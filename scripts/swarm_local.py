@@ -61,11 +61,11 @@ def private_env(root):
     return env
 
 
-def model_entry(model, name):
+def model_entry(model, name, context_window, reasoning=False):
     return {
-        "id": model, "name": name, "reasoning": False, "input": ["text"],
-        "contextWindow": 32768, "maxTokens": 4096,
-        "samplingParams": {"reasoning_effort": "none"},
+        "id": model, "name": name, "reasoning": reasoning, "input": ["text"],
+        "contextWindow": context_window, "maxTokens": 4096,
+        "samplingParams": {} if reasoning else {"reasoning_effort": "none"},
         "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
     }
 
@@ -92,20 +92,20 @@ def write_json(path, value):
 
 def configure_providers(root, env):
     agent_home = root / "pi-state"
-    local_url = env.get("SWARM_LOCAL_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
+    local_url = env.get("SWARM_LOCAL_MODEL_URL", "http://127.0.0.1:11435").rstrip("/")
     remote_url = env.get("SWARM_REMOTE_OLLAMA_URL", "").rstrip("/")
-    local_model = env.get("SWARM_LOCAL_MODEL", "qwen3.5:27b")
-    remote_model = env.get("SWARM_REMOTE_MODEL", "qwen3.5:9b")
+    local_model = env.get("SWARM_LOCAL_MODEL", "nornic-ornith")
+    remote_model = env.get("SWARM_REMOTE_AGENT_MODEL", "nornic-agent-remote")
     providers = {
-        "ollamaLocal": {
-            "baseUrl": local_url + "/v1", "api": "openai-completions", "apiKey": "ollama",
-            "models": [model_entry(local_model, "Qwen 3.5 27B Local (32K)")],
+        "nornicLocal": {
+            "baseUrl": local_url + "/v1", "api": "openai-completions", "apiKey": "local",
+            "models": [model_entry(local_model, "Ornith 1.5 Compact Local", int(env.get("SWARM_LOCAL_CONTEXT_WINDOW", "0")) or 262144, reasoning=True)],
         },
     }
     if remote_url:
         providers["ollamaRemote"] = {
             "baseUrl": remote_url + "/v1", "api": "openai-completions", "apiKey": "ollama",
-            "models": [model_entry(remote_model, "Qwen 3.5 9B Remote (32K)")],
+            "models": [model_entry(remote_model, "Qwen 3.5 9B Remote", int(env.get("SWARM_REMOTE_CONTEXT_WINDOW", "262144")))],
         }
     models_path = agent_home / "models.json"
     models = json.loads(models_path.read_text()) if models_path.exists() else {}
@@ -113,15 +113,11 @@ def configure_providers(root, env):
     write_json(models_path, models)
     settings_path = root / "state" / "userdata" / "settings.json"
     settings = json.loads(settings_path.read_text()) if settings_path.exists() else {}
-    selected = settings.get("defaultModelSelection")
-    if selected is None or str(selected.get("model", "")).startswith("gpt-6-astra"):
-        settings["defaultModelSelection"] = {
-            "instanceId": "codex", "model": "gpt-6.1-sol",
-            "options": [{"id": "reasoningEffort", "value": "low"}],
-        }
+    if settings.get("defaultModelSelection") is None:
+        settings["defaultModelSelection"] = {"instanceId": "ollama_local", "model": "default"}
     instances = settings.setdefault("providerInstances", {})
     agent_binary = root / "pi" / "node_modules" / ".bin" / "pi"
-    instances.setdefault("ollama_local", provider_instance("Nornic Local 27B", "ollamaLocal", local_model, agent_home, agent_binary))
+    instances.setdefault("ollama_local", provider_instance("Nornic Local · Ornith", "nornicLocal", local_model, agent_home, agent_binary))
     if remote_url:
         instances.setdefault("ollama_remote", provider_instance("Nornic Remote 9B", "ollamaRemote", remote_model, agent_home, agent_binary))
     codex = env.get("SWARM_CODEX_BINARY") or shutil.which("codex")
@@ -133,8 +129,29 @@ def configure_providers(root, env):
     write_json(settings_path, settings)
 
 
+
+def prepare_remote_agent(env):
+    """Give the standalone remote worker its own model context, separate from routing."""
+    origin = env.get("SWARM_REMOTE_OLLAMA_URL", "").rstrip("/")
+    if not origin:
+        return
+    model = env.get("SWARM_REMOTE_AGENT_MODEL", "nornic-agent-remote")
+    base = env.get("SWARM_REMOTE_MODEL", "qwen3.5:9b")
+    context = int(env.get("SWARM_REMOTE_CONTEXT_WINDOW", "262144"))
+    try:
+        info = request(origin + "/api/show", {}, {"model": model})
+        if any(line.split() == ["num_ctx", str(context)] for line in info.get("parameters", "").splitlines()):
+            return
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+    result = request(origin + "/api/create", {}, {"model": model, "from": base, "parameters": {"num_ctx": context}, "stream": False})
+    if result.get("status") != "success":
+        raise RuntimeError("Remote worker model setup failed; check its Ollama service and model availability.")
+
+
 def setup():
-    require_tools("git", "vp", "npm", "uv", "ollama")
+    require_tools("git", "vp", "npm", "uv", "llama-server")
     root, t3, state = paths()
     root.mkdir(parents=True, exist_ok=True)
     env = private_env(root)
@@ -159,8 +176,8 @@ def setup():
     if not python.exists():
         run("uv", "venv", "--python", "3.13", root / "code-intel")
     run("uv", "pip", "install", "--python", python, "-r", REPO / "scripts" / "requirements-code-intelligence.txt")
-    # Model download is explicit: setup remains usable when only the remote worker
-    # is available or a large local model is still being fetched.
+    run(sys.executable, REPO / "scripts" / "swarm_model.py")
+    prepare_remote_agent(env)
     configure_providers(root, env)
     state.mkdir(parents=True, exist_ok=True)
     print(f"Setup complete in {root}. Run 'make swarm-doctor', then 'make swarm'.")
@@ -195,13 +212,13 @@ def doctor():
     for label, url in [
         ("NornicDB", (env.get("SWARM_NORNICDB_URL") or env.get("NORNICDB_URI", "")).rstrip("/") + "/health" if (env.get("SWARM_NORNICDB_URL") or env.get("NORNICDB_URI")) else ""),
         ("Remote Ollama", env.get("SWARM_REMOTE_OLLAMA_URL", "").rstrip("/") + "/api/tags" if env.get("SWARM_REMOTE_OLLAMA_URL") else ""),
-        ("Local Ollama", env.get("SWARM_LOCAL_OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/") + "/api/tags"),
+        ("Local Ornith", env.get("SWARM_LOCAL_MODEL_URL", "http://127.0.0.1:11435").rstrip("/") + "/health"),
     ]:
         if not url:
             print(f"{label}: configure its URL in {root / 'env'}")
             continue
         try:
-            result = request(url, env)
+            result = request(url, env if label == "NornicDB" else {})
             models = [model.get("name") for model in result.get("models", [])] if isinstance(result, dict) else []
             print(f"{label}: ready" + (f" ({', '.join(models)})" if models else ""))
         except (OSError, ValueError) as exc:
@@ -223,7 +240,9 @@ def start():
     env["NORNICDB_URI"] = uri
     env.setdefault("NORNICDB_WORKFLOW_DATABASE", "t3workflow")
     env.setdefault("NORNIC_CODE_DATABASE", "nornicdbcode")
-    env.setdefault("NORNIC_OLLAMA_URL", env.get("SWARM_REMOTE_OLLAMA_URL", env.get("SWARM_LOCAL_OLLAMA_URL", "http://127.0.0.1:11434")))
+    env.setdefault("NORNIC_OLLAMA_URL", env.get("SWARM_REMOTE_OLLAMA_URL", ""))
+    if not env["NORNIC_OLLAMA_URL"]:
+        raise RuntimeError(f"Set SWARM_REMOTE_OLLAMA_URL in {root / 'env'} for the intent router.")
     env.setdefault("NORNIC_CLASSIFIER_MODEL", env.get("SWARM_REMOTE_ALIAS", "nornic-coder"))
     env.setdefault("NORNIC_LOCAL_PROVIDER_INSTANCE", "ollama_local")
     env.setdefault("NORNIC_FRONTIER_INSTANCES", "codex")
@@ -241,12 +260,20 @@ def start():
     subprocess.run(["vp", "run", "dev", "--home-dir", str(state), "--no-seed"], cwd=t3, env=env, check=True)
 
 
+def ingest_help():
+    root, _, _ = paths()
+    python = root / "code-intel" / "bin" / "python"
+    if not python.exists():
+        raise RuntimeError("Run make swarm-setup first to install the help importer dependencies.")
+    run(python, REPO / "scripts" / "swarm_help.py")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("setup", "doctor", "start"))
+    parser.add_argument("command", choices=("setup", "doctor", "start", "ingest-help"))
     command = parser.parse_args().command
     try:
-        {"setup": setup, "doctor": doctor, "start": start}[command]()
+        {"setup": setup, "doctor": doctor, "start": start, "ingest-help": ingest_help}[command]()
     except (RuntimeError, subprocess.CalledProcessError, urllib.error.HTTPError) as exc:
         print(f"swarm: {exc}", file=sys.stderr)
         return 1

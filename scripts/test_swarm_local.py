@@ -26,14 +26,15 @@ class SwarmLocalTest(unittest.TestCase):
             self.assertIn("ollama_local", saved["providerInstances"])
             self.assertIn("ollama_remote", saved["providerInstances"])
             self.assertIn("codex", saved["providerInstances"])
-            self.assertEqual(saved["providerInstances"]["ollama_local"]["displayName"], "Nornic Local 27B")
+            self.assertEqual(saved["providerInstances"]["ollama_local"]["displayName"], "Nornic Local · Ornith")
             self.assertEqual(saved["providerInstances"]["ollama_remote"]["displayName"], "Nornic Remote 9B")
-            self.assertEqual(saved["defaultModelSelection"]["model"], "gpt-6.1-sol")
-            self.assertEqual(saved["defaultModelSelection"]["options"], [{"id": "reasoningEffort", "value": "low"}])
+            self.assertEqual(saved["defaultModelSelection"], {"instanceId": "ollama_local", "model": "default"})
             models = json.loads((root / "pi-state" / "models.json").read_text())
             self.assertEqual(models["providers"]["custom"], {"baseUrl": "http://custom"})
             self.assertEqual(models["providers"]["ollamaRemote"]["baseUrl"], "http://remote:11434/v1")
-            self.assertEqual(models["providers"]["ollamaLocal"]["models"][0]["id"], "qwen3.5:27b")
+            self.assertEqual(models["providers"]["nornicLocal"]["models"][0]["id"], "nornic-ornith")
+            self.assertEqual(models["providers"]["nornicLocal"]["models"][0]["contextWindow"], 262144)
+            self.assertEqual(models["providers"]["nornicLocal"]["baseUrl"], "http://127.0.0.1:11435/v1")
 
     def test_token_takes_precedence_over_basic_auth(self):
         self.assertEqual(
@@ -45,12 +46,12 @@ class SwarmLocalTest(unittest.TestCase):
             "Basic dTpw",
         )
 
-    def test_astra_cannot_remain_the_implicit_default(self):
+    def test_explicit_user_default_is_preserved(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             settings = root / "state" / "userdata" / "settings.json"
             swarm_local.write_json(settings, {
-                "defaultModelSelection": {"instanceId": "codex", "model": "gpt-6-astra"},
+                "defaultModelSelection": {"instanceId": "codex", "model": "gpt-6.1-sol"},
             })
             with mock.patch.object(swarm_local.shutil, "which", return_value="/bin/codex"):
                 swarm_local.configure_providers(root, {})
@@ -69,7 +70,7 @@ class SwarmLocalTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             root.joinpath("T3").mkdir()
-            root.joinpath("env").write_text("SWARM_NORNICDB_URL=http://remote:7474\n")
+            root.joinpath("env").write_text("SWARM_NORNICDB_URL=http://remote:7474\nSWARM_REMOTE_OLLAMA_URL=http://remote:11434\n")
             with mock.patch.object(swarm_local, "paths", return_value=(root, root / "T3", root / "state")), \
                  mock.patch.object(swarm_local, "require_tools"), \
                  mock.patch.object(swarm_local, "request", return_value={"errors": []}), \

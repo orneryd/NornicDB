@@ -7,14 +7,27 @@ not complete the larger milestone's acceptance contract.
 
 ## Local experiment: model defaults
 
+- [x] Default fresh UI chats to the Nornic local agent and configure this installation accordingly; preserve explicitly saved choices during later setup.
+
 - [x] Name the managed agent Nornic across provider/model labels, settings,
   diagnostics, launchers and docs; retain valid upstream runtime identifiers.
 - [x] Reproduce the Codex dropdown choosing Astra despite the harness's saved
   Sol selection; default the shared catalog to GPT-6.1 Sol with low reasoning.
 - [x] Verify catalog selection, reasoning defaults and provider/model consumers
   with focused T3 tests; preserve manual Astra selection and its agent-call guard.
-- [x] Document that automatic classification starts through Ollama Local 27B;
+- [x] Document that automatic classification starts through the Nornic local agent;
   directly selecting another provider does not automatically classify its requests.
+
+## Local experiment: actionable intent help
+
+- [x] Add read-only authenticated-user Linear issue listing with pagination and
+  explicit tool examples, rather than suggesting unavailable operations.
+- [x] Clone `tommyvo/useful-prompts` under `~/src` without running its installers.
+- [x] Build one cited help corpus from its skills and recursively linked local
+  guidance starting at NornicDB's `AGENTS.md`, using the existing document importer.
+- [x] Retrieve this help during intent routing and expose explicit help search.
+- [ ] Verify mocked boundaries and live read-only Linear/retrieval paths; publish
+  the actual ingestion and test evidence on the harness PR.
 
 ## 1. Establish integration capabilities
 
@@ -114,3 +127,10 @@ not complete the larger milestone's acceptance contract.
 - [ ] Run `make verify BASE=origin/release/v1.4.4` for the implementation PR and
   post checked head/base, command, results and skips. Do not equate a path-filtered
   no-op or documentation-only check with runtime feature verification.
+
+## Local experiment: warm native-context model serving
+
+- [x] Stop local Ollama and remove its requested local model cache; retain the remote router.
+- [x] Pin and checksum the Ornith APEX MTP Compact artifact and install llama.cpp.
+- [x] Verify the persistent local server, native 256K allocation, tool calls and warm reuse.
+- [x] Keep the router at 32K and use serving-model context sizes for agent sessions; leave Codex native defaults untouched.

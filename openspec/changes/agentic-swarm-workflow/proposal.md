@@ -32,7 +32,7 @@ must make this possible on local hardware without embedding each worktree.
   per-agent vector index, or per-agent embedding model instance.
 - Expose the service through T3's authenticated MCP toolkit. Use existing
   NornicDB Cypher/search APIs; no custom NornicDB/APOC/Heimdall plugin is required.
-- Classify user intent with the local Ollama model, inject only relevant
+- Classify user intent with the configured small Ollama routing model, inject only relevant
   instructions, and route complex/uncertain work to configured available frontier
   providers. Routine implementation of an existing plan stays local.
 - Run the repository's duplicate checker in the harness against the candidate

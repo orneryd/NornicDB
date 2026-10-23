@@ -18,22 +18,22 @@ to use the UI. The normal web address is `http://localhost:5733`.
 ### macOS with local and remote workers
 
 Install Git, Python 3, Node/npm, [Vite+](https://viteplus.dev/),
-[uv](https://docs.astral.sh/uv/), and [Ollama](https://ollama.com/). Start the local
-Ollama service. The local 27B model is optional but requires roughly 17 GiB of
-model storage; choose a smaller model if your machine cannot keep it resident.
-The remote 2080 Ti host uses its existing `qwen3.5:9b` and `nornic-coder` models.
+[uv](https://docs.astral.sh/uv/), and [llama.cpp](https://github.com/ggml-org/llama.cpp).
+Local inference uses Ornith 1.5 Compact through `llama-server`; local Ollama is
+not required. The remote 2080 Ti host keeps Ollama for the 9B intent router.
 
 ```sh
-ollama pull qwen3.5:27b
+brew install llama.cpp
 make swarm-setup
 ```
 
 The default permanent tools/state directory is
 `~/.local/share/nornicdb-swarm`; set `SWARM_TOOLS_ROOT` to change it. The setup
 pins T3 to `2c8bdf6177159d8fcd12a897d7c9311f6eb93237`, applies this PR's
-patch, installs frozen T3 dependencies, Nornic 1.4.0 and the code-intelligence
-Python requirements. It preserves existing T3 provider instances. It does not
-download a model or change global Git hooks.
+patch, installs frozen T3 dependencies, agent runtime 1.4.0 and the
+code-intelligence Python requirements. It downloads the pinned 17.44GB Ornith
+Compact GGUF and verifies its SHA256 before starting it. It preserves existing
+T3 provider instances and does not change global Git hooks.
 
 Put machine-specific endpoints in a private `env` file under that directory
 (mode 0600); shell environment values take precedence. For the current testing
@@ -42,7 +42,9 @@ host use:
 ```dotenv
 SWARM_NORNICDB_URL=http://192.168.1.30:7474
 SWARM_REMOTE_OLLAMA_URL=http://192.168.1.30:11434
-SWARM_LOCAL_OLLAMA_URL=http://127.0.0.1:11434
+SWARM_LOCAL_MODEL_URL=http://127.0.0.1:11435
+SWARM_LOCAL_MODEL=nornic-ornith
+SWARM_LOCAL_CONTEXT_WINDOW=0
 # Optional if codex is not on PATH:
 SWARM_CODEX_BINARY=/absolute/path/to/codex
 ```
@@ -62,15 +64,16 @@ make swarm-doctor
 make swarm
 ```
 
-The agent is named **Nornic** in T3. Its local entry is **Nornic Local 27B**,
+The agent is named **Nornic** in T3. Its local entry is **Nornic Local · Ornith**,
 with **Nornic default** as the model selection; the remote entry is
 **Nornic Remote 9B**. The underlying runtime dependency remains
 `@earendil-works/pi-coding-agent@1.4.0`. Its `pi` executable,
 `PI_CODING_AGENT_DIR` environment variable, T3 adapter package path and `pi`
 driver identifier are technical dependency names, not the agent's UI name.
 
-The Codex model dropdown defaults to **GPT-6.1 Sol** with **Low** reasoning.
-Choose **Nornic Local 27B** to use automatic intent routing. Selecting
+New chats default to **Nornic Local · Ornith / Nornic default**. Within the
+Codex provider, the model dropdown defaults to **GPT-6.1 Sol** with **Low** reasoning.
+Choose **Nornic Local · Ornith** to use automatic intent routing. Selecting
 **Codex Frontier** or **Nornic Remote 9B** directly starts that agent without
 the automatic classifier. The intent classifier uses the remote `nornic-coder` model. For
 automatic intake routing, the local Nornic instance is `ollama_local` and Codex is
@@ -87,6 +90,32 @@ browser pairing URL there. To launch from any directory, add a shell alias such
 as `alias t3-swarm='make -C /absolute/path/to/NornicDB-swarm swarm'` to your
 shell configuration. On a different host, update the private URLs and use
 `make swarm-doctor` before starting.
+
+### Local model lifetime and context
+
+The macOS setup installs `com.nornicdb.swarm-model` in the user's LaunchAgents.
+It starts at login, restarts after failure, and runs independently of the T3
+terminal. `--sleep-idle-seconds -1` keeps the model warm after requests. Logs are
+under `~/.local/share/nornicdb-swarm/logs/local-model.log`; the listener is
+loopback-only. The service enables the bundled MTP head using `--spec-type
+draft-mtp` and uses the GGUF's native chat template with tool support.
+
+The local service uses `--ctx-size 0`, meaning the model's native context
+(262,144 tokens for this Ornith checkpoint), with one server slot. An explicit
+`SWARM_LOCAL_CONTEXT_WINDOW` can select a smaller token count. The standalone
+remote worker uses a separate `nornic-agent-remote` alias with its own
+`SWARM_REMOTE_CONTEXT_WINDOW` (262,144 by default). The remote `nornic-coder`
+intent router and read assistant alone request 32,768-token contexts. Codex
+receives no context-size override; its runtime manages the frontier model's
+native window and compaction. Catalog context sizes must agree with the serving
+runtime; advertising a larger window alone does not increase server capacity.
+
+The artifact is `mudler/Ornith-1.5-35B-A3B-APEX-MTP-GGUF`, revision
+`4c326713c52d13fdb40983a2a09a46cca8e88739`, file
+`Ornith-1.5-35B-A3B-APEX-MTP-Compact.gguf`, SHA256
+`a7373f724cf3693e8a6a5f8209ae9a06ff8071ae2af60659bdbdf8ff6f6c10df`.
+The quantization card reports no throughput benchmarks for these files; MTP and
+long-context performance require measurements on the actual host.
 
 The remote test Compose configuration has authentication disabled and publishes
 HTTP/Bolt on its LAN interfaces. Restrict those ports to the trusted test
@@ -140,8 +169,8 @@ embedding workers**. The model's default dimensions are documented in the
 Code submitted for embeddings goes to OpenAI. Embedding/search indexes live in
 system RAM; graph data and vectors persist in Docker's data volume.
 
-Ollama handles intent classification and bounded coding with Qwen 3.5 9B at 32K
-context. On the test RTX 2080 Ti it ran entirely on GPU. Confirm using `ollama ps`;
+The remote Ollama router uses Qwen 3.5 9B at 32K context. Its standalone
+worker alias has a separate native-size context. On the test RTX 2080 Ti it ran entirely on GPU. Confirm using `ollama ps`;
 do not infer GPU residency from the model name. BGE is no longer required or loaded
 by this configuration. The larger Ornith 35B quantization was not selected for this
 11 GB GPU.
@@ -155,6 +184,17 @@ frontier authentication are separate.
 For Linear, add `LINEAR_API_KEY=...` to the same ignored env file. The startup
 script passes it only to the local T3 server; Docker does not need this key.
 The tracker adapter uses [Linear's GraphQL API](https://linear.app/developers/graphql).
+`linear.assigned` lists issues assigned to the authenticated API-key owner,
+returning that person's identity and `pageInfo`. It defaults to 25 uncompleted
+issues in the configured `NORNIC_LINEAR_TEAM` (default `NOR`); `first` accepts
+1–50, `after` continues the returned cursor, and `includeCompleted` includes
+completed/canceled issues. Do not assume that an integration key belongs to the
+human asking: report the returned account and resolve any identity mismatch.
+For example, call `nornic_workflow` with
+`{"operation":"linear.assigned","requestId":"assigned-1"}`. If
+`pageInfo.hasNextPage` is true, continue with `after=pageInfo.endCursor` and a
+new request ID before claiming a complete list.
+
 `linear.issue` reads the current issue; `linear.bind` attaches the exact current
 scope and external version to an assigned task. Binding invalidates its previous
 plan/claims/duplicate receipt, so plan again against the actual issue. Bound tasks
@@ -172,7 +212,7 @@ the required independent evidence; a duplicate pass cannot mark Test Complete.
 
 Open the pairing URL printed by T3 (web UI normally `http://localhost:5733`). Its
 backend normally uses port 13773. Add the repository as a T3 project and select
-**Ollama Local / nornic-coder**. Use a **new worktree** for implementation tasks;
+**Nornic Local / Nornic default**. Use a **new worktree** for implementation tasks;
 the constrained file gateway refuses writes to the project's primary checkout.
 State, provider sessions and settings remain isolated under the tools directory.
 NornicDB listens only on loopback ports 7474/7687 with local test authentication
@@ -289,6 +329,57 @@ uncertain work routes through T3 to an enabled, installed, authenticated frontie
 provider. Missing classification or frontier readiness blocks admission and
 reports the reason. A request to *implement an existing plan* must classify as
 implementation, not as a request to create a plan.
+
+For simple local information requests, a bounded read assistant on the routing
+model can call `linear.assigned`, `linear.issue` and `context.search` directly.
+It can make up to three reads, inspect results, and ask a specific clarification
+question when user input is missing. Up to four preceding conversation messages
+are available to resolve clarification replies. Repeated requests, oversized
+evidence and missing evidence stop the shortcut rather than fabricating an
+answer. The selected local model displays its answer or question with further
+tool calls disabled; this is not a direct UI response that avoids all local-model
+inference. Complex requests still follow the existing Sol routing rules.
+
+## Skills and repository guidance corpus
+
+Clone the skills library once, then publish its Markdown documents together with
+NornicDB's `AGENTS.md`, this harness guide, and their recursively linked local documentation:
+
+```sh
+git clone git@github.com:tommyvo/useful-prompts.git ~/src/useful-prompts
+make swarm-help
+```
+
+The importer uses committed Git snapshots. Commit intended guidance changes
+before refreshing. It does not run the skill repository's installers or execute
+retrieved instructions. `SWARM_SKILLS_ROOT` and `SWARM_GUIDANCE_ROOT` can select
+different local checkouts. Connection URLs and credentials come from the private
+swarm env file or environment. For the explicitly unauthenticated LAN test
+server only, avoid inheriting credentials for a different local server:
+
+```sh
+NORNICDB_TOKEN= NORNICDB_USER= NORNICDB_PASSWORD= make swarm-help
+```
+
+On Windows, `make swarm-help` uses `SWARM_TOOLS_ROOT` (default
+`../.swarm-local`); configure `NORNICDB_URI` or the private `env` file in that
+directory before running it. Native Windows execution has not been verified.
+
+The existing document publisher owns one leased, reconciled manifest under
+`nornic/intent-help`, in `nornicdbcode` by default. It deletes stale chunks only
+from that help repository. `NORNIC_HELP_REPO` and `NORNIC_HELP_DATABASE` can
+override that scope consistently for ingestion and T3. Each chunk retains its
+original repository, path, source revision and line range. A manifest with source
+revisions, missing local links and external references is written to
+`intent-help-manifest.json` in the tools directory. External URLs are not fetched;
+binary files are not ingested. Embedding readiness is separate from publication.
+
+Normal intent routing retrieves bounded relevant help from this corpus alongside
+applicable code context. The read assistant can retrieve it on demand. Explicit
+help search is available as
+`{"operation":"context.search","contextScope":"help","query":"review checklist","requestId":"help-1"}`.
+Retrieved guidance is cited reference material. It cannot grant tool access,
+authorize external changes, or override the current user's scope and approvals.
 
 The opt-in local profile disables native shell/edit/write tools. Its only workflow
 tool supports assigned tasks, versioned plans, expiring resource claims and a

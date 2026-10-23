@@ -111,16 +111,19 @@ BGE_RERANKER_URL := https://huggingface.co/gpustack/bge-reranker-v2-m3-GGUF/reso
 .PHONY: build-llama-cpu push-llama-cpu deploy-llama-cpu ensure-llama-cpu
 .PHONY: build-llama-cuda push-llama-cuda deploy-llama-cuda ensure-llama-cuda
 .PHONY: build run build-ui build-binary build-admin build-localllm build-headless build-localllm-headless sync-version test lint-slog install-hooks clean images help macos-menubar macos-install macos-uninstall macos-all macos-clean macos-package macos-package-lite macos-package-full macos-package-all macos-package-signed homebrew-artifacts
-.PHONY: swarm swarm-setup swarm-doctor
+.PHONY: swarm swarm-setup swarm-doctor swarm-help
 
 # One entry point on both hosts. Windows retains its qualified NVIDIA scripts;
 # macOS uses the remote NornicDB and Ollama services configured by the operator.
 ifeq ($(HOST_OS),windows)
 SWARM_POWERSHELL ?= powershell
+SWARM_TOOLS_ROOT ?= ../.swarm-local
 swarm-setup:
 	$(SWARM_POWERSHELL) -NoProfile -ExecutionPolicy Bypass -File scripts/setup-swarm-local.ps1
 swarm: swarm-setup
 	$(SWARM_POWERSHELL) -NoProfile -ExecutionPolicy Bypass -File scripts/start-swarm-local.ps1
+swarm-help:
+	$(SWARM_POWERSHELL) -NoProfile -Command "& '$(SWARM_TOOLS_ROOT)/code-intel/Scripts/python.exe' scripts/swarm_help.py --tools-root '$(SWARM_TOOLS_ROOT)'"
 swarm-doctor:
 	$(SWARM_POWERSHELL) -NoProfile -ExecutionPolicy Bypass -File scripts/swarm-local-smoke.ps1
 else
@@ -129,6 +132,8 @@ swarm-setup:
 	$(SWARM_PYTHON) scripts/swarm_local.py setup
 swarm: swarm-setup
 	$(SWARM_PYTHON) scripts/swarm_local.py start
+swarm-help:
+	$(SWARM_PYTHON) scripts/swarm_local.py ingest-help
 swarm-doctor:
 	$(SWARM_PYTHON) scripts/swarm_local.py doctor
 endif

@@ -50,6 +50,16 @@ def ingest_documents(root, revision):
                 "repo": repo, "source_file": source, "start_line": start, "end_line": end,
                 "source_location": f"{start}-{end} (chunk {ordinal})", "content_hash": digest, "content": content,
             }})
+    publish_documents(rows, repo, database, commit, (uri, user, password, token))
+
+
+def publish_documents(rows, repo, database, commit, connection):
+    """Publish one complete manifest through the same leased document owner.
+
+    Callers supply an explicit connection when their host application already owns
+    endpoint/auth configuration; the code-intelligence command retains its policy.
+    """
+    uri, user, password, token = connection
     ids = [row["id"] for row in rows]
     # HttpSession splits oversized list parameters; NOT IN must never be split.
     if len(json.dumps(ids).encode()) > gi.HTTP_MAX_REQUEST_BYTES // 2:
