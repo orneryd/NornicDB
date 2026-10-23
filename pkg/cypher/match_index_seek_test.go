@@ -256,7 +256,7 @@ func TestGh809_IndexedTransactionMixedRowsAndWrites(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForUnlabeledEquality(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
@@ -289,7 +289,7 @@ func TestMatchUsesPropertyIndexForUnlabeledEquality(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForFabricRecordBindingEquality(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
@@ -326,7 +326,7 @@ func TestMatchUsesPropertyIndexForFabricRecordBindingEquality(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForInParamList(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
@@ -379,7 +379,7 @@ func TestMatchUsesPropertyIndexForInParamList(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForOrInParamList_NoScan(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
@@ -449,7 +449,7 @@ func TestParseSimpleIndexedInLiteral(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForInLiteralList(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
@@ -496,7 +496,7 @@ func TestMatchUsesPropertyIndexForInLiteralList(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForIsNotNullOrderByLimit(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
@@ -526,7 +526,7 @@ func TestMatchUsesPropertyIndexForIsNotNullOrderByLimit(t *testing.T) {
 }
 
 func TestMatchUsesPropertyIndexForIsNotNullOrderByLimit_WithConstantAndConjuncts(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 
@@ -563,7 +563,7 @@ func TestMatchUsesPropertyIndexForIsNotNullOrderByLimit_WithConstantAndConjuncts
 // fills the index, so an index-backed ordered scan returns them (the index
 // is trusted; there is no scan fallback for an empty index result, #719).
 func TestMatchUsesIndexFilledFromExistingNodes(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 
 	_, err := base.CreateNode(&storage.Node{

@@ -10,12 +10,12 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
-	"github.com/orneryd/nornicdb/pkg/storage"
+
 	"github.com/stretchr/testify/require"
 )
 
 func TestGh745_CompositeSubqueryElementIDNamesConstituent(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()

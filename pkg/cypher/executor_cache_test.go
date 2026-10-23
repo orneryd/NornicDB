@@ -117,7 +117,7 @@ func TestExecutor_CacheDoesNotPublishOverlappingReadAtNewRevision(t *testing.T) 
 }
 
 func TestExecutor_CacheReflectsExternalAsyncNodeDeleteBeforeFlush(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := newTestMemoryEngine(t)
 	asyncStore := baseStore
 	t.Cleanup(func() { require.NoError(t, asyncStore.Close()) })
 	store := storage.NewNamespacedEngine(asyncStore, "test")
@@ -138,7 +138,7 @@ func TestExecutor_CacheReflectsExternalAsyncNodeDeleteBeforeFlush(t *testing.T) 
 }
 
 func TestExecutor_CacheReflectsExternalAsyncEdgeDeleteBeforeFlush(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := newTestMemoryEngine(t)
 	asyncStore := baseStore
 	t.Cleanup(func() { require.NoError(t, asyncStore.Close()) })
 	store := storage.NewNamespacedEngine(asyncStore, "test")

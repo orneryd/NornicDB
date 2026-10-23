@@ -66,7 +66,7 @@ func seedRelationshipLimitData(t *testing.T, eng *relationshipScanGuardEngine, c
 }
 
 func TestRelationshipMatchLimitShortCircuitsTraversal(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &relationshipScanGuardEngine{MemoryEngine: base}
 	exec := NewStorageExecutor(eng)
@@ -85,7 +85,7 @@ LIMIT 1
 }
 
 func TestRelationshipMatchUsesIndexForIsNotNullStartNodeFilter(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &relationshipScanGuardEngine{MemoryEngine: base}
 	exec := NewStorageExecutor(eng)
@@ -129,7 +129,7 @@ LIMIT 1
 }
 
 func TestRelationshipMatchTranslationQueryFamily_EndNodeFilterOrderLimit(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &relationshipScanGuardEngine{MemoryEngine: base}
 	exec := NewStorageExecutor(eng)
@@ -181,7 +181,7 @@ LIMIT 3
 }
 
 func TestRelationshipMatchEndSeededTopKSupportsFixedMultiHop(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	exec := NewStorageExecutor(base)
 	ctx := context.Background()

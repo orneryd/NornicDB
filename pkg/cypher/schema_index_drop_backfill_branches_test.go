@@ -65,7 +65,7 @@ func TestSchema_CreateIndexBranches(t *testing.T) {
 }
 
 func TestSchema_CreateIndexBranches_BackfillErrorsAcrossSyntaxes(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &getNodesByLabelErrorEngine{MemoryEngine: base, errOnLabel: "ErrBackfill"}
 	exec := NewStorageExecutor(eng)
@@ -129,7 +129,7 @@ func TestSchema_BackfillCompositeIndex_ErrorBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// GetNodesByLabel error branch.
-	baseErr := storage.NewMemoryEngine()
+	baseErr := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = baseErr.Close() })
 	errEng := &getNodesByLabelErrorEngine{MemoryEngine: baseErr, errOnLabel: "ErrLabel"}
 	errStore := storage.NewNamespacedEngine(errEng, "schema_backfill_err")

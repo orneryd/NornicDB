@@ -21,7 +21,7 @@ func TestExplicitTransactionUnwindDeleteCommitAndRollback(t *testing.T) {
 		{name: "rollback", terminal: "ROLLBACK", remainingEdge: 1},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			store := storage.NewMemoryEngine()
+			store := newTestMemoryEngine(t)
 			t.Cleanup(func() { require.NoError(t, store.Close()) })
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(store, "test"))
 			ctx := context.Background()
@@ -57,7 +57,7 @@ DELETE rel`, map[string]any{
 }
 
 func TestExplicitTransactionUnwindDeleteEmptyInput(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(store, "test"))
 	ctx := context.Background()

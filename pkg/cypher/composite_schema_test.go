@@ -14,7 +14,7 @@ import (
 // (scoped to the default DB) wired with a DatabaseManager.
 func compositeTestFixture(t *testing.T) (*StorageExecutor, *multidb.DatabaseManager) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { mgr.Close() })

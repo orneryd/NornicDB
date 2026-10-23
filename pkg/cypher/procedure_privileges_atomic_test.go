@@ -42,7 +42,7 @@ func TestProcedurePrivilegeBatchFailureChangesNothing(t *testing.T) {
 	for _, revoke := range []bool{false, true} {
 		t.Run(map[bool]string{false: "grant", true: "revoke"}[revoke], func(t *testing.T) {
 			ctx := context.Background()
-			inner := storage.NewMemoryEngine()
+			inner := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = inner.Close() })
 			system := storage.NewNamespacedEngine(inner, "system")
 			store := auth.NewProcedurePrivilegeStore(system)
@@ -68,7 +68,7 @@ func TestRoleDeletionJoinsExplicitTransaction(t *testing.T) {
 	for _, commit := range []bool{false, true} {
 		t.Run(map[bool]string{false: "rollback", true: "commit"}[commit], func(t *testing.T) {
 			ctx := context.Background()
-			inner := storage.NewMemoryEngine()
+			inner := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = inner.Close() })
 			system := storage.NewNamespacedEngine(inner, "system")
 			require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "ops"))

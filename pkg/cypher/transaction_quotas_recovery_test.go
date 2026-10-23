@@ -19,7 +19,7 @@ func TestTransactionQuotaRejectionLeavesWALIndexesAndSearchUnchanged(t *testing.
 			t.Run(fmt.Sprintf("explicit=%v/%s", explicit, kind), func(t *testing.T) {
 				ctx := context.Background()
 				dir := t.TempDir()
-				base := storage.NewMemoryEngine()
+				base := newTestMemoryEngine(t)
 				wal, err := storage.NewWAL(dir, nil)
 				require.NoError(t, err)
 				logged := storage.NewWALEngine(base, wal)

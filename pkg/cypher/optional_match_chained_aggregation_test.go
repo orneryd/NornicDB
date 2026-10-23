@@ -9,7 +9,7 @@ import (
 )
 
 func TestChainedOptionalMatchesPreserveEarlierBindingsForAggregation(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	defer func() { require.NoError(t, base.Close()) }()
 	store := storage.NewNamespacedEngine(base, "optional_aggregation")
 	exec := NewStorageExecutor(store)

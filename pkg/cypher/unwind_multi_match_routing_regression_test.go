@@ -353,7 +353,7 @@ func TestRewriteTopLevelMultiMatchToCartesianMatch(t *testing.T) {
 }
 
 func TestBug_UnwindMatchCount_RewriteAvoidsPerItemLabelScans(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &limitedLabelScanEngine{MemoryEngine: base, maxCalls: 3}
 	exec := NewStorageExecutor(eng)

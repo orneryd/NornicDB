@@ -64,7 +64,7 @@ func TestAdministrationRoutingFailures(t *testing.T) {
 		require.ErrorIs(t, err, errSystemUnavailable)
 	})
 	t.Run("system database opens no transaction", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base.Close() })
 		// nonTransactionalEngine (executor_misc_test.go) opens no transaction.
 		exec := routed(t, nonTransactionalEngine{Engine: storage.NewNamespacedEngine(base, "system")}, nil)

@@ -126,7 +126,7 @@ func TestTransactionStoredReaderKeepsOverlayAndHiddenBodies(t *testing.T) {
 }
 
 func TestTransactionStoredReaderKeepsSnapshot(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	ns := storage.NewNamespacedEngine(base, "a")
 	for _, id := range []storage.NodeID{"x", "y"} {

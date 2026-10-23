@@ -111,7 +111,7 @@ func consumerHits(t *testing.T, svc *search.Service, word string) int {
 // pauses whichever read decides the older statement's index change.
 func newConsumerVectorStore(t *testing.T, observed func(*storage.Node, error) bool) (storage.Engine, *consumerObservationBarrier, *search.Service) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	node := &storage.Node{ID: "source", Labels: []string{"Doc"}, Properties: map[string]any{"content": "obsoleteword"}, ChunkEmbeddings: [][]float32{{1, 0}}}

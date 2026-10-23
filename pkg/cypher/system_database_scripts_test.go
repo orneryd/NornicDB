@@ -13,7 +13,7 @@ import (
 // refused, as Neo4j 5.26.30 refuses it.
 func TestSystemDatabaseChecksScriptBodiesAndProcedureResults(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = inner.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(inner, "system"))
 

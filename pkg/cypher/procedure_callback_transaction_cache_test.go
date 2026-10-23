@@ -14,7 +14,7 @@ import (
 func TestPublicProcedureCallbackReadsPendingImplicitWrites(t *testing.T) {
 	for _, carrier := range []string{"callback context and storage", "storage only", "context only"} {
 		t.Run(carrier, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := newTestMemoryEngine(t)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			t.Cleanup(cypher.ClearUserProcedures)
 			exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "nornic"))

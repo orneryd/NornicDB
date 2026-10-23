@@ -49,7 +49,7 @@ import (
 
 func setupOptionalMatchRelVarFixture(t *testing.T) (*StorageExecutor, storage.Engine) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)

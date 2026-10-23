@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
-	"github.com/orneryd/nornicdb/pkg/storage"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,7 +14,7 @@ import (
 // executor on pcomp.
 func newCompositeFixture(t *testing.T) *StorageExecutor {
 	t.Helper()
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	mgr, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
 	require.NoError(t, mgr.CreateDatabase("pother"))

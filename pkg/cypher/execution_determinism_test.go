@@ -192,7 +192,7 @@ func TestExecutionDeterminismPureParameterizedCacheHit(t *testing.T) {
 }
 
 func TestExecutionDeterminismFabricEmbeddedDeadline(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
 	require.NoError(t, manager.CreateDatabase("determinism_local"))

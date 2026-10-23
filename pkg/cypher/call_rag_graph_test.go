@@ -16,7 +16,7 @@ import (
 // refused; without relationship search it ranks nodes alone.
 func TestCallDbRetrieveGraph(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)

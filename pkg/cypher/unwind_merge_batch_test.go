@@ -662,7 +662,7 @@ RETURN count(t) AS prepared
 }
 
 func TestGenericMerge_MultiPropertyLookup_UsesCompositeSchemaPath(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 

@@ -15,7 +15,7 @@ import (
 // relationship search; db.retrieve still searches nodes (#1065).
 func TestCallDbRetrieveRelationships(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
@@ -64,7 +64,7 @@ func TestCallDbRetrieveRelationships(t *testing.T) {
 // db.retrieve ignores a relationships key: it searches nodes.
 func TestCallDbRetrieveIgnoresRelationshipsKey(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)
@@ -97,7 +97,7 @@ func TestRetrieveRelationshipsMetadata(t *testing.T) {
 // too, left unchanged) or a string as the query; null is refused (#1065).
 func TestCallDbRetrieveRelationshipsRequestForms(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)

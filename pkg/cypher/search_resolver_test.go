@@ -12,7 +12,7 @@ import (
 // statement, and the executors it is cloned into for another database (USE,
 // a composite constituent) use that database's service, not its own.
 func TestExecutorResolvesItsDatabasesSearchService(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = inner.Close() })
 	services := map[string]*search.Service{
 		"nornic": search.NewService(storage.NewNamespacedEngine(inner, "nornic")),
@@ -36,7 +36,7 @@ func TestExecutorResolvesItsDatabasesSearchService(t *testing.T) {
 // Two services at the same revision, a reset database's search and the one
 // it replaced, key different cached results.
 func TestSearchCacheKeyTellsReplacedServicesApart(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = inner.Close() })
 	replaced := search.NewService(storage.NewNamespacedEngine(inner, "nornic"))
 	current := search.NewService(storage.NewNamespacedEngine(inner, "nornic"))

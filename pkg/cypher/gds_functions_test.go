@@ -113,7 +113,7 @@ func TestGDSFunctionArgumentErrors(t *testing.T) {
 		for index := range values {
 			args[index] = strconv.Itoa(index)
 		}
-		store := storage.NewMemoryEngine()
+		store := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = store.Close() })
 		value, found, err := cypherfn.EvaluateFunction(name, args, cypherfn.Context{Eval: func(expression string) (interface{}, error) {
 			index, _ := strconv.Atoi(expression)

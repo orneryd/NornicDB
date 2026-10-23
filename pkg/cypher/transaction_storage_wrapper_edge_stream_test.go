@@ -14,7 +14,7 @@ import (
 // user-facing IDs, so constraint validation inside a transaction neither
 // loads AllEdges nor sees other databases.
 func TestTransactionStorageWrapper_StreamEdgesByType(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = base.Close() })
 	for _, db := range []string{"a", "b"} {
 		ns := storage.NewNamespacedEngine(base, db)

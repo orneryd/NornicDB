@@ -140,7 +140,7 @@ func (e *scanCountingEngine) reset() {
 // underlying engine increments the counter.
 func newCountingExecutor(t testing.TB) (*StorageExecutor, *scanCountingEngine) {
 	t.Helper()
-	mem := storage.NewMemoryEngine()
+	mem := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = mem.Close() })
 	wrapped := &scanCountingEngine{MemoryEngine: mem}
 	ns := storage.NewNamespacedEngine(wrapped, "scan")

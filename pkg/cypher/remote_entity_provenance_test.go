@@ -32,7 +32,7 @@ func TestFabricRemoteEntityGraphFunctions(t *testing.T) {
 		_, _ = w.Write(wire)
 	}))
 	t.Cleanup(server.Close)
-	base := storage.NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	mgr, err := multidb.NewDatabaseManager(base, &multidb.Config{
 		RemoteEngineFactory: func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
 			return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: token})

@@ -21,7 +21,7 @@ func materializedPathAccessFixture() PathResult {
 
 func TestMaterializedPathUsesTypedCarrier(t *testing.T) {
 	path := materializedPathAccessFixture()
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	t.Cleanup(func() { _ = exec.storage.Close() })
 
 	for _, tc := range []struct {
@@ -59,7 +59,7 @@ func TestMaterializedPathAccessAcrossTransactions(t *testing.T) {
 			name = "explicit"
 		}
 		t.Run(name, func(t *testing.T) {
-			inner := &accessCountingEngine{MemoryEngine: storage.NewMemoryEngine()}
+			inner := &accessCountingEngine{MemoryEngine: newTestMemoryEngine(t)}
 			t.Cleanup(func() { _ = inner.Close() })
 			store := storage.NewNamespacedEngine(inner, "materialized")
 			exec := NewStorageExecutor(store)
