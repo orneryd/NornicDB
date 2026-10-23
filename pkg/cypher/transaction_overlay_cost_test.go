@@ -75,6 +75,11 @@ MATCH (n:Probe {graph: graph}) WITH graph, collect(n) AS nodes
 CALL (graph) { MATCH (n:Probe {graph: graph}) DETACH DELETE n RETURN count(*) AS removed }
 RETURN removed`
 
+const overlayCostMerge = `UNWIND range(1,$edges) AS i
+MERGE (a:Probe {id: toString(i % 106)})
+MERGE (b:Probe {id: toString((i*7) % 106)})
+RETURN count(*) AS processed`
+
 func TestTransactionOverlayScaledRepros(t *testing.T) {
 	for _, size := range []int{1000, 5000} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
@@ -101,5 +106,83 @@ func TestTransactionOverlayScaledRepros(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{int64(106)}}, result.Rows)
 		})
+	}
+}
+
+// BenchmarkTransactionOverlayDetachCost measures one create-and-cascade
+// statement with every edge pending at delete time. Fixture setup and engine
+// cleanup happen outside the timed region.
+func BenchmarkTransactionOverlayDetachCost(b *testing.B) {
+	for _, size := range []int{1000, 5000} {
+		b.Run(fmt.Sprint(size), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				engine := storage.NewMemoryEngine()
+				exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
+				b.StartTimer()
+				result, err := exec.Execute(context.Background(), overlayCostCreate+"\n"+overlayCostDelete, map[string]interface{}{
+					"edges": int64(size), "graph": "overlay-cost",
+				})
+				b.StopTimer()
+				if err != nil {
+					_ = engine.Close()
+					b.Fatal(err)
+				}
+				if len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0] != int64(106) {
+					_ = engine.Close()
+					b.Fatalf("removed rows = %v, want [[106]]", result.Rows)
+				}
+				if err := engine.Close(); err != nil {
+					b.Fatal(err)
+				}
+				b.StartTimer()
+			}
+		})
+	}
+}
+
+// BenchmarkTransactionOverlayMergeCost compares the same row workload when
+// its 106 nodes are pending (created by the first MERGE in that statement)
+// and when those nodes were committed by a prior statement.
+func BenchmarkTransactionOverlayMergeCost(b *testing.B) {
+	for _, size := range []int{1000, 5000} {
+		for _, committed := range []bool{false, true} {
+			name := "pending"
+			if committed {
+				name = "committed"
+			}
+			b.Run(fmt.Sprintf("%s/%d", name, size), func(b *testing.B) {
+				b.ReportAllocs()
+				for i := 0; i < b.N; i++ {
+					b.StopTimer()
+					engine := storage.NewMemoryEngine()
+					store := storage.NewNamespacedEngine(engine, "test")
+					exec := NewStorageExecutor(store)
+					if committed {
+						_, err := exec.Execute(context.Background(), `UNWIND range(0,105) AS i CREATE (:Probe {id: toString(i)})`, nil)
+						if err != nil {
+							_ = engine.Close()
+							b.Fatal(err)
+						}
+					}
+					b.StartTimer()
+					result, err := exec.Execute(context.Background(), overlayCostMerge, map[string]interface{}{"edges": int64(size)})
+					b.StopTimer()
+					if err != nil {
+						_ = engine.Close()
+						b.Fatal(err)
+					}
+					if len(result.Rows) != 1 || len(result.Rows[0]) != 1 || result.Rows[0][0] != int64(size) {
+						_ = engine.Close()
+						b.Fatalf("processed rows = %v, want %d", result.Rows, size)
+					}
+					if err := engine.Close(); err != nil {
+						b.Fatal(err)
+					}
+					b.StartTimer()
+				}
+			})
+		}
 	}
 }
