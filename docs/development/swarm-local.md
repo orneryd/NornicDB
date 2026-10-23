@@ -160,6 +160,22 @@ the repository binding to match the T3 project before using it for another repo.
 
 ## Native NornicDB MCP tools
 
+Compose publishes HTTP/MCP port 7474 and Bolt port 7687 on all host IPv4
+interfaces, with authentication disabled for the testing network. Other machines
+can use `http://<host-LAN-IP>:7474`,
+`http://<host-LAN-IP>:7474/mcp/nornicdbcode`, and
+`bolt://<host-LAN-IP>:7687`. The Windows test host currently uses `192.168.1.30`;
+use the actual host address on each installation. Applying changed port mappings
+requires container recreation; wait for active ingestion to finish first.
+
+If Windows Firewall blocks incoming connections, run this once in an
+administrator PowerShell to admit these ports from the local subnet on Private
+networks:
+
+```powershell
+New-NetFirewallRule -DisplayName 'NornicDB testing network' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 7474,7687 -RemoteAddress LocalSubnet -Profile Private
+```
+
 The extension exposes `nornic_store`, `nornic_recall`, `nornic_discover`,
 `nornic_link`, and `nornic_tasks` through T3's authenticated MCP server. These
 forward to `http://127.0.0.1:7474/mcp/nornicdbcode` using the native NornicDB

@@ -4,8 +4,8 @@ services:
   nornicdb:
     image: nornicdb:1.4.4-cuda-local
     ports:
-      - "127.0.0.1:7474:7474"
-      - "127.0.0.1:7687:7687"
+      - "0.0.0.0:7474:7474"
+      - "0.0.0.0:7687:7687"
     volumes:
       - swarm-openai-data:/data
     environment:
