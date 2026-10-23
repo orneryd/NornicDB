@@ -1173,9 +1173,11 @@ func (w *WALEngine) Close() error {
 	// Stop auto-compaction if enabled
 	w.DisableAutoCompaction()
 
-	// Sync and close WAL first
+	// Stop log appends first, preserving the existing admission order. The
+	// engine's lifetime owner then drains native data and seals the closed
+	// log for downgrade; sealing owns the WAL file mutex, not an open handle.
 	if err := w.wal.Close(); err != nil {
-		// Log but continue
+		// Log but continue closing storage.
 	}
 	return w.engine.Close()
 }

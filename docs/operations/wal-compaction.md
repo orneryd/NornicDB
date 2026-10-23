@@ -10,6 +10,41 @@ Last Updated: December 2025
 
 NornicDB's Write-Ahead Log (WAL) supports automatic compaction to prevent unbounded growth. Without compaction, the WAL would grow indefinitely in long-running databases, consuming disk space and slowing recovery.
 
+## Upgrading and downgrading WAL stores
+
+Ordinary buffered records retain the v3 framing and payload used by the previous
+release. Dictionary changes add v4 control frames that preserve property names
+when a snapshot or WAL is restored into another store. The storage version is
+unchanged, and an existing store's own old-format WAL still recovers at startup.
+
+A successful clean shutdown, or successful snapshot compaction, seals the
+dictionary controls into ordinary v3 checkpoints. The previous release can then
+open the store. Stop accepting writes before downgrading: subsequent writes can
+start another v4 epoch.
+
+This also applies with write-behind disabled: restoring a native backup into
+a WAL-backed engine writes a dictionary control. Clean shutdown seals it even
+if no snapshot compaction has occurred. A store whose WAL never received a
+dictionary control, the usual synchronous case, has nothing to seal, and its
+clean shutdown does no extra WAL work.
+
+After an unclean stop, an older release refuses the log without truncating it:
+
+```text
+unsupported WAL version 4 (max supported: 3)
+```
+
+Start this release once and stop it cleanly, then the older release can open the
+store. Do not delete or edit the WAL to bypass that error. Clean conversion uses
+atomic file replacement, converts sealed files first and the active file last,
+and copies ordinary data records without changing them.
+
+Foreign imports and restores invalidate the store's clean ownership proof.
+Ambiguous historical records from another store fail explicitly when they omit
+the property-name bindings needed for recovery. This change prevents new
+corruption; it cannot detect or repair data an older binary already corrupted
+during a cross-store snapshot and WAL restore.
+
 **Problem Solved**: WAL grows forever until manual snapshot + delete
 **Solution**: Automatic periodic snapshots with WAL truncation
 

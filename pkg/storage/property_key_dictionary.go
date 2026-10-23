@@ -39,6 +39,13 @@ const (
 // propertyKeyDictionary holds the per-namespace forward and reverse
 // indexes for property-key tokenization.
 type propertyKeyDictionary struct {
+	// WAL identity belongs to this physical dictionary, independent of names used.
+	walIdentity      atomic.Pointer[string]
+	walEpochRevision atomic.Uint64
+	// Under mu: invalidates prepared imports when mappings or durability change.
+	walBindingRevision uint64
+	walBindingDomain   uint64 // changes only when existing ID meanings can change
+
 	mu        sync.RWMutex
 	forward   map[string]map[string]uint64 // namespace -> (name -> id)
 	reverse   map[string]map[uint64]string // namespace -> (id -> name)
@@ -176,6 +183,8 @@ func (d *propertyKeyDictionary) resolveOrAllocateInTxn(txn *badger.Txn, namespac
 		id = d.nextID[namespace].Add(1)
 		d.forward[namespace][name] = id
 		d.reverse[namespace][id] = name
+		d.walBindingRevision++
+		d.walEpochRevision.Add(1)
 	}
 	d.mu.Unlock()
 
@@ -410,8 +419,20 @@ func (drain propKeyTxnDrain) writeTo(w *batchWriter) error {
 // tokens into a fresh dictionary whose in-memory maps are otherwise empty.
 func (d *propertyKeyDictionary) markPersisted(drain propKeyTxnDrain) {
 	d.mu.Lock()
+	if len(drain.pending) != 0 {
+		d.walBindingRevision++
+	}
 	for _, entry := range drain.pending {
 		d.ensureNamespace(entry.namespace)
+		if id, exists := d.forward[entry.namespace][entry.name]; exists && id != entry.id {
+			d.walBindingDomain++
+		}
+		if name, exists := d.reverse[entry.namespace][entry.id]; exists && name != entry.name {
+			d.walBindingDomain++
+		}
+		if _, exists := d.forward[entry.namespace][entry.name]; !exists || d.reverse[entry.namespace][entry.id] != entry.name {
+			d.walEpochRevision.Add(1)
+		}
 		d.persisted[entry.namespace][entry.name] = true
 		if _, ok := d.forward[entry.namespace][entry.name]; !ok {
 			d.forward[entry.namespace][entry.name] = entry.id
@@ -608,6 +629,9 @@ func isPropertyKeyDictionaryKey(key []byte) bool {
 // dropped with the store it belonged to.
 func (d *propertyKeyDictionary) replaceWith(fresh *propertyKeyDictionary) {
 	d.mu.Lock()
+	d.walBindingDomain++
+	d.walBindingRevision++
+	d.walEpochRevision.Add(1)
 	d.forward, d.reverse, d.persisted = fresh.forward, fresh.reverse, fresh.persisted
 	d.nextID, d.noted = fresh.nextID, fresh.noted
 	d.mu.Unlock()
