@@ -111,6 +111,13 @@ func TestTemporalMapConstructorsUseSharedComponentSemantics(t *testing.T) {
 	}
 }
 
+func TestTemporalTimeMapAcceptsZuluTimezone(t *testing.T) {
+	executor, ctx := newUnitExecutor(t)
+	result, err := executor.Execute(ctx, "RETURN toString(time({hour: 12, minute: 34, second: 56, timezone: 'Z'})) AS value", nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"12:34:56Z"}}, result.Rows)
+}
+
 func TestNamedTimezoneUsesNeo4jHistoricalRulesIndependentlyOfHostTZData(t *testing.T) {
 	value, zoneID, ok := parseCypherDateTimeText("1818-07-21T21:40:32.142[Europe/Stockholm]")
 	if !ok {
