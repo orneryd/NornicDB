@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -314,7 +315,7 @@ func TestFabricExecutor_ApplyBatchesCorrelatedCollectLookup(t *testing.T) {
 	}
 	inner := &FragmentExec{
 		Input:     &FragmentInit{Columns: []string{"textKey128"}, ImportColumns: []string{"textKey128"}},
-		Query:     "WITH textKey128 MATCH (tt:MongoDocument) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts",
+		Query:     "WITH `textKey128` MATCH (tt:MongoDocument) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts",
 		GraphName: "db1",
 		Columns:   []string{"texts"},
 	}
@@ -334,7 +335,7 @@ func TestFabricExecutor_ApplyBatchesCorrelatedCollectLookup(t *testing.T) {
 	if got := mock.calls[batchedInnerQuery]; got != 1 {
 		t.Fatalf("expected single batched inner lookup, got %d calls", got)
 	}
-	if got := mock.calls["WITH textKey128 MATCH (tt:MongoDocument) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts"]; got != 0 {
+	if got := mock.calls["WITH `textKey128` MATCH (tt:MongoDocument) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts"]; got != 0 {
 		t.Fatalf("expected no per-row correlated inner calls, got %d", got)
 	}
 	// Row 1 matched.
@@ -861,41 +862,6 @@ func TestFragmentContainsWrite(t *testing.T) {
 	})
 }
 
-func TestRewriteLeadingWithImports_DeterministicClauseBoundary(t *testing.T) {
-	query := "WITH id, size([x IN [1,2,3] WHERE x > 1]) AS c MATCH (n) WHERE n.id = id RETURN n"
-	rewritten := rewriteLeadingWithImports(query, []string{"id"})
-	expected := "WITH $id AS id MATCH (n) WHERE n.id = id RETURN n"
-	if rewritten != expected {
-		t.Fatalf("expected %q, got %q", expected, rewritten)
-	}
-}
-
-func TestRewriteLeadingWithImports_RespectsQuotedKeywords(t *testing.T) {
-	query := "WITH 'MATCH as text' AS txt, id RETURN txt, id"
-	rewritten := rewriteLeadingWithImports(query, []string{"id"})
-	expected := "WITH $id AS id RETURN txt, id"
-	if rewritten != expected {
-		t.Fatalf("expected %q, got %q", expected, rewritten)
-	}
-}
-
-func TestRewriteLeadingWithImports_NoLeadingWith(t *testing.T) {
-	query := "MATCH (n) RETURN n"
-	rewritten := rewriteLeadingWithImports(query, []string{"id"})
-	if rewritten != query {
-		t.Fatalf("expected query unchanged, got %q", rewritten)
-	}
-}
-
-func TestRewriteLeadingWithImports_NoLeadingWithReturn(t *testing.T) {
-	query := "RETURN id, name"
-	rewritten := rewriteLeadingWithImports(query, []string{"id", "name"})
-	expected := "WITH $id AS id, $name AS name RETURN id, name"
-	if rewritten != expected {
-		t.Fatalf("expected %q, got %q", expected, rewritten)
-	}
-}
-
 func TestExecuteApplyInMemoryProjection_WithCollectMapReturnAlias(t *testing.T) {
 	input := &ResultStream{
 		Columns: []string{"textKey", "textKey128"},
@@ -1013,72 +979,6 @@ func TestExecuteRowsGroupedJoinProjection_InvalidInput(t *testing.T) {
 	})
 	if len(got.Rows) != 0 {
 		t.Fatalf("expected empty projection rows, got %#v", got.Rows)
-	}
-}
-
-func TestFabricImportRewriteHelpers(t *testing.T) {
-	init := &FragmentInit{Columns: []string{"a"}, ImportColumns: []string{"a"}}
-	execFrag := &FragmentExec{
-		Input:   init,
-		Query:   "WITH a MATCH (n) WHERE n.id = a RETURN n.id AS id",
-		Columns: []string{"id"},
-	}
-	union := &FragmentUnion{
-		LHS:     execFrag,
-		RHS:     &FragmentExec{Input: &FragmentInit{}, Query: "RETURN 1 AS one", Columns: []string{"one"}},
-		Columns: []string{"id"},
-	}
-	apply := &FragmentApply{Input: &FragmentInit{}, Inner: union, Columns: []string{"id"}}
-
-	if cols := importColumnsFromFragment(init); len(cols) != 1 || cols[0] != "a" {
-		t.Fatalf("unexpected import columns: %#v", cols)
-	}
-	if !fragmentHasStaticImports(apply) {
-		t.Fatal("expected fragmentHasStaticImports to detect static imports")
-	}
-	rewritten := rewriteFragmentWithImports(apply)
-	rewrittenApply, ok := rewritten.(*FragmentApply)
-	if !ok {
-		t.Fatalf("expected rewritten apply, got %T", rewritten)
-	}
-	innerUnion, ok := rewrittenApply.Inner.(*FragmentUnion)
-	if !ok {
-		t.Fatalf("expected rewritten union, got %T", rewrittenApply.Inner)
-	}
-	lhsExec, ok := innerUnion.LHS.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected rewritten lhs exec, got %T", innerUnion.LHS)
-	}
-	if !strings.Contains(lhsExec.Query, "$a") {
-		t.Fatalf("expected rewritten query to contain parameterized import, got %q", lhsExec.Query)
-	}
-
-	rewrittenRuntime := rewriteFragmentWithRuntimeImports(&FragmentExec{
-		Input:   &FragmentInit{ImportColumns: []string{"a"}},
-		Query:   "RETURN a, b",
-		Columns: []string{"a", "b"},
-	}, []string{"b", "a", "b"})
-	rExec, ok := rewrittenRuntime.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected rewritten runtime exec, got %T", rewrittenRuntime)
-	}
-	if !strings.HasPrefix(strings.TrimSpace(rExec.Query), "WITH ") {
-		t.Fatalf("expected runtime rewrite to prepend WITH imports, got %q", rExec.Query)
-	}
-	merged := mergeImportColumns([]string{"a", "b"}, []string{"b", "c"})
-	if len(merged) != 3 || merged[0] != "a" || merged[1] != "b" || merged[2] != "c" {
-		t.Fatalf("unexpected merged import columns: %#v", merged)
-	}
-}
-
-func TestSubstituteAndReplaceStandaloneVar(t *testing.T) {
-	query := `MATCH (tt) WHERE tt.translationId = textKey128 AND tt.note = "textKey128" RETURN textKey128, tt.translationId`
-	sub := substituteVarsWithParams(query, []string{"textKey128"})
-	if !strings.Contains(sub, "tt.translationId = $textKey128") {
-		t.Fatalf("expected identifier substitution in predicate, got %q", sub)
-	}
-	if !strings.Contains(sub, `"textKey128"`) {
-		t.Fatalf("expected string literal untouched, got %q", sub)
 	}
 }
 
@@ -1531,29 +1431,6 @@ func TestMergeBindings_AllBranches(t *testing.T) {
 	}
 }
 
-func TestImportColumnsFromFragment(t *testing.T) {
-	// nil fragment.
-	if importColumnsFromFragment(nil) != nil {
-		t.Fatal("expected nil for nil fragment")
-	}
-	// Non-init fragment.
-	if importColumnsFromFragment(&FragmentExec{}) != nil {
-		t.Fatal("expected nil for non-init fragment")
-	}
-	// Init with import columns.
-	init := &FragmentInit{Columns: []string{"a"}, ImportColumns: []string{"b"}}
-	cols := importColumnsFromFragment(init)
-	if len(cols) != 1 || cols[0] != "b" {
-		t.Fatalf("expected import columns, got %v", cols)
-	}
-	// Init without import columns falls back to Columns.
-	init2 := &FragmentInit{Columns: []string{"c"}}
-	cols = importColumnsFromFragment(init2)
-	if len(cols) != 1 || cols[0] != "c" {
-		t.Fatalf("expected fallback columns, got %v", cols)
-	}
-}
-
 func TestSplitTopLevelResultModifiers_WithQuotedStrings(t *testing.T) {
 	// ORDER BY inside a quoted string should not split.
 	clause := "textKey128, 'ORDER BY fake' AS label ORDER BY textKey128"
@@ -1750,220 +1627,6 @@ func TestExecuteApplyInMemoryProjection_ColumnNotFound(t *testing.T) {
 	}
 }
 
-func TestRewriteFragmentWithImports_NilFragment(t *testing.T) {
-	got := rewriteFragmentWithImports(nil)
-	if got != nil {
-		t.Fatal("expected nil for nil fragment")
-	}
-}
-
-func TestRewriteFragmentWithImports_DefaultBranch(t *testing.T) {
-	init := &FragmentInit{Columns: []string{"a"}}
-	got := rewriteFragmentWithImports(init)
-	if got != init {
-		t.Fatal("expected init fragment to pass through unchanged")
-	}
-}
-
-func TestRewriteFragmentWithRuntimeImports_NilFragment(t *testing.T) {
-	got := rewriteFragmentWithRuntimeImports(nil, []string{"a"})
-	if got != nil {
-		t.Fatal("expected nil for nil fragment")
-	}
-}
-
-func TestRewriteFragmentWithRuntimeImports_DefaultBranch(t *testing.T) {
-	init := &FragmentInit{Columns: []string{"a"}}
-	got := rewriteFragmentWithRuntimeImports(init, []string{"a"})
-	if got != init {
-		t.Fatal("expected init fragment to pass through unchanged")
-	}
-}
-
-func TestRewriteFragmentWithRuntimeImports_Apply(t *testing.T) {
-	inner := &FragmentExec{
-		Input: &FragmentInit{ImportColumns: []string{"a"}},
-		Query: "RETURN a",
-	}
-	apply := &FragmentApply{
-		Input: &FragmentInit{},
-		Inner: inner,
-	}
-	got := rewriteFragmentWithRuntimeImports(apply, []string{"b"})
-	result, ok := got.(*FragmentApply)
-	if !ok {
-		t.Fatalf("expected *FragmentApply, got %T", got)
-	}
-	exec, ok := result.Inner.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected inner *FragmentExec, got %T", result.Inner)
-	}
-	if !strings.Contains(exec.Query, "$") {
-		t.Fatalf("expected rewritten query with params, got %q", exec.Query)
-	}
-}
-
-func TestRewriteFragmentWithRuntimeImports_Union(t *testing.T) {
-	union := &FragmentUnion{
-		LHS: &FragmentExec{
-			Input: &FragmentInit{ImportColumns: []string{"a"}},
-			Query: "RETURN a",
-		},
-		RHS: &FragmentExec{
-			Input: &FragmentInit{},
-			Query: "RETURN 1 AS one",
-		},
-	}
-	got := rewriteFragmentWithRuntimeImports(union, []string{"b"})
-	result, ok := got.(*FragmentUnion)
-	if !ok {
-		t.Fatalf("expected *FragmentUnion, got %T", got)
-	}
-	lhs, ok := result.LHS.(*FragmentExec)
-	if !ok {
-		t.Fatalf("expected LHS *FragmentExec, got %T", result.LHS)
-	}
-	if !strings.Contains(lhs.Query, "$") {
-		t.Fatalf("expected LHS rewritten, got %q", lhs.Query)
-	}
-}
-
-func TestMergeImportColumns_Deduplication(t *testing.T) {
-	got := mergeImportColumns([]string{"a", "b", " "}, []string{"b", "c", "  "})
-	if len(got) != 3 || got[0] != "a" || got[1] != "b" || got[2] != "c" {
-		t.Fatalf("expected [a b c], got %v", got)
-	}
-}
-
-func TestIsSimpleWithImportClause(t *testing.T) {
-	if isSimpleWithImportClause("WITH a, b", []string{"a", "b"}) != true {
-		t.Fatal("expected simple import clause to match")
-	}
-	if isSimpleWithImportClause("WITH a, b", []string{"a"}) != false {
-		t.Fatal("expected non-matching import list to fail")
-	}
-	if isSimpleWithImportClause("MATCH (n)", []string{"a"}) != false {
-		t.Fatal("expected non-WITH clause to fail")
-	}
-	if isSimpleWithImportClause("WITH ", []string{"a"}) != false {
-		t.Fatal("expected empty WITH body to fail")
-	}
-	if isSimpleWithImportClause("WITH a", nil) != false {
-		t.Fatal("expected nil import cols to fail")
-	}
-	if isSimpleWithImportClause("WITH n.x", []string{"n.x"}) != false {
-		t.Fatal("expected non-simple identifier in WITH to fail")
-	}
-}
-
-func TestReplaceStandaloneVar_WithQuotes(t *testing.T) {
-	// Single-quoted should be preserved.
-	got := replaceStandaloneVar("n.x = 'id' AND id = 5", "id", "$id")
-	if !strings.Contains(got, "'id'") {
-		t.Fatalf("expected single-quoted 'id' preserved, got %q", got)
-	}
-	if !strings.Contains(got, "$id = 5") {
-		t.Fatalf("expected standalone id replaced, got %q", got)
-	}
-	// Double-quoted should be preserved.
-	got = replaceStandaloneVar(`n.x = "id" AND id = 5`, "id", "$id")
-	if !strings.Contains(got, `"id"`) {
-		t.Fatalf("expected double-quoted preserved, got %q", got)
-	}
-	// Backtick-quoted should be preserved.
-	got = replaceStandaloneVar("n.`id` = 1 AND id = 5", "id", "$id")
-	if !strings.Contains(got, "`id`") {
-		t.Fatalf("expected backtick-quoted preserved, got %q", got)
-	}
-	// Empty ident.
-	got = replaceStandaloneVar("abc", "", "$x")
-	if got != "abc" {
-		t.Fatalf("expected unchanged for empty ident, got %q", got)
-	}
-	// String shorter than ident.
-	got = replaceStandaloneVar("a", "abc", "$abc")
-	if got != "a" {
-		t.Fatalf("expected unchanged for short string, got %q", got)
-	}
-	// Preceded by dot should not match.
-	got = replaceStandaloneVar("n.id = 1", "id", "$id")
-	if strings.Contains(got, "$id") {
-		t.Fatalf("expected dot-preceded id to not be replaced, got %q", got)
-	}
-}
-
-func TestFindLeadingWithClauseEnd_Empty(t *testing.T) {
-	pos, ok := findLeadingWithClauseEnd("")
-	if ok || pos != 0 {
-		t.Fatalf("expected false for empty, got pos=%d ok=%v", pos, ok)
-	}
-}
-
-func TestFindLeadingWithClauseEnd_NotWith(t *testing.T) {
-	pos, ok := findLeadingWithClauseEnd("MATCH (n) RETURN n")
-	if ok {
-		t.Fatalf("expected false for non-WITH query, got pos=%d", pos)
-	}
-}
-
-func TestFindLeadingWithClauseEnd_WithQuotes(t *testing.T) {
-	// WITH clause containing single-quoted string with a keyword.
-	pos, ok := findLeadingWithClauseEnd("WITH 'MATCH stuff' AS x MATCH (n)")
-	if !ok {
-		t.Fatal("expected true for WITH with quotes")
-	}
-	rest := strings.TrimSpace("WITH 'MATCH stuff' AS x MATCH (n)"[pos:])
-	if !strings.HasPrefix(rest, "MATCH") {
-		t.Fatalf("expected WITH clause end before MATCH, got rest=%q", rest)
-	}
-}
-
-func TestFindLeadingWithClauseEnd_WithDoubleQuotes(t *testing.T) {
-	pos, ok := findLeadingWithClauseEnd(`WITH "RETURN stuff" AS x RETURN y`)
-	if !ok {
-		t.Fatal("expected true for WITH with double quotes")
-	}
-	rest := strings.TrimSpace((`WITH "RETURN stuff" AS x RETURN y`)[pos:])
-	if !strings.HasPrefix(rest, "RETURN") {
-		t.Fatalf("expected clause end before RETURN, got rest=%q", rest)
-	}
-}
-
-func TestFindLeadingWithClauseEnd_WithBackticks(t *testing.T) {
-	pos, ok := findLeadingWithClauseEnd("WITH `MATCH` AS x MATCH (n)")
-	if !ok {
-		t.Fatal("expected true for WITH with backticks")
-	}
-	rest := strings.TrimSpace("WITH `MATCH` AS x MATCH (n)"[pos:])
-	if !strings.HasPrefix(rest, "MATCH") {
-		t.Fatalf("expected clause end before MATCH, got rest=%q", rest)
-	}
-}
-
-func TestFindLeadingWithClauseEnd_Nested(t *testing.T) {
-	// Brackets/braces/parens should be skipped.
-	pos, ok := findLeadingWithClauseEnd("WITH [MATCH, x] AS arr RETURN arr")
-	if !ok {
-		t.Fatal("expected true")
-	}
-	rest := strings.TrimSpace("WITH [MATCH, x] AS arr RETURN arr"[pos:])
-	if !strings.HasPrefix(rest, "RETURN") {
-		t.Fatalf("expected clause end before RETURN, got rest=%q", rest)
-	}
-}
-
-func TestFindLeadingWithClauseEnd_NoFollowingClause(t *testing.T) {
-	// WITH clause with no following keyword should return len(query).
-	query := "WITH a, b"
-	pos, ok := findLeadingWithClauseEnd(query)
-	if !ok {
-		t.Fatal("expected true")
-	}
-	if pos != len(query) {
-		t.Fatalf("expected pos=%d (end of query), got %d", len(query), pos)
-	}
-}
-
 func TestExecuteApplyAsPipeline_NilInput(t *testing.T) {
 	exec := NewFabricExecutor(NewCatalog(), nil, nil)
 	_, used, err := exec.executeApplyAsPipeline(context.Background(), nil, nil, &FragmentExec{}, nil, "")
@@ -1992,7 +1655,7 @@ func TestExecuteApplyAsPipeline_ReturnUsesCanonicalPipeline(t *testing.T) {
 	if err != nil || !used {
 		t.Fatalf("expected canonical projection pipeline: used=%v err=%v", used, err)
 	}
-	if capture.lastQuery != "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.a AS a RETURN a AS x" {
+	if capture.lastQuery != "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.`a` AS `a` RETURN a AS x" {
 		t.Fatalf("unexpected pipeline query: %s", capture.lastQuery)
 	}
 }
@@ -2001,7 +1664,7 @@ func TestFabricExecutor_ProjectionContinuationWithQuotedInputColumnUsesPipeline(
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
 	outerQuery := "MATCH (n) RETURN n AS a, n.name AS `display name`"
-	continuationQuery := "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.a AS a, __fabric_row.`display name` AS `display name` RETURN a ORDER BY a.id"
+	continuationQuery := "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.`a` AS `a`, __fabric_row.`display name` AS `display name` RETURN a ORDER BY a.id"
 	mock := &mockCypherExecutor{
 		calls: map[string]int{},
 		results: map[string]*ResultStream{
@@ -2062,7 +1725,7 @@ func TestExecuteApplyAsPipeline_SimpleWithContinuation(t *testing.T) {
 	if err != nil || !used {
 		t.Fatalf("expected whole-stream continuation: used=%v err=%v", used, err)
 	}
-	if capture.lastQuery != "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.a AS a "+inner.Query {
+	if capture.lastQuery != "UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.`a` AS `a` "+inner.Query {
 		t.Fatalf("unexpected continuation query: %s", capture.lastQuery)
 	}
 }
@@ -2211,7 +1874,7 @@ func TestFabricExecutor_ApplyBatchedLookupRows(t *testing.T) {
 	}
 	inner := &FragmentExec{
 		Input:     &FragmentInit{Columns: []string{"id"}, ImportColumns: []string{"id"}},
-		Query:     "WITH id MATCH (m:Person) WHERE m.id = id RETURN m.name AS name, m.age AS age",
+		Query:     "WITH `id` MATCH (m:Person) WHERE m.id = id RETURN m.name AS name, m.age AS age",
 		GraphName: "db1",
 		Columns:   []string{"name", "age"},
 	}
@@ -2275,26 +1938,6 @@ func TestApplySimpleResultModifiers_SkipAllRows(t *testing.T) {
 	applySimpleResultModifiers(result, "SKIP 10", map[string]string{})
 	if len(result.Rows) != 0 {
 		t.Fatalf("expected all rows skipped, got %d", len(result.Rows))
-	}
-}
-
-func TestRewriteLeadingWithImports_EmptyImports(t *testing.T) {
-	query := "WITH a MATCH (n) RETURN n"
-	got := rewriteLeadingWithImports(query, nil)
-	if got != query {
-		t.Fatalf("expected unchanged for nil imports, got %q", got)
-	}
-	got = rewriteLeadingWithImports(query, []string{})
-	if got != query {
-		t.Fatalf("expected unchanged for empty imports, got %q", got)
-	}
-}
-
-func TestRewriteLeadingWithImports_WithOnly(t *testing.T) {
-	query := "WITH a"
-	got := rewriteLeadingWithImports(query, []string{"a"})
-	if got != "WITH $a AS a" {
-		t.Fatalf("expected WITH-only rewrite, got %q", got)
 	}
 }
 
@@ -2923,7 +2566,7 @@ func TestQueryGateway_PlanError(t *testing.T) {
 	gw := NewQueryGateway(p, exec)
 
 	// Empty query → plan error.
-	_, err := gw.Execute(context.Background(), nil, "", "db", nil, "")
+	_, err := gw.Execute(context.Background(), nil, "", "db", nil, "", resultmetadata.Facts{})
 	if err == nil {
 		t.Fatal("expected error for empty query")
 	}
@@ -2931,7 +2574,7 @@ func TestQueryGateway_PlanError(t *testing.T) {
 
 func TestQueryGateway_NilGateway(t *testing.T) {
 	var gw *QueryGateway
-	_, err := gw.Execute(context.Background(), nil, "RETURN 1", "db", nil, "")
+	_, err := gw.Execute(context.Background(), nil, "RETURN 1", "db", nil, "", resultmetadata.Facts{})
 	if err == nil {
 		t.Fatal("expected error for nil gateway")
 	}
@@ -3037,14 +2680,6 @@ func TestFabricTransaction_Commit_CompensationError(t *testing.T) {
 	}
 }
 
-func TestSubstituteVarsWithParams_EmptyVar(t *testing.T) {
-	// Empty var in import list should be skipped.
-	got := substituteVarsWithParams("MATCH (n) WHERE n.id = x", []string{"", "x"})
-	if !strings.Contains(got, "$x") {
-		t.Fatalf("expected x substituted, got %q", got)
-	}
-}
-
 func TestExtractApplyCorrelationWhere_RHSVarProp(t *testing.T) {
 	// Reversed: importCol on LHS, var.prop on RHS.
 	matchVar, matchProp, otherWhere, ok := extractApplyCorrelationWhere("textKey128 = tt.translationId", "textKey128")
@@ -3139,6 +2774,7 @@ func TestTryExecuteApplyBatchedCollectLookup_AllNilKeys(t *testing.T) {
 	inner := &FragmentExec{
 		Query:     "WITH textKey128 MATCH (tt) WHERE tt.id = textKey128 RETURN collect(tt) AS texts",
 		GraphName: "db1",
+		Input:     &FragmentInit{ImportColumns: []string{"textKey128"}},
 	}
 	result, handled, err := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, input, inner, nil, "")
 	if err != nil {
@@ -3214,6 +2850,7 @@ func TestTryExecuteApplyBatchedLookupRows_AllNilKeys(t *testing.T) {
 	inner := &FragmentExec{
 		Query:     "WITH id MATCH (n) WHERE n.id = id RETURN n.name AS name",
 		GraphName: "db1",
+		Input:     &FragmentInit{ImportColumns: []string{"id"}},
 	}
 	result, handled, err := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
 	if err != nil {
@@ -3318,7 +2955,7 @@ func TestTryExecuteApplyBatchedCountLookup_TraversalPattern(t *testing.T) {
 	}
 	inner := &FragmentExec{
 		Input:     &FragmentInit{Columns: []string{"sourceId"}, ImportColumns: []string{"sourceId"}},
-		Query:     "WITH sourceId MATCH (tt:MongoDocument)-[:IN_LANG]->(l:Lang) WHERE tt.translationId = sourceId RETURN count(*) AS c",
+		Query:     "WITH `sourceId` MATCH (tt:MongoDocument)-[:IN_LANG]->(l:Lang) WHERE tt.translationId = sourceId RETURN count(*) AS c",
 		GraphName: "db1",
 		Columns:   []string{"c"},
 	}
@@ -3526,52 +3163,6 @@ func TestExecuteApplyAsPipeline_AllFabricColumns(t *testing.T) {
 	_, used, _ := exec.executeApplyAsPipeline(context.Background(), nil, input, inner, nil, "")
 	if used {
 		t.Fatal("expected all-fabric columns to prevent pipeline")
-	}
-}
-
-func TestRewriteLeadingWithImports_WithMatchSubstitution(t *testing.T) {
-	query := "WITH id MATCH (n) WHERE n.id = id RETURN n"
-	got := rewriteLeadingWithImports(query, []string{"id"})
-	// Simple import WITH + MATCH → substitution path.
-	if !strings.Contains(got, "$id") {
-		t.Fatalf("expected substitution, got %q", got)
-	}
-}
-
-func TestRewriteLeadingWithImports_WithOptionalMatch(t *testing.T) {
-	query := "WITH id OPTIONAL MATCH (n) WHERE n.id = id RETURN n"
-	got := rewriteLeadingWithImports(query, []string{"id"})
-	if !strings.Contains(got, "$id") {
-		t.Fatalf("expected substitution for OPTIONAL MATCH, got %q", got)
-	}
-}
-
-func TestRewriteLeadingWithImports_WithNonMatchClause(t *testing.T) {
-	query := "WITH id, count(*) AS c RETURN id, c"
-	got := rewriteLeadingWithImports(query, []string{"id"})
-	// Non-simple WITH clause → regular rewrite.
-	if !strings.Contains(got, "$id AS id") {
-		t.Fatalf("expected param rewrite, got %q", got)
-	}
-}
-
-func TestIsSimpleWithImportClause_EmptyParts(t *testing.T) {
-	// Empty WITH body after trimming.
-	if isSimpleWithImportClause("WITH  ", []string{"a"}) {
-		t.Fatal("expected false for whitespace-only WITH body")
-	}
-}
-
-func TestFindLeadingWithClauseEnd_SingleQuoteEscape(t *testing.T) {
-	// Escaped single quote inside WITH clause.
-	query := "WITH 'it''s' AS x MATCH (n)"
-	pos, ok := findLeadingWithClauseEnd(query)
-	if !ok {
-		t.Fatal("expected true")
-	}
-	rest := strings.TrimSpace(query[pos:])
-	if !strings.HasPrefix(rest, "MATCH") {
-		t.Fatalf("expected clause end before MATCH, got rest=%q", rest)
 	}
 }
 
@@ -3862,7 +3453,9 @@ func TestE2E_SingleGraphQueryReturnsCorrectRows(t *testing.T) {
 		NewFabricPlanner(catalog),
 		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
-	res, err := gw.Execute(context.Background(), nil, "MATCH (n:Person) RETURN n.name AS name", "db", nil, "")
+	q := &factsQuery{query: "MATCH (n:Person) RETURN n.name AS name"}
+	facts := knownFacts(t, statementOf([]string{"name"}, q.clause(resultmetadata.ClauseMatch, "MATCH (n:Person)", nil, []string{"n"}), q.clause(resultmetadata.ClauseReturn, "RETURN n.name AS name", []string{"n"}, []string{"name"})))
+	res, err := gw.Execute(context.Background(), nil, q.query, "db", nil, "", facts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3894,7 +3487,9 @@ func TestE2E_UseClauseRoutesToCorrectGraph(t *testing.T) {
 		NewFabricPlanner(catalog),
 		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
-	res, err := gw.Execute(context.Background(), nil, "USE nornic.tr MATCH (t:Translation) RETURN t.id AS id", "nornic", nil, "")
+	q := &factsQuery{query: "USE nornic.tr MATCH (t:Translation) RETURN t.id AS id"}
+	facts := knownFacts(t, statementOf([]string{"id"}, q.clause(resultmetadata.ClauseUse, "USE nornic.tr", nil, nil), q.clause(resultmetadata.ClauseMatch, "MATCH (t:Translation)", nil, []string{"t"}), q.clause(resultmetadata.ClauseReturn, "RETURN t.id AS id", []string{"t"}, []string{"id"})))
+	res, err := gw.Execute(context.Background(), nil, q.query, "nornic", nil, "", facts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3923,8 +3518,11 @@ func TestE2E_UnionCombinesResults(t *testing.T) {
 		NewFabricPlanner(catalog),
 		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
-	res, err := gw.Execute(context.Background(), nil,
-		"RETURN 'a' AS val UNION ALL RETURN 'b' AS val", "db", nil, "")
+	q := &factsQuery{query: "RETURN 'a' AS val UNION ALL RETURN 'b' AS val"}
+	left := statementOf([]string{"val"}, q.clause(resultmetadata.ClauseReturn, "RETURN 'a' AS val", nil, []string{"val"}))
+	right := statementOf([]string{"val"}, q.clause(resultmetadata.ClauseReturn, "RETURN 'b' AS val", nil, []string{"val"}))
+	facts := knownFacts(t, resultmetadata.Statement{Incoming: resultmetadata.KnownScope(nil), Retained: resultmetadata.KnownScope(nil), After: resultmetadata.KnownScope([]string{"val"}), Columns: resultmetadata.KnownColumns([]string{"val"}), Branches: []resultmetadata.Statement{left, right}, UnionAll: []bool{true}})
+	res, err := gw.Execute(context.Background(), nil, q.query, "db", nil, "", facts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3949,8 +3547,11 @@ func TestE2E_UnionDistinctDeduplicates(t *testing.T) {
 		NewFabricPlanner(catalog),
 		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
-	res, err := gw.Execute(context.Background(), nil,
-		"RETURN 1 AS x UNION RETURN 1 AS x", "db", nil, "")
+	q := &factsQuery{query: "RETURN 1 AS x UNION RETURN 1 AS x"}
+	left := statementOf([]string{"x"}, q.clause(resultmetadata.ClauseReturn, "RETURN 1 AS x", nil, []string{"x"}))
+	right := statementOf([]string{"x"}, q.clause(resultmetadata.ClauseReturn, "RETURN 1 AS x", nil, []string{"x"}))
+	facts := knownFacts(t, resultmetadata.Statement{Incoming: resultmetadata.KnownScope(nil), Retained: resultmetadata.KnownScope(nil), After: resultmetadata.KnownScope([]string{"x"}), Columns: resultmetadata.KnownColumns([]string{"x"}), Branches: []resultmetadata.Statement{left, right}, UnionAll: []bool{false}})
+	res, err := gw.Execute(context.Background(), nil, q.query, "db", nil, "", facts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -3997,11 +3598,11 @@ func TestE2E_CallUseSubqueryRoutesCorrectly(t *testing.T) {
 
 	mock := &mockCypherExecutor{
 		results: map[string]*ResultStream{
-			"MATCH (t:Translation)\n  RETURN t.id AS translationId": {
+			"MATCH (t:Translation) RETURN t.id AS translationId": {
 				Columns: []string{"translationId"},
 				Rows:    [][]interface{}{{"t-1"}},
 			},
-			"UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.translationId AS translationId RETURN translationId": {
+			"UNWIND $__fabric_apply_rows AS __fabric_row WITH __fabric_row.`translationId` AS `translationId` RETURN translationId": {
 				Columns: []string{"translationId"},
 				Rows:    [][]interface{}{{"t-1"}},
 			},
@@ -4020,7 +3621,16 @@ CALL {
 }
 RETURN translationId`
 
-	res, err := gw.Execute(context.Background(), nil, query, "nornic", nil, "")
+	q := &factsQuery{query: query}
+	use := q.clause(resultmetadata.ClauseUse, "USE nornic", nil, nil)
+	callStart := strings.Index(query, "CALL {")
+	body := statementOf([]string{"translationId"}, q.clause(resultmetadata.ClauseUse, "USE nornic.tr", nil, nil), q.clause(resultmetadata.ClauseMatch, "MATCH (t:Translation)", nil, []string{"t"}), q.clause(resultmetadata.ClauseReturn, "RETURN t.id AS translationId", []string{"t"}, []string{"translationId"}))
+	callEnd := strings.Index(query, "}") + 1
+	call := &resultmetadata.Call{Retained: resultmetadata.KnownScope(nil), Body: resultmetadata.KnownColumns([]string{"translationId"}), Kind: resultmetadata.CallReturning, After: resultmetadata.KnownScope([]string{"translationId"}), Statement: &body}
+	callClause := resultmetadata.Clause{Kind: resultmetadata.ClauseCallSubquery, Start: callStart, End: callEnd, Before: resultmetadata.KnownScope(nil), After: call.After, Call: call}
+	q.at = callEnd
+	facts := knownFacts(t, statementOf([]string{"translationId"}, use, callClause, q.clause(resultmetadata.ClauseReturn, "RETURN translationId", []string{"translationId"}, []string{"translationId"})))
+	res, err := gw.Execute(context.Background(), nil, query, "nornic", nil, "", facts)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -4302,7 +3912,7 @@ func TestTryExecuteApplyBatchedLookupRows_NoCorrelation(t *testing.T) {
 
 func TestParseApplyCorrelatedLookupSubquery_WithModifiersAndOptionalWhere(t *testing.T) {
 	spec, ok := parseApplyCorrelatedLookupSubquery(
-		"WITH sourceId USE translations.txr MATCH (tt:MongoDocument) WHERE tt.translationId = sourceId RETURN tt.language AS language, tt.translatedText AS translatedText ORDER BY tt.language DESC LIMIT 1",
+		&FragmentExec{Input: &FragmentInit{ImportColumns: []string{"sourceId"}}, Query: "WITH sourceId USE translations.txr MATCH (tt:MongoDocument) WHERE tt.translationId = sourceId RETURN tt.language AS language, tt.translatedText AS translatedText ORDER BY tt.language DESC LIMIT 1"},
 	)
 	if !ok {
 		t.Fatal("expected parse to succeed")
@@ -4327,7 +3937,7 @@ func TestParseApplyCorrelatedLookupSubquery_WithModifiersAndOptionalWhere(t *tes
 	}
 
 	spec, ok = parseApplyCorrelatedLookupSubquery(
-		"WITH sourceId USE translations.txr MATCH (tt:MongoDocument) RETURN tt.language AS language",
+		&FragmentExec{Input: &FragmentInit{ImportColumns: []string{"sourceId"}}, Query: "WITH sourceId USE translations.txr MATCH (tt:MongoDocument) RETURN tt.language AS language"},
 	)
 	if !ok {
 		t.Fatal("expected parse without WHERE to succeed")

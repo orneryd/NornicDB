@@ -13,6 +13,7 @@ import (
 // whole expression).
 type returnProjection struct {
 	expr                           string
+	variable                       string
 	alias                          string
 	isAggr                         bool
 	aggregateName                  string
@@ -34,6 +35,7 @@ type returnProjectionPlan struct {
 	starProjections []returnProjection
 	distinct        bool
 	modifiers       string
+	predicate       string
 	projections     []returnProjection
 	columns         []string
 	hasAggregate    bool
@@ -78,7 +80,7 @@ func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
 // withStarExpanded is the plan of RETURN *, items with the * written out
 // (starProjectionItems, #883).
 func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProjectionPlan {
-	expanded := &returnProjectionPlan{valid: plan.valid, distinct: plan.distinct, modifiers: plan.modifiers}
+	expanded := &returnProjectionPlan{valid: plan.valid, distinct: plan.distinct, modifiers: plan.modifiers, predicate: plan.predicate}
 	named := make(map[string]bool, len(plan.starProjections))
 	for _, projection := range plan.starProjections {
 		named[projection.alias] = true
@@ -89,6 +91,7 @@ func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProj
 		}
 		expanded.addProjection(projectionVariableText(column), column)
 		last := &expanded.projections[len(expanded.projections)-1]
+		last.variable = column
 		last.definitionStart, last.definitionEnd = -1, -1
 	}
 	for _, projection := range plan.starProjections {

@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 )
 
 // QueryGateway is the shared Fabric entrypoint used by protocol adapters.
@@ -25,11 +26,12 @@ func (g *QueryGateway) Execute(
 	sessionDB string,
 	params map[string]interface{},
 	authToken string,
+	facts resultmetadata.Facts,
 ) (*ResultStream, error) {
 	if g == nil || g.planner == nil || g.executor == nil {
 		return nil, fmt.Errorf("fabric query gateway is not fully configured")
 	}
-	fragment, err := g.planner.Plan(query, sessionDB)
+	fragment, err := g.planner.Plan(query, sessionDB, facts)
 	if err != nil {
 		return nil, err
 	}

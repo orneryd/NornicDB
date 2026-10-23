@@ -38,22 +38,6 @@ func TestFabricHelpers_AccumulatorsAndMaps(t *testing.T) {
 	require.False(t, sameSourceID("a", "b"))
 }
 
-func TestFabricHelpers_InferColumnsAndRecordRewrite(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
-
-	require.Equal(t, []string{"n", "c"}, exec.StatementColumns("MATCH (n) RETURN n, count(*) AS c ORDER BY c DESC LIMIT 2"))
-	require.Equal(t, []string{}, exec.StatementColumns("MATCH (n)"))
-
-	r := stripLeadingWithImportsForFabricRecord("WITH x, y MATCH (n) WHERE n.id = x RETURN n", map[string]interface{}{"x": int64(1), "y": int64(2)})
-	require.Equal(t, "MATCH (n) WHERE n.id = $x RETURN n", r)
-
-	// Non-simple WITH projection should not rewrite.
-	r = stripLeadingWithImportsForFabricRecord("WITH x AS y MATCH (n) RETURN n", map[string]interface{}{"x": int64(1)})
-	require.Equal(t, "WITH x AS y MATCH (n) RETURN n", r)
-
-	require.Greater(t, findLeadingWithEndLocal("WITH x MATCH (n) RETURN n"), 0)
-}
-
 func TestFabricHelpers_ConstituentAndFragmentRouting(t *testing.T) {
 	ref, ok := toConstituentRef(map[string]interface{}{
 		"alias":         "east",

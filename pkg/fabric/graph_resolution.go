@@ -11,7 +11,7 @@ import (
 
 // GraphArgumentEvaluator evaluates the argument expressions of a dynamic
 // graph reference (USE graph.byName(g)) with the statement's parameters and
-// the current row's variables (params holds both). graph.byName and
+// the current row's variables (RecordBindingsFromContext). graph.byName and
 // graph.byElementId take a STRING: the evaluator returns one string per
 // expression, or Neo4j's error for an argument that isn't one (the Cypher
 // executor owns value types and their names).
@@ -42,8 +42,8 @@ func (e *FabricExecutor) SetGraphArgumentEvaluator(evaluate GraphArgumentEvaluat
 }
 
 // resolveExecGraph returns the graph a fragment runs on: its static name,
-// or its dynamic reference evaluated with params (the statement's
-// parameters and the row's variables).
+// or its dynamic reference evaluated with the statement's parameters and the
+// independently bound row on ctx.
 func (e *FabricExecutor) resolveExecGraph(ctx context.Context, f *FragmentExec, params map[string]interface{}) (string, Location, error) {
 	name := f.GraphName
 	if f.Graph != nil && f.Graph.IsDynamic() {

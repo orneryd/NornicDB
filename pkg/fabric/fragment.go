@@ -9,6 +9,8 @@
 // mapped to Go idioms and wired into NornicDB's existing storage and multidb layers.
 package fabric
 
+import "github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
+
 // Fragment is a sealed interface representing a node in the query plan tree
 // produced by decomposing a Cypher statement at USE-clause boundaries.
 //
@@ -63,6 +65,10 @@ func (f *FragmentLeaf) OutputColumns() []string {
 // FragmentExec is an executable fragment bound to a specific graph location.
 // It represents a unit of work that can be dispatched to either a local or remote executor.
 type FragmentExec struct {
+	// In and Call are the statement owner's input scope and CALL import facts.
+	// They retain decoded identities through graph selection and generated text.
+	In   resultmetadata.Scope
+	Call *resultmetadata.Call
 	// Input is the fragment that feeds rows into this executable unit.
 	Input Fragment
 
@@ -100,6 +106,9 @@ func (f *FragmentExec) OutputColumns() []string {
 // FragmentApply executes a correlated CALL body per Input row, or an outer
 // continuation over the complete Input stream when Projection is true.
 type FragmentApply struct {
+	// Call is nil for an outer continuation; otherwise its imports and kind
+	// come from the shared statement owner, independently of row contents.
+	Call *resultmetadata.Call
 	// Projection marks an outer continuation whose columns replace input bindings.
 	Projection bool
 	// Input is the outer fragment producing driver rows.

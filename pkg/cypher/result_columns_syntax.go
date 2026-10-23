@@ -49,6 +49,9 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode) *returnProjectionPl
 		}
 	}
 	plan.modifiers = strings.Join(modifiers, " ")
+	if where := clause.ChildRule(cypherantlr.CypherParserRULE_where); where.Valid() {
+		plan.predicate = where.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
+	}
 	items := body.ChildRule(cypherantlr.CypherParserRULE_projectionItems)
 	if !items.Valid() {
 		return plan
@@ -76,6 +79,16 @@ func projectionPlanFromSyntax(clause cypherantlr.SyntaxNode) *returnProjectionPl
 		}
 		target.addProjection(expression.Code(), alias)
 		projection := &target.projections[len(target.projections)-1]
+		// A direct variable follows a chain of single-child grammar rules to
+		// an atom's symbol. Literals and compound expressions have other roles;
+		// their spelling must never make them identity projections.
+		variable := expression
+		for variable.ChildCount() == 1 && variable.Rule() != cypherantlr.CypherParserRULE_symbol {
+			variable = variable.Child(0)
+		}
+		if variableSyntaxRead(variable) {
+			projection.variable = syntaxSymbolName(variable)
+		}
 		definition := item.ChildRule(cypherantlr.CypherParserRULE_symbol)
 		if !definition.Valid() {
 			definition = expression

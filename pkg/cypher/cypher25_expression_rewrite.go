@@ -138,7 +138,13 @@ func startsProjectedExpression(query string, at int) bool {
 	if strings.IndexByte(",;)}=<>+-*/%^.[|", query[at]) >= 0 {
 		return false
 	}
-	for _, keyword := range []string{"AS", "ORDER", "SKIP", "LIMIT", "WHERE", "UNION", "AND", "OR", "XOR", "IS", "IN", "CONTAINS", "STARTS", "ENDS"} {
+	// ALL before the next clause is a variable, including an importing WITH
+	// before USE and a projection before CALL. Use the same name/clause
+	// boundary contract as the query readers instead of a partial clause list.
+	if startsWithClauseAfterName(query[at:]) {
+		return false
+	}
+	for _, keyword := range []string{"AS", "AND", "OR", "XOR", "IS", "IN", "CONTAINS", "STARTS", "ENDS"} {
 		if matchKeywordAt(query, at, keyword) {
 			return false
 		}

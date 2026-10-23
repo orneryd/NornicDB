@@ -23,7 +23,7 @@ func TestFragmentSelectionAuthorization(t *testing.T) {
 			return refused
 		})
 		fragment := &FragmentExec{GraphName: "composite.source", Query: "RETURN 1 AS one"}
-		_, _, _, err := executor.prepareExecDispatch(context.Background(), nil, fragment, nil)
+		_, _, err := executor.prepareExecDispatch(context.Background(), nil, fragment, nil)
 		require.ErrorIs(t, err, refused)
 	}
 }

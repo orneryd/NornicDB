@@ -97,7 +97,7 @@ func startsWithClauseAfterDistinct(text string) bool {
 // word is a name when it ends the text, what follows it continues an
 // expression, or a clause follows it (no clause keyword but OPTIONAL and
 // UNION is followed directly by a clause: WITH where WHERE where = 3); ORDER
-// is a clause only as ORDER BY and OPTIONAL only as OPTIONAL MATCH (WITH
+// is a clause only as ORDER BY and OPTIONAL as OPTIONAL MATCH or CALL (WITH
 // order ORDER BY order).
 func startsWithClauseAfterName(text string) bool {
 	end := 0
@@ -112,7 +112,7 @@ func startsWithClauseAfterName(text string) bool {
 	case strings.EqualFold(text[:end], "ORDER"):
 		return matchKeywordAt(rest, 0, "BY")
 	case strings.EqualFold(text[:end], "OPTIONAL"):
-		return matchKeywordAt(rest, 0, "MATCH")
+		return matchKeywordAt(rest, 0, "MATCH") || matchKeywordAt(rest, 0, "CALL")
 	}
 	if rest == "" || nameContinuesExpression(rest) {
 		return false
@@ -502,7 +502,7 @@ func isNameableClauseKeyword(keyword string) bool {
 // The clause keywords a name can be spelled as (isNameableClauseKeyword),
 // by length.
 var (
-	nameableClauseKeywords3 = [...]string{"SET", "LET", "FOR"}
+	nameableClauseKeywords3 = [...]string{"SET", "LET", "FOR", "USE"}
 	nameableClauseKeywords4 = [...]string{"WITH", "SKIP", "CALL"}
 	nameableClauseKeywords5 = [...]string{"MATCH", "MERGE", "UNION", "LIMIT", "ORDER", "WHERE"}
 	nameableClauseKeywords6 = [...]string{"RETURN", "DELETE", "CREATE", "REMOVE", "UNWIND", "FINISH", "FILTER"}
