@@ -104,19 +104,21 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 // flusher lands it, the node's MVCC head doesn't show that commit, and the
 // flush would later write the node behind the writer's Badger snapshot, so
 // the writer's commit would lose to it. Once landed, a writer that has
-// observed nothing moves to a snapshot taken now; any other fails with
-// ErrConflict, as catchUpToNode does. Without write-behind, or with nothing
-// buffered for the node, it does nothing.
+// observed nothing moves to a snapshot taken now, even if the buffer has
+// already drained: its ACK may precede the transaction while the physical
+// flush follows it. Any observed transaction with a pending buffered node
+// fails with ErrConflict, as catchUpToNode does. Without write-behind it
+// does nothing.
 func (tx *BadgerTransaction) settleBufferedNode(nodeID NodeID) error {
 	buffer := tx.engine.writeBehind
 	if buffer == nil {
 		return nil
 	}
-	if _, found, _ := buffer.GetNode(nodeID); !found {
-		return nil
-	}
-	if err := buffer.Flush(); err != nil {
-		return err
+	_, pending, _ := buffer.GetNode(nodeID)
+	if pending {
+		if err := buffer.Flush(); err != nil {
+			return err
+		}
 	}
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
@@ -124,7 +126,10 @@ func (tx *BadgerTransaction) settleBufferedNode(nodeID NodeID) error {
 		return nil
 	}
 	if tx.observedLocked() {
-		return localizedError(localization.StorageTransactionNodeChanged(string(nodeID)), ErrConflict)
+		if pending {
+			return localizedError(localization.StorageTransactionNodeChanged(string(nodeID)), ErrConflict)
+		}
+		return nil
 	}
 	return tx.refreshSnapshotLocked()
 }
