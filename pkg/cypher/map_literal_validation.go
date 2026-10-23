@@ -3,8 +3,8 @@ package cypher
 import "strings"
 
 // validateStaticMapKeys rejects malformed symbolic map keys before either
-// parser frontend or executor can normalize them. Braces without a top-level
-// key/value separator are ignored because they may delimit a subquery.
+// parser frontend or executor can normalize them. Subqueries retain their own
+// scope; entries without a colon must be map-projection selectors.
 func validateStaticMapKeys(query string) error {
 	upper := upperASCII(strings.TrimSpace(query))
 	if strings.HasPrefix(upper, "CREATE ") && strings.Contains(upper, "INDEX") && findKeywordIndex(query, "OPTIONS") >= 0 {
@@ -81,12 +81,19 @@ func validateStaticMapKeys(query string) error {
 					"pattern property maps require key-value entries",
 				)
 			}
-			continue
 		}
 		for _, part := range parts {
 			trimmedPart := strings.TrimSpace(part)
+			if !mapLiteral {
+				trimmedPart = strings.TrimSpace(StripComments(trimmedPart))
+			}
 			if _, selector := mapProjectionPropertySelector(trimmedPart); trimmedPart == ".*" || (strings.HasPrefix(trimmedPart, ".") && selector) {
 				continue
+			}
+			if !mapLiteral {
+				if _, selector := isOneSymbolicName(trimmedPart); selector {
+					continue
+				}
 			}
 			separator := findTopLevelMapKeyValueSeparator(part)
 			if separator <= 0 || !validMapLiteralKey(strings.TrimSpace(part[:separator])) {
