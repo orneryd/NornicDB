@@ -104,10 +104,19 @@ func TestEncodePackStreamDateTimeIntoWithUTC_UsesLegacyOrUTCSignature(t *testing
 	if len(legacy) < 2 || legacy[0] != 0xB3 || legacy[1] != 0x46 {
 		t.Fatalf("expected legacy DateTime struct header B3 46, got=%x", legacy[:2])
 	}
+	_, offset := dt.Zone()
+	seconds, _, err := decodePackStreamValue(legacy, 2)
+	if err != nil || seconds != dt.Unix()+int64(offset) {
+		t.Fatalf("legacy seconds must include the offset: got=%v err=%v", seconds, err)
+	}
 
 	utc := encodePackStreamDateTimeIntoWithUTC(nil, dt, true)
 	if len(utc) < 2 || utc[0] != 0xB3 || utc[1] != 0x49 {
 		t.Fatalf("expected UTC DateTime struct header B3 49, got=%x", utc[:2])
+	}
+	seconds, _, err = decodePackStreamValue(utc, 2)
+	if err != nil || seconds != dt.Unix() {
+		t.Fatalf("UTC seconds must preserve the instant: got=%v err=%v", seconds, err)
 	}
 }
 
@@ -125,17 +134,19 @@ func TestDecodePackStreamValue_DateTimeStructures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode utc-patched datetime failed: %v", err)
 	}
-	if _, ok := v.(cypher.CypherDateTime); !ok {
-		t.Fatalf("expected CypherDateTime for utc-patched datetime, got %T", v)
+	if value, ok := v.(cypher.CypherDateTime); !ok || value.Time.Unix() != sec || value.Time.Nanosecond() != int(nanos) {
+		t.Fatalf("expected utc-patched datetime instant %d.%09d, got %v", sec, nanos, v)
 	}
 
 	// Legacy DateTime: struct(3) sig=0x46 [seconds, nanos, offsetSeconds]
-	legacy := append([]byte{0xB3, 0x46}, utcPatched[2:]...)
+	legacy := encodePackStreamIntInto([]byte{0xB3, 0x46}, sec+offset)
+	legacy = encodePackStreamIntInto(legacy, nanos)
+	legacy = encodePackStreamIntInto(legacy, offset)
 	v, _, err = decodePackStreamValue(legacy, 0)
 	if err != nil {
 		t.Fatalf("decode legacy datetime failed: %v", err)
 	}
-	if _, ok := v.(cypher.CypherDateTime); !ok {
-		t.Fatalf("expected CypherDateTime for legacy datetime, got %T", v)
+	if value, ok := v.(cypher.CypherDateTime); !ok || value.Time.Unix() != sec || value.Time.Nanosecond() != int(nanos) {
+		t.Fatalf("expected legacy datetime instant %d.%09d, got %v", sec, nanos, v)
 	}
 }
