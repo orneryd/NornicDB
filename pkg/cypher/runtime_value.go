@@ -10,16 +10,26 @@ import (
 // runtimeProcedureResult admits registered/plugin rows before YIELD or a query
 // tail consumes them. A handler can retain its result, so copy its row envelope;
 // FunctionResult copies only rows and nested containers needing normalization.
-func runtimeProcedureResult(result *ExecuteResult) *ExecuteResult {
+func runtimeProcedureResult(ctx context.Context, result *ExecuteResult) (*ExecuteResult, error) {
 	if result == nil {
-		return nil
+		return nil, nil
 	}
 	normalized := *result
 	normalized.Rows = make([][]interface{}, len(result.Rows))
-	for index, row := range result.Rows {
-		normalized.Rows[index] = cypherfn.FunctionResult(row).([]interface{})
+	for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for offset, row := range result.Rows[batch.start:batch.end] {
+			index := batch.start + offset
+			value, err := cypherfn.FunctionResult(ctx, row)
+			if err != nil {
+				return nil, err
+			}
+			normalized.Rows[index] = value.([]interface{})
+		}
 	}
-	return &normalized
+	return &normalized, nil
 }
 
 // runtimeRowResult preserves all three evaluator outcomes. In particular an
@@ -135,9 +145,9 @@ func materializePropertyEntries(ctx context.Context, expressions []pipelinePrope
 		// numbers and typed lists. Storage coercion belongs to property bags;
 		// applying it here corrupts values before a numeric consumer reads them.
 		if orderedValue {
-			value = normalizeExpressionValue(value)
+			value = normalizeExpressionValue(valueWalk(ctx), value)
 		} else {
-			value = normalizePropValue(value)
+			value = normalizePropValue(valueWalk(ctx), value)
 		}
 		props[expression.key] = value
 	}

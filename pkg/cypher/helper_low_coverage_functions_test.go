@@ -159,14 +159,14 @@ func TestExtractSeedNodesFromResult_Branches(t *testing.T) {
 			{[]interface{}{map[string]interface{}{"id": "n2"}}},
 		},
 	}
-	nodes, err := exec.extractSeedNodesFromResult(res, "seed")
+	nodes, err := exec.extractSeedNodesFromResult(context.Background(), res, "seed")
 	require.NoError(t, err)
 	require.Len(t, nodes, 4)
 
-	_, err = exec.extractSeedNodesFromResult(&ExecuteResult{Columns: []string{"other"}, Rows: [][]interface{}{{"n1"}}}, "seed")
+	_, err = exec.extractSeedNodesFromResult(context.Background(), &ExecuteResult{Columns: []string{"other"}, Rows: [][]interface{}{{"n1"}}}, "seed")
 	require.Error(t, err)
 
-	nodes, err = exec.extractSeedNodesFromResult(nil, "seed")
+	nodes, err = exec.extractSeedNodesFromResult(context.Background(), nil, "seed")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }

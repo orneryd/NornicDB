@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 type preparedPatternRowKey struct{}
@@ -65,13 +67,21 @@ func (e *StorageExecutor) preparePatternRow(ctx context.Context, pattern string,
 	rowCtx := ctx
 	if row != nil {
 		scope := valueBindingsLayer(ctx, len(row))
+		pass := bulk.NewCheckpoint(ctx)
 		for name, value := range row {
+			if err := pass.Observe(); err != nil {
+				return nil, "", err
+			}
 			scope[name] = value
 		}
 		rowCtx = withValueBindings(ctx, scope)
 	}
 	params := make(map[string]interface{}, len(outer)+len(plan.maps))
+	pass2 := bulk.NewCheckpoint(ctx)
 	for name, value := range outer {
+		if err := pass2.Observe(); err != nil {
+			return nil, "", err
+		}
 		params[name] = value
 	}
 	for _, properties := range plan.maps {

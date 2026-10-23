@@ -346,7 +346,7 @@ func TestBuildPathContextChained(t *testing.T) {
 		require.NotEmpty(t, paths)
 
 		// Build context for first path
-		pathCtx := exec.buildPathContext(paths[0], match)
+		pathCtx := exec.buildPathContext(context.Background(), paths[0], match)
 
 		// All three node variables should be mapped
 		assert.NotNil(t, pathCtx.nodes["p"], "start node 'p' should be mapped")
@@ -373,7 +373,7 @@ func TestBuildPathContextChained(t *testing.T) {
 		paths := exec.traverseGraph(context.Background(), match)
 		require.NotEmpty(t, paths)
 
-		pathCtx := exec.buildPathContext(paths[0], match)
+		pathCtx := exec.buildPathContext(context.Background(), paths[0], match)
 
 		// Both relationship variables should be mapped
 		assert.NotNil(t, pathCtx.rels["r1"], "relationship 'r1' should be mapped")

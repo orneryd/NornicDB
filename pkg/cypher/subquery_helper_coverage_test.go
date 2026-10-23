@@ -188,16 +188,6 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 	require.Equal(t, "b:1", callSubqueryLookupKeyString(true))
 	require.Contains(t, callSubqueryLookupKeyString(struct{ X int }{X: 1}), "struct")
 
-	joined := crossJoinCallResults(
-		&ExecuteResult{Columns: []string{"left", "shared"}, Rows: [][]interface{}{{"l1", "keep"}}},
-		&ExecuteResult{Columns: []string{"shared", "right", "extra"}, Rows: [][]interface{}{{"drop", "r1", "x1"}, {"drop2", "r2"}}},
-	)
-	require.Equal(t, []string{"left", "shared", "right", "extra"}, joined.Columns)
-	require.Equal(t, [][]interface{}{{"l1", "keep", "r1", "x1"}, {"l1", "keep", "r2", nil}}, joined.Rows)
-
-	require.Same(t, joined, crossJoinCallResults(joined, nil))
-	require.Same(t, joined, crossJoinCallResults(nil, joined))
-
 	require.True(t, callSubqueryQueryIsWrite("MATCH (n) CREATE (m)"))
 	require.False(t, callSubqueryQueryIsWrite("MATCH (n) RETURN n"))
 }
@@ -217,10 +207,4 @@ func TestCallSubqueryHelpers_PropertyExtractionAndOrdering(t *testing.T) {
 	require.Equal(t, -1, compareRowRefsForOrder(rowRefForOrder{row: []interface{}{1}, idx: 0}, rowRefForOrder{row: []interface{}{1}, idx: 1}, 0, false))
 	require.Equal(t, -1, compareRowRefsForOrder(rowRefForOrder{row: []interface{}{3}, idx: 0}, rowRefForOrder{row: []interface{}{1}, idx: 1}, 0, true))
 
-	top := selectTopKRowsForOrder([][]interface{}{{3, "c"}, {1, "a"}, {2, "b"}}, 0, false, 2)
-	require.Equal(t, [][]interface{}{{1, "a"}, {2, "b"}}, top)
-
-	all := selectTopKRowsForOrder([][]interface{}{{2}, {1}}, 0, true, 5)
-	require.Equal(t, [][]interface{}{{2}, {1}}, all)
-	require.Empty(t, selectTopKRowsForOrder([][]interface{}{{1}}, 0, false, 0))
 }

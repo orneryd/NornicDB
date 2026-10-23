@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -267,14 +268,18 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 	rollback := func() {
 		plan.nodes = plan.nodes[:nodeStart]
 		plan.edges = plan.edges[:edgeStart]
+		pass := bulk.NewCheckpoint(ctx)
 		for _, undo := range nodesAdded {
+			pass.Check()
 			if undo.prev == nil {
 				delete(nodes, undo.name)
 			} else {
 				nodes[undo.name] = undo.prev
 			}
 		}
+		pass2 := bulk.NewCheckpoint(ctx)
 		for _, undo := range edgesAdded {
+			pass2.Check()
 			if undo.prev == nil {
 				delete(edges, undo.name)
 			} else {
@@ -297,7 +302,11 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 			}
 			// CREATE drops null properties, exactly as prepareCreateNodePattern
 			// deletes them from the parsed map.
+			pass3 := bulk.NewCheckpoint(ctx)
 			for key, value := range props {
+				if err := pass3.Observe(); err != nil {
+					return nil, true, err
+				}
 				if value == nil {
 					delete(props, key)
 				}
@@ -307,7 +316,11 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 				rollback()
 				return nil, true, err
 			}
+			pass4 := bulk.NewCheckpoint(ctx)
 			for key, value := range props {
+				if err := pass4.Observe(); err != nil {
+					return nil, true, err
+				}
 				if _, bad := value.(invalidPropertyValue); bad {
 					rollback()
 					return nil, true, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
@@ -336,7 +349,11 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 				return nil, true, err
 			}
 			// CREATE drops null properties on relationships too.
+			pass5 := bulk.NewCheckpoint(ctx)
 			for key, value := range props {
+				if err := pass5.Observe(); err != nil {
+					return nil, true, err
+				}
 				if value == nil {
 					delete(props, key)
 				}

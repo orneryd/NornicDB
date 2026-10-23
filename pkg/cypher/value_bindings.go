@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -40,7 +41,9 @@ func valueBindingsFromContext(ctx context.Context) map[string]interface{} {
 func valueBindingsLayer(ctx context.Context, extra int) map[string]interface{} {
 	outer := valueBindingsFromContext(ctx)
 	layer := make(map[string]interface{}, len(outer)+extra)
+	pass := bulk.NewCheckpoint(ctx)
 	for name, value := range outer {
+		pass.Check()
 		layer[name] = value
 	}
 	return layer

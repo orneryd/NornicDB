@@ -1,0 +1,1058 @@
+# Passes over the query's data the cancellation owner does not cover yet (TestCancellationBoundary).
+# One line per pass: package|file|function|kind|pass. A new pass outside this list fails the test, and
+# so does a line no pass matches any more: the list only shrinks. Remove a line when its pass is converted.
+cypher|aggregation_projection_scope.go|aggregatingProjectionScopeError|call|sort.Slice(expressions)
+cypher|algorithm_graph_reader.go|selectEdges|loop|range edges
+cypher|apoc_algorithms.go|callApocNeighborsByhop|pass|getNeighborsByhop over data (relType) @apoc_algorithms.go:*StorageExecutor.getNeighborsByhop
+cypher|apoc_algorithms.go|callApocNeighborsTohop|pass|getNeighborsByhop over data (relType) @apoc_algorithms.go:*StorageExecutor.getNeighborsByhop
+cypher|apoc_algorithms.go|pathAlgorithmArguments|pass|parseApocRelationshipFilter over data (filter) @call_apoc_path.go:parseApocRelationshipFilter
+cypher|apoc_algorithms.go|renumberInNodeOrder|loop|range nodes
+cypher|apoc_community.go|callApocAlgoLabelPropagation|pass|computeLabelPropagation over data (nodes) @apoc_community.go:*StorageExecutor.computeLabelPropagation
+cypher|apoc_community.go|computeLabelPropagation|pass|renumberInNodeOrder over data (nodes) @apoc_algorithms.go:renumberInNodeOrder
+cypher|apoc_custom.go|callApocCustomDrop|pass|dropPersistedProcedure over data (apocCustomPrefix + strings.TrimPrefix(bulk.TrimSpace(ctx, name), apocCustomPrefi) @procedure_ddl.go:*StorageExecutor.dropPersistedProcedure
+cypher|apoc_custom.go|callApocCustomInstall|pass|parseCustomSignature over data (signatureText) @apoc_custom.go:parseCustomSignature
+cypher|apoc_load_export.go|callApocExportCsvAll|pass|resolveAPOCLocalExportFilePath over data (filePath) @apoc_load_export.go:*StorageExecutor.resolveAPOCLocalExportFilePath
+cypher|apoc_load_export.go|callApocExportCsvQuery|pass|resolveAPOCLocalExportFilePath over data (filePath) @apoc_load_export.go:*StorageExecutor.resolveAPOCLocalExportFilePath
+cypher|apoc_load_export.go|callApocExportJsonAll|pass|resolveAPOCLocalExportFilePath over data (filePath) @apoc_load_export.go:*StorageExecutor.resolveAPOCLocalExportFilePath
+cypher|apoc_load_export.go|callApocExportJsonQuery|pass|resolveAPOCLocalExportFilePath over data (filePath) @apoc_load_export.go:*StorageExecutor.resolveAPOCLocalExportFilePath
+cypher|apoc_load_export.go|callApocImportJson|pass|loadJsonFromFile over data (urlOrFile) @apoc_load_export.go:*StorageExecutor.loadJsonFromFile
+cypher|apoc_load_export.go|callApocLoadCsv|pass|resolveAPOCLocalImportFilePath over data (urlOrFile) @apoc_load_export.go:*StorageExecutor.resolveAPOCLocalImportFilePath
+cypher|apoc_load_export.go|callApocLoadJsonArray|pass|loadJsonFromFile over data (urlOrFile) @apoc_load_export.go:*StorageExecutor.loadJsonFromFile
+cypher|apoc_load_export.go|callApocLoadJson|pass|loadJsonFromFile over data (urlOrFile) @apoc_load_export.go:*StorageExecutor.loadJsonFromFile
+cypher|apoc_map_functions.go|apocMapArgumentTypeError|walk|nil walk to neo4jValueRepr
+cypher|apoc_map_null_contract.go|apocMapConstructor|call|fmt.Sprint of a value
+cypher|apoc_map_null_contract.go|apocMapConstructor|call|fmt.Sprint of a value
+cypher|apoc_map_null_contract.go|apocMapConstructor|loop|for len(values) < 3
+cypher|apoc_map_null_contract.go|apocMapConstructor|loop|range keys
+cypher|apoc_map_null_contract.go|apocMapConstructor|loop|range m
+cypher|apoc_map_null_contract.go|apocMapConstructor|loop|range m
+cypher|apoc_map_null_contract.go|apocMapConstructor|loop|range values
+cypher|apoc_map_null_contract.go|apocMapConstructor|pass|apocSameValue over data (fmt.Sprint(value)) @apoc_collections.go:apocSameValue
+cypher|apoc_map_null_contract.go|apocMapConstructor|pass|nativeAPOCCallFailure over data (values) @apoc_native_functions.go:nativeAPOCCallFailure
+cypher|apoc_map_null_contract.go|apocMapNullInput|loop|range items
+cypher|apoc_native_functions.go|evaluateNativeAPOCFunction|pass|nativeAPOCCallFailure over data (args) @apoc_native_functions.go:nativeAPOCCallFailure
+cypher|apoc_native_functions.go|evaluateNativeAPOCFunction|pass|nativeAPOCPath over data (args) @apoc_native_functions.go:*StorageExecutor.nativeAPOCPath
+cypher|apoc_native_functions.go|evaluateNativeAPOCFunction|pass|nativeAPOCTemporalFormat over data (args) @apoc_native_temporal.go:nativeAPOCTemporalFormat
+cypher|apoc_native_functions.go|nativeAPOCAdjacency|pass|parseApocRelationshipFilter over data (filter) @call_apoc_path.go:parseApocRelationshipFilter
+cypher|apoc_native_functions.go|nativeAPOCPath|call|append of all of elements
+cypher|apoc_native_functions.go|nativeAPOCPath|call|append of all of second[1:]
+cypher|apoc_native_functions.go|nativeAPOCPath|loop|range elements
+cypher|apoc_native_functions.go|nativeAPOCPath|loop|range elements
+cypher|apoc_native_functions.go|nativeAPOCPath|pass|nativeAPOCCallFailure over data (args) @apoc_native_functions.go:nativeAPOCCallFailure
+cypher|apoc_native_temporal.go|nativeAPOCTemporalFormat|pass|compileTemporalPattern over data (pattern) @temporal_pattern.go:compileTemporalPattern
+cypher|apoc_native_temporal.go|nativeAPOCTemporalFormat|pass|nativeAPOCCallFailure over data (args) @apoc_native_functions.go:nativeAPOCCallFailure
+cypher|apoc_native_temporal.go|nativeAPOCTemporalFormat|pass|nativeAPOCDurationFormat over data (pattern) @apoc_native_temporal.go:nativeAPOCDurationFormat
+cypher|ast_builder.go|parseRemove|call|strings.TrimSpace(l)
+cypher|ast_builder.go|parseRemove|loop|range labels
+cypher|authorization.go|QueryPermissionRequirements|pass|classificationText over data (query) @keyword_scan.go:classificationText
+cypher|authorization.go|QueryPermissionRequirements|pass|isAdminPermissionQuery over data (query) @authorization.go:isAdminPermissionQuery
+cypher|authorization.go|QueryPermissionRequirements|pass|isSchemaPermissionQuery over data (query) @authorization.go:isSchemaPermissionQuery
+cypher|authorization.go|QueryPermissionRequirements|pass|queryKeywords over data (query) @authorization.go:queryKeywords
+cypher|authorization.go|QueryPermissionRequirements|pass|statementReadsGraphText over data (query) @executor.go:statementReadsGraphText
+cypher|authorization.go|resolveGraphSelection|loop|range refs
+cypher|binding_where_compile.go|compileMembershipTruth|pass|buildComparableMembershipIndex over data (items) @predicate_helpers.go:buildComparableMembershipIndex
+cypher|binding_where_compile.go|compileMembershipTruth|pass|listHasNull over data (items) @binding_where_compile.go:listHasNull
+cypher|binding_where_compile.go|compileMembershipTruth|pass|membershipTruth over data (nonComparable) @binding_where_compile.go:membershipTruth
+cypher|binding_where_compile.go|compileMembershipTruth|pass|staticMembershipTruth over data (listValues) @binding_where_compile.go:staticMembershipTruth
+cypher|binding_where_compile.go|getValidated|call|append of all of items
+cypher|binding_where_compile.go|getValidated|loop|range items
+cypher|binding_where_compile.go|getValidated|pass|buildComparableMembershipIndex over data (items) @predicate_helpers.go:buildComparableMembershipIndex
+cypher|binding_where_compile.go|getValidated|pass|listHasNull over data (items) @binding_where_compile.go:listHasNull
+cypher|binding_where_compile.go|get|pass|getValidated over data (items) @binding_where_compile.go:*bindingParamMembershipCache.getValidated
+cypher|binding_where_compile.go|listHasNull|loop|range items
+cypher|binding_where_compile.go|makeCompiledBindingMembershipPredicate|pass|staticMembershipTruth over data (items) @binding_where_compile.go:staticMembershipTruth
+cypher|binding_where_compile.go|membershipTruth|pass|evaluateComparableMembership over data (nonComparable) @predicate_helpers.go:evaluateComparableMembership
+cypher|binding_where_compile.go|paramMembershipTruth|pass|get over data (items) @binding_where_compile.go:*bindingParamMembershipCache.get
+cypher|binding_where_compile.go|paramMembershipTruth|pass|membershipTruth over data (nonComparable) @binding_where_compile.go:membershipTruth
+cypher|binding_where_compile.go|staticMembershipTruth|pass|buildComparableMembershipIndex over data (items) @predicate_helpers.go:buildComparableMembershipIndex
+cypher|binding_where_compile.go|staticMembershipTruth|pass|listHasNull over data (items) @binding_where_compile.go:listHasNull
+cypher|binding_where_compile.go|staticMembershipTruth|pass|membershipTruth over data (nonComparable) @binding_where_compile.go:membershipTruth
+cypher|cache.go|InvalidateLabels|loop|range sc.cache
+cypher|cache.go|cacheNodeLookup|pass|makeLookupKey over data (props) @cache.go:makeLookupKey
+cypher|cache.go|lookupCachedNode|pass|makeLookupKey over data (props) @cache.go:makeLookupKey
+cypher|cache.go|makeLookupKey|call|fmt.Sprintf of a value
+cypher|cache.go|makeLookupKey|loop|range props
+cypher|cache_key.go|writeCacheKeyValue|pass|writeCacheKeyString over data (fmt.Sprintf("%T", value)) @cache_key.go:writeCacheKeyString
+cypher|cache_key.go|writeCacheKeyValue|pass|writeCacheKeyString over data (formatValueText(work, value)) @cache_key.go:writeCacheKeyString
+cypher|call.go|countLabels|loop|range nodes
+cypher|call.go|countRelTypes|loop|range edges
+cypher|call.go|executeCallTailSingleRow|pass|executeInternal over data (params) @executor_internal.go:*StorageExecutor.executeInternal
+cypher|call.go|projectCallTailReturnAll|call|sort.Strings(columns)
+cypher|call.go|sortedStringSet|call|sort.Strings(members)
+cypher|call.go|tryExecuteCallTailProcedurePipeline|call|append of all of procedureRow
+cypher|call_apoc_dynamic.go|callApocCypherRunMany|pass|executeUserStatement over data (params) @executor_internal.go:*StorageExecutor.executeUserStatement
+cypher|call_apoc_dynamic.go|callApocCypherRunMany|pass|splitBySemicolon over data (statements) @call_apoc_helpers.go:*StorageExecutor.splitBySemicolon
+cypher|call_apoc_dynamic.go|callApocCypherRun|pass|executeUserStatement over data (params) @executor_internal.go:*StorageExecutor.executeUserStatement
+cypher|call_apoc_path.go|apocInteger|walk|nil walk to neo4jProvidedValue
+cypher|call_apoc_path.go|apocString|walk|nil walk to neo4jProvidedValue
+cypher|call_apoc_path.go|configure|pass|parseApocLabelFilter over data (text) @call_apoc_path.go:parseApocLabelFilter
+cypher|call_apoc_path.go|configure|pass|parseApocRelationshipFilter over data (text) @call_apoc_path.go:parseApocRelationshipFilter
+cypher|call_apoc_path.go|configure|pass|parseApocSequence over data (sequence) @call_apoc_path.go:parseApocSequence
+cypher|call_apoc_periodic.go|callApocPeriodicCommit|pass|executeUserStatement over data (params) @executor_internal.go:*StorageExecutor.executeUserStatement
+cypher|call_apoc_periodic.go|callApocPeriodicCommit|pass|internalFunctionCallError over data (statement) @function_semantic_validation.go:internalFunctionCallError
+cypher|call_apoc_periodic.go|callApocPeriodicIterate|pass|executeUserStatement over data (params) @executor_internal.go:*StorageExecutor.executeUserStatement
+cypher|call_apoc_periodic.go|callApocPeriodicIterate|pass|internalFunctionCallError over data (actionQuery) @function_semantic_validation.go:internalFunctionCallError
+cypher|call_cdc.go|callDbCdcCurrent|pass|databaseChangeTag over data (database) @call_cdc.go:*StorageExecutor.databaseChangeTag
+cypher|call_cdc.go|callDbCdcEarliest|pass|databaseChangeTag over data (database) @call_cdc.go:*StorageExecutor.databaseChangeTag
+cypher|call_cdc.go|callDbCdcQuery|pass|databaseChangeTag over data (database) @call_cdc.go:*StorageExecutor.databaseChangeTag
+cypher|call_cdc.go|changeEventValue|pass|keyMapsValue over data (event.EdgeKeys) @call_cdc.go:keyMapsValue
+cypher|call_cdc.go|changeMetadataValue|loop|range event.TxMetadata
+cypher|call_cdc.go|changeMetadataValue|walk|nil walk to cdcValue
+cypher|call_cdc.go|changeStateValue|loop|range state.Properties
+cypher|call_cdc.go|changeStateValue|walk|nil walk to cdcValue
+cypher|call_cdc.go|changedAll|walk|nil walk to IdenticalValues
+cypher|call_cdc.go|keyMapsValue|loop|range keys
+cypher|call_cdc.go|keyMapsValue|loop|range maps
+cypher|call_cdc.go|keyMapsValue|walk|nil walk to cdcValue
+cypher|call_cdc.go|keyMatches|call|append of all of event.EdgeKeys
+cypher|call_cdc.go|keyMatches|call|append of all of maps
+cypher|call_cdc.go|keyMatches|loop|range keyMaps
+cypher|call_cdc.go|matches|loop|range s.txMetadata
+cypher|call_cdc.go|matches|walk|nil walk to IdenticalValues
+cypher|call_cdc.go|matches|walk|nil walk to cdcValue
+cypher|call_cdc.go|nodeKeysValue|pass|keyMapsValue over data (maps) @call_cdc.go:keyMapsValue
+cypher|call_cdc.go|parseChangeSelectors|loop|range list
+cypher|call_cdc.go|parseChangeSelectors|pass|parseChangeSelector over data (fields) @call_cdc.go:parseChangeSelector
+cypher|call_cdc.go|parseChangeSelector|call|sort.Strings(names)
+cypher|call_cdc.go|parseChangeSelector|loop|range fields
+cypher|call_cdc.go|parseChangeSelector|pass|parseChangeSelector over data (nested) @call_cdc.go:parseChangeSelector
+cypher|call_cdc.go|stringList|loop|range list
+cypher|call_compat.go|buildEdgeFulltextDoc|pass|buildFulltextDocFromProperties over data (edge.Properties) @call_fulltext.go:buildFulltextDocFromProperties
+cypher|call_compat.go|callDbIndexFulltextQueryRelationships|pass|fulltextFieldPresenceQuery over data (query) @call_fulltext.go:fulltextFieldPresenceQuery
+cypher|call_compat.go|callDbIndexFulltextQueryRelationships|pass|isFulltextWildcard over data (query) @call_fulltext.go:isFulltextWildcard
+cypher|call_compat.go|callDbIndexFulltextQueryRelationships|pass|parseFulltextQueryObserved over data (query) @fulltext_query.go:parseFulltextQueryObserved
+cypher|call_compat.go|callDbIndexVectorCreateIndex|pass|registerVectorSpace over data (property) @vector_registry.go:*StorageExecutor.registerVectorSpace
+cypher|call_compat.go|callDbIndexVectorQueryRelationshipsInput|call|fmt.Sprint of a value
+cypher|call_compat.go|callDbIndexVectorQueryRelationshipsInput|call|strings.Join(unsupportedParams)
+cypher|call_compat.go|callDbIndexVectorQueryRelationshipsInput|pass|embedVectorQueryText over data (text) @vector_query_embed_cache.go:*StorageExecutor.embedVectorQueryText
+cypher|call_compat.go|callDbIndexVectorQueryRelationships|pass|callDbIndexVectorQueryRelationshipsInput over data (indexName) @call_compat.go:*StorageExecutor.callDbIndexVectorQueryRelationshipsInput
+cypher|call_compat.go|callDbmsListConfigArguments|call|strings.Join(validValues)
+cypher|call_compat.go|callSetVectorProperty|pass|evaluateExpressionWithContext over data (expression) @functions.go:*StorageExecutor.evaluateExpressionWithContext
+cypher|call_compat.go|callTxSetMetadataArguments|pass|evaluateExpressionWithContext over data (expression) @functions.go:*StorageExecutor.evaluateExpressionWithContext
+cypher|call_compat.go|edgePropertiesContain|call|strings.Contains(lowerASCII(str))
+cypher|call_compat.go|edgePropertiesContain|call|strings.Contains(lowerASCII(str))
+cypher|call_compat.go|edgePropertiesContain|loop|range edge.Properties
+cypher|call_compat.go|edgePropertiesContain|pass|lowerASCII over data (str) @keyword_scan.go:lowerASCII
+cypher|call_compat.go|edgePropertiesContain|pass|lowerASCII over data (str) @keyword_scan.go:lowerASCII
+cypher|call_compat.go|edgeToMap|loop|range edge.Properties
+cypher|call_compat.go|extractEdgeTextContent|loop|range edge.Properties
+cypher|call_compat.go|writeFulltextValue|call|(*strings.Builder).WriteString(fmt.Sprint(val))
+cypher|call_compat.go|writeFulltextValue|call|(*strings.Builder).WriteString(s)
+cypher|call_compat.go|writeFulltextValue|call|fmt.Sprint of a value
+cypher|call_fulltext.go|buildFulltextDocFromProperties|call|fmt.Sprintf of a value
+cypher|call_fulltext.go|buildFulltextDocFromProperties|loop|range properties
+cypher|call_fulltext.go|buildFulltextDocFromProperties|pass|lowerASCII over data (raw) @keyword_scan.go:lowerASCII
+cypher|call_fulltext.go|buildNodeFulltextDoc|pass|buildFulltextDocFromProperties over data (node.Properties) @call_fulltext.go:buildFulltextDocFromProperties
+cypher|call_fulltext.go|callDbIndexFulltextQueryNodes|pass|fulltextFieldPresenceQuery over data (query) @call_fulltext.go:fulltextFieldPresenceQuery
+cypher|call_fulltext.go|callDbIndexFulltextQueryNodes|pass|isFulltextWildcard over data (query) @call_fulltext.go:isFulltextWildcard
+cypher|call_fulltext.go|callDbIndexFulltextQueryNodes|pass|parseFulltextQueryObserved over data (query) @fulltext_query.go:parseFulltextQueryObserved
+cypher|call_fulltext.go|extractTextContent|call|(*strings.Builder).WriteString(fmt.Sprintf("%v ", val))
+cypher|call_fulltext.go|extractTextContent|call|fmt.Sprintf of a value
+cypher|call_index_mgmt.go|callNamedIndexManagement|call|fmt.Sprintf of a value
+cypher|call_query_statistics.go|callQueryStatistics|call|fmt.Sprintf of a value
+cypher|call_query_statistics.go|callQueryStatistics|call|fmt.Sprintf of a value
+cypher|call_query_statistics.go|callQueryStatistics|pass|evaluateExpressionWithContext over data (expression) @functions.go:*StorageExecutor.evaluateExpressionWithContext
+cypher|call_rag.go|continuationPassages|loop|range continuationResultMetadata(passage)
+cypher|call_rag.go|parseRerankCandidates|call|strings.TrimSpace(id)
+cypher|call_rag.go|parseRerankCandidates|loop|range items
+cypher|call_rag.go|parseRetrievalFilters|call|fmt.Sprint of a value
+cypher|call_rag.go|parseRetrievalFilters|loop|range filters
+cypher|call_rag.go|runSearchRequest|pass|compileNodeWhereFilter over data (where) @executor_mutations_where_eval.go:*StorageExecutor.compileNodeWhereFilter
+cypher|call_rag.go|runSearchRequest|pass|compileNodeWhereFilter over data (where) @executor_mutations_where_eval.go:*StorageExecutor.compileNodeWhereFilter
+cypher|call_rag.go|runSearchRequest|pass|desugarRetrievalWhere over data (where) @call_rag.go:desugarRetrievalWhere
+cypher|call_rag.go|toChatMessages|call|strings.TrimSpace(role)
+cypher|call_rag.go|toChatMessages|loop|range items
+cypher|call_schema_visualization.go|schemaVisualizationLabelMetadata|call|strings.Join(properties)
+cypher|call_shared_utils.go|ragToFloat64|call|strings.TrimSpace(text)
+cypher|call_temporal.go|coerceStringArg|call|fmt.Sprint of a value
+cypher|call_temporal.go|valuesEqual|call|fmt.Sprint of a value
+cypher|call_temporal.go|valuesEqual|call|fmt.Sprint of a value
+cypher|call_temporal.go|valuesEqual|walk|nil walk to IdenticalValues
+cypher|call_txlog.go|txlogInteger|walk|nil walk to neo4jProvidedValue
+cypher|call_vector.go|callDbIndexVectorQueryNodesInput|call|strings.Join(unsupportedParams)
+cypher|call_vector.go|callDbIndexVectorQueryNodesInput|pass|embedVectorQueryText over data (text) @vector_query_embed_cache.go:*StorageExecutor.embedVectorQueryText
+cypher|call_vector.go|callDbIndexVectorQueryNodes|pass|callDbIndexVectorQueryNodesInput over data (indexName) @call_vector.go:*StorageExecutor.callDbIndexVectorQueryNodesInput
+cypher|call_vector.go|callVectorQueryArguments|pass|callDbIndexVectorQueryNodesInput over data (indexName) @call_vector.go:*StorageExecutor.callDbIndexVectorQueryNodesInput
+cypher|call_vector.go|callVectorQueryArguments|pass|callDbIndexVectorQueryRelationshipsInput over data (indexName) @call_compat.go:*StorageExecutor.callDbIndexVectorQueryRelationshipsInput
+cypher|case_expression.go|compareValues|walk|nil walk to IdenticalValues
+cypher|clauses.go|appendDistinctUnionRows|pass|addTupleByContract over data (row) @value_equivalence_index.go:*cypherValueIndex.addTupleByContract
+cypher|clauses.go|canApplySetBasedUnwindRewrite|pass|unwindItemsAreDistinctComparable over data (items) @clauses.go:unwindItemsAreDistinctComparable
+cypher|clauses.go|joinedValueKey|call|fmt.Sprintf of a value
+cypher|clauses.go|normalizeInterfaceMap|call|fmt.Sprintf of a value
+cypher|clauses.go|normalizeInterfaceMap|loop|range input
+cypher|clauses.go|setNodePropertyIfChanged|walk|nil walk to IdenticalValues
+cypher|clauses.go|setRelationshipPropertyIfChanged|walk|nil walk to IdenticalValues
+cypher|clauses.go|toStringAnyMap|loop|range m
+cypher|clauses.go|unwindItemsAreDistinctComparable|loop|range items
+cypher|clauses.go|unwindMergeLabelsKey|call|sort.Strings(sorted)
+cypher|coll_functions.go|collIndex|walk|nil walk to neo4jValueRepr
+cypher|comparison.go|edgeMatchesProps|loop|range props
+cypher|comparison.go|nodeMatchesProps|pass|nodePropertiesMatch over data (props) @comparison.go:nodePropertiesMatch
+cypher|comparison.go|nodePropertiesMatch|loop|range props
+cypher|composite_commands.go|executeAlterCompositeDatabase|pass|parseConstituentFromTokens over data (tokens) @composite_commands.go:parseConstituentFromTokens
+cypher|composite_commands.go|executeCreateCompositeDatabase|pass|parseConstituentFromTokens over data (tokens) @composite_commands.go:parseConstituentFromTokens
+cypher|composite_commands.go|parseConstituentFromTokens|call|strings.TrimSpace(accessVal)
+cypher|composite_commands.go|parseConstituentFromTokens|call|strings.TrimSpace(aliasName)
+cypher|composite_commands.go|parseConstituentFromTokens|call|strings.TrimSpace(constituentDbName)
+cypher|composite_commands.go|parseConstituentFromTokens|call|strings.TrimSpace(password)
+cypher|composite_commands.go|parseConstituentFromTokens|call|strings.TrimSpace(password)
+cypher|composite_commands.go|parseConstituentFromTokens|call|strings.TrimSpace(secretRef)
+cypher|composite_commands.go|parseConstituentFromTokens|call|strings.TrimSpace(typeVal)
+cypher|composite_commands.go|parseConstituentFromTokens|call|strings.TrimSpace(uri)
+cypher|composite_commands.go|parseConstituentFromTokens|call|strings.TrimSpace(user)
+cypher|composite_commands.go|parseConstituentFromTokens|call|strings.TrimSpace(user)
+cypher|composite_commands.go|parseConstituentFromTokens|pass|lowerASCII over data (strings.TrimSpace(accessVal)) @keyword_scan.go:lowerASCII
+cypher|composite_commands.go|parseConstituentFromTokens|pass|lowerASCII over data (strings.TrimSpace(typeVal)) @keyword_scan.go:lowerASCII
+cypher|constraint_requirement.go|canonicalConstraintRequirement|call|strings.Index(cypher)
+cypher|constraint_requirement.go|canonicalConstraintRequirement|call|strings.ToUpper(match[2])
+cypher|constraint_requirement.go|canonicalConstraintRequirement|call|strings.ToUpper(match[3])
+cypher|constraint_requirement.go|canonicalConstraintRequirement|call|strings.TrimSpace(match[1])
+cypher|constraint_requirement.go|canonicalConstraintRequirement|pass|parseCreateIndexForPattern over data (patternSpan) @schema.go:parseCreateIndexForPattern
+cypher|create.go|applyCreatePlan|pass|countCreatedEntity over data (edge.Properties) @query_stats.go:countCreatedEntity
+cypher|create.go|applyCreatePlan|pass|countCreatedEntity over data (node.Properties) @query_stats.go:countCreatedEntity
+cypher|create.go|createParameterProperties|pass|cloneNodePropertiesMap over data (properties) @merge.go:cloneNodePropertiesMap
+cypher|create.go|planCreatePatterns|pass|parseCreateRelPatternWithVars over data (currentPattern) @create_pipeline_helpers.go:*StorageExecutor.parseCreateRelPatternWithVars
+cypher|create.go|planCreatePatterns|pass|parseRelationshipTypeAndProps over data (relStr) @create.go:*StorageExecutor.parseRelationshipTypeAndProps
+cypher|create.go|planCreatePatterns|pass|planCreateEndpoint over data (sourceContent) @create.go:*StorageExecutor.planCreateEndpoint
+cypher|create.go|planCreatePatterns|pass|planCreateEndpoint over data (targetContent) @create.go:*StorageExecutor.planCreateEndpoint
+cypher|create.go|planCreatePatterns|pass|relationshipDeclarationOf over data (relStr) @relationship_declaration.go:relationshipDeclarationOf
+cypher|create.go|planCreatePatterns|pass|splitPatternParameterMap over data (relStr) @create.go:splitPatternParameterMap
+cypher|create.go|planCreatePatterns|pass|validateCreatePropertyKeys over data ("[" + relStr + "]") @create.go:validateCreatePropertyKeys
+cypher|create.go|planCreatePatterns|pass|validatePropertyValues over data (relProps) @set_semantic_validation.go:validatePropertyValues
+cypher|create.go|prepareCreateNodePattern|pass|validateCreatePropertyKeys over data (nodePattern.properties) @create.go:validateCreatePropertyKeys
+cypher|create.go|prepareCreateNodePattern|pass|validatePropertyValues over data (nodePattern.properties) @set_semantic_validation.go:validatePropertyValues
+cypher|create.go|resolveNodeFromIDEqualityTerm|call|strings.SplitN(lookupID)
+cypher|create.go|resolveNodeFromIDEqualityTerm|call|strings.TrimSpace(s)
+cypher|create.go|resolveNodeFromIDEqualityTerm|call|strings.TrimSpace(s)
+cypher|create.go|resolveSetMergeSourceFromParams|loop|range parts[1:]
+cypher|create.go|validateCreatePropertyKeys|loop|range properties
+cypher|create_pipeline_helpers.go|extractCreateVariableRefs|call|strings.TrimSpace(remainder)
+cypher|create_pipeline_helpers.go|extractCreateVariableRefs|pass|isSimpleVariable over data (src) @create.go:isSimpleVariable
+cypher|create_pipeline_helpers.go|extractCreateVariableRefs|pass|isSimpleVariable over data (tgt) @create.go:isSimpleVariable
+cypher|create_pipeline_template.go|parseCreateEdgeTemplates|pass|bareEndpointVariable over data ("(" + sourceContent + ")") @create_pipeline_template.go:bareEndpointVariable
+cypher|create_pipeline_template.go|parseCreateEdgeTemplates|pass|bareEndpointVariable over data ("(" + targetContent + ")") @create_pipeline_template.go:bareEndpointVariable
+cypher|create_pipeline_template.go|parseCreateEdgeTemplates|pass|parseCreateRelPatternWithVars over data (current) @create_pipeline_helpers.go:*StorageExecutor.parseCreateRelPatternWithVars
+cypher|create_pipeline_template.go|parseCreateEdgeTemplates|pass|relationshipDeclarationOf over data (relStr) @relationship_declaration.go:relationshipDeclarationOf
+cypher|create_pipeline_template.go|parseCreateEdgeTemplates|pass|splitPatternParameterMap over data (relStr) @create.go:splitPatternParameterMap
+cypher|create_pipeline_template.go|plan|pass|validatePropertyValues over data (props) @set_semantic_validation.go:validatePropertyValues
+cypher|create_pipeline_template.go|plan|pass|validatePropertyValues over data (props) @set_semantic_validation.go:validatePropertyValues
+cypher|cypher25_value_text.go|writeCypher25PathText|loop|range nodes
+cypher|cypher25_value_text.go|writeCypher25PathText|loop|range path.Relationships
+cypher|cypher25_value_text.go|writeCypher25PathText|loop|range relationships
+cypher|database_options.go|alterDatabaseOption|call|strings.Fields(name)
+cypher|database_options.go|alterDatabaseOption|pass|unquoteBacktickIdentifier over data (name) @identifier_unquote.go:unquoteBacktickIdentifier
+cypher|database_options.go|applyDatabaseOptions|call|sort.Strings(keys)
+cypher|database_options.go|databaseOptionValue|call|strings.ToUpper(strings.TrimSpace(text))
+cypher|database_options.go|databaseOptionValue|call|strings.TrimSpace(text)
+cypher|database_options.go|databaseOptionValue|walk|nil walk to neo4jValueRepr
+cypher|dynamic_tokens.go|dynamicPropertyKey|pass|tokenNameError over data (name) @dynamic_tokens.go:tokenNameError
+cypher|dynamic_tokens.go|fnDynamicLabelTest|pass|labelsSatisfyNames over data (names) @dynamic_tokens.go:labelsSatisfyNames
+cypher|dynamic_tokens.go|fnDynamicLabelTest|pass|labelsSatisfyNames over data (names) @dynamic_tokens.go:labelsSatisfyNames
+cypher|dynamic_tokens.go|resolveRowDynamicTokens|call|(*strings.Builder).WriteString(labelExpressionNameText(name))
+cypher|dynamic_tokens.go|resolveRowDynamicTokens|loop|range names
+cypher|dynamic_tokens.go|resolveRowDynamicTokens|pass|labelExpressionNameText over data (name) @label_expression.go:labelExpressionNameText
+cypher|execution_determinism.go|allows|pass|cachedExecutionPolicy over data (inner) @execution_determinism.go:cachedExecutionPolicy
+cypher|execution_determinism.go|compileExecutionPolicy|call|strings.TrimSpace(text)
+cypher|execution_determinism.go|compileExecutionPolicy|call|strings.TrimSpace(text[open + 1:close])
+cypher|execution_determinism.go|compileExecutionPolicy|loop|for from < len(text)
+cypher|execution_determinism.go|compileExecutionPolicy|loop|range args
+cypher|execution_determinism.go|compileExecutionPolicy|pass|QueryPermissionRequirements over data (text) @authorization.go:QueryPermissionRequirements
+cypher|execution_determinism.go|compileExecutionPolicy|pass|classificationText over data (text) @keyword_scan.go:classificationText
+cypher|execution_determinism.go|compileExecutionPolicy|pass|compileExecutionInput over data (argument) @execution_input_values.go:compileExecutionInput
+cypher|execution_determinism.go|compileExecutionPolicy|pass|keywordIndexFrom over data (text) @keyword_scan.go:keywordIndexFrom
+cypher|execution_determinism.go|compileExecutionPolicy|pass|keywordIndexFrom over data (text) @keyword_scan.go:keywordIndexFrom
+cypher|execution_determinism.go|compileExecutionPolicy|pass|procedureNameAt over data (text) @authorization.go:procedureNameAt
+cypher|execution_determinism.go|compileExecutionPolicy|pass|queryGapEnd over data (text) @keyword_scan.go:queryGapEnd
+cypher|execution_determinism.go|compileExecutionPolicy|pass|splitTopLevelComma over data (body) @call_shared_utils.go:splitTopLevelComma
+cypher|executor_entry.go|Execute|pass|execute over data (params) @executor_entry.go:*StorageExecutor.execute
+cypher|executor_entry.go|executeRouted|pass|execute over data (params) @executor_entry.go:*StorageExecutor.execute
+cypher|executor_entry.go|execute|call|fmt.Sprintf of a value
+cypher|executor_entry.go|execute|pass|executeOnDatabase over data (params) @executor_use.go:*StorageExecutor.executeOnDatabase
+cypher|executor_entry.go|execute|pass|executeOnDatabase over data (params) @executor_use.go:*StorageExecutor.executeOnDatabase
+cypher|executor_entry.go|execute|pass|executeOnDatabase over data (params) @executor_use.go:*StorageExecutor.executeOnDatabase
+cypher|executor_entry.go|execute|pass|executeRouted over data (params) @executor_entry.go:*StorageExecutor.executeRouted
+cypher|executor_entry.go|execute|pass|handOver over data (result.Rows) @transaction_memory.go:*memoryScope.handOver
+cypher|executor_entry.go|execute|pass|parameterValues over data (params) @quoted_variables.go:*quotedVariableNames.parameterValues
+cypher|executor_fabric.go|ExecuteQueryWithRecord|pass|executeFragmentQuery over data (params) @executor_fabric.go:*cypherFabricExecutor.executeFragmentQuery
+cypher|executor_fabric.go|ExecuteQuery|pass|ExecuteQueryWithRecord over data (params) @executor_fabric.go:*cypherFabricExecutor.ExecuteQueryWithRecord
+cypher|executor_fabric.go|ExecuteRecordQuery|pass|executeFragmentQuery over data (params) @executor_fabric.go:*cypherFabricExecutor.executeFragmentQuery
+cypher|executor_fabric.go|executeFragmentQuery|pass|executeInternal over data (params) @executor_internal.go:*StorageExecutor.executeInternal
+cypher|executor_fabric.go|executeViaPreparedFabricWithTx|pass|isSchemaCommandStatement over data (command) @match_semantic_validation.go:isSchemaCommandStatement
+cypher|executor_fabric.go|normalizeFabricRowWrapper|loop|range inferred
+cypher|executor_fabric.go|sameSourceID|call|fmt.Sprint of a value
+cypher|executor_fabric.go|sameSourceID|call|strings.Trim(s)
+cypher|executor_fabric.go|sameSourceID|call|strings.TrimSpace(fmt.Sprint(v))
+cypher|executor_internal.go|executeInternal|pass|executeInternal over data (params) @executor_internal.go:*StorageExecutor.executeInternal
+cypher|executor_internal.go|executeInternal|pass|executeOnDatabase over data (params) @executor_use.go:*StorageExecutor.executeOnDatabase
+cypher|executor_internal.go|executeUserStatement|pass|executeInternal over data (params) @executor_internal.go:*StorageExecutor.executeInternal
+cypher|executor_match_vector_cosine_fastpath.go|appendProjectedProperty|call|sort.Strings(properties)
+cypher|executor_match_vector_cosine_fastpath.go|nodeProjectionPropertiesForVectorFastPath|call|sort.Strings(out)
+cypher|executor_match_vector_cosine_fastpath.go|nodeProjectionPropertiesForVectorFastPath|loop|range matchProps
+cypher|executor_match_vector_cosine_fastpath.go|parseSimpleMatchRelationshipPattern|call|strings.TrimSpace(relPropsStr)
+cypher|executor_match_vector_cosine_fastpath.go|parseSimpleMatchRelationshipPattern|call|strings.TrimSpace(relType)
+cypher|executor_match_vector_cosine_fastpath.go|parseSimpleMatchRelationshipPattern|call|strings.TrimSpace(relType)
+cypher|executor_match_vector_cosine_fastpath.go|parseSimpleMatchRelationshipPattern|call|strings.TrimSpace(relVar)
+cypher|executor_match_vector_cosine_fastpath.go|parseSimpleMatchRelationshipPattern|call|strings.TrimSpace(remainder)
+cypher|executor_match_vector_cosine_fastpath.go|parseSimpleMatchRelationshipPattern|pass|parseCreateRelationshipContent over data (relContent) @create.go:parseCreateRelationshipContent
+cypher|executor_match_vector_cosine_fastpath.go|parseSimpleMatchRelationshipPattern|pass|parseSimpleEndpointRef over data (sourceContent) @executor_match_vector_cosine_fastpath.go:parseSimpleEndpointRef
+cypher|executor_match_vector_cosine_fastpath.go|parseSimpleMatchRelationshipPattern|pass|parseSimpleEndpointRef over data (targetContent) @executor_match_vector_cosine_fastpath.go:parseSimpleEndpointRef
+cypher|executor_match_vector_cosine_fastpath.go|resolveCosineQueryVector|pass|embedVectorQueryText over data (text) @vector_query_embed_cache.go:*StorageExecutor.embedVectorQueryText
+cypher|executor_match_vector_cosine_fastpath.go|tryFastPathMatchVectorCosine|pass|nodeMatchesProps over data (matchProps) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|executor_match_vector_cosine_fastpath.go|tryFastPathMatchVectorCosine|pass|nodeProjectionPropertiesForVectorFastPath over data (matchProps) @executor_match_vector_cosine_fastpath.go:nodeProjectionPropertiesForVectorFastPath
+cypher|executor_match_vector_cosine_fastpath.go|tryFastPathMatchWithVectorCosineProjection|pass|nodeMatchesProps over data (matchProps) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|executor_match_vector_cosine_fastpath.go|tryFastPathMatchWithVectorCosineProjection|pass|nodeProjectionPropertiesForVectorFastPath over data (matchProps) @executor_match_vector_cosine_fastpath.go:nodeProjectionPropertiesForVectorFastPath
+cypher|executor_mutations.go|applyDeleteReturnProjection|walk|nil walk to collectDeleteTargetValue
+cypher|executor_mutations.go|collectDeleteWithLimitCandidates|pass|parseNodePattern over data (prepared) @pattern_parser.go:*StorageExecutor.parseNodePattern
+cypher|executor_mutations.go|normalizePropsMap|loop|range genericMap
+cypher|executor_mutations.go|normalizePropsMap|loop|range propsMap
+cypher|executor_mutations.go|normalizePropsMap|walk|nil walk to normalizePropValue
+cypher|executor_mutations.go|normalizePropsMap|walk|nil walk to normalizePropValue
+cypher|executor_mutations_relationship_delete.go|collectBoundRelationshipDeleteSources|pass|nodeMatchesProps over data (sourcePattern.properties) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|executor_mutations_relationship_delete.go|tryExecuteBoundRelationshipDelete|pass|edgeMatchesProps over data (rowMatch.Relationship.Properties) @comparison.go:*StorageExecutor.edgeMatchesProps
+cypher|executor_mutations_relationship_delete.go|tryExecuteBoundRelationshipDelete|pass|parseNodePattern over data (sourceText) @pattern_parser.go:*StorageExecutor.parseNodePattern
+cypher|executor_mutations_relationship_delete.go|tryExecuteBoundRelationshipDelete|pass|parseTraversalPattern over data (rowPattern) @traversal.go:*StorageExecutor.parseTraversalPattern
+cypher|executor_mutations_where_eval.go|cloneStringAnyMap|loop|range src
+cypher|executor_show.go|applyShowTail|call|append of all of row
+cypher|executor_show.go|executeCreateDatabase|pass|findMultiWordKeywordIndex over data (cypher) @helpers.go:findMultiWordKeywordIndex
+cypher|executor_show.go|executeCreateDatabase|pass|findMultiWordKeywordIndex over data (cypher[startPos:]) @helpers.go:findMultiWordKeywordIndex
+cypher|executor_show.go|executeCreateDatabase|pass|splitDatabaseOptions over data (cypher) @database_options.go:*StorageExecutor.splitDatabaseOptions
+cypher|executor_show.go|executeCreateDatabase|pass|unquoteBacktickIdentifier over data (rawDBName) @identifier_unquote.go:unquoteBacktickIdentifier
+cypher|executor_show.go|executeShowConstraints|call|append of all of extensions
+cypher|executor_show.go|executeShowFunctions|call|copy of row
+cypher|executor_show.go|executeShowIndexes|pass|showIndexCreateStatement over data (name) @show_schema_values.go:showIndexCreateStatement
+cypher|executor_show.go|executeShowIndexes|pass|showLookupIndexCreateStatement over data (name) @schema_lookup_index.go:showLookupIndexCreateStatement
+cypher|executor_show.go|executeShowSettings|call|sort.Slice(definitions)
+cypher|executor_show.go|executeShowWithTail|pass|applyShowTail over data (showDefaultColumns(result)) @executor_show.go:*StorageExecutor.applyShowTail
+cypher|executor_show.go|functionSignatureDescriptions|call|fmt.Sprintf of a value
+cypher|executor_show.go|functionSignatureDescriptions|pass|parseLiteralValueFromComputedRow over data (defaultLiteral) @match_with_rel.go:parseLiteralValueFromComputedRow
+cypher|executor_show.go|projectShowColumns|loop|range result.Rows
+cypher|executor_show.go|showDatabaseCreatedAt|loop|range manager.ListDatabases()
+cypher|executor_subqueries.go|appendCorrelatedBinding|loop|range result.Rows
+cypher|executor_subqueries.go|callSeedIsFirstNode|call|strings.EqualFold(strings.TrimSpace(imported))
+cypher|executor_subqueries.go|callSeedIsFirstNode|call|strings.TrimSpace(imported)
+cypher|executor_subqueries.go|callSeedIsFirstNode|call|strings.TrimSpace(imported)
+cypher|executor_subqueries.go|callSeedIsFirstNode|loop|range imports
+cypher|executor_subqueries.go|callSubqueryLookupKeyString|call|fmt.Sprintf of a value
+cypher|executor_subqueries.go|compareValuesForSort|call|fmt.Sprintf of a value
+cypher|executor_subqueries.go|compareValuesForSort|call|fmt.Sprintf of a value
+cypher|executor_subqueries.go|compareValuesForSort|loop|for index < len(aList) && index < len(bList)
+cypher|executor_subqueries.go|compareValuesForSort|recursion|a recursive pass over data whose levels do not start with an observation
+cypher|executor_subqueries.go|refreshCallSeedNodeValues|call|append of all of seedRow
+cypher|executor_subqueries.go|seedNodesFromOuterMatch|pass|findKeywordIndex over data (matchBody) @helpers.go:findKeywordIndex
+cypher|executor_subqueries.go|seedNodesFromOuterMatch|pass|findKeywordIndex over data (whereClause) @helpers.go:findKeywordIndex
+cypher|executor_subqueries.go|seedNodesFromOuterMatch|pass|nodeMatchesProps over data (np.properties) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|executor_subqueries.go|seedNodesFromOuterMatch|pass|parseNodePattern over data (matchBody) @pattern_parser.go:*StorageExecutor.parseNodePattern
+cypher|executor_subqueries.go|seedNodesFromOuterMatch|pass|preparePatternRow over data (matchBody) @pattern_row.go:*StorageExecutor.preparePatternRow
+cypher|executor_subqueries.go|seedNodesFromOuterMatch|pass|readNodePattern over data (matchBody) @pattern_parser.go:readNodePattern
+cypher|executor_subqueries.go|seedNodesFromOuterMatch|pass|tryCollectNodesFromIDEquality over data (whereClause) @match_index_seek.go:*StorageExecutor.tryCollectNodesFromIDEquality
+cypher|executor_subqueries.go|seedNodesFromOuterMatch|pass|tryCollectNodesFromIDIn over data (whereClause) @match_index_seek.go:*StorageExecutor.tryCollectNodesFromIDIn
+cypher|executor_subqueries.go|seedNodesFromOuterMatch|pass|tryCollectNodesFromPropertyIndex over data (whereClause) @match_index_seek.go:*StorageExecutor.tryCollectNodesFromPropertyIndex
+cypher|executor_subqueries.go|seedNodesFromOuterMatch|pass|tryCollectNodesFromPropertyIndexIn over data (whereClause) @match_index_seek.go:*StorageExecutor.tryCollectNodesFromPropertyIndexIn
+cypher|executor_subqueries.go|tryExecuteCorrelatedBatchedLookup|call|append of all of m
+cypher|executor_subqueries.go|tryExecuteCorrelatedBatchedLookup|call|append of all of seedRow
+cypher|executor_subqueries.go|tryExecuteCorrelatedBatchedLookup|pass|executeInternal over data (params) @executor_internal.go:*StorageExecutor.executeInternal
+cypher|executor_use.go|CompositeGraphs|call|sort.Strings(graphs)
+cypher|executor_use.go|CompositeGraphs|loop|range constituents
+cypher|executor_use.go|executeOnDatabase|pass|executeInternal over data (params) @executor_internal.go:*StorageExecutor.executeInternal
+cypher|executor_use.go|executeOnDatabase|pass|executeRouted over data (params) @executor_entry.go:*StorageExecutor.executeRouted
+cypher|executor_use.go|useDatabase|pass|TransactionDatabaseError over data (resolvedDB) @executor_use.go:TransactionDatabaseError
+cypher|explain.go|analyzeQuery|call|sort.SliceStable(clauses)
+cypher|explain.go|annotateIndexDiagnostics|call|fmt.Sprintf of a value
+cypher|explain.go|annotateIndexDiagnostics|call|strings.Join(props)
+cypher|explain.go|annotateIndexDiagnostics|call|strings.TrimSpace(idxLabel)
+cypher|explain.go|annotateIndexDiagnostics|loop|range indexes
+cypher|explain.go|formatOperator|call|strings.Repeat("  ")
+cypher|explain.go|neo4jPlanOperatorMap|loop|range op.Arguments
+cypher|fastrp.go|fastRPConfiguration|call|fmt.Sprint of a value
+cypher|fastrp.go|fastRPConfiguration|loop|range items
+cypher|fastrp.go|fastRPConfiguration|loop|range items
+cypher|fastrp.go|fastRPConfiguration|pass|newGDSConfig over data (options) @gds_projection.go:newGDSConfig
+cypher|fastrp.go|runGdsFastRP|pass|fastRPConfiguration over data (options) @fastrp.go:fastRPConfiguration
+cypher|fulltext_query.go|parseRange|pass|lowerASCII over data (hi) @keyword_scan.go:lowerASCII
+cypher|fulltext_query.go|parseRange|pass|lowerASCII over data (lo) @keyword_scan.go:lowerASCII
+cypher|functions.go|evaluateExpressionWithCASESubstituted|call|(*strings.Builder).WriteString(reference)
+cypher|functions_cypher25.go|fnStringJoin|call|strings.Join(parts)
+cypher|functions_cypher25.go|fnStringRegexReplace|pass|javaReplacementTemplate over data (texts[2]) @functions_cypher25.go:javaReplacementTemplate
+cypher|functions_eval_functions.go|evaluateExpressionWithContextFullFunctions|call|strings.Join(parts)
+cypher|functions_eval_functions.go|evaluateExpressionWithContextFullFunctions|call|strings.ReplaceAll(str)
+cypher|functions_eval_functions.go|evaluateExpressionWithContextFullFunctions|call|strings.Split(str)
+cypher|functions_eval_functions.go|evaluateExpressionWithContextFullFunctions|pass|parseDuration over data (str) @duration.go:parseDuration
+cypher|functions_eval_functions.go|evaluateListAccessFunction|loop|range items
+cypher|functions_eval_functions.go|evaluateListAccessFunction|walk|nil walk to neo4jValueRepr
+cypher|functions_eval_math.go|evaluateExpressionWithContextFullMath|pass|kalmanAdaptiveProcess over data (stateJSON) @kalman_functions.go:kalmanAdaptiveProcess
+cypher|functions_eval_math.go|evaluateExpressionWithContextFullMath|pass|kalmanPredict over data (stateJSON) @kalman_functions.go:kalmanPredict
+cypher|functions_eval_math.go|evaluateExpressionWithContextFullMath|pass|kalmanProcess over data (stateJSON) @kalman_functions.go:kalmanProcess
+cypher|functions_eval_math.go|evaluateExpressionWithContextFullMath|pass|kalmanReset over data (stateJSON) @kalman_functions.go:kalmanReset
+cypher|functions_eval_math.go|evaluateExpressionWithContextFullMath|pass|kalmanStateValue over data (stateJSON) @kalman_functions.go:kalmanStateValue
+cypher|functions_eval_math.go|evaluateExpressionWithContextFullMath|pass|kalmanVelocityPredict over data (stateJSON) @kalman_functions.go:kalmanVelocityPredict
+cypher|functions_eval_math.go|evaluateExpressionWithContextFullMath|pass|kalmanVelocityProcess over data (stateJSON) @kalman_functions.go:kalmanVelocityProcess
+cypher|functions_eval_math.go|evaluateExpressionWithContextFullMath|pass|pointInPolygon over data (polygonPoints) @helpers.go:pointInPolygon
+cypher|functions_eval_math.go|evaluateExpressionWithContextFullMath|pass|pointInPolygon over data (polygonPoints) @helpers.go:pointInPolygon
+cypher|functions_eval_math.go|evaluateListComprehension|pass|rowComprehensionLoop over data (items) @row_list_loops.go:rowComprehensionLoop
+cypher|functions_eval_math.go|evaluateQuantifierWithContext|pass|rowQuantifierLoop over data (coerceToUnwindItems(list)) @row_list_loops.go:rowQuantifierLoop
+cypher|functions_eval_operators.go|cypherMembership|loop|range list
+cypher|functions_helpers.go|tryCallPluginFunction|pass|evaluateNativeAPOCFunction over data (evalArgs) @apoc_native_functions.go:*StorageExecutor.evaluateNativeAPOCFunction
+cypher|functions_neo5.go|convertToFloatOrNull|call|strings.TrimSpace(text)
+cypher|functions_neo5.go|fnScalarConversion|call|fmt.Sprintf of a value
+cypher|functions_neo5.go|fnStringOperation|loop|range values
+cypher|functions_neo5.go|fnStringOperation|pass|splitAtAnyDelimiter over data (text) @functions_neo5.go:splitAtAnyDelimiter
+cypher|functions_neo5.go|fnTrimFunction|pass|trimCharacters over data (text) @functions_neo5.go:trimCharacters
+cypher|functions_neo5.go|fnTrim|pass|trimCharacters over data (value) @functions_neo5.go:trimCharacters
+cypher|functions_neo5.go|sortValueTypes|call|sort.SliceStable(types)
+cypher|functions_neo5.go|splitAtAnyDelimiter|loop|for position < len(text)
+cypher|functions_neo5.go|splitAtAnyDelimiter|loop|range delimiters
+cypher|functions_neo5.go|splitAtAnyDelimiter|loop|range separators
+cypher|functions_neo5.go|trimSpecificationForm|pass|trimCharacters over data (text) @functions_neo5.go:trimCharacters
+cypher|functions_neo5.go|valueTypeOf|loop|range items
+cypher|functions_neo5.go|valueTypeOf|recursion|a recursive pass over data whose levels do not start with an observation
+cypher|functions_text_locate.go|fnTextLocate|pass|locateQuote over data (text) @functions_text_locate.go:locateQuote
+cypher|gds_functions.go|fnGDSAsNodes|call|fmt.Errorf of a value
+cypher|gds_functions.go|fnGDSGraphExists|call|fmt.Errorf of a value
+cypher|gds_functions.go|fnGDSIsFinite|call|fmt.Errorf of a value
+cypher|gds_functions.go|fnGDSNodeProperty|call|fmt.Errorf of a value
+cypher|gds_functions.go|fnGDSNodeProperty|call|fmt.Errorf of a value
+cypher|gds_functions.go|fnGDSNodeProperty|call|fmt.Errorf of a value
+cypher|gds_functions.go|fnGDSNodeProperty|call|fmt.Errorf of a value
+cypher|gds_functions.go|fnGDSSameCommunity|call|fmt.Errorf of a value
+cypher|gds_functions.go|gdsLinkPredictionConfig|call|fmt.Errorf of a value
+cypher|gds_functions.go|gdsLinkPredictionConfig|call|strings.ToUpper(text)
+cypher|gds_functions.go|gdsLinkPredictionConfig|loop|range entries
+cypher|gds_functions.go|gdsNodeByID|call|fmt.Sprint of a value
+cypher|gds_projection.go|gdsGraphInfo|loop|range schema["relationships"].(map[string]interface{})
+cypher|gds_projection.go|gdsProjectConfiguration|pass|newGDSConfig over data (options) @gds_projection.go:newGDSConfig
+cypher|gds_projection.go|gdsProjectionSpecs|call|sort.Strings(keys)
+cypher|gds_projection.go|gdsProjectionSpecs|loop|range items
+cypher|gds_projection.go|names|loop|range items
+cypher|gds_projection.go|newGDSConfig|call|sort.Strings(keys)
+cypher|gds_projection.go|newGDSConfig|loop|range entries
+cypher|gds_projection.go|readGDSPropertySpecs|call|sort.Strings(keys)
+cypher|gds_projection.go|readGDSPropertySpecs|loop|range items
+cypher|gds_projection.go|readGDSPropertySpecs|pass|gdsAggregation over data (text) @gds_projection.go:gdsAggregation
+cypher|gds_projection.go|read|call|strings.ToUpper(orientation)
+cypher|gds_projection.go|read|pass|gdsAggregation over data (aggregation) @gds_projection.go:gdsAggregation
+cypher|helpers.go|pointInPolygon|loop|range polygonPoints
+cypher|index_hints.go|ApplyIndexHint|loop|range nodeIDs
+cypher|index_hints.go|ApplyIndexHint|loop|range nodes
+cypher|index_hints.go|ValidateIndexHints|call|fmt.Sprintf of a value
+cypher|index_hints.go|ValidateIndexHints|loop|range indexes
+cypher|json_value_encoder.go|writeJSONValue|call|encoding/json.Marshal(value)
+cypher|json_values.go|apocConvertFromJSON|call|conversion []byte(text)
+cypher|json_values.go|apocConvertFromJSON|call|fmt.Sprintf of a value
+cypher|json_values.go|apocConvertFromJSON|walk|nil walk to jsonNumbers
+cypher|json_values.go|apocConvertToJSON|call|(*encoding/json.Encoder).Encode(value)
+cypher|knowledgepolicy_ddl.go|parseOptionsMap|call|strings.TrimSpace(rawVal)
+cypher|knowledgepolicy_procedures.go|callNornicDbKnowledgePolicyResolve|pass|parseKnowledgePolicyEntityID over data (entityID) @knowledgepolicy_procedures.go:parseKnowledgePolicyEntityID
+cypher|knowledgepolicy_procedures.go|callNornicDbKnowledgePolicyResolve|pass|splitCSVLabels over data (labelsCSV) @knowledgepolicy_procedures.go:splitCSVLabels
+cypher|knowledgepolicy_procedures.go|optionalStringArg|call|strings.TrimSpace(s)
+cypher|label_expression.go|resolveDynamic|loop|range names
+cypher|label_expression_rewrite.go|applyLabelRewriteEdits|call|sort.SliceStable(edits)
+cypher|label_expression_rewrite.go|comprehension|call|strings.Join(predicates)
+cypher|label_expression_rewrite.go|comprehension|pass|whereWithPredicates over data (predicates) @label_expression_rewrite.go:*labelExpressionRewriter.whereWithPredicates
+cypher|label_expression_rewrite.go|patternPredicate|call|strings.Join(predicates)
+cypher|label_expression_rewrite.go|patternWithWhere|call|strings.Join(predicates)
+cypher|label_expression_rewrite.go|patternWithWhere|call|strings.Join(predicates)
+cypher|label_expression_rewrite.go|patternWithWhere|pass|whereWithPredicates over data (predicates) @label_expression_rewrite.go:*labelExpressionRewriter.whereWithPredicates
+cypher|label_expression_rewrite.go|subquery|call|strings.Join(predicates)
+cypher|label_expression_rewrite.go|subquery|pass|whereWithPredicates over data (predicates) @label_expression_rewrite.go:*labelExpressionRewriter.whereWithPredicates
+cypher|linkprediction.go|callGdsLinkPredictionAdamicAdar|pass|callGdsLinkPredictionTopology over data (args) @linkprediction.go:*StorageExecutor.callGdsLinkPredictionTopology
+cypher|linkprediction.go|callGdsLinkPredictionCommonNeighbors|pass|callGdsLinkPredictionTopology over data (args) @linkprediction.go:*StorageExecutor.callGdsLinkPredictionTopology
+cypher|linkprediction.go|callGdsLinkPredictionJaccard|pass|callGdsLinkPredictionTopology over data (args) @linkprediction.go:*StorageExecutor.callGdsLinkPredictionTopology
+cypher|linkprediction.go|callGdsLinkPredictionPredict|pass|linkPredictionConfigFromArguments over data (args) @linkprediction.go:linkPredictionConfigFromArguments
+cypher|linkprediction.go|callGdsLinkPredictionPredict|pass|linkPredictionTargets over data (predictions) @linkprediction.go:linkPredictionTargets
+cypher|linkprediction.go|callGdsLinkPredictionPreferentialAttachment|pass|callGdsLinkPredictionTopology over data (args) @linkprediction.go:*StorageExecutor.callGdsLinkPredictionTopology
+cypher|linkprediction.go|callGdsLinkPredictionResourceAllocation|pass|callGdsLinkPredictionTopology over data (args) @linkprediction.go:*StorageExecutor.callGdsLinkPredictionTopology
+cypher|linkprediction.go|callGdsLinkPredictionTopology|pass|linkPredictionConfigFromArguments over data (args) @linkprediction.go:linkPredictionConfigFromArguments
+cypher|linkprediction.go|callGdsLinkPredictionTopology|pass|linkPredictionTargets over data (predictions) @linkprediction.go:linkPredictionTargets
+cypher|linkprediction.go|linkPredictionConfigFromArguments|loop|range args
+cypher|linkprediction.go|linkPredictionConfigFromArguments|loop|range targets
+cypher|linkprediction.go|linkPredictionTargets|loop|range predictions
+cypher|map_pattern_context.go|scope|call|sort.Slice(scope.clauses)
+cypher|match.go|compareForSort|call|fmt.Sprintf of a value
+cypher|match.go|compareForSort|call|fmt.Sprintf of a value
+cypher|match_index_order_groups.go|collectIndexedOrderWindow|pass|nodeMatchesProps over data (pattern.properties) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|match_index_seek.go|idEqualityLookup|call|strings.SplitN(lookupID)
+cypher|match_index_seek.go|indexCandidateLabels|call|sort.Strings(out)
+cypher|match_index_seek.go|indexCandidateLabels|call|strings.EqualFold(strings.TrimSpace(prop))
+cypher|match_index_seek.go|indexCandidateLabels|call|strings.EqualFold(strings.TrimSpace(typ))
+cypher|match_index_seek.go|indexCandidateLabels|call|strings.TrimSpace(label)
+cypher|match_index_seek.go|indexCandidateLabels|call|strings.TrimSpace(prop)
+cypher|match_index_seek.go|indexCandidateLabels|call|strings.TrimSpace(typ)
+cypher|match_index_seek.go|indexCandidateLabels|loop|range schema.GetIndexes()
+cypher|match_index_seek.go|parseSimpleIndexedInLiteral|call|fmt.Sprintf of a value
+cypher|match_index_seek.go|parseSimpleIndexedInParam|call|fmt.Sprintf of a value
+cypher|match_index_seek.go|parseSimpleIndexedInParam|loop|range list
+cypher|match_index_seek.go|tryCollectNodesFromIDEqualityParam|call|strings.SplitN(idValue)
+cypher|match_index_seek.go|tryCollectNodesFromIDEqualityParam|call|strings.SplitN(lookupID)
+cypher|match_index_seek.go|tryCollectNodesFromIDIn|call|strings.SplitN(lookupID)
+cypher|match_index_seek.go|tryCollectNodesFromIDIn|call|strings.SplitN(lookupID)
+cypher|match_index_seek.go|tryCollectNodesFromIDIn|pass|nodeMatchesProps over data (nodePattern.properties) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|match_index_seek.go|tryCollectNodesFromPropertyIndexAnyOf|pass|seekCandidateHasLabels over data (anyOf) @match_index_seek.go:seekCandidateHasLabels
+cypher|match_index_seek.go|tryCollectNodesFromPropertyIndexAnyOf|pass|seekCandidateLabels over data (property) @match_index_seek.go:*StorageExecutor.seekCandidateLabels
+cypher|match_index_seek.go|tryCollectNodesFromPropertyIndexInAnyOf|pass|seekCandidateHasLabels over data (anyOf) @match_index_seek.go:seekCandidateHasLabels
+cypher|match_index_seek.go|tryCollectNodesFromPropertyIndexInAnyOf|pass|seekCandidateLabels over data (property) @match_index_seek.go:*StorageExecutor.seekCandidateLabels
+cypher|match_index_seek.go|tryCollectNodesFromPropertyIndexInLiteralAnyOf|pass|seekCandidateHasLabels over data (anyOf) @match_index_seek.go:seekCandidateHasLabels
+cypher|match_index_seek.go|tryCollectNodesFromPropertyIndexInLiteralAnyOf|pass|seekCandidateLabels over data (property) @match_index_seek.go:*StorageExecutor.seekCandidateLabels
+cypher|match_index_seek.go|tryCollectNodesFromPropertyIndexInOrParam|call|fmt.Sprintf of a value
+cypher|match_index_seek.go|tryCollectNodesFromPropertyIndexInOrParam|pass|indexCandidateLabels over data (lprop) @match_index_seek.go:*StorageExecutor.indexCandidateLabels
+cypher|match_index_seek.go|tryCollectNodesFromPropertyIndexInOrParam|pass|indexCandidateLabels over data (rprop) @match_index_seek.go:*StorageExecutor.indexCandidateLabels
+cypher|match_index_seek.go|tryCollectNodesFromPropertyIndexOrEquality|pass|indexCandidateLabels over data (lprop) @match_index_seek.go:*StorageExecutor.indexCandidateLabels
+cypher|match_index_seek.go|tryCollectNodesFromPropertyIndexOrEquality|pass|indexCandidateLabels over data (rprop) @match_index_seek.go:*StorageExecutor.indexCandidateLabels
+cypher|match_multi.go|evaluateRowRelationshipPattern|pass|parseBoundRelationshipPattern over data (pattern) @match_multi.go:*StorageExecutor.parseBoundRelationshipPattern
+cypher|match_multi.go|executeChainedMatch|pass|parseNodePattern over data (rowPattern) @pattern_parser.go:*StorageExecutor.parseNodePattern
+cypher|match_multi.go|executeChainedMatch|pass|parseTraversalPattern over data (rowPattern) @traversal.go:*StorageExecutor.parseTraversalPattern
+cypher|match_multi.go|relationshipBindingsFromPathContext|call|append of all of path.Relationships
+cypher|match_multi.go|sameRelationshipBinding|loop|range leftList
+cypher|match_multi.go|visitNodesWithStreamingProjection|pass|nodeMatchesProps over data (properties) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|match_multi.go|visitNodesWithStreamingProjection|pass|nodePropertiesMatch over data (required) @comparison.go:nodePropertiesMatch
+cypher|match_rows.go|evaluateCoalesceInContext|walk|nil walk to queryVisibleValue
+cypher|match_rows.go|evaluateSumArithmetic|loop|range nodes
+cypher|match_rows.go|extractOrderByPropertyValue|pass|mapLookupCaseInsensitive over data (props) @match_rows.go:mapLookupCaseInsensitive
+cypher|match_rows.go|extractOrderByPropertyValue|pass|mapLookupCaseInsensitive over data (v.Properties) @match_rows.go:mapLookupCaseInsensitive
+cypher|match_rows.go|extractOrderByPropertyValue|pass|mapLookupCaseInsensitive over data (v.Properties) @match_rows.go:mapLookupCaseInsensitive
+cypher|match_rows.go|extractOrderByPropertyValue|pass|mapLookupCaseInsensitive over data (v.Properties) @match_rows.go:mapLookupCaseInsensitive
+cypher|match_rows.go|filterNodesByProperties|pass|nodeMatchesProps over data (props) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|match_rows.go|mapLookupCaseInsensitive|loop|range m
+cypher|match_rows.go|parseWithWhereLabelTest|pass|labelExpressionOfNames over data (labelChainNames(chain)) @label_expression.go:labelExpressionOfNames
+cypher|match_semantic_validation.go|callSubqueryReturnsOuterUnchanged|loop|range pipelineReturnSourceColumns(inner[returnIndex:])
+cypher|match_semantic_validation.go|callSubqueryReturnsOuterUnchanged|pass|topLevelKeywordIndex over data (inner) @keyword_scan.go:topLevelKeywordIndex
+cypher|match_semantic_validation.go|semanticScopeWalk|loop|range columns
+cypher|match_semantic_validation.go|semanticScopeWalk|pass|callSubqueryReturnTypes over data (branches) @static_type_scope.go:*StorageExecutor.callSubqueryReturnTypes
+cypher|match_semantic_validation.go|semanticScopeWalk|pass|callSubqueryReturnsOuterUnchanged over data (branches) @match_semantic_validation.go:callSubqueryReturnsOuterUnchanged
+cypher|match_semantic_validation.go|semanticScopeWalk|pass|topLevelKeywordIndex over data (branches[0]) @keyword_scan.go:topLevelKeywordIndex
+cypher|match_semantic_validation.go|validateMatchSemanticScopesUncached|loop|range e.fabricRecordBindings
+cypher|match_with_chain.go|countForExpr|loop|range nodes
+cypher|merge.go|cacheMergeNode|loop|range keys
+cypher|merge.go|cacheMergeNode|walk|nil walk to mergeLookupCacheKeys
+cypher|merge.go|cloneNodePropertiesMap|loop|range in
+cypher|merge.go|evictMergeNodeCacheEntries|loop|range keys
+cypher|merge.go|evictMergeNodeCacheEntries|walk|nil walk to mergeLookupCacheKeys
+cypher|merge.go|findMergeNodeInCache|loop|range keys
+cypher|merge.go|findMergeNodeInCache|pass|mergeNodeMatches over data (props) @merge.go:mergeNodeMatches
+cypher|merge.go|findMergeNodeInCache|pass|mergeNodeMatches over data (props) @merge.go:mergeNodeMatches
+cypher|merge.go|findMergeNodeInCache|walk|nil walk to mergeLookupCacheKeys
+cypher|merge.go|findMergeNodesScanned|pass|mergeNodeIndexedCandidateIDs over data (props) @merge.go:*StorageExecutor.mergeNodeIndexedCandidateIDs
+cypher|merge.go|findMergeNodesScanned|pass|mergeNodeMatches over data (props) @merge.go:mergeNodeMatches
+cypher|merge.go|findMergeNodesScanned|pass|mergeNodeMatches over data (props) @merge.go:mergeNodeMatches
+cypher|merge.go|findMergeNodesScanned|pass|mergeNodeMatches over data (props) @merge.go:mergeNodeMatches
+cypher|merge.go|findMergeNode|pass|findMergeNodeInCache over data (props) @merge.go:*StorageExecutor.findMergeNodeInCache
+cypher|merge.go|findMergeNode|pass|mergeNodeMatches over data (props) @merge.go:mergeNodeMatches
+cypher|merge.go|findMergeNode|pass|mergeNodeMatches over data (props) @merge.go:mergeNodeMatches
+cypher|merge.go|findMergeNode|pass|mergeNodeMatches over data (props) @merge.go:mergeNodeMatches
+cypher|merge.go|findMergeNode|pass|mergeNodeMatches over data (props) @merge.go:mergeNodeMatches
+cypher|merge.go|findMergeNode|pass|mergeNodeMatches over data (props) @merge.go:mergeNodeMatches
+cypher|merge.go|findMergeNode|pass|mergeNodeMatches over data (props) @merge.go:mergeNodeMatches
+cypher|merge.go|mergeNodeMatches|pass|nodePropertiesMatch over data (props) @comparison.go:nodePropertiesMatch
+cypher|merge.go|mergePropertyNamesSorted|call|sort.Strings(names)
+cypher|merge.go|mergePropertyNamesSorted|loop|range props
+cypher|merge_actions.go|pipelineMergePath|call|strings.Join(splitTopLevelAndConjuncts(match[where + len("WHERE"):]))
+cypher|merge_actions.go|pipelineMergePath|loop|range mergePathSegments(identityPattern)
+cypher|merge_actions.go|pipelineMergePath|pass|directedMergePath over data (createPattern) @merge_actions.go:directedMergePath
+cypher|merge_actions.go|pipelineMergePath|pass|parseMergeRelationshipShape over data (segment) @merge_relationship_pattern.go:*StorageExecutor.parseMergeRelationshipShape
+cypher|merge_actions.go|pipelineMergePath|pass|pipelineMatchRows over data (match) @shortest_path_match.go:*StorageExecutor.pipelineMatchRows
+cypher|merge_actions.go|pipelineMergePath|pass|pipelineMatchRows over data (match) @shortest_path_match.go:*StorageExecutor.pipelineMatchRows
+cypher|merge_actions.go|pipelineMergePath|pass|preparePatternRow over data (identityPattern) @pattern_row.go:*StorageExecutor.preparePatternRow
+cypher|merge_actions.go|pipelineMergePath|pass|splitTopLevelAndConjuncts over data (match[where + len("WHERE"):]) @match_index_seek.go:splitTopLevelAndConjuncts
+cypher|merge_actions.go|pipelineMergePath|pass|topLevelKeywordIndex over data (identityPattern) @keyword_scan.go:topLevelKeywordIndex
+cypher|merge_actions.go|pipelineMergePath|pass|topLevelKeywordIndex over data (match) @keyword_scan.go:topLevelKeywordIndex
+cypher|merge_actions.go|pipelineMergePath|pass|validateMergePatternProperties over data (evaluated) @merge_semantic_validation.go:validateMergePatternProperties
+cypher|merge_actions.go|pipelineMergePath|pass|validateMergePatternProperties over data (properties) @merge_semantic_validation.go:validateMergePatternProperties
+cypher|merge_context.go|applyNodeSetClause|pass|mapEntries over data (node.Properties) @set_write_count.go:*setWrites.mapEntries
+cypher|merge_context.go|applyNodeSetClause|pass|setPropertyMap over data (props) @set_helpers.go:setPropertyMap
+cypher|merge_context.go|applySetToRelationshipWithContext|pass|mapEntries over data (edge.Properties) @set_write_count.go:*setWrites.mapEntries
+cypher|merge_context.go|applySetToRelationshipWithContext|pass|mapEntries over data (edge.Properties) @set_write_count.go:*setWrites.mapEntries
+cypher|merge_context.go|applySetToRelationshipWithContext|pass|setPropertyMap over data (props) @set_helpers.go:setPropertyMap
+cypher|merge_context.go|executeMergeRelationshipWithContext|pass|countCreatedEntity over data (edge.Properties) @query_stats.go:countCreatedEntity
+cypher|merge_context.go|executeMergeRelationshipWithContext|pass|validateMergePatternProperties over data (parsedPattern.endNodePattern.properties) @merge_semantic_validation.go:validateMergePatternProperties
+cypher|merge_context.go|executeMergeRelationshipWithContext|pass|validateMergePatternProperties over data (parsedPattern.startNodePattern.properties) @merge_semantic_validation.go:validateMergePatternProperties
+cypher|merge_context.go|executeMergeWithContext|pass|countCreatedEntity over data (node.Properties) @query_stats.go:countCreatedEntity
+cypher|merge_context.go|executeMergeWithContext|pass|findMergeNode over data (labels) @merge.go:*StorageExecutor.findMergeNode
+cypher|merge_context.go|executeMergeWithContext|pass|findMergeNode over data (labels) @merge.go:*StorageExecutor.findMergeNode
+cypher|merge_context.go|executeMergeWithContext|pass|mergeNodeMatches over data (labels) @merge.go:mergeNodeMatches
+cypher|merge_context.go|executeMergeWithContext|pass|validateMergePatternProperties over data (matchProps) @merge_semantic_validation.go:validateMergePatternProperties
+cypher|merge_context.go|executeMergeWithContext|pass|validatePropertyValues over data (node.Properties) @set_semantic_validation.go:validatePropertyValues
+cypher|merge_context.go|setPropertyMapValue|loop|range props
+cypher|merge_context.go|setPropertyMapValue|loop|range props
+cypher|merge_context.go|setPropertyMapValue|loop|range rewrites
+cypher|merge_relationship_pattern.go|parseMergeRelationshipShape|call|strings.TrimSpace(remainder)
+cypher|merge_relationship_pattern.go|parseMergeRelationshipShape|pass|parseCreateRelationshipContent over data (relationshipContent) @create.go:parseCreateRelationshipContent
+cypher|merge_semantic_validation.go|validateMergePatternProperties|loop|range properties
+cypher|merge_semantic_validation.go|validateMergePatternProperties|pass|validatePropertyValues over data (properties) @set_semantic_validation.go:validatePropertyValues
+cypher|node_helpers.go|materializedValue|walk|nil walk to materializedValueWithCheckpoint
+cypher|node_helpers.go|nodeToMap|loop|range props
+cypher|operators.go|add|call|append of all of leftList
+cypher|operators.go|add|call|append of all of rightList
+cypher|operators.go|appendListOperand|call|append of all of items
+cypher|optimized_executors.go|getPropertyString|call|fmt.Sprintf of a value
+cypher|optional_match_traversal.go|extendTraversalRow|loop|range row.values
+cypher|optional_match_traversal_general.go|candidateValuesAgreeWithRow|walk|nil walk to IdenticalValues
+cypher|optional_match_traversal_general.go|extendTraversalRowMulti|loop|range row.values
+cypher|optional_match_traversal_general.go|pipelineRowFromTraversalOptionalRow|loop|range row.values
+cypher|parallel.go|run|recover|the owner's stop recovered outside a boundary (RecoverStop)
+cypher|parallel.go|work|recover|the owner's stop recovered outside a boundary (RecoverStop)
+cypher|parameters.go|getParamKeys|loop|range params
+cypher|parser.go|Parse|call|strings.EqualFold(tokens[pos + 1])
+cypher|parser.go|Parse|loop|for pos < len(tokens)
+cypher|parser.go|Parse|pass|upperASCII over data (tokens[pos]) @keyword_scan.go:upperASCII
+cypher|path_selector.go|pathNodeIDs|loop|range nodes
+cypher|path_selector.go|pathResultNodeIDs|loop|range path.Nodes
+cypher|path_selector.go|rewrittenExpression|call|sort.SliceStable(sub.edits)
+cypher|path_selector_search_walk.go|walkHops|call|append of all of rest
+cypher|pattern_row.go|compilePatternRow|call|sort.Strings(properties.keys)
+cypher|pattern_row.go|compilePatternRow|loop|for {}
+cypher|pattern_row.go|compilePatternRow|loop|range keys
+cypher|pattern_row.go|preparePatternNodeProperties|pass|patternRowPropertyValues over data (text) @pattern_row.go:*StorageExecutor.patternRowPropertyValues
+cypher|pattern_row.go|preparePatternNodeProperties|pass|splitNodePatternProperties over data (prepared) @pattern_parser.go:splitNodePatternProperties
+cypher|pipeline_aggregate_stream.go|cartesianAggregateProperty|loop|range patterns
+cypher|pipeline_aggregate_stream.go|pipelineAggregateGroups|call|append of all of template.states
+cypher|pipeline_aggregate_stream.go|pipelineAggregateGroups|pass|addTupleByContract over data (values) @value_equivalence_index.go:*cypherValueIndex.addTupleByContract
+cypher|pipeline_aggregate_stream.go|pipelineAggregateGroups|pass|growTuple over data (values) @transaction_memory.go:*memoryAccount.growTuple
+cypher|pipeline_aggregate_stream.go|pipelineRowsSource|loop|range rows
+cypher|pipeline_aggregate_stream.go|tryCartesianAggregatePartitions|pass|addTupleByContract over data (parts) @value_equivalence_index.go:*cypherValueIndex.addTupleByContract
+cypher|pipeline_aggregate_stream.go|tryCartesianAggregatePartitions|pass|cartesianAggregateProperty over data (patterns) @pipeline_aggregate_stream.go:cartesianAggregateProperty
+cypher|pipeline_aggregate_stream.go|tryCartesianAggregatePartitions|pass|cartesianAggregateProperty over data (patterns) @pipeline_aggregate_stream.go:cartesianAggregateProperty
+cypher|pipeline_call_operator.go|callPipelineResultFromRows|call|sort.Strings(sorted)
+cypher|pipeline_call_operator.go|pipelineApplyCallSubqueryWithMetadata|call|strings.TrimSpace(afterCall)
+cypher|pipeline_call_operator.go|pipelineApplyCallSubqueryWithMetadata|pass|callSubqueryQueryIsWrite over data (body) @executor_subqueries.go:callSubqueryQueryIsWrite
+cypher|pipeline_call_operator.go|pipelineApplyCallSubqueryWithMetadata|pass|estimateResultRowBytes over data (values) @transaction_memory_estimate.go:estimateResultRowBytes
+cypher|pipeline_call_operator.go|pipelineApplyCallSubqueryWithMetadata|pass|executeUnionBranches over data (body) @clauses.go:*StorageExecutor.executeUnionBranches
+cypher|pipeline_call_operator.go|pipelineApplyCallSubqueryWithMetadata|pass|isIdentifierReferenced over data (body) @call.go:isIdentifierReferenced
+cypher|pipeline_call_operator.go|pipelineApplyCallSubqueryWithMetadata|pass|unscopedBranchLocals over data (branch) @executor_subqueries.go:unscopedBranchLocals
+cypher|pipeline_call_operator.go|pipelineApplyCallSubqueryWithMetadata|pass|useDatabase over data (remaining) @executor_use.go:*StorageExecutor.useDatabase
+cypher|pipeline_executor.go|collectPipelineInitialNodeCandidates|pass|collectNodesWithStreamingProjection over data (streamingWhere) @match_multi.go:*StorageExecutor.collectNodesWithStreamingProjection
+cypher|pipeline_executor.go|pipelineApplyBoundRelationshipListMatch|pass|parseTraversalPattern over data (prepared) @traversal.go:*StorageExecutor.parseTraversalPattern
+cypher|pipeline_executor.go|pipelineApplyInitialNodeMatch|pass|pipelinePropertiesKey over data (nodePattern.properties) @pipeline_pattern_template.go:pipelinePropertiesKey
+cypher|pipeline_executor.go|pipelineBindingValuesEqual|walk|nil walk to IdenticalValues
+cypher|pipeline_executor.go|pipelineLabelScanProjection|call|sort.Strings(properties)
+cypher|pipeline_executor.go|pipelineLabelScanProjection|pass|pipelineNodePredicateProperties over data (nodePattern.properties) @pipeline_executor.go:pipelineNodePredicateProperties
+cypher|pipeline_executor.go|pipelineNodeMatchesPattern|pass|nodeMatchesProps over data (pattern.properties) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|pipeline_executor.go|pipelineNodePredicateProperties|call|sort.Strings(properties)
+cypher|pipeline_executor.go|pipelineNodePredicateProperties|loop|range inline
+cypher|pipeline_executor.go|runPipelineClauseRows|loop|range yielded
+cypher|pipeline_executor.go|runPipelineClauseRows|pass|growRows over data (newRows) @transaction_memory.go:*memoryScope.growRows
+cypher|pipeline_executor.go|runPipelineClauseRows|pass|growRows over data (newRows) @transaction_memory.go:*memoryScope.growRows
+cypher|pipeline_executor.go|runPipelineClauseRows|pass|growRows over data (newRows) @transaction_memory.go:*memoryScope.growRows
+cypher|pipeline_executor.go|runPipelineClauseRows|pass|topLevelKeywordIndex over data (body) @keyword_scan.go:topLevelKeywordIndex
+cypher|pipeline_executor.go|tryStreamPipelineFilteredNodeCount|pass|nodeMatchesProps over data (nodePattern.properties) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|pipeline_executor.go|tryStreamPipelineFilteredNodeCount|pass|pipelineNodePredicateProperties over data (nodePattern.properties) @pipeline_executor.go:pipelineNodePredicateProperties
+cypher|pipeline_executor.go|visitPipelineInitialNodeCandidates|pass|visitNodesWithStreamingProjection over data (streamingWhere) @match_multi.go:*StorageExecutor.visitNodesWithStreamingProjection
+cypher|pipeline_imports.go|carrySubqueryImports|loop|range imports
+cypher|pipeline_mutation.go|changedPropertyCount|loop|range after
+cypher|pipeline_mutation.go|changedPropertyCount|loop|range before
+cypher|pipeline_mutation.go|pipelineApplyDelete|pass|add over data (nodeIDs) @deleted_entity_projection.go:*deletedEntities.add
+cypher|pipeline_mutation.go|pipelineApplyForeach|pass|evaluateListForPipelineWithContext over data (listExpr) @pipeline_value_helpers.go:*StorageExecutor.evaluateListForPipelineWithContext
+cypher|pipeline_mutation.go|pipelineApplyMerge|pass|executeMergeWithContext over data ("MERGE " + mergePattern) @merge_context.go:*StorageExecutor.executeMergeWithContext
+cypher|pipeline_mutation.go|pipelineApplyMerge|pass|extractPathAssignmentVariable over data (mergePattern) @executor_mutations_delete_guard.go:extractPathAssignmentVariable
+cypher|pipeline_mutation.go|pipelineApplyMerge|pass|extractVarName over data (mergePattern) @node_helpers.go:*StorageExecutor.extractVarName
+cypher|pipeline_mutation.go|pipelineApplyMerge|pass|findMergeNodesScanned over data (labels) @merge.go:*StorageExecutor.findMergeNodesScanned
+cypher|pipeline_mutation.go|pipelineApplyMerge|pass|firstRelationshipBracket over data (mergePattern) @relationship_brackets.go:firstRelationshipBracket
+cypher|pipeline_mutation.go|pipelineApplyMerge|pass|parseMergeNodePattern over data (nodePattern) @merge_context.go:*StorageExecutor.parseMergeNodePattern
+cypher|pipeline_mutation.go|pipelineApplyMerge|pass|parseMergeRelationshipPattern over data (mergePattern) @merge_relationship_pattern.go:*StorageExecutor.parseMergeRelationshipPattern
+cypher|pipeline_mutation.go|pipelineApplyMerge|pass|parseMergeRelationshipShape over data (mergePattern) @merge_relationship_pattern.go:*StorageExecutor.parseMergeRelationshipShape
+cypher|pipeline_mutation.go|pipelineApplyMerge|pass|pipelineMergeTemplateFor over data ("MERGE " + preparedPattern) @pipeline_pattern_template.go:*StorageExecutor.pipelineMergeTemplateFor
+cypher|pipeline_mutation.go|pipelineApplyMerge|pass|preparePatternRow over data (mergePattern) @pattern_row.go:*StorageExecutor.preparePatternRow
+cypher|pipeline_mutation.go|pipelineApplyRowDynamicMerge|pass|pipelineApplyMerge over data (clause[:at] + resolved + clause[at + len(pattern):]) @pipeline_mutation.go:*StorageExecutor.pipelineApplyMerge
+cypher|pipeline_mutation.go|pipelineApplySet|call|fmt.Sprintf of a value
+cypher|pipeline_mutation.go|pipelineApplySet|pass|cloneStringAnyMap over data (node.Properties) @executor_mutations_where_eval.go:cloneStringAnyMap
+cypher|pipeline_mutation.go|pipelineApplySet|pass|cloneStringAnyMap over data (relationship.Properties) @executor_mutations_where_eval.go:cloneStringAnyMap
+cypher|pipeline_mutation.go|pipelinePlanCreateRow|pass|hasDynamicToken over data (pattern) @dynamic_tokens.go:hasDynamicToken
+cypher|pipeline_mutation.go|pipelinePlanCreateRow|pass|planCreatePatterns over data (pattern) @create.go:*StorageExecutor.planCreatePatterns
+cypher|pipeline_mutation.go|pipelinePlanCreateRow|pass|resolveRowDynamicTokens over data (pattern) @dynamic_tokens.go:*StorageExecutor.resolveRowDynamicTokens
+cypher|pipeline_mutation.go|samePropertyValue|walk|nil walk to IdenticalValues
+cypher|pipeline_mutation.go|setClauseSourceTypeError|pass|typedOperand over data (typeName) @static_operand.go:typedOperand
+cypher|pipeline_pattern_template.go|pipelinePropertiesKey|call|sort.Strings(keys)
+cypher|pipeline_pattern_template.go|pipelinePropertiesKey|loop|range props
+cypher|pipeline_projection.go|deduplicatePipelineResultRows|pass|addTupleByContract over data (row) @value_equivalence_index.go:*cypherValueIndex.addTupleByContract
+cypher|pipeline_projection.go|deduplicatePipelineRowsWithScopes|pass|addTupleByContract over data (values) @value_equivalence_index.go:*cypherValueIndex.addTupleByContract
+cypher|pipeline_projection.go|deduplicatePipelineRowsWithScopes|pass|growTuple over data (values) @transaction_memory.go:*memoryAccount.growTuple
+cypher|pipeline_projection.go|pipelineScopeColumns|call|sort.Strings(columns)
+cypher|pipeline_projection.go|pipelineWildcardColumns|call|sort.Strings(columns)
+cypher|pipeline_row_stream.go|pipelineNodeMatchSourceWithHint|pass|pipelinePropertiesKey over data (pattern.properties) @pipeline_pattern_template.go:pipelinePropertiesKey
+cypher|pipeline_traversal_match.go|pipelineApplySeededTraversalMatch|pass|boundTraversalLimitSafe over data (materializedPattern) @pipeline_traversal_match.go:*StorageExecutor.boundTraversalLimitSafe
+cypher|pipeline_traversal_match.go|pipelineApplySeededTraversalMatch|pass|executeMatchWithRelationshipsWithPathSeeded over data (materializedPattern) @traversal.go:*StorageExecutor.executeMatchWithRelationshipsWithPathSeeded
+cypher|pipeline_traversal_match.go|pipelineApplySeededTraversalMatch|pass|pipelineTraversalSeedNodes over data (materializedPattern) @pipeline_traversal_match.go:*StorageExecutor.pipelineTraversalSeedNodes
+cypher|pipeline_traversal_match.go|pipelineApplySeededTraversalMatch|pass|relationshipIDSeedNodes over data (materializedPattern) @traversal_relationship_id_seed.go:*StorageExecutor.relationshipIDSeedNodes
+cypher|pipeline_traversal_match.go|pipelineApplySeededTraversalMatch|pass|tryExecuteTraversalSeedOrderLimit over data (materializedPattern) @traversal.go:*StorageExecutor.tryExecuteTraversalSeedOrderLimit
+cypher|pipeline_traversal_match.go|pipelineApplySeededTraversalMatch|pass|tryExecuteTraversalSeedOrderLimit over data (materializedPattern) @traversal.go:*StorageExecutor.tryExecuteTraversalSeedOrderLimit
+cypher|pipeline_traversal_source.go|pipelineTraversalSource|pass|edgeMatchesProps over data (match.Relationship.Properties) @comparison.go:*StorageExecutor.edgeMatchesProps
+cypher|pipeline_traversal_source.go|traversalSourceProperties|pass|pipelineNodePredicateProperties over data (node.properties) @pipeline_executor.go:pipelineNodePredicateProperties
+cypher|pipeline_write_stretch.go|addStretchLabelChain|loop|range names
+cypher|plan_hash.go|canonicalizePlan|call|sort.Strings(keys)
+cypher|plan_hash.go|canonicalizePlan|loop|range op.Arguments
+cypher|plugin_typed_invocation.go|convertPluginArgument|loop|for iter.Next()
+cypher|plugin_typed_invocation.go|convertPluginArgument|loop|range items
+cypher|point_values.go|neo4jValueDescription|call|fmt.Sprint of a value
+cypher|point_values.go|newPointFromMap|call|fmt.Sprint of a value
+cypher|point_values.go|newPointFromMap|call|fmt.Sprint of a value
+cypher|point_values.go|newPointFromMap|call|fmt.Sprint of a value
+cypher|point_values.go|newPointFromMap|call|fmt.Sprintf of a value
+cypher|point_values.go|newPointFromMap|pass|pointCRSByName over data (name) @point_values.go:pointCRSByName
+cypher|predicate_helpers.go|buildComparableMembershipIndex|loop|range items
+cypher|predicate_helpers.go|evaluateComparableMembership|loop|range nonComparable
+cypher|procedure_arguments.go|requiredProcedureStringList|loop|range items
+cypher|procedure_ddl.go|compilePersistedProcedure|pass|executeUserStatement over data (params) @executor_internal.go:*StorageExecutor.executeUserStatement
+cypher|procedure_ddl.go|executeCreateProcedure|pass|buildProcedureSignature over data (argNames) @procedure_ddl.go:buildProcedureSignature
+cypher|procedure_ddl.go|loadPersistedProcedures|loop|range nodes
+cypher|procedure_registry.go|ListBuiltIns|call|sort.Slice(out)
+cypher|procedure_registry.go|List|call|sort.Slice(out)
+cypher|procedure_registry_builtin.go|ensureBuiltInProceduresRegistered|pass|callGdsLinkPredictionAdamicAdar over data (args) @linkprediction.go:*StorageExecutor.callGdsLinkPredictionAdamicAdar
+cypher|procedure_registry_builtin.go|ensureBuiltInProceduresRegistered|pass|callGdsLinkPredictionCommonNeighbors over data (args) @linkprediction.go:*StorageExecutor.callGdsLinkPredictionCommonNeighbors
+cypher|procedure_registry_builtin.go|ensureBuiltInProceduresRegistered|pass|callGdsLinkPredictionJaccard over data (args) @linkprediction.go:*StorageExecutor.callGdsLinkPredictionJaccard
+cypher|procedure_registry_builtin.go|ensureBuiltInProceduresRegistered|pass|callGdsLinkPredictionPredict over data (args) @linkprediction.go:*StorageExecutor.callGdsLinkPredictionPredict
+cypher|procedure_registry_builtin.go|ensureBuiltInProceduresRegistered|pass|callGdsLinkPredictionPreferentialAttachment over data (args) @linkprediction.go:*StorageExecutor.callGdsLinkPredictionPreferentialAttachment
+cypher|procedure_registry_builtin.go|ensureBuiltInProceduresRegistered|pass|callGdsLinkPredictionResourceAllocation over data (args) @linkprediction.go:*StorageExecutor.callGdsLinkPredictionResourceAllocation
+cypher|procedure_registry_builtin.go|registerProcedure|loop|range arguments
+cypher|procedure_registry_builtin.go|registerProcedure|loop|range columns
+cypher|procedure_registry_builtin.go|registerProcedure|pass|functionSignatureDescriptions over data ("returns" + returnSignature) @executor_show.go:functionSignatureDescriptions
+cypher|procedure_validation.go|staticProcedureArgumentTypeError|pass|procedureArgumentTypeName over data (typeName) @static_operand.go:procedureArgumentTypeName
+cypher|procedure_validation.go|staticProcedureArgumentTypeError|pass|procedureParameterAcceptsStaticType over data (typeName) @procedure_validation.go:procedureParameterAcceptsStaticType
+cypher|procedure_validation.go|staticProcedureArgumentTypeError|pass|typeNameMismatchError over data (expected) @size_semantics.go:typeNameMismatchError
+cypher|procedure_validation.go|validateAndCoerceProcedureArguments|call|append of all of args
+cypher|procedure_validation.go|validateAndCoerceProcedureArguments|call|fmt.Sprintf of a value
+cypher|procedure_validation.go|validateAndCoerceProcedureArguments|loop|range coerced
+cypher|property_access_semantic_validation.go|parameterMayRejectPropertyAccess|pass|rejectsPropertyAccess over data (typeName) @property_access_semantic_validation.go:rejectsPropertyAccess
+cypher|property_access_semantic_validation.go|scanPropertyAccesses|pass|propertyAccessMismatch over data (parameterPropertyAccessType(value)) @property_access_semantic_validation.go:propertyAccessMismatch
+cypher|property_access_semantic_validation.go|validatePropertyAccessClauses|pass|elementOfType over data (propertyAccessExpressionType(expression, types, params)) @static_operand.go:elementOfType
+cypher|quantified_path_pattern.go|matchQuantifiedIterations|call|append of all of lists[variable]
+cypher|quantified_path_pattern.go|matchQuantifiedIterations|call|append of all of values
+cypher|quantifier_semantic_validation.go|validateStaticQuantifierCall|loop|range toAnySlice(list)
+cypher|query_info.go|Analyze|pass|analyzeQuery over data (text) @query_info.go:analyzeQuery
+cypher|query_info.go|Analyze|pass|cachedExecutionPolicy over data (text) @execution_determinism.go:cachedExecutionPolicy
+cypher|query_info.go|Analyze|pass|normalizeQuery over data (text) @cache.go:normalizeQuery
+cypher|query_info.go|appendPatternPropertyExpressions|pass|containsString over data (labels) @create_pipeline_helpers.go:containsString
+cypher|query_property_visibility.go|queryEntityProperties|walk|nil walk to queryVisibleValue
+cypher|query_stats.go|countCreatedEntity|loop|range properties
+cypher|query_structure_rewrite.go|region|call|strings.Repeat("CALL (*) { ")
+cypher|quoted_variables.go|canonicalizeQuotedVariables|call|sort.Slice(names.internalOrder)
+cypher|quoted_variables.go|parameterValues|loop|range params
+cypher|quoted_variables.go|sortColumnsByName|call|sort.SliceStable(order)
+cypher|regex_match.go|cypherRegexMatch|pass|anchoredRegexPattern over data (patternString) @regex_match.go:anchoredRegexPattern
+cypher|regex_match.go|cypherRegexMatch|walk|nil walk to neo4jValueRepr
+cypher|relationship_endpoint_projection.go|readRetained|loop|range selected
+cypher|relationship_merge_identity.go|createRelationshipForMerge|pass|validatePropertyValues over data (edge.Properties) @set_semantic_validation.go:validatePropertyValues
+cypher|relationship_merge_identity.go|normalizeRelationshipMergeIdentityValue|loop|range props
+cypher|relationship_merge_identity.go|normalizeRelationshipMergeIdentityValue|recursion|a recursive pass over data whose levels do not start with an observation
+cypher|relationship_merge_identity.go|normalizeRelationshipMergeIdentityValue|walk|nil walk to normalizePropValue
+cypher|relationship_merge_identity.go|relationshipMergeIdentityKey|walk|nil walk to unwindMergeKey
+cypher|relationship_merge_identity.go|relationshipMergeValuesEqualGeneral|walk|nil walk to IdenticalValues
+cypher|relationship_merge_identity.go|relationshipMergeValuesEqualGeneral|walk|nil walk to mergeValueKey
+cypher|relationship_merge_identity.go|relationshipMergeValuesEqualGeneral|walk|nil walk to mergeValueKey
+cypher|relationship_merge_identity.go|relationshipMergeValuesEqualGeneral|walk|nil walk to relationshipMergeIdentityContainsNaN
+cypher|relationship_merge_identity.go|relationshipMergeValuesEqualGeneral|walk|nil walk to relationshipMergeIdentityContainsNaN
+cypher|relationship_merge_identity_cache.go|relationshipMergeIdentityValuesKey|call|(*strings.Builder).WriteString(mergeValueKey(nil, positiveZero(nil, normalized)))
+cypher|relationship_merge_identity_cache.go|relationshipMergeIdentityValuesKey|walk|nil walk to mergeValueKey
+cypher|relationship_merge_identity_cache.go|relationshipMergeIdentityValuesKey|walk|nil walk to positiveZero
+cypher|relationship_merge_identity_cache.go|relationshipMergeIdentityValuesKey|walk|nil walk to relationshipMergeIdentityContainsNaN
+cypher|relationship_merge_identity_cache.go|sortedIdentityKeys|call|sort.Strings(keys)
+cypher|remove_clause.go|removeFromNode|pass|removeNodeLabels over data (labels) @executor_mutations.go:removeNodeLabels
+cypher|result_columns.go|CachedResultColumns|loop|range e.fabricRecordBindings
+cypher|result_columns.go|resultIncomingScope|loop|range e.fabricRecordBindings
+cypher|result_columns_admission.go|admitBoundStatement|loop|range e.fabricRecordBindings
+cypher|result_columns_admission.go|admitBoundStatement|loop|range valueBindingsFromContext(ctx)
+cypher|result_columns_bound.go|defineClause|call|slices.Sort(names)
+cypher|result_columns_compile.go|callImports|call|slices.Sort(outer)
+cypher|result_columns_compile.go|compileBound|call|slices.Sort(inputNames)
+cypher|result_columns_compile.go|implicitSyntaxImports|call|slices.Sort(imports)
+cypher|result_columns_normalization.go|canonicalizeStatementText|call|(*strings.Builder).WriteString(canonical[edit.canonStart:edit.canonEnd])
+cypher|result_columns_scope.go|namesKey|call|slices.Sort(values)
+cypher|result_columns_scope.go|projectedMapNames|call|slices.Sort(names)
+cypher|result_stream.go|Next|loop|for !s.exhausted && (n <= 0 || len(out) < n)
+cypher|result_stream.go|take|call|append of all of rows[:room:room]
+cypher|retrieval_request.go|readRetrievalContinuation|call|strings.TrimSpace(stringOr(req["mode"], ""))
+cypher|retrieval_request.go|readRetrievalContinuation|pass|lowerASCII over data (strings.TrimSpace(stringOr(req["mode"], ""))) @keyword_scan.go:lowerASCII
+cypher|row_expression.go|compareCypherOrderedValues|loop|for index < sharedLength
+cypher|row_expression.go|compareCypherOrderedValues|recursion|a recursive pass over data whose levels do not start with an observation
+cypher|row_expression.go|cypherListSlice|call|append of all of items[from:to]
+cypher|row_expression.go|evaluateRowListComprehension|pass|rowComprehensionLoop over data (coerceToUnwindItems(listValue)) @row_list_loops.go:rowComprehensionLoop
+cypher|row_expression.go|evaluateRowQuantifier|pass|rowQuantifierLoop over data (coerceToUnwindItems(listValue)) @row_list_loops.go:rowQuantifierLoop
+cypher|row_expression.go|rowIdentityPayload|call|strings.SplitN(text)
+cypher|row_expression.go|rowMembershipOfValues|loop|range items
+cypher|row_extension_expression.go|evaluateRowExtensionFunction|call|strings.Join(parts)
+cypher|row_extension_expression.go|evaluateRowExtensionFunction|pass|evaluateNativeAPOCFunction over data (arguments) @apoc_native_functions.go:*StorageExecutor.evaluateNativeAPOCFunction
+cypher|row_extension_expression.go|evaluateRowKalman|pass|kalmanAdaptiveProcess over data (state) @kalman_functions.go:kalmanAdaptiveProcess
+cypher|row_extension_expression.go|evaluateRowKalman|pass|kalmanPredict over data (state) @kalman_functions.go:kalmanPredict
+cypher|row_extension_expression.go|evaluateRowKalman|pass|kalmanProcess over data (state) @kalman_functions.go:kalmanProcess
+cypher|row_extension_expression.go|evaluateRowKalman|pass|kalmanReset over data (state) @kalman_functions.go:kalmanReset
+cypher|row_extension_expression.go|evaluateRowKalman|pass|kalmanStateValue over data (state) @kalman_functions.go:kalmanStateValue
+cypher|row_extension_expression.go|evaluateRowKalman|pass|kalmanVelocityPredict over data (state) @kalman_functions.go:kalmanVelocityPredict
+cypher|row_extension_expression.go|evaluateRowKalman|pass|kalmanVelocityProcess over data (state) @kalman_functions.go:kalmanVelocityProcess
+cypher|row_graph_function_validation.go|invalidFunctionArgument|call|fmt.Sprintf of a value
+cypher|row_list_loops.go|rowComprehensionLoop|loop|range items
+cypher|row_list_loops.go|rowQuantifierLoop|loop|range items
+cypher|row_predicate_plan.go|prepare|pass|getValidated over data (items) @binding_where_compile.go:*bindingParamMembershipCache.getValidated
+cypher|row_predicate_plan.go|resolveScope|walk|nil walk to queryVisibleValue
+cypher|row_predicate_plan.go|rowPredicatePartValue|pass|get over data (items) @binding_where_compile.go:*bindingParamMembershipCache.get
+cypher|row_subscript_validation.go|invalidSubscriptTypeError|call|fmt.Sprintf of a value
+cypher|row_subscript_validation.go|validateRowSubscriptTypes|pass|evaluateTemporalProperty over data (key) @temporal_accessors.go:evaluateTemporalProperty
+cypher|row_value_program.go|compileComprehension|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compileFunction|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compileFunction|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compileQuantifier|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compileReduce|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compileValue|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compileValue|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compileValue|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compileValue|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compileValue|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compileValue|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compileValue|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compileValue|pass|compose over data (parts) @row_value_program.go:*rowValueCompiler.compose
+cypher|row_value_program.go|compose|loop|range parts
+cypher|row_value_program.go|eval|pass|rowComprehensionLoop over data (coerceToUnwindItems(listValue)) @row_list_loops.go:rowComprehensionLoop
+cypher|row_value_program.go|eval|pass|rowQuantifierLoop over data (coerceToUnwindItems(listValue)) @row_list_loops.go:rowQuantifierLoop
+cypher|runtime_type_errors.go|cypherPredicateTruth|call|fmt.Sprintf of a value
+cypher|runtime_type_errors.go|neo4jValueReprLeaf|call|(*strings.Builder).WriteString(formatCypherValueString(value))
+cypher|runtime_type_errors.go|neo4jValueReprLeaf|call|(*strings.Builder).WriteString(neo4jValueTypeName(value))
+cypher|runtime_type_errors.go|neo4jValueReprLeaf|call|(*strings.Builder).WriteString(neo4jValueTypeName(value))
+cypher|runtime_type_errors.go|propertyAccessTypeError|call|fmt.Sprintf of a value
+cypher|runtime_type_errors.go|propertyAccessTypeError|walk|nil walk to neo4jValueRepr
+cypher|runtime_type_errors.go|runtimeArithmeticTypeError|call|fmt.Sprintf of a value
+cypher|runtime_type_errors.go|runtimeArithmeticTypeError|call|fmt.Sprintf of a value
+cypher|runtime_type_errors.go|runtimeArithmeticTypeError|call|fmt.Sprintf of a value
+cypher|runtime_type_errors.go|runtimeArithmeticTypeError|call|fmt.Sprintf of a value
+cypher|runtime_type_errors.go|runtimeArithmeticTypeError|call|fmt.Sprintf of a value
+cypher|runtime_type_errors.go|runtimeArithmeticTypeError|call|fmt.Sprintf of a value
+cypher|runtime_type_errors.go|subscriptReceiverError|call|fmt.Sprintf of a value
+cypher|runtime_type_errors.go|subscriptReceiverError|walk|nil walk to neo4jValueRepr
+cypher|runtime_type_errors.go|subscriptReceiverError|walk|nil walk to neo4jValueRepr
+cypher|runtime_type_errors.go|unaryMinusTypeError|call|fmt.Sprintf of a value
+cypher|schema.go|backfillCompositeIndex|loop|range nodes
+cypher|schema.go|executeCreateConstraint|pass|canonicalConstraintRequirement over data (cypher) @constraint_requirement.go:*StorageExecutor.canonicalConstraintRequirement
+cypher|schema.go|executeCreateConstraint|pass|executeCreateConstraintContract over data (cypher) @schema_contracts.go:*StorageExecutor.executeCreateConstraintContract
+cypher|schema.go|executeCreateConstraint|pass|keywordIndexFrom over data (cypher) @keyword_scan.go:keywordIndexFrom
+cypher|schema.go|executeCreateConstraint|pass|keywordIndexFrom over data (cypher) @keyword_scan.go:keywordIndexFrom
+cypher|schema.go|executeCreateConstraint|pass|parseCreateConstraintCardinalityDDL over data (cypher) @schema.go:*StorageExecutor.parseCreateConstraintCardinalityDDL
+cypher|schema.go|executeCreateConstraint|pass|parseCreateConstraintDomainDDL over data (cypher) @schema.go:*StorageExecutor.parseCreateConstraintDomainDDL
+cypher|schema.go|executeCreateConstraint|pass|parseCreateConstraintForRequireDDL over data (cypher) @schema.go:*StorageExecutor.parseCreateConstraintForRequireDDL
+cypher|schema.go|executeCreateConstraint|pass|parseCreateConstraintNodeKeyDDL over data (cypher) @schema.go:*StorageExecutor.parseCreateConstraintNodeKeyDDL
+cypher|schema.go|executeCreateConstraint|pass|parseCreateConstraintPolicyDDL over data (cypher) @schema.go:*StorageExecutor.parseCreateConstraintPolicyDDL
+cypher|schema.go|executeCreateConstraint|pass|parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL over data (cypher) @schema.go:*StorageExecutor.parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL
+cypher|schema.go|executeCreateConstraint|pass|parseCreateConstraintSimplePropertyDDL over data (cypher) @schema.go:*StorageExecutor.parseCreateConstraintSimplePropertyDDL
+cypher|schema.go|executeCreateConstraint|pass|parseCreateConstraintTemporalDDL over data (cypher) @schema.go:*StorageExecutor.parseCreateConstraintTemporalDDL
+cypher|schema.go|executeCreateConstraint|pass|parseCreateConstraintTypeDDL over data (cypher) @schema.go:*StorageExecutor.parseCreateConstraintTypeDDL
+cypher|schema.go|executeCreateVectorIndex|pass|registerVectorSpace over data (similarityFunc) @vector_registry.go:*StorageExecutor.registerVectorSpace
+cypher|schema.go|extractVectorOptionValue|call|strings.EqualFold(name)
+cypher|schema.go|extractVectorOptionValue|call|strings.TrimSpace(value)
+cypher|schema.go|parseCreateConstraintCardinalityDDL|call|strings.TrimSpace(requireExpr)
+cypher|schema.go|parseCreateConstraintCardinalityDDL|call|strings.TrimSpace(requireExpr)
+cypher|schema.go|parseCreateConstraintCardinalityDDL|call|strings.TrimSpace(requireExpr)
+cypher|schema.go|parseCreateConstraintCardinalityDDL|call|strings.TrimSpace(strings.TrimSpace(requireExpr)[end:])
+cypher|schema.go|parseCreateConstraintCardinalityDDL|loop|range raw
+cypher|schema.go|parseCreateConstraintCardinalityDDL|pass|keywordSpanAt over data (strings.TrimSpace(requireExpr)) @schema.go:keywordSpanAt
+cypher|schema.go|parseCreateConstraintCardinalityDDL|pass|parseCardinalityRequireExpr over data (requireExpr) @schema.go:parseCardinalityRequireExpr
+cypher|schema.go|parseCreateConstraintCardinalityDDL|pass|parseRelationshipForDirection over data (patternSpan) @schema.go:parseRelationshipForDirection
+cypher|schema.go|parseCreateConstraintForRequireDDL|pass|parseCreateIndexForPattern over data (patternSpan) @schema.go:parseCreateIndexForPattern
+cypher|schema.go|parseCreateConstraintNodeKeyDDL|pass|parseCreateIndexForPattern over data (patternSpan) @schema.go:parseCreateIndexForPattern
+cypher|schema.go|parseCreateConstraintNodeKeyDDL|pass|parseNodeKeyPropertyList over data (requireExpr) @schema.go:*StorageExecutor.parseNodeKeyPropertyList
+cypher|schema.go|parseCreateConstraintPolicyDDL|pass|parsePolicyForClause over data (patternSpan) @schema.go:parsePolicyForClause
+cypher|schema.go|parseCreateConstraintPolicyDDL|pass|parsePolicyModeRequireExpr over data (requireExpr) @schema.go:parsePolicyModeRequireExpr
+cypher|schema.go|parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL|call|strings.Index(patternExpr)
+cypher|schema.go|parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL|call|strings.Index(patternInside)
+cypher|schema.go|parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL|call|strings.TrimSpace(patternSpan)
+cypher|schema.go|parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL|loop|range strings.Split(propertyExpr, ",")
+cypher|schema.go|parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL|pass|keywordIndexFrom over data (requireExpr) @keyword_scan.go:keywordIndexFrom
+cypher|schema.go|parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL|pass|normalizeIdentifierToken over data (patternInside[:colon]) @schema.go:normalizeIdentifierToken
+cypher|schema.go|parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL|pass|normalizeIdentifierToken over data (qualifier) @schema.go:normalizeIdentifierToken
+cypher|schema.go|parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL|pass|parseConstraintQualifiedProperty over data (reference) @schema.go:parseConstraintQualifiedProperty
+cypher|schema.go|parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL|pass|parseCreateIndexForPattern over data (patternSpan) @schema.go:parseCreateIndexForPattern
+cypher|schema.go|parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL|pass|parseRelationshipKeyOrCompositeUniquePredicate over data (requireExpr) @schema.go:*StorageExecutor.parseRelationshipKeyOrCompositeUniquePredicate
+cypher|schema.go|parseCreateConstraintRelationshipKeyOrCompositeUniqueDDL|pass|qualifiedIndexPropertiesWellFormed over data (propertyExpr) @schema.go:qualifiedIndexPropertiesWellFormed
+cypher|schema.go|parseCreateConstraintSimplePropertyDDL|pass|parseConstraintPredicate over data (predicateExpr) @schema.go:parseConstraintPredicate
+cypher|schema.go|parseCreateConstraintSimplePropertyDDL|pass|parseCreateIndexForPattern over data (patternSpan) @schema.go:parseCreateIndexForPattern
+cypher|schema.go|parseCreateConstraintTypeDDL|pass|parseConstraintTypePredicate over data (predicateExpr) @schema.go:parseConstraintTypePredicate
+cypher|schema.go|parseCreateConstraintTypeDDL|pass|parseCreateIndexForPattern over data (patternSpan) @schema.go:parseCreateIndexForPattern
+cypher|schema.go|parseCreateConstraintTypeDDL|pass|parsePropertyType over data (typeName) @schema_property_types.go:parsePropertyType
+cypher|schema.go|parseCreateFulltextForPattern|pass|parseFulltextRelationshipTypes over data (relTypeRaw) @schema.go:parseFulltextRelationshipTypes
+cypher|schema.go|parseCreateFulltextIndexDDL|pass|parseQualifiedIndexProperties over data (propsSegment) @schema.go:*StorageExecutor.parseQualifiedIndexProperties
+cypher|schema.go|parseCreateIndexDDL|pass|parseQualifiedIndexProperties over data (propsSegment) @schema.go:*StorageExecutor.parseQualifiedIndexProperties
+cypher|schema.go|parseCreateIndexDDL|pass|qualifiedIndexPropertiesWellFormed over data (propsSegment) @schema.go:qualifiedIndexPropertiesWellFormed
+cypher|schema.go|parseVectorOptions|call|strings.TrimSpace(raw)
+cypher|schema.go|parseVectorOptions|call|strings.TrimSpace(raw)
+cypher|schema_contracts.go|createConstraintContractForTarget|pass|parseConstraintContractEntry over data (rawEntry) @schema_contracts.go:*StorageExecutor.parseConstraintContractEntry
+cypher|schema_index_admission.go|admitSchemaIndexCreation|loop|range schema.GetIndexes()
+cypher|schema_property_types.go|parsePropertyType|call|sort.Slice(types)
+cypher|schema_type_properties.go|add|loop|range properties
+cypher|schema_type_properties.go|callDbSchemaTypeProperties|pass|add over data (edge.Properties) @schema_type_properties.go:*schemaTypeCategory.add
+cypher|schema_type_properties.go|callDbSchemaTypeProperties|pass|add over data (node.Properties) @schema_type_properties.go:*schemaTypeCategory.add
+cypher|schema_type_properties.go|schemaPropertyTypeName|loop|range toAnySlice(value)
+cypher|set_helpers.go|applySetMapMergeToNode|pass|mapEntries over data (node.Properties) @set_write_count.go:*setWrites.mapEntries
+cypher|set_helpers.go|applySetRuns|pass|cloneStringAnyMap over data (node.Properties) @executor_mutations_where_eval.go:cloneStringAnyMap
+cypher|set_helpers.go|applySetRuns|pass|cloneStringAnyMap over data (relationship.Properties) @executor_mutations_where_eval.go:cloneStringAnyMap
+cypher|set_helpers.go|applySetRuns|pass|restoreSetEntities over data (states) @set_helpers.go:restoreSetEntities
+cypher|set_helpers.go|applySetRuns|pass|restoreSetEntities over data (states) @set_helpers.go:restoreSetEntities
+cypher|set_helpers.go|copyStoredPropertyValue|call|copy of list
+cypher|set_helpers.go|persistSetEntities|pass|changedPropertyCount over data (state.properties) @pipeline_mutation.go:changedPropertyCount
+cypher|set_helpers.go|persistSetEntities|pass|changedPropertyCount over data (state.properties) @pipeline_mutation.go:changedPropertyCount
+cypher|set_helpers.go|restoreSetEntities|loop|range states
+cypher|set_helpers.go|setPropertyMap|loop|range properties
+cypher|set_semantic_validation.go|expressionFreeVariables|call|sort.Strings(references)
+cypher|set_semantic_validation.go|invalidSetPropertyType|call|fmt.Sprintf of a value
+cypher|set_semantic_validation.go|storablePropertyValue|walk|nil walk to normalizedPropValue
+cypher|set_semantic_validation.go|validateMutationClauseScopes|pass|bind over data (variable) @create_semantic_validation.go:*semanticBindingScope.bind
+cypher|set_semantic_validation.go|validatePropertyValues|loop|range properties
+cypher|set_semantic_validation.go|validateSetPropertyValue|call|append of all of items
+cypher|set_semantic_validation.go|validateSetPropertyValue|loop|range items
+cypher|set_semantic_validation.go|validateSetPropertyValue|loop|range items
+cypher|set_semantic_validation.go|validateSetPropertyValue|loop|range items[1:]
+cypher|set_write_count.go|mapEntries|loop|range before
+cypher|set_write_count.go|mapEntries|loop|range props
+cypher|set_write_count.go|mapWrites|pass|mapEntries over data (before) @set_write_count.go:*setWrites.mapEntries
+cypher|shell_commands.go|evaluateParamMapExpression|pass|executeInternal over data (params) @executor_internal.go:*StorageExecutor.executeInternal
+cypher|shell_commands.go|executeParamCommand|pass|evaluateParamMapExpression over data (mapExpr) @shell_commands.go:*StorageExecutor.evaluateParamMapExpression
+cypher|shell_commands.go|executeShellCommand|pass|authorizeSelectedDatabase over data (dbName) @authorization.go:*StorageExecutor.authorizeSelectedDatabase
+cypher|shell_commands.go|executeShellCommand|pass|scopedExecutorForUse over data (dbName) @executor_use.go:*StorageExecutor.scopedExecutorForUse
+cypher|shell_commands.go|isUnevaluatedParameterExpression|call|strings.TrimSpace(got)
+cypher|shell_commands.go|setShellParams|loop|for {}
+cypher|shortest_path.go|evaluateShortestPathValue|pass|parseTraversalPattern over data (pattern) @traversal.go:*StorageExecutor.parseTraversalPattern
+cypher|shortest_path.go|evaluateShortestPathValue|pass|parseTraversalPatternStructure over data (pattern) @traversal.go:*StorageExecutor.parseTraversalPatternStructure
+cypher|shortest_path.go|evaluateShortestPathValue|pass|preparePatternRow over data (pattern) @pattern_row.go:*StorageExecutor.preparePatternRow
+cypher|shortest_path.go|evaluateShortestPathValue|pass|shortestPathEndpointPatterns over data (pattern) @shortest_path_match.go:shortestPathEndpointPatterns
+cypher|shortest_path.go|evaluateShortestPathValue|pass|shortestPathPatternError over data (pattern) @shortest_path_match.go:shortestPathPatternError
+cypher|shortest_path.go|evaluateShortestPathValue|pass|shortestPathPlanContext over data (pattern) @shortest_path_match.go:shortestPathPlanContext
+cypher|shortest_path.go|nodeToValue|loop|range n.Properties
+cypher|shortest_path.go|pathValueParts|loop|range result.Nodes
+cypher|shortest_path.go|pathValueParts|loop|range result.Relationships
+cypher|show_admin.go|executeTerminateTransactions|pass|terminate over data (text) @show_admin.go:*runningTransactionRegistry.terminate
+cypher|show_admin.go|executeTerminateTransactions|pass|terminateTransactionID over data (text) @show_admin.go:terminateTransactionID
+cypher|show_schema_values.go|schemaConfigLiteral|call|sort.Strings(keys)
+cypher|show_schema_values.go|schemaConfigLiteral|loop|range config
+cypher|show_schema_values.go|schemaConfigValue|call|fmt.Sprintf of a value
+cypher|show_schema_values.go|showConstraintCreateStatement|loop|range c.AllowedValues
+cypher|show_schema_values.go|showIndexCreateStatement|pass|schemaConfigLiteral over data (config) @show_schema_values.go:schemaConfigLiteral
+cypher|size_semantics.go|sizeArgumentError|walk|nil walk to neo4jValueRepr
+cypher|size_semantics.go|typeMismatchError|pass|typeNameMismatchError over data (cypherTypeName(value)) @size_semantics.go:typeNameMismatchError
+cypher|size_semantics.go|typeMismatchFromFunctionError|walk|nil walk to neo4jValueRepr
+cypher|statement_property_views.go|edge|walk|nil walk to IdenticalValues
+cypher|statement_property_views.go|node|walk|nil walk to IdenticalValues
+cypher|static_function_argument_types.go|validateStaticFunctionVariablesIn|pass|accepts over data (typeName) @static_operand.go:staticArgumentType.accepts
+cypher|static_function_argument_types.go|validateStaticFunctionVariablesIn|pass|staticArgumentMismatch over data (typeName) @static_function_argument_types.go:staticArgumentMismatch
+cypher|static_function_literal_arguments.go|checkStaticLiteralArguments|call|sort.Strings(quoted)
+cypher|subquery_value_expression.go|boundNodeLookupCount|pass|nodeMatchesProps over data (pattern.properties) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|subquery_value_expression.go|executeCorrelatedSubqueryBody|call|sort.Strings(names)
+cypher|subquery_value_expression.go|executeCorrelatedSubqueryBody|pass|executeInternal over data (params) @executor_internal.go:*StorageExecutor.executeInternal
+cypher|subquery_value_expression.go|rowSubqueryValue|call|strings.TrimSpace(body)
+cypher|subquery_value_expression.go|rowSubqueryValue|pass|boundChainCount over data (body) @subquery_value_expression.go:*StorageExecutor.boundChainCount
+cypher|subquery_value_expression.go|rowSubqueryValue|pass|boundDegreeCount over data (body) @subquery_value_expression.go:*StorageExecutor.boundDegreeCount
+cypher|subquery_value_expression.go|rowSubqueryValue|pass|cypher5ImportGrouping over data (body) @subquery_import_grouping.go:cypher5ImportGrouping
+cypher|subquery_value_expression.go|rowSubqueryValue|pass|runCorrelatedSubquery over data (query) @subquery_value_expression.go:*StorageExecutor.runCorrelatedSubquery
+cypher|subquery_value_expression.go|rowSubqueryValue|pass|topLevelKeywordIndex over data (query) @keyword_scan.go:topLevelKeywordIndex
+cypher|subscript_evaluation.go|evaluateCypherSubscript|pass|evaluateTemporalProperty over data (key) @temporal_accessors.go:evaluateTemporalProperty
+cypher|subscript_evaluation.go|evaluateCypherSubscript|pass|rowPropertyValue over data (key) @row_expression.go:rowPropertyValue
+cypher|subscript_evaluation.go|evaluateCypherSubscript|walk|nil walk to queryVisibleValue
+cypher|subscript_evaluation.go|listSubscriptIndexError|loop|range items
+cypher|subscript_evaluation.go|listSubscriptIndexError|walk|nil walk to neo4jValueRepr
+cypher|subscript_evaluation.go|listSubscriptIndexError|walk|nil walk to neo4jValueRepr
+cypher|subscript_evaluation.go|listSubscriptIndexError|walk|nil walk to neo4jValueRepr
+cypher|temporal_accessors.go|formatCypherValueString|call|fmt.Sprint of a value
+cypher|temporal_arithmetic.go|durationScaleError|walk|nil walk to neo4jValueRepr
+cypher|temporal_format.go|constructTemporalWithPattern|pass|parseTemporalPattern over data (patternText) @temporal_pattern_parse.go:parseTemporalPattern
+cypher|temporal_format.go|fnFormat|pass|compileTemporalPattern over data (pattern) @temporal_pattern.go:compileTemporalPattern
+cypher|temporal_format.go|fnFormat|pass|formatDurationPattern over data (pattern) @temporal_format.go:formatDurationPattern
+cypher|temporal_format.go|fnFormat|pass|formatPrintf over data (template) @temporal_format.go:formatPrintf
+cypher|temporal_format.go|formatDurationPattern|call|strings.Repeat("0")
+cypher|temporal_format.go|formatPrintfArgument|walk|nil walk to neo4jValueRepr
+cypher|temporal_format.go|formatPrintf|call|fmt.Sprintf of a value
+cypher|temporal_format.go|formatPrintf|loop|range values
+cypher|temporal_format.go|formatTemporalISO|call|fmt.Sprint of a value
+cypher|temporal_pattern.go|formatTemporalPattern|call|(*strings.Builder).WriteString(text)
+cypher|temporal_pattern.go|formatTemporalPattern|call|strings.Repeat(" ")
+cypher|temporal_pattern.go|padDigits|call|strings.Repeat("0")
+cypher|temporal_truncation.go|temporalMissingComponentError|call|fmt.Sprint of a value
+cypher|temporal_truncation.go|truncateTemporalValue|loop|range fields
+cypher|temporal_values.go|buildTemporalValue|pass|cloneTemporalFields over data (fields) @temporal_values.go:cloneTemporalFields
+cypher|temporal_values.go|buildTemporalValue|pass|temporalEpochBase over data (fields) @temporal_values.go:temporalEpochBase
+cypher|temporal_values.go|cloneTemporalFields|loop|range fields
+cypher|temporal_values.go|evaluateTemporalConstructor|pass|buildTemporalValue over data (fields) @temporal_values.go:buildTemporalValue
+cypher|temporal_values.go|evaluateTemporalConstructor|pass|parseTemporalTextWithError over data (text) @temporal_parse.go:parseTemporalTextWithError
+cypher|temporal_values.go|evaluateTemporalConstructor|pass|truncateTemporalValue over data (unit) @temporal_truncation.go:truncateTemporalValue
+cypher|temporal_values.go|temporalConstructorError|pass|temporalEpochBase over data (value) @temporal_values.go:temporalEpochBase
+cypher|temporal_values.go|temporalEpochBase|pass|cloneTemporalFields over data (fields) @temporal_values.go:cloneTemporalFields
+cypher|temporal_values.go|temporalEpochBase|walk|nil walk to neo4jProvidedValue
+cypher|temporal_viewport.go|filterNodesByRequiredLabels|loop|range nodes
+cypher|transaction.go|looksLikeWriteQuery|call|strings.Contains(upper)
+cypher|transaction.go|looksLikeWriteQuery|call|strings.Contains(upper)
+cypher|transaction.go|looksLikeWriteQuery|call|strings.Contains(upper)
+cypher|transaction.go|looksLikeWriteQuery|call|strings.Contains(upper)
+cypher|transaction.go|looksLikeWriteQuery|call|strings.Contains(upper)
+cypher|transaction.go|looksLikeWriteQuery|pass|upperASCII over data (classificationText(cypher)) @keyword_scan.go:upperASCII
+cypher|transaction_memory.go|growRows|loop|range rows
+cypher|transaction_memory.go|growTuple|loop|range values
+cypher|transaction_memory.go|growValue|walk|nil walk to estimateValueBytes
+cypher|transaction_memory.go|handOver|loop|range rows
+cypher|transaction_memory.go|handOver|pass|estimateResultRowBytes over data (row) @transaction_memory_estimate.go:estimateResultRowBytes
+cypher|transaction_memory.go|valueBytes|walk|nil walk to estimateValueBytes
+cypher|transaction_memory_estimate.go|estimateResultRowBytes|loop|range row
+cypher|transaction_memory_estimate.go|value|walk|nil walk to estimateValueBytes
+cypher|transaction_memory_estimate.go|value|walk|nil walk to estimateValueBytes
+cypher|transactional_call_batch_size.go|callBatchSizeError|call|fmt.Sprint of a value
+cypher|traversal.go|appendPathRows|pass|appendRow over data (row) @traversal.go:*traversalResultCollector.appendRow
+cypher|traversal.go|appendRows|pass|appendRow over data (row) @traversal.go:*traversalResultCollector.appendRow
+cypher|traversal.go|appendRow|pass|estimateResultRowBytes over data (row) @transaction_memory_estimate.go:estimateResultRowBytes
+cypher|traversal.go|executeMatchWithRelationshipsWithPathSeeded|pass|appendRow over data (row) @traversal.go:*traversalResultCollector.appendRow
+cypher|traversal.go|executeMatchWithRelationshipsWithPathSeeded|pass|appendRow over data (row) @traversal.go:*traversalResultCollector.appendRow
+cypher|traversal.go|expandTraversalWildcardReturnItems|call|sort.Strings(columns)
+cypher|traversal.go|findPaths|loop|range edges
+cypher|traversal.go|findPaths|recursion|a recursive pass over data whose levels do not start with an observation
+cypher|traversal.go|matchesEndPattern|pass|nodeMatchesProps over data (pattern.properties) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|traversal.go|pathContextEntryValue|pass|relationshipListValue over data (path.Relationships) @traversal.go:relationshipListValue
+cypher|traversal.go|pathContextRowValue|pass|relationshipListValue over data (path.Relationships) @traversal.go:relationshipListValue
+cypher|traversal.go|relationshipListValue|loop|range relationships
+cypher|traversal.go|reversePathResult|loop|range path.Nodes
+cypher|traversal.go|reversePathResult|loop|range path.Relationships
+cypher|traversal.go|traverseChainedGraph|call|append of all of path.Nodes
+cypher|traversal.go|traverseChainedGraph|call|append of all of path.Relationships
+cypher|traversal.go|traverseChainedGraph|call|append of all of segPath.Nodes[1:]
+cypher|traversal.go|traverseChainedGraph|call|append of all of segPath.Relationships
+cypher|traversal.go|traverseFromNode|pass|nodeMatchesProps over data (match.StartNode.properties) @comparison.go:*StorageExecutor.nodeMatchesProps
+cypher|type_predicate.go|isCypherPropertyValue|loop|range items
+cypher|type_predicate.go|matches|loop|range items
+cypher|type_predicate.go|matches|recursion|a recursive pass over data whose levels do not start with an observation
+cypher|typed_results.go|TypedExecute|pass|Execute over data (params) @executor_entry.go:*StorageExecutor.Execute
+cypher|typed_results.go|assignValue|call|fmt.Sprintf of a value
+cypher|unwind_multi_match_create.go|evaluateBatchLookupExpr|walk|nil walk to normalizePropValue
+cypher|unwind_multi_match_create.go|evaluateBatchLookupExpr|walk|nil walk to normalizePropValue
+cypher|unwind_multi_match_create.go|evaluateBatchLookupExpr|walk|nil walk to normalizePropValue
+cypher|unwind_multi_match_create.go|propEqKeyBatch|call|fmt.Sprintf of a value
+cypher|unwind_relationship_merge_batch.go|parseRelationshipBatchMergeClause|pass|relationshipMergeKeyProps over data (literals) @unwind_relationship_merge_batch.go:relationshipMergeKeyProps
+cypher|unwind_relationship_merge_batch.go|relationshipBatchEdgeKeyFromProperties|pass|relationshipBatchEdgeKey over data (keyProps) @unwind_relationship_merge_batch.go:relationshipBatchEdgeKey
+cypher|unwind_relationship_merge_batch.go|relationshipBatchEdgeKeyFromRow|pass|relationshipBatchEdgeKey over data (buildPropsFromSpec(row, merge.rowFieldRefs, merge.literals)) @unwind_relationship_merge_batch.go:relationshipBatchEdgeKey
+cypher|unwind_relationship_merge_batch.go|relationshipBatchEdgeKey|loop|range mergeProps
+cypher|unwind_relationship_merge_batch.go|relationshipBatchEdgeKey|walk|nil walk to unwindMergeKey
+cypher|unwind_relationship_merge_batch.go|relationshipMergeKeyProps|call|sort.Slice(props)
+cypher|unwind_relationship_merge_batch.go|relationshipMergeKeyProps|loop|range literals
+cypher|unwind_routing.go|executeSetBasedUnwindCreateOperator|pass|unwindItemsAreDistinctComparable over data (plan.items) @clauses.go:unwindItemsAreDistinctComparable
+cypher|unwind_routing.go|executeUnwindBatchOperator|pass|canApplySetBasedUnwindRewrite over data (plan.items) @clauses.go:canApplySetBasedUnwindRewrite
+cypher|uuid_v5.go|fnUUIDv5|pass|parseCypherUUID over data (text) @uuid_values.go:parseCypherUUID
+cypher|value_equality.go|cypherEqualityValue|loop|range leftList
+cypher|value_equality.go|cypherEqualityValue|loop|range leftMap
+cypher|value_equality.go|cypherEqualityValue|recursion|a recursive pass over data whose levels do not start with an observation
+cypher|value_equivalence.go|appendNestedValueKey|call|(*strings.Builder).WriteString(nested)
+cypher|value_equivalence.go|appendNestedValueKey|call|(*strings.Builder).WriteString(strconv.Itoa(len(nested)))
+cypher|value_equivalence.go|appendValueKey|call|(*strings.Builder).WriteString(fmt.Sprintf("%T:%#v", value, value))
+cypher|value_equivalence.go|appendValueKey|call|fmt.Sprintf of a value
+cypher|value_equivalence.go|cypherValueKeyWithNumericPolicy|walk|nil walk to cypherValueKeyWithNumericCheckpoint
+cypher|value_equivalence.go|cypherValueKey|walk|nil walk to cypherValueKeyWithCheckpoint
+cypher|value_equivalence_index.go|addByContract|pass|addTupleValuesByContract over data ([]interface{}{…}) @value_equivalence_index.go:*cypherValueIndex.addTupleValuesByContract
+cypher|value_equivalence_index.go|addTupleByContract|loop|range values
+cypher|value_equivalence_index.go|addTupleByContract|pass|addTupleValuesByContract over data (values) @value_equivalence_index.go:*cypherValueIndex.addTupleValuesByContract
+cypher|value_equivalence_index.go|addTupleValuesByContract|call|append of all of values
+cypher|value_equivalence_index.go|addTupleValuesByContract|loop|range values
+cypher|value_equivalence_index.go|cypherValueHash|walk|nil walk to cypherValueHashWithCheckpoint
+cypher|value_equivalence_index.go|cypherValuesMatch|walk|nil walk to cypherValuesMatchWithCheckpoint
+cypher|value_ordering.go|compareCypherMaps|loop|range left
+cypher|value_ordering.go|compareCypherMaps|loop|range left
+cypher|value_ordering.go|compareCypherMaps|loop|range right
+cypher|value_ordering.go|compareCypherStructuredValues|loop|for index < len(leftPath) && index < len(rightPath)
+cypher|value_ordering.go|compareCypherStructuredValues|pass|compareCypherMaps over data (leftMap) @value_ordering.go:compareCypherMaps
+cypher|value_ordering.go|cypherPathElementsOf|loop|range path.Nodes
+cypher|value_type_names.go|storedArrayElementKind|loop|range toAnySlice(value)
+cypher|vector_functions.go|fnUUID|pass|parseCypherUUID over data (text) @uuid_values.go:parseCypherUUID
+cypher|vector_functions.go|fnVector|pass|newCypherVector over data (items) @vector_functions.go:newCypherVector
+cypher|vector_functions.go|newCypherVector|loop|range items
+cypher|vector_functions.go|vectorItems|call|strings.TrimSpace(part)
+cypher|vector_functions.go|vectorItems|call|strings.TrimSpace(text)
+cypher|vector_functions.go|vectorItems|loop|range strings.Split(trimmed[1:len(trimmed) - 1], ",")
+cypher|vector_similarity_functions.go|similarityVectorArgument|walk|nil walk to neo4jValueRepr
+cypher|vector_values.go|String|call|(*strings.Builder).WriteString(vectorFloatText(v.Floats[i], v.Type == VectorFloat32))
+fn|builtins_graph.go|init|call|strings.EqualFold(graph)
+fn|builtins_graph.go|init|loop|range graphs
+fn|builtins_graph.go|init|loop|range graphs

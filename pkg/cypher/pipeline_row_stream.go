@@ -5,6 +5,7 @@ import (
 	"iter"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -163,7 +164,9 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 		return nil, false
 	}
 	return func(yield func(interface{}) bool) {
+		pass := bulk.NewCheckpoint(ctx)
 		for _, value := range items {
+			pass.Check()
 			if !yield(value) {
 				return
 			}
@@ -171,19 +174,19 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 	}, true
 }
 
-func (e *StorageExecutor) validatePipelineWithRows(rows []pipelineRow, clause string) error {
+func (e *StorageExecutor) validatePipelineWithRows(ctx context.Context, rows []pipelineRow, clause string) error {
 	if err := e.validatePipelinePercentileArguments(rows, clause, "WITH"); err != nil {
 		return err
 	}
-	return e.validatePipelineProjectionValues(rows, clause, "WITH")
+	return e.validatePipelineProjectionValues(ctx, rows, clause, "WITH")
 }
 
-func (e *StorageExecutor) validatePipelineProjectionValues(rows []pipelineRow, clause, keyword string) error {
-	for _, validate := range []func([]pipelineRow, string, string) error{
+func (e *StorageExecutor) validatePipelineProjectionValues(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
+	for _, validate := range []func(context.Context, []pipelineRow, string, string) error{
 		e.validatePipelineRangeArguments,
 		e.validatePipelineProjectionSubscripts, e.validatePipelineSizeArguments,
 	} {
-		if err := validate(rows, clause, keyword); err != nil {
+		if err := validate(ctx, rows, clause, keyword); err != nil {
 			return err
 		}
 	}
@@ -422,7 +425,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 							// value hits it directly instead of an index seek
 							// per row (see buildRelationshipBatchNodeMatchIndex).
 							value, _ := pattern.properties[template.properties[0].key]
-							if node, ok := prefetchedBatch[propEqKeyBatch(normalizePropValue(value))]; ok {
+							if node, ok := prefetchedBatch[propEqKeyBatch(normalizePropValue(valueWalk(ctx), value))]; ok {
 								nodes = []*storage.Node{node}
 							} else {
 								nodes = nil
@@ -454,15 +457,21 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 					candidates[index].nodes = nodes
 					candidates[index].ready = true
 				}
-				for _, node := range candidates[index].nodes {
-					if !e.pipelineNodeMatchesPattern(node, pattern) {
-						continue
-					}
-					current[pattern.variable] = node
-					accepted := visit(index + 1)
-					delete(current, pattern.variable)
-					if !accepted {
+				for batch, batchErr := range materializedBatches(ctx, len(candidates[index].nodes)) {
+					if batchErr != nil {
+						valid = false
 						return false
+					}
+					for _, node := range candidates[index].nodes[batch.start:batch.end] {
+						if !e.pipelineNodeMatchesPattern(node, pattern) {
+							continue
+						}
+						current[pattern.variable] = node
+						accepted := visit(index + 1)
+						delete(current, pattern.variable)
+						if !accepted {
+							return false
+						}
 					}
 				}
 				return true
@@ -549,7 +558,7 @@ func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipel
 				return false
 			}
 			if strings.ContainsAny(plan.clause, "([") {
-				if err := e.validatePipelineWithRows([]pipelineRow{row}, plan.clause); err != nil {
+				if err := e.validatePipelineWithRows(ctx, []pipelineRow{row}, plan.clause); err != nil {
 					recordExpressionFailure(ctx, err)
 					valid = false
 					return false
@@ -629,7 +638,12 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 		plans = append(plans, plan)
 	}
 	source := pipelineRowSource(func(yield func(pipelineRow) bool) bool {
+		// A checkpoint, not a batch iterator: this source is itself an
+		// iterator body, where a nested batch iterator would not inline and
+		// would allocate on every pass.
+		inputs := bulk.RowsCheckpoint(ctx, len(rows))
 		for _, input := range rows {
+			inputs.Check()
 			values, ok := e.pipelineUnwindValues(ctx, expression, input)
 			if !ok {
 				return false
@@ -651,7 +665,9 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 		}
 		return true
 	})
+	pass := bulk.NewCheckpoint(ctx)
 	for _, plan := range plans {
+		pass.Check()
 		source = e.pipelineWithRowSource(ctx, source, plan)
 	}
 	return source, len(plans), true

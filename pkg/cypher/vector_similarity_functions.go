@@ -68,7 +68,7 @@ func similarityVectorArgument(function, argument string, value interface{}, vali
 	items, isList := valueconvert.ReadList(value)
 	if !isList {
 		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-			localization.CypherCoreFunctionArgumentInvalid("vector.similarity."+function, "LIST<INTEGER | FLOAT>", neo4jValueRepr(value)))
+			localization.CypherCoreFunctionArgumentInvalid("vector.similarity."+function, "LIST<INTEGER | FLOAT>", neo4jValueRepr(nil, value)))
 	}
 	coordinates, numeric := items.Numbers()
 	if !numeric {

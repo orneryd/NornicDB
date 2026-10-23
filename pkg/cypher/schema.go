@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -198,7 +199,7 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 		}
 	}
 	// Detect IF NOT EXISTS to pass through to AddConstraint for duplicate-schema handling.
-	ifNotExists := strings.Contains(upperASCII(cypher), "IF NOT EXISTS")
+	ifNotExists := bulk.Contains(ctx, bulk.UpperASCII(ctx, cypher), "IF NOT EXISTS")
 	if result, handled, err := e.executeCreateConstraintContract(ctx, cypher, ifNotExists); handled {
 		return result, err
 	}
@@ -405,8 +406,8 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		(strings.Contains(upperASCII(cypher), " IS ::") || strings.Contains(upperASCII(cypher), " IS TYPED")) &&
+	} else if startsWithKeywordFold(bulk.TrimSpace(ctx, cypher), "CREATE CONSTRAINT") &&
+		(bulk.Contains(ctx, bulk.UpperASCII(ctx, cypher), " IS ::") || bulk.Contains(ctx, bulk.UpperASCII(ctx, cypher), " IS TYPED")) &&
 		strings.Contains(upperASCII(err.Error()), "UNSUPPORTED PROPERTY TYPE") {
 		return nil, err
 	}
@@ -441,8 +442,8 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		strings.Contains(upperASCII(cypher), "REQUIRE MAX COUNT") {
+	} else if startsWithKeywordFold(bulk.TrimSpace(ctx, cypher), "CREATE CONSTRAINT") &&
+		bulk.Contains(ctx, bulk.UpperASCII(ctx, cypher), "REQUIRE MAX COUNT") {
 		return nil, err
 	}
 
@@ -467,8 +468,8 @@ func (e *StorageExecutor) executeCreateConstraint(ctx context.Context, cypher st
 			return nil, err
 		}
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
-	} else if startsWithKeywordFold(strings.TrimSpace(cypher), "CREATE CONSTRAINT") &&
-		(strings.Contains(upperASCII(cypher), "REQUIRE ALLOWED") || strings.Contains(upperASCII(cypher), "REQUIRE DISALLOWED")) {
+	} else if startsWithKeywordFold(bulk.TrimSpace(ctx, cypher), "CREATE CONSTRAINT") &&
+		(bulk.Contains(ctx, bulk.UpperASCII(ctx, cypher), "REQUIRE ALLOWED") || bulk.Contains(ctx, bulk.UpperASCII(ctx, cypher), "REQUIRE DISALLOWED")) {
 		return nil, err
 	}
 

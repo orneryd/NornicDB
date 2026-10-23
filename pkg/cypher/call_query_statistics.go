@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 type queryStatisticsCollector struct {
@@ -136,7 +137,7 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 		if !valid {
 			return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "statistics section must be a STRING")
 		}
-		section = strings.ToUpper(section)
+		section = bulk.ToUpper(ctx, section)
 	}
 	if section == "ALL" && action != "retrieve" {
 		section = "QUERIES"
@@ -257,19 +258,33 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 	}
 	labels, relationships, properties := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	labelCounts, typeCounts := map[string]int64{}, map[string]int64{}
+	pass := bulk.NewCheckpoint(ctx)
 	for _, node := range nodes {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		for _, label := range node.Labels {
 			labels[label] = true
 			labelCounts[label]++
 		}
 		for key := range node.Properties {
+			if err := pass.Observe(); err != nil {
+				return nil, err
+			}
 			properties[key] = true
 		}
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for _, edge := range edges {
+		if err := pass2.Observe(); err != nil {
+			return nil, err
+		}
 		relationships[edge.Type] = true
 		typeCounts[edge.Type]++
 		for key := range edge.Properties {
+			if err := pass2.Observe(); err != nil {
+				return nil, err
+			}
 			properties[key] = true
 		}
 	}
@@ -292,7 +307,11 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 			return nil, err
 		}
 		constraintRows := make([]interface{}, 0, len(constraints.Rows))
+		pass3 := bulk.NewCheckpoint(ctx)
 		for _, row := range constraints.Rows {
+			if err := pass3.Observe(); err != nil {
+				return nil, err
+			}
 			values := make(map[string]interface{}, len(constraints.Columns))
 			for index, column := range constraints.Columns {
 				values[column] = row[index]
@@ -316,7 +335,7 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 		if err != nil {
 			return nil, err
 		}
-		result.Rows = append(result.Rows, queries.Rows...)
+		result.Rows, _ = appendPopulation(ctx, result.Rows, queries.Rows)
 	}
 	return result, nil
 }

@@ -2,9 +2,11 @@ package cypher
 
 import (
 	"fmt"
+	"iter"
 	"math"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/linkpredict"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -191,11 +193,11 @@ func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
 		if err != nil {
 			return nil, err
 		}
-		left, err := gdsNeighbors(ctx.Storage, first.ID, config)
+		left, err := gdsNeighbors(valueWalk(ctx.StatementContext()), ctx.Storage, first.ID, config)
 		if err != nil {
 			return nil, err
 		}
-		right, err := gdsNeighbors(ctx.Storage, second.ID, config)
+		right, err := gdsNeighbors(valueWalk(ctx.StatementContext()), ctx.Storage, second.ID, config)
 		if err != nil {
 			return nil, err
 		}
@@ -206,7 +208,7 @@ func gdsLinkPrediction(name, algorithm string) cypherfn.Func {
 		// neighbourhood.
 		degrees := map[storage.NodeID]int{}
 		for _, id := range gdsCommon(left, right) {
-			neighbors, err := gdsNeighbors(ctx.Storage, id, config)
+			neighbors, err := gdsNeighbors(valueWalk(ctx.StatementContext()), ctx.Storage, id, config)
 			if err != nil {
 				return nil, err
 			}
@@ -270,13 +272,13 @@ func gdsLinkPredictionConfig(name string, values []interface{}) (gdsLinkConfig, 
 
 // gdsNeighbors returns a node's neighbourhood under config, or the error a
 // read of its relationships gives.
-func gdsNeighbors(store storage.Engine, id storage.NodeID, config gdsLinkConfig) (gdsNeighborhood, error) {
+func gdsNeighbors(walk *materializedRowCheckpoint, store storage.Engine, id storage.NodeID, config gdsLinkConfig) (gdsNeighborhood, error) {
 	neighbors := gdsNeighborhood{nodes: map[storage.NodeID]struct{}{}}
 	if store == nil {
 		return neighbors, nil
 	}
-	add := func(edges []*storage.Edge, outgoing bool) {
-		for _, edge := range edges {
+	add := func(edges iter.Seq[*storage.Edge], outgoing bool) {
+		for edge := range edges {
 			if config.relationshipType != "" && edge.Type != config.relationshipType {
 				continue
 			}
@@ -297,14 +299,14 @@ func gdsNeighbors(store storage.Engine, id storage.NodeID, config gdsLinkConfig)
 		}
 	}
 	if config.direction != "INCOMING" {
-		edges, err := store.GetOutgoingEdges(id)
+		edges, err := adjacentEdges(walk, store, id, "outgoing")
 		if err != nil {
 			return neighbors, err
 		}
 		add(edges, true)
 	}
 	if config.direction == "BOTH" || config.direction == "INCOMING" {
-		edges, err := store.GetIncomingEdges(id)
+		edges, err := adjacentEdges(walk, store, id, "incoming")
 		if err != nil {
 			return neighbors, err
 		}
@@ -386,7 +388,12 @@ func fnGDSAsNodes(ctx cypherfn.Context, args []string) (interface{}, error) {
 		return nil, fmt.Errorf("gds.util.asNodes expects a list of node ids, got %s", cypherTypeSystemName(values[0]))
 	}
 	nodes := make([]interface{}, 0, len(ids))
+	statement := ctx.StatementContext()
+	lookups := bulk.NewCheckpoint(statement)
 	for _, id := range ids {
+		if err := lookups.Observe(); err != nil {
+			return nil, err
+		}
 		if node := gdsNodeByID(ctx.Storage, id); node != nil {
 			nodes = append(nodes, node)
 		}

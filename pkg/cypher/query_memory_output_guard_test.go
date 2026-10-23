@@ -90,7 +90,8 @@ func TestQueryMemoryOutputBoundaryGuard(t *testing.T) {
 		})
 		return found
 	}
-	owned := carriers(function(projection, "projectVisibleQueryValue"))
+	// The value walker carries every container to the one entity decision.
+	owned := carriers(function(projection, "projectVisibleQueryEntity"))
 	for _, path := range []string{"../bolt/packstream.go", "../server/server_db.go"} {
 		for name := range carriers(read(path)) {
 			require.True(t, owned[name], "%s encodes %s without a visibility decision", path, name)

@@ -61,7 +61,12 @@ func planPipelineTraversalScan(match *TraversalMatch, where string, row pipeline
 // Label plans expand adjacency; type alternatives each use their own index.
 func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor, match *TraversalMatch, visit func(*storage.Edge, storage.NodeID, storage.NodeID) error) error {
 	store := e.getStorage(ctx)
+	scan := newStorageScan(ctx)
+	defer scan.close()
 	oriented := func(edge *storage.Edge) error {
+		if err := scan.observe(); err != nil {
+			return err
+		}
 		if match.Relationship.Direction == "incoming" {
 			return visit(edge, edge.EndNode, edge.StartNode)
 		}
@@ -75,13 +80,13 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 	}
 	switch plan.access {
 	case traversalNodeScan:
-		return storage.StreamEdgesByType(ctx, store, "", oriented)
+		return streamEdgesByType(scan, store, "", oriented)
 	case traversalTypeScan:
 		for index, kind := range match.Relationship.Types {
 			if containsString(match.Relationship.Types[:index], kind) {
 				continue
 			}
-			if err := storage.StreamEdgesByType(ctx, store, kind, oriented); err != nil {
+			if err := streamEdgesByType(scan, store, kind, oriented); err != nil {
 				return err
 			}
 		}
@@ -98,7 +103,7 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 			case "incoming":
 				edges = e.traversalEdges(traversal, node.ID, false)
 			case "both":
-				edges, err = undirectedIncidentEdges(store, node.ID)
+				edges, err = undirectedIncidentEdges(nil, store, node.ID)
 			default:
 				edges = e.traversalEdges(traversal, node.ID, true)
 			}

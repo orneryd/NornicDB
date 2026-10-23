@@ -4,12 +4,12 @@ import (
 	"context"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -117,6 +117,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		return group
 	}
 	var grouping cypherValueIndex
+	grouping.observeCancellation(ctx)
 	ordered := make([]*pipelineAggregateGroup, 0)
 	values := make([]interface{}, 0, groupingCount)
 	// run is the aggregation's state the row callback updates: whether every
@@ -130,7 +131,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			return false
 		}
 		for _, clause := range validationClauses {
-			if err := e.validatePipelineProjectionValues([]pipelineRow{row}, clause, "WITH"); err != nil {
+			if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause, "WITH"); err != nil {
 				recordExpressionFailure(ctx, err)
 				run.valid = false
 				return false
@@ -161,7 +162,9 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		}
 		group := ordered[position]
 		for index := range group.projections {
+			pass := bulk.NewCheckpoint(ctx)
 			for offset := range group.projections[index].states {
+				pass.Check()
 				if !group.projections[index].states[offset].add(ctx, e, row) {
 					run.valid = false
 					return false
@@ -217,7 +220,11 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 		return nil, false, nil
 	}
 	rows := 1
+	pass := bulk.NewCheckpoint(ctx)
 	for _, pattern := range patterns {
+		if err := pass.Observe(); err != nil {
+			return nil, true, err
+		}
 		if len(pattern.nodes) == 0 || rows > int(^uint(0)>>1)/len(pattern.nodes) {
 			return nil, false, nil
 		}
@@ -226,7 +233,11 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 	if rows < 65536 && forcedWorkers == 0 {
 		return nil, false, nil
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for index, pattern := range patterns {
+		if err := pass2.Observe(); err != nil {
+			return nil, true, err
+		}
 		for prior := 0; prior < index; prior++ {
 			if pattern.variable == patterns[prior].variable {
 				return nil, false, nil
@@ -267,7 +278,11 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			}
 			if name == "sum" {
 				complexity++
+				pass3 := bulk.NewCheckpoint(ctx)
 				for _, node := range patterns[patternIndex].nodes {
+					if err := pass3.Observe(); err != nil {
+						return nil, true, err
+					}
 					if node == nil || node.Properties[property] == nil {
 						continue
 					}
@@ -297,7 +312,9 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 		workerContext := context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
 		source := func(yield func(pipelineRow) bool) bool {
 			values := make(pipelineRow, len(patterns))
+			pass4 := bulk.NewCheckpoint(ctx)
 			for {
+				pass4.Check()
 				job := int(next.Add(1) - 1)
 				if job >= jobs {
 					return true
@@ -309,8 +326,10 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 					end++
 				}
 				for ordinal := start; ordinal < end; ordinal++ {
+					pass4.Check()
 					position := ordinal
 					for index := len(patterns) - 1; index >= 0; index-- {
+						pass4.Check()
 						pattern := patterns[index]
 						node := pattern.nodes[position%len(pattern.nodes)]
 						if node == nil {
@@ -343,6 +362,8 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 		for worker := 0; worker < workers; worker++ {
 			go func() {
 				defer wait.Done()
+				// A stop in the partition is its error, which the merge below returns.
+				defer bulk.RecoverStop(&partitions[worker].err)
 				run(worker)
 			}()
 		}
@@ -352,9 +373,16 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 		return partitions[0].groups, true, partitions[0].err
 	}
 	positions := make([]map[*storage.Node]int, len(patterns))
+	pass6 := bulk.NewCheckpoint(ctx)
 	for index, pattern := range patterns {
+		if err := pass6.Observe(); err != nil {
+			return nil, true, err
+		}
 		positions[index] = make(map[*storage.Node]int, len(pattern.nodes))
 		for position, node := range pattern.nodes {
+			if err := pass6.Observe(); err != nil {
+				return nil, true, err
+			}
 			if _, exists := positions[index][node]; !exists {
 				positions[index][node] = position
 			}
@@ -370,12 +398,19 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 		if partition.err != nil {
 			return nil, true, partition.err
 		}
+		pass7 := bulk.NewCheckpoint(ctx)
 		for _, partial := range partition.groups {
+			if err := pass7.Observe(); err != nil {
+				return nil, true, err
+			}
 			if len(partial.first) == 0 {
 				continue
 			}
 			ordinal := 0
 			for index, pattern := range patterns {
+				if err := pass7.Observe(); err != nil {
+					return nil, true, err
+				}
 				node, _ := partial.first[pattern.variable].(*storage.Node)
 				ordinal = ordinal*len(pattern.nodes) + positions[index][node]
 			}
@@ -404,6 +439,9 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			}
 			for index := range group.projections {
 				for stateIndex := range group.projections[index].states {
+					if err := pass7.Observe(); err != nil {
+						return nil, true, err
+					}
 					state := &group.projections[index].states[stateIndex]
 					other := &partial.projections[index].states[stateIndex]
 					state.count += other.count
@@ -412,7 +450,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			}
 		}
 	}
-	sort.Slice(ordered, func(left, right int) bool { return ordered[left].ordinal < ordered[right].ordinal })
+	_ = sortPopulation(ctx, ordered, func(left, right int) bool { return ordered[left].ordinal < ordered[right].ordinal })
 	result := make([]*pipelineAggregateGroup, len(ordered))
 	for index, merged := range ordered {
 		result[index] = merged.group
@@ -429,7 +467,9 @@ func (group *pipelineAggregateGroup) value(ctx context.Context, executor *Storag
 	for name, value := range group.first {
 		values[name] = value
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for offset := range projection.states {
+		pass.Check()
 		value, ok := projection.states[offset].result(ctx, executor)
 		if !ok {
 			return nil, false
@@ -489,7 +529,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		// The percentile evaluator retains every input row until finalization.
 		// Charge the map, its values, and the slice slot before growing it.
 		if state.memory.scope != nil {
-			if state.memory.grow(estimateValueBytes(map[string]interface{}(stored))+valueSlotBytes) != nil {
+			if state.memory.grow(estimateValueBytes(valueWalk(ctx), map[string]interface{}(stored))+valueSlotBytes) != nil {
 				return false
 			}
 		}
@@ -507,6 +547,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		return true
 	}
 	if state.distinct {
+		state.seen.observeCancellation(ctx)
 		if _, exists := state.seen.addByContract(value, cypherEquivalenceContract); exists {
 			return true
 		}

@@ -144,7 +144,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"internal/cyphertext/string.go:DecodeString":                 "canonical Cypher string decoder",
 		"pkg/cypher/string_literal.go:validateUnicodeStringLiterals": "canonical Cypher string Unicode escape reader",
 		"pkg/cypher/quoted_variables.go:isBacktickQuotedName":        "canonical quoted symbolic-name validator",
-		"pkg/cypher/fulltext_query.go:ftTokenize":                    "parses decoded Lucene fulltext query syntax, not Cypher text",
+		"pkg/cypher/fulltext_query.go:ftTokenizeObserved":            "parses decoded Lucene fulltext query syntax, not Cypher text",
 		"pkg/cypher/temporal_format.go:formatDurationPattern":        "parses a decoded Java duration format pattern, not Cypher text",
 		"pkg/cypher/temporal_format.go:stripDurationQuotes":          "parses a decoded Java duration format pattern, not Cypher text",
 		"pkg/cypher/temporal_pattern.go:compileTemporalPattern":      "parses a decoded Java temporal construction pattern, not Cypher text",

@@ -614,17 +614,17 @@ func TestEstimateValueBytes(t *testing.T) {
 			require.Equal(t, tc.want, util.EstimateValueBytes(tc.value))
 		})
 	}
-	require.Equal(t, int64(valueSlotBytes), estimateValueBytes(int64(1)))
-	require.Equal(t, int64(valueSlotBytes+stringHeaderBytes+5), estimateValueBytes("hello"))
+	require.Equal(t, int64(valueSlotBytes), estimateValueBytes(nil, int64(1)))
+	require.Equal(t, int64(valueSlotBytes+stringHeaderBytes+5), estimateValueBytes(nil, "hello"))
 	list := []interface{}{int64(1), "ab"}
-	require.Equal(t, int64(valueSlotBytes+sliceHeaderBytes)+int64(cap(list)-len(list))*valueSlotBytes+valueSlotBytes+valueSlotBytes+stringHeaderBytes+2, estimateValueBytes(list))
+	require.Equal(t, int64(valueSlotBytes+sliceHeaderBytes)+int64(cap(list)-len(list))*valueSlotBytes+valueSlotBytes+valueSlotBytes+stringHeaderBytes+2, estimateValueBytes(nil, list))
 	nested := map[string]interface{}{"k": list}
-	require.Greater(t, estimateValueBytes(nested), estimateValueBytes(list))
+	require.Greater(t, estimateValueBytes(nil, nested), estimateValueBytes(nil, list))
 	deep := interface{}(int64(0))
 	for i := 0; i < 100; i++ {
 		deep = []interface{}{deep}
 	}
-	require.Positive(t, estimateValueBytes(deep))
+	require.Positive(t, estimateValueBytes(nil, deep))
 }
 
 // transactionMemoryBenchRounds is how many interleaved off/on rounds
@@ -827,14 +827,14 @@ func testKnownListsSizeCollectedListsOnce(t *testing.T) {
 	list := collected.([]interface{})
 	counted, known := tracker.knownListBytes(list)
 	require.True(t, known)
-	require.GreaterOrEqual(t, counted, estimateValueBytes(list)-int64(cap(list)-len(list))*valueSlotBytes)
+	require.GreaterOrEqual(t, counted, estimateValueBytes(nil, list)-int64(cap(list)-len(list))*valueSlotBytes)
 	require.Equal(t, int64(pipelineRowExtraBytes+sliceHeaderBytes)+counted, estimateResultRowBytes([]interface{}{list}, tracker))
 
 	copied := make([]interface{}, len(list))
 	copy(copied, list)
 	_, known = tracker.knownListBytes(copied)
 	require.False(t, known, "a list built otherwise is walked")
-	require.Equal(t, int64(pipelineRowExtraBytes+sliceHeaderBytes)+estimateValueBytes(copied), estimateResultRowBytes([]interface{}{copied}, tracker))
+	require.Equal(t, int64(pipelineRowExtraBytes+sliceHeaderBytes)+estimateValueBytes(nil, copied), estimateResultRowBytes([]interface{}{copied}, tracker))
 }
 
 func TestKnownListsAfterPriorMemoryFailure(t *testing.T) {

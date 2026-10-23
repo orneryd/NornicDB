@@ -1,10 +1,10 @@
 package cypher
 
 import (
-	"reflect"
 	"slices"
 	"sync"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -106,7 +106,7 @@ func (v *statementPropertyViews) node(source *storage.Node) *storage.Node {
 	// A wrapper may return a fresh pointer on every index recheck. Reuse only
 	// when its complete scoring input equals our detached snapshot: timestamps
 	// alone are not a body version, and an ID alone is never sufficient.
-	if !ok || !source.CreatedAt.Equal(body.source.CreatedAt) || !source.UpdatedAt.Equal(body.source.UpdatedAt) || !slices.Equal(source.Labels, body.source.Labels) || !reflect.DeepEqual(source.Properties, body.source.Properties) {
+	if !ok || !source.CreatedAt.Equal(body.source.CreatedAt) || !source.UpdatedAt.Equal(body.source.UpdatedAt) || !slices.Equal(source.Labels, body.source.Labels) || !cypherfn.IdenticalValues(nil, source.Properties, body.source.Properties) {
 		snapshot := storage.CopyNode(&storage.Node{ID: source.ID, Labels: source.Labels, Properties: source.Properties, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt})
 		body = nodePropertyViewBody{snapshot, v.projection.NodeProperties(source)}
 		v.nodeBodies[source.ID] = body
@@ -138,7 +138,7 @@ func (v *statementPropertyViews) edge(source *storage.Edge) *storage.Edge {
 		v.edgeBodies = make(map[storage.EdgeID]edgePropertyViewBody)
 	}
 	body, ok := v.edgeBodies[source.ID]
-	if !ok || source.Type != body.source.Type || !source.CreatedAt.Equal(body.source.CreatedAt) || !source.UpdatedAt.Equal(body.source.UpdatedAt) || !reflect.DeepEqual(source.Properties, body.source.Properties) {
+	if !ok || source.Type != body.source.Type || !source.CreatedAt.Equal(body.source.CreatedAt) || !source.UpdatedAt.Equal(body.source.UpdatedAt) || !cypherfn.IdenticalValues(nil, source.Properties, body.source.Properties) {
 		snapshot := storage.CopyEdge(&storage.Edge{ID: source.ID, Type: source.Type, Properties: source.Properties, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt})
 		body = edgePropertyViewBody{snapshot, v.projection.EdgeProperties(source)}
 		v.edgeBodies[source.ID] = body

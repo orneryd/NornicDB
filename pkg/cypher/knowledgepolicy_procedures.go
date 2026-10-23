@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -25,7 +26,7 @@ func (e *StorageExecutor) knowledgePolicySchema() (*storage.SchemaManager, error
 	return transaction.KnowledgePolicySchema()
 }
 
-func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles(ctx context.Context) (*ExecuteResult, error) {
 	schema, err := e.knowledgePolicySchema()
 	if err != nil {
 		return nil, err
@@ -93,7 +94,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult,
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies() (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies(ctx context.Context) (*ExecuteResult, error) {
 	schema, err := e.knowledgePolicySchema()
 	if err != nil {
 		return nil, err
@@ -242,7 +243,7 @@ func parseKnowledgePolicyEntityID(entityID string) (string, knowledgePolicyEntit
 	}
 }
 
-func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	entityID, err := optionalStringArg(args, 0)
 	if err != nil {
 		return nil, err
@@ -326,7 +327,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbKnowledgePolicyDeindexStatus() (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbKnowledgePolicyDeindexStatus(ctx context.Context) (*ExecuteResult, error) {
 	columns := []string{"pending_count", "supported", "message", "workItemId", "targetId", "targetScope", "enqueuedAt", "status"}
 	be := unwrapBadgerEngine(e.storage)
 	if be == nil {

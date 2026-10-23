@@ -374,7 +374,7 @@ func TestFlattenList(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := flattenList(tt.input, true)
+			result := flattenList(nil, tt.input, true)
 			if len(result) != tt.expected {
 				t.Errorf("Expected %d elements, got %d", tt.expected, len(result))
 			}
@@ -384,7 +384,7 @@ func TestFlattenList(t *testing.T) {
 
 func TestToSet(t *testing.T) {
 	input := []interface{}{1, 2, 2, 3, 3, 3, 1}
-	result := toSet(input)
+	result := toSet(context.Background(), input)
 	if len(result) != 3 {
 		t.Errorf("Expected 3 unique elements, got %d", len(result))
 	}
@@ -409,25 +409,6 @@ func TestGetCypherType(t *testing.T) {
 		if got != tt.expected {
 			t.Errorf("apocValueTypeName(%v) = %s, want %s", tt.input, got, tt.expected)
 		}
-	}
-}
-
-func TestMergeMaps(t *testing.T) {
-	map1 := map[string]interface{}{"a": 1, "b": 2}
-	map2 := map[string]interface{}{"b": 3, "c": 4}
-	result := mergeMaps(map1, map2)
-
-	if len(result) != 3 {
-		t.Errorf("Expected 3 keys, got %d", len(result))
-	}
-	if result["a"] != 1 {
-		t.Errorf("Expected a=1, got %v", result["a"])
-	}
-	if result["b"] != 3 {
-		t.Errorf("Expected b=3 (overridden), got %v", result["b"])
-	}
-	if result["c"] != 4 {
-		t.Errorf("Expected c=4, got %v", result["c"])
 	}
 }
 

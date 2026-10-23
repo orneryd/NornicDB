@@ -6,8 +6,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 type pipelineCallMetadata struct {
@@ -17,6 +19,9 @@ type pipelineCallMetadata struct {
 }
 
 func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, true, err
+	}
 	body, afterCall, inTransactions, batchExpression := e.parseCallSubquery(clause)
 	if err := validateCallSubqueryBody(body); err != nil {
 		return nil, nil, true, err
@@ -51,7 +56,11 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				return nil, nil, true, importErr
 			}
 		}
+		pass := bulk.NewCheckpoint(ctx)
 		for _, name := range declared {
+			if err := pass.Observe(); err != nil {
+				return nil, nil, true, err
+			}
 			if _, exists := metadata.scope[name]; !exists {
 				return nil, nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable", "variable "+name+" is not defined")
 			}
@@ -133,9 +142,13 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		if unionBranches, _, _, union := parseTopLevelUnionBranches(body); union {
 			branches = unionBranches
 		}
+		pass2 := bulk.NewCheckpoint(ctx)
 		for _, branch := range branches {
+			if err := pass2.Observe(); err != nil {
+				return nil, nil, true, err
+			}
 			if locals := unscopedBranchLocals(branch, outerNames); len(locals) > 0 {
-				branchLocals[strings.TrimSpace(branch)] = locals
+				branchLocals[bulk.TrimSpace(ctx, branch)] = locals
 			}
 		}
 	}
@@ -151,122 +164,132 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		// What each outer row's run of the body takes goes back when the run
 		// ends; the rows kept from it count below (#1343).
 		memory := memoryScopeFromContext(runCtx)
+		// Each outer row's inner rows are accounted against the statement.
+		innerRows := bulk.NewCheckpoint(runCtx)
 		kept := memoryAccount{scope: memory}
 		keptRows := rowEstimator{known: memory.knownLists()}
 		defer kept.close()
-		for _, outer := range outerRows {
-			rowMark := memory.mark()
-			input := pipelineRow{}
-			bindParameterRow(runCtx, input)
-			if hasLegacyImports {
-				for name, value := range outer {
-					input[name] = value
-				}
-			} else {
-				for _, name := range imports {
-					value, exists := outer[name]
-					if !exists {
-						return out, stats, true, localizedError(localization.CypherSubqueriesWithImportUnknownVariable(name), nil)
-					}
-					input[name] = value
-				}
+		for batch, batchErr := range materializedBatches(runCtx, len(outerRows)) {
+			if batchErr != nil {
+				return out, stats, true, getExpressionFailure(runCtx)
 			}
-			runBranch := func(query string) (*ExecuteResult, error) {
-				branchClauses := clauses
-				if isUnion {
-					var planned bool
-					branchClauses, planned = pipelineClausesFor(query)
-					if !planned {
-						return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "CALL branch could not be planned as a clause pipeline")
+			for _, outer := range outerRows[batch.start:batch.end] {
+				rowMark := memory.mark()
+				input := pipelineRow{}
+				bindParameterRow(runCtx, input)
+				if hasLegacyImports {
+					for name, value := range outer {
+						input[name] = value
 					}
-				}
-				branchInput := make(pipelineRow, len(input))
-				scope := make(map[string]struct{}, len(input))
-				for name, value := range input {
-					branchInput[name] = value
-					if !strings.HasPrefix(name, "$") {
-						scope[name] = struct{}{}
-					}
-				}
-				for _, name := range branchLocals[strings.TrimSpace(query)] {
-					delete(branchInput, name)
-					delete(scope, name)
-				}
-				var carried pipelineRow
-				if scoped {
-					carried = make(pipelineRow, len(imports))
+				} else {
 					for _, name := range imports {
-						carried[name] = branchInput[name]
+						value, exists := outer[name]
+						if !exists {
+							return out, stats, true, localizedError(localization.CypherSubqueriesWithImportUnknownVariable(name), nil)
+						}
+						input[name] = value
 					}
 				}
-				if !scoped && hasLegacyImports {
-					names := map[string]struct{}{}
-					var nodes []cypherantlr.SyntaxNode
-					for name := range branchInput {
-						names[name] = struct{}{}
+				runBranch := func(query string) (*ExecuteResult, error) {
+					branchClauses := clauses
+					if isUnion {
+						var planned bool
+						branchClauses, planned = pipelineClausesFor(query)
+						if !planned {
+							return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "CALL branch could not be planned as a clause pipeline")
+						}
 					}
-					for _, clause := range branchClauses {
-						nodes = append(nodes, clause.syntax)
+					branchInput := make(pipelineRow, len(input))
+					scope := make(map[string]struct{}, len(input))
+					for name, value := range input {
+						branchInput[name] = value
+						if !strings.HasPrefix(name, "$") {
+							scope[name] = struct{}{}
+						}
 					}
-					carried = pipelineRow{}
-					for _, name := range implicitSyntaxImports(names, nodes...) {
-						carried[name] = branchInput[name]
+					for _, name := range branchLocals[strings.TrimSpace(query)] {
+						delete(branchInput, name)
+						delete(scope, name)
 					}
-				}
-				branchCtx := withPipelineImports(withValueBindings(runCtx, branchInput), carried)
+					var carried pipelineRow
+					if scoped {
+						carried = make(pipelineRow, len(imports))
+						for _, name := range imports {
+							carried[name] = branchInput[name]
+						}
+					}
+					if !scoped && hasLegacyImports {
+						names := map[string]struct{}{}
+						var nodes []cypherantlr.SyntaxNode
+						for name := range branchInput {
+							names[name] = struct{}{}
+						}
+						for _, clause := range branchClauses {
+							nodes = append(nodes, clause.syntax)
+						}
+						carried = pipelineRow{}
+						for _, name := range implicitSyntaxImports(names, nodes...) {
+							carried[name] = branchInput[name]
+						}
+					}
+					branchCtx := withPipelineImports(withValueBindings(runCtx, branchInput), carried)
 
-				inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
-				if execErr == nil {
-					execErr = getExpressionFailure(runCtx)
-				}
-				if !handled && execErr == nil {
-					execErr = newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "CALL branch could not be executed as a clause pipeline")
-				}
-				return inner, execErr
-			}
-			var inner *ExecuteResult
-			var execErr error
-			if isUnion {
-				inner, execErr = runExec.executeUnionBranches(body, unionAll, runBranch)
-			} else {
-				inner, execErr = runBranch(body)
-			}
-			memory.releaseSince(rowMark)
-			if memory != nil && execErr == nil && hasReturn && inner != nil {
-				outerBytes := keptRows.bytes(outer)
-				for _, values := range inner.Rows {
-					if execErr = kept.grow(estimateResultRowBytes(values, keptRows.known) + outerBytes); execErr != nil {
-						break
+					inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
+					if execErr == nil {
+						execErr = getExpressionFailure(runCtx)
 					}
+					if !handled && execErr == nil {
+						execErr = newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "CALL branch could not be executed as a clause pipeline")
+					}
+					return inner, execErr
 				}
-			}
-			if inner != nil {
-				addQueryStats(stats, inner.Stats)
-				if len(inner.Columns) > 0 {
-					if metadata != nil {
-						metadata.columns = append(metadata.columns[:0], inner.Columns...)
-						for _, name := range inner.Columns {
-							metadata.scope[name] = struct{}{}
+				var inner *ExecuteResult
+				var execErr error
+				if isUnion {
+					inner, execErr = runExec.executeUnionBranches(runCtx, body, unionAll, runBranch)
+				} else {
+					inner, execErr = runBranch(body)
+				}
+				memory.releaseSince(rowMark)
+				if memory != nil && execErr == nil && hasReturn && inner != nil {
+					outerBytes := keptRows.bytes(outer)
+					for _, values := range inner.Rows {
+						if err := innerRows.Observe(); err != nil {
+							return nil, nil, true, err
+						}
+						if execErr = kept.grow(estimateResultRowBytes(values, keptRows.known) + outerBytes); execErr != nil {
+							break
 						}
 					}
 				}
-			}
-			if execErr != nil {
-				if hasReturn && inner != nil {
-					out = appendCallReturnRows(out, outer, inner.Columns, inner.Rows)
-				}
-				return out, stats, true, execErr
-			}
-			if hasReturn {
 				if inner != nil {
-					out = appendCallReturnRows(out, outer, inner.Columns, inner.Rows)
+					addQueryStats(stats, inner.Stats)
+					if len(inner.Columns) > 0 {
+						if metadata != nil {
+							metadata.columns = append(metadata.columns[:0], inner.Columns...)
+							for _, name := range inner.Columns {
+								metadata.scope[name] = struct{}{}
+							}
+						}
+					}
 				}
-			} else {
-				retained := make(pipelineRow, len(outer))
-				for name, value := range outer {
-					retained[name] = value
+				if execErr != nil {
+					if hasReturn && inner != nil {
+						out = appendCallReturnRows(runCtx, out, outer, inner.Columns, inner.Rows)
+					}
+					return out, stats, true, execErr
 				}
-				out = append(out, retained)
+				if hasReturn {
+					if inner != nil {
+						out = appendCallReturnRows(runCtx, out, outer, inner.Columns, inner.Rows)
+					}
+				} else {
+					retained := make(pipelineRow, len(outer))
+					for name, value := range outer {
+						retained[name] = value
+					}
+					out = append(out, retained)
+				}
 			}
 		}
 		return out, stats, true, nil
@@ -278,10 +301,20 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			if err != nil || !ok {
 				return innerRows, stats, ok, err
 			}
-			joined := make([]pipelineRow, 0, len(rows)*len(innerRows))
-			for _, outer := range rows {
-				for _, inner := range innerRows {
-					joined = append(joined, mergeCallPipelineRows(outer, inner))
+			joined := make([]pipelineRow, 0, util.SafePreallocCap(len(rows)*len(innerRows)))
+			for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+				if batchErr != nil {
+					return nil, stats, true, getExpressionFailure(ctx)
+				}
+				for _, outer := range rows[batch.start:batch.end] {
+					for innerBatch, innerErr := range materializedBatches(ctx, len(innerRows)) {
+						if innerErr != nil {
+							return nil, stats, true, getExpressionFailure(ctx)
+						}
+						for _, inner := range innerRows[innerBatch.start:innerBatch.end] {
+							joined = append(joined, mergeCallPipelineRows(outer, inner))
+						}
+					}
 				}
 			}
 			return joined, stats, true, nil
@@ -295,6 +328,10 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	combined := make([]pipelineRow, 0, len(rows))
 	stats := &QueryStats{}
 	for start := 0; start < len(rows); start += batch.size {
+		// Each batch commits on its own; none starts after cancellation.
+		if err := ctx.Err(); err != nil {
+			return combined, stats, true, err
+		}
 		end := start + batch.size
 		if end > len(rows) {
 			end = len(rows)
@@ -314,26 +351,36 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		if err != nil {
 			return combined, stats, true, err
 		}
-		combined = append(combined, batchRows...)
+		var appendErr error
+		if combined, appendErr = appendPopulation(ctx, combined, batchRows); appendErr != nil {
+			return combined, stats, true, appendErr
+		}
 		addQueryStats(stats, batchStats)
 	}
 	return combined, stats, true, nil
 }
 
-func appendCallReturnRows(out []pipelineRow, outer pipelineRow, columns []string, rows [][]interface{}) []pipelineRow {
-	for _, values := range rows {
-		joined := make(pipelineRow, len(outer)+len(columns))
-		for name, value := range outer {
-			joined[name] = value
+func appendCallReturnRows(ctx context.Context, out []pipelineRow, outer pipelineRow, columns []string, rows [][]interface{}) []pipelineRow {
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return out
 		}
-		for index, name := range columns {
-			if index < len(values) {
-				joined[name] = values[index]
-			} else {
-				joined[name] = nil
+		for _, values := range rows[batch.start:batch.end] {
+			joined := make(pipelineRow, len(outer)+len(columns))
+			for name, value := range outer {
+				joined[name] = value
 			}
+			pass := bulk.NewCheckpoint(ctx)
+			for index, name := range columns {
+				pass.Check()
+				if index < len(values) {
+					joined[name] = values[index]
+				} else {
+					joined[name] = nil
+				}
+			}
+			out = append(out, joined)
 		}
-		out = append(out, joined)
 	}
 	return out
 }
@@ -360,7 +407,9 @@ func callPipelineRowsFromResult(ctx context.Context, result *ExecuteResult) []pi
 	}
 	rows := make([]pipelineRow, 0, len(result.Rows))
 	params := getParamsFromContext(ctx)
+	pass := bulk.NewCheckpoint(ctx)
 	for _, values := range result.Rows {
+		pass.Check()
 		row := make(pipelineRow, len(result.Columns)+len(params))
 		for index, name := range result.Columns {
 			if index < len(values) {
@@ -375,7 +424,7 @@ func callPipelineRowsFromResult(ctx context.Context, result *ExecuteResult) []pi
 	return rows
 }
 
-func callPipelineResultFromRows(rows []pipelineRow, seed *ExecuteResult, stats *QueryStats, callColumns []string) *ExecuteResult {
+func callPipelineResultFromRows(ctx context.Context, rows []pipelineRow, seed *ExecuteResult, stats *QueryStats, callColumns []string) *ExecuteResult {
 	columns := make([]string, 0)
 	seen := make(map[string]struct{})
 	if seed != nil {
@@ -386,18 +435,25 @@ func callPipelineResultFromRows(rows []pipelineRow, seed *ExecuteResult, stats *
 			}
 		}
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for _, name := range callColumns {
+		pass.Check()
 		if _, exists := seen[name]; !exists {
 			seen[name] = struct{}{}
 			columns = append(columns, name)
 		}
 	}
 	additional := make(map[string]struct{})
-	for _, row := range rows {
-		for name := range row {
-			if !strings.HasPrefix(name, "$") {
-				if _, exists := seen[name]; !exists {
-					additional[name] = struct{}{}
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			for name := range row {
+				if !strings.HasPrefix(name, "$") {
+					if _, exists := seen[name]; !exists {
+						additional[name] = struct{}{}
+					}
 				}
 			}
 		}
@@ -409,12 +465,17 @@ func callPipelineResultFromRows(rows []pipelineRow, seed *ExecuteResult, stats *
 	sort.Strings(sorted)
 	columns = append(columns, sorted...)
 	result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows)), Stats: mergeQueryStats(seedStats(seed), stats)}
-	for _, row := range rows {
-		values := make([]interface{}, len(columns))
-		for index, name := range columns {
-			values[index] = row[name]
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil
 		}
-		result.Rows = append(result.Rows, values)
+		for _, row := range rows[batch.start:batch.end] {
+			values := make([]interface{}, len(columns))
+			for index, name := range columns {
+				values[index] = row[name]
+			}
+			result.Rows = append(result.Rows, values)
+		}
 	}
 	return result
 }

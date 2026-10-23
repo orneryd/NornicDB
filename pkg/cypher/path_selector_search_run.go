@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -226,11 +227,7 @@ func (s *pathSearch) relationships(node storage.NodeID, direction string) []*sto
 	if direction == "incoming" {
 		edges = incoming
 	} else if direction != "outgoing" {
-		edges, err = combineIncidentEdges(s.ctx, node, outgoing, incoming)
-		if err != nil {
-			recordExpressionFailure(s.ctx, err)
-			return nil
-		}
+		edges = combineIncidentEdges(valueWalk(s.ctx), node, outgoing, incoming)
 	}
 	s.edges[key] = edges
 	return edges
@@ -448,7 +445,9 @@ func (s *pathSearch) trails(depth int, entry int32, used map[storage.EdgeID]stru
 	key := [2]int32{int32(depth), entry}
 	for _, nogood := range s.nogoods[key] {
 		blocked := true
+		pass := bulk.NewCheckpoint(s.ctx)
 		for _, id := range nogood {
+			pass.Check()
 			if _, in := used[id]; !in {
 				blocked = false
 				break
@@ -461,7 +460,9 @@ func (s *pathSearch) trails(depth int, entry int32, used map[storage.EdgeID]stru
 	found := false
 	var conflicts []storage.EdgeID
 	conflict := func(id storage.EdgeID) {
+		pass2 := bulk.NewCheckpoint(s.ctx)
 		for _, have := range conflicts {
+			pass2.Check()
 			if have == id {
 				return
 			}
@@ -486,7 +487,9 @@ func (s *pathSearch) trails(depth int, entry int32, used map[storage.EdgeID]stru
 			return false, true, nil
 		}
 		found = found || foundBelow
+		pass3 := bulk.NewCheckpoint(s.ctx)
 		for _, blocked := range below {
+			pass3.Check()
 			if blocked != id {
 				conflict(blocked)
 			}
@@ -726,7 +729,9 @@ func (s *pathSearch) dominate() {
 		successors = append(successors, nil)
 		return int32(len(successors) - 1)
 	}
+	pass := bulk.NewCheckpoint(s.ctx)
 	for index := int32(0); index < count; index++ {
+		pass.Check()
 		grow()
 	}
 	relationshipNode := func(id storage.EdgeID) int32 {
@@ -738,15 +743,20 @@ func (s *pathSearch) dominate() {
 		return node
 	}
 	link := func(from int32, p int32) {
+		pass2 := bulk.NewCheckpoint(s.ctx)
 		for _, step := range s.products[p].steps {
+			pass2.Check()
 			via := relationshipNode(step.edge.ID)
 			successors[from] = append(successors[from], via)
 			successors[via] = append(successors[via], step.to+1)
 		}
 	}
+	pass3 := bulk.NewCheckpoint(s.ctx)
 	for p := int32(0); p < products; p++ {
+		pass3.Check()
 		link(p+1, p)
 		for index, step := range s.products[p].steps {
+			pass3.Check()
 			d.incoming[step.to] = append(d.incoming[step.to], pathSearchHop{product: p, step: int32(index)})
 		}
 	}

@@ -72,7 +72,7 @@ func (e *StorageExecutor) nodeMatchesProps(node *storage.Node, props map[string]
 	if len(props) == 0 {
 		return true
 	}
-	return nodePropertiesMatch(e.queryVisibleValue(node).(*storage.Node), props)
+	return nodePropertiesMatch(e.queryVisibleValue(nil, node).(*storage.Node), props)
 }
 
 // nodePropertiesMatch is the one property test of a node pattern

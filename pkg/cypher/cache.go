@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -278,7 +277,8 @@ func (qc *QueryCache) Get(cypher string, params map[string]interface{}) (*Execut
 //	Safe to call concurrently from multiple goroutines.
 func (qc *QueryCache) Put(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration) {
 	key := qc.cacheKey(cypher, params)
-	result = cacheOwnedResult(result)
+	// A completed result handed to the public cache, outside any statement.
+	result, _ = cacheOwnedResult(context.Background(), result)
 
 	qc.mu.Lock()
 	defer qc.mu.Unlock()
@@ -300,13 +300,17 @@ func (qc *QueryCache) Put(cypher string, params map[string]interface{}, result *
 // cacheOwnedResult gives a persistent cache its own visible outer row window.
 // The caller may still own a larger allocation, so neither its hidden row
 // headers nor the shared row contents may be cleared during publication.
-func cacheOwnedResult(result *ExecuteResult) *ExecuteResult {
+func cacheOwnedResult(ctx context.Context, result *ExecuteResult) (*ExecuteResult, error) {
 	if result == nil {
-		return nil
+		return nil, nil
 	}
 	owned := *result
-	owned.Rows = slices.Clone(result.Rows)
-	return &owned
+	rows, err := clonePopulation(ctx, result.Rows)
+	if err != nil {
+		return nil, err
+	}
+	owned.Rows = rows
+	return &owned, nil
 }
 
 // Invalidate clears all cached query results.
@@ -427,7 +431,10 @@ func (qc *QueryCache) Stats() (hits, misses int64, size int) {
 // cacheKey is the query and its parameters encoded in full
 // (statementCacheKey): entries are keyed by the whole key, never a hash.
 func (qc *QueryCache) cacheKey(cypher string, params map[string]interface{}) string {
-	return statementCacheKey(cypher, params)
+	// The public cache runs outside any statement: its walk (nil) never
+	// stops, and the boundary keeps any stop inside the package.
+	key, _ := insideStopBoundary(func() (string, error) { return statementCacheKey(nil, cypher, params), nil })
+	return key
 }
 
 // moveToFront moves key to front of LRU list.
@@ -635,12 +642,23 @@ func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl 
 }
 
 func (sc *SmartQueryCache) putWithLabelsAndTrace(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace) {
-	sc.putWithLabelsAndTraceForEmbedding(key, result, ttl, labels, trace, 0)
+	sc.putWithLabelsAndTraceForEmbedding(context.Background(), key, result, ttl, labels, trace, 0)
 }
 
-func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64) {
-	result = cacheOwnedResult(result)
-	entities := resultHasMaterializedEntities(result)
+// putWithLabelsAndTraceForEmbedding walks a statement's result for entities
+// within the statement's ctx: a statement canceled meanwhile stores nothing.
+func (sc *SmartQueryCache) putWithLabelsAndTraceForEmbedding(ctx context.Context, key string, result *ExecuteResult, ttl time.Duration, labels []string, trace HotPathTrace, generation uint64) {
+	result, err := cacheOwnedResult(ctx, result)
+	if err != nil {
+		return
+	}
+	var entities bool
+	if result != nil {
+		var err error
+		if entities, err = materializedRowsWithCancellation(ctx, nil, result.Rows); err != nil {
+			return
+		}
+	}
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 
@@ -885,13 +903,25 @@ func extractLabelsFromQuery(cypher string) []string {
 // trivia outside expression-derived column names and a trailing semicolon
 // from defeating a hit. Column-name spelling remains part of the key.
 func resultCacheEntryKey(cypher string, params map[string]interface{}) string {
+	key, _ := insideStopBoundary(func() (string, error) { return statementResultCacheKey(nil, cypher, params), nil })
+	return key
+}
+
+// statementResultCacheKey is resultCacheEntryKey for a statement: its walk
+// over the parameters observes the statement, and a canceled statement stops
+// (check) with no key, so it neither reads nor fills the cache.
+func statementResultCacheKey(ctx context.Context, cypher string, params map[string]interface{}) string {
+	var work *materializedRowCheckpoint
+	if ctx != nil {
+		work = valueWalk(ctx)
+	}
 	source := trimTrailingStatementDelimiters(cypher)
 	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.StatementEntry, false)
 	var protected []statementPresentationSpan
 	if err == nil {
 		protected = statementExpressionNameSpans(syntax)
 	}
-	return statementCacheKey(normalizeQueryWithPresentation(source, protected), params)
+	return statementCacheKey(work, normalizeQueryWithPresentation(source, protected), params)
 }
 
 // =============================================================================

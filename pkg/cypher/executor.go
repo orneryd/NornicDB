@@ -124,6 +124,7 @@ import (
 	apoccfg "github.com/orneryd/nornicdb/apoc"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
@@ -411,6 +412,9 @@ type StorageExecutor struct {
 	shellParams        map[string]interface{}
 	shellParamsByToken map[string]map[string]interface{}
 	shellParamsMu      sync.RWMutex
+	// shellParamsVersion counts published shell-param changes: buckets are
+	// never written once published (see setShellParams).
+	shellParamsVersion uint64
 
 	// vectorRegistry maps Cypher vector index definitions to concrete vector spaces.
 	vectorRegistry    *vectorspace.IndexRegistry
@@ -1645,10 +1649,10 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// Try to get a transaction-capable engine and async wrapper (if present)
 	engines := e.resolveImplicitTxEngines()
 	if engines.namespace == "" {
-		if dbName := strings.TrimSpace(GetUseDatabaseFromContext(ctx)); dbName != "" {
+		if dbName := bulk.TrimSpace(ctx, GetUseDatabaseFromContext(ctx)); dbName != "" {
 			engines.namespace = dbName
-		} else if _, dbName := e.resolveWALAndDatabase(); strings.TrimSpace(dbName) != "" {
-			engines.namespace = strings.TrimSpace(dbName)
+		} else if _, dbName := e.resolveWALAndDatabase(); bulk.TrimSpace(ctx, dbName) != "" {
+			engines.namespace = bulk.TrimSpace(ctx, dbName)
 		}
 	}
 	txEngine := engines.txEngine
@@ -1659,7 +1663,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		if inlineEmbeddingEnabled {
 			return nil, localizedError(localization.CypherCoreEmbeddingTransactionStorageRequired(), nil)
 		}
-		result, err := execute(ctx, e)
+		result, err := insideStopBoundary(func() (*ExecuteResult, error) { return execute(ctx, e) })
 		if err == nil {
 			// Legacy engines apply writes directly; successful execution is
 			// their publication boundary, with no pending transaction.
@@ -1760,7 +1764,11 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	txExec := e.cloneWithStorage(txWrapper)
 
 	// Execute the query
-	result, execErr := execute(txCtx, txExec)
+	// A stop in the statement's work comes back as its error here, so the
+	// error path below rolls the transaction back.
+	statementDone := txWrapper.runningStatement(ctx)
+	result, execErr := insideStopBoundary(func() (*ExecuteResult, error) { return execute(txCtx, txExec) })
+	statementDone()
 	// An expression error recorded while the statement ran is its error, so
 	// nothing it wrote is committed.
 	if execErr == nil {

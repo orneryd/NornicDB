@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 var pluginContextType = reflect.TypeOf((*context.Context)(nil)).Elem()
@@ -42,7 +43,11 @@ func invokeTypedPlugin(ctx context.Context, handler interface{}, args []interfac
 	if offset == 1 {
 		values[0] = reflect.ValueOf(ctx)
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for i, arg := range args {
+		if err := pass2.Observe(); err != nil {
+			return nil, err
+		}
 		at := i + offset
 		var target reflect.Type
 		if typ.IsVariadic() && at >= typ.NumIn()-1 {

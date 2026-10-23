@@ -272,16 +272,16 @@ func TestEvaluateRelationshipPatternInWhere_BareDirected(t *testing.T) {
 	orphan := getNodeByName("orphan")
 	peer := getNodeByName("peer")
 
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(connected, "n", "(n)-->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(orphan, "n", "(n)-->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(peer, "n", "(n)-->()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), connected, "n", "(n)-->()"))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), orphan, "n", "(n)-->()"))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), peer, "n", "(n)-->()"))
 
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(peer, "n", "(n)<--()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(connected, "n", "(n)<--()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), peer, "n", "(n)<--()"))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), connected, "n", "(n)<--()"))
 
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(connected, "n", "(n)--()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(peer, "n", "(n)--()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(orphan, "n", "(n)--()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), connected, "n", "(n)--()"))
+	assert.True(t, exec.evaluateRelationshipPatternInWhere(context.Background(), peer, "n", "(n)--()"))
+	assert.False(t, exec.evaluateRelationshipPatternInWhere(context.Background(), orphan, "n", "(n)--()"))
 }
 
 func TestCheckSubqueryMatch_BareBody(t *testing.T) {

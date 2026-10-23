@@ -5,6 +5,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -31,7 +32,11 @@ func (e *StorageExecutor) prepareTopLevelUnwind(ctx context.Context, cypher stri
 	asIdx := unwindIdx + len("UNWIND") + asRelativeIdx
 	listExpr := strings.TrimSpace(cypher[unwindIdx+len("UNWIND") : asIdx])
 	remainderStart := asIdx + len("AS")
+	pass := bulk.NewCheckpoint(ctx)
 	for remainderStart < len(cypher) && isASCIISpace(cypher[remainderStart]) {
+		if err := pass.Observe(); err != nil {
+			return topLevelUnwindPlan{}, err
+		}
 		remainderStart++
 	}
 	remainder := strings.TrimSpace(cypher[remainderStart:])
@@ -132,7 +137,11 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 			if rewritten, ok := rewriteUnwindCorrelationToIn(normalized, plan.variable, "__unwind_items"); ok {
 				rewritten = rewriteTopLevelMultiMatchToCartesianMatch(rewritten)
 				params := make(map[string]interface{}, len(getParamsFromContext(ctx))+1)
+				pass := bulk.NewCheckpoint(ctx)
 				for key, value := range getParamsFromContext(ctx) {
+					if err := pass.Observe(); err != nil {
+						return nil, true, err
+					}
 					params[key] = value
 				}
 				params["__unwind_items"] = plan.items
@@ -188,17 +197,29 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 	ctx = withExpressionFailureSlot(ctx)
 	scope := map[string]struct{}{variable: {}}
 	base := pipelineRow{}
+	pass := bulk.NewCheckpoint(ctx)
 	for name, value := range e.fabricRecordBindings {
+		if err := pass.Observe(); err != nil {
+			return nil, true, err
+		}
 		base[name] = value
 		scope[name] = struct{}{}
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for name, value := range valueBindingsFromContext(ctx) {
+		if err := pass2.Observe(); err != nil {
+			return nil, true, err
+		}
 		base[name] = value
 		scope[name] = struct{}{}
 	}
 	bindParameterRow(ctx, base)
 	rows := make([]pipelineRow, 0, len(items))
+	pass4 := bulk.NewCheckpoint(ctx)
 	for _, item := range items {
+		if err := pass4.Observe(); err != nil {
+			return nil, true, err
+		}
 		row := maps.Clone(base)
 		row[variable] = item
 		rows = append(rows, row)
@@ -233,7 +254,11 @@ func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Contex
 	}
 	rewritten = rewriteTopLevelMultiMatchToCartesianMatch(rewritten)
 	params := make(map[string]interface{}, len(getParamsFromContext(ctx))+1)
+	pass := bulk.NewCheckpoint(ctx)
 	for key, value := range getParamsFromContext(ctx) {
+		if err := pass.Observe(); err != nil {
+			return nil, true, err
+		}
 		params[key] = value
 	}
 	params["__unwind_items"] = plan.items

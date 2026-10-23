@@ -9,7 +9,7 @@
   },
   "pkg/cypher/cache_key.go:writeCacheKeyValue": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "3f691ff05957d6f3f03856567c624ebc04d2992c91ef0c7c7a6d01eb023be13f"
+    "sha256": "746d9782e55e40dc7aa3f52643005a42c253172d5c058b6ffbe0369e294f65f8"
   },
   "pkg/cypher/call_cdc.go:cdcValue": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
@@ -17,7 +17,7 @@
   },
   "pkg/cypher/clauses.go:canonicalUnwindMergeValue": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "25856ca3e8151d02498acaf1cf7036d0f456246d5c61fbcb54e1e9358c317f87"
+    "sha256": "141b5c0bcf12b3ceb004473a94fd2ee78dbf40900a1fae81e9044af6caa9fcfb"
   },
   "pkg/cypher/executor_subqueries.go:callSubqueryLookupKeyString": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
@@ -57,7 +57,7 @@
   },
   "pkg/cypher/call_apoc_path.go:apocNodes": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "e51d6bfc5cad1246c5db53585baa3276b2c5fd8301c591a4405a2e0e5e38b044"
+    "sha256": "afed8be98bc5411549a0b9286d7d22ffdec717861637c0798cab82a422e4f8d7"
   },
   "pkg/cypher/deleted_entity_projection.go:replace": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
@@ -73,7 +73,7 @@
   },
   "pkg/cypher/executor_mutations.go:collectDeleteWithLimitCandidates": {
     "reason": "DELETE fast-route admission accepts its fixed native list shapes and otherwise declines to the shared pipeline. #1594 adds structural property inspection before row evaluation; no numeric/list conversion is implemented here.",
-    "sha256": "c48c98bea914784351535bfe91211e7d0df5ecdbe88d9af3b5ee0e6eb77fac1a"
+    "sha256": "cc0dfee6b6a1e55a442a2a51dd153433d666d15562a27598e51abcf5ac85e3bd"
   },
   "pkg/cypher/executor_mutations_delete_guard.go:collectDeleteTargetValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
@@ -85,19 +85,19 @@
   },
   "pkg/cypher/executor_subqueries.go:extractSeedNodesFromResult": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "ba94bb21481ba8242327cb15c104978fa38ebf4c813f2e78a3b5cd07511f9324"
+    "sha256": "a16a126db58c239fedf1e1b5ef47e07e58c988c3ca2c7a3111174e37ed891b12"
   },
-  "pkg/cypher/node_helpers.go:materializedValue": {
+  "pkg/cypher/node_helpers.go:materializedValueWithCheckpoint": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "a19859776d56b6055b7b4f0b307e19b45f2534a168716898af1a067a25aae268"
+    "sha256": "92fc9deb611474ef236a02ed8a08128ac4e15e2a4c2594e1bc982130de5f0b4a"
   },
   "pkg/cypher/parameters.go:parameterRowValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "3db6a819cf980b27fc9457210b23a75bdefcf4b3d8dda550fbe5d483025ee7b7"
+    "sha256": "71e8d7bfb3cbbdde9d535e42991127b7b5038fc315ceb8ce7df5e497b6c4f9b2"
   },
   "pkg/cypher/parameters.go:nestedParameterValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "71efbd76fdff16457ebfd60a5fd63dacf46d16f717ba7489dc75eccf2739fedf"
+    "sha256": "cc82fc6f5fc2665518384556549289b1b07b95b17d8cd0e805dc844179f6b113"
   },
   "pkg/cypher/parameters.go:sameParameterValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
@@ -105,7 +105,7 @@
   },
   "pkg/cypher/parameters.go:normalizeParameterValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "650795d261ecd8c80850e34ef4ad4ece39daa7f40ae133ef7f0826d1ec8d0325"
+    "sha256": "d2c72e3868e6179bf9595590e1640b058bf97b17ae371c2080d2e14c46be59f9"
   },
   "pkg/cypher/pipeline_executor.go:pipelineRelationshipList": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
@@ -117,7 +117,7 @@
   },
   "pkg/cypher/keyword_scan.go:restoreValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "e4a70464e6c125c3332f0de55af6094cb9b2c0deb2c1716b15692dab67a38276"
+    "sha256": "7309d684db41d5cfb39df32737b8d6599f7d87971882616e9afe7ca07657b4ff"
   },
   "pkg/cypher/quoted_variables.go:restoreValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
@@ -151,13 +151,13 @@
     "reason": "Existing storage/identity/comparison-key contract, distinct from generic coordinate reading; do not change adjudicated equivalence or physical write detection.",
     "sha256": "8ad3f2e2a05a0b026571e8a5c3fdeda0cdf4d5f8856bbc902b6e2f12d1c74743"
   },
-  "pkg/cypher/value_equivalence.go:cypherValueKey": {
+  "pkg/cypher/value_equivalence.go:cypherValueKeyWithCheckpoint": {
     "reason": "Existing storage/identity/comparison-key contract, distinct from generic coordinate reading; do not change adjudicated equivalence or physical write detection.",
-    "sha256": "497bda05e205566813aacde5b5a1c1075f771f6a0830a9a6d4a75e0f10766c92"
+    "sha256": "2301173bb5ed23b9eea6e942e2195bc3e974ec22c7c1bfb160cc6fc97ff27f99"
   },
   "pkg/cypher/value_equivalence.go:appendValueKey": {
     "reason": "Existing storage/identity/comparison-key contract, distinct from generic coordinate reading; do not change adjudicated equivalence or physical write detection.",
-    "sha256": "5b70af2f76ea5c79aee6dc7ee64bc417651fd22c09c353a69b6a847dfa5a4e28"
+    "sha256": "756e933f017b4a4053af64121491aed1239eb6ebbf8507943eca388f16458cff"
   },
   "pkg/cypher/value_equivalence.go:addPositionByContract": {
     "reason": "Existing storage/identity/comparison-key contract, distinct from generic coordinate reading; do not change adjudicated equivalence or physical write detection.",
@@ -221,7 +221,7 @@
   },
   "pkg/cypher/runtime_type_errors.go:neo4jValueRepr": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
-    "sha256": "3c041b53388cbdd3656645161297b62ccfc97a2a23140740fcf2e0c4aaef34de"
+    "sha256": "c72b4f37e86ca3fbd5a92d0884b989fa5fe648c924fda5248113c8bc0933afc3"
   },
   "pkg/cypher/show_schema_values.go:schemaConfigValue": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
@@ -237,11 +237,11 @@
   },
   "pkg/cypher/temporal_format.go:formatPrintfArgument": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
-    "sha256": "c74d1c1f18b18366078be9596e80ae0fdd25e79d7e918da344021f837e4c2275"
+    "sha256": "3995b20750a354a0fe56dd9a2d632e09dbfcf3a8e3c8ca7ecc94e8cc48d9ea09"
   },
   "pkg/cypher/temporal_values.go:neo4jProvidedValue": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
-    "sha256": "53406ebd13e8c440ad50feabb6859c0a234b387058bf762c130e1949e69e8d65"
+    "sha256": "0da3e3b2f861d67ea0a5cf537e945fcf304010e2fc5da7c0e2bac2a1651fb6e3"
   },
   "pkg/cypher/cypher25_expression_rewrite.go:fnInterpolate": {
     "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
@@ -273,7 +273,7 @@
   },
   "pkg/cypher/fn/runtime_value.go:functionResult": {
     "reason": "Runtime null normalization at the producer boundary; numeric scalars and primitive lists pass through unchanged, with no narrowing or numeric interpretation.",
-    "sha256": "8f68f3a810e140fcbb6f7f7b50bd61bce9a2f8488230676671673ba173d76a64"
+    "sha256": "56b1ca201144affacdf84c50b518febc201fb184d14e4702522360f0b404a6e0"
   },
   "pkg/cypher/transaction_memory.go:growValue": {
     "reason": "#1618 retained-memory accounting specializes fixed-width scalar footprints, then delegates other carriers to the shared estimator. It sizes representations without interpreting or converting numeric values.",
@@ -290,5 +290,9 @@
   "pkg/cypher/executor_mutations.go:normalizedCypherValue": {
     "reason": "Runtime/property admission shares temporal/null/container traversal; numeric classification and checked property coercion use ReadNumber/Number.Int64, while runtime numeric carriers stay exact.",
     "sha256": "669666ccb6e2abce773554afd5848d65c33f6174136d3fc4c79b1236e35115f6"
+  },
+  "pkg/cypher/temporal_values.go:writeFormatValueText": {
+    "reason": "String/token or type/format rendering policy; it does not convert numeric elements. Length dispatch already has a reflection fallback for every list width.",
+    "sha256": "eb1b1ec19c669268ad0ac1e40556437865d684b86cba1872b947eabf6278eb4a"
   }
 }

@@ -156,7 +156,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 	// Resolve dotted/bracketed parameter map paths like $d.uuid and
 	// $d['uuid'] as typed values.
 	if v, ok := resolveParamPathRef(ctx, expr); ok {
-		return normalizeExpressionValue(v)
+		return normalizeExpressionValue(valueWalk(ctx), v)
 	}
 	if baseExpr, property, ok := splitPostfixPropertyAccess(expr); ok {
 		base := e.evaluateExpressionWithContextFull(ctx, baseExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -165,7 +165,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 			return value[property]
 		case *storage.Node:
 			if value != nil {
-				propertyValue, _ := getNodePropertyValue(e.queryVisibleValue(value).(*storage.Node), property)
+				propertyValue, _ := getNodePropertyValue(e.queryVisibleValue(nil, value).(*storage.Node), property)
 				return propertyValue
 			}
 			return nil
@@ -303,7 +303,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 			if node == nil {
 				return nil, true
 			}
-			if val, ok := getNodePropertyValue(e.queryVisibleValue(node).(*storage.Node), propName); ok {
+			if val, ok := getNodePropertyValue(e.queryVisibleValue(nil, node).(*storage.Node), propName); ok {
 				return val, true
 			}
 			return nil, true

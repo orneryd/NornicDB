@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -15,6 +16,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 	deleteVars string,
 	detach bool,
 ) (*ExecuteResult, bool, error) {
+	work := bulk.NewCheckpoint(ctx)
 	matchSegment = strings.TrimSpace(matchSegment)
 	_, inTransactionWrapper := e.getStorage(ctx).(*transactionStorageWrapper)
 	if detach || strings.Contains(deleteVars, ",") {
@@ -102,7 +104,11 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 	store := e.getStorage(ctx)
 	edgeIDs := make([]storage.EdgeID, 0)
 	seen := make(map[storage.EdgeID]struct{})
+	pass := bulk.NewCheckpoint(ctx)
 	for _, source := range sources {
+		if err := pass.Observe(); err != nil {
+			return nil, true, err
+		}
 		if source == nil {
 			continue
 		}
@@ -117,11 +123,14 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		if rowMatch == nil || !e.pipelineNodeMatchesPattern(source, rowMatch.StartNode) {
 			continue
 		}
-		candidates, err := e.boundRelationshipDeleteCandidateEdges(store, source.ID, rowMatch.Relationship.Direction)
+		candidates, err := e.boundRelationshipDeleteCandidateEdges(ctx, store, source.ID, rowMatch.Relationship.Direction)
 		if err != nil {
 			return nil, true, err
 		}
 		for _, edge := range candidates {
+			if err := work.Observe(); err != nil {
+				return nil, true, err
+			}
 			if edge == nil || !relationshipTypeAllowed(edge.Type, rowMatch.Relationship.Types, typeSet) {
 				continue
 			}
@@ -171,7 +180,11 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 			return nil, true, err
 		}
 		result.Stats.RelationshipsDeleted = len(edgeIDs)
+		pass2 := bulk.NewCheckpoint(ctx)
 		for _, edgeID := range edgeIDs {
+			if err := pass2.Observe(); err != nil {
+				return nil, true, err
+			}
 			e.notifyEdgeMutated(string(edgeID))
 		}
 	}
@@ -202,25 +215,30 @@ func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Cont
 
 	filtered := make([]*storage.Node, 0, len(nodes))
 	hideSystemNodes := shouldHideSystemNodes(store)
-	for _, node := range nodes {
-		if node == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		if hideSystemNodes && isSystemNode(node) {
-			continue
+		for _, node := range nodes[batch.start:batch.end] {
+			if node == nil {
+				continue
+			}
+			if hideSystemNodes && isSystemNode(node) {
+				continue
+			}
+			if len(sourcePattern.labels) > 0 && !mergeNodeHasLabels(node, sourcePattern.labels) {
+				continue
+			}
+			if len(sourcePattern.properties) > 0 && !e.nodeMatchesProps(node, sourcePattern.properties) {
+				continue
+			}
+			filtered = append(filtered, node)
 		}
-		if len(sourcePattern.labels) > 0 && !mergeNodeHasLabels(node, sourcePattern.labels) {
-			continue
-		}
-		if len(sourcePattern.properties) > 0 && !e.nodeMatchesProps(node, sourcePattern.properties) {
-			continue
-		}
-		filtered = append(filtered, node)
 	}
 	return filtered, nil
 }
 
-func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
+func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(ctx context.Context, store storage.Engine, nodeID storage.NodeID, direction string) ([]*storage.Edge, error) {
 	var edges []*storage.Edge
 	switch direction {
 	case "outgoing":
@@ -228,13 +246,17 @@ func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.En
 		if err != nil {
 			return nil, err
 		}
-		edges = append(edges, outgoing...)
+		if edges, err = appendPopulation(ctx, edges, outgoing); err != nil {
+			return nil, err
+		}
 	case "incoming":
 		incoming, err := store.GetIncomingEdges(nodeID)
 		if err != nil {
 			return nil, err
 		}
-		edges = append(edges, incoming...)
+		if edges, err = appendPopulation(ctx, edges, incoming); err != nil {
+			return nil, err
+		}
 	case "both":
 		outgoing, err := store.GetOutgoingEdges(nodeID)
 		if err != nil {
@@ -244,8 +266,12 @@ func (e *StorageExecutor) boundRelationshipDeleteCandidateEdges(store storage.En
 		if err != nil {
 			return nil, err
 		}
-		edges = append(edges, outgoing...)
-		edges = append(edges, incoming...)
+		if edges, err = appendPopulation(ctx, edges, outgoing); err != nil {
+			return nil, err
+		}
+		if edges, err = appendPopulation(ctx, edges, incoming); err != nil {
+			return nil, err
+		}
 	}
 	return edges, nil
 }

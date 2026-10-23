@@ -41,7 +41,7 @@ func TestValueTypeNamesComeFromOneTable(t *testing.T) {
 	}
 	require.Equal(t, "LongArray", neo4jValueTypeName([]int64{1, 2}))
 	require.Equal(t, "StringArray", neo4jValueTypeName([]string{"a"}))
-	require.Equal(t, "LongArray[1, 2]", neo4jValueRepr([]int64{1, 2}))
+	require.Equal(t, "LongArray[1, 2]", neo4jValueRepr(nil, []int64{1, 2}))
 }
 
 // TestTypeErrorMessagesNameCypherTypes: errors name a value's Cypher type,

@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -392,7 +393,11 @@ func (e *Executor) ParseAndValidate(ctx context.Context, cypher string, params m
 	}
 
 	// Add parameters
+	pass := bulk.NewCheckpoint(ctx)
 	for k, v := range params {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		query.Parameters[k] = v
 	}
 

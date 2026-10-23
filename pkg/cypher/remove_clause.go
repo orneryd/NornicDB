@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -115,7 +116,11 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 				}
 			}
 		}
+		pass := bulk.NewCheckpoint(ctx)
 		for _, entity := range touched {
+			if err := pass.Observe(); err != nil {
+				return err
+			}
 			switch typed := entity.(type) {
 			case *storage.Node:
 				if err := updateMutatedNode(store, typed); err != nil {
@@ -159,7 +164,7 @@ func (e *StorageExecutor) removeFromNode(ctx context.Context, store storage.Engi
 		return nil
 	}
 	node.Labels = next
-	if err := validatePolicyOnLabelChange(store, node, before); err != nil {
+	if err := validatePolicyOnLabelChange(ctx, store, node, before); err != nil {
 		node.Labels = before
 		return err
 	}

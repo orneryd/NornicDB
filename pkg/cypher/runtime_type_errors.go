@@ -5,7 +5,7 @@ import (
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"reflect"
-	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -99,63 +99,83 @@ func predicateValueHolds(ctx context.Context, value interface{}, arithmetic bool
 // Long(1), Double(1.500000e+00), String("x"), Boolean('true'),
 // LongArray[1, 2], List{Long(1), String("a")}; a temporal value or a point
 // as its text (2020-01-02, P1D, point({x: 1.0, y: 2.0, crs: 'cartesian'})).
-func neo4jValueRepr(value interface{}) string {
+func neo4jValueRepr(work *materializedRowCheckpoint, value interface{}) string {
+	return valueText(work, value, neo4jValueReprStyle)
+}
+
+// neo4jValueReprStyle is Neo4j's runtime representation of a value in an
+// error: Map{key -> value} in key order, List{item, ...}, a typed array as
+// its type name and items, and Long(1), String("a") ... for other values.
+var neo4jValueReprStyle = &valueTextStyle{
+	mapping: stringMap,
+	list: func(value interface{}) ([]interface{}, bool) {
+		if value == nil {
+			return nil, false
+		}
+		if kind := reflect.TypeOf(value).Kind(); (kind == reflect.Slice || kind == reflect.Array) && neo4jValueTypeName(value) == "List" {
+			return toAnySlice(value), true
+		}
+		return nil, false
+	},
+	listOpen: "List{", listClose: "}", listSeparator: ", ",
+	mapOpen: "Map{", mapClose: "}", mapSeparator: ", ", keySeparator: " -> ",
+	sorted: true,
+	leaf:   neo4jValueReprLeaf,
+}
+
+func neo4jValueReprLeaf(walk *materializedRowCheckpoint, out *strings.Builder, value interface{}) bool {
 	switch v := value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return fmt.Sprintf("Long(%d)", v)
+		out.WriteString(fmt.Sprintf("Long(%d)", v))
+		return true
 	case float32, float64:
-		return fmt.Sprintf("Double(%e)", v)
+		out.WriteString(fmt.Sprintf("Double(%e)", v))
+		return true
 	case string:
-		return fmt.Sprintf("String(%q)", v)
+		out.WriteString("String(")
+		writeObservedText(walk, out, strconv.Quote(v))
+		out.WriteString(")")
+		return true
 	case bool:
-		return fmt.Sprintf("Boolean('%t')", v)
+		out.WriteString(fmt.Sprintf("Boolean('%t')", v))
+		return true
 	case *storage.Node:
 		if v != nil {
-			return "(" + string(v.ID) + ")"
+			out.WriteString("(" + string(v.ID) + ")")
+			return true
 		}
 	case *storage.Edge:
 		if v != nil {
-			return "-[" + string(v.ID) + "]-"
+			out.WriteString("-[" + string(v.ID) + "]-")
+			return true
 		}
 	}
 	if value == nil {
-		return "NO_VALUE"
-	}
-	if m, isMap := value.(map[string]interface{}); isMap {
-		keys := make([]string, 0, len(m))
-		for key := range m {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		parts := make([]string, len(keys))
-		for index, key := range keys {
-			parts[index] = key + " -> " + neo4jValueRepr(m[key])
-		}
-		return "Map{" + strings.Join(parts, ", ") + "}"
+		out.WriteString("NO_VALUE")
+		return true
 	}
 	if kind := reflect.TypeOf(value).Kind(); kind == reflect.Slice || kind == reflect.Array {
-		items := toAnySlice(value)
-		typeName := neo4jValueTypeName(value)
-		parts := make([]string, len(items))
-		for index, item := range items {
-			if typeName == "List" {
-				parts[index] = neo4jValueRepr(item)
-			} else {
-				parts[index] = fmt.Sprint(item)
+		// A typed array: its type name and its items' text.
+		out.WriteString(neo4jValueTypeName(value))
+		out.WriteByte('[')
+		for index, item := range observedItems(walk, toAnySlice(value)) {
+			if index > 0 {
+				out.WriteString(", ")
 			}
+			out.WriteString(formatValueText(walk, item))
 		}
-		if typeName == "List" {
-			return "List{" + strings.Join(parts, ", ") + "}"
-		}
-		return typeName + "[" + strings.Join(parts, ", ") + "]"
+		out.WriteByte(']')
+		return true
 	}
 	switch value.(type) {
 	case CypherDate, *CypherDate, CypherLocalTime, *CypherLocalTime, CypherTime, *CypherTime,
 		CypherLocalDateTime, *CypherLocalDateTime, CypherDateTime, *CypherDateTime,
 		CypherDuration, *CypherDuration, CypherPoint, *CypherPoint, time.Time, *time.Time:
-		return formatCypherValueString(value)
+		out.WriteString(formatCypherValueString(value))
+		return true
 	}
-	return neo4jValueTypeName(value)
+	out.WriteString(neo4jValueTypeName(value))
+	return true
 }
 
 // isRuntimeNumber reports whether v is a Cypher INTEGER or FLOAT value.
@@ -278,7 +298,7 @@ func propertyAccessTypeError(value interface{}) error {
 	if _, isMap := toStringAnyMap(value); isMap {
 		return nil
 	}
-	return runtimeTypeError(fmt.Sprintf("Type mismatch: expected a map but was %s", neo4jValueRepr(value)))
+	return runtimeTypeError(fmt.Sprintf("Type mismatch: expected a map but was %s", neo4jValueRepr(nil, value)))
 }
 
 // temporalNoSuchFieldError is the TypeError of reading a field a temporal
@@ -291,8 +311,8 @@ func temporalNoSuchFieldError(field string) error {
 // subscriptReceiverError is the TypeError of base[index] for a base that is
 // neither a list nor a map.
 func subscriptReceiverError(base, index interface{}) error {
-	repr := neo4jValueRepr(base)
-	return runtimeTypeError(fmt.Sprintf("`%s` is not a collection or a map. Element access is only possible by performing a collection lookup using an integer index, or by performing a map lookup using a string key (found: %s[%s])", repr, repr, neo4jValueRepr(index)))
+	repr := neo4jValueRepr(nil, base)
+	return runtimeTypeError(fmt.Sprintf("`%s` is not a collection or a map. Element access is only possible by performing a collection lookup using an integer index, or by performing a map lookup using a string key (found: %s[%s])", repr, repr, neo4jValueRepr(nil, index)))
 }
 
 // isOperatorExpressionText reports whether text can be an expression whose

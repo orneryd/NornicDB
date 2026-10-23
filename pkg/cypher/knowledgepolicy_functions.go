@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -311,7 +312,11 @@ func validateDecayOptions(
 		return "", localizedError(localization.CypherKnowledgePolicyDecayOptionsMapRequired(fmt.Sprintf("%T", val)), nil)
 	}
 	var property string
+	pass := bulk.NewCheckpoint(ctx)
 	for k, v := range m {
+		if err := pass.Observe(); err != nil {
+			return "", err
+		}
 		switch k {
 		case "property":
 			s, _ := v.(string)

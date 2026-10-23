@@ -24,12 +24,12 @@ func TestKnowledgePolicySchemaLookupErrorBoundaries(t *testing.T) {
 	_, err = wrongNamespace.knowledgePolicySchema()
 	require.Error(t, err)
 	require.NoError(t, tx.Rollback())
-	for _, procedure := range []func() (*ExecuteResult, error){
+	for _, procedure := range []func(context.Context) (*ExecuteResult, error){
 		executor.callNornicDbKnowledgePolicyInfo,
 		executor.callNornicDbKnowledgePolicyProfiles,
 		executor.callNornicDbKnowledgePolicyPolicies,
 	} {
-		_, err := procedure()
+		_, err := procedure(context.Background())
 		require.Error(t, err, "closed transaction introspection must not silently fall back to committed schema")
 	}
 }
@@ -176,20 +176,20 @@ func TestKnowledgePolicyProcedure_Branches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	res, err := exec.callNornicDbKnowledgePolicyDeindexStatus()
+	res, err := exec.callNornicDbKnowledgePolicyDeindexStatus(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"pending_count", "supported", "message", "workItemId", "targetId", "targetScope", "enqueuedAt", "status"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 	require.Equal(t, false, res.Rows[0][1])
 	require.Equal(t, "deindex status requires BadgerDB storage backend", res.Rows[0][2])
 
-	_, err = exec.callNornicDbKnowledgePolicyResolve(nil)
+	_, err = exec.callNornicDbKnowledgePolicyResolve(context.Background(), nil)
 	require.EqualError(t, err, "kp.resolve requires entityId, labels, or edgeType")
 
-	_, err = exec.callNornicDbKnowledgePolicyResolve([]interface{}{123})
+	_, err = exec.callNornicDbKnowledgePolicyResolve(context.Background(), []interface{}{123})
 	require.EqualError(t, err, "argument 1 must be a string")
 
-	_, err = exec.callNornicDbKnowledgePolicyResolve([]interface{}{"missing-entity"})
+	_, err = exec.callNornicDbKnowledgePolicyResolve(context.Background(), []interface{}{"missing-entity"})
 	require.EqualError(t, err, "knowledge policy binding table unavailable")
 
 	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE DECAY PROFILE base OPTIONS {
@@ -206,23 +206,23 @@ func TestKnowledgePolicyProcedure_Branches(t *testing.T) {
 	_, err = exec.executeKnowledgePolicyDDL(ctx, `CREATE PROMOTION POLICY fact_promote FOR (n:Fact) APPLY { ON ACCESS { SET n.accessCount = n.accessCount + 1 } }`)
 	require.NoError(t, err)
 
-	profiles, err := exec.callNornicDbKnowledgePolicyProfiles()
+	profiles, err := exec.callNornicDbKnowledgePolicyProfiles(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"kind", "Name", "HalfLifeSeconds", "VisibilityThreshold", "ScoreFloor", "Function", "Scope", "DecayEnabled", "ScoreFrom", "ScoreFromProperty", "Enabled", "TargetLabels", "TargetEdgeType", "IsWildcard", "IsEdge", "ProfileRef", "NoDecay", "Order", "Apply"}, profiles.Columns)
 	require.Len(t, profiles.Rows, 2)
 
-	policies, err := exec.callNornicDbKnowledgePolicyPolicies()
+	policies, err := exec.callNornicDbKnowledgePolicyPolicies(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"kind", "Name", "Scope", "Multiplier", "ScoreFloor", "ScoreCap", "Enabled", "TargetLabels", "TargetEdgeType", "IsWildcard", "IsEdge", "Apply"}, policies.Columns)
 	require.Len(t, policies.Rows, 2)
 
-	_, err = exec.callNornicDbKnowledgePolicyResolve([]interface{}{"missing-entity"})
+	_, err = exec.callNornicDbKnowledgePolicyResolve(context.Background(), []interface{}{"missing-entity"})
 	require.EqualError(t, err, "entity not found: missing-entity")
-	resolveByLabels, err := exec.callNornicDbKnowledgePolicyResolve([]interface{}{"", "Fact"})
+	resolveByLabels, err := exec.callNornicDbKnowledgePolicyResolve(context.Background(), []interface{}{"", "Fact"})
 	require.NoError(t, err)
 	require.Len(t, resolveByLabels.Rows, 1)
 	require.Equal(t, "dry-run", resolveByLabels.Rows[0][0])
-	resolveByEdge, err := exec.callNornicDbKnowledgePolicyResolve([]interface{}{"", "", "LINKS"})
+	resolveByEdge, err := exec.callNornicDbKnowledgePolicyResolve(context.Background(), []interface{}{"", "", "LINKS"})
 	require.NoError(t, err)
 	require.Len(t, resolveByEdge.Rows, 1)
 	require.Equal(t, "dry-run", resolveByEdge.Rows[0][0])

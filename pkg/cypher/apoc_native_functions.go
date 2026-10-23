@@ -102,7 +102,7 @@ func (e *StorageExecutor) evaluateNativeAPOCFunction(ctx context.Context, name s
 		v, err := e.nativeAPOCPath(name, args)
 		return v, true, err
 	case "apoc.temporal.format":
-		v, err := nativeAPOCTemporalFormat(args)
+		v, err := nativeAPOCTemporalFormat(ctx, args)
 		return v, true, err
 	}
 	return nil, false, nil

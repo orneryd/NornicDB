@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -27,6 +28,9 @@ import (
 // data statement (ForbiddenDueToTransactionType), in auto-commit as in an
 // explicit transaction.
 func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (result *ExecuteResult, err error) {
+	if err := dynamicStatementTextError("statement", statement); err != nil {
+		return nil, err
+	}
 	if totals, ok := ctx.Value(procedureStatementStatsKey{}).(*procedureStatementStats); ok && totals != nil {
 		// Every nested procedure installs its own invocation collector. Its
 		// completed summary enters this collector only through this result.
@@ -57,6 +61,10 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if e.txContext != nil && e.txContext.active {
 		defer func() { e.failTransaction(ctx, retErr) }()
 	}
+	// Every statement, nested ones too, is a boundary of the cancellation
+	// owner: a stop returns the statement's error, before the transaction
+	// fails with it.
+	defer bulk.RecoverStop(&retErr)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -131,7 +139,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	if labelRewrite != nil {
 		cypher = desugared
-		defer func() { result, retErr = labelRewrite.restore(withoutGeneratedColumns(result), retErr) }()
+		defer func() { result, retErr = labelRewrite.restore(ctx, withoutGeneratedColumns(ctx, result), retErr) }()
 	}
 
 	// Basic syntax validation to preserve existing error behavior.
@@ -149,7 +157,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 
 	params = mergeInheritedQueryParams(ctx, params)
-	params = normalizeQueryParameters(params)
+	params = normalizeQueryParameters(ctx, params)
 	ctx = withQueryParams(ctx, params)
 	if err := e.validateBoundParameterExpressions(ctx, cypher, params); err != nil {
 		return nil, err

@@ -1,11 +1,12 @@
 package cypher
 
 import (
+	"context"
 	"encoding/json"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"sort"
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -39,24 +40,36 @@ func newRelationshipMergeIdentityCache() *relationshipMergeIdentityCache {
 }
 
 // relationships is findRelationshipsForMerge through the cache.
-func (c *relationshipMergeIdentityCache) relationships(store storage.Engine, startID, endID storage.NodeID, relType string, matchProps map[string]interface{}) ([]*storage.Edge, error) {
+func (c *relationshipMergeIdentityCache) relationships(ctx context.Context, store storage.Engine, startID, endID storage.NodeID, relType string, matchProps map[string]interface{}) ([]*storage.Edge, error) {
 	if c == nil || mergeIdentityCacheDisabled {
-		return findRelationshipsForMerge(store, startID, endID, relType, matchProps)
+		return findRelationshipsForMerge(ctx, store, startID, endID, relType, matchProps)
 	}
-	if relationshipMergeIdentityContainsNaN(matchProps) {
+	if relationshipMergeIdentityContainsNaN(valueWalk(ctx), matchProps) {
 		return nil, nil
 	}
 	keys := sortedIdentityKeys(matchProps)
 	entryKey := relationshipMergeIdentityEntryKey(startID, endID, relType, keys)
 	entry, ok := c.entries[entryKey]
 	if !ok {
-		edges, err := storage.MatchEdgesBetween(store, startID, endID, relType, keys, func(*storage.Edge) bool { return true })
+		scan := newStorageScan(ctx)
+		defer scan.close()
+		edges, err := matchEdgesBetween(scan, store, startID, endID, relType, keys, func(*storage.Edge) bool {
+			if scan.canceled() {
+				return false
+			}
+			return true
+		})
 		if err != nil {
 			return nil, err
 		}
 		entry = &relationshipMergeIdentityEntry{keys: keys, byKey: make(map[string][]*storage.Edge, len(edges))}
-		for _, edge := range edges {
-			entry.add(edge)
+		for batch, batchErr := range materializedBatches(ctx, len(edges)) {
+			if batchErr != nil {
+				return nil, batchErr
+			}
+			for _, edge := range edges[batch.start:batch.end] {
+				entry.add(edge)
+			}
 		}
 		c.entries[entryKey] = entry
 	}
@@ -64,7 +77,7 @@ func (c *relationshipMergeIdentityCache) relationships(store storage.Engine, sta
 	if !ok {
 		return nil, nil
 	}
-	return append([]*storage.Edge(nil), entry.byKey[key]...), nil
+	return clonePopulation(ctx, entry.byKey[key])
 }
 
 // created records a relationship the MERGE created (and nothing else
@@ -110,9 +123,9 @@ func relationshipMergeIdentityEntryKey(startID, endID storage.NodeID, relType st
 
 // relationshipMergeIdentityValuesKey encodes the values of keys in props: two sets
 // of values have the same key exactly when relationshipMergeValuesEqual
-// holds for every key. The key is the canonical form the general comparison
-// falls back to (canonicalUnwindMergeValue of the normalized value), whose
-// JSON is injective; normalization makes values that compare equal directly
+// holds for every key. The key is the type-tagged value key the general
+// comparison falls back to (mergeValueKey of the normalized value), which is
+// injective; normalization makes values that compare equal directly
 // (-0.0 and 0.0, 1.0 and 1) canonically equal, and positiveZero does the same
 // for a FLOAT kept as float32. ok is false when a key is
 // missing or a value contains NaN: such properties match nothing.
@@ -124,14 +137,10 @@ func relationshipMergeIdentityValuesKey(props map[string]interface{}, keys []str
 			return "", false
 		}
 		normalized := normalizeRelationshipMergeIdentityValue(value)
-		if relationshipMergeIdentityContainsNaN(normalized) {
+		if relationshipMergeIdentityContainsNaN(nil, normalized) {
 			return "", false
 		}
-		encoded, err := json.Marshal(canonicalUnwindMergeValue(positiveZero(normalized)))
-		if err != nil {
-			return "", false
-		}
-		key.Write(encoded)
+		key.WriteString(mergeValueKey(nil, positiveZero(nil, normalized)))
 		key.WriteByte(0)
 	}
 	return key.String(), true
@@ -139,51 +148,21 @@ func relationshipMergeIdentityValuesKey(props map[string]interface{}, keys []str
 
 // positiveZero replaces a negative float32 zero in value with a positive one:
 // the two compare equal, but their canonical forms differ.
-func positiveZero(value interface{}) interface{} {
-	switch typed := value.(type) {
-	case float32:
-		if typed == 0 {
-			return float32(0)
-		}
-	case []interface{}:
-		var out []interface{}
-		for i, item := range typed {
-			if fixed := positiveZero(item); !isSameZero(fixed, item) {
-				if out == nil {
-					out = append([]interface{}(nil), typed...)
-				}
-				out[i] = fixed
-			}
-		}
-		if out != nil {
-			return out
-		}
-	case map[string]interface{}:
-		var out map[string]interface{}
-		for key, item := range typed {
-			if fixed := positiveZero(item); !isSameZero(fixed, item) {
-				if out == nil {
-					out = make(map[string]interface{}, len(typed))
-					for k, v := range typed {
-						out[k] = v
-					}
-				}
-				out[key] = fixed
-			}
-		}
-		if out != nil {
-			return out
-		}
-	}
-	return value
+func positiveZero(walk *materializedRowCheckpoint, value interface{}) interface{} {
+	normalized, _ := cypherfn.TransformValue(walk, value, positiveZeroStep)
+	return normalized
 }
 
-// isSameZero reports whether positiveZero left item as it was.
-func isSameZero(fixed, item interface{}) bool {
-	f, fOK := fixed.(float32)
-	i, iOK := item.(float32)
-	if fOK && iOK {
-		return math.Signbit(float64(f)) == math.Signbit(float64(i))
+// positiveZeroStep is a float32 negative zero made positive; the walker
+// descends into lists and maps.
+func positiveZeroStep(value interface{}) (interface{}, bool, bool) {
+	switch typed := value.(type) {
+	case float32:
+		if typed == 0 && 1/typed < 0 {
+			return float32(0), true, false
+		}
+	case []interface{}, map[string]interface{}:
+		return value, false, true
 	}
-	return true
+	return value, false, false
 }

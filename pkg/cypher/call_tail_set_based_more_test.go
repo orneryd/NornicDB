@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
@@ -26,7 +27,7 @@ func TestCallTailReturnOptionsAndVersionNonDevCommit(t *testing.T) {
 	buildinfo.Commit = "278e403abcd"
 
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_tail_version_nondev"))
-	res, err := exec.callNornicDbVersion()
+	res, err := exec.callNornicDbVersion(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"version", "build", "edition"}, res.Columns)
 	require.Len(t, res.Rows, 1)

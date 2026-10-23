@@ -5,6 +5,7 @@ import (
 	"time"
 	"unsafe"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -28,55 +29,60 @@ const (
 )
 
 // estimateValueBytes is the estimated size of a value a statement keeps.
-func estimateValueBytes(value interface{}) int64 {
-	return estimateValueBytesAt(value, 0)
+func estimateValueBytes(walk *materializedRowCheckpoint, value interface{}) int64 {
+	var total int64
+	cypherfn.VisitValueDepth(walk, value, func(value interface{}, depth int) (descend, stop bool) {
+		bytes, members := estimateValueOwnBytes(walk, value, depth)
+		total += bytes
+		return members, false
+	})
+	return total
 }
 
-func estimateValueBytesAt(value interface{}, depth int) int64 {
+// estimateValueOwnBytes is the estimate of one value itself, without its
+// members, and whether its members count (a list or map within
+// maxEstimateDepth): the value walker adds theirs.
+func estimateValueOwnBytes(walk *materializedRowCheckpoint, value interface{}, depth int) (int64, bool) {
 	if depth > maxEstimateDepth {
-		return unknownValueBytes
+		return unknownValueBytes, false
 	}
 	switch v := value.(type) {
 	case nil, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return valueSlotBytes
+		return valueSlotBytes, false
 	case string:
-		return valueSlotBytes + stringHeaderBytes + int64(len(v))
+		return valueSlotBytes + stringHeaderBytes + int64(len(v)), false
 	case []byte:
-		return valueSlotBytes + sliceHeaderBytes + int64(cap(v))
+		return valueSlotBytes + sliceHeaderBytes + int64(cap(v)), false
 	case []interface{}:
-		total := valueSlotBytes + sliceHeaderBytes + int64(cap(v)-len(v))*valueSlotBytes
-		for _, element := range v {
-			total += estimateValueBytesAt(element, depth+1)
-		}
-		return total
+		return valueSlotBytes + sliceHeaderBytes + int64(cap(v)-len(v))*valueSlotBytes, true
 	case []string:
 		total := valueSlotBytes + sliceHeaderBytes + int64(cap(v))*stringHeaderBytes
-		for _, element := range v {
+		for _, element := range observedItems(walk, v) {
 			total += int64(len(element))
 		}
-		return total
+		return total, false
 	case []int64:
-		return valueSlotBytes + sliceHeaderBytes + int64(cap(v))*8
+		return valueSlotBytes + sliceHeaderBytes + int64(cap(v))*8, false
 	case []float64:
-		return valueSlotBytes + sliceHeaderBytes + int64(cap(v))*8
+		return valueSlotBytes + sliceHeaderBytes + int64(cap(v))*8, false
 	case []float32:
-		return valueSlotBytes + sliceHeaderBytes + int64(cap(v))*4
+		return valueSlotBytes + sliceHeaderBytes + int64(cap(v))*4, false
 	case map[string]interface{}:
 		total := int64(valueSlotBytes + mapHeaderBytes)
-		for key, element := range v {
-			total += mapEntryBytes + stringHeaderBytes + int64(len(key)) + estimateValueBytesAt(element, depth+1)
+		for key := range observedEntries(walk, v) {
+			total += mapEntryBytes + stringHeaderBytes + int64(len(key))
 		}
-		return total
+		return total, true
 	case *storage.Node, *storage.Edge, storage.Node, storage.Edge:
-		return valueSlotBytes + entityReferenceBytes
+		return valueSlotBytes + entityReferenceBytes, false
 	case []*storage.Node:
-		return valueSlotBytes + sliceHeaderBytes + int64(len(v))*entityReferenceBytes
+		return valueSlotBytes + sliceHeaderBytes + int64(len(v))*entityReferenceBytes, false
 	case []*storage.Edge:
-		return valueSlotBytes + sliceHeaderBytes + int64(len(v))*entityReferenceBytes
+		return valueSlotBytes + sliceHeaderBytes + int64(len(v))*entityReferenceBytes, false
 	case time.Time, time.Duration:
-		return valueSlotBytes + 24
+		return valueSlotBytes + 24, false
 	default:
-		return unknownValueBytes
+		return unknownValueBytes, false
 	}
 }
 
@@ -135,10 +141,10 @@ func (r *rowEstimator) value(column string, value interface{}) int64 {
 			identity = reflect.ValueOf(v).UnsafePointer()
 		}
 	default:
-		return estimateValueBytes(value)
+		return estimateValueBytes(nil, value)
 	}
 	if identity == nil {
-		return estimateValueBytes(value)
+		return estimateValueBytes(nil, value)
 	}
 	for index := 0; index < r.count; index++ {
 		if r.columns[index].name == column {

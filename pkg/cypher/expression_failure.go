@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -84,20 +85,43 @@ func (failure *expressionFailure) recordMapKeyOrder(value map[string]interface{}
 }
 
 func snapshotMapKeyOrders(ctx context.Context) map[uintptr][]string {
-	failure, ok := ctx.Value(expressionFailureKey{}).(*expressionFailure)
+	orders, _ := snapshotMapKeyOrdersWithCancellation(ctx, ctx)
+	return orders
+}
+
+// The deferred result snapshot reads the statement's metadata after its owned
+// context has been closed. Its cancellation budget is the caller's still-live
+// context; ordinary snapshots use the running statement's context for both.
+func snapshotMapKeyOrdersWithCancellation(valuesCtx, cancellationCtx context.Context) (orders map[uintptr][]string, err error) {
+	// Record after the metadata lock is released: the error slot uses that lock.
+	defer func() {
+		if err != nil {
+			recordExpressionFailure(valuesCtx, err)
+		}
+	}()
+	failure, ok := valuesCtx.Value(expressionFailureKey{}).(*expressionFailure)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	failure.mu.Lock()
 	defer failure.mu.Unlock()
 	if len(failure.mapKeyOrders) == 0 {
-		return nil
+		return nil, nil
 	}
-	orders := make(map[uintptr][]string, len(failure.mapKeyOrders))
+	checkpoint := bulk.RowsCheckpoint(cancellationCtx, len(failure.mapKeyOrders))
+	orders = make(map[uintptr][]string, len(failure.mapKeyOrders))
 	for pointer, keys := range failure.mapKeyOrders {
+		// Not Observe: it records the failure in the slot whose lock is
+		// held here (a self-deadlock); the deferred record above does it.
+		if err = checkpoint.Err(); err != nil {
+			return nil, err
+		}
 		orders[pointer] = append([]string(nil), keys...)
 	}
-	return orders
+	if err = cancellationCtx.Err(); err != nil {
+		return nil, err
+	}
+	return orders, nil
 }
 
 func recordExpressionFailure(ctx context.Context, err error) {
@@ -131,7 +155,9 @@ func expressionErrorSlot(ctx context.Context) *expressionFailure {
 // operand; nested context evaluators must record their errors in that operand.
 func rowValuesInExpressionContext(ctx context.Context, values map[string]interface{}) map[string]interface{} {
 	scope := make(map[string]interface{}, len(values)+1)
+	pass := bulk.NewCheckpoint(ctx)
 	for name, value := range values {
+		pass.Check()
 		scope[name] = value
 	}
 	scope[rowStatementContextKey] = ctx

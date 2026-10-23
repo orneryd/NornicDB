@@ -15,7 +15,15 @@ type Options struct {
 	Seed                     []int
 	// Resolution scales observed community weight; zero uses one.
 	Resolution float64
+	// Stop, when set, is polled once per stopStride node visits and input
+	// relationships; once it reports true the run ends early and its result
+	// is incomplete (the caller's statement was canceled).
+	Stop func() bool
 }
+
+// stopStride is the node visits, or input relationships, between two polls
+// of Options.Stop.
+const stopStride = 1024
 
 // DefaultOptions returns the GDS and apoc.algo.louvain defaults.
 func DefaultOptions() Options {
@@ -31,6 +39,9 @@ func DefaultOptions() Options {
 func RunUndirected(size, relationshipCount int, relationship func(int) (int, int, float64, bool), options Options) Result {
 	counts := make([]int, size)
 	for i := 0; i < relationshipCount; i++ {
+		if options.Stop != nil && i&(stopStride-1) == 0 && options.Stop() {
+			return Result{}
+		}
 		source, target, _, included := relationship(i)
 		if included {
 			counts[source]++
@@ -39,6 +50,9 @@ func RunUndirected(size, relationshipCount int, relationship func(int) (int, int
 	}
 	graph := NewGraph(size, counts)
 	for i := 0; i < relationshipCount; i++ {
+		if options.Stop != nil && i&(stopStride-1) == 0 && options.Stop() {
+			return Result{}
+		}
 		source, target, weight, included := relationship(i)
 		if included {
 			graph.Link(source, target, weight)
@@ -76,12 +90,16 @@ func Run(graph *Graph, options Options) Result {
 	var run Result
 	size := len(graph.arcs)
 	scratch := newWorkspace(size)
+	scratch.stop = options.Stop
 	membership := identityCommunities(size)
 	representative := identityCommunities(size)
 	initial := options.Seed
 	previous := 0.0
 	for level := 0; level < options.MaxLevels; level++ {
 		communities := graph.moveNodes(options.MaxIterations, options.Tolerance, initial, options.Resolution, scratch)
+		if scratch.stopped {
+			return Result{}
+		}
 		initial = nil
 		modularity := graph.modularityScratch(communities, options.Resolution, scratch.inside, scratch.totals)
 		var representatives []int
@@ -120,6 +138,24 @@ func Run(graph *Graph, options Options) Result {
 type workspace struct {
 	community, next, stamps, candidates, heads, links, counts, numbers []int
 	communityDegree, influence, inside, totals, weights                []float64
+
+	// stop is Options.Stop, polled once per stopStride node visits (visits);
+	// stopped records that it reported true.
+	stop    func() bool
+	visits  int
+	stopped bool
+}
+
+// halt polls stop at the stride and reports whether the run must end.
+func (scratch *workspace) halt() bool {
+	if scratch.stop == nil {
+		return false
+	}
+	scratch.visits++
+	if scratch.visits&(stopStride-1) == 0 && scratch.stop() {
+		scratch.stopped = true
+	}
+	return scratch.stopped
 }
 
 func newWorkspace(size int) *workspace {
@@ -297,6 +333,9 @@ func (g *Graph) moveNodes(maxIterations int, tolerance float64, initial []int, r
 		moves := 0
 		for _, class := range classes {
 			for _, i := range class {
+				if scratch.halt() {
+					return community
+				}
 				current := community[i]
 				// The weight from i to each neighbouring community (its own
 				// self-loops apart).

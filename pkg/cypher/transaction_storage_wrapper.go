@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -85,6 +86,12 @@ func orderedPropertyIndexSchema(engine storage.Engine) *storage.SchemaManager {
 // for use in implicit transaction execution. It routes writes through the transaction
 // (for atomicity/rollback) and reads through the underlying engine (for performance).
 type transactionStorageWrapper struct {
+	// ctx is the statement running in the transaction, observed by the
+	// wrapper's own passes over what storage returns or is handed. It is set
+	// while a statement runs (runningStatement) and nil otherwise, so a
+	// commit or rollback observes nothing.
+	ctx context.Context
+
 	tx                  *storage.BadgerTransaction
 	underlying          storage.Engine // For read operations not supported by transaction
 	schema              *storage.SchemaManager
@@ -305,7 +312,7 @@ func (w *transactionStorageWrapper) IncidentEdges(nodeID storage.NodeID) ([]*sto
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdges(edges)
 }
 
 func (w *transactionStorageWrapper) CreateEdge(edge *storage.Edge) error {
@@ -411,7 +418,7 @@ func (w *transactionStorageWrapper) GetNodesByLabel(label string) ([]*storage.No
 	if w.namespace == "" {
 		return nodes, nil
 	}
-	return w.toUserNamespacedNodes(nodes), nil
+	return w.toUserNamespacedNodes(nodes)
 }
 
 // StreamNodesByLabelProjected keeps labelled MATCH reads on the transaction's
@@ -484,11 +491,10 @@ func (w *transactionStorageWrapper) StreamNodesWithOptions(ctx context.Context, 
 	if err != nil {
 		return err
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for _, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
+		if err := pass.Observe(); err != nil {
+			return err
 		}
 		if node == nil {
 			continue
@@ -559,7 +565,11 @@ func (w *transactionStorageWrapper) ForEachNodeIDByLabel(label string, visit fun
 	if err != nil {
 		return err
 	}
+	work := bulk.NewCheckpoint(w.ctx)
 	for _, node := range nodes {
+		if err := work.Observe(); err != nil {
+			return err
+		}
 		if node == nil {
 			continue
 		}
@@ -578,7 +588,7 @@ func (w *transactionStorageWrapper) GetOutgoingEdges(nodeID storage.NodeID) ([]*
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdges(edges)
 }
 
 // OutgoingEdgeHeaders lists the transaction's relationship headers in its
@@ -597,7 +607,8 @@ func (w *transactionStorageWrapper) userEdgeHeaders(edges []*storage.Edge, answe
 	if err != nil || !answered || w.namespace == "" {
 		return edges, answered, err
 	}
-	return w.toUserEdges(edges), true, nil
+	out, err := w.toUserEdges(edges)
+	return out, true, err
 }
 
 func (w *transactionStorageWrapper) GetIncomingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
@@ -608,7 +619,7 @@ func (w *transactionStorageWrapper) GetIncomingEdges(nodeID storage.NodeID) ([]*
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdges(edges)
 }
 
 func (w *transactionStorageWrapper) GetEdgesBetween(startID, endID storage.NodeID) ([]*storage.Edge, error) {
@@ -619,7 +630,7 @@ func (w *transactionStorageWrapper) GetEdgesBetween(startID, endID storage.NodeI
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdges(edges)
 }
 
 // MatchEdgesBetween matches the transaction's edges of one type between two
@@ -639,7 +650,7 @@ func (w *transactionStorageWrapper) MatchEdgesBetween(startID, endID storage.Nod
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdges(edges)
 }
 
 func (w *transactionStorageWrapper) GetEdgeBetween(startID, endID storage.NodeID, edgeType string) *storage.Edge {
@@ -661,7 +672,7 @@ func (w *transactionStorageWrapper) GetEdgesByType(edgeType string) ([]*storage.
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserNamespacedEdges(edges), nil
+	return w.toUserNamespacedEdges(edges)
 }
 
 func (w *transactionStorageWrapper) GetNodesByLabelVisibleAt(label string, version storage.MVCCVersion) ([]*storage.Node, error) {
@@ -670,7 +681,7 @@ func (w *transactionStorageWrapper) GetNodesByLabelVisibleAt(label string, versi
 		if err != nil || w.namespace == "" || w.underlyingIsNamespaced() {
 			return nodes, err
 		}
-		return w.toUserNamespacedNodes(nodes), nil
+		return w.toUserNamespacedNodes(nodes)
 	}
 	return nil, storage.ErrNotImplemented
 }
@@ -687,7 +698,7 @@ func (w *transactionStorageWrapper) GetOutgoingEdgesVisibleAt(nodeID storage.Nod
 	if err != nil || w.namespace == "" {
 		return edges, err
 	}
-	return w.toUserNamespacedEdges(edges), nil
+	return w.toUserNamespacedEdges(edges)
 }
 
 func (w *transactionStorageWrapper) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
@@ -702,7 +713,7 @@ func (w *transactionStorageWrapper) GetIncomingEdgesVisibleAt(nodeID storage.Nod
 	if err != nil || w.namespace == "" {
 		return edges, err
 	}
-	return w.toUserNamespacedEdges(edges), nil
+	return w.toUserNamespacedEdges(edges)
 }
 
 func (w *transactionStorageWrapper) GetEdgesByTypeVisibleAt(edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
@@ -711,7 +722,7 @@ func (w *transactionStorageWrapper) GetEdgesByTypeVisibleAt(edgeType string, ver
 		if err != nil || w.namespace == "" || w.underlyingIsNamespaced() {
 			return edges, err
 		}
-		return w.toUserNamespacedEdges(edges), nil
+		return w.toUserNamespacedEdges(edges)
 	}
 	return nil, storage.ErrNotImplemented
 }
@@ -728,7 +739,7 @@ func (w *transactionStorageWrapper) GetEdgesBetweenVisibleAt(startID, endID stor
 	if err != nil || w.namespace == "" {
 		return edges, err
 	}
-	return w.toUserNamespacedEdges(edges), nil
+	return w.toUserNamespacedEdges(edges)
 }
 
 func (w *transactionStorageWrapper) AllNodes() ([]*storage.Node, error) {
@@ -739,7 +750,7 @@ func (w *transactionStorageWrapper) AllNodes() ([]*storage.Node, error) {
 	if w.namespace == "" {
 		return nodes, nil
 	}
-	return w.toUserNamespacedNodes(nodes), nil
+	return w.toUserNamespacedNodes(nodes)
 }
 
 func (w *transactionStorageWrapper) AllEdges() ([]*storage.Edge, error) {
@@ -747,7 +758,7 @@ func (w *transactionStorageWrapper) AllEdges() ([]*storage.Edge, error) {
 	if err != nil || w.namespace == "" {
 		return edges, err
 	}
-	return w.toUserNamespacedEdges(edges), nil
+	return w.toUserNamespacedEdges(edges)
 }
 
 func (w *transactionStorageWrapper) GetAllNodes() []*storage.Node {
@@ -755,7 +766,9 @@ func (w *transactionStorageWrapper) GetAllNodes() []*storage.Node {
 	if w.namespace == "" {
 		return nodes
 	}
-	return w.toUserNamespacedNodes(nodes)
+	// A canceled statement's error is recorded where its outcome reads it.
+	out, _ := w.toUserNamespacedNodes(nodes)
+	return out
 }
 
 func (w *transactionStorageWrapper) GetInDegree(nodeID storage.NodeID) int {
@@ -777,7 +790,11 @@ func (w *transactionStorageWrapper) GetSchema() *storage.SchemaManager {
 // create inside a transaction is namespaced and recorded as mutated exactly
 // like a single create.
 func (w *transactionStorageWrapper) BulkCreateNodes(nodes []*storage.Node) error {
+	work := bulk.NewCheckpoint(w.ctx)
 	for _, node := range nodes {
+		if err := work.Observe(); err != nil {
+			return err
+		}
 		if _, err := w.CreateNode(node); err != nil {
 			return err
 		}
@@ -787,7 +804,11 @@ func (w *transactionStorageWrapper) BulkCreateNodes(nodes []*storage.Node) error
 
 func (w *transactionStorageWrapper) BulkCreateEdges(edges []*storage.Edge) error {
 	var relationshipTypes []string
+	work := bulk.NewCheckpoint(w.ctx)
 	for _, edge := range edges {
+		if err := work.Observe(); err != nil {
+			return err
+		}
 		if edge == nil {
 			return storage.ErrInvalidData
 		}
@@ -801,6 +822,9 @@ func (w *transactionStorageWrapper) BulkCreateEdges(edges []*storage.Edge) error
 	}
 	namespaced := make([]*storage.Edge, len(edges))
 	for i, edge := range edges {
+		if err := work.Observe(); err != nil {
+			return err
+		}
 		if edge == nil {
 			// The transaction rejects it, as CreateEdge does.
 			namespaced[i] = nil
@@ -816,7 +840,11 @@ func (w *transactionStorageWrapper) BulkCreateEdges(edges []*storage.Edge) error
 }
 
 func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error {
+	work := bulk.NewCheckpoint(w.ctx)
 	for _, id := range ids {
+		if err := work.Observe(); err != nil {
+			return err
+		}
 		if err := w.tx.DeleteNode(w.prefixNodeID(id)); err != nil {
 			return err
 		}
@@ -828,7 +856,11 @@ func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error 
 // BulkDeleteEdges, it skips IDs that do not exist, those the transaction
 // already deleted included (#827).
 func (w *transactionStorageWrapper) BulkDeleteEdges(ids []storage.EdgeID) error {
+	work := bulk.NewCheckpoint(w.ctx)
 	for _, id := range ids {
+		if err := work.Observe(); err != nil {
+			return err
+		}
 		if err := w.tx.DeleteEdge(w.prefixEdgeID(id)); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return err
 		}
@@ -907,43 +939,59 @@ func (w *transactionStorageWrapper) toUserEdge(edge *storage.Edge) *storage.Edge
 	return out
 }
 
-func (w *transactionStorageWrapper) toUserEdges(edges []*storage.Edge) []*storage.Edge {
+func (w *transactionStorageWrapper) toUserEdges(edges []*storage.Edge) ([]*storage.Edge, error) {
 	out := make([]*storage.Edge, 0, len(edges))
+	work := bulk.NewCheckpoint(w.ctx)
 	for _, edge := range edges {
+		if err := work.Observe(); err != nil {
+			return nil, err
+		}
 		out = append(out, w.toUserEdge(edge))
 	}
-	return out
+	return out, nil
 }
 
-func (w *transactionStorageWrapper) toUserNamespacedEdges(edges []*storage.Edge) []*storage.Edge {
+func (w *transactionStorageWrapper) toUserNamespacedEdges(edges []*storage.Edge) ([]*storage.Edge, error) {
 	prefix := w.namespace + w.separator
 	out := make([]*storage.Edge, 0, len(edges))
+	work := bulk.NewCheckpoint(w.ctx)
 	for _, edge := range edges {
+		if err := work.Observe(); err != nil {
+			return nil, err
+		}
 		if edge == nil || !strings.HasPrefix(string(edge.ID), prefix) {
 			continue
 		}
 		out = append(out, w.toUserEdge(edge))
 	}
-	return out
+	return out, nil
 }
 
-func (w *transactionStorageWrapper) toUserNodes(nodes []*storage.Node) []*storage.Node {
+func (w *transactionStorageWrapper) toUserNodes(nodes []*storage.Node) ([]*storage.Node, error) {
 	out := make([]*storage.Node, 0, len(nodes))
+	work := bulk.NewCheckpoint(w.ctx)
 	for _, node := range nodes {
+		if err := work.Observe(); err != nil {
+			return nil, err
+		}
 		out = append(out, w.toUserNode(node))
 	}
-	return out
+	return out, nil
 }
 
-func (w *transactionStorageWrapper) toUserNamespacedNodes(nodes []*storage.Node) []*storage.Node {
+func (w *transactionStorageWrapper) toUserNamespacedNodes(nodes []*storage.Node) ([]*storage.Node, error) {
 	prefix := w.namespace + w.separator
 	out := make([]*storage.Node, 0, len(nodes))
+	work := bulk.NewCheckpoint(w.ctx)
 	for _, node := range nodes {
+		if err := work.Observe(); err != nil {
+			return nil, err
+		}
 		if node != nil && strings.HasPrefix(string(node.ID), prefix) {
 			out = append(out, w.toUserNode(node))
 		}
 	}
-	return out
+	return out, nil
 }
 
 func (w *transactionStorageWrapper) underlyingIsNamespaced() bool {
@@ -1073,7 +1121,11 @@ func (w *transactionStorageWrapper) edgeCountByEndpointLabelScan(label, edgeType
 		return 0, err
 	}
 	var count int64
+	work := bulk.NewCheckpoint(w.ctx)
 	for _, edge := range edges {
+		if err := work.Observe(); err != nil {
+			return 0, err
+		}
 		if edge == nil {
 			continue
 		}
@@ -1104,4 +1156,14 @@ func (w *transactionStorageWrapper) DeleteByPrefix(prefix string) (nodesDeleted 
 // WithStoreTransaction joins system-store mutations to this existing transaction.
 func (w *transactionStorageWrapper) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
 	return mutate(w)
+}
+
+// runningStatement makes ctx the statement the wrapper observes until done
+// is called (the statement ended), which restores the one before it: a
+// transaction runs one statement at a time, and the passes of a statement's
+// workers end with it.
+func (w *transactionStorageWrapper) runningStatement(ctx context.Context) (done func()) {
+	previous := w.ctx
+	w.ctx = ctx
+	return func() { w.ctx = previous }
 }

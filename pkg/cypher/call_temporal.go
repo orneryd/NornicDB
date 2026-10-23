@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
-	"reflect"
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -64,7 +65,11 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 		return nil, localizedError(localization.CypherSpecializedCallsTemporalReadNodesFailed(label, err), err)
 	}
 
+	pass := bulk.NewCheckpoint(ctx)
 	for _, node := range nodes {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		if node == nil {
 			continue
 		}
@@ -149,7 +154,11 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 
 	var bestNode interface{}
 	var bestStart time.Time
+	pass := bulk.NewCheckpoint(ctx)
 	for _, node := range nodes {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		if node == nil {
 			continue
 		}
@@ -256,7 +265,7 @@ func temporalNodesByLabel(engine storage.Engine, label string, version storage.M
 }
 
 func valuesEqual(a, b interface{}) bool {
-	if reflect.DeepEqual(a, b) {
+	if cypherfn.IdenticalValues(nil, a, b) {
 		return true
 	}
 	return fmt.Sprint(a) == fmt.Sprint(b)

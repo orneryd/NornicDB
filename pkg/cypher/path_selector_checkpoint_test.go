@@ -94,36 +94,41 @@ func TestSelectedPathCancellationWorkCheckpoints(t *testing.T) {
 					bound++
 					return e.bindSelectedPath(ctx, plan, plan.forward, false, pipelineRow{}, path)
 				}
-				switch mode {
-				case "one":
-					search.pair(source, target, 1, false, true, bind)
-				case "pair":
-					search.pair(source, target, 1, true, true, bind)
-				case "run":
-					search.run(source, 2, true, bind)
-				case "forward":
-					search.begin(source)
-					w := &pathSearchWalks{forward: map[int32]int{}, preds: map[int32][]pathSearchHop{}, backward: map[pathSearchKey]int{}}
-					if len(search.levels) > 0 {
-						for _, entry := range search.levels[0].entries {
-							w.forward[entry.product] = 0
-							w.frontier = append(w.frontier, entry.product)
+				// The search runs inside the statement's stop boundary, as in
+				// execution: a pass without an error result stops by unwinding.
+				_, _ = insideStopBoundary(func() (struct{}, error) {
+					switch mode {
+					case "one":
+						search.pair(source, target, 1, false, true, bind)
+					case "pair":
+						search.pair(source, target, 1, true, true, bind)
+					case "run":
+						search.run(source, 2, true, bind)
+					case "forward":
+						search.begin(source)
+						w := &pathSearchWalks{forward: map[int32]int{}, preds: map[int32][]pathSearchHop{}, backward: map[pathSearchKey]int{}}
+						if len(search.levels) > 0 {
+							for _, entry := range search.levels[0].entries {
+								w.forward[entry.product] = 0
+								w.frontier = append(w.frontier, entry.product)
+							}
+						}
+						search.expandForward(w)
+					case "backward":
+						search.begin(source)
+						key := pathSearchKey{node: target.ID, slot: int32(plan.forward.final)}
+						w := &pathSearchWalks{backward: map[pathSearchKey]int{key: 0}, nodes: map[pathSearchKey]*storage.Node{key: target}, succs: map[pathSearchKey][]pathSearchBack{}, back: []pathSearchKey{key}, forward: map[int32]int{}}
+						search.expandBackward(w)
+					case "trace":
+						search.begin(source)
+						for depth := 0; depth < 3 && search.ctx.Err() == nil && search.nextLevel(); depth++ {
+						}
+						if len(search.levels) > 1 {
+							search.trace(len(search.levels)-1, 0, 1, func(path pathSearchPath) bool { _, ok := bind(path); return ok })
 						}
 					}
-					search.expandForward(w)
-				case "backward":
-					search.begin(source)
-					key := pathSearchKey{node: target.ID, slot: int32(plan.forward.final)}
-					w := &pathSearchWalks{backward: map[pathSearchKey]int{key: 0}, nodes: map[pathSearchKey]*storage.Node{key: target}, succs: map[pathSearchKey][]pathSearchBack{}, back: []pathSearchKey{key}, forward: map[int32]int{}}
-					search.expandBackward(w)
-				case "trace":
-					search.begin(source)
-					for depth := 0; depth < 3 && search.ctx.Err() == nil && search.nextLevel(); depth++ {
-					}
-					if len(search.levels) > 1 {
-						search.trace(len(search.levels)-1, 0, 1, func(path pathSearchPath) bool { _, ok := bind(path); return ok })
-					}
-				}
+					return struct{}{}, nil
+				})
 				if ctx.Context.Err() != nil {
 					require.Equal(t, atBound, bound, "%s %s budget=%d", pattern, mode, budget)
 					require.Equal(t, products, len(search.products), "%s %s budget=%d", pattern, mode, budget)

@@ -1,5 +1,7 @@
 package cypher
 
+import "github.com/orneryd/nornicdb/pkg/cypher/bulk"
+
 // evaluateRowReduce evaluates reduce and allReduce (parseReduceForm) for a
 // row, every part evaluated by evaluate (the row evaluator, or the context
 // evaluator for a reduce whose expressions hold subqueries); resolved is false
@@ -21,7 +23,11 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 		return nil, true, nil
 	}
 	scope := make(map[string]interface{}, len(values)+2)
+	pass := bulk.NewCheckpoint(rowStatementContextOrBackground(values))
 	for name, value := range values {
+		if err := pass.Observe(); err != nil {
+			return nil, false, err
+		}
 		scope[name] = value
 	}
 	plan := form.appendPlan()

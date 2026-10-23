@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	securitypkg "github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -293,7 +294,11 @@ func (e *StorageExecutor) callApocLoadJson(ctx context.Context, args []interface
 	switch v := data.(type) {
 	case []interface{}:
 		// Array of items - return each as a row
+		pass := bulk.NewCheckpoint(ctx)
 		for _, item := range v {
+			if err := pass.Observe(); err != nil {
+				return nil, err
+			}
 			rows = append(rows, []interface{}{item})
 		}
 	case map[string]interface{}:
@@ -486,12 +491,13 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []inte
 	nodes := e.storage.GetAllNodes()
 	edges, _ := e.storage.AllEdges()
 
+	work := bulk.NewCheckpoint(ctx)
 	export := map[string]interface{}{
-		"nodes":         e.nodesToExportFormat(nodes),
-		"relationships": e.edgesToExportFormat(edges),
+		"nodes":         e.nodesToExportFormat(&work, nodes),
+		"relationships": e.edgesToExportFormat(&work, edges),
 	}
 
-	jsonData, err := json.MarshalIndent(export, "", "  ")
+	jsonData, err := encodeJSONValue(&work, export, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
 	}
@@ -512,8 +518,8 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []inte
 			filePath,
 			len(nodes),
 			len(edges),
-			e.countProperties(nodes, edges),
-			string(jsonData),
+			e.countProperties(&work, nodes, edges),
+			bulk.String(ctx, jsonData),
 		}},
 	}, nil
 }
@@ -522,7 +528,7 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []inte
 // Syntax: CALL apoc.export.json.query(query, file, config)
 func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "apoc.export.json.query"
-	query, err := requiredProcedureString(procedure, args, 0, "query")
+	query, err := requiredStatementText(procedure, args, 0, "query")
 	if err != nil {
 		return nil, err
 	}
@@ -551,7 +557,7 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, args []in
 		"data":    result.Rows,
 	}
 
-	jsonData, err := json.MarshalIndent(export, "", "  ")
+	jsonData, err := encodeJSONValue(valueWalk(ctx), export, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal JSON: %w", err)
 	}
@@ -568,7 +574,7 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, args []in
 		Rows: [][]interface{}{{
 			filePath,
 			len(result.Rows),
-			string(jsonData),
+			bulk.String(ctx, jsonData),
 		}},
 	}, nil
 }
@@ -603,24 +609,19 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 	// Nodes section
 	csvContent.WriteString("# Nodes\n")
 	csvContent.WriteString("_id,_labels,properties\n")
-	for _, node := range nodes {
-		props, _ := json.Marshal(node.Properties)
-		csvContent.WriteString(fmt.Sprintf("%s,\"%s\",\"%s\"\n",
-			node.ID,
-			strings.Join(node.Labels, ";"),
-			strings.ReplaceAll(string(props), "\"", "\"\"")))
+	work := bulk.NewCheckpoint(ctx)
+	for _, node := range observedItems(&work, nodes) {
+		if err := writeCSVExportNode(&work, &csvContent, node); err != nil {
+			return nil, err
+		}
 	}
 
 	csvContent.WriteString("\n# Relationships\n")
 	csvContent.WriteString("_id,_type,_start,_end,properties\n")
-	for _, edge := range edges {
-		props, _ := json.Marshal(edge.Properties)
-		csvContent.WriteString(fmt.Sprintf("%s,%s,%s,%s,\"%s\"\n",
-			edge.ID,
-			edge.Type,
-			edge.StartNode,
-			edge.EndNode,
-			strings.ReplaceAll(string(props), "\"", "\"\"")))
+	for _, edge := range observedItems(&work, edges) {
+		if err := writeCSVExportEdge(&work, &csvContent, edge); err != nil {
+			return nil, err
+		}
 	}
 
 	content := csvContent.String()
@@ -650,7 +651,7 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 // Syntax: CALL apoc.export.csv.query(query, file, config)
 func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "apoc.export.csv.query"
-	query, err := requiredProcedureString(procedure, args, 0, "query")
+	query, err := requiredStatementText(procedure, args, 0, "query")
 	if err != nil {
 		return nil, err
 	}
@@ -677,25 +678,31 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []int
 	var csvContent strings.Builder
 
 	// Header
-	csvContent.WriteString(strings.Join(result.Columns, ","))
+	work := valueWalk(ctx)
+	for index, column := range observedItems(work, result.Columns) {
+		if index > 0 {
+			csvContent.WriteByte(',')
+		}
+		writeObservedText(work, &csvContent, column)
+	}
 	csvContent.WriteByte('\n')
 
 	// Data rows
-	for _, row := range result.Rows {
-		values := make([]string, len(row))
-		for i, val := range row {
-			switch v := val.(type) {
-			case string:
-				values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(v, "\"", "\"\""))
-			case nil:
-				values[i] = ""
-			default:
-				jsonVal, _ := json.Marshal(v)
-				values[i] = fmt.Sprintf("\"%s\"", strings.ReplaceAll(string(jsonVal), "\"", "\"\""))
-			}
+	for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		csvContent.WriteString(strings.Join(values, ","))
-		csvContent.WriteByte('\n')
+		for _, row := range result.Rows[batch.start:batch.end] {
+			for i, val := range observedItems(work, row) {
+				if i > 0 {
+					csvContent.WriteByte(',')
+				}
+				if err := writeCSVExportValue(work, &csvContent, val); err != nil {
+					return nil, err
+				}
+			}
+			csvContent.WriteByte('\n')
+		}
 	}
 
 	content := csvContent.String()
@@ -721,9 +728,9 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []int
 // Helper functions
 // =============================================================================
 
-func (e *StorageExecutor) nodesToExportFormat(nodes []*storage.Node) []map[string]interface{} {
+func (e *StorageExecutor) nodesToExportFormat(walk *materializedRowCheckpoint, nodes []*storage.Node) []map[string]interface{} {
 	result := make([]map[string]interface{}, len(nodes))
-	for i, node := range nodes {
+	for i, node := range observedItems(walk, nodes) {
 		result[i] = map[string]interface{}{
 			"id":         string(node.ID),
 			"labels":     node.Labels,
@@ -733,9 +740,9 @@ func (e *StorageExecutor) nodesToExportFormat(nodes []*storage.Node) []map[strin
 	return result
 }
 
-func (e *StorageExecutor) edgesToExportFormat(edges []*storage.Edge) []map[string]interface{} {
+func (e *StorageExecutor) edgesToExportFormat(walk *materializedRowCheckpoint, edges []*storage.Edge) []map[string]interface{} {
 	result := make([]map[string]interface{}, len(edges))
-	for i, edge := range edges {
+	for i, edge := range observedItems(walk, edges) {
 		result[i] = map[string]interface{}{
 			"id":         string(edge.ID),
 			"type":       edge.Type,
@@ -747,15 +754,75 @@ func (e *StorageExecutor) edgesToExportFormat(edges []*storage.Edge) []map[strin
 	return result
 }
 
-func (e *StorageExecutor) countProperties(nodes []*storage.Node, edges []*storage.Edge) int {
+func (e *StorageExecutor) countProperties(walk *materializedRowCheckpoint, nodes []*storage.Node, edges []*storage.Edge) int {
 	count := 0
-	for _, node := range nodes {
+	for _, node := range observedItems(walk, nodes) {
 		count += len(node.Properties)
 	}
-	for _, edge := range edges {
+	for _, edge := range observedItems(walk, edges) {
 		count += len(edge.Properties)
 	}
 	return count
+}
+
+// writeCSVExportNode writes a node's export row: id, labels joined by ';',
+// properties as quoted JSON.
+func writeCSVExportNode(walk *materializedRowCheckpoint, out *strings.Builder, node *storage.Node) error {
+	writeObservedText(walk, out, string(node.ID))
+	out.WriteString(",\"")
+	for index, label := range observedItems(walk, node.Labels) {
+		if index > 0 {
+			out.WriteByte(';')
+		}
+		writeObservedText(walk, out, label)
+	}
+	out.WriteString("\",")
+	if err := writeCSVExportValue(walk, out, node.Properties); err != nil {
+		return err
+	}
+	out.WriteByte('\n')
+	return nil
+}
+
+// writeCSVExportEdge writes a relationship's export row: id, type, start,
+// end, properties as quoted JSON.
+func writeCSVExportEdge(walk *materializedRowCheckpoint, out *strings.Builder, edge *storage.Edge) error {
+	for _, field := range []string{string(edge.ID), edge.Type, string(edge.StartNode), string(edge.EndNode)} {
+		writeObservedText(walk, out, field)
+		out.WriteByte(',')
+	}
+	if err := writeCSVExportValue(walk, out, edge.Properties); err != nil {
+		return err
+	}
+	out.WriteByte('\n')
+	return nil
+}
+
+// writeCSVExportValue writes a value as a quoted CSV field (a string as
+// itself, anything else as its JSON, null as nothing), doubling quotes, a
+// chunk at a time through the owner's check (walk).
+func writeCSVExportValue(walk *materializedRowCheckpoint, out *strings.Builder, value interface{}) error {
+	var text string
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case string:
+		text = typed
+	default:
+		encoded, err := encodeJSONValue(walk, typed, "", "")
+		if err != nil {
+			return err
+		}
+		text = bulk.String(walk.Context(), encoded)
+	}
+	quoted, err := bulk.ReplaceAll(walk.Context(), text, "\"", "\"\"")
+	if err != nil {
+		return err
+	}
+	out.WriteByte('"')
+	writeObservedText(walk, out, quoted)
+	out.WriteByte('"')
+	return nil
 }
 
 // =============================================================================
@@ -786,7 +853,11 @@ func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []inte
 	rows := [][]interface{}{}
 	switch v := data.(type) {
 	case []interface{}:
+		pass := bulk.NewCheckpoint(ctx)
 		for _, item := range v {
+			if err := pass.Observe(); err != nil {
+				return nil, err
+			}
 			rows = append(rows, []interface{}{item})
 		}
 	default:
@@ -806,6 +877,7 @@ func (e *StorageExecutor) callApocLoadJsonArray(ctx context.Context, args []inte
 // callApocImportJson imports JSON graph data directly.
 // Syntax: CALL apoc.import.json(urlOrFile) YIELD nodes, relationships
 func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	work := bulk.NewCheckpoint(ctx)
 	store := e.getStorage(ctx)
 	prefixIDs := true
 	dbName := GetUseDatabaseFromContext(ctx)
@@ -863,7 +935,11 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 	if dataMap, ok := data.(map[string]interface{}); ok {
 		// Import nodes
 		if nodes, ok := dataMap["nodes"].([]interface{}); ok {
+			pass := bulk.NewCheckpoint(ctx)
 			for _, nodeData := range nodes {
+				if err := pass.Observe(); err != nil {
+					return nil, err
+				}
 				if nodeMap, ok := nodeData.(map[string]interface{}); ok {
 					node := &storage.Node{
 						Properties: make(map[string]interface{}),
@@ -874,6 +950,9 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 					}
 					if labels, ok := nodeMap["labels"].([]interface{}); ok {
 						for _, l := range labels {
+							if err := work.Observe(); err != nil {
+								return nil, err
+							}
 							if ls, ok := l.(string); ok {
 								node.Labels = append(node.Labels, ls)
 							}
@@ -894,7 +973,11 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 
 		// Import relationships
 		if rels, ok := dataMap["relationships"].([]interface{}); ok {
+			pass2 := bulk.NewCheckpoint(ctx)
 			for _, relData := range rels {
+				if err := pass2.Observe(); err != nil {
+					return nil, err
+				}
 				if relMap, ok := relData.(map[string]interface{}); ok {
 					edge := &storage.Edge{
 						Properties: make(map[string]interface{}),

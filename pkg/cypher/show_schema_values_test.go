@@ -213,7 +213,7 @@ func TestShowDatabasesValues(t *testing.T) {
 		return nil
 	}
 	createdAt := processStartTime.Add(-time.Hour)
-	row := showDatabaseRow(nil, "db", "standard", "online", true, createdAt)
+	row := showDatabaseRow(context.Background(), nil, "db", "standard", "online", true, createdAt)
 	assert.Equal(t, int64(1), column(row, "currentPrimariesCount"))
 	assert.Equal(t, int64(0), column(row, "currentSecondariesCount"))
 	assert.Equal(t, int64(0), column(row, "replicationLag"))
@@ -224,10 +224,10 @@ func TestShowDatabasesValues(t *testing.T) {
 	assert.Nil(t, column(row, "store"))
 
 	later := processStartTime.Add(time.Hour)
-	row = showDatabaseRow(nil, "db", "standard", "online", true, later)
+	row = showDatabaseRow(context.Background(), nil, "db", "standard", "online", true, later)
 	assert.Equal(t, later.UTC(), column(row, "lastStartTime"), "a database created later starts when it is created")
 
-	row = showDatabaseRow(nil, "db", "standard", "online", true, time.Time{})
+	row = showDatabaseRow(context.Background(), nil, "db", "standard", "online", true, time.Time{})
 	assert.Nil(t, column(row, "creationTime"), "an unknown creation time is null")
 	assert.Nil(t, column(row, "lastStartTime"))
 	assert.True(t, showDatabaseCreatedAt(nil, "db").IsZero())

@@ -3,7 +3,8 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 // =============================================================================
@@ -14,11 +15,11 @@ import (
 // CALL apoc.periodic.iterate(cypherIterate, cypherAction, {batchSize:1000, parallel:false})
 // This is used for large-scale data processing to avoid memory issues.
 func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure string, args []interface{}) (*ExecuteResult, error) {
-	iterateQuery, err := requiredProcedureString(procedure, args, 0, "iterate")
+	iterateQuery, err := requiredStatementText(procedure, args, 0, "iterate")
 	if err != nil {
 		return nil, err
 	}
-	actionQuery, err := requiredProcedureString(procedure, args, 1, "action")
+	actionQuery, err := requiredStatementText(procedure, args, 1, "action")
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +54,11 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 	errorCount := int64(0)
 	successCount := int64(0)
 
+	pass := bulk.NewCheckpoint(ctx)
 	for batchNum := 0; batchNum < batches; batchNum++ {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		startIdx := batchNum * batchSize
 		endIdx := startIdx + batchSize
 		if endIdx > totalRows {
@@ -62,6 +67,9 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 
 		// Process each row in the batch
 		for i := startIdx; i < endIdx; i++ {
+			if err := pass.Observe(); err != nil {
+				return nil, err
+			}
 			row := iterateResult.Rows[i]
 
 			// Build params map from row
@@ -134,7 +142,7 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 // This commits every N operations to avoid large transactions.
 func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "apoc.periodic.commit"
-	statement, err := requiredProcedureString(procedure, args, 0, "statement")
+	statement, err := requiredStatementText(procedure, args, 0, "statement")
 	if err != nil {
 		return nil, err
 	}
@@ -162,8 +170,8 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []int
 
 	for {
 		// Add LIMIT to statement if not present
-		stmtUpper := upperASCII(statement)
-		if !strings.Contains(stmtUpper, "LIMIT") {
+		stmtUpper := bulk.UpperASCII(ctx, statement)
+		if !bulk.Contains(ctx, stmtUpper, "LIMIT") {
 			statement = statement + fmt.Sprintf(" LIMIT %d", limit)
 		}
 

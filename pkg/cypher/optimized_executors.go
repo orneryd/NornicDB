@@ -12,18 +12,23 @@
 package cypher
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
-	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // ExecuteOptimized attempts to execute a query using an optimized path.
 // Returns (result, true) if optimization was applied, (nil, false) otherwise.
-func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, patternInfo PatternInfo) (*ExecuteResult, bool) {
+func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, patternInfo PatternInfo) (result *ExecuteResult, handled bool) {
+	// A canceled statement's stop leaves the query unhandled: the path that
+	// runs it next returns the statement's error.
+	var stopped error
+	defer bulk.RecoverStop(&stopped)
 	switch patternInfo.Pattern {
 	case PatternMutualRelationship:
 		result, err := e.executeMutualRelationshipOptimized(ctx, query, patternInfo)
@@ -85,38 +90,48 @@ func (e *StorageExecutor) executeMutualRelationshipOptimized(ctx context.Context
 
 	// Build edge set for O(1) reverse lookup
 	edgeSet := make(map[string]bool, len(edgeList))
-	for _, edge := range edgeList {
-		key := string(edge.StartNode) + ":" + string(edge.EndNode)
-		edgeSet[key] = true
+	for batch, batchErr := range materializedBatches(ctx, len(edgeList)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for _, edge := range edgeList[batch.start:batch.end] {
+			key := string(edge.StartNode) + ":" + string(edge.EndNode)
+			edgeSet[key] = true
+		}
 	}
 
 	// Find mutual pairs: for each edge A→B, check if B→A exists
 	seenPairs := make(map[string]bool) // Avoid duplicates
 	nodeCache := make(map[storage.NodeID]*storage.Node)
 
-	for _, edge := range edgeList {
-		reverseKey := string(edge.EndNode) + ":" + string(edge.StartNode)
-		if edgeSet[reverseKey] {
-			// Found mutual relationship!
-			// Use ordered pair to avoid duplicates (smaller ID first)
-			var pairKey string
-			if edge.StartNode < edge.EndNode {
-				pairKey = string(edge.StartNode) + ":" + string(edge.EndNode)
-			} else {
-				pairKey = string(edge.EndNode) + ":" + string(edge.StartNode)
-			}
+	for batch, batchErr := range materializedBatches(ctx, len(edgeList)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for _, edge := range edgeList[batch.start:batch.end] {
+			reverseKey := string(edge.EndNode) + ":" + string(edge.StartNode)
+			if edgeSet[reverseKey] {
+				// Found mutual relationship!
+				// Use ordered pair to avoid duplicates (smaller ID first)
+				var pairKey string
+				if edge.StartNode < edge.EndNode {
+					pairKey = string(edge.StartNode) + ":" + string(edge.EndNode)
+				} else {
+					pairKey = string(edge.EndNode) + ":" + string(edge.StartNode)
+				}
 
-			if !seenPairs[pairKey] {
-				seenPairs[pairKey] = true
+				if !seenPairs[pairKey] {
+					seenPairs[pairKey] = true
 
-				// Get node properties
-				startNode := e.getNodeCached(edge.StartNode, nodeCache)
-				endNode := e.getNodeCached(edge.EndNode, nodeCache)
+					// Get node properties
+					startNode := e.getNodeCached(edge.StartNode, nodeCache)
+					endNode := e.getNodeCached(edge.EndNode, nodeCache)
 
-				if startNode != nil && endNode != nil {
-					startName := e.getPropertyString(startNode, "name")
-					endName := e.getPropertyString(endNode, "name")
-					result.Rows = append(result.Rows, []interface{}{startName, endName})
+					if startNode != nil && endNode != nil {
+						startName := e.getPropertyString(startNode, "name")
+						endName := e.getPropertyString(endNode, "name")
+						result.Rows = append(result.Rows, []interface{}{startName, endName})
+					}
 				}
 			}
 		}
@@ -157,9 +172,14 @@ func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, que
 	incomingCount := make(map[storage.NodeID]int64)
 	relType := info.RelType
 
-	for _, edge := range allEdges {
-		if relType == "" || edge.Type == relType {
-			incomingCount[edge.EndNode]++
+	for batch, batchErr := range materializedBatches(ctx, len(allEdges)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for _, edge := range allEdges[batch.start:batch.end] {
+			if relType == "" || edge.Type == relType {
+				incomingCount[edge.EndNode]++
+			}
 		}
 	}
 
@@ -169,14 +189,18 @@ func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, que
 		count  int64
 	}
 	rows := make([]countRow, 0, len(incomingCount))
+	groups := bulk.RowsCheckpoint(ctx, len(incomingCount))
 	for nodeID, count := range incomingCount {
+		if err := groups.Observe(); err != nil {
+			return nil, err
+		}
 		rows = append(rows, countRow{nodeID: nodeID, count: count})
 	}
 
 	// Sort by count descending (common for "top followers" queries)
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].count > rows[j].count
-	})
+	if err := stableSortRows(ctx, rows, func(left, right countRow) int { return cmp.Compare(right.count, left.count) }); err != nil {
+		return nil, err
+	}
 
 	// Apply LIMIT
 	limit := len(rows)
@@ -186,12 +210,17 @@ func (e *StorageExecutor) executeIncomingCountOptimized(ctx context.Context, que
 
 	// Build result with node properties
 	nodeCache := make(map[storage.NodeID]*storage.Node)
-	for i := 0; i < limit; i++ {
-		row := rows[i]
-		node := e.getNodeCached(row.nodeID, nodeCache)
-		if node != nil {
-			name := e.getPropertyString(node, "name")
-			result.Rows = append(result.Rows, []interface{}{name, row.count})
+	for batch, batchErr := range materializedBatches(ctx, limit) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for i := batch.start; i < batch.end; i++ {
+			row := rows[i]
+			node := e.getNodeCached(row.nodeID, nodeCache)
+			if node != nil {
+				name := e.getPropertyString(node, "name")
+				result.Rows = append(result.Rows, []interface{}{name, row.count})
+			}
 		}
 	}
 
@@ -225,9 +254,14 @@ func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, que
 	outgoingCount := make(map[storage.NodeID]int64)
 	relType := info.RelType
 
-	for _, edge := range allEdges {
-		if relType == "" || edge.Type == relType {
-			outgoingCount[edge.StartNode]++
+	for batch, batchErr := range materializedBatches(ctx, len(allEdges)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for _, edge := range allEdges[batch.start:batch.end] {
+			if relType == "" || edge.Type == relType {
+				outgoingCount[edge.StartNode]++
+			}
 		}
 	}
 
@@ -237,14 +271,18 @@ func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, que
 		count  int64
 	}
 	rows := make([]countRow, 0, len(outgoingCount))
+	groups := bulk.RowsCheckpoint(ctx, len(outgoingCount))
 	for nodeID, count := range outgoingCount {
+		if err := groups.Observe(); err != nil {
+			return nil, err
+		}
 		rows = append(rows, countRow{nodeID: nodeID, count: count})
 	}
 
 	// Sort by count descending
-	sort.Slice(rows, func(i, j int) bool {
-		return rows[i].count > rows[j].count
-	})
+	if err := stableSortRows(ctx, rows, func(left, right countRow) int { return cmp.Compare(right.count, left.count) }); err != nil {
+		return nil, err
+	}
 
 	// Apply LIMIT
 	limit := len(rows)
@@ -254,12 +292,17 @@ func (e *StorageExecutor) executeOutgoingCountOptimized(ctx context.Context, que
 
 	// Build result with node properties
 	nodeCache := make(map[storage.NodeID]*storage.Node)
-	for i := 0; i < limit; i++ {
-		row := rows[i]
-		node := e.getNodeCached(row.nodeID, nodeCache)
-		if node != nil {
-			name := e.getPropertyString(node, "name")
-			result.Rows = append(result.Rows, []interface{}{name, row.count})
+	for batch, batchErr := range materializedBatches(ctx, limit) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for i := batch.start; i < batch.end; i++ {
+			row := rows[i]
+			node := e.getNodeCached(row.nodeID, nodeCache)
+			if node != nil {
+				name := e.getPropertyString(node, "name")
+				result.Rows = append(result.Rows, []interface{}{name, row.count})
+			}
 		}
 	}
 
@@ -300,35 +343,40 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 	// Build aggregation map: EndNode → stats
 	aggMap := make(map[storage.NodeID]*edgeAggStats)
 
-	for _, edge := range allEdges {
-		// Get property value
-		propVal, exists := edge.Properties[info.AggProperty]
-		if !exists {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(allEdges)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
+		for _, edge := range allEdges[batch.start:batch.end] {
+			// Get property value
+			propVal, exists := edge.Properties[info.AggProperty]
+			if !exists {
+				continue
+			}
 
-		// Convert to float64
-		numVal, numeric := valueconvert.NumericFloat64(propVal)
-		if !numeric {
-			continue
-		}
+			// Convert to float64
+			numVal, numeric := valueconvert.NumericFloat64(propVal)
+			if !numeric {
+				continue
+			}
 
-		// Get or create stats
-		stats, exists := aggMap[edge.EndNode]
-		if !exists {
-			stats = &edgeAggStats{min: numVal, max: numVal}
-			aggMap[edge.EndNode] = stats
-		}
+			// Get or create stats
+			stats, exists := aggMap[edge.EndNode]
+			if !exists {
+				stats = &edgeAggStats{min: numVal, max: numVal}
+				aggMap[edge.EndNode] = stats
+			}
 
-		// Update stats
-		stats.sum += numVal
-		stats.count++
-		stats.hasValue = true
-		if numVal < stats.min {
-			stats.min = numVal
-		}
-		if numVal > stats.max {
-			stats.max = numVal
+			// Update stats
+			stats.sum += numVal
+			stats.count++
+			stats.hasValue = true
+			if numVal < stats.min {
+				stats.min = numVal
+			}
+			if numVal > stats.max {
+				stats.max = numVal
+			}
 		}
 	}
 
@@ -342,18 +390,22 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 		stats  *edgeAggStats
 	}
 	rows := make([]aggRow, 0, len(aggMap))
+	groups := bulk.RowsCheckpoint(ctx, len(aggMap))
 	for nodeID, stats := range aggMap {
+		if err := groups.Observe(); err != nil {
+			return nil, err
+		}
 		if stats.hasValue {
 			rows = append(rows, aggRow{nodeID: nodeID, stats: stats})
 		}
 	}
 
 	// Sort by avg descending (common pattern)
-	sort.Slice(rows, func(i, j int) bool {
-		avgI := rows[i].stats.sum / float64(rows[i].stats.count)
-		avgJ := rows[j].stats.sum / float64(rows[j].stats.count)
-		return avgI > avgJ
-	})
+	if err := stableSortRows(ctx, rows, func(left, right aggRow) int {
+		return cmp.Compare(right.stats.sum/float64(right.stats.count), left.stats.sum/float64(left.stats.count))
+	}); err != nil {
+		return nil, err
+	}
 
 	// Apply LIMIT
 	limit := len(rows)
@@ -363,29 +415,34 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 
 	// Build result with node properties
 	nodeCache := make(map[storage.NodeID]*storage.Node)
-	for i := 0; i < limit; i++ {
-		row := rows[i]
-		node := e.getNodeCached(row.nodeID, nodeCache)
-		if node == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, limit) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-
-		resultRow := []interface{}{e.getPropertyString(node, "name")}
-		for _, fn := range info.AggFunctions {
-			switch fn {
-			case "count":
-				resultRow = append(resultRow, row.stats.count)
-			case "sum":
-				resultRow = append(resultRow, row.stats.sum)
-			case "avg":
-				resultRow = append(resultRow, row.stats.sum/float64(row.stats.count))
-			case "min":
-				resultRow = append(resultRow, row.stats.min)
-			case "max":
-				resultRow = append(resultRow, row.stats.max)
+		for i := batch.start; i < batch.end; i++ {
+			row := rows[i]
+			node := e.getNodeCached(row.nodeID, nodeCache)
+			if node == nil {
+				continue
 			}
+
+			resultRow := []interface{}{e.getPropertyString(node, "name")}
+			for _, fn := range info.AggFunctions {
+				switch fn {
+				case "count":
+					resultRow = append(resultRow, row.stats.count)
+				case "sum":
+					resultRow = append(resultRow, row.stats.sum)
+				case "avg":
+					resultRow = append(resultRow, row.stats.sum/float64(row.stats.count))
+				case "min":
+					resultRow = append(resultRow, row.stats.min)
+				case "max":
+					resultRow = append(resultRow, row.stats.max)
+				}
+			}
+			result.Rows = append(result.Rows, resultRow)
 		}
-		result.Rows = append(result.Rows, resultRow)
 	}
 
 	return result, nil

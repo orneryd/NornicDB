@@ -3,9 +3,9 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	nerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -363,11 +363,8 @@ func isUnevaluatedParameterExpression(expr string, value interface{}) bool {
 }
 
 func (e *StorageExecutor) mergeShellParams(ctx context.Context, explicitParams map[string]interface{}) map[string]interface{} {
-	shell := e.shellParamsFor(ctx)
-	e.shellParamsMu.RLock()
-	shellLen := len(shell)
-	if shellLen == 0 {
-		e.shellParamsMu.RUnlock()
+	shell := e.getShellParamsSnapshot(ctx)
+	if len(shell) == 0 {
 		if len(explicitParams) == 0 {
 			return nil
 		}
@@ -375,13 +372,14 @@ func (e *StorageExecutor) mergeShellParams(ctx context.Context, explicitParams m
 		return explicitParams
 	}
 
-	merged := make(map[string]interface{}, util.SafePreallocSum(shellLen, len(explicitParams)))
+	merged := make(map[string]interface{}, util.SafePreallocSum(len(shell), len(explicitParams)))
+	pass := bulk.NewCheckpoint(ctx)
 	for key, value := range shell {
+		pass.Check()
 		merged[key] = value
 	}
-	e.shellParamsMu.RUnlock()
-
 	for key, value := range explicitParams {
+		pass.Check()
 		merged[key] = value
 	}
 	return merged
@@ -411,6 +409,7 @@ func shellParamsBucket(ctx context.Context) string {
 
 // cloneShellParamsByToken copies every per-caller shell-param bucket for a
 // derived executor (a request-scoped clone; each clone serves one caller).
+// Buckets are never written once published, so the clone shares them.
 func cloneShellParamsByToken(e *StorageExecutor) map[string]map[string]interface{} {
 	e.shellParamsMu.RLock()
 	defer e.shellParamsMu.RUnlock()
@@ -419,67 +418,85 @@ func cloneShellParamsByToken(e *StorageExecutor) map[string]map[string]interface
 	}
 	out := make(map[string]map[string]interface{}, len(e.shellParamsByToken))
 	for bucket, params := range e.shellParamsByToken {
-		copyParams := make(map[string]interface{}, len(params))
-		for key, value := range params {
-			copyParams[key] = value
-		}
-		out[bucket] = copyParams
+		out[bucket] = params
 	}
 	return out
 }
 
+// getShellParamsSnapshot is the caller's shell-param bucket as published:
+// buckets are never written once published (setShellParams and
+// clearShellParams publish a new one), so it is read outside the lock and
+// must not be written.
 func (e *StorageExecutor) getShellParamsSnapshot(ctx context.Context) map[string]interface{} {
-	shell := e.shellParamsFor(ctx)
 	e.shellParamsMu.RLock()
 	defer e.shellParamsMu.RUnlock()
-	if len(shell) == 0 {
-		return nil
-	}
-	out := make(map[string]interface{}, len(shell))
-	for key, value := range shell {
-		out[key] = value
-	}
-	return out
+	return e.shellParamsFor(ctx)
 }
 
+// setShellParams merges params into the caller's bucket. The merged bucket
+// is built outside the lock, observing the statement, and published only if
+// no other change was published meanwhile: a stop leaves the bucket as it was.
 func (e *StorageExecutor) setShellParams(ctx context.Context, params map[string]interface{}) {
+	pass := bulk.NewCheckpoint(ctx)
+	for {
+		e.shellParamsMu.RLock()
+		current, version := e.shellParamsFor(ctx), e.shellParamsVersion
+		e.shellParamsMu.RUnlock()
+		next := make(map[string]interface{}, util.SafePreallocSum(len(current), len(params)))
+		for key, value := range current {
+			pass.Check()
+			next[key] = value
+		}
+		for key, value := range params {
+			pass.Check()
+			next[key] = value
+		}
+		if e.publishShellParams(ctx, next, version) {
+			return
+		}
+	}
+}
+
+// publishShellParams makes bucket the caller's shell parameters, unless a
+// change was published since version.
+func (e *StorageExecutor) publishShellParams(ctx context.Context, bucket map[string]interface{}, version uint64) bool {
 	e.shellParamsMu.Lock()
 	defer e.shellParamsMu.Unlock()
-	shell := e.shellParamsFor(ctx)
-	if bucket := shellParamsBucket(ctx); bucket != "" {
-		if shell == nil {
-			shell = make(map[string]interface{}, len(params))
-			if e.shellParamsByToken == nil {
-				e.shellParamsByToken = make(map[string]map[string]interface{})
-			}
-			e.shellParamsByToken[bucket] = shell
+	if e.shellParamsVersion != version {
+		return false
+	}
+	e.shellParamsVersion++
+	if token := shellParamsBucket(ctx); token != "" {
+		if e.shellParamsByToken == nil {
+			e.shellParamsByToken = make(map[string]map[string]interface{})
 		}
-	} else if e.shellParams == nil {
-		e.shellParams = make(map[string]interface{}, len(params))
-		shell = e.shellParams
+		e.shellParamsByToken[token] = bucket
+	} else {
+		e.shellParams = bucket
 	}
-	for key, value := range params {
-		shell[key] = value
-	}
+	return true
 }
 
 func (e *StorageExecutor) clearShellParams(ctx context.Context) {
-	e.shellParamsMu.Lock()
-	defer e.shellParamsMu.Unlock()
-	shell := e.shellParamsFor(ctx)
-	if shell == nil {
-		return
+	for {
+		e.shellParamsMu.RLock()
+		version := e.shellParamsVersion
+		e.shellParamsMu.RUnlock()
+		if e.publishShellParams(ctx, map[string]interface{}{}, version) {
+			return
+		}
 	}
-	clear(shell)
 }
 
 func (e *StorageExecutor) listShellParams(ctx context.Context) *ExecuteResult {
 	params := e.getShellParamsSnapshot(ctx)
 	keys := make([]string, 0, len(params))
+	pass := bulk.NewCheckpoint(ctx)
 	for key := range params {
+		pass.Check()
 		keys = append(keys, key)
 	}
-	sort.Strings(keys)
+	_ = sortStrings(ctx, keys)
 	rows := make([][]interface{}, 0, len(keys))
 	for _, key := range keys {
 		rows = append(rows, []interface{}{key, params[key]})

@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -106,7 +107,11 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 	}
 
 	deletedNodeIDs := make(map[string]struct{}, len(candidates))
+	pass := bulk.NewCheckpoint(ctx)
 	for _, node := range candidates {
+		if err := pass.Observe(); err != nil {
+			return nil, true, err
+		}
 		if node == nil {
 			continue
 		}
@@ -129,7 +134,11 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 	}
 
 	input := &ExecuteResult{Columns: []string{deleteVar}, Rows: make([][]interface{}, 0, len(candidates))}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for _, node := range candidates {
+		if err := pass2.Observe(); err != nil {
+			return nil, true, err
+		}
 		input.Rows = append(input.Rows, []interface{}{node})
 	}
 	e.applyDeleteReturnProjection(result, cypher, deleteVar, deleteProjectionInfo{ctx: ctx, input: input})
@@ -195,7 +204,7 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 			usedIndex = true
 		}
 		if !usedIndex {
-			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexIn(wherePartNodePattern(nodePat, deleteVar), wherePart, params); idxErr == nil && used {
+			if candidates, used, idxErr := e.tryCollectNodesFromPropertyIndexIn(ctx, wherePartNodePattern(nodePat, deleteVar), wherePart, params); idxErr == nil && used {
 				nodes = candidates
 				usedIndex = true
 			}
@@ -224,7 +233,9 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 		}
 	}
 	if len(nodePat.properties) > 0 {
-		nodes = e.filterNodesByProperties(nodes, nodePat.properties)
+		if nodes, err = e.filterNodesByProperties(ctx, nodes, nodePat.properties); err != nil {
+			return nil, true, err
+		}
 	}
 
 	if wherePart != "" {
@@ -246,12 +257,17 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 				expected = strings.Trim(rhs, "'\"")
 			}
 			filtered := make([]*storage.Node, 0, len(nodes))
-			for _, n := range nodes {
-				if n == nil {
-					continue
+			for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+				if batchErr != nil {
+					return nil, true, batchErr
 				}
-				if e.compareEqual(n.Properties[prop], expected) {
-					filtered = append(filtered, n)
+				for _, n := range nodes[batch.start:batch.end] {
+					if n == nil {
+						continue
+					}
+					if e.compareEqual(n.Properties[prop], expected) {
+						filtered = append(filtered, n)
+					}
 				}
 			}
 			nodes = filtered
@@ -263,10 +279,16 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 				return []*storage.Node{}, true, nil
 			}
 			allowed := map[string]struct{}{}
+			// One walk observes the statement over every value's text.
+			text := valueWalk(ctx)
 			switch v := raw.(type) {
 			case []interface{}:
+				pass := bulk.NewCheckpoint(ctx)
 				for _, item := range v {
-					allowed[fmt.Sprintf("%v", item)] = struct{}{}
+					if err := pass.Observe(); err != nil {
+						return nil, true, err
+					}
+					allowed[formatValueText(text, item)] = struct{}{}
 				}
 			case []string:
 				for _, item := range v {
@@ -276,12 +298,17 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 				return nil, false, nil
 			}
 			filtered := make([]*storage.Node, 0, len(nodes))
-			for _, n := range nodes {
-				if n == nil {
-					continue
+			for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+				if batchErr != nil {
+					return nil, true, batchErr
 				}
-				if _, ok := allowed[fmt.Sprintf("%v", n.Properties[prop])]; ok {
-					filtered = append(filtered, n)
+				for _, n := range nodes[batch.start:batch.end] {
+					if n == nil {
+						continue
+					}
+					if _, ok := allowed[formatValueText(text, n.Properties[prop])]; ok {
+						filtered = append(filtered, n)
+					}
 				}
 			}
 			nodes = filtered
@@ -371,49 +398,59 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 		store := e.getStorage(ctx)
 		seenNodes, seenEdges := map[string]struct{}{}, map[string]struct{}{}
 		var targetEdges []storage.EdgeID
-		for _, values := range info.input.Rows {
-			row := pipelineRow(buildRowValueMap(info.input.Columns, values))
-			rows = append(rows, row)
-			// An entity the DELETE removed without naming it (a DETACH
-			// DELETE's relationships) is gone from storage.
-			for _, value := range row {
-				switch entity := value.(type) {
-				case *storage.Node:
-					if entity != nil {
-						if _, err := e.getQueryNode(store, entity.ID); errors.Is(err, storage.ErrNotFound) {
-							nodeIDs = append(nodeIDs, entity.ID)
-						}
-					}
-				case *storage.Edge:
-					if entity != nil {
-						if _, err := store.GetEdge(entity.ID); errors.Is(err, storage.ErrNotFound) {
-							edgeIDs[entity.ID] = struct{}{}
-						}
-					}
-				}
+		for batch, batchErr := range materializedBatches(ctx, len(info.input.Rows)) {
+			if batchErr != nil {
+				return
 			}
-			// The DELETE's targets, as the pipeline DELETE collects them (a
-			// path's nodes and relationships, a list's entities).
-			for _, target := range splitTopLevelComma(deleteVars) {
-				value, ok := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(target), row)
-				if !ok {
-					pipelineItemUnevaluable(ctx, target)
-					return
+			for _, values := range info.input.Rows[batch.start:batch.end] {
+				row := pipelineRow(buildRowValueMap(info.input.Columns, values))
+				rows = append(rows, row)
+				// An entity the DELETE removed without naming it (a DETACH
+				// DELETE's relationships) is gone from storage.
+				for _, value := range row {
+					switch entity := value.(type) {
+					case *storage.Node:
+						if entity != nil {
+							if _, err := e.getQueryNode(store, entity.ID); errors.Is(err, storage.ErrNotFound) {
+								nodeIDs = append(nodeIDs, entity.ID)
+							}
+						}
+					case *storage.Edge:
+						if entity != nil {
+							if _, err := store.GetEdge(entity.ID); errors.Is(err, storage.ErrNotFound) {
+								edgeIDs[entity.ID] = struct{}{}
+							}
+						}
+					}
 				}
-				collectDeleteTargetValue(value, seenNodes, seenEdges, &nodeIDs, &targetEdges)
+				// The DELETE's targets, as the pipeline DELETE collects them (a
+				// path's nodes and relationships, a list's entities).
+				for _, target := range splitTopLevelComma(deleteVars) {
+					value, ok := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(target), row)
+					if !ok {
+						pipelineItemUnevaluable(ctx, target)
+						return
+					}
+					collectDeleteTargetValue(nil, value, seenNodes, seenEdges, &nodeIDs, &targetEdges)
+				}
 			}
 		}
-		for _, id := range targetEdges {
-			edgeIDs[id] = struct{}{}
+		for batch, batchErr := range materializedBatches(ctx, len(targetEdges)) {
+			if batchErr != nil {
+				return
+			}
+			for _, id := range targetEdges[batch.start:batch.end] {
+				edgeIDs[id] = struct{}{}
+			}
 		}
 	}
 	deleted := &deletedEntities{}
 	deleted.add(nodeIDs, edgeIDs)
-	if err := validateDeletedEntityReads(rows, cypher[returnIdx:], deleted); err != nil {
+	if err := validateDeletedEntityReads(ctx, rows, cypher[returnIdx:], deleted); err != nil {
 		recordExpressionFailure(ctx, err)
 		return
 	}
-	e.replaceDeletedEntityViews(rows, deleted)
+	e.replaceDeletedEntityViews(ctx, rows, deleted)
 	projected, err := e.projectMergeReturn(ctx, rows, cypher[returnIdx:])
 	if err != nil {
 		return
@@ -453,60 +490,82 @@ func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars str
 	return true
 }
 
-func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResult, store storage.Engine) {
+func (e *StorageExecutor) normalizeSetMatchRowsToNodes(ctx context.Context, matchResult *ExecuteResult, store storage.Engine) error {
 	if matchResult == nil {
-		return
+		return nil
 	}
-	for rowIdx := range matchResult.Rows {
-		row := matchResult.Rows[rowIdx]
-		for colIdx, val := range row {
-			m, ok := val.(map[string]interface{})
-			if !ok {
-				continue
+	for batch, batchErr := range materializedBatches(ctx, len(matchResult.Rows)) {
+		if batchErr != nil {
+			return batchErr
+		}
+		for offset := range matchResult.Rows[batch.start:batch.end] {
+			rowIdx := batch.start + offset
+			row := matchResult.Rows[rowIdx]
+			pass := bulk.NewCheckpoint(ctx)
+			for colIdx, val := range row {
+				if err := pass.Observe(); err != nil {
+					return err
+				}
+				m, ok := val.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				rawID, ok := m["_nodeId"]
+				if !ok {
+					continue
+				}
+				nodeID, ok := rawID.(string)
+				if !ok || nodeID == "" {
+					continue
+				}
+				node, err := e.getQueryNode(store, storage.NodeID(nodeID))
+				if err != nil || node == nil {
+					continue
+				}
+				row[colIdx] = node
 			}
-			rawID, ok := m["_nodeId"]
-			if !ok {
-				continue
-			}
-			nodeID, ok := rawID.(string)
-			if !ok || nodeID == "" {
-				continue
-			}
-			node, err := e.getQueryNode(store, storage.NodeID(nodeID))
-			if err != nil || node == nil {
-				continue
-			}
-			row[colIdx] = node
 		}
 	}
+	return nil
 }
 
-func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine) {
+func (e *StorageExecutor) normalizeSetMatchRowsToEdges(ctx context.Context, matchResult *ExecuteResult, store storage.Engine) error {
 	if matchResult == nil {
-		return
+		return nil
 	}
-	for rowIdx := range matchResult.Rows {
-		row := matchResult.Rows[rowIdx]
-		for colIdx, val := range row {
-			m, ok := val.(map[string]interface{})
-			if !ok {
-				continue
+	for batch, batchErr := range materializedBatches(ctx, len(matchResult.Rows)) {
+		if batchErr != nil {
+			return batchErr
+		}
+		for offset := range matchResult.Rows[batch.start:batch.end] {
+			rowIdx := batch.start + offset
+			row := matchResult.Rows[rowIdx]
+			pass := bulk.NewCheckpoint(ctx)
+			for colIdx, val := range row {
+				if err := pass.Observe(); err != nil {
+					return err
+				}
+				m, ok := val.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				rawID, ok := m["_edgeId"]
+				if !ok {
+					continue
+				}
+				edgeID, ok := rawID.(string)
+				if !ok || edgeID == "" {
+					continue
+				}
+				edge, err := store.GetEdge(storage.EdgeID(edgeID))
+				if err != nil || edge == nil {
+					continue
+				}
+				row[colIdx] = edge
 			}
-			rawID, ok := m["_edgeId"]
-			if !ok {
-				continue
-			}
-			edgeID, ok := rawID.(string)
-			if !ok || edgeID == "" {
-				continue
-			}
-			edge, err := store.GetEdge(storage.EdgeID(edgeID))
-			if err != nil || edge == nil {
-				continue
-			}
-			row[colIdx] = edge
 		}
 	}
+	return nil
 }
 
 var setScopeVarPattern = regexp.MustCompile(`(?i)\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:\.|\+=|=)`)
@@ -688,7 +747,7 @@ func normalizePropsMap(value interface{}, source string) (map[string]interface{}
 	propsMap, ok := value.(map[string]interface{})
 	if ok {
 		for k, v := range propsMap {
-			propsMap[k] = normalizePropValue(v)
+			propsMap[k] = normalizePropValue(nil, v)
 		}
 		return propsMap, nil
 	}
@@ -699,15 +758,15 @@ func normalizePropsMap(value interface{}, source string) (map[string]interface{}
 			if !ok {
 				return nil, localizedError(localization.CypherMutationsSetMergeStringKeysRequired(source, fmt.Sprintf("%T", k)), nil)
 			}
-			propsMap[keyStr] = normalizePropValue(v)
+			propsMap[keyStr] = normalizePropValue(nil, v)
 		}
 		return propsMap, nil
 	}
 	return nil, localizedError(localization.CypherMutationsSetMergeMapRequired(source, fmt.Sprintf("%T", value)), nil)
 }
 
-func normalizePropValue(value interface{}) interface{} {
-	normalized, _ := normalizedPropValue(value)
+func normalizePropValue(walk *materializedRowCheckpoint, value interface{}) interface{} {
+	normalized, _ := normalizedPropValue(walk, value)
 	return normalized
 }
 
@@ -715,80 +774,61 @@ func normalizePropValue(value interface{}) interface{} {
 // become int64, float32 float64 and Go times DateTimes, in lists and maps
 // too. A container is copied only when a descendant changes; rewritten
 // describes a value conversion, independently of a writer's ownership copy.
-func normalizedPropValue(value interface{}) (normalized interface{}, rewritten bool) {
-	return normalizedCypherValue(value, true)
+// The value walker observes the statement (walk) over the value.
+func normalizedPropValue(walk *materializedRowCheckpoint, value interface{}) (normalized interface{}, rewritten bool) {
+	return cypherfn.TransformValue(walk, value, propertyValueStep)
 }
 
 // normalizeExpressionValue admits a runtime value without storage's numeric
 // coercion. Both boundaries share container, temporal and null normalization.
-func normalizeExpressionValue(value interface{}) interface{} {
-	normalized, _ := normalizedCypherValue(value, false)
+func normalizeExpressionValue(walk *materializedRowCheckpoint, value interface{}) interface{} {
+	normalized, _ := cypherfn.TransformValue(walk, value, expressionValueStep)
 	return normalized
 }
 
-func normalizedCypherValue(value interface{}, property bool) (normalized interface{}, rewritten bool) {
+func propertyValueStep(value interface{}) (interface{}, bool, bool) {
+	return cypherValueStep(value, true)
+}
+
+func expressionValueStep(value interface{}) (interface{}, bool, bool) {
+	return cypherValueStep(value, false)
+}
+
+// cypherValueStep is the property (storage numeric coercion) or expression
+// normalization of one value; the walker descends into lists and maps.
+func cypherValueStep(value interface{}, property bool) (normalized interface{}, rewritten, descend bool) {
 	if value != nil && cypherfn.RuntimeValue(value) == nil {
-		return nil, true
+		return nil, true, false
 	}
 	if number, numeric := valueconvert.ReadNumber(value); numeric {
 		if !property {
-			return value, false
+			return value, false, false
 		}
 		if number.IsInteger() {
 			if integer, fits := number.Int64(valueconvert.IntegerOnly); fits {
 				_, canonical := value.(int64)
-				return integer, !canonical
+				return integer, !canonical, false
 			}
 		}
 		if _, canonical := value.(float64); canonical {
-			return value, false
+			return value, false, false
 		}
 		// Preserve storage's existing unsigned-overflow-to-Double policy;
 		// a failed signed conversion must never wrap to a negative Long.
-		return number.Float64(), true
+		return number.Float64(), true, false
 	}
 	switch v := value.(type) {
 	case time.Time:
-		return dateTimeFromGoTime(v), true
+		return dateTimeFromGoTime(v), true, false
 	case *time.Time:
 		if v == nil {
-			return nil, true
+			return nil, true, false
 		}
-		return dateTimeFromGoTime(*v), true
-	case []interface{}:
-		var out []interface{}
-		for i, item := range v {
-			stored, changed := normalizedCypherValue(item, property)
-			if changed && out == nil {
-				out = make([]interface{}, len(v))
-				copy(out, v)
-			}
-			if out != nil {
-				out[i] = stored
-			}
-		}
-		if out != nil {
-			return out, true
-		}
-		return value, false
-	case map[string]interface{}:
-		var out map[string]interface{}
-		for k, item := range v {
-			stored, changed := normalizedCypherValue(item, property)
-			if changed && out == nil {
-				out = cloneStringAnyMap(v)
-			}
-			if out != nil {
-				out[k] = stored
-			}
-		}
-		if out != nil {
-			return out, true
-		}
-		return value, false
-	default:
-		return value, false
+		return dateTimeFromGoTime(*v), true, false
+	case []interface{}, map[string]interface{}:
+		return value, false, true
 	}
+	return value, false, false
 }
 
 func removeNodeLabels(existing []string, labelsToRemove []string) ([]string, int64) {
@@ -861,13 +901,13 @@ func (e *StorageExecutor) idCounter() int64 {
 // evaluateRelationshipPatternInWhere evaluates a WHERE clause relationship pattern
 // like "(n)-[:SUPERSEDED_BY]->()" and returns true if the node has a matching edge.
 // Used when NOT (n)-[:TYPE]->() is evaluated after stripping outer parens to "n)-[:TYPE]->()".
-func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node, variable, pattern string) bool {
+func (e *StorageExecutor) evaluateRelationshipPatternInWhere(ctx context.Context, node *storage.Node, variable, pattern string) bool {
 	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
 		return false
 	}
 	relationshipCount := strings.Count(pattern, "-[")
 	if relationshipCount > 1 {
-		return e.checkChainedPattern(node, variable, pattern, "")
+		return e.checkChainedPattern(ctx, node, variable, pattern, "")
 	}
 	_ = e.extractTargetVariable(pattern, variable) // not needed for simple (var)-[]->() pattern
 	relPattern := e.parseOptionalRelPattern(context.Background(), pattern)
@@ -882,7 +922,9 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 		if len(relPattern.targetLabels) > 0 && !mergeNodeHasLabels(targetNode, relPattern.targetLabels) {
 			return false
 		}
+		pass := bulk.NewCheckpoint(ctx)
 		for key, expected := range relPattern.targetProps {
+			pass.Check()
 			actual, ok := targetNode.Properties[key]
 			if !ok || !e.compareEqual(actual, expected) {
 				return false
@@ -895,7 +937,9 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 	checkIncoming, checkOutgoing, relTypes = e.relationshipExistencePatternDirections(pattern, variable)
 	if checkIncoming {
 		edges, _ := e.storage.GetIncomingEdges(node.ID)
+		pass2 := bulk.NewCheckpoint(ctx)
 		for _, edge := range edges {
+			pass2.Check()
 			if (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(edge.StartNode) {
 				return true
 			}
@@ -903,7 +947,9 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 	}
 	if checkOutgoing {
 		edges, _ := e.storage.GetOutgoingEdges(node.ID)
+		pass3 := bulk.NewCheckpoint(ctx)
 		for _, edge := range edges {
+			pass3.Check()
 			if (len(relTypes) == 0 || e.edgeTypeMatches(edge.Type, relTypes)) && targetMatches(edge.EndNode) {
 				return true
 			}
@@ -918,7 +964,7 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 }
 
 // checkChainedPattern handles chained relationship patterns like (p)-[:KNOWS]->()-[:KNOWS]->()
-func (e *StorageExecutor) checkChainedPattern(node *storage.Node, variable, pattern, innerWhere string) bool {
+func (e *StorageExecutor) checkChainedPattern(ctx context.Context, node *storage.Node, variable, pattern, innerWhere string) bool {
 	// Parse the pattern to extract relationship hops
 	// E.g., (p)-[:KNOWS]->()-[:KNOWS]->() has two hops
 
@@ -942,7 +988,7 @@ func (e *StorageExecutor) checkChainedPattern(node *storage.Node, variable, patt
 	}
 
 	// Traverse the chain starting from the given node
-	return e.traverseChain(node, hops, 0)
+	return e.traverseChain(ctx, node, hops, 0)
 }
 
 // relationshipHop represents one step in a chained relationship pattern
@@ -1027,7 +1073,7 @@ func (e *StorageExecutor) parseRelationshipHops(pattern, variable string) []rela
 }
 
 // traverseChain recursively checks if a chain of relationships exists
-func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipHop, hopIndex int) bool {
+func (e *StorageExecutor) traverseChain(ctx context.Context, node *storage.Node, hops []relationshipHop, hopIndex int) bool {
 	if hopIndex >= len(hops) {
 		return true // All hops matched
 	}
@@ -1036,29 +1082,39 @@ func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipH
 
 	if hop.outgoing {
 		edges, _ := e.storage.GetOutgoingEdges(node.ID)
-		for _, edge := range edges {
-			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
-				// Get the target node and recurse
-				nextNode, err := e.getQueryNode(e.storage, edge.EndNode)
-				if err != nil {
-					continue
-				}
-				if e.traverseChain(nextNode, hops, hopIndex+1) {
-					return true
+		for batch, batchErr := range materializedBatches(ctx, len(edges)) {
+			if batchErr != nil {
+				return false
+			}
+			for _, edge := range edges[batch.start:batch.end] {
+				if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
+					// Get the target node and recurse
+					nextNode, err := e.getQueryNode(e.storage, edge.EndNode)
+					if err != nil {
+						continue
+					}
+					if e.traverseChain(ctx, nextNode, hops, hopIndex+1) {
+						return true
+					}
 				}
 			}
 		}
 	} else {
 		edges, _ := e.storage.GetIncomingEdges(node.ID)
-		for _, edge := range edges {
-			if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
-				// Get the source node and recurse
-				nextNode, err := e.getQueryNode(e.storage, edge.StartNode)
-				if err != nil {
-					continue
-				}
-				if e.traverseChain(nextNode, hops, hopIndex+1) {
-					return true
+		for batch, batchErr := range materializedBatches(ctx, len(edges)) {
+			if batchErr != nil {
+				return false
+			}
+			for _, edge := range edges[batch.start:batch.end] {
+				if len(hop.relTypes) == 0 || e.edgeTypeMatches(edge.Type, hop.relTypes) {
+					// Get the source node and recurse
+					nextNode, err := e.getQueryNode(e.storage, edge.StartNode)
+					if err != nil {
+						continue
+					}
+					if e.traverseChain(ctx, nextNode, hops, hopIndex+1) {
+						return true
+					}
 				}
 			}
 		}
@@ -1239,7 +1295,7 @@ func (e *StorageExecutor) edgeTypeMatches(edgeType string, allowedTypes []string
 // change. It validates all adjacent edges (outgoing and incoming) against the current
 // policy constraints to ensure no DISALLOWED pair is formed and any ALLOWED whitelist
 // is still satisfied.
-func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLabels []string) error {
+func validatePolicyOnLabelChange(ctx context.Context, store storage.Engine, node *storage.Node, oldLabels []string) error {
 	schema := store.GetSchema()
 	if schema == nil {
 		return nil
@@ -1259,25 +1315,35 @@ func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLa
 
 	// Check outgoing edges (node is the source).
 	outgoing, _ := store.GetOutgoingEdges(node.ID)
-	for _, edge := range outgoing {
-		targetNode, err := store.GetNode(storage.NodeID(edge.EndNode))
-		if err != nil || targetNode == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(outgoing)) {
+		if batchErr != nil {
+			return batchErr
 		}
-		if err := checkPolicyForEdge(edge.Type, node.Labels, targetNode.Labels, policies); err != nil {
-			return err
+		for _, edge := range outgoing[batch.start:batch.end] {
+			targetNode, err := store.GetNode(storage.NodeID(edge.EndNode))
+			if err != nil || targetNode == nil {
+				continue
+			}
+			if err := checkPolicyForEdge(edge.Type, node.Labels, targetNode.Labels, policies); err != nil {
+				return err
+			}
 		}
 	}
 
 	// Check incoming edges (node is the target).
 	incoming, _ := store.GetIncomingEdges(node.ID)
-	for _, edge := range incoming {
-		sourceNode, err := store.GetNode(storage.NodeID(edge.StartNode))
-		if err != nil || sourceNode == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(incoming)) {
+		if batchErr != nil {
+			return batchErr
 		}
-		if err := checkPolicyForEdge(edge.Type, sourceNode.Labels, node.Labels, policies); err != nil {
-			return err
+		for _, edge := range incoming[batch.start:batch.end] {
+			sourceNode, err := store.GetNode(storage.NodeID(edge.StartNode))
+			if err != nil || sourceNode == nil {
+				continue
+			}
+			if err := checkPolicyForEdge(edge.Type, sourceNode.Labels, node.Labels, policies); err != nil {
+				return err
+			}
 		}
 	}
 

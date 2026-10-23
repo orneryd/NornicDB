@@ -541,7 +541,7 @@ func setExpressionKeyword(token string) bool {
 // values here, so a value is storable or not whichever route writes it: a
 // map entry as a direct property value (#1055).
 func storablePropertyValue(value interface{}) (stored interface{}, rewritten bool, err error) {
-	stored, rewritten = normalizedPropValue(value)
+	stored, rewritten = normalizedPropValue(nil, value)
 	validated, coerced, err := validateSetPropertyValue(stored)
 	if err != nil {
 		return nil, false, err

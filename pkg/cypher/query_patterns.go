@@ -75,8 +75,20 @@ type PatternInfo struct {
 	GroupByVars  []string // Variables in implicit GROUP BY
 }
 
-// DetectQueryPattern analyzes a Cypher query and returns pattern info
+// DetectQueryPattern analyzes a Cypher query and returns pattern info. A
+// statement canceled meanwhile finds no pattern (PatternGeneric); its next
+// observation fails it.
 func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
+	info, err := insideStopBoundary(func() (PatternInfo, error) {
+		return detectQueryPattern(ctx, query), nil
+	})
+	if err != nil {
+		return PatternInfo{Pattern: PatternGeneric}
+	}
+	return info
+}
+
+func detectQueryPattern(ctx context.Context, query string) PatternInfo {
 	info := PatternInfo{
 		Pattern: PatternGeneric,
 	}

@@ -1,8 +1,10 @@
 package fn
 
 import (
+	"context"
 	"reflect"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -59,103 +61,43 @@ func RuntimeValue(value interface{}) interface{} {
 // becomes {a: nil}, while allocated empty maps and nil lists remain containers.
 // Containers are copied only when conversion is needed; handler-owned values
 // are never modified. Entities retain their identity and property-bag semantics.
-func FunctionResult(value interface{}) interface{} {
-	normalized, _ := functionResult(value)
-	return normalized
+//
+// The walk observes the statement (statement): a canceled one stops it
+// (bulk.Checkpoint.Check) and gets its error, and no value.
+func FunctionResult(statement context.Context, value interface{}) (normalized interface{}, err error) {
+	defer bulk.RecoverStop(&err)
+	walk := bulk.NewCheckpoint(statement)
+	normalized, _ = TransformValue(&walk, value, functionResultStep)
+	return normalized, nil
 }
 
-func functionResult(value interface{}) (interface{}, bool) {
+// functionResultStep is FunctionResult's decision for one value (the value
+// walker copies the containers whose members change).
+func functionResultStep(value interface{}) (interface{}, bool, bool) {
 	// Primitive scalars cannot contain NULL members or be boxed nils.
 	// Keep their producer path as cheap as the scalar expression boundary.
 	switch value.(type) {
 	case string, bool, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
-		return value, false
+		return value, false, false
 	}
 	if RuntimeValue(value) == nil {
-		return nil, value != nil
+		return nil, value != nil, false
 	}
-	switch v := value.(type) {
-	case map[string]interface{}:
-		var out map[string]interface{}
-		for key, item := range v {
-			normalized, changed := functionResult(item)
-			if !changed {
-				continue
-			}
-			if out == nil {
-				out = make(map[string]interface{}, len(v))
-				for k, item := range v {
-					out[k] = item
-				}
-			}
-			out[key] = normalized
-		}
-		if out != nil {
-			return out, true
-		}
-	case map[interface{}]interface{}:
-		var out map[interface{}]interface{}
-		for key, item := range v {
-			normalized, changed := functionResult(item)
-			if !changed {
-				continue
-			}
-			if out == nil {
-				out = make(map[interface{}]interface{}, len(v))
-				for k, item := range v {
-					out[k] = item
-				}
-			}
-			out[key] = normalized
-		}
-		if out != nil {
-			return out, true
-		}
-	case []interface{}:
-		var out []interface{}
-		for index, item := range v {
-			normalized, changed := functionResult(item)
-			if !changed {
-				continue
-			}
-			if out == nil {
-				out = append([]interface{}(nil), v...)
-			}
-			out[index] = normalized
-		}
-		if out != nil {
-			return out, true
-		}
+	switch value.(type) {
+	case map[string]interface{}, map[interface{}]interface{}, []interface{}:
+		return value, false, true
 	case storage.RemoteEntityValue, storage.RemotePathValue:
 		// These maps are graph values, not user maps. In particular an empty
 		// entity property bag is still a map, not a NULL entity.
+		return value, false, false
 	case []string, []byte, []int, []int64, []float32, []float64, []bool:
 		// Primitive-list results need no traversal or allocation.
-	default:
-		reflected := reflect.ValueOf(value)
-		switch reflected.Kind() {
-		case reflect.Map:
-			if reflected.Type().Key().Kind() == reflect.String {
-				out := make(map[string]interface{}, reflected.Len())
-				iterator := reflected.MapRange()
-				for iterator.Next() {
-					out[iterator.Key().String()] = FunctionResult(iterator.Value().Interface())
-				}
-				return out, true
-			}
-			out := make(map[interface{}]interface{}, reflected.Len())
-			iterator := reflected.MapRange()
-			for iterator.Next() {
-				out[iterator.Key().Interface()] = FunctionResult(iterator.Value().Interface())
-			}
-			return out, true
-		case reflect.Slice, reflect.Array:
-			out := make([]interface{}, reflected.Len())
-			for index := range out {
-				out[index] = FunctionResult(reflected.Index(index).Interface())
-			}
-			return out, true
-		}
+		return value, false, false
 	}
-	return value, false
+	switch reflect.ValueOf(value).Kind() {
+	case reflect.Map, reflect.Slice, reflect.Array:
+		// Typed lists and maps are converted to Cypher lists and maps.
+		return value, false, true
+	}
+	return value, false, false
 }

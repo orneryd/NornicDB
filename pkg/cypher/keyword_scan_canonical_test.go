@@ -284,7 +284,7 @@ func TestQueryRewriteRestoresPlansAndMessages(t *testing.T) {
 			"plan":  map[string]interface{}{"details": []interface{}{"n.x IS NULL", 2.5}, "rows": int64(1)},
 		},
 	}
-	restored, err := rewrite.restore(result, fmt.Errorf("Invalid input 'n.x IS NULL' near \"RETURN n\""))
+	restored, err := rewrite.restore(context.Background(), result, fmt.Errorf("Invalid input 'n.x IS NULL' near \"RETURN n\""))
 	require.Equal(t, "n.x IS  NULL", restored.Rows[0][0])
 	require.Equal(t, []interface{}{"n.x IS  NULL", int64(1)}, restored.Rows[1][0])
 	require.Equal(t, original, restored.Metadata["query"])
@@ -297,12 +297,12 @@ func TestQueryRewriteRestoresPlansAndMessages(t *testing.T) {
 	// A plain statement's rows are data: never rewritten.
 	_, plain := canonicalizeQueryText("RETURN  'n.x IS NULL' AS s")
 	data := &ExecuteResult{Columns: []string{"s"}, Rows: [][]interface{}{{"RETURN 'n.x IS NULL' AS s"}}}
-	kept, err := plain.restore(data, nil)
+	kept, err := plain.restore(context.Background(), data, nil)
 	require.NoError(t, err)
 	require.Same(t, data, kept)
 
 	var nilRewrite *queryRewrite
-	same, sameErr := nilRewrite.restore(data, nil)
+	same, sameErr := nilRewrite.restore(context.Background(), data, nil)
 	require.Same(t, data, same)
 	require.NoError(t, sameErr)
 }

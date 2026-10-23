@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -65,7 +66,9 @@ func (e *StorageExecutor) traversalOptionalWhereMatches(ctx context.Context, pre
 	for variable, relationship := range row.rels {
 		values[variable] = relationship
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for variable, value := range row.values {
+		pass.Check()
 		values[variable] = value
 	}
 	predicate = substituteWithWhereLabelTests(predicate, values)

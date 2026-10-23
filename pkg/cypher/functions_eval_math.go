@@ -6,6 +6,7 @@ import (
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -276,7 +277,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		if paths != nil {
 			if pathResult, ok := paths[inner]; ok && pathResult != nil {
 				var result []interface{}
+				pass := bulk.NewCheckpoint(ctx)
 				for _, node := range pathResult.Nodes {
+					pass.Check()
 					result = append(result, node)
 				}
 				return result
@@ -285,7 +288,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		// Then check allPathNodes (for variable-length patterns without explicit path variable)
 		if len(allPathNodes) > 0 {
 			var result []interface{}
+			pass3 := bulk.NewCheckpoint(ctx)
 			for _, node := range allPathNodes {
+				pass3.Check()
 				result = append(result, node)
 			}
 			return result
@@ -317,7 +322,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		if paths != nil {
 			if pathResult, ok := paths[inner]; ok && pathResult != nil {
 				result := make([]interface{}, len(pathResult.Relationships))
+				pass4 := bulk.NewCheckpoint(ctx)
 				for index, edge := range pathResult.Relationships {
+					pass4.Check()
 					result[index] = edge
 				}
 				return result
@@ -326,7 +333,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 		// Then check allPathEdges (for variable-length patterns without explicit path variable)
 		if len(allPathEdges) > 0 {
 			result := make([]interface{}, len(allPathEdges))
+			pass6 := bulk.NewCheckpoint(ctx)
 			for index, edge := range allPathEdges {
+				pass6.Check()
 				result[index] = edge
 			}
 			return result
@@ -1139,7 +1148,9 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 	// once: evaluateRowExpressionWithContext binds the ones a row lacks,
 	// and copied the row to do it for every element (#1214).
 	values := make(map[string]interface{}, len(pathValues)+len(nodes)+len(rels)+1)
+	pass := bulk.NewCheckpoint(ctx)
 	for name, value := range pathValues {
+		pass.Check()
 		values[name] = value
 	}
 	for name, node := range nodes {
@@ -1154,10 +1165,14 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 			values[name] = value
 		}
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for name, value := range valueBindingsFromContext(ctx) {
+		pass2.Check()
 		bindAbsent(name, value)
 	}
+	pass3 := bulk.NewCheckpoint(ctx)
 	for name, value := range parameterRowValues(ctx) {
+		pass3.Check()
 		bindAbsent(name, value)
 	}
 	if needsRowStatementContext(predicate) {
@@ -1190,7 +1205,9 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	if condition == "" && projection == "" {
 		if texts, isTexts := list.([]string); isTexts {
 			items := make([]interface{}, len(texts))
+			pass := bulk.NewCheckpoint(ctx)
 			for index, item := range texts {
+				pass.Check()
 				items[index] = item
 			}
 			return items
@@ -1276,7 +1293,7 @@ func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inne
 			return evaluate(plan.terms[index])(accumulator, item)
 		}}
 	}
-	result, err := runReduceForm(form, acc, items, evaluate(form.step), evaluate(form.predicate), appender)
+	result, err := runReduceForm(ctx, form, acc, items, evaluate(form.step), evaluate(form.predicate), appender)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil

@@ -47,6 +47,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -66,7 +67,11 @@ func (e *StorageExecutor) applySetMapMergeToNode(ctx context.Context, node *stor
 		return err
 	}
 	writes.mapEntries(node.Properties, props, false)
+	pass := bulk.NewCheckpoint(ctx)
 	for k, v := range props {
+		if err := pass.Observe(); err != nil {
+			return err
+		}
 		setNodeProperty(node, k, v)
 	}
 	return nil
@@ -266,8 +271,12 @@ func (e *StorageExecutor) generateUUID() string {
 // node whose labels changed is checked against the label policies first.
 // On an error the entity is restored and the error is wrapped by its caller
 // (wrap).
-func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
+func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
+	pass2 := bulk.NewCheckpoint(ctx)
 	for index := range states {
+		if err := pass2.Observe(); err != nil {
+			return err
+		}
 		state := &states[index]
 		if stats != nil {
 			stats.PropertiesSet += state.written
@@ -282,7 +291,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 				node.Labels = state.labels
 			}
 			if labelsAdded > 0 {
-				if err := validatePolicyOnLabelChange(store, node, state.labels); err != nil {
+				if err := validatePolicyOnLabelChange(ctx, store, node, state.labels); err != nil {
 					restore()
 					return err
 				}
@@ -382,7 +391,11 @@ func (e *StorageExecutor) applySetRuns(ctx context.Context, runs []setRun, nodes
 			return nil, false, nil
 		}
 		target := -1
+		pass2 := bulk.NewCheckpoint(ctx)
 		for index := range states {
+			if err := pass2.Observe(); err != nil {
+				return nil, true, err
+			}
 			if states[index].variable == run.variable {
 				target = index
 				break

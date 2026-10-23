@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 // ArgumentTypeError reports a function argument of a type the function does
@@ -80,6 +82,24 @@ func EvaluateFunction(name string, args []string, ctx Context) (value interface{
 	if ctx.Now == nil {
 		ctx.Now = func() time.Time { return time.Now() }
 	}
-	val, err := fn(ctx, args)
-	return FunctionResult(val), true, err
+	val, err := callFunction(fn, ctx, args)
+	return val, true, err
+}
+
+// callFunction runs a function's implementation inside the cancellation
+// owner's boundary: a stop in its work returns the statement's error
+// (bulk.RecoverStop), and none of the stopped work's result.
+func callFunction(fn Func, ctx Context, args []string) (value interface{}, err error) {
+	defer bulk.RecoverStop(&err)
+	return normalizedCall(fn, ctx, args)
+}
+
+// normalizedCall is the function's result as a runtime value (FunctionResult).
+func normalizedCall(fn Func, ctx Context, args []string) (interface{}, error) {
+	value, err := fn(ctx, args)
+	normalized, stopped := FunctionResult(ctx.StatementContext(), value)
+	if stopped != nil {
+		return nil, stopped
+	}
+	return normalized, err
 }

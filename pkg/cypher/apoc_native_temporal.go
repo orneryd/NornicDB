@@ -1,10 +1,12 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 // APOC named formats share the Java-pattern compiler; scalar inputs follow
@@ -54,7 +56,7 @@ var nativeAPOCNamedPatterns = map[string]string{
 	"year_month_day":                    "yyyy-MM-dd",
 }
 
-func nativeAPOCTemporalFormat(args []interface{}) (interface{}, error) {
+func nativeAPOCTemporalFormat(ctx context.Context, args []interface{}) (interface{}, error) {
 	const name = "apoc.temporal.format"
 	value := args[0]
 	pattern := "yyyy-MM-dd"
@@ -65,7 +67,7 @@ func nativeAPOCTemporalFormat(args []interface{}) (interface{}, error) {
 			return nil, invalidFunctionArgument(name, args[1])
 		}
 	}
-	lower := lowerASCII(pattern)
+	lower := bulk.LowerASCII(ctx, pattern)
 	namedISO := strings.HasPrefix(lower, "iso_") || lower == "basic_iso_date" || lower == "rfc_1123_date_time"
 	if resolved, ok := nativeAPOCNamedPatterns[lower]; ok {
 		pattern = resolved
@@ -105,7 +107,7 @@ func nativeAPOCTemporalFormat(args []interface{}) (interface{}, error) {
 		}
 		return nativeAPOCDurationFormat(duration, pattern), nil
 	}
-	return nativeAPOCJavaText(value), nil
+	return nativeAPOCJavaText(valueWalk(ctx), value), nil
 }
 
 func nativeAPOCISOBasePattern(name string) (string, bool) {
@@ -293,28 +295,23 @@ func nativeAPOCDurationFormat(duration *CypherDuration, pattern string) string {
 	return out.String()
 }
 
-func nativeAPOCJavaText(value interface{}) string {
-	if value == nil {
-		return "null"
-	}
-	if object, ok := value.(map[string]interface{}); ok {
-		keys := make([]string, 0, len(object))
-		for key := range object {
-			keys = append(keys, key)
+func nativeAPOCJavaText(work *materializedRowCheckpoint, value interface{}) string {
+	return valueText(work, value, nativeAPOCJavaTextStyle)
+}
+
+// nativeAPOCJavaTextStyle is APOC's Java text of a value: {key=value, ...}
+// in key order, [item, ...], and Cypher's text of other values.
+var nativeAPOCJavaTextStyle = &valueTextStyle{
+	mapping: stringMap, list: toInterfaceSlice,
+	listOpen: "[", listClose: "]", listSeparator: ", ",
+	mapOpen: "{", mapClose: "}", mapSeparator: ", ", keySeparator: "=",
+	sorted: true,
+	leaf: func(_ *materializedRowCheckpoint, out *strings.Builder, value interface{}) bool {
+		if value == nil {
+			out.WriteString("null")
+			return true
 		}
-		sort.Strings(keys)
-		parts := make([]string, len(keys))
-		for i, key := range keys {
-			parts[i] = key + "=" + nativeAPOCJavaText(object[key])
-		}
-		return "{" + strings.Join(parts, ", ") + "}"
-	}
-	if list, ok := toInterfaceSlice(value); ok {
-		parts := make([]string, len(list))
-		for i, v := range list {
-			parts[i] = nativeAPOCJavaText(v)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	}
-	return formatCypherValueString(value)
+		out.WriteString(formatCypherValueString(value))
+		return true
+	},
 }

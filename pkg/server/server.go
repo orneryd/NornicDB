@@ -1054,6 +1054,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	if db == nil {
 		return nil, fmt.Errorf("database required")
 	}
+	// Statement text a procedure runs is held to the request limit too.
+	cypher.SetDynamicStatementLimit(config.MaxRequestSize)
 	trustedProxyPrefixes, err := parseTrustedProxyPrefixes(config.TrustedProxies)
 	if err != nil {
 		return nil, err

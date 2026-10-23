@@ -67,33 +67,33 @@ func TestCypher25ToStringWritesValues(t *testing.T) {
 }
 
 func TestCypher25ValueTextOfOtherValues(t *testing.T) {
-	_, ok := cypher25ValueText(nil)
+	_, ok := cypher25ValueText(nil, nil)
 	require.False(t, ok)
-	_, ok = cypher25ValueText(struct{}{})
+	_, ok = cypher25ValueText(nil, struct{}{})
 	require.False(t, ok)
-	_, ok = cypher25ValueText([]interface{}{struct{}{}})
+	_, ok = cypher25ValueText(nil, []interface{}{struct{}{}})
 	require.False(t, ok)
-	_, ok = cypher25ValueText(map[string]interface{}{"a": struct{}{}})
+	_, ok = cypher25ValueText(nil, map[string]interface{}{"a": struct{}{}})
 	require.False(t, ok)
-	_, ok = cypher25ValueText(map[string]int{"a": 1})
+	_, ok = cypher25ValueText(nil, map[string]int{"a": 1})
 	require.False(t, ok)
-	_, ok = cypher25ValueText((*storage.Node)(nil))
+	_, ok = cypher25ValueText(nil, (*storage.Node)(nil))
 	require.False(t, ok)
-	_, ok = cypher25ValueText((*storage.Edge)(nil))
+	_, ok = cypher25ValueText(nil, (*storage.Edge)(nil))
 	require.False(t, ok)
 	start := &storage.Node{ID: "a", Labels: []string{"A"}}
 	end := &storage.Node{ID: "b"}
 	edge := &storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "T"}
-	text, ok := cypher25ValueText(PathResult{Nodes: []*storage.Node{start, end}, Relationships: []*storage.Edge{edge}})
+	text, ok := cypher25ValueText(nil, PathResult{Nodes: []*storage.Node{start, end}, Relationships: []*storage.Edge{edge}})
 	require.True(t, ok)
 	require.Equal(t, "(:A)-[:T]->()", text)
-	text, ok = cypher25ValueText(&PathResult{Nodes: []*storage.Node{start}})
+	text, ok = cypher25ValueText(nil, &PathResult{Nodes: []*storage.Node{start}})
 	require.True(t, ok)
 	require.Equal(t, "(:A)", text)
-	text, ok = cypher25ValueText(map[string]interface{}{"_pathResult": &PathResult{Nodes: []*storage.Node{end, start}, Relationships: []*storage.Edge{edge}}})
+	text, ok = cypher25ValueText(nil, map[string]interface{}{"_pathResult": &PathResult{Nodes: []*storage.Node{end, start}, Relationships: []*storage.Edge{edge}}})
 	require.True(t, ok)
 	require.Equal(t, "()<-[:T]-(:A)", text)
-	text, ok = cypher25ValueText(map[string]interface{}{"_pathResult": PathResult{Nodes: []*storage.Node{start, end}, Relationships: []*storage.Edge{edge}}})
+	text, ok = cypher25ValueText(nil, map[string]interface{}{"_pathResult": PathResult{Nodes: []*storage.Node{start, end}, Relationships: []*storage.Edge{edge}}})
 	require.True(t, ok)
 	require.Equal(t, "(:A)-[:T]->()", text)
 	// A boolean marker is ordinary user data, even beside graph-valued keys.
@@ -107,7 +107,7 @@ func TestCypher25ValueTextOfOtherValues(t *testing.T) {
 		{map[string]interface{}{"_pathResult": true, "nodes": []interface{}{start, end}, "rels": []interface{}{"x"}}, "{_pathResult: true, nodes: [(:A), ()], rels: [x]}"},
 		{map[string]interface{}{"_pathResult": true, "nodes": []interface{}{start, end}, "rels": []interface{}{edge}}, "{_pathResult: true, nodes: [(:A), ()], rels: [[:T]]}"},
 	} {
-		text, ok = cypher25ValueText(tc.value)
+		text, ok = cypher25ValueText(nil, tc.value)
 		require.True(t, ok)
 		require.Equal(t, tc.want, text)
 	}
@@ -117,12 +117,12 @@ func TestCypher25ValueTextOfOtherValues(t *testing.T) {
 		map[string]interface{}{"_pathResult": &PathResult{}},
 		PathResult{Nodes: []*storage.Node{start}, Relationships: []*storage.Edge{edge}},
 	} {
-		_, ok = cypher25ValueText(path)
+		_, ok = cypher25ValueText(nil, path)
 		require.False(t, ok)
 	}
-	require.Nil(t, convertToStringInVersion([]interface{}{struct{}{}}, true))
-	require.Equal(t, "1", convertToStringInVersion(int64(1), false))
-	require.Equal(t, "null", convertToStringInVersion(nil, true))
+	require.Nil(t, convertToStringInVersion(nil, []interface{}{struct{}{}}, true))
+	require.Equal(t, "1", convertToStringInVersion(nil, int64(1), false))
+	require.Equal(t, "null", convertToStringInVersion(nil, nil, true))
 }
 
 // Keep actual query-produced paths and user maps distinct across the public

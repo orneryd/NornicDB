@@ -118,7 +118,9 @@ func (s *procedureStatementStats) Value(key interface{}) interface{} {
 // nested statements' counters, including iterator/export/custom bodies.
 func (e *StorageExecutor) executeProcedureHandler(ctx context.Context, proc registeredProcedure, query string, args []interface{}) (*ExecuteResult, error) {
 	totals := &procedureStatementStats{Context: ctx}
-	result, err := proc.Handler(totals, e, query, args)
+	// A stop in the procedure's work returns the statement's error, and none
+	// of the stopped work's rows.
+	result, err := insideStopBoundary(func() (*ExecuteResult, error) { return proc.Handler(totals, e, query, args) })
 	if err == nil && (totals.stats != nil || totals.committed != nil) {
 		if result == nil {
 			result = &ExecuteResult{}

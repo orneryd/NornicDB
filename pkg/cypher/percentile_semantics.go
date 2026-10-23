@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -35,36 +34,45 @@ func (e *StorageExecutor) evaluatePipelinePercentile(ctx context.Context, rows [
 	}
 	values := make([]percentileValue, 0, len(rows))
 	var seen cypherValueIndex
-	for _, row := range rows {
-		value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(arguments[0]), row)
-		if !resolved {
+	seen.observeCancellation(ctx)
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
 			return nil, false
 		}
-		if value == nil {
-			continue
-		}
-		numeric, _, _, valid := pipelineAggregateNumber(value)
-		if !valid {
-			// Neo4j's percentiles take numbers only: any other value is a
-			// TypeError.
-			recordExpressionFailure(ctx, aggregateValueError(name, value))
-			return nil, false
-		}
-		if distinct {
-			if _, exists := seen.addByContract(value, cypherEquivalenceContract); exists {
+		for _, row := range rows[batch.start:batch.end] {
+			value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(arguments[0]), row)
+			if !resolved {
+				return nil, false
+			}
+			if value == nil {
 				continue
 			}
+			numeric, _, _, valid := pipelineAggregateNumber(value)
+			if !valid {
+				// Neo4j's percentiles take numbers only: any other value is a
+				// TypeError.
+				recordExpressionFailure(ctx, aggregateValueError(name, value))
+				return nil, false
+			}
+			if distinct {
+				if _, exists := seen.addByContract(value, cypherEquivalenceContract); exists {
+					continue
+				}
+			}
+			values = append(values, percentileValue{numeric: numeric, original: value})
 		}
-		values = append(values, percentileValue{numeric: numeric, original: value})
 	}
 	if len(values) == 0 {
 		return nil, true
 	}
 	// Ordered as ORDER BY orders numbers (compareValuesForSort): NaN after
 	// every number, -0.0 before 0.0, integers and floats exactly (#907).
-	sort.SliceStable(values, func(left, right int) bool {
-		return compareValuesForSort(values[left].original, values[right].original) < 0
-	})
+	if err := stableSortRows(ctx, values, func(left, right percentileValue) int {
+		return compareValuesForSort(left.original, right.original)
+	}); err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil, false
+	}
 
 	if name == "percentiledisc" {
 		index := int(math.Ceil(percentile*float64(len(values)))) - 1

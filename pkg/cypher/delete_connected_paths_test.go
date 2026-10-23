@@ -63,7 +63,7 @@ func TestConnectedDeleteTargetsLookupErrors(t *testing.T) {
 	base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	for _, incomingOnly := range []bool{false, true} {
 		store := adjacencyFailingEngine{Engine: base, incomingOnly: incomingOnly}
-		_, err := connectedDeleteTargets(store, []storage.NodeID{"n"}, nil)
+		_, err := connectedDeleteTargets(context.Background(), store, []storage.NodeID{"n"}, nil)
 		require.ErrorIs(t, err, errAdjacencyRead)
 	}
 

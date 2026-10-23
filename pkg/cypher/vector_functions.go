@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -290,7 +291,11 @@ func fnUUID(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	pass := bulk.NewCheckpoint(ctx.StatementContext())
 	for _, value := range values {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		if value == nil {
 			return nil, nil
 		}

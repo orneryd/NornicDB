@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -36,7 +37,11 @@ func stringArguments(ctx cypherfn.Context, function string, args []string, count
 		return nil, false, err
 	}
 	texts := make([]string, count)
+	pass := bulk.NewCheckpoint(ctx.StatementContext())
 	for index, value := range values {
+		if err := pass.Observe(); err != nil {
+			return nil, false, err
+		}
 		if value == nil {
 			return nil, true, nil
 		}
@@ -56,7 +61,7 @@ func fnStringIndexOf(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil || null {
 		return nil, err
 	}
-	at := strings.Index(texts[0], texts[1])
+	at := bulk.Index(ctx.StatementContext(), texts[0], texts[1])
 	if at < 0 {
 		return int64(-1), nil
 	}
@@ -80,14 +85,18 @@ func fnStringJoin(ctx cypherfn.Context, args []string) (interface{}, error) {
 		return nil, &cypherfn.TypeMismatchError{Function: "string.join", Expected: "String", Value: values[1]}
 	}
 	parts := make([]string, 0, len(list))
+	pass := bulk.NewCheckpoint(ctx.StatementContext())
 	for _, item := range list {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		if item == nil {
 			continue
 		}
 		text, ok := item.(string)
 		if !ok {
 			return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-				localization.CypherCoreStringJoinElementType(neo4jValueRepr(item)))
+				localization.CypherCoreStringJoinElementType(neo4jValueRepr(valueWalk(ctx.StatementContext()), item)))
 		}
 		parts = append(parts, text)
 	}

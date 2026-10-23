@@ -32,11 +32,11 @@ func TestCompoundCASEKeepsTypedValues(t *testing.T) {
 func TestGoTimePropertyZoneIdentity(t *testing.T) {
 	for _, location := range []*time.Location{time.UTC, time.Local, time.FixedZone("Offset", 3600)} {
 		value := time.Unix(1792888200, 0).In(location)
-		require.Empty(t, normalizePropValue(value).(CypherDateTime).ZoneID)
+		require.Empty(t, normalizePropValue(nil, value).(CypherDateTime).ZoneID)
 	}
 	loc, ok := loadPinnedTemporalLocation("America/New_York")
 	require.True(t, ok)
-	require.Equal(t, "America/New_York", normalizePropValue(time.Unix(1793511000, 0).In(loc)).(CypherDateTime).ZoneID)
+	require.Equal(t, "America/New_York", normalizePropValue(nil, time.Unix(1793511000, 0).In(loc)).(CypherDateTime).ZoneID)
 }
 
 func TestPrintfCollectionDisplay(t *testing.T) {
@@ -63,11 +63,11 @@ func TestInvalidDateTimeTextShapes(t *testing.T) {
 }
 
 func TestNormalizeNilPointerOfOtherTypes(t *testing.T) {
-	value, changed := normalizeParameterValue((*int)(nil))
+	value, changed := normalizeParameterValue(nil, (*int)(nil))
 	require.True(t, changed)
 	require.Nil(t, value)
 	v := int64(1)
-	value, changed = normalizeParameterValue(&v)
+	value, changed = normalizeParameterValue(nil, &v)
 	require.False(t, changed)
 	require.Same(t, &v, value)
 }

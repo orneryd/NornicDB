@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
 
@@ -71,9 +72,9 @@ func fnTextLocate(ctx cypherfn.Context, args []string) (interface{}, error) {
 			}
 		}
 	}
-	start, end, found := locateQuote(text, quote, options)
-	if !found {
-		return nil, nil
+	start, end, found, err := locateQuote(valueWalk(ctx.StatementContext()), text, quote, options)
+	if err != nil || !found {
+		return nil, err
 	}
 	return map[string]interface{}{"start": int64(start), "end": int64(end)}, nil
 }
@@ -118,17 +119,20 @@ func init() {
 }
 
 // textLocatePattern is the quote's words as one case-insensitive pattern
-// (fnTextLocate's rules), or nil when the quote has no word.
-func textLocatePattern(quote string) *regexp.Regexp {
+// (fnTextLocate's rules), or nil when the quote has no word. A quote whose
+// pattern exceeds the regular expression engine's limits is out of range.
+// walk observes the statement while the pattern is built; compiling it is
+// the engine's (a stated limitation: it runs to its end).
+func textLocatePattern(walk *materializedRowCheckpoint, quote string) (*regexp.Regexp, error) {
 	quote = textLocateLineLabel.ReplaceAllString(quote, "")
-	words := strings.Fields(textLocateEscapedBreak.ReplaceAllString(quote, " "))
-	if len(words) == 0 {
-		return nil
+	words, err := bulk.Fields(walk.Context(), textLocateEscapedBreak.ReplaceAllString(quote, " "))
+	if err != nil || len(words) == 0 {
+		return nil, err
 	}
 	parts := make([]string, len(words))
-	for index, word := range words {
+	for index, word := range observedItems(walk, words) {
 		var core strings.Builder
-		for _, r := range word {
+		for _, r := range observedRunes(walk, word) {
 			if class, mark := textLocateMarks[r]; mark {
 				core.WriteString(class)
 			} else {
@@ -137,20 +141,36 @@ func textLocatePattern(quote string) *regexp.Regexp {
 		}
 		parts[index] = textLocateMarkupOpen + core.String() + textLocateMarkupClose
 	}
-	return regexp.MustCompile(`(?i)` + strings.Join(parts, textLocateGap))
+	joined, err := bulk.Join(walk.Context(), parts, textLocateGap)
+	if err != nil {
+		return nil, err
+	}
+	pattern, err := regexp.Compile(`(?i)` + joined)
+	if err != nil {
+		return nil, functionArgumentOutOfRange("text.locate")
+	}
+	return pattern, nil
 }
 
 // locateQuote finds quote's best occurrence in text (fnTextLocate). It works
 // on byte offsets and converts only the result to code points; each search
 // starts at a candidate line (or from) and stops at the first match.
-func locateQuote(text, quote string, options textLocateOptions) (start, end int, found bool) {
-	pattern := textLocatePattern(quote)
+func locateQuote(walk *materializedRowCheckpoint, text, quote string, options textLocateOptions) (start, end int, found bool, err error) {
+	pattern, err := textLocatePattern(walk, quote)
 	if pattern == nil {
-		return 0, 0, false
+		return 0, 0, false, err
 	}
-	low, high := codePointByteOffset(text, options.from), len(text)
+	start, end, found = locatePattern(walk, pattern, text, options)
+	return start, end, found, nil
+}
+
+// locatePattern is locateQuote's search for the quote's compiled pattern.
+// Matching is the engine's (a stated limitation); walk observes the passes
+// over the text around it.
+func locatePattern(walk *materializedRowCheckpoint, pattern *regexp.Regexp, text string, options textLocateOptions) (int, int, bool) {
+	low, high := codePointByteOffset(walk, text, options.from), len(text)
 	if options.to >= 0 {
-		high = codePointByteOffset(text, options.to)
+		high = codePointByteOffset(walk, text, options.to)
 	}
 	if low > high {
 		return 0, 0, false
@@ -174,6 +194,7 @@ func locateQuote(text, quote string, options textLocateOptions) (start, end int,
 	}
 	lineStarts := []int{0}
 	for index := strings.IndexByte(text, '\n'); index >= 0; {
+		walk.Check()
 		lineStarts = append(lineStarts, index+1)
 		next := strings.IndexByte(text[index+1:], '\n')
 		if next < 0 {
@@ -208,11 +229,11 @@ func locateQuote(text, quote string, options textLocateOptions) (start, end int,
 
 // codePointByteOffset is the byte offset of text's code point at index,
 // clamped to the text.
-func codePointByteOffset(text string, index int) int {
+func codePointByteOffset(walk *materializedRowCheckpoint, text string, index int) int {
 	if index <= 0 {
 		return 0
 	}
-	for offset := range text {
+	for offset := range observedRunes(walk, text) {
 		if index == 0 {
 			return offset
 		}

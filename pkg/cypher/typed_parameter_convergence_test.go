@@ -84,7 +84,7 @@ func TestTypedParameterNullNormalization(t *testing.T) {
 		require.Equal(t, [][]any{{true}}, r.Rows)
 		for _, child := range []any{map[any]any{"v": value}, map[string]*time.Time{"v": nil}, map[int]any{1: value}} {
 			if typed, ok := child.(map[int]any); ok {
-				normalized, changed := normalizeParameterValue(typed)
+				normalized, changed := normalizeParameterValue(nil, typed)
 				require.True(t, changed)
 				converted := normalized.(map[any]any)
 				v, exists := converted[1]

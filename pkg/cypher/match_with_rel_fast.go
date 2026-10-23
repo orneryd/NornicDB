@@ -1,13 +1,15 @@
 package cypher
 
 import (
+	"context"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withClause string, returnClause string, orderByClause string, skipVal int, limitVal int) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) tryFastRevenueByProduct(ctx context.Context, matches *TraversalMatch, withClause string, returnClause string, orderByClause string, skipVal int, limitVal int) (*ExecuteResult, bool, error) {
 	// MATCH (p:Product)<-[r:ORDERS]-(:Order)
 	// WITH p, sum(p.unitPrice * r.quantity) as revenue
 	// RETURN p.productName, revenue
@@ -69,7 +71,7 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 		return nil, false, nil
 	}
 
-	edgeList, _, err := e.getEdgesByTypeFast(matches.Relationship.Types[0])
+	edgeList, _, err := e.getEdgesByTypeFast(ctx, matches.Relationship.Types[0])
 	if err != nil {
 		return nil, false, err
 	}
@@ -79,7 +81,11 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 	productIDs := make([]storage.NodeID, 0, 1024)
 	orderSeen := make(map[storage.NodeID]struct{}, 1024)
 	orderIDs := make([]storage.NodeID, 0, 1024)
+	pass := bulk.NewCheckpoint(ctx)
 	for _, edge := range edgeList {
+		if err := pass.Observe(); err != nil {
+			return nil, false, err
+		}
 		productID := edge.EndNode
 		if _, ok := productSeen[productID]; !ok {
 			productSeen[productID] = struct{}{}
@@ -106,7 +112,11 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 	}
 
 	revenueByProduct := make(map[storage.NodeID]float64, len(productIDs))
+	pass2 := bulk.NewCheckpoint(ctx)
 	for _, edge := range edgeList {
+		if err := pass2.Observe(); err != nil {
+			return nil, false, err
+		}
 		productID := edge.EndNode
 		pNode := products[productID]
 		if pNode == nil || !mergeNodeHasLabels(pNode, requiredProductLabels) {
@@ -158,7 +168,11 @@ func (e *StorageExecutor) tryFastRevenueByProduct(matches *TraversalMatch, withC
 	}
 
 	if strings.TrimSpace(orderByClause) != "" {
-		result.Rows = e.orderResultRows(result.Rows, result.Columns, orderByClause)
+		ordered, err := e.orderResultRows(ctx, result.Rows, result.Columns, orderByClause)
+		if err != nil {
+			return nil, true, err
+		}
+		result.Rows = ordered
 	}
 	if skipVal > 0 {
 		if skipVal < len(result.Rows) {

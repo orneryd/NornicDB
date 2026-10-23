@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -99,7 +100,11 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		const caseBinding = "__nornic_case_value"
 		scope := make(map[string]interface{}, len(values)+1)
+		pass := bulk.NewCheckpoint(rowStatementContextOrBackground(values))
 		for name, value := range values {
+			if err := pass.Observe(); err != nil {
+				return nil, false, err
+			}
 			scope[name] = value
 		}
 		scope[caseBinding] = caseValue
@@ -121,7 +126,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// directly instead of scanning for literals, operators and subscripts.
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
-			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), chain)
+			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(valueWalk(rowStatementContextOrBackground(values)), base), chain)
 			if !ok {
 				return nil, false, rowPropertyChainTypeError(base, chain)
 			}
@@ -211,7 +216,11 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			return value, resolved, err
 		case "shortestpath", "allshortestpaths":
 			nodes := make(map[string]*storage.Node, len(values))
+			pass2 := bulk.NewCheckpoint(rowStatementContextOrBackground(values))
 			for name, value := range values {
+				if err := pass2.Observe(); err != nil {
+					return nil, false, err
+				}
 				if node, ok := value.(*storage.Node); ok {
 					nodes[name] = node
 				}
@@ -256,7 +265,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				return int64(path.Length), true, nil
 			}
 			return nil, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-				localization.CypherCoreFunctionArgumentInvalid("length", "a Path", neo4jValueRepr(value)))
+				localization.CypherCoreFunctionArgumentInvalid("length", "a Path", neo4jValueRepr(valueWalk(rowStatementContextOrBackground(values)), value)))
 		case "range":
 			parts := e.splitFunctionArgs(argument)
 			arguments := make([]interface{}, len(parts))
@@ -270,7 +279,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 				}
 				arguments[index] = value
 			}
-			result, err := evaluateCypherRange(arguments)
+			result, err := evaluateCypherRange(valueWalk(rowStatementContextOrBackground(values)), arguments)
 			if err != nil {
 				return nil, false, err
 			}
@@ -371,7 +380,11 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 			if _, isPath := cypherPathResultOf(value, object, isMap); isPath {
 				return nil, false, invalidFunctionArgument("keys", value)
 			}
-			keys, ok := cypherfn.PropertyKeys(e.queryVisibleValue(value))
+			keys, ok, err := cypherfn.PropertyKeys(rowStatementContextOrBackground(values), e.queryVisibleValue(valueWalk(rowStatementContextOrBackground(values)), value))
+			if err != nil {
+				recordExpressionFailure(rowStatementContextOrBackground(values), err)
+				return nil, false, err
+			}
 			if !ok {
 				return nil, false, invalidFunctionArgument("keys", value)
 			}
@@ -651,7 +664,7 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		}
 		if ok {
 			chain := strings.TrimSpace(expr[dot+1:])
-			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), chain)
+			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(valueWalk(rowStatementContextOrBackground(values)), base), chain)
 			if !ok {
 				if err := rowPropertyChainTypeError(base, chain); err != nil {
 					return nil, false, err
@@ -999,7 +1012,11 @@ func (e *StorageExecutor) evaluateRowListComprehension(expr string, values map[s
 	}
 	// One scope for every element, as in evaluateRowQuantifier.
 	scope := make(map[string]interface{}, len(values)+1)
+	pass := bulk.NewCheckpoint(rowStatementContextOrBackground(values))
 	for name, value := range values {
+		if err := pass.Observe(); err != nil {
+			return nil, false, false, err
+		}
 		scope[name] = value
 	}
 	var holds func() (bool, bool, error)
@@ -1139,7 +1156,11 @@ func (e *StorageExecutor) evaluateRowQuantifier(expr string, values map[string]i
 	// reduce does: copying the row per element cost an allocation of the
 	// whole row for each one (#1214).
 	scope := make(map[string]interface{}, len(values)+1)
+	pass := bulk.NewCheckpoint(rowStatementContextOrBackground(values))
 	for name, value := range values {
+		if err := pass.Observe(); err != nil {
+			return nil, false, false, err
+		}
 		scope[name] = value
 	}
 	value, resolved, err := rowQuantifierLoop(function, coerceToUnwindItems(listValue), func(item interface{}) { scope[variable] = item }, func() (interface{}, bool, error) {

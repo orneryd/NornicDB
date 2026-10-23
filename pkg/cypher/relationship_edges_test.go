@@ -55,19 +55,19 @@ func TestUndirectedIncidentEdges(t *testing.T) {
 		return out
 	}
 	adjacent := &adjacentEdgeEngine{Engine: store}
-	edges, err := undirectedIncidentEdges(adjacent, "a")
+	edges, err := undirectedIncidentEdges(nil, adjacent, "a")
 	require.NoError(t, err)
 	require.Equal(t, []string{"aa", "ab", "ba"}, ids(edges))
 	require.Equal(t, 1, adjacent.calls)
-	edges, err = undirectedIncidentEdges(&failingEdgeEngine{Engine: store}, "a")
+	edges, err = undirectedIncidentEdges(nil, &failingEdgeEngine{Engine: store}, "a")
 	require.NoError(t, err)
 	require.Equal(t, []string{"aa", "ab", "ba"}, ids(edges))
 
 	adjacent.fail = true
-	_, err = undirectedIncidentEdges(adjacent, "a")
+	_, err = undirectedIncidentEdges(nil, adjacent, "a")
 	require.ErrorIs(t, err, errEdgeRead)
 	for _, failing := range []*failingEdgeEngine{{Engine: store, failOutgoing: true}, {Engine: store, failIncoming: true}} {
-		_, err = undirectedIncidentEdges(failing, "a")
+		_, err = undirectedIncidentEdges(nil, failing, "a")
 		require.ErrorIs(t, err, errEdgeRead)
 	}
 }

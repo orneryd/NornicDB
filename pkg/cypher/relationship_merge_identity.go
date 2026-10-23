@@ -1,12 +1,15 @@
 package cypher
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"reflect"
 	"strconv"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -26,7 +29,7 @@ func relationshipMergeIdentityKey(
 	for key, value := range matchProps {
 		normalized[key] = normalizeRelationshipMergeIdentityValue(value)
 	}
-	return string(startID) + "\x00" + relType + "\x00" + string(endID) + "\x00" + unwindMergeKey("", normalized)
+	return string(startID) + "\x00" + relType + "\x00" + string(endID) + "\x00" + unwindMergeKey(nil, "", normalized)
 }
 
 // normalizeRelationshipMergeIdentityValue canonicalizes values for identity
@@ -35,7 +38,7 @@ func relationshipMergeIdentityKey(
 // the concrete Go slice type as identity would make MERGE non-idempotent after
 // a restart.
 func normalizeRelationshipMergeIdentityValue(value interface{}) interface{} {
-	normalized := normalizePropValue(value)
+	normalized := normalizePropValue(nil, value)
 	if number, ok := normalized.(float64); ok &&
 		!math.IsNaN(number) && !math.IsInf(number, 0) &&
 		math.Trunc(number) == number && number >= -(1<<63) && number < (1<<63) {
@@ -60,30 +63,19 @@ func normalizeRelationshipMergeIdentityValue(value interface{}) interface{} {
 	return out
 }
 
-func relationshipMergeIdentityContainsNaN(value interface{}) bool {
-	switch typed := value.(type) {
-	case float32:
-		return math.IsNaN(float64(typed))
-	case float64:
-		return math.IsNaN(typed)
-	case map[string]interface{}:
-		for _, item := range typed {
-			if relationshipMergeIdentityContainsNaN(item) {
-				return true
-			}
+func relationshipMergeIdentityContainsNaN(walk *materializedRowCheckpoint, value interface{}) bool {
+	return cypherfn.VisitValue(walk, value, func(value interface{}) (descend, stop bool) {
+		switch typed := value.(type) {
+		case float32:
+			return false, math.IsNaN(float64(typed))
+		case float64:
+			return false, math.IsNaN(typed)
+		case map[string]interface{}:
+			return true, false
 		}
-		return false
-	}
-	rv := reflect.ValueOf(value)
-	if !rv.IsValid() || (rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array) {
-		return false
-	}
-	for i := 0; i < rv.Len(); i++ {
-		if relationshipMergeIdentityContainsNaN(rv.Index(i).Interface()) {
-			return true
-		}
-	}
-	return false
+		kind := reflect.ValueOf(value).Kind()
+		return kind == reflect.Slice || kind == reflect.Array, false
+	})
 }
 
 // deterministicRelationshipMergeEdgeID makes concurrent creation of the same MERGE
@@ -109,13 +101,14 @@ func (e *StorageExecutor) newRelationshipMergeEdgeID(
 	relType string,
 	matchProps map[string]interface{},
 ) storage.EdgeID {
-	if relationshipMergeIdentityContainsNaN(matchProps) {
+	if relationshipMergeIdentityContainsNaN(nil, matchProps) {
 		return storage.EdgeID(e.generateID())
 	}
 	return deterministicRelationshipMergeEdgeID(startID, endID, relType, matchProps, 0)
 }
 
 func createRelationshipForMerge(
+	ctx context.Context,
 	e *StorageExecutor,
 	store storage.Engine,
 	edge *storage.Edge,
@@ -128,9 +121,9 @@ func createRelationshipForMerge(
 	bareAttempts := 0
 
 	for {
-		nonReflexiveIdentity := relationshipMergeIdentityContainsNaN(matchProps)
+		nonReflexiveIdentity := relationshipMergeIdentityContainsNaN(valueWalk(ctx), matchProps)
 		if len(matchProps) > 0 && !nonReflexiveIdentity {
-			existing, err := selectRelationshipMergeCreateID(store, edge, matchProps)
+			existing, err := selectRelationshipMergeCreateID(ctx, store, edge, matchProps)
 			if err != nil {
 				return nil, false, err
 			}
@@ -143,6 +136,7 @@ func createRelationshipForMerge(
 				return nil, false, err
 			}
 			existing, lookupErr := findRelationshipForMerge(
+				ctx,
 				store,
 				edge.StartNode,
 				edge.EndNode,
@@ -176,6 +170,7 @@ func createRelationshipForMerge(
 // is required before transactional CreateEdge because a transaction can buffer
 // a snapshot-visible committed ID without returning ErrAlreadyExists.
 func selectRelationshipMergeCreateID(
+	ctx context.Context,
 	store storage.Engine,
 	edge *storage.Edge,
 	matchProps map[string]interface{},
@@ -202,7 +197,12 @@ func selectRelationshipMergeCreateID(
 		return nil, err
 	}
 	firstOrdinal := len(edges)
+	// One probe per relationship between the pair, which can be many.
+	probes := bulk.RowsCheckpoint(ctx, len(edges)+1)
 	for offset := 0; offset <= len(edges); offset++ {
+		if err := probes.Observe(); err != nil {
+			return nil, err
+		}
 		edge.ID = deterministicRelationshipMergeEdgeID(
 			edge.StartNode,
 			edge.EndNode,
@@ -255,13 +255,13 @@ func relationshipMergeValuesEqual(got, want interface{}) bool {
 // values of any type: NaN matches nothing, and values that differ only in
 // their Go representation (map and list forms) are equal.
 func relationshipMergeValuesEqualGeneral(got, want interface{}) bool {
-	if relationshipMergeIdentityContainsNaN(got) || relationshipMergeIdentityContainsNaN(want) {
+	if relationshipMergeIdentityContainsNaN(nil, got) || relationshipMergeIdentityContainsNaN(nil, want) {
 		return false
 	}
-	if reflect.DeepEqual(got, want) {
+	if cypherfn.IdenticalValues(nil, got, want) {
 		return true
 	}
-	return reflect.DeepEqual(canonicalUnwindMergeValue(got), canonicalUnwindMergeValue(want))
+	return mergeValueKey(nil, got) == mergeValueKey(nil, want)
 }
 
 // relationshipMergeScalarsEqual is relationshipMergeValuesEqualGeneral for
@@ -296,13 +296,14 @@ func relationshipMergeScalarsEqual(got, want interface{}) (equal bool, decided b
 // findRelationshipsForMerge finds, or nil: for callers that bind one
 // relationship per row.
 func findRelationshipForMerge(
+	ctx context.Context,
 	store storage.Engine,
 	startID storage.NodeID,
 	endID storage.NodeID,
 	relType string,
 	matchProps map[string]interface{},
 ) (*storage.Edge, error) {
-	matches, err := findRelationshipsForMerge(store, startID, endID, relType, matchProps)
+	matches, err := findRelationshipsForMerge(ctx, store, startID, endID, relType, matchProps)
 	if err != nil || len(matches) == 0 {
 		return nil, err
 	}
@@ -315,20 +316,30 @@ func findRelationshipForMerge(
 // reads only the relationships of that type between the two nodes, and of
 // each only the identity properties; a match is read whole.
 func findRelationshipsForMerge(
+	ctx context.Context,
 	store storage.Engine,
 	startID storage.NodeID,
 	endID storage.NodeID,
 	relType string,
 	matchProps map[string]interface{},
 ) ([]*storage.Edge, error) {
-	if relationshipMergeIdentityContainsNaN(matchProps) {
+	if relationshipMergeIdentityContainsNaN(valueWalk(ctx), matchProps) {
 		return nil, nil
 	}
 	keys := make([]string, 0, len(matchProps))
+	pass2 := bulk.NewCheckpoint(ctx)
 	for key := range matchProps {
+		if err := pass2.Observe(); err != nil {
+			return nil, err
+		}
 		keys = append(keys, key)
 	}
-	return storage.MatchEdgesBetween(store, startID, endID, relType, keys, func(edge *storage.Edge) bool {
+	scan := newStorageScan(ctx)
+	defer scan.close()
+	return matchEdgesBetween(scan, store, startID, endID, relType, keys, func(edge *storage.Edge) bool {
+		if scan.canceled() {
+			return false
+		}
 		return relationshipMatchesMergePattern(edge, relType, matchProps)
 	})
 }

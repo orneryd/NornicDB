@@ -32,8 +32,8 @@ func TestApocLoadExportHelpers_ExportFormatting(t *testing.T) {
 	nodes := []*storage.Node{{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "alice"}}}
 	edges := []*storage.Edge{{ID: "e1", Type: "KNOWS", StartNode: "n1", EndNode: "n2", Properties: map[string]interface{}{"since": int64(2020)}}}
 
-	nf := e.nodesToExportFormat(nodes)
-	ef := e.edgesToExportFormat(edges)
+	nf := e.nodesToExportFormat(nil, nodes)
+	ef := e.edgesToExportFormat(nil, edges)
 	assert.Len(t, nf, 1)
 	assert.Len(t, ef, 1)
 	assert.Equal(t, "n1", nf[0]["id"])
@@ -45,8 +45,8 @@ func TestApocLoadExportHelpers_CountProperties(t *testing.T) {
 	e := &StorageExecutor{}
 	nodes := []*storage.Node{{Properties: map[string]interface{}{"a": 1, "b": 2}}, {Properties: map[string]interface{}{}}}
 	edges := []*storage.Edge{{Properties: map[string]interface{}{"c": 3}}}
-	assert.Equal(t, 3, e.countProperties(nodes, edges))
-	assert.Equal(t, 0, e.countProperties(nil, nil))
+	assert.Equal(t, 3, e.countProperties(nil, nodes, edges))
+	assert.Equal(t, 0, e.countProperties(nil, nil, nil))
 }
 
 func TestApocLoadExportHelpers_CallApocLoadJsonArray_FromFile(t *testing.T) {

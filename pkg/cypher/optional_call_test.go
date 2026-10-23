@@ -48,13 +48,13 @@ func TestPipelineApplyOptionallyStops(t *testing.T) {
 	rows := []pipelineRow{{"i": int64(1)}, {"i": int64(2)}}
 	failure := errors.New("call failed")
 	ok := true
-	_, err := pipelineApplyOptionally(rows, func([]pipelineRow) ([]pipelineRow, []string, bool, error) {
+	_, err := pipelineApplyOptionally(context.Background(), rows, func([]pipelineRow) ([]pipelineRow, []string, bool, error) {
 		return nil, nil, true, failure
 	}, &ok)
 	require.ErrorIs(t, err, failure)
 	require.True(t, ok)
 
-	out, err := pipelineApplyOptionally(rows, func([]pipelineRow) ([]pipelineRow, []string, bool, error) {
+	out, err := pipelineApplyOptionally(context.Background(), rows, func([]pipelineRow) ([]pipelineRow, []string, bool, error) {
 		return nil, nil, false, nil
 	}, &ok)
 	require.NoError(t, err)

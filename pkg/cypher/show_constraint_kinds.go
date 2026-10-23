@@ -48,7 +48,7 @@ func showConstraintKindOf(cypher string, cypher25 bool) (kind showConstraintKind
 	if end < 0 {
 		return kind, false, nil
 	}
-	words := make([]string, 0, end-1)
+	words := make([]string, 0, len(fields[1:end]))
 	for _, word := range fields[1:end] {
 		word = strings.ToUpper(word)
 		if !showConstraintKindWords[word] {
