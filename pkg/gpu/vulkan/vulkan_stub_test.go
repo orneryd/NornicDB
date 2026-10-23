@@ -7,6 +7,22 @@ import (
 	"testing"
 )
 
+// An unavailable runtime must keep the public constructor on its error path.
+// The default pure-Go build can use a real Vulkan driver, so build tags alone
+// cannot establish that a machine has no device.
+func TestUnavailableRuntime(t *testing.T) {
+	if IsAvailable() {
+		t.Skip("Vulkan runtime is available; native device tests cover this host")
+	}
+	if count := DeviceCount(); count != 0 {
+		t.Fatalf("unavailable runtime reported %d devices", count)
+	}
+	device, err := NewDevice(0)
+	if device != nil || (!errors.Is(err, ErrVulkanNotAvailable) && !errors.Is(err, ErrDeviceCreation)) {
+		t.Fatalf("unavailable runtime constructed a device: %v, %v", device, err)
+	}
+}
+
 func TestDeviceMethodsStub(t *testing.T) {
 	var device Device
 
