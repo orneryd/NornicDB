@@ -43,7 +43,7 @@ func (e *StorageExecutor) runGraphSearchRequest(ctx context.Context, procedure s
 // or a relationship with its start and end nodes (null when not visible).
 func (e *StorageExecutor) graphSearchEntity(result *search.SearchResult) (kind string, node, relationship, start, end interface{}) {
 	if result.Relationship == nil {
-		return "node", &storage.Node{ID: storage.NodeID(result.ID), Labels: result.Labels, Properties: result.Properties}, nil, nil, nil
+		return "node", result.MaterializedNode(), nil, nil, nil
 	}
 	endpoint := func(id storage.NodeID) interface{} {
 		if found, err := e.storage.GetNode(id); err == nil && found != nil {
