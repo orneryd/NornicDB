@@ -252,6 +252,20 @@ func splitPipelineClausesAllowingProcedureCalls(cypher string) ([]pipelineClause
 // is unsupported, and any other text splits the same way. Callers get their
 // own copy of the clause list.
 func cachedPipelineClauses(cypher string, procedureCalls bool) ([]pipelineClause, bool) {
+	split := cachedPipelineClauseSplit(cypher)
+	if split.topLevelCall && !procedureCalls {
+		return nil, false
+	}
+	if split.clauses == nil {
+		return nil, split.ok
+	}
+	return append([]pipelineClause(nil), split.clauses...), split.ok
+}
+
+// cachedPipelineClauseSplit returns immutable parse facts for readers that do
+// not execute or mutate clauses. Execution callers receive their own slice
+// through cachedPipelineClauses.
+func cachedPipelineClauseSplit(cypher string) pipelineClauseSplit {
 	pipelineClauseSplits.RLock()
 	split, cached := pipelineClauseSplits.splits[cypher]
 	pipelineClauseSplits.RUnlock()
@@ -264,13 +278,7 @@ func cachedPipelineClauses(cypher string, procedureCalls bool) ([]pipelineClause
 		pipelineClauseSplits.splits[cypher] = split
 		pipelineClauseSplits.Unlock()
 	}
-	if split.topLevelCall && !procedureCalls {
-		return nil, false
-	}
-	if split.clauses == nil {
-		return nil, split.ok
-	}
-	return append([]pipelineClause(nil), split.clauses...), split.ok
+	return split
 }
 
 // parsePipelineClauses walks the query from left to right and slices it on
@@ -527,7 +535,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 		}
 	}()
 	hasCallSubquery := firstTopLevelCallSubquery(cypher) >= 0
-	if !hasCallSubquery && startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") {
+	if !hasCallSubquery && startsWithKeywordFold(strings.TrimSpace(cypher), "UNWIND") && !e.pipelineReadsImportedBinding(ctx, nil) {
 		if !pipelineUnwindUsesRange(cypher) {
 			plan, err := e.prepareTopLevelUnwind(ctx, cypher)
 			if err != nil {
@@ -557,7 +565,7 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 	// unbound, so a correlated body (EXISTS / COUNT / COLLECT over an
 	// imported variable) takes the row pipeline, which is seeded with the
 	// imports below.
-	if !hasCallSubquery && !e.pipelineReadsImportedBinding(ctx, clauses) {
+	if !hasCallSubquery && pipelineSingleMatchReturn(clauses) && !e.pipelineReadsImportedBinding(ctx, clauses) {
 		if result, handled, err := e.tryExecutePipelineSimpleNodeReadPlan(ctx, clauses, params); handled || err != nil {
 			return newPipelineDispatchOutcome(result, handled, err)
 		}
@@ -572,14 +580,9 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 	// their `$name` expression keys so list/map inputs are not stringified while
 	// crossing WITH and UNWIND horizons.
 	initialRow := pipelineRow{}
-	for name, value := range e.fabricRecordBindings {
+	e.forEachPipelineImport(ctx, clauses, func(name string, value interface{}) {
 		initialRow[name] = value
-	}
-	if len(clauses) == 0 || clauses[0].kind != pipelineClauseCallSubquery {
-		for name, value := range valueBindingsFromContext(ctx) {
-			initialRow[name] = value
-		}
-	}
+	})
 	bindParameterRow(ctx, initialRow)
 	rows := []pipelineRow{initialRow}
 	scope := make(map[string]struct{})
@@ -602,6 +605,11 @@ type pipelineRowOutput struct {
 }
 
 func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clauses, originalClauses []pipelineClause, output *pipelineRowOutput) (*ExecuteResult, bool, error) {
+	if output == nil {
+		if globals, ok := ctx.Value(semanticSubqueryGlobalsKey{}).(pipelineRow); ok {
+			ctx = withPipelineImports(ctx, globals)
+		}
+	}
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -948,16 +956,13 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			var stats *QueryStats
 			ok := true
 			var err error
-			if clause.optional {
-				body, _, _, _ := e.parseCallSubquery(clause.text)
-				columns := e.inferTopLevelReturnColumns(body)
+			if clause.optional && len(rows) != 0 {
 				stats = &QueryStats{}
 				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
 					rowsOut, rowStats, handled, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, row, clause.text, callMetadata)
 					addQueryStats(stats, rowStats)
-					return rowsOut, columns, handled, err
+					return rowsOut, callMetadata.columns, handled, err
 				}, &ok)
-				callMetadata.columns = columns
 			} else {
 				newRows, stats, ok, err = e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause.text, callMetadata)
 			}
@@ -970,6 +975,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			rows = newRows
 			terminalCallColumns = append(terminalCallColumns[:0], callMetadata.columns...)
+			for _, name := range callMetadata.columns {
+				scope[name] = struct{}{}
+			}
 			for _, row := range rows {
 				for name := range row {
 					if !strings.HasPrefix(name, "$") {
@@ -1088,36 +1096,39 @@ func pipelineDecline(ctx context.Context, wrote bool, clause string) (*ExecuteRe
 	return nil, false, nil
 }
 
-// pipelineReadsImportedBinding reports whether a clause mentions a variable
-// the pipeline's first row imports: a correlated subquery body's outer row
-// (fabricRecordBindings) or an enclosing value scope. Parameters are not
-// imports. It uses isIdentifierReferenced, the reader unscoped CALL imports
-// use, so a body that only names its own variables keeps the shortcuts.
-func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
-	references := func(name string) bool {
-		if strings.HasPrefix(name, "$") {
-			return false
-		}
-		for _, clause := range clauses {
-			if isIdentifierReferenced(clause.text, name) {
-				return true
-			}
-		}
-		return false
-	}
-	for name := range e.fabricRecordBindings {
-		if references(name) {
-			return true
-		}
+// forEachPipelineImport owns the imports of the pipeline's first row for
+// execution and shortcut eligibility. Context values override fabric values.
+func (e *StorageExecutor) forEachPipelineImport(ctx context.Context, clauses []pipelineClause, visit func(string, interface{})) {
+	for name, value := range e.fabricRecordBindings {
+		visit(name, value)
 	}
 	if len(clauses) == 0 || clauses[0].kind != pipelineClauseCallSubquery {
-		for name := range valueBindingsFromContext(ctx) {
-			if references(name) {
-				return true
-			}
+		for name, value := range valueBindingsFromContext(ctx) {
+			visit(name, value)
 		}
 	}
-	return false
+}
+
+// pipelineReadsImportedBinding declines statement shortcuts unless the shared
+// scope owner proves the body independent of the complete imported row.
+func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clauses []pipelineClause) bool {
+	var buffer [8]string
+	names := buffer[:0]
+	e.forEachPipelineImport(ctx, clauses, func(name string, _ interface{}) {
+		if !strings.HasPrefix(name, "$") && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	})
+	if len(names) == 0 {
+		return false
+	}
+	return semanticRuntimeDependencies(clauses, names, cypherVersionFromContext(ctx) == "25")
+}
+
+// Both statement shortcuts consume this parsed shape. Other pipelines cannot
+// use them and need no dependency proof for their eligibility.
+func pipelineSingleMatchReturn(clauses []pipelineClause) bool {
+	return len(clauses) == 2 && clauses[0].kind == pipelineClauseMatch && clauses[1].kind == pipelineClauseReturn
 }
 
 // tryExecutePipelineSimpleRelationshipCountPlan is the fused physical form of
@@ -1131,7 +1142,7 @@ func (e *StorageExecutor) pipelineReadsImportedBinding(ctx context.Context, clau
 // traversal-layer fast path exists. It delegates to relationshipCountFromStore,
 // the single owner of counts answered from the counters (count_store.go).
 func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx context.Context, clauses []pipelineClause, params map[string]interface{}) (*ExecuteResult, bool, error) {
-	if len(clauses) != 2 || clauses[0].kind != pipelineClauseMatch || clauses[1].kind != pipelineClauseReturn {
+	if !pipelineSingleMatchReturn(clauses) {
 		return nil, false, nil
 	}
 	matchBody := strings.TrimSpace(clauses[0].text[len("MATCH"):])
@@ -1175,7 +1186,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleRelationshipCountPlan(ctx cont
 // still projected by the pipeline, so indexed and scanned inputs share the
 // same expression semantics.
 func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Context, clauses []pipelineClause, params map[string]interface{}) (*ExecuteResult, bool, error) {
-	if len(clauses) != 2 || clauses[0].kind != pipelineClauseMatch || clauses[1].kind != pipelineClauseReturn {
+	if !pipelineSingleMatchReturn(clauses) {
 		return nil, false, nil
 	}
 	matchBody := strings.TrimSpace(clauses[0].text[len("MATCH"):])

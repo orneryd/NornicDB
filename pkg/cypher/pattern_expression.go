@@ -299,8 +299,7 @@ func (e *StorageExecutor) evaluateBoundRowValue(expr string, values pipelineRow)
 type rowContextShape struct {
 	pattern          bool
 	statementContext bool
-	subquery         subqueryExpression
-	isSubquery       bool
+	subquery         *rowSubqueryNode
 	identity         bool
 	function         string
 	argument         string
@@ -324,7 +323,9 @@ func rowContextShapeOf(expr string) *rowContextShape {
 		trimmed:          strings.TrimSpace(expr),
 		brace:            strings.Contains(expr, "{"),
 	}
-	shape.subquery, shape.isSubquery = standaloneSubqueryExpression(expr)
+	if subquery, ok := standaloneSubqueryExpression(expr); ok {
+		shape.subquery = &rowSubqueryNode{text: expr, kind: subquery.kind, body: subquery.body}
+	}
 	if function, argument, ok := parseFunctionCallWS(shape.trimmed); ok {
 		shape.identity = strings.EqualFold(function, "id") || strings.EqualFold(function, "elementId")
 		shape.function, shape.argument = function, argument
@@ -396,8 +397,8 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 			defer delete(values, rowStatementContextKey)
 		}
 	}
-	if shape.isSubquery {
-		return e.evaluateRowSubqueryValue(ctx, shape.subquery.kind, shape.subquery.body, values)
+	if shape.subquery != nil {
+		return e.evaluateRowSubqueryValueWithScope(ctx, shape.subquery.kind, shape.subquery.body, values, &shape.subquery.scope)
 	}
 	// Whole id() / elementId() calls resolve directly at this boundary.
 	// Nested registry calls use the same statement identity through the

@@ -138,6 +138,7 @@ type rowSubqueryPlan struct {
 	names     []string
 	rewritten string
 	logical   bool
+	scope     semanticScalarScopeCache
 	// wholeExists is set for a predicate that is exactly NOT EXISTS { … },
 	// which the predicate evaluator tests directly (evaluateRowExistsPredicate).
 	wholeExists bool
@@ -286,7 +287,11 @@ func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string
 // COUNT how many rows it has, COLLECT the list of its single returned column.
 // A body that is only a pattern is matched as MATCH <pattern>.
 func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool) {
-	value, ok, err := e.rowSubqueryValue(ctx, kind, body, values)
+	return e.evaluateRowSubqueryValueWithScope(ctx, kind, body, values, nil)
+}
+
+func (e *StorageExecutor) evaluateRowSubqueryValueWithScope(ctx context.Context, kind, body string, values map[string]interface{}, cache *semanticScalarScopeCache) (interface{}, bool) {
+	value, ok, err := e.rowSubqueryValueWithScope(ctx, kind, body, values, cache)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil, false
@@ -299,6 +304,14 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // COLLECT subqueries: the body runs as a pipeline, so its WHERE, ORDER BY,
 // SKIP / LIMIT and RETURN all apply.
 func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
+	return e.rowSubqueryValueWithScope(ctx, kind, body, values, nil)
+}
+
+func (e *StorageExecutor) rowSubqueryValueWithScope(ctx context.Context, kind, body string, values map[string]interface{}, cache *semanticScalarScopeCache) (interface{}, bool, error) {
+	model, scopeErr := e.runtimeScalarQueryScope(ctx, kind, body, values, cache)
+	if scopeErr != nil {
+		return nil, false, scopeErr
+	}
 	// EXISTS is whether the body has a row and COUNT how many: one
 	// evaluation, so a body gives EXISTS and COUNT the same rows.
 	if kind == "EXISTS" || kind == "COUNT" {
@@ -315,6 +328,9 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 				return rowCountValue(kind, int64(len(rows))), true, nil
 			}
 		}
+	}
+	if model.complete {
+		body = model.executionQuery()
 	}
 	if cypherVersionFromContext(ctx) != "25" {
 		grouped, err := cypher5ImportGrouping(body, values)
@@ -392,6 +408,12 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 			return e.runCorrelatedSubquery(ctx, branch, values)
 		})
 	}
+	// Carrying is needed only across a WITH horizon. Other bodies already
+	// receive the complete imported row through correlatedSubqueryExecutor.
+	split := cachedPipelineClauseSplit(query)
+	if !split.ok || pipelineHasClauseKind(split.clauses, pipelineClauseWith) {
+		ctx = withSemanticSubqueryGlobals(ctx, values, nil)
+	}
 	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)
 	if outcome.terminal() {
 		return outcome.result, outcome.err
@@ -410,8 +432,16 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 		params[name] = value
 	}
 	names := make([]string, 0, len(values))
+	dependencies := pipelineDependencyClauses(query)
+	input := make(typeScope, len(values))
 	for name := range values {
-		if !strings.HasPrefix(name, "$") && containsIdentifierWord(query, name) {
+		if semanticBindingName(name) {
+			input[name] = staticOperand{}
+		}
+	}
+	proof, complete := input.pipelineDependencies(dependencies)
+	for name := range values {
+		if semanticBindingName(name) && (!complete || proof.reads[name]) {
 			names = append(names, name)
 		}
 	}
@@ -447,7 +477,7 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	if len(carried) > 0 {
 		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
 	}
-	return e.executeInternal(ctx, prefix.String()+query, params)
+	return e.executeInternal(withSemanticSubqueryGlobals(ctx, values, names), prefix.String()+query, params)
 }
 
 // boundChainCount counts the rows of a body that is one relationship chain,

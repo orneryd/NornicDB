@@ -33,9 +33,16 @@ import (
 func normalizeLiteralText(s string) (canonical string, changed bool) {
 	var out strings.Builder
 	out.Grow(len(s))
+	changed = writeNormalizedLiteralText(s, func(part string) { out.WriteString(part) })
+	return out.String(), changed
+}
+
+// writeNormalizedLiteralText is the shared literal reader. A caller that only
+// needs a cache lookup can use temporary storage without allocating a string.
+func writeNormalizedLiteralText(s string, write func(string)) (changed bool) {
 	last := 0
 	flushAt := func(end int) {
-		out.WriteString(s[last:end])
+		write(s[last:end])
 		last = end
 	}
 	for i := 0; i < len(s); i++ {
@@ -56,12 +63,12 @@ func normalizeLiteralText(s string) (canonical string, changed bool) {
 			flushAt(i)
 			if !closed {
 				flushAt(len(s))
-				return out.String(), changed
+				return changed
 			}
 			if hasEscape {
 				flushAt(end)
 			} else {
-				out.WriteString(normStringMarker)
+				write(normStringMarker)
 				changed = true
 				last = end
 			}
@@ -77,7 +84,7 @@ func normalizeLiteralText(s string) (canonical string, changed bool) {
 					j++
 				}
 				flushAt(i)
-				out.WriteString(normParamMarker)
+				write(normParamMarker)
 				changed = true
 				last = j
 				i = j - 1
@@ -139,9 +146,9 @@ func normalizeLiteralText(s string) (canonical string, changed bool) {
 			// so their canonical form stays distinct from valid ones.
 			if normNumberSafe(s[i:j]) {
 				if strings.ContainsAny(s[i:j], ".eE") && !(len(s[i:j]) > 1 && (s[i:j][1] == 'x' || s[i:j][1] == 'X')) {
-					out.WriteString(normFloatMarker)
+					write(normFloatMarker)
 				} else {
-					out.WriteString(normIntMarker)
+					write(normIntMarker)
 				}
 				changed = true
 				last = j
@@ -152,7 +159,7 @@ func normalizeLiteralText(s string) (canonical string, changed bool) {
 		}
 	}
 	flushAt(len(s))
-	return out.String(), changed
+	return changed
 }
 
 // normNumberSafe reports whether a scanned numeric literal text is

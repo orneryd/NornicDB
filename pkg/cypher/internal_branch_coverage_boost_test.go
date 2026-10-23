@@ -224,8 +224,8 @@ func TestExecuteCorrelatedCallWithSeedRows_Branches(t *testing.T) {
 	assert.Contains(t, err.Error(), "missing")
 
 	_, err = exec.sharedCorrelatedCallForTest(ctx, &ExecuteResult{Columns: []string{"seed"}, Rows: [][]interface{}{{}}}, "RETURN 1 AS x", []string{"seed"})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unknown variable: seed")
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
+	assert.Contains(t, err.Error(), "seed")
 
 	res, err := exec.sharedCorrelatedCallForTest(
 		ctx,

@@ -286,8 +286,8 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 		}
 		return bound(expr, &rowLiteralNode{text: expr}, rowValueInfo{pure: true, trivial: true})
 	}
-	if _, _, subquery := rowSubqueryAtom(expr); subquery {
-		return rowTextValue(expr)
+	if kind, open, subquery := rowSubqueryAtom(expr); subquery {
+		return bound(expr, &rowSubqueryNode{text: expr, kind: kind, body: strings.TrimSpace(expr[open+1 : len(expr)-1])}, impureRowValue())
 	}
 	if _, _, comprehension := rowPatternComprehensionAtom(expr); comprehension {
 		return rowTextValue(expr)
@@ -651,6 +651,30 @@ func (n *rowCaseNode) eval(e *StorageExecutor, values map[string]interface{}, fr
 		}
 		return value, ok, err
 	})
+}
+
+// Compiled subqueries use the same evaluator as text expressions. Only the
+// complete scope proof is retained; every row still executes its own body.
+type rowSubqueryNode struct {
+	text  string
+	kind  string
+	body  string
+	scope semanticScalarScopeCache
+}
+
+func (n *rowSubqueryNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
+	ctx := rowStatementContext(values)
+	if ctx == nil {
+		return e.evaluateRowValueText(n.text, values)
+	}
+	value, resolved, err := e.rowSubqueryValueWithScope(ctx, n.kind, n.body, values, &n.scope)
+	if err != nil {
+		return nil, false, err
+	}
+	if !resolved {
+		return e.evaluateRowValueText(n.text, values)
+	}
+	return value, true, nil
 }
 
 // rowTextNode evaluates its text with evaluateRowValueText.

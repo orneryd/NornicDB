@@ -153,26 +153,9 @@ func deleteExpressionRootIdentifier(expression string) string {
 }
 
 func addPipelinePatternBindings(executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
-	pattern := strings.TrimSpace(clause)
-	if len(pattern) >= len(keyword) && strings.EqualFold(pattern[:len(keyword)], keyword) {
-		pattern = strings.TrimSpace(pattern[len(keyword):])
-	}
-	if where := findKeywordIndexInContext(pattern, "WHERE"); where >= 0 {
-		pattern = strings.TrimSpace(pattern[:where])
-	}
-	for _, variable := range executor.extractVariableNamesFromPattern(pattern) {
-		if variable != "" {
-			scope[variable] = struct{}{}
-		}
-	}
-	for _, variable := range extractRelationshipVariables(pattern) {
-		if variable != "" {
-			scope[variable] = struct{}{}
-		}
-	}
-	if variable := extractPathAssignmentVariable(pattern); variable != "" {
+	forEachMatchPatternBinding(clause, func(variable string, _ matchBindingKind) {
 		scope[variable] = struct{}{}
-	}
+	})
 }
 
 func extractPathAssignmentVariable(pattern string) string {
