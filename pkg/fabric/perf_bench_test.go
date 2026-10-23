@@ -23,21 +23,6 @@ func BenchmarkQueryIsWrite(b *testing.B) {
 	})
 }
 
-func BenchmarkInferReturnColumnsFromQuery(b *testing.B) {
-	query := `CALL {
-  USE translations.tr
-  MATCH (t:Translation)
-  RETURN t.id AS id, t.textKey AS textKey, t.textKey128 AS textKey128, t.lang AS lang
-}
-RETURN id, textKey, textKey128, lang
-ORDER BY textKey128
-LIMIT 25`
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		_ = inferReturnColumnsFromQuery(query)
-	}
-}
-
 func BenchmarkRewriteLeadingWithImports(b *testing.B) {
 	query := "WITH textKey128 MATCH (tt:TranslationText) WHERE tt.textKey128 = textKey128 RETURN collect(tt) AS texts"
 	imports := []string{"textKey128"}

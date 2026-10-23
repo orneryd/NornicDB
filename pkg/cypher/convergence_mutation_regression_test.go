@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -180,7 +181,12 @@ func (e *StorageExecutor) sharedSeededCallForTest(ctx context.Context, input *Ex
 
 func (e *StorageExecutor) sharedCorrelatedCallForTest(ctx context.Context, input *ExecuteResult, body string, imports []string) (*ExecuteResult, error) {
 	columns := append([]string(nil), input.Columns...)
-	for _, column := range e.StatementColumns(body) {
+	call := "CALL (" + strings.Join(imports, ", ") + ") { " + body + " }"
+	outputs, err := e.ResultColumns(call, resultmetadata.KnownScope(input.Columns), cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		return nil, err
+	}
+	for _, column := range outputs {
 		if !slices.Contains(columns, column) {
 			columns = append(columns, column)
 		}
@@ -189,7 +195,7 @@ func (e *StorageExecutor) sharedCorrelatedCallForTest(ctx context.Context, input
 	if len(columns) > 0 {
 		projection = strings.Join(columns, ", ")
 	}
-	return e.sharedSeededCallForTest(ctx, input, "CALL ("+strings.Join(imports, ", ")+") { "+body+" } RETURN "+projection)
+	return e.sharedSeededCallForTest(ctx, input, call+" RETURN "+projection)
 }
 
 func (e *StorageExecutor) sharedTransactionalCallForTest(ctx context.Context, body string, batchSize int) (*ExecuteResult, error) {

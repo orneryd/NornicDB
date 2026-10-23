@@ -12,6 +12,7 @@ import (
 	"unicode"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -32,6 +33,7 @@ type FabricExecutor struct {
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
 	union                  UnionContract
+	resultColumns          resultmetadata.Provider
 }
 
 // UnionContract is the Cypher executor's UNION semantics for the branches
@@ -73,11 +75,33 @@ const (
 
 // NewFabricExecutor creates a fabric executor.
 func NewFabricExecutor(catalog *Catalog, local *LocalFragmentExecutor, remote *RemoteFragmentExecutor) *FabricExecutor {
-	return &FabricExecutor{
+	executor := &FabricExecutor{
 		catalog: catalog,
 		local:   local,
 		remote:  remote,
 	}
+	if local != nil {
+		provider, _ := local.cypherExec.(resultmetadata.Provider)
+		executor.SetResultColumnProvider(provider)
+	}
+	return executor
+}
+
+// SetResultColumnProvider supplies the Cypher owner's cache to standalone
+// dispatchers. Actual stream fields remain authoritative.
+func (e *FabricExecutor) SetResultColumnProvider(provider resultmetadata.Provider) {
+	e.resultColumns = provider
+}
+
+func (e *FabricExecutor) restoreCachedResultColumns(ctx context.Context, result *ResultStream, query string, bindings map[string]interface{}) {
+	if result == nil || result.Columns != nil || e.resultColumns == nil {
+		return
+	}
+	incoming := make([]string, 0, len(bindings))
+	for name := range bindings {
+		incoming = append(incoming, name)
+	}
+	e.resultColumns.CachedResultColumns(ctx, query, incoming).Visit(func(names []string) { result.Columns = names }, func() {})
 }
 
 // Execute runs a Fragment tree within the context of a FabricTransaction.
@@ -147,9 +171,7 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 		if err != nil {
 			return nil, 0, err
 		}
-		if res != nil && len(res.Columns) == 0 {
-			res.Columns = inferReturnColumnsFromQuery(f.Query)
-		}
+		e.restoreCachedResultColumns(ctx, res, f.Query, recordBindings)
 		return res, 256, nil
 
 	case *LocationRemote:
@@ -160,9 +182,7 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 		if err != nil {
 			return nil, 0, err
 		}
-		if res != nil && len(res.Columns) == 0 {
-			res.Columns = inferReturnColumnsFromQuery(f.Query)
-		}
+		e.restoreCachedResultColumns(ctx, res, f.Query, recordBindings)
 		return res, 128, nil
 
 	default:
@@ -282,74 +302,6 @@ func materializeIterator(columns []string, it RowIterator) (*ResultStream, error
 	}, nil
 }
 
-func inferReturnColumnsFromQuery(query string) []string {
-	returnIdx := lastKeywordIndexFold(query, "RETURN")
-	if returnIdx < 0 {
-		return nil
-	}
-	clause := strings.TrimSpace(query[returnIdx+len("RETURN"):])
-	if clause == "" {
-		return nil
-	}
-	// Trim trailing semicolon.
-	clause = strings.TrimSuffix(clause, ";")
-	// Strip top-level ORDER BY / SKIP / LIMIT tails.
-	end := len(clause)
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(clause); i++ {
-		if next, quoted := cyphertext.SkipToken(clause, i); quoted {
-			i = next - 1
-			continue
-		}
-		ch := clause[i]
-		switch ch {
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if hasKeywordAt(clause, i, "ORDER BY") || hasKeywordAt(clause, i, "SKIP") || hasKeywordAt(clause, i, "LIMIT") {
-			end = i
-			break
-		}
-	}
-	clause = strings.TrimSpace(clause[:end])
-	parts := splitTopLevelCSV(clause)
-	cols := make([]string, 0, len(parts))
-	for _, p := range parts {
-		item := strings.TrimSpace(p)
-		if item == "" {
-			continue
-		}
-		if as := lastAsIndexFold(item); as >= 0 {
-			alias := strings.TrimSpace(item[as+4:])
-			if alias != "" {
-				cols = append(cols, strings.Trim(alias, "`"))
-				continue
-			}
-		}
-		cols = append(cols, item)
-	}
-	return cols
-}
-
 func lastKeywordIndexFold(s, keyword string) int {
 	if len(keyword) == 0 || len(s) < len(keyword) {
 		return -1
@@ -466,7 +418,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 			return nil, fmt.Errorf("apply input failed: %w", err)
 		}
 		if !f.Projection && len(inputResult.Rows) <= fabricApplyInMemoryMaxRows {
-			if streamRes, handled := executeApplyInMemoryProjection(inputResult, execFrag.Query); handled {
+			if streamRes, handled := executeApplyInMemoryProjectionColumns(inputResult, execFrag.Query, e.executionProjection(execFrag.Query, inputResult.Columns).Names); handled {
 				return streamRes, nil
 			}
 		}
@@ -510,7 +462,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		innerCtx := WithRecordBindings(ctx, mergedBind)
 
 		if execFrag, ok := innerFragment.(*FragmentExec); ok && !f.Projection && !f.Optional && !f.Unit && execFrag.Graph == nil {
-			if cols, projected, ok := projectSimpleReturnFromRow(execFrag.Query, inputCols, inputRow); ok {
+			if cols, projected, ok := projectSimpleProjectionFromRow(e.executionProjection(execFrag.Query, inputCols), inputCols, inputRow); ok {
 				if len(result.Columns) == 0 {
 					result.Columns = cols
 				}
@@ -536,7 +488,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		}
 		if len(innerResult.Rows) == 0 {
 			if execFrag, ok := innerFragment.(*FragmentExec); ok {
-				if cols, row, ok := synthesizeEmptyCollectOnlyReturn(execFrag.Query); ok {
+				if cols, row, ok := synthesizeEmptyCollectProjection(e.executionProjection(execFrag.Query, inputCols)); ok {
 					innerResult.Columns = cols
 					innerResult.Rows = [][]interface{}{row}
 				}
@@ -570,6 +522,21 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		return nil, fmt.Errorf("apply input failed: %w", err)
 	}
 	_ = inputIter.Close()
+
+	// A projection declares its fields even when there was no input record.
+	// Consume the same execution plan used by the row path; a missing plan or
+	// an unknown wildcard stays unknown and never invokes the CALL body.
+	if result.Columns == nil && len(result.Rows) == 0 && !f.Unit {
+		if inner, ok := innerFragment.(*FragmentExec); ok {
+			e.executionProjection(inner.Query, inputCols).Names.Visit(func(names []string) {
+				if f.Projection {
+					result.Columns = names
+				} else {
+					result.Columns = combineColumns(inputCols, names)
+				}
+			}, func() {})
+		}
+	}
 
 	return result, nil
 }
@@ -627,7 +594,10 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 	if !exists {
 		return nil, false, nil
 	}
-	innerCols := aliasesFromReturnItems(returnItems)
+	innerCols := e.executionColumnNames(inner.Query, inputCols)
+	if innerCols == nil {
+		return nil, false, nil
+	}
 	innerIdx := buildColumnIndex(innerCols)
 	result := &ResultStream{
 		Columns: combineColumns(inputCols, innerCols),
@@ -849,6 +819,10 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 		return nil, false, nil
 	}
 
+	ownerColumns := e.executionColumnNames(inner.Query, inputResult.Columns)
+	if ownerColumns == nil {
+		return nil, false, nil
+	}
 	outerIdx := buildColumnIndex(inputResult.Columns)
 	keyIdx, exists := outerIdx[spec.importCol]
 	if !exists {
@@ -881,10 +855,10 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 	}
 	if len(seen) == 0 {
 		result := &ResultStream{
-			Columns: combineColumns(inputResult.Columns, []string{outAlias}),
+			Columns: combineColumns(inputResult.Columns, ownerColumns),
 			Rows:    make([][]interface{}, 0, len(inputResult.Rows)),
 		}
-		innerCols := []string{outAlias}
+		innerCols := ownerColumns
 		innerIdx := buildColumnIndex(innerCols)
 		for _, outerRow := range inputResult.Rows {
 			innerRow := []interface{}{[]interface{}{}}
@@ -987,10 +961,10 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 	}
 
 	result := &ResultStream{
-		Columns: combineColumns(inputResult.Columns, []string{outAlias}),
+		Columns: combineColumns(inputResult.Columns, ownerColumns),
 		Rows:    make([][]interface{}, 0, len(inputResult.Rows)),
 	}
-	innerCols := []string{outAlias}
+	innerCols := ownerColumns
 	innerIdx := buildColumnIndex(innerCols)
 	combiner := newCompiledRowCombiner(result.Columns, outerIdx, innerIdx)
 	for i, outerRow := range inputResult.Rows {
@@ -1047,6 +1021,10 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 		return nil, false, nil
 	}
 
+	ownerColumns := e.executionColumnNames(inner.Query, inputResult.Columns)
+	if ownerColumns == nil {
+		return nil, false, nil
+	}
 	outerIdx := buildColumnIndex(inputResult.Columns)
 	keyIdx, exists := outerIdx[spec.importCol]
 	if !exists {
@@ -1078,10 +1056,10 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 	}
 	if len(seen) == 0 {
 		result := &ResultStream{
-			Columns: combineColumns(inputResult.Columns, aliasesFromCountReturnItems(countItems)),
+			Columns: combineColumns(inputResult.Columns, ownerColumns),
 			Rows:    make([][]interface{}, 0, len(inputResult.Rows)),
 		}
-		innerCols := aliasesFromCountReturnItems(countItems)
+		innerCols := ownerColumns
 		innerIdx := buildColumnIndex(innerCols)
 		zeroes := zeroCountValues(len(countItems))
 		for _, outerRow := range inputResult.Rows {
@@ -1194,7 +1172,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 	default:
 	}
 
-	innerCols := aliasesFromCountReturnItems(countItems)
+	innerCols := ownerColumns
 	innerIdx := buildColumnIndex(innerCols)
 	zeroes := zeroCountValues(len(countItems))
 	result := &ResultStream{
@@ -1289,7 +1267,10 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 	if !exists {
 		return nil, false, nil
 	}
-	innerCols := aliasesFromReturnItems(returnItems)
+	innerCols := e.executionColumnNames(inner.Query, inputResult.Columns)
+	if innerCols == nil {
+		return nil, false, nil
+	}
 	innerIdx := buildColumnIndex(innerCols)
 	result := &ResultStream{
 		Columns: combineColumns(inputResult.Columns, innerCols),
@@ -1995,82 +1976,49 @@ func containsStandaloneIdentifier(s, ident string) bool {
 	return false
 }
 
-func synthesizeEmptyCollectOnlyReturn(query string) ([]string, []interface{}, bool) {
-	trimmed := strings.TrimSpace(query)
-	retIdx := lastKeywordIndexFold(trimmed, "RETURN")
-	if retIdx < 0 {
+func (e *FabricExecutor) executionProjection(query string, incoming []string) resultmetadata.Projection {
+	if provider, ok := e.resultColumns.(resultmetadata.ProjectionProvider); ok {
+		return provider.ResultProjection(query, incoming)
+	}
+	return resultmetadata.Projection{}
+}
+
+func synthesizeEmptyCollectProjection(plan resultmetadata.Projection) ([]string, []interface{}, bool) {
+	var columns []string
+	plan.Names.Visit(func(names []string) { columns = names }, func() {})
+	if plan.Distinct || plan.Modifiers != "" || len(columns) == 0 || len(columns) != len(plan.Expressions) {
 		return nil, nil, false
 	}
-	clause := strings.TrimSpace(trimmed[retIdx+len("RETURN"):])
-	if clause == "" {
-		return nil, nil, false
-	}
-	items := splitTopLevelCSV(clause)
-	if len(items) == 0 {
-		return nil, nil, false
-	}
-	cols := make([]string, 0, len(items))
-	row := make([]interface{}, 0, len(items))
-	for _, it := range items {
-		it = strings.TrimSpace(it)
-		if it == "" {
-			return nil, nil, false
-		}
-		expr := it
-		alias := it
-		if as := lastAsIndexFold(it); as >= 0 {
-			expr = strings.TrimSpace(it[:as])
-			alias = strings.TrimSpace(it[as+4:])
-		}
+	row := make([]interface{}, 0, len(columns))
+	for _, expr := range plan.Expressions {
 		if !startsWithFold(strings.TrimSpace(expr), "collect(") {
 			return nil, nil, false
 		}
-		cols = append(cols, strings.Trim(alias, "`"))
 		row = append(row, []interface{}{})
 	}
-	return cols, row, true
+	return columns, row, true
 }
 
-func projectSimpleReturnFromRow(query string, inputCols []string, inputRow []interface{}) ([]string, []interface{}, bool) {
-	trimmed := strings.TrimSpace(query)
-	if !startsWithFold(trimmed, "RETURN ") {
+func projectSimpleProjectionFromRow(plan resultmetadata.Projection, inputCols []string, inputRow []interface{}) ([]string, []interface{}, bool) {
+	var columns []string
+	plan.Names.Visit(func(names []string) { columns = names }, func() {})
+	if !plan.Standalone || plan.Distinct || plan.Modifiers != "" || len(columns) == 0 || len(columns) != len(plan.Expressions) {
 		return nil, nil, false
 	}
-	clause := strings.TrimSpace(trimmed[len("RETURN "):])
-	if clause == "" {
-		return nil, nil, false
-	}
-	items := splitTopLevelCSV(clause)
-	if len(items) == 0 {
-		return nil, nil, false
-	}
-	colIdx := buildColumnIndex(inputCols)
-	cols := make([]string, 0, len(items))
-	values := make([]interface{}, 0, len(items))
-	for _, it := range items {
-		it = strings.TrimSpace(it)
-		if it == "" {
+	index := buildColumnIndex(inputCols)
+	values := make([]interface{}, 0, len(columns))
+	for i, source := range plan.Expressions {
+		if !isSimpleIdentifier(source) || !isSimpleIdentifier(columns[i]) {
 			return nil, nil, false
 		}
-		src := it
-		alias := it
-		if as := lastAsIndexFold(it); as >= 0 {
-			src = strings.TrimSpace(it[:as])
-			alias = strings.TrimSpace(it[as+4:])
-		}
-		if !isSimpleIdentifier(src) || !isSimpleIdentifier(alias) {
+		position, found := index[source]
+		if !found || position >= len(inputRow) {
 			return nil, nil, false
 		}
-		idx, ok := colIdx[src]
-		if !ok || idx >= len(inputRow) {
-			return nil, nil, false
-		}
-		cols = append(cols, alias)
-		values = append(values, inputRow[idx])
+		values = append(values, inputRow[position])
 	}
-	return cols, values, true
+	return columns, values, true
 }
-
 func bindingsFromParentAndRow(parent map[string]interface{}, columns []string, row []interface{}) map[string]interface{} {
 	if len(parent) == 0 && (len(columns) == 0 || len(row) == 0) {
 		return nil
@@ -2133,8 +2081,13 @@ var reWithCollectDistinctKeys = regexp.MustCompile(`(?is)^\s*WITH\s+collect\s*\(
 
 var reWithCollectJoinFlat = regexp.MustCompile(`(?is)^\s*WITH\s+([A-Za-z_][A-Za-z0-9_]*)\s*,\s*collect\s*\(\s*\{([^}]*)\}\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+UNWIND\s+([A-Za-z_][A-Za-z0-9_]*)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+WITH\s+([A-Za-z_][A-Za-z0-9_]*)\s*,\s*\[\s*([A-Za-z_][A-Za-z0-9_]*)\s+IN\s+([A-Za-z_][A-Za-z0-9_]*)\s+WHERE\s+([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\]\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+UNWIND\s+([A-Za-z_][A-Za-z0-9_]*)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+RETURN\s+(.+?)\s*;?\s*$`)
 
-func executeApplyInMemoryProjection(inputResult *ResultStream, query string) (*ResultStream, bool) {
+func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query string, names resultmetadata.Names) (*ResultStream, bool) {
 	if inputResult == nil {
+		return nil, false
+	}
+	var columns []string
+	names.Visit(func(known []string) { columns = known }, func() {})
+	if columns == nil {
 		return nil, false
 	}
 	trimmed := strings.TrimSpace(query)
@@ -2175,11 +2128,8 @@ func executeApplyInMemoryProjection(inputResult *ResultStream, query string) (*R
 				}
 			}
 			out := &ResultStream{
-				Columns: make([]string, len(parsed)),
+				Columns: columns,
 				Rows:    make([][]interface{}, 0, len(inputResult.Rows)),
-			}
-			for i, p := range parsed {
-				out.Columns[i] = p.alias
 			}
 			aliasToCol := make(map[string]string, len(parsed))
 			for _, p := range parsed {
@@ -2229,7 +2179,7 @@ func executeApplyInMemoryProjection(inputResult *ResultStream, query string) (*R
 			keys = append(keys, v)
 		}
 		return &ResultStream{
-			Columns: []string{keysAlias},
+			Columns: columns,
 			Rows:    [][]interface{}{{keys}},
 		}, true
 	}
@@ -2250,7 +2200,7 @@ func executeApplyInMemoryProjection(inputResult *ResultStream, query string) (*R
 			items = append(items, rm)
 		}
 		return &ResultStream{
-			Columns: []string{rowsAlias},
+			Columns: columns,
 			Rows:    [][]interface{}{{items}},
 		}, true
 	}
@@ -2264,7 +2214,9 @@ func executeApplyInMemoryProjection(inputResult *ResultStream, query string) (*R
 		containsFold(trimmed, "UNWIND rows AS r") &&
 		strings.Contains(trimmed, "g.k = r.textKey128") &&
 		containsFold(trimmed, "COALESCE(hit.texts, []) AS texts") {
-		return executeRowsGroupedJoinProjection(inputResult), true
+		result := executeRowsGroupedJoinProjection(inputResult)
+		result.Columns = columns
+		return result, true
 	}
 
 	// Generic set-based flatten projection:
@@ -2273,7 +2225,8 @@ func executeApplyInMemoryProjection(inputResult *ResultStream, query string) (*R
 	// WITH <r>, [g IN <grouped> WHERE g.<k1> = <r>.<k2>] AS <ms>
 	// UNWIND <ms> AS <m>
 	// RETURN <r>.<...> AS ..., <m>.<...> AS ...
-	if projected, ok := executeCollectedMapJoinFlatProjection(inputResult, trimmed); ok {
+	if projected, ok := executeCollectedMapJoinFlatProjectionColumns(inputResult, trimmed, resultmetadata.Known(columns)); ok {
+		projected.Columns = columns
 		return projected, true
 	}
 
@@ -2639,7 +2592,7 @@ func executeRowsGroupedJoinProjection(input *ResultStream) *ResultStream {
 	return out
 }
 
-func executeCollectedMapJoinFlatProjection(input *ResultStream, query string) (*ResultStream, bool) {
+func executeCollectedMapJoinFlatProjectionColumns(input *ResultStream, query string, names resultmetadata.Names) (*ResultStream, bool) {
 	if input == nil || len(input.Rows) == 0 {
 		return nil, false
 	}
@@ -2770,10 +2723,12 @@ func executeCollectedMapJoinFlatProjection(input *ResultStream, query string) (*
 		return nil, false
 	}
 
-	outCols := make([]string, 0, len(retItems))
-	for _, item := range retItems {
-		outCols = append(outCols, item.alias)
+	var outCols []string
+	names.Visit(func(columns []string) { outCols = columns }, func() {})
+	if outCols == nil || len(outCols) != len(retItems) {
+		return nil, false
 	}
+
 	out := &ResultStream{
 		Columns: outCols,
 		Rows:    make([][]interface{}, 0, len(rowsAny)),
@@ -2870,7 +2825,7 @@ func (e *FabricExecutor) executeApplyAsPipeline(
 	if res != nil && len(res.Columns) == 1 && res.Columns[0] == "__fabric_row" {
 		// Fallback: when pipeline execution leaks the wrapper row map column,
 		// apply structural in-memory projection from the original inner query.
-		if projected, ok := executeCollectedMapJoinFlatProjection(inputResult, trimmed); ok {
+		if projected, ok := executeCollectedMapJoinFlatProjectionColumns(inputResult, trimmed, e.executionProjection(trimmed, inputResult.Columns).Names); ok {
 			return projected, true, nil
 		}
 	}
@@ -3647,4 +3602,10 @@ func (h *fnv64a) writeString(s string) {
 
 func (h *fnv64a) sum64() uint64 {
 	return h.sum
+}
+
+func (e *FabricExecutor) executionColumnNames(query string, incoming []string) []string {
+	var columns []string
+	e.executionProjection(query, incoming).Names.Visit(func(names []string) { columns = names }, func() {})
+	return columns
 }

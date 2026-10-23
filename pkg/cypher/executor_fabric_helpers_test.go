@@ -41,8 +41,8 @@ func TestFabricHelpers_AccumulatorsAndMaps(t *testing.T) {
 func TestFabricHelpers_InferColumnsAndRecordRewrite(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 
-	require.Equal(t, []string{"n", "c"}, exec.inferTopLevelReturnColumns("MATCH (n) RETURN n, count(*) AS c ORDER BY c DESC LIMIT 2"))
-	require.Nil(t, exec.inferTopLevelReturnColumns("MATCH (n)"))
+	require.Equal(t, []string{"n", "c"}, exec.StatementColumns("MATCH (n) RETURN n, count(*) AS c ORDER BY c DESC LIMIT 2"))
+	require.Equal(t, []string{}, exec.StatementColumns("MATCH (n)"))
 
 	r := stripLeadingWithImportsForFabricRecord("WITH x, y MATCH (n) WHERE n.id = x RETURN n", map[string]interface{}{"x": int64(1), "y": int64(2)})
 	require.Equal(t, "MATCH (n) WHERE n.id = $x RETURN n", r)

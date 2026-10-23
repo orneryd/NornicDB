@@ -27,23 +27,9 @@ func TestValidateContextCancellationReleasesValidator(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	during := &cancelDuringLookahead{Context: ctx, cancel: cancel}
-	require.ErrorIs(t, ValidateContext(during, "MATCH (n) WHERE n.x > 1 RETURN n"), context.Canceled)
+	require.ErrorIs(t, ValidateContext(during, "MATCH (n:ColdCancellationContext) WHERE n.x > 1 RETURN n"), context.Canceled)
 	require.GreaterOrEqual(t, during.checks, 6, "cancellation must occur inside lookahead")
-	func() {
-		pooled := validatorPool.Get().(*pooledValidator)
-		defer validatorPool.Put(pooled)
-		var requestContext context.Context
-		switch input := pooled.lexer.GetInputStream().(type) {
-		case *contextCharStream:
-			requestContext = input.ctx
-		case *contextASCIICharStream:
-			requestContext = input.ctx
-		}
-		if requestContext != nil {
-			require.Equal(t, context.Background(), requestContext, "idle validators must release the statement context")
-		}
-	}()
-	require.NoError(t, Validate("RETURN 1"), "the interrupted pooled validator is reusable")
+	require.NoError(t, Validate("RETURN 1"), "a canceled product must not contaminate later validation")
 	require.Error(t, Validate("MATCH ("), "cancellation must not leave the next validation accepted")
 }
 
@@ -71,7 +57,7 @@ func TestValidateContextUnrelatedPanicPropagates(t *testing.T) {
 	defer cancel()
 	during := &panicDuringLookahead{Context: ctx}
 	require.PanicsWithValue(t, "unrelated prediction panic", func() {
-		_ = ValidateContext(during, "MATCH (n) WHERE n.x > 1 RETURN n")
+		_ = ValidateContext(during, "MATCH (n:ColdCancellationContext) WHERE n.x > 1 RETURN n")
 	})
 	require.NoError(t, Validate("RETURN 1"), "panic unwind releases the validator")
 }

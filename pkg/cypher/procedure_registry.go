@@ -245,18 +245,7 @@ func procedureOutputTypes(clause string) map[string]string {
 	if !found {
 		return nil
 	}
-	outputs := procedure.Spec.Returns
-	if len(outputs) == 0 {
-		separator := strings.LastIndex(procedure.Spec.Signature, " :: (")
-		if separator < 0 || !strings.HasSuffix(procedure.Spec.Signature, ")") {
-			return nil
-		}
-		for _, output := range splitTopLevelComma(procedure.Spec.Signature[separator+5 : len(procedure.Spec.Signature)-1]) {
-			if name, typeName, ok := strings.Cut(output, "::"); ok {
-				outputs = append(outputs, ProcedureColumn{Name: strings.TrimSpace(name), Type: typeName})
-			}
-		}
-	}
+	outputs := procedureDeclaredReturns(procedure.Spec)
 	result := make(map[string]string, len(outputs))
 	for _, output := range outputs {
 		if typeName := procedureStaticType(output.Type); typeName != "" {
@@ -264,6 +253,24 @@ func procedureOutputTypes(clause string) map[string]string {
 		}
 	}
 	return result
+}
+
+// procedureDeclaredReturns is the registry's ordered output declaration,
+// shared by static type consumers and result-header analysis.
+func procedureDeclaredReturns(spec ProcedureSpec) []ProcedureColumn {
+	outputs := spec.Returns
+	if len(outputs) == 0 {
+		separator := strings.LastIndex(spec.Signature, " :: (")
+		if separator < 0 || !strings.HasSuffix(spec.Signature, ")") {
+			return nil
+		}
+		for _, output := range splitTopLevelComma(spec.Signature[separator+5 : len(spec.Signature)-1]) {
+			if name, typeName, ok := strings.Cut(output, "::"); ok {
+				outputs = append(outputs, ProcedureColumn{Name: strings.TrimSpace(name), Type: typeName})
+			}
+		}
+	}
+	return outputs
 }
 
 func procedureStaticType(typeName string) string {

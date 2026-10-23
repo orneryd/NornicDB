@@ -11,65 +11,20 @@ type paginationExpression struct {
 	value   string
 }
 
-// extractPaginationExpressions returns the SKIP / LIMIT expressions of the
-// statement's WITH and RETURN clauses. Each UNION branch has its own SKIP /
-// LIMIT, so the branches are read one by one; otherwise the last RETURN of a
-// branch would run into the next branch (LIMIT 2 UNION ALL MATCH …).
+// extractPaginationExpressions consumes the same semantic effect owner as
+// execution, including prefixes, UNION branches and every nested expression.
 func extractPaginationExpressions(cypher string) []paginationExpression {
-	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
-		var result []paginationExpression
-		for _, branch := range branches {
-			result = append(result, extractPaginationExpressions(branch)...)
-		}
-		return result
-	}
-	clauses, ok := splitPipelineClauses(cypher)
-	if !ok {
+	if !containsFold(cypher, "SKIP") && !containsFold(cypher, "LIMIT") {
 		return nil
 	}
-	result := make([]paginationExpression, 0, 2)
-	for _, clause := range clauses {
-		if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseReturn {
-			continue
-		}
-		for _, keyword := range []string{"SKIP", "LIMIT"} {
-			if topLevelKeywordIndex(clause.text, keyword) < 0 {
-				continue
-			}
-			result = append(result, paginationExpression{
-				keyword: keyword,
-				value:   pipelinePaginationExpression(clause.text, keyword),
-			})
-		}
+	effects, err := pipelineStatementEffectsFor(context.Background(), cypher)
+	if err != nil {
+		return nil
 	}
-	return result
+	return effects.pagination
 }
 
 func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) error {
-	braces := newSubqueryBraceScanner(cypher, 0)
-	// Check original subquery bodies before imported variables are replaced
-	// with their row values. A substituted integer is still a row dependency.
-	for index := 0; index < len(cypher); index++ {
-		switch cypherLexicalByte(cypher[index]) {
-		case cypherQuoteClass:
-			index = skipCypherQuotedText(cypher, index, cypher[index]) - 1
-			continue
-		case '/':
-			if end := queryCommentEnd(cypher, index); end > index {
-				index = end - 1
-				continue
-			}
-		case '{':
-			if braces.at(index) {
-				if close := findMatchingDelimiter(cypher, index, '{', '}'); close >= 0 {
-					if err := e.validateStaticPaginationExpressions(cypher[index+1 : close]); err != nil {
-						return err
-					}
-					index = close
-				}
-			}
-		}
-	}
 	for _, pagination := range extractPaginationExpressions(cypher) {
 		if err := e.validateStaticPaginationExpression(pagination.keyword, pagination.value); err != nil {
 			return err
@@ -85,6 +40,15 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) err
 func (e *StorageExecutor) validateStaticPaginationExpression(keyword, expression string) error {
 	if expression == "" {
 		return paginationCompileTypeError(keyword, nil)
+	}
+	// The shared structural classifier rejects graph-dependent scalar
+	// arguments before the pagination validator can evaluate any expression.
+	shape, err := describeScalarExpression(context.Background(), expression)
+	if err != nil {
+		return paginationCompileTypeError(keyword, expression)
+	}
+	if shape.forbidden {
+		return paginationCompileTypeError(keyword, expression)
 	}
 	if paginationExpressionUsesRowVariable(expression) {
 		return newSemanticError(

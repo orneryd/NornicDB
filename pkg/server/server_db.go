@@ -945,11 +945,17 @@ func statementError(err error) QueryError {
 // compiled and failed while running, its result with its columns and no rows
 // is recorded in response first, as Neo4j's HTTP API reports it (#668); a
 // statement failing at compile time has no result.
-func statementFailure(response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error, localize func(localization.Message) string) QueryError {
+func statementFailure(ctx context.Context, response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error, localize func(localization.Message) string) QueryError {
 	failure := statementError(err)
 	localizeStatementError(&failure, err, localize)
 	if executor != nil && !nornicerrors.IsCompileTimeError(err) {
-		if columns := executor.StatementColumns(query); len(columns) > 0 {
+		columns, columnErr := executor.StatementResultColumnsContext(ctx, query)
+		if columnErr != nil {
+			failure = statementError(columnErr)
+			localizeStatementError(&failure, columnErr, localize)
+			return failure
+		}
+		if len(columns) > 0 {
 			response.Results = append(response.Results, QueryResult{Columns: columns, Data: []ResultRow{}})
 		}
 	}
@@ -1610,7 +1616,7 @@ func (s *Server) runRequestStatements(
 				s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
 				return &failure
 			}
-			queryErr := statementFailure(response, executor, queryStatement, err, localize)
+			queryErr := statementFailure(ctx, response, executor, queryStatement, err, localize)
 			return &queryErr
 		}
 

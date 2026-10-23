@@ -7,6 +7,9 @@ import (
 	"hash/fnv"
 	"sort"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+ cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
 // Backtick-quoted variables (#734).
@@ -30,10 +33,7 @@ import (
 // backtick-quoted name without its quotes and with each doubled backtick as
 // one backtick; any other text as is.
 func symbolicNameValue(written string) string {
-	if len(written) >= 2 && written[0] == '`' && written[len(written)-1] == '`' {
-		return strings.ReplaceAll(written[1:len(written)-1], "``", "`")
-	}
-	return written
+	return cyphertext.SymbolicNameValue(written)
 }
 
 // isOneSymbolicName reports whether text (surrounding whitespace ignored) is
@@ -154,11 +154,11 @@ func canonicalizeQuotedVariables(query string) (string, *quotedVariableNames) {
 					names.parameters[replacement] = token.name
 				}
 			}
-		case token.procColumn:
-			if !isPlainVariableName(token.name) {
-				continue
-			}
-			replacement = token.name
+        case token.procColumn:
+            if !isPlainVariableName(token.name){
+                if !token.binding{continue}
+                replacement=token.written+" AS "+replacementFor(token)
+            }else{replacement=token.name}
 		case token.variable && (isBound || isPlainVariableName(token.name)):
 			// A quoted name that can be written plain is the plain name
 			// (`x` is x), bound here or not.
@@ -249,127 +249,35 @@ func internalVariableIdentifier(query, name string, used map[string]struct{}) st
 
 // scanQuotedTokens lists the backtick-quoted symbolic names of query outside
 // string literals, with their positions classified.
-func scanQuotedTokens(query string) []quotedToken {
-	var tokens []quotedToken
-	var brackets []byte // open ( [ { at the current position
-	for i := 0; i < len(query); {
-		switch c := query[i]; c {
-		case '\'', '"':
-			i = skipQuotedText(query, i)
-			continue
-		case '(', '[', '{':
-			brackets = append(brackets, c)
-		case ')', ']', '}':
-			if len(brackets) > 0 {
-				brackets = brackets[:len(brackets)-1]
-			}
-		case '$':
-			// A quoted parameter name ($`a b`) becomes a plain one, like a
-			// quoted variable.
-			if i+1 < len(query) && query[i+1] == '`' {
-				if written, end, ok := scanSymbolicName(query, i+1); ok {
-					tokens = append(tokens, quotedToken{start: i + 1, end: end, written: written, name: symbolicNameValue(written), parameter: true})
-					i = end
-					continue
-				}
-			}
-		case '`':
-			written, end, ok := scanSymbolicName(query, i)
-			if !ok {
-				i++
-				continue
-			}
-			inner := byte(0)
-			if len(brackets) > 0 {
-				inner = brackets[len(brackets)-1]
-			}
-			token := quotedToken{start: i, end: end, written: written, name: symbolicNameValue(written)}
-			classifyQuotedToken(query, &token, inner)
-			tokens = append(tokens, token)
-			i = end
-			continue
-		}
-		i++
-	}
-	return tokens
+func scanQuotedTokens(source string)[]quotedToken{
+ syntax,err:=cypherantlr.ParseSyntax(context.Background(),source,cypherantlr.StatementEntry,false)
+ if err!=nil{return nil} // Syntax admission owns this statement's error.
+ var tokens []quotedToken
+ syntax.Walk(func(node cypherantlr.SyntaxNode)func(){
+  name,symbol:=node.Name()
+  if !symbol || !strings.HasPrefix(node.Text(),"`"){return nil}
+  start,end:=node.Span()
+  token:=quotedToken{start:start,end:end,written:node.Text(),name:name}
+  parent,ok:=node.Parent();if !ok{return nil}
+  switch parent.Rule(){
+  case cypherantlr.CypherParserRULE_atom,cypherantlr.CypherParserRULE_setItem,cypherantlr.CypherParserRULE_removeItem,cypherantlr.CypherParserRULE_callSubquery,cypherantlr.CypherParserRULE_mapProjection:
+   token.variable=true
+  case cypherantlr.CypherParserRULE_mapProjectionItem:
+   token.variable,token.selector=true,true
+  case cypherantlr.CypherParserRULE_nodePattern,cypherantlr.CypherParserRULE_relationDetail,cypherantlr.CypherParserRULE_patternPart,cypherantlr.CypherParserRULE_projectionItem,cypherantlr.CypherParserRULE_unwindSt,cypherantlr.CypherParserRULE_forSt,cypherantlr.CypherParserRULE_filterExpression,cypherantlr.CypherParserRULE_reduceExpression,cypherantlr.CypherParserRULE_allReduceExpression,cypherantlr.CypherParserRULE_foreachSt,cypherantlr.CypherParserRULE_letItem:
+   token.variable,token.binding=true,true
+  case cypherantlr.CypherParserRULE_yieldItem:
+   first:=parent.ChildRule(cypherantlr.CypherParserRULE_symbol)
+   _,aliased:=parent.DirectToken(cypherantlr.CypherLexerAS)
+   if first.ID()==node.ID(){token.procColumn=true;token.binding=!aliased}else{token.variable,token.binding=true,true}
+  case cypherantlr.CypherParserRULE_name:
+   if owner,exists:=parent.Parent();exists && owner.Rule()==cypherantlr.CypherParserRULE_parameter{token.parameter=true}
+  }
+  tokens=append(tokens,token)
+  return nil
+ })
+ return tokens
 }
-
-// classifyQuotedToken decides from its surroundings whether a quoted name is
-// a variable, and whether it binds one.
-func classifyQuotedToken(query string, token *quotedToken, inner byte) {
-	prev, prevIndex := previousSignificant(query, token.start)
-	next, nextIndex := nextSignificant(query, token.end)
-	prevWord := upperASCII(previousWord(query, token.start))
-	nextWord := upperASCII(nextWordAt(query, nextIndex))
-	switch {
-	case prev == '.' && !(prevIndex > 0 && query[prevIndex-1] == '.'):
-		return // property key (n.`p q`) or map projection property selector
-	case next == '(':
-		return // function or procedure name
-	case next == '.' && dottedNameCall(query, nextIndex):
-		return // procedure or function namespace
-	case prev == ':' && isLabelColon(query, prevIndex, inner):
-		return // label or relationship type
-	case (prev == '|' || prev == '&' || prev == '!') && inLabelExpression(query, prevIndex, inner):
-		return // label expression
-	case next == ':' && inner == '{' && (prev == '{' || prev == ','):
-		return // map key
-	case isNonVariableKeyword(prevWord):
-		return // database, index, constraint, alias, user or role name
-	}
-	token.variable = true
-	switch {
-	case inner == '{' && (prev == '{' || prev == ',') && (next == ',' || next == '}') && mapProjectionBrace(query, token.start):
-		token.selector = true
-	case prevWord == "AS":
-		token.binding = true
-	case (prev == '[' || prev == '(' || prev == ',') && declaredAt(query, prevIndex+1, token.start):
-		token.binding = true // comprehension, quantifier, reduce, FOREACH or named path variable
-	case prev == '(' && (next == ':' || next == ')' || next == '{') && !callParenthesis(query, prevIndex):
-		token.binding = true // node pattern variable
-	case prev == '[' && (next == ':' || next == ']' || next == '*' || next == '{'):
-		token.binding = true // relationship pattern variable
-	case next == '=' && !followsOperator(query, nextIndex) && (prev == ',' || prev == '(' || prevWord == "MATCH" || prevWord == "MERGE" || prevWord == "CREATE"):
-		token.binding = true // path variable or reduce accumulator
-	case inYieldList(query, token.start):
-		if nextWord != "AS" {
-			token.procColumn = true
-			token.variable = false
-		}
-	}
-}
-
-// callParenthesis reports whether the '(' at index opens a call's
-// arguments (f(x), CALL (x)) rather than a pattern or a grouping.
-func callParenthesis(query string, index int) bool {
-	before, _ := previousSignificant(query, index)
-	if before == '`' {
-		return true
-	}
-	word := previousWord(query, index)
-	return word != "" && !isCypherKeyword(word)
-}
-
-func previousSignificant(query string, index int) (byte, int) {
-	for i := index - 1; i >= 0; i-- {
-		if !isWhitespace(query[i]) {
-			return query[i], i
-		}
-	}
-	return 0, -1
-}
-
-func nextSignificant(query string, index int) (byte, int) {
-	for i := index; i < len(query); i++ {
-		if !isWhitespace(query[i]) {
-			return query[i], i
-		}
-	}
-	return 0, len(query)
-}
-
-// previousWord is the identifier that ends right before index (whitespace
-// skipped), or "".
 func previousWord(query string, index int) string {
 	end := index
 	for end > 0 && isWhitespace(query[end-1]) {
@@ -382,156 +290,6 @@ func previousWord(query string, index int) string {
 	return query[start:end]
 }
 
-func nextWordAt(query string, index int) string {
-	word, _, ok := scanIdentifierToken(query, index)
-	if !ok {
-		return ""
-	}
-	return word
-}
-
-// dottedNameCall reports whether the dotted name continuing at dot (the
-// index of a '.') ends in a call: `db`.labels().
-func dottedNameCall(query string, dot int) bool {
-	for i := dot; i < len(query) && query[i] == '.'; {
-		_, end, ok := scanSymbolicName(query, i+1)
-		if !ok {
-			return false
-		}
-		next, nextIndex := nextSignificant(query, end)
-		if next == '(' {
-			return true
-		}
-		i = nextIndex
-	}
-	return false
-}
-
-// isLabelColon reports whether the ':' at colon starts a label or a
-// relationship type rather than a map value ({key: value}).
-func isLabelColon(query string, colon int, inner byte) bool {
-	if inner != '{' {
-		return true
-	}
-	before, beforeIndex := previousSignificant(query, colon)
-	if before == 0 {
-		return true
-	}
-	start := beforeIndex
-	if before == '`' {
-		for start = beforeIndex - 1; start >= 0 && query[start] != '`'; start-- {
-		}
-	} else {
-		for start > 0 && isIdentByte(query[start-1]) {
-			start--
-		}
-	}
-	keyPrev, _ := previousSignificant(query, start)
-	return !(keyPrev == '{' || keyPrev == ',')
-}
-
-// inLabelExpression reports whether the operator at index continues a label
-// expression (:A|B, :A&B, :!A).
-func inLabelExpression(query string, index int, inner byte) bool {
-	before, beforeIndex := previousSignificant(query, index)
-	if before == ':' {
-		return isLabelColon(query, beforeIndex, inner)
-	}
-	start := beforeIndex
-	if before == '`' {
-		for start = beforeIndex - 1; start >= 0 && query[start] != '`'; start-- {
-		}
-	} else if isIdentByte(before) {
-		for start > 0 && isIdentByte(query[start-1]) {
-			start--
-		}
-	} else {
-		return false
-	}
-	operator, operatorIndex := previousSignificant(query, start)
-	switch operator {
-	case ':':
-		return isLabelColon(query, operatorIndex, inner)
-	case '|', '&', '!':
-		return inLabelExpression(query, operatorIndex, inner)
-	}
-	return false
-}
-
-// followsOperator reports whether the '=' at index is part of an operator
-// (=~, <=, >=, <>, ==).
-func followsOperator(query string, index int) bool {
-	if index+1 < len(query) && (query[index+1] == '~' || query[index+1] == '=') {
-		return true
-	}
-	return index > 0 && (query[index-1] == '<' || query[index-1] == '>' || query[index-1] == '!' || query[index-1] == '=')
-}
-
-// mapProjectionBrace reports whether the '{' enclosing index follows a
-// variable (n {…}), making it a map projection rather than a map literal.
-func mapProjectionBrace(query string, index int) bool {
-	depth := 0
-	for i := index - 1; i >= 0; i-- {
-		switch query[i] {
-		case '}', ')', ']':
-			depth++
-		case '(', '[':
-			if depth == 0 {
-				return false
-			}
-			depth--
-		case '{':
-			if depth > 0 {
-				depth--
-				continue
-			}
-			before, _ := previousSignificant(query, i)
-			return before == '`' || isIdentByte(before)
-		}
-	}
-	return false
-}
-
-// inYieldList reports whether index is inside the item list of a YIELD.
-func inYieldList(query string, index int) bool {
-	yield := lastKeywordBefore(query, index, "YIELD")
-	if yield < 0 {
-		return false
-	}
-	between := query[yield:index]
-	for _, keyword := range []string{"WHERE", "RETURN", "WITH", "MATCH", "UNWIND", "CALL", "ORDER", "SKIP", "LIMIT"} {
-		if FindKeywordIndex(between, keyword) >= 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func lastKeywordBefore(query string, index int, keyword string) int {
-	found := -1
-	for from := 0; from < index; {
-		rel := FindKeywordIndex(query[from:index], keyword)
-		if rel < 0 {
-			break
-		}
-		found = from + rel
-		from = found + len(keyword)
-	}
-	return found
-}
-
-// isNonVariableKeyword reports whether a quoted name after word names a
-// database, graph, index, constraint, alias, user or role.
-func isNonVariableKeyword(word string) bool {
-	switch word {
-	case "USE", "DATABASE", "DATABASES", "GRAPH", "INDEX", "CONSTRAINT", "ALIAS", "COMPOSITE", "USER", "ROLE", "ROLES", "USERS":
-		return true
-	}
-	return false
-}
-
-// isCypherKeyword reports whether name is a Cypher keyword, which a plain
-// variable can't be.
 func isCypherKeyword(name string) bool {
 	switch upperASCII(name) {
 	case "ALL", "AND", "ANY", "AS", "ASC", "ASCENDING", "BY", "CALL", "CASE", "CONTAINS", "CREATE", "DELETE", "DESC", "DESCENDING",

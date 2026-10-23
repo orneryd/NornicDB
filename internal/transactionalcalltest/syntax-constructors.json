@@ -1,0 +1,34 @@
+{
+  "IAtomContext": {
+    "IAllReduceExpressionContext": "children",
+    "ICaseExpressionContext": "children",
+    "ICollectSubqueryContext": "effect",
+    "ICountAllContext": "effect",
+    "ICountSubqueryContext": "effect",
+    "IFilterWithContext": "children",
+    "IFunctionInvocationContext": "effect",
+    "IListComprehensionContext": "children",
+    "ILiteralContext": "children",
+    "IMapProjectionContext": "effect",
+    "IParameterContext": "children",
+    "IParenthesizedExpressionContext": "children",
+    "IPatternComprehensionContext": "children",
+    "IReduceExpressionContext": "children",
+    "IRelationshipsChainPatternContext": "children",
+    "ISubqueryExistContext": "effect",
+    "ISymbolContext": "children"
+  },
+  "IAtomicExpressionContext": {
+    "ILabelPredicateContext": "effect",
+    "IListExpressionContext": "effect",
+    "INormalizationPredicateContext": "children",
+    "INullExpressionContext": "children",
+    "IPropertyOrLabelExpressionContext": "effect",
+    "IStringExpressionContext": "children",
+    "ITypePredicateContext": "children"
+  },
+  "INotExpressionContext": {
+    "IComparisonExpressionContext": "children",
+    "IExistsSubqueryContext": "effect"
+  }
+}

@@ -88,6 +88,9 @@ type CypherParserListener interface {
 	// EnterCallSubquery is called when entering the callSubquery production.
 	EnterCallSubquery(c *CallSubqueryContext)
 
+	// EnterTransactionBatch is called when entering the transactionBatch production.
+	EnterTransactionBatch(c *TransactionBatchContext)
+
 	// EnterSubqueryBody is called when entering the subqueryBody production.
 	EnterSubqueryBody(c *SubqueryBodyContext)
 
@@ -421,6 +424,18 @@ type CypherParserListener interface {
 	// EnterReservedWord is called when entering the reservedWord production.
 	EnterReservedWord(c *ReservedWordContext)
 
+	// EnterSyntaxFragment is called when entering the syntaxFragment production.
+	EnterSyntaxFragment(c *SyntaxFragmentContext)
+
+	// EnterPathSelector is called when entering the pathSelector production.
+	EnterPathSelector(c *PathSelectorContext)
+
+	// EnterPrivilegeCommand is called when entering the privilegeCommand production.
+	EnterPrivilegeCommand(c *PrivilegeCommandContext)
+
+	// EnterProcedurePrivilegePattern is called when entering the procedurePrivilegePattern production.
+	EnterProcedurePrivilegePattern(c *ProcedurePrivilegePatternContext)
+
 	// ExitScript is called when exiting the script production.
 	ExitScript(c *ScriptContext)
 
@@ -501,6 +516,9 @@ type CypherParserListener interface {
 
 	// ExitCallSubquery is called when exiting the callSubquery production.
 	ExitCallSubquery(c *CallSubqueryContext)
+
+	// ExitTransactionBatch is called when exiting the transactionBatch production.
+	ExitTransactionBatch(c *TransactionBatchContext)
 
 	// ExitSubqueryBody is called when exiting the subqueryBody production.
 	ExitSubqueryBody(c *SubqueryBodyContext)
@@ -834,4 +852,16 @@ type CypherParserListener interface {
 
 	// ExitReservedWord is called when exiting the reservedWord production.
 	ExitReservedWord(c *ReservedWordContext)
+
+	// ExitSyntaxFragment is called when exiting the syntaxFragment production.
+	ExitSyntaxFragment(c *SyntaxFragmentContext)
+
+	// ExitPathSelector is called when exiting the pathSelector production.
+	ExitPathSelector(c *PathSelectorContext)
+
+	// ExitPrivilegeCommand is called when exiting the privilegeCommand production.
+	ExitPrivilegeCommand(c *PrivilegeCommandContext)
+
+	// ExitProcedurePrivilegePattern is called when exiting the procedurePrivilegePattern production.
+	ExitProcedurePrivilegePattern(c *ProcedurePrivilegePatternContext)
 }

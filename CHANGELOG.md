@@ -29,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - Preserve node properties and source metadata in retrieval procedure rows, graph
   hits and continuation pages when property decay is enabled.
+- Share retained statement syntax, bound variable scopes and ordered result
+  columns across execution, EXPLAIN, PROFILE and empty CALL results. Decode
+  quoted YIELD aliases, preserve comment boundaries and bind every clause's
+  input expressions before effects. Expand wildcards from the known scope and
+  procedure registry, and expose complete facts to composite query planning;
+  unresolved metadata is a terminal error rather than a guessed or empty header.
 
 - Configure sampler recovery spacing and unleased rearm with positive-millisecond
   `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`
@@ -121,6 +127,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve the prompt wire format for custom legacy Ollama endpoints during batching and use array input for scalar calls to modern /api/embed endpoints.
 
 - Batch Voyage text documents and Ollama inputs in real HTTP arrays, split provider requests within input/token budgets, and retain returned embedding usage without changing the public API (#1488).
+- Parse transactional CALL batch clauses structurally and share static size/context admission between execution and EXPLAIN.
+  Include every expression position in shared graph-effect and chain-dependency analysis, including graph-reading projections and predicates.
+  Bind runtime sizes at the resulting chain boundaries and preserve every earlier committed batch when a later batch fails.
 - Use canonical temporal equality for APOC collection membership and set operations, including typed Go parameters and temporal values nested in lists and maps.
 - Idle automatic embedding workers wait for enqueue notifications. Recovery scans have a 30-second minimum
   interval, and all embedding batch paths honor foreground-pressure pauses. Model readiness and resume
@@ -158,6 +167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - Keep scoped CALL imports available after WITH while excluding unprojected imports from DISTINCT and grouping keys.
   Use structural value comparison for DISTINCT, grouping and collection deduplication without serializing lists or maps.
 
@@ -257,6 +267,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - Restore Neo4j zero-precision rounding for negative ties when no rounding mode is supplied;
   retain positive-precision and explicit `HALF_UP` behavior. Reuse shared rounding modes to preserve
   adjacent half values, large integers and positive zero in both one- and two-argument calls.
@@ -724,6 +735,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 #### Cypher semantics
 
 - A pattern predicate works wherever Neo4j allows a boolean: `FILTER`,
@@ -1066,6 +1078,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - Make `^` and `power()` return Neo4j's correctly rounded result instead of
   `math.Pow`'s value, which is 1 ulp away for inputs such as `3 ^ 2.5`.
   The exponential, logarithmic, power and hyperbolic functions now run on a
@@ -1581,6 +1594,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - Compare explicit HTTP differential failures after commit, where Neo4j can
   defer connected-node DELETE validation. Roll back open reference transactions
   before failed assertions can leave locks behind and cause later reset timeouts.
@@ -2361,6 +2375,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - Preserve process-wide cursor lifecycle metrics and gauges when additional
   database search services attach to the shared continuation registry.
 - Prevent stateful `db.retrieve` continuation START/PULL/DISCARD calls from
@@ -2461,6 +2476,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Container ingress settings now reach NornicDB unchanged.** Shipped Docker
   Compose variants forward auth, CORS, trusted HTTP proxies, native HTTPS, Bolt
   TLS/mTLS and WebSocket controls, Qdrant gRPC listener and request limits, and
@@ -2517,6 +2533,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Relationship updates cannot overwrite peer writes published after validation.**
   Native conflict detection remains enabled in high-performance mode, and
   committed edge targets now join the native transaction's conflict-read set.
@@ -2641,6 +2658,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Local browser authentication now works over loopback HTTP without weakening
   HTTPS deployments.** Session cookies remain `HttpOnly` and `SameSite=Lax`;
   the `Secure` attribute is enabled for direct TLS and TLS-terminating proxies
@@ -2702,6 +2720,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Bolt explicit transactions now enforce the client-configured lifetime and
   own one cleanup attempt on every terminal path through the database-manager or
   per-connection `TransactionalExecutor` path.** Per-connection executors come
@@ -2767,6 +2786,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Relationship `MERGE` now includes properties from the pattern in its
   identity.**
   NornicDB previously matched relationships by start node, end node, and type
@@ -2796,6 +2816,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Cypher `WHERE ... LIMIT` now preserves predicate semantics on non-streaming
   storage wrappers.**
   The MATCH fast path could mark a compilable predicate as already evaluated,
@@ -2934,6 +2955,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Authentication is now enabled by default, and omitted YAML auth settings no
   longer downgrade the secure default.**
   New default deployments now require authentication unless it is explicitly
@@ -2992,6 +3014,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Explicit `auth.enabled` values in YAML configuration now take precedence.**
   An `auth.enabled: false` setting was previously indistinguishable from an
   omitted value and could leave authentication enabled by defaults or other
@@ -3128,6 +3151,7 @@ MATCH` genuinely matched.** `executeDelete`, `executeSet`, and
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Multi-MATCH relationship variable bound in a later clause was silently
   dropped.**
   `MATCH (s) WHERE s.uid IN $u MATCH (s)-[rel]->() WHERE
@@ -3375,6 +3399,7 @@ Maintenance release: dependency refresh, llama.cpp upgrade, Cypher Graphiti inge
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Cypher Graphiti ingest correctness**:
   - `CALL`-tail projection fast path corrected so that tail subquery outputs project correctly into outer RETURN clauses.
   - Graphiti ingest-time relationship and chunk search performance improved; edge cases around exact relationship shape matching during high-frequency ingest are hardened.
@@ -3399,12 +3424,14 @@ Maintenance release: dependency refresh, llama.cpp upgrade, Cypher Graphiti inge
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Cypher count preservation**: `RETURN` clauses now preserve counts correctly when combined with aggregation and projection (hotfix backport from v1.1.8-hotfix).
 
 ## [v1.1.8-hotfix]
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Cypher count preservation**: `RETURN` clauses no longer drop count values when combined with aggregation and projection.
 
 ## [v1.1.8]
@@ -3439,6 +3466,7 @@ Maintenance release: dependency refresh, llama.cpp upgrade, Cypher Graphiti inge
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Cypher vector and mutation correctness issues were resolved**:
   - relationship-bound `WITH ... CALL` vector-property paths now execute side effects and bind relationship variables correctly;
   - node mutation indexing now updates properly;
@@ -3506,6 +3534,7 @@ Maintenance release: dependency refresh, llama.cpp upgrade, Cypher Graphiti inge
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Configuration-driven auth disabling is now honored by server startup**:
   - `auth.enabled: false` and `server.auth: none` from the loaded configuration no longer get overridden by serve startup defaults.
   - `--no-auth` remains a hard disable override, which keeps Homebrew first-run configurations that choose no authentication aligned with runtime behavior.
@@ -3535,6 +3564,7 @@ Release focused on Neo4j/Graphiti compatibility hardening, vector-search perform
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Graphiti-blocking write-path correctness issues resolved end-to-end**:
   - `SET n:<labels>` + `SET n = <map>` composition no longer drops properties/labels.
   - Bulk `UNWIND ... MERGE/SET ... WITH ... CALL db.create.setNodeVectorProperty(...)` no longer silently discards row writes.
@@ -3580,6 +3610,7 @@ Post-`v1.1.4` stabilization focused on Cypher/Bolt correctness, storage resilien
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Cypher MATCH+CREATE error handling now surfaces storage failures instead of silent no-op results.** Label/all-node lookups and relationship-existence checks in compound MATCH...CREATE paths now return explicit errors.
 - **Cypher MATCH...CREATE relationship creation regressions fixed.** The following common Neo4j-compatible patterns now execute correctly again:
   - `MATCH (a),(b) CREATE (a)-[:R]->(b)`
@@ -3629,6 +3660,7 @@ Maintenance release: **llama.cpp upgraded to b9835** with configurable per-model
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Cypher:** `$dotted.param` parsing no longer fails; the simple-where cache is correctly skipped for parameterized values.
 - **Storage:** Node label index is rebuilt from bodies on engine open (#183), fixing incorrect `db.labels()` results after unclean shutdown.
 - **Storage:** Label-count metadata is now namespaced per-database, preserving correctness across async write paths and startup re-indexing.
@@ -3693,6 +3725,7 @@ Headline release: **Bolt over WebSocket** lands end-to-end so browser-based Neo4
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **`mcp-neo4j-memory` regressions — three independently reproducible Cypher correctness defects resolved.**
   1. **Map-parameter property access stored as literal text.** `WITH $entity AS entity MERGE (e:Memory {name: entity.name})` previously stored the literal string `"{name:'Alice', type:'Person'}.name"` instead of evaluating `entity.name`. The WITH-binding substitution treated `entity.<key>` as a standalone identifier and replaced just `entity`, leaving an orphaned `.name` suffix. Fixed by expanding `<ident>.<key>` into the property's Cypher literal value before the standalone-identifier replacer runs. Token boundary checks (word / underscore / dot) keep unrelated identifiers untouched. The same pattern in `UNWIND [$r] AS r MATCH (a),(b) WHERE a.name = r.source AND b.name = r.target MERGE (a)-[:REL]->(b)` now matches and creates the expected edge.
 
@@ -3754,6 +3787,7 @@ Patch release focused on multi-tenant MVCC isolation, MERGE concurrency correctn
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **MERGE on a uniquely-constrained value is now deterministically idempotent under concurrent writers.** Two writers MERGE-ing on the same `uid` would intermittently surface Badger's generic `"Transaction Conflict"` (or, after the first round of fixes, an SI `"node ... changed after transaction start"` conflict) instead of the consumer-pinned commit-time UNIQUE shape — regression: `TestMERGE_IsIdempotentUnderConcurrentRetry`, ~3 % originally and ~0.05 % after the partial fix. Root cause has two coupled parts:
   1. **Read-set leak.** `writeNodeMVCCHeadInTxn` and the archive-pre-overwrite paths read `mvccNodeHeadKey` via the user txn to carry `FloorVersion` forward; that read entered Badger's SSI set, and a peer commit on the same head key forced a generic `Transaction Conflict`. Fixed by routing those reads through fresh read transactions (`loadNodeMVCCHead` / `loadEdgeMVCCHead`).
   2. **MERGE-MATCH redirect onto a peer.** When MERGE's MATCH (a fresh read-txn lookup) found a node a peer committed between begin and our pin, the subsequent `OpUpdateNode` ran on the peer's nodeID. `validateSnapshotIsolationConflicts` then fired `checkNodeWriteConflict` (head version > readTS) → ErrConflict. **The semantic cause is the consumer-pinned commit-time UNIQUE race**, not a generic SI conflict, so the storage layer now reclassifies: when an OpUpdate hits an SI conflict on a nodeID whose pending body carries a uniquely-constrained value already mapped to that nodeID in the schema's UNIQUE-value cache, `checkNodeWriteConflict` returns a `ConstraintViolationError{Type: ConstraintUnique, Cause: ErrConflict}` and the commit path wraps it as `commit failed: constraint violation: … already exists`. The transient classifier still fires via the `Cause` chain, so retry-aware drivers see the documented retry sentinel. Verified at 50,000 stress iterations: zero non-deterministic failures.
@@ -3820,6 +3854,7 @@ Patch release focused on multi-tenant MVCC isolation, MERGE concurrency correctn
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Hybrid search filter edge case**:
   - fixed empty filter-list handling so requests with empty filter lists no longer discard all results.
 
@@ -3904,6 +3939,7 @@ Patch release focused on multi-tenant MVCC isolation, MERGE concurrency correctn
 
 ### Fixed
 
+- Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - **Knowledge-policy correctness and stability**:
   - fixed decay diagnostics, targeted suppression invalidation, score-argument handling, and reveal-path correctness.
   - hardened embed/reveal worker concurrency so the new knowledge lifecycle features behave predictably under load.

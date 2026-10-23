@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strconv"
 	"strings"
 
@@ -169,26 +170,27 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 	return nil
 }
 
-func explicitProcedureArgumentTexts(callCypher string) []string {
-	open := strings.Index(callCypher, "(")
-	if open < 0 {
+func explicitProcedureArgumentTexts(source string) []string {
+	clause, ok := canonicalQueryClause(source)
+	if !ok {
 		return nil
 	}
-	close := findMatchingCallParen(callCypher, open)
-	if close < 0 {
+	arguments := clause.ChildRule(cypherantlr.CypherParserRULE_parenExpressionChain)
+	if !arguments.Valid() {
 		return nil
 	}
-	body := strings.TrimSpace(callCypher[open+1 : close])
-	if body == "" {
-		return []string{}
+	expressions := arguments.ChildRule(cypherantlr.CypherParserRULE_expressionChain)
+	texts := []string{}
+	if expressions.Valid() {
+		for i := 0; i < expressions.ChildCount(); i++ {
+			expression := expressions.Child(i)
+			if expression.Rule() == cypherantlr.CypherParserRULE_expression {
+				texts = append(texts, expression.Code())
+			}
+		}
 	}
-	parts := splitTopLevelComma(body)
-	for index := range parts {
-		parts[index] = strings.TrimSpace(parts[index])
-	}
-	return parts
+	return texts
 }
-
 func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{}, explicitTexts []string) ([]interface{}, error) {
 	coerced := append([]interface{}(nil), args...)
 	for index := range coerced {

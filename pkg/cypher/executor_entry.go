@@ -724,6 +724,18 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
 		return nil, err
 	}
+	admission, admissionErr := e.admitBoundStatement(ctx, scopeText)
+	if admissionErr != nil {
+		return nil, admissionErr
+	}
+	if admission.program != nil {
+		ctx = withBoundStatementProgram(ctx, admission.program)
+	}
+	defer func() {
+		if retErr == nil && result != nil {
+			retErr = admission.verifyColumns(result.Columns)
+		}
+	}()
 	if err := e.statementParametersError(ctx, cypher, params); err != nil {
 		return nil, err
 	}

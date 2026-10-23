@@ -197,39 +197,6 @@ func appendUniquePipelineBinding(bindings []string, binding string) []string {
 	return append(bindings, binding)
 }
 
-func pipelineProjectionScope(previous map[string]struct{}, clause string, imports pipelineRow) map[string]struct{} {
-	body := strings.TrimSpace(clause)
-	if len(body) >= len("WITH") && strings.EqualFold(body[:len("WITH")], "WITH") {
-		body = strings.TrimSpace(body[len("WITH"):])
-	}
-	if where := findKeywordIndexInContext(body, "WHERE"); where >= 0 {
-		body = strings.TrimSpace(body[:where])
-	}
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := findKeywordIndexInContext(body, keyword); index >= 0 {
-			body = strings.TrimSpace(body[:index])
-		}
-	}
-	body, _ = cutDistinct(body)
-	next := make(map[string]struct{})
-	for _, item := range splitTopLevelComma(body) {
-		if strings.TrimSpace(item) == "*" {
-			for name := range previous {
-				next[name] = struct{}{}
-			}
-			continue
-		}
-		_, alias := parseProjectionExprAlias(strings.TrimSpace(item))
-		if alias != "" {
-			next[alias] = struct{}{}
-		}
-	}
-	for name := range imports {
-		next[name] = struct{}{}
-	}
-	return next
-}
-
 func pipelineUnwindAlias(clause string) string {
 	if _, alias, ok := parsePipelineIteration(clause); ok {
 		return normalizeProjectionColumnName(alias)

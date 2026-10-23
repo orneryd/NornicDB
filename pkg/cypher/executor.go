@@ -197,23 +197,10 @@ func callSubqueryAt(query string, i int) bool {
 	if !matchKeywordAt(query, i, "CALL") {
 		return false
 	}
-	j := skipSpaces(query, i+len("CALL"))
-	if j < len(query) && query[j] == '{' {
-		return true
-	}
-	if j >= len(query) || query[j] != '(' {
-		return false
-	}
-	close := findMatchingCallParen(query, j)
-	if close < 0 {
-		return false
-	}
-	k := skipSpaces(query, close+1)
-	return k < len(query) && query[k] == '{'
-}
-
-func hasCallInTransactions(query string) bool {
-	return hasCallSubqueryPattern(query) && findKeywordIndex(query, "IN TRANSACTIONS") >= 0
+	// Classification consumes the same CALL frame as scope and execution.
+	// In particular, comments before or after imports are query trivia.
+	body := i + readCallSubqueryScope(query[i:]).bodyOffset
+	return body < len(query) && query[body] == '{'
 }
 
 func hasNotExistsFollowedByBrace(query string) bool {

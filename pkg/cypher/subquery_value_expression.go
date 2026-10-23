@@ -377,6 +377,24 @@ func rowCountValue(kind string, rows int64) interface{} {
 // procedure call in it, …). EXISTS, COUNT and COLLECT all run their bodies
 // here, so a body gives the same rows whichever of them wraps it.
 func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+	// Correlated expression imports remain visible across a WITH horizon. The
+	// existing context masks them when a nested CALL selects its own imports.
+	// Without a WITH there is no dropping horizon and the row already owns them.
+	if indexASCIIFold(query, "with") >= 0 {
+		imports := pipelineRow(values)
+		for name := range values {
+			if strings.HasPrefix(name, "$") || strings.HasPrefix(name, "\x00") {
+				imports = make(pipelineRow, len(values))
+				for variable, value := range values {
+					if !strings.HasPrefix(variable, "$") && !strings.HasPrefix(variable, "\x00") {
+						imports[variable] = value
+					}
+				}
+				break
+			}
+		}
+		ctx = withPipelineImports(ctx, imports)
+	}
 	// The expression's current lexical row owns its imports. A traversal's
 	// ambient context may still bind the same name to an earlier endpoint;
 	// it must not replace a quantifier/comprehension/reduce local in the body.

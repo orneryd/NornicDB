@@ -8,7 +8,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/antlr4-go/antlr/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -20,89 +19,23 @@ type ParseResult struct {
 	Errors []string
 }
 
-type pooledValidator struct {
-	lexer         *CypherLexer
-	tokens        *antlr.CommonTokenStream
-	parser        *CypherParser
-	errorListener *parseErrorListener
-}
-
-var validatorPool = sync.Pool{
-	New: func() interface{} {
-		input := antlr.NewInputStream("")
-		lexer := NewCypherLexer(input)
-		tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
-		parser := NewCypherParser(tokens)
-
-		errorListener := &parseErrorListener{}
-
-		parser.RemoveErrorListeners()
-		parser.AddErrorListener(errorListener)
-		lexer.RemoveErrorListeners()
-		lexer.AddErrorListener(errorListener)
-
-		// Validation does not need parse tree listeners.
-		parser.BuildParseTrees = false
-
-		return &pooledValidator{
-			lexer:         lexer,
-			tokens:        tokens,
-			parser:        parser,
-			errorListener: errorListener,
-		}
-	},
-}
-
 // Parse parses a Cypher query string using ANTLR and returns the parse tree
 func Parse(query string) (*ParseResult, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
+	if strings.TrimSpace(query) == "" {
 		message := localization.CypherANTLRParseEmptyQuery()
 		return nil, localization.NewLocalizedError(string(message.ID), message, nil)
 	}
-
-	// Create ANTLR input stream
-	input := antlr.NewInputStream(query)
-
-	// Create lexer
-	lexer := NewCypherLexer(input)
-
-	// Create token stream
-	tokens := antlr.NewCommonTokenStream(lexer, antlr.TokenDefaultChannel)
-
-	// Create parser
-	parser := NewCypherParser(tokens)
-
-	// Add error listener
-	errorListener := &parseErrorListener{}
-	parser.RemoveErrorListeners()
-	parser.AddErrorListener(errorListener)
-	lexer.RemoveErrorListeners()
-	lexer.AddErrorListener(errorListener)
-
-	// Parse, then detach the generation: the tree's contexts keep parser,
-	// which must not keep a retired generation's DFAs reachable.
-	prediction := acquirePrediction()
-	defer prediction.release()
-	usePrediction(parser, prediction)
-	tree := parser.Script()
-	parser.Interpreter = nil
-
-	result := &ParseResult{
-		Tree:   tree,
-		Errors: errorListener.errors,
+	// Legacy AST consumers explicitly request their own mutable tree. They use
+	// the same parser lifecycle, and never receive the retained immutable tree.
+	result := &ParseResult{}
+	data, err := parseStatementSyntax(context.Background(), query, StatementEntry, func(tree antlr.Tree) { result.Tree = tree.(IScriptContext) })
+	if data != nil {
+		result.Errors = append([]string(nil), data.diagnostics...)
 	}
-
-	// Check for errors
-	if len(errorListener.errors) > 0 {
-		message := localization.CypherANTLRParseSyntaxError(strings.Join(errorListener.errors, "; "))
-		return result, localization.NewLocalizedError(string(message.ID), message, nil)
-	}
-
-	return result, nil
+	return result, err
 }
 
-// Validate validates a Cypher query using pooled ANTLR objects (lexer/parser/token stream).
+// Validate consumes the retained canonical statement product.
 //
 // Context-free convenience API; execution and logging use ValidateContext.
 // It is optimized for throughput and reduced allocations and does not return a parse tree.
@@ -112,70 +45,25 @@ func Validate(query string) error {
 
 // ValidateContext validates syntax while observing cancellation during lexer
 // and parser lookahead, including cold prediction. Cancellation returns only
-// after the parser has unwound and its pooled validator is released.
-func ValidateContext(ctx context.Context, query string) (err error) {
+// after the parser has unwound and its prediction lease is released.
+func ValidateContext(ctx context.Context, query string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	defer recoverPredictionCancellation(&err)
-
-	query, err = TrimSpaceContext(ctx, query)
+	trimmed, err := TrimSpaceContext(ctx, query)
 	if err != nil {
 		return err
 	}
-	if query == "" {
+	if trimmed == "" {
 		message := localization.CypherANTLRValidateEmptyQuery()
 		return localization.NewLocalizedError(string(message.ID), message, nil)
 	}
-
-	v := validatorPool.Get().(*pooledValidator)
-	v.errorListener.reset()
-	prediction := acquirePrediction()
-	usePrediction(v.parser, prediction)
-	defer func() {
-		// Tokens can retain their lexer's character stream. Drop the statement
-		// context as well as the parser wrapper before pooling the validator.
-		if input, ok := v.lexer.GetInputStream().(interface{ releaseContext() }); ok {
-			input.releaseContext()
-		}
-		// Restore the plain stream before detaching and releasing the generation.
-		v.parser.SetTokenStream(v.tokens)
-		v.parser.Interpreter = nil
-		prediction.release()
-		validatorPool.Put(v)
-	}()
-
-	input := contextInputStream(ctx, query)
-
-	v.lexer.SetInputStream(input)
-	v.lexer.Reset()
-
-	v.tokens.SetTokenSource(v.lexer)
-	var tokens antlr.TokenStream = v.tokens
-	if ctx.Done() != nil {
-		tokens = &contextTokenStream{TokenStream: v.tokens, ctx: ctx}
+	syntax, err := ParseSyntax(ctx, query, StatementEntry, false)
+	if err != nil && syntax.Valid() && len(syntax.data.diagnostics) != 0 {
+		message := localization.CypherANTLRValidateSyntaxError(strings.Join(syntax.data.diagnostics, "; "))
+		return localization.NewLocalizedError(string(message.ID), message, nil)
 	}
-	v.parser.SetTokenStream(tokens)
-
-	// Fast path: SLL prediction mode is usually faster; fall back to LL on errors.
-	v.parser.Interpreter.SetPredictionMode(antlr.PredictionModeSLL)
-	_ = v.parser.Script()
-
-	if len(v.errorListener.errors) > 0 {
-		// Retry with LL prediction mode to avoid rejecting valid queries that
-		// require full context prediction.
-		v.errorListener.reset()
-		v.tokens.Seek(0)
-		v.parser.SetTokenStream(tokens)
-		v.parser.Interpreter.SetPredictionMode(antlr.PredictionModeLL)
-		_ = v.parser.Script()
-
-		if len(v.errorListener.errors) > 0 {
-			message := localization.CypherANTLRValidateSyntaxError(strings.Join(v.errorListener.errors, "; "))
-			return localization.NewLocalizedError(string(message.ID), message, nil)
-		}
-	}
-	return nil
+	return err
 }
 
 // parseErrorListener collects syntax errors during parsing

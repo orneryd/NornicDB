@@ -76,7 +76,7 @@ transactionStatement
 
 // statements
 query
-    : queryPrefix* cypherPreamble? useClause? (regularQuery | standaloneCall | schemaCommand | administrationCommand | showCommand | terminateCommand)
+    : queryPrefix* cypherPreamble? queryPrefix* useClause? (regularQuery | standaloneCall | privilegeCommand | schemaCommand | administrationCommand | showCommand | terminateCommand)
     ;
 
 useClause
@@ -191,7 +191,17 @@ collectSubquery
     ;
 
 callSubquery
-    : OPTIONAL? CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE (IN TRANSACTIONS (OF (numLit | parameter) (ROW | ROWS))?)?
+    : OPTIONAL? CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE transactionBatch?
+    ;
+
+// Both executor parser modes read this production. Options are represented
+// even when execution does not support them, so admission can reject them
+// before a preceding clause commits.
+transactionBatch
+    : IN (concurrency=expression? CONCURRENT)? TRANSACTIONS
+      (OF size=expression (ROW | ROWS))?
+      (ON ERROR errorMode=(CONTINUE | BREAK | FAIL))?
+      (REPORT STATUS AS statusVariable=symbol)?
     ;
 
 // Subquery body can start with WITH (to import variables) or have statements
@@ -242,7 +252,7 @@ orderSt
 // Reads may follow writes without a WITH (CREATE … MATCH … RETURN), as in
 // Neo4j 5 and 25.
 singlePartQ
-    : readingStatement* (returnSt | updatingStatement (readingStatement | updatingStatement)* embeddingSt? returnSt?)?
+    : readingStatement* (returnSt | FINISH | updatingStatement (readingStatement | updatingStatement)* embeddingSt? (returnSt | FINISH)?)?
     | callSubquery orderSt?
     ;
 
@@ -275,7 +285,8 @@ forSt
     ;
 
 readingStatement
-    : matchSt
+    : useClause
+    | matchSt
     | unwindSt
     | letSt
     | filterSt
@@ -491,7 +502,7 @@ propertyExpression
     ;
 
 patternPart
-    : (symbol ASSIGN)? patternElem
+    : (symbol ASSIGN)? pathSelector? patternElem
     | (symbol ASSIGN)? pathFunction
     ;
 
@@ -501,7 +512,7 @@ pathFunction
 
 patternElem
     : patternElemStart patternElemPart*
-    | LPAREN patternElem RPAREN
+    | LPAREN patternElem where? RPAREN
     ;
 
 // A quantified path pattern repeats a parenthesised path; the node patterns
@@ -537,7 +548,7 @@ properties
     ;
 
 nodePattern
-    : LPAREN symbol? nodeLabels? properties? RPAREN
+    : LPAREN symbol? nodeLabels? properties? where? RPAREN
     ;
 
 atom
@@ -580,7 +591,7 @@ relationshipPattern
     ;
 
 relationDetail
-    : LBRACK symbol? relationshipTypes? rangeLit? properties? RBRACK
+    : LBRACK symbol? relationshipTypes? rangeLit? properties? where? RBRACK
     ;
 
 relationshipTypes
@@ -705,6 +716,8 @@ mapPair
 // primitive ids
 name
     : symbol
+    | SHORTEST | PATH | PATHS | GROUP | GROUPS
+    | GRANT | REVOKE | DENY | EXECUTE | BOOSTED | PROCEDURE | DBMS | TO
     | reservedWord
     ;
 
@@ -824,6 +837,8 @@ symbol
     | ALL
     | SHORTESTPATH
     | ALLSHORTESTPATHS
+    | SHORTEST | PATH | PATHS | GROUP | GROUPS
+    | GRANT | REVOKE | DENY | EXECUTE | BOOSTED | PROCEDURE | DBMS | TO
     | reservedWord
     ;
 
@@ -886,4 +901,31 @@ reservedWord
     | DROP
     | FOREACH
     | REDUCE
+    | CONCURRENT
+    | ERROR
+    | CONTINUE
+    | BREAK
+    | FAIL
+    | REPORT
+    | STATUS
+    ;
+
+// One complete lexical product for scope-independent structural inspection.
+// This entry does not make a fragment an executable statement.
+syntaxFragment
+    : (script | subqueryBody | expression) EOF
+    ;
+// Existing execution path selectors, represented before the path's elements.
+pathSelector
+    : (ANY | ALL)? SHORTEST INTEGER? ((PATH | PATHS) (GROUP | GROUPS)?)?
+    | ANY INTEGER? (PATH | PATHS)?
+    ;
+
+privilegeCommand
+    : (GRANT | DENY) EXECUTE BOOSTED? (PROCEDURE | PROCEDURES) procedurePrivilegePattern (COMMA procedurePrivilegePattern)* ON DBMS TO symbol (COMMA symbol)*
+    | REVOKE (GRANT | DENY)? EXECUTE BOOSTED? (PROCEDURE | PROCEDURES) procedurePrivilegePattern (COMMA procedurePrivilegePattern)* ON DBMS FROM symbol (COMMA symbol)*
+    ;
+
+procedurePrivilegePattern
+    : (symbol | MULT) (DOT (symbol | MULT))*
     ;
