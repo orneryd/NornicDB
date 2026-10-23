@@ -62,8 +62,10 @@ make swarm-doctor
 make swarm
 ```
 
-Choose **Ollama Local 27B**, **Ollama Remote 9B**, or **Codex Frontier** as the
-agent in T3. The intent classifier uses the remote `nornic-coder` model. For
+The Codex model dropdown defaults to **GPT-6.1 Sol** with **Low** reasoning.
+Choose **Ollama Local 27B** to use automatic intent routing. Selecting
+**Codex Frontier** or **Ollama Remote 9B** directly starts that agent without
+the automatic classifier. The intent classifier uses the remote `nornic-coder` model. For
 automatic intake routing, the local Pi instance is `ollama_local` and Codex is
 available as a frontier provider; the remote Pi instance remains selectable for
 bounded tasks. The remote 9B model classifies intent and complexity. `intent.route`

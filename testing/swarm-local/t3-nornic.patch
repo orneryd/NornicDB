@@ -3215,6 +3215,89 @@ index 0000000000..3e477f2fbf
 +  };
 +  return { state: next, response: result };
 +}
+diff --git a/apps/server/src/provider/CodexProvider.test.ts b/apps/server/src/provider/CodexProvider.test.ts
+index 30f63b21f3..d2ec29d184 100644
+--- a/apps/server/src/provider/CodexProvider.test.ts
++++ b/apps/server/src/provider/CodexProvider.test.ts
+@@ -1,7 +1,56 @@
+ import { assert, it } from "@effect/vitest";
++import { DEFAULT_MODEL } from "@t3tools/contracts";
+ 
+ import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+ 
++it("defaults Codex selections to Sol 6.1 while leaving Astra selectable", () => {
++  assert.equal(DEFAULT_MODEL, "gpt-6.1-sol");
++  const models = applyPreferredCodexDefaultModel([
++    { slug: "gpt-6-astra", name: "Astra", isCustom: false, isDefault: true, capabilities: null },
++    { slug: "gpt-6.1-sol", name: "Sol", isCustom: false, capabilities: null },
++  ]);
++  assert.deepStrictEqual(
++    models.filter((model) => model.isDefault).map((model) => model.slug),
++    ["gpt-6.1-sol"],
++  );
++  assert.equal(
++    models.some((model) => model.slug === "gpt-6-astra"),
++    true,
++  );
++});
++
++it("defaults Sol 6.1 reasoning to low in the model picker", () => {
++  for (const model of ["gpt-6.1-sol", "openai.gpt-6.1-sol"]) {
++    const capabilities = mapCodexModelCapabilities({
++      additionalSpeedTiers: [],
++      defaultReasoningEffort: "high",
++      defaultServiceTier: null,
++      description: "Sol",
++      displayName: "Sol",
++      hidden: false,
++      id: model,
++      model,
++      isDefault: true,
++      serviceTiers: [],
++      supportedReasoningEfforts: (["low", "medium", "high"] as const).map((reasoningEffort) => ({
++        reasoningEffort,
++        description: reasoningEffort,
++      })),
++    });
++    const reasoning = capabilities.optionDescriptors?.find(
++      (option) => option.id === "reasoningEffort",
++    );
++    assert.equal(reasoning?.currentValue, "low");
++    assert.equal(reasoning?.type, "select");
++    if (reasoning?.type === "select") {
++      assert.deepStrictEqual(
++        reasoning.options.filter((option) => option.isDefault).map((option) => option.id),
++        ["low"],
++      );
++    }
++  }
++});
++
+ it("maps current Codex model capability fields", () => {
+   const capabilities = mapCodexModelCapabilities({
+     additionalSpeedTiers: [],
+diff --git a/apps/server/src/provider/CodexProvider.ts b/apps/server/src/provider/CodexProvider.ts
+index 4a60f12891..84f3b5cc04 100644
+--- a/apps/server/src/provider/CodexProvider.ts
++++ b/apps/server/src/provider/CodexProvider.ts
+@@ -163,8 +163,15 @@ function codexAccountEmail(account: CodexSchema.V2GetAccountResponse["account"])
+   return account.email;
+ }
+ 
+-export function codexDefaultReasoningEffortOverride(model: string): "medium" | undefined {
+-  return codexModelFamily(model) === "gpt-6-astra" ? "medium" : undefined;
++export function codexDefaultReasoningEffortOverride(model: string): "low" | "medium" | undefined {
++  switch (codexModelFamily(model)) {
++    case "gpt-6.1-sol":
++      return "low";
++    case "gpt-6-astra":
++      return "medium";
++    default:
++      return undefined;
++  }
+ }
+ 
+ export function mapCodexModelCapabilities(
 diff --git a/packages/contracts/src/index.ts b/packages/contracts/src/index.ts
 index 7f38a38dbb..8f9cb44f54 100644
 --- a/packages/contracts/src/index.ts
@@ -3224,6 +3307,19 @@ index 7f38a38dbb..8f9cb44f54 100644
  export * from "./secretRequest.ts";
  export * from "./clientRpcPermissions.ts";
 +export * from "./nornicWorkflow.ts";
+diff --git a/packages/contracts/src/model.ts b/packages/contracts/src/model.ts
+index 36356146fd..89879c2e50 100644
+--- a/packages/contracts/src/model.ts
++++ b/packages/contracts/src/model.ts
+@@ -123,7 +123,7 @@ const PI_DRIVER_KIND = ProviderDriverKind.make("pi");
+ const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
+ const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
+ 
+-export const DEFAULT_MODEL = "gpt-6-astra";
++export const DEFAULT_MODEL = "gpt-6.1-sol";
+ 
+ /**
+  * The provider snapshot marks the first of these present in the live
 diff --git a/packages/contracts/src/nornicWorkflow.ts b/packages/contracts/src/nornicWorkflow.ts
 new file mode 100644
 index 0000000000..6bc9134a7e

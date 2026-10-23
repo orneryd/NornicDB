@@ -5,6 +5,15 @@ The pinned local experiment implements a subset; its setup and actual checks are
 documented in `docs/development/swarm-local.md`. A partial implementation does
 not complete the larger milestone's acceptance contract.
 
+## Local experiment: model defaults
+
+- [x] Reproduce the Codex dropdown choosing Astra despite the harness's saved
+  Sol selection; default the shared catalog to GPT-6.1 Sol with low reasoning.
+- [x] Verify catalog selection, reasoning defaults and provider/model consumers
+  with focused T3 tests; preserve manual Astra selection and its agent-call guard.
+- [x] Document that automatic classification starts through Ollama Local 27B;
+  directly selecting another provider does not automatically classify its requests.
+
 ## 1. Establish integration capabilities
 
 - [ ] Pin upstream T3, Codex and Copilot CLI versions; inventory enabled tools,
