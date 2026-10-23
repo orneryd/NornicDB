@@ -24,7 +24,7 @@ import (
 // failure observed on Linux CI runners under
 // TestExecuteCypher_SetInvalidatesManagedEmbeddings.
 func TestCurrentMVCCReadVersion_ClampsToHighWater(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	// Force one namespace's high-water mark to a timestamp ~1s in the
@@ -42,7 +42,7 @@ func TestCurrentMVCCReadVersion_ClampsToHighWater(t *testing.T) {
 }
 
 func TestAllocateMVCCVersion_AdvancesHighWater(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	commitAt := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -72,7 +72,7 @@ func TestBeginTransaction_DoesNotConflictAfterClockSkew(t *testing.T) {
 	// then open a transaction and exercise the write path. Without
 	// the clamp, the SET would fail with a "changed after transaction
 	// start" conflict; with it, the tx commits cleanly.
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	_, err := e.CreateNode(&Node{

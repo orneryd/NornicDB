@@ -228,7 +228,7 @@ func TestWALSkipsCorruptedEmbeddingEntries(t *testing.T) {
 
 // TestReplayResultTracking verifies ReplayResult correctly tracks outcomes.
 func TestReplayResultTracking(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 
 	// Create test entries
 	node1 := &Node{ID: "n1", Labels: []string{"Test"}}

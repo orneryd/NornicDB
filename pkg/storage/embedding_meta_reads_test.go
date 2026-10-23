@@ -113,7 +113,7 @@ func TestGetNodeEmbeddingMetaFailures(t *testing.T) {
 	_, err = engine.GetNodeEmbeddingMeta("nornic:a")
 	require.Error(t, err)
 
-	memory := NewNamespacedEngine(NewMemoryEngine(), "nornic")
+	memory := NewNamespacedEngine(newTestMemoryEngine(t), "nornic")
 	_, err = memory.CreateNode(&Node{ID: "m", Properties: map[string]any{"text": "z"}, EmbedMeta: map[string]any{"chunk_count": 1}})
 	require.NoError(t, err)
 	meta, err := memory.GetNodeEmbeddingMeta("m")
@@ -128,7 +128,7 @@ type plainEngine struct{ Engine }
 
 // An engine without the metadata-only read answers with the full node's.
 func TestEmbeddingMetaOfFallsBackToTheNode(t *testing.T) {
-	engine := plainEngine{NewMemoryEngine()}
+	engine := plainEngine{newTestMemoryEngine(t)}
 	_, err := engine.CreateNode(&Node{ID: "nornic:p", Properties: map[string]any{"text": "z"}, EmbedMeta: map[string]any{"chunk_count": 3}})
 	require.NoError(t, err)
 	meta, err := embeddingMetaOf(engine, "nornic:p")

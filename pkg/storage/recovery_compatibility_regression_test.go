@@ -95,7 +95,7 @@ func TestRecoveryReplayUndoPreservesEntityFields(t *testing.T) {
 			e.ID = "e"
 			e.StartNode = "a"
 			e.EndNode = "b"
-			engine := NewMemoryEngine()
+			engine := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = engine.Close() })
 			ns := NewNamespacedEngine(engine, "test")
 			_, err := ns.CreateNode(&Node{ID: "b"})
@@ -181,7 +181,7 @@ func TestRecoverySnapshotSaveRestoreAcrossRoutes(t *testing.T) {
 			memory, _, err := RecoverFromWALWithResult(t.TempDir(), path)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = memory.Close() })
-			target := NewMemoryEngine()
+			target := newTestMemoryEngine(t)
 			t.Cleanup(func() { _ = target.Close() })
 			_, status, err := RecoverIntoEngine(target, t.TempDir(), path)
 			require.NoError(t, err)

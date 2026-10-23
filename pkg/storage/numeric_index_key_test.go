@@ -19,7 +19,7 @@ func TestPropertyIndexNumericKeysExact(t *testing.T) {
 		int64(9007199254740994), uint64(9007199254740995), int64(-9007199254740993),
 		int64(math.MaxInt64), uint64(math.MaxUint64), float64(9007199254740996), 0x1p63, -0x1p53 - 2, 1.5,
 	}
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_precise", "P", []string{"id"}))

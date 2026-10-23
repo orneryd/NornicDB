@@ -60,7 +60,7 @@ func TestPropertyIndexKeyRangeNarrowsOnlyOneKind(t *testing.T) {
 }
 
 func TestVisitPropertyIndexGroupsInRange(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_item_t", "Item", []string{"t"}))
@@ -105,7 +105,7 @@ func TestVisitPropertyIndexGroupsInRange(t *testing.T) {
 // while a writer keeps its sorted-key cache stale: under the race detector,
 // no reader may rebuild the cache under the shared read lock (#942).
 func TestPropertyIndexRangeConcurrentReaders(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_item_t", "Item", []string{"t"}))
@@ -155,7 +155,7 @@ func TestPropertyIndexRangeConcurrentReaders(t *testing.T) {
 // float64) are separate index keys but one group, visited together in either
 // direction.
 func TestVisitPropertyIndexGroupsInRangeEqualKeysOfTwoTypes(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	defer engine.Close()
 	schema := engine.GetSchema()
 	require.NoError(t, schema.AddPropertyIndex("idx_item_t", "Item", []string{"t"}))

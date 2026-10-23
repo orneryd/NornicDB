@@ -13,7 +13,7 @@ import (
 // newSidecarTestBadger returns the Badger core of an in-memory engine.
 func newSidecarTestBadger(t *testing.T) *BadgerEngine {
 	t.Helper()
-	return NewMemoryEngine().BadgerEngine
+	return newTestMemoryEngine(t).BadgerEngine
 }
 
 func sidecarTestNode(t *testing.T, b *BadgerEngine, id string, props map[string]any, at time.Time) *Node {

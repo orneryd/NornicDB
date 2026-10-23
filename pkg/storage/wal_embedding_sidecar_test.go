@@ -13,7 +13,7 @@ import (
 // sidecar write is logged as OpUpdateEmbedding, never changes node counts,
 // never rewrites the node record, and the persisted embedding reads back.
 func TestWALEngine_UpdateNodeEmbeddingSidecar(t *testing.T) {
-	base := NewMemoryEngine()
+	base := newTestMemoryEngine(t)
 	dir := t.TempDir()
 	wal, err := NewWAL(dir, nil)
 	require.NoError(t, err)

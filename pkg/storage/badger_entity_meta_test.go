@@ -9,7 +9,7 @@ import (
 )
 
 func TestBadgerEngine_GetEntityMeta_NodeRoundTrip(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	_, err := e.CreateNode(&Node{
@@ -42,7 +42,7 @@ func TestBadgerEngine_GetEntityMeta_NodeRoundTrip(t *testing.T) {
 }
 
 func TestBadgerEngine_GetEntityMeta_EdgeRoundTrip(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	_, err := e.CreateNode(&Node{ID: "test:a", Labels: []string{"L"}, Properties: map[string]any{}})
@@ -66,7 +66,7 @@ func TestBadgerEngine_GetEntityMeta_EdgeRoundTrip(t *testing.T) {
 }
 
 func TestBadgerEngine_GetEntityMeta_NotFoundReturnsError(t *testing.T) {
-	e := NewMemoryEngine()
+	e := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = e.Close() })
 
 	_, err := e.GetEntityMeta("test:nonexistent")

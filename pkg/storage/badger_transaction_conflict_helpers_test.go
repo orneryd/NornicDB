@@ -334,7 +334,7 @@ func TestBadgerTransaction_BulkCreateEdges_NodeVisibleDeletedBranch(t *testing.T
 }
 
 func TestBadgerTransaction_PinNamespaceFromIDLocked_RefreshFailureBranch(t *testing.T) {
-	engine := NewMemoryEngine()
+	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	controller := &txLifecycleControllerStub{enabled: true, err: ErrMVCCResourcePressure}
 	engine.SetLifecycleController(controller)
