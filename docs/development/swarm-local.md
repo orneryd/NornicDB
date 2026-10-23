@@ -74,7 +74,7 @@ T3 model configuration, or a command committed to the repository.
 OPENAI_API_KEY=your-key-here
 ```
 
-NornicDB uses OpenAI `text-embedding-3-small` (1536 dimensions), with **10 concurrent
+NornicDB uses OpenAI `text-embedding-3-small` (1536 dimensions), with **4 concurrent
 embedding workers**. The model's default dimensions are documented in the
 [OpenAI embedding guide](https://developers.openai.com/api/docs/guides/embeddings).
 Code submitted for embeddings goes to OpenAI. Embedding/search indexes live in
@@ -257,7 +257,8 @@ workers, producing HTTP 429 responses, plus one transient HTTP 500 batch. These
 were retryable; the observed 36,912 failed attempts were accompanied by zero
 terminal failures. Do not reset the graph or clear embeddings to reset this
 counter. Wait for pending work to drain and check for terminal errors before
-qualifying the complete corpus. Ten workers do not override the account's API
+qualifying the complete corpus. The default is now four workers to reduce
+concurrent API pressure. Worker count does not override the account's API
 limits. To rotate the key, save it in the private env file and recreate the
 container after ingestion finishes; ordinary container restart retains its old
 environment.
