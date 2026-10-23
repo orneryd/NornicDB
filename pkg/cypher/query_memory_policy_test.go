@@ -16,9 +16,12 @@ func queryMemoryPolicyFixture(t testing.TB) (*StorageExecutor, *storage.BadgerEn
 	t.Cleanup(func() { _ = base.Close() })
 	base.SetDecayEnabled(true)
 	schema := base.GetSchemaForNamespace("policy")
+	// The traversal differential executes 108 queries against this fixture.
+	// Keep fresh pending properties stable throughout that comparison; the
+	// 72-hour-old controls still exercise suppression and promotion.
 	require.NoError(t, schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{
 		Name: "age", Scope: knowledgepolicy.ScopeNode, Function: knowledgepolicy.DecayFunctionExponential,
-		HalfLifeSeconds: 1, VisibilityThreshold: 0.10, ScoreFrom: knowledgepolicy.ScoreFromCreated,
+		HalfLifeSeconds: 3600, VisibilityThreshold: 0.10, ScoreFrom: knowledgepolicy.ScoreFromCreated,
 		Enabled: true, DecayEnabled: true,
 	}))
 	require.NoError(t, schema.CreateDecayProfileBinding(knowledgepolicy.DecayProfileBinding{
