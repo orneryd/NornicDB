@@ -45,28 +45,43 @@ func containsKeywordOutsideStrings(s, keyword string) bool {
 // string literals. Unlike containsKeywordOutsideStrings, this does exact substring matching
 // without word boundary checks (useful for symbols like -> and <-).
 func containsOutsideStrings(s, substr string) bool {
+	found, _ := inspectOutsideStrings(s, substr)
+	return found
+}
+
+// inspectOutsideStrings also retains unfinished comments for statement admission.
+// It uses the same lexical walk as symbol lookup, including when normalization
+// is disabled, so admission does not add a second pass over ordinary statements.
+func inspectOutsideStrings(s, substr string) (bool, int) {
 	if substr == "" {
-		return false
+		return false, -1
 	}
 	first := substr[0]
 	for i := 0; i < len(s); i++ {
-		if end, quoted := skipCypherLexicalToken(s, i); quoted {
-			i = end - 1
+		switch c := s[i]; c {
+		case '\'', '"', '`':
+			i = skipCypherQuotedText(s, i, c) - 1
 			continue
+		case '/':
+			if end := queryCommentEnd(s, i); end >= 0 {
+				if unclosedQueryComment(s, i, end) {
+					return false, i
+				}
+				i = end - 1
+				continue
+			}
 		}
-		c := s[i]
-		if c != first {
+		if s[i] != first {
 			continue
 		}
 		if i+len(substr) > len(s) {
-			return false
+			return false, -1
 		}
 		if s[i:i+len(substr)] == substr {
-			return true
+			return true, -1
 		}
 	}
-
-	return false
+	return false, -1
 }
 
 // ========================================

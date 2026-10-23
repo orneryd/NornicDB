@@ -10,14 +10,21 @@ import (
 )
 
 func (e *StorageExecutor) validateStatementFraming(cypher string) error {
-	if containsOutsideStrings(cypher, ";") {
+	multiple, unclosed := inspectOutsideStrings(cypher, ";")
+	if unclosed >= 0 {
+		return unclosedCommentError(cypher, unclosed, ModeNormal)
+	}
+	if multiple {
 		statements := e.splitBySemicolon(cypher)
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			localization.CypherCommandRoutingMultipleStatements(len(statements)))
 	}
-	if explainProfileConflict(cypher) {
-		return nornicerrors.MarkCompileTime(newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
-			"Can't specify multiple conflicting values for execution mode"))
+	mode, body, conflict := statementExecutionModes(cypher)
+	if mode != ModeNormal && queryGapEnd(body, 0) == len(body) {
+		return emptyStatementError()
+	}
+	if conflict {
+		return executionModeConflictError()
 	}
 	// Only a statement with the word UNION in it can have UNION branches.
 	if findKeywordIndex(cypher, "UNION") < 0 || findKeywordIndex(cypher, "FINISH") < 0 {
@@ -93,8 +100,8 @@ func validateCypherPreamble(query string) error {
 	}
 	var seenVersion string
 	for rest != "" {
-		if matchKeywordAt(rest, 0, "EXPLAIN") || matchKeywordAt(rest, 0, "PROFILE") {
-			rest = strings.TrimSpace(rest[len("EXPLAIN"):])
+		if mode, inner := executionModePrefix(rest); mode != ModeNormal {
+			rest = inner
 			continue
 		}
 		if !matchKeywordAt(rest, 0, "CYPHER") {
@@ -116,6 +123,14 @@ func validateCypherPreamble(query string) error {
 			seenVersion = version
 			rest = strings.TrimSpace(rest[end:])
 		}
+		// Comments between the preamble and its body are still source text.
+		// Admit their terminator while consuming this existing prefix gap,
+		// before option parsing can misreport an unfinished comment as syntax.
+		gap, unclosed := readQueryGap(rest, 0)
+		if unclosed >= 0 {
+			return unclosedCommentError(rest, unclosed, ModeNormal)
+		}
+		rest = strings.TrimSpace(rest[gap:])
 		for rest != "" && !startsWithClauseKeyword(rest) {
 			end := 0
 			for end < len(rest) && isIdentByte(rest[end]) {
@@ -161,9 +176,9 @@ func stripCypherPreamble(query string) (string, bool) {
 	var modes []string
 	for {
 		trimmed := strings.TrimSpace(rest)
-		if matchKeywordAt(trimmed, 0, "EXPLAIN") || matchKeywordAt(trimmed, 0, "PROFILE") {
-			modes = append(modes, trimmed[:len("EXPLAIN")])
-			rest = strings.TrimSpace(trimmed[len("EXPLAIN"):])
+		if mode, inner := executionModePrefix(trimmed); mode != ModeNormal {
+			modes = append(modes, string(mode))
+			rest = inner
 			continue
 		}
 		if !matchKeywordAt(trimmed, 0, "CYPHER") {
@@ -353,26 +368,7 @@ func firstWordUpper(s string) (string, bool) {
 	return upperASCII(s[:i]), true
 }
 
-// explainProfileConflict reports whether the statement starts with both
-// EXPLAIN and PROFILE (either order), which Neo4j rejects.
 func explainProfileConflict(cypher string) bool {
-	query := strings.TrimSpace(cypher)
-	first := ""
-	for {
-		query = strings.TrimSpace(query[queryGapEnd(query, 0):])
-		query, _ = stripCypherPreamble(query)
-		mode := ""
-		if matchKeywordAt(query, 0, "EXPLAIN") {
-			mode = "EXPLAIN"
-		} else if matchKeywordAt(query, 0, "PROFILE") {
-			mode = "PROFILE"
-		} else {
-			return false
-		}
-		if first != "" && first != mode {
-			return true
-		}
-		first = mode
-		query = strings.TrimSpace(query[len(mode):])
-	}
+	_, statement, conflict := statementExecutionModes(cypher)
+	return conflict && queryGapEnd(statement, 0) < len(statement)
 }
