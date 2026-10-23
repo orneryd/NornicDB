@@ -8,45 +8,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func TestStripLeadingWithImportsForFabricRecord_MatchIsStripped(t *testing.T) {
-	query := "WITH textKey128 MATCH (tt) WHERE tt.textKey128 = textKey128 RETURN collect(tt) AS texts"
-	got := stripLeadingWithImportsForFabricRecord(query, map[string]interface{}{"textKey128": "h1"})
-	want := "MATCH (tt) WHERE tt.textKey128 = $textKey128 RETURN collect(tt) AS texts"
-	if got != want {
-		t.Fatalf("expected stripped query %q, got %q", want, got)
-	}
-}
-
-func TestStripLeadingWithImportsForFabricRecord_UnwindPipelineIsStripped(t *testing.T) {
-	query := "WITH rows UNWIND rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
-	got := stripLeadingWithImportsForFabricRecord(query, map[string]interface{}{"rows": []interface{}{}})
-	want := "UNWIND $rows AS r WITH collect(DISTINCT r.textKey128) AS keys RETURN keys"
-	if got != want {
-		t.Fatalf("expected stripped query %q, got %q", want, got)
-	}
-}
-
-func TestStripLeadingWithImportsForFabricRecord_UseClauseIsStripped(t *testing.T) {
-	query := "WITH textKey128 USE translations.txr MATCH (tt) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts"
-	got := stripLeadingWithImportsForFabricRecord(query, map[string]interface{}{"textKey128": "abc"})
-	want := "USE translations.txr MATCH (tt) WHERE tt.translationId = $textKey128 RETURN collect(tt) AS texts"
-	if got != want {
-		t.Fatalf("expected stripped query %q, got %q", want, got)
-	}
-}
-
-func TestFindLeadingWithEndLocalAndSplitCommaTopLevelLocal(t *testing.T) {
-	query := "WITH a, collect({k: b, t: c}) AS rows USE translations.txr MATCH (n) RETURN n"
-	idx := findLeadingWithEndLocal(query)
-	if idx <= 0 {
-		t.Fatalf("expected positive with-end index, got %d", idx)
-	}
-	parts := splitTopLevelComma("a, collect({k: b, t: c}) AS rows, `quoted`")
-	if len(parts) != 3 {
-		t.Fatalf("expected 3 top-level parts, got %#v", parts)
-	}
-}
-
 func TestCypherFabricExecutor_ExecuteQuery_DelegatesAndReturnsRows(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(baseStore)

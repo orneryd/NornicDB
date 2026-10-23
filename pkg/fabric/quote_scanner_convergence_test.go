@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"strings"
 	"testing"
 
@@ -40,19 +41,13 @@ func TestFabricStructuralReadersUseCanonicalQuotation(t *testing.T) {
 				parts[index] = strings.TrimSpace(parts[index])
 			}
 			require.Equal(t, []string{"a", mapText, "tail"}, parts)
-
-			parts, operators, union, err := splitTopLevelUnion("RETURN "+mapText+" AS x UNION ALL RETURN {plain: 2} AS x", nil)
-			require.NoError(t, err)
-			require.True(t, union)
-			require.Len(t, parts, 2)
-			require.Equal(t, []bool{false}, operators)
-
 			require.Equal(t, -1, indexTopLevelKeyword(mapText, "AND"))
 			require.Len(t, splitTopLevelAnd("n.x = "+mapText+" AND n.y = 1"), 2)
-
-			fragment, planErr := NewFabricPlanner(NewCatalog()).Plan("RETURN "+mapText+" AS x", "neo4j")
-			require.NoError(t, planErr)
-			require.NotNil(t, fragment)
+			q := &factsQuery{query: "RETURN " + mapText + " AS x"}
+			statement := statementOf([]string{"x"}, q.clause(resultmetadata.ClauseReturn, q.query, nil, []string{"x"}))
+			fragment, err := NewFabricPlanner(NewCatalog()).Plan(q.query, "neo4j", knownFacts(t, statement))
+			require.NoError(t, err)
+			require.Equal(t, q.query, fragment.(*FragmentExec).Query)
 		})
 	}
 }

@@ -14,11 +14,13 @@ func testHeaderProjection(query string) resultmetadata.Projection {
 	// the mock's row results. No query parser is duplicated in this package.
 	switch query {
 	case "WITH textKey128 MATCH (tt:MongoDocument) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts",
+		"WITH `textKey128` MATCH (tt:MongoDocument) WHERE tt.translationId = textKey128 RETURN collect(tt) AS texts",
 		"WITH textKey128 USE translations.txr MATCH (tt:MongoDocument) WHERE tt.language = 'es' AND tt.translationId = textKey128 RETURN collect(tt) AS texts",
 		"WITH textKey128 MATCH (tt:MongoDocument) WHERE textKey128 = tt.translationId RETURN collect(tt) AS texts",
 		"WITH textKey128 MATCH (tt) WHERE tt.id = textKey128 RETURN collect(tt) AS texts":
 		return resultmetadata.Projection{Expressions: []string{"collect(tt)"}, Names: resultmetadata.Known([]string{"texts"})}
-	case "WITH id MATCH (m:Person) WHERE m.id = id RETURN m.name AS name, m.age AS age":
+	case "WITH id MATCH (m:Person) WHERE m.id = id RETURN m.name AS name, m.age AS age",
+		"WITH `id` MATCH (m:Person) WHERE m.id = id RETURN m.name AS name, m.age AS age":
 		return resultmetadata.Projection{Expressions: []string{"m.name", "m.age"}, Names: resultmetadata.Known([]string{"name", "age"})}
 	case "WITH id MATCH (n) WHERE n.id = id RETURN n.name AS name, n.age AS age":
 		return resultmetadata.Projection{Expressions: []string{"n.name", "n.age"}, Names: resultmetadata.Known([]string{"name", "age"})}
@@ -30,6 +32,7 @@ func testHeaderProjection(query string) resultmetadata.Projection {
 	case "WITH sourceId USE translations.txr MATCH (tt:MongoDocument) WHERE tt.translationId = sourceId AND tt.language IS NOT NULL AND tt.translatedText IS NOT NULL RETURN tt.language AS language, tt.translatedText AS translatedText ORDER BY tt.language DESC LIMIT 1":
 		return resultmetadata.Projection{Expressions: []string{"tt.language", "tt.translatedText"}, Names: resultmetadata.Known([]string{"language", "translatedText"}), Modifiers: "ORDER BY tt.language DESC LIMIT 1"}
 	case "WITH sourceId MATCH (tt:MongoDocument)-[:IN_LANG]->(l:Lang) WHERE tt.translationId = sourceId RETURN count(*) AS c",
+		"WITH `sourceId` MATCH (tt:MongoDocument)-[:IN_LANG]->(l:Lang) WHERE tt.translationId = sourceId RETURN count(*) AS c",
 		"WITH sourceId MATCH (tt:MongoDocument) WHERE tt.translationId = sourceId AND sourceId IS NOT NULL RETURN count(*) AS c":
 		return resultmetadata.Projection{Expressions: []string{"count(*)"}, Names: resultmetadata.Known([]string{"c"})}
 	}

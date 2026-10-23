@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -23,7 +24,9 @@ func TestQueryGatewayExecute(t *testing.T) {
 		NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil),
 	)
 
-	res, err := gateway.Execute(context.Background(), NewFabricTransaction("tx-1"), "MATCH (n) RETURN 1 AS ok", "db1", nil, "")
+	q := &factsQuery{query: "MATCH (n) RETURN 1 AS ok"}
+	facts := knownFacts(t, statementOf([]string{"ok"}, q.clause(resultmetadata.ClauseMatch, "MATCH (n)", nil, []string{"n"}), q.clause(resultmetadata.ClauseReturn, "RETURN 1 AS ok", []string{"n"}, []string{"ok"})))
+	res, err := gateway.Execute(context.Background(), NewFabricTransaction("tx-1"), q.query, "db1", nil, "", facts)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, []string{"ok"}, res.Columns)
@@ -31,6 +34,6 @@ func TestQueryGatewayExecute(t *testing.T) {
 }
 
 func TestQueryGatewayExecuteInvalidConfig(t *testing.T) {
-	_, err := (&QueryGateway{}).Execute(context.Background(), nil, "MATCH (n) RETURN n", "nornic", nil, "")
+	_, err := (&QueryGateway{}).Execute(context.Background(), nil, "MATCH (n) RETURN n", "nornic", nil, "", resultmetadata.Facts{})
 	require.Error(t, err)
 }

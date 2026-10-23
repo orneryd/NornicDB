@@ -152,7 +152,7 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 		e.execMu.Lock()
 		defer e.execMu.Unlock()
 	}
-	loc, execParams, ctx, err := e.prepareExecDispatch(ctx, tx, f, params)
+	loc, ctx, err := e.prepareExecDispatch(ctx, tx, f, params)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -161,13 +161,14 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 		defer e.execMu.Unlock()
 	}
 	recordBindings, _ := RecordBindingsFromContext(ctx)
+	ctx = withRetainedFragmentBindings(ctx, f.Call, recordBindings)
 
 	switch l := loc.(type) {
 	case *LocationLocal:
 		if e.local == nil {
 			return nil, 0, fmt.Errorf("local executor not configured")
 		}
-		res, err := e.local.ExecuteWithRecord(ctx, l, f.Query, execParams, recordBindings)
+		res, err := e.local.ExecuteWithRecord(ctx, l, f.Query, params, recordBindings)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -178,7 +179,8 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 		if e.remote == nil {
 			return nil, 0, fmt.Errorf("remote executor not configured")
 		}
-		res, err := e.remote.Execute(ctx, l, f.Query, execParams, authToken)
+		query, remoteParams := remoteImportStatement(f, params, recordBindings)
+		res, err := e.remote.Execute(ctx, l, query, remoteParams, authToken)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -240,26 +242,16 @@ func wrapPipelineIterator(ctx context.Context, it RowIterator, prefetch int) Row
 
 // prepareExecDispatch resolves the graph a fragment runs on
 // (resolveExecGraph), preserves its catalog name for selection checks, joins the distributed
-// transaction, and merges the row's variables into the parameters.
-func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}) (Location, map[string]interface{}, context.Context, error) {
-	recordBindings, _ := RecordBindingsFromContext(ctx)
-	execParams := params
-	if len(recordBindings) > 0 {
-		execParams = make(map[string]interface{}, util.SafePreallocSum(len(params), len(recordBindings)))
-		for k, v := range params {
-			execParams[k] = v
-		}
-		for k, v := range recordBindings {
-			execParams[k] = v
-		}
-	}
-	graph, loc, err := e.resolveExecGraph(ctx, f, execParams)
+// transaction. Parameters remain separate from the row bound on ctx, including
+// while the graph argument owner evaluates USE graph.byName(...).
+func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}) (Location, context.Context, error) {
+	graph, loc, err := e.resolveExecGraph(ctx, f, params)
 	if err != nil {
-		return nil, nil, ctx, err
+		return nil, ctx, err
 	}
 	if e.authorizeGraph != nil {
 		if err := e.authorizeGraph(ctx, graph, f.Query); err != nil {
-			return nil, nil, ctx, err
+			return nil, ctx, err
 		}
 	}
 	ctx = context.WithValue(ctx, graphSelectionContextKey{}, graph)
@@ -267,12 +259,12 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 		participant := participantKeyFromLocation(loc)
 		sub, err := tx.GetOrOpen(participant, f.IsWrite)
 		if err != nil {
-			return nil, nil, ctx, err
+			return nil, ctx, err
 		}
 		ctx = WithFabricTransaction(ctx, tx)
 		ctx = WithSubTransaction(ctx, sub)
 	}
-	return loc, execParams, ctx, nil
+	return loc, ctx, nil
 }
 
 // SetGraphAuthorizer installs the statement owner's selection check. Dispatch
@@ -459,6 +451,13 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 	for inputIter.Next() {
 		inputRow := inputIter.Row()
 		mergedBind := bindingsFromParentAndRow(parentBindings, inputCols, inputRow)
+		if f.Call != nil {
+			imported := make(map[string]interface{}, len(f.Call.Imports))
+			for _, name := range f.Call.Imports {
+				imported[name] = mergedBind[name]
+			}
+			mergedBind = imported
+		}
 		innerCtx := WithRecordBindings(ctx, mergedBind)
 
 		if execFrag, ok := innerFragment.(*FragmentExec); ok && !f.Projection && !f.Optional && !f.Unit && execFrag.Graph == nil {
@@ -483,7 +482,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		// nothing: the input row is kept exactly once, whatever rows the body
 		// produced internally (none, or a nested CALL's).
 		if f.Unit {
-			result.Rows = append(result.Rows, newCompiledRowCombiner(result.Columns, outerIdx, nil).combine(inputRow, nil))
+			result.Rows = append(result.Rows, newCompiledRowCombiner(result.Columns, outerIdx, nil).withRetained(parentBindings).combine(inputRow, nil))
 			continue
 		}
 		if len(innerResult.Rows) == 0 {
@@ -506,13 +505,13 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 		if len(innerResult.Rows) == 0 {
 			// OPTIONAL CALL keeps the input row with null for the body's columns.
 			if f.Optional {
-				combiner := newCompiledRowCombiner(result.Columns, outerIdx, buildColumnIndex(innerResult.Columns))
+				combiner := newCompiledRowCombiner(result.Columns, outerIdx, buildColumnIndex(innerResult.Columns)).withRetained(parentBindings)
 				result.Rows = append(result.Rows, combiner.combine(inputRow, make([]interface{}, len(innerResult.Columns))))
 			}
 			continue
 		}
 		innerIdx := buildColumnIndex(innerResult.Columns)
-		combiner := newCompiledRowCombiner(result.Columns, outerIdx, innerIdx)
+		combiner := newCompiledRowCombiner(result.Columns, outerIdx, innerIdx).withRetained(parentBindings)
 		for _, innerRow := range innerResult.Rows {
 			combined := combiner.combine(inputRow, innerRow)
 			result.Rows = append(result.Rows, combined)
@@ -562,15 +561,11 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 		return nil, false, nil
 	}
 
-	m := reApplyLookupRows.FindStringSubmatch(trimmed)
-	if len(m) != 6 {
+	spec, recognized := parseApplyCorrelatedLookupSubquery(inner)
+	if !recognized || spec.returnModifiers != "" {
 		return nil, false, nil
 	}
-	importCol := strings.TrimSpace(m[1])
-	useClause := strings.TrimSpace(m[2])
-	matchPart := strings.TrimSpace(m[3])
-	wherePart := strings.TrimSpace(m[4])
-	returnPart := strings.TrimSpace(m[5])
+	importCol, useClause, matchPart, wherePart, returnPart := spec.importCol, spec.useClause, spec.matchPart, spec.wherePart, spec.returnProjection
 	if importCol == "" || wherePart == "" || returnPart == "" {
 		return nil, false, nil
 	}
@@ -766,8 +761,6 @@ type applyCorrelatedLookupSpec struct {
 	returnModifiers  string
 }
 
-var reApplyLookupRows = regexp.MustCompile(`(?is)^WITH\s+([A-Za-z_][A-Za-z0-9_]*)\s+((?:USE\s+[A-Za-z0-9_.` + "`" + `]+\s+)?)MATCH\s+(.+?)\s+WHERE\s+(.+?)\s+RETURN\s+(.+?)\s*;?\s*$`)
-
 type fabricReturnItem struct {
 	expr  string
 	prop  string
@@ -801,7 +794,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 		return nil, false, nil
 	}
 
-	spec, ok := parseApplyCorrelatedLookupSubquery(trimmed)
+	spec, ok := parseApplyCorrelatedLookupSubquery(inner)
 	if !ok || spec.importCol == "" || strings.TrimSpace(spec.wherePart) == "" || strings.TrimSpace(spec.returnModifiers) != "" {
 		return nil, false, nil
 	}
@@ -1002,7 +995,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 		return nil, false, nil
 	}
 
-	spec, ok := parseApplyCorrelatedLookupSubquery(trimmed)
+	spec, ok := parseApplyCorrelatedLookupSubquery(inner)
 	if !ok || spec.importCol == "" || strings.TrimSpace(spec.wherePart) == "" || strings.TrimSpace(spec.returnProjection) == "" || strings.TrimSpace(spec.returnModifiers) != "" {
 		return nil, false, nil
 	}
@@ -1244,7 +1237,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 		return nil, false, nil
 	}
 
-	spec, ok := parseApplyCorrelatedLookupSubquery(trimmed)
+	spec, ok := parseApplyCorrelatedLookupSubquery(inner)
 	if !ok || spec.importCol == "" || strings.TrimSpace(spec.wherePart) == "" || strings.TrimSpace(spec.returnProjection) == "" {
 		return nil, false, nil
 	}
@@ -1624,28 +1617,12 @@ func parseSimpleCollectReturnItem(returnPart string) (collectExpr string, alias 
 	return inner, alias, true
 }
 
-func parseApplyCorrelatedLookupSubquery(query string) (applyCorrelatedLookupSpec, bool) {
-	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(query), ";"))
-	if !startsWithFold(trimmed, "WITH ") {
+func parseApplyCorrelatedLookupSubquery(fragment *FragmentExec) (applyCorrelatedLookupSpec, bool) {
+	importCol, rest, bound := lookupImportPrefix(fragment)
+	if !bound {
 		return applyCorrelatedLookupSpec{}, false
 	}
-
-	rest := strings.TrimSpace(trimmed[len("WITH "):])
-	if rest == "" {
-		return applyCorrelatedLookupSpec{}, false
-	}
-	if commaIdx := strings.Index(rest, ","); commaIdx >= 0 && commaIdx < strings.Index(rest+" ", " ") {
-		return applyCorrelatedLookupSpec{}, false
-	}
-
-	importCol, remainder := firstToken(rest)
-	if importCol == "" || !isSimpleIdentifier(importCol) {
-		return applyCorrelatedLookupSpec{}, false
-	}
-	rest = strings.TrimSpace(remainder)
-	if rest == "" {
-		return applyCorrelatedLookupSpec{}, false
-	}
+	rest = strings.TrimSpace(strings.TrimSuffix(rest, ";"))
 
 	useClause := ""
 	if startsWithFold(rest, "USE ") {
@@ -2850,314 +2827,8 @@ func isSimpleIdentifier(s string) bool {
 	return true
 }
 
-func importColumnsFromFragment(f Fragment) []string {
-	if f == nil {
-		return nil
-	}
-	if init, ok := f.(*FragmentInit); ok {
-		if len(init.ImportColumns) > 0 {
-			return init.ImportColumns
-		}
-		return init.Columns
-	}
-	return nil
-}
-
 func quoteCypherIdentifier(identifier string) string {
-	if isSimpleIdentifier(identifier) {
-		return identifier
-	}
 	return "`" + strings.ReplaceAll(identifier, "`", "``") + "`"
-}
-
-func rewriteFragmentWithImports(fragment Fragment) Fragment {
-	if fragment == nil {
-		return nil
-	}
-
-	switch f := fragment.(type) {
-	case *FragmentExec:
-		importCols := importColumnsFromFragment(f.Input)
-		if rewritten := rewriteLeadingWithImports(f.Query, importCols); rewritten != f.Query {
-			copied := *f
-			copied.Query = rewritten
-			return &copied
-		}
-		return fragment
-	case *FragmentApply:
-		copied := *f
-		copied.Input = rewriteFragmentWithImports(copied.Input)
-		copied.Inner = rewriteFragmentWithImports(copied.Inner)
-		return &copied
-	case *FragmentUnion:
-		copied := *f
-		copied.LHS = rewriteFragmentWithImports(copied.LHS)
-		copied.RHS = rewriteFragmentWithImports(copied.RHS)
-		return &copied
-	default:
-		return fragment
-	}
-}
-
-func rewriteFragmentWithRuntimeImports(fragment Fragment, runtimeCols []string) Fragment {
-	if fragment == nil {
-		return nil
-	}
-	switch f := fragment.(type) {
-	case *FragmentExec:
-		importCols := importColumnsFromFragment(f.Input)
-		merged := mergeImportColumns(runtimeCols, importCols)
-		if rewritten := rewriteLeadingWithImports(f.Query, merged); rewritten != f.Query {
-			copied := *f
-			copied.Query = rewritten
-			return &copied
-		}
-		return fragment
-	case *FragmentApply:
-		copied := *f
-		copied.Input = rewriteFragmentWithRuntimeImports(copied.Input, runtimeCols)
-		copied.Inner = rewriteFragmentWithRuntimeImports(copied.Inner, runtimeCols)
-		return &copied
-	case *FragmentUnion:
-		copied := *f
-		copied.LHS = rewriteFragmentWithRuntimeImports(copied.LHS, runtimeCols)
-		copied.RHS = rewriteFragmentWithRuntimeImports(copied.RHS, runtimeCols)
-		return &copied
-	default:
-		return fragment
-	}
-}
-
-func mergeImportColumns(a, b []string) []string {
-	seen := make(map[string]struct{}, len(a)+len(b))
-	out := make([]string, 0, len(a)+len(b))
-	for _, col := range a {
-		col = strings.TrimSpace(col)
-		if col == "" {
-			continue
-		}
-		if _, ok := seen[col]; ok {
-			continue
-		}
-		seen[col] = struct{}{}
-		out = append(out, col)
-	}
-	for _, col := range b {
-		col = strings.TrimSpace(col)
-		if col == "" {
-			continue
-		}
-		if _, ok := seen[col]; ok {
-			continue
-		}
-		seen[col] = struct{}{}
-		out = append(out, col)
-	}
-	return out
-}
-
-func fragmentHasStaticImports(fragment Fragment) bool {
-	switch f := fragment.(type) {
-	case *FragmentExec:
-		return len(importColumnsFromFragment(f.Input)) > 0
-	case *FragmentApply:
-		return fragmentHasStaticImports(f.Input) || fragmentHasStaticImports(f.Inner)
-	case *FragmentUnion:
-		return fragmentHasStaticImports(f.LHS) || fragmentHasStaticImports(f.RHS)
-	default:
-		return false
-	}
-}
-
-func rewriteLeadingWithImports(query string, importCols []string) string {
-	if len(importCols) == 0 {
-		return query
-	}
-	assignments := make([]string, 0, len(importCols))
-	for _, col := range importCols {
-		col = strings.TrimSpace(col)
-		if col == "" {
-			continue
-		}
-		assignments = append(assignments, "$"+col+" AS "+col)
-	}
-	if len(assignments) == 0 {
-		return query
-	}
-
-	trimmed := strings.TrimSpace(query)
-	if !startsWithFold(trimmed, "WITH ") {
-		// For projection-only fragments produced by planner (e.g. trailing
-		// RETURN after APPLY), import outer variables explicitly.
-		if startsWithFold(trimmed, "RETURN ") {
-			return "WITH " + strings.Join(assignments, ", ") + " " + trimmed
-		}
-		return query
-	}
-
-	withEnd, ok := findLeadingWithClauseEnd(trimmed)
-	if !ok || withEnd <= 0 {
-		return query
-	}
-	withClause := strings.TrimSpace(trimmed[:withEnd])
-	rest := strings.TrimSpace(trimmed[withEnd:])
-	if rest == "" {
-		return "WITH " + strings.Join(assignments, ", ")
-	}
-	// Keep correlated semantics for simple import-only WITH clauses by
-	// substituting imported vars directly into MATCH predicates.
-	if (startsWithFold(rest, "MATCH ") || startsWithFold(rest, "OPTIONAL MATCH ")) &&
-		isSimpleWithImportClause(withClause, importCols) {
-		return substituteVarsWithParams(rest, importCols)
-	}
-	return "WITH " + strings.Join(assignments, ", ") + " " + rest
-}
-
-func isSimpleWithImportClause(withClause string, importCols []string) bool {
-	if len(importCols) == 0 {
-		return false
-	}
-	trimmed := strings.TrimSpace(withClause)
-	if !startsWithFold(trimmed, "WITH ") {
-		return false
-	}
-	lhs := strings.TrimSpace(trimmed[len("WITH "):])
-	if lhs == "" {
-		return false
-	}
-	parts := splitTopLevelCSV(lhs)
-	if len(parts) == 0 {
-		return false
-	}
-	allowed := make(map[string]struct{}, len(importCols))
-	for _, col := range importCols {
-		col = strings.TrimSpace(col)
-		if col == "" {
-			continue
-		}
-		allowed[col] = struct{}{}
-	}
-	for _, p := range parts {
-		name := strings.TrimSpace(p)
-		if !isSimpleIdentifier(name) {
-			return false
-		}
-		if _, ok := allowed[name]; !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func substituteVarsWithParams(query string, vars []string) string {
-	out := query
-	for _, v := range vars {
-		v = strings.TrimSpace(v)
-		if v == "" {
-			continue
-		}
-		out = replaceStandaloneVar(out, v, "$"+v)
-	}
-	return out
-}
-
-func replaceStandaloneVar(s, ident, replacement string) string {
-	if ident == "" || len(s) < len(ident) {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s) + 8)
-	for i := 0; i < len(s); {
-		if next, quoted := cyphertext.SkipToken(s, i); quoted {
-			b.WriteString(s[i:next])
-			i = next
-			continue
-		}
-		ch := s[i]
-
-		if i+len(ident) <= len(s) && s[i:i+len(ident)] == ident {
-			prevOK := i == 0 || (!isIdentChar(s[i-1]) && s[i-1] != '.')
-			next := i + len(ident)
-			nextOK := next >= len(s) || !isIdentChar(s[next])
-			if prevOK && nextOK {
-				b.WriteString(replacement)
-				i = next
-				continue
-			}
-		}
-		b.WriteByte(ch)
-		i++
-	}
-	return b.String()
-}
-
-func findLeadingWithClauseEnd(query string) (int, bool) {
-	if query == "" {
-		return 0, false
-	}
-	i := skipLeadingSpace(query, 0)
-	if !hasKeywordAt(query, i, "WITH") {
-		return 0, false
-	}
-	i += len("WITH")
-	i = skipLeadingSpace(query, i)
-
-	depth := 0
-
-	for idx := i; idx < len(query); idx++ {
-		if next, quoted := cyphertext.SkipToken(query, idx); quoted {
-			idx = next - 1
-			continue
-		}
-		ch := query[idx]
-		switch ch {
-		case '(', '[', '{':
-			depth++
-			continue
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-			continue
-		}
-
-		if depth == 0 && isCypherClauseStart(query, idx) {
-			return idx, true
-		}
-	}
-
-	return len(query), true
-}
-
-func isCypherClauseStart(query string, idx int) bool {
-	for _, kw := range clauseStartKeywords {
-		if hasKeywordAt(query, idx, kw) {
-			return true
-		}
-	}
-	return false
-}
-
-var clauseStartKeywords = [...]string{
-	"OPTIONAL MATCH",
-	"DETACH DELETE",
-	"ORDER BY",
-	"LOAD CSV",
-	"USE",
-	"MATCH",
-	"RETURN",
-	"CALL",
-	"CREATE",
-	"MERGE",
-	"UNWIND",
-	"WHERE",
-	"SET",
-	"DELETE",
-	"WITH",
-	"FOREACH",
-	"UNION",
-	"LIMIT",
-	"SKIP",
 }
 
 func hasKeywordAt(query string, idx int, keyword string) bool {
@@ -3182,13 +2853,6 @@ func hasKeywordAt(query string, idx int, keyword string) bool {
 		}
 	}
 	return true
-}
-
-func skipLeadingSpace(s string, idx int) int {
-	for idx < len(s) && unicode.IsSpace(rune(s[idx])) {
-		idx++
-	}
-	return idx
 }
 
 // executeUnion executes both branches and merges results.
@@ -3451,12 +3115,15 @@ func combineRowsByIndexes(resultCols []string, outerIdx map[string]int, outerRow
 }
 
 type compiledRowCombiner struct {
+	columns   []string
 	fromOuter []int
 	fromInner []int
+	retained  map[string]interface{}
 }
 
 func newCompiledRowCombiner(resultCols []string, outerIdx map[string]int, innerIdx map[string]int) compiledRowCombiner {
 	c := compiledRowCombiner{
+		columns:   resultCols,
 		fromOuter: make([]int, len(resultCols)),
 		fromInner: make([]int, len(resultCols)),
 	}
@@ -3476,8 +3143,25 @@ func newCompiledRowCombiner(resultCols []string, outerIdx map[string]int, innerI
 	return c
 }
 
+// withRetained preserves scoped CALL imports across fragment boundaries. They
+// remain visible in the body even when WITH has dropped them from the rows a
+// prefix returns. A column actually supplied by either row always wins, even
+// when its value is null.
+func (c compiledRowCombiner) withRetained(bindings map[string]interface{}) compiledRowCombiner {
+	c.retained = bindings
+	return c
+}
+
 func (c compiledRowCombiner) combine(outerRow []interface{}, innerRow []interface{}) []interface{} {
-	return NewJoinedRowView(outerRow, innerRow, c.fromOuter, c.fromInner).Materialize()
+	row := NewJoinedRowView(outerRow, innerRow, c.fromOuter, c.fromInner).Materialize()
+	if len(c.retained) > 0 {
+		for i, name := range c.columns {
+			if c.fromOuter[i] < 0 && c.fromInner[i] < 0 {
+				row[i] = c.retained[name]
+			}
+		}
+	}
+	return row
 }
 
 // deduplicateRows removes duplicate rows based on string representation.

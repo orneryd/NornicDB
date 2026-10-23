@@ -102,10 +102,12 @@ func statementHasReturningOperator(statement resultmetadata.Statement) bool {
 
 func projectionDescriptor(plan *returnProjectionPlan) resultmetadata.Projection {
 	expressions := make([]string, 0, len(plan.projections))
+	passThrough := len(plan.projections) > 0
 	for _, item := range plan.projections {
 		expressions = append(expressions, item.expr)
+		passThrough = passThrough && item.variable != "" && item.variable == item.alias
 	}
-	return resultmetadata.Projection{Expressions: expressions, Names: resultmetadata.Known(plan.columns), Distinct: plan.distinct, Modifiers: plan.modifiers}
+	return resultmetadata.Projection{Expressions: expressions, Names: resultmetadata.Known(plan.columns), Distinct: plan.distinct, Modifiers: plan.modifiers, Predicate: plan.predicate, PassThrough: passThrough}
 }
 
 func statementUsesParticipant(statement resultmetadata.Statement) bool {

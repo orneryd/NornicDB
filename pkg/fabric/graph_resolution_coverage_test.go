@@ -3,6 +3,7 @@ package fabric
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"strings"
 	"testing"
 
@@ -252,7 +253,12 @@ func (r *recordingCypherExecutor) ExecuteQueryWithRecord(_ context.Context, dbNa
 // the query on the constituent it names.
 func TestFabricExecutor_DynamicUseRunsOnResolvedConstituent(t *testing.T) {
 	catalog := graphResolutionCatalog()
-	fragment, err := NewFabricPlanner(catalog).Plan("USE graph.byName($g) MATCH (n) RETURN n", "cmp")
+	q := &factsQuery{query: "USE graph.byName($g) MATCH (n) RETURN n"}
+	statement := statementOf([]string{"n"},
+		q.clause(resultmetadata.ClauseUse, "USE graph.byName($g)", nil, nil),
+		q.clause(resultmetadata.ClauseMatch, "MATCH (n)", nil, []string{"n"}),
+		q.clause(resultmetadata.ClauseReturn, "RETURN n", []string{"n"}, []string{"n"}))
+	fragment, err := NewFabricPlanner(catalog).Plan(q.query, "cmp", knownFacts(t, statement))
 	require.NoError(t, err)
 
 	recorder := &recordingCypherExecutor{}

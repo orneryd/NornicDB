@@ -302,7 +302,7 @@ func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher str
 	if dbFromCtx := GetUseDatabaseFromContext(ctx); strings.TrimSpace(dbFromCtx) != "" {
 		sessionDB = dbFromCtx
 	}
-	fragment, err := e.planFabricQuery(catalog, cypher, sessionDB)
+	fragment, err := e.planFabricQuery(ctx, catalog, cypher, sessionDB)
 	if err != nil {
 		return nil, fabricGraphReferenceError(err)
 	}
@@ -372,22 +372,29 @@ var fabricUnionContract = fabric.UnionContract{
 	},
 }
 
-func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
+func (e *StorageExecutor) planFabricQuery(ctx context.Context, catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
+	cypher25 := cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(cypher) == "25"
+	incoming := e.resultIncomingScope()
+	var names []string
+	incoming.Visit(func(known []string) { names = known }, func() {})
+	key := cypher
+	if cypher25 || len(names) > 0 {
+		key = fmt.Sprintf("%t:%q:%s", cypher25, names, cypher)
+	}
 	if e.fabricPlanCache != nil {
-		if cached, found := e.fabricPlanCache.Get(cypher, sessionDB); found && cached != nil {
+		if cached, found := e.fabricPlanCache.Get(key, sessionDB); found && cached != nil {
 			return cached, nil
 		}
 	}
 
 	planner := fabric.NewFabricPlanner(catalog)
-	// A name spelled UNION, OPTIONAL or RETURN is read as ordinary statements read it.
-	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
-	fragment, err := planner.Plan(cypher, sessionDB)
+	facts := e.StatementFactsWith(cypher, incoming, cypher25, e.participantSchemaForStatement(ctx, cypher))
+	fragment, err := planner.Plan(cypher, sessionDB, facts)
 	if err != nil {
 		return nil, err
 	}
 	if e.fabricPlanCache != nil {
-		e.fabricPlanCache.Put(cypher, sessionDB, fragment)
+		e.fabricPlanCache.Put(key, sessionDB, fragment)
 	}
 	return fragment, nil
 }
@@ -647,13 +654,13 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 	}
 	if len(recordBindings) > 0 {
 		exec.fabricRecordBindings = recordBindings
-		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
 	}
 	ctx = withExecutionDatabase(ctx, dbName)
 	return c.executeFragmentQuery(ctx, exec, query, params)
 }
 
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+	ctx = withPipelineImports(ctx, pipelineRow(fabric.RetainedFragmentBindings(ctx)))
 	// Local fragments bypass implicit execution's decision. Classify this
 	// fragment itself: writes and procedures must retain full node reads.
 	exec.readOnlyQueryNodes = exec.readsQueryNodesWithoutVectors(exec.analyzer.Analyze(query))
@@ -670,75 +677,6 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	return result.Columns, result.Rows, nil
 }
 
-func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[string]interface{}) string {
-	if len(recordBindings) == 0 {
-		return query
-	}
-	trimmed := strings.TrimSpace(query)
-	if !strings.HasPrefix(upperASCII(trimmed), "WITH ") {
-		return query
-	}
-	withEnd := findLeadingWithEndLocal(trimmed)
-	if withEnd <= 0 || withEnd >= len(trimmed) {
-		return query
-	}
-	withClause := strings.TrimSpace(trimmed[len("WITH "):withEnd])
-	rest := strings.TrimSpace(trimmed[withEnd:])
-	if rest == "" {
-		return query
-	}
-	// Stripping is safe for simple imported bindings when the next clause is a
-	// top-level read/projection/pipeline clause that can resolve identifiers from
-	// Fabric record bindings.
-	if !(startsWithKeywordFold(rest, "MATCH") ||
-		startsWithKeywordFold(rest, "OPTIONAL MATCH") ||
-		startsWithKeywordFold(rest, "RETURN") ||
-		startsWithKeywordFold(rest, "UNWIND") ||
-		startsWithKeywordFold(rest, "USE")) {
-		return query
-	}
-	imports := splitTopLevelComma(withClause)
-	if len(imports) == 0 {
-		return query
-	}
-	for _, item := range imports {
-		name := strings.TrimSpace(item)
-		if name == "" || strings.Contains(name, " ") {
-			return query
-		}
-		if _, ok := recordBindings[name]; !ok {
-			return query
-		}
-	}
-	rewritten := rest
-	local := localOccurrences{text: rest}
-	for _, item := range imports {
-		name := strings.TrimSpace(item)
-		rewritten = replaceIdentifierOutsideQuotesUnless(rewritten, name, "$"+name, &local)
-	}
-	return rewritten
-}
-
-func findLeadingWithEndLocal(query string) int {
-	const prefix = "WITH "
-	if len(query) <= len(prefix) {
-		return -1
-	}
-	body := query[len(prefix):]
-	end := -1
-	for _, keyword := range [...]string{
-		"MATCH", "OPTIONAL MATCH", "RETURN", "WHERE", "USE", "WITH", "CALL",
-		"CREATE", "MERGE", "UNWIND", "SET", "DELETE", "DETACH DELETE",
-	} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && (end < 0 || index < end) {
-			end = index
-		}
-	}
-	if end < 0 {
-		return -1
-	}
-	return len(prefix) + end
-}
 func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, sub *fabric.SubTransaction, dbName string, engine storage.Engine) (*StorageExecutor, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -801,9 +739,10 @@ func (c *cypherFabricExecutor) bindCallbacksOnce(sub *fabric.SubTransaction, com
 // parameters and the current row's variables.
 func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
 	ctx = withQueryParams(ctx, values)
+	record, _ := fabric.RecordBindingsFromContext(ctx)
 	out := make([]string, len(expressions))
 	for i, expression := range expressions {
-		value, ok := e.evaluateRowExpressionWithContext(ctx, expression, pipelineRow(values))
+		value, ok := e.evaluateRowExpressionWithContext(ctx, expression, pipelineRow(record))
 		if !ok {
 			if err, undefined := undefinedVariableError(expression); undefined {
 				return nil, err

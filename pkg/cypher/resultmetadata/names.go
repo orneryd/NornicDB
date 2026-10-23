@@ -43,6 +43,11 @@ type Projection struct {
 	Standalone  bool
 	Distinct    bool
 	Modifiers   string
+	// Predicate is a WITH filter, evaluated after its projection modifiers.
+	Predicate string
+	// PassThrough means every expression is a variable projected under its
+	// own name. Literal words such as true are distinguished by syntax.
+	PassThrough bool
 }
 
 // ProjectionProvider supplies the canonical single-clause projection reader.
