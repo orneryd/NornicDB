@@ -509,31 +509,15 @@ func encodePackStreamDateTimeInto(dst []byte, t time.Time) []byte {
 }
 
 func encodePackStreamDateTimeIntoWithUTC(dst []byte, t time.Time, useUTCDateTimeStructs bool) []byte {
-	_, offsetSeconds := t.Zone()
-	sig := byte(0x49)
-	if !useUTCDateTimeStructs {
-		sig = 0x46
-	}
-	dst = append(dst, 0xB3, sig)
-	dst = encodePackStreamIntInto(dst, t.Unix())
-	dst = encodePackStreamIntInto(dst, int64(t.Nanosecond()))
-	dst = encodePackStreamIntInto(dst, int64(offsetSeconds))
-	return dst
+	return encodePackStreamCypherDateTimeInto(dst, cypher.CypherDateTime{Time: t}, useUTCDateTimeStructs)
 }
 
 func encodePackStreamZonedDateTimeIntoWithUTC(dst []byte, value time.Time, useUTCDateTimeStructs bool) []byte {
 	zoneID := value.Location().String()
 	if !strings.Contains(zoneID, "/") {
-		return encodePackStreamDateTimeIntoWithUTC(dst, value, useUTCDateTimeStructs)
+		zoneID = ""
 	}
-	signature := byte(0x69)
-	if !useUTCDateTimeStructs {
-		signature = 0x66
-	}
-	dst = append(dst, 0xB3, signature)
-	dst = encodePackStreamIntInto(dst, value.Unix())
-	dst = encodePackStreamIntInto(dst, int64(value.Nanosecond()))
-	return encodePackStreamStringInto(dst, zoneID)
+	return encodePackStreamCypherDateTimeInto(dst, cypher.CypherDateTime{Time: value, ZoneID: zoneID}, useUTCDateTimeStructs)
 }
 
 func encodePackStreamDateTime(t time.Time) []byte {
@@ -585,17 +569,35 @@ func encodePackStreamLocalDateTimeValueInto(dst []byte, value time.Time) []byte 
 }
 
 func encodePackStreamCypherDateTimeInto(dst []byte, value cypher.CypherDateTime, useUTCDateTimeStructs bool) []byte {
-	if value.ZoneID == "" {
-		return encodePackStreamDateTimeIntoWithUTC(dst, value.Time, useUTCDateTimeStructs)
-	}
-	signature := byte(0x69)
+	_, offset := value.Time.Zone()
+	seconds := value.Time.Unix()
+	signature := byte(0x49)
 	if !useUTCDateTimeStructs {
-		signature = 0x66
+		// Legacy seconds describe the local wall clock, not the UTC instant.
+		seconds += int64(offset)
+		signature = 0x46
+	}
+	if value.ZoneID != "" {
+		signature += 0x20
 	}
 	dst = append(dst, 0xB3, signature)
-	dst = encodePackStreamIntInto(dst, value.Time.Unix())
+	dst = encodePackStreamIntInto(dst, seconds)
 	dst = encodePackStreamIntInto(dst, int64(value.Time.Nanosecond()))
-	return encodePackStreamStringInto(dst, value.ZoneID)
+	if value.ZoneID != "" {
+		return encodePackStreamStringInto(dst, value.ZoneID)
+	}
+	return encodePackStreamIntInto(dst, int64(offset))
+}
+
+func decodePackStreamDateTime(seconds, nanos int64, location *time.Location, useUTCDateTimeStructs bool) time.Time {
+	value := time.Unix(seconds, nanos)
+	if useUTCDateTimeStructs {
+		return value.In(location)
+	}
+	// Interpret the legacy wall-clock components in the supplied zone. Looking
+	// up the offset at time.Unix(seconds, nanos) instead is wrong near DST changes.
+	value = value.UTC()
+	return time.Date(value.Year(), value.Month(), value.Day(), value.Hour(), value.Minute(), value.Second(), value.Nanosecond(), location)
 }
 
 func encodePackStreamCypherDurationInto(dst []byte, value *cypher.CypherDuration) []byte {
@@ -1726,7 +1728,7 @@ func decodeStructureFields(data []byte, offset int, fieldCount int, signature by
 			offsetSec, okOffset := toInt64Field(fields[2])
 			if okSec && okNsec && okOffset {
 				loc := time.FixedZone("", int(offsetSec))
-				return cypher.CypherDateTime{Time: time.Unix(sec, nsec).In(loc)}, fieldsConsumed, nil
+				return cypher.CypherDateTime{Time: decodePackStreamDateTime(sec, nsec, loc, signature == 0x49)}, fieldsConsumed, nil
 			}
 		}
 		return map[string]any{"_type": "DateTime", "fields": fields}, fieldsConsumed, nil
@@ -1810,7 +1812,7 @@ func decodeStructureFields(data []byte, offset int, fieldCount int, signature by
 				if err != nil {
 					loc = time.UTC
 				}
-				return cypher.CypherDateTime{Time: time.Unix(sec, nsec).In(loc), ZoneID: zoneID}, fieldsConsumed, nil
+				return cypher.CypherDateTime{Time: decodePackStreamDateTime(sec, nsec, loc, signature == 0x69), ZoneID: zoneID}, fieldsConsumed, nil
 			}
 		}
 		return map[string]any{"_type": "DateTimeZoneId", "fields": fields}, fieldsConsumed, nil
