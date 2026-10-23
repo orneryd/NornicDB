@@ -11,7 +11,7 @@ import (
 )
 
 func TestDatabaseManagerStorageExposesQueryLimitsToExecutor(t *testing.T) {
-	inner := newTestMemoryEngine(t)
+	inner := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = inner.Close() })
 	manager, err := multidb.NewDatabaseManager(inner, nil)
 	require.NoError(t, err)

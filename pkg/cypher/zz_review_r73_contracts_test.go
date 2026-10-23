@@ -47,7 +47,7 @@ func TestReviewR73SeedContracts(t *testing.T) {
 
 func TestReviewR73FabricContinuation(t *testing.T) {
 	ctx := context.Background()
-	mgr, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
 	require.NoError(t, err)
 	defer mgr.Close()
 	require.NoError(t, mgr.CreateDatabase("review_shard"))

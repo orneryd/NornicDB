@@ -83,8 +83,12 @@ func TestConfigureDatabaseExecutor_InheritsLoggerAndSlowQueryThreshold(t *testin
 	exec := cypher.NewStorageExecutor(storageEngine)
 	qe.ConfigureDatabaseExecutor(exec, "nornic", storageEngine)
 
-	_, err = exec.Execute(context.Background(), "RETURN 1", nil)
+	// A trivial RETURN can complete within one Windows clock tick and report
+	// zero elapsed time, below even this 1 ns threshold. Exercise real query
+	// work so this wiring test actually reaches the slow-query emission gate.
+	result, err := exec.Execute(context.Background(), "UNWIND range(1, 10000) AS value RETURN sum(value) AS total", nil)
 	require.NoError(t, err)
+	require.EqualValues(t, 50005000, result.Rows[0][0])
 
 	var found bool
 	for _, rec := range te.LoggedRecords() {

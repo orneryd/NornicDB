@@ -42,7 +42,7 @@ func (s *boundMatchCandidateEngine) StreamNodesByLabelProjected(label string, _ 
 
 func newBoundMatchCandidateStore(t testing.TB, size int) *storage.NamespacedEngine {
 	t.Helper()
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "bound_match")
 	for i := 0; i < size; i++ {

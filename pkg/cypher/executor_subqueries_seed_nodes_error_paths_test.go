@@ -53,7 +53,7 @@ func (e *seedLabelBehaviorEngine) StreamNodesByLabelProjectedInScope(_, label st
 }
 
 func TestSeedNodesFromOuterMatch_ErrorAndNilBranches(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &seedLabelBehaviorEngine{MemoryEngine: base, errorLabel: "ErrSeed", nilLabel: "NilSeed"}
 	store := storage.NewNamespacedEngine(eng, "seed_nodes_err_paths_cov")

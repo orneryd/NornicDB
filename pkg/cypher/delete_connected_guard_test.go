@@ -11,7 +11,7 @@ import (
 
 func setupDeleteGuardFixture(t *testing.T) (*StorageExecutor, storage.Engine) {
 	t.Helper()
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)

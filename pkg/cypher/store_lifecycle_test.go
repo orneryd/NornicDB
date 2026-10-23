@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,7 +48,7 @@ func TestOpenBadgerStoreCounter(t *testing.T) {
 func TestTestMainRejectsLeakedStore(t *testing.T) {
 	const leakEnv = "NORNICDB_TEST_LEAK_STORE"
 	if os.Getenv(leakEnv) == "1" {
-		_ = newTestMemoryEngine(t) // deliberately leaked only in the child
+		_ = storage.NewMemoryEngine() // deliberately leaked only in the child
 		return
 	}
 	binary, err := os.Executable()

@@ -23,7 +23,7 @@ func TestOuterRowBindingInComprehensionProjection(t *testing.T) {
 			mode = "explicit"
 		}
 		t.Run(mode, func(t *testing.T) {
-			base := newTestMemoryEngine(t)
+			base := storage.NewMemoryEngine()
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "outer_row_binding"))
 			ctx := context.Background()

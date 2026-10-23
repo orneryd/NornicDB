@@ -40,7 +40,7 @@ func (e *labelCountGuardEngine) NodeCountByLabel(label string) (int64, error) {
 }
 
 func TestMatchCountUsesLabelCountFastPath(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &labelCountGuardEngine{Engine: base}
 	exec := NewStorageExecutor(eng)

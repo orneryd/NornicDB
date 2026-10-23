@@ -30,7 +30,7 @@ import (
 // label-indexed; without it, wall time scales with total store size (see
 // the "before" timings in the fix's commit message).
 func TestMultidbStack_LabelScanScalesWithLabelNotStore(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close() })
 
 	manager, err := multidb.NewDatabaseManager(base, nil)

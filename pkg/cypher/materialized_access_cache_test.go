@@ -37,7 +37,7 @@ func (e *accessCountingEngine) take() []string {
 // as the statement that filled the cache did; a result without any records
 // nothing.
 func TestMaterializedAccessRecordedOnCacheHits(t *testing.T) {
-	inner := &accessCountingEngine{MemoryEngine: newTestMemoryEngine(t)}
+	inner := &accessCountingEngine{MemoryEngine: storage.NewMemoryEngine()}
 	t.Cleanup(func() { _ = inner.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(inner, "test"))
 	ctx := context.Background()

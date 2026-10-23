@@ -2,6 +2,8 @@ package testutil
 
 import (
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func TestSetupExecutorsAndHelpers(t *testing.T) {
@@ -12,7 +14,7 @@ func TestSetupExecutorsAndHelpers(t *testing.T) {
 		t.Fatalf("expected single value 1, got %v", v)
 	}
 
-	store := newTestMemoryEngine(t)
+	store := storage.NewMemoryEngine()
 	defer store.Close()
 	exec2 := SetupTestExecutorWithStore(t, store)
 	result2 := ExecuteQuery(t, exec2, "RETURN 2 AS two", nil)

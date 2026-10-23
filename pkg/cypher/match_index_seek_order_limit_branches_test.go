@@ -10,7 +10,7 @@ import (
 )
 
 func TestTryCollectNodesFromPropertyIndexOrderLimit_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 	exec := NewStorageExecutor(eng)
@@ -52,7 +52,7 @@ func TestTryCollectNodesFromPropertyIndexOrderLimit_Branches(t *testing.T) {
 }
 
 func TestTryCollectNodesFromPropertyIndexNotNullPaths(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "seek_notnull_cov")
 	exec := NewStorageExecutor(store)

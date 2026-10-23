@@ -23,7 +23,7 @@ func TestResidualCompositePreambles(t *testing.T) {
 			previous := config.GetParserType()
 			config.SetParserType(mode)
 			t.Cleanup(func() { config.SetParserType(previous) })
-			manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+			manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, manager.Close()) })
 			require.NoError(t, manager.CreateDatabase("preamble_shard"))
@@ -65,7 +65,7 @@ func TestResidualCompositePreambles(t *testing.T) {
 }
 
 func TestCompositeExplicitTx_SecondWriteShardRejected(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -107,7 +107,7 @@ func TestCompositeExplicitTx_SecondWriteShardRejected(t *testing.T) {
 }
 
 func TestCompositeExplicitTx_BeginCommitLifecycle(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -137,7 +137,7 @@ func TestCompositeExplicitTx_BeginCommitLifecycle(t *testing.T) {
 func TestGh683_CompositeTerminalContext(t *testing.T) {
 	for _, canceledCommit := range []bool{false, true} {
 		t.Run(fmt.Sprint(canceledCommit), func(t *testing.T) {
-			manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+			manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
 			require.NoError(t, err)
 			defer manager.Close()
 			require.NoError(t, manager.CreateDatabase("share_shard"))
@@ -180,7 +180,7 @@ func TestGh683_CompositeTerminalContext(t *testing.T) {
 }
 
 func TestCompositeExplicitTx_DocumentationExamples(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -256,7 +256,7 @@ func TestCompositeExplicitTx_FailureReleasesParticipantMergeKeys(t *testing.T) {
 					previous := config.GetParserType()
 					config.SetParserType(mode)
 					t.Cleanup(func() { config.SetParserType(previous) })
-					mgr, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+					mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
 					require.NoError(t, err)
 					t.Cleanup(func() { require.NoError(t, mgr.Close()) })
 					require.NoError(t, mgr.CreateDatabase("mk_a"))
@@ -333,7 +333,7 @@ func TestCompositeExplicitTx_FailureReleasesParticipantMergeKeys(t *testing.T) {
 }
 
 func TestCompositeExplicitTx_RollbackRevertsWrites(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -375,7 +375,7 @@ RETURN c
 }
 
 func TestCompositeExplicitTx_CommitPersistsWrites(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -456,7 +456,7 @@ func TestCompositeExplicitTx_RemoteParticipantCommitLifecycle(t *testing.T) {
 	}))
 	defer remote.Close()
 
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	mgr, err := multidb.NewDatabaseManager(base, &multidb.Config{
 		DefaultDatabase: "nornic",
 		SystemDatabase:  "system",
@@ -536,7 +536,7 @@ func TestCompositeExplicitTx_RemoteParticipantRollbackLifecycle(t *testing.T) {
 	}))
 	defer remote.Close()
 
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	mgr, err := multidb.NewDatabaseManager(base, &multidb.Config{
 		DefaultDatabase: "nornic",
 		SystemDatabase:  "system",
@@ -582,7 +582,7 @@ func TestCompositeExplicitTx_RemoteParticipantRollbackLifecycle(t *testing.T) {
 // every statement's writes, as in Neo4j; the relationship counters (count by
 // type and by label and type) stay equal to a scan.
 func TestCompositeExplicitTx_StatementsShareShardTransaction(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()

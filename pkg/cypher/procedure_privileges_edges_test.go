@@ -82,7 +82,7 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	system := storage.NewNamespacedEngine(systemBase, "system")
 	require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "a"))
 	require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "b"))
-	user := newTestMemoryEngine(t)
+	user := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = user.Close() })
 	exec := NewStorageExecutor(user)
 	exec.SetDatabaseManager(systemOnlyManager{engine: system})

@@ -47,7 +47,7 @@ func TestExecuteDeleteStreaming_FallbackMapEdgeBranch(t *testing.T) {
 }
 
 func TestExecuteDeleteStreaming_FallbackDeletesAfterInitialDeleteFailure(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &failFirstDeleteNodeEngine{MemoryEngine: base, failuresRemaining: 1}
 	store := storage.NewNamespacedEngine(eng, "delete_stream_fallback_delete_cov")

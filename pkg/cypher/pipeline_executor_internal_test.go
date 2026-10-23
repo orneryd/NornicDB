@@ -99,7 +99,7 @@ func TestUnwindRewrittenOperatorsPreserveExecutionErrors(t *testing.T) {
 }
 
 func TestPipelineSimpleNodeReadPlan_HandlesBoundedLabelStream(t *testing.T) {
-	store := newTestMemoryEngine(t)
+	store := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = store.Close() })
 	for index := 0; index < 20; index++ {
 		_, err := store.CreateNode(&storage.Node{

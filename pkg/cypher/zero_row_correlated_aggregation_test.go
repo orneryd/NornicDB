@@ -26,7 +26,7 @@ func TestZeroRowCorrelatedCallAggregation(t *testing.T) {
 					name = "nonempty"
 				}
 				t.Run(fixture+"/"+mode+"/"+name, func(t *testing.T) {
-					base := newTestMemoryEngine(t)
+					base := storage.NewMemoryEngine()
 					t.Cleanup(func() { require.NoError(t, base.Close()) })
 					exec := NewStorageExecutor(storage.NewNamespacedEngine(base, "zero_row_aggregate"))
 					ctx := context.Background()

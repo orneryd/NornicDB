@@ -25,7 +25,7 @@ func (e *invariantCreateErrEngine) BulkCreateNodes(nodes []*storage.Node) error 
 
 func TestCypherInvariantErrorsHaveTypedIdentityAndExactEnglish(t *testing.T) {
 	t.Run("pipeline create failure", func(t *testing.T) {
-		base := newTestMemoryEngine(t)
+		base := storage.NewMemoryEngine()
 		t.Cleanup(func() { _ = base.Close() })
 		store := storage.NewNamespacedEngine(base, "pipeline_invariant")
 		seed := NewStorageExecutor(store)

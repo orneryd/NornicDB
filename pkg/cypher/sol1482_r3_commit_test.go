@@ -36,7 +36,7 @@ func TestSol1482R2CypherCommittedReadCannotResurrectNewerDelete(t *testing.T) {
 
 func TestSol1482R3ExplicitCommitAndRollback(t *testing.T) {
 	ctx := WithTransactionControl(context.Background())
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	svc := search.NewServiceWithDimensions(store, 2)

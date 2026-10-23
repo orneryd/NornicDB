@@ -119,7 +119,7 @@ func TestResultCacheServesEachParameterValueItsOwnResult(t *testing.T) {
 // cached result isn't served to a caller the statement isn't authorized
 // for; the caller gets the permission error it gets uncached (#729).
 func TestFabricResultCacheServesOnlyAuthorizedCallers(t *testing.T) {
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()

@@ -459,7 +459,7 @@ func TestTraverseFromNode(t *testing.T) {
 
 	t.Run("skips dangling adjacency endpoints instead of failing", func(t *testing.T) {
 		inner := &danglingTraversalEngine{
-			MemoryEngine:   newTestMemoryEngine(t),
+			MemoryEngine:   storage.NewMemoryEngine(),
 			forcedOutgoing: make(map[storage.NodeID][]*storage.Edge),
 			missingNodeIDs: make(map[storage.NodeID]error),
 		}

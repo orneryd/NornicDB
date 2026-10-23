@@ -23,7 +23,7 @@ func (m administrationReviewManager) Exists(name string) bool                   
 
 func administrationReviewExecutor(t *testing.T, database string) (*StorageExecutor, storage.Engine) {
 	t.Helper()
-	base := newTestMemoryEngine(t)
+	base := storage.NewMemoryEngine()
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	manager := administrationReviewManager{stores: map[string]storage.Engine{

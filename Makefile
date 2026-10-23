@@ -828,7 +828,7 @@ lint-cardinality:
 
 test: lint-slog lint-cardinality
 ifeq ($(HOST_OS),windows)
-	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -p 1 -parallel 1 -timeout 30m ./... 2>&1 | Select-String -Pattern '^(FAIL|ok|---\s+FAIL)'; exit $$LASTEXITCODE"
+	powershell -NoProfile -File scripts/test-windows.ps1 -PackageParallelism 1 -Parallel 1
 else
 	# pipefail propagates `go test`'s real exit through the grep filter,
 	# so a test failure still fails the make target even though grep
@@ -844,7 +844,7 @@ install-hooks:
 # Test with limited parallelism (useful on Windows with memory constraints)
 test-serial:
 ifeq ($(HOST_OS),windows)
-	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -p 1 -parallel 1 -timeout 30m ./..."
+	powershell -NoProfile -File scripts/test-windows.ps1 -PackageParallelism 1 -ShowAll
 else
 	go test -p 1 -parallel 4 -timeout 30m ./...
 endif
@@ -854,7 +854,7 @@ endif
 test-pkg:
 	@echo "Usage: make test-pkg PKG=./pkg/cypher"
 ifeq ($(HOST_OS),windows)
-	powershell -Command "$$env:GOMEMLIMIT='4GiB'; go test -v -timeout 10m $(PKG)"
+	powershell -NoProfile -File scripts/test-windows.ps1 -Package "$(PKG)" -Timeout 10m -VerboseTests -ShowAll
 else
 	go test -v -timeout 10m $(PKG)
 endif
