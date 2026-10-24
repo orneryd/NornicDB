@@ -129,6 +129,8 @@ type BadgerTransaction struct {
 	nodeHeadCache       map[NodeID]MVCCHead
 	pendingIndex        *pendingNodeIndex
 	pendingEdges        map[EdgeID]*Edge
+	pendingAdjacency    map[NodeID]map[EdgeID]*Edge
+	snapshotEquality    map[snapshotLabelCacheKey]*snapshotEqualityPopulation
 	deferredEdgeWrites  map[EdgeID]struct{}
 	cancelledEdgeWrites map[EdgeID]struct{}
 	deletedNodes        map[NodeID]struct{}
@@ -399,6 +401,7 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 	}
 	tx.mergeKeyReleases = nil
 	tx.clearSnapshotCachesLocked()
+	tx.pendingAdjacency = nil
 	if tx.bufferedStagingTransferred {
 		// The write-behind buffer owns the staged state; the transaction is
 		// dead after close, so leaving the fields nil saves six fresh-map
@@ -423,6 +426,7 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 // clearSnapshotCachesLocked drops what the transaction cached from its
 // snapshot.
 func (tx *BadgerTransaction) clearSnapshotCachesLocked() {
+	tx.snapshotEquality = nil
 	tx.snapshotOutgoingAdjacency.clear()
 	tx.snapshotIncomingAdjacency.clear()
 	tx.snapshotLabelPrefixNodes = nil
@@ -1154,6 +1158,9 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 		edges = append(edges, edge)
 	}
 	skip := func(edgeID EdgeID) bool {
+		if _, rewritten := tx.pendingEdges[edgeID]; rewritten {
+			return true
+		}
 		if _, ok := listed[edgeID]; ok {
 			return true
 		}
@@ -1168,14 +1175,12 @@ func (tx *BadgerTransaction) incidentEdgesLocked(nodeID NodeID) ([]*Edge, error)
 
 	// Relationships this transaction created or rewrote: the committed index
 	// does not list the new ones (#741).
-	for edgeID, edge := range tx.pendingEdges {
-		if edge != nil && (edge.StartNode == nodeID || edge.EndNode == nodeID) && !skip(edgeID) {
+	for edgeID, edge := range tx.pendingAdjacencyLocked(nodeID) {
+		if _, deleted := tx.deletedEdges[edgeID]; !deleted {
 			include(edge)
 		}
-		// A rewrite shadows its old buffered/committed adjacency even
-		// when its new endpoints no longer include this node.
-		listed[edgeID] = struct{}{}
 	}
+
 	// Buffered transactions read committed state through the same capture
 	// owner as engine adjacency. Overlay selection and committed IDs must
 	// not straddle replay/retirement. Transaction-local rewrites and deletes
@@ -1262,7 +1267,7 @@ func (tx *BadgerTransaction) bufferRemoveEdgeBookkeepingBuffered(edge *Edge, del
 	tx.bufferDeleteEdgeBetweenIndexes(edge)
 
 	tx.deletedEdges[edge.ID] = struct{}{}
-	delete(tx.pendingEdges, edge.ID)
+	tx.removePendingEdgeLocked(edge.ID)
 
 	tx.bufferAdjustEdgeTypeCount(namespaceForEdgeID(edge.ID), edge.Type, -1)
 
@@ -1632,7 +1637,7 @@ func (tx *BadgerTransaction) bufferNewEdgeLocked(edge *Edge, startLabels, endLab
 	// Track for read-your-writes
 	edgeCopy := copyEdge(edge)
 	delete(tx.deletedEdges, edge.ID)
-	tx.pendingEdges[edge.ID] = edgeCopy
+	tx.setPendingEdgeLocked(edgeCopy)
 	tx.operations = append(tx.operations, Operation{
 		Type:             OpCreateEdge,
 		Timestamp:        time.Now(),
@@ -1777,7 +1782,7 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 
 	// Track for read-your-writes.
 	edgeCopy := copyEdge(edge)
-	tx.pendingEdges[edge.ID] = edgeCopy
+	tx.setPendingEdgeLocked(edgeCopy)
 	if err := tx.bufferEdgeReplacementCountDeltasLocked(oldEdge, edge); err != nil {
 		return err
 	}
@@ -1892,7 +1897,7 @@ func (tx *BadgerTransaction) DeleteEdge(edgeID EdgeID) error {
 	}
 
 	// Track deletion
-	delete(tx.pendingEdges, edgeID)
+	tx.removePendingEdgeLocked(edgeID)
 	tx.deletedEdges[edgeID] = struct{}{}
 
 	// Derived per-type counter follows the index entry removal (issue #638).
@@ -2191,7 +2196,7 @@ func (tx *BadgerTransaction) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	if err != nil {
 		return nil, err
 	}
-	return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+	return tx.mergePendingAdjacentEdgesLocked(committed, nodeID, func(edge *Edge) bool {
 		return edge.StartNode == nodeID
 	}), nil
 }
@@ -2211,7 +2216,7 @@ func (tx *BadgerTransaction) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	if err != nil {
 		return nil, err
 	}
-	return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+	return tx.mergePendingAdjacentEdgesLocked(committed, nodeID, func(edge *Edge) bool {
 		return edge.EndNode == nodeID
 	}), nil
 }
@@ -2234,7 +2239,7 @@ func (tx *BadgerTransaction) GetEdgesBetween(startID, endID NodeID) ([]*Edge, er
 	if err != nil {
 		return nil, err
 	}
-	return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+	return tx.mergePendingAdjacentEdgesLocked(committed, startID, func(edge *Edge) bool {
 		return edge.StartNode == startID && edge.EndNode == endID
 	}), nil
 }

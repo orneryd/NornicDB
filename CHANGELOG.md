@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep transaction adjacency reads local to incident pending relationships and reuse bounded snapshot equality candidates for row MERGE. Reuse newly created edge bodies during same-transaction cascades instead of repeatedly sorting pending Badger writes.
+
 - Select only usable compiled GPU backends, and close replaced vector-file
   stores and slow-query log files through their owning lifecycle.
 - Preserve pre-pin MVCC scan visibility at tied clock timestamps and use the

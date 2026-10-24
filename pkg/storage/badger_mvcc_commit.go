@@ -72,6 +72,19 @@ func (b *BadgerEngine) materializeMVCCCommit(w *batchWriter, version MVCCVersion
 func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MVCCVersion, operations []Operation, staged bool) error {
 	heads := commitMVCCHeads{b: b, staged: staged}
 	states := newCommitStates(operations)
+	// Bodies of edges created in this commit are already known. Reading their
+	// nonexistent committed body during a cascade opens a Badger history
+	// iterator per edge and repeatedly sorts the growing pending-write set.
+	// Keep the operation-ordered body until deletion; it has no committed
+	// predecessor to archive. Existing/replaced edges retain the normal reader.
+	var createdEdgeBodies map[EdgeID]*Edge
+	hasCascade := false
+	for _, op := range operations {
+		if len(op.DeletedEdgeIDs) > 0 {
+			hasCascade = true
+			break
+		}
+	}
 	// Archive superseded bodies when retention policy demands history OR
 	// when an active snapshot reader needs to resolve the old version —
 	// snapshot isolation must hold regardless of retention config.
@@ -151,13 +164,17 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 					break
 				}
 				err = w.write(func(txn *badger.Txn) error {
-					edge, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
+					edge, fresh := createdEdgeBodies[edgeID]
+					var err error
+					if !fresh {
+						edge, err = b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
+					}
 					if err == nil {
 						err = b.writeEdgeAdjacencyDeltaInTxn(txn, edge, nil, version)
 					}
-					// The stored record is still the committed version here:
-					// buffered writes are flushed after materialization.
-					if err == nil && retainsHistory {
+					// Only existing edges have a predecessor to archive. Their
+					// stored records are unchanged until buffered writes flush.
+					if err == nil && retainsHistory && !fresh {
 						err = heads.archiveEdge(txn, edgeID, edge)
 					} else if err == ErrNotFound {
 						err = nil
@@ -170,10 +187,17 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 					}
 					return err
 				})
+				delete(createdEdgeBodies, edgeID)
 			}
 		case OpCreateEdge:
 			if op.Edge == nil {
 				continue
+			}
+			if hasCascade && !op.ReplacesExisting {
+				if createdEdgeBodies == nil {
+					createdEdgeBodies = make(map[EdgeID]*Edge)
+				}
+				createdEdgeBodies[op.Edge.ID] = op.Edge
 			}
 			err = w.write(func(txn *badger.Txn) error {
 				if err := b.writeEdgeAdjacencyDeltaInTxn(txn, nil, op.Edge, version); err != nil {
@@ -187,6 +211,9 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 		case OpUpdateEdge:
 			if op.Edge == nil {
 				continue
+			}
+			if _, fresh := createdEdgeBodies[op.Edge.ID]; fresh {
+				createdEdgeBodies[op.Edge.ID] = op.Edge
 			}
 			err = w.write(func(txn *badger.Txn) error {
 				var err error
@@ -202,6 +229,7 @@ func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MV
 				return err
 			})
 		case OpDeleteEdge:
+			delete(createdEdgeBodies, op.EdgeID)
 			err = w.write(func(txn *badger.Txn) error {
 				var err error
 				if op.OldEdge != nil {
