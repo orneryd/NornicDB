@@ -1,13 +1,8 @@
 package server
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
-	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -18,66 +13,19 @@ import (
 func TestListInputHTTPRepresentations(t *testing.T) {
 	srv, authenticator := setupTestServer(t)
 	token := getAuthToken(t, authenticator, "admin")
-	peer := httptest.NewServer(srv.buildRouter())
-	t.Cleanup(peer.Close)
-	base := "/db/" + srv.dbManager.DefaultDatabaseName() + "/tx"
+	client := newListInputHTTPClient(t, srv, token, false)
 	store, err := srv.dbManager.GetStorage(srv.dbManager.DefaultDatabaseName())
 	require.NoError(t, err)
 	for _, input := range listinputs.TransportInputs() {
 		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"TypedWireList"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.PropertyValue()}})
 		require.NoError(t, err)
 	}
-	request := func(t *testing.T, path, query string, params map[string]interface{}) TransactionResponse {
-		t.Helper()
-		statements := []map[string]interface{}{}
-		if query != "" {
-			statements = append(statements, map[string]interface{}{"statement": query, "parameters": params})
-		}
-		body, err := json.Marshal(map[string]interface{}{"statements": statements})
-		require.NoError(t, err)
-		req, err := http.NewRequest(http.MethodPost, peer.URL+path, bytes.NewReader(body))
-		require.NoError(t, err)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-		response, err := peer.Client().Do(req)
-		require.NoError(t, err)
-		defer response.Body.Close()
-		var payload TransactionResponse
-		require.NoError(t, json.NewDecoder(response.Body).Decode(&payload))
-		return payload
-	}
-	rollback := func(t *testing.T, path string) {
-		t.Helper()
-		req, err := http.NewRequest(http.MethodDelete, peer.URL+path, nil)
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer "+token)
-		response, err := peer.Client().Do(req)
-		require.NoError(t, err)
-		defer response.Body.Close()
-		require.True(t, response.StatusCode >= 200 && response.StatusCode < 300 || response.StatusCode == http.StatusNotFound)
-	}
 	for _, explicit := range []bool{false, true} {
 		for _, input := range listinputs.TransportInputs() {
 			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, input.Name), func(t *testing.T) {
-				// Each statement owns its transaction: an expected failure must
-				// not abort the remaining representation checks.
 				run := func(t *testing.T, query string, params map[string]interface{}) TransactionResponse {
 					t.Helper()
-					path := base + "/commit"
-					if explicit {
-						opened := request(t, base, "", nil)
-						require.Empty(t, opened.Errors)
-						commit, err := url.Parse(opened.Commit)
-						require.NoError(t, err)
-						path = strings.TrimSuffix(commit.Path, "/commit")
-						defer rollback(t, path)
-					}
-					payload := request(t, path, query, params)
-					if explicit && len(payload.Errors) == 0 {
-						committed := request(t, path+"/commit", "", nil)
-						require.Empty(t, committed.Errors)
-					}
-					return payload
+					return client.run(t, explicit, query, params)
 				}
 				params := map[string]interface{}{"xs": input.Value, "name": input.Name}
 				read := func(t *testing.T, query string, params map[string]interface{}) interface{} {
@@ -115,6 +63,7 @@ func TestListInputHTTPRepresentations(t *testing.T) {
 										payload := run(t, query, params)
 										require.Len(t, payload.Errors, 1, query)
 										require.Equal(t, oracle.Code, payload.Errors[0].Code, query)
+										require.Equal(t, float64(7), read(t, "RETURN 7 AS v", nil), "the next independent case survives a rejected input")
 										return
 									}
 									require.NoError(t, json.Unmarshal([]byte(oracle.JSON), &formWant))
