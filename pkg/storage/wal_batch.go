@@ -148,6 +148,9 @@ func (b *BatchWriter) CommitWithSeq() (uint64, uint64, error) {
 	var firstSeq uint64
 	var lastSeq uint64
 	for _, pending := range b.pending {
+		if err := b.wal.prepareUnboundWALRecordLocked(pending.Operation); err != nil {
+			return 0, 0, err
+		}
 		// Assign sequence number NOW, at commit time
 		seq := b.wal.sequence.Add(1)
 		if firstSeq == 0 {

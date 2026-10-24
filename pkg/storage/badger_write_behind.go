@@ -87,6 +87,13 @@ func estimateBufferedCommitBytes(c *bufferedCommit) int64 {
 // every acknowledged write-behind commit. It is called once, at construction,
 // by NewWALEngine before the engine serves traffic.
 func (b *BadgerEngine) SetBufferedCommitWAL(w *WAL) {
+	if _, err := b.beginHelperTxn(); err != nil {
+		return
+	}
+	defer b.txnWG.Done()
+	if b.writeBehind != nil {
+		w.bindPropertyDictionary(b.propKeyDict)
+	}
 	b.bufferedCommitWAL = w
 }
 
@@ -214,7 +221,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	// buffer exists to avoid; power-loss durability remains the durable
 	// synchronous path's contract.
 	if tx.engine.bufferedCommitWAL != nil {
-		if err := tx.engine.bufferedCommitWAL.AppendBufferedCommit(&c); err != nil {
+		if err := tx.engine.bufferedCommitWAL.AppendBufferedCommit(&c, tx.engine.propKeyDict); err != nil {
 			// The ACK must never outrun the durable record: failing to log
 			// the payload fails the commit.
 			tx.closeLocked(TxStatusRolledBack, true, nil)

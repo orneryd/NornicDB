@@ -21,11 +21,15 @@ const recoveryBatchSize = 1000
 
 // RecoverIntoEngine restores a snapshot and subsequent WAL entries directly
 // into destination. Framed snapshots and WAL files are processed one record at
-// a time, so retained recovery memory is bounded by the largest record.
+// a time. Physical bodies and name authority are retained one record at a time.
+
 func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayResult, RecoveryStreamStatus, error) {
 	result := ReplayResult{Errors: make([]ReplayError, 0)}
 	status := RecoveryStreamStatus{}
 	var snapshotSeq uint64
+	if err := markRecoveryPropertyForeign(destination); err != nil {
+		return result, status, err
+	}
 
 	if snapshotPath != "" {
 		streaming, err := IsStreamingSnapshot(snapshotPath)
@@ -37,6 +41,10 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 			file, err := os.Open(snapshotPath)
 			if err != nil {
 				return result, status, fmt.Errorf("wal: failed to open snapshot: %w", err)
+			}
+			if err := beginRecoveryPropertyRestore(destination); err != nil {
+				file.Close()
+				return result, status, err
 			}
 			visitor := newRecoverySnapshotVisitor(destination, recoveryBatchSize)
 			metadata, readErr := readSnapshot(file, visitor, nil, materializedSnapshotRecordSize)
@@ -60,6 +68,9 @@ func RecoverIntoEngine(destination Engine, walDir, snapshotPath string) (ReplayR
 					return result, status, fmt.Errorf("wal: failed to load snapshot: %w", err)
 				}
 			} else {
+				if err := beginRecoveryPropertyRestore(destination); err != nil {
+					return result, status, err
+				}
 				snapshotSeq = snapshot.Sequence
 				status.SnapshotNodes = uint64(len(snapshot.Nodes))
 				status.SnapshotEdges = uint64(len(snapshot.Edges))

@@ -114,10 +114,10 @@ func scanAtomicWALForRepair(file *os.File, fileSize int64) (truncateOffset int64
 		}
 
 		version := header[4]
-		if version > walFormatVersionV3 {
+		if version > walFormatVersionPropertyEpoch {
 			// A newer format is not evidence of a torn write. Never destroy data
 			// merely because this binary cannot read it.
-			return 0, lastGoodSeq, "", false, fmt.Errorf("wal: unsupported WAL version %d (max supported: %d)", version, walFormatVersionV3)
+			return 0, lastGoodSeq, "", false, fmt.Errorf("wal: unsupported WAL version %d (max supported: %d)", version, walFormatVersionPropertyEpoch)
 		}
 
 		payloadLen := binary.LittleEndian.Uint32(header[5:9])
