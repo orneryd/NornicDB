@@ -125,7 +125,7 @@ func compileRowPredicateParts(expr string) rowPredicateNode {
 // compileRowPredicateFromSubqueries compiles a predicate as
 // evaluateRowPredicatePartsFromSubqueries evaluates it.
 func compileRowPredicateFromSubqueries(expr string) rowPredicateNode {
-	if plan := planRowSubqueries(expr); plan != nil && !plan.logical && !plan.wholeExists {
+	if plan := planRowSubqueries(expr); plan != nil && !plan.logical {
 		return &rowPredicatePartsTextNode{text: expr}
 	}
 	if variable, labels, ok := parseWithWhereLabelTest(expr); ok {
@@ -133,9 +133,6 @@ func compileRowPredicateFromSubqueries(expr string) rowPredicateNode {
 	}
 	if plan := planRowPredicate(expr); plan != nil {
 		return &rowPredicatePlanNode{plan: plan}
-	}
-	if _, whole := wholeExistsPredicate(expr); whole {
-		return &rowPredicateTextNode{text: expr}
 	}
 	var buffer [8]string
 	if plan := planLogicalExpression(expr, buffer[:0]); plan.kind != logicalNone {
@@ -149,11 +146,10 @@ func compileRowPredicateFromSubqueries(expr string) rowPredicateNode {
 	return compileRowPredicateLeaf(expr)
 }
 
-// compileRowPredicateLeaf compiles a predicate that is neither a whole
-// EXISTS nor a logical operator, as evaluateRowPredicateTextFromSubqueries
-// evaluates it.
+// compileRowPredicateLeaf compiles a predicate without a top-level logical
+// operator, as evaluateRowPredicateTextFromSubqueries evaluates it.
 func compileRowPredicateLeaf(expr string) rowPredicateNode {
-	if plan := planRowSubqueries(expr); plan != nil && !plan.wholeExists {
+	if plan := planRowSubqueries(expr); plan != nil {
 		return &rowPredicateLeafTextNode{text: expr}
 	}
 	if isRelationshipPatternOperand(expr) {
@@ -287,12 +283,6 @@ type rowPredicatePartsTextNode struct{ text string }
 
 func (n *rowPredicatePartsTextNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
 	return e.evaluateRowPredicatePartsFromSubqueries(ctx, n.text, values)
-}
-
-type rowPredicateTextNode struct{ text string }
-
-func (n *rowPredicateTextNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	return e.evaluateRowPredicateText(ctx, n.text, values)
 }
 
 type rowPredicateLeafTextNode struct{ text string }
