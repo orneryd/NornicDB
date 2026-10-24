@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
@@ -45,28 +46,15 @@ func containsKeywordOutsideStrings(s, keyword string) bool {
 // string literals. Unlike containsKeywordOutsideStrings, this does exact substring matching
 // without word boundary checks (useful for symbols like -> and <-).
 func containsOutsideStrings(s, substr string) bool {
-	if substr == "" {
-		return false
-	}
-	first := substr[0]
-	for i := 0; i < len(s); i++ {
-		if end, quoted := skipCypherLexicalToken(s, i); quoted {
-			i = end - 1
-			continue
-		}
-		c := s[i]
-		if c != first {
-			continue
-		}
-		if i+len(substr) > len(s) {
-			return false
-		}
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
+	found, _ := inspectOutsideStrings(s, substr)
+	return found
+}
 
-	return false
+// inspectOutsideStrings also retains unfinished comments for statement admission.
+// It uses the same lexical walk as symbol lookup, including when normalization
+// is disabled, so admission does not add a second pass over ordinary statements.
+func inspectOutsideStrings(s, substr string) (bool, int) {
+	return cyphertext.FindOutside(s, substr)
 }
 
 // ========================================

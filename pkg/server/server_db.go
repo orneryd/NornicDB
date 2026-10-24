@@ -1589,11 +1589,10 @@ func (s *Server) runRequestStatements(
 		}
 		// An empty statement (or only a comment) is Neo4j's SyntaxError, so it
 		// fails its request like any other invalid statement.
-		if strings.TrimSpace(cypher.StripComments(queryStatement)) == "" {
-			return &QueryError{
-				Code:    "Neo.ClientError.Statement.SyntaxError",
-				Message: "Unexpected end of input: expected CYPHER, EXPLAIN, PROFILE or Query",
-			}
+		if err := cypher.ValidateStatementText(queryStatement); err != nil {
+			failure := statementError(err)
+			localizeStatementError(&failure, err, localize)
+			return &failure
 		}
 
 		queryStart := time.Now()
