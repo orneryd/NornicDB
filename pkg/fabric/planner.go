@@ -65,8 +65,8 @@ func clauseKeywordAt(text string, idx int, keyword string, isName ClauseKeywordN
 }
 
 func splitTopLevelUnion(query string, isName ClauseKeywordNameReader) ([]string, []bool, bool, error) {
-	parts := make([]string, 0, 2)
-	ops := make([]bool, 0, 1)
+	var parts []string
+	var ops []bool
 	start := 0
 	braceDepth := 0
 	parenDepth := 0

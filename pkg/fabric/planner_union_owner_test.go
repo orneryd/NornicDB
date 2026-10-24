@@ -39,7 +39,7 @@ func TestPlan_UnionPlanningEntries(t *testing.T) {
 				var fragment Fragment
 				var err error
 				if entry.multi {
-					blocks, extractErr := extractTopLevelCallBlocks(entry.query)
+					blocks, extractErr := extractTopLevelCallBlocks(entry.query, nil)
 					require.NoError(t, extractErr)
 					fragment, err = p.planMultiGraph(planTarget{name: "cmp"}, "cmp", entry.query, blocks)
 				} else if entry.shared {
@@ -122,11 +122,11 @@ func unionOwnerViolations(t *testing.T, dir string) []string {
 	require.NoError(t, err)
 	var violations []string
 	fset := token.NewFileSet()
-	splits := 0
+	splits := map[string]int{}
 	owners := map[string]string{
 		"NewConcatRowIterator":   "mergeUnion",
 		"NewDistinctRowIterator": "mergeUnion",
-		"splitTopLevelUnion":     "planQuery",
+		"splitTopLevelUnion":     "planQuery|singleGraphStatement",
 		"planSingleQuery":        "planQuery|planCallBranch",
 		"planCallBranch":         "planQuery",
 		"ProjectionColumns":      "ResultColumns|validateUnionSchemas",
@@ -157,7 +157,7 @@ func unionOwnerViolations(t *testing.T, dir string) []string {
 					callee = fun.Name
 				}
 				if callee == "splitTopLevelUnion" {
-					splits++
+					splits[fn.Name.Name]++
 				}
 				if owner, guarded := owners[callee]; guarded && !strings.Contains("|"+owner+"|", "|"+fn.Name.Name+"|") {
 					violations = append(violations, fn.Name.Name+" calls "+callee+" outside "+owner)
@@ -166,8 +166,8 @@ func unionOwnerViolations(t *testing.T, dir string) []string {
 			})
 		}
 	}
-	if splits != 1 {
-		violations = append(violations, "union splitting must have exactly one production owner")
+	if splits["planQuery"] != 1 || splits["singleGraphStatement"] != 1 || len(splits) != 2 {
+		violations = append(violations, "UNION splitting must use the shared splitter once in each planning and validation entry")
 	}
 	return violations
 }

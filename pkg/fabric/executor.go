@@ -3547,8 +3547,8 @@ func (e *FabricExecutor) mergeUnion(f *FragmentUnion, lhsCols []string, lhs RowI
 			cols, wrapper = rhsCols, rhsWrapper
 		}
 	}
-	align := func(branch []string, rows RowIterator, rowWrapper bool) (RowIterator, error) {
-		if e.union.ColumnOrder == nil || branch == nil || rowWrapper {
+	align := func(branch []string, rows RowIterator) (RowIterator, error) {
+		if e.union.ColumnOrder == nil || branch == nil || lhsWrapper || rhsWrapper {
 			return rows, nil
 		}
 		order, same := e.union.ColumnOrder(cols, branch)
@@ -3568,10 +3568,10 @@ func (e *FabricExecutor) mergeUnion(f *FragmentUnion, lhsCols []string, lhs RowI
 			return values
 		}), nil
 	}
-	left, err := align(lhsCols, lhs, lhsWrapper)
+	left, err := align(lhsCols, lhs)
 	var right RowIterator
 	if err == nil {
-		right, err = align(rhsCols, rhs, rhsWrapper)
+		right, err = align(rhsCols, rhs)
 	}
 	if err != nil {
 		if lhs != nil {

@@ -81,10 +81,29 @@ func TestUnionNarrowPriorFindings(t *testing.T) {
 	require.NoError(t, err)
 	var baseline []unionNarrowObservation
 	require.NoError(t, json.Unmarshal(blob, &baseline))
+	// The old parent fixtures remain intact. These out-of-scope controls
+	// compare against the exact integration release: nested non-unit terminal
+	// CALL is now rejected, while Cypher 25 scope failures remain inherited.
+	currentBlob, err := os.ReadFile("testdata/fabric_union_release_f91_" + suffix + ".json")
+	require.NoError(t, err)
+	var current []unionNarrowObservation
+	require.NoError(t, json.Unmarshal(currentBlob, &current))
+	require.Len(t, current, 84, "all historical unit/metadata controls remain represented")
+	byName := make(map[string]unionNarrowObservation, len(current))
+	for _, control := range current {
+		byName[control.Name] = control
+	}
 	exec := unionNarrowExecutor(t)
 	for _, want := range baseline {
 		if want.Family == "original" || want.Family == "r1-columns" {
 			continue
+		}
+		if want.Family == "r4-unit-export" || want.Family == "r4-metadata" {
+			control, ok := byName[want.Name]
+			require.True(t, ok, want.Name)
+			require.Equal(t, want.Query, control.Query, "baseline input population must not change")
+			require.Equal(t, want.Family, control.Family)
+			want = control
 		}
 		t.Run(want.Name, func(t *testing.T) {
 			got := unionNarrowObserve(exec, want.Name, want.Family, want.Query)
