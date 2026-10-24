@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
@@ -53,35 +54,7 @@ func containsOutsideStrings(s, substr string) bool {
 // It uses the same lexical walk as symbol lookup, including when normalization
 // is disabled, so admission does not add a second pass over ordinary statements.
 func inspectOutsideStrings(s, substr string) (bool, int) {
-	if substr == "" {
-		return false, -1
-	}
-	first := substr[0]
-	for i := 0; i < len(s); i++ {
-		switch c := s[i]; c {
-		case '\'', '"', '`':
-			i = skipCypherQuotedText(s, i, c) - 1
-			continue
-		case '/':
-			if end := queryCommentEnd(s, i); end >= 0 {
-				if unclosedQueryComment(s, i, end) {
-					return false, i
-				}
-				i = end - 1
-				continue
-			}
-		}
-		if s[i] != first {
-			continue
-		}
-		if i+len(substr) > len(s) {
-			return false, -1
-		}
-		if s[i:i+len(substr)] == substr {
-			return true, -1
-		}
-	}
-	return false, -1
+	return cyphertext.FindOutside(s, substr)
 }
 
 // ========================================

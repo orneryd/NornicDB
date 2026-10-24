@@ -91,6 +91,9 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	if err != nil {
 		return nil, err
 	}
+	if endsInFinish(ctx, query) {
+		query += " FINISH"
+	}
 	if err := validateQueryBodyComposition(query); err != nil {
 		return nil, err
 	}
@@ -121,6 +124,9 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	query, err := executionModeStatement(ModeProfile, query)
 	if err != nil {
 		return nil, err
+	}
+	if endsInFinish(ctx, query) {
+		query += " FINISH"
 	}
 	// Resolve participant signatures through the same owner as EXPLAIN and
 	// planning. Incomplete metadata cannot authorize execution effects.

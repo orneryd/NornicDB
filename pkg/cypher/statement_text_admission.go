@@ -1,8 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
-	"unicode/utf8"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -96,11 +96,6 @@ func emptyStatementError() error {
 	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", localization.CypherCoreEmptyQuery())
 }
 
-func unclosedQueryComment(query string, start, end int) bool {
-	return start+1 < len(query) && query[start] == '/' && query[start+1] == '*' &&
-		(end-start < 4 || query[end-2:end] != "*/")
-}
-
 // Only a failing lexical token needs prefix interpretation. Accepted ordinary
 // statements never run a second comment or mode reader here.
 func unclosedCommentError(query string, index int, mode ExecutionMode) error {
@@ -142,30 +137,16 @@ func statementExecutionModes(cypher string) (ExecutionMode, string, bool) {
 // readQueryGap keeps ordinary tokens on an inlineable exit. The slow reader is
 // shared by strict admission and permissive gap consumers; only comments need
 // termination work, and ordinary whitespace never calls the comment reader.
-func readQueryGap(query string, index int) (int, int) {
-	if index >= len(query) || query[index] > ' ' && query[index] < utf8.RuneSelf && query[index] != '/' {
-		return index, -1
-	}
-	return scanQueryGap(query, index)
-}
+func readQueryGap(query string, index int) (int, int) { return cyphertext.GapEnd(query, index) }
 
-func scanQueryGap(query string, index int) (int, int) {
-	for index < len(query) {
-		if size := queryWhitespaceAt(query, index); size > 0 {
-			index += size
-			continue
-		}
-		if query[index] != '/' {
-			break
-		}
-		end := queryCommentEnd(query, index)
-		if end < 0 {
-			break
-		}
-		if unclosedQueryComment(query, index, end) {
-			return end, index
-		}
-		index = end
+// ValidateStatementText admits raw transport text before any adapter can
+// discard malformed comments. For example, CREATE (:N) /* fails before writes.
+func ValidateStatementText(query string) error {
+	if _, unclosed := inspectOutsideStrings(query, ";"); unclosed >= 0 {
+		return unclosedCommentError(query, unclosed, ModeNormal)
 	}
-	return index, -1
+	if queryGapEnd(query, 0) == len(query) {
+		return emptyStatementError()
+	}
+	return nil
 }

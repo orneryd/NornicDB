@@ -98,6 +98,14 @@ func validateCypherPreamble(query string) error {
 	argumentError := func(message string) error {
 		return nornicerrors.MarkCompileTime(newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", message))
 	}
+	consumeGap := func(index int) error {
+		end, unclosed := readQueryGap(rest, index)
+		if unclosed >= 0 {
+			return unclosedCommentError(rest, unclosed, ModeNormal)
+		}
+		rest = strings.TrimSpace(rest[end:])
+		return nil
+	}
 	var seenVersion string
 	for rest != "" {
 		if mode, inner := executionModePrefix(rest); mode != ModeNormal {
@@ -107,7 +115,9 @@ func validateCypherPreamble(query string) error {
 		if !matchKeywordAt(rest, 0, "CYPHER") {
 			return nil
 		}
-		rest = strings.TrimSpace(rest[len("CYPHER"):])
+		if err := consumeGap(len("CYPHER")); err != nil {
+			return err
+		}
 		if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
 			end := 0
 			for end < len(rest) && ((rest[end] >= '0' && rest[end] <= '9') || rest[end] == '.') {
@@ -121,7 +131,9 @@ func validateCypherPreamble(query string) error {
 				return argumentError("Can't specify multiple conflicting values for cypher version")
 			}
 			seenVersion = version
-			rest = strings.TrimSpace(rest[end:])
+			if err := consumeGap(end); err != nil {
+				return err
+			}
 		}
 		// Comments between the preamble and its body are still source text.
 		// Admit their terminator while consuming this existing prefix gap,
@@ -137,11 +149,15 @@ func validateCypherPreamble(query string) error {
 				end++
 			}
 			name := strings.ToLower(rest[:end])
-			rest = strings.TrimSpace(rest[end:])
+			if err := consumeGap(end); err != nil {
+				return err
+			}
 			if end == 0 || rest == "" || rest[0] != '=' {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid CYPHER option: expected name=value")
 			}
-			rest = strings.TrimSpace(rest[1:])
+			if err := consumeGap(1); err != nil {
+				return err
+			}
 			end = 0
 			for end < len(rest) && isIdentByte(rest[end]) {
 				end++
@@ -150,7 +166,9 @@ func validateCypherPreamble(query string) error {
 				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid CYPHER option: expected a value")
 			}
 			value := strings.ToLower(rest[:end])
-			rest = strings.TrimSpace(rest[end:])
+			if err := consumeGap(end); err != nil {
+				return err
+			}
 			allowed, known := cypherPreambleOptionValues[name]
 			if !known {
 				return argumentError("Unsupported options: " + name)
@@ -185,27 +203,27 @@ func stripCypherPreamble(query string) (string, bool) {
 			break
 		}
 		changed = true
-		rest = strings.TrimSpace(trimmed[len("CYPHER"):])
+		rest = strings.TrimSpace(trimmed[queryGapEnd(trimmed, len("CYPHER")):])
 		// Optional version number (e.g. CYPHER 5, CYPHER 25).
 		if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
 			i := 0
 			for i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
 				i++
 			}
-			rest = strings.TrimSpace(rest[i:])
+			rest = strings.TrimSpace(rest[queryGapEnd(rest, i):])
 		}
 		// Option tokens until the next clause keyword starts the statement.
 		for rest != "" && !startsWithClauseKeyword(rest) {
 			if isCypherStringQuoteByte(rest[0]) {
 				end := skipCypherQuotedText(rest, 0, rest[0])
-				rest = strings.TrimSpace(rest[end:])
+				rest = strings.TrimSpace(rest[queryGapEnd(rest, end):])
 				continue
 			}
 			i := 0
-			for i < len(rest) && !isASCIISpace(rest[i]) {
+			for i < len(rest) && !isASCIISpace(rest[i]) && queryCommentEnd(rest, i) < 0 {
 				i++
 			}
-			rest = strings.TrimSpace(rest[i:])
+			rest = strings.TrimSpace(rest[queryGapEnd(rest, i):])
 		}
 		if rest == "" {
 			break
@@ -371,4 +389,13 @@ func firstWordUpper(s string) (string, bool) {
 func explainProfileConflict(cypher string) bool {
 	_, statement, conflict := statementExecutionModes(cypher)
 	return conflict && queryGapEnd(statement, 0) < len(statement)
+}
+
+// completeFinishedResult applies FINISH before the declared schema is checked.
+// Internal and public execution share this terminal projection.
+func completeFinishedResult(result *ExecuteResult) {
+	if result != nil {
+		result.Columns = nil
+		result.Rows = nil
+	}
 }

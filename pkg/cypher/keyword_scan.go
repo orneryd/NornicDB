@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -1258,18 +1257,7 @@ type queryRewrite struct {
 
 // queryWhitespaceAt returns the length of the whitespace character at
 // query[index] (ASCII or a Unicode space), 0 when there is none.
-func queryWhitespaceAt(query string, index int) int {
-	switch c := query[index]; {
-	case c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v':
-		return 1
-	case c >= utf8.RuneSelf:
-		r, width := utf8.DecodeRuneInString(query[index:])
-		if unicode.IsSpace(r) {
-			return width
-		}
-	}
-	return 0
-}
+func queryWhitespaceAt(query string, index int) int { return cyphertext.WhitespaceAt(query, index) }
 
 // queryCommentEnd returns the end of the comment that starts at
 // query[index], or -1 when none starts there. A line comment ends before
@@ -1517,7 +1505,7 @@ func readCanonicalQueryText(query string, admit bool) (string, *queryRewrite, er
 		}
 		if index < verbatimEnd {
 			if end := queryCommentEnd(query, index); end >= 0 {
-				if admit && unclosedQueryComment(query, index, end) {
+				if _, closed := cyphertext.CommentEndStatus(query, index); admit && !closed {
 					return query, nil, unclosedCommentError(query, index, ModeNormal)
 				}
 				replace(index, end, commentReplacement(query[index:end]))

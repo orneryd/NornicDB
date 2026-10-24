@@ -373,10 +373,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 	if finishTerminated {
 		defer func() {
-			if result != nil {
-				result.Columns = nil
-				result.Rows = nil
-			}
+			completeFinishedResult(result)
 		}()
 	}
 
@@ -466,6 +463,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		mergedParams := e.mergeShellParams(ctx, mergeInheritedQueryParams(ctx, params))
 		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
+		if finishTerminated {
+			ctx = withFinishedStatement(ctx, modeQuery)
+		}
 		if mode != ModeNormal {
 			if err := e.validateSyntax(ctx, modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
 				return nil, err
@@ -742,6 +742,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// check the statement they plan, as Neo4j compiles it.
 	_, scopeText := parseExecutionMode(cypher)
 	scopeText, _ = stripWithEmbeddingSuffix(scopeText)
+	if finishTerminated {
+		scopeText += " FINISH"
+	}
 	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
 		return nil, err
 	}
@@ -753,6 +756,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		ctx = withBoundStatementProgram(ctx, admission.program)
 	}
 	defer func() {
+		if finishTerminated {
+			completeFinishedResult(result)
+		}
 		if retErr == nil && result != nil {
 			retErr = admission.verifyColumns(result.Columns)
 		}
@@ -870,6 +876,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// and EOF. A classifier flag must never re-enter the unchanged statement.
 	if info.HasExplain || info.HasProfile {
 		mode, innerQuery := parseExecutionMode(cypher)
+		if finishTerminated {
+			ctx = withFinishedStatement(ctx, innerQuery)
+		}
 		if mode == ModeExplain {
 			return e.executeExplain(ctx, innerQuery)
 		}

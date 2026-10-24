@@ -93,10 +93,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	if finishTerminated {
 		defer func() {
-			if result != nil {
-				result.Columns = nil
-				result.Rows = nil
-			}
+			completeFinishedResult(result)
 		}()
 	}
 
