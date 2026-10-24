@@ -115,7 +115,7 @@ func TestHandleRunRejectsDatabaseSwitchInExplicitTransaction(t *testing.T) {
 	}
 
 	beginData := encodePackStreamMap(map[string]any{"db": "translations"})
-	if err := session.handleBegin(beginData); err != nil {
+	if err := session.dispatchInner(MsgBegin, beginData, "BEGIN", nil); err != nil {
 		t.Fatalf("handleBegin failed: %v", err)
 	}
 	manager.lastGetDB = ""

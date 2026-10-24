@@ -28,7 +28,7 @@ type mergeRelationshipPattern struct {
 	direction        mergeRelationshipDirection
 	// endContent and relProps are the end node's and the relationship's
 	// text: a map that reads the pattern's own variables is read again once
-	// they are bound (executeMergeRelationshipWithContext).
+	// they are bound (executeMergeWithContext).
 	endContent string
 	relProps   string
 }

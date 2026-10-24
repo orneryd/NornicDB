@@ -110,7 +110,11 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 		if node == nil {
 			continue
 		}
-		nodeID := string(node.ID)
+		lookupID, validSource := node.Identity().NodeLookupID(store)
+		if !validSource {
+			continue
+		}
+		nodeID := string(lookupID)
 		if _, seen := deletedNodeIDs[nodeID]; seen {
 			continue
 		}
@@ -380,14 +384,16 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 				switch entity := value.(type) {
 				case *storage.Node:
 					if entity != nil {
-						if _, err := e.getQueryNode(store, entity.ID); errors.Is(err, storage.ErrNotFound) {
-							nodeIDs = append(nodeIDs, entity.ID)
+						id, valid := entity.Identity().NodeLookupID(store)
+						if _, err := e.getQueryNode(store, id); valid && errors.Is(err, storage.ErrNotFound) {
+							nodeIDs = append(nodeIDs, id)
 						}
 					}
 				case *storage.Edge:
 					if entity != nil {
-						if _, err := store.GetEdge(entity.ID); errors.Is(err, storage.ErrNotFound) {
-							edgeIDs[entity.ID] = struct{}{}
+						id := deleteEdgeLookupID(store, entity)
+						if _, err := store.GetEdge(id); errors.Is(err, storage.ErrNotFound) {
+							edgeIDs[id] = struct{}{}
 						}
 					}
 				}
@@ -400,7 +406,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 					pipelineItemUnevaluable(ctx, target)
 					return
 				}
-				collectDeleteTargetValue(value, seenNodes, seenEdges, &nodeIDs, &targetEdges)
+				collectDeleteTargetValue(store, value, seenNodes, seenEdges, &nodeIDs, &targetEdges)
 			}
 		}
 		for _, id := range targetEdges {
@@ -408,7 +414,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 		}
 	}
 	deleted := &deletedEntities{}
-	deleted.add(nodeIDs, edgeIDs)
+	deleted.addFromStorage(e.getStorage(ctx), nodeIDs, edgeIDs)
 	if err := validateDeletedEntityReads(rows, cypher[returnIdx:], deleted); err != nil {
 		recordExpressionFailure(ctx, err)
 		return

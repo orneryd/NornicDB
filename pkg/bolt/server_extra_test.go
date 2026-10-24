@@ -622,7 +622,7 @@ func TestHandleBeginWithTransactionalExecutor(t *testing.T) {
 		conn := &mockConn{}
 		session := newTestSession(conn, executor)
 
-		err := session.handleBegin(nil)
+		err := session.dispatchInner(MsgBegin, nil, "BEGIN", nil)
 		if err != nil {
 			t.Fatalf("handleBegin error: %v", err)
 		}
@@ -645,7 +645,7 @@ func TestHandleBeginWithTransactionalExecutor(t *testing.T) {
 			"tx_timeout": int64(30000),
 		})
 
-		err := session.handleBegin(metadata)
+		err := session.dispatchInner(MsgBegin, metadata, "BEGIN", nil)
 		if err != nil {
 			t.Fatalf("handleBegin error: %v", err)
 		}
@@ -662,7 +662,7 @@ func TestHandleBeginWithTransactionalExecutor(t *testing.T) {
 		conn := &mockConn{}
 		session := newTestSession(conn, executor)
 
-		err := session.handleBegin(nil)
+		err := session.dispatchInner(MsgBegin, nil, "BEGIN", nil)
 		if err != nil {
 			t.Fatalf("handleBegin should not return Go error: %v", err)
 		}
@@ -791,7 +791,7 @@ func TestHandleCommitWithTransactionalExecutor(t *testing.T) {
 		}
 		executor.beginCalled = false
 		conn.writeData = nil
-		if err := session.handleBegin(nil); err != nil {
+		if err := session.dispatchInner(MsgBegin, nil, "BEGIN", nil); err != nil {
 			t.Fatalf("same connection should accept BEGIN after RESET: %v", err)
 		}
 		if !executor.beginCalled {
@@ -799,133 +799,6 @@ func TestHandleCommitWithTransactionalExecutor(t *testing.T) {
 		}
 		if !session.inTransaction {
 			t.Fatal("session should be in a new transaction after BEGIN")
-		}
-	})
-}
-
-func TestHandleRollbackWithTransactionalExecutor(t *testing.T) {
-	t.Run("rollback calls executor", func(t *testing.T) {
-		executor := &mockTransactionalExecutor{}
-		conn := &mockConn{}
-		session := newTestSession(conn, executor)
-		session.inTransaction = true
-		primeTestTransactionLifecycle(t, session)
-
-		err := session.handleRollback(nil)
-		if err != nil {
-			t.Fatalf("handleRollback error: %v", err)
-		}
-
-		if !executor.rollbackCalled {
-			t.Error("RollbackTransaction should have been called")
-		}
-		if session.inTransaction {
-			t.Error("session should not be in transaction after rollback")
-		}
-	})
-
-	t.Run("rollback without transaction is no-op", func(t *testing.T) {
-		executor := &mockTransactionalExecutor{}
-		conn := &mockConn{}
-		session := newTestSession(conn, executor)
-		session.inTransaction = false
-
-		err := session.handleRollback(nil)
-		if err != nil {
-			t.Fatalf("handleRollback error: %v", err)
-		}
-
-		if executor.rollbackCalled {
-			t.Error("RollbackTransaction should NOT have been called")
-		}
-	})
-}
-
-func TestHandleResetWithTransactionalExecutor(t *testing.T) {
-	t.Run("reset rolls back active transaction", func(t *testing.T) {
-		executor := &mockTransactionalExecutor{}
-		conn := &mockConn{}
-		session := newTestSession(conn, executor)
-		session.inTransaction = true
-		primeTestTransactionLifecycle(t, session)
-
-		err := session.handleReset(nil)
-		if err != nil {
-			t.Fatalf("handleReset error: %v", err)
-		}
-
-		if !executor.rollbackCalled {
-			t.Error("RollbackTransaction should have been called on reset")
-		}
-		if session.inTransaction {
-			t.Error("session should not be in transaction after reset")
-		}
-	})
-
-	t.Run("reset without transaction does not call rollback", func(t *testing.T) {
-		executor := &mockTransactionalExecutor{}
-		conn := &mockConn{}
-		session := newTestSession(conn, executor)
-		session.inTransaction = false
-
-		err := session.handleReset(nil)
-		if err != nil {
-			t.Fatalf("handleReset error: %v", err)
-		}
-
-		if executor.rollbackCalled {
-			t.Error("RollbackTransaction should NOT have been called")
-		}
-	})
-}
-
-func TestTransactionWithNonTransactionalExecutor(t *testing.T) {
-	t.Run("begin works without TransactionalExecutor", func(t *testing.T) {
-		executor := &mockExecutor{} // Does NOT implement TransactionalExecutor
-		conn := &mockConn{}
-		session := newTestSession(conn, executor)
-
-		err := session.handleBegin(nil)
-		if err != nil {
-			t.Fatalf("handleBegin error: %v", err)
-		}
-
-		if !session.inTransaction {
-			t.Error("session should be in transaction")
-		}
-	})
-
-	t.Run("commit works without TransactionalExecutor", func(t *testing.T) {
-		executor := &mockExecutor{}
-		conn := &mockConn{}
-		session := newTestSession(conn, executor)
-		session.inTransaction = true
-		primeTestTransactionLifecycle(t, session)
-
-		err := session.handleCommit(nil)
-		if err != nil {
-			t.Fatalf("handleCommit error: %v", err)
-		}
-
-		if session.inTransaction {
-			t.Error("session should not be in transaction after commit")
-		}
-	})
-
-	t.Run("rollback works without TransactionalExecutor", func(t *testing.T) {
-		executor := &mockExecutor{}
-		conn := &mockConn{}
-		session := newTestSession(conn, executor)
-		session.inTransaction = true
-		primeTestTransactionLifecycle(t, session)
-
-		err := session.handleRollback(nil)
-		if err != nil {
-			t.Fatalf("handleRollback error: %v", err)
-		}
-
-		if session.inTransaction {
-			t.Error("session should not be in transaction after rollback")
 		}
 	})
 }
@@ -1632,4 +1505,42 @@ func TestAuthDisabled(t *testing.T) {
 			t.Errorf("expected 1 row, got %d", len(session.lastResult.Rows))
 		}
 	})
+}
+
+func TestTransactionMessageExecutorMatrix(t *testing.T) {
+	for _, tc := range []struct {
+		name                                     string
+		message                                  byte
+		native, active, wantActive, wantRollback bool
+	}{
+		{name: "native rollback", message: MsgRollback, native: true, active: true, wantRollback: true},
+		{name: "native rollback without transaction", message: MsgRollback, native: true},
+		{name: "native reset", message: MsgReset, native: true, active: true, wantRollback: true},
+		{name: "native reset without transaction", message: MsgReset, native: true},
+		{name: "protocol-only begin", message: MsgBegin, wantActive: true},
+		{name: "protocol-only commit", message: MsgCommit, active: true},
+		{name: "protocol-only rollback", message: MsgRollback, active: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			native := &mockTransactionalExecutor{}
+			var executor QueryExecutor = &mockExecutor{}
+			if tc.native {
+				executor = native
+			}
+			session := newTestSession(&mockConn{}, executor)
+			session.inTransaction = tc.active
+			if tc.active {
+				primeTestTransactionLifecycle(t, session)
+			}
+			if err := session.dispatchInner(tc.message, nil, "transaction", nil); err != nil {
+				t.Fatalf("transaction message: %v", err)
+			}
+			if session.inTransaction != tc.wantActive {
+				t.Errorf("transaction active=%v, want %v", session.inTransaction, tc.wantActive)
+			}
+			if tc.native && native.rollbackCalled != tc.wantRollback {
+				t.Errorf("RollbackTransaction called=%v, want %v", native.rollbackCalled, tc.wantRollback)
+			}
+		})
+	}
 }

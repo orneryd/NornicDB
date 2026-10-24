@@ -83,7 +83,7 @@ func (reader relationshipEndpointReader) readRetained(id storage.NodeID, propert
 	}
 	// Timestamps belong to property visibility. Vectors, embedding bodies and
 	// storage snapshot owners are unrelated to an ID/label/scalar projection.
-	*node = storage.Node{ID: node.ID, Labels: node.Labels, Properties: selected,
+	*node = storage.Node{ID: node.ID, Database: node.Database, Labels: node.Labels, Properties: selected,
 		CreatedAt: node.CreatedAt, UpdatedAt: node.UpdatedAt,
 		VisibilitySuppressed: node.VisibilitySuppressed, EmbedMeta: metadata}
 	return node, nil

@@ -42,3 +42,14 @@ type Context struct {
 type GraphCatalog interface {
 	CompositeGraphs() (graphs []string, composite bool)
 }
+
+// GraphStorage resolves the execution selection only for a function that reads
+// graph data. Pure value/catalog functions retain the record fragment path.
+func (ctx Context) GraphStorage() (storage.Engine, error) {
+	if resolver, ok := ctx.Graphs.(interface {
+		FunctionStorage(string) (storage.Engine, error)
+	}); ok {
+		return resolver.FunctionStorage(ctx.Database)
+	}
+	return ctx.Storage, nil
+}

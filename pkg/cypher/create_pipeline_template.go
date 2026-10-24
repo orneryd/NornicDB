@@ -358,6 +358,10 @@ func (t *pipelineCreateTemplate) plan(ctx context.Context, e *StorageExecutor, r
 			Type:       edgeTemplate.relType,
 			Properties: props,
 		}
+		if err := edge.SetEndpoints(startNode, endNode); err != nil {
+			rollback()
+			return nil, true, err
+		}
 		plan.edges = append(plan.edges, edge)
 		if edgeTemplate.relVar != "" {
 			edgesAdded = append(edgesAdded, edgeUndo{name: edgeTemplate.relVar, prev: edges[edgeTemplate.relVar]})

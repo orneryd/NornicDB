@@ -714,7 +714,7 @@ func TestCreatePromotionPolicy_MissingProfileRef(t *testing.T) {
 	assert.Contains(t, err.Error(), "not found")
 }
 
-func TestKnowledgePolicySchemaTransactionErrorBoundaries(t *testing.T) {
+func TestPolicySchemaTransactionFailures(t *testing.T) {
 	for _, boundary := range []string{"namespace", "corrupt", "read", "write", "serialize"} {
 		t.Run(boundary, func(t *testing.T) {
 			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
@@ -725,12 +725,12 @@ func TestKnowledgePolicySchemaTransactionErrorBoundaries(t *testing.T) {
 					return transaction.Set(schemaKey("native"), []byte("{"))
 				}))
 			}
-			transaction, err := engine.BeginTransaction()
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = transaction.Rollback() })
-			if boundary != "namespace" {
-				require.NoError(t, transaction.SetNamespace("native"))
+			namespace := "native"
+			if boundary == "namespace" {
+				namespace = ""
 			}
+			transaction := runtimeFixtureOwner.NamespaceTransaction(t, engine.BeginTransaction, namespace)
+
 			if boundary == "read" {
 				transaction.badgerTx.Discard()
 			}
