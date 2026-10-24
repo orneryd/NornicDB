@@ -1,0 +1,792 @@
+[
+  {
+    "name": "r4/unit/native/0///execute",
+    "family": "r4-unit-export",
+    "query": "UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN *",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0///EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN *",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0///PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN *",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0//UNION/execute",
+    "family": "r4-unit-export",
+    "query": "UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0//UNION/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0//UNION/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0//UNION ALL/execute",
+    "family": "r4-unit-export",
+    "query": "UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION ALL RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0//UNION ALL/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION ALL RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0//UNION ALL/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION ALL RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0/OPTIONAL //execute",
+    "family": "r4-unit-export",
+    "query": "UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN *",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0/OPTIONAL //EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN *",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0/OPTIONAL //PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN *",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0/OPTIONAL /UNION/execute",
+    "family": "r4-unit-export",
+    "query": "UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0/OPTIONAL /UNION/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0/OPTIONAL /UNION/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0/OPTIONAL /UNION ALL/execute",
+    "family": "r4-unit-export",
+    "query": "UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION ALL RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0/OPTIONAL /UNION ALL/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION ALL RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/0/OPTIONAL /UNION ALL/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION ALL RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/native/1///execute",
+    "family": "r4-unit-export",
+    "query": "UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN *",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/native/1///EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN *",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/native/1///PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN *",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/native/1//UNION/execute",
+    "family": "r4-unit-export",
+    "query": "UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/native/1//UNION/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/native/1//UNION/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/native/1//UNION ALL/execute",
+    "family": "r4-unit-export",
+    "query": "UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION ALL RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/native/1//UNION ALL/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION ALL RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/native/1//UNION ALL/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION ALL RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/native/1/OPTIONAL //execute",
+    "family": "r4-unit-export",
+    "query": "UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN *",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/native/1/OPTIONAL //EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN *",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/native/1/OPTIONAL //PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN *",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/native/1/OPTIONAL /UNION/execute",
+    "family": "r4-unit-export",
+    "query": "UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/native/1/OPTIONAL /UNION/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/native/1/OPTIONAL /UNION/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/native/1/OPTIONAL /UNION ALL/execute",
+    "family": "r4-unit-export",
+    "query": "UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION ALL RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/native/1/OPTIONAL /UNION ALL/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION ALL RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/native/1/OPTIONAL /UNION ALL/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION ALL RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/composite/0///execute",
+    "family": "r4-unit-export",
+    "query": "USE comp.one UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN *",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0///EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN USE comp.one UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN *",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0///PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE USE comp.one UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN *",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0//UNION/execute",
+    "family": "r4-unit-export",
+    "query": "USE comp.one UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION USE comp.one RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0//UNION/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN USE comp.one UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION USE comp.one RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0//UNION/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE USE comp.one UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION USE comp.one RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0//UNION ALL/execute",
+    "family": "r4-unit-export",
+    "query": "USE comp.one UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION ALL USE comp.one RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0//UNION ALL/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN USE comp.one UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION ALL USE comp.one RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0//UNION ALL/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE USE comp.one UNWIND [] AS seed CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION ALL USE comp.one RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0/OPTIONAL //execute",
+    "family": "r4-unit-export",
+    "query": "USE comp.one UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN *",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0/OPTIONAL //EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN USE comp.one UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN *",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0/OPTIONAL //PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE USE comp.one UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN *",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0/OPTIONAL /UNION/execute",
+    "family": "r4-unit-export",
+    "query": "USE comp.one UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION USE comp.one RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0/OPTIONAL /UNION/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN USE comp.one UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION USE comp.one RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0/OPTIONAL /UNION/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE USE comp.one UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION USE comp.one RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0/OPTIONAL /UNION ALL/execute",
+    "family": "r4-unit-export",
+    "query": "USE comp.one UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION ALL USE comp.one RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0/OPTIONAL /UNION ALL/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN USE comp.one UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION ALL USE comp.one RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/0/OPTIONAL /UNION ALL/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE USE comp.one UNWIND [] AS seed OPTIONAL CALL { CALL { RETURN 'inner' AS hidden } } RETURN * UNION ALL USE comp.one RETURN 'outer' AS seed",
+    "columns": null,
+    "rows": null,
+    "error": "Query cannot conclude with CALL (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+  },
+  {
+    "name": "r4/unit/composite/1///execute",
+    "family": "r4-unit-export",
+    "query": "USE comp.one UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN *",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/composite/1///EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN USE comp.one UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN *",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/composite/1///PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE USE comp.one UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN *",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/composite/1//UNION/execute",
+    "family": "r4-unit-export",
+    "query": "USE comp.one UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION USE comp.one RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/composite/1//UNION/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN USE comp.one UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION USE comp.one RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/composite/1//UNION/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE USE comp.one UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION USE comp.one RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/composite/1//UNION ALL/execute",
+    "family": "r4-unit-export",
+    "query": "USE comp.one UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION ALL USE comp.one RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/composite/1//UNION ALL/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN USE comp.one UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION ALL USE comp.one RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/composite/1//UNION ALL/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE USE comp.one UNWIND [] AS seed CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION ALL USE comp.one RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/composite/1/OPTIONAL //execute",
+    "family": "r4-unit-export",
+    "query": "USE comp.one UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN *",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/composite/1/OPTIONAL //EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN USE comp.one UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN *",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/composite/1/OPTIONAL //PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE USE comp.one UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN *",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/composite/1/OPTIONAL /UNION/execute",
+    "family": "r4-unit-export",
+    "query": "USE comp.one UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION USE comp.one RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/composite/1/OPTIONAL /UNION/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN USE comp.one UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION USE comp.one RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/composite/1/OPTIONAL /UNION/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE USE comp.one UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION USE comp.one RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/composite/1/OPTIONAL /UNION ALL/execute",
+    "family": "r4-unit-export",
+    "query": "USE comp.one UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION ALL USE comp.one RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/unit/composite/1/OPTIONAL /UNION ALL/EXPLAIN",
+    "family": "r4-unit-export",
+    "query": "EXPLAIN USE comp.one UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION ALL USE comp.one RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": []
+  },
+  {
+    "name": "r4/unit/composite/1/OPTIONAL /UNION ALL/PROFILE",
+    "family": "r4-unit-export",
+    "query": "PROFILE USE comp.one UNWIND [] AS seed OPTIONAL CALL { WITH 'inner' AS hidden CALL db.labels() YIELD label } RETURN * UNION ALL USE comp.one RETURN 'outer' AS seed",
+    "columns": [
+      "seed"
+    ],
+    "rows": [
+      [
+        "outer"
+      ]
+    ]
+  },
+  {
+    "name": "r4/metadata/conditional/execute",
+    "family": "r4-metadata",
+    "query": "CYPHER 25 WITH 'outer' AS value CALL (value) { WHEN true THEN RETURN value AS tag ELSE RETURN value AS tag } RETURN tag",
+    "columns": null,
+    "rows": null,
+    "error": "Variable `value` not defined",
+    "code": "Neo.ClientError.Statement.SyntaxError",
+    "detail": "UndefinedVariable"
+  },
+  {
+    "name": "r4/metadata/conditional/EXPLAIN",
+    "family": "r4-metadata",
+    "query": "CYPHER 25 EXPLAIN WITH 'outer' AS value CALL (value) { WHEN true THEN RETURN value AS tag ELSE RETURN value AS tag } RETURN tag",
+    "columns": null,
+    "rows": null,
+    "error": "Variable `value` not defined",
+    "code": "Neo.ClientError.Statement.SyntaxError",
+    "detail": "UndefinedVariable"
+  },
+  {
+    "name": "r4/metadata/conditional/PROFILE",
+    "family": "r4-metadata",
+    "query": "CYPHER 25 PROFILE WITH 'outer' AS value CALL (value) { WHEN true THEN RETURN value AS tag ELSE RETURN value AS tag } RETURN tag",
+    "columns": null,
+    "rows": null,
+    "error": "Variable `value` not defined",
+    "code": "Neo.ClientError.Statement.SyntaxError",
+    "detail": "UndefinedVariable"
+  },
+  {
+    "name": "r4/metadata/braced/execute",
+    "family": "r4-metadata",
+    "query": "CYPHER 25 WITH 'outer' AS value CALL (value) { { RETURN value AS tag UNION RETURN value AS tag } UNION ALL RETURN value AS tag } RETURN tag",
+    "columns": null,
+    "rows": null,
+    "error": "Variable `value` not defined",
+    "code": "Neo.ClientError.Statement.SyntaxError",
+    "detail": "UndefinedVariable"
+  },
+  {
+    "name": "r4/metadata/braced/EXPLAIN",
+    "family": "r4-metadata",
+    "query": "CYPHER 25 EXPLAIN WITH 'outer' AS value CALL (value) { { RETURN value AS tag UNION RETURN value AS tag } UNION ALL RETURN value AS tag } RETURN tag",
+    "columns": null,
+    "rows": null,
+    "error": "Variable `value` not defined",
+    "code": "Neo.ClientError.Statement.SyntaxError",
+    "detail": "UndefinedVariable"
+  },
+  {
+    "name": "r4/metadata/braced/PROFILE",
+    "family": "r4-metadata",
+    "query": "CYPHER 25 PROFILE WITH 'outer' AS value CALL (value) { { RETURN value AS tag UNION RETURN value AS tag } UNION ALL RETURN value AS tag } RETURN tag",
+    "columns": null,
+    "rows": null,
+    "error": "Variable `value` not defined",
+    "code": "Neo.ClientError.Statement.SyntaxError",
+    "detail": "UndefinedVariable"
+  },
+  {
+    "name": "r4/metadata/next_control/execute",
+    "family": "r4-metadata",
+    "query": "CYPHER 25 RETURN 'outer' AS value NEXT WHEN true THEN RETURN value AS tag ELSE RETURN value AS tag",
+    "columns": null,
+    "rows": null,
+    "error": "Variable `value` not defined",
+    "code": "Neo.ClientError.Statement.SyntaxError",
+    "detail": "UndefinedVariable"
+  },
+  {
+    "name": "r4/metadata/next_control/EXPLAIN",
+    "family": "r4-metadata",
+    "query": "CYPHER 25 EXPLAIN RETURN 'outer' AS value NEXT WHEN true THEN RETURN value AS tag ELSE RETURN value AS tag",
+    "columns": null,
+    "rows": null,
+    "error": "Variable `value` not defined",
+    "code": "Neo.ClientError.Statement.SyntaxError",
+    "detail": "UndefinedVariable"
+  },
+  {
+    "name": "r4/metadata/next_control/PROFILE",
+    "family": "r4-metadata",
+    "query": "CYPHER 25 PROFILE RETURN 'outer' AS value NEXT WHEN true THEN RETURN value AS tag ELSE RETURN value AS tag",
+    "columns": null,
+    "rows": null,
+    "error": "Variable `value` not defined",
+    "code": "Neo.ClientError.Statement.SyntaxError",
+    "detail": "UndefinedVariable"
+  },
+  {
+    "name": "r4/metadata/conditional_star_control/execute",
+    "family": "r4-metadata",
+    "query": "CYPHER 25 WITH 'outer' AS value CALL (value) { WHEN true THEN RETURN *, 'tag' AS tag ELSE RETURN *, 'tag' AS tag } RETURN tag",
+    "columns": null,
+    "rows": null,
+    "error": "Cannot establish the statement scope and result columns"
+  },
+  {
+    "name": "r4/metadata/conditional_star_control/EXPLAIN",
+    "family": "r4-metadata",
+    "query": "CYPHER 25 EXPLAIN WITH 'outer' AS value CALL (value) { WHEN true THEN RETURN *, 'tag' AS tag ELSE RETURN *, 'tag' AS tag } RETURN tag",
+    "columns": null,
+    "rows": null,
+    "error": "Cannot establish the statement scope and result columns"
+  },
+  {
+    "name": "r4/metadata/conditional_star_control/PROFILE",
+    "family": "r4-metadata",
+    "query": "CYPHER 25 PROFILE WITH 'outer' AS value CALL (value) { WHEN true THEN RETURN *, 'tag' AS tag ELSE RETURN *, 'tag' AS tag } RETURN tag",
+    "columns": null,
+    "rows": null,
+    "error": "Cannot establish the statement scope and result columns"
+  }
+]
