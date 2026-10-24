@@ -61,6 +61,9 @@ func (s *Session) handleRun(data []byte) error {
 	// Parse PackStream to extract query, params, and metadata
 	query, params, metadata, err := s.parseRunMessage(data)
 	if err != nil {
+		if errors.Is(err, errDateTimeSignature) {
+			return err
+		}
 		return s.sendLocalizedRunFailure("Neo.ClientError.Request.Invalid", localization.BoltRunMessageParseFailed(err))
 	}
 	s.language = language.Und
@@ -590,9 +593,14 @@ func (s *Session) parseRunMessage(data []byte) (string, map[string]any, map[stri
 	// Parse parameters map
 	params := make(map[string]any)
 	if offset < len(data) {
-		p, consumed, err := decodePackStreamMap(data, offset)
+		p, consumed, err := decodePackStreamMap(data, offset, s.useUTCDateTimeStructs())
 		if err != nil {
-			// Params parse failed, use empty map
+			// A negotiated temporal violation must reach RUN's failure owner,
+			// including when it occurred inside a nested value.
+			if errors.Is(err, errDateTimeSignature) {
+				return "", nil, nil, err
+			}
+			// Preserve existing handling of other malformed parameter maps.
 			params = make(map[string]any)
 		} else {
 			params = p
@@ -604,7 +612,10 @@ func (s *Session) parseRunMessage(data []byte) (string, map[string]any, map[stri
 	// Parse metadata if present
 	metadata := make(map[string]any)
 	if offset < len(data) {
-		m, _, err := decodePackStreamMap(data, offset)
+		m, _, err := decodePackStreamMap(data, offset, s.useUTCDateTimeStructs())
+		if errors.Is(err, errDateTimeSignature) {
+			return "", nil, nil, err
+		}
 		if err == nil {
 			metadata = m
 		}
@@ -621,7 +632,7 @@ type streamingOptions struct {
 
 const maxStreamingLimit = int64(1<<31 - 1)
 
-func parseStreamingOptions(data []byte) (streamingOptions, error) {
+func parseStreamingOptions(data []byte, utcDateTime ...bool) (streamingOptions, error) {
 	options := streamingOptions{limit: -1, statementID: -1}
 	if len(data) == 0 {
 		return options, nil
@@ -637,7 +648,7 @@ func parseStreamingOptions(data []byte) (streamingOptions, error) {
 			return options, fmt.Errorf("failed to decode streaming option key: %w", err)
 		}
 		offset += consumed
-		value, consumed, err := decodePackStreamValue(data, offset)
+		value, consumed, err := decodePackStreamValue(data, offset, utcDateTime...)
 		if err != nil {
 			return options, fmt.Errorf("failed to decode streaming option %q: %w", string(key), err)
 		}
@@ -813,8 +824,11 @@ func (s *Session) sendStreamingFailure(message string) error {
 
 // handlePull handles the PULL message.
 func (s *Session) handlePull(data []byte) error {
-	options, err := parseStreamingOptions(data)
+	options, err := parseStreamingOptions(data, s.useUTCDateTimeStructs())
 	if err != nil {
+		if errors.Is(err, errDateTimeSignature) {
+			return err
+		}
 		return s.sendStreamingFailure(err.Error())
 	}
 	stream, statementID, ok := s.selectResultStream(options.statementID)
@@ -991,8 +1005,11 @@ func databaseFromMetadata(metadata map[string]any) (string, bool) {
 
 // handleDiscard handles the DISCARD message.
 func (s *Session) handleDiscard(data []byte) error {
-	options, err := parseStreamingOptions(data)
+	options, err := parseStreamingOptions(data, s.useUTCDateTimeStructs())
 	if err != nil {
+		if errors.Is(err, errDateTimeSignature) {
+			return err
+		}
 		return s.sendStreamingFailure(err.Error())
 	}
 	stream, statementID, ok := s.selectResultStream(options.statementID)
@@ -1150,8 +1167,11 @@ func (s *Session) handleBegin(data []byte) error {
 	// Parse BEGIN metadata (contains tx_timeout, bookmarks, etc.)
 	var metadata map[string]any
 	if len(data) > 0 {
-		m, _, err := decodePackStreamMap(data, 0)
+		m, _, err := decodePackStreamMap(data, 0, s.useUTCDateTimeStructs())
 		if err != nil {
+			if errors.Is(err, errDateTimeSignature) {
+				return err
+			}
 			return s.sendTransactionControlFailure("Neo.ClientError.Request.Invalid",
 				fmt.Sprintf("Failed to parse BEGIN metadata: %v", err))
 		}
