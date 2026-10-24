@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep transactional CALL batches independent while rolling back ordinary outer writes; preserve CREATE read phases, list element admission, and pagination opening order.
+
 - Keep transaction adjacency reads local to incident pending relationships and reuse bounded snapshot equality candidates for row MERGE. Reuse newly created edge bodies during same-transaction cascades instead of repeatedly sorting pending Badger writes.
 
 - Select only usable compiled GPU backends, and close replaced vector-file
@@ -168,6 +170,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve the prompt wire format for custom legacy Ollama endpoints during batching and use array input for scalar calls to modern /api/embed endpoints.
 
 - Batch Voyage text documents and Ollama inputs in real HTTP arrays, split provider requests within input/token budgets, and retain returned embedding usage without changing the public API (#1488).
+- Parse transactional CALL batch clauses structurally and share static size/context admission between execution and EXPLAIN.
+  Include every expression position in shared graph-effect and chain-dependency analysis, including graph-reading projections and predicates.
+  Bind runtime sizes at the resulting chain boundaries and preserve every earlier committed batch when a later batch fails.
 - Use canonical temporal equality for APOC collection membership and set operations, including typed Go parameters and temporal values nested in lists and maps.
 - Idle automatic embedding workers wait for enqueue notifications. Recovery scans have a 30-second minimum
   interval, and all embedding batch paths honor foreground-pressure pauses. Model readiness and resume

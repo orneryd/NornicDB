@@ -768,9 +768,7 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		if invalidIntegerKey {
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreListIndexTypeMismatch(key.display))
 		}
-		if element := strings.TrimSuffix(strings.TrimPrefix(receiver.kind, "List<"), ">"); element != "T" && !strings.ContainsAny(element, "<,") {
-			return knownOperand(element), nil
-		}
+		return staticListElementOperand(receiver), nil
 	case receiver.kind == "Map" || receiver.kind == "Map, Node or Relationship":
 		if keyKnown && key.kind != "String" {
 			return staticOperand{}, localizedStatusError(syntaxError, detail, localization.CypherCoreMapKeyTypeMismatch(key.display))
@@ -928,7 +926,7 @@ func staticMapProjectionSplit(expression string) (variable, items string, projec
 // checkAtom types a literal, parameter, variable, list or map literal or
 // function call, checking the expressions inside it.
 func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand, error) {
-	if expression[0] == '$' {
+	if expression[0] == '$' && simpleSemanticIdentifier(strings.TrimSpace(expression[1:])) != "" {
 		name := strings.TrimSpace(expression[1:])
 		if checker.params == nil || simpleSemanticIdentifier(name) == "" {
 			return staticOperand{}, nil
@@ -1035,6 +1033,26 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 				if _, err := checker.check(argument); err != nil {
 					return staticOperand{}, err
 				}
+			}
+		}
+		// These functions preserve their input element type (and reverse also
+		// preserves String). Erasing it lets an invalid composed batch size
+		// escape compilation and fail only after earlier batches commit.
+		if strings.EqualFold(function, "tail") || strings.EqualFold(function, "reverse") {
+			if args := splitTopLevelComma(arguments); len(args) == 1 {
+				return checker.check(args[0])
+			}
+		}
+		// List selectors preserve the element constraint supplied by their
+		// argument, including a bound parameter. CASE and coalesce join those
+		// constraints through their existing rules rather than selected values.
+		if strings.EqualFold(function, "head") || strings.EqualFold(function, "last") {
+			if args := splitTopLevelComma(arguments); len(args) == 1 {
+				list, err := checker.check(args[0])
+				if err != nil {
+					return staticOperand{}, err
+				}
+				return staticListElementOperand(list), nil
 			}
 		}
 		return knownOperand(staticFunctionResultType(function, arguments)), nil
@@ -1445,4 +1463,16 @@ func numericOperatorResult(left, right staticOperand) staticOperand {
 		return knownOperand("Integer")
 	}
 	return knownOperand("Number")
+}
+
+// staticListElementOperand is shared by subscripts and list-selector functions.
+// A heterogeneous list has no single statically known element type.
+func staticListElementOperand(list staticOperand) staticOperand {
+	if list.list() {
+		element := strings.TrimSuffix(strings.TrimPrefix(list.kind, "List<"), ">")
+		if element != "T" && !strings.ContainsAny(element, "<,") {
+			return knownOperand(element)
+		}
+	}
+	return staticOperand{}
 }
