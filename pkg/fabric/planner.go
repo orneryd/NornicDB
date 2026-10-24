@@ -65,8 +65,8 @@ func clauseKeywordAt(text string, idx int, keyword string, isName ClauseKeywordN
 }
 
 func splitTopLevelUnion(query string, isName ClauseKeywordNameReader) ([]string, []bool, bool, error) {
-	parts := make([]string, 0, 2)
-	ops := make([]bool, 0, 1)
+	var parts []string
+	var ops []bool
 	start := 0
 	braceDepth := 0
 	parenDepth := 0
@@ -274,7 +274,7 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 			if err := p.validatePlanTarget(scope, sub); err != nil {
 				return nil, err
 			}
-			inner, err := p.planSingleQuery(subRest, sub, scope, true)
+			inner, err := p.planQuery(subRest, sub, scope, true)
 			if err != nil {
 				return nil, err
 			}
