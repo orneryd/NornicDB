@@ -34,6 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Keep registered and dynamic procedure writes in the caller's rollback owner,
+  enforce one writable composite database, and preserve periodic autocommit batch boundaries.
+
 - Retain declared UNION branch schemas when participant metadata is absent, align both branch streams before DISTINCT, and keep nested planning on the UNION-aware entry.
 
 - Preserve remote CALL imports, outer bindings and typed Bolt/HTTP values, including exact integer numbers and temporal offsets. Reject invalid scope imports before writes and retain scoped imports across constituent WITH clauses.
