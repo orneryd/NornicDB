@@ -110,11 +110,85 @@ func (s *BaseCypherParserListener) EnterAdministrationCommand(ctx *Administratio
 // ExitAdministrationCommand is called when production administrationCommand is exited.
 func (s *BaseCypherParserListener) ExitAdministrationCommand(ctx *AdministrationCommandContext) {}
 
+// EnterCompositeConstituent is called when production compositeConstituent is entered.
+func (s *BaseCypherParserListener) EnterCompositeConstituent(ctx *CompositeConstituentContext) {}
+
+// ExitCompositeConstituent is called when production compositeConstituent is exited.
+func (s *BaseCypherParserListener) ExitCompositeConstituent(ctx *CompositeConstituentContext) {}
+
+// EnterCompositeConstituentOption is called when production compositeConstituentOption is entered.
+func (s *BaseCypherParserListener) EnterCompositeConstituentOption(ctx *CompositeConstituentOptionContext) {
+}
+
+// ExitCompositeConstituentOption is called when production compositeConstituentOption is exited.
+func (s *BaseCypherParserListener) ExitCompositeConstituentOption(ctx *CompositeConstituentOptionContext) {
+}
+
+// EnterCompositeValue is called when production compositeValue is entered.
+func (s *BaseCypherParserListener) EnterCompositeValue(ctx *CompositeValueContext) {}
+
+// ExitCompositeValue is called when production compositeValue is exited.
+func (s *BaseCypherParserListener) ExitCompositeValue(ctx *CompositeValueContext) {}
+
 // EnterQualifiedName is called when production qualifiedName is entered.
 func (s *BaseCypherParserListener) EnterQualifiedName(ctx *QualifiedNameContext) {}
 
 // ExitQualifiedName is called when production qualifiedName is exited.
 func (s *BaseCypherParserListener) ExitQualifiedName(ctx *QualifiedNameContext) {}
+
+// EnterCompositeAt is called when production compositeAt is entered.
+func (s *BaseCypherParserListener) EnterCompositeAt(ctx *CompositeAtContext) {}
+
+// ExitCompositeAt is called when production compositeAt is exited.
+func (s *BaseCypherParserListener) ExitCompositeAt(ctx *CompositeAtContext) {}
+
+// EnterCompositePassword is called when production compositePassword is entered.
+func (s *BaseCypherParserListener) EnterCompositePassword(ctx *CompositePasswordContext) {}
+
+// ExitCompositePassword is called when production compositePassword is exited.
+func (s *BaseCypherParserListener) ExitCompositePassword(ctx *CompositePasswordContext) {}
+
+// EnterCompositeOidc is called when production compositeOidc is entered.
+func (s *BaseCypherParserListener) EnterCompositeOidc(ctx *CompositeOidcContext) {}
+
+// ExitCompositeOidc is called when production compositeOidc is exited.
+func (s *BaseCypherParserListener) ExitCompositeOidc(ctx *CompositeOidcContext) {}
+
+// EnterCompositeCredential is called when production compositeCredential is entered.
+func (s *BaseCypherParserListener) EnterCompositeCredential(ctx *CompositeCredentialContext) {}
+
+// ExitCompositeCredential is called when production compositeCredential is exited.
+func (s *BaseCypherParserListener) ExitCompositeCredential(ctx *CompositeCredentialContext) {}
+
+// EnterCompositeForwarding is called when production compositeForwarding is entered.
+func (s *BaseCypherParserListener) EnterCompositeForwarding(ctx *CompositeForwardingContext) {}
+
+// ExitCompositeForwarding is called when production compositeForwarding is exited.
+func (s *BaseCypherParserListener) ExitCompositeForwarding(ctx *CompositeForwardingContext) {}
+
+// EnterCompositeSecret is called when production compositeSecret is entered.
+func (s *BaseCypherParserListener) EnterCompositeSecret(ctx *CompositeSecretContext) {}
+
+// ExitCompositeSecret is called when production compositeSecret is exited.
+func (s *BaseCypherParserListener) ExitCompositeSecret(ctx *CompositeSecretContext) {}
+
+// EnterCompositeRef is called when production compositeRef is entered.
+func (s *BaseCypherParserListener) EnterCompositeRef(ctx *CompositeRefContext) {}
+
+// ExitCompositeRef is called when production compositeRef is exited.
+func (s *BaseCypherParserListener) ExitCompositeRef(ctx *CompositeRefContext) {}
+
+// EnterCompositeAccess is called when production compositeAccess is entered.
+func (s *BaseCypherParserListener) EnterCompositeAccess(ctx *CompositeAccessContext) {}
+
+// ExitCompositeAccess is called when production compositeAccess is exited.
+func (s *BaseCypherParserListener) ExitCompositeAccess(ctx *CompositeAccessContext) {}
+
+// EnterCompositeConstituents is called when production compositeConstituents is entered.
+func (s *BaseCypherParserListener) EnterCompositeConstituents(ctx *CompositeConstituentsContext) {}
+
+// ExitCompositeConstituents is called when production compositeConstituents is exited.
+func (s *BaseCypherParserListener) ExitCompositeConstituents(ctx *CompositeConstituentsContext) {}
 
 // EnterSchemaCommand is called when production schemaCommand is entered.
 func (s *BaseCypherParserListener) EnterSchemaCommand(ctx *SchemaCommandContext) {}

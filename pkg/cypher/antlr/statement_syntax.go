@@ -85,7 +85,7 @@ type statementSyntaxData struct {
 	bytes       []int // rune boundary to original UTF-8 byte boundary
 	nodes       []syntaxNodeData
 	tokens      []syntaxTokenData
-	diagnostics []string // Raw grammar diagnostics; failed products are never cached.
+	diagnostics []localization.Message // Structural grammar diagnostics; failed products are never cached.
 }
 
 type syntaxNodeData struct {
@@ -225,18 +225,19 @@ func parseStatementSyntax(ctx context.Context, source string, entry SyntaxEntry,
 		tree = parser.Script()
 	}
 	if (entry == ClauseEntry || entry == ExpressionEntry || entry == PatternEntry) && stream.LA(1) != antlr4.TokenEOF {
-		listener.errors = append(listener.errors, "unexpected trailing input")
+		trailing := stream.LT(1)
+		listener.errors = append(listener.errors, localization.CypherANTLRUnexpectedInput(trailing.GetLine(), trailing.GetColumn()))
 	}
 	tokens.Fill()
 	var syntaxErr error
 	if len(listener.errors) != 0 {
-		message := localization.CypherANTLRParseSyntaxError(strings.Join(listener.errors, "; "))
+		message := localization.CypherANTLRParseSyntaxError(strings.Join(listener.fallbacks(), "; "), listener.errors...)
 		syntaxErr = localization.NewLocalizedError(string(message.ID), message, nil)
 	}
 	if observe != nil {
 		observe(tree)
 	}
-	data = &statementSyntaxData{source: source, diagnostics: append([]string(nil), listener.errors...)}
+	data = &statementSyntaxData{source: source, diagnostics: append([]localization.Message(nil), listener.errors...)}
 	for offset := range source {
 		data.bytes = append(data.bytes, offset)
 	}

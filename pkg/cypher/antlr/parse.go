@@ -6,7 +6,6 @@ package antlr
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
@@ -18,6 +17,12 @@ import (
 type ParseResult struct {
 	Tree   IScriptContext
 	Errors []string
+}
+
+// compositeKeyword lets administrative grammar additions reuse identifiers
+// without reserving their words in ordinary Cypher statements.
+func (p *CypherParser) compositeKeyword(word string) bool {
+	return strings.EqualFold(p.GetCurrentToken().GetText(), word)
 }
 
 // Parse parses a Cypher query string using ANTLR and returns the parse tree
@@ -35,7 +40,7 @@ func Parse(query string) (*ParseResult, error) {
 	result := &ParseResult{}
 	data, err := parseStatementSyntax(context.Background(), query, StatementEntry, func(tree antlr.Tree) { result.Tree = tree.(IScriptContext) })
 	if data != nil {
-		result.Errors = append([]string(nil), data.diagnostics...)
+		result.Errors = diagnosticFallbacks(data.diagnostics)
 	}
 	return result, err
 }
@@ -69,7 +74,7 @@ func ValidateContext(ctx context.Context, query string) error {
 	}
 	syntax, err := ParseSyntax(ctx, query, StatementEntry, false)
 	if err != nil && syntax.Valid() && len(syntax.data.diagnostics) != 0 {
-		message := localization.CypherANTLRValidateSyntaxError(strings.Join(syntax.data.diagnostics, "; "))
+		message := localization.CypherANTLRValidateSyntaxError(strings.Join(diagnosticFallbacks(syntax.data.diagnostics), "; "), syntax.data.diagnostics...)
 		return localization.NewLocalizedError(string(message.ID), message, nil)
 	}
 	return err
@@ -78,7 +83,22 @@ func ValidateContext(ctx context.Context, query string) error {
 // parseErrorListener collects syntax errors during parsing
 type parseErrorListener struct {
 	*antlr.DefaultErrorListener
-	errors []string
+	errors []localization.Message
+}
+
+func (e *parseErrorListener) fallbacks() []string {
+	return diagnosticFallbacks(e.errors)
+}
+
+func diagnosticFallbacks(diagnostics []localization.Message) []string {
+	if len(diagnostics) == 0 {
+		return nil
+	}
+	result := make([]string, len(diagnostics))
+	for i, message := range diagnostics {
+		result[i] = message.Fallback
+	}
+	return result
 }
 
 func (e *parseErrorListener) reset() {
@@ -87,7 +107,10 @@ func (e *parseErrorListener) reset() {
 }
 
 func (e *parseErrorListener) SyntaxError(recognizer antlr.Recognizer, offendingSymbol interface{}, line, column int, msg string, ex antlr.RecognitionException) {
-	e.errors = append(e.errors, fmt.Sprintf("line %d:%d %s", line, column, msg))
+	// Do not persist ANTLR's token/excerpt text: a malformed password can be
+	// the offending token, including in lexer errors before a token exists.
+	// Parse, Validate, and ParseResult share this structural diagnostic owner.
+	e.errors = append(e.errors, localization.CypherANTLRUnexpectedInput(line, column))
 }
 
 func isASCII(s string) bool {

@@ -482,13 +482,34 @@ func isNornicExtensionStatement(cypher string) bool {
 	// GRANT … as the default parser does.
 	_, cypher = parseExecutionMode(cypher)
 	cypher = strings.TrimSpace(cypher)
-	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
+	return isCompositeAdministrationStatement(cypher) ||
+		isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
 		isPrivilegeAdministrationCommand(cypher) || isDropRoleCommand(cypher) ||
 		startsWithKeywords(cypher, "SHOW", "LIMITS") ||
 		(startsWithKeywords(cypher, "ALTER", "DATABASE") && (findKeywordIndex(cypher, "SET LIMIT") >= 0 ||
 			findKeywordIndex(cypher, "SET OPTION") >= 0 || findKeywordIndex(cypher, "REMOVE OPTION") >= 0)) ||
 		((startsWithKeywords(cypher, "CREATE", "DATABASE") || startsWithKeywords(cypher, "CREATE", "OR")) &&
 			findKeywordIndex(cypher, "DATABASE") >= 0 && findKeywordIndex(cypher, "OPTIONS") >= 0)
+}
+
+// isCompositeAdministrationStatement routes the NornicDB composite catalog
+// language through its command owner in both parser modes. The command owner
+// validates options and names before applying any catalog mutation; the core
+// Cypher grammar does not own these administration extensions. Neo4j's
+// CREATE OR REPLACE forms are unsupported; the same owner rejects them.
+func isCompositeAdministrationStatement(cypher string) bool {
+	_, cypher = parseExecutionMode(cypher)
+	cypher = strings.TrimSpace(cypher)
+	return startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE") ||
+		startsWithKeywords(cypher, "CREATE", "OR REPLACE COMPOSITE DATABASE") ||
+		startsWithKeywords(cypher, "ALTER", "COMPOSITE DATABASE") ||
+		startsWithKeywords(cypher, "DROP", "COMPOSITE DATABASE") ||
+		startsWithKeywords(cypher, "CREATE", "ALIAS") ||
+		startsWithKeywords(cypher, "CREATE", "OR REPLACE ALIAS") ||
+		startsWithKeywords(cypher, "DROP", "ALIAS") ||
+		startsWithKeywords(cypher, "SHOW", "COMPOSITE DATABASES") ||
+		startsWithKeywords(cypher, "SHOW", "CONSTITUENTS") ||
+		startsWithKeywords(cypher, "SHOW", "ALIASES")
 }
 
 // isDropRoleCommand reports DROP ROLE, which Neo4j parses and Neo4j
@@ -502,6 +523,12 @@ func isDropRoleCommand(cypher string) bool {
 // validateSyntaxNornic performs fast inline syntax validation.
 func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 	if e.hasCachedValidSyntax(cypher, syntaxValidNornic) {
+		return nil
+	}
+	if isCompositeAdministrationStatement(cypher) {
+		// Composite administration is parsed by executeCreate/Alter/Drop and
+		// the SHOW command owners after this admission boundary. Their shared
+		// command grammar keeps default and ANTLR public execution in sync.
 		return nil
 	}
 	// Grammar checks consume code from the same lexical expression reader as
