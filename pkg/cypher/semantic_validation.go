@@ -60,7 +60,9 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := validateStaticQuantifierTypes(cypher); err != nil {
 		return err
 	}
-	if err := validateStaticFunctionArguments(cypher, cypher25); err != nil {
+	if err := checkedWithoutUnaryPlus(cypher, cypher25, func(text string) error {
+		return validateStaticFunctionArguments(text, cypher25)
+	}); err != nil {
 		return err
 	}
 	if err := e.validateStaticPaginationExpressions(cypher); err != nil {
@@ -72,13 +74,7 @@ func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher str
 	if err := validateAggregatingProjectionScopes(cypher); err != nil {
 		return err
 	}
-	if err := validateExistsSubqueryClauseComposition(cypher); err != nil {
-		return err
-	}
 	if err := validatePatternExpressionPlacement(cypher); err != nil {
-		return err
-	}
-	if err := validateStaticPropertyAccessTypes(cypher); err != nil {
 		return err
 	}
 	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
@@ -238,26 +234,13 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 		return nil
 	}
 	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
-		index := skipSpaces(cypher, position+len("CALL"))
-		imports := ""
-		scoped := false
-		if index < len(cypher) && cypher[index] == '(' {
-			closeParen := findMatchingCallParen(cypher, index)
-			if closeParen < 0 {
-				continue
-			}
-			imports = strings.TrimSpace(cypher[index+1 : closeParen])
-			scoped = true
-			if imports != "" && imports != "*" {
-				for _, name := range splitTopLevelComma(imports) {
-					if simpleSemanticIdentifier(strings.TrimSpace(name)) == "" {
-						return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
-							"CALL imports must contain only variable names")
-					}
-				}
-			}
-			index = skipSpaces(cypher, closeParen+1)
+		scope := readCallSubqueryScope(cypher[position:])
+		if scope.invalid {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport",
+				"CALL imports must contain only variable names")
 		}
+		index := position + scope.bodyOffset
+		imports, scoped := scope.text, scope.scoped
 		if index >= len(cypher) || cypher[index] != '{' {
 			continue // a procedure call
 		}
@@ -312,14 +295,12 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 				}
 			}
 		}
-		if imports == "*" || startsWithKeywordFold(body, "WITH *") {
+		if scoped && scope.names == nil || startsWithKeywordFold(body, "WITH *") {
 			continue
 		}
 		var retained []string
-		if scoped && imports != "" {
-			for _, name := range splitTopLevelComma(imports) {
-				retained = append(retained, normalizeProjectionColumnName(strings.TrimSpace(name)))
-			}
+		if scoped && len(scope.names) > 0 {
+			retained = scope.names
 			body = "WITH " + imports + " " + body
 		}
 		if body == "" {
@@ -327,7 +308,7 @@ func (e *StorageExecutor) validateCallSubqueryScopes(cypher string, cypher25 boo
 		}
 		// A body that imports nothing (CALL () { … }) sees no outer
 		// variable: it is checked as a statement of its own.
-		if scoped && imports == "" {
+		if scoped && len(scope.names) == 0 {
 			if err := e.validateMatchSemanticScopes(body, cypher25); err != nil {
 				return err
 			}
@@ -672,38 +653,6 @@ func invalidPatternExpressionPlacementError() error {
 		"UnexpectedSyntax",
 		"pattern expressions are only valid as predicates in WHERE",
 	)
-}
-
-func validateExistsSubqueryClauseComposition(cypher string) error {
-	for index := 0; index < len(cypher); index++ {
-		name, next, ok := scanIdentifierToken(cypher, index)
-		if !ok || !strings.EqualFold(name, "exists") {
-			continue
-		}
-		open := skipSpaces(cypher, next)
-		if open >= len(cypher) || cypher[open] != '{' {
-			continue
-		}
-		close := findMatchingDelimiter(cypher, open, '{', '}')
-		if close < 0 {
-			continue
-		}
-		body := cypher[open+1 : close]
-		if clauses, parsed := splitPipelineClauses(body); parsed {
-			for _, clause := range clauses {
-				switch clause.kind {
-				case pipelineClauseCreate, pipelineClauseDelete, pipelineClauseMerge, pipelineClauseRemove, pipelineClauseSet:
-					return newSemanticError(
-						"Neo.ClientError.Statement.SyntaxError",
-						"InvalidClauseComposition",
-						"existential subqueries cannot contain updating clauses",
-					)
-				}
-			}
-		}
-		index = close
-	}
-	return nil
 }
 
 func (e *StorageExecutor) duplicateReturnColumnName(cypher string, names *quotedVariableNames) string {

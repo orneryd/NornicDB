@@ -1,5 +1,10 @@
 package cypher
 
+import (
+	"context"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+)
+
 // =============================================================================
 // APOC Helper Functions
 // =============================================================================
@@ -39,15 +44,18 @@ func (e *StorageExecutor) splitBySemicolon(s string) []string {
 
 // extractProcedureName uses the same component reader as authorization,
 // retaining exact case while accepting quoted names and spaced separators.
-func extractProcedureName(cypher string) string {
-	if at := keywordIndexFrom(cypher, "CALL", 0, defaultKeywordScanOpts()); at >= 0 {
-		if name, ok := procedureNameAt(cypher, at+len("CALL")); ok {
-			return name
-		}
+func extractProcedureName(source string) string {
+	syntax, _ := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.FragmentEntry, false)
+	if !syntax.Valid() {
+		return ""
 	}
-	// Fallback: return truncated query
-	if len(cypher) > 60 {
-		return cypher[:60] + "..."
+	call, found := syntax.LeadingCall()
+	if !found {
+		return ""
 	}
-	return cypher
+	invocation := call.ChildRule(cypherantlr.CypherParserRULE_invocationName)
+	if !invocation.Valid() {
+		return ""
+	}
+	return invocation.QualifiedName()
 }

@@ -16,6 +16,20 @@ import (
 
 type pipelineRowSource func(func(pipelineRow) bool) bool
 
+// pipelineProjectionHasOnlyAggregates identifies the projection that creates
+// one global group even with no input rows. A grouping key prevents that row.
+func pipelineProjectionHasOnlyAggregates(projections []returnProjection) bool {
+	if len(projections) == 0 {
+		return false
+	}
+	for _, projection := range projections {
+		if !projection.isAggr {
+			return false
+		}
+	}
+	return true
+}
+
 func pipelineClauseAggregates(clause pipelineClause) bool {
 	if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseReturn {
 		return false
@@ -66,10 +80,9 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 	templates := make([]pipelineAggregateProjection, len(projections))
 	memory := memoryScopeFromContext(ctx)
 	validationClauses := make([]string, 0)
-	allAggregates := len(projections) > 0
+	allAggregates := pipelineProjectionHasOnlyAggregates(projections)
 	groupingCount := 0
 	for index, projection := range projections {
-		allAggregates = allAggregates && projection.isAggr
 		if !projection.isAggr {
 			groupingCount++
 		}

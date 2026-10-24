@@ -2,9 +2,11 @@ package cypher
 
 import (
 	"context"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -35,9 +37,10 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	// An unscoped body imports through its branches' leading WITHs
 	// (unscopedCallImports, #907).
-	scoped := callSubqueryHasScopeClause(clause)
+	callScope := readCallSubqueryScope(clause)
+	scopedImports, scoped := callScope.names, callScope.scoped
 	if metadata != nil {
-		declared := parseCallSubqueryImportVariables(clause)
+		declared := scopedImports
 		if declared == nil && !scoped {
 			var importErr error
 			declared, _, importErr = unscopedCallImports(body, func(name string) bool {
@@ -54,16 +57,6 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			}
 		}
 	}
-	if len(rows) == 0 {
-		if metadata != nil {
-			metadata.columns = e.inferTopLevelReturnColumns(body)
-			for _, name := range metadata.columns {
-				metadata.scope[name] = struct{}{}
-			}
-		}
-		return []pipelineRow{}, &QueryStats{}, true, nil
-	}
-
 	targetExec := e
 	if use, remaining, hasUse, err := parseUseClause(body, true); hasUse || err != nil {
 		if err != nil {
@@ -81,7 +74,20 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		body = remaining
 	}
 
-	scopedImports := parseCallSubqueryImportVariables(clause)
+	if len(rows) == 0 {
+		if metadata != nil {
+			columns, err := e.ResultColumns(clause, resultmetadata.KnownScope(pipelineScopeColumns(metadata.scope)), cypherVersionFromContext(ctx) == "25")
+			if err != nil {
+				return nil, nil, true, err
+			}
+			metadata.columns = columns
+			for _, name := range metadata.columns {
+				metadata.scope[name] = struct{}{}
+			}
+		}
+		return []pipelineRow{}, &QueryStats{}, true, nil
+	}
+
 	hasLegacyImports := false
 	if !scoped {
 		var importErr error
@@ -190,6 +196,20 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				if scoped {
 					carried = make(pipelineRow, len(imports))
 					for _, name := range imports {
+						carried[name] = branchInput[name]
+					}
+				}
+				if !scoped && hasLegacyImports {
+					names := map[string]struct{}{}
+					var nodes []cypherantlr.SyntaxNode
+					for name := range branchInput {
+						names[name] = struct{}{}
+					}
+					for _, clause := range branchClauses {
+						nodes = append(nodes, clause.syntax)
+					}
+					carried = pipelineRow{}
+					for _, name := range implicitSyntaxImports(names, nodes...) {
 						carried[name] = branchInput[name]
 					}
 				}

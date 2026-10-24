@@ -347,10 +347,7 @@ func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
 			return true
 		}
 	}
-	j := end
-	for j < len(s) && isASCIISpace(s[j]) {
-		j++
-	}
+	j := queryGapEnd(s, end)
 	if j < len(s) && s[j] == ':' {
 		return true // a map key: {set: 1}
 	}
@@ -2100,4 +2097,13 @@ func followedByTimeZone(s string, pos int) bool {
 		pos += len(word)
 	}
 	return true
+}
+
+// keywordEndAt preserves the source width of a compound keyword's trivia.
+func keywordEndAt(source string, at int, keyword string) int {
+	start, end := trimKeywordWSBounds(keyword)
+	if next, ok := keywordMatchAt(source, at, keyword, start, end); ok {
+		return next
+	}
+	return at
 }

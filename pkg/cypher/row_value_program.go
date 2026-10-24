@@ -373,8 +373,8 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 		suffix  string
 		notNull bool
 	}{{suffix: " IS NOT NULL", notNull: true}, {suffix: " IS NULL"}} {
-		if hasSuffixFoldASCII(expr, lowerASCII(predicate.suffix)) {
-			operand, info := c.part(strings.TrimSpace(expr[:len(expr)-len(predicate.suffix)]))
+		if operand, nullTest := nullPredicateOperand(expr, strings.TrimSpace(predicate.suffix)); nullTest {
+			operand, info := c.part(operand)
 			parts, infos := []rowValueNode{operand}, []rowValueInfo{info}
 			c.compose(info, parts, infos)
 			return bound(expr, &rowNullTestNode{operand: parts[0], notNull: predicate.notNull}, info)

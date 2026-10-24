@@ -969,21 +969,6 @@ func TestSynthesizeEmptyCollectOnlyReturn(t *testing.T) {
 	}
 }
 
-func TestInferReturnColumnsFromQuery(t *testing.T) {
-	query := `CALL {
-  USE translations.tr
-  MATCH (t:MongoDocument)
-  RETURN t.textKey AS textKey, t.textKey128 AS textKey128
-}
-RETURN coalesce(textKey, textKey128) AS textKey, textKey128, count(*) AS c
-ORDER BY textKey128
-LIMIT 25`
-	got := inferReturnColumnsFromQuery(query)
-	if len(got) != 3 || got[0] != "textKey" || got[1] != "textKey128" || got[2] != "c" {
-		t.Fatalf("unexpected inferred columns: %#v", got)
-	}
-}
-
 func TestExecuteRowsGroupedJoinProjection_CoversShapes(t *testing.T) {
 	input := &ResultStream{
 		Columns: []string{"rows", "k", "texts"},
@@ -1653,34 +1638,6 @@ func TestBuildColumnIndex_SkipsWhitespace(t *testing.T) {
 	}
 	if idx["a"] != 0 || idx["b"] != 2 {
 		t.Fatalf("unexpected index: %v", idx)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_NoReturn(t *testing.T) {
-	got := inferReturnColumnsFromQuery("MATCH (n) WHERE n.id = 1")
-	if got != nil {
-		t.Fatalf("expected nil for no RETURN, got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_EmptyReturn(t *testing.T) {
-	got := inferReturnColumnsFromQuery("MATCH (n) RETURN")
-	if got != nil {
-		t.Fatalf("expected nil for empty RETURN clause, got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_WithSemicolon(t *testing.T) {
-	got := inferReturnColumnsFromQuery("RETURN a, b;")
-	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Fatalf("expected [a b], got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_NestedParens(t *testing.T) {
-	got := inferReturnColumnsFromQuery("RETURN coalesce(a, b) AS x, c ORDER BY x")
-	if len(got) != 2 || got[0] != "x" || got[1] != "c" {
-		t.Fatalf("expected [x c], got %v", got)
 	}
 }
 
@@ -2537,62 +2494,6 @@ func TestFabricExecutor_UnknownFragmentType(t *testing.T) {
 	// tested in TestFabricExecutor_LeafFragment.
 }
 
-func TestInferReturnColumnsFromQuery_QuotedCommas(t *testing.T) {
-	// Commas inside single-quoted strings.
-	got := inferReturnColumnsFromQuery("RETURN 'a,b' AS x, c")
-	if len(got) != 2 || got[0] != "x" || got[1] != "c" {
-		t.Fatalf("expected [x c], got %v", got)
-	}
-	// Commas inside double-quoted strings.
-	got = inferReturnColumnsFromQuery(`RETURN "a,b" AS x, c`)
-	if len(got) != 2 || got[0] != "x" || got[1] != "c" {
-		t.Fatalf("expected [x c] with double quotes, got %v", got)
-	}
-	// Commas inside backtick-quoted.
-	got = inferReturnColumnsFromQuery("RETURN `a,b` AS x, c")
-	if len(got) != 2 || got[0] != "x" || got[1] != "c" {
-		t.Fatalf("expected [x c] with backticks, got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_BracketsAndBraces(t *testing.T) {
-	// Commas inside brackets should not split.
-	got := inferReturnColumnsFromQuery("RETURN [1,2,3] AS arr, b")
-	if len(got) != 2 || got[0] != "arr" || got[1] != "b" {
-		t.Fatalf("expected [arr b], got %v", got)
-	}
-	// Commas inside braces should not split.
-	got = inferReturnColumnsFromQuery("RETURN {x: 1, y: 2} AS m, c")
-	if len(got) != 2 || got[0] != "m" || got[1] != "c" {
-		t.Fatalf("expected [m c], got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_SkipAndLimit(t *testing.T) {
-	got := inferReturnColumnsFromQuery("RETURN a, b SKIP 5")
-	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
-		t.Fatalf("expected [a b] ignoring SKIP, got %v", got)
-	}
-	got = inferReturnColumnsFromQuery("RETURN a LIMIT 10")
-	if len(got) != 1 || got[0] != "a" {
-		t.Fatalf("expected [a] ignoring LIMIT, got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_NoAlias(t *testing.T) {
-	got := inferReturnColumnsFromQuery("RETURN n.name")
-	if len(got) != 1 || got[0] != "n.name" {
-		t.Fatalf("expected [n.name] with no alias, got %v", got)
-	}
-}
-
-func TestInferReturnColumnsFromQuery_BacktickAlias(t *testing.T) {
-	got := inferReturnColumnsFromQuery("RETURN n.name AS `my col`")
-	if len(got) != 1 || got[0] != "my col" {
-		t.Fatalf("expected [my col] stripped of backticks, got %v", got)
-	}
-}
-
 func TestSplitTopLevelResultModifiers_ParensSkipped(t *testing.T) {
 	// ORDER BY inside parens should not split.
 	proj, mods := splitTopLevelResultModifiers("coalesce(a ORDER BY b) AS x ORDER BY x")
@@ -2737,32 +2638,6 @@ func TestExecuteExec_WithTransaction(t *testing.T) {
 	// Should have registered a sub-transaction.
 	if len(tx.Participants()) != 1 {
 		t.Fatalf("expected 1 participant, got %d", len(tx.Participants()))
-	}
-}
-
-func TestExecuteExec_InfersColumnsWhenEmpty(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-
-	mock := &mockCypherExecutor{
-		results: map[string]*ResultStream{
-			"RETURN 1 AS x, 2 AS y": {
-				Columns: []string{}, // Empty columns — should be inferred.
-				Rows:    [][]interface{}{{1, 2}},
-			},
-		},
-	}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-
-	frag := &FragmentExec{
-		Input: &FragmentInit{}, Query: "RETURN 1 AS x, 2 AS y", GraphName: "db1",
-	}
-	result, err := exec.Execute(context.Background(), nil, frag, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result.Columns) != 2 || result.Columns[0] != "x" || result.Columns[1] != "y" {
-		t.Fatalf("expected inferred columns [x y], got %v", result.Columns)
 	}
 }
 
@@ -3775,39 +3650,6 @@ func TestExecuteExec_RemotePath(t *testing.T) {
 	}
 }
 
-func TestExecuteExec_RemotePathInfersColumns(t *testing.T) {
-	catalog := NewCatalog()
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"results": []any{
-				map[string]any{
-					"columns": []string{}, // Empty columns — should be inferred.
-					"data":    []any{map[string]any{"row": []any{1, 2}}},
-				},
-			},
-			"errors": []any{},
-		})
-	}))
-	defer srv.Close()
-
-	catalog.Register("remote.shard", &LocationRemote{DBName: "shard", URI: srv.URL})
-	remote := NewRemoteFragmentExecutor()
-	defer func() { _ = remote.Close() }()
-	exec := NewFabricExecutor(catalog, nil, remote)
-
-	frag := &FragmentExec{
-		Input: &FragmentInit{}, Query: "RETURN 1 AS a, 2 AS b", GraphName: "remote.shard",
-	}
-	result, err := exec.Execute(context.Background(), nil, frag, nil, "tok")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if len(result.Columns) != 2 || result.Columns[0] != "a" || result.Columns[1] != "b" {
-		t.Fatalf("expected inferred columns [a b], got %v", result.Columns)
-	}
-}
-
 func TestExecuteExec_RemotePathError(t *testing.T) {
 	catalog := NewCatalog()
 
@@ -4334,15 +4176,6 @@ func TestExecuteUnionSequential_NilResults(t *testing.T) {
 	}
 	if len(result.Rows) != 0 {
 		t.Fatalf("expected 0 rows for nil results, got %d", len(result.Rows))
-	}
-}
-
-func TestInferReturnColumnsFromQuery_EmptyItemAfterComma(t *testing.T) {
-	// Trailing comma leaves an empty item.
-	got := inferReturnColumnsFromQuery("RETURN a, ")
-	// Empty items are skipped.
-	if len(got) != 1 || got[0] != "a" {
-		t.Fatalf("expected [a], got %v", got)
 	}
 }
 

@@ -36,10 +36,10 @@ type structureRewriter struct {
 }
 
 // statementColumner names a statement's result columns
-// (StorageExecutor.StatementColumns). An interface, not a method value, so
+// (StorageExecutor.StatementResultColumns). An interface, not a method value, so
 // Execute passes the executor to desugarQueryStructure without allocating.
 type statementColumner interface {
-	StatementColumns(query string) []string
+	StatementResultColumns(query string) ([]string, error)
 }
 
 // desugarQueryStructure returns query with NEXT, WHEN and braced query parts
@@ -83,6 +83,20 @@ func mayUseQueryStructure(query string) bool {
 
 func (r *structureRewriter) edit(start, end int, text string) {
 	r.edits = append(r.edits, labelRewriteEdit{start: start, end: end, text: text})
+}
+
+// rewrittenRegionText materializes the exact execution edits for a region
+// before asking the schema owner about it. Query composition is lowered by this
+// rewriter once; the schema owner never receives half-lowered conditional text.
+func (r *structureRewriter) rewrittenRegionText(start, end, firstEdit int) string {
+	edits := make([]labelRewriteEdit, len(r.edits)-firstEdit)
+	for index, edit := range r.edits[firstEdit:] {
+		edit.start -= start
+		edit.end -= start
+		edits[index] = edit
+	}
+	text, _ := applyLabelRewriteEdits(r.query[start:end], edits, true)
+	return text
 }
 
 // queryStructureClauseStarts are the words that start a query part after
@@ -235,12 +249,17 @@ func (r *structureRewriter) unionParts(start, end int, distinct bool) error {
 			wrap := outerAll && r.hasDistinctUnion(open+1, close)
 			// Dropped braces put the part's UNIONs in this union; braces
 			// around a single query hold no UNION to change.
+			firstEdit := len(r.edits)
 			if err := r.region(open+1, close, !wrap && !outerAll && len(parts) > 1); err != nil {
 				return err
 			}
 			if wrap {
+				columns, err := r.columns.StatementResultColumns(r.rewrittenRegionText(open+1, close, firstEdit))
+				if err != nil {
+					return err
+				}
 				r.edit(open, open+1, "CALL (*) {")
-				r.edit(close+1, close+1, returnColumnsText(r.columns.StatementColumns(r.query[open+1:close])))
+				r.edit(close+1, close+1, returnColumnsText(columns))
 			} else {
 				r.edit(open, open+1, "")
 				r.edit(close, close+1, "")
@@ -308,7 +327,14 @@ func (r *structureRewriter) conditional(start, end int) error {
 	var cases strings.Builder
 	cases.WriteString("UNWIND [CASE")
 	for index, branch := range branches {
-		bodyColumns := r.columns.StatementColumns(r.unbraced(branch.bodyStart, branch.bodyEnd))
+		firstEdit := len(r.edits)
+		if err := r.region(branch.bodyStart, branch.bodyEnd, false); err != nil {
+			return err
+		}
+		bodyColumns, err := r.columns.StatementResultColumns(r.rewrittenRegionText(branch.bodyStart, branch.bodyEnd, firstEdit))
+		if err != nil {
+			return err
+		}
 		if index == 0 {
 			columns = bodyColumns
 		} else if len(bodyColumns) != len(columns) {
@@ -334,9 +360,6 @@ func (r *structureRewriter) conditional(start, end int) error {
 			r.edit(branch.keywordStart, branch.bodyStart, cases.String()+guard)
 		} else {
 			r.edit(branches[index-1].bodyEnd, branch.bodyStart, " UNION ALL "+guard)
-		}
-		if err := r.unionParts(branch.bodyStart, branch.bodyEnd, false); err != nil {
-			return err
 		}
 	}
 	last := branches[len(branches)-1].bodyEnd
@@ -398,15 +421,6 @@ func (r *structureRewriter) whenBranches(start, end int) ([]whenBranch, bool) {
 		}
 	}
 	return branches, true
-}
-
-// unbraced is q[start:end] without enclosing braces.
-func (r *structureRewriter) unbraced(start, end int) string {
-	text := strings.TrimSpace(r.query[start:end])
-	for strings.HasPrefix(text, "{") && findMatchingDelimiter(text, 0, '{', '}') == len(text)-1 {
-		text = strings.TrimSpace(text[1 : len(text)-1])
-	}
-	return text
 }
 
 // returnColumnsText is " RETURN c1, c2" for columns (each quoted when it
