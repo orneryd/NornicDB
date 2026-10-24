@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -152,10 +154,7 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 
 	bindings := make(map[string]struct{}, len(yield.items))
 	for _, item := range yield.items {
-		binding := item.name
-		if item.alias != "" {
-			binding = item.alias
-		}
+		binding := item.column()
 		binding = normalizeProjectionColumnName(binding)
 		if _, exists := bindings[binding]; exists {
 			return newSemanticError(
@@ -169,26 +168,31 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 	return nil
 }
 
-func explicitProcedureArgumentTexts(callCypher string) []string {
-	open := strings.Index(callCypher, "(")
-	if open < 0 {
+func explicitProcedureArgumentTexts(source string) []string {
+	clause, ok := canonicalQueryClause(source)
+	if !ok {
 		return nil
 	}
-	close := findMatchingCallParen(callCypher, open)
-	if close < 0 {
-		return nil
-	}
-	body := strings.TrimSpace(callCypher[open+1 : close])
-	if body == "" {
-		return []string{}
-	}
-	parts := splitTopLevelComma(body)
-	for index := range parts {
-		parts[index] = strings.TrimSpace(parts[index])
-	}
-	return parts
+	return procedureArgumentTextsFromSyntax(clause)
 }
 
+func procedureArgumentTextsFromSyntax(clause cypherantlr.SyntaxNode) []string {
+	arguments := clause.ChildRule(cypherantlr.CypherParserRULE_parenExpressionChain)
+	if !arguments.Valid() {
+		return nil
+	}
+	expressions := arguments.ChildRule(cypherantlr.CypherParserRULE_expressionChain)
+	texts := []string{}
+	if expressions.Valid() {
+		for i := 0; i < expressions.ChildCount(); i++ {
+			expression := expressions.Child(i)
+			if expression.Rule() == cypherantlr.CypherParserRULE_expression {
+				texts = append(texts, expression.Code())
+			}
+		}
+	}
+	return texts
+}
 func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{}, explicitTexts []string) ([]interface{}, error) {
 	coerced := append([]interface{}(nil), args...)
 	for index := range coerced {
@@ -231,14 +235,15 @@ func staticProcedureArgumentTypeError(clause string, scope staticTypeScope, unwo
 	if len(texts) == 0 {
 		return nil
 	}
-	if len(unwound) > 0 && len(scope.values) > 0 {
-		values := make(map[string]string, len(scope.values))
-		for name, typeName := range scope.values {
-			if _, fromUnwind := unwound[name]; !fromUnwind {
-				values[name] = typeName
-			}
+	if len(unwound) > 0 {
+		// The whole binding is left to the call: its type name and its
+		// derived operand alike.
+		scope.values = maps.Clone(scope.values)
+		scope.derived = maps.Clone(scope.derived)
+		for name := range unwound {
+			delete(scope.values, name)
+			delete(scope.derived, name)
 		}
-		scope.values = values
 	}
 	for index, text := range texts {
 		if index >= len(procedure.Spec.Params) {
@@ -312,25 +317,8 @@ func procedureParameterAcceptsStaticType(parameterType, typeName string) (string
 	default:
 		return "", true
 	}
-	for _, choice := range staticTypeChoices(typeName) {
-		if choice == "Any" || containsString(accepted, choice) {
-			return expected, true
-		}
-	}
-	return expected, false
-}
-
-// procedureArgumentTypeName is how Neo4j names an argument's static type in a
-// procedure call's type mismatch: a list of numbers or booleans is a List<T>,
-// while a List<String> or a list of maps keeps its element type.
-func procedureArgumentTypeName(typeName string) string {
-	if typeName == "List<Float>, List<Integer> or List<Number>" {
-		return "List<T>"
-	}
-	for _, element := range []string{"Integer", "Float", "Boolean", "Number"} {
-		typeName = strings.ReplaceAll(typeName, "List<"+element+">", "List<T>")
-	}
-	return typeName
+	// The typing owner decides: one fitting alternative is enough.
+	return expected, typeName != "" && !typedOperand(typeName).proved().excludes(typeNameIn(append(accepted, "Any")...))
 }
 
 func isStaticallyTypedProcedureArgument(text string) bool {
@@ -416,4 +404,9 @@ func procedureCallContainsAggregation(callCypher string) bool {
 		}
 	}
 	return false
+}
+
+// unknownProcedureError is the shared planning/execution terminal for a missing procedure.
+func unknownProcedureError(name string) error {
+	return newSemanticError("Neo.ClientError.Procedure.ProcedureNotFound", "ProcedureNotFound", fmt.Sprintf("There is no procedure with the name `%s` registered for this database instance. Please ensure you've spelled the procedure name correctly and that the procedure is properly deployed.", name))
 }

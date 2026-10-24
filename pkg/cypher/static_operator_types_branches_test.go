@@ -19,7 +19,14 @@ func TestCheckOperatorBranches(t *testing.T) {
 		fails       bool
 	}{
 		{op: '+', left: known("Date"), right: known("List<T>"), want: "List<T>"},
-		{op: '+', left: known("Duration"), right: staticOperand{}, want: ""},
+		// Neo4j adds a duration to a duration or a temporal value, and a list
+		// to either side.
+		// Neo4j adds a duration to a duration or a temporal value, and a list
+		// to either side.
+		{op: '+', left: known("Duration"), right: staticOperand{}, want: "Duration, Date, Time, LocalTime, LocalDateTime, DateTime or List<T>"},
+		{op: '-', left: staticOperand{}, right: known("Integer"), want: "Float or Integer"},
+		{op: '*', left: staticOperand{}, right: known("Float"), want: "Float or Duration"},
+		{op: '/', left: known("Integer"), right: staticOperand{}, want: "Float or Integer"},
 		{op: '/', left: known("Duration"), right: known("String"), fails: true},
 		{op: '/', left: known("Duration"), right: known("Integer"), want: "Duration"},
 		{op: '*', left: known("String"), right: known("Integer"), fails: true},
@@ -32,7 +39,7 @@ func TestCheckOperatorBranches(t *testing.T) {
 			continue
 		}
 		require.NoError(t, err, "%c %+v %+v", tc.op, tc.left, tc.right)
-		require.Equal(t, tc.want, got.kind, "%c %+v %+v", tc.op, tc.left, tc.right)
+		require.Equal(t, tc.want, got.typeName(), "%c %+v %+v", tc.op, tc.left, tc.right)
 	}
 }
 
@@ -75,7 +82,7 @@ func TestStaticOperatorCheckerBranches(t *testing.T) {
 			continue
 		}
 		require.NoError(t, err, tc.expr)
-		require.Equal(t, tc.want, got.kind, tc.expr)
+		require.Equal(t, tc.want, got.typeName(), tc.expr)
 	}
 	noParams := staticOperatorChecker{}
 	got, err := noParams.check("$i")
@@ -87,10 +94,10 @@ func TestStaticOperatorCheckerBranches(t *testing.T) {
 // value kind.
 func TestStaticParameterOperandBranches(t *testing.T) {
 	require.False(t, staticParameterOperand(nil).known())
-	require.Equal(t, "Float", staticParameterOperand(1.5).kind)
-	require.Equal(t, "Boolean", staticParameterOperand(true).kind)
-	require.Equal(t, "List<T>", staticParameterOperand([]interface{}{int64(1)}).kind)
-	require.Equal(t, "Map", staticParameterOperand(map[string]interface{}{"a": 1}).kind)
+	require.Equal(t, "Float", staticParameterOperand(1.5).typeName())
+	require.Equal(t, "Boolean", staticParameterOperand(true).typeName())
+	require.Equal(t, "List<T>", staticParameterOperand([]interface{}{int64(1)}).typeName())
+	require.Equal(t, "Map", staticParameterOperand(map[string]interface{}{"a": 1}).typeName())
 	require.False(t, staticParameterOperand(struct{}{}).known())
 }
 

@@ -23,6 +23,7 @@ package cypher
 
 import (
 	"context"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"reflect"
 	"slices"
 	"sort"
@@ -63,8 +64,9 @@ const (
 // keyword (MATCH/CREATE/WITH/UNWIND/RETURN) and the clause body — exactly
 // what you would pass to the clause implementation.
 type pipelineClause struct {
-	kind pipelineClauseKind
-	text string
+	kind   pipelineClauseKind
+	syntax cypherantlr.SyntaxNode
+	text   string
 	// optional marks OPTIONAL CALL (kinds pipelineClauseCall and
 	// pipelineClauseCallSubquery; text is the CALL itself): an input row the
 	// call produces no row for is kept, with null for the call's columns
@@ -279,123 +281,24 @@ func cachedPipelineClauses(cypher string, procedureCalls bool) ([]pipelineClause
 // true) on success. On anything unsupported (e.g. nested MERGE or CALL
 // subquery) returns (nil, false) so the caller falls back. topLevelCall
 // reports whether the query has a CALL of its own (cachedPipelineClauses).
-func parsePipelineClauses(cypher string) (clauses []pipelineClause, ok bool, topLevelCall bool) {
-	type kw struct {
-		name string
-		kind pipelineClauseKind
+func parsePipelineClauses(source string) (clauses []pipelineClause, ok bool, topLevelCall bool) {
+	body := readQueryBody(source, 0, len(source))
+	if body.status != queryBodyRead || len(body.branches) != 1 {
+		return nil, false, false
 	}
-	// Order matters for multi-word lookups but we only care about single-word
-	// keywords here; OPTIONAL MATCH and MERGE kick us out via detection below.
-	keywords := []kw{
-		{"OPTIONAL MATCH", pipelineClauseOptionalMatch},
-		{"MATCH", pipelineClauseMatch},
-		{"CREATE", pipelineClauseCreate},
-		{"MERGE", pipelineClauseMerge},
-		{"DETACH DELETE", pipelineClauseDelete},
-		{"DELETE", pipelineClauseDelete},
-		{"SET", pipelineClauseSet},
-		{"REMOVE", pipelineClauseRemove},
-		{"WITH", pipelineClauseWith},
-		{"UNWIND", pipelineClauseUnwind},
-		{"FOR", pipelineClauseUnwind},
-		{"LET", pipelineClauseLet},
-		{"FILTER", pipelineClauseFilter},
-		{"FOREACH", pipelineClauseForeach},
-		{"RETURN", pipelineClauseReturn},
+	branch := body.branches[0]
+	if branch.useStart >= 0 || branch.finished || len(branch.clauses) == 0 {
+		return nil, false, false
 	}
-	// Clauses we don't yet model as their own kind force a fallback: a CALL
-	// clause of the statement itself. A CALL inside a subquery expression's
-	// body belongs to that body, which the subquery evaluator runs. Anything
-	// else — including $param references and arbitrary WHERE on bindings —
-	// is handled by the per-clause appliers below, which substitute params
-	// from context and respect node bindings supplied by the caller.
-	if topLevelKeywordIndex(cypher, "CALL") >= 0 {
-		topLevelCall = true
-		keywords = append(keywords, kw{"OPTIONAL CALL", pipelineClauseCall}, kw{"CALL", pipelineClauseCall})
-	}
-
-	// Collect boundary positions for each supported keyword.
-	var boundaries []pipelineBoundary
-	for _, k := range keywords {
-		for _, p := range findAllTopLevelPipelineKeywordPositions(cypher, k.name) {
-			// OPTIONAL CALL and OPTIONAL MATCH are one clause, found by their
-			// own keyword, unless optional is a variable (WITH x, optional
-			// MATCH (n), #894).
-			if k.name == "CALL" && precededByOptionalKeyword(cypher, p) {
-				continue
-			}
-			if k.kind == pipelineClauseMatch {
-				if precededByOptionalKeyword(cypher, p) || keywordsBefore(cypher, p, "ON") >= 0 {
-					continue
-				}
-			}
-			if k.kind == pipelineClauseSet {
-				if keywordsBefore(cypher, p, "ON", "CREATE") >= 0 || keywordsBefore(cypher, p, "ON", "MATCH") >= 0 {
-					continue
-				}
-			}
-			if k.kind == pipelineClauseReturn {
-				preceding := strings.TrimRight(cypher[:p], " \t\n\r")
-				if strings.HasSuffix(preceding, ":") {
-					continue
-				}
-			}
-			if k.name == "DELETE" && keywordsBefore(cypher, p, "DETACH") >= 0 {
-				continue
-			}
-			// FOR is only an iteration clause in the shared grammar. In
-			// schema and alias DDL it is a specifier (CREATE INDEX … FOR
-			// (n:Label), CREATE ALIAS … FOR DATABASE …): not a clause.
-			if k.name == "FOR" {
-				if _, _, iteration := parsePipelineIteration(strings.TrimSpace(cypher[p:])); !iteration {
-					continue
-				}
-			}
-			if k.kind == pipelineClauseCreate && keywordsBefore(cypher, p, "ON") >= 0 {
-				continue
-			}
-			boundaries = append(boundaries, pipelineBoundary{pos: p, kind: k.kind, name: k.name})
+	for _, clause := range branch.clauses {
+		if clause.kind == pipelineClauseCall || clause.kind == pipelineClauseCallSubquery {
+			topLevelCall = true
 		}
+		item := clause.pipelineClause
+		item.syntax = clause.syntax
+		clauses = append(clauses, item)
 	}
-	if len(boundaries) == 0 {
-		return nil, false, topLevelCall
-	}
-	// Sort ascending by pos.
-	sortBoundariesByPos(boundaries)
-
-	// Cut the query on each boundary. The first clause must begin at the
-	// first boundary (i.e. the query should begin with one of these keywords
-	// after trimming).
-	trimmedLeft := len(cypher) - len(strings.TrimLeft(cypher, " \t\n\r"))
-	if boundaries[0].pos != trimmedLeft {
-		return nil, false, topLevelCall
-	}
-
-	var out []pipelineClause
-	for i, b := range boundaries {
-		end := len(cypher)
-		if i+1 < len(boundaries) {
-			end = boundaries[i+1].pos
-		}
-		text := strings.TrimSpace(cypher[b.pos:end])
-		if text == "" {
-			continue
-		}
-		kind := b.kind
-		optional := b.name == "OPTIONAL CALL"
-		if optional {
-			text = strings.TrimSpace(text[len("OPTIONAL"):])
-		}
-		if b.name == "CALL" || optional {
-			if startsWithCallSubquery(text) {
-				kind = pipelineClauseCallSubquery
-			} else if !pipelineProcedureCallsAreClauses(text) {
-				return nil, false, topLevelCall
-			}
-		}
-		out = append(out, pipelineClause{kind: kind, text: text, optional: optional})
-	}
-	return out, true, topLevelCall
+	return clauses, true, topLevelCall
 }
 
 // pipelineApplyOptionally runs an OPTIONAL CALL (pipelineClause.optional)
@@ -497,26 +400,6 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 	return positions
 }
 
-type pipelineBoundary struct {
-	pos  int
-	kind pipelineClauseKind
-	name string
-}
-
-func sortBoundariesByPos(bs []pipelineBoundary) {
-	// Insertion sort — boundary count is small (usually < 20).
-	for i := 1; i < len(bs); i++ {
-		j := i
-		for j > 0 && bs[j-1].pos > bs[j].pos {
-			bs[j-1], bs[j] = bs[j], bs[j-1]
-			j--
-		}
-	}
-}
-
-// executePipeline walks the clauses, threading the binding rows through each
-// step. Its outcome distinguishes a safe decline from a parse rejection or a
-// runtime failure, so callers only retry the NotApplicable state.
 func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (outcome pipelineDispatchOutcome) {
 	statement := cypher
 	cypher = e.substituteParams(cypher, getParamsFromContext(ctx))
@@ -602,6 +485,15 @@ type pipelineRowOutput struct {
 }
 
 func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clauses, originalClauses []pipelineClause, output *pipelineRowOutput) (*ExecuteResult, bool, error) {
+	programClauses := originalClauses
+	if len(programClauses) == 0 {
+		programClauses = clauses
+	}
+	var programErr error
+	ctx, programErr = e.bindPipelineProgram(ctx, programClauses, scope)
+	if programErr != nil {
+		return nil, true, programErr
+	}
 	result := &ExecuteResult{
 		Columns: []string{},
 		Rows:    [][]interface{}{},
@@ -989,16 +881,13 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			var stats *QueryStats
 			ok := true
 			var err error
-			if clause.optional {
-				body, _, _, _ := e.parseCallSubquery(clause.text)
-				columns := e.inferTopLevelReturnColumns(body)
+			if clause.optional && len(rows) > 0 {
 				stats = &QueryStats{}
 				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
 					rowsOut, rowStats, handled, err := e.pipelineApplyCallSubqueryWithMetadata(ctx, row, clause.text, callMetadata)
 					addQueryStats(stats, rowStats)
-					return rowsOut, columns, handled, err
+					return rowsOut, callMetadata.columns, handled, err
 				}, &ok)
-				callMetadata.columns = columns
 			} else {
 				newRows, stats, ok, err = e.pipelineApplyCallSubqueryWithMetadata(ctx, rows, clause.text, callMetadata)
 			}
@@ -1011,12 +900,8 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			rows = newRows
 			terminalCallColumns = append(terminalCallColumns[:0], callMetadata.columns...)
-			for _, row := range rows {
-				for name := range row {
-					if !strings.HasPrefix(name, "$") {
-						scope[name] = struct{}{}
-					}
-				}
+			for _, name := range callMetadata.columns {
+				scope[name] = struct{}{}
 			}
 			if callSubqueryQueryIsWrite(clause.text) || callMetadata.batch != nil {
 				wrote = true
@@ -1053,20 +938,23 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source == nil {
 				source = pipelineRowsSource(rows)
 			}
-			plan := returnProjectionPlanFor(clause.text)
-			if plan.star && len(rows) == 0 {
-				plan = plan.withStarExpanded(pipelineScopeColumns(scope))
+			// Fused input operators can change clause indexes; each retained
+			// syntax node still names its own canonical projection.
+			original := clause
+			plan, planErr := executionReturnProjection(ctx, original)
+			if planErr != nil {
+				return nil, true, planErr
 			}
 			final, ok := e.pipelineApplyReturnPlan(ctx, rows, plan, source, rowsValidated)
 			source = nil
 			if !ok {
 				if failure := getExpressionFailure(ctx); failure != nil && final != nil {
-					pipelineNameReturnColumns(final, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
+
 					return final, true, failure
 				}
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
-			pipelineNameReturnColumns(final, clause.text, pipelineOriginalReturnText(originalClauses, idx), scope)
+
 			result.Columns = final.Columns
 			result.Rows = final.Rows
 			// RETURN is always last.

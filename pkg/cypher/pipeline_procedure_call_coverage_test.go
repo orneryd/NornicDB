@@ -113,8 +113,14 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
-	yield := parseYieldClause("CALL cov.echo(1) YIELD echoed ORDER BY echoed WHERE echoed = 1")
-	require.NotNil(t, yield)
+	malformed := "CALL cov.echo(1) YIELD echoed ORDER BY echoed WHERE echoed = 1"
+	require.Nil(t, parseYieldClause(malformed))
+	_, err = exec.Execute(ctx, malformed, nil)
+	require.Error(t, err)
+	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
+	// The modifier validator also rejects an explicitly constructed invalid
+	// modifier order; the canonical parser never admits that sequence.
+	yield := &yieldClause{items: []yieldItem{{name: "echoed"}}, orderBy: "echoed", where: "echoed = 1", misplacedWhere: true}
 	err = exec.validateYieldModifiers(yield, true)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
