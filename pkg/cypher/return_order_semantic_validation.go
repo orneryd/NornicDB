@@ -15,7 +15,7 @@ func validateReturnOrderBySemanticScopeIn(clause string, retained typeScope) err
 		return nil
 	}
 	projectionBody := strings.TrimSpace(body[:orderIndex])
-	orderBody := strings.TrimSpace(body[orderIndex+len("ORDER BY"):])
+	orderBody := strings.TrimSpace(body[keywordEndAt(body, orderIndex, "ORDER BY"):])
 	for _, keyword := range []string{"SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(orderBody, keyword); index >= 0 {
 			orderBody = strings.TrimSpace(orderBody[:index])
@@ -256,27 +256,6 @@ func containsFunctionCallNamed(expression, expected string) bool {
 		index = next
 	}
 	return false
-}
-
-func pipelineReturnSourceColumns(clause string) []string {
-	body := strings.TrimSpace(clause[len("RETURN"):])
-	end := len(body)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
-			end = index
-		}
-	}
-	body = strings.TrimSpace(body[:end])
-	body, _ = cutDistinct(body)
-	if body == "*" || body == "" {
-		return nil
-	}
-	columns := make([]string, 0)
-	for _, item := range splitTopLevelComma(body) {
-		_, alias := parseProjectionExprAlias(strings.TrimSpace(item))
-		columns = append(columns, alias)
-	}
-	return columns
 }
 
 func directSemanticReference(expression string) string {

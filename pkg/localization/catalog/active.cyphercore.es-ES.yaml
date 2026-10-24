@@ -348,3 +348,12 @@
   other: "Métrica de distancia de vector no válida; se esperaba {{.Expected}}"
 - id: cyphercore.uuid_invalid_text
   other: "El argumento `input` de la función `uuid()` debe ser una cadena UUID válida."
+- id: cyphercore.result_metadata_unresolved
+  description: No se pudo determinar el ámbito y las columnas de la sentencia.
+  other: No se puede determinar el ámbito y las columnas de resultado de la sentencia
+- id: cyphercore.result_metadata_mismatch
+  description: Las columnas de ejecución no coinciden con el esquema de la sentencia.
+  other: Las columnas de resultado de la ejecución no coinciden con el esquema de la sentencia
+- id: cyphercore.call_import_variables_required
+  description: A CALL import item must name a variable.
+  other: Las importaciones de CALL deben contener solo nombres de variables

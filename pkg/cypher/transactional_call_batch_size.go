@@ -24,7 +24,7 @@ var callClauseReads = newBoundedCache[string, cypherantlr.CallClause](4096, boun
 func readTransactionalStatement(ctx context.Context, query string) ([]cypherantlr.CallClause, error) {
 	// Only a cheap candidate filter: all classification and boundaries below
 	// come from the shared tokens/grammar, including nested expression calls.
-	if !containsFold(query, "CALL") {
+	if !containsFold(query, "CALL") || !containsFold(query, "TRANSACTIONS") || isNornicExtensionStatement(query) || isSchemaCommandStatement(query) {
 		return nil, nil
 	}
 	if calls, ok := transactionalStatementReads.get(query); ok {

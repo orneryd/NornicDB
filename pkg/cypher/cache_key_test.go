@@ -75,6 +75,8 @@ func TestNormalizeQueryKeepsQuotedText(t *testing.T) {
 	} {
 		require.Equal(t, want, normalizeQuery(input), input)
 	}
+	require.NotEqual(t, resultCacheEntryKey("RETURN 1 IS  NULL", nil), resultCacheEntryKey("RETURN 1 IS\tNULL", nil))
+	require.NotEqual(t, resultCacheEntryKey("RETURN 1 /* column */ + 2", nil), resultCacheEntryKey("RETURN 1 + 2", nil))
 	require.NotEqual(t, resultCacheEntryKey("RETURN 'a  b' AS s", nil), resultCacheEntryKey("RETURN 'a b' AS s", nil))
 	require.Equal(t, resultCacheEntryKey("RETURN  'a b'  AS s", nil), resultCacheEntryKey("RETURN 'a b' AS s", nil))
 }

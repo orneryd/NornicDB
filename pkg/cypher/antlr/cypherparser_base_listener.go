@@ -860,3 +860,29 @@ func (s *BaseCypherParserListener) EnterReservedWord(ctx *ReservedWordContext) {
 
 // ExitReservedWord is called when production reservedWord is exited.
 func (s *BaseCypherParserListener) ExitReservedWord(ctx *ReservedWordContext) {}
+
+// EnterSyntaxFragment is called when production syntaxFragment is entered.
+func (s *BaseCypherParserListener) EnterSyntaxFragment(ctx *SyntaxFragmentContext) {}
+
+// ExitSyntaxFragment is called when production syntaxFragment is exited.
+func (s *BaseCypherParserListener) ExitSyntaxFragment(ctx *SyntaxFragmentContext) {}
+
+// EnterPathSelector is called when production pathSelector is entered.
+func (s *BaseCypherParserListener) EnterPathSelector(ctx *PathSelectorContext) {}
+
+// ExitPathSelector is called when production pathSelector is exited.
+func (s *BaseCypherParserListener) ExitPathSelector(ctx *PathSelectorContext) {}
+
+// EnterPrivilegeCommand is called when production privilegeCommand is entered.
+func (s *BaseCypherParserListener) EnterPrivilegeCommand(ctx *PrivilegeCommandContext) {}
+
+// ExitPrivilegeCommand is called when production privilegeCommand is exited.
+func (s *BaseCypherParserListener) ExitPrivilegeCommand(ctx *PrivilegeCommandContext) {}
+
+// EnterProcedurePrivilegePattern is called when production procedurePrivilegePattern is entered.
+func (s *BaseCypherParserListener) EnterProcedurePrivilegePattern(ctx *ProcedurePrivilegePatternContext) {
+}
+
+// ExitProcedurePrivilegePattern is called when production procedurePrivilegePattern is exited.
+func (s *BaseCypherParserListener) ExitProcedurePrivilegePattern(ctx *ProcedurePrivilegePatternContext) {
+}

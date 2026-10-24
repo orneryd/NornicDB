@@ -17,9 +17,9 @@ import (
 // expression reaches the shared walk, and the planner cannot grow clause paths.
 func TestTransactionalSemanticOwnerCensus(t *testing.T) {
 	owners := map[string]int{"planPipelineCallChain": 0, "pipelineSyntaxEffects": 0,
-		"walkCypherSyntax": 0, "classifyTransactionalBatchExpression": 0,
+		"pipelineEffectVisitor": 0, "classifyTransactionalBatchExpression": 0,
 		"describeScalarExpression": 0, "scalarExpressionEvaluationError": 0,
-		"bindTransactionalCallChain": 0, "pipelineApplyCallSubqueryWithMetadata": 0, "executeTransactionBatch": 0}
+		"bindTransactionalCallChain": 0, "pipelineApplyCallSubqueryWithMetadata": 0}
 	effectContexts := map[string]bool{}
 	entries, err := os.ReadDir(".")
 	require.NoError(t, err)
@@ -38,10 +38,8 @@ func TestTransactionalSemanticOwnerCensus(t *testing.T) {
 			if _, tracked := owners[fn.Name.Name]; tracked {
 				owners[fn.Name.Name]++
 			}
-			if fn.Name.Name == "pipelineSyntaxEffects" {
-				for name := range semanticEffectContexts(fn.Body) {
-					effectContexts[name] = true
-				}
+			if fn.Name.Name == "pipelineEffectVisitor" {
+				effectContexts = semanticEffectContexts(fn.Body)
 			}
 			if fn.Name.Name == "planPipelineCallChain" {
 				ast.Inspect(fn.Body, func(node ast.Node) bool {
@@ -53,29 +51,43 @@ func TestTransactionalSemanticOwnerCensus(t *testing.T) {
 				})
 			}
 			if fn.Name.Name == "walkCypherSyntax" {
-				childEdges, recursiveEdges := 0, 0
-				ast.Inspect(fn.Body, func(node ast.Node) bool {
-					if _, returns := node.(*ast.ReturnStmt); returns {
-						t.Error("syntax walk can prune an expression representation")
-					}
-					if call, ok := node.(*ast.CallExpr); ok {
-						if selector, ok := call.Fun.(*ast.SelectorExpr); ok && selector.Sel.Name == "GetChildren" {
-							childEdges++
-						}
-						if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "walkCypherSyntax" {
-							recursiveEdges++
-						}
-					}
-					return true
-				})
-				require.Equal(t, 1, childEdges)
-				require.Equal(t, 1, recursiveEdges)
+				t.Error("duplicate legacy statement traversal remains")
 			}
 		}
 	}
 	for owner, count := range owners {
 		require.Equal(t, 1, count, owner)
 	}
+	canonical, err := parser.ParseFile(token.NewFileSet(), "antlr/statement_syntax.go", nil, parser.SkipObjectResolution)
+	require.NoError(t, err)
+	walkers := 0
+	for _, declaration := range canonical.Decls {
+		fn, ok := declaration.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "walkSyntax" {
+			continue
+		}
+		walkers++
+		children, recursion := 0, 0
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			if _, returns := node.(*ast.ReturnStmt); returns {
+				t.Error("canonical traversal prunes children")
+			}
+			if call, ok := node.(*ast.CallExpr); ok {
+				if name, ok := call.Fun.(*ast.Ident); ok {
+					if name.Name == "children" {
+						children++
+					}
+					if name.Name == "walkSyntax" {
+						recursion++
+					}
+				}
+			}
+			return true
+		})
+		require.Equal(t, 1, children)
+		require.Equal(t, 1, recursion)
+	}
+	require.Equal(t, 1, walkers, "one generic traversal owns all statement consumers")
 	grammar, err := parser.ParseFile(token.NewFileSet(), "antlr/cypher_parser.go", nil, parser.SkipObjectResolution)
 	require.NoError(t, err)
 	constructors := transactionalcalltest.SyntaxConstructors()
@@ -140,10 +152,9 @@ func semanticEffectContexts(body *ast.BlockStmt) map[string]bool {
 	ast.Inspect(body, func(node ast.Node) bool {
 		if branch, ok := node.(*ast.CaseClause); ok {
 			for _, expression := range branch.List {
-				if pointer, ok := expression.(*ast.StarExpr); ok {
-					if context, ok := pointer.X.(*ast.SelectorExpr); ok {
-						contexts[context.Sel.Name] = true
-					}
+				if context, ok := expression.(*ast.SelectorExpr); ok && strings.HasPrefix(context.Sel.Name, "CypherParserRULE_") {
+					name := strings.TrimPrefix(context.Sel.Name, "CypherParserRULE_")
+					contexts[strings.ToUpper(name[:1])+name[1:]+"Context"] = true
 				}
 			}
 		}
@@ -157,19 +168,15 @@ func TestTransactionalReviewCensusDetectsMissingCreate(t *testing.T) {
 	require.NoError(t, err)
 	for _, declaration := range file.Decls {
 		fn, ok := declaration.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "pipelineSyntaxEffects" {
+		if !ok || fn.Name.Name != "pipelineEffectVisitor" {
 			continue
 		}
 		require.True(t, semanticEffectContexts(fn.Body)["CreateStContext"])
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
 			if branch, ok := node.(*ast.CaseClause); ok {
 				for i, expression := range branch.List {
-					pointer, ok := expression.(*ast.StarExpr)
-					if !ok {
-						continue
-					}
-					selector, ok := pointer.X.(*ast.SelectorExpr)
-					if ok && selector.Sel.Name == "CreateStContext" {
+					selector, ok := expression.(*ast.SelectorExpr)
+					if ok && selector.Sel.Name == "CypherParserRULE_createSt" {
 						branch.List = append(branch.List[:i], branch.List[i+1:]...)
 						break
 					}

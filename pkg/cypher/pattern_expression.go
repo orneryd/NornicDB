@@ -97,8 +97,8 @@ func (e *StorageExecutor) evaluateRowPatternComprehensionAtom(expr string, value
 // IN, which this rejects.
 func patternComprehensionHead(pattern string) bool {
 	head := strings.TrimSpace(StripComments(pattern))
-	if eq := strings.IndexByte(head, '='); eq > 0 && isValidIdentifier(strings.TrimSpace(head[:eq])) {
-		head = strings.TrimSpace(head[eq+1:])
+	if _, _, start, ok := namedPathDeclaration(head, 0); ok {
+		head = head[start:]
 	}
 	if !strings.HasPrefix(head, "(") {
 		return false

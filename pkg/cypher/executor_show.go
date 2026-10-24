@@ -619,10 +619,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		}
 		sources := make([]int, 0, len(yield.items))
 		for _, item := range yield.items {
-			name := item.name
-			if item.alias != "" {
-				name = item.alias
-			}
+			name := item.column()
 			outputs = append(outputs, name)
 			if name != item.name {
 				projected.Columns = append(projected.Columns, name)
@@ -656,8 +653,8 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	if where := segmentText(3); where != "" {
 		types := map[string]string{"name": "String"}
 		for _, item := range yield.items {
-			if item.alias != "" && types[item.name] != "" {
-				types[item.alias] = types[item.name]
+			if types[item.name] != "" {
+				types[item.column()] = types[item.name]
 			}
 		}
 		clause := pipelineClause{kind: pipelineClauseWith, text: "WITH * WHERE " + where}

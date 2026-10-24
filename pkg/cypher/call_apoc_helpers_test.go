@@ -43,8 +43,7 @@ func TestApocHelpers_ExtractProcedureName(t *testing.T) {
 	assert.Equal(t, "apoc.cypher.run", extractProcedureName("call apoc.cypher.run('RETURN 1',{})"))
 	long := "THIS TEXT HAS NO PROC KEYWORD AND SHOULD FALL BACK TO TRUNCATED QUERY STRING BEHAVIOR"
 	got := extractProcedureName(long)
-	assert.Len(t, got, 63)
-	assert.Equal(t, long[:60]+"...", got)
+	assert.Empty(t, got, "a declined syntax read must not invent a procedure name")
 }
 
 func TestApocHelpers_SharedCallUtilities(t *testing.T) {

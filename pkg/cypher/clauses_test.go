@@ -559,11 +559,9 @@ func TestCallUnknownProcedure(t *testing.T) {
 
 	_, err := e.Execute(ctx, "CALL unknown.procedure()", nil)
 	if err == nil {
-		t.Error("Expected error for unknown procedure")
+		t.Fatal("Expected error for unknown procedure")
 	}
-	if !strings.Contains(err.Error(), "Neo.ClientError.Procedure.ProcedureNotFound: There is no procedure with the name") {
-		t.Errorf("Expected ProcedureNotFound error, got: %v", err)
-	}
+	requireStatusCode(t, err, "Neo.ClientError.Procedure.ProcedureNotFound")
 }
 
 // ========================================

@@ -172,9 +172,7 @@ func subqueryExpressionAfterLiveByte(query string, braceIndex, index int) bool {
 // subqueryExpressionKeywordBeforeBrace validates a known keyword token and its
 // brace without rescanning its prefix when the forward reader already found it.
 func subqueryExpressionKeywordBeforeBrace(query string, start, end, braceIndex int) bool {
-	switch upperASCII(query[start:end]) {
-	case "EXISTS", "COUNT", "COLLECT", "CALL":
-	default:
+	if !queryBodyContainerKeyword(query[start:end]) {
 		return false
 	}
 	precedingToken := start - 1
@@ -235,8 +233,11 @@ func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
 		return false
 	}
 
+	// Any clause opens a body, an update clause too: EXISTS { CREATE () } is
+	// a body Neo4j rejects for its update, not a map.
 	switch upperASCII(query[start:index]) {
-	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN", "ORDER", "LIMIT", "SKIP", "OFFSET":
+	case "MATCH", "OPTIONAL", "CALL", "WITH", "UNWIND", "RETURN", "ORDER", "LIMIT", "SKIP", "OFFSET",
+		"CREATE", "MERGE", "DELETE", "DETACH", "NODETACH", "SET", "REMOVE", "FOREACH", "USE", "LET", "FILTER", "FINISH", "LOAD":
 		return true
 	default:
 		return false

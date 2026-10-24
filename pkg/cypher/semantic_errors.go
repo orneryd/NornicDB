@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"strings"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 )
@@ -78,4 +79,14 @@ func procedureRuntimeError(procedure string, err error) error {
 
 func newSemanticError(code, detail, message string) error {
 	return &SemanticError{Code: code, Detail: detail, Message: message}
+}
+
+// syntaxAdmissionError retains specific pattern diagnostics at grammar admission.
+func syntaxAdmissionError(source string, cause error) error {
+	if invalidRelationshipPattern(source) {
+		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidRelationshipPattern", "invalid variable-length relationship pattern")
+	}
+	message := strings.ReplaceAll(cause.Error(), "mismatched input ", "Invalid input ")
+	message = strings.ReplaceAll(message, "extraneous input ", "Invalid input ")
+	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", message)
 }

@@ -23,6 +23,10 @@ func TestTransactionalBatchStructuralReader(t *testing.T) {
 				require.Equal(t, "RETURN 'é}' AS value", call.Body)
 				require.Equal(t, "RETURN value", call.After)
 				require.Equal(t, sample.expression, call.Batch.Expression)
+				syntax, retained := call.Batch.ExpressionSyntax()
+				require.True(t, retained)
+				start, end := syntax.Span()
+				require.Equal(t, sample.expression, syntax.Source()[start:end])
 				require.Equal(t, sample.kind, call.Batch.LiteralKind)
 			}
 		})

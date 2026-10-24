@@ -33,3 +33,12 @@ func readRetrievalContinuation(req map[string]any) retrievalContinuation {
 func (r retrievalContinuation) requested() bool {
 	return r.qid != "" || r.discard || r.nPresent || r.mode != "" || r.groupBy != "" || r.rankedLimitPresent
 }
+
+// retrievalResultSchemas is the shared row/page header contract for retrieval.
+func retrievalResultSchemas(graph bool) [][]string {
+	columns := []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"}
+	if graph {
+		columns = append([]string{"kind", "node", "relationship", "start", "end"}, columns[1:]...)
+	}
+	return [][]string{columns, {"page"}}
+}

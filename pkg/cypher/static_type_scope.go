@@ -11,105 +11,6 @@ import (
 // projected expression is typed once, by projectedOperand, for both.
 type typeScope map[string]staticOperand
 
-// bindingKind is the match validator's view of an operand: the entity it is
-// (a node, a relationship, a list of either, a path), a value that is none of
-// them, or unknown. A type of several choices ("Map, Node or Relationship")
-// is a value: never read as an entity.
-func (operand staticOperand) bindingKind() matchBindingKind {
-	switch operand.kind {
-	case "Node":
-		return matchBindingNode
-	case "Relationship":
-		return matchBindingRelationship
-	case "List<Node>":
-		return matchBindingNodeList
-	case "List<Relationship>":
-		return matchBindingRelationshipList
-	case "Path":
-		return matchBindingPath
-	case "", "Null":
-		if operand.nonEntity || operand.nonBoolean {
-			return matchBindingValue
-		}
-		return matchBindingUnknown
-	}
-	// A type of several choices that may be a node or relationship ("Map,
-	// Node or Relationship") is checked when the row runs.
-	for _, choice := range staticTypeChoices(operand.kind) {
-		if choice == "Node" || choice == "Relationship" {
-			return matchBindingUnknown
-		}
-	}
-	return matchBindingValue
-}
-
-// listOfType is the type of a list of typeName's values: List<X> for one
-// type, each choice's list for several ("List<A>, List<B> or List<C>").
-func listOfType(typeName string) string {
-	choices := staticTypeChoices(typeName)
-	for index, choice := range choices {
-		choices[index] = "List<" + choice + ">"
-	}
-	return joinTypeNames(choices)
-}
-
-// elementOfType is the type of an element of a list of typeName ("" when
-// typeName isn't a list of known elements): X of List<X>, each choice's
-// element for several list types.
-func elementOfType(typeName string) string {
-	choices := staticTypeChoices(typeName)
-	if len(choices) == 0 {
-		return ""
-	}
-	elements := make([]string, 0, len(choices))
-	for _, choice := range choices {
-		if !strings.HasPrefix(choice, "List<") || choice == "List<T>" {
-			return ""
-		}
-		elements = append(elements, strings.TrimSuffix(strings.TrimPrefix(choice, "List<"), ">"))
-	}
-	return joinTypeNames(elements)
-}
-
-// typedOperand is the operand of a static type name. A property value's type
-// (staticPropertyValueType) names every type a property can hold: the
-// function and pattern checks reject it where none fits (labels(v),
-// MATCH (v)); the operator checks, which take one type, read it as unknown.
-func typedOperand(typeName string) staticOperand {
-	if typeName == staticPropertyValueType {
-		return staticOperand{display: typeName, nonEntity: true}
-	}
-	return knownOperand(typeName)
-}
-
-// typeName is the static type name of operand: its kind, or a property
-// value's type (typedOperand); "" when neither is known.
-func (operand staticOperand) typeName() string {
-	if operand.kind == "" && operand.display == staticPropertyValueType {
-		return staticPropertyValueType
-	}
-	return operand.kind
-}
-
-// operandOfKind is the operand a binding kind describes.
-func operandOfKind(kind matchBindingKind) staticOperand {
-	switch kind {
-	case matchBindingNode:
-		return knownOperand("Node")
-	case matchBindingRelationship:
-		return knownOperand("Relationship")
-	case matchBindingNodeList:
-		return knownOperand("List<Node>")
-	case matchBindingRelationshipList:
-		return knownOperand("List<Relationship>")
-	case matchBindingPath:
-		return knownOperand("Path")
-	case matchBindingValue:
-		return staticOperand{nonEntity: true}
-	}
-	return staticOperand{}
-}
-
 // isEntityTypeName reports a static type the binding kinds hold themselves.
 func isEntityTypeName(typeName string) bool {
 	switch typeName {
@@ -123,7 +24,7 @@ func isEntityTypeName(typeName string) bool {
 func (types typeScope) kinds() matchSemanticScope {
 	kinds := make(matchSemanticScope, len(types))
 	for name, operand := range types {
-		kinds[name] = operand.bindingKind()
+		kinds[name] = gateProven(operand).bindingKind()
 	}
 	return kinds
 }
@@ -133,17 +34,16 @@ func (types typeScope) kinds() matchSemanticScope {
 func (types typeScope) static(cypher25 bool) staticTypeScope {
 	scope := staticTypeScope{kinds: types.kinds(), complete: true, cypher25: cypher25}
 	for name, operand := range types {
-		if operand.kind == "" && operand.nonInteger {
+		// The views hold only what a verified rule proved.
+		operand = gateProven(operand)
+		// Every value operand travels whole (its alternatives and its
+		// constraints), so a later clause reads exactly what the projection
+		// derived; the type-name view below is derived from it.
+		if operand.typeName() != "" && !isEntityTypeName(operand.typeName()) || operand.nonEntity {
 			if scope.derived == nil {
 				scope.derived = make(map[string]staticOperand)
 			}
 			scope.derived[name] = operand
-			if operand.display != "" {
-				if scope.values == nil {
-					scope.values = make(map[string]string)
-				}
-				scope.values[name] = operand.display
-			}
 		}
 		if typeName := operand.typeName(); typeName != "" && !isEntityTypeName(typeName) {
 			if scope.values == nil {
@@ -168,10 +68,10 @@ func typeScopeOf(scope staticTypeScope) typeScope {
 		types[name] = operandOfKind(kind)
 	}
 	for name, typeName := range scope.values {
-		if isEntityTypeName(types[name].kind) {
+		if isEntityTypeName(types[name].typeName()) {
 			continue
 		}
-		types[name] = typedOperand(typeName)
+		types[name] = typedOperand(typeName).proved()
 	}
 	for name, members := range scope.members {
 		operand := types[name]
@@ -234,8 +134,8 @@ func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string) t
 }
 
 // projectedOperand is the static type of a projected expression, as Neo4j
-// types it before the statement runs: a bare variable's own; null open to
-// any kind; coalesce of variables of one kind and a list of nodes or of
+// types it before the statement runs: a bare variable's own; null a Null
+// (open to any kind); coalesce of variables of one kind and a list of nodes or of
 // relationships that kind; collect of nodes or relationships their list, a
 // count an Integer, any other aggregate a value; a node's or relationship's
 // property a value of unknown type; a map member unknown in Cypher 5; and
@@ -245,7 +145,9 @@ func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string) t
 func projectedOperand(types typeScope, input staticTypeScope, expression string) staticOperand {
 	expression = strings.TrimSpace(expression)
 	if strings.EqualFold(expression, "null") {
-		return staticOperand{}
+		// Null, as written in place (+z of WITH null AS z is a number); it
+		// fits every position and binds as any kind (bindingKind).
+		return provenOperand("Null")
 	}
 	if source := simpleSemanticIdentifier(expression); source != "" && !isLiteralKeyword(source) {
 		return types[source]
@@ -253,59 +155,8 @@ func projectedOperand(types typeScope, input staticTypeScope, expression string)
 	if kind, ok := entityListLiteralKind(expression, input.kinds); ok {
 		return operandOfKind(kind)
 	}
-	if function, arguments, call := parseFunctionCallWS(expression); call {
-		if operand, typed := projectedFunctionOperand(types, input, lowerASCII(function), arguments); typed {
-			return operand
-		}
-		// A function's own result type needs no look at its arguments:
-		// their errors are the clause checks' to report.
-		if result := staticFunctionResultType(function, arguments); result != "" {
-			return knownOperand(result)
-		}
-	}
-	if name, argument, _, aggregate := parsePipelineAggregate(expression); aggregate {
-		switch name {
-		case "collect":
-			if element := projectedOperand(types, input, argument).typeName(); element != "" && element != "Null" {
-				return knownOperand(listOfType(element))
-			}
-			return knownOperand("List<T>")
-		case "count":
-			return knownOperand("Integer")
-		}
-		return staticOperand{nonEntity: true}
-	}
-	if variable, _, property := parseVarPropertyRef(expression); property && simpleSemanticIdentifier(variable) == variable {
-		switch input.kinds[variable] {
-		case matchBindingNode, matchBindingRelationship:
-			return typedOperand(staticPropertyValueType)
-		}
-		if !input.cypher25 {
-			// A map's member (x.node) is checked when the row runs.
-			return staticOperand{}
-		}
-	}
-	if inner, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
-		if operand, typed := projectedListOperand(types, input, inner); typed {
-			return operand
-		}
-	}
-	if receiver, index, subscript, postfix := staticPostfixSplit(expression); postfix && subscript {
-		// An element of a typed list ([n, o][0], nodes(p)[0]) has its
-		// element type; a slice is the list's type.
-		list := projectedOperand(types, input, receiver)
-		if element := elementOfType(list.kind); element != "" {
-			if _, _, slice := staticSliceBounds(index); slice {
-				return list
-			}
-			return typedOperand(element)
-		}
-	}
-	operand, err := (staticOperatorChecker{scope: input}).check(expression)
-	if err != nil {
-		return staticOperand{}
-	}
-	return operand
+	// Every other expression has the one static type its scope derives.
+	return input.operandOf(expression)
 }
 
 // unwoundOperand is the static type of the variable UNWIND binds from list:
@@ -320,18 +171,14 @@ func unwoundOperand(types typeScope, input staticTypeScope, clause string) stati
 // variable, a comprehension's or quantifier's local; localBindingKind).
 func listElementOperand(types typeScope, input staticTypeScope, list string) staticOperand {
 	operand := projectedOperand(types, input, list)
-	if element := elementOfType(operand.kind); element != "" {
-		return typedOperand(element)
+	if !operand.union && operand.known() && !operand.list() {
+		return operand // UNWIND 5 binds 5
 	}
-	if operand.kind != "" && !strings.Contains(operand.kind, "List<") {
-		return operand
+	if unwound := operand.unwoundOperand(); unwound.typeName() != "" {
+		return unwound
 	}
-	if typeName := staticListElementType(list); typeName != "" {
-		return knownOperand(typeName)
-	}
-	if matchFuncStartAndSuffix(strings.TrimSpace(list), "range") {
-		return knownOperand("Integer")
-	}
+	// The deriver typed the list; its elements are what it derived, or
+	// unknown.
 	return staticOperand{}
 }
 
@@ -357,6 +204,24 @@ func projectStaticValueMembers(scope staticTypeScope, clause string) map[string]
 	return projectTypeScopeIn(typeScopeOf(scope), scope, clause).static(true).members
 }
 
+// carryStaticSubqueryImports models both possible global-aggregate rows. A
+// nonempty group carries current operands; an empty group's missing input
+// falls back to original imports. Both scopes use the runtime retention owner.
+// Keep the type facts shared by both rows and defer only disagreements until
+// execution. No cardinality guess is needed for parameterized UNWIND, filters
+// or data-dependent MATCH.
+func carryStaticSubqueryImports(projected, input, imports typeScope, projection string) {
+	var empty typeScope
+	if len(imports) > 0 && pipelineProjectionHasOnlyAggregates(returnProjectionPlanFor("RETURN "+projection).projections) {
+		empty = maps.Clone(projected)
+		carrySubqueryImports(empty, nil, imports)
+	}
+	carrySubqueryImports(projected, input, imports)
+	for name, operand := range empty {
+		projected[name] = joinedOperand(projected[name], operand)
+	}
+}
+
 // callSubqueryImports is the scope a CALL subquery's body starts from: CALL
 // (a, b) { … } imports a and b, CALL (*) { … } and an old-style CALL { … }
 // every outer variable (the latter's leading WITH picks them). ok is false
@@ -369,20 +234,20 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 		return nil, false, false
 	}
 	initial := make(typeScope)
-	head := strings.TrimSpace(trimmed[call+len("CALL") : open])
-	if imports, scoped := stripEnclosingRowDelimiter(head, '(', ')'); scoped && strings.TrimSpace(imports) != "*" {
-		for _, name := range splitTopLevelComma(imports) {
-			name = normalizeProjectionColumnName(strings.TrimSpace(name))
+	scope := readCallSubqueryScope(callText)
+	imports, scoped := scope.names, scope.scoped
+	if scoped && imports != nil {
+		for _, name := range imports {
 			if operand, bound := outer[name]; bound {
 				initial[name] = operand
 			}
 		}
-		return initial, true, true
+		return initial, scoped, true
 	}
 	for name, operand := range outer {
 		initial[name] = operand
 	}
-	return initial, false, true
+	return initial, scoped, true
 }
 
 // callSubqueryReturnTypes walks a CALL subquery's body, each UNION branch
@@ -400,6 +265,7 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 		return nil, nil
 	}
 	var returned typeScope
+	typedBranches := 0
 	for _, branch := range branches {
 		clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
 		if !ok || len(clauses) == 0 {
@@ -439,86 +305,20 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 			return nil, err
 		}
 		last := clauses[len(clauses)-1]
-		if len(branches) == 1 && complete && last.kind == pipelineClauseReturn {
-			returnClause := strings.TrimSpace(last.text)
-			returned = projectTypeScope(final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
+		if !complete || last.kind != pipelineClauseReturn {
+			return nil, nil
 		}
+		returnClause := strings.TrimSpace(last.text)
+		branchTypes := projectTypeScope(final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
+		if typedBranches == 0 {
+			returned = branchTypes
+		} else {
+			// A UNION column is a value of any branch's type.
+			for name, operand := range returned {
+				returned[name] = joinedOperand(operand, branchTypes[name])
+			}
+		}
+		typedBranches++
 	}
 	return returned, nil
-}
-
-// projectedFunctionOperand is the static type of a call whose result type
-// follows from its arguments: coalesce of arguments of one type (open when
-// one is null), nodes / relationships of a path, startNode / endNode,
-// head / last of a typed list. typed is false for any other call.
-func projectedFunctionOperand(types typeScope, input staticTypeScope, function, arguments string) (staticOperand, bool) {
-	switch function {
-	case "coalesce":
-		operand := staticOperand{}
-		for index, argument := range splitTopLevelComma(arguments) {
-			typed := projectedOperand(types, input, argument)
-			if typed.typeName() == "" || (index > 0 && typed.typeName() != operand.typeName()) {
-				return staticOperand{}, true
-			}
-			operand = typed
-		}
-		return operand, true
-	case "nodes":
-		return knownOperand("List<Node>"), true
-	case "relationships":
-		return knownOperand("List<Relationship>"), true
-	case "startnode", "endnode":
-		return knownOperand("Node"), true
-	case "head", "last":
-		if element := elementOfType(projectedOperand(types, input, arguments).kind); element != "" {
-			return typedOperand(element), true
-		}
-	}
-	return staticOperand{}, false
-}
-
-// projectedListOperand is the static type of a list literal or list
-// comprehension (inner is the text between the brackets): a list of the one
-// type every element has ([p], [coalesce(1, 2)]), a map widened to "Map, Node
-// or Relationship" as Neo4j types a list of maps. A comprehension is a list
-// of its projection's type, typed with its local as an element of the list
-// it iterates (listElementOperand: [at IN range(0, 1) | [at]] is a
-// List<List<Integer>>), or of that element's type when it projects nothing
-// ([at IN l WHERE …]). typed is false when the elements' types differ or
-// aren't known.
-func projectedListOperand(types typeScope, input staticTypeScope, inner string) (staticOperand, bool) {
-	if variable, listExpression, _, projection, comprehension := parseListComprehension(inner); comprehension {
-		element := listElementOperand(types, input, listExpression)
-		if strings.TrimSpace(projection) == "" {
-			if typeName := element.typeName(); typeName != "" && typeName != "Null" {
-				return knownOperand(listOfType(typeName)), true
-			}
-			return staticOperand{}, false
-		}
-		scope := make(typeScope, len(types)+1)
-		for name, operand := range types {
-			scope[name] = operand
-		}
-		scope[variable] = element
-		projected := projectedOperand(scope, scope.static(input.cypher25), projection).typeName()
-		if projected == "" || projected == "Null" {
-			return staticOperand{}, false
-		}
-		return knownOperand(listOfType(projected)), true
-	}
-	if strings.TrimSpace(inner) == "" {
-		return staticOperand{}, false
-	}
-	element := ""
-	for _, item := range splitTopLevelComma(inner) {
-		typed := projectedOperand(types, input, item).typeName()
-		if typed == "Map" {
-			typed = "Map, Node or Relationship"
-		}
-		if typed == "" || typed == "Null" || (element != "" && typed != element) {
-			return staticOperand{}, false
-		}
-		element = typed
-	}
-	return knownOperand(listOfType(element)), true
 }

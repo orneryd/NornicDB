@@ -543,6 +543,7 @@ ORDER BY textKey128
 func TestNormalizeFabricRowWrapper_MapInterfaceKeys(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "nornic"))
 	query := "RETURN sourceId, textKey, originalText, language, translatedText"
+	exec.fabricRecordBindings = map[string]interface{}{"sourceId": nil, "textKey": nil, "originalText": nil, "language": nil, "translatedText": nil}
 	stream := &fabric.ResultStream{
 		Columns: []string{"__fabric_row"},
 		Rows: [][]interface{}{
@@ -558,7 +559,7 @@ func TestNormalizeFabricRowWrapper_MapInterfaceKeys(t *testing.T) {
 		},
 	}
 
-	exec.normalizeFabricRowWrapper(query, stream)
+	require.NoError(t, exec.normalizeFabricRowWrapper(query, stream))
 	require.Equal(t, []string{"sourceId", "textKey", "originalText", "language", "translatedText"}, stream.Columns)
 	require.Len(t, stream.Rows, 1)
 	require.Equal(t, []interface{}{"s1", "k1", "o1", "es", "t1"}, stream.Rows[0])

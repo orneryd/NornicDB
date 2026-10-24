@@ -406,15 +406,6 @@ func (e *StorageExecutor) extractReturnItemsFromQuery(query string) []returnItem
 	return e.parseReturnItems(returnPart)
 }
 
-// buildColumnsFromReturnItems builds column names from parsed return items
-func (e *StorageExecutor) buildColumnsFromReturnItems(items []returnItem) []string {
-	columns := make([]string, len(items))
-	for i, item := range items {
-		columns[i] = item.column()
-	}
-	return columns
-}
-
 // getNodeCached retrieves a node, using cache to avoid repeated lookups
 func (e *StorageExecutor) getNodeCached(id storage.NodeID, cache map[storage.NodeID]*storage.Node) *storage.Node {
 	if node, exists := cache[id]; exists {

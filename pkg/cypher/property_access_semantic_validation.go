@@ -16,22 +16,6 @@ var propertyAccessStaticTypes = map[string]bool{
 	"Map, Node or Relationship": true,
 }
 
-// validateStaticPropertyAccessTypes rejects, when the statement compiles, a
-// property access whose base has a static type without properties: a string,
-// number, boolean or list literal ('x'.y), or a variable a WITH or UNWIND
-// bound to one (WITH 5 AS s RETURN s.x), wherever the access is (projections,
-// WHERE, ORDER BY, pattern properties, function arguments, CASE, list and
-// pattern comprehensions, subquery bodies). Neo4j's SyntaxError is "Type
-// mismatch: expected Map, Node, Relationship, … but was Integer"; a map
-// projection of such a base (s {.a}) is "expected Map, Node or Relationship". A base whose type depends on the data (a
-// property, a function result) is checked when it is evaluated, with Neo4j's
-// TypeError "Type mismatch: expected a map but was Long(5)"
-// (propertyAccessTypeError). Parameters are typed by
-// validateStaticPropertyAccessParameters, per execution.
-func validateStaticPropertyAccessTypes(cypher string) error {
-	return validatePropertyAccessTypes(cypher, nil)
-}
-
 // validateStaticPropertyAccessParameters is validateStaticPropertyAccessTypes
 // with the statement's parameter values as static types, as Neo4j compiles a
 // statement with its parameters: RETURN $m.a for m = 5 is "Type mismatch for
@@ -142,13 +126,9 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 				return err
 			}
 			variable := normalizeProjectionColumnName(alias)
-			element := ""
-			listType := propertyAccessExpressionType(expression, types, params)
-			if strings.HasPrefix(listType, "List<") && strings.HasSuffix(listType, ">") && !strings.Contains(listType, ",") {
-				if inner := listType[len("List<") : len(listType)-1]; inner != "T" {
-					element = inner
-				}
-			}
+			// The element type of each list alternative, from the one
+			// list-element reader; unknown for a list of unknown elements.
+			element := elementOfType(propertyAccessExpressionType(expression, types, params))
 			if _, known := types[variable]; known || element != "" {
 				next := make(map[string]string, len(types)+1)
 				for name, typeName := range types {
@@ -196,26 +176,15 @@ func projectionSemanticBodyAndTail(clause, keyword string) (string, string) {
 }
 
 // propertyAccessExpressionType is the static type of a projected or unwound
-// expression: a literal's, a parameter's (when checking with parameter
-// values), or the type of the variable it copies. A list comprehension is a
+// expression: a parameter's (when checking with parameter values), the type
+// of the variable it copies, or the operator check's. A list comprehension is a
 // list of a type this check doesn't infer (List<T>). "" is unknown.
 func propertyAccessExpressionType(expression string, types map[string]string, params map[string]interface{}) string {
 	expression = strings.TrimSpace(expression)
 	if expression == "" {
 		return ""
 	}
-	if typeName := staticLiteralTypeName(expression); typeName != "" {
-		return typeName
-	}
-	if _, list := stripEnclosingRowDelimiter(expression, '[', ']'); list {
-		return "List<T>"
-	}
-	if mayContainArithmetic(expression) {
-		if typeName := (staticTypeScope{values: types}).staticExpressionType(expression); typeName != "" {
-			return typeName
-		}
-	}
-	if expression[0] == '$' {
+	if expression[0] == '$' && simpleSemanticIdentifier(strings.TrimSpace(expression[1:])) != "" {
 		if params == nil {
 			return ""
 		}
@@ -227,6 +196,14 @@ func propertyAccessExpressionType(expression string, types map[string]string, pa
 	}
 	if variable := simpleSemanticIdentifier(expression); variable != "" {
 		return types[normalizeProjectionColumnName(variable)]
+	}
+	// Every other expression (CASE, a computed list, a call, arithmetic) is
+	// typed by the static operand owner, which keeps a union's alternatives.
+	if typeName := (staticTypeScope{values: types}).staticExpressionType(expression); typeName != "" {
+		return typeName
+	}
+	if _, list := stripEnclosingRowDelimiter(expression, '[', ']'); list {
+		return "List<T>"
 	}
 	return ""
 }
@@ -245,18 +222,14 @@ func parameterPropertyAccessType(value interface{}) string {
 	return staticParameterOperand(value).display
 }
 
+// hasPropertiesTypeName reports one static type a property access reads.
+func hasPropertiesTypeName(typeName string) bool { return propertyAccessStaticTypes[typeName] }
+
 // rejectsPropertyAccess reports whether a known static type has no
-// properties.
+// properties: the operand owner decides, so a union is rejected only when
+// none of its alternatives has properties.
 func rejectsPropertyAccess(typeName string) bool {
-	if typeName == "" {
-		return false
-	}
-	for _, choice := range strings.Split(strings.ReplaceAll(typeName, " or ", ", "), ", ") {
-		if propertyAccessStaticTypes[choice] {
-			return false
-		}
-	}
-	return true
+	return typeName != "" && typedOperand(typeName).excludes(hasPropertiesTypeName)
 }
 
 // checkPropertyAccesses checks each property access in text whose base is a
@@ -387,7 +360,7 @@ func propertyAccessMismatch(typeName, parameter string) error {
 	if !rejectsPropertyAccess(typeName) {
 		return nil
 	}
-	return operandMismatch(staticOperand{kind: typeName, display: typeName, parameter: parameter}, propertyAccessExpectedTypes)
+	return operandMismatch(displayedOperand(typeName, typeName, parameter), propertyAccessExpectedTypes)
 }
 
 // propertyAccessFollows reports whether text[index:] starts with a property

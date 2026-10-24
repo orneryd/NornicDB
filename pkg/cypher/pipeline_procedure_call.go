@@ -97,11 +97,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			return nil, nil, true, err
 		}
 		for _, item := range yield.items {
-			name := item.name
-			if item.alias != "" {
-				name = item.alias
-			}
-			yielded = append(yielded, name)
+			yielded = append(yielded, item.column())
 		}
 		if len(procedure.Spec.Returns) > 0 {
 			columns := make([]string, len(procedure.Spec.Returns))

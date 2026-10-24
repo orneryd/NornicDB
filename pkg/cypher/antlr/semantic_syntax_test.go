@@ -4,7 +4,6 @@ import (
 	"context"
 	"testing"
 
-	antlr4 "github.com/antlr4-go/antlr/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -20,35 +19,31 @@ func TestTransactionalSyntaxRetainsExpressionPositions(t *testing.T) {
 	} {
 		t.Run(query, func(t *testing.T) {
 			patterns := []string{}
-			err := ReadClauseSyntax(context.Background(), query, func(tree antlr4.Tree, source []rune) {
-				var visit func(antlr4.Tree)
-				visit = func(node antlr4.Tree) {
-					if pattern, ok := node.(*NodePatternContext); ok {
-						patterns = append(patterns, SyntaxText(pattern, source))
+			err := ReadClauseSyntax(context.Background(), query, func(syntax StatementSyntax) {
+				syntax.Walk(func(node SyntaxNode) func() {
+					if node.Rule() == CypherParserRULE_nodePattern {
+						patterns = append(patterns, node.Text())
 					}
-					for _, child := range node.GetChildren() {
-						visit(child)
-					}
-				}
-				visit(tree)
+					return nil
+				})
 			})
 			require.NoError(t, err)
 			require.Contains(t, patterns, "(n:Record)")
 		})
 	}
-	err := ReadExpressionSyntax(context.Background(), "coalesce(head($sizes), 1)", func(tree antlr4.Tree, source []rune) {
-		require.IsType(t, &ExpressionContext{}, tree)
-		require.Equal(t, "coalesce(head($sizes), 1)", SyntaxText(tree.(antlr4.ParserRuleContext), source))
+	err := ReadExpressionSyntax(context.Background(), "coalesce(head($sizes), 1)", func(syntax StatementSyntax) {
+		require.Equal(t, CypherParserRULE_expression, syntax.Root().Rule())
+		require.Equal(t, "coalesce(head($sizes), 1)", syntax.Root().Text())
 	})
 	require.NoError(t, err)
-	err = ReadClauseSyntax(context.Background(), "WITH 'é' AS k", func(tree antlr4.Tree, source []rune) {
-		require.Equal(t, "WITH 'é' AS k", SyntaxText(tree.(antlr4.ParserRuleContext), source))
+	err = ReadClauseSyntax(context.Background(), "WITH 'é' AS k", func(syntax StatementSyntax) {
+		require.Equal(t, "WITH 'é' AS k", syntax.Root().Text())
 	})
 	require.NoError(t, err)
 }
 
 func TestTransactionalSyntaxRejectsPartialReads(t *testing.T) {
-	consume := func(antlr4.Tree, []rune) { t.Error("invalid syntax reached its consumer") }
+	consume := func(StatementSyntax) { t.Error("invalid syntax reached its consumer") }
 	require.Error(t, ReadExpressionSyntax(context.Background(), "1 ROWS", consume))
 	require.Error(t, ReadClauseSyntax(context.Background(), "WITH 1 AS k INVALID_TAIL", consume))
 	ctx, cancel := context.WithCancel(context.Background())
@@ -59,19 +54,15 @@ func TestTransactionalSyntaxRejectsPartialReads(t *testing.T) {
 
 func TestTransactionalSyntaxStatementAdmission(t *testing.T) {
 	limits := 0
-	err := ReadStatementSyntax(context.Background(), "EXPLAIN CALL { RETURN 1 AS x LIMIT 1 } IN TRANSACTIONS OF 1 ROWS RETURN x", func(tree antlr4.Tree, source []rune) {
-		require.IsType(t, &ScriptContext{}, tree)
-		var visit func(antlr4.Tree)
-		visit = func(node antlr4.Tree) {
-			if limit, ok := node.(*LimitStContext); ok {
+	err := ReadStatementSyntax(context.Background(), "EXPLAIN CALL { RETURN 1 AS x LIMIT 1 } IN TRANSACTIONS OF 1 ROWS RETURN x", func(syntax StatementSyntax) {
+		require.Equal(t, CypherParserRULE_script, syntax.Root().Rule())
+		syntax.Walk(func(node SyntaxNode) func() {
+			if node.Rule() == CypherParserRULE_limitSt {
 				limits++
-				require.Equal(t, "1", SyntaxText(limit.Expression(), source))
+				require.Equal(t, "1", node.ChildRule(CypherParserRULE_expression).Text())
 			}
-			for _, child := range node.GetChildren() {
-				visit(child)
-			}
-		}
-		visit(tree)
+			return nil
+		})
 	})
 	require.NoError(t, err)
 	require.Equal(t, 1, limits)

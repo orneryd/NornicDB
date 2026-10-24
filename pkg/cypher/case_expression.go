@@ -246,8 +246,14 @@ func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool
 	}
 	if i > 0 {
 		switch s[i-1] {
-		case '.', ':', '$':
+		case '.', '$':
 			return false
+		case ':':
+			// A label or type (n:End); a map value written without a space
+			// ({a:CASE … END}) is an expression like any other.
+			if !colonIsMapKeySeparator(s, i-1) {
+				return false
+			}
 		}
 	}
 	switch keyword {

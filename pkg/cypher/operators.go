@@ -108,6 +108,36 @@ func hasKeywordPrefixFoldASCII(text, keyword string) bool {
 }
 
 func operatorMatchesAt(expr, op string, idx int, caseInsensitive bool) bool {
+	if strings.HasPrefix(op, " ") && strings.HasSuffix(op, " ") {
+		word := strings.TrimSpace(op)
+		start := queryGapEnd(expr, idx)
+		if start > idx {
+			before := skipBackSpaces(expr, idx)
+			if before > 0 && strings.IndexByte(".:", expr[before-1]) >= 0 {
+				return false
+			}
+			end, ok := keywordMatchAt(expr, start, word, 0, len(word))
+			if !ok || !keywordRightBoundaryOK(expr, end, keywordBoundaryWord) {
+				return false
+			}
+			if !caseInsensitive {
+				at := start
+				for index := 0; index < len(word); index++ {
+					if isASCIISpace(word[index]) {
+						for at < end && isASCIISpace(expr[at]) {
+							at++
+						}
+					} else {
+						if expr[at] != word[index] {
+							return false
+						}
+						at++
+					}
+				}
+			}
+			return true
+		}
+	}
 	for offset := 0; offset < len(op); offset++ {
 		exprByte := expr[idx+offset]
 		opByte := op[offset]
@@ -229,7 +259,12 @@ func splitAtOperator(expr, op string, idx int) (string, string, bool) {
 		return "", "", false
 	}
 	left := strings.TrimSpace(expr[:idx])
-	right := strings.TrimSpace(expr[idx+len(op):])
+	end := idx + len(op)
+	if strings.HasPrefix(op, " ") && strings.HasSuffix(op, " ") ||
+		strings.IndexFunc(strings.TrimSpace(op), func(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }) >= 0 {
+		end = keywordEndAt(expr, queryGapEnd(expr, idx), strings.TrimSpace(op))
+	}
+	right := strings.TrimSpace(expr[end:])
 	return left, right, true
 }
 
@@ -964,4 +999,12 @@ func (e *StorageExecutor) subtract(left, right interface{}) interface{} {
 //	hasStringPredicate("'CONTAINS' = n.name", " CONTAINS ")     // false (in quotes)
 func (e *StorageExecutor) hasStringPredicate(expr, predicate string) bool {
 	return findTopLevelOperator(expr, predicate, true, true) >= 0
+}
+
+func nullPredicateOperand(expression, keyword string) (string, bool) {
+	at := topLevelKeywordIndex(expression, keyword)
+	if at <= 0 || strings.TrimSpace(expression[keywordEndAt(expression, at, keyword):]) != "" {
+		return "", false
+	}
+	return strings.TrimSpace(expression[:at]), true
 }

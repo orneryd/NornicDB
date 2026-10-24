@@ -447,7 +447,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 
 	result := &ExecuteResult{
-		Columns: []string{"node", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason", "query_chunks_searched", "query_chunks_total", "matches"},
+		Columns: retrievalResultSchemas(false)[0],
 		Rows:    make([][]interface{}, 0, len(response.Results)),
 	}
 	// Of a query split into chunks, how many were searched; 0 and 0 for a
@@ -533,7 +533,7 @@ func executeSearchContinuationPage(page *search.SearchContinuationPage) *Execute
 		pageMap["query_chunks_total"] = int64(page.QueryChunksTotal)
 	}
 	result := &ExecuteResult{
-		Columns: []string{"page"},
+		Columns: retrievalResultSchemas(false)[1],
 		Rows:    [][]interface{}{{pageMap}},
 	}
 	metadata := continuationResultMetadata(page.SearchResponse())

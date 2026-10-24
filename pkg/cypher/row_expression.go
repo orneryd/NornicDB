@@ -476,8 +476,8 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 		{suffix: " IS NOT NULL", notNull: true},
 		{suffix: " IS NULL"},
 	} {
-		if hasSuffixFoldASCII(expr, lowerASCII(predicate.suffix)) {
-			value, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[:len(expr)-len(predicate.suffix)]), values)
+		if operand, nullTest := nullPredicateOperand(expr, strings.TrimSpace(predicate.suffix)); nullTest {
+			value, ok, err := e.evaluateRowValue(operand, values)
 			if err != nil {
 				return nil, false, err
 			}
@@ -1575,8 +1575,7 @@ func (e *StorageExecutor) evaluateRowPredicateTextFromSubqueries(ctx context.Con
 		return ok && known && matched
 	}
 	for _, operator := range []string{" IS NOT NULL", " IS NULL"} {
-		if hasSuffixFoldASCII(expression, operator) {
-			left := strings.TrimSpace(expression[:len(expression)-len(operator)])
+		if left, nullTest := nullPredicateOperand(expression, strings.TrimSpace(operator)); nullTest {
 			value, ok := e.rowPredicateOperand(ctx, left, values)
 			if !ok {
 				value = nil

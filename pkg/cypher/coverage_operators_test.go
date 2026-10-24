@@ -530,3 +530,13 @@ func TestBuildNegatedCosineQueryExpr(t *testing.T) {
 			"negated vector should start with -; got %q", got)
 	})
 }
+
+func TestPR1632SymbolicOperatorSourceWidth(t *testing.T) {
+	e := freshExecutorForOperators(t)
+	for _, expression := range []string{"x :: INTEGER", "x   :: INTEGER", "x    ::    INTEGER", "x   IS  ::  INTEGER"} {
+		value, ok, err := e.evaluateRowValue(expression, map[string]interface{}{"x": int64(1)})
+		require.NoError(t, err, expression)
+		require.True(t, ok, expression)
+		require.Equal(t, true, value, expression)
+	}
+}

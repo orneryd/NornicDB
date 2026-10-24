@@ -235,6 +235,21 @@ DIGIT : HexInteger | OctalInteger | [0-9];
 // token numbers stay as they were.
 ALLREDUCE: 'ALLREDUCE';
 
+// Execution's path selectors and procedure-privilege commands share the
+// retained lexical product with statement facts.
+SHORTEST: 'SHORTEST';
+PATH: 'PATH';
+PATHS: 'PATHS';
+GROUP: 'GROUP';
+GROUPS: 'GROUPS';
+GRANT: 'GRANT';
+REVOKE: 'REVOKE';
+DENY: 'DENY';
+EXECUTE: 'EXECUTE';
+BOOSTED: 'BOOSTED';
+PROCEDURE: 'PROCEDURE';
+DBMS: 'DBMS';
+TO: 'TO';
 // ID must come after numbers so they aren't matched as IDs
 ID: Letter LetterOrDigit*;
 

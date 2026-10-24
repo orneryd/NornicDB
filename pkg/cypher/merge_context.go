@@ -191,49 +191,14 @@ func splitTopLevelOrTerms(expr string) []string {
 	return out
 }
 
-// extractVariableNamesFromPattern extracts variable names from a Cypher pattern.
-// e.g., "(p:Person)<-[:REL]-(poc:POC)-[:BELONGS_TO]->(a:Area)" returns ["p", "poc", "a"]
+// extractVariableNamesFromPattern returns the node variables pattern binds,
+// each once in order of first appearance: e.g.,
+// "(p:Person)<-[:REL]-(poc:POC)-[:BELONGS_TO]->(a:Area)" returns ["p", "poc", "a"].
+// The shared node-binding reader reads them from the pattern's structure, so a
+// dynamic label's $any(...), a property map, an element WHERE, a call such as
+// shortestPath(...) and a parenthesized or quantified path are not nodes.
 func (e *StorageExecutor) extractVariableNamesFromPattern(pattern string) []string {
-	var varNames []string
-	seen := make(map[string]bool)
-
-	// Find all node patterns (...)
-	inParen := false
-	inBracket := false
-	var current strings.Builder
-
-	for _, c := range pattern {
-		switch c {
-		case '(':
-			inParen = true
-			current.Reset()
-		case ')':
-			if inParen {
-				nodeContent := current.String()
-				// Extract variable name (before : or end)
-				varName, _, _ := splitNodeHead(nodeContent)
-				// Remove any property part
-				if idx := strings.Index(varName, "{"); idx > 0 {
-					varName = strings.TrimSpace(varName[:idx])
-				}
-				if varName != "" && !seen[varName] {
-					varNames = append(varNames, varName)
-					seen[varName] = true
-				}
-			}
-			inParen = false
-		case '[':
-			inBracket = true
-		case ']':
-			inBracket = false
-		default:
-			if inParen && !inBracket {
-				current.WriteRune(c)
-			}
-		}
-	}
-
-	return varNames
+	return canonicalPatternVariables(pattern)
 }
 
 // mergeNodeAbsentKey marks a context whose caller has just scanned the

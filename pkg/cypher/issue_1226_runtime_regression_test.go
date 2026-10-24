@@ -21,7 +21,67 @@ func TestIssue1226MainRuntimeRegressions(t *testing.T) {
 		{name: "valid_map_keys_marker", query: "WITH {_pathResult: 1, a: 2} AS m RETURN keys(m)", rows: [][]interface{}{{[]interface{}{"_pathResult", "a"}}}},
 		{name: "length_runtime_map", query: "UNWIND [{length: 42}] AS m RETURN length(CASE WHEN true THEN m ELSE null END)", code: "Neo.ClientError.Statement.TypeError"},
 		{name: "valid_comprehension_case_shadow", setup: "CREATE (:X)", query: "MATCH (x:X) RETURN [x IN ['a'] | toUpper(CASE WHEN true THEN x ELSE x END)]", rows: [][]interface{}{{[]interface{}{"A"}}}},
-		{name: "comprehension_case_runtime_error", query: "RETURN [x IN [1] | toUpper(CASE WHEN true THEN x ELSE 'a' END)]", code: "Neo.ClientError.Statement.TypeError"},
+		{name: "comprehension_case_runtime_error", query: "RETURN [x IN [1] | toUpper(CASE WHEN true THEN x ELSE 'a' END)] AS v", code: "Neo.ClientError.Statement.TypeError"},
+		{name: "valid_case_mixed_argument", query: "RETURN toUpper(CASE WHEN false THEN 1 ELSE 'a' END) AS v", rows: [][]interface{}{{"A"}}},
+		{name: "valid_comprehension_case_mixed", query: "RETURN [x IN [1] | toUpper(CASE WHEN false THEN x ELSE 'a' END)] AS v", rows: [][]interface{}{{[]interface{}{"A"}}}},
+		{name: "case_mixed_runtime_error", query: "RETURN toUpper(CASE WHEN true THEN 1 ELSE 'a' END) AS v", code: "Neo.ClientError.Statement.TypeError"},
+		{name: "valid_simple_case_mixed", query: "RETURN toUpper(CASE 0 WHEN 1 THEN 1 ELSE 'a' END) AS v", rows: [][]interface{}{{"A"}}},
+		{name: "valid_nested_case_mixed", query: "RETURN toUpper(CASE WHEN true THEN CASE WHEN false THEN 1 ELSE 'a' END ELSE 'b' END) AS v", rows: [][]interface{}{{"A"}}},
+		{name: "comprehension_case_absent_else_static_error", query: "RETURN [x IN [1] | toUpper(CASE WHEN true THEN x END)] AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_integer_nullable_runtime_error", query: "RETURN toUpper(CASE WHEN true THEN 1 ELSE null END) AS v", code: "Neo.ClientError.Statement.TypeError"},
+		{name: "valid_case_null_branch", query: "RETURN toUpper(CASE WHEN false THEN 1 ELSE null END) AS v", rows: [][]interface{}{{nil}}},
+		{name: "valid_case_string_nullable", query: "RETURN toUpper(CASE WHEN true THEN 'a' ELSE null END) AS v", rows: [][]interface{}{{"A"}}},
+		{name: "case_mixed_empty_input", query: "UNWIND [] AS outer RETURN toUpper(CASE WHEN true THEN 1 ELSE 'a' END) AS v", rows: [][]interface{}{}},
+		{name: "case_homogeneous_empty_input_static_error", query: "UNWIND [] AS outer RETURN toUpper(CASE WHEN true THEN 1 ELSE 2 END) AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_numeric_union_static_error", query: "RETURN toUpper(CASE WHEN true THEN 1 ELSE 2.0 END) AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_numeric_union_empty_static_error", query: "UNWIND [] AS outer RETURN toUpper(CASE WHEN true THEN 1 ELSE 2.0 END) AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_list_union_static_error", query: "RETURN toUpper(CASE WHEN true THEN [1] ELSE ['a'] END) AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_head_projected_static_error", query: "UNWIND [] AS row WITH CASE WHEN true THEN [[1]] ELSE [['a']] END AS xs WITH head(xs) AS v RETURN toUpper(v) AS a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_last_projected_static_error", query: "UNWIND [] AS row WITH CASE WHEN true THEN [[1]] ELSE [['a']] END AS xs WITH last(xs) AS v RETURN toUpper(v) AS a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_head_argument_static_error", query: "UNWIND [] AS row WITH CASE WHEN true THEN [[1]] ELSE [['a']] END AS xs RETURN toUpper(head(xs)) AS a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_last_argument_static_error", query: "UNWIND [] AS row WITH CASE WHEN true THEN [[1]] ELSE [['a']] END AS xs RETURN toUpper(last(xs)) AS a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_head_explicit_import_static_error", query: "WITH CASE WHEN true THEN [[1]] ELSE [['a']] END AS xs CALL (xs) { WITH head(xs) AS v UNWIND [] AS row RETURN toUpper(v) AS a } RETURN a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_last_star_import_static_error", query: "WITH CASE WHEN true THEN [[1]] ELSE [['a']] END AS xs CALL (*) { WITH last(xs) AS v UNWIND [] AS row RETURN toUpper(v) AS a } RETURN a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_reduce_element_static_error", query: "UNWIND [] AS row RETURN reduce(a = 0, x IN CASE WHEN true THEN [1] ELSE [true] END | a + size(x)) AS a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_collect_static_error", query: "UNWIND [] AS row WITH CASE WHEN true THEN 1 ELSE true END AS v WITH collect(v) AS vs RETURN toUpper(head(vs)) AS a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_comprehension_projection_static_error", query: "UNWIND [] AS row WITH [x IN [1] | CASE WHEN true THEN 1 ELSE true END] AS vs RETURN toUpper(head(vs)) AS a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_list_literal_static_error", query: "UNWIND [] AS row WITH [CASE WHEN true THEN 1 ELSE true END] AS vs RETURN toUpper(head(vs)) AS a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_unwind_element_static_error", query: "UNWIND [] AS row WITH CASE WHEN true THEN [1] ELSE [true] END AS xs UNWIND xs AS x RETURN toUpper(x) AS a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_comprehension_element_static_error", query: "UNWIND [] AS row WITH CASE WHEN true THEN [1] ELSE [true] END AS xs RETURN [x IN xs | toUpper(x)] AS a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_subscript_static_error", query: "UNWIND [] AS row WITH CASE WHEN true THEN [1] ELSE [true] END AS xs RETURN toUpper(xs[0]) AS a", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_union_nested_head_fitting_empty", query: "UNWIND [] AS row WITH CASE WHEN true THEN [[1]] ELSE [['a']] END AS xs RETURN toUpper(head(head(xs))) AS a", rows: [][]interface{}{}},
+		{name: "case_union_reduce_fitting_empty", query: "UNWIND [] AS row RETURN reduce(a = '', x IN CASE WHEN true THEN [1] ELSE ['b'] END | a + toUpper(x)) AS a", rows: [][]interface{}{}},
+		{name: "case_union_head_fitting_empty", query: "UNWIND [] AS row WITH CASE WHEN true THEN [1] ELSE ['a'] END AS xs RETURN toUpper(head(xs)) AS a", rows: [][]interface{}{}},
+		{name: "case_union_last_fitting_empty", query: "UNWIND [] AS row WITH CASE WHEN true THEN [1] ELSE ['a'] END AS xs WITH last(xs) AS v RETURN toUpper(v) AS a", rows: [][]interface{}{}},
+		{name: "case_union_collect_fitting_global_row", query: "UNWIND [] AS row WITH CASE WHEN true THEN 1 ELSE 'a' END AS v WITH collect(v) AS vs RETURN toUpper(head(vs)) AS a", rows: [][]interface{}{{nil}}},
+		{name: "case_list_union_empty_static_error", query: "UNWIND [] AS outer RETURN toUpper(CASE WHEN true THEN [1] ELSE ['a'] END) AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_nested_list_union_static_error", query: "RETURN toUpper(CASE WHEN true THEN [[1]] ELSE [['a']] END) AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_simple_numeric_union_static_error", query: "RETURN toUpper(CASE 0 WHEN 0 THEN 1 ELSE 2.0 END) AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_nested_numeric_union_static_error", query: "RETURN toUpper(CASE WHEN true THEN CASE WHEN false THEN 1 ELSE 2.0 END ELSE 3 END) AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_comprehension_numeric_union_static_error", query: "RETURN [x IN [1] | toUpper(CASE WHEN true THEN x ELSE 2.0 END)] AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_comprehension_list_union_static_error", query: "RETURN [x IN [1] | toUpper(CASE WHEN true THEN [x] ELSE ['a'] END)] AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_projected_numeric_union_static_error", query: "WITH CASE WHEN true THEN 1 ELSE 2.0 END AS x RETURN toUpper(x) AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_valid_list_union", query: "RETURN size(CASE WHEN true THEN [1] ELSE ['a'] END) AS v", rows: [][]interface{}{{int64(1)}}},
+		{name: "case_valid_nested_list_union", query: "RETURN size(CASE WHEN false THEN [[1]] ELSE [['a']] END) AS v", rows: [][]interface{}{{int64(1)}}},
+		{name: "case_valid_numeric_union", query: "RETURN abs(CASE WHEN true THEN 1 ELSE 2.0 END) AS v", rows: [][]interface{}{{int64(1)}}},
+		{name: "case_valid_numeric_union_float", query: "RETURN abs(CASE WHEN false THEN 1 ELSE 2.0 END) AS v", rows: [][]interface{}{{float64(2)}}},
+		{name: "case_numeric_union_nullable_runtime_error", query: "RETURN toUpper(CASE WHEN true THEN CASE WHEN true THEN 1 ELSE 2.0 END ELSE null END) AS v", code: "Neo.ClientError.Statement.TypeError"},
+		{name: "case_numeric_union_nullable_empty", query: "UNWIND [] AS outer RETURN toUpper(CASE WHEN true THEN CASE WHEN true THEN 1 ELSE 2.0 END ELSE null END) AS v", rows: [][]interface{}{}},
+		{name: "case_nested_list_union_element_static_error", query: "RETURN toUpper((CASE WHEN true THEN [[1]] ELSE [['a']] END)[0]) AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_list_union_comprehension_source_static_error", query: "RETURN [x IN CASE WHEN true THEN [1] ELSE [2.0] END | toUpper(x)] AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_numeric_union_arithmetic", query: "RETURN (CASE WHEN true THEN 1 ELSE 2.0 END) + 1 AS v", rows: [][]interface{}{{int64(2)}}},
+		{name: "case_valid_branch_after_invalid_nested_union", query: "RETURN toUpper(CASE WHEN false THEN CASE WHEN true THEN [1] ELSE [2.0] END ELSE 'a' END) AS v", rows: [][]interface{}{{"A"}}},
+		{name: "case_three_invalid_types_static_error", query: "RETURN toUpper(CASE WHEN false THEN 1 WHEN false THEN 2.0 ELSE true END) AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_unknown_property_branch", setup: "CREATE (:X {a: 'a'})", query: "MATCH (n:X) RETURN toUpper(CASE WHEN true THEN n.a ELSE 1 END) AS v", rows: [][]interface{}{{"A"}}},
+		{name: "case_unknown_property_branch_runtime_error", setup: "CREATE (:X {a: 1})", query: "MATCH (n:X) RETURN toUpper(CASE WHEN true THEN n.a ELSE 1 END) AS v", code: "Neo.ClientError.Statement.TypeError"},
+		{name: "case_invalid_branch_expression_static_error", query: "RETURN toUpper(CASE WHEN false THEN 1 + true ELSE 'a' END) AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_all_null", query: "RETURN toUpper(CASE WHEN true THEN null ELSE null END) AS v", rows: [][]interface{}{{nil}}},
+		{name: "case_projected_numeric_union_index", query: "WITH CASE WHEN true THEN 1 ELSE 2.0 END AS x RETURN [10,20][x] AS v", rows: [][]interface{}{{int64(20)}}},
+		{name: "map_union_keeps_arithmetic_static_error", query: "UNWIND [{a:1}] AS m RETURN m + 1 AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "map_union_keeps_unary_static_error", query: "UNWIND [{a:1}] AS m RETURN -m AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "map_union_keeps_boolean_static_error", query: "UNWIND [{a:1}] AS m WITH m WHERE m RETURN 1 AS v", code: "Neo.ClientError.Statement.SyntaxError"},
+		{name: "case_map_node_union_valid_branch", setup: "CREATE (:X)", query: "MATCH (n:X) RETURN labels(CASE WHEN true THEN n ELSE {a:1} END) AS v", rows: [][]interface{}{{[]interface{}{"X"}}}},
+		{name: "case_map_node_union_runtime_error", setup: "CREATE (:X)", query: "MATCH (n:X) RETURN labels(CASE WHEN false THEN n ELSE {a:1} END) AS v", code: "Neo.ClientError.Statement.TypeError"},
 		{name: "comprehension_nodes_static_error", query: "UNWIND [1] AS x RETURN [y IN [x] | nodes(y)]", code: "Neo.ClientError.Statement.SyntaxError"},
 		{name: "property_concat_predicate_filters", setup: "CREATE (:X {id: 'a'})", query: "MATCH (n:X) WHERE n.id + 'z' RETURN n.id", rows: [][]interface{}{}},
 		{name: "property_concat_and_filters", setup: "CREATE (:X {id: 'a'})", query: "MATCH (n:X) WHERE n.id + 'z' AND true RETURN n.id", rows: [][]interface{}{}},
@@ -50,25 +110,38 @@ func TestIssue1226MainRuntimeRegressions(t *testing.T) {
 		{name: "exists_pattern_with_where", setup: "CREATE (:X {id: 1})-[:R]->(:Y)", query: "MATCH (n:X {id: 1}) WITH n WHERE exists((n)-->()) RETURN n.id", rows: [][]interface{}{{int64(1)}}},
 		{name: "exists_pattern_where_comparison", setup: "CREATE (:X {id: 1})-[:R]->(:Y)", query: "MATCH (n:X {id: 1}) WHERE exists((n)-->()) = true RETURN n.id", rows: [][]interface{}{{int64(1)}}},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "issue1226")
-			exec := NewStorageExecutor(engine)
-			ctx := context.Background()
-			if tt.setup != "" {
-				_, err := exec.Execute(ctx, tt.setup, nil)
-				require.NoError(t, err)
+	for _, mode := range []string{"auto", "tx"} {
+		t.Run(mode, func(t *testing.T) {
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "issue1226")
+					exec := NewStorageExecutor(engine)
+					ctx := context.Background()
+					if mode == "tx" {
+						_, err := exec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+						defer exec.Execute(ctx, "ROLLBACK", nil)
+					}
+					if tt.setup != "" {
+						_, err := exec.Execute(ctx, tt.setup, nil)
+						require.NoError(t, err)
+					}
+					result, err := exec.Execute(ctx, tt.query, nil)
+					if tt.code != "" {
+						require.Error(t, err)
+						var classified interface{ BoltErrorCode() string }
+						require.True(t, errors.As(err, &classified), "unclassified error: %v", err)
+						require.Equal(t, tt.code, classified.BoltErrorCode(), "%v", err)
+						return
+					}
+					require.NoError(t, err)
+					require.Equal(t, tt.rows, result.Rows)
+					if mode == "tx" {
+						_, err = exec.Execute(ctx, "COMMIT", nil)
+						require.NoError(t, err)
+					}
+				})
 			}
-			result, err := exec.Execute(ctx, tt.query, nil)
-			if tt.code != "" {
-				require.Error(t, err)
-				var classified interface{ BoltErrorCode() string }
-				require.True(t, errors.As(err, &classified), "unclassified error: %v", err)
-				require.Equal(t, tt.code, classified.BoltErrorCode(), "%v", err)
-				return
-			}
-			require.NoError(t, err)
-			require.Equal(t, tt.rows, result.Rows)
 		})
 	}
 }
@@ -106,35 +179,57 @@ func TestIssue1226DeleteRejectsOrdinaryEntityMarkerMaps(t *testing.T) {
 }
 
 func TestIssue1226DeletePreservesEntityPathAndStringTargets(t *testing.T) {
-	for _, tc := range []struct {
-		name, query        string
-		nodeGone, edgeGone bool
-	}{
-		{"node", "MATCH (n:Victim) DELETE n", true, false},
-		{"relationship", "MATCH ()-[r:R]->() DELETE r", false, true},
-		{"path", "MATCH p = (:Left)-[:R]->(:Right) DELETE p", false, true},
-		{"string_id_extension", "DELETE 'victim'", true, false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "delete_valid")
-			for id, label := range map[string]string{"victim": "Victim", "left": "Left", "right": "Right"} {
-				_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{label}})
-				require.NoError(t, err)
-			}
-			require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "link", StartNode: "left", EndNode: "right", Type: "R"}))
-			result, err := NewStorageExecutor(engine).Execute(context.Background(), tc.query, nil)
-			require.NoError(t, err)
-			_, err = engine.GetNode("victim")
-			require.Equal(t, tc.nodeGone, err != nil)
-			_, err = engine.GetEdge("link")
-			require.Equal(t, tc.edgeGone, err != nil)
-			if tc.name == "path" {
-				for _, id := range []storage.NodeID{"left", "right"} {
-					_, err := engine.GetNode(id)
-					require.Error(t, err, "path endpoint survived DELETE")
-				}
-				require.Equal(t, 2, result.Stats.NodesDeleted)
-				require.Equal(t, 1, result.Stats.RelationshipsDeleted)
+	for _, mode := range []string{"auto", "tx"} {
+		t.Run(mode, func(t *testing.T) {
+			for _, tc := range []struct {
+				name, query                string
+				nodeGone, edgeGone         bool
+				endpointsGone              bool
+				nodesDeleted, edgesDeleted int
+			}{
+				{"node", "MATCH (n:Victim) DELETE n", true, false, false, 1, 0},
+				{"relationship", "MATCH ()-[r:R]->() DELETE r", false, true, false, 0, 1},
+				{"path", "MATCH p = (:Left)-[:R]->(:Right) DELETE p", false, true, true, 2, 1},
+				{"string_id_extension", "DELETE 'victim'", true, false, false, 1, 0},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					engine := storage.NewNamespacedEngine(newTestMemoryEngine(t), "delete_valid")
+					for id, label := range map[string]string{"victim": "Victim", "left": "Left", "right": "Right"} {
+						_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id), Labels: []string{label}})
+						require.NoError(t, err)
+					}
+					require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "link", StartNode: "left", EndNode: "right", Type: "R"}))
+					exec := NewStorageExecutor(engine)
+					ctx := context.Background()
+					if mode == "tx" {
+						_, err := exec.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+						defer exec.Execute(ctx, "ROLLBACK", nil)
+					}
+					result, err := exec.Execute(ctx, tc.query, nil)
+					require.NoError(t, err)
+					require.NotNil(t, result.Stats)
+					require.Equal(t, tc.nodesDeleted, result.Stats.NodesDeleted)
+					require.Equal(t, tc.edgesDeleted, result.Stats.RelationshipsDeleted)
+					if mode == "tx" {
+						_, err = exec.Execute(ctx, "COMMIT", nil)
+						require.NoError(t, err)
+					}
+					for id, gone := range map[storage.NodeID]bool{"victim": tc.nodeGone, "left": tc.endpointsGone, "right": tc.endpointsGone} {
+						_, err = engine.GetNode(id)
+						if gone {
+							require.ErrorIs(t, err, storage.ErrNotFound, "node %s must be deleted", id)
+						} else {
+							require.NoError(t, err, "node %s must survive", id)
+						}
+					}
+					_, err = engine.GetEdge("link")
+					if tc.edgeGone {
+						require.ErrorIs(t, err, storage.ErrNotFound)
+					} else {
+						require.NoError(t, err)
+					}
+				})
 			}
 		})
 	}

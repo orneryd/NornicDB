@@ -926,29 +926,30 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 }
 
 // setSourceTypeError rejects SET x = <source> and SET x += <source>
-// (property "") whose source has a static type other than a map, node or
-// relationship: a literal, or a variable or parameter whose type types /
-// params give (propertyAccessExpressionType, the owner of static expression
-// types). Neo4j 5.26 types it before the statement runs ("Type mismatch:
-// expected Map, Node or Relationship"). A source of unknown type, null
-// included, is checked when the SET runs (setPropertyMapValue), as in Neo4j
-// (#907).
-func setSourceTypeError(property, operator, source string, types map[string]string, params map[string]interface{}) error {
+// (property "") whose source operand is proven to be no map, node or
+// relationship. The shared clause validator passes the source's operand in
+// the statement's one type scope (staticSetItemsTokenError), so a CALL,
+// UNION or RETURN * result reaches it. Neo4j 5.26 types it before the
+// statement runs ("Type mismatch: expected Map, Node or Relationship"). A
+// source of unknown type, null included, is checked when the SET runs
+// (setPropertyMapValue), as in Neo4j (#907).
+func setSourceTypeError(property, operator string, source staticOperand) error {
 	if property != "" || (operator != "=" && operator != "+=") {
 		return nil
 	}
-	switch typeName := propertyAccessExpressionType(source, types, params); typeName {
-	case "", "Map", "Node", "Relationship":
+	// The operand owner decides: a union is rejected only when none of its
+	// alternatives is a map, node or relationship.
+	if !source.excludes(isMapNodeOrRelationshipTypeName) {
 		return nil
-	default:
-		return typeNameMismatchError("Map, Node or Relationship", typeName)
 	}
+	return typeNameMismatchError("Map, Node or Relationship", source.display)
 }
 
 // setClauseSourceTypeError is setSourceTypeError for the assignments of a
-// SET clause whose source is a variable or parameter, with the static types
-// of the variables in scope. Literal sources are checked with each item's
-// scope check (validateSetClauseScope), in item order, as Neo4j reports them.
+// SET clause with the statement's parameter values (the per-execution
+// check, validateStaticPropertyAccessParameters). Literal sources are checked
+// with each item's scope check (validateSetClauseScope), in item order, as
+// Neo4j reports them.
 func setClauseSourceTypeError(clause string, types map[string]string, params map[string]interface{}) error {
 	body := strings.TrimSpace(clause)
 	if startsWithKeywordFold(body, "SET") {
@@ -959,7 +960,12 @@ func setClauseSourceTypeError(clause string, types map[string]string, params map
 		if staticLiteralTypeName(source) != "" {
 			continue
 		}
-		if err := setSourceTypeError(property, operator, source, types, params); err != nil {
+		// Parameter values are the run's facts (the per-execution check).
+		var operand staticOperand
+		if typeName := propertyAccessExpressionType(source, types, params); typeName != "" {
+			operand = typedOperand(typeName).proved()
+		}
+		if err := setSourceTypeError(property, operator, operand); err != nil {
 			return err
 		}
 	}

@@ -770,7 +770,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args
 	}
 	if entity == storage.ConstraintEntityRelationship {
 		return &ExecuteResult{
-			Columns: []string{"name", "relationshipType", "property", "dimension", "similarityFunction"},
+			Columns: legacyProcedureColumns("db.index.vector.createRelationshipIndex"),
 			Rows:    [][]interface{}{{indexName, token, property, int(dimension), similarity}},
 		}, nil
 	}
@@ -806,7 +806,7 @@ func (e *StorageExecutor) callDbIndexFulltextCreateNodeIndex(ctx context.Context
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "labels", "properties"},
+		Columns: legacyProcedureColumns("db.index.fulltext.createNodeIndex"),
 		Rows:    [][]interface{}{{indexName, labels, properties}},
 	}, nil
 }
@@ -840,7 +840,7 @@ func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"name", "relationshipTypes", "properties"},
+		Columns: legacyProcedureColumns("db.index.fulltext.createRelationshipIndex"),
 		Rows:    [][]interface{}{{indexName, relTypes, properties}},
 	}, nil
 }
@@ -860,7 +860,7 @@ func (e *StorageExecutor) callDbIndexFulltextDrop(args []interface{}) (*ExecuteR
 		return nil, err
 	}
 	return &ExecuteResult{
-		Columns: []string{"name", "dropped"},
+		Columns: legacyProcedureColumns("db.index.fulltext.drop"),
 		Rows:    [][]interface{}{{indexName, true}},
 	}, nil
 }
@@ -880,7 +880,7 @@ func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteRes
 		return nil, err
 	}
 	return &ExecuteResult{
-		Columns: []string{"name", "dropped"},
+		Columns: legacyProcedureColumns("db.index.fulltext.drop"),
 		Rows:    [][]interface{}{{indexName, true}},
 	}, nil
 }
@@ -902,7 +902,6 @@ func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storag
 		return e.dropIndexByName(name, false)
 	})
 }
-
 
 // callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
 // Syntax: CALL db.create.setNodeVectorProperty(node, propertyKey, vector)

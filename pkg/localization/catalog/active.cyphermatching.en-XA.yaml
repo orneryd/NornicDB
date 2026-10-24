@@ -118,6 +118,18 @@
 - id: cyphermatching.return_star_no_variables
   description: "Expanded pseudo-locale RETURN * with no variables."
   other: "[!! RETURN * requires at least one variable in scope !!]"
+- id: cyphermatching.query_cannot_conclude
+  description: "Expanded pseudo-locale query that cannot conclude with a clause."
+  other: "[!! Query cannot conclude with {{.Clause}} (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD). !!]"
+- id: cyphermatching.exists_expression_updates
+  description: "Expanded pseudo-locale update inside a EXISTS subquery expression."
+  other: "[!! An Exists Expression cannot contain any updates !!]"
+- id: cyphermatching.count_expression_updates
+  description: "Expanded pseudo-locale update inside a COUNT subquery expression."
+  other: "[!! A Count Expression cannot contain any updates !!]"
+- id: cyphermatching.collect_expression_updates
+  description: "Expanded pseudo-locale update inside a COLLECT subquery expression."
+  other: "[!! A Collect Expression cannot contain any updates !!]"
 - id: cyphermatching.optional_match_shape_unsupported
   description: "Expanded pseudo-locale MATCH … OPTIONAL MATCH form unsupported."
   other: "[!! this MATCH … OPTIONAL MATCH form is not supported: {{.Query}} !!]"
