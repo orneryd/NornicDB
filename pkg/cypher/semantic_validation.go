@@ -13,6 +13,9 @@ import (
 // canonicalize alike but can validate differently (their column names
 // differ).
 func (e *StorageExecutor) validateSemanticScopes(ctx context.Context, cypher string) error {
+	if err := e.validateTransactionalCalls(ctx, cypher, nil); err != nil {
+		return err
+	}
 	names := quotedVariableNamesFor(ctx, cypher)
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	cacheKey := cypher

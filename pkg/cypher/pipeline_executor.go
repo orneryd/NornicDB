@@ -646,7 +646,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		// Row by row only while no clause of the stretch reads what another
 		// one writes (pipelineWriteStretchConflicts); otherwise clause by
 		// clause, as Neo4j does.
-		if writes && !pipelineWriteStretchConflicts(clauses[:prefix], clauses[prefix:]) {
+		if writes && !pipelineWriteStretchConflicts(ctx, clauses[:prefix], clauses[prefix:]) {
 			var retained []pipelineRow
 			for _, row := range rows {
 				rowScope := make(map[string]struct{}, len(scope))
@@ -673,8 +673,37 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	// The rows a MATCH, OPTIONAL MATCH or WITH builds count against the
 	// statement's memory limit (#1343).
 	memory := memoryScopeFromContext(ctx)
+	var callChain boundCallChain
+	callChainEnd := 0
 	for idx := 0; idx < len(clauses); idx++ {
 		clause := clauses[idx]
+		if (clause.kind == pipelineClauseWith || clause.kind == pipelineClauseReturn) && !callChain.pagination[idx] {
+			if err := e.validateRuntimePaginationClause(ctx, clause.text); err != nil {
+				return result, true, err
+			}
+		}
+		var callBatch *boundTransactionBatch
+		if clause.kind == pipelineClauseCallSubquery {
+			_, _, inTransactions, _ := e.parseCallSubquery(clause.text)
+			if inTransactions {
+				if idx >= callChainEnd {
+					maximumRows := len(rows)
+					if source != nil {
+						maximumRows = -1
+					}
+					plan, err := e.planPipelineCallChain(ctx, clauses, idx, maximumRows)
+					if err != nil {
+						return result, true, err
+					}
+					callChain, err = e.bindTransactionalCallChain(ctx, plan)
+					if err != nil {
+						return result, true, err
+					}
+					callChainEnd = plan.end
+				}
+				callBatch = callChain.batches[idx]
+			}
+		}
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
 			clause.kind != pipelineClauseLet && clause.kind != pipelineClauseFilter &&
 			!(clause.kind == pipelineClauseCreate && independentCreate) &&
@@ -761,6 +790,11 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		case pipelineClauseCreate:
 			end := idx + 1
 			for end < len(clauses) && clauses[end].kind == pipelineClauseCreate {
+				// Publish every earlier CREATE row before a later CREATE
+				// reads those writes. Only independent clauses share a plan.
+				if pipelineWriteStretchConflicts(ctx, clauses[idx:end+1], nil) {
+					break
+				}
 				end++
 			}
 			var newRows []pipelineRow
@@ -950,7 +984,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				wrote = true
 			}
 		case pipelineClauseCallSubquery:
-			callMetadata := &pipelineCallMetadata{scope: scope}
+			callMetadata := &pipelineCallMetadata{scope: scope, batch: callBatch}
 			var newRows []pipelineRow
 			var stats *QueryStats
 			ok := true
@@ -984,7 +1018,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					}
 				}
 			}
-			if callSubqueryQueryIsWrite(clause.text) || strings.Contains(upperASCII(clause.text), "IN TRANSACTIONS") {
+			if callSubqueryQueryIsWrite(clause.text) || callMetadata.batch != nil {
 				wrote = true
 			}
 		case pipelineClauseForeach:

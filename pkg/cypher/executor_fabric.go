@@ -82,6 +82,9 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	if prepared == nil {
 		return nil, localizedError(localization.CypherCommandRoutingFabricNotPrepared(), nil)
 	}
+	if hasCallInTransactions(cypher) {
+		return nil, transactionalCallContextError("transactional CALL on composite targets is not supported")
+	}
 	catalog := prepared.catalog
 
 	authToken := GetAuthTokenFromContext(ctx)
