@@ -754,15 +754,16 @@ func (m *DatabaseManager) SetDatabaseStatus(name, status string) error {
 // Close releases resources.
 func (m *DatabaseManager) Close() error {
 	m.mu.Lock()
-	defer m.unlockStatementCacheIndexes(true, true)
-
 	// Clear all cached engines
 	m.engines = make(map[string]storage.Engine)
 	m.limitCheckers = make(map[string]*databaseLimitChecker)
 	m.statementCachesClosed = true
 	m.disposeStatementCachesLocked()
+	m.unlockStatementCacheIndexes(true, true)
 
-	// Close the underlying storage
+	// Close the underlying storage after releasing the manager lock: closing
+	// lands acknowledged write-behind writes and delivers their listeners,
+	// which may commit through this manager (storageSizeInitialized).
 	return m.inner.Close()
 }
 

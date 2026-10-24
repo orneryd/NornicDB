@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -91,8 +92,35 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 	b.schemasMu.Lock()
 	b.schemas = loadedMap
 	b.schemasMu.Unlock()
+	for _, ls := range loadedSchemas {
+		b.attachWriteBehind(ls.namespace, ls.schema)
+	}
 
 	return nil
+}
+
+// attachWriteBehind attaches the commit buffer as sm's pending-write source,
+// so property-index seeks and UNIQUE / NODE KEY lookups merge acknowledged
+// but unflushed nodes (#719). Every schema the engine installs passes
+// through it: a lazily created one, the persisted schemas loaded at open or
+// by a restore, and those already loaded when open creates the buffer.
+// Without it a schema loaded at open never saw buffered nodes: after a
+// restart a second buffered CREATE of a UNIQUE value was acknowledged.
+func (b *BadgerEngine) attachWriteBehind(namespace string, sm *SchemaManager) {
+	if b.writeBehind != nil {
+		sm.attachPendingWrites(b.writeBehind, namespace)
+	}
+}
+
+// attachWriteBehindToSchemas attaches the commit buffer to every installed
+// schema; open calls it once it has created the buffer.
+func (b *BadgerEngine) attachWriteBehindToSchemas() {
+	b.schemasMu.RLock()
+	schemas := maps.Clone(b.schemas)
+	b.schemasMu.RUnlock()
+	for namespace, sm := range schemas {
+		b.attachWriteBehind(namespace, sm)
+	}
 }
 
 func parseSchemaNamespaceFromKey(key []byte) (string, bool) {
@@ -300,14 +328,10 @@ func (b *BadgerEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
 		})
 		b.schemas[namespace] = sm
 	}
-	// Write-behind: attach the commit buffer as this schema's pending-write
-	// source so property-index seeks (and ordered / not-null scans) merge
-	// acknowledged-but-unflushed nodes. Without it, MATCH (n:User {id: $x})
-	// against a fresh index misses users whose commits are still buffered
-	// and the following CREATE silently produces nothing (Pokec batched
-	// load). Attachment is idempotent and re-tracks pairs on index changes.
-	if b.writeBehind != nil {
-		sm.attachPendingWrites(b.writeBehind, namespace)
-	}
+	// Write-behind: without the buffer as pending-write source, MATCH
+	// (n:User {id: $x}) against a fresh index misses users whose commits
+	// are still buffered and the following CREATE silently produces nothing
+	// (Pokec batched load). Attachment is idempotent.
+	b.attachWriteBehind(namespace, sm)
 	return sm
 }

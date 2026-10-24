@@ -116,7 +116,9 @@ func (tx *BadgerTransaction) settleBufferedNode(nodeID NodeID) error {
 	}
 	_, pending, _ := buffer.GetNode(nodeID)
 	if pending {
-		if err := buffer.Flush(); err != nil {
+		// The landed generations' listeners must not run under the key this
+		// transaction holds until it ends: deliver them elsewhere, in order.
+		if err := tx.engine.LandWriteBehind(); err != nil {
 			return err
 		}
 	}

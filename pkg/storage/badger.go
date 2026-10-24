@@ -188,8 +188,11 @@ type BadgerEngine struct {
 	notificationMu                     sync.Mutex
 	notificationHead, notificationTail *commitNotification
 	notificationDraining               bool
-	closeMu                            sync.Mutex
-	txnWG                              sync.WaitGroup
+	// notificationDrainer is the goroutine delivering listener notifications
+	// while write-behind is on (write_behind_generation.go); zero otherwise.
+	notificationDrainer atomic.Uint64
+	closeMu             sync.Mutex
+	txnWG               sync.WaitGroup
 	// writeBarrier orders Close against durable writes. Every public
 	// non-transactional mutator holds it for read for its whole duration,
 	// and an explicit transaction holds it for read from just before its
@@ -210,6 +213,10 @@ type BadgerEngine struct {
 	// writeBehind buffers implicit autocommit commits for background replay
 	// (see badger_write_behind.go). Nil when disabled.
 	writeBehind *WriteBehindBuffer
+	// writeBehindOrder keeps buffered and synchronous writes one history
+	// while writeBehind is set (see write_behind_commit_order.go). Lock
+	// order: writeBarrier, then constraint key locks, then writeBehindOrder.
+	writeBehindOrder sync.RWMutex
 	// memoryPolicy is the database-owned soft admission budget for retained
 	// write-behind generations. Nil preserves the legacy unbounded path.
 	memoryPolicy *memory.Policy
@@ -1229,9 +1236,21 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 			interval = 50 * time.Millisecond
 		}
 		engine.writeBehind = NewWriteBehindBuffer(interval, opts.WriteBehindMaxOps, engine.replayWriteBehind)
+		engine.writeBehind.inDelivery = func() bool {
+			drainer := engine.notificationDrainer.Load()
+			return drainer != 0 && drainer == currentGoroutineID()
+		}
+		engine.writeBehind.release = func(n *commitNotification, deliver bool) {
+			if deliver {
+				engine.completeCommitNotification(n)
+			} else {
+				engine.readyCommitNotification(n)
+			}
+		}
 		engine.writeBehind.SetWarn(func(msg string) {
 			engine.log.Warn(msg, "subsystem", "storage")
 		})
+		engine.attachWriteBehindToSchemas()
 	}
 	return engine, nil
 }

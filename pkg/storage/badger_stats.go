@@ -214,6 +214,13 @@ func (b *BadgerEngine) Close() error {
 	// Drain acknowledged write-behind commits before tearing down Badger so
 	// a shutdown never loses writes that were acknowledged to clients.
 	if b.writeBehind != nil {
+		// Close admission before the final drain: a buffered commit
+		// acknowledged after it would be lost. Commits admitted earlier hold
+		// the write-behind order shared until they append; wait for them. A
+		// listener the drain runs may still write synchronously.
+		b.writeBehind.closeAdmission()
+		b.writeBehindOrder.Lock()
+		b.writeBehindOrder.Unlock()
 		if err := b.FlushWriteBehind(); err != nil && b.log != nil {
 			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", err)
 		}
