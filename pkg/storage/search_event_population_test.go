@@ -223,6 +223,7 @@ var storageMutatorClassification = map[string]string{
 	"BadgerTransaction.BulkCreateEdges":                 "buffers in the transaction; published by its Commit",
 	"BadgerTransaction.PrepareMergeKey":                 "reserves a MERGE key in the transaction; no entity state",
 	"BadgerTransaction.PrepareMergeNode":                "admits MERGE constraint tuples and may advance the snapshot; entity writes are published by CreateNode/UpdateNode at Commit",
+	"BadgerTransaction.PrepareMergeNodeForWrite":        "admits MERGE write keys and may land previously published buffered commits; new entity writes are published by its Commit",
 	"BadgerEngine.Restore":                              "replaces the whole store offline; DB.Restore owns the reset of search (restartSearchAfterRestore)",
 	"BadgerEngine.ConsumeCleanShutdownMarker":           "a startup marker; no entity state",
 	"BadgerEngine.FindNodeNeedingEmbedding":             "maintains the pending-embedding work index; no entity state",

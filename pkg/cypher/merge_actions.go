@@ -272,7 +272,7 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 				return nil, nil, false, err
 			}
 			if nodeContext[variable] == nil {
-				if err := prepareMergeKeys(ctx, e.getStorage(ctx), labels, properties); err != nil {
+				if err := prepareMergeKeys(ctx, e.getStorage(ctx), labels, properties, mergeNodeWritesFromContext(ctx).writes(variable)); err != nil {
 					return nil, nil, false, err
 				}
 			}
