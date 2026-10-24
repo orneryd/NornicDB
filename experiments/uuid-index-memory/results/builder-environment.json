@@ -1,0 +1,12 @@
+{
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+  "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "env": {
+    "GOMAXPROCS": "4",
+    "GOGC": "100",
+    "GOMEMLIMIT": "off"
+  },
+  "repeats": 3,
+  "source_sha256": "02a6cab3b96c9cf1e27242aa59cabb5d99209deb78a79b547635cc7857359192",
+  "base_commit": "ba8d6d13b48452ec4e38d826869ad63a64063848"
+}

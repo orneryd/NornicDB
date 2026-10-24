@@ -1,0 +1,24 @@
+=== RUN   TestExactCompatibility
+=== RUN   TestExactCompatibility/baseline
+=== RUN   TestExactCompatibility/paged
+=== RUN   TestExactCompatibility/packed
+=== RUN   TestExactCompatibility/packed-hash
+--- PASS: TestExactCompatibility (0.01s)
+    --- PASS: TestExactCompatibility/baseline (0.00s)
+    --- PASS: TestExactCompatibility/paged (0.00s)
+    --- PASS: TestExactCompatibility/packed (0.00s)
+    --- PASS: TestExactCompatibility/packed-hash (0.00s)
+=== RUN   TestPackedCollisionsAndChurn
+--- PASS: TestPackedCollisionsAndChurn (1.11s)
+=== RUN   TestDisjointConcurrentMutations
+=== RUN   TestDisjointConcurrentMutations/baseline
+=== RUN   TestDisjointConcurrentMutations/paged
+=== RUN   TestDisjointConcurrentMutations/packed
+=== RUN   TestDisjointConcurrentMutations/packed-hash
+--- PASS: TestDisjointConcurrentMutations (0.24s)
+    --- PASS: TestDisjointConcurrentMutations/baseline (0.04s)
+    --- PASS: TestDisjointConcurrentMutations/paged (0.06s)
+    --- PASS: TestDisjointConcurrentMutations/packed (0.06s)
+    --- PASS: TestDisjointConcurrentMutations/packed-hash (0.06s)
+PASS
+ok  	nornicdb-uuid-memory-spike	2.447s
