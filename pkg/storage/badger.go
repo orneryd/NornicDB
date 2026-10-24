@@ -582,7 +582,7 @@ func (b *BadgerEngine) notifyNodeCreated(node *Node) {
 }
 
 func (b *BadgerEngine) publishNodeCreated(node *Node) {
-	b.enqueueCommitOperation(Operation{Type: OpCreateNode, Node: node})
+	b.queueCommitOperations(nil, &Operation{Type: OpCreateNode, Node: node})
 }
 
 // dispatchNodeCreated publishes callbacks for an already visible graph mutation.
@@ -603,7 +603,7 @@ func (b *BadgerEngine) notifyNodeUpdated(node *Node) {
 }
 
 func (b *BadgerEngine) publishNodeUpdated(node *Node) {
-	b.enqueueCommitOperation(Operation{Type: OpUpdateNode, Node: node})
+	b.queueCommitOperations(nil, &Operation{Type: OpUpdateNode, Node: node})
 }
 
 // dispatchNodeUpdated publishes callbacks for an already visible graph mutation.
@@ -632,7 +632,7 @@ func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
 func (b *BadgerEngine) publishNodeDeleted(nodeID NodeID) {
 	b.forgetManualSuppression(manualSuppressionNode, string(nodeID))
 	b.deleteCleanup.recordDelete()
-	b.enqueueCommitOperation(Operation{Type: OpDeleteNode, NodeID: nodeID})
+	b.queueCommitOperations(nil, &Operation{Type: OpDeleteNode, NodeID: nodeID})
 }
 
 func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
@@ -652,7 +652,7 @@ func (b *BadgerEngine) notifyEdgeCreated(edge *Edge) {
 }
 
 func (b *BadgerEngine) publishEdgeCreated(edge *Edge) {
-	b.enqueueCommitOperation(Operation{Type: OpCreateEdge, Edge: edge})
+	b.queueCommitOperations(nil, &Operation{Type: OpCreateEdge, Edge: edge})
 }
 
 // dispatchEdgeCreated publishes callbacks for an already visible graph mutation.
@@ -673,7 +673,7 @@ func (b *BadgerEngine) notifyEdgeUpdated(edge *Edge) {
 }
 
 func (b *BadgerEngine) publishEdgeUpdated(edge *Edge) {
-	b.enqueueCommitOperation(Operation{Type: OpUpdateEdge, Edge: edge})
+	b.queueCommitOperations(nil, &Operation{Type: OpUpdateEdge, Edge: edge})
 }
 
 // dispatchEdgeUpdated publishes callbacks for an already visible graph mutation.
@@ -696,7 +696,7 @@ func (b *BadgerEngine) notifyEdgeDeleted(edgeID EdgeID) {
 func (b *BadgerEngine) publishEdgeDeleted(edgeID EdgeID) {
 	b.forgetManualSuppression(manualSuppressionEdge, string(edgeID))
 	b.deleteCleanup.recordDelete()
-	b.enqueueCommitOperation(Operation{Type: OpDeleteEdge, EdgeID: edgeID})
+	b.queueCommitOperations(nil, &Operation{Type: OpDeleteEdge, EdgeID: edgeID})
 }
 
 // dispatchEdgeDeleted publishes callbacks for an already visible graph mutation.
