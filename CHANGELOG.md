@@ -96,6 +96,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   procedure registry, and expose complete facts to composite query planning;
   unresolved metadata is a terminal error rather than a guessed or empty header.
 - Close internally allocated stores and WAL resources when recovery or startup fails; propagate malformed WAL manifests without panicking. Check test package boundaries for leaked stores and follow allocator identities through fields and call parameters.
+- Preserve property names when buffered WAL records are replayed after snapshot
+  restoration, including stores with different property-token assignments. Ambiguous
+  historical records report missing name bindings instead of silently exchanging values;
+  original-store upgrades retain verbatim recovery through the constructor; foreign
+  records require their own bindings or lossless named properties. Durable dictionary
+  identity and explicit dictionary epochs preserve names across repeated rebuilds
+  and writes. Ordinary buffered records keep their existing v3 bytes; name tables
+  are written only at dictionary and snapshot boundaries.
+  Keep provenance and import under the engine lifetime owner: late replay returns
+  the closed-engine error, and admitted work drains before teardown.
+  Clean shutdown and successful snapshot compaction seal dictionary controls into
+  v3 checkpoints so the previous release can reopen the store, including native
+  backup restoration with write-behind disabled and no snapshot compaction. After an unclean
+  stop, that release refuses without truncating the log with
+  `unsupported WAL version 4 (max supported: 3)`. Start this release once and stop
+  it cleanly, then the older release can open the store. The storage version is
+  unchanged. This prevents new corruption; it cannot repair data already corrupted
+  by an older binary during cross-store recovery.
+
 
 - Configure sampler recovery spacing and unleased rearm with positive-millisecond
   `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`
