@@ -319,3 +319,25 @@ func TestResultHeaderSharedExecutionProjection(t *testing.T) {
 		})
 	}
 }
+
+// A cache hint exposes result headers, not the broader set of legal YIELD
+// names. Conditional headers remain unresolved for single-header consumers.
+func TestCachedHeadersPreserveDeclaredProcedureShapes(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "closed_headers"))
+	ctx := context.Background()
+	for _, sample := range []struct {
+		query  string
+		header []string
+	}{
+		{"CALL db.index.fulltext.createNodeIndex('closed_header', ['Memory'], ['content'])", []string{"name", "labels", "properties"}},
+		{"CALL db.rretrieve({query:'closed header'})", nil},
+	} {
+		t.Run(sample.query, func(t *testing.T) {
+			exec.StatementFacts(sample.query, resultmetadata.KnownScope(nil), false).Visit(func(resultmetadata.Statement) {}, func() { t.Fatal("missing procedure facts") }, func(reason resultmetadata.Unresolved) { t.Fatalf("unresolved: %+v", reason) })
+			exec.CachedResultColumns(ctx, sample.query, nil).Visit(func(header []string) {
+				require.NotNil(t, sample.header, "a conditional procedure cannot supply one fixed header")
+				require.Equal(t, sample.header, header)
+			}, func() { require.Nil(t, sample.header, "fixed header was lost") })
+		})
+	}
+}
