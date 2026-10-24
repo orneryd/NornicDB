@@ -20,7 +20,14 @@ func (e *StorageExecutor) executeKnowledgePolicyDDL(ctx context.Context, cypher 
 		return nil, localizedError(localization.CypherKnowledgePolicyUnsupportedCommand(cypher), nil)
 	}
 
-	schema, err := e.knowledgePolicySchema()
+	_, show := cmd.(*ShowDecayProfilesCmd)
+	if !show {
+		_, show = cmd.(*ShowPromotionProfilesCmd)
+	}
+	if !show {
+		_, show = cmd.(*ShowPromotionPoliciesCmd)
+	}
+	schema, err := e.knowledgePolicySchema(!show)
 	if err != nil {
 		return nil, err
 	}

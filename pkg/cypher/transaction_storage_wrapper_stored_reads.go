@@ -11,7 +11,11 @@ import (
 var _ storage.StoredEntityReader = (*transactionStorageWrapper)(nil)
 
 func (w *transactionStorageWrapper) GetStoredNode(id storage.NodeID) (*storage.Node, error) {
-	node, err := w.tx.GetStoredNode(w.prefixNodeID(id))
+	tx := w.transaction()
+	if tx == nil {
+		return storage.GetStoredNode(w.underlying, id)
+	}
+	node, err := tx.GetStoredNode(w.prefixNodeID(id))
 	if err != nil || w.namespace == "" {
 		return node, err
 	}
@@ -19,7 +23,11 @@ func (w *transactionStorageWrapper) GetStoredNode(id storage.NodeID) (*storage.N
 }
 
 func (w *transactionStorageWrapper) GetStoredEdge(id storage.EdgeID) (*storage.Edge, error) {
-	edge, err := w.tx.GetStoredEdge(w.prefixEdgeID(id))
+	tx := w.transaction()
+	if tx == nil {
+		return storage.GetStoredEdge(w.underlying, id)
+	}
+	edge, err := tx.GetStoredEdge(w.prefixEdgeID(id))
 	if err != nil || w.namespace == "" {
 		return edge, err
 	}
@@ -27,7 +35,11 @@ func (w *transactionStorageWrapper) GetStoredEdge(id storage.EdgeID) (*storage.E
 }
 
 func (w *transactionStorageWrapper) GetStoredOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	edges, err := w.tx.GetStoredOutgoingEdges(w.prefixNodeID(id))
+	tx := w.transaction()
+	if tx == nil {
+		return storage.GetStoredOutgoingEdges(w.underlying, id)
+	}
+	edges, err := tx.GetStoredOutgoingEdges(w.prefixNodeID(id))
 	if err != nil || w.namespace == "" {
 		return edges, err
 	}
@@ -35,7 +47,11 @@ func (w *transactionStorageWrapper) GetStoredOutgoingEdges(id storage.NodeID) ([
 }
 
 func (w *transactionStorageWrapper) GetStoredIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
-	edges, err := w.tx.GetStoredIncomingEdges(w.prefixNodeID(id))
+	tx := w.transaction()
+	if tx == nil {
+		return storage.GetStoredIncomingEdges(w.underlying, id)
+	}
+	edges, err := tx.GetStoredIncomingEdges(w.prefixNodeID(id))
 	if err != nil || w.namespace == "" {
 		return edges, err
 	}
@@ -43,7 +59,11 @@ func (w *transactionStorageWrapper) GetStoredIncomingEdges(id storage.NodeID) ([
 }
 
 func (w *transactionStorageWrapper) GetStoredNodesByLabel(label string) ([]*storage.Node, error) {
-	nodes, err := w.tx.GetStoredNodesByLabel(label)
+	tx := w.transaction()
+	if tx == nil {
+		return storage.GetStoredNodesByLabel(w.underlying, label)
+	}
+	nodes, err := tx.GetStoredNodesByLabel(label)
 	if err != nil || w.namespace == "" {
 		return nodes, err
 	}

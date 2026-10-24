@@ -185,7 +185,7 @@ func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Cont
 	}
 
 	store := e.getStorage(ctx)
-	if txWrapper, ok := store.(*transactionStorageWrapper); !ok || !txWrapper.tx.HasPendingNodeMutations() {
+	if txWrapper, ok := store.(*transactionStorageWrapper); !ok || txWrapper.transaction() == nil || !txWrapper.transaction().HasPendingNodeMutations() {
 		return e.collectNodesWithStreaming(ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
 	}
 

@@ -280,9 +280,13 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 		return nil, err
 	}
 	var result *ExecuteResult
-	if nested {
+	switch {
+	case compositeStatementFrom(ctx) != nil && scopedExec.shouldUseFabricPlanner(query):
+		// Its composite graphs run as part of the composite statement.
+		result, err = scopedExec.executeViaFabric(ctx, query, params)
+	case nested:
 		result, err = scopedExec.executeInternal(ctx, query, params)
-	} else {
+	default:
 		result, err = scopedExec.executeRouted(ctx, query, params)
 	}
 	if result != nil {
@@ -303,7 +307,9 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 // the rules every such statement follows: the caller may use db, the system
 // database runs only what its statement policy allows, and a statement of a
 // transaction (explicit, or the one the statement is nested in) stays on
-// that transaction's database. It returns db's executor and ctx scoped to db.
+// that transaction's database. Inside a composite statement query runs on
+// db's participant storage (compositeStatement.on). It returns the executor
+// query runs on and ctx scoped to db.
 func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*StorageExecutor, context.Context, error) {
 	if err := e.authorizeSelectedDatabase(ctx, db, query); err != nil {
 		return nil, ctx, err
@@ -317,12 +323,19 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 			return nil, ctx, err
 		}
 	}
-	if scopedExec != e && e.inTransaction(ctx) {
+	composite := compositeStatementFrom(ctx)
+	if composite == nil && scopedExec != e && e.inTransaction(ctx) {
+		// Inside a composite statement a statement may select any of its
+		// databases; the one it writes is its write participant.
 		if err := TransactionDatabaseError(e.dbManager, e.currentDatabaseName(), resolvedDB, query); err != nil {
 			return nil, ctx, err
 		}
 	}
-	return scopedExec, withExecutionDatabase(ctx, resolvedDB), nil
+	ctx = withExecutionDatabase(ctx, resolvedDB)
+	if composite == nil || scopedExec.shouldUseFabricPlanner(query) {
+		return scopedExec, ctx, nil
+	}
+	return composite.on(ctx, resolvedDB, scopedExec)
 }
 
 // systemDatabaseStatementError is the error for a statement the system

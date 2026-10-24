@@ -76,6 +76,11 @@ type ProcedureSpec struct {
 	// ResultCache declares execution dependencies; an undeclared handler is
 	// opaque to the determinism owner and cannot supply cached results.
 	ResultCache ProcedureResultCache
+	// ExecutesStatements marks a READ procedure that runs a Cypher statement
+	// it is given (apoc.cypher.run): NornicDB lets that statement write. A
+	// composite statement claims its write database for such a write when
+	// the statement runs (fragmentWrites).
+	ExecutesStatements bool
 }
 
 // writes reports whether a call of the procedure changes the database: its
@@ -105,9 +110,13 @@ type registeredProcedure struct {
 type ProcedureRegistry struct {
 	mu         sync.RWMutex
 	generation atomic.Uint64
-	builtins   map[string]registeredProcedure
-	user       map[string]registeredProcedure
-	userFold   map[string]struct{}
+	// modeGeneration advances when what a composite statement reads of a
+	// procedure changes (noteModeChangeLocked), which decides its access
+	// mode (fragmentWrites).
+	modeGeneration atomic.Uint64
+	builtins       map[string]registeredProcedure
+	user           map[string]registeredProcedure
+	userFold       map[string]struct{}
 }
 
 func NewProcedureRegistry() *ProcedureRegistry {
@@ -128,6 +137,7 @@ func (r *ProcedureRegistry) RegisterBuiltIn(spec ProcedureSpec, handler Procedur
 	key := spec.Name
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.noteModeChangeLocked(r.builtins[key], spec, false)
 	r.builtins[key] = registeredProcedure{Spec: spec, Handler: handler}
 	r.generation.Add(1)
 	return nil
@@ -148,10 +158,22 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	key := spec.Name
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.noteModeChangeLocked(r.user[key], spec, true)
 	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true}
 	r.userFold[lowerASCII(spec.Name)] = struct{}{}
 	r.generation.Add(1)
 	return nil
+}
+
+// noteModeChangeLocked advances modeGeneration when registering spec over
+// previous changes what a composite statement reads of the procedure: its
+// presence, mode, kind (built-in or user) or ExecutesStatements. Reloading a
+// persisted procedure unchanged (every new executor does) keeps it.
+func (r *ProcedureRegistry) noteModeChangeLocked(previous registeredProcedure, spec ProcedureSpec, user bool) {
+	if previous.Handler == nil || previous.User != user || previous.Spec.Mode != spec.Mode ||
+		previous.Spec.ExecutesStatements != spec.ExecutesStatements {
+		r.modeGeneration.Add(1)
+	}
 }
 
 func (r *ProcedureRegistry) Get(name string) (registeredProcedure, bool) {
@@ -225,6 +247,9 @@ func (r *ProcedureRegistry) ListBuiltIns() []ProcedureSpec {
 func (r *ProcedureRegistry) ClearUser() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if len(r.user) > 0 {
+		r.modeGeneration.Add(1)
+	}
 	r.user = make(map[string]registeredProcedure)
 	r.userFold = make(map[string]struct{})
 	r.generation.Add(1)

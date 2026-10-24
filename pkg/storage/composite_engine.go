@@ -1598,6 +1598,32 @@ func (c *CompositeEngine) SetCompositeName(name string) { c.name = name }
 // CompositeName is the composite database's name, or "" if not recorded.
 func (c *CompositeEngine) CompositeName() string { return c.name }
 
+// WithConstituents is a view of the composite database whose constituents
+// are resolve(alias, engine) of its own: the same routing over other
+// storage for them (a composite statement routes to its participants'
+// storage).
+func (c *CompositeEngine) WithConstituents(resolve func(alias string, engine Engine) Engine) *CompositeEngine {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	constituents := make(map[string]Engine, len(c.constituents))
+	for alias, engine := range c.constituents {
+		if engine != nil {
+			engine = resolve(alias, engine)
+		}
+		constituents[alias] = engine
+	}
+	return &CompositeEngine{
+		name:              c.name,
+		constituents:      constituents,
+		constituentNames:  c.constituentNames,
+		accessModes:       c.accessModes,
+		labelRouting:      c.labelRouting,
+		propertyRouting:   c.propertyRouting,
+		propertyDefaults:  c.propertyDefaults,
+		nodeToConstituent: make(map[NodeID]string),
+	}
+}
+
 // Ensure CompositeEngine implements Engine interface
 var _ Engine = (*CompositeEngine)(nil)
 

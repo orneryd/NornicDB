@@ -19,16 +19,17 @@ func (w *transactionStorageWrapper) streamEdgesByType(ctx context.Context, edgeT
 	if visit == nil {
 		return storage.ErrInvalidData
 	}
-	if w.tx == nil {
+	tx := w.transaction()
+	if tx == nil {
 		if stored {
 			return storage.StreamStoredEdgesByType(ctx, w.underlying, edgeType, visit)
 		}
 		return storage.StreamEdgesByType(ctx, w.underlying, edgeType, visit)
 	}
 	prefix := w.namespace + w.separator
-	stream := w.tx.StreamEdgesByType
+	stream := tx.StreamEdgesByType
 	if stored {
-		stream = w.tx.StreamStoredEdgesByType
+		stream = tx.StreamStoredEdgesByType
 	}
 	return stream(ctx, edgeType, func(edge *storage.Edge) error {
 		if edge == nil {

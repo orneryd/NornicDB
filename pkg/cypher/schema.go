@@ -106,7 +106,10 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	result, err := e.countSchemaChanges(ctx, cypher, run)
 	if err == nil {
 		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
-			err = wrapper.tx.StageSchemaChanges()
+			var tx *storage.BadgerTransaction
+			if tx, err = wrapper.writable(); err == nil {
+				err = tx.StageSchemaChanges()
+			}
 		}
 	}
 	if err != nil && startsWithKeywords(cypher, "CREATE", "CONSTRAINT") {

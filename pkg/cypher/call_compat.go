@@ -1010,7 +1010,7 @@ func (e *StorageExecutor) callTxSetMetadataArguments(ctx context.Context, argume
 			return nil, localizedError(localization.CypherProceduresMetadataTransactionUnsupported(), nil)
 		}
 	} else if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
-		tx = wrapper.tx
+		tx = wrapper.transaction()
 	}
 	if tx == nil {
 		return nil, localizedError(localization.CypherProceduresMetadataActiveTransactionRequired(), nil)

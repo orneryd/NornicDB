@@ -48,23 +48,10 @@ func TestFragmentExec_OutputColumns(t *testing.T) {
 		Query:     "MATCH (n) RETURN n.id",
 		GraphName: "shard1",
 		Columns:   []string{"n.id"},
-		IsWrite:   false,
 	}
 	cols := f.OutputColumns()
 	if len(cols) != 1 || cols[0] != "n.id" {
 		t.Errorf("expected [n.id], got %v", cols)
-	}
-}
-
-func TestFragmentExec_IsWrite(t *testing.T) {
-	f := &FragmentExec{
-		Input:     &FragmentInit{},
-		Query:     "CREATE (n:Test)",
-		GraphName: "shard1",
-		IsWrite:   true,
-	}
-	if !f.IsWrite {
-		t.Error("expected IsWrite=true")
 	}
 }
 

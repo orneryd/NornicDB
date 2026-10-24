@@ -43,7 +43,6 @@ func TestPlan_DynamicUseKeepsReference(t *testing.T) {
 		require.Equal(t, &UseClause{Function: "graph.byName", Args: []string{"$g"}}, exec.Graph)
 		require.Equal(t, "cmp", exec.Scope)
 		require.Equal(t, "MATCH (n) RETURN n", exec.Query)
-		require.False(t, exec.IsWrite)
 	}
 }
 

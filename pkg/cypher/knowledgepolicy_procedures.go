@@ -9,10 +9,19 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) knowledgePolicySchema() (*storage.SchemaManager, error) {
+// knowledgePolicySchema is the schema knowledge-policy commands read, and
+// write when write is set: a transaction's own. A write on a composite
+// statement's participant storage begins its transaction (writable).
+func (e *StorageExecutor) knowledgePolicySchema(write bool) (*storage.SchemaManager, error) {
 	var transaction *storage.BadgerTransaction
 	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
-		transaction = wrapper.tx
+		transaction = wrapper.transaction()
+		if write {
+			var err error
+			if transaction, err = wrapper.writable(); err != nil {
+				return nil, err
+			}
+		}
 	} else if e.txContext != nil && e.txContext.active {
 		transaction, _ = e.txContext.tx.(*storage.BadgerTransaction)
 	}
@@ -26,7 +35,7 @@ func (e *StorageExecutor) knowledgePolicySchema() (*storage.SchemaManager, error
 }
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult, error) {
-	schema, err := e.knowledgePolicySchema()
+	schema, err := e.knowledgePolicySchema(false)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +103,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult,
 }
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies() (*ExecuteResult, error) {
-	schema, err := e.knowledgePolicySchema()
+	schema, err := e.knowledgePolicySchema(false)
 	if err != nil {
 		return nil, err
 	}

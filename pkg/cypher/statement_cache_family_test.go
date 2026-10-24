@@ -25,11 +25,14 @@ func TestStatementCacheFamilyFreshExecutorCacheFamily(t *testing.T) {
 	})
 	t.Run("Fabric shard transaction", func(t *testing.T) {
 		c := &cypherFabricExecutor{base: base}
-		exec, err := c.ensureLocalShardTxExecutor(context.Background(), &fabric.SubTransaction{ShardName: "review1477"}, "nornic", store)
+		tx := fabric.NewFabricTransaction("review1477")
+		composite := c.statementFor(context.Background(), tx)
+		participant, err := composite.participant("nornic", store)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer exec.Execute(context.Background(), "ROLLBACK", nil)
+		exec, _ := participant.run(context.Background(), composite)
+		defer tx.Rollback(nil)
 		if !exec.hasCachedValidSyntax(query, activeSyntaxValidator()) {
 			t.Error("Fabric shard transaction lost warmed syntax verdict")
 		}

@@ -17,11 +17,11 @@ func TestKnowledgePolicySchemaLookupErrorBoundaries(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("lookup"))
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "lookup"))
 	executor.txContext = &TransactionContext{tx: tx, active: true}
-	view, err := executor.knowledgePolicySchema()
+	view, err := executor.knowledgePolicySchema(false)
 	require.NoError(t, err)
 	require.NotNil(t, view)
 	wrongNamespace := NewStorageExecutor(&transactionStorageWrapper{tx: tx, underlying: base, namespace: "other"})
-	_, err = wrongNamespace.knowledgePolicySchema()
+	_, err = wrongNamespace.knowledgePolicySchema(true)
 	require.Error(t, err)
 	require.NoError(t, tx.Rollback())
 	for _, procedure := range []func() (*ExecuteResult, error){

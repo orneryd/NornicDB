@@ -44,6 +44,9 @@ func (tx *BadgerTransaction) KnowledgePolicySchema() (*SchemaManager, error) {
 		if err := tx.ensureLifecycleActiveLocked(); err != nil {
 			return err
 		}
+		if err := tx.admitWriteLocked(); err != nil {
+			return err
+		}
 		blob, err := json.Marshal(updated)
 		if err != nil {
 			return err

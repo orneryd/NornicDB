@@ -69,8 +69,29 @@ func (e *StorageExecutor) useTargetRequiresFabric(target string) bool {
 }
 
 func (e *StorageExecutor) executeViaFabric(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
+	if composite := compositeStatementFrom(ctx); composite != nil {
+		return e.executeNestedFabric(ctx, cypher, params, composite)
+	}
 	tx := fabric.NewFabricTransaction(fmt.Sprintf("fab-%d", time.Now().UnixNano()))
 	return e.executeViaFabricWithTx(ctx, cypher, params, tx, true)
+}
+
+// executeNestedFabric runs a composite statement that a statement of
+// composite runs (a statement a procedure of a fragment was given): it is
+// part of composite. Its fragments run on the same transaction and
+// participants, and commit or roll back with the whole statement, which ends
+// the transaction. They run one at a time, in the fragment that runs them.
+func (e *StorageExecutor) executeNestedFabric(ctx context.Context, cypher string, params map[string]interface{}, composite *compositeStatement) (*ExecuteResult, error) {
+	prepared, err := e.preparedFabricFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if prepared == nil || prepared.query != cypher {
+		if prepared, err = e.prepareFabricExecution(ctx, cypher); err != nil {
+			return nil, err
+		}
+	}
+	return e.runFabricStatement(ctx, cypher, params, composite.tx, prepared, composite.executor, false)
 }
 
 func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, autoCommit bool) (*ExecuteResult, error) {
@@ -94,14 +115,60 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	if hasCallInTransactions(cypher) {
 		return nil, transactionalCallContextError("transactional CALL on composite targets is not supported")
 	}
-	catalog := prepared.catalog
-
-	authToken := GetAuthTokenFromContext(ctx)
-	localExec := fabric.NewLocalFragmentExecutor(&cypherFabricExecutor{
+	participants := &cypherFabricExecutor{
 		base:       e,
-		authToken:  authToken,
+		authToken:  GetAuthTokenFromContext(ctx),
 		autoCommit: autoCommit,
-	}, func(dbName string) (storage.Engine, error) {
+		catalog:    prepared.catalog,
+	}
+	if !autoCommit && e.txContext != nil && e.txContext.active {
+		if cached := e.txContext.fabricRemoteExe; cached != nil {
+			participants.remote = cached
+		} else {
+			participants.remote = fabric.NewRemoteFragmentExecutor()
+			e.txContext.fabricRemoteExe = participants.remote
+		}
+	} else {
+		participants.remote = fabric.NewRemoteFragmentExecutor()
+		defer func() { _ = participants.remote.Close() }()
+	}
+
+	// An autocommit statement owns its transaction: every way it ends other
+	// than its commit (an error, a cancellation, a panic) rolls back every
+	// participant. An explicit transaction's statement leaves it to the
+	// client's COMMIT or ROLLBACK; Execute fails the transaction when the
+	// statement fails or panics, so COMMIT can't keep a failed statement's
+	// writes.
+	if autoCommit {
+		ended := false
+		defer func() {
+			if !ended {
+				_ = tx.Rollback(nil)
+			}
+		}()
+		result, err := e.runFabricStatement(ctx, cypher, params, tx, prepared, participants, autoCommit)
+		if err != nil {
+			return nil, err
+		}
+		ended = true
+		if err := tx.Commit(nil, nil); err != nil {
+			return nil, err
+		}
+		if tx.WriteShard() != "" {
+			publishStatementCommit(ctx)
+		}
+		return result, nil
+	}
+	return e.runFabricStatement(ctx, cypher, params, tx, prepared, participants, autoCommit)
+}
+
+// runFabricStatement runs a prepared composite statement on tx, its
+// fragments on participants; concurrent lets independent fragments run at
+// once. The caller ends tx.
+func (e *StorageExecutor) runFabricStatement(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, prepared *fabricPreparedExec, participants *cypherFabricExecutor, concurrent bool) (*ExecuteResult, error) {
+	catalog := prepared.catalog
+	authToken := GetAuthTokenFromContext(ctx)
+	localExec := fabric.NewLocalFragmentExecutor(participants, func(dbName string) (storage.Engine, error) {
 		if e.dbManager != nil {
 			engineIface, err := e.dbManager.GetStorageForUse(dbName, authToken)
 			if err == nil {
@@ -117,26 +184,14 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		}
 		return scoped.storage, nil
 	})
-	var remoteExec *fabric.RemoteFragmentExecutor
-	if !autoCommit && e.txContext != nil && e.txContext.active {
-		if cached := e.txContext.fabricRemoteExe; cached != nil {
-			remoteExec = cached
-		} else {
-			remoteExec = fabric.NewRemoteFragmentExecutor()
-			e.txContext.fabricRemoteExe = remoteExec
-		}
-	} else {
-		remoteExec = fabric.NewRemoteFragmentExecutor()
-		defer func() { _ = remoteExec.Close() }()
-	}
 
 	statsAcc := &queryStatsAccumulator{}
 	ctx = context.WithValue(ctx, queryStatsAccumulatorKey{}, statsAcc)
 	fabricTrace := &fabric.HotPathTrace{}
 	ctx = fabric.WithHotPathTrace(ctx, fabricTrace)
-	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, remoteExec)
+	fabricExecutor := fabric.NewFabricExecutor(catalog, localExec, participants.remote)
 	fabricExecutor.SetUnionContract(fabricUnionContract)
-	fabricExecutor.SetConcurrentExecution(autoCommit)
+	fabricExecutor.SetConcurrentExecution(concurrent)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	fabricExecutor.SetGraphAuthorizer(func(ctx context.Context, database, query string) error {
 		if err := e.authorizeSelectedDatabase(ctx, database, query); err != nil {
@@ -146,22 +201,9 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	})
 	stream, err := fabricExecutor.Execute(ctx, tx, prepared.fragment, params, authToken)
 	if err != nil {
-		// In explicit transactions (autoCommit=false), preserve transaction lifecycle
-		// for client-issued COMMIT/ROLLBACK. In autocommit mode, rollback immediately.
-		if autoCommit {
-			_ = tx.Rollback(nil)
-		}
 		return nil, fabricGraphReferenceError(err)
 	}
 	e.setFabricBatchedApplyRowsUsed(fabricTrace.ApplyBatchedLookupRows.Load())
-	if autoCommit {
-		if err := tx.Commit(nil, nil); err != nil {
-			return nil, err
-		}
-		if tx.WriteShard() != "" {
-			publishStatementCommit(ctx)
-		}
-	}
 	if stream == nil {
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
@@ -190,6 +232,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 }
 
 type fabricPreparedExec struct {
+	query     string
 	catalog   *fabric.Catalog
 	sessionDB string
 	fragment  fabric.Fragment
@@ -316,6 +359,7 @@ func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher str
 		return nil, fabricGraphReferenceError(err)
 	}
 	return &fabricPreparedExec{
+		query:     cypher,
 		catalog:   catalog,
 		sessionDB: sessionDB,
 		fragment:  fragment,
@@ -583,28 +627,17 @@ type cypherFabricExecutor struct {
 	base       *StorageExecutor
 	authToken  string
 	autoCommit bool
+	// catalog names the statement's participants; remote runs its remote
+	// fragments, and those of a composite statement nested in it.
+	catalog *fabric.Catalog
+	remote  *fabric.RemoteFragmentExecutor
 
-	mu sync.Mutex
-	// localTxExecBySub holds the sub-transaction executors of a statement
-	// run outside an explicit transaction; an explicit transaction keeps
-	// them in its TransactionContext (localShardTxExecutors).
-	localTxExecBySub map[string]*StorageExecutor
-}
-
-// localShardTxExecutors is the map of sub-transaction executors by shard
-// name: the explicit transaction's, so its statements share one
-// sub-transaction per constituent, or else this statement's own.
-func (c *cypherFabricExecutor) localShardTxExecutors() map[string]*StorageExecutor {
-	if c.base != nil && c.base.txContext != nil && c.base.txContext.active {
-		if c.base.txContext.fabricLocalTxExec == nil {
-			c.base.txContext.fabricLocalTxExec = make(map[string]*StorageExecutor)
-		}
-		return c.base.txContext.fabricLocalTxExec
-	}
-	if c.localTxExecBySub == nil {
-		c.localTxExecBySub = make(map[string]*StorageExecutor)
-	}
-	return c.localTxExecBySub
+	mu        sync.Mutex
+	statement *compositeStatement // the statement's fragments run in (statementFor)
+	// ownParticipants holds the local participants of a statement run
+	// outside an explicit transaction; an explicit transaction keeps them
+	// in its TransactionContext (participants).
+	ownParticipants map[string]*participantHandle
 }
 
 func (c *cypherFabricExecutor) ExecuteQuery(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
@@ -637,20 +670,30 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
-	base := c.base
-	if !c.autoCommit {
-		if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
-			txExec, err := c.ensureLocalShardTxExecutor(ctx, sub, dbName, engine)
+	var exec *StorageExecutor
+	if tx, ok := fabric.FabricTransactionFromContext(ctx); ok {
+		// The fragment, and each statement it runs, runs on its database's
+		// participant storage; the composite database routes to its
+		// constituents'.
+		composite := c.statementFor(ctx, tx)
+		if root, isRoot := engine.(*storage.CompositeEngine); isRoot {
+			// The executor reads the stored procedure catalog from the
+			// databases themselves, as it is built, not through the
+			// participants: that read is not the statement's, so it begins
+			// no participant transaction.
+			exec = c.base.cloneForStorage(root).cloneWithStorage(composite.router(root))
+			ctx = &compositeContext{Context: ctx, statement: composite}
+		} else {
+			participant, err := composite.participant(dbName, engine)
 			if err != nil {
 				return nil, nil, err
 			}
-			base = txExec
-			engine = txExec.storage
+			exec, ctx = participant.run(ctx, composite)
 		}
+	} else {
+		// A fragment view owns its removable catalog selection.
+		exec = c.base.cloneForStorage(engine)
 	}
-	// A fragment view owns its removable catalog selection while the retained
-	// shard executor keeps the underlying database transaction's lifetime.
-	exec := base.cloneForStorage(engine)
 	if err := exec.bindFabricStatementCacheScope(ctx, dbName); err != nil {
 		return nil, nil, err
 	}
@@ -747,62 +790,6 @@ func findLeadingWithEndLocal(query string) int {
 		return -1
 	}
 	return len(prefix) + end
-}
-func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, sub *fabric.SubTransaction, dbName string, engine storage.Engine) (*StorageExecutor, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	executors := c.localShardTxExecutors()
-	if existing := executors[sub.ShardName]; existing != nil {
-		return existing, nil
-	}
-
-	txExec := NewStorageExecutor(engine)
-	txExec.ShareStatementCachesFrom(c.base)
-	txExec.deferFlush = c.base.deferFlush
-	txExec.ShareEmbedderFrom(c.base)
-	c.base.shareSearchFor(txExec, storageDatabaseName(engine))
-	txExec.inferenceManager = c.base.inferenceManager
-	txExec.onNodeMutated = c.base.onNodeMutated
-	txExec.defaultEmbeddingDimensions = c.base.defaultEmbeddingDimensions
-	txExec.dbManager = c.base.dbManager
-	if err := txExec.bindStatementCacheScope(dbName); err != nil {
-		return nil, err
-	}
-	txExec.vectorRegistry = c.base.vectorRegistry
-	txExec.vectorIndexSpaces = c.base.vectorIndexSpaces
-
-	beginCtx := WithTransactionControl(WithAuthToken(ctx, c.authToken))
-	if _, err := txExec.Execute(beginCtx, "BEGIN", nil); err != nil {
-		return nil, localizedError(localization.CypherCommandRoutingFabricShardTransactionFailed(dbName, err), err)
-	}
-
-	terminalCtx := context.WithoutCancel(beginCtx)
-	commitFn := func(_ *fabric.SubTransaction) error {
-		_, err := txExec.Execute(terminalCtx, "COMMIT", nil)
-		return err
-	}
-	rollbackFn := func(_ *fabric.SubTransaction) error {
-		_, err := txExec.Execute(terminalCtx, "ROLLBACK", nil)
-		return err
-	}
-	if err := c.bindCallbacksOnce(sub, commitFn, rollbackFn); err != nil {
-		return nil, err
-	}
-
-	executors[sub.ShardName] = txExec
-	return txExec, nil
-}
-
-func (c *cypherFabricExecutor) bindCallbacksOnce(sub *fabric.SubTransaction, commitFn fabric.CommitCallback, rollbackFn fabric.RollbackCallback) error {
-	if c.base == nil || c.base.txContext == nil {
-		return nil
-	}
-	tx, ok := c.base.txContext.tx.(*fabric.FabricTransaction)
-	if !ok || tx == nil {
-		return nil
-	}
-	return tx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn)
 }
 
 // evaluateGraphArguments evaluates a dynamic graph reference's arguments

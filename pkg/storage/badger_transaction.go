@@ -41,6 +41,10 @@ type snapshotLabelCacheKey struct {
 type BadgerTransaction struct {
 	mu sync.Mutex
 
+	// writeAdmission decides whether the transaction may write, before its
+	// first write (SetWriteAdmission); nil once it admitted, or without one.
+	writeAdmission func() error
+
 	// commitCtx is the caller's context while CommitContext runs: commit-time
 	// constraint validation polls it, so a terminated or abandoned statement
 	// stops before anything is written instead of validating to the end

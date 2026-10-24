@@ -2,8 +2,11 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/fabric"
 )
 
 // =============================================================================
@@ -77,6 +80,11 @@ func (e *StorageExecutor) callApocPeriodicIterate(ctx context.Context, procedure
 			// Preserve their values at the checked property boundary; their names
 			// must never become stored source text.
 			actionResult, err := e.executeUserStatement(withValueBindings(ctx, params), actionQuery, params)
+			if errors.Is(err, fabric.ErrSecondWriteShard) {
+				// A write the composite statement refuses is the statement's
+				// error, not a failed operation.
+				return nil, err
+			}
 			if err != nil {
 				errorCount++
 				continue
@@ -168,6 +176,11 @@ func (e *StorageExecutor) callApocPeriodicCommit(ctx context.Context, args []int
 		}
 
 		result, err := e.executeUserStatement(ctx, statement, params)
+		if errors.Is(err, fabric.ErrSecondWriteShard) {
+			// A write the composite statement refuses is the statement's
+			// error.
+			return nil, err
+		}
 		if err != nil {
 			break
 		}

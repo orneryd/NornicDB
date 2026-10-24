@@ -50,6 +50,22 @@ func (e *StorageExecutor) migrateProcedureCatalogIdentity(store storage.Engine, 
 	return superseded, nil
 }
 
+// procedureCatalogSuperseded reports whether node is a legacy lowercase
+// catalog record whose exact-name copy store already holds, reading only.
+func procedureCatalogSuperseded(store storage.Engine, node *storage.Node, record persistedProcedureRecord) (bool, error) {
+	canonical := procedureCatalogNodeID(record.Name)
+	if node.ID == canonical || node.ID != storage.NodeID(procedureCatalogPrefix+lowerASCII(strings.TrimSpace(record.Name))) {
+		return false, nil
+	}
+	if _, err := store.GetNode(canonical); err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			return false, nil
+		}
+		return false, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
+	}
+	return true, nil
+}
+
 // decodeProcedureCatalogRecord is shared by loading and mutation-time identity
 // resolution; the serialized payload, rather than its historical key, names the procedure.
 func decodeProcedureCatalogRecord(node *storage.Node) (persistedProcedureRecord, error) {

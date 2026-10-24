@@ -199,9 +199,10 @@ func TestFabricExecutorUnionRowsBranches(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
 	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	withAccessMode(t, func(query string, _ bool) bool { return query == "RETURN 'b' AS v" })
 	union := &FragmentUnion{
 		LHS:      &FragmentExec{GraphName: "db1", Query: "RETURN 'a' AS v"},
-		RHS:      &FragmentExec{GraphName: "db1", Query: "RETURN 'b' AS v", IsWrite: true},
+		RHS:      &FragmentExec{GraphName: "db1", Query: "RETURN 'b' AS v"},
 		Distinct: true,
 	}
 
@@ -216,7 +217,7 @@ func TestFabricExecutorUnionRowsBranches(t *testing.T) {
 	require.NoError(t, it.Close())
 	require.Equal(t, []string{"a", "dup", "b"}, got)
 
-	union.RHS = &FragmentExec{GraphName: "missing", Query: "RETURN 'b' AS v", IsWrite: true}
+	union.RHS = &FragmentExec{GraphName: "missing", Query: "RETURN 'b' AS v"}
 	_, _, err = exec.executeUnionRows(context.Background(), nil, union, nil, "")
 	require.ErrorContains(t, err, "union RHS failed")
 }
@@ -238,8 +239,9 @@ func TestFabricExecutorUnionMaterializers(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db1", &LocationLocal{DBName: "db1"})
 	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+	withAccessMode(t, func(query string, _ bool) bool { return query == "RETURN 'a' AS v" })
 	union := &FragmentUnion{
-		LHS:     &FragmentExec{GraphName: "db1", Query: "RETURN 'a' AS v", IsWrite: true},
+		LHS:     &FragmentExec{GraphName: "db1", Query: "RETURN 'a' AS v"},
 		RHS:     &FragmentExec{GraphName: "db1", Query: "RETURN 'b' AS v"},
 		Columns: []string{"v"},
 	}

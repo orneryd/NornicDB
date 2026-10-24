@@ -259,7 +259,9 @@ func (e *StorageExecutor) temporalClockTime(ctx context.Context, clock string) t
 			}
 		}
 		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
-			return wrapper.tx.StartTime.UTC()
+			if tx := wrapper.transaction(); tx != nil {
+				return tx.StartTime.UTC()
+			}
 		}
 	}
 	if instant, ok := ctx.Value(temporalStatementTimeKey{}).(time.Time); ok {

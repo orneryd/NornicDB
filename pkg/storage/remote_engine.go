@@ -47,7 +47,10 @@ type remoteTransport interface {
 	query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error)
 	queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error)
 	queryBatch(ctx context.Context, statements []remoteStatement) error
-	beginCypherTx(ctx context.Context) (RemoteCypherTx, error)
+	// beginCypherTx opens a transaction in write access mode, or in read
+	// access mode when write is false: a server that enforces it refuses a
+	// write there.
+	beginCypherTx(ctx context.Context, write bool) (RemoteCypherTx, error)
 	close() error
 }
 
@@ -259,10 +262,14 @@ func (b *boltTransport) queryBatch(ctx context.Context, statements []remoteState
 	return err
 }
 
-func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+func (b *boltTransport) beginCypherTx(ctx context.Context, write bool) (RemoteCypherTx, error) {
+	mode := neo4j.AccessModeRead
+	if write {
+		mode = neo4j.AccessModeWrite
+	}
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
-		AccessMode:   neo4j.AccessModeWrite,
+		AccessMode:   mode,
 	})
 	tx, err := session.BeginTransaction(ctx)
 	if err != nil {
@@ -612,7 +619,7 @@ func (h *httpTransport) queryBatch(ctx context.Context, statements []remoteState
 	return err
 }
 
-func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+func (h *httpTransport) beginCypherTx(ctx context.Context, write bool) (RemoteCypherTx, error) {
 	openBody := remoteTxRequest{Statements: []remoteStatement{}}
 	raw, err := json.Marshal(openBody)
 	if err != nil {
@@ -623,6 +630,10 @@ func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if !write {
+		// The HTTP API's access mode of the transaction.
+		req.Header.Set("access-mode", "READ")
+	}
 	if h.user != "" || h.password != "" {
 		req.SetBasicAuth(h.user, h.password)
 	} else if h.authToken != "" {
@@ -1453,12 +1464,88 @@ func (r *RemoteEngine) QueryCypher(ctx context.Context, statement string, params
 	return r.transport.queryWithColumns(ctx, statement, params)
 }
 
-// BeginCypherTx opens an explicit remote transaction handle.
+// BeginCypherTx opens an explicit remote transaction handle in write access
+// mode.
 func (r *RemoteEngine) BeginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+	return r.beginCypherTx(ctx, true)
+}
+
+// BeginReadCypherTx opens an explicit remote transaction handle in read
+// access mode: a server that enforces the access mode refuses a write in it.
+func (r *RemoteEngine) BeginReadCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+	return r.beginCypherTx(ctx, false)
+}
+
+func (r *RemoteEngine) beginCypherTx(ctx context.Context, write bool) (RemoteCypherTx, error) {
 	if ctx == nil {
 		var cancel context.CancelFunc
 		ctx, cancel = defaultCtx()
 		defer cancel()
 	}
-	return r.transport.beginCypherTx(ctx)
+	return r.transport.beginCypherTx(ctx, write)
 }
+
+// RemoteStatementRunner runs one statement of a remote engine's operations,
+// and returns its columns and rows.
+type RemoteStatementRunner func(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error)
+
+// WithStatementRunner is the remote engine whose every operation runs its
+// statements through run instead of a session of its own: a composite
+// statement's remote participant runs them in the statement's remote
+// transaction, so nothing an operation writes is kept unless the statement
+// commits. A transaction begun on it joins run's: it ends with whatever run
+// belongs to, not with its own Commit or Rollback.
+func (r *RemoteEngine) WithStatementRunner(run RemoteStatementRunner) *RemoteEngine {
+	return &RemoteEngine{transport: runnerTransport{run: run}, schema: r.schema}
+}
+
+// NewStatementRemoteEngine is a remote engine of its own schema whose every
+// operation runs its statements through run (WithStatementRunner).
+func NewStatementRemoteEngine(run RemoteStatementRunner) *RemoteEngine {
+	return &RemoteEngine{transport: runnerTransport{run: run}, schema: NewSchemaManager()}
+}
+
+// runnerTransport is the transport of a remote engine bound to a statement
+// runner (RemoteEngine.WithStatementRunner).
+type runnerTransport struct {
+	run RemoteStatementRunner
+}
+
+func (t runnerTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error) {
+	_, rows, err := t.run(ctx, statement, params)
+	return rows, err
+}
+
+func (t runnerTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+	return t.run(ctx, statement, params)
+}
+
+func (t runnerTransport) queryBatch(ctx context.Context, statements []remoteStatement) error {
+	for _, stmt := range statements {
+		if _, _, err := t.run(ctx, stmt.Statement, stmt.Parameters); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (t runnerTransport) beginCypherTx(context.Context, bool) (RemoteCypherTx, error) {
+	return joinedCypherTx{run: t.run}, nil
+}
+
+func (t runnerTransport) close() error { return nil }
+
+// joinedCypherTx is a transaction begun on a remote engine bound to a
+// statement runner: its statements run in the runner's transaction, which
+// ends with its owner.
+type joinedCypherTx struct {
+	run RemoteStatementRunner
+}
+
+func (t joinedCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+	return t.run(ctx, statement, params)
+}
+
+func (joinedCypherTx) Commit(context.Context) error { return nil }
+
+func (joinedCypherTx) Rollback(context.Context) error { return nil }

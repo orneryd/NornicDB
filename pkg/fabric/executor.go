@@ -265,7 +265,7 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 	ctx = context.WithValue(ctx, graphSelectionContextKey{}, graph)
 	if tx != nil {
 		participant := participantKeyFromLocation(loc)
-		sub, err := tx.GetOrOpen(participant, f.IsWrite)
+		sub, err := tx.GetOrOpen(participant, false)
 		if err != nil {
 			return nil, nil, ctx, err
 		}
@@ -558,7 +558,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || fragmentMayWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -797,7 +797,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN collect(") || fragmentMayWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -872,12 +872,14 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 	sem := make(chan struct{}, fabricApplyLookupMaxConcurrency)
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
+	relay := &panicRelay{stop: cancelBatch}
 	for start := 0; start < len(distinctKeys); start += fabricApplyLookupBatchSize {
 		end := minInt(start+fabricApplyLookupBatchSize, len(distinctKeys))
 		chunk := append([]interface{}(nil), distinctKeys[start:end]...)
 		wg.Add(1)
 		go func(chunk []interface{}) {
 			defer wg.Done()
+			defer relay.capture()
 			select {
 			case sem <- struct{}{}:
 			case <-ctxBatch.Done():
@@ -954,6 +956,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 		}(chunk)
 	}
 	wg.Wait()
+	relay.rethrow()
 	select {
 	case err := <-errCh:
 		return nil, true, err
@@ -998,7 +1001,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || !containsFold(trimmed, "count(") || queryIsWrite(trimmed) {
+	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || !containsFold(trimmed, "count(") || fragmentMayWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -1074,12 +1077,14 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 	sem := make(chan struct{}, fabricApplyLookupMaxConcurrency)
 	errCh := make(chan error, 1)
 	var wg sync.WaitGroup
+	relay := &panicRelay{stop: cancelBatch}
 	for start := 0; start < len(distinctKeys); start += fabricApplyLookupBatchSize {
 		end := minInt(start+fabricApplyLookupBatchSize, len(distinctKeys))
 		chunk := append([]interface{}(nil), distinctKeys[start:end]...)
 		wg.Add(1)
 		go func(chunk []interface{}) {
 			defer wg.Done()
+			defer relay.capture()
 			select {
 			case sem <- struct{}{}:
 			case <-ctxBatch.Done():
@@ -1166,6 +1171,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 		}(chunk)
 	}
 	wg.Wait()
+	relay.rethrow()
 	select {
 	case err := <-errCh:
 		return nil, true, err
@@ -1240,7 +1246,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || fragmentMayWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -1389,12 +1395,14 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 			sem := make(chan struct{}, fabricApplyLookupMaxConcurrency)
 			errCh := make(chan error, 1)
 			var wg sync.WaitGroup
+			relay := &panicRelay{stop: cancelBatch}
 			for start := 0; start < len(distinctKeys); start += fabricApplyLookupBatchSize {
 				end := minInt(start+fabricApplyLookupBatchSize, len(distinctKeys))
 				keyChunk := append([]interface{}(nil), distinctKeys[start:end]...)
 				wg.Add(1)
 				go func(keys []interface{}) {
 					defer wg.Done()
+					defer relay.capture()
 					select {
 					case sem <- struct{}{}:
 					case <-ctxBatch.Done():
@@ -1459,6 +1467,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 			}
 			wg.Wait()
 			cancelBatch()
+			relay.rethrow()
 			select {
 			case err := <-errCh:
 				return nil, true, err
@@ -3225,9 +3234,11 @@ func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransac
 		rhsIt   RowIterator
 		err     error
 	)
+	relay := &panicRelay{}
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
+		defer relay.capture()
 		cols, it, runErr := e.executeRows(ctx, tx, f.LHS, params, authToken)
 		mu.Lock()
 		defer mu.Unlock()
@@ -3240,6 +3251,7 @@ func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransac
 	}()
 	go func() {
 		defer wg.Done()
+		defer relay.capture()
 		cols, it, runErr := e.executeRows(ctx, tx, f.RHS, params, authToken)
 		mu.Lock()
 		defer mu.Unlock()
@@ -3253,6 +3265,15 @@ func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransac
 		rhsIt = it
 	}()
 	wg.Wait()
+	if relay.panicked() {
+		if lhsIt != nil {
+			_ = lhsIt.Close()
+		}
+		if rhsIt != nil {
+			_ = rhsIt.Close()
+		}
+		relay.rethrow()
+	}
 	if err != nil {
 		if lhsIt != nil {
 			_ = lhsIt.Close()
@@ -3337,9 +3358,11 @@ func (e *FabricExecutor) executeUnionParallel(ctx context.Context, tx *FabricTra
 		rit RowIterator
 		err error
 	)
+	relay := &panicRelay{}
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
+		defer relay.capture()
 		cols, it, runErr := e.executeRows(ctx, tx, f.LHS, params, authToken)
 		mu.Lock()
 		defer mu.Unlock()
@@ -3351,6 +3374,7 @@ func (e *FabricExecutor) executeUnionParallel(ctx context.Context, tx *FabricTra
 	}()
 	go func() {
 		defer wg.Done()
+		defer relay.capture()
 		cols, it, runErr := e.executeRows(ctx, tx, f.RHS, params, authToken)
 		mu.Lock()
 		defer mu.Unlock()
@@ -3363,6 +3387,15 @@ func (e *FabricExecutor) executeUnionParallel(ctx context.Context, tx *FabricTra
 		rhs, rit = cols, it
 	}()
 	wg.Wait()
+	if relay.panicked() {
+		if lit != nil {
+			_ = lit.Close()
+		}
+		if rit != nil {
+			_ = rit.Close()
+		}
+		relay.rethrow()
+	}
 	if err != nil {
 		if lit != nil {
 			_ = lit.Close()
@@ -3388,7 +3421,7 @@ func isFabricRowWrapper(columns []string) bool {
 func fragmentContainsWrite(fragment Fragment) bool {
 	switch f := fragment.(type) {
 	case *FragmentExec:
-		return f.IsWrite
+		return fragmentMayWrite(f.Query)
 	case *FragmentApply:
 		return fragmentContainsWrite(f.Input) || fragmentContainsWrite(f.Inner)
 	case *FragmentUnion:

@@ -308,7 +308,16 @@ func ensureLabel(labels []string, label string) []string {
 }
 
 func (e *StorageExecutor) loadPersistedProcedures() error {
-	nodes, err := e.storage.GetNodesByLabel(procedureCatalogLabel)
+	return e.loadPersistedProceduresFrom(e.storage, true)
+}
+
+// loadPersistedProceduresFrom registers the procedures of store's catalog.
+// With migrate it moves legacy catalog identities in store
+// (migrateProcedureCatalogIdentity); without, it writes nothing: a legacy
+// record its exact-name copy supersedes is skipped, and any other one is
+// registered as it is.
+func (e *StorageExecutor) loadPersistedProceduresFrom(store storage.Engine, migrate bool) error {
+	nodes, err := store.GetNodesByLabel(procedureCatalogLabel)
 	if err != nil {
 		return localizedError(localization.CypherProceduresCatalogReadFailed(err), nerrors.ErrProcedureCatalogReadFailed)
 	}
@@ -324,9 +333,16 @@ func (e *StorageExecutor) loadPersistedProcedures() error {
 		if err != nil {
 			return localizedError(localization.CypherProceduresCatalogRecordInvalid(string(node.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
 		}
-		if superseded, err := e.migrateProcedureCatalogIdentity(e.storage, node, record); err != nil {
+		var superseded bool
+		if migrate {
+			superseded, err = e.migrateProcedureCatalogIdentity(store, node, record)
+		} else {
+			superseded, err = procedureCatalogSuperseded(store, node, record)
+		}
+		if err != nil {
 			return err
-		} else if superseded {
+		}
+		if superseded {
 			continue
 		}
 		if err := RegisterUserProcedure(spec, handler); err != nil {

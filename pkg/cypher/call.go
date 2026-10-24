@@ -1567,7 +1567,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo() (*ExecuteResult, err
 
 	var decayProfiles, decayBindings int
 	var promotionProfiles, promotionPolicies int
-	schema, err := e.knowledgePolicySchema()
+	schema, err := e.knowledgePolicySchema(false)
 	if err != nil {
 		return nil, err
 	}
