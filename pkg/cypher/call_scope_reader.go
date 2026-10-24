@@ -25,7 +25,7 @@ func readCallSubqueryScope(source string) callSubqueryScopeClause {
 	}
 	first, _ := syntax.LeadingCall()
 	if !first.Valid() {
-		return callSubqueryScopeClause{}
+		return callSubqueryScopeClause{invalid: err != nil}
 	}
 	if first.Rule() == cypherantlr.CypherParserRULE_callSubquery {
 		scope := scopeClauseFromSyntax(first)
@@ -35,7 +35,7 @@ func readCallSubqueryScope(source string) callSubqueryScopeClause {
 	name := first.ChildRule(cypherantlr.CypherParserRULE_invocationName)
 	if name.Valid() {
 		start, _ := name.Span()
-		return callSubqueryScopeClause{bodyOffset: start}
+		return callSubqueryScopeClause{bodyOffset: start, invalid: err != nil}
 	}
-	return callSubqueryScopeClause{}
+	return callSubqueryScopeClause{invalid: err != nil}
 }
