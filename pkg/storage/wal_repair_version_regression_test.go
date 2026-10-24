@@ -14,7 +14,7 @@ import (
 func TestWALUnknownVersionDoesNotTruncateOnOpen(t *testing.T) {
 	dir := t.TempDir()
 	path := walActivePath(dir)
-	future, _ := buildAtomicRecord([]byte(`{"future":"valid record"}`), walFormatVersionV3+1)
+	future, _ := buildAtomicRecord([]byte(`{"future":"valid record"}`), walFormatVersionPropertyEpoch+1)
 	require.NoError(t, os.WriteFile(path, future, 0600))
 	wal, err := NewWAL(dir, &WALConfig{Dir: dir, SyncMode: "none"})
 	if wal != nil {
@@ -34,7 +34,7 @@ func TestWALUnknownVersionDoesNotTruncateDuringRecovery(t *testing.T) {
 			payload, err := json.Marshal(WALEntry{Sequence: 1, Operation: OpCheckpoint, Data: json.RawMessage(`{}`), Checksum: crc32Checksum([]byte(`{}`))})
 			require.NoError(t, err)
 			good, _ := buildAtomicRecord(payload, 2)
-			future, _ := buildAtomicRecord([]byte(`{"future":"record"}`), walFormatVersionV3+1)
+			future, _ := buildAtomicRecord([]byte(`{"future":"record"}`), walFormatVersionPropertyEpoch+1)
 			original := append(good, future...)
 			require.NoError(t, os.WriteFile(path, original, 0600))
 			if streaming {

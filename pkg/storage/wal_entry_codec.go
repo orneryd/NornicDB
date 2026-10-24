@@ -47,6 +47,9 @@ func encodeWALEntryV3(buf *bytes.Buffer, e *WALEntry) ([]byte, error) {
 // v1/v2 records are plain JSON (base64 Data); v3 payloads carry the Data
 // field as raw bytes after the JSON header.
 func decodeWALEntry(payload []byte, version uint8) (WALEntry, error) {
+	if version > walFormatVersionPropertyEpoch {
+		return WALEntry{}, fmt.Errorf("wal: unsupported WAL version %d (max supported: %d)", version, walFormatVersionPropertyEpoch)
+	}
 	if version < walFormatVersionV3 {
 		var e WALEntry
 		if err := json.Unmarshal(payload, &e); err != nil {
@@ -73,5 +76,9 @@ func decodeWALEntry(payload []byte, version uint8) (WALEntry, error) {
 		return WALEntry{}, err
 	}
 	e.Data = payload[dataOff+4:]
+	e.framingVersion = version
+	if version == walFormatVersionPropertyEpoch && !isWALPropertyEpoch(e) {
+		return WALEntry{}, fmt.Errorf("wal: framing version 4 is reserved for property dictionary controls")
+	}
 	return e, nil
 }

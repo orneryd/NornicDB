@@ -25,10 +25,27 @@ const bufferedRecoveryBatchBytes int64 = 8 << 20
 // deltas: crash recovery is rare, and the authoritative rebuild is the same
 // recovery boundary the sync path uses.
 func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
+	return recoverBufferedCommits(engine, wal, walForeignImport)
+}
+
+// RecoverBufferedCommitsAtOpen is exclusively the constructor's recovery of a
+// store's own configured WAL directory, before traffic. That structural authority
+// preserves unstamped historical upgrades; a foreign-populated store cannot use it.
+func RecoverBufferedCommitsAtOpen(engine Engine, wal *WAL) (int, error) {
+	return recoverBufferedCommits(engine, wal, walOwnDirectoryAtOpen)
+}
+
+func recoverBufferedCommits(engine Engine, wal *WAL, authority walPropertyAuthority) (int, error) {
 	b, ok := engine.(*BadgerEngine)
 	if !ok || b == nil || wal == nil || b.writeBehind == nil {
 		return 0, nil
 	}
+	// The batch reader retains engine state through import, physical apply
+	// and count repair. Close rejects later admissions and waits for this lease.
+	if _, err := b.beginHelperTxn(); err != nil {
+		return 0, err
+	}
+	defer b.txnWG.Done()
 
 	// A kill -9 can leave a torn tail record at EOF. Truncate it back to
 	// the last good boundary before reading (the same conservative repair
@@ -56,13 +73,9 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 		if entry.Operation != OpBufferedCommit {
 			return nil
 		}
-		var data WALBufferedCommitData
-		payload, err := decompressWALBufferedCommitPayload(entry.Data)
+		data, err := decodeBufferedWALRecord(entry)
 		if err != nil {
 			return err
-		}
-		if err := decodeRecoveryPayload(payload, &data); err != nil {
-			return fmt.Errorf("wal: failed to unmarshal buffered commit %d: %w", entry.Sequence, err)
 		}
 		if data.TxID == "" {
 			return nil
@@ -72,25 +85,11 @@ func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
 			return fmt.Errorf("wal: failed to check flush marker for %q: %w", data.TxID, err)
 		}
 		if exists {
-			return nil // already applied to Badger
+			return nil // each remaining record supplies its own authority
 		}
-		c := bufferedCommit{
-			recovered:      true,
-			namespace:      data.Namespace,
-			txID:           data.TxID,
-			ops:            data.Ops,
-			writes:         data.Writes,
-			version:        data.Version,
-			counterNodeMax: data.NodeMax,
-			counterEdgeMax: data.EdgeMax,
-			hasCounters:    data.HasCounters,
-			propKeyDrain:   data.propKeyDrain(),
-		}
-		if len(data.Deletes) > 0 {
-			c.deletes = make(map[string]bool, len(data.Deletes))
-			for _, key := range data.Deletes {
-				c.deletes[key] = true
-			}
+		c, err := b.importBufferedWALRecord(&data, authority)
+		if err != nil {
+			return err
 		}
 		bytes := estimateBufferedCommitBytes(&c)
 		if len(pending) > 0 && bytes > bufferedRecoveryBatchBytes-pendingBytes {

@@ -19,6 +19,9 @@ func TestBufferedRecoveryRetiresBatchBeforeReadingLaterInvalidRecord(t *testing.
 	crashClose(t, engine, wal)
 
 	engine = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
+	// The deliberately invalid tail cannot receive a clean-downgrade proof.
+	// Assert that refusal before the shared fixture owner repeats Close.
+	t.Cleanup(func() { require.ErrorContains(t, engine.Close(), "cannot unmarshal string") })
 
 	wal = engine.bufferedCommitWAL
 	replayed, err := RecoverBufferedCommits(engine, wal)
