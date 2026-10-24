@@ -1,13 +1,9 @@
 package server
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -20,18 +16,15 @@ import (
 func TestTypedNumericHTTPBoundaries(t *testing.T) {
 	srv, authenticator := setupTestServer(t)
 	token := getAuthToken(t, authenticator, "admin")
-	peer := httptest.NewServer(srv.buildRouter())
-	t.Cleanup(peer.Close)
-	base := "/db/" + srv.dbManager.DefaultDatabaseName() + "/tx"
+	client := newListInputHTTPClient(t, srv, token, true)
 	store, err := srv.dbManager.GetStorage(srv.dbManager.DefaultDatabaseName())
 	require.NoError(t, err)
 	for _, input := range listinputs.NumericHTTPInputs() {
 		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(input.Name), Labels: []string{"NumericWireProperty"}, Properties: map[string]interface{}{"name": input.Name, "xs": input.Property}})
 		require.NoError(t, err)
 	}
-	request := func(t *testing.T, path, query string, params map[string]interface{}) TransactionResponse {
+	request := func(t *testing.T, explicit bool, query string, params map[string]interface{}) TransactionResponse {
 		t.Helper()
-		statements := []map[string]interface{}{}
 		if query != "" {
 			// JSON has no native float/list widths. Keep float parameters as
 			// floating tokens: encoding/json otherwise emits a whole float near
@@ -52,21 +45,8 @@ func TestTypedNumericHTTPBoundaries(t *testing.T) {
 				copy["xs"] = numbers
 				params = copy
 			}
-			statements = append(statements, map[string]interface{}{"statement": query, "parameters": params})
 		}
-		body, err := json.Marshal(map[string]interface{}{"statements": statements})
-		require.NoError(t, err)
-		req, err := http.NewRequest(http.MethodPost, peer.URL+path, bytes.NewReader(body))
-		require.NoError(t, err)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+token)
-		response, err := peer.Client().Do(req)
-		require.NoError(t, err)
-		defer response.Body.Close()
-		var payload TransactionResponse
-		decoder := json.NewDecoder(response.Body)
-		decoder.UseNumber()
-		require.NoError(t, decoder.Decode(&payload))
+		payload := client.run(t, explicit, query, params)
 		require.Empty(t, payload.Errors, query)
 		return payload
 	}
@@ -80,16 +60,9 @@ func TestTypedNumericHTTPBoundaries(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		for _, input := range listinputs.NumericHTTPInputs() {
 			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, input.Name), func(t *testing.T) {
-				path := base + "/commit"
-				if explicit {
-					opened := request(t, base, "", nil)
-					commit, err := url.Parse(opened.Commit)
-					require.NoError(t, err)
-					path = strings.TrimSuffix(commit.Path, "/commit")
-				}
 				read := func(t *testing.T, query string, params map[string]interface{}) interface{} {
 					t.Helper()
-					payload := request(t, path, query, params)
+					payload := request(t, explicit, query, params)
 					require.Len(t, payload.Results, 1, query)
 					require.Len(t, payload.Results[0].Data, 1, query)
 					return payload.Results[0].Data[0].Row[0]
@@ -126,20 +99,10 @@ func TestTypedNumericHTTPBoundaries(t *testing.T) {
 						require.Equal(t, canonical(map[string]interface{}{"v": want}), canonical(got))
 					})
 				}
-				request(t, path, "MATCH (n:NumericWireWritten) DETACH DELETE n", nil)
-				if explicit {
-					request(t, path+"/commit", "", nil)
-				}
+				request(t, explicit, "MATCH (n:NumericWireWritten) DETACH DELETE n", nil)
 			})
 		}
 		t.Run(fmt.Sprintf("explicit=%t/computed-nonfinite", explicit), func(t *testing.T) {
-			path := base + "/commit"
-			if explicit {
-				opened := request(t, base, "", nil)
-				commit, err := url.Parse(opened.Commit)
-				require.NoError(t, err)
-				path = strings.TrimSuffix(commit.Path, "/commit")
-			}
 			for _, input := range []struct {
 				text    string
 				integer int64
@@ -155,15 +118,12 @@ func TestTypedNumericHTTPBoundaries(t *testing.T) {
 				} {
 					t.Run(input.text+"/"+check.expression, func(t *testing.T) {
 						query := listinputs.Query(check.expression, "[toFloat($number)]")
-						payload := request(t, path, query, map[string]interface{}{"number": input.text})
+						payload := request(t, explicit, query, map[string]interface{}{"number": input.text})
 						require.Len(t, payload.Results, 1)
 						require.Len(t, payload.Results[0].Data, 1)
 						require.Equal(t, canonical(check.want), canonical(payload.Results[0].Data[0].Row[0]), query)
 					})
 				}
-			}
-			if explicit {
-				request(t, path+"/commit", "", nil)
 			}
 		})
 	}
