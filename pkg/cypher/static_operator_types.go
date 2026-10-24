@@ -84,6 +84,16 @@ func staticFunctionResultType(function, arguments string) string {
 type staticOperatorChecker struct {
 	scope  staticTypeScope
 	params map[string]interface{}
+	// checked holds the results of one local scope's checks by text
+	// (checkScoped): its function-argument check and its operator check
+	// type the same arguments, and each nested scope is typed once.
+	checked map[string]staticCheckResult
+}
+
+// staticCheckResult is one check's result.
+type staticCheckResult struct {
+	operand staticOperand
+	err     error
 }
 
 // operandMismatch is the SyntaxError for an operand the operator can't take.
@@ -400,8 +410,18 @@ var staticComparisonKeywords = []string{"STARTS WITH", "ENDS WITH", "CONTAINS", 
 // error in it. Its result is proven or unknown (gateProven): a type only a
 // verified rule produced can reach a consumer.
 func (checker staticOperatorChecker) check(expression string) (staticOperand, error) {
+	if checker.checked == nil {
+		operand, err := checker.derive(expression)
+		return gateProven(operand), err
+	}
+	expression = strings.TrimSpace(expression)
+	if result, done := checker.checked[expression]; done {
+		return result.operand, result.err
+	}
 	operand, err := checker.derive(expression)
-	return gateProven(operand), err
+	operand = gateProven(operand)
+	checker.checked[expression] = staticCheckResult{operand: operand, err: err}
+	return operand, err
 }
 
 // derive is check before its gate. CASE, list comprehensions, quantifiers,
