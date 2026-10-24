@@ -10,6 +10,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"sync"
 	"sync/atomic"
@@ -60,7 +62,7 @@ func gatherBytesByKind(t *testing.T, reg *prometheus.Registry) map[string]float6
 // setupSweeperEnv creates an in-memory engine + StorageMetrics + sweeper.
 func setupSweeperEnv(t *testing.T, interval time.Duration) (*BadgerEngine, *prometheus.Registry, *observability.StorageMetrics, *BytesMetricsSweeper) {
 	t.Helper()
-	be, err := NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 

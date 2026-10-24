@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -12,7 +14,7 @@ import (
 
 func TestBoltDropRoleUnsupportedChangesNothing(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	system := storage.NewNamespacedEngine(inner, "system")
 	roles := auth.NewRoleStore(system)
@@ -46,7 +48,7 @@ func TestBoltDropRoleUnsupportedChangesNothing(t *testing.T) {
 
 func TestBoltRejectedStatementDiscardsAdministrationTransaction(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
 	system := storage.NewNamespacedEngine(inner, "system")
 	exec := cypher.NewStorageExecutor(system)

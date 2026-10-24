@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"math/rand"
@@ -28,7 +30,7 @@ func populationBenchNode(r *rand.Rand, i int) *storage.Node {
 
 func populationBenchEngine(b *testing.B, nodes int) *storage.MemoryEngine {
 	b.Helper()
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = engine.Close() })
 	r := rand.New(rand.NewSource(1))
 	for i := range nodes {

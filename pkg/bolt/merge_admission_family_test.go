@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"net"
 	"testing"
 
@@ -27,7 +29,7 @@ func TestMergeAdmissionFamilyAfterPriorWrite(t *testing.T) {
 			{"subquery", "CALL { MERGE (k:AdmissionKey {tenant:7, id:42})-[:LINK]->(:AdmissionOther) RETURN k } RETURN k.id"},
 		} {
 			t.Run(constraint.name+"/"+route.name, func(t *testing.T) {
-				base := storage.NewMemoryEngine()
+				base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 				t.Cleanup(func() { _ = base.Close() })
 				_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
 				peer := openBoltTestConn(t, port)
@@ -61,7 +63,7 @@ func TestMergeAdmissionFamilyAfterPriorWrite(t *testing.T) {
 func TestMergeAdmissionTupleIntegerPrecision(t *testing.T) {
 	for _, kind := range []string{"UNIQUE", "NODE KEY"} {
 		t.Run(kind, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
 			peer := openBoltTestConn(t, port)

@@ -4,6 +4,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"os"
@@ -144,7 +146,7 @@ func openRealDataBenchmarkExecutor(b *testing.B, databaseName string) (*StorageE
 		b.Skipf("real data dir unavailable: %s (%v)", dataDir, err)
 	}
 
-	base, err := storage.NewBadgerEngine(dataDir)
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
 	if err != nil {
 		b.Fatalf("open badger real data: %v", err)
 	}

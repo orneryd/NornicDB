@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"testing"
@@ -9,7 +10,10 @@ import (
 )
 
 func TestReleaseRevealAfterExplicitTransactionLabelScan(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

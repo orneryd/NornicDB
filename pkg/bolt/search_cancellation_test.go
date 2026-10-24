@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -20,7 +22,7 @@ func (canceledSearchEmbedder) ChunkText(text string, _, _ int) ([]string, error)
 }
 
 func TestBoltRetrieveCanceledEmbeddingReturnsFailure(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	server, port := startBoltIntegrationServer(t, store)

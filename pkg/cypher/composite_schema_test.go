@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -14,7 +15,7 @@ import (
 // (scoped to the default DB) wired with a DatabaseManager.
 func compositeTestFixture(t *testing.T) (*StorageExecutor, *multidb.DatabaseManager) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { mgr.Close() })

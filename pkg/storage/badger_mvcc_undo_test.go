@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -273,7 +275,7 @@ func TestUndoHistoryChainsAndRetention(t *testing.T) {
 	}))
 
 	// Head-only retention archives complete records for a snapshot reader.
-	plain, err := NewBadgerEngineInMemory()
+	plain, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer plain.Close()
 	_, err = plain.CreateNode(&Node{ID: id, Labels: []string{"N"}, Properties: map[string]any{"v": int64(1)}})

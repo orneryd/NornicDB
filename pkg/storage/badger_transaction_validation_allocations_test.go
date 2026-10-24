@@ -2,6 +2,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -65,7 +67,7 @@ func TestTransactionHighDegreeDeleteValidationMemoryBound(t *testing.T) {
 }
 
 func BenchmarkTransactionHighDegreeDeleteValidation(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = engine.Close() })
 	nodeID := seedHighDegreeValidationGraph(b, engine, highDegreeValidationEdgesPerDirection)

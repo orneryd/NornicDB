@@ -1,6 +1,8 @@
 package nornicdb_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -30,7 +32,7 @@ func (s *reviewR73RejectOnce) UpdateNodeEmbeddingSidecar(n *storage.Node) error 
 func TestReviewR73DLQUpdateWithoutEnqueue(t *testing.T) {
 	for _, mode := range []string{"idempotent", "changed_source", "advanced_timestamp", "enqueue"} {
 		t.Run(mode, func(t *testing.T) {
-			disk, err := storage.NewBadgerEngine(t.TempDir())
+			disk, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			defer disk.Close()
 			disk.SetEmbeddingsEnabled(true)
@@ -77,7 +79,7 @@ func TestReviewR73DLQUpdateWithoutEnqueue(t *testing.T) {
 // The successful-attempt suppression window is also revision-owned. A changed
 // source must be eligible immediately even without an Enqueue notification.
 func TestReviewR73UpdateAfterSuccessWithoutEnqueue(t *testing.T) {
-	disk, err := storage.NewBadgerEngine(t.TempDir())
+	disk, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer disk.Close()
 	disk.SetEmbeddingsEnabled(true)

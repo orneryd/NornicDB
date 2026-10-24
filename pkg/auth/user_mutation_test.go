@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -30,7 +31,7 @@ func (e *userChangeFault) UpdateNode(node *storage.Node) error {
 
 func combinedUserFixture(t *testing.T) (*Authenticator, *userChangeFault) {
 	t.Helper()
-	base := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "system")
+	base := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "system")
 	t.Cleanup(func() { _ = base.Close() })
 	fault := &userChangeFault{Engine: base}
 	config := DefaultAuthConfig()

@@ -1,6 +1,8 @@
 package nornicdb_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"net/http"
@@ -57,7 +59,7 @@ func TestProviderHTTPWorkerPartialFailure(t *testing.T) {
 			}
 			base, err := embed.NewEmbedder(context.Background(), &embed.Config{Provider: provider, Mode: "text", APIURL: server.URL, APIPath: path, APIKey: "mock-only", Model: "test", Dimensions: 2, Timeout: time.Second})
 			require.NoError(t, err)
-			engine, err := storage.NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, engine.Close()) })
 			engine.SetEmbeddingsEnabled(true)
@@ -104,7 +106,7 @@ func TestProviderHTTPWorkerMultimodalChunkMetadata(t *testing.T) {
 	t.Cleanup(server.Close)
 	base, err := embed.NewEmbedder(context.Background(), &embed.Config{Provider: "voyage", Mode: "multimodal", APIURL: server.URL, APIKey: "mock-only", Model: "test", Dimensions: 2, Timeout: time.Second})
 	require.NoError(t, err)
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	engine.SetEmbeddingsEnabled(true)

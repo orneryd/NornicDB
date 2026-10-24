@@ -1,6 +1,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"context"
 	"path/filepath"
@@ -125,7 +127,7 @@ func TestWALEngineRecoveryPreservesSuppliedTimes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, live.CreateEdge(e))
 	require.NoError(t, wal.Close())
-	recovered, err := RecoverFromWAL(dir, "")
+	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	gotN, err := recovered.GetNode(n.ID)
@@ -196,7 +198,7 @@ func TestWALEngineDefaultTimesRecordedBeforeCreation(t *testing.T) {
 	e, err := live.GetEdge("test:e")
 	require.NoError(t, err)
 	require.NoError(t, wal.Close())
-	recovered, err := RecoverFromWAL(dir, "")
+	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	gotN, err := recovered.GetNode(n.ID)
@@ -233,7 +235,7 @@ func TestWALEngineDefaultUpdateTimeRecordedBeforeMutation(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, want.UpdatedAt.IsZero())
 	require.NoError(t, wal.Close())
-	recovered, err := RecoverFromWAL(dir, "")
+	recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(dir, ""))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	got, err := recovered.GetNode(node.ID)

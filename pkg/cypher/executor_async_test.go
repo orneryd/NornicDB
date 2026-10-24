@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -247,7 +248,10 @@ func TestExecuteImplicitAsync_MultipleCreateChain_SingleRoute(t *testing.T) {
 
 func TestExecuteImplicitAsync_CreateSet_RemainsTransactional(t *testing.T) {
 	tmpDir := t.TempDir()
-	badgerEngine, err := storage.NewBadgerEngine(tmpDir)
+	badgerEngine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(tmpDir))
+	if badgerEngine != nil {
+		fixtureowner.Own(t, badgerEngine)
+	}
 	require.NoError(t, err)
 
 	wal, err := storage.NewWAL(filepath.Join(tmpDir, "wal"), nil)
@@ -571,7 +575,10 @@ func TestBenchmarkMatchCreateDelete_WithBadger(t *testing.T) {
 	skipDiskIOTestOnWindows(t)
 	tmpDir := t.TempDir()
 
-	badgerEngine, err := storage.NewBadgerEngine(tmpDir)
+	badgerEngine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(tmpDir))
+	if badgerEngine != nil {
+		fixtureowner.Own(t, badgerEngine)
+	}
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}
@@ -702,7 +709,10 @@ func TestBenchmarkMatchCreateDelete_LargeDataset_Direct(t *testing.T) {
 func TestBenchmarkMatchCreateDelete_Badger_LargeDataset(t *testing.T) {
 	skipDiskIOTestOnWindows(t)
 	tmpDir := t.TempDir()
-	badgerEngine, err := storage.NewBadgerEngine(tmpDir)
+	badgerEngine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(tmpDir))
+	if badgerEngine != nil {
+		fixtureowner.Own(t, badgerEngine)
+	}
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}

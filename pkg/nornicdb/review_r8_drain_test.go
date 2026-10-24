@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"sync/atomic"
@@ -24,7 +26,7 @@ func (e *reviewRejectFirstDisk) UpdateNodeEmbeddingSidecar(node *storage.Node) e
 }
 
 func TestReviewPendingCountIncludesDLQ(t *testing.T) {
-	disk, err := storage.NewBadgerEngine(t.TempDir())
+	disk, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer disk.Close()
 	disk.SetEmbeddingsEnabled(true)

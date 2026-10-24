@@ -1,6 +1,8 @@
 package server
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"errors"
@@ -273,7 +275,7 @@ func TestImmutableProcedureGrantOverHTTP(t *testing.T) {
 	database, err := nornicdb.Open(t.TempDir(), nornicdb.DefaultConfig())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = database.Close() })
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	open, err := auth.NewAuthenticator(auth.AuthConfig{SecurityEnabled: false}, authStorage)
 	require.NoError(t, err)

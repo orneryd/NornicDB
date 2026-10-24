@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"strings"
 	"sync/atomic"
@@ -257,7 +258,7 @@ func TestGraphitiScenarioE2E_RelationshipSetWithLimitBoundsMVCCCommitState(t *te
 		t.Skip("large-vector MVCC regression")
 	}
 
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 
@@ -714,7 +715,10 @@ LIMIT $limit`
 		}
 	}
 
-	base1, err := storage.NewBadgerEngine(dir)
+	base1, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if base1 != nil {
+		fixtureowner.Own(t, base1)
+	}
 	require.NoError(t, err)
 	store1 := storage.NewNamespacedEngine(base1, "test")
 	seedExec := NewStorageExecutor(store1)
@@ -760,7 +764,7 @@ LIMIT $limit`
 
 	require.NoError(t, base1.Close())
 
-	base2, err := storage.NewBadgerEngine(dir)
+	base2, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer base2.Close()
 
@@ -1185,7 +1189,7 @@ func BenchmarkGraphitiRelationshipVectorFastPath(b *testing.B) {
 	setup := func(b *testing.B, attachSearch bool) (*StorageExecutor, context.Context) {
 		b.Helper()
 
-		base, err := storage.NewBadgerEngineInMemory()
+		base, err := fixtureowner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 		require.NoError(b, err)
 		b.Cleanup(func() { _ = base.Close() })
 

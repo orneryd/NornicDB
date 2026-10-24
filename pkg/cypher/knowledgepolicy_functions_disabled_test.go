@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -10,7 +11,10 @@ import (
 
 func setupDisabledDecayEngine(t *testing.T) *StorageExecutor {
 	t.Helper()
-	eng, err := storage.NewBadgerEngineInMemory()
+	eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

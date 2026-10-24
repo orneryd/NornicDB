@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"flag"
 	"fmt"
@@ -90,7 +92,7 @@ func buildDemoExecutor(tb testing.TB) (*StorageExecutor, *storage.NamespacedEngi
 func buildDemoExecutorNS(tb testing.TB) (*StorageExecutor, *storage.NamespacedEngine, *storage.NamespacedEngine) {
 	tb.Helper()
 	dir := tb.TempDir()
-	badger, err := storage.NewBadgerEngine(dir)
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](tb, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(tb, err)
 	tb.Cleanup(func() { _ = badger.Close() })
 	ns := storage.NewNamespacedEngine(badger, "d3_demo")

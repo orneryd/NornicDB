@@ -1,6 +1,8 @@
 package server
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"net/http"
 	"path/filepath"
@@ -36,7 +38,7 @@ func TestAllDatabaseBackupIncludesSystemAdmission(t *testing.T) {
 	response := makeRequest(t, s, http.MethodPost, "/admin/backup", map[string]any{"path": path}, token)
 	t.Logf("same token: GET /db/system=%d; POST /admin/backup=%d %s", control.Code, response.Code, response.Body.String())
 	if response.Code == http.StatusOK {
-		restored, err := storage.NewBadgerEngine(filepath.Join(t.TempDir(), "restore"))
+		restored, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(t.TempDir(), "restore")))
 		require.NoError(t, err)
 		defer restored.Close()
 		require.NoError(t, restored.Restore(path))

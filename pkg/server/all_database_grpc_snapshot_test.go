@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -63,7 +64,10 @@ func TestAllDatabaseGRPCSnapshotsIncludeSystemAdmission(t *testing.T) {
 		if readable {
 			description := response.GetSnapshotDescription()
 			require.NotNil(t, description)
-			restored, err := storage.NewBadgerEngine(filepath.Join(t.TempDir(), "restore"))
+			restored, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(t.TempDir(), "restore")))
+			if restored != nil {
+				fixtureowner.Own(t, restored)
+			}
 			require.NoError(t, err)
 			require.NoError(t, restored.Restore(filepath.Join(cfg.SnapshotDir, "full", description.GetName())))
 			node, err := restored.GetNode("system:grpc-system-sentinel")

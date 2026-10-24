@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -15,7 +16,7 @@ import (
 
 func TestBoltCanonicalStatementMatrix(t *testing.T) {
 	ctx := context.Background()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "tenant"))

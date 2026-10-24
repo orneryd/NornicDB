@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"testing"
@@ -14,7 +16,7 @@ import (
 // unlabelled 6; seven :Friend (one a self-loop on 1) and two :Likes.
 func countStoreGraph(t *testing.T) (*StorageExecutor, storage.Engine) {
 	t.Helper()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")

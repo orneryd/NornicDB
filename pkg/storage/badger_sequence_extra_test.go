@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/binary"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestBadgerEngine_MVCCSequenceLoadInitializeAndPersist(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -73,10 +74,13 @@ func TestBadgerEngine_MVCCSequenceLoadInitializeAndPersist(t *testing.T) {
 }
 
 func TestNewBadgerEngineWithOptions_ValidEncryptionKey(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory:      true,
 		EncryptionKey: []byte("1234567890abcdef"),
-	})
+	}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NotNil(t, engine)
 	require.NoError(t, engine.Close())

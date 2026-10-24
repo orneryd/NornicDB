@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -18,7 +20,7 @@ func TestQueryNodeScanDecayOptionAcrossReadViews(t *testing.T) {
 				b = newWriteBehindTestEngine(t, time.Hour)
 			} else {
 				var err error
-				b, err = NewBadgerEngineInMemory()
+				b, err = runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = b.Close() })
 			}
@@ -145,7 +147,7 @@ func TestQueryNodeScanBufferedCallerCopy(t *testing.T) {
 }
 
 func TestQueryNodeScanNestedVisitorsKeepTheirOptions(t *testing.T) {
-	b, err := NewBadgerEngineInMemory()
+	b, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	for _, id := range []NodeID{"test:a", "test:b"} {

@@ -3,6 +3,7 @@ package qdrantgrpc
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -18,7 +19,7 @@ func setupPointsService(t *testing.T) (*PointsService, CollectionStore, storage.
 	t.Helper()
 
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	collections, err := NewDatabaseCollectionStore(dbm, nil)
@@ -1434,7 +1435,7 @@ func TestPointsService_MissingCollectionBranches(t *testing.T) {
 
 func TestPointsService_EngineErrorBranches(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	eng := &errEngine{Engine: base}
 	store := &fakeCollectionStore{
 		engine: eng,

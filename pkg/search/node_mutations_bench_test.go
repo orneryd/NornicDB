@@ -1,13 +1,15 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func BenchmarkSearchNodeMutationOrdering(b *testing.B) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer engine.Close()
 	svc := NewServiceWithDimensions(engine, 2)
 	defer svc.Close()

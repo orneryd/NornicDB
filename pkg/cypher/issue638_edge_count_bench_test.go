@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -20,7 +22,7 @@ import (
 
 func newIssue638BenchStore(b *testing.B) (*storage.NamespacedEngine, *storage.BadgerEngine, *StorageExecutor) {
 	b.Helper()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}

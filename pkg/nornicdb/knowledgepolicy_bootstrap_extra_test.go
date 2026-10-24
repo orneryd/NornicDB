@@ -1,6 +1,7 @@
 package nornicdb
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -18,9 +19,9 @@ func (p *knowledgePolicyBootstrapProvider) GetSchemaForNamespace(namespace strin
 
 func TestKnowledgePolicyBootstrapBranches(t *testing.T) {
 	require.NoError(t, maybeBootstrapDefaultKnowledgePolicy(nil, "tenant"))
-	require.NoError(t, maybeBootstrapDefaultKnowledgePolicy(storage.NewMemoryEngine(), "tenant"))
+	require.NoError(t, maybeBootstrapDefaultKnowledgePolicy(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant"))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	provider := &knowledgePolicyBootstrapProvider{
 		Engine:  base,

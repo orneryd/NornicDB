@@ -7,6 +7,8 @@ package bolt
 // map — all equal to the elementId() the query engine returns.
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"strings"
@@ -19,7 +21,7 @@ import (
 )
 
 func TestGh745_RealDriverBolt5Entities(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})

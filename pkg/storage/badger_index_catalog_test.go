@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -95,7 +96,10 @@ func TestIndexCatalog_DeindexedFlag(t *testing.T) {
 }
 
 func TestIndexCatalog_CollectNodeIndexKeys(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +123,10 @@ func TestIndexCatalog_CollectNodeIndexKeys(t *testing.T) {
 }
 
 func TestIndexCatalog_CollectEdgeIndexKeys(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

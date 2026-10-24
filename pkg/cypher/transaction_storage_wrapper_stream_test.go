@@ -5,6 +5,8 @@ package cypher
 // wrapper's namespace or, without one, the whole store.
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"sort"
 	"testing"
@@ -14,7 +16,7 @@ import (
 )
 
 func TestTransactionStorageWrapperStreamNodesWithOptions(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []storage.NodeID{"t:1", "u:1"} {

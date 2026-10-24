@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -46,7 +47,7 @@ func TestDB_Coverage_EmbeddingCountErrorPaths(t *testing.T) {
 	})
 
 	t.Run("default path returns zero when default db service cannot be created", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		db := &DB{
 			storage:             storage.NewNamespacedEngine(base, "system"),
@@ -89,15 +90,15 @@ func TestDB_Coverage_QueryChunkEmbeddingEdgeBranches(t *testing.T) {
 }
 
 func TestDB_Coverage_UnwrapToBadgerEngine_NonBadgerChain(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
-	wrapper := &unwrapOnlyEngine{Engine: base, inner: storage.NewMemoryEngine()}
+	wrapper := &unwrapOnlyEngine{Engine: base, inner: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = wrapper.inner.Close() })
 	require.Nil(t, unwrapToBadgerEngine(wrapper))
 }
 
 func TestDB_Coverage_MaybeEnableReplication_DefaultDataDirBranch(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	t.Setenv("NORNICDB_CLUSTER_MODE", "invalid-mode")

@@ -2,6 +2,7 @@ package qdrantgrpc
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -33,7 +34,7 @@ func (readAdmissionSearcher) Search(context.Context, string, []float32, *search.
 // read: each principal below has a different per-database decision.
 func TestDatabaseReadAdmissionThroughEveryGRPCReadMethod(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	collections, err := NewDatabaseCollectionStore(manager, nil)
@@ -52,7 +53,7 @@ func TestDatabaseReadAdmissionThroughEveryGRPCReadMethod(t *testing.T) {
 	authConfig := auth.DefaultAuthConfig()
 	authConfig.SecurityEnabled = true
 	authConfig.JWTSecret = []byte("0123456789abcdef0123456789abcdef")
-	users, err := auth.NewAuthenticator(authConfig, storage.NewMemoryEngine())
+	users, err := auth.NewAuthenticator(authConfig, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	require.NoError(t, err)
 	tokens := map[string]string{}
 	for name := range profiles {

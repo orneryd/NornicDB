@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 	"time"
 
@@ -18,7 +20,7 @@ func TestEmbedWorkerSaveRetryAfterSameSourceUpdate(t *testing.T) {
 				original, err := queue.GetNode("node-000")
 				require.NoError(t, err)
 				dir := t.TempDir()
-				disk, err := storage.NewBadgerEngine(dir)
+				disk, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = disk.Close() })
 				store := storage.NewNamespacedEngine(disk, "retry-freshness")
@@ -61,7 +63,7 @@ func TestEmbedWorkerSaveRetryAfterSameSourceUpdate(t *testing.T) {
 
 				worker.Close()
 				require.NoError(t, disk.Close())
-				reopened, err := storage.NewBadgerEngine(dir)
+				reopened, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 				require.NoError(t, err)
 				defer reopened.Close()
 				restored, err := storage.NewNamespacedEngine(reopened, "retry-freshness").GetNode(original.ID)

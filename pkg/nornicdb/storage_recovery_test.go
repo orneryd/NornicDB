@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,7 +184,10 @@ func TestRecoverBadgerFromSnapshotAndWAL_HandlesEmptyRecoveryInputs(t *testing.T
 
 func TestRecoverBadgerFromSnapshotAndWAL_RejectsEmptyReplayOfExistingStore(t *testing.T) {
 	dataDir := t.TempDir()
-	store, err := storage.NewBadgerEngine(dataDir)
+	store, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+	if store != nil {
+		fixtureowner.Own(t, store)
+	}
 	require.NoError(t, err)
 	_, err = store.CreateNode(&storage.Node{
 		ID: storage.NodeID("nornic:preserved"), Labels: []string{"Doc"},
@@ -214,7 +218,7 @@ func TestRecoverBadgerFromSnapshotAndWAL_SnapshotAndWALReplay(t *testing.T) {
 	wal, err := storage.NewWAL(walDir, &storage.WALConfig{Dir: walDir, SyncMode: "immediate"})
 	require.NoError(t, err)
 
-	mem := storage.NewMemoryEngine()
+	mem := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	ns := storage.NewNamespacedEngine(mem, "test")
 	_, err = ns.CreateNode(&storage.Node{
 		ID:     "seed-1",

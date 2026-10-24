@@ -8,6 +8,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"encoding/binary"
 	"encoding/json"
@@ -554,7 +556,7 @@ func TestAtomicWALFullRecovery(t *testing.T) {
 
 	// Phase 2: Recover from WAL
 	// Recovery will use the database name from each WAL entry
-	baseEngine, result, err := RecoverFromWALWithResult(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -606,7 +608,7 @@ func TestAtomicWALRecoveryWithPartialWrite(t *testing.T) {
 
 	// Recovery should work, getting the 2 valid entries
 	// Use the same database name as the WAL entries (testDBName declared above)
-	baseEngine, result, err := RecoverFromWALWithResult(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery should succeed: %v", err)
 	}

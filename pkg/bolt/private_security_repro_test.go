@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -23,7 +24,7 @@ func (privateReproAccessMode) CanAccessDatabase(name string) bool {
 }
 
 func TestPrivateReproBoltBareBeginPoolReuse(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	manager := &mockDBManager{stores: map[string]storage.Engine{"nornic": store}, defaultDB: "nornic"}
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
 	t.Cleanup(func() { _ = server.Close() })
@@ -58,7 +59,7 @@ func TestPrivateReproBoltBareBeginPoolReuse(t *testing.T) {
 }
 
 func TestPrivateReproBoltConstituentAccess(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })

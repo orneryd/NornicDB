@@ -2,6 +2,7 @@ package linkpredict
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -223,7 +224,7 @@ func TestIsolatedNode(t *testing.T) {
 // TestBuildGraphFromEngine verifies graph construction from storage.
 func TestBuildGraphFromEngine(t *testing.T) {
 	ctx := context.Background()
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
@@ -458,7 +459,7 @@ func TestBuildGraphErrors(t *testing.T) {
 	// (actual behavior depends on Engine interface implementation)
 
 	// Test with empty engine
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	graph, err := BuildGraphFromEngine(ctx, engine, true)

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -106,7 +107,10 @@ func TestWriteBehindTotalCountsIgnoreUpdates(t *testing.T) {
 // read must not add the already-published generation over that scan.
 func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour})
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []NodeID{"test:a", "test:b", "other:z"} {
@@ -190,7 +194,10 @@ func TestWriteBehindTotalCountsColdPrefixesAndMutationLifecycle(t *testing.T) {
 	check(read())
 	require.Empty(t, observed, "empty commits do not republish callbacks")
 	require.NoError(t, engine.Close())
-	engine, err = NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour})
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	check(read())
 }

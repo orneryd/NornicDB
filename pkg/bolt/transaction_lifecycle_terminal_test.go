@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 	"time"
@@ -112,7 +113,10 @@ func TestBoltExplicitTransactionTerminalPathsRecordSinglePersistentWALAbort(t *t
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			badger, err := storage.NewBadgerEngine(t.TempDir())
+			badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+			if badger != nil {
+				fixtureowner.Own(t, badger)
+			}
 			require.NoError(t, err)
 			walDir := t.TempDir()
 			wal, err := storage.NewWAL(walDir, nil)

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 
@@ -11,7 +12,10 @@ import (
 func TestBadgerStartupRepairsLegacyEdgeAdjacency(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "badger")
 	options := BadgerOptions{DataDir: dataDir}
-	engine, err := NewBadgerEngineWithOptions(options)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
@@ -56,14 +60,20 @@ func TestBadgerStartupRepairsLegacyEdgeAdjacency(t *testing.T) {
 	require.NoError(t, engine.Close())
 	engine = nil
 
-	_, err = NewBadgerEngineWithOptions(options)
+	unexpected, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if unexpected != nil {
+		fixtureowner.Own(t, unexpected)
+	}
 	var upgradeErr *ErrStorageUpgradeRequired
 	require.ErrorAs(t, err, &upgradeErr)
 	require.Equal(t, storageVersionPropKeyDictV2, upgradeErr.OnDisk)
 	require.Equal(t, storageVersionCurrent, upgradeErr.Current)
 
 	options.AllowStorageUpgrade = true
-	engine, err = NewBadgerEngineWithOptions(options)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	version, err := engine.readSchemaVersion()
 	require.NoError(t, err)
@@ -92,7 +102,10 @@ func TestV3MigrationPreservesRetainedLegacyEdgeHistory(t *testing.T) {
 		DataDir:       filepath.Join(t.TempDir(), "badger"),
 		EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}},
 	}
-	engine, err := NewBadgerEngineWithOptions(options)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
@@ -124,7 +137,10 @@ func TestV3MigrationPreservesRetainedLegacyEdgeHistory(t *testing.T) {
 	require.NoError(t, engine.Close())
 	engine = nil
 	options.AllowStorageUpgrade = true
-	engine, err = NewBadgerEngineWithOptions(options)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	historical, err := engine.GetOutgoingEdgesVisibleAt(startID, created.Version)
 	require.NoError(t, err)
@@ -137,7 +153,10 @@ func TestV3MigrationPreservesDeletedLegacyEdgeHistory(t *testing.T) {
 		DataDir:       filepath.Join(t.TempDir(), "badger"),
 		EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}},
 	}
-	engine, err := NewBadgerEngineWithOptions(options)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
@@ -169,7 +188,10 @@ func TestV3MigrationPreservesDeletedLegacyEdgeHistory(t *testing.T) {
 	require.NoError(t, engine.Close())
 	engine = nil
 	options.AllowStorageUpgrade = true
-	engine, err = NewBadgerEngineWithOptions(options)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	historical, err := engine.GetOutgoingEdgesVisibleAt(startID, created.Version)
 	require.NoError(t, err)
@@ -187,7 +209,7 @@ func TestV3MigrationPreservesDeletedLegacyEdgeHistory(t *testing.T) {
 // repair plus the runtime version scans must accept them (#752-style startup
 // failure: "invalid mvcc edge version key: len=61").
 func TestRepairArchivedEdgeAdjacencyToleratesLegacyVersionKeys(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = engine.Close()

@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"testing"
 
@@ -211,7 +212,7 @@ func BenchmarkRelationshipVectorQueryIndexedVsStorageScan(b *testing.B) {
 		limit     = 50
 	)
 
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = engine.Close() })
 

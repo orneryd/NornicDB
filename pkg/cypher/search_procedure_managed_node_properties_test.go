@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -14,7 +16,7 @@ func TestSearchProcedureManagedNodeProperties(t *testing.T) {
 	for _, cacheSize := range []int{1, 100} {
 		t.Run(fmt.Sprintf("cache-%d", cacheSize), func(t *testing.T) {
 			ctx := context.Background()
-			base, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{InMemory: true, NodeCacheMaxEntries: cacheSize})
+			base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{InMemory: true, NodeCacheMaxEntries: cacheSize}))
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			store := storage.NewNamespacedEngine(base, "test")

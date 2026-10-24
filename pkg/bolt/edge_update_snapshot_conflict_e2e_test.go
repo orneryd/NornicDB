@@ -15,6 +15,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"strings"
 	"testing"
 
@@ -25,7 +27,7 @@ import (
 // full wire path: handshake, HELLO, BEGIN, RUN, PULL over real Bolt
 // connections against the session-scoped explicit-transaction executor.
 func TestBoltExplicitTxPeerCommittedEdgeUpdateIsTransientOutdated(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = baseStore.Close() })
 	store := storage.NewNamespacedEngine(baseStore, "neo4j")
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)

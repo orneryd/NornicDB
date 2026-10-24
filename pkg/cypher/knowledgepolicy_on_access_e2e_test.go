@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -12,7 +14,7 @@ import (
 
 func setupOnAccessE2E(t *testing.T, bundles map[string]*knowledgepolicy.DecayProfileBundle, bindings map[string]*knowledgepolicy.DecayProfileBinding, policies map[string]*knowledgepolicy.PromotionPolicyDef) (*storage.BadgerEngine, *knowledgepolicy.AccessAccumulator, *knowledgepolicy.AccessFlusher, *StorageExecutor, context.Context) {
 	t.Helper()
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 

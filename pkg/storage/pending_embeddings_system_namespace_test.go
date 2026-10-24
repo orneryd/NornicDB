@@ -1,13 +1,15 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestPendingEmbeddingsIndex_SkipsSystemNamespace(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetEmbeddingsEnabled(true)

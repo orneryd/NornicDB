@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -31,7 +33,7 @@ func TestConstraintContractOrderingIntegerPrecision(t *testing.T) {
 				{"<", even, even, false},
 			} {
 				t.Run(fmt.Sprintf("relationship=%v/backfill=%v/%d%s%d", relationship, backfill, tc.value, tc.op, tc.threshold), func(t *testing.T) {
-					base := storage.NewMemoryEngine()
+					base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 					t.Cleanup(func() { _ = base.Close() })
 					_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
 					conn := openBoltTestConn(t, port)

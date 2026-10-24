@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,7 +14,10 @@ import (
 // and properties, so a retry reuses it).
 func TestEntityRecreatedAfterRolledBackCreateSurvivesReopen(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	for _, id := range []NodeID{"test:a", "test:b"} {
 		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"N"}})
@@ -35,7 +39,7 @@ func TestEntityRecreatedAfterRolledBackCreateSurvivesReopen(t *testing.T) {
 	inTx(true)
 	require.NoError(t, engine.Close())
 
-	engine, err = NewBadgerEngine(dir)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	edge, err := engine.GetEdge("test:merge-x")

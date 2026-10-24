@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"strings"
@@ -14,7 +16,7 @@ import (
 // property: the node phase and the relationship phase together.
 func BenchmarkBuildIndexesWithRelationships(b *testing.B) {
 	b.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "100000")
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer engine.Close()
 	vec := make([]float32, 1024)
 	for i := range vec {

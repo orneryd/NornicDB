@@ -6,6 +6,7 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"sort"
 	"testing"
@@ -27,7 +28,10 @@ func sortedIDs(nodes []*Node) []string {
 func serverStack(t *testing.T) (*BadgerEngine, *WALEngine) {
 	t.Helper()
 	dir := t.TempDir()
-	badger, err := NewBadgerEngine(dir)
+	badger, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if badger != nil {
+		fixtureowner.Own(t, badger)
+	}
 	require.NoError(t, err)
 	wal, err := NewWAL(filepath.Join(dir, "wal"), nil)
 	require.NoError(t, err)
@@ -86,7 +90,7 @@ func TestScopedLabelReadsReturnOneDatabase(t *testing.T) {
 }
 
 func TestScopedLabelReadsVisibleAtAndInTransactions(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, id := range []NodeID{"a:p1", "a:p2", "b:p1"} {
@@ -141,7 +145,7 @@ func TestScopedLabelReadsVisibleAtAndInTransactions(t *testing.T) {
 // The cost of a label read follows its own database: 1,000 nodes in database
 // a are read in about the same time with 50,000 nodes of the label in b.
 func TestScopedLabelReadCostIgnoresOtherDatabases(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	a := NewNamespacedEngine(engine, "a")

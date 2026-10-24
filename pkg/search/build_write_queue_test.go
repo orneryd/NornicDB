@@ -9,6 +9,7 @@ package search
 import (
 	"context"
 	"fmt"
+
 	"log/slog"
 	"path/filepath"
 	"runtime"

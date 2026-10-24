@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,7 +21,7 @@ import (
 
 // createTestBadgerEngine creates an in-memory BadgerEngine for testing.
 func createTestBadgerEngine(t *testing.T) *BadgerEngine {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		engine.Close()
@@ -31,7 +32,10 @@ func createTestBadgerEngine(t *testing.T) *BadgerEngine {
 // createTestBadgerEngineOnDisk creates a disk-based BadgerEngine for persistence tests.
 func createTestBadgerEngineOnDisk(t *testing.T) (*BadgerEngine, string) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	return engine, dir
@@ -983,7 +987,10 @@ func TestBadgerEngine_EdgeBetweenIndexBackfill(t *testing.T) {
 
 func TestBadgerEngine_EdgeBetweenIndexBackfillRepairsStoreAsynchronously(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	n1 := testNode("edge-index-async-n1")
@@ -1005,7 +1012,7 @@ func TestBadgerEngine_EdgeBetweenIndexBackfillRepairsStoreAsynchronously(t *test
 	}))
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 
@@ -1249,7 +1256,10 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 
 	t.Run("data survives restart", func(t *testing.T) {
 		// Create engine and add data
-		engine1, err := NewBadgerEngine(dir)
+		engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+		if engine1 != nil {
+			fixtureowner.Own(t, engine1)
+		}
 		require.NoError(t, err)
 
 		node := &Node{
@@ -1265,7 +1275,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		require.NoError(t, engine1.Close())
 
 		// Reopen
-		engine2, err := NewBadgerEngine(dir)
+		engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 		require.NoError(t, err)
 		defer engine2.Close()
 
@@ -1278,7 +1288,10 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 	t.Run("indexes persist", func(t *testing.T) {
 		// Create fresh engine
 		dir2 := t.TempDir()
-		engine1, err := NewBadgerEngine(dir2)
+		engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir2))
+		if engine1 != nil {
+			fixtureowner.Own(t, engine1)
+		}
 		require.NoError(t, err)
 
 		// Add nodes with labels
@@ -1302,7 +1315,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 		require.NoError(t, engine1.Close())
 
 		// Reopen
-		engine2, err := NewBadgerEngine(dir2)
+		engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir2))
 		require.NoError(t, err)
 		defer engine2.Close()
 
@@ -1319,7 +1332,10 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 
 	t.Run("property index entries survive restart", func(t *testing.T) {
 		dir3 := t.TempDir()
-		engine1, err := NewBadgerEngine(dir3)
+		engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir3))
+		if engine1 != nil {
+			fixtureowner.Own(t, engine1)
+		}
 		require.NoError(t, err)
 
 		nodes := []*Node{
@@ -1343,7 +1359,7 @@ func TestBadgerEngine_Persistence(t *testing.T) {
 
 		require.NoError(t, engine1.Close())
 
-		engine2, err := NewBadgerEngine(dir3)
+		engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir3))
 		require.NoError(t, err)
 		defer engine2.Close()
 
@@ -1520,7 +1536,7 @@ func TestBadgerEngine_RunGC(t *testing.T) {
 func TestNewBadgerEngine(t *testing.T) {
 	t.Run("creates engine with valid path", func(t *testing.T) {
 		dir := t.TempDir()
-		engine, err := NewBadgerEngine(dir)
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 		require.NoError(t, err)
 		defer engine.Close()
 
@@ -1530,7 +1546,7 @@ func TestNewBadgerEngine(t *testing.T) {
 
 	t.Run("creates directory if not exists", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "subdir", "nested")
-		engine, err := NewBadgerEngine(dir)
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 		require.NoError(t, err)
 		defer engine.Close()
 
@@ -1543,9 +1559,9 @@ func TestNewBadgerEngine(t *testing.T) {
 
 func TestNewBadgerEngineWithOptions(t *testing.T) {
 	t.Run("respects InMemory option", func(t *testing.T) {
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 			InMemory: true,
-		})
+		}))
 		require.NoError(t, err)
 		defer engine.Close()
 
@@ -1556,10 +1572,10 @@ func TestNewBadgerEngineWithOptions(t *testing.T) {
 
 	t.Run("respects SyncWrites option", func(t *testing.T) {
 		dir := t.TempDir()
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 			DataDir:    dir,
 			SyncWrites: true,
-		})
+		}))
 		require.NoError(t, err)
 		defer engine.Close()
 
@@ -1569,17 +1585,20 @@ func TestNewBadgerEngineWithOptions(t *testing.T) {
 	})
 
 	t.Run("rejects bad encryption key", func(t *testing.T) {
-		_, err := NewBadgerEngineWithOptions(BadgerOptions{
+		_, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 			InMemory:      true,
 			EncryptionKey: []byte("short"),
-		})
+		}))
 		require.ErrorContains(t, err, "16, 24, or 32 bytes")
 	})
 
 	t.Run("applies cache defaults and overrides", func(t *testing.T) {
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 			InMemory: true,
-		})
+		}))
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		require.Equal(t, defaultBadgerNodeCacheMaxEntries, engine.nodeCacheMaxEntries)
 		require.Equal(t, defaultBadgerEdgeTypeCacheMaxTypes, engine.edgeTypeCacheMaxTypes)
@@ -1588,7 +1607,7 @@ func TestNewBadgerEngineWithOptions(t *testing.T) {
 		require.Zero(t, engine.retentionPolicy.TTL)
 		require.NoError(t, engine.Close())
 
-		engine, err = NewBadgerEngineWithOptions(BadgerOptions{
+		engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 			InMemory:                      true,
 			HighPerformance:               true,
 			NodeCacheMaxEntries:           7,
@@ -1597,7 +1616,7 @@ func TestNewBadgerEngineWithOptions(t *testing.T) {
 			EngineOptions: EngineOptions{
 				RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 7, TTL: time.Hour},
 			},
-		})
+		}))
 		require.NoError(t, err)
 		defer engine.Close()
 		require.Equal(t, 7, engine.nodeCacheMaxEntries)
@@ -1610,10 +1629,10 @@ func TestNewBadgerEngineWithOptions(t *testing.T) {
 	})
 
 	t.Run("low memory mode also initializes successfully", func(t *testing.T) {
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 			InMemory:  true,
 			LowMemory: true,
-		})
+		}))
 		require.NoError(t, err)
 		defer engine.Close()
 
@@ -1942,7 +1961,7 @@ func TestBadgerEngine_ImplementsEngine(t *testing.T) {
 // ============================================================================
 
 func BenchmarkBadgerEngine_CreateNode(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -1960,7 +1979,7 @@ func BenchmarkBadgerEngine_CreateNode(b *testing.B) {
 }
 
 func BenchmarkBadgerEngine_GetNode(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -1985,7 +2004,7 @@ func BenchmarkBadgerEngine_GetNode(b *testing.B) {
 func BenchmarkBadgerEngine_BulkCreateNodes(b *testing.B) {
 	for _, size := range []int{10, 100, 1000} {
 		b.Run(fmt.Sprintf("size=%d", size), func(b *testing.B) {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -2003,7 +2022,7 @@ func BenchmarkBadgerEngine_BulkCreateNodes(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				// Reset engine between iterations
 				engine.Close()
-				engine, _ = NewBadgerEngineInMemory()
+				engine, _ = fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 				engine.BulkCreateNodes(nodes)
 			}
 		})
@@ -2128,7 +2147,10 @@ func TestBadgerEngine_UpdateEdge_NilAndEmptyID(t *testing.T) {
 }
 
 func TestBadgerEngine_ClosedEngineErrors(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 

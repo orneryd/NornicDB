@@ -9,6 +9,7 @@ package search
 import (
 	"context"
 	"fmt"
+
 	"log/slog"
 	"math/rand"
 	"path/filepath"

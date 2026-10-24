@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"archive/zip"
 	"context"
 	"io"
@@ -31,7 +33,7 @@ func TestVectorEntryRollbackToRelease143(t *testing.T) {
 	require.NoError(t, archive.Close())
 	// The documented rollback operation discards only derived search caches.
 	require.NoError(t, os.RemoveAll(filepath.Join(dir, "search")))
-	base, err := storage.NewBadgerEngine(filepath.Join(dir, "graph"))
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(dir, "graph")))
 	require.NoError(t, err)
 	defer base.Close()
 	engine := storage.NewNamespacedEngine(base, "nornic")
@@ -50,7 +52,11 @@ func TestVectorEntryRollbackToRelease143(t *testing.T) {
 	hits, err := svc.VectorQueryNodes(context.Background(), []float32{0, 0, 1, 0}, VectorQuerySpec{Limit: 10})
 	require.NoError(t, err)
 	var found bool
-	for _, hit := range hits { if hit.ID == "rollback-control" { found = true } }
+	for _, hit := range hits {
+		if hit.ID == "rollback-control" {
+			found = true
+		}
+	}
 	require.True(t, found, "a write made after upgrade must survive rollback and rebuild")
 	// v1.4.3 still has the original collision bug; this probe proves rollback
 	// readability and rebuild, not collision correctness in the old binary.

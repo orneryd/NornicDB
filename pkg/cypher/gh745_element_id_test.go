@@ -6,6 +6,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -15,7 +16,7 @@ import (
 )
 
 func TestGh745_CompositeSubqueryElementIDNamesConstituent(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
