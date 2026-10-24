@@ -578,7 +578,7 @@ func buildTemporalValue(kind string, fields map[string]interface{}) (interface{}
 	value := time.Date(date.Year(), date.Month(), date.Day(), int(hour), int(minute), int(second), int(nanosecond), zone)
 	if kind == "datetime" && zoneID != "" {
 		local := time.Date(date.Year(), date.Month(), date.Day(), int(hour), int(minute), int(second), int(nanosecond), time.UTC)
-		value = resolveNamedZoneLocalTime(local, zone, true)
+		value = ResolveNamedZoneLocalTime(local, zone, true)
 	}
 	value = normalizeTemporalNamedZone(value)
 	switch kind {

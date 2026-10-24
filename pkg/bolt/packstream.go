@@ -3,6 +3,7 @@ package bolt
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"strings"
@@ -12,6 +13,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
+
+var errDateTimeSignature = errors.New("DateTime signature is not allowed by the negotiated Bolt temporal format")
 
 var packstreamZero8 [8]byte
 var packstreamFallbackHook func(v any)
@@ -226,12 +229,12 @@ func encodePackStreamValueIntoWithUTC(dst []byte, v any, useUTCDateTimeStructs b
 		}
 		return encodeStorageEdgeIntoWithUTC(dst, val, useUTCDateTimeStructs)
 	case unboundRelationship:
-		return encodeUnboundRelationshipInto(dst, &val)
+		return encodeUnboundRelationshipIntoWithUTC(dst, &val, useUTCDateTimeStructs)
 	case *unboundRelationship:
 		if val == nil {
 			return append(dst, 0xC0)
 		}
-		return encodeUnboundRelationshipInto(dst, val)
+		return encodeUnboundRelationshipIntoWithUTC(dst, val, useUTCDateTimeStructs)
 	case []storage.Edge:
 		if len(val) == 0 {
 			return append(dst, 0x90)
@@ -592,7 +595,7 @@ func encodePackStreamCypherDateTimeInto(dst []byte, value cypher.CypherDateTime,
 	return encodePackStreamIntInto(dst, int64(offset))
 }
 
-func decodePackStreamDateTime(seconds, nanos int64, location *time.Location, useUTCDateTimeStructs bool) time.Time {
+func decodePackStreamDateTime(seconds, nanos int64, location *time.Location, useUTCDateTimeStructs, namedZone bool) time.Time {
 	value := time.Unix(seconds, nanos)
 	if useUTCDateTimeStructs {
 		return value.In(location)
@@ -600,6 +603,11 @@ func decodePackStreamDateTime(seconds, nanos int64, location *time.Location, use
 	// Interpret the legacy wall-clock components in the supplied zone. Looking
 	// up the offset at time.Unix(seconds, nanos) instead is wrong near DST changes.
 	value = value.UTC()
+	if namedZone {
+		// Legacy zone IDs use the string-constructor policy: the earlier overlap
+		// instant and a forward shift through gaps, matching Neo4j's wire reader.
+		return cypher.ResolveNamedZoneLocalTime(value, location, false)
+	}
 	return time.Date(value.Year(), value.Month(), value.Day(), value.Hour(), value.Minute(), value.Second(), value.Nanosecond(), location)
 }
 
@@ -1428,7 +1436,7 @@ func decodePackStreamString(data []byte, offset int) (string, int, error) {
 	return str, (offset + length) - startOffset, nil
 }
 
-func decodePackStreamMap(data []byte, offset int) (map[string]any, int, error) {
+func decodePackStreamMap(data []byte, offset int, utcDateTime ...bool) (map[string]any, int, error) {
 	if offset >= len(data) {
 		return nil, 0, fmt.Errorf("offset out of bounds")
 	}
@@ -1451,7 +1459,7 @@ func decodePackStreamMap(data []byte, offset int) (map[string]any, int, error) {
 		offset += n
 
 		// Decode value
-		value, n, err := decodePackStreamValue(data, offset)
+		value, n, err := decodePackStreamValue(data, offset, utcDateTime...)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to decode map value for key %s: %w", key, err)
 		}
@@ -1463,7 +1471,7 @@ func decodePackStreamMap(data []byte, offset int) (map[string]any, int, error) {
 	return result, offset - startOffset, nil
 }
 
-func decodePackStreamValue(data []byte, offset int) (any, int, error) {
+func decodePackStreamValue(data []byte, offset int, utcDateTime ...bool) (any, int, error) {
 	if offset >= len(data) {
 		return nil, 0, fmt.Errorf("offset out of bounds")
 	}
@@ -1580,12 +1588,12 @@ func decodePackStreamValue(data []byte, offset int) (any, int, error) {
 
 	// List
 	if marker >= 0x90 && marker <= 0x9F || marker == 0xD4 || marker == 0xD5 || marker == 0xD6 {
-		return decodePackStreamList(data, offset)
+		return decodePackStreamList(data, offset, utcDateTime...)
 	}
 
 	// Map
 	if marker >= 0xA0 && marker <= 0xAF || marker == 0xD8 || marker == 0xD9 || marker == 0xDA {
-		return decodePackStreamMap(data, offset)
+		return decodePackStreamMap(data, offset, utcDateTime...)
 	}
 
 	// Structure (for nodes, relationships, paths, etc.)
@@ -1593,7 +1601,7 @@ func decodePackStreamValue(data []byte, offset int) (any, int, error) {
 	// Tiny structures: 0xB0-0xBF (0-15 fields)
 	// Larger structures: 0xDC (STRUCT8), 0xDD (STRUCT16)
 	if marker >= 0xB0 && marker <= 0xBF {
-		return decodePackStreamStructure(data, offset)
+		return decodePackStreamStructure(data, offset, utcDateTime...)
 	}
 
 	// STRUCT8: 0xDC [size: 1 byte] [signature: 1 byte] [fields...]
@@ -1604,7 +1612,7 @@ func decodePackStreamValue(data []byte, offset int) (any, int, error) {
 		size := int(data[offset+1])
 		signature := data[offset+2]
 		fieldOffset := offset + 3
-		result, fieldsConsumed, err := decodeStructureFields(data, fieldOffset, size, signature)
+		result, fieldsConsumed, err := decodeStructureFields(data, fieldOffset, size, signature, utcDateTime...)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -1620,7 +1628,7 @@ func decodePackStreamValue(data []byte, offset int) (any, int, error) {
 		size := int(data[offset+1])<<8 | int(data[offset+2])
 		signature := data[offset+3]
 		fieldOffset := offset + 4
-		result, fieldsConsumed, err := decodeStructureFields(data, fieldOffset, size, signature)
+		result, fieldsConsumed, err := decodeStructureFields(data, fieldOffset, size, signature, utcDateTime...)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -1633,7 +1641,7 @@ func decodePackStreamValue(data []byte, offset int) (any, int, error) {
 
 // decodePackStreamStructure decodes a tiny structure (0xB0-0xBF).
 // Format: [marker] [signature] [field1] [field2] ...
-func decodePackStreamStructure(data []byte, offset int) (any, int, error) {
+func decodePackStreamStructure(data []byte, offset int, utcDateTime ...bool) (any, int, error) {
 	if offset >= len(data) {
 		return nil, 0, fmt.Errorf("offset out of bounds")
 	}
@@ -1653,7 +1661,7 @@ func decodePackStreamStructure(data []byte, offset int) (any, int, error) {
 
 	// Decode fields based on signature
 	// Note: offset already accounts for marker (1 byte) and signature (1 byte)
-	result, fieldsConsumed, err := decodeStructureFields(data, offset, fieldCount, signature)
+	result, fieldsConsumed, err := decodeStructureFields(data, offset, fieldCount, signature, utcDateTime...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -1668,13 +1676,23 @@ func decodePackStreamStructure(data []byte, offset int) (any, int, error) {
 //	0x52 (R) = Relationship: [id, startNodeId, endNodeId, type, properties]
 //	0x50 (P) = Path: [nodes, relationships, sequence]
 //	Other signatures are decoded as generic structures (map with fields)
-func decodeStructureFields(data []byte, offset int, fieldCount int, signature byte) (any, int, error) {
+func decodeStructureFields(data []byte, offset int, fieldCount int, signature byte, utcDateTime ...bool) (any, int, error) {
+	// Unscoped codec callers may inspect either family. Session readers pass
+	// their negotiated mode through every nested container and structure.
+	if len(utcDateTime) > 0 {
+		utc := signature == 0x49 || signature == 0x69
+		legacy := signature == 0x46 || signature == 0x66
+		if (utc || legacy) && utcDateTime[0] != utc {
+			return nil, 0, fmt.Errorf("%w: 0x%02X", errDateTimeSignature, signature)
+		}
+	}
+
 	startOffset := offset
 	fields := make([]any, fieldCount)
 
 	// Decode all fields
 	for i := 0; i < fieldCount; i++ {
-		value, n, err := decodePackStreamValue(data, offset)
+		value, n, err := decodePackStreamValue(data, offset, utcDateTime...)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to decode structure field %d: %w", i, err)
 		}
@@ -1731,7 +1749,7 @@ func decodeStructureFields(data []byte, offset int, fieldCount int, signature by
 			offsetSec, okOffset := toInt64Field(fields[2])
 			if okSec && okNsec && okOffset {
 				loc := time.FixedZone("", int(offsetSec))
-				return cypher.CypherDateTime{Time: decodePackStreamDateTime(sec, nsec, loc, signature == 0x49)}, fieldsConsumed, nil
+				return cypher.CypherDateTime{Time: decodePackStreamDateTime(sec, nsec, loc, signature == 0x49, false)}, fieldsConsumed, nil
 			}
 		}
 		return map[string]any{"_type": "DateTime", "fields": fields}, fieldsConsumed, nil
@@ -1815,7 +1833,7 @@ func decodeStructureFields(data []byte, offset int, fieldCount int, signature by
 				if err != nil {
 					loc = time.UTC
 				}
-				return cypher.CypherDateTime{Time: decodePackStreamDateTime(sec, nsec, loc, signature == 0x69), ZoneID: zoneID}, fieldsConsumed, nil
+				return cypher.CypherDateTime{Time: decodePackStreamDateTime(sec, nsec, loc, signature == 0x69, true), ZoneID: zoneID}, fieldsConsumed, nil
 			}
 		}
 		return map[string]any{"_type": "DateTimeZoneId", "fields": fields}, fieldsConsumed, nil
@@ -1858,7 +1876,7 @@ func toInt64Field(v any) (int64, bool) {
 	}
 }
 
-func decodePackStreamList(data []byte, offset int) ([]any, int, error) {
+func decodePackStreamList(data []byte, offset int, utcDateTime ...bool) ([]any, int, error) {
 	if offset >= len(data) {
 		return nil, 0, fmt.Errorf("offset out of bounds")
 	}
@@ -1902,7 +1920,7 @@ func decodePackStreamList(data []byte, offset int) ([]any, int, error) {
 	result := make([]any, validatedSize)
 
 	for i := 0; i < validatedSize; i++ {
-		value, n, err := decodePackStreamValue(data, offset)
+		value, n, err := decodePackStreamValue(data, offset, utcDateTime...)
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to decode list item %d: %w", i, err)
 		}
