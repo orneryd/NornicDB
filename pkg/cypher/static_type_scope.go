@@ -234,7 +234,7 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 	if scope.invalid {
 		return nil, false, false, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
 	}
-	if scope.bodyOffset == 0 {
+	if scope.bodyOffset == 0 || scope.bodyOffset >= len(callText) || callText[scope.bodyOffset] != '{' {
 		return nil, false, false, nil
 	}
 	initial := make(typeScope)
