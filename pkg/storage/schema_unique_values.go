@@ -390,6 +390,9 @@ func (sm *SchemaManager) waitForUniqueConstraintLock(ctx context.Context, owner 
 		sm.uniqueConstraintLockWaits[owner] = lock
 		released := lock.released
 		sm.uniqueConstraintCommitLocksMu.Unlock()
+		if hook := uniqueKeyLockWaitHook.Load(); hook != nil {
+			(*hook)()
+		}
 		select {
 		case <-released:
 		case <-ctx.Done():
