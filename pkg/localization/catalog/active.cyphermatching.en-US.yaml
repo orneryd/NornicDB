@@ -118,6 +118,18 @@
 - id: cyphermatching.return_star_no_variables
   description: "RETURN * with no variable in scope."
   other: "RETURN * requires at least one variable in scope"
+- id: cyphermatching.query_cannot_conclude
+  description: "A query or CALL subquery body whose last clause can't conclude it. Clause is a Cypher keyword and is not translated."
+  other: "Query cannot conclude with {{.Clause}} (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD)."
+- id: cyphermatching.exists_expression_updates
+  description: "An update clause inside a EXISTS subquery expression, at any depth."
+  other: "An Exists Expression cannot contain any updates"
+- id: cyphermatching.count_expression_updates
+  description: "An update clause inside a COUNT subquery expression, at any depth."
+  other: "A Count Expression cannot contain any updates"
+- id: cyphermatching.collect_expression_updates
+  description: "An update clause inside a COLLECT subquery expression, at any depth."
+  other: "A Collect Expression cannot contain any updates"
 - id: cyphermatching.optional_match_shape_unsupported
   description: "A MATCH … OPTIONAL MATCH statement the clause pipeline does not run. Query is Cypher text and is not translated."
   other: "this MATCH … OPTIONAL MATCH form is not supported: {{.Query}}"

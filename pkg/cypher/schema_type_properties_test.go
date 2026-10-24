@@ -52,7 +52,7 @@ func TestSchemaTypeProperties(t *testing.T) {
 	require.Equal(t, [][]interface{}{
 		{":`ZR`", "w", []string{"INTEGER NOT NULL"}, true},
 		{":`ZS`", nil, nil, false},
-	}, call("CYPHER 25 CALL db.schema.relTypeProperties() YIELD relType, propertyName, propertyTypes, mandatory RETURN *"))
+	}, call("CYPHER 25 CALL db.schema.relTypeProperties() YIELD relType, propertyName, propertyTypes, mandatory RETURN relType, propertyName, propertyTypes, mandatory"))
 
 	for value, want := range map[string][2]string{
 		"zoned datetime": {"DateTime", "ZONED DATETIME NOT NULL"},

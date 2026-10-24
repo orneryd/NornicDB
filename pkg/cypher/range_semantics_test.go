@@ -64,6 +64,14 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 			{"UNWIND range(1, 30000) AS x WITH sum(x) AS s RETURN s", 450015000},
 		} {
 			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, test.query), func(t *testing.T) {
+				// This budget detects retained input rows, independently of the
+				// process-global grammar's cold prediction initialization. Only
+				// syntax is prepared; the executor and its first result stay fresh.
+				var parserBefore, parserAfter runtime.MemStats
+				runtime.ReadMemStats(&parserBefore)
+				require.NoError(t, cypherantlr.Validate(test.query))
+				runtime.ReadMemStats(&parserAfter)
+				t.Logf("grammar setup allocated %d bytes outside row-retention measurement", parserAfter.TotalAlloc-parserBefore.TotalAlloc)
 				executor := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "stream_aggregate"), 0, 0)
 				if explicit {
 					_, err := executor.handleBegin()
