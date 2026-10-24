@@ -5,13 +5,11 @@ import (
 	"encoding/binary"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"unicode"
 
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -113,6 +111,9 @@ func (e *FabricExecutor) restoreCachedResultColumns(ctx context.Context, result 
 //   - params: query parameters
 //   - authToken: the caller's auth token for OIDC forwarding to remote shards
 func (e *FabricExecutor) Execute(ctx context.Context, tx *FabricTransaction, fragment Fragment, params map[string]interface{}, authToken string) (*ResultStream, error) {
+	if tx != nil {
+		tx.BindContext(ctx)
+	}
 	switch f := fragment.(type) {
 	case *FragmentInit:
 		return e.executeInit(f)
@@ -302,68 +303,20 @@ func materializeIterator(columns []string, it RowIterator) (*ResultStream, error
 	}, nil
 }
 
-func lastKeywordIndexFold(s, keyword string) int {
-	if len(keyword) == 0 || len(s) < len(keyword) {
-		return -1
-	}
-	for i := len(s) - len(keyword); i >= 0; i-- {
-		if hasKeywordAt(s, i, keyword) {
-			return i
-		}
-	}
-	return -1
-}
-
-func lastAsIndexFold(s string) int {
-	if len(s) < 4 {
-		return -1
-	}
-	for i := len(s) - 4; i >= 0; i-- {
-		if strings.EqualFold(s[i:i+4], " AS ") {
-			return i
-		}
-	}
-	return -1
+func inferReturnColumnsFromQuery(query string) []string {
+	return ReadQueryStructure(query).ResultColumns()
 }
 
 func splitTopLevelCSV(s string) []string {
 	var parts []string
 	start := 0
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(s); i++ {
-		if next, quoted := cyphertext.SkipToken(s, i); quoted {
-			i = next - 1
-			continue
-		}
-		ch := s[i]
-		switch ch {
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		case ',':
-			if paren == 0 && bracket == 0 && brace == 0 {
-				parts = append(parts, s[start:i])
-				start = i + 1
-			}
+	for token := range queryTokens(s) {
+		if token.depth == 0 && token.text == "," {
+			parts = append(parts, s[start:token.start])
+			start = token.end
 		}
 	}
-	parts = append(parts, s[start:])
-	return parts
+	return append(parts, s[start:])
 }
 
 func participantKeyFromLocation(loc Location) string {
@@ -371,6 +324,9 @@ func participantKeyFromLocation(loc Location) string {
 	case *LocationLocal:
 		return "local:" + strings.TrimSpace(l.DBName)
 	case *LocationRemote:
+		if l.GraphName != "" {
+			return "remote:" + l.GraphName
+		}
 		return "remote:" + strings.TrimSpace(l.URI) + "|" + strings.TrimSpace(l.DBName)
 	default:
 		return fmt.Sprintf("unknown:%T", loc)
@@ -558,19 +514,19 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRowsIter(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+	if !ReadQueryStructure(trimmed).Starts("WITH") || queryIsWrite(trimmed) {
 		return nil, false, nil
 	}
 
-	m := reApplyLookupRows.FindStringSubmatch(trimmed)
-	if len(m) != 6 {
+	spec, parsed := parseApplyCorrelatedLookupSubquery(trimmed)
+	if !parsed {
 		return nil, false, nil
 	}
-	importCol := strings.TrimSpace(m[1])
-	useClause := strings.TrimSpace(m[2])
-	matchPart := strings.TrimSpace(m[3])
-	wherePart := strings.TrimSpace(m[4])
-	returnPart := strings.TrimSpace(m[5])
+	importCol := spec.importCol
+	useClause := spec.useClause
+	matchPart := spec.matchPart
+	wherePart := spec.wherePart
+	returnPart := strings.TrimSpace(spec.returnProjection + " " + spec.returnModifiers)
 	if importCol == "" || wherePart == "" || returnPart == "" {
 		return nil, false, nil
 	}
@@ -766,8 +722,6 @@ type applyCorrelatedLookupSpec struct {
 	returnModifiers  string
 }
 
-var reApplyLookupRows = regexp.MustCompile(`(?is)^WITH\s+([A-Za-z_][A-Za-z0-9_]*)\s+((?:USE\s+[A-Za-z0-9_.` + "`" + `]+\s+)?)MATCH\s+(.+?)\s+WHERE\s+(.+?)\s+RETURN\s+(.+?)\s*;?\s*$`)
-
 type fabricReturnItem struct {
 	expr  string
 	prop  string
@@ -797,7 +751,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCollectLookup(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+	if !ReadQueryStructure(trimmed).Starts("WITH") || queryIsWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -998,7 +952,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || !containsFold(trimmed, "count(") || queryIsWrite(trimmed) {
+	if !ReadQueryStructure(trimmed).Starts("WITH") || queryIsWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -1240,7 +1194,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 	}
 
 	trimmed := strings.TrimSpace(inner.Query)
-	if !startsWithFold(trimmed, "WITH ") || !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") || queryIsWrite(trimmed) {
+	if !ReadQueryStructure(trimmed).Starts("WITH") || queryIsWrite(trimmed) {
 		return nil, false, nil
 	}
 
@@ -1496,27 +1450,18 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 }
 
 func parseSimpleBatchedLookupReturnItems(returnPart, matchVar string) ([]fabricReturnItem, bool) {
-	items := splitTopLevelCSV(returnPart)
-	if len(items) == 0 {
+	p := readProjection(returnPart)
+	if p == nil || p.Distinct || p.Star || p.Modifiers != "" || len(p.Items) == 0 {
 		return nil, false
 	}
-	out := make([]fabricReturnItem, 0, len(items))
-	for _, raw := range items {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
+	out := make([]fabricReturnItem, 0, len(p.Items))
+	for _, item := range p.Items {
+		v, prop, ok := syntaxProperty(item.tree)
+		alias := item.Column
+		if !ok || v != matchVar || !isSimpleIdentifier(v) || !isSimpleIdentifier(prop) || !isSimpleIdentifier(alias) {
 			return nil, false
 		}
-		expr := raw
-		alias := raw
-		if as := lastAsIndexFold(raw); as >= 0 {
-			expr = strings.TrimSpace(raw[:as])
-			alias = strings.TrimSpace(raw[as+4:])
-		}
-		v, p, ok := parseFabricVarProp(expr)
-		if !ok || !strings.EqualFold(v, matchVar) || !isSimpleIdentifier(alias) {
-			return nil, false
-		}
-		out = append(out, fabricReturnItem{expr: strings.TrimSpace(expr), prop: p, alias: alias})
+		out = append(out, fabricReturnItem{expr: item.Expression, prop: prop, alias: alias})
 	}
 	return out, true
 }
@@ -1529,6 +1474,10 @@ func buildResultModifierAliasMap(items []fabricReturnItem) map[string]string {
 		}
 		if strings.TrimSpace(item.expr) != "" {
 			out[item.expr] = item.alias
+			_, tree := readExpression(item.expr)
+			if key := syntaxExpressionKey(tree); key != "" {
+				out[key] = item.alias
+			}
 		}
 	}
 	return out
@@ -1543,45 +1492,22 @@ func aliasesFromReturnItems(items []fabricReturnItem) []string {
 }
 
 func parseSimpleBatchedCountReturnItems(returnPart string) ([]fabricCountReturnItem, bool) {
-	items := splitTopLevelCSV(returnPart)
-	if len(items) == 0 {
+	p := readProjection(returnPart)
+	if p == nil || p.Distinct || p.Star || p.Modifiers != "" || len(p.Items) == 0 {
 		return nil, false
 	}
-	out := make([]fabricCountReturnItem, 0, len(items))
-	for _, raw := range items {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
+	out := make([]fabricCountReturnItem, 0, len(p.Items))
+	for _, item := range p.Items {
+		alias := item.Column
+		if !isSimpleIdentifier(alias) || !isSimpleCountExpr(item.Expression) {
 			return nil, false
 		}
-		expr := raw
-		alias := raw
-		if as := lastAsIndexFold(raw); as >= 0 {
-			expr = strings.TrimSpace(raw[:as])
-			alias = strings.TrimSpace(raw[as+4:])
-		}
-		if !isSimpleIdentifier(alias) {
-			return nil, false
-		}
-		if !isSimpleCountExpr(expr) {
-			return nil, false
-		}
-		out = append(out, fabricCountReturnItem{expr: expr, alias: alias})
+		out = append(out, fabricCountReturnItem{expr: item.Expression, alias: alias})
 	}
 	return out, true
 }
 
-func isSimpleCountExpr(expr string) bool {
-	expr = strings.TrimSpace(expr)
-	if !startsWithFold(expr, "count(") || !strings.HasSuffix(expr, ")") {
-		return false
-	}
-	inner := strings.TrimSpace(expr[len("count(") : len(expr)-1])
-	if inner == "*" || isSimpleIdentifier(inner) {
-		return true
-	}
-	_, _, ok := parseFabricVarProp(inner)
-	return ok
-}
+func isSimpleCountExpr(expr string) bool { return syntaxSimpleCount(expr) }
 
 func aliasesFromCountReturnItems(items []fabricCountReturnItem) []string {
 	cols := make([]string, 0, len(items))
@@ -1600,162 +1526,46 @@ func zeroCountValues(n int) []interface{} {
 }
 
 func parseSimpleCollectReturnItem(returnPart string) (collectExpr string, alias string, ok bool) {
-	parts := splitTopLevelCSV(strings.TrimSpace(returnPart))
-	if len(parts) != 1 {
+	p := readProjection(returnPart)
+	if p == nil || p.Distinct || p.Star || p.Modifiers != "" || len(p.Items) != 1 {
 		return "", "", false
 	}
-	item := strings.TrimSpace(parts[0])
-	asIdx := lastAsIndexFold(item)
-	if asIdx < 0 {
+	item := p.Items[0]
+	if item.Alias == "" {
 		return "", "", false
 	}
-	expr := strings.TrimSpace(item[:asIdx])
-	alias = strings.TrimSpace(item[asIdx+4:])
-	if !isSimpleIdentifier(alias) {
-		return "", "", false
-	}
-	if !startsWithFold(expr, "collect(") || !strings.HasSuffix(expr, ")") {
-		return "", "", false
-	}
-	inner := strings.TrimSpace(expr[len("collect(") : len(expr)-1])
-	if inner == "" {
-		return "", "", false
-	}
-	return inner, alias, true
+	inner, ok := syntaxCollect(item.Expression)
+	return inner, item.Alias, ok
 }
 
 func parseApplyCorrelatedLookupSubquery(query string) (applyCorrelatedLookupSpec, bool) {
-	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(query), ";"))
-	if !startsWithFold(trimmed, "WITH ") {
+	q := ReadQueryStructure(query)
+	if q.Err != nil || !q.Starts("WITH") {
 		return applyCorrelatedLookupSpec{}, false
 	}
-
-	rest := strings.TrimSpace(trimmed[len("WITH "):])
-	if rest == "" {
+	clauses := q.Clauses
+	p := clauses[0].Projection
+	if p == nil || p.Star || p.Distinct || p.Modifiers != "" || clauses[0].Predicate != "" || len(p.Items) != 1 || !isSimpleIdentifier(p.Items[0].Name) || p.Items[0].HasAlias {
 		return applyCorrelatedLookupSpec{}, false
 	}
-	if commaIdx := strings.Index(rest, ","); commaIdx >= 0 && commaIdx < strings.Index(rest+" ", " ") {
+	spec := applyCorrelatedLookupSpec{importCol: p.Items[0].Name}
+	clauses = clauses[1:]
+	if len(clauses) > 0 && clauses[0].Kind == "USE" {
+		spec.useClause = clauses[0].Text
+		clauses = clauses[1:]
+	}
+	if len(clauses) != 2 || clauses[0].Kind != "MATCH" || clauses[1].Kind != "RETURN" || clauses[1].Projection == nil {
 		return applyCorrelatedLookupSpec{}, false
 	}
-
-	importCol, remainder := firstToken(rest)
-	if importCol == "" || !isSimpleIdentifier(importCol) {
+	spec.matchPart = clauses[0].Pattern
+	spec.wherePart = clauses[0].Predicate
+	projection := clauses[1].Projection
+	if projection.Distinct || projection.Star || !syntaxSimpleModifiers(projection) {
 		return applyCorrelatedLookupSpec{}, false
 	}
-	rest = strings.TrimSpace(remainder)
-	if rest == "" {
-		return applyCorrelatedLookupSpec{}, false
-	}
-
-	useClause := ""
-	if startsWithFold(rest, "USE ") {
-		matchIdx := indexTopLevelKeyword(rest, "MATCH")
-		if matchIdx <= 0 {
-			return applyCorrelatedLookupSpec{}, false
-		}
-		useClause = strings.TrimSpace(rest[:matchIdx])
-		if !startsWithFold(useClause, "USE ") {
-			return applyCorrelatedLookupSpec{}, false
-		}
-		rest = strings.TrimSpace(rest[matchIdx:])
-	}
-
-	if !startsWithFold(rest, "MATCH ") {
-		return applyCorrelatedLookupSpec{}, false
-	}
-	rest = strings.TrimSpace(rest[len("MATCH "):])
-	if rest == "" {
-		return applyCorrelatedLookupSpec{}, false
-	}
-
-	returnIdx := indexTopLevelKeyword(rest, "RETURN")
-	if returnIdx < 0 {
-		return applyCorrelatedLookupSpec{}, false
-	}
-	beforeReturn := strings.TrimSpace(rest[:returnIdx])
-	if beforeReturn == "" {
-		return applyCorrelatedLookupSpec{}, false
-	}
-	returnClause := strings.TrimSpace(rest[returnIdx+len("RETURN"):])
-	if returnClause == "" {
-		return applyCorrelatedLookupSpec{}, false
-	}
-
-	matchPart := beforeReturn
-	wherePart := ""
-	if whereIdx := indexTopLevelKeyword(beforeReturn, "WHERE"); whereIdx >= 0 {
-		matchPart = strings.TrimSpace(beforeReturn[:whereIdx])
-		wherePart = strings.TrimSpace(beforeReturn[whereIdx+len("WHERE"):])
-		if matchPart == "" {
-			return applyCorrelatedLookupSpec{}, false
-		}
-	}
-
-	projection, modifiers := splitTopLevelResultModifiers(returnClause)
-	if strings.TrimSpace(projection) == "" {
-		return applyCorrelatedLookupSpec{}, false
-	}
-
-	return applyCorrelatedLookupSpec{
-		importCol:        importCol,
-		useClause:        strings.TrimSpace(useClause),
-		matchPart:        matchPart,
-		wherePart:        wherePart,
-		returnProjection: strings.TrimSpace(projection),
-		returnModifiers:  strings.TrimSpace(modifiers),
-	}, true
-}
-
-func firstToken(s string) (token string, rest string) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "", ""
-	}
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case ' ', '\t', '\n', '\r':
-			return strings.TrimSpace(s[:i]), strings.TrimSpace(s[i:])
-		}
-	}
-	return s, ""
-}
-
-func indexTopLevelKeyword(s string, keyword string) int {
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(s); i++ {
-		if next, quoted := cyphertext.SkipToken(s, i); quoted {
-			i = next - 1
-			continue
-		}
-		ch := s[i]
-		switch ch {
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if hasKeywordAt(s, i, keyword) {
-			return i
-		}
-	}
-	return -1
+	spec.returnProjection = projection.Text
+	spec.returnModifiers = projection.Modifiers
+	return spec, true
 }
 
 func extractApplyCorrelationWhere(whereClause string, importCol string) (matchVar string, matchProp string, otherWhere string, ok bool) {
@@ -1783,7 +1593,7 @@ func extractApplyCorrelationWhere(whereClause string, importCol string) (matchVa
 			break
 		}
 	}
-	if correlationIdx < 0 || matchVar == "" || matchProp == "" {
+	if correlationIdx < 0 || !isSimpleIdentifier(matchVar) || !isSimpleIdentifier(matchProp) {
 		return "", "", "", false
 	}
 	remaining := make([]string, 0, len(terms)-1)
@@ -1828,153 +1638,19 @@ func sanitizeOtherWhereForImportColumn(otherWhere string, importCol string) (str
 }
 
 func isImportNotNullGuardTerm(term string, importCol string) bool {
-	parts := strings.Fields(strings.TrimSpace(term))
-	if len(parts) != 4 {
-		return false
-	}
-	left := strings.TrimSpace(parts[0])
-	left = strings.Trim(left, "`")
-	if !strings.EqualFold(left, strings.TrimSpace(importCol)) {
-		return false
-	}
-	return strings.EqualFold(parts[1], "IS") &&
-		strings.EqualFold(parts[2], "NOT") &&
-		strings.EqualFold(parts[3], "NULL")
+	return syntaxNotNullGuard(term, importCol)
 }
 
-func splitTopLevelAnd(whereClause string) []string {
-	parts := make([]string, 0, 4)
-	start := 0
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(whereClause); i++ {
-		if next, quoted := cyphertext.SkipToken(whereClause, i); quoted {
-			i = next - 1
-			continue
-		}
-		ch := whereClause[i]
-		switch ch {
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if hasKeywordAt(whereClause, i, "AND") {
-			parts = append(parts, strings.TrimSpace(whereClause[start:i]))
-			i += len("AND") - 1
-			start = i + 1
-		}
-	}
-	parts = append(parts, strings.TrimSpace(whereClause[start:]))
-	return parts
-}
+func splitTopLevelAnd(s string) []string { return syntaxAndTerms(s) }
 
-func splitTopLevelEquality(expr string) (lhs, rhs string, ok bool) {
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(expr); i++ {
-		if next, quoted := cyphertext.SkipToken(expr, i); quoted {
-			i = next - 1
-			continue
-		}
-		ch := expr[i]
-		switch ch {
-		case '(':
-			paren++
-			continue
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-			continue
-		case '[':
-			bracket++
-			continue
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-			continue
-		case '{':
-			brace++
-			continue
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-			continue
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if ch == '=' {
-			if i > 0 {
-				prev := expr[i-1]
-				if prev == '<' || prev == '>' || prev == '!' {
-					continue
-				}
-			}
-			if i+1 < len(expr) {
-				next := expr[i+1]
-				if next == '=' {
-					continue
-				}
-			}
-			return strings.TrimSpace(expr[:i]), strings.TrimSpace(expr[i+1:]), true
-		}
-	}
-	return "", "", false
-}
+func splitTopLevelEquality(expr string) (lhs, rhs string, ok bool) { return syntaxEquality(expr) }
 
 func parseFabricVarProp(expr string) (varName, prop string, ok bool) {
-	dot := strings.IndexByte(expr, '.')
-	if dot <= 0 || dot >= len(expr)-1 {
-		return "", "", false
-	}
-	lhs := strings.TrimSpace(expr[:dot])
-	rhs := strings.TrimSpace(expr[dot+1:])
-	if !isSimpleIdentifier(lhs) || !isSimpleIdentifier(rhs) {
-		return "", "", false
-	}
-	return lhs, rhs, true
+	_, tree := readExpression(expr)
+	return syntaxProperty(tree)
 }
 
-func containsStandaloneIdentifier(s, ident string) bool {
-	if ident == "" || len(s) < len(ident) {
-		return false
-	}
-	for i := 0; i+len(ident) <= len(s); i++ {
-		if next, quoted := cyphertext.SkipToken(s, i); quoted {
-			i = next - 1
-			continue
-		}
-		if s[i:i+len(ident)] != ident {
-			continue
-		}
-		prevOK := i == 0 || !isIdentChar(s[i-1])
-		next := i + len(ident)
-		nextOK := next >= len(s) || !isIdentChar(s[next])
-		if prevOK && nextOK {
-			return true
-		}
-	}
-	return false
-}
+func containsStandaloneIdentifier(s, ident string) bool { return syntaxHasVariable(s, ident) }
 
 func (e *FabricExecutor) executionProjection(query string, incoming []string) resultmetadata.Projection {
 	if provider, ok := e.resultColumns.(resultmetadata.ProjectionProvider); ok {
@@ -1991,7 +1667,8 @@ func synthesizeEmptyCollectProjection(plan resultmetadata.Projection) ([]string,
 	}
 	row := make([]interface{}, 0, len(columns))
 	for _, expr := range plan.Expressions {
-		if !startsWithFold(strings.TrimSpace(expr), "collect(") {
+		expr = strings.TrimSpace(expr)
+		if len(expr) < len("collect(") || !strings.EqualFold(expr[:len("collect(")], "collect(") {
 			return nil, nil, false
 		}
 		row = append(row, []interface{}{})
@@ -2019,6 +1696,7 @@ func projectSimpleProjectionFromRow(plan resultmetadata.Projection, inputCols []
 	}
 	return columns, values, true
 }
+
 func bindingsFromParentAndRow(parent map[string]interface{}, columns []string, row []interface{}) map[string]interface{} {
 	if len(parent) == 0 && (len(columns) == 0 || len(row) == 0) {
 		return nil
@@ -2075,12 +1753,6 @@ func mergeBindings(parent, row map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-var reWithCollectMapOnly = regexp.MustCompile(`(?is)^\s*WITH\s+collect\s*\(\s*\{([^}]*)\}\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+RETURN\s+([A-Za-z_][A-Za-z0-9_]*))?\s*;?\s*$`)
-
-var reWithCollectDistinctKeys = regexp.MustCompile(`(?is)^\s*WITH\s+collect\s*\(\s*\{([^}]*)\}\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+UNWIND\s+([A-Za-z_][A-Za-z0-9_]*)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+WITH\s+collect\s*\(\s*DISTINCT\s+([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+RETURN\s+([A-Za-z_][A-Za-z0-9_]*)\s*;?\s*$`)
-
-var reWithCollectJoinFlat = regexp.MustCompile(`(?is)^\s*WITH\s+([A-Za-z_][A-Za-z0-9_]*)\s*,\s*collect\s*\(\s*\{([^}]*)\}\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+UNWIND\s+([A-Za-z_][A-Za-z0-9_]*)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+WITH\s+([A-Za-z_][A-Za-z0-9_]*)\s*,\s*\[\s*([A-Za-z_][A-Za-z0-9_]*)\s+IN\s+([A-Za-z_][A-Za-z0-9_]*)\s+WHERE\s+([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\]\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+UNWIND\s+([A-Za-z_][A-Za-z0-9_]*)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+RETURN\s+(.+?)\s*;?\s*$`)
-
 func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query string, names resultmetadata.Names) (*ResultStream, bool) {
 	if inputResult == nil {
 		return nil, false
@@ -2095,10 +1767,14 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 		return nil, false
 	}
 
-	if startsWithFold(trimmed, "RETURN ") {
-		clause := strings.TrimSpace(trimmed[len("RETURN "):])
-		projectionClause, modifierClause := splitTopLevelResultModifiers(clause)
-		items := splitTopLevelCSV(projectionClause)
+	structure := ReadQueryStructure(trimmed)
+	if structure.Starts("RETURN") && len(structure.Clauses) == 1 {
+		projection := structure.Clauses[0].Projection
+		if projection == nil || projection.Star || !syntaxSimpleModifiers(projection) {
+			return nil, false
+		}
+		modifierClause := projection.Modifiers
+		items := projection.Items
 		if len(items) > 0 {
 			type retItem struct {
 				src   string
@@ -2106,17 +1782,8 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 			}
 			parsed := make([]retItem, 0, len(items))
 			for _, it := range items {
-				it = strings.TrimSpace(it)
-				if it == "" {
-					return nil, false
-				}
-				src := it
-				alias := it
-				if as := lastAsIndexFold(it); as >= 0 {
-					src = strings.TrimSpace(it[:as])
-					alias = strings.TrimSpace(it[as+4:])
-				}
-				if !isSimpleIdentifier(src) || !isSimpleIdentifier(alias) {
+				src, alias := it.Name, it.Column
+				if src == "" || alias == "" {
 					return nil, false
 				}
 				parsed = append(parsed, retItem{src: src, alias: alias})
@@ -2138,6 +1805,15 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 					aliasToCol[p.src] = p.alias
 				}
 			}
+			for _, order := range projection.Order {
+				key := order.Expression
+				if order.Name != "" {
+					key = order.Name
+				}
+				if _, ok := aliasToCol[key]; !ok {
+					return nil, false
+				}
+			}
 			for _, in := range inputResult.Rows {
 				row := make([]interface{}, len(parsed))
 				for i, p := range parsed {
@@ -2147,12 +1823,15 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 				}
 				out.Rows = append(out.Rows, row)
 			}
+			if projection.Distinct {
+				out.Rows = deduplicateRows(out.Rows)
+			}
 			applySimpleResultModifiers(out, modifierClause, aliasToCol)
 			return out, true
 		}
 	}
 
-	if m := reWithCollectDistinctKeys.FindStringSubmatch(trimmed); len(m) == 9 {
+	if m := readCollectDistinctProjection(trimmed); len(m) == 9 {
 		mapSpec := strings.TrimSpace(m[1])
 		rowsAlias := strings.TrimSpace(m[2])
 		unwindList := strings.TrimSpace(m[3])
@@ -2184,7 +1863,7 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 		}, true
 	}
 
-	if m := reWithCollectMapOnly.FindStringSubmatch(trimmed); len(m) == 4 {
+	if m := readCollectMapProjection(trimmed); len(m) == 4 {
 		mapSpec := strings.TrimSpace(m[1])
 		rowsAlias := strings.TrimSpace(m[2])
 		returnAlias := strings.TrimSpace(m[3])
@@ -2210,10 +1889,7 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 	// UNWIND rows AS r
 	// WITH r, [g IN grouped WHERE g.k = r.textKey128][0] AS hit
 	// RETURN r.textKey AS textKey, r.textKey128 AS textKey128, coalesce(hit.texts, []) AS texts
-	if startsWithFold(trimmed, "WITH rows, collect({k: k, texts: texts}) AS grouped") &&
-		containsFold(trimmed, "UNWIND rows AS r") &&
-		strings.Contains(trimmed, "g.k = r.textKey128") &&
-		containsFold(trimmed, "COALESCE(hit.texts, []) AS texts") {
+	if isRowsGroupedJoin(trimmed) {
 		result := executeRowsGroupedJoinProjection(inputResult)
 		result.Columns = columns
 		return result, true
@@ -2239,45 +1915,11 @@ type simpleOrderSpec struct {
 }
 
 func splitTopLevelResultModifiers(clause string) (projection string, modifiers string) {
-	projection = strings.TrimSpace(clause)
-	modifiers = ""
-	paren, bracket, brace := 0, 0, 0
-	for i := 0; i < len(clause); i++ {
-		if next, quoted := cyphertext.SkipToken(clause, i); quoted {
-			i = next - 1
-			continue
-		}
-		ch := clause[i]
-		switch ch {
-		case '(':
-			paren++
-		case ')':
-			if paren > 0 {
-				paren--
-			}
-		case '[':
-			bracket++
-		case ']':
-			if bracket > 0 {
-				bracket--
-			}
-		case '{':
-			brace++
-		case '}':
-			if brace > 0 {
-				brace--
-			}
-		}
-		if paren != 0 || bracket != 0 || brace != 0 {
-			continue
-		}
-		if hasKeywordAt(clause, i, "ORDER BY") || hasKeywordAt(clause, i, "SKIP") || hasKeywordAt(clause, i, "LIMIT") {
-			projection = strings.TrimSpace(clause[:i])
-			modifiers = strings.TrimSpace(clause[i:])
-			return projection, modifiers
-		}
+	p := readProjection(clause)
+	if p == nil {
+		return clause, ""
 	}
-	return projection, modifiers
+	return p.Text, p.Modifiers
 }
 
 func applySimpleResultModifiers(result *ResultStream, modifiers string, aliasToCol map[string]string) {
@@ -2320,86 +1962,40 @@ func applySimpleResultModifiers(result *ResultStream, modifiers string, aliasToC
 }
 
 func parseSimpleResultModifiers(modifiers string, aliasToCol map[string]string) ([]simpleOrderSpec, int, int) {
-	if strings.TrimSpace(modifiers) == "" {
+	p := ResultModifierSyntax(modifiers)
+	if p == nil {
 		return nil, 0, -1
 	}
-	orderSpecs := []simpleOrderSpec{}
-	skip := 0
-	limit := -1
-	remaining := strings.TrimSpace(modifiers)
-	for remaining != "" {
-		switch {
-		case startsWithFold(remaining, "ORDER BY"):
-			orderClause, rest := splitLeadingModifierClause(remaining, "ORDER BY")
-			orderSpecs = parseSimpleOrderByClause(strings.TrimSpace(orderClause[len("ORDER BY"):]), aliasToCol)
-			remaining = strings.TrimSpace(rest)
-		case startsWithFold(remaining, "SKIP"):
-			skipClause, rest := splitLeadingModifierClause(remaining, "SKIP")
-			if n, ok := parseSimplePositiveInt(strings.TrimSpace(skipClause[len("SKIP"):])); ok {
-				skip = n
-			}
-			remaining = strings.TrimSpace(rest)
-		case startsWithFold(remaining, "LIMIT"):
-			limitClause, rest := splitLeadingModifierClause(remaining, "LIMIT")
-			if n, ok := parseSimplePositiveInt(strings.TrimSpace(limitClause[len("LIMIT"):])); ok {
-				limit = n
-			}
-			remaining = strings.TrimSpace(rest)
-		default:
-			remaining = ""
+	var order []simpleOrderSpec
+	skip, limit := 0, -1
+	for _, item := range p.Order {
+		col := item.Expression
+		if item.Name != "" {
+			col = item.Name
+		}
+		if mapped, ok := aliasToCol[item.Key]; item.Key != "" && ok {
+			col = mapped
+		} else if mapped, ok := aliasToCol[col]; ok {
+			col = mapped
+		} else if item.Name == "" {
+			continue
+		}
+		if col != "" {
+			order = append(order, simpleOrderSpec{column: col, desc: item.Desc})
 		}
 	}
-	return orderSpecs, skip, limit
-}
-
-func splitLeadingModifierClause(s string, keyword string) (clause string, rest string) {
-	trimmed := strings.TrimSpace(s)
-	if trimmed == "" {
-		return "", ""
+	if n, ok := parseSimplePositiveInt(p.Skip); ok {
+		skip = n
 	}
-	end := len(trimmed)
-	if strings.EqualFold(keyword, "ORDER BY") {
-		for i := len(keyword); i < len(trimmed); i++ {
-			if hasKeywordAt(trimmed, i, "SKIP") || hasKeywordAt(trimmed, i, "LIMIT") {
-				end = i
-				break
-			}
-		}
-	} else {
-		for i := len(keyword); i < len(trimmed); i++ {
-			if hasKeywordAt(trimmed, i, "ORDER BY") || hasKeywordAt(trimmed, i, "SKIP") || hasKeywordAt(trimmed, i, "LIMIT") {
-				end = i
-				break
-			}
-		}
+	if n, ok := parseSimplePositiveInt(p.Limit); ok {
+		limit = n
 	}
-	return strings.TrimSpace(trimmed[:end]), strings.TrimSpace(trimmed[end:])
+	return order, skip, limit
 }
 
 func parseSimpleOrderByClause(clause string, aliasToCol map[string]string) []simpleOrderSpec {
-	parts := splitTopLevelCSV(clause)
-	specs := make([]simpleOrderSpec, 0, len(parts))
-	for _, part := range parts {
-		item := strings.TrimSpace(part)
-		if item == "" {
-			continue
-		}
-		desc := false
-		if len(item) > 5 && strings.EqualFold(item[len(item)-5:], " DESC") {
-			desc = true
-			item = strings.TrimSpace(item[:len(item)-5])
-		} else if len(item) > 4 && strings.EqualFold(item[len(item)-4:], " ASC") {
-			item = strings.TrimSpace(item[:len(item)-4])
-		}
-		if mapped, ok := aliasToCol[item]; ok {
-			item = mapped
-		}
-		if !isSimpleIdentifier(item) {
-			continue
-		}
-		specs = append(specs, simpleOrderSpec{column: item, desc: desc})
-	}
-	return specs
+	order, _, _ := parseSimpleResultModifiers("ORDER BY "+clause, aliasToCol)
+	return order
 }
 
 func parseSimplePositiveInt(s string) (int, bool) {
@@ -2502,27 +2098,9 @@ func asComparableFloat(v interface{}) (float64, bool) {
 
 func projectInputRowsAsMaps(input *ResultStream, mapSpec string) ([]map[string]interface{}, bool) {
 	colIdx := buildColumnIndex(input.Columns)
-	entries := splitTopLevelCSV(mapSpec)
-	if len(entries) == 0 {
+	pairs := readMapFields(mapSpec)
+	if len(pairs) == 0 {
 		return nil, false
-	}
-	type kv struct {
-		key string
-		col string
-	}
-	pairs := make([]kv, 0, len(entries))
-	for _, e := range entries {
-		e = strings.TrimSpace(e)
-		colon := strings.Index(e, ":")
-		if colon <= 0 {
-			return nil, false
-		}
-		k := strings.TrimSpace(e[:colon])
-		v := strings.TrimSpace(e[colon+1:])
-		if !isSimpleIdentifier(k) || !isSimpleIdentifier(v) {
-			return nil, false
-		}
-		pairs = append(pairs, kv{key: k, col: v})
 	}
 
 	out := make([]map[string]interface{}, 0, len(input.Rows))
@@ -2596,7 +2174,7 @@ func executeCollectedMapJoinFlatProjectionColumns(input *ResultStream, query str
 	if input == nil || len(input.Rows) == 0 {
 		return nil, false
 	}
-	m := reWithCollectJoinFlat.FindStringSubmatch(query)
+	m := readCollectJoinProjection(query)
 	if len(m) != 17 {
 		return nil, false
 	}
@@ -2627,7 +2205,7 @@ func executeCollectedMapJoinFlatProjectionColumns(input *ResultStream, query str
 		return nil, false
 	}
 
-	collectPairs := splitTopLevelCSV(mapSpec)
+	collectPairs := readMapFields(mapSpec)
 	if len(collectPairs) == 0 {
 		return nil, false
 	}
@@ -2638,16 +2216,7 @@ func executeCollectedMapJoinFlatProjectionColumns(input *ResultStream, query str
 	mapPairs := make([]mapPair, 0, len(collectPairs))
 	joinFieldExists := false
 	for _, p := range collectPairs {
-		p = strings.TrimSpace(p)
-		colon := strings.IndexByte(p, ':')
-		if colon <= 0 {
-			return nil, false
-		}
-		key := strings.TrimSpace(p[:colon])
-		src := strings.TrimSpace(p[colon+1:])
-		if !isSimpleIdentifier(key) || !isSimpleIdentifier(src) {
-			return nil, false
-		}
+		key, src := p.key, p.col
 		if strings.EqualFold(key, groupKeyField) {
 			joinFieldExists = true
 		}
@@ -2662,23 +2231,18 @@ func executeCollectedMapJoinFlatProjectionColumns(input *ResultStream, query str
 		srcKey string
 		alias  string
 	}
-	retParts := splitTopLevelCSV(returnClause)
-	if len(retParts) == 0 {
+	projection := readProjection(returnClause)
+	if projection == nil || len(projection.Items) == 0 {
 		return nil, false
 	}
+	retParts := projection.Items
 	retItems := make([]retItem, 0, len(retParts))
 	for _, part := range retParts {
-		part = strings.TrimSpace(part)
-		as := lastAsIndexFold(part)
-		if as < 0 {
+		alias := part.Alias
+		if alias == "" {
 			return nil, false
 		}
-		expr := strings.TrimSpace(part[:as])
-		alias := strings.TrimSpace(part[as+4:])
-		if !isSimpleIdentifier(alias) {
-			return nil, false
-		}
-		v, k, ok := parseFabricVarProp(expr)
+		v, k, ok := syntaxProperty(part.tree)
 		if !ok {
 			return nil, false
 		}
@@ -2864,7 +2428,7 @@ func importColumnsFromFragment(f Fragment) []string {
 }
 
 func quoteCypherIdentifier(identifier string) string {
-	if isSimpleIdentifier(identifier) {
+	if isSimpleIdentifier(identifier) && !KeywordName(identifier) {
 		return identifier
 	}
 	return "`" + strings.ReplaceAll(identifier, "`", "``") + "`"
@@ -2979,17 +2543,19 @@ func rewriteLeadingWithImports(query string, importCols []string) string {
 		if col == "" {
 			continue
 		}
-		assignments = append(assignments, "$"+col+" AS "+col)
+		identifier := quoteCypherIdentifier(col)
+		assignments = append(assignments, "$"+identifier+" AS "+identifier)
 	}
 	if len(assignments) == 0 {
 		return query
 	}
 
 	trimmed := strings.TrimSpace(query)
-	if !startsWithFold(trimmed, "WITH ") {
+	structure := ReadQueryStructure(trimmed)
+	if !structure.Starts("WITH") {
 		// For projection-only fragments produced by planner (e.g. trailing
 		// RETURN after APPLY), import outer variables explicitly.
-		if startsWithFold(trimmed, "RETURN ") {
+		if structure.Starts("RETURN") {
 			return "WITH " + strings.Join(assignments, ", ") + " " + trimmed
 		}
 		return query
@@ -3001,12 +2567,15 @@ func rewriteLeadingWithImports(query string, importCols []string) string {
 	}
 	withClause := strings.TrimSpace(trimmed[:withEnd])
 	rest := strings.TrimSpace(trimmed[withEnd:])
+	if !isSimpleWithImportClause(withClause, importCols) {
+		return "WITH " + strings.Join(assignments, ", ") + " " + trimmed
+	}
 	if rest == "" {
 		return "WITH " + strings.Join(assignments, ", ")
 	}
 	// Keep correlated semantics for simple import-only WITH clauses by
 	// substituting imported vars directly into MATCH predicates.
-	if (startsWithFold(rest, "MATCH ") || startsWithFold(rest, "OPTIONAL MATCH ")) &&
+	if (ReadQueryStructure(rest).Starts("MATCH") || ReadQueryStructure(rest).Starts("OPTIONAL MATCH")) &&
 		isSimpleWithImportClause(withClause, importCols) {
 		return substituteVarsWithParams(rest, importCols)
 	}
@@ -3014,35 +2583,21 @@ func rewriteLeadingWithImports(query string, importCols []string) string {
 }
 
 func isSimpleWithImportClause(withClause string, importCols []string) bool {
-	if len(importCols) == 0 {
+	q := ReadQueryStructure(withClause)
+	names := q.ImportNames()
+	if len(names) == 0 || len(importCols) == 0 {
 		return false
 	}
-	trimmed := strings.TrimSpace(withClause)
-	if !startsWithFold(trimmed, "WITH ") {
+	p := q.Clauses[0].Projection
+	if p.Distinct || p.Modifiers != "" || q.Clauses[0].Predicate != "" {
 		return false
 	}
-	lhs := strings.TrimSpace(trimmed[len("WITH "):])
-	if lhs == "" {
-		return false
-	}
-	parts := splitTopLevelCSV(lhs)
-	if len(parts) == 0 {
-		return false
-	}
-	allowed := make(map[string]struct{}, len(importCols))
+	allowed := make(map[string]bool, len(importCols))
 	for _, col := range importCols {
-		col = strings.TrimSpace(col)
-		if col == "" {
-			continue
-		}
-		allowed[col] = struct{}{}
+		allowed[col] = true
 	}
-	for _, p := range parts {
-		name := strings.TrimSpace(p)
-		if !isSimpleIdentifier(name) {
-			return false
-		}
-		if _, ok := allowed[name]; !ok {
+	for i, name := range names {
+		if !allowed[name] || p.Items[i].HasAlias {
 			return false
 		}
 	}
@@ -3056,142 +2611,19 @@ func substituteVarsWithParams(query string, vars []string) string {
 		if v == "" {
 			continue
 		}
-		out = replaceStandaloneVar(out, v, "$"+v)
+		out = replaceStandaloneVar(out, v, "$"+quoteCypherIdentifier(v))
 	}
 	return out
 }
 
 func replaceStandaloneVar(s, ident, replacement string) string {
-	if ident == "" || len(s) < len(ident) {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s) + 8)
-	for i := 0; i < len(s); {
-		if next, quoted := cyphertext.SkipToken(s, i); quoted {
-			b.WriteString(s[i:next])
-			i = next
-			continue
-		}
-		ch := s[i]
-
-		if i+len(ident) <= len(s) && s[i:i+len(ident)] == ident {
-			prevOK := i == 0 || (!isIdentChar(s[i-1]) && s[i-1] != '.')
-			next := i + len(ident)
-			nextOK := next >= len(s) || !isIdentChar(s[next])
-			if prevOK && nextOK {
-				b.WriteString(replacement)
-				i = next
-				continue
-			}
-		}
-		b.WriteByte(ch)
-		i++
-	}
-	return b.String()
+	return RewriteQueryVariable(s, ident, replacement)
 }
 
 func findLeadingWithClauseEnd(query string) (int, bool) {
-	if query == "" {
-		return 0, false
-	}
-	i := skipLeadingSpace(query, 0)
-	if !hasKeywordAt(query, i, "WITH") {
-		return 0, false
-	}
-	i += len("WITH")
-	i = skipLeadingSpace(query, i)
-
-	depth := 0
-
-	for idx := i; idx < len(query); idx++ {
-		if next, quoted := cyphertext.SkipToken(query, idx); quoted {
-			idx = next - 1
-			continue
-		}
-		ch := query[idx]
-		switch ch {
-		case '(', '[', '{':
-			depth++
-			continue
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-			continue
-		}
-
-		if depth == 0 && isCypherClauseStart(query, idx) {
-			return idx, true
-		}
-	}
-
-	return len(query), true
+	return LeadingWithClauseEnd(query)
 }
 
-func isCypherClauseStart(query string, idx int) bool {
-	for _, kw := range clauseStartKeywords {
-		if hasKeywordAt(query, idx, kw) {
-			return true
-		}
-	}
-	return false
-}
-
-var clauseStartKeywords = [...]string{
-	"OPTIONAL MATCH",
-	"DETACH DELETE",
-	"ORDER BY",
-	"LOAD CSV",
-	"USE",
-	"MATCH",
-	"RETURN",
-	"CALL",
-	"CREATE",
-	"MERGE",
-	"UNWIND",
-	"WHERE",
-	"SET",
-	"DELETE",
-	"WITH",
-	"FOREACH",
-	"UNION",
-	"LIMIT",
-	"SKIP",
-}
-
-func hasKeywordAt(query string, idx int, keyword string) bool {
-	if idx < 0 || idx+len(keyword) > len(query) {
-		return false
-	}
-	if idx > 0 {
-		prev := rune(query[idx-1])
-		if unicode.IsLetter(prev) || unicode.IsDigit(prev) || prev == '_' {
-			return false
-		}
-	}
-	segment := query[idx : idx+len(keyword)]
-	if !strings.EqualFold(segment, keyword) {
-		return false
-	}
-	end := idx + len(keyword)
-	if end < len(query) {
-		next := rune(query[end])
-		if unicode.IsLetter(next) || unicode.IsDigit(next) || next == '_' {
-			return false
-		}
-	}
-	return true
-}
-
-func skipLeadingSpace(s string, idx int) int {
-	for idx < len(s) && unicode.IsSpace(rune(s[idx])) {
-		idx++
-	}
-	return idx
-}
-
-// executeUnion executes both branches and merges results.
 func (e *FabricExecutor) executeUnion(ctx context.Context, tx *FabricTransaction, f *FragmentUnion, params map[string]interface{}, authToken string) (*ResultStream, error) {
 	cols, it, err := e.executeUnionRows(ctx, tx, f, params, authToken)
 	if err != nil {
@@ -3269,41 +2701,7 @@ func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransac
 // A branch without column metadata returned no rows and has nothing to match,
 // and the pipeline's row wrapper column is resolved after execution.
 func (e *FabricExecutor) mergeUnion(f *FragmentUnion, lhsCols []string, lhs RowIterator, rhsCols []string, rhs RowIterator) ([]string, RowIterator, error) {
-	cols := f.Columns
-	if len(cols) == 0 {
-		cols = lhsCols
-		if len(cols) == 0 {
-			cols = rhsCols
-		}
-	}
-	if e.union.ColumnOrder != nil && len(lhsCols) > 0 && len(rhsCols) > 0 && !isFabricRowWrapper(lhsCols) && !isFabricRowWrapper(rhsCols) {
-		order, sameNames := e.union.ColumnOrder(lhsCols, rhsCols)
-		if !sameNames {
-			_ = lhs.Close()
-			_ = rhs.Close()
-			return nil, nil, e.union.ColumnsError(lhsCols, rhsCols)
-		}
-		if order != nil {
-			rhs = NewConvertingRowIterator(rhs, func(row []interface{}) []interface{} {
-				values := make([]interface{}, len(order))
-				for column, position := range order {
-					if position < len(row) {
-						values[column] = row[position]
-					}
-				}
-				return values
-			})
-		}
-	}
-	out := NewConcatRowIterator(lhs, rhs)
-	if f.Distinct {
-		distinct := NewDistinctRowIterator(out)
-		if e.union.NewDistinct != nil {
-			distinct.(*distinctRowIterator).added = e.union.NewDistinct()
-		}
-		out = distinct
-	}
-	return cols, out, nil
+	return mergeUnionRows(e.union, f, lhsCols, lhs, rhsCols, rhs)
 }
 
 // executeUnionSequential preserves direct test-call compatibility while using

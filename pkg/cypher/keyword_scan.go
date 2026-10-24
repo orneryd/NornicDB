@@ -6,6 +6,7 @@ package cypher
 // comments and bracket nesting tracked inline instead of by a lexer.
 
 import (
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"hash/maphash"
 	"strconv"
 	"strings"
@@ -25,6 +26,12 @@ import (
 // follows it can't start an expression (distinctFollowsAsName, #894).
 // Without the keyword, text is returned trimmed.
 func cutDistinct(text string) (string, bool) {
+	if p := fabric.ProjectionSyntax(text); p != nil {
+		if p.Distinct {
+			return strings.TrimSpace(p.Text + " " + p.Tail), true
+		}
+		return strings.TrimSpace(text), false
+	}
 	text = strings.TrimSpace(text)
 	const keyword = "DISTINCT"
 	if len(text) <= len(keyword) || !strings.EqualFold(text[:len(keyword)], keyword) || isIdentByte(text[len(keyword)]) {

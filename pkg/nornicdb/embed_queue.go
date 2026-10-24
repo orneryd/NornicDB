@@ -30,10 +30,11 @@ type deterministicTextChunker interface {
 // EmbedWorker manages async embedding generation using a pull-based model.
 // Enqueue wakes sleeping workers; a long recovery scan finds missed writes.
 type EmbedWorker struct {
-	embedder         embed.Embedder
-	embedderResolver func(storage.NodeID) (embed.Embedder, error)
-	storage          storage.Engine
-	config           *EmbedWorkerConfig
+	embedder             embed.Embedder
+	embedderResolver     func(storage.NodeID) (embed.Embedder, error)
+	failureErrorRedactor func(storage.NodeID, error) error
+	storage              storage.Engine
+	config               *EmbedWorkerConfig
 
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -435,6 +436,7 @@ func (ew *EmbedWorker) Stats() WorkerStats {
 func (ew *EmbedWorker) ParkedEmbeddingFailures(ctx context.Context, limit int) ([]EmbeddingFailure, error) {
 	failures := make([]EmbeddingFailure, 0)
 	count, err := ew.scanParkedEmbeddingFailures(ctx, func(failure EmbeddingFailure) error {
+		failure.Error = ew.redactFailureText(failure.NodeID, failure.Error)
 		if limit <= 0 || len(failures) < limit {
 			failures = append(failures, failure)
 		}
@@ -992,7 +994,11 @@ func (ew *EmbedWorker) processNextResolvedBatch(selections ...embeddingSelection
 		}
 		for _, resultErr := range resultErrors {
 			if resultErr != nil {
-				fmt.Printf("⚠️  Failed to embed %d-node batch: %s\n", len(group.nodes), compactWorkerError(resultErr, 300))
+				diagnosticErr := resultErr
+				for _, node := range group.nodes {
+					diagnosticErr = ew.redactFailure(node.ID, diagnosticErr)
+				}
+				fmt.Printf("⚠️  Failed to embed %d-node batch: %s\n", len(group.nodes), compactWorkerError(diagnosticErr, 300))
 				break
 			}
 		}
@@ -1295,6 +1301,7 @@ func (ew *EmbedWorker) markRecentlyProcessed(node *storage.Node) {
 // properties, removes it from the pending index, and lets later content edits
 // retry it by clearing managed embedding metadata during invalidation.
 func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr error, sources ...*storage.Node) {
+	embedErr = ew.redactFailure(nodeID, embedErr)
 	var node *storage.Node
 	if len(sources) != 0 {
 		node = sources[0]

@@ -173,9 +173,10 @@ func TestExecutorConfusableAndEmbeddingSuffixHelpers(t *testing.T) {
 	_, ok = cypherSyntaxConfusableReplacement('—')
 	require.False(t, ok)
 
+	// With a following RETURN, EMBEDDING remains a possible projected variable.
 	stripped, found := stripWithEmbeddingSuffix("CREATE (n) WITH EMBEDDING RETURN n")
-	require.True(t, found)
-	require.Equal(t, "CREATE (n) RETURN n", stripped)
+	require.False(t, found)
+	require.Equal(t, "CREATE (n) WITH EMBEDDING RETURN n", stripped)
 
 	stripped, found = stripWithEmbeddingSuffix("CREATE (n) WITH EMBEDDING")
 	require.True(t, found)

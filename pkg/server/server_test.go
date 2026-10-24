@@ -4426,21 +4426,23 @@ func TestRequestTimeoutMiddleware_TxRoute_UsesConfigAndOverride(t *testing.T) {
 		t.Fatalf("expected 200 for tx route without override, got %d body=%q", rr.Code, rr.Body.String())
 	}
 
-	// Env override should be honored for tx timeout, enabling short deterministic limits in tests.
+	// The execution timeout should return promptly before terminal COMMIT admission.
 	t.Setenv("NORNICDB_HTTP_TX_TIMEOUT", "5ms")
 	s2 := &Server{config: &Config{WriteTimeout: 10 * time.Second}}
 	slowTimeout := s2.requestTimeoutMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(30 * time.Millisecond)
-		w.WriteHeader(http.StatusOK)
+		_, bounded := r.Context().Deadline()
+		require.True(t, bounded)
+		<-r.Context().Done()
+		http.Error(w, r.Context().Err().Error(), http.StatusGatewayTimeout)
 	}))
 	req2 := httptest.NewRequest(http.MethodPost, "/db/nornic/tx/commit", nil)
 	rr2 := httptest.NewRecorder()
 	slowTimeout.ServeHTTP(rr2, req2)
 	if rr2.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503 when tx timeout override expires, got %d", rr2.Code)
+		t.Fatalf("expected pre-admission timeout response when execution deadline expires, got %d", rr2.Code)
 	}
-	if !strings.Contains(rr2.Body.String(), "request timeout: transaction busy") {
-		t.Fatalf("expected tx timeout body, got %q", rr2.Body.String())
+	if !strings.Contains(rr2.Body.String(), `"errors"`) {
+		t.Fatalf("expected a transaction-shaped timeout response, got %q", rr2.Body.String())
 	}
 }
 

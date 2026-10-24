@@ -1145,7 +1145,8 @@ func showDatabaseCreatedAt(manager DatabaseManagerInterface, name string) time.T
 //   - Success: Result with database name in single row
 //   - Error: If database already exists (unless IF NOT EXISTS is used)
 //   - Error: If DatabaseManager is not configured
-func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	defer redactAdminCommandError(cypher, &retErr)
 	e.logEvent(slog.LevelDebug, localization.CypherCreateDatabaseInvokedEvent(len(cypher)))
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE DATABASE"), nil)
@@ -1266,7 +1267,8 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 // existing database of that name (if any) is dropped and a fresh one created.
 // It is an admin command, classified by isAdminPermissionQuery, so a caller
 // without the admin permission never reaches it.
-func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	defer redactAdminCommandError(cypher, &retErr)
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE DATABASE"), nil)
 	}
@@ -1342,7 +1344,8 @@ func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cy
 //   - Success: Result with database name in single row (empty if IF EXISTS and not found)
 //   - Error: If database doesn't exist (unless IF EXISTS is used)
 //   - Error: If DatabaseManager is not configured
-func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	defer redactAdminCommandError(cypher, &retErr)
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("DROP DATABASE"), nil)
 	}
@@ -1443,7 +1446,8 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 // Returns:
 //   - Success: Result with alias name in single row
 //   - Error: If alias already exists or database doesn't exist
-func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	defer redactAdminCommandError(cypher, &retErr)
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE ALIAS"), nil)
 	}
@@ -1560,7 +1564,8 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 // Returns:
 //   - Success: Result with alias name in single row (empty if IF EXISTS and not found)
 //   - Error: If alias doesn't exist (unless IF EXISTS is used)
-func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	defer redactAdminCommandError(cypher, &retErr)
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("DROP ALIAS"), nil)
 	}
@@ -1756,7 +1761,8 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 // Returns:
 //   - Success: Result with database name
 //   - Error: If database doesn't exist or syntax is invalid
-func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	defer redactAdminCommandError(cypher, &retErr)
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("ALTER DATABASE"), nil)
 	}
@@ -1978,7 +1984,8 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 // Returns:
 //   - Success: Result with limit information in Neo4j-compatible format
 //   - Error: If database doesn't exist
-func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	defer redactAdminCommandError(cypher, &retErr)
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("SHOW LIMITS"), nil)
 	}

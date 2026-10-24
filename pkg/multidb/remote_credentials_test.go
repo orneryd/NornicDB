@@ -73,6 +73,95 @@ func TestIsEncryptedRemoteCredential(t *testing.T) {
 	assert.False(t, isEncryptedRemoteCredential(""))
 }
 
+func TestIsCredentialFreeSimpleHTTPURL(t *testing.T) {
+	tests := []struct {
+		name string
+		uri  string
+		want bool
+	}{
+		{name: "plain host", uri: "http://example.test", want: true},
+		{name: "escaped path", uri: "https://example.test/path%20item", want: true},
+		{name: "userinfo", uri: "http://synthetic@example.test"},
+		{name: "query", uri: "http://example.test/?user=synthetic"},
+		{name: "fragment", uri: "http://example.test/#synthetic"},
+		{name: "bad escape", uri: "http://example.test/%GG"},
+		{name: "bad port", uri: "http://example.test:port"},
+		{name: "noncanonical scheme", uri: "HTTP://example.test"},
+		{name: "space", uri: "http://example.test/path with space"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isCredentialFreeSimpleHTTPURL(tt.uri))
+		})
+	}
+}
+
+func TestPrecomputedAliasStorageLookupDoesNotAllocate(t *testing.T) {
+	remote := storage.NewMemoryEngine()
+	defer remote.Close()
+	manager := &DatabaseManager{
+		databases: map[string]*DatabaseInfo{
+			"probe": &DatabaseInfo{Type: "composite", Constituents: []ConstituentRef{{Alias: "remote", DatabaseName: "remote", Type: "remote", URI: "http://example.test", AuthMode: "user_password", User: "fixture-user", Password: "fixture-password"}}},
+		},
+		remoteEngineFactory: func(ConstituentRef, string) (storage.Engine, error) { return remote, nil },
+	}
+	manager.rebuildRuntimeConstituents()
+	allocs := testing.AllocsPerRun(1000, func() {
+		if _, err := manager.GetStorage("probe.remote"); err != nil {
+			t.Fatal("precomputed remote alias lookup failed")
+		}
+	})
+	assert.Zero(t, allocs)
+}
+
+func TestRuntimeConstituentIndexUsesCanonicalWinnerForRegisteredSpellings(t *testing.T) {
+	manager := &DatabaseManager{databases: map[string]*DatabaseInfo{
+		"probe": &DatabaseInfo{Type: "composite", Constituents: []ConstituentRef{
+			{Alias: "R", DatabaseName: "first", Type: "remote", URI: "http://first.example.test"},
+			{Alias: "r", DatabaseName: "last", Type: "remote", URI: "http://last.example.test"},
+		}},
+	}}
+	manager.rebuildRuntimeConstituents()
+	indexed := manager.databases["probe"].runtimeConstituentsByAlias
+	upper, lower := indexed["R"], indexed["r"]
+	if upper == nil || lower == nil {
+		t.Fatal("registered alias spellings were not indexed")
+	}
+	assert.Same(t, upper, lower, "case-folded duplicate spellings must share the canonical entry")
+	assert.Equal(t, "last", upper.ref.DatabaseName)
+	assert.Equal(t, "http://last.example.test", upper.storedRef.URI)
+}
+
+func TestRuntimeConstituentCacheInvalidatesCredentialAndAliasChanges(t *testing.T) {
+	ref := ConstituentRef{Alias: "remote", DatabaseName: "remote", Type: "remote", URI: "http://example.test", AuthMode: "user_password", User: "fixture-user", Password: "fixture-password"}
+	info := &DatabaseInfo{Type: "composite", Constituents: []ConstituentRef{ref}}
+	manager := &DatabaseManager{databases: map[string]*DatabaseInfo{"probe": info}}
+	manager.rebuildRuntimeConstituents()
+	first := info.runtimeConstituentsByAlias["remote"]
+	if first == nil {
+		t.Fatal("registered remote constituent was not cached")
+	}
+
+	ref.Password = "fixture-password-updated"
+	info.Constituents[0] = ref
+	manager.rebuildRuntimeConstituents()
+	second := info.runtimeConstituentsByAlias["remote"]
+	if second == nil || first == second {
+		t.Fatal("credential changes did not replace the cached runtime identity")
+	}
+
+	ref.Alias = "renamed"
+	info.Constituents[0] = ref
+	manager.rebuildRuntimeConstituents()
+	third := info.runtimeConstituentsByAlias["renamed"]
+	if _, exists := info.runtimeConstituentsByAlias["remote"]; exists {
+		t.Fatal("old alias remained in the runtime index")
+	}
+	if third == nil || second == third {
+		t.Fatal("alias change did not replace the cached runtime identity")
+	}
+}
+
 func TestDatabaseManager_EncryptRemotePassword(t *testing.T) {
 	inner := storage.NewMemoryEngine()
 	defer inner.Close()

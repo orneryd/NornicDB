@@ -39,9 +39,10 @@ func TestSharedScannersConsumeCompleteFragments(t *testing.T) {
 	})
 
 	t.Run("quoted spans", func(t *testing.T) {
-		// Escaped quote and doubled quote both stay inside the span.
+		// Backslash escapes stay inside a string; doubled string delimiters
+		// close one token and begin another.
 		require.Equal(t, len(`'a\'b'`), skipCypherQuotedText(`'a\'b'`, 0, '\''))
-		require.Equal(t, len(`'a''b'`), skipCypherQuotedText(`'a''b'`, 0, '\''))
+		require.Equal(t, len("'a'"), skipCypherQuotedText(`'a''b'`, 0, '\''))
 		require.Equal(t, len(`"a\"b"`), skipCypherQuotedText(`"a\"b"`, 0, '"'))
 		// A backtick name escapes a backtick by doubling; a backslash does not
 		// escape, so the first backtick closes the name.

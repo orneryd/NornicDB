@@ -931,6 +931,16 @@ func TestSplitAtTopLevelUse_NoUse(t *testing.T) {
 	}
 }
 
+func TestSplitTopLevelUnionIgnoresQualifiedFunctionName(t *testing.T) {
+	_, _, hasUnion, err := splitTopLevelUnion("RETURN apoc.coll.union([1, 2], [3]) AS value", nil)
+	if err != nil {
+		t.Fatalf("unexpected split error: %v", err)
+	}
+	if hasUnion {
+		t.Fatal("qualified function name was treated as a UNION clause")
+	}
+}
+
 func TestEnsureRowProducingPrefix(t *testing.T) {
 	// Empty query.
 	if ensureRowProducingPrefix("") != "" {
@@ -945,6 +955,11 @@ func TestEnsureRowProducingPrefix(t *testing.T) {
 	got = ensureRowProducingPrefix("WITH a, b")
 	if !strings.HasSuffix(got, "RETURN a, b") {
 		t.Fatalf("expected RETURN aliases appended, got %q", got)
+	}
+	// Later clauses can add bindings that a nested CALL needs as input.
+	got = ensureRowProducingPrefix("WITH x UNWIND [1,2] AS y")
+	if got != "WITH x UNWIND [1,2] AS y RETURN *" {
+		t.Fatalf("expected all live bindings returned after UNWIND, got %q", got)
 	}
 	// Query without RETURN and without WITH.
 	got = ensureRowProducingPrefix("MATCH (n)")
@@ -1137,7 +1152,7 @@ func TestFindMatchingBrace_PosOutOfBounds(t *testing.T) {
 
 func TestFindMatchingBrace_QuotedStrings(t *testing.T) {
 	// Single-quoted with escaped quote.
-	pos, err := findMatchingBrace("{ 'it''s' }", 0)
+	pos, err := findMatchingBrace("{ 'it\\'s' }", 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1145,7 +1160,7 @@ func TestFindMatchingBrace_QuotedStrings(t *testing.T) {
 		t.Fatalf("expected pos=10, got %d", pos)
 	}
 	// Double-quoted with escaped quote.
-	pos, err = findMatchingBrace(`{ "say ""hi""" }`, 0)
+	pos, err = findMatchingBrace(`{ "say \"hi\"" }`, 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1391,11 +1406,10 @@ func TestExtractWithImports_NotFollowedByWhitespace(t *testing.T) {
 }
 
 func TestExtractWithImports_WithASKeyword(t *testing.T) {
-	// AS is skipped as a keyword.
+	// The input name is imported; its output alias is not another import.
 	got := extractWithImports("WITH x AS y MATCH (n)")
-	// "x" is parsed, "AS" is skipped, "y" is parsed, "MATCH" stops.
-	if len(got) != 2 || got[0] != "x" || got[1] != "y" {
-		t.Fatalf("expected [x y], got %v", got)
+	if len(got) != 1 || got[0] != "x" {
+		t.Fatalf("expected [x], got %v", got)
 	}
 }
 
@@ -1575,14 +1589,14 @@ func TestCallBlockContainsFabricUse_NestedCallError(t *testing.T) {
 
 func TestSplitAtTopLevelUse_EscapedSingleQuote(t *testing.T) {
 	// Escaped single quote.
-	_, _, ok := splitAtTopLevelUse("MATCH (n {x: 'it''s USE db'}) RETURN n")
+	_, _, ok := splitAtTopLevelUse("MATCH (n {x: 'it\\'s USE db'}) RETURN n")
 	if ok {
 		t.Fatal("expected USE inside escaped single quote to be ignored")
 	}
 }
 
 func TestSplitAtTopLevelUse_EscapedDoubleQuote(t *testing.T) {
-	_, _, ok := splitAtTopLevelUse(`MATCH (n {x: "say ""USE db"""}) RETURN n`)
+	_, _, ok := splitAtTopLevelUse(`MATCH (n {x: "say \"USE db\""}) RETURN n`)
 	if ok {
 		t.Fatal("expected USE inside escaped double quote to be ignored")
 	}
@@ -1590,23 +1604,23 @@ func TestSplitAtTopLevelUse_EscapedDoubleQuote(t *testing.T) {
 
 func TestHasTopLevelReturnClause_EscapedQuotes(t *testing.T) {
 	// Escaped single quote.
-	if !hasTopLevelReturnClause("MATCH (n {x: 'it''s'}) RETURN n") {
+	if !hasTopLevelReturnClause("MATCH (n {x: 'it\\'s'}) RETURN n") {
 		t.Fatal("expected RETURN to be found after escaped single quote")
 	}
 	// Escaped double quote.
-	if !hasTopLevelReturnClause(`MATCH (n {x: "say ""hello"""}) RETURN n`) {
+	if !hasTopLevelReturnClause(`MATCH (n {x: "say \"hello\""}) RETURN n`) {
 		t.Fatal("expected RETURN to be found after escaped double quote")
 	}
 }
 
 func TestTrailingWithAliases_EscapedQuotes(t *testing.T) {
 	// Escaped single quote in WITH clause.
-	got := trailingWithAliases("MATCH (n {x: 'it''s'}) WITH a")
+	got := trailingWithAliases("MATCH (n {x: 'it\\'s'}) WITH a")
 	if len(got) != 1 || got[0] != "a" {
 		t.Fatalf("expected [a], got %v", got)
 	}
 	// Escaped double quote.
-	got = trailingWithAliases(`MATCH (n {x: "say ""hi"""}) WITH b`)
+	got = trailingWithAliases(`MATCH (n {x: "say \"hi\""}) WITH b`)
 	if len(got) != 1 || got[0] != "b" {
 		t.Fatalf("expected [b], got %v", got)
 	}
@@ -1636,12 +1650,12 @@ func TestTrailingWithAliases_AsNonValidAlias(t *testing.T) {
 
 func TestFindMatchingBrace_EscapedQuotes(t *testing.T) {
 	// Escaped single quote.
-	pos, err := findMatchingBrace("{ 'it''s' }", 0)
+	pos, err := findMatchingBrace("{ 'it\\'s' }", 0)
 	if err != nil || pos != 10 {
 		t.Fatalf("expected pos=10, got pos=%d err=%v", pos, err)
 	}
 	// Escaped double quote.
-	pos, err = findMatchingBrace(`{ "say ""hi""" }`, 0)
+	pos, err = findMatchingBrace(`{ "say \"hi\"" }`, 0)
 	if err != nil || pos != 15 {
 		t.Fatalf("expected pos=15, got pos=%d err=%v", pos, err)
 	}

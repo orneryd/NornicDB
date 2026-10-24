@@ -23,11 +23,23 @@ func IsDoubleQuote(character byte) bool { return character == '"' }
 func IsBacktick(character byte) bool { return character == '`' }
 
 // ScanQuotedText returns the byte after the quoted token at start. Doubled
-// delimiters escape every quote kind; backslash escapes apply to strings but
-// not backtick symbolic names.
+// backticks escape symbolic-name delimiters; backslash escapes apply to
+// strings but not backtick symbolic names.
 func ScanQuotedText(text string, start int) (int, bool) {
 	end, _, closed := scanQuotedText(text, start, true, nil)
 	return end, closed
+}
+
+// UnquoteBacktick returns the name inside one complete backtick token.
+func UnquoteBacktick(text string) (string, bool) {
+	if len(text) < 2 || !IsBacktick(text[0]) {
+		return "", false
+	}
+	end, closed := ScanQuotedText(text, 0)
+	if !closed || end != len(text) {
+		return "", false
+	}
+	return strings.ReplaceAll(text[1:len(text)-1], "``", "`"), true
 }
 
 // ScanStringToken preserves adjacent string literals as separate tokens for
@@ -69,13 +81,53 @@ func scanQuotedText(text string, start int, doubled bool, expressionEnd func(int
 		if text[index] != quote {
 			continue
 		}
-		if doubled && index+1 < len(text) && text[index+1] == quote {
+		if doubled && quote == '`' && index+1 < len(text) && text[index+1] == quote {
 			index++
 			continue
 		}
 		return index + 1, hasEscape, true
 	}
 	return len(text), hasEscape, false
+}
+
+// HasAdjacentStringLiterals reports two string tokens separated only by
+// whitespace or comments. Cypher strings escape their delimiter with a
+// backslash; unlike backtick symbolic names, doubled quote bytes close one
+// string and start another.
+func HasAdjacentStringLiterals(text string) bool {
+	previousString := false
+	for index := 0; index < len(text); {
+		if end := CommentEnd(text, index); end >= 0 {
+			index = end
+			continue
+		}
+		if IsStringQuote(text[index]) {
+			if previousString {
+				return true
+			}
+			end, _, closed := ScanStringToken(text, index)
+			if !closed {
+				return false
+			}
+			index = end
+			previousString = true
+			continue
+		}
+		if IsBacktick(text[index]) {
+			end, _ := ScanQuotedText(text, index)
+			index = end
+			previousString = false
+			continue
+		}
+		switch text[index] {
+		case ' ', '\t', '\r', '\n', '\f':
+			index++
+		default:
+			previousString = false
+			index++
+		}
+	}
+	return false
 }
 
 // CommentEnd returns the end of the Cypher comment at index, or -1.
@@ -130,7 +182,7 @@ func SkipTokenRunes(text []rune, index int) (int, bool) {
 			if text[end] != quote {
 				continue
 			}
-			if end+1 < len(text) && text[end+1] == quote {
+			if quote == '`' && end+1 < len(text) && text[end+1] == quote {
 				end++
 				continue
 			}

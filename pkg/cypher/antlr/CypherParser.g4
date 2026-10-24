@@ -206,7 +206,7 @@ transactionBatch
 
 // Subquery body can start with WITH (to import variables) or have statements
 subqueryBody
-    : useClause? ((readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* (returnSt | FINISH)? (UNION ALL? subqueryBody)?
+    : useClause? ((readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* (embeddingSt | returnSt | FINISH)? (UNION ALL? subqueryBody)?
     ;
 
 returnSt
@@ -218,7 +218,7 @@ withSt
     ;
 
 embeddingSt
-    : WITH EMBEDDING
+    : {p.EmbeddingOptionTerminal()}? WITH EMBEDDING
     ;
 
 skipSt
@@ -250,9 +250,10 @@ orderSt
     ;
 
 // Reads may follow writes without a WITH (CREATE … MATCH … RETURN), as in
-// Neo4j 5 and 25.
+// Neo4j 5 and 25. The embedding option ends the query grammatically, so a
+// nonterminal WITH EMBEDDING can only be the multiPartQ projection.
 singlePartQ
-    : readingStatement* (returnSt | FINISH | updatingStatement (readingStatement | updatingStatement)* embeddingSt? (returnSt | FINISH)?)?
+    : readingStatement* (returnSt | FINISH | updatingStatement (readingStatement | updatingStatement)* (embeddingSt | returnSt | FINISH)?)?
     | callSubquery orderSt?
     ;
 
@@ -611,7 +612,7 @@ invocationName
     ;
 
 functionInvocation
-    : invocationName LPAREN DISTINCT? expressionChain? RPAREN
+    : invocationName LPAREN (DISTINCT? expressionChain)? RPAREN
     | TRIM LPAREN (LEADING | TRAILING | BOTH)? expression? FROM expression RPAREN
     ;
 
@@ -661,7 +662,7 @@ allReduceExpression
     ;
 
 parameter
-    : DOLLAR (name | numLit | DIGIT_NAME)
+    : DOLLAR (UNION | name | numLit | DIGIT_NAME)
     ;
 
 // literals
@@ -724,6 +725,7 @@ name
 symbol
     : ESC_LITERAL
     | ID
+    | UNION
     | COUNT
     | SUM
     | AVG
@@ -908,6 +910,90 @@ reservedWord
     | FAIL
     | REPORT
     | STATUS
+    | GRAPH
+    | LOAD
+    | CSV
+    | HEADERS
+    | FIELDTERMINATOR
+    | INSERT
+    | NODETACH
+    | OFFSET
+    ;
+
+// Fabric is a grammar entry, not a text preprocessor. In particular USE may
+// follow a subquery's importing WITH, so projection/expression prediction must
+// see that complete enclosing context when a name is spelled NOT, USE, etc.
+fabricScript
+    : fabricBody EOF
+    ;
+
+fabricBody
+    : fabricClause*
+    ;
+
+fabricClause
+    : fabricUseClause
+    | withSt
+    | returnSt
+    | matchSt
+    | unwindSt
+    | createSt embeddingSt?
+    | fabricInsertSt embeddingSt?
+    | mergeSt embeddingSt?
+    | deleteSt embeddingSt?
+    | fabricNoDetachDeleteSt embeddingSt?
+    | setSt embeddingSt?
+    | removeSt embeddingSt?
+    | foreachSt embeddingSt?
+    | letSt
+    | filterSt
+    | forSt
+    | fabricCallSubquery
+    | queryCallSt
+    | fabricLoadCsv
+    | schemaCommand
+    | showCommand
+    | terminateCommand
+    | orderSt
+    | skipSt
+    | limitSt
+    | fabricOffsetSt
+    | UNION ALL?
+    | FINISH
+    | queryPrefix
+    | cypherGroup
+    | SEMI
+    ;
+
+fabricUseClause
+    : USE GRAPH?
+      (functionInvocation | symbol (DOT symbol)*)
+    ;
+
+fabricCallSubquery
+    : OPTIONAL? CALL fabricCallScope? LBRACE fabricBody RBRACE
+      (IN TRANSACTIONS (OF (numLit | parameter) (ROW | ROWS))?)?
+    ;
+
+fabricCallScope
+    : LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN
+    ;
+
+fabricLoadCsv
+    : LOAD CSV (WITH HEADERS)? FROM expression AS symbol
+      (FIELDTERMINATOR stringLit)?
+    ;
+
+fabricInsertSt
+    : INSERT pattern
+    ;
+
+fabricNoDetachDeleteSt
+    : NODETACH DELETE expressionChain
+    ;
+
+fabricOffsetSt
+    : OFFSET expression
     ;
 
 // One complete lexical product for scope-independent structural inspection.

@@ -110,6 +110,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"splitCommaTopLevelLocal": true, "splitArgsRespectingArrays": true,
 	}
 	quoteMechanismAllowlist := map[string]string{
+		"pkg/cypher/admin_error_redaction.go:redactAdminCommandError": "Recovers credential keywords after malformed quotes, then uses the canonical gap and quoted-text readers before shared redaction.",
 		"pkg/cypher/executor_spans.go:redactSpanErrorText": "Finds quoted Cypher fragments inside free-form trace errors, then delegates escape handling and literal masking to the canonical Cypher readers.",
 		"pkg/adminimport/importer.go:withDefaults":                   "sets a CSV quote option; does not read Cypher source",
 		"pkg/adminimport/importer.go:openCSVSource":                  "validates a CSV quote option before encoding/csv parsing; does not read Cypher source",
@@ -158,6 +159,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 	// still explicit, reasoned exceptions when present, but absence on the
 	// other branch cannot make that branch's guard stale.
 	branchOptionalAllowlist := map[string]string{
+		"pkg/multidb/remote_credentials.go:isCredentialFreeSimpleHTTPURL": "This URL fast path rejects userinfo, query, fragment, and ambiguous authority punctuation; it does not scan Cypher names or strings.",
 		"pkg/cypher/json_stringify.go:writeString":     "emits JSON string escapes and does not read Cypher text",
 		"pkg/cypher/json_stringify.go:pythonBytesRepr": "emits a Python bytes representation and does not read Cypher text",
 	}

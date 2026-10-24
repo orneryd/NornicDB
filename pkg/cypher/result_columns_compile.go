@@ -7,6 +7,7 @@ import (
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 )
 
 // boundCompilation schedules scope transfers on the canonical CST. Binding and
@@ -22,6 +23,8 @@ type boundCompilation struct {
 	locals      map[localIdentityKey]statementBindingID
 	clauses     map[int]queryBodyClause
 	localSyntax map[int][]syntaxLocalBinding
+	candidates  map[int]string // embedding option candidates by name offset
+	candidated  bool
 }
 type boundEvent struct{ enter, leave []func() }
 type boundBody struct {
@@ -53,6 +56,7 @@ type boundClause struct {
 	projectionSyntax    []cypherantlr.SyntaxNode
 	body                *boundBody
 	expressionDepth     int
+	transparent         bool // an unbound WITH EMBEDDING candidate
 }
 
 func (compiler *projectionCompilation) compileBound(incoming, retained resultmetadata.Names) *projectedScopeFacts {
@@ -330,6 +334,16 @@ func (compilation *boundCompilation) enterClause(clause *boundClause) {
 	clause.step = resultmetadata.Clause{Start: source.start, End: source.end, Before: projectionScope(projectedMapNames(clause.before))}
 	switch source.kind {
 	case pipelineClauseWith, pipelineClauseReturn:
+		if name, candidate := compilation.embeddingCandidate(source); candidate && source.kind == pipelineClauseWith {
+			if _, bound := clause.before[name]; !bound {
+				// The same decision as semantic validation and the pipeline
+				// frame: an unbound candidate is the execution option, and
+				// the scope passes through unchanged.
+				clause.transparent = true
+				clause.step.Kind = resultmetadata.ClauseWrite
+				return
+			}
+		}
 		clause.step.Kind = resultmetadata.ClauseReturn
 		if source.kind == pipelineClauseWith {
 			clause.step.Kind = resultmetadata.ClauseWith
@@ -403,6 +417,48 @@ func (compilation *boundCompilation) enterClause(clause *boundClause) {
 	default:
 		compilation.fail(resultmetadata.ReasonUnsupportedSyntax, source.start, nil)
 	}
+}
+
+// embeddingCandidate reports a nonterminal WITH EMBEDDING projection.
+func (compilation *boundCompilation) embeddingCandidate(source queryBodyClause) (string, bool) {
+	if !compilation.candidated {
+		compilation.candidates, compilation.candidated = statementEmbeddingCandidates(compilation.owner.source), true
+	}
+	name := embeddingCandidateIn(compilation.candidates, source.start, source.end)
+	return name, name != ""
+}
+
+// statementEmbeddingCandidates maps each nonterminal WITH EMBEDDING
+// candidate's name offset to its name. The shared fabric reader owns the
+// syntax eligibility; the scope compiler, semantic validation and the
+// pipeline frame decide its meaning from the bound variables.
+func statementEmbeddingCandidates(source string) map[int]string {
+	if !containsFold(source, "EMBEDDING") {
+		return nil
+	}
+	names, ok := fabric.NameOccurrences(source)
+	if !ok {
+		return nil
+	}
+	var candidates map[int]string
+	for _, name := range names {
+		if name.EmbeddingCandidate {
+			if candidates == nil {
+				candidates = map[int]string{}
+			}
+			candidates[name.Start] = name.Name
+		}
+	}
+	return candidates
+}
+
+func embeddingCandidateIn(candidates map[int]string, start, end int) string {
+	for position, name := range candidates {
+		if position >= start && position < end {
+			return name
+		}
+	}
+	return ""
 }
 
 func (compilation *boundCompilation) leaveClause(clause *boundClause) {

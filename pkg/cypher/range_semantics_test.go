@@ -65,13 +65,17 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 		} {
 			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, test.query), func(t *testing.T) {
 				// This budget detects retained input rows, independently of the
-				// process-global grammar's cold prediction initialization. Only
-				// syntax is prepared; the executor and its first result stay fresh.
+				// process-global grammar and statement-program initialization that
+				// execution performs on every entry it reads. A throwaway executor
+				// prepares them; the measured executor and its first result stay fresh.
 				var parserBefore, parserAfter runtime.MemStats
 				runtime.ReadMemStats(&parserBefore)
 				require.NoError(t, cypherantlr.Validate(test.query))
+				warm := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "stream_aggregate_warm"), 0, 0)
+				_, err := warm.Execute(context.Background(), test.query, nil)
+				require.NoError(t, err)
 				runtime.ReadMemStats(&parserAfter)
-				t.Logf("grammar setup allocated %d bytes outside row-retention measurement", parserAfter.TotalAlloc-parserBefore.TotalAlloc)
+				t.Logf("process-global setup allocated %d bytes outside row-retention measurement", parserAfter.TotalAlloc-parserBefore.TotalAlloc)
 				executor := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "stream_aggregate"), 0, 0)
 				if explicit {
 					_, err := executor.handleBegin()
@@ -81,7 +85,6 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 				var before, after runtime.MemStats
 				runtime.ReadMemStats(&before)
 				var result *ExecuteResult
-				var err error
 				if explicit {
 					result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
 				} else {

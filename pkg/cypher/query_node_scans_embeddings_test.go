@@ -206,7 +206,7 @@ func TestFabricFragmentQueryNodeEligibility(t *testing.T) {
 			spy := &queryNodeReadSpy{Engine: g.store}
 			exec := g.exec.cloneForStorage(spy)
 			fabric := &cypherFabricExecutor{base: g.exec}
-			_, _, err := fabric.executeFragmentQuery(context.Background(), exec, tc.query, nil)
+			_, _, err := fabric.executeFragmentQuery(context.Background(), exec, tc.query, nil, nil)
 			require.NoError(t, err)
 			require.Equal(t, tc.eligible, exec.readOnlyQueryNodes)
 			if tc.eligible {

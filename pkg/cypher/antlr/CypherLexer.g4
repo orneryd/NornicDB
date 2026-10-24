@@ -250,6 +250,17 @@ BOOSTED: 'BOOSTED';
 PROCEDURE: 'PROCEDURE';
 DBMS: 'DBMS';
 TO: 'TO';
+// Fabric's routing grammar must also recognize clauses sent to a remote
+// constituent. Keep these at the end of the keyword vocabulary.
+GRAPH: 'GRAPH';
+LOAD: 'LOAD';
+CSV: 'CSV';
+HEADERS: 'HEADERS';
+FIELDTERMINATOR: 'FIELDTERMINATOR';
+INSERT: 'INSERT';
+NODETACH: 'NODETACH';
+OFFSET: 'OFFSET';
+
 // ID must come after numbers so they aren't matched as IDs
 ID: Letter LetterOrDigit*;
 
@@ -259,10 +270,12 @@ ID: Letter LetterOrDigit*;
 DIGIT_NAME: [0-9]+ Letter LetterOrDigit*;
 
 ESC_LITERAL    : '`' ('``' | ~'`')* '`';
-// Single-quoted strings can contain any characters except unescaped quotes
-CHAR_LITERAL   : '\'' (~['\\] | EscapeSequence)* '\'';
-// Double-quoted strings can contain any characters except unescaped quotes
-STRING_LITERAL : '"' (~["\\] | EscapeSequence)* '"';
+// The generated lexer keeps doubled delimiters in one candidate token to
+// preserve its vocabulary. Public Parse/Validate entrypoints use the shared
+// token scanner to reject adjacent string literals; backslash escapes remain
+// the Cypher string-quote mechanism.
+CHAR_LITERAL   : '\'' ('\'' '\'' | ~['\\] | EscapeSequence)* '\'';
+STRING_LITERAL : '"' ('""' | ~["\\] | EscapeSequence)* '"';
 
 WS           : [ \t\r\n\u000C]+ -> channel(HIDDEN);
 COMMENT      : '/*' .*? '*/'    -> channel(COMMENTS);

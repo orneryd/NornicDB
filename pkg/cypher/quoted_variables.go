@@ -100,6 +100,21 @@ type quotedToken struct {
 // query (see the file comment). It returns nil when there is nothing to
 // rewrite; a query without a backtick isn't scanned.
 func canonicalizeQuotedVariables(query string) (string, *quotedVariableNames) {
+	return canonicalizeQuotedVariablesWithBindings(query, nil)
+}
+
+// Fabric's planner and remote participants consume native Cypher names.
+// Local fragments translate identifiers at the local execution boundary.
+func canonicalizeLocalQuotedVariables(query string, fabricQuery bool) (string, *quotedVariableNames) {
+	if fabricQuery {
+		return query, nil
+	}
+	return canonicalizeQuotedVariables(query)
+}
+
+// External row bindings have the same identifier roles as bindings declared
+// in the query. The local query and its row keys are translated together.
+func canonicalizeQuotedVariablesWithBindings(query string, bindings map[string]interface{}) (string, *quotedVariableNames) {
 	if strings.IndexByte(query, '`') < 0 {
 		return query, nil
 	}
@@ -108,6 +123,9 @@ func canonicalizeQuotedVariables(query string) (string, *quotedVariableNames) {
 		return query, nil
 	}
 	bound := make(map[string]struct{})
+	for name := range bindings {
+		bound[name] = struct{}{}
+	}
 	for _, token := range tokens {
 		if token.binding {
 			bound[token.name] = struct{}{}
@@ -194,6 +212,34 @@ func canonicalizeQuotedVariables(query string) (string, *quotedVariableNames) {
 		return names.internalOrder[i] < names.internalOrder[j]
 	})
 	return names.canonical, names
+}
+
+func (names *quotedVariableNames) bindingValues(bindings map[string]interface{}) map[string]interface{} {
+	if names == nil || len(bindings) == 0 {
+		return bindings
+	}
+	var out map[string]interface{}
+	for internal, original := range names.internal {
+		if _, parameter := names.parameters[internal]; parameter {
+			continue
+		}
+		value, exists := bindings[original.name]
+		if !exists {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]interface{}, len(bindings))
+			for name, value := range bindings {
+				out[name] = value
+			}
+		}
+		delete(out, original.name)
+		out[internal] = value
+	}
+	if out != nil {
+		return out
+	}
+	return bindings
 }
 
 // parameterValues returns params with each internal parameter name bound

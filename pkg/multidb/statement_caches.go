@@ -150,10 +150,11 @@ func (m *DatabaseManager) statementCacheScopeLocked(name string) (string, *State
 	if err == nil {
 		references = []string{name, database}
 	} else {
-		ref, resolved, ok := m.resolveCompositeConstituentInternal(name)
+		constituent, resolved, ok := m.resolveCompositeConstituentInternal(name)
 		if !ok {
 			return "", nil, ErrDatabaseNotFound
 		}
+		ref := constituent.ref
 		composite := name[:strings.IndexByte(name, '.')]
 		key = composite + "." + ref.Alias
 		references = []string{key, composite}

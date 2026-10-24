@@ -57,12 +57,32 @@ func TestPatternReadStreamsBeforeFullScan(t *testing.T) {
 		t.Run(query, func(t *testing.T) {
 			var calls atomic.Int64
 			withPluginFunctions(t, map[string]interface{}{"inspection.value": func() int64 { calls.Add(1); return 1 }})
-			// Initialize the parser and exact query path on a separate tiny
-			// fixture. The budget below measures streaming, not cold startup.
-			warmStore := &patternPhaseScanEngine{MemoryEngine: newTestMemoryEngine(t), size: 1}
+			// Warm the same asynchronous streaming path on a tiny fixture. This
+			// keeps the budget focused on row streaming, not cold parser-pool
+			// initialization.
+			warmStore := &patternPhaseScanEngine{MemoryEngine: newTestMemoryEngine(t), size: 64}
 			warm := NewStorageExecutor(storage.NewNamespacedEngine(warmStore, "phase_stream"))
-			_, warmErr := warm.Execute(context.Background(), query, nil)
-			require.NoError(t, warmErr)
+			warmCtx, warmCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer warmCancel()
+			var warmBefore, warmAfter runtime.MemStats
+			runtime.ReadMemStats(&warmBefore)
+			warmRun := executeStreamed(warmCtx, warm, query, 8)
+			select {
+			case <-warmRun.stream.Started():
+			case <-warmCtx.Done():
+				t.Fatalf("warm read did not stream: %v", warmRun.err)
+			}
+			runtime.ReadMemStats(&warmAfter)
+			warmMallocs := warmAfter.Mallocs - warmBefore.Mallocs
+			warmBytes := warmAfter.TotalAlloc - warmBefore.TotalAlloc
+			for {
+				_, done := warmRun.stream.Next(8)
+				if done {
+					break
+				}
+			}
+			<-warmRun.stream.Done()
+			require.NoError(t, warmRun.err)
 			calls.Store(0)
 			store := &patternPhaseScanEngine{MemoryEngine: newTestMemoryEngine(t), size: 50000}
 			exec := NewStorageExecutor(storage.NewNamespacedEngine(store, "phase_stream"))
@@ -80,7 +100,8 @@ func TestPatternReadStreamsBeforeFullScan(t *testing.T) {
 			runtime.ReadMemStats(&after)
 			require.LessOrEqual(t, store.visited.Load(), int64(64), "first row must precede the full scan")
 			require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(8<<20), "unconsumed rows must not be buffered")
-			require.Less(t, after.Mallocs-before.Mallocs, uint64(20000), "allocations must follow consumed rows")
+			require.LessOrEqual(t, after.Mallocs-before.Mallocs, warmMallocs+2048, "first-batch allocations must not scale with unconsumed rows")
+			require.LessOrEqual(t, after.TotalAlloc-before.TotalAlloc, warmBytes+(1<<20), "first-batch bytes must not scale with unconsumed rows")
 			rows, done := run.stream.Next(2)
 			require.False(t, done)
 			require.Len(t, rows, 2)
