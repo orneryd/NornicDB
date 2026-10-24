@@ -1,0 +1,37 @@
+[
+  {
+    "provider": "nornicLocal",
+    "runtime_exit": 0,
+    "elapsed_seconds": 29.74,
+    "tools": [
+      "read",
+      "read",
+      "edit",
+      "bash"
+    ],
+    "admission_operations": [
+      "worker.admit"
+    ],
+    "tests_passed": true,
+    "changed": true
+  },
+  {
+    "provider": "ollamaRemote",
+    "runtime_exit": 0,
+    "elapsed_seconds": 79.22,
+    "tools": [
+      "read",
+      "bash",
+      "bash",
+      "read",
+      "edit",
+      "bash",
+      "bash"
+    ],
+    "admission_operations": [
+      "worker.admit"
+    ],
+    "tests_passed": true,
+    "changed": true
+  }
+]

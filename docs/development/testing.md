@@ -163,3 +163,10 @@ Tests run automatically on:
 - **[Setup](setup.md)** - Development setup
 - **[Code Style](code-style.md)** - Code conventions
 - **[Contributing](../contributing.md)** - Contribution process
+
+## Local T3 workflow integration
+
+See [the local swarm setup](swarm-local.md) for the pinned T3 extension, Docker
+persistence/GPU checks, live intent and code-graph MCP tests, Linear read-only
+qualification, and the mandatory duplicate-gate acceptance fixture. These checks
+qualify the prototype paths they exercise, not the full proposed swarm lifecycle.

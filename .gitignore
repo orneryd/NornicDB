@@ -108,3 +108,5 @@ testing/cypher/tck/testdata/differential/sweep.json.gz
 # Optional local code-intelligence tools and private configuration
 .venv-code-intelligence/
 .env.code-intelligence
+/docker/.env.swarm-local
+/docker/.swarm-local.paths.json
