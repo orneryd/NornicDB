@@ -59,6 +59,9 @@ func (tx *BadgerTransaction) removePendingEdgeLocked(id EdgeID) {
 }
 
 func (tx *BadgerTransaction) mergePendingAdjacentEdgesLocked(committed []*Edge, id NodeID, include func(*Edge) bool) []*Edge {
+	if len(tx.pendingEdges) == 0 && len(tx.deletedEdges) == 0 {
+		return committed
+	}
 	pending := tx.pendingAdjacencyLocked(id)
 	// Committed adjacency is caller-owned. A rewrite shadows its former
 	// endpoints even when its new endpoints aren't in this node's index.
