@@ -16,6 +16,12 @@ var statementPresentationRewrites = newBoundedCache[string, *queryRewrite](4096,
 // owner, and no second scope or result-header analysis runs here.
 func canonicalizeStatementText(source string) (string, *queryRewrite) {
 	canonical, rewrite := canonicalizeQueryText(source)
+	return preserveStatementPresentation(source, canonical, rewrite)
+}
+
+// preserveStatementPresentation composes lexical normalization with the
+// grammar-owned source spans that are public expression column names.
+func preserveStatementPresentation(source, canonical string, rewrite *queryRewrite) (string, *queryRewrite) {
 	if rewrite == nil {
 		return canonical, nil
 	}
@@ -63,7 +69,7 @@ func canonicalizeStatementText(source string) (string, *queryRewrite) {
 		statementPresentationRewrites.put(source, nil)
 		return source, nil
 	}
-	rewrite = &queryRewrite{original: source, canonical: canonical, edits: kept, verbatimColumns: rewrite.verbatimColumns}
+	rewrite = &queryRewrite{original: source, canonical: canonical, edits: kept, verbatimColumns: rewrite.verbatimColumns, commentsAdmitted: rewrite.commentsAdmitted}
 	statementPresentationRewrites.put(source, rewrite)
 	return canonical, rewrite
 }

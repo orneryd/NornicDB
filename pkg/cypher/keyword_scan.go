@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -1251,22 +1250,14 @@ type queryRewrite struct {
 	// The label-expression rewrite inserts predicates, in which a short
 	// column name (r) can occur last (#860).
 	verbatimColumns bool
+
+	// Admission is a fact of exact source text, retained by its existing rewrite.
+	commentsAdmitted bool
 }
 
 // queryWhitespaceAt returns the length of the whitespace character at
 // query[index] (ASCII or a Unicode space), 0 when there is none.
-func queryWhitespaceAt(query string, index int) int {
-	switch c := query[index]; {
-	case c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v':
-		return 1
-	case c >= utf8.RuneSelf:
-		r, width := utf8.DecodeRuneInString(query[index:])
-		if unicode.IsSpace(r) {
-			return width
-		}
-	}
-	return 0
-}
+func queryWhitespaceAt(query string, index int) int { return cyphertext.WhitespaceAt(query, index) }
 
 // queryCommentEnd returns the end of the comment that starts at
 // query[index], or -1 when none starts there. A line comment ends before
@@ -1278,18 +1269,7 @@ func queryCommentEnd(query string, index int) int {
 // queryGapEnd returns the end of the run of whitespace and comments that
 // starts at index, index itself when none does.
 func queryGapEnd(query string, index int) int {
-	end := index
-	for end < len(query) {
-		if commentEnd := queryCommentEnd(query, end); commentEnd >= 0 {
-			end = commentEnd
-			continue
-		}
-		size := queryWhitespaceAt(query, end)
-		if size == 0 {
-			break
-		}
-		end += size
-	}
+	end, _ := readQueryGap(query, index)
 	return end
 }
 
@@ -1455,6 +1435,11 @@ func canonicalizeQueryText(query string) (string, *queryRewrite) {
 // scanCanonicalQueryText is canonicalizeQueryText's full scan, for a query
 // the quick check couldn't clear.
 func scanCanonicalQueryText(query string) (string, *queryRewrite) {
+	canonical, rewrite, _ := readCanonicalQueryText(query, false)
+	return canonical, rewrite
+}
+
+func readCanonicalQueryText(query string, admit bool) (string, *queryRewrite, error) {
 	var (
 		rewrite  *queryRewrite
 		memoized *queryRewrite
@@ -1464,7 +1449,7 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 	replace := func(start, end int, replacement string) {
 		if rewrite == nil {
 			if len(query) <= canonicalRewriteMemoMaxLen {
-				if cached := canonicalRewrites.slot(query).Load(); cached != nil && cached.original == query {
+				if cached := canonicalRewrites.slot(query).Load(); cached != nil && cached.original == query && (!admit || cached.commentsAdmitted) {
 					memoized = cached
 					return
 				}
@@ -1491,14 +1476,14 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 			if c == '`' && index >= verbatimEnd && aliasKeywordEndsAt(query, index) {
 				replace(index, index, " ")
 				if memoized != nil {
-					return memoized.canonical, memoized
+					return memoized.canonical, memoized, nil
 				}
 			}
 			index = skipCypherQuotedText(query, index, c)
 			if index >= verbatimEnd && gluedAliasKeywordAt(query, index) {
 				replace(index, index, " ")
 				if memoized != nil {
-					return memoized.canonical, memoized
+					return memoized.canonical, memoized, nil
 				}
 			}
 			continue
@@ -1508,7 +1493,7 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 			// clause reader expects.
 			replace(index+1, index+1, " ")
 			if memoized != nil {
-				return memoized.canonical, memoized
+				return memoized.canonical, memoized, nil
 			}
 			index++
 			continue
@@ -1520,9 +1505,12 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 		}
 		if index < verbatimEnd {
 			if end := queryCommentEnd(query, index); end >= 0 {
+				if _, closed := cyphertext.CommentEndStatus(query, index); admit && !closed {
+					return query, nil, unclosedCommentError(query, index, ModeNormal)
+				}
 				replace(index, end, commentReplacement(query[index:end]))
 				if memoized != nil {
-					return memoized.canonical, memoized
+					return memoized.canonical, memoized, nil
 				}
 				index = end
 				continue
@@ -1530,16 +1518,19 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 			index++
 			continue
 		}
-		if end := queryGapEnd(query, index); end > index {
+		if end, unclosed := readQueryGap(query, index); end > index {
+			if admit && unclosed >= 0 {
+				return query, nil, unclosedCommentError(query, unclosed, ModeNormal)
+			}
 			if index > 0 && end < len(query) && arrowGap(query[index-1], query[end]) && inPatternClause(query, index) {
 				replace(index, end, "")
 				if memoized != nil {
-					return memoized.canonical, memoized
+					return memoized.canonical, memoized, nil
 				}
 			} else if end != index+1 || c != ' ' {
 				replace(index, end, " ")
 				if memoized != nil {
-					return memoized.canonical, memoized
+					return memoized.canonical, memoized, nil
 				}
 			}
 			index = end
@@ -1548,14 +1539,15 @@ func scanCanonicalQueryText(query string) (string, *queryRewrite) {
 		index++
 	}
 	if rewrite == nil {
-		return query, nil
+		return query, nil, nil
 	}
 	out.WriteString(query[last:])
 	rewrite.canonical = out.String()
+	rewrite.commentsAdmitted = admit
 	if len(query) <= canonicalRewriteMemoMaxLen {
 		canonicalRewrites.slot(query).Store(rewrite)
 	}
-	return rewrite.canonical, rewrite
+	return rewrite.canonical, rewrite, nil
 }
 
 // arrowGap reports whether a gap between before and after can be inside a
