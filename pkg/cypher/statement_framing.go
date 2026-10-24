@@ -95,20 +95,23 @@ var cypherPreambleOptionValues = map[string]string{
 
 func validateCypherPreamble(query string) error {
 	rest := strings.TrimSpace(query)
+	restOffset := strings.Index(query, rest)
 	argumentError := func(message string) error {
 		return nornicerrors.MarkCompileTime(newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument", message))
 	}
 	consumeGap := func(index int) error {
 		end, unclosed := readQueryGap(rest, index)
 		if unclosed >= 0 {
-			return unclosedCommentError(rest, unclosed, ModeNormal)
+			return unclosedCommentError(query, restOffset+unclosed, ModeNormal)
 		}
-		rest = strings.TrimSpace(rest[end:])
+		restOffset += end
+		rest = rest[end:]
 		return nil
 	}
 	var seenVersion string
 	for rest != "" {
 		if mode, inner := executionModePrefix(rest); mode != ModeNormal {
+			restOffset += len(rest) - len(inner)
 			rest = inner
 			continue
 		}
@@ -138,11 +141,9 @@ func validateCypherPreamble(query string) error {
 		// Comments between the preamble and its body are still source text.
 		// Admit their terminator while consuming this existing prefix gap,
 		// before option parsing can misreport an unfinished comment as syntax.
-		gap, unclosed := readQueryGap(rest, 0)
-		if unclosed >= 0 {
-			return unclosedCommentError(rest, unclosed, ModeNormal)
+		if err := consumeGap(0); err != nil {
+			return err
 		}
-		rest = strings.TrimSpace(rest[gap:])
 		for rest != "" && !startsWithClauseKeyword(rest) {
 			end := 0
 			for end < len(rest) && isIdentByte(rest[end]) {

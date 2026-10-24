@@ -26,6 +26,11 @@ func TestPR1612ReviewFraming(t *testing.T) {
 					require.Equal(t, [][]interface{}{{int64(1)}}, r.Rows)
 				})
 			}
+			t.Run("unfinished comment after option", func(t *testing.T) {
+				_, err := e.Execute(context.Background(), "CYPHER runtime=slotted /* incomplete", nil)
+				requireStatusCode(t, err, "Neo.DatabaseError.Statement.ExecutionFailed")
+			})
+
 			for _, q := range []string{"WITH 1 AS x FINISH", "EXPLAIN WITH 1 AS x FINISH", "PROFILE WITH 1 AS x FINISH", "PROFILE CALL db.labels() YIELD label WHERE label = 'R1612' FINISH"} {
 				t.Run(q, func(t *testing.T) {
 					r, err := e.Execute(context.Background(), q, nil)
