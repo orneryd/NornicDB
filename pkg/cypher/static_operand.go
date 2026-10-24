@@ -355,8 +355,8 @@ func (operand staticOperand) listPart() staticOperand {
 func (operand staticOperand) reversedOperand() staticOperand {
 	// Null admits reverse without constraining its input to a concrete overload.
 	// The declared result remains String or List, never an arbitrary scalar.
-	if operand.proven && operand.mayBeNull() {
-		return provenOperand("String or List<T>")
+	if operand.mayBeNull() || operand.isPropertyValue() {
+		return typedOperand("String or List<T>").proved()
 	}
 
 	var results []string
@@ -797,7 +797,12 @@ func derivedFunctionOperand(function string, arguments []staticOperand) (result 
 	case derivationElement:
 		return first.elementOperand(), true
 	case derivationListPart:
-		return first.listPart(), true
+		result := first.listPart()
+		if result.typeName() == "" {
+			// tail always returns a list even when admission cannot constrain its input.
+			result = provenOperand("List<T>")
+		}
+		return result, true
 	case derivationReversed:
 		return first.reversedOperand(), true
 	case derivationListOf:

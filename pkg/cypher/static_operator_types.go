@@ -520,10 +520,14 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 		}
 	}
 	for _, tier := range []string{"+-", "*/%", "^"} {
-		left, right, operator, arithmetic := splitRowArithmeticTier(expression, tier)
+		left, right, operator, arithmetic := splitRowArithmeticTier(scan, tier)
 		if !arithmetic {
 			continue
 		}
+		// CASE bodies are atomic to the enclosing expression. Use the masked
+		// boundary, then derive operands from their original source.
+		position := len(left) + strings.IndexByte(scan[len(left):], operator)
+		left, right = strings.TrimSpace(expression[:position]), strings.TrimSpace(expression[position+1:])
 		if !staticArithmeticOperandText(left) || !staticArithmeticOperandText(right) {
 			return staticOperand{}, nil
 		}

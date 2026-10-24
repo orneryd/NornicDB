@@ -27,7 +27,7 @@ func TestBoltCanonicalStatementMatrix(t *testing.T) {
 			restore := config.WithCypherQueryNormalizationDisabled()
 			defer restore()
 			config.SetCypherQueryNormalizationEnabled(normalized)
-			for _, sample := range statementfactstest.Cases() {
+			for _, sample := range append(statementfactstest.Cases(), statementfactstest.ReviewAdmissionCases()...) {
 				for _, explicit := range []bool{false, true} {
 					for _, prefix := range []string{"", "EXPLAIN ", "PROFILE "} {
 						t.Run(fmt.Sprintf("%s/explicit=%v/mode=%s", sample.Name, explicit, prefix), func(t *testing.T) {

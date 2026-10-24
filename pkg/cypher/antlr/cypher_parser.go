@@ -1977,6 +1977,8 @@ func (p *CypherParser) Script() (localctx IScriptContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -1987,7 +1989,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ICypherPreambleContext is an interface to support dynamic dispatch.
@@ -2125,6 +2126,8 @@ func (p *CypherParser) CypherPreamble() (localctx ICypherPreambleContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -2135,7 +2138,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ICypherGroupContext is an interface to support dynamic dispatch.
@@ -2317,6 +2319,8 @@ func (p *CypherParser) CypherGroup() (localctx ICypherGroupContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -2327,7 +2331,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ICypherOptionContext is an interface to support dynamic dispatch.
@@ -2474,6 +2477,8 @@ func (p *CypherParser) CypherOption() (localctx ICypherOptionContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -2484,7 +2489,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IShellCommandContext is an interface to support dynamic dispatch.
@@ -2656,6 +2660,8 @@ func (p *CypherParser) ShellCommand() (localctx IShellCommandContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -2666,7 +2672,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IShellCommandElementContext is an interface to support dynamic dispatch.
@@ -2844,6 +2849,8 @@ func (p *CypherParser) ShellCommandElement() (localctx IShellCommandElementConte
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -2854,7 +2861,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ITransactionStatementContext is an interface to support dynamic dispatch.
@@ -3046,6 +3052,8 @@ func (p *CypherParser) TransactionStatement() (localctx ITransactionStatementCon
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -3056,7 +3064,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IQueryContext is an interface to support dynamic dispatch.
@@ -3452,6 +3459,8 @@ func (p *CypherParser) Query() (localctx IQueryContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -3462,7 +3471,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IUseClauseContext is an interface to support dynamic dispatch.
@@ -3670,6 +3678,8 @@ func (p *CypherParser) UseClause() (localctx IUseClauseContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -3680,7 +3690,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IQueryPrefixContext is an interface to support dynamic dispatch.
@@ -3776,6 +3785,8 @@ func (p *CypherParser) QueryPrefix() (localctx IQueryPrefixContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -3786,7 +3797,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IShowCommandContext is an interface to support dynamic dispatch.
@@ -4584,6 +4594,8 @@ func (p *CypherParser) ShowCommand() (localctx IShowCommandContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -4594,7 +4606,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IShowConstraintKindContext is an interface to support dynamic dispatch.
@@ -4858,6 +4869,8 @@ func (p *CypherParser) ShowConstraintKind() (localctx IShowConstraintKindContext
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -4868,7 +4881,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IShowTailContext is an interface to support dynamic dispatch.
@@ -5178,6 +5190,8 @@ func (p *CypherParser) ShowTail() (localctx IShowTailContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -5188,7 +5202,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ITerminateCommandContext is an interface to support dynamic dispatch.
@@ -5607,6 +5620,8 @@ func (p *CypherParser) TerminateCommand() (localctx ITerminateCommandContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -5617,7 +5632,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IAdministrationCommandContext is an interface to support dynamic dispatch.
@@ -6414,6 +6428,8 @@ func (p *CypherParser) AdministrationCommand() (localctx IAdministrationCommandC
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -6424,7 +6440,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IQualifiedNameContext is an interface to support dynamic dispatch.
@@ -6584,6 +6599,8 @@ func (p *CypherParser) QualifiedName() (localctx IQualifiedNameContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -6594,7 +6611,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ISchemaCommandContext is an interface to support dynamic dispatch.
@@ -8250,6 +8266,8 @@ func (p *CypherParser) SchemaCommand() (localctx ISchemaCommandContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -8260,7 +8278,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IConstraintRequirementContext is an interface to support dynamic dispatch.
@@ -8778,6 +8795,8 @@ func (p *CypherParser) ConstraintRequirement() (localctx IConstraintRequirementC
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -8788,7 +8807,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IConstraintBlockContext is an interface to support dynamic dispatch.
@@ -9100,6 +9118,8 @@ func (p *CypherParser) ConstraintBlock() (localctx IConstraintBlockContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -9110,7 +9130,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPropertyTypeNameContext is an interface to support dynamic dispatch.
@@ -9204,6 +9223,8 @@ func (p *CypherParser) PropertyTypeName() (localctx IPropertyTypeNameContext) {
 		p.ExpressionType()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -9214,7 +9235,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IRegularQueryContext is an interface to support dynamic dispatch.
@@ -9373,6 +9393,8 @@ func (p *CypherParser) RegularQuery() (localctx IRegularQueryContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -9383,7 +9405,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ISingleQueryContext is an interface to support dynamic dispatch.
@@ -9513,6 +9534,8 @@ func (p *CypherParser) SingleQuery() (localctx ISingleQueryContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -9523,7 +9546,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IStandaloneCallContext is an interface to support dynamic dispatch.
@@ -9851,6 +9873,8 @@ func (p *CypherParser) StandaloneCall() (localctx IStandaloneCallContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -9861,7 +9885,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IExistsSubqueryContext is an interface to support dynamic dispatch.
@@ -10085,6 +10108,8 @@ func (p *CypherParser) ExistsSubquery() (localctx IExistsSubqueryContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -10095,7 +10120,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ICountSubqueryContext is an interface to support dynamic dispatch.
@@ -10319,6 +10343,8 @@ func (p *CypherParser) CountSubquery() (localctx ICountSubqueryContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -10329,7 +10355,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ICollectSubqueryContext is an interface to support dynamic dispatch.
@@ -10462,6 +10487,8 @@ func (p *CypherParser) CollectSubquery() (localctx ICollectSubqueryContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -10472,7 +10499,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ICallSubqueryContext is an interface to support dynamic dispatch.
@@ -10809,6 +10835,8 @@ func (p *CypherParser) CallSubquery() (localctx ICallSubqueryContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -10819,7 +10847,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ITransactionBatchContext is an interface to support dynamic dispatch.
@@ -11236,6 +11263,8 @@ func (p *CypherParser) TransactionBatch() (localctx ITransactionBatchContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -11246,7 +11275,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ISubqueryBodyContext is an interface to support dynamic dispatch.
@@ -11701,6 +11729,8 @@ func (p *CypherParser) SubqueryBody() (localctx ISubqueryBodyContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -11711,7 +11741,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IReturnStContext is an interface to support dynamic dispatch.
@@ -11818,6 +11847,8 @@ func (p *CypherParser) ReturnSt() (localctx IReturnStContext) {
 		p.ProjectionBody()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -11828,7 +11859,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IWithStContext is an interface to support dynamic dispatch.
@@ -11968,6 +11998,8 @@ func (p *CypherParser) WithSt() (localctx IWithStContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -11978,7 +12010,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IEmbeddingStContext is an interface to support dynamic dispatch.
@@ -12077,6 +12108,8 @@ func (p *CypherParser) EmbeddingSt() (localctx IEmbeddingStContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -12087,7 +12120,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ISkipStContext is an interface to support dynamic dispatch.
@@ -12194,6 +12226,8 @@ func (p *CypherParser) SkipSt() (localctx ISkipStContext) {
 		p.Expression()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -12204,7 +12238,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ILimitStContext is an interface to support dynamic dispatch.
@@ -12311,6 +12344,8 @@ func (p *CypherParser) LimitSt() (localctx ILimitStContext) {
 		p.Expression()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -12321,7 +12356,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IProjectionBodyContext is an interface to support dynamic dispatch.
@@ -12531,6 +12565,8 @@ func (p *CypherParser) ProjectionBody() (localctx IProjectionBodyContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -12541,7 +12577,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IProjectionItemsContext is an interface to support dynamic dispatch.
@@ -12729,6 +12764,8 @@ func (p *CypherParser) ProjectionItems() (localctx IProjectionItemsContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -12739,7 +12776,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IProjectionItemContext is an interface to support dynamic dispatch.
@@ -12879,6 +12915,8 @@ func (p *CypherParser) ProjectionItem() (localctx IProjectionItemContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -12889,7 +12927,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IOrderItemContext is an interface to support dynamic dispatch.
@@ -13026,6 +13063,8 @@ func (p *CypherParser) OrderItem() (localctx IOrderItemContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -13036,7 +13075,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IOrderStContext is an interface to support dynamic dispatch.
@@ -13222,6 +13260,8 @@ func (p *CypherParser) OrderSt() (localctx IOrderStContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -13232,7 +13272,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ISinglePartQContext is an interface to support dynamic dispatch.
@@ -13630,6 +13669,8 @@ func (p *CypherParser) SinglePartQ() (localctx ISinglePartQContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -13640,7 +13681,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IMultiPartQContext is an interface to support dynamic dispatch.
@@ -13932,6 +13972,8 @@ func (p *CypherParser) MultiPartQ() (localctx IMultiPartQContext) {
 		p.SinglePartQ()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -13942,7 +13984,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IMatchStContext is an interface to support dynamic dispatch.
@@ -14074,6 +14115,8 @@ func (p *CypherParser) MatchSt() (localctx IMatchStContext) {
 		p.PatternWhere()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -14084,7 +14127,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IUnwindStContext is an interface to support dynamic dispatch.
@@ -14258,6 +14300,8 @@ func (p *CypherParser) UnwindSt() (localctx IUnwindStContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -14268,7 +14312,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ILetStContext is an interface to support dynamic dispatch.
@@ -14441,6 +14484,8 @@ func (p *CypherParser) LetSt() (localctx ILetStContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -14451,7 +14496,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ILetItemContext is an interface to support dynamic dispatch.
@@ -14579,6 +14623,8 @@ func (p *CypherParser) LetItem() (localctx ILetItemContext) {
 		p.Expression()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -14589,7 +14635,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IFilterStContext is an interface to support dynamic dispatch.
@@ -14717,6 +14762,8 @@ func (p *CypherParser) FilterSt() (localctx IFilterStContext) {
 		p.Expression()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -14727,7 +14774,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IForStContext is an interface to support dynamic dispatch.
@@ -14868,6 +14914,8 @@ func (p *CypherParser) ForSt() (localctx IForStContext) {
 		p.Expression()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -14878,7 +14926,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IReadingStatementContext is an interface to support dynamic dispatch.
@@ -15152,6 +15199,8 @@ func (p *CypherParser) ReadingStatement() (localctx IReadingStatementContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -15162,7 +15211,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IUpdatingStatementContext is an interface to support dynamic dispatch.
@@ -15389,6 +15437,8 @@ func (p *CypherParser) UpdatingStatement() (localctx IUpdatingStatementContext) 
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -15399,7 +15449,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IDeleteStContext is an interface to support dynamic dispatch.
@@ -15531,6 +15580,8 @@ func (p *CypherParser) DeleteSt() (localctx IDeleteStContext) {
 		p.ExpressionChain()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -15541,7 +15592,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IRemoveStContext is an interface to support dynamic dispatch.
@@ -15714,6 +15764,8 @@ func (p *CypherParser) RemoveSt() (localctx IRemoveStContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -15724,7 +15776,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IRemoveItemContext is an interface to support dynamic dispatch.
@@ -15899,6 +15950,8 @@ func (p *CypherParser) RemoveItem() (localctx IRemoveItemContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -15909,7 +15962,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IForeachStContext is an interface to support dynamic dispatch.
@@ -16154,6 +16206,8 @@ func (p *CypherParser) ForeachSt() (localctx IForeachStContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -16164,7 +16218,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IQueryCallStContext is an interface to support dynamic dispatch.
@@ -16492,6 +16545,8 @@ func (p *CypherParser) QueryCallSt() (localctx IQueryCallStContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -16502,7 +16557,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IParenExpressionChainContext is an interface to support dynamic dispatch.
@@ -16634,6 +16688,8 @@ func (p *CypherParser) ParenExpressionChain() (localctx IParenExpressionChainCon
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -16644,7 +16700,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IYieldItemsContext is an interface to support dynamic dispatch.
@@ -16835,6 +16890,8 @@ func (p *CypherParser) YieldItems() (localctx IYieldItemsContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -16845,7 +16902,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IYieldItemContext is an interface to support dynamic dispatch.
@@ -16990,6 +17046,8 @@ func (p *CypherParser) YieldItem() (localctx IYieldItemContext) {
 		p.Symbol()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -17000,7 +17058,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IMergeStContext is an interface to support dynamic dispatch.
@@ -17172,6 +17229,8 @@ func (p *CypherParser) MergeSt() (localctx IMergeStContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -17182,7 +17241,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IMergeActionContext is an interface to support dynamic dispatch.
@@ -17312,6 +17370,8 @@ func (p *CypherParser) MergeAction() (localctx IMergeActionContext) {
 		p.SetSt()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -17322,7 +17382,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ISetStContext is an interface to support dynamic dispatch.
@@ -17495,6 +17554,8 @@ func (p *CypherParser) SetSt() (localctx ISetStContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -17505,7 +17566,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ISetItemContext is an interface to support dynamic dispatch.
@@ -17755,6 +17815,8 @@ func (p *CypherParser) SetItem() (localctx ISetItemContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -17765,7 +17827,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IDynamicPropertyExpressionContext is an interface to support dynamic dispatch.
@@ -17906,6 +17967,8 @@ func (p *CypherParser) DynamicPropertyExpression() (localctx IDynamicPropertyExp
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -17916,7 +17979,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // INodeLabelsContext is an interface to support dynamic dispatch.
@@ -18085,6 +18147,8 @@ func (p *CypherParser) NodeLabels() (localctx INodeLabelsContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -18095,7 +18159,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ILabelExpressionContext is an interface to support dynamic dispatch.
@@ -18292,6 +18355,8 @@ func (p *CypherParser) LabelExpression() (localctx ILabelExpressionContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -18302,7 +18367,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ILabelConjunctionContext is an interface to support dynamic dispatch.
@@ -18484,6 +18548,8 @@ func (p *CypherParser) LabelConjunction() (localctx ILabelConjunctionContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -18494,7 +18560,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ILabelNegationContext is an interface to support dynamic dispatch.
@@ -18724,6 +18789,8 @@ func (p *CypherParser) LabelNegation() (localctx ILabelNegationContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -18734,7 +18801,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IDynamicLabelContext is an interface to support dynamic dispatch.
@@ -18900,6 +18966,8 @@ func (p *CypherParser) DynamicLabel() (localctx IDynamicLabelContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -18910,7 +18978,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ICreateStContext is an interface to support dynamic dispatch.
@@ -19017,6 +19084,8 @@ func (p *CypherParser) CreateSt() (localctx ICreateStContext) {
 		p.Pattern()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -19027,7 +19096,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPatternWhereContext is an interface to support dynamic dispatch.
@@ -19154,6 +19222,8 @@ func (p *CypherParser) PatternWhere() (localctx IPatternWhereContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -19164,7 +19234,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IWhereContext is an interface to support dynamic dispatch.
@@ -19271,6 +19340,8 @@ func (p *CypherParser) Where() (localctx IWhereContext) {
 		p.Expression()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -19281,7 +19352,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPatternContext is an interface to support dynamic dispatch.
@@ -19441,6 +19511,8 @@ func (p *CypherParser) Pattern() (localctx IPatternContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -19451,7 +19523,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IExpressionContext is an interface to support dynamic dispatch.
@@ -19618,6 +19689,8 @@ func (p *CypherParser) Expression() (localctx IExpressionContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -19628,7 +19701,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IXorExpressionContext is an interface to support dynamic dispatch.
@@ -19795,6 +19867,8 @@ func (p *CypherParser) XorExpression() (localctx IXorExpressionContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -19805,7 +19879,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IAndExpressionContext is an interface to support dynamic dispatch.
@@ -19972,6 +20045,8 @@ func (p *CypherParser) AndExpression() (localctx IAndExpressionContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -19982,7 +20057,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // INotExpressionContext is an interface to support dynamic dispatch.
@@ -20181,6 +20255,8 @@ func (p *CypherParser) NotExpression() (localctx INotExpressionContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -20191,7 +20267,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IComparisonExpressionContext is an interface to support dynamic dispatch.
@@ -20387,6 +20462,8 @@ func (p *CypherParser) ComparisonExpression() (localctx IComparisonExpressionCon
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -20397,7 +20474,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IComparisonSignsContext is an interface to support dynamic dispatch.
@@ -20518,6 +20594,8 @@ func (p *CypherParser) ComparisonSigns() (localctx IComparisonSignsContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -20528,7 +20606,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IAddSubExpressionContext is an interface to support dynamic dispatch.
@@ -20710,6 +20787,8 @@ func (p *CypherParser) AddSubExpression() (localctx IAddSubExpressionContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -20720,7 +20799,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IMultDivExpressionContext is an interface to support dynamic dispatch.
@@ -20903,6 +20981,8 @@ func (p *CypherParser) MultDivExpression() (localctx IMultDivExpressionContext) 
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -20913,7 +20993,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPowerExpressionContext is an interface to support dynamic dispatch.
@@ -21073,6 +21152,8 @@ func (p *CypherParser) PowerExpression() (localctx IPowerExpressionContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -21083,7 +21164,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IUnaryAddSubExpressionContext is an interface to support dynamic dispatch.
@@ -21208,6 +21288,8 @@ func (p *CypherParser) UnaryAddSubExpression() (localctx IUnaryAddSubExpressionC
 		p.AtomicExpression()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -21218,7 +21300,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IAtomicExpressionContext is an interface to support dynamic dispatch.
@@ -21641,6 +21722,8 @@ func (p *CypherParser) AtomicExpression() (localctx IAtomicExpressionContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -21651,7 +21734,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // INormalizationPredicateContext is an interface to support dynamic dispatch.
@@ -21816,6 +21898,8 @@ func (p *CypherParser) NormalizationPredicate() (localctx INormalizationPredicat
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -21826,7 +21910,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ILabelPredicateContext is an interface to support dynamic dispatch.
@@ -21933,6 +22016,8 @@ func (p *CypherParser) LabelPredicate() (localctx ILabelPredicateContext) {
 		p.LabelExpression()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -21943,7 +22028,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IListExpressionContext is an interface to support dynamic dispatch.
@@ -22277,6 +22361,8 @@ func (p *CypherParser) ListExpression() (localctx IListExpressionContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -22287,7 +22373,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IStringExpressionContext is an interface to support dynamic dispatch.
@@ -22402,6 +22487,8 @@ func (p *CypherParser) StringExpression() (localctx IStringExpressionContext) {
 		p.PropertyOrLabelExpression()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -22412,7 +22499,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IStringExpPrefixContext is an interface to support dynamic dispatch.
@@ -22564,6 +22650,8 @@ func (p *CypherParser) StringExpPrefix() (localctx IStringExpPrefixContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -22574,7 +22662,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // INullExpressionContext is an interface to support dynamic dispatch.
@@ -22698,6 +22785,8 @@ func (p *CypherParser) NullExpression() (localctx INullExpressionContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -22708,7 +22797,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ITypePredicateContext is an interface to support dynamic dispatch.
@@ -22930,6 +23018,8 @@ func (p *CypherParser) TypePredicate() (localctx ITypePredicateContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -22940,7 +23030,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IExpressionTypeContext is an interface to support dynamic dispatch.
@@ -23107,6 +23196,8 @@ func (p *CypherParser) ExpressionType() (localctx IExpressionTypeContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -23117,7 +23208,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IExpressionTypePartContext is an interface to support dynamic dispatch.
@@ -23438,6 +23528,8 @@ func (p *CypherParser) ExpressionTypePart() (localctx IExpressionTypePartContext
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -23448,7 +23540,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPropertyOrLabelExpressionContext is an interface to support dynamic dispatch.
@@ -23632,6 +23723,8 @@ func (p *CypherParser) PropertyOrLabelExpression() (localctx IPropertyOrLabelExp
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -23642,7 +23735,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPropertyExpressionContext is an interface to support dynamic dispatch.
@@ -23819,6 +23911,8 @@ func (p *CypherParser) PropertyExpression() (localctx IPropertyExpressionContext
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -23829,7 +23923,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPatternPartContext is an interface to support dynamic dispatch.
@@ -24054,6 +24147,8 @@ func (p *CypherParser) PatternPart() (localctx IPatternPartContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -24064,7 +24159,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPathFunctionContext is an interface to support dynamic dispatch.
@@ -24207,6 +24301,8 @@ func (p *CypherParser) PathFunction() (localctx IPathFunctionContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -24217,7 +24313,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPatternElemContext is an interface to support dynamic dispatch.
@@ -24469,6 +24564,8 @@ func (p *CypherParser) PatternElem() (localctx IPatternElemContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -24479,7 +24576,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPatternElemStartContext is an interface to support dynamic dispatch.
@@ -24621,6 +24717,8 @@ func (p *CypherParser) PatternElemStart() (localctx IPatternElemStartContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -24631,7 +24729,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPatternElemPartContext is an interface to support dynamic dispatch.
@@ -24791,6 +24888,8 @@ func (p *CypherParser) PatternElemPart() (localctx IPatternElemPartContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -24801,7 +24900,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IQuantifiedPathContext is an interface to support dynamic dispatch.
@@ -24975,6 +25073,8 @@ func (p *CypherParser) QuantifiedPath() (localctx IQuantifiedPathContext) {
 		p.RelationshipQuantifier()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -24985,7 +25085,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPatternElemChainContext is an interface to support dynamic dispatch.
@@ -25133,6 +25232,8 @@ func (p *CypherParser) PatternElemChain() (localctx IPatternElemChainContext) {
 		p.NodePattern()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -25143,7 +25244,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IRelationshipQuantifierContext is an interface to support dynamic dispatch.
@@ -25374,6 +25474,8 @@ func (p *CypherParser) RelationshipQuantifier() (localctx IRelationshipQuantifie
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -25384,7 +25486,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPropertiesContext is an interface to support dynamic dispatch.
@@ -25515,6 +25616,8 @@ func (p *CypherParser) Properties() (localctx IPropertiesContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -25525,7 +25628,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // INodePatternContext is an interface to support dynamic dispatch.
@@ -25748,6 +25850,8 @@ func (p *CypherParser) NodePattern() (localctx INodePatternContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -25758,7 +25862,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IAtomContext is an interface to support dynamic dispatch.
@@ -26248,6 +26351,8 @@ func (p *CypherParser) Atom() (localctx IAtomContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -26258,7 +26363,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IMapProjectionContext is an interface to support dynamic dispatch.
@@ -26475,6 +26579,8 @@ func (p *CypherParser) MapProjection() (localctx IMapProjectionContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -26485,7 +26591,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IMapProjectionItemContext is an interface to support dynamic dispatch.
@@ -26697,6 +26802,8 @@ func (p *CypherParser) MapProjectionItem() (localctx IMapProjectionItemContext) 
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -26707,7 +26814,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ILhsContext is an interface to support dynamic dispatch.
@@ -26814,6 +26920,8 @@ func (p *CypherParser) Lhs() (localctx ILhsContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -26824,7 +26932,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IRelationshipPatternContext is an interface to support dynamic dispatch.
@@ -27056,6 +27163,8 @@ func (p *CypherParser) RelationshipPattern() (localctx IRelationshipPatternConte
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -27066,7 +27175,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IRelationDetailContext is an interface to support dynamic dispatch.
@@ -27320,6 +27428,8 @@ func (p *CypherParser) RelationDetail() (localctx IRelationDetailContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -27330,7 +27440,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IRelationshipTypesContext is an interface to support dynamic dispatch.
@@ -27447,6 +27556,8 @@ func (p *CypherParser) RelationshipTypes() (localctx IRelationshipTypesContext) 
 		p.LabelExpression()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -27457,7 +27568,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IUnionStContext is an interface to support dynamic dispatch.
@@ -27589,6 +27699,8 @@ func (p *CypherParser) UnionSt() (localctx IUnionStContext) {
 		p.SingleQuery()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -27599,7 +27711,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ISubqueryExistContext is an interface to support dynamic dispatch.
@@ -27767,6 +27878,8 @@ func (p *CypherParser) SubqueryExist() (localctx ISubqueryExistContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -27777,7 +27890,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IInvocationNameContext is an interface to support dynamic dispatch.
@@ -27937,6 +28049,8 @@ func (p *CypherParser) InvocationName() (localctx IInvocationNameContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -27947,7 +28061,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IFunctionInvocationContext is an interface to support dynamic dispatch.
@@ -28271,6 +28384,8 @@ func (p *CypherParser) FunctionInvocation() (localctx IFunctionInvocationContext
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -28281,7 +28396,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IParenthesizedExpressionContext is an interface to support dynamic dispatch.
@@ -28401,6 +28515,8 @@ func (p *CypherParser) ParenthesizedExpression() (localctx IParenthesizedExpress
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -28411,7 +28527,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IFilterWithContext is an interface to support dynamic dispatch.
@@ -28564,6 +28679,8 @@ func (p *CypherParser) FilterWith() (localctx IFilterWithContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -28574,7 +28691,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPatternComprehensionContext is an interface to support dynamic dispatch.
@@ -28792,6 +28908,8 @@ func (p *CypherParser) PatternComprehension() (localctx IPatternComprehensionCon
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -28802,7 +28920,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IRelationshipsChainPatternContext is an interface to support dynamic dispatch.
@@ -28967,6 +29084,8 @@ func (p *CypherParser) RelationshipsChainPattern() (localctx IRelationshipsChain
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -28977,7 +29096,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IListComprehensionContext is an interface to support dynamic dispatch.
@@ -29143,6 +29261,8 @@ func (p *CypherParser) ListComprehension() (localctx IListComprehensionContext) 
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -29153,7 +29273,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IFilterExpressionContext is an interface to support dynamic dispatch.
@@ -29314,6 +29433,8 @@ func (p *CypherParser) FilterExpression() (localctx IFilterExpressionContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -29324,7 +29445,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ICountAllContext is an interface to support dynamic dispatch.
@@ -29449,6 +29569,8 @@ func (p *CypherParser) CountAll() (localctx ICountAllContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -29459,7 +29581,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IExpressionChainContext is an interface to support dynamic dispatch.
@@ -29619,6 +29740,8 @@ func (p *CypherParser) ExpressionChain() (localctx IExpressionChainContext) {
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -29629,7 +29752,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ICaseExpressionContext is an interface to support dynamic dispatch.
@@ -29872,6 +29994,8 @@ func (p *CypherParser) CaseExpression() (localctx ICaseExpressionContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -29882,7 +30006,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IReduceExpressionContext is an interface to support dynamic dispatch.
@@ -30152,6 +30275,8 @@ func (p *CypherParser) ReduceExpression() (localctx IReduceExpressionContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -30162,7 +30287,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IAllReduceExpressionContext is an interface to support dynamic dispatch.
@@ -30449,6 +30573,8 @@ func (p *CypherParser) AllReduceExpression() (localctx IAllReduceExpressionConte
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -30459,7 +30585,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IParameterContext is an interface to support dynamic dispatch.
@@ -30617,6 +30742,8 @@ func (p *CypherParser) Parameter() (localctx IParameterContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -30627,7 +30754,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ILiteralContext is an interface to support dynamic dispatch.
@@ -30870,6 +30996,8 @@ func (p *CypherParser) Literal() (localctx ILiteralContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -30880,7 +31008,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IRangeLitContext is an interface to support dynamic dispatch.
@@ -31062,6 +31189,8 @@ func (p *CypherParser) RangeLit() (localctx IRangeLitContext) {
 
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -31072,7 +31201,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IBoolLitContext is an interface to support dynamic dispatch.
@@ -31168,6 +31296,8 @@ func (p *CypherParser) BoolLit() (localctx IBoolLitContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -31178,7 +31308,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IIntegerLitContext is an interface to support dynamic dispatch.
@@ -31305,6 +31434,8 @@ func (p *CypherParser) IntegerLit() (localctx IIntegerLitContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -31315,7 +31446,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // INumLitContext is an interface to support dynamic dispatch.
@@ -31470,6 +31600,8 @@ func (p *CypherParser) NumLit() (localctx INumLitContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -31480,7 +31612,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IStringLitContext is an interface to support dynamic dispatch.
@@ -31566,6 +31697,8 @@ func (p *CypherParser) StringLit() (localctx IStringLitContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -31576,7 +31709,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ICharLitContext is an interface to support dynamic dispatch.
@@ -31662,6 +31794,8 @@ func (p *CypherParser) CharLit() (localctx ICharLitContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -31672,7 +31806,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IListLitContext is an interface to support dynamic dispatch.
@@ -31804,6 +31937,8 @@ func (p *CypherParser) ListLit() (localctx IListLitContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -31814,7 +31949,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IMapLitContext is an interface to support dynamic dispatch.
@@ -32010,6 +32144,8 @@ func (p *CypherParser) MapLit() (localctx IMapLitContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -32020,7 +32156,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IMapPairContext is an interface to support dynamic dispatch.
@@ -32148,6 +32283,8 @@ func (p *CypherParser) MapPair() (localctx IMapPairContext) {
 		p.Expression()
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -32158,7 +32295,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // INameContext is an interface to support dynamic dispatch.
@@ -32496,6 +32632,8 @@ func (p *CypherParser) Name() (localctx INameContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -32506,7 +32644,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ISymbolContext is an interface to support dynamic dispatch.
@@ -34655,6 +34792,8 @@ func (p *CypherParser) Symbol() (localctx ISymbolContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -34665,7 +34804,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IReservedWordContext is an interface to support dynamic dispatch.
@@ -35076,6 +35214,8 @@ func (p *CypherParser) ReservedWord() (localctx IReservedWordContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -35086,7 +35226,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // ISyntaxFragmentContext is an interface to support dynamic dispatch.
@@ -35251,6 +35390,8 @@ func (p *CypherParser) SyntaxFragment() (localctx ISyntaxFragmentContext) {
 		}
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -35261,7 +35402,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPathSelectorContext is an interface to support dynamic dispatch.
@@ -35527,6 +35667,8 @@ func (p *CypherParser) PathSelector() (localctx IPathSelectorContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -35537,7 +35679,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IPrivilegeCommandContext is an interface to support dynamic dispatch.
@@ -36069,6 +36210,8 @@ func (p *CypherParser) PrivilegeCommand() (localctx IPrivilegeCommandContext) {
 		goto errorExit
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -36079,7 +36222,6 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }
 
 // IProcedurePrivilegePatternContext is an interface to support dynamic dispatch.
@@ -36295,6 +36437,8 @@ func (p *CypherParser) ProcedurePrivilegePattern() (localctx IProcedurePrivilege
 		_la = p.GetTokenStream().LA(1)
 	}
 
+	goto errorExit
+
 errorExit:
 	if p.HasError() {
 		v := p.GetError()
@@ -36305,5 +36449,4 @@ errorExit:
 	}
 	p.ExitRule()
 	return localctx
-	goto errorExit // Trick to prevent compiler error if the label is not used
 }

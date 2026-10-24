@@ -145,3 +145,31 @@ func Cases() []Case {
 	}
 	return cases
 }
+
+// ReviewAdmissionCases are the PR 1632 type/scope findings replayed through
+// native Execute, Bolt and HTTP with both normalization and transaction modes.
+func ReviewAdmissionCases() []Case {
+	var cases []Case
+	for index, query := range []string{
+		"UNWIND [] AS r MATCH (n) WITH n, reverse(CASE WHEN true THEN null ELSE [1] END) AS v RETURN abs(v) AS a",
+		"UNWIND [] AS r MATCH (n) WITH n, reverse(CASE WHEN true THEN null ELSE 1 END) AS v RETURN abs(v) AS a",
+		"UNWIND [] AS r MATCH (n) WITH n, reverse(CASE WHEN true THEN null ELSE [1] END) AS v RETURN -v AS a",
+		"UNWIND [] AS r MATCH (n) WITH n, tail(CASE WHEN true THEN null ELSE 1 END) AS v RETURN abs(v) AS a",
+		"UNWIND [] AS r MATCH (n) WITH n, tail(n.k) AS v RETURN labels(v) AS a",
+		"UNWIND [] AS r MATCH (n) WITH n, reverse(n.k) AS v RETURN abs(v) AS a",
+		"UNWIND [] AS r MATCH (n) RETURN CASE WHEN true THEN -CASE WHEN true THEN 1 ELSE true END ELSE -CASE WHEN true THEN 1 ELSE true END END.a AS a",
+		"WITH 1 AS x CALL (*) { RETURN DISTINCT /* c */ * } RETURN *",
+	} {
+		cases = append(cases, Case{Name: fmt.Sprintf("review_1632_%d", index), Query: query, Code: "Neo.ClientError.Statement.SyntaxError"})
+	}
+	for index, query := range []string{
+		"UNWIND [] AS r MATCH (n) WITH n, reverse(CASE WHEN true THEN null ELSE [1] END) AS v RETURN v[0] AS a",
+		"UNWIND [] AS r MATCH (n) WITH n, reverse(CASE WHEN true THEN null ELSE 1 END) AS v RETURN v + 1 AS a",
+		"UNWIND [] AS r MATCH (n) WITH n, reverse(n.k) AS v RETURN v[0] AS a",
+		"UNWIND [] AS r MATCH (n) WITH n, reverse(n.k) AS v RETURN v + 1 AS a",
+	} {
+		cases = append(cases, Case{Name: fmt.Sprintf("review_1632_valid_%d", index), Query: query, Columns: []string{"a"}})
+	}
+
+	return cases
+}
