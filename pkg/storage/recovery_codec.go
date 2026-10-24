@@ -58,37 +58,43 @@ func marshalWALRecoveryPayload(buffer *bytes.Buffer, value any) ([]byte, error) 
 }
 
 func decodeRecoveryPayload(data []byte, target any) error {
+	_, err := decodeRecoveryPayloadAuthority(data, target)
+	return err
+}
+
+// Decode once and report whether the current envelope preserves typed named
+// properties. Historical JSON is never promoted to lossless authority.
+func decodeRecoveryPayloadAuthority(data []byte, target any) (bool, error) {
 	_, _, hasHeader, err := splitSerializationHeader(data)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !hasHeader {
 		trimmed := bytes.TrimSpace(data)
 		if len(trimmed) == 0 || trimmed[0] != '{' {
-			return decodeLegacyRecoveryJSON(bytes.NewReader(data), target)
+			return false, decodeLegacyRecoveryJSON(bytes.NewReader(data), target)
 		}
 		var sidecar walRecoverySidecar
 		if err := json.Unmarshal(data, &sidecar); err != nil {
-			return err
+			return false, err
 		}
 		if sidecar.Encoding == "" {
-			return decodeLegacyRecoveryJSON(bytes.NewReader(data), target)
+			return false, decodeLegacyRecoveryJSON(bytes.NewReader(data), target)
 		}
 		if sidecar.Encoding != walRecoveryEncoding {
-			return fmt.Errorf("unsupported recovery encoding %q", sidecar.Encoding)
+			return false, fmt.Errorf("unsupported recovery encoding %q", sidecar.Encoding)
 		}
 		if len(sidecar.Data) == 0 {
-			return fmt.Errorf("empty recovery record")
+			return false, fmt.Errorf("empty recovery record")
 		}
 		data = sidecar.Data
 	}
 	if err := decodeValue(data, target); err != nil {
-		return fmt.Errorf("decode recovery record: %w", err)
+		return false, fmt.Errorf("decode recovery record: %w", err)
 	}
 	transformRecoveryEntities(target, restoreRecoveryNode, restoreRecoveryEdge)
-	return nil
+	return true, nil
 }
-
 func copyRecoveryPayload(value any) (any, bool) {
 	switch value := value.(type) {
 	case Node:

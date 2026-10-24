@@ -265,6 +265,7 @@ func (b *BadgerEngine) Close() error {
 	// reopen has no open-time write to perform (PR #1043 item #2).
 	b.foldRemainingCountDeltasOnClose(db)
 	b.releasePendingEmbeddingCandidates()
+	propertyErr := b.finishPropertyWALOnClose(db)
 
 	b.mu.Lock()
 	b.releaseClosedStateLocked()
@@ -273,7 +274,7 @@ func (b *BadgerEngine) Close() error {
 	if db == nil {
 		return nil
 	}
-	return db.Close()
+	return errors.Join(propertyErr, db.Close())
 }
 
 // releaseClosedStateLocked drops large heap graphs that are not needed after

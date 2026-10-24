@@ -164,6 +164,12 @@ type WALEntry struct {
 	Data      []byte        `json:"data"`               // JSON-serialized operation data
 	Checksum  uint32        `json:"checksum"`           // CRC32 checksum for integrity
 	Database  string        `json:"database,omitempty"` // Database/namespace name (for multi-database support)
+	// Readers attach immutable file authority; JSON transport preserves it.
+	// Native writers leave this nil and encode authority once at epoch boundaries.
+	PropertyEpoch      *WALPropertyEpoch `json:"property_epoch,omitempty"`
+	framingVersion     uint8
+	recordEnd          uint64
+	propertyScopeReset bool
 }
 
 // WALNodeData holds node data for WAL entries with optional undo support.
@@ -225,10 +231,9 @@ type WALTxData struct {
 	OpCount  int               `json:"op_count,omitempty"` // For commit: number of operations
 }
 
-// WALPropKeyEntry is one staged property-key dictionary token of a buffered
-// commit. Replay must persist these before materializing the commit, or the
-// tokenized node/edge bodies reference property-key IDs the fresh engine's
-// dictionary does not know.
+// WALPropKeyEntry binds a source-store property token to its namespace and
+// name. Replay resolves that name through the destination dictionary before
+// applying the physical body; source numeric IDs are never installed there.
 type WALPropKeyEntry struct {
 	Namespace string `json:"namespace"`
 	Name      string `json:"name"`
@@ -253,26 +258,16 @@ type WALBufferedCommitData struct {
 	EdgeMax     uint64            `json:"edge_max,omitempty"`
 	HasCounters bool              `json:"has_counters,omitempty"`
 
-	// PropKeys / PropKeyCounters are the property-key dictionary tokens the
-	// commit staged; replay persists them before materializing the bodies.
+	// PropertyBindings binds every property token referenced by Writes,
+	// including persisted names. Import remaps tokens into the destination.
+	PropertyBindings             []byte `json:"property_bindings,omitempty"`
+	PropertyDictionaryID         string `json:"property_dictionary_id,omitempty"`
+	namedPropertiesAuthoritative bool
+	propertyEpoch                *walPropertyEpochState
+
+	// Historical writers carried only newly staged keys and source counters.
 	PropKeys        []WALPropKeyEntry `json:"prop_keys,omitempty"`
 	PropKeyCounters map[string]uint64 `json:"prop_key_counters,omitempty"`
-}
-
-// propKeyDrain reconstructs the staged property-key dictionary drain the
-// buffered commit carried at ACK time.
-func (d *WALBufferedCommitData) propKeyDrain() propKeyTxnDrain {
-	var out propKeyTxnDrain
-	if len(d.PropKeys) > 0 {
-		out.pending = make([]propKeyPersistEntry, 0, len(d.PropKeys))
-		for _, entry := range d.PropKeys {
-			out.pending = append(out.pending, propKeyPersistEntry{namespace: entry.Namespace, name: entry.Name, id: entry.ID})
-		}
-	}
-	if len(d.PropKeyCounters) > 0 {
-		out.counters = d.PropKeyCounters
-	}
-	return out
 }
 
 // WALConfig configures WAL behavior.
@@ -358,7 +353,16 @@ func DefaultWALConfig() *WALConfig {
 // WAL provides write-ahead logging for durability.
 // Thread-safe for concurrent writes.
 type WAL struct {
-	mu sync.Mutex
+	mu                         sync.Mutex
+	propertyDictionary         *propertyKeyDictionary
+	propertyEpoch              *WALPropertyEpoch
+	propertyEpochRevision      uint64
+	propertyEpochError         error
+	propertyEpochKnown         bool // physical stream state; never writer provenance
+	propertyEpochFormatChecked bool
+	// propertyEpochUnsealed mirrors the durable marker: the log may hold v4
+	// controls. Clean close and compaction convert only while it is set.
+	propertyEpochUnsealed bool
 	// syncMu serializes fsync syscalls without blocking Append. w.mu
 	// only guards Go-side state (bufio writer, encoder, segment
 	// bookkeeping) — the kernel-level fsync on w.file is independent
@@ -497,6 +501,10 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 	}
 	// cfg.Logger is guaranteed non-nil above.
 	w.encoder = json.NewEncoder(w.writer)
+	// An unreadable marker is treated as present: conversion is then attempted.
+	if _, err := os.Stat(walPropertyEpochUnsealedPath(cfg.Dir)); !os.IsNotExist(err) {
+		w.propertyEpochUnsealed = true
+	}
 
 	// Load existing sequence number
 	if seq, err := w.loadLastSequence(); err == nil {
@@ -622,6 +630,9 @@ func (w *WAL) AppendWithDatabaseReturningSeq(op OperationType, data interface{},
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if err := w.prepareUnboundWALRecordLocked(op); err != nil {
+		return 0, err
+	}
 
 	entryBytes, err := encodeWALEntryV3(entryBuf, &entry)
 	if err != nil {
@@ -704,11 +715,11 @@ func (w *WAL) AppendTxAbort(database, txID, reason string) (uint64, error) {
 // (write(2)) before returning, so the ACK never outruns the record that
 // survives kill -9. It deliberately skips fsync: power-loss durability
 // remains the durable synchronous path's contract.
-func (w *WAL) AppendBufferedCommit(c *bufferedCommit) error {
+func (w *WAL) AppendBufferedCommit(c *bufferedCommit, dictionary *propertyKeyDictionary) error {
 	if w == nil || c == nil {
 		return nil
 	}
-	data := WALBufferedCommitData{
+	data := walBufferedCommitPayload{
 		TxID:        c.txID,
 		Namespace:   c.namespace,
 		Ops:         c.ops,
@@ -733,7 +744,7 @@ func (w *WAL) AppendBufferedCommit(c *bufferedCommit) error {
 		}
 		data.PropKeyCounters = c.propKeyDrain.counters
 	}
-	if _, err := w.appendWithDatabaseForcedFlush(OpBufferedCommit, &data, c.namespace); err != nil {
+	if _, err := w.appendWithDatabaseForcedFlush(OpBufferedCommit, &data, c.namespace, dictionary); err != nil {
 		return fmt.Errorf("wal: failed to log buffered commit %q: %w", c.txID, err)
 	}
 	return nil
@@ -743,7 +754,7 @@ func (w *WAL) AppendBufferedCommit(c *bufferedCommit) error {
 // difference: it flushes the userspace buffer to the kernel after the write,
 // regardless of DeferAppendFlush, so a crash cannot lose the record from the
 // userspace buffer before the ACK.
-func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, database string) (uint64, error) {
+func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, database string, dictionaries ...*propertyKeyDictionary) (uint64, error) {
 	if !config.IsWALEnabled() {
 		return 0, nil
 	}
@@ -782,6 +793,15 @@ func (w *WAL) appendWithDatabaseForcedFlush(op OperationType, data interface{}, 
 	}
 
 	w.mu.Lock()
+	if len(dictionaries) != 0 {
+		if err := w.ensurePropertyEpochLocked(dictionaries[0], false); err != nil {
+			w.mu.Unlock()
+			return 0, err
+		}
+	} else if err := w.prepareUnboundWALRecordLocked(op); err != nil {
+		w.mu.Unlock()
+		return 0, err
+	}
 	entryBytes, err := encodeWALEntryV3(entryBuf, &entry)
 	if err != nil {
 		w.mu.Unlock()
@@ -964,6 +984,13 @@ func (w *WAL) rotateSegmentLocked(lastSeq uint64) error {
 	w.segmentBytes = 0
 	w.segmentCreatedAt = time.Time{}
 
+	w.propertyEpochKnown, w.propertyEpochFormatChecked = true, true
+	if w.propertyEpoch != nil || w.propertyDictionary != nil {
+		if err := w.writePropertyEpochLocked(w.propertyEpoch); err != nil {
+			return err
+		}
+		return w.writer.Flush()
+	}
 	return nil
 }
 
@@ -977,6 +1004,11 @@ func (w *WAL) Checkpoint() error {
 
 // Close closes the WAL, flushing all pending writes.
 func (w *WAL) Close() error {
+	// The closed flag and final handle release share the file owner. Epoch
+	// sealing also owns mu and must never mistake a Close waiting here for
+	// an already flushed and closed handle.
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	if w.closed.Swap(true) {
 		return nil // Already closed
 	}
@@ -986,9 +1018,6 @@ func (w *WAL) Close() error {
 		w.syncTicker.Stop()
 		close(w.stopSync)
 	}
-
-	w.mu.Lock()
-	defer w.mu.Unlock()
 
 	// Final sync
 	if err := w.syncLocked(); err != nil {
@@ -1506,7 +1535,10 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 		if err := w.rotateSegmentLocked(w.sequence.Load()); err != nil {
 			return fmt.Errorf("wal: failed to seal segment before retention: %w", err)
 		}
-		return w.applyRetentionLocked(snapshotSeq)
+		if err := w.applyRetentionLocked(snapshotSeq); err != nil {
+			return err
+		}
+		return w.sealPropertyEpochsLocked()
 	}
 
 	// Flush pending writes before truncation
@@ -1588,7 +1620,16 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 	entryBuf := walJSONBufPool.Get().(*bytes.Buffer)
 	defer walJSONBufPool.Put(entryBuf)
 
+	var retainedEpoch *WALPropertyEpoch
 	for _, entry := range keptEntries {
+		headerBytes, err := w.writeRetainedPropertyEpochLocked(tmpWriter, &retainedEpoch, entry)
+		if err != nil {
+			tmpFile.Close()
+			os.Remove(tmpPath)
+			w.reopenWAL()
+			return fmt.Errorf("wal: retain property epoch: %w", err)
+		}
+		bytesWritten += headerBytes
 		// Serialize entry
 		entryBytes, err := encodeWALEntryV3(entryBuf, &entry)
 		if err != nil {
@@ -1654,7 +1695,8 @@ func (w *WAL) TruncateAfterSnapshot(snapshotSeq uint64) error {
 	w.entries.Store(int64(len(keptEntries)))
 	w.bytes.Store(bytesWritten)
 
-	return nil
+	w.propertyEpoch, w.propertyEpochKnown, w.propertyEpochFormatChecked = retainedEpoch, true, true
+	return w.sealPropertyEpochsLocked()
 }
 
 // retainsSegments reports whether WAL retention is configured: sealed
@@ -1743,6 +1785,7 @@ func (w *WAL) reopenWAL() error {
 		return fmt.Errorf("wal: failed to reopen: %w", err)
 	}
 
+	w.propertyEpochKnown, w.propertyEpochFormatChecked = false, false
 	w.file = file
 	w.writer = bufio.NewWriterSize(file, 64*1024)
 	w.encoder = json.NewEncoder(w.writer)
@@ -1832,12 +1875,14 @@ func readAtomicWALEntries(file *os.File, logger *slog.Logger) ([]WALEntry, error
 }
 
 func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEntry) error) error {
+	visit = withWALPropertyEpochs(visit)
 	if logger == nil {
 		logger = discardWALSlog()
 	}
 	var skippedEmbeddings int
 	var partialWriteDetected bool
 	var lastGoodSeq uint64
+	var offset uint64
 
 	reader := bufio.NewReader(file)
 	headerBuf := make([]byte, 9) // magic(4) + version(1) + length(4)
@@ -1869,9 +1914,9 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 
 		// Read version (for future compatibility)
 		version := headerBuf[4]
-		if version > walFormatVersionV3 {
+		if version > walFormatVersionPropertyEpoch {
 			return fmt.Errorf("%w: unsupported WAL version %d (max supported: %d)",
-				ErrWALCorrupted, version, walFormatVersionV3)
+				ErrWALCorrupted, version, walFormatVersionPropertyEpoch)
 		}
 
 		// Read payload length
@@ -1881,6 +1926,11 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 				ErrWALCorrupted, payloadLen, walMaxEntrySize)
 		}
 
+		recordLen := int64(9 + payloadLen + 4)
+		if version >= 2 {
+			recordLen = alignUp(recordLen + 8)
+		}
+		offset += uint64(recordLen)
 		// Read payload
 		payload := make([]byte, payloadLen)
 		n, err = io.ReadFull(reader, payload)
@@ -1969,6 +2019,7 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 				ErrWALCorrupted, lastGoodSeq, err)
 		}
 
+		entry.recordEnd = offset
 		// Also verify the inner data checksum
 		expectedDataCRC := crc32Checksum(entry.Data)
 		if entry.Checksum != expectedDataCRC {
@@ -1997,6 +2048,7 @@ func visitAtomicWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 }
 
 func visitLegacyWALEntries(file *os.File, logger *slog.Logger, visit func(WALEntry) error) error {
+	visit = withWALPropertyEpochs(visit)
 	if logger == nil {
 		logger = discardWALSlog()
 	}
@@ -2081,6 +2133,13 @@ func readWALEntriesForTruncation(walPath string, afterSeq uint64) ([]WALEntry, e
 // readAtomicWALEntriesForTruncation reads atomic format entries, skipping corrupted ones.
 func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEntry, error) {
 	var entries []WALEntry
+	var offset uint64
+	visit := withWALPropertyEpochs(func(entry WALEntry) error {
+		if entry.Sequence > afterSeq {
+			entries = append(entries, entry)
+		}
+		return nil
+	})
 	reader := bufio.NewReader(file)
 	headerBuf := make([]byte, 9)
 
@@ -2102,11 +2161,19 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 		}
 
 		version := headerBuf[4]
+		if version > walFormatVersionPropertyEpoch {
+			return entries, fmt.Errorf("wal: unsupported WAL version %d (max supported: %d)", version, walFormatVersionPropertyEpoch)
+		}
 		payloadLen := binary.LittleEndian.Uint32(headerBuf[5:9])
 		if payloadLen > walMaxEntrySize {
 			break // Invalid size
 		}
 
+		recordLen := int64(9 + payloadLen + 4)
+		if version >= 2 {
+			recordLen = alignUp(recordLen + 8)
+		}
+		offset += uint64(recordLen)
 		payload := make([]byte, payloadLen)
 		n, err = io.ReadFull(reader, payload)
 		if err != nil || uint32(n) != payloadLen {
@@ -2119,7 +2186,8 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 			break
 		}
 
-		// Skip CRC verification for truncation - we just want to find valid entries
+		outerValid := binary.LittleEndian.Uint32(crcBuf) == crc32Checksum(payload)
+		trailerValid := true
 
 		// Version 2+: Read trailer
 		if version >= 2 {
@@ -2128,6 +2196,7 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 			if err != nil || n != 8 {
 				break
 			}
+			trailerValid = binary.LittleEndian.Uint64(trailerBuf) == walTrailer
 			// Skip alignment padding
 			rawRecordLen := int64(9 + payloadLen + 4 + 8)
 			alignedRecordLen := alignUp(rawRecordLen)
@@ -2143,11 +2212,20 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 
 		entry, err := decodeWALEntry(payload, version)
 		if err != nil {
-			continue // Skip malformed entries
+			_ = visit(WALEntry{propertyScopeReset: true})
+			continue // Unknown record cannot carry dictionary authority across the gap
 		}
 
-		if entry.Sequence > afterSeq {
-			entries = append(entries, entry)
+		entry.recordEnd = offset
+		if isWALPropertyEpoch(entry) && (!outerValid || !trailerValid || entry.Checksum != crc32Checksum(entry.Data)) {
+			return entries, fmt.Errorf("%w: invalid retained property epoch", ErrWALCorrupted)
+		}
+		if !outerValid || !trailerValid {
+			_ = visit(WALEntry{propertyScopeReset: true})
+			entry.PropertyEpoch = nil
+		}
+		if err := visit(entry); err != nil {
+			return entries, err
 		}
 	}
 
@@ -2157,6 +2235,12 @@ func readAtomicWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 // readLegacyWALEntriesForTruncation reads legacy JSON format entries, skipping corrupted ones.
 func readLegacyWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEntry, error) {
 	var entries []WALEntry
+	visit := withWALPropertyEpochs(func(entry WALEntry) error {
+		if entry.Sequence > afterSeq {
+			entries = append(entries, entry)
+		}
+		return nil
+	})
 	decoder := json.NewDecoder(file)
 
 	for {
@@ -2165,9 +2249,12 @@ func readLegacyWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 			break // Stop on any decode error
 		}
 
+		if isWALPropertyEpoch(entry) && entry.Checksum != crc32Checksum(entry.Data) {
+			return entries, fmt.Errorf("%w: invalid retained property epoch", ErrWALCorrupted)
+		}
 		// Skip checksum verification for truncation - we just want entries after snapshot
-		if entry.Sequence > afterSeq {
-			entries = append(entries, entry)
+		if err := visit(entry); err != nil {
+			return entries, err
 		}
 	}
 
@@ -2226,6 +2313,20 @@ func ReadWALEntriesAfter(walPath string, afterSeq uint64) ([]WALEntry, error) {
 // ReplayWALEntry applies a single WAL entry to the engine.
 // Uses the database name from the entry if present, otherwise wraps with default database.
 func ReplayWALEntry(engine Engine, entry WALEntry) error {
+	if entry.Operation != OpCheckpoint && entry.Operation != OpTxBegin && entry.Operation != OpTxCommit && entry.Operation != OpTxAbort {
+		// Retain engine state through provenance, import and physical apply.
+		// A lifetime lease permits delegated CRUD to acquire its own write
+		// barrier; holding that barrier here would risk recursive-read deadlock.
+		if b, ok := UnwrapEngine(engine).(*BadgerEngine); ok {
+			if _, err := b.beginHelperTxn(); err != nil {
+				return err
+			}
+			defer b.txnWG.Done()
+		}
+		if err := markRecoveryPropertyForeign(engine); err != nil {
+			return err
+		}
+	}
 	// Determine database name: use entry's database if present, otherwise infer from engine/config.
 	dbName := entry.Database
 	if dbName == "" {
@@ -2334,13 +2435,9 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		// commit application path the flusher uses, so MVCC heads, ID
 		// counters, indexes and caches all land identically. Only
 		// BadgerEngine destinations support this; anything else skips.
-		var data WALBufferedCommitData
-		payload, err := decompressWALBufferedCommitPayload(entry.Data)
+		data, err := decodeBufferedWALRecord(entry)
 		if err != nil {
 			return err
-		}
-		if err := decodeRecoveryPayload(payload, &data); err != nil {
-			return fmt.Errorf("wal: failed to unmarshal buffered commit: %w", err)
 		}
 		b, ok := baseEngine.(*BadgerEngine)
 		if !ok || b == nil {
@@ -2349,23 +2446,9 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if len(data.Ops) == 0 && len(data.Writes) == 0 && len(data.Deletes) == 0 {
 			return nil
 		}
-		c := bufferedCommit{
-			recovered:      true,
-			namespace:      data.Namespace,
-			txID:           data.TxID,
-			ops:            data.Ops,
-			writes:         data.Writes,
-			version:        data.Version,
-			counterNodeMax: data.NodeMax,
-			counterEdgeMax: data.EdgeMax,
-			hasCounters:    data.HasCounters,
-			propKeyDrain:   data.propKeyDrain(),
-		}
-		if len(data.Deletes) > 0 {
-			c.deletes = make(map[string]bool, len(data.Deletes))
-			for _, key := range data.Deletes {
-				c.deletes[key] = true
-			}
+		c, err := b.importBufferedWALRecord(&data, walForeignImport)
+		if err != nil {
+			return err
 		}
 		return b.applyBufferedCommits([]bufferedCommit{c})
 

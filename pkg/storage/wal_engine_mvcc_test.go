@@ -16,6 +16,8 @@ func TestWALEngine_MVCCDelegationAndFallback(t *testing.T) {
 		require.NoError(t, err)
 		defer walLog.Close()
 		wal := NewWALEngine(engine, walLog)
+		// Close the complete owner before its WAL directory is removed.
+		t.Cleanup(func() { require.NoError(t, wal.Close()) })
 
 		nodeID := NodeID(prefixTestID("wal-mvcc-node"))
 		_, err = wal.CreateNode(&Node{ID: nodeID, Labels: []string{"Doc"}, Properties: map[string]any{"version": 1}})

@@ -136,6 +136,9 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	}
 	b.idDict.replaceWith(ids)
 	b.propKeyDict.replaceWith(keys)
+	if err := b.initializeWALPropertyIdentity(db, true, true); err != nil {
+		return err
+	}
 	if err := b.loadManualSuppressions(loader); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
@@ -363,6 +366,9 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 			return 0, 0, err
 		}
 		b.propKeyDict.mu.Lock()
+		b.propKeyDict.walBindingDomain++
+		b.propKeyDict.walBindingRevision++
+		b.propKeyDict.walEpochRevision.Add(1)
 		delete(b.propKeyDict.forward, namespace)
 		delete(b.propKeyDict.reverse, namespace)
 		delete(b.propKeyDict.persisted, namespace)
