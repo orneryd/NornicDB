@@ -352,7 +352,7 @@ func (e *StorageExecutor) analyzeNodeScan(query string) *PlanOperator {
 	if label, ok := extractFirstNodeLabelFromQuery(query); ok {
 
 		// Check for property filter (n:Label {prop: value})
-		if strings.Contains(query, "{") {
+		if statementSchemaFactsOf(query).hasNodeProperties() {
 			args := map[string]interface{}{
 				"label": label,
 			}
@@ -570,72 +570,24 @@ func (e *StorageExecutor) analyzeReturnClause(query string) *PlanOperator {
 	}
 }
 
+// containsVariableLengthPathPattern reports a variable-length relationship
+// (-[*]->, -[r:T*1..3]->) in query, read by the declaration owner.
 func containsVariableLengthPathPattern(query string) bool {
-	for i := 0; i < len(query); i++ {
-		if query[i] != '[' {
-			continue
-		}
-		inside, _, ok := extractBracketSection(query[i:])
-		if !ok {
-			continue
-		}
-		inner := strings.TrimSpace(inside)
-		if !strings.HasPrefix(inner, "*") {
-			continue
-		}
-		rangeExpr := strings.TrimSpace(inner[1:])
-		if rangeExpr == "" {
-			return true // [*]
-		}
-		dotIdx := strings.Index(rangeExpr, "..")
-		if dotIdx < 0 {
-			continue
-		}
-		left := strings.TrimSpace(rangeExpr[:dotIdx])
-		right := strings.TrimSpace(rangeExpr[dotIdx+2:])
-		if (left == "" || isAllDigits(left)) && (right == "" || isAllDigits(right)) {
-			return true // [*1..3], [*..5], [*1..]
+	for open, close := nextRelationshipBracket(query, 0); open >= 0; open, close = nextRelationshipBracket(query, close+1) {
+		if declaration := relationshipDeclarationHead(query[open+1 : close]); declaration.hasLength && !declaration.lengthInvalid {
+			return true
 		}
 	}
 	return false
 }
 
 func extractFirstNodeLabelFromQuery(query string) (string, bool) {
-	for i := 0; i < len(query); i++ {
-		if query[i] != '(' {
-			continue
-		}
-		inside, _, ok := extractParenSection(query[i:])
-		if !ok {
-			continue
-		}
-		if label, ok := extractLabelFromNodeSection(inside); ok {
-			return label, true
-		}
-	}
-	return "", false
+	return statementSchemaFactsOf(query).firstLabel()
 }
 
 func extractLabelFromNodeSection(inside string) (string, bool) {
-	s := strings.TrimSpace(inside)
-	if s == "" {
-		return "", false
-	}
-	if strings.HasPrefix(s, ":") {
-		label, _, ok := parseIdentifierToken(strings.TrimSpace(s[1:]))
-		return label, ok
-	}
-	if varName, rest, ok := parseIdentifierToken(s); ok {
-		_ = varName
-		rest = strings.TrimSpace(rest)
-		if strings.HasPrefix(rest, ":") {
-			label, _, ok := parseIdentifierToken(strings.TrimSpace(rest[1:]))
-			return label, ok
-		}
-	}
-	return "", false
+	return firstNodeLabelFromSection(inside)
 }
-
 func isAllDigits(s string) bool {
 	if s == "" {
 		return false

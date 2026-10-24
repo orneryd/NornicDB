@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -43,9 +44,7 @@ func showIndexOptions(provider string, config map[string]interface{}) map[string
 
 // quoteSchemaName backtick-quotes a name for a generated statement, doubling
 // any backtick in it.
-func quoteSchemaName(name string) string {
-	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
-}
+func quoteSchemaName(name string) string { return cyphertext.QuoteName(name) }
 
 // schemaPattern is the pattern of an index or constraint statement:
 // (n:`A`|`B`) for nodes, ()-[r:`T`]-() for relationships. It returns the

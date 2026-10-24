@@ -301,6 +301,13 @@ func TestQueryRewriteRestoresPlansAndMessages(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, data, kept)
 
+	// So are a PROFILE statement's: only its plan metadata is restored.
+	_, profile := canonicalizeQueryText("PROFILE RETURN  'n.x IS NULL' AS s")
+	profiled := &ExecuteResult{Columns: []string{"s"}, Rows: [][]interface{}{{"RETURN 'n.x IS NULL' AS s"}}}
+	keptProfile, err := profile.restore(profiled, nil)
+	require.NoError(t, err)
+	require.Equal(t, "RETURN 'n.x IS NULL' AS s", keptProfile.Rows[0][0])
+
 	var nilRewrite *queryRewrite
 	same, sameErr := nilRewrite.restore(data, nil)
 	require.Same(t, data, same)

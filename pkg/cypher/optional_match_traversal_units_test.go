@@ -216,40 +216,6 @@ func TestIsSimpleTraversalIdentifier(t *testing.T) {
 	require.False(t, isSimpleTraversalIdentifier("a-b"), "operator char")
 }
 
-func TestParseOptionalClauseEndpoints_ErrorsAndRelForms(t *testing.T) {
-	exec, ctx := newUnitExecutor(t)
-
-	_, err := exec.parseOptionalClauseEndpoints(ctx, "no parens here")
-	require.Error(t, err, "no node endpoint")
-	_, err = exec.parseOptionalClauseEndpoints(ctx, "(a")
-	require.Error(t, err, "unterminated source endpoint")
-	_, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r:T]->")
-	require.Error(t, err, "no target endpoint")
-	_, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r:T]->(b")
-	require.Error(t, err, "unterminated target endpoint")
-
-	eps, err := exec.parseOptionalClauseEndpoints(ctx, "(a)-[r:T {w:1}]->(b)")
-	require.NoError(t, err)
-	require.Equal(t, "T", eps.relType, "props stripped from relationship type")
-
-	eps, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r:T*1..2]->(b)")
-	require.NoError(t, err)
-	require.Equal(t, "T", eps.relType, "variable-length hops stripped from type")
-
-	eps, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r*1..2]->(b)")
-	require.NoError(t, err)
-	require.Equal(t, "r", eps.relVar, "variable-length without type keeps the variable")
-	require.Empty(t, eps.relType)
-
-	eps, err = exec.parseOptionalClauseEndpoints(ctx, "(a)-[r]->(b)")
-	require.NoError(t, err)
-	require.Equal(t, "r", eps.relVar, "bare relationship variable")
-
-	eps, err = exec.parseOptionalClauseEndpoints(ctx, "(a)<-[:T]-(b)")
-	require.NoError(t, err)
-	require.Equal(t, "in", eps.direction)
-}
-
 func TestExtendTraversalRow_NoNewBindings(t *testing.T) {
 	n := &storage.Node{ID: "n1"}
 	row := traversalOptRow{nodes: map[string]*storage.Node{"a": n}, rels: map[string]*storage.Edge{}}

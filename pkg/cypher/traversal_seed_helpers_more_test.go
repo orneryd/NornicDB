@@ -17,7 +17,7 @@ func TestTraversalSeedHelpers_WhereExtractionAndReverse(t *testing.T) {
 	orig := &TraversalMatch{
 		StartNode:    nodePatternInfo{variable: "a", labels: []string{"A"}},
 		EndNode:      nodePatternInfo{variable: "b", labels: []string{"B"}},
-		Relationship: RelationshipPattern{Direction: "outgoing", MinHops: 1, MaxHops: 3, Types: []string{"R"}},
+		Relationship: RelationshipPattern{Direction: "outgoing", MinHops: 1, MaxHops: 3, Types: relationshipTypesForTest("R")},
 	}
 	reversed := reverseTraversalMatch(orig)
 	require.NotNil(t, reversed)

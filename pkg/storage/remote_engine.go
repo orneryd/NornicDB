@@ -12,6 +12,7 @@ import (
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -712,9 +713,7 @@ func (t *httpCypherTx) Rollback(ctx context.Context) error {
 // Helpers shared across transports
 // ---------------------------------------------------------------------------
 
-func quoteIdent(name string) string {
-	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
-}
+func quoteIdent(name string) string { return cyphertext.QuoteName(name) }
 
 func labelsExpr(labels []string) string {
 	if len(labels) == 0 {

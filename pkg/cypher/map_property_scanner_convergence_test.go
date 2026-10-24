@@ -138,7 +138,6 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"pkg/cypher/keyword_scan.go:inPatternClause":                 "canonical clause-boundary reader",
 		"pkg/cypher/keyword_scan.go:StripComments":                   "canonical Cypher comment and quotation reader",
 		"pkg/cypher/keyword_scan.go:restoreMessage":                  "canonical query-position restoration reader",
-		"pkg/cypher/keyword_scan.go:scanIdentifierToken":             "canonical plain/backtick symbolic-name reader",
 		"internal/cyphertext/structure.go:FindMatchingDelimiter":     "canonical quote/comment-aware delimiter reader",
 		"internal/cyphertext/string.go:IsWholeString":                "canonical complete Cypher string token reader",
 		"internal/cyphertext/string.go:DecodeString":                 "canonical Cypher string decoder",

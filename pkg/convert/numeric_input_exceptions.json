@@ -121,7 +121,7 @@
   },
   "pkg/cypher/quoted_variables.go:restoreValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "a6b826e161e8da70c3c26f4e7b274b2dd5ae8fcba460c7148e73e8b6ecfd98bc"
+    "sha256": "cea7a3fd5a8c04b38755e3b0fe2a554252a4b71ace1077111a9ef0a98ecfdcf0"
   },
   "pkg/cypher/match_multi.go:cartesianShiftValueKey": {
     "reason": "Compiler/index specialization handles a fixed native fast shape and falls back to the generic owner for other representations.",

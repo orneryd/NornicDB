@@ -2,7 +2,6 @@
 package cypher
 
 import (
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -18,20 +17,11 @@ import (
 //	    // handle error
 //	}
 //	// ast.Clauses contains structured representation
-type ASTBuilder struct {
-	// Precompiled patterns for performance
-	nodePattern     *regexp.Regexp
-	relationPattern *regexp.Regexp
-	propertyPattern *regexp.Regexp
-}
+type ASTBuilder struct{}
 
 // NewASTBuilder creates a new AST builder.
 func NewASTBuilder() *ASTBuilder {
-	return &ASTBuilder{
-		nodePattern:     regexp.MustCompile(`\((\w*)?(?::(\w+(?::\w+)*))?(?:\s*\{([^}]*)\})?\)`),
-		relationPattern: regexp.MustCompile(`-\[(\w*)?(?::(\w+))?\]->`),
-		propertyPattern: regexp.MustCompile(`(\w+)\s*:\s*([^,}]+)`),
-	}
+	return &ASTBuilder{}
 }
 
 // AST represents a complete parsed query.
@@ -851,39 +841,35 @@ func (b *ASTBuilder) parsePatterns(text string) []ASTPattern {
 
 		pattern := ASTPattern{RawText: part}
 
-		// Find all nodes in pattern
-		for _, match := range b.nodePattern.FindAllStringSubmatch(part, -1) {
-			node := ASTNode{
-				Properties: make(map[string]ASTExpression),
+		// Metadata consumes the same node and property-key owners as execution.
+		eachPatternElement(part, func(element patternElement) {
+			if element.isRelationship {
+				return
 			}
-			if len(match) > 1 {
-				node.Variable = match[1]
-			}
-			if len(match) > 2 && match[2] != "" {
-				node.Labels = strings.Split(match[2], ":")
-			}
-			if len(match) > 3 && match[3] != "" {
-				node.RawProps = match[3]
-				// Parse properties
-				for _, propMatch := range b.propertyPattern.FindAllStringSubmatch(match[3], -1) {
-					if len(propMatch) > 2 {
-						node.Properties[propMatch[1]] = b.parseExpression(propMatch[2])
-					}
+			head, properties := splitNodePatternProperties(element.node)
+			variable, labels, _ := parseNodeHead(head)
+			node := ASTNode{Variable: variable, Labels: labels, Properties: make(map[string]ASTExpression)}
+			if expressions, err := parsePropertyExpressions(properties); err == nil {
+				if len(properties) >= 2 {
+					node.RawProps = properties[1 : len(properties)-1]
+				}
+				for _, expression := range expressions {
+					node.Properties[expression.key] = b.parseExpression(expression.expr)
 				}
 			}
 			pattern.Nodes = append(pattern.Nodes, node)
-		}
+		})
 
-		// Find relationships
-		for _, match := range b.relationPattern.FindAllStringSubmatch(part, -1) {
-			rel := ASTRelationship{
-				Direction: EdgeOutgoing, // Default for ->
+		// Find the outgoing relationships (-[r:T]->), read by the
+		// relationship declaration owner.
+		for open, close := nextRelationshipBracket(part, 0); open >= 0; open, close = nextRelationshipBracket(part, close+1) {
+			if !strings.HasPrefix(part[close+1:], "->") {
+				continue
 			}
-			if len(match) > 1 {
-				rel.Variable = match[1]
-			}
-			if len(match) > 2 {
-				rel.Type = match[2]
+			declaration := relationshipDeclarationOf(part[open+1 : close])
+			rel := ASTRelationship{Direction: EdgeOutgoing, Variable: declaration.variable}
+			if declaration.types.len() > 0 {
+				rel.Type = declaration.types.at(0).storageName()
 			}
 			pattern.Relationships = append(pattern.Relationships, rel)
 		}

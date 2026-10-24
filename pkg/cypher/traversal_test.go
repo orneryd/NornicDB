@@ -116,7 +116,7 @@ func TestParseRelationshipPattern(t *testing.T) {
 			if result.Direction != tt.direction {
 				t.Errorf("Direction = %s, want %s", result.Direction, tt.direction)
 			}
-			if len(result.Types) != len(tt.types) {
+			if result.Types.len() != len(tt.types) {
 				t.Errorf("Types = %v, want %v", result.Types, tt.types)
 			}
 			if result.Variable != tt.variable {
@@ -142,7 +142,7 @@ func TestParseRelationshipPatternWithArrowheadsAtBothEnds(t *testing.T) {
 	if !pattern.VariableLength || pattern.MinHops != 3 || pattern.MaxHops != 3 {
 		t.Fatalf("expected an exact three-hop relationship, got %#v", pattern)
 	}
-	if len(pattern.Types) != 1 || pattern.Types[0] != "LIKES" {
+	if pattern.Types.len() != 1 || pattern.Types.at(0).storageName() != "LIKES" {
 		t.Fatalf("expected LIKES relationship type, got %#v", pattern.Types)
 	}
 }
@@ -322,7 +322,7 @@ func TestVariableLengthPaths(t *testing.T) {
 	if pattern.MaxHops != 2 {
 		t.Errorf("MaxHops = %d, want 2", pattern.MaxHops)
 	}
-	if len(pattern.Types) != 1 || pattern.Types[0] != "KNOWS" {
+	if pattern.Types.len() != 1 || pattern.Types.at(0).storageName() != "KNOWS" {
 		t.Errorf("Types = %v, want [KNOWS]", pattern.Types)
 	}
 }

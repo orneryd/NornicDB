@@ -1990,6 +1990,9 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:whereIndex])
 	}
+	if hasQuantifiedGroup(pattern) || e.isChainedPattern(pattern) {
+		return nil, false, nil
+	}
 	open, close := firstRelationshipBracket(pattern)
 	if open < 0 || close < 0 {
 		return nil, false, nil
@@ -2004,9 +2007,6 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 		if _, exists := row[declaration.variable]; !exists {
 			return nil, false, nil
 		}
-	}
-	if hasQuantifiedGroup(pattern) || e.isChainedPattern(normalizeAnonymousTraversalRelationships(pattern)) {
-		return nil, false, nil
 	}
 
 	store := e.getStorage(ctx)

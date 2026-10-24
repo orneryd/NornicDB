@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -611,27 +610,11 @@ func parseBoundNodeShape(body string) boundNodeShape {
 // of the row that isn't a node or relationship, a property map reading the
 // row, a shortest path, or no bound start node.
 func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
-	pattern := strings.TrimSpace(body)
-	if hasPrefixFold(pattern, "MATCH ") {
-		pattern = strings.TrimSpace(pattern[len("MATCH"):])
-	}
-	// One MATCH clause, its WHERE included: a RETURN or any other clause is
-	// the kernel's or the pipeline's.
-	if clauses, ok := splitPipelineClauses("MATCH " + pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	shape := boundChainShapeFor(body)
+	if !shape.ok {
 		return 0, false
 	}
-	where := ""
-	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
-		where = strings.TrimSpace(pattern[index+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:index])
-	}
-	// A match mode or path selector (REPEATABLE ELEMENTS, ANY SHORTEST)
-	// precedes the pattern; only the pipeline's MATCH runs those.
-	if !strings.HasPrefix(pattern, "(") || len(splitTopLevelComma(pattern)) != 1 || !containsRelationshipPattern(pattern) ||
-		extractPathAssignmentVariable(pattern) != "" || !patternMapsAreConstant(pattern) ||
-		indexASCIIFold(body, "shortestpath") >= 0 || indexASCIIFold(body, repeatableElementsFunction) >= 0 {
-		return 0, false
-	}
+	pattern, where := shape.pattern, shape.where
 	matches := e.parseTraversalPattern(ctx, pattern)
 	if matches == nil || !chainVariablesBindEntities(matches, values) {
 		return 0, false
@@ -692,6 +675,55 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	return count, true
 }
 
+type boundChainShape struct {
+	pattern string
+	where   string
+	ok      bool
+}
+
+// The admission reads only the body, which is the same for every row the
+// COUNT or EXISTS is evaluated for; the traversal still runs per row.
+var boundChainShapes = newBoundedCache[string, boundChainShape](1024, boundedCacheStringShardIndex)
+
+func boundChainShapeFor(body string) boundChainShape {
+	cacheable := len(body) <= 1024
+	if cacheable {
+		if shape, ok := boundChainShapes.get(body); ok {
+			return shape
+		}
+	}
+	shape := parseBoundChainShape(body)
+	if cacheable {
+		boundChainShapes.put(strings.Clone(body), shape)
+	}
+	return shape
+}
+
+func parseBoundChainShape(body string) boundChainShape {
+	pattern := strings.TrimSpace(body)
+	if hasPrefixFold(pattern, "MATCH ") {
+		pattern = strings.TrimSpace(pattern[len("MATCH"):])
+	}
+	// One MATCH clause, its WHERE included: a RETURN or any other clause is
+	// the kernel's or the pipeline's.
+	if clauses, ok := splitPipelineClauses("MATCH " + pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+		return boundChainShape{}
+	}
+	where := ""
+	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
+		where = strings.TrimSpace(pattern[index+len("WHERE"):])
+		pattern = strings.TrimSpace(pattern[:index])
+	}
+	// A match mode or path selector (REPEATABLE ELEMENTS, ANY SHORTEST)
+	// precedes the pattern; only the pipeline's MATCH runs those.
+	if !strings.HasPrefix(pattern, "(") || len(splitTopLevelComma(pattern)) != 1 || !containsRelationshipPattern(pattern) ||
+		extractPathAssignmentVariable(pattern) != "" || !patternMapsAreConstant(pattern) ||
+		indexASCIIFold(body, "shortestpath") >= 0 || indexASCIIFold(body, repeatableElementsFunction) >= 0 {
+		return boundChainShape{}
+	}
+	return boundChainShape{pattern: pattern, where: where, ok: true}
+}
+
 // patternMapsAreConstant reports whether every property map in a node or
 // relationship pattern of pattern holds only literals and parameters
 // ((n {id: 1}), ()-[:R {k: $k}]->()): boundChainCount's traversal matches
@@ -721,7 +753,23 @@ func patternMapsAreConstantText(pattern string) bool {
 		switch c := pattern[index]; cypherLexicalByte(c) {
 		case cypherQuoteClass:
 			index = skipCypherQuotedText(pattern, index, c) - 1
-		case '(', '[':
+		case '[':
+			if previous := trimRightIndex(pattern, 0, index); previous == 0 || pattern[previous-1] != '-' {
+				depth++
+				continue
+			}
+			// A relationship's map is its declaration's; its own WHERE is
+			// read per relationship, so the pattern isn't constant.
+			close := findMatchingBracket(pattern, index)
+			if close < 0 {
+				return false
+			}
+			declaration := relationshipDeclarationHead(pattern[index+1 : close])
+			if declaration.predicate != "" || !constantPropertyMap(declaration.properties) {
+				return false
+			}
+			index = close
+		case '(':
 			depth++
 		case ')', ']':
 			depth--
@@ -730,16 +778,29 @@ func patternMapsAreConstantText(pattern string) bool {
 				continue
 			}
 			close := findMatchingDelimiter(pattern, index, '{', '}')
-			if close < 0 {
+			if close < 0 || !constantPropertyMap(pattern[index:close+1]) {
 				return false
 			}
-			for _, pair := range splitTopLevelComma(pattern[index+1 : close]) {
-				separator := findTopLevelMapKeyValueSeparator(pair)
-				if separator <= 0 || !isConstantMapValue(pair[separator+1:]) {
-					return false
-				}
-			}
 			index = close
+		}
+	}
+	return true
+}
+
+// constantPropertyMap reports whether a property map's ({…}) values are all
+// literals or parameters; no map (or a parameter map) is constant.
+func constantPropertyMap(properties string) bool {
+	if properties == "" || properties[0] != '{' {
+		return true
+	}
+	close := findMatchingDelimiter(properties, 0, '{', '}')
+	if close < 0 {
+		return false
+	}
+	for _, pair := range splitTopLevelComma(properties[1:close]) {
+		separator := findTopLevelMapKeyValueSeparator(pair)
+		if separator <= 0 || !isConstantMapValue(pair[separator+1:]) {
+			return false
 		}
 	}
 	return true
@@ -882,7 +943,6 @@ func containsIdentifierWord(text, name string) bool {
 // [MATCH] (v)-[:T|U]->(), (v)<-[:T]-(), ()-[:T]->(v), with the arrows in
 // either spelling (-->, -[r]->). Its count is the node's degree, unless the
 // relationship variable is bound in the row (boundDegreeCount).
-var boundDegreePattern = regexp.MustCompile(`^(?i:MATCH\s+)?(?:\(\s*([A-Za-z_]\w*)\s*\)\s*(<?)-(?:\[\s*([A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*\)|\(\s*\)\s*(<?)-(?:\[\s*([A-Za-z_]\w*)?\s*(?::\s*([A-Za-z_\w|\s` + "`" + `]+?))?\s*\])?-(>?)\s*\(\s*([A-Za-z_]\w*)\s*\))\s*$`)
 
 // boundDegreeShape is a parsed boundDegreePattern body: the bound variable,
 // the hop's direction from it and its relationship types. ok is false for any
@@ -891,7 +951,7 @@ type boundDegreeShape struct {
 	variable     string
 	relationship string // the hop's relationship variable, or ""
 	outgoing     bool
-	types        []string
+	types        relationshipTypes
 	ok           bool
 }
 
@@ -910,33 +970,7 @@ func parseBoundDegreeShape(body string) boundDegreeShape {
 }
 
 func parseBoundDegreeShapeText(body string) boundDegreeShape {
-	trimmed := strings.TrimSpace(body)
-	if len(trimmed) == 0 || strings.ContainsAny(trimmed, "{*,") {
-		return boundDegreeShape{}
-	}
-	match := boundDegreePattern.FindStringSubmatch(trimmed)
-	if match == nil {
-		return boundDegreeShape{}
-	}
-	variable, relationship, types := match[1], match[3], match[4]
-	outgoing := match[2] == "" && match[5] == ">"
-	incoming := match[2] == "<" && match[5] == ""
-	if variable == "" {
-		// ()-[:T]->(v) is an incoming hop of v.
-		variable, relationship, types = match[10], match[7], match[8]
-		outgoing = match[6] == "<" && match[9] == ""
-		incoming = match[6] == "" && match[9] == ">"
-	}
-	if outgoing == incoming {
-		return boundDegreeShape{}
-	}
-	var relTypes []string
-	for _, relType := range strings.Split(types, "|") {
-		if relType = strings.Trim(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(relType), ":")), "`"); relType != "" {
-			relTypes = append(relTypes, relType)
-		}
-	}
-	return boundDegreeShape{variable: variable, relationship: relationship, outgoing: outgoing, types: relTypes, ok: true}
+	return relationshipDegreeShape(body)
 }
 
 // boundDegreeCount counts COUNT { (v)-[:T]->() } for a node bound in values
@@ -976,12 +1010,12 @@ func (e *StorageExecutor) nodeDegreeCount(ctx context.Context, node *storage.Nod
 		recordExpressionFailure(ctx, err)
 		return 0
 	}
-	if len(shape.types) == 0 {
+	if shape.types.len() == 0 {
 		return int64(len(edges))
 	}
 	var count int64
 	for _, edge := range edges {
-		if e.edgeTypeMatches(edge.Type, shape.types) {
+		if shape.types.matches(edge.Type) {
 			count++
 		}
 	}

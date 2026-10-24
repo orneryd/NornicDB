@@ -256,6 +256,6 @@ func TestDynamicRelationshipTypeExpressionInWrites(t *testing.T) {
 		"r:$(t * 2)*2 {w: $ws[i*2]}": {variable: "r", typeText: "$(t * 2)", hasLength: true, length: "2", properties: "{w: $ws[i*2]}"},
 	} {
 		got := relationshipDeclarationOf(inner)
-		assert.Equal(t, want, declared{got.variable, got.typeText, got.length, got.properties, got.hasLength}, inner)
+		assert.Equal(t, want, declared{got.variable, got.typeText, got.rangeText, got.properties, got.hasLength}, inner)
 	}
 }

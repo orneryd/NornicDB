@@ -199,7 +199,8 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 	case ']':
 		start = matchingRowDelimiterStart(expression, end, '[', ']')
 		// A bracket group after an operator or a comma is a list literal,
-		// the whole receiver (... + [5, 6][1]).
+		// the whole receiver (... + [5, 6][1]); one after a map literal
+		// subscripts it ({k: {xs: [1]}}['k'].xs[0]).
 		before := start - 1
 		for before >= 0 && isASCIIWhitespace(expression[before]) {
 			before--
@@ -257,6 +258,15 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		}
 		for start > 0 && isRowReceiverIdentifierByte(expression[start-1]) {
 			start--
+		}
+		// A property chain can start on another primary expression, not
+		// only a variable: {outer:{xs:[11,17]}}.outer.xs[i], f().xs[i],
+		// and [{xs:[17]}][0].xs[i]. Include that receiver so the row and
+		// compiled evaluators both recognize the final [i] as a subscript.
+		if expression[start] == '.' {
+			if receiver := rowSubscriptReceiverStart(expression, start); receiver >= 0 {
+				return receiver
+			}
 		}
 		return start
 	}

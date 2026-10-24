@@ -275,6 +275,15 @@ func mergePatternUsesParameterPredicate(pattern string) bool {
 			if end := queryCommentEnd(pattern, index); end >= 0 {
 				index = end - 1
 			}
+		case '[':
+			if relationshipBracketAt(pattern, 0, index) {
+				if closing := findMatchingBracket(pattern, index); closing > index {
+					if strings.HasPrefix(relationshipDeclarationHead(pattern[index+1:closing]).properties, "$") {
+						return true
+					}
+					index = closing
+				}
+			}
 		case '{':
 			if end := findMatchingDelimiter(pattern, index, '{', '}'); end > index {
 				index = end

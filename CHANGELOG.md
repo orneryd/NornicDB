@@ -84,6 +84,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   input expressions before effects. Expand wildcards from the known scope and
   procedure registry, and expose complete facts to composite query planning;
   unresolved metadata is a terminal error rather than a guessed or empty header.
+- Derive query-cache dependencies from parsed statement facts, preserving quoted
+  relationship alternatives and label names during selective invalidation.
+- Read label and relationship-type names given as values literally: a GDS projection
+  of 'A|B' or ['A|B'] projects the one type A|B, and GraphQL quotes the names it writes into Cypher.
 
 - Configure sampler recovery spacing and unleased rearm with positive-millisecond
   `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`
