@@ -47,13 +47,24 @@ func TestSearchProcedureNodeProperties(t *testing.T) {
 			service.StartRelationshipIndex()
 			require.NoError(t, service.BuildIndexes(ctx))
 			exec.SetSearchService(service)
-			nodecontract.Run(t, func(query string) ([][]any, error) {
-				result, err := exec.Execute(ctx, query, params)
-				if err != nil {
-					return nil, err
-				}
-				return result.Rows, nil
-			})
+			for _, explicit := range []bool{false, true} {
+				t.Run(fmt.Sprintf("explicit=%t", explicit), func(t *testing.T) {
+					nodecontract.Run(t, func(query string) ([][]any, error) {
+						if explicit {
+							_, err := exec.Execute(ctx, "BEGIN", nil)
+							if err != nil {
+								return nil, err
+							}
+							defer exec.Execute(ctx, "ROLLBACK", nil)
+						}
+						result, err := exec.Execute(ctx, query, params)
+						if err != nil {
+							return nil, err
+						}
+						return result.Rows, nil
+					})
+				})
+			}
 		})
 	}
 }

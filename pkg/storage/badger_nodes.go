@@ -91,7 +91,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		if err != nil {
 			return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 		}
-		if err := txn.Set(key, data); err != nil {
+		if err := b.setKeyWithPendingHint(txn, key, data); err != nil {
 			return localizedError(localization.StorageClientNodeWriteFailed(err), err)
 		}
 		if embeddingsSeparate {
@@ -133,12 +133,6 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		return "", err
 	}
 
-	// On successful create, register unique constraint values
-	for _, label := range node.Labels {
-		for propName, propValue := range node.Properties {
-			schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-		}
-	}
 	releaseUniqueLocks()
 	if persistSeparateEmbeddings {
 		if err := b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist); err != nil {
@@ -286,17 +280,21 @@ func (b *BadgerEngine) getNodeSnapshotForRead(id NodeID, force bool, v readVisib
 // node is cached apart from the node cache (queryNodeCache), so full reads
 // never see it and still hydrate.
 func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
-	return b.getQueryNode(id, visibleRead)
+	return b.getQueryNode(id, visibleRead, nodeReadCacheQuery)
 }
 
-func (b *BadgerEngine) getQueryNode(id NodeID, v readVisibility) (*Node, error) {
+func (b *BadgerEngine) getQueryNode(id NodeID, v readVisibility, cacheMode nodeReadCacheMode) (*Node, error) {
+	fill := b.cacheFillQueryNode
+	if cacheMode == nodeReadCacheSnapshot {
+		fill = nil
+	}
 	return b.getNodeByID(id, v,
 		func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 			return b.readQueryNodeItemInTxn(txn, item, id)
 		},
 		copyNodeForCaller,
-		b.cacheFillQueryNode,
-		nodeReadCacheQuery,
+		fill,
+		cacheMode,
 	)
 }
 
@@ -444,7 +442,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			if err != nil {
 				return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 			}
-			if err := txn.Set(key, data); err != nil {
+			if err := b.setKeyWithPendingHint(txn, key, data); err != nil {
 				return err
 			}
 
@@ -500,7 +498,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		// them from storage too (#963).
 		dropStaleCarriedEmbeddings(b, existingNode, node)
 
-		if err := b.validateNodeConstraintsInTxn(txn, node, schema, dbName, node.ID); err != nil {
+		if err := b.validateNodeConstraintsInTxn(txn, node, schema, dbName, node.ID, existingNode); err != nil {
 			return err
 		}
 
@@ -533,7 +531,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 		}
 
-		if err := txn.Set(key, data); err != nil {
+		if err := b.setKeyWithPendingHint(txn, key, data); err != nil {
 			return err
 		}
 
@@ -612,30 +610,10 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	// Update cache on successful operation
 	if err == nil {
 		if wasInsert {
-			// Register unique constraint values
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-				}
-			}
-
 			b.cacheOnNodeCreated(node)
 			// Notify listeners about the new node
 			b.notifyNodeCreated(node)
 		} else {
-			if existingNode != nil {
-				for _, label := range existingNode.Labels {
-					for propName, propValue := range existingNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
-				}
-			}
-
 			b.cacheOnNodeUpdatedWithOldNode(node, existingNode)
 			// Notify listeners to re-index the updated node
 			b.notifyNodeUpdated(node)
@@ -684,6 +662,11 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	var deletedEdges []*Edge
 	var deletedNode *Node
 
+	// A commit writing this node, or a relationship to it, and this delete
+	// publish one at a time (entity_commit_order.go).
+	var order entityOrderSet
+	order.addNode(id)
+	releaseOrder := b.entityOrder.lock(&order)
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now())
 		if allocErr != nil {
@@ -762,21 +745,10 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		}
 		return nil
 	})
+	releaseOrder()
 
 	// Invalidate cache on successful delete
 	if err == nil {
-		if deletedNode != nil {
-			dbName, _, ok := ParseDatabasePrefix(string(deletedNode.ID))
-			if ok {
-				schema := b.GetSchemaForNamespace(dbName)
-				for _, label := range deletedNode.Labels {
-					for propName, propValue := range deletedNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-		}
-
 		if deletedNode != nil {
 			b.cacheOnNodeDeletedWithLabels(id, deletedNode.Labels, totalEdgesDeleted)
 		} else {
@@ -844,5 +816,5 @@ func (b *BadgerEngine) deleteEdgesWithPrefix(txn *badger.Txn, prefix []byte) (in
 // lockEngineWriteKeys takes node's constraint key locks for a direct engine
 // write, under an owner of its own (a variable so tests can make it fail).
 var lockEngineWriteKeys = func(schema *SchemaManager, node *Node) (func(), error) {
-	return schema.lockConstraintKeysOf(context.Background(), newEngineWriteLockOwner(), node)
+	return schema.acquireUniqueConstraintCommitLocks(context.Background(), newEngineWriteLockOwner(), schema.nodeTransitionLockKeys(nil, node))
 }

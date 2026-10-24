@@ -76,6 +76,9 @@ func (c Constraint) EffectiveEntityType() ConstraintEntityType {
 type SchemaManager struct {
 	mu         sync.RWMutex
 	tokenOrder schemaTokenOrder
+	// Committed UNIQUE reads use the durable index, never a reservation cache.
+	uniqueEngine    *BadgerEngine
+	uniqueNamespace string
 
 	// Temporal constraints (by temporalIndexCompletenessKey) created at
 	// runtime: on an empty label their history index is complete from the

@@ -29,6 +29,7 @@ var badgerKeyFamilies = []struct {
 	{prefixMVCCOutgoingAdj, "mvcc"}, {prefixMVCCIncomingAdj, "mvcc"},
 	{prefixMVCCPruneFloor, "mvcc"},
 	{prefixChangeEvent, "metadata"},
+	{prefixNodeUnique, "index"},
 }
 
 func namespaceOwnsBadgerKey(key []byte, prefix []byte, namespace string, wholeNamespace bool, nodes, edges map[uint64]struct{}) bool {
@@ -50,6 +51,11 @@ func namespaceOwnsBadgerKey(key []byte, prefix []byte, namespace string, wholeNa
 		return ok
 	}
 	switch key[0] {
+	case prefixNodeUnique:
+		if key[1] == 1 {
+			return bytes.HasPrefix(key[2:], prefix)
+		}
+		return wholeNamespace && bytes.HasPrefix(key, nodeUniqueNamespacePrefix(namespace))
 	case prefixNode, prefixEdge, prefixPendingEmbed, prefixEmbedding:
 		return bytes.HasPrefix(key[1:], prefix)
 	case prefixChangeEvent:

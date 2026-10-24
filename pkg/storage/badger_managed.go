@@ -230,8 +230,23 @@ func (m *managedBadgerDB) advanceDiscardTs() {
 // gate exclusively and commits wait for it instead. The caller must not hold
 // the gate.
 func (m *managedBadgerDB) DropPrefix(prefixes ...[]byte) error {
+	return m.dropPrefixes(prefixes, nil)
+}
+
+// dropPrefixes resolves shared index entries under the drop's own commit
+// gate. No commit can replace a selected reservation before its deletion.
+func (m *managedBadgerDB) dropPrefixes(prefixes [][]byte, extra func(*badger.Txn) ([][]byte, error)) error {
 	m.commitGate.Lock()
 	defer m.commitGate.Unlock()
+	if extra != nil {
+		if err := m.View(func(txn *badger.Txn) error {
+			keys, err := extra(txn)
+			prefixes = append(prefixes, keys...)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
 	ts, err := m.oracle.assign()
 	if err != nil {
 		return err

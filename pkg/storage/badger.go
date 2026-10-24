@@ -171,9 +171,14 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
-	db     *managedBadgerDB
-	mu     sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
-	closed bool
+	// nodeConflictDetected is a deterministic scheduling seam for storage tests.
+	// Tests install it before starting transactions; production leaves it nil.
+	nodeConflictDetected        func(NodeID)
+	nodeBeforeConflictRead      func(NodeID)
+	nodeUniquePrefixDropPlanned func()
+	db                          *managedBadgerDB
+	mu                          sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
+	closed                      bool
 	// pendingCandidates accelerates the durable pending-embedding index. Adds
 	// are published by the common commit writer only after a successful commit.
 	pendingCandidates           pendingEmbeddingCandidates
@@ -201,6 +206,11 @@ type BadgerEngine struct {
 	// Lock order: writeBarrier before mu; Close stops its background
 	// backfills before taking the barrier so they cannot wait on it.
 	writeBarrier sync.RWMutex
+	// entityOrder orders a commit's check of the nodes and relationships it
+	// writes against every commit that deletes them (entity_commit_order.go).
+	// Lock order: writeBarrier, constraint key locks, entityOrder, then the
+	// count locks, the commit gate and the buffer lock.
+	entityOrder entityCommitOrder
 	// deleteCleanup counts deletes and runs the deleted-entry clean-up; nil
 	// for in-memory engines (see badger_delete_cleanup.go).
 	deleteCleanup *deleteCleanup

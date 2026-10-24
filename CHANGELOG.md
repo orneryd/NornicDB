@@ -93,6 +93,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unresolved metadata is a terminal error rather than a guessed or empty header.
 - Close internally allocated stores and WAL resources when recovery or startup fails; propagate malformed WAL manifests without panicking. Check test package boundaries for leaked stores and follow allocator identities through fields and call parameters.
 
+- Preserve storage snapshot failures as database commit errors through implicit
+  and explicit Execute, Bolt and HTTP transactions, with the original cause.
+  Unclassified commit failures now use Neo4j's DatabaseError status class.
+
+- Keep unchanged-key node update conflicts as ordinary retryable transaction
+  conflicts, without a misleading UNIQUE constraint-violation message. Genuine
+  competing unique-value claims retain their existing classification. Publish
+  single-property unique reservations with node data so renames and deletes
+  release their keys atomically. Transaction reads retain no key images;
+  virtual schema nodes and retrieval after a transaction's own delete remain usable.
+  A write whose node or relationship a concurrent transaction deleted after it
+  began now reports the retryable transaction conflict, also with write-behind,
+  instead of a syntax error.
+
 - Configure sampler recovery spacing and unleased rearm with positive-millisecond
   `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`
   and matching YAML keys; preserve the 5000 / 30000 ms defaults.

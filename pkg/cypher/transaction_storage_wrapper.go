@@ -263,6 +263,10 @@ func (w *transactionStorageWrapper) CreateNode(node *storage.Node) (storage.Node
 }
 
 func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
+	return w.UpdateNodeObserved(nil, node)
+}
+
+func (w *transactionStorageWrapper) UpdateNodeObserved(before, node *storage.Node) error {
 	if node == nil {
 		return storage.ErrInvalidData
 	}
@@ -270,7 +274,7 @@ func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
 		return err
 	}
 	if w.namespace == "" {
-		err := w.tx.UpdateNode(node)
+		err := w.tx.UpdateNodeObserved(before, node)
 		if err == nil {
 			w.markMutatedNodeID(node.ID)
 		}
@@ -278,7 +282,12 @@ func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
 	}
 	namespaced := storage.CopyNode(node)
 	namespaced.ID = w.prefixNodeID(node.ID)
-	err := w.tx.UpdateNode(namespaced)
+	if before != nil {
+		image := *before
+		image.ID = w.prefixNodeID(before.ID)
+		before = &image
+	}
+	err := w.tx.UpdateNodeObserved(before, namespaced)
 	if err == nil {
 		w.markMutatedNodeID(node.ID)
 	}

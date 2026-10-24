@@ -127,29 +127,25 @@ func storageMutatorPopulation(t *testing.T) []string {
 			funcs[name] = f
 		}
 	}
-	reaches := make(map[string]bool)
-	var visit func(name string, seen map[string]bool) bool
-	visit = func(name string, seen map[string]bool) bool {
-		if r, ok := reaches[name]; ok {
-			return r
-		}
-		if seen[name] {
-			return false
-		}
-		seen[name] = true
-		f := funcs[name]
-		if f == nil {
-			return false
-		}
-		result := f.seed
-		for callee := range f.calls {
-			if result {
-				break
+	// Reachability is a fixpoint over the call graph, so cycles cannot make
+	// the answer depend on which function a map iteration visits first.
+	reaches := make(map[string]bool, len(funcs))
+	for name, f := range funcs {
+		reaches[name] = f.seed
+	}
+	for changed := true; changed; {
+		changed = false
+		for name, f := range funcs {
+			if reaches[name] {
+				continue
 			}
-			result = visit(callee, seen)
+			for callee := range f.calls {
+				if reaches[callee] {
+					reaches[name], changed = true, true
+					break
+				}
+			}
 		}
-		reaches[name] = result
-		return result
 	}
 	var population []string
 	for name := range funcs {
@@ -157,7 +153,7 @@ func storageMutatorPopulation(t *testing.T) []string {
 		if !ok || (receiver != "BadgerEngine" && receiver != "BadgerTransaction") || !ast.IsExported(method) {
 			continue
 		}
-		if visit(name, make(map[string]bool)) {
+		if reaches[name] {
 			population = append(population, name)
 		}
 	}
@@ -222,6 +218,7 @@ var storageMutatorClassification = map[string]string{
 	"BadgerTransaction.CreateNode":                      "buffers in the transaction; published by its Commit",
 	"BadgerTransaction.CreateEdge":                      "buffers in the transaction; published by its Commit",
 	"BadgerTransaction.UpdateNode":                      "buffers in the transaction; published by its Commit",
+	"BadgerTransaction.UpdateNodeObserved":              "buffers an observed mutation in the transaction; published by its Commit",
 	"BadgerTransaction.BulkCreateEdges":                 "buffers in the transaction; published by its Commit",
 	"BadgerTransaction.PrepareMergeKey":                 "reserves a MERGE key in the transaction; no entity state",
 	"BadgerTransaction.PrepareMergeNode":                "admits MERGE constraint tuples and may advance the snapshot; entity writes are published by CreateNode/UpdateNode at Commit",
@@ -229,6 +226,7 @@ var storageMutatorClassification = map[string]string{
 	"BadgerEngine.Restore":                              "replaces the whole store offline; DB.Restore owns the reset of search (restartSearchAfterRestore)",
 	"BadgerEngine.ConsumeCleanShutdownMarker":           "a startup marker; no entity state",
 	"BadgerEngine.FindNodeNeedingEmbedding":             "maintains the pending-embedding work index; no entity state",
+	"BadgerEngine.AddToPendingEmbeddings":               "writes only a pending-work marker; the shared key setter does not change a node for that prefix",
 	"BadgerEngine.RefreshPendingEmbeddingsIndex":        "maintains the pending-embedding work index; no entity state",
 	"BadgerEngine.GetSchema":                            "persists schema metadata; reads entities only",
 	"BadgerEngine.GetSchemaForNamespace":                "persists schema metadata; reads entities only",

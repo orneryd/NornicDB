@@ -40,6 +40,8 @@ type snapshotLabelCacheKey struct {
 //   - Durability: Badger's WAL ensures persistence
 type BadgerTransaction struct {
 	mu sync.Mutex
+	// Only writes retain their first observed key image. Read-only work has no entries.
+	nodeWriteBefore map[NodeID]*Node
 
 	// commitCtx is the caller's context while CommitContext runs: commit-time
 	// constraint validation polls it, so a terminated or abandoned statement
@@ -66,6 +68,9 @@ type BadgerTransaction struct {
 	// created after our begin) bind to sequence 0, which correctly
 	// treats anything committed under them as post-begin.
 	beginSnapshot map[string]MVCCVersion
+	// overlayAtBegin is the write-behind overlay pinned with the begin
+	// snapshot (beginReadSnapshot); released when the transaction closes.
+	overlayAtBegin *beginOverlay
 	// CommitVersion is assigned once for a successful commit that mutates storage.
 	CommitVersion MVCCVersion
 
@@ -122,11 +127,11 @@ type BadgerTransaction struct {
 
 	// Track operations for constraint validation
 	pendingNodes map[NodeID]*Node
-	// nodeHeadCache memoizes commit-time endpoint head lookups within one
+	// nodeTargetCache memoizes commit-time endpoint lookups within one
 	// validation pass: bulk edge commits repeat endpoints per edge and the
-	// engine read is a Badger point read each time. Nil until the first
-	// cached lookup; discarded with the transaction.
-	nodeHeadCache       map[NodeID]MVCCHead
+	// engine read is a point read each time. Nil until the first cached
+	// lookup; discarded with the transaction.
+	nodeTargetCache     map[NodeID]writeTarget
 	pendingIndex        *pendingNodeIndex
 	pendingEdges        map[EdgeID]*Edge
 	pendingAdjacency    map[NodeID]map[EdgeID]*Edge
@@ -276,7 +281,7 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 	badgerDB := b.db
 	b.mu.RUnlock()
 
-	snapshotTx, badgerReadTs, err := badgerDB.beginTxn(false)
+	snapshotTx, badgerReadTs, overlayAtBegin, err := b.beginReadSnapshot(badgerDB)
 	if err != nil {
 		return nil, err
 	}
@@ -302,6 +307,7 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 		Status:                  TxStatusActive,
 		readTS:                  readTS,
 		beginSnapshot:           beginSnapshot,
+		overlayAtBegin:          overlayAtBegin,
 		badgerTx:                badgerTx,
 		snapshotTx:              snapshotTx,
 		badgerDB:                badgerDB,
@@ -390,6 +396,7 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 		tx.snapshotTx.Discard()
 		tx.snapshotTx = nil
 	}
+	tx.overlayAtBegin.release()
 	if tx.badgerReadHeld {
 		tx.badgerDB.endRead(tx.badgerReadTs)
 		tx.badgerReadHeld = false
@@ -402,6 +409,7 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 	tx.mergeKeyReleases = nil
 	tx.clearSnapshotCachesLocked()
 	tx.pendingAdjacency = nil
+	tx.nodeWriteBefore = nil
 	if tx.bufferedStagingTransferred {
 		// The write-behind buffer owns the staged state; the transaction is
 		// dead after close, so leaving the fields nil saves six fresh-map
@@ -680,12 +688,15 @@ func (tx *BadgerTransaction) flushBufferedWrites(w *batchWriter) error {
 	// Apply deletes first (in case a key is both written and deleted, delete wins)
 	for keyStr := range tx.pendingDeletes {
 		key := []byte(keyStr)
-		if err := w.write(func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
+		if err := w.write(func(txn *badger.Txn) error { return tx.engine.deleteKeyWithUniqueIndex(txn, key) }); err != nil {
 			return fmt.Errorf("flushing delete for key %s: %w", keyStr, err)
 		}
 	}
 
 	// Apply writes (only keys that weren't deleted)
+	if err := tx.engine.prepareNodeUniqueRemovals(w, tx.operations, tx.pendingWrites, tx.pendingDeletes); err != nil {
+		return err
+	}
 	for keyStr, value := range tx.pendingWrites {
 		// Skip if this key was also deleted (delete wins)
 		if tx.pendingDeletes[keyStr] {
@@ -800,6 +811,7 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 	}
 
 	// Track for read-your-writes and constraint validation
+	tx.rememberNodeMutationLocked(node.ID, nil, true)
 	nodeCopy := copyNode(node)
 	tx.pendingNodeChangedLocked(tx.pendingNodes[node.ID], nodeCopy)
 	tx.pendingNodes[node.ID] = nodeCopy
@@ -822,6 +834,13 @@ func (tx *BadgerTransaction) CreateNode(node *Node) (NodeID, error) {
 
 // UpdateNode updates a node in the transaction.
 func (tx *BadgerTransaction) UpdateNode(node *Node) error {
+	return tx.UpdateNodeObserved(nil, node)
+}
+
+// UpdateNodeObserved stages an update using the caller's observed key image.
+// The first write owns that image. A nil image uses the staging existence read
+// for a blind update; ordinary reads retain no transaction observation state.
+func (tx *BadgerTransaction) UpdateNodeObserved(before, node *Node) error {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 
@@ -837,13 +856,6 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 	}
 	tx.engine.NotePropertyKeysInNamespace(tx.namespace, node.Properties)
 
-	// Validate constraints
-	if !tx.deferConstraintValidation {
-		if err := tx.validateNodeConstraints(node); err != nil {
-			return err
-		}
-	}
-
 	// Check if node exists
 	var oldNode *Node
 	createOpIdx := -1
@@ -854,12 +866,25 @@ func (tx *BadgerTransaction) UpdateNode(node *Node) error {
 		var err error
 		oldNode, err = tx.getCommittedNodeLocked(node.ID)
 		if err == ErrNotFound {
-			return ErrNotFound
+			return tx.vanishedWriteTargetLocked(bufferedNodeEntity, string(node.ID), false)
 		}
 		if err != nil {
 			return fmt.Errorf("reading node: %w", err)
 		}
 		if err := tx.enrollCommittedWriteLocked(nodeKey(node.ID), "node"); err != nil {
+			return err
+		}
+	}
+
+	if before == nil {
+		before = oldNode
+	}
+	if before.ID != node.ID {
+		return ErrInvalidID
+	}
+	tx.rememberNodeMutationLocked(node.ID, before, createOpIdx >= 0)
+	if !tx.deferConstraintValidation {
+		if err := tx.validateNodeConstraints(node); err != nil {
 			return err
 		}
 	}
@@ -1581,11 +1606,11 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(Nod
 	}
 	startLabels, visible := endpoint(edge.StartNode)
 	if !visible {
-		return nil, nil, nil, localizedError(localization.StorageTransactionStartNodeMissing(string(edge.StartNode)), ErrNotFound)
+		return nil, nil, nil, tx.missingEdgeEndpointLocked(edge.StartNode, localization.StorageTransactionStartNodeMissing(string(edge.StartNode)))
 	}
 	endLabels, visible = endpoint(edge.EndNode)
 	if !visible {
-		return nil, nil, nil, localizedError(localization.StorageTransactionEndNodeMissing(string(edge.EndNode)), ErrNotFound)
+		return nil, nil, nil, tx.missingEdgeEndpointLocked(edge.EndNode, localization.StorageTransactionEndNodeMissing(string(edge.EndNode)))
 	}
 	if _, exists := tx.pendingEdges[edge.ID]; exists {
 		return nil, nil, nil, ErrAlreadyExists
@@ -1699,7 +1724,7 @@ func (tx *BadgerTransaction) UpdateEdge(edge *Edge) error {
 		var err error
 		oldEdge, err = tx.getCommittedEdgeForUpdateLocked(edge.ID)
 		if err == ErrNotFound {
-			return ErrNotFound
+			return tx.vanishedWriteTargetLocked(bufferedEdgeEntity, string(edge.ID), false)
 		}
 		if errors.Is(err, ErrConflict) {
 			return err
@@ -2894,19 +2919,9 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		return fmt.Errorf("schema snapshot changed before commit: %w", ErrConflict)
 	}
 
-	// Acquire per-(label, property, value) commit locks for every unique
-	// constraint value touched by this transaction's pending nodes. Held
-	// across validateAllConstraints + badgerTx.Commit + the post-commit
-	// RegisterUniqueValue calls below so that a peer transaction touching the
-	// same constrained value cannot pass validation against an empty cache
-	// while we are still committing. Without this lock, two concurrent
-	// transactions that both add a node with the same constrained property
-	// value both pass deferred validation (cache empty for both), both reach
-	// badgerTx.Commit (Badger writes them under distinct node IDs so the KV
-	// layer does not detect the conflict), and both call RegisterUniqueValue
-	// — the second overwriting the first — leaving the UNIQUE constraint
-	// silently violated in storage. See cross_session_merge_unique_test.go
-	// for the reproduction.
+	// Serialize each node publication and its removed/added keys through
+	// validation and commit (or buffered ACK). Native index writes share the
+	// data transaction; there is no post-commit reservation publication.
 	releaseCommitLocks, err := tx.acquireUniqueConstraintCommitLocks()
 	if err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -2921,7 +2936,20 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		return err
 	}
 
+	// From the target checks below until this commit's write is published
+	// (Badger commit or buffered acknowledgement), no commit that deletes a
+	// node or relationship it writes can publish (entity_commit_order.go).
+	defer tx.lockEntityOrderLocked()()
+
 	// Final constraint validation before commit
+	if err := tx.validateNodeKeyImagesLocked(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		var cv *ConstraintViolationError
+		if errors.As(err, &cv) {
+			return localizedError(localization.StorageTransactionConstraintViolation(err), err)
+		}
+		return err
+	}
 	if err := tx.validateAllConstraints(); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		// Wire contract: prefix "constraint violation:" is matched by downstream Bolt classifiers.
@@ -3017,6 +3045,14 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	cw.beforeLarge = tx.acquireCommitPublicationLocked
 	cw.onBatch = func(next *badger.Txn) { tx.badgerTx = next }
 	tx.commitW = cw
+	if tx.schemaRuntime != nil {
+		if err := prepareNodeUniqueSchemaTransition(&cw.batchWriter, tx.namespace, tx.schemaRuntime.ExportDefinition()); err != nil {
+			return tx.abortCommitLocked(err)
+		}
+		if err := stageNodeUniqueIndexes(&cw.batchWriter, tx.namespace, tx.schemaRuntime); err != nil {
+			return tx.abortCommitLocked(err)
+		}
+	}
 	if hasWrites {
 		if err := tx.engine.materializeMVCCCommit(&cw.batchWriter, version, physicalOperations); err != nil {
 			return tx.abortCommitLocked(fmt.Errorf("materializing mvcc commit state: %w", err))
@@ -3112,7 +3148,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	// counters in separate Badger transactions so those high-frequency
 	// shared keys do not participate in the user transaction's
 	// conflict-detection set. Concurrent commits in the same namespace
-	// must not race on these writes — see allocateMVCCVersion's doc.
+	// must not race on these writes — see allocateVersion's doc.
 	if tx.namespace != "" && !tx.CommitVersion.IsZero() {
 		tx.engine.persistMVCCSequence(tx.namespace)
 	}
@@ -3153,56 +3189,6 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	}
 
 	tx.engine.prepareCommitOperations(tx.operations, notification != nil)
-
-	// Update derived unique-constraint caches (in-memory) based on committed operations.
-	// This keeps non-transactional CreateNode() uniqueness checks consistent with transactional writes.
-	//
-	// All committed ops belong to the transaction's pinned namespace, so the
-	// schema lookup is hoisted out of the loop.
-	//
-	// NOTE: We don't persist these caches; they are rebuilt from stored nodes on startup.
-	if tx.namespace != "" {
-		schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-		if schema != nil {
-			for _, op := range tx.operations {
-				switch op.Type {
-				case OpCreateNode:
-					if op.Node == nil {
-						continue
-					}
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				case OpUpdateNode:
-					if op.OldNode != nil {
-						for _, label := range op.OldNode.Labels {
-							for propName, propValue := range op.OldNode.Properties {
-								schema.UnregisterUniqueValue(label, propName, propValue)
-							}
-						}
-					}
-					if op.Node != nil {
-						for _, label := range op.Node.Labels {
-							for propName, propValue := range op.Node.Properties {
-								schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-							}
-						}
-					}
-				case OpDeleteNode:
-					if op.OldNode == nil {
-						continue
-					}
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-			}
-		}
-	}
 
 	// ACID GUARANTEE: Force fsync for EXPLICIT transactions only.
 	// Explicit COMMIT must be durable before we return success (user asked
@@ -3259,6 +3245,9 @@ func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	var bytes int64
+	for id, image := range tx.nodeWriteBefore {
+		bytes += int64(64+len(id)) + estimateRetainedNodeBytes(image)
+	}
 	for key, value := range tx.pendingWrites {
 		bytes += int64(len(key) + cap(value) + 64)
 	}
@@ -3404,7 +3393,7 @@ func (tx *BadgerTransaction) getCommittedNodeReadLocked(nodeID NodeID, vectors b
 		if vectors {
 			return tx.engine.getNode(nodeID, v)
 		}
-		return tx.engine.getQueryNode(nodeID, v)
+		return tx.engine.getQueryNode(nodeID, v, nodeReadCacheQuery)
 	}
 	if node, ok := tx.snapshotPrefixNodeByID[nodeID]; ok {
 		return copyRead(node), nil
@@ -3734,9 +3723,17 @@ func (tx *BadgerTransaction) visibleNodeLabelsLocked(nodeID NodeID) ([]string, b
 }
 
 func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
+	// Entities this transaction created: a later write to one has no earlier
+	// target a peer could have deleted.
+	var createdNodes map[NodeID]struct{}
+	var createdEdges map[EdgeID]struct{}
 	for _, op := range tx.operations {
 		switch op.Type {
 		case OpCreateNode:
+			if createdNodes == nil {
+				createdNodes = make(map[NodeID]struct{})
+			}
+			createdNodes[op.NodeID] = struct{}{}
 			// FreshID: this transaction generated the ID (UUID-shaped) and
 			// already skipped the existence read on the same premise. No
 			// peer can hold an MVCC head for it, so the per-node head-load
@@ -3746,16 +3743,26 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 					return err
 				}
 			}
-		case OpUpdateNode, OpDeleteNode, OpUpdateEmbedding:
+		case OpUpdateNode, OpUpdateEmbedding:
+			check := tx.checkStagedNodeWriteLocked
+			if _, created := createdNodes[op.NodeID]; created {
+				check = tx.checkNodeWriteConflict
+			}
+			if err := check(op.NodeID); err != nil {
+				return err
+			}
+		case OpDeleteNode:
 			if err := tx.checkNodeWriteConflict(op.NodeID); err != nil {
 				return err
 			}
-			if op.Type == OpDeleteNode {
-				if err := tx.checkNodeAdjacencyConflict(op.NodeID); err != nil {
-					return err
-				}
+			if err := tx.checkNodeAdjacencyConflict(op.NodeID); err != nil {
+				return err
 			}
 		case OpCreateEdge:
+			if createdEdges == nil {
+				createdEdges = make(map[EdgeID]struct{})
+			}
+			createdEdges[op.EdgeID] = struct{}{}
 			// Created and deleted in the same transaction: nothing reaches
 			// commit, so neither the create conflict nor the endpoint checks
 			// apply (#741: DELETE r / DETACH DELETE after CREATE in one tx).
@@ -3777,7 +3784,11 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 			if _, deleted := tx.deletedEdges[op.EdgeID]; deleted {
 				continue
 			}
-			if err := tx.checkEdgeWriteConflict(op.EdgeID); err != nil {
+			check := tx.checkStagedEdgeWriteLocked
+			if _, created := createdEdges[op.EdgeID]; created {
+				check = tx.checkEdgeWriteConflict
+			}
+			if err := check(op.EdgeID); err != nil {
 				return err
 			}
 			if err := tx.checkEdgeEndpointConflicts(op.Edge); err != nil {
@@ -3806,13 +3817,13 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 // and Compare> returns true even though no concurrent tx actually
 // wrote between BeginTransaction and Commit. Each namespace's commit
 // sequence is an atomic uint64 incremented at every
-// allocateMVCCVersion call for that namespace — it cannot move
+// allocateVersion call for that namespace — it cannot move
 // non-monotonically. A real concurrent commit in the same namespace
 // MUST bump that namespace's seq past tx.readTS.CommitSequence to
 // have written anything. Cross-namespace comparisons never reach
 // this function because BadgerTransaction is pinned to one namespace.
 // When a namespace's sequence saturates at MaxUint64 we can no longer
-// distinguish commits by seq, so allocateMVCCVersion forces strictly
+// distinguish commits by seq, so allocateVersion forces strictly
 // increasing commit timestamps and this check falls back to
 // timestamp ordering only for the equal-MaxUint64 case.
 // snapshotIsolationConflict reports whether headVersion is logically newer
@@ -3846,81 +3857,85 @@ func (tx *BadgerTransaction) checkNodeCreateConflict(nodeID NodeID) error {
 }
 
 func (tx *BadgerTransaction) checkNodeWriteConflict(nodeID NodeID) error {
+	if tx.engine.nodeBeforeConflictRead != nil {
+		tx.engine.nodeBeforeConflictRead(nodeID)
+	}
 	head, err := tx.engine.GetNodeCurrentHead(nodeID)
 	if err == ErrNotFound {
 		return nil
 	}
 	if err != nil {
+		return &CommitFailureError{Cause: localizedError(localization.StorageTransactionSnapshotReadFailed(string(nodeID), err), err)}
+	}
+	return tx.nodeHeadConflictLocked(nodeID, head)
+}
+
+// checkStagedNodeWriteLocked validates a staged update of a node this
+// transaction did not create. A node gone now is decided by the
+// vanished-target owner, as at staging; otherwise its head's version decides.
+func (tx *BadgerTransaction) checkStagedNodeWriteLocked(nodeID NodeID) error {
+	if tx.engine.nodeBeforeConflictRead != nil {
+		tx.engine.nodeBeforeConflictRead(nodeID)
+	}
+	target, err := tx.engine.currentWriteTarget(bufferedNodeEntity, string(nodeID))
+	if err != nil {
+		return &CommitFailureError{Cause: localizedError(localization.StorageTransactionSnapshotReadFailed(string(nodeID), err), err)}
+	}
+	if err := tx.stagedTargetGoneLocked(bufferedNodeEntity, string(nodeID), target); err != nil || !target.headFound {
 		return err
 	}
+	return tx.nodeHeadConflictLocked(nodeID, target.head)
+}
+
+func (tx *BadgerTransaction) nodeHeadConflictLocked(nodeID NodeID, head MVCCHead) error {
 	conflict, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
 	if err != nil {
-		return err
+		return &CommitFailureError{Cause: localizedError(localization.StorageTransactionSnapshotReadFailed(string(nodeID), err), err)}
 	}
 	if conflict {
-		// MERGE-on-same-unique-value race: this transaction's MERGE
-		// matched a node that a peer committed between our begin and
-		// our commit. The match → UpdateNode redirect onto the peer's
-		// node would normally fire as ErrConflict here, but the
-		// observable cause is "another writer claimed the unique
-		// value" — the consumer-pinned commit-time UNIQUE shape.
-		// Surface that shape directly so retry-aware MERGE clients
-		// converge instead of being told to retry on a transient
-		// conflict (which would just observe the peer's node, find
-		// the constraint already satisfied, and complete cleanly).
-		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
-		if cv := tx.classifyUpdateConflictAsUniqueViolation(nodeID); cv != nil {
-			return cv
+		// Only a value this transaction claimed can reclassify the conflict.
+		// Its first write owns the baseline; the schema owns the current claim.
+		if tx.engine.nodeConflictDetected != nil {
+			tx.engine.nodeConflictDetected(nodeID)
+		}
+		if err := tx.classifyUpdateConflictAsUniqueViolation(nodeID); err != nil {
+			return err
 		}
 		return localizedError(localization.StorageTransactionNodeChangedDetailed(string(nodeID), head.Version.String(), tx.readTS.String()), ErrConflict)
 	}
 	return nil
 }
 
-// classifyUpdateConflictAsUniqueViolation returns a ConstraintViolationError
-// when this transaction's UPDATE on nodeID is the loser of a commit-time
-// unique-value race — i.e., a peer claimed a uniquely-constrained value
-// this transaction's pending node also carries, and our MERGE-MATCH path
-// redirected our UPDATE onto the peer's node. Returns nil for any conflict
-// that isn't shaped this way (lost-update on a contended counter, generic
-// SI conflict on an unrelated update, etc.); the caller falls back to
-// the generic conflict error.
-func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(nodeID NodeID) error {
-	pending, ok := tx.pendingNodes[nodeID]
-	if !ok || pending == nil || tx.namespace == "" {
+func (tx *BadgerTransaction) classifyUpdateConflictAsUniqueViolation(nodeID NodeID, merged ...bool) error {
+	pending := tx.pendingNodes[nodeID]
+	if pending == nil || tx.namespace == "" {
+		return nil
+	}
+	if _, observed := tx.nodeWriteBefore[nodeID]; !observed && tx.pendingCreateNodeOperationIndexLocked(nodeID) < 0 {
 		return nil
 	}
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-	if schema == nil {
-		return nil
-	}
 	for _, c := range schema.GetConstraintsForLabels(pending.Labels) {
-		if c.Type != ConstraintUnique || len(c.Properties) != 1 {
+		if c.Type != ConstraintUnique || len(c.Properties) != 1 || !tx.nodeIntroducesKeyLocked(pending, c) {
 			continue
 		}
-		prop := c.Properties[0]
-		val, has := pending.Properties[prop]
-		if !has {
+		property, value := c.Properties[0], pending.Properties[c.Properties[0]]
+		claims, err := schema.readUniqueConstraintValue(c.Label, property, value, len(merged) > 0 && merged[0])
+		if err != nil {
+			return &CommitFailureError{Cause: err}
+		}
+		held := claims.found && claims.holder == nodeID
+		for _, id := range claims.pending {
+			held = held || id == nodeID
+		}
+		if !held {
 			continue
 		}
-		existing, found, complete, constrained := schema.lookupUniqueConstraintValueForValidation(c.Label, prop, val)
-		if !constrained || !complete || !found {
-			continue
-		}
-		if existing != nodeID {
-			continue
-		}
-		// Peer claimed our unique value; the schema cache has already
-		// recorded their (label, prop, value) → nodeID mapping, and
-		// our pending update targets that same nodeID. This is the
-		// commit-time UNIQUE race the contract documents.
-		message := localization.StorageValidationNodeUniqueConcurrent(prop, val)
 		cause := localizedError(localization.StorageTransactionConcurrentModification(), ErrConflict)
-		return newLocalizedConstraintViolation(ConstraintUnique, c.Label, []string{prop}, message, cause)
+		return newLocalizedConstraintViolation(ConstraintUnique, c.Label, c.Properties, localization.StorageValidationNodeUniqueConcurrent(property, value), cause)
 	}
 	return nil
 }
-
 func (tx *BadgerTransaction) checkEdgeCreateConflict(edgeID EdgeID) error {
 	head, err := tx.engine.GetEdgeCurrentHead(edgeID)
 	if err == ErrNotFound {
@@ -3947,6 +3962,23 @@ func (tx *BadgerTransaction) checkEdgeWriteConflict(edgeID EdgeID) error {
 	if err != nil {
 		return err
 	}
+	return tx.edgeHeadConflictLocked(edgeID, head)
+}
+
+// checkStagedEdgeWriteLocked is checkStagedNodeWriteLocked for a staged
+// relationship update.
+func (tx *BadgerTransaction) checkStagedEdgeWriteLocked(edgeID EdgeID) error {
+	target, err := tx.engine.currentWriteTarget(bufferedEdgeEntity, string(edgeID))
+	if err != nil {
+		return err
+	}
+	if err := tx.stagedTargetGoneLocked(bufferedEdgeEntity, string(edgeID), target); err != nil || !target.headFound {
+		return err
+	}
+	return tx.edgeHeadConflictLocked(edgeID, target.head)
+}
+
+func (tx *BadgerTransaction) edgeHeadConflictLocked(edgeID EdgeID, head MVCCHead) error {
 	conflict, err := tx.snapshotHeadConflict(tx.engine.mvccEdgeHeadKeyStringLookup(edgeID), head.Version)
 	if err != nil {
 		return err
@@ -3955,6 +3987,87 @@ func (tx *BadgerTransaction) checkEdgeWriteConflict(edgeID EdgeID) error {
 		return localizedError(localization.StorageTransactionEdgeChanged(string(edgeID)), ErrConflict)
 	}
 	return nil
+}
+
+// vanishedWriteTargetLocked classifies a write target that is gone. A target
+// the transaction saw exists, in its begin snapshot or, for a write it
+// already staged (observed), when it staged the write, was removed by another
+// transaction since: a concurrent modification (ErrConflict). A target it
+// never saw, or one it deleted itself, stays ErrNotFound.
+func (tx *BadgerTransaction) vanishedWriteTargetLocked(kind bufferedEntityKind, id string, observed bool) error {
+	if kind == bufferedNodeEntity {
+		if _, own := tx.deletedNodes[NodeID(id)]; own {
+			return ErrNotFound
+		}
+	} else if _, own := tx.deletedEdges[EdgeID(id)]; own {
+		return ErrNotFound
+	}
+	visible := observed
+	if !visible {
+		var err error
+		if visible, err = tx.visibleAtBeginLocked(kind, id); err != nil {
+			return &CommitFailureError{Cause: localizedError(localization.StorageTransactionSnapshotReadFailed(id, err), err)}
+		}
+	}
+	if !visible {
+		return ErrNotFound
+	}
+	// Wire contract: substrings "conflict:" and "changed after transaction
+	// start" are matched by downstream Bolt classifiers as transient.
+	if kind == bufferedNodeEntity {
+		return localizedError(localization.StorageTransactionNodeChanged(id), ErrConflict)
+	}
+	return localizedError(localization.StorageTransactionEdgeChanged(id), ErrConflict)
+}
+
+// stagedTargetGoneLocked decides, at commit, a staged write whose target was
+// there when the write was staged. The commit holds the target's entity
+// order, so no delete of it publishes between this check and the commit's
+// write. A target that existed and is gone now is classified by the owner
+// that classifies it at staging, as observed: a concurrent delete
+// (ErrConflict), and the commit writes nothing. One this transaction deleted
+// itself, or one that never existed anywhere, is left to the checks that
+// follow.
+func (tx *BadgerTransaction) stagedTargetGoneLocked(kind bufferedEntityKind, id string, target writeTarget) error {
+	if !target.gone {
+		return nil
+	}
+	if err := tx.vanishedWriteTargetLocked(kind, id, target.existed); err != ErrNotFound {
+		return err
+	}
+	return nil
+}
+
+// missingEdgeEndpointLocked keeps the endpoint-missing message for an endpoint
+// that is not found, and the conflict for a concurrent delete.
+func (tx *BadgerTransaction) missingEdgeEndpointLocked(nodeID NodeID, missing localization.Message) error {
+	if err := tx.vanishedWriteTargetLocked(bufferedNodeEntity, string(nodeID), false); err != ErrNotFound {
+		return err
+	}
+	return localizedError(missing, ErrNotFound)
+}
+
+// visibleAtBeginLocked reports whether the target existed in the begin
+// snapshot: the write-behind overlay pinned at begin decides when it holds the
+// entity, otherwise the Badger read snapshot taken at the same begin.
+func (tx *BadgerTransaction) visibleAtBeginLocked(kind bufferedEntityKind, id string) (bool, error) {
+	if state := tx.overlayAtBegin.entityState(kind, id); state.found {
+		return !state.deleted, nil
+	}
+	key := nodeKey(NodeID(id))
+	if kind == bufferedEdgeEntity {
+		key = edgeKey(EdgeID(id))
+	}
+	visible := false
+	err := tx.withSnapshotViewLocked(func(view *badger.Txn) error {
+		_, err := view.Get(key)
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			return nil
+		}
+		visible = err == nil
+		return err
+	})
+	return visible, err
 }
 
 func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
@@ -3967,28 +4080,24 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
 				continue
 			}
 		}
-		head, err := tx.endpointHead(nodeID)
-		if err == ErrNotFound {
-			if _, nodeErr := tx.engine.GetStoredNode(nodeID); nodeErr == nil {
-				continue
-			} else if nodeErr == ErrNotFound {
-				return ErrInvalidEdge
-			} else {
-				return nodeErr
-			}
-		}
+		target, err := tx.endpointTarget(nodeID)
 		if err != nil {
 			return err
 		}
-		if head.Tombstoned {
-			conflict, err := tx.snapshotHeadConflict(tx.engine.mvccNodeHeadKeyStringLookup(nodeID), head.Version)
-			if err != nil {
-				return err
-			}
-			if conflict {
-				return localizedError(localization.StorageTransactionEndpointDeleted(string(nodeID)), ErrConflict)
-			}
+		if !target.gone {
+			continue
+		}
+		// A deleted endpoint the new relationship was staged against is
+		// classified by the vanished-target owner, as observed; one that
+		// never existed anywhere stays an invalid relationship.
+		classified := tx.vanishedWriteTargetLocked(bufferedNodeEntity, string(nodeID), target.existed)
+		switch {
+		case errors.Is(classified, ErrConflict):
+			return localizedError(localization.StorageTransactionEndpointDeleted(string(nodeID)), ErrConflict)
+		case classified == ErrNotFound:
 			return ErrInvalidEdge
+		default:
+			return classified
 		}
 	}
 	return nil
@@ -3999,22 +4108,36 @@ func (tx *BadgerTransaction) checkEdgeEndpointConflicts(edge *Edge) error {
 // node instead of twice per edge. The cache is only read within a single
 // commit validation pass, which is point-in-time by construction, so the
 // memoized value is exactly as fresh as the first read.
-func (tx *BadgerTransaction) endpointHead(nodeID NodeID) (MVCCHead, error) {
-	if head, ok := tx.nodeHeadCache[nodeID]; ok {
-		return head, nil
+func (tx *BadgerTransaction) endpointTarget(nodeID NodeID) (writeTarget, error) {
+	if target, ok := tx.nodeTargetCache[nodeID]; ok {
+		return target, nil
 	}
-	head, err := tx.engine.GetNodeCurrentHead(nodeID)
+	target, err := tx.engine.currentWriteTarget(bufferedNodeEntity, string(nodeID))
 	if err == nil {
-		if tx.nodeHeadCache == nil {
-			tx.nodeHeadCache = make(map[NodeID]MVCCHead, 64)
+		if tx.nodeTargetCache == nil {
+			tx.nodeTargetCache = make(map[NodeID]writeTarget, 64)
 		}
-		tx.nodeHeadCache[nodeID] = head
+		tx.nodeTargetCache[nodeID] = target
 	}
-	return head, err
+	return target, err
 }
 
 func (tx *BadgerTransaction) checkNodeAdjacencyConflict(nodeID NodeID) error {
-	return tx.engine.withView(func(viewTx *badger.Txn) error {
+	// A relationship acknowledged into the write-behind buffer has no stored
+	// adjacency yet. One this delete does not remove would point at a deleted
+	// node; the commit holds the node's entity order, so every relationship
+	// published to it is here.
+	var buffered []*Edge
+	return tx.engine.withReadView(func(w *WriteBehindBuffer) {
+		if w != nil {
+			buffered = append(w.liveAdjacencyLocked(nodeID, true), w.liveAdjacencyLocked(nodeID, false)...)
+		}
+	}, func(viewTx *badger.Txn) error {
+		for _, edge := range buffered {
+			if _, own := tx.deletedEdges[edge.ID]; !own {
+				return localizedError(localization.StorageTransactionAdjacentEdgeChanged(string(nodeID), string(edge.ID)), ErrConflict)
+			}
+		}
 		var prefixes [][]byte
 		if outPrefix := tx.engine.outgoingIndexPrefixString(nodeID); outPrefix != nil {
 			prefixes = append(prefixes, outPrefix)
@@ -4145,6 +4268,9 @@ func (tx *BadgerTransaction) validateNodeConstraints(node *Node) error {
 // re-filter by namespace prefix. The committed-data fallback still filters
 // because the label index spans all namespaces.
 func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, c Constraint) error {
+	if !tx.nodeIntroducesKeyLocked(node, c) {
+		return nil
+	}
 	prop := c.Properties[0]
 	value := node.Properties[prop]
 
@@ -4164,9 +4290,19 @@ func (tx *BadgerTransaction) checkUniqueConstraint(node *Node, c Constraint) err
 	}
 
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-	if existingNode, found, cacheComplete, constrained := schema.lookupUniqueConstraintValueForValidation(c.Label, prop, value); constrained && cacheComplete {
-		if found && existingNode != node.ID && !tx.committedNodeSupersededLocked(existingNode) {
-			return uniqueConstraintViolation(c.Label, prop, value, existingNode)
+	claims, err := schema.readUniqueConstraintValue(c.Label, prop, value, true)
+	if err != nil {
+		return err
+	}
+	if claims.constrained && claims.complete {
+		holders := claims.pending
+		if claims.found {
+			holders = append(holders, claims.holder)
+		}
+		for _, id := range holders {
+			if id != node.ID && !tx.committedNodeSupersededLocked(id) {
+				return uniqueConstraintViolation(c.Label, prop, value, id)
+			}
 		}
 		return nil
 	}
@@ -4590,15 +4726,23 @@ func (tx *BadgerTransaction) checkTemporalConstraint(node *Node, c Constraint) e
 // already locked for it is taken without waiting. A wait that would close a
 // cycle of transactions fails with ErrDeadlock.
 func (tx *BadgerTransaction) acquireUniqueConstraintCommitLocks() (func(), error) {
-	if (len(tx.pendingNodes) == 0 && len(tx.pendingEdges) == 0) || tx.namespace == "" {
+	if (len(tx.pendingNodes) == 0 && len(tx.deletedNodes) == 0 && len(tx.pendingEdges) == 0) || tx.namespace == "" {
 		return func() {}, nil
 	}
 	schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-	nodes := make([]*Node, 0, len(tx.pendingNodes))
-	for _, node := range tx.pendingNodes {
-		nodes = append(nodes, node)
+	var keys []uniqueConstraintLockKey
+	for id, node := range tx.pendingNodes {
+		keys = append(keys, schema.nodeTransitionLockKeys(tx.nodeWriteBefore[id], node)...)
 	}
-	releaseNodes, err := schema.lockConstraintKeysOf(context.Background(), tx.ID, nodes...)
+	for _, op := range tx.operations {
+		if op.Type == OpDeleteNode {
+			keys = append(keys, schema.nodeTransitionLockKeys(op.OldNode, nil)...)
+		}
+	}
+	for _, node := range tx.connectedDeletes {
+		keys = append(keys, schema.nodeTransitionLockKeys(node, nil)...)
+	}
+	releaseNodes, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), tx.ID, keys)
 	if err != nil {
 		return nil, err
 	}
@@ -4716,7 +4860,9 @@ func (tx *BadgerTransaction) ResumeAfterIndependentCommit() error {
 }
 
 func (tx *BadgerTransaction) advanceSnapshotLocked(preserveWrites bool) error {
-	snapshotTx, badgerReadTs, err := tx.badgerDB.beginTxn(false)
+	// The next view's write-behind overlay is pinned with its read, as at
+	// begin; the old one keeps answering until the view is replaced.
+	snapshotTx, badgerReadTs, overlay, err := tx.engine.beginReadSnapshot(tx.badgerDB)
 	if err != nil {
 		return err
 	}
@@ -4733,6 +4879,7 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(preserveWrites bool) error {
 		if err != nil {
 			snapshotTx.Discard()
 			tx.badgerDB.endRead(badgerReadTs)
+			overlay.release()
 			return err
 		}
 	}
@@ -4761,6 +4908,8 @@ func (tx *BadgerTransaction) advanceSnapshotLocked(preserveWrites bool) error {
 		tx.badgerDB.endRead(tx.badgerReadTs)
 		tx.badgerReadHeld = false
 	}
+	tx.overlayAtBegin.release()
+	tx.overlayAtBegin = overlay
 	tx.snapshotTx = snapshotTx
 	tx.badgerReadTs = badgerReadTs
 	tx.badgerReadHeld = true

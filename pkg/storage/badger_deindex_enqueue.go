@@ -83,7 +83,7 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 		if err != nil {
 			return false, nil, err
 		}
-		if err := txn.Set(nodeKey(nodeID), data); err != nil {
+		if err := b.setKeyWithPendingHint(txn, nodeKey(nodeID), data); err != nil {
 			return false, nil, err
 		}
 		if err := enqueueWorkItemInTxn(txn, string(nodeID), "NODE"); err != nil {
@@ -97,7 +97,7 @@ func (b *BadgerEngine) evaluateNodeSuppressionInTxn(txn *badger.Txn, nodeID Node
 		if err != nil {
 			return false, nil, err
 		}
-		if err := txn.Set(nodeKey(nodeID), data); err != nil {
+		if err := b.setKeyWithPendingHint(txn, nodeKey(nodeID), data); err != nil {
 			return false, nil, err
 		}
 		return false, node, clearTombstonesForEntityInTxn(txn, string(nodeID))
@@ -140,7 +140,7 @@ func (b *BadgerEngine) rescoreSuppressionAfterLabelChangeInTxn(txn *badger.Txn, 
 	if err != nil {
 		return err
 	}
-	if err := txn.Set(nodeKey(node.ID), data); err != nil {
+	if err := b.setKeyWithPendingHint(txn, nodeKey(node.ID), data); err != nil {
 		return err
 	}
 

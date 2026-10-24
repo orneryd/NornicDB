@@ -13,6 +13,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func (e *StorageExecutor) callDbRetrieve(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
@@ -284,6 +285,12 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 		opts.RerankMinScore = v
 	}
 
+	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok && wrapper.tx.HasPendingNodeMutations() {
+		previous := opts.Where
+		opts.Where = func(node *storage.Node) bool {
+			return !wrapper.tx.NodeDeleted(wrapper.prefixNodeID(node.ID)) && (previous == nil || previous(node))
+		}
+	}
 	embedding, suppliedEmbedding, err := resolveSuppliedRetrieveEmbedding(req, failClosed)
 	if err != nil {
 		return nil, err

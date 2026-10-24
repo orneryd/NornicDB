@@ -57,15 +57,17 @@ func TestPrepareMergeNodeForWriteSerializesWritersOfOneNode(t *testing.T) {
 	require.Equal(t, int64(2), stored.Properties["w"])
 }
 
-// TestPrepareMergeNodeForWriteLocksUntrustedHolder: a holder the values
-// cache knows while it isn't complete is still caught up to, and a writer
-// still takes its key.
-func TestPrepareMergeNodeForWriteLocksUntrustedHolder(t *testing.T) {
+// A live engine proves both an existing holder and an absent key through the
+// stored claim reader, even when the obsolete values cache says otherwise.
+func TestPrepareMergeNodeForWriteUsesStoredClaims(t *testing.T) {
 	engine, schema := newMergeKeyTestEngine(t)
 	ctx := context.Background()
 	nodeID := createKeyNode(t, engine, "w2", 2)
 	constraint := schema.uniqueConstraints["U:k"]
+	staleKey, ok := indexValueKey(int64(3))
+	require.True(t, ok)
 	constraint.mu.Lock()
+	constraint.values = map[interface{}]NodeID{staleKey: nodeID}
 	constraint.valuesCacheComplete = false
 	constraint.mu.Unlock()
 
@@ -77,10 +79,15 @@ func TestPrepareMergeNodeForWriteLocksUntrustedHolder(t *testing.T) {
 	require.Equal(t, int64(2), node.Properties["k"])
 	require.NoError(t, writer.Rollback())
 
-	// An absent key with an incomplete cache admits nothing, as before.
+	// The complete stored read proves absence; the writer reserves that key
+	// instead of treating an incomplete or stale cache as the authority.
+	_, found, _, complete, err := schema.LookupUniqueConstraintValueForPlanningChecked("U", "k", int64(3))
+	require.NoError(t, err)
+	require.False(t, found)
+	require.True(t, complete)
 	absent := beginMergeKeyTx(t, engine)
 	require.NoError(t, absent.PrepareMergeNodeForWrite(ctx, []string{"U"}, map[string]interface{}{"k": int64(3)}))
-	require.Empty(t, absent.mergeKeyReleases)
+	require.Len(t, absent.mergeKeyReleases, 1)
 	require.NoError(t, absent.Rollback())
 }
 

@@ -142,6 +142,8 @@
   other: "conflicto detectado: el nodo {{.NodeID}} cambió después de iniciar la transacción"
 - id: storage.transaction.node_changed_detailed
   other: "conflicto detectado: el nodo {{.NodeID}} cambió después de iniciar la transacción (head={{.Head}}, readTS={{.ReadTimestamp}})"
+- id: storage.transaction.snapshot_read_failed
+  other: "no se pudo leer la instantánea de la transacción para el nodo {{.NodeID}}: {{.Cause}}"
 - id: storage.transaction.concurrent_modification
   other: "conflicto detectado: una transacción simultánea modificó los datos antes de la confirmación"
 - id: storage.transaction.endpoint_deleted

@@ -87,12 +87,19 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 			rowCtx, nodes, rels = e.pipelineRowWriteContext(ctx, row)
 		}
 		touched = touched[:0]
+		beforeNodes := make(map[*storage.Node]*storage.Node)
 		for _, item := range items {
 			propertiesBefore, labelsBefore := result.Stats.PropertiesSet, result.Stats.LabelsRemoved
 			switch entity := row[item.variable].(type) {
 			case *storage.Node:
 				if entity == nil {
 					continue
+				}
+				if beforeNodes[entity] == nil {
+					before := *entity
+					before.Labels = append([]string(nil), entity.Labels...)
+					before.Properties = cloneStringAnyMap(entity.Properties)
+					beforeNodes[entity] = &before
 				}
 				if err := e.removeFromNode(rowCtx, store, entity, item, nodes, rels, result.Stats); err != nil {
 					return err
@@ -118,7 +125,7 @@ func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipeli
 		for _, entity := range touched {
 			switch typed := entity.(type) {
 			case *storage.Node:
-				if err := updateMutatedNode(store, typed); err != nil {
+				if err := updateMutatedNode(store, typed, beforeNodes[typed]); err != nil {
 					return err
 				}
 				e.notifyNodeMutated(string(typed.ID))

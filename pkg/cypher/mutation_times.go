@@ -9,10 +9,10 @@ import (
 // Cypher owns the time of a user mutation. Storage preserves supplied times so
 // imports and recovery can restore historical versions without rewriting them.
 // Restore the in-memory time if persistence fails, as with the caller's values.
-func updateMutatedNode(store storage.Engine, node *storage.Node) error {
+func updateMutatedNode(store storage.Engine, node, before *storage.Node) error {
 	previous := node.UpdatedAt
 	node.UpdatedAt = time.Now()
-	if err := store.UpdateNode(node); err != nil {
+	if err := storage.UpdateObservedNode(store, before, node); err != nil {
 		node.UpdatedAt = previous
 		return err
 	}

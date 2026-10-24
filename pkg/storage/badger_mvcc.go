@@ -825,6 +825,53 @@ func (b *BadgerEngine) loadEdgeMVCCHeadInTxn(txn *badger.Txn, id EdgeID) (MVCCHe
 	return head, err
 }
 
+// writeTarget is a write target as a commit finds it now: its stored MVCC
+// head, whether it is gone (deleted in the write-behind buffer, or tombstoned
+// or absent in storage), and whether it ever existed (a head, a buffered
+// state or a stored body).
+type writeTarget struct {
+	head      MVCCHead
+	headFound bool
+	gone      bool
+	existed   bool
+}
+
+// currentWriteTarget reads the buffer and storage through one captured view,
+// so an acknowledged buffered delete counts before the flusher lands it.
+func (b *BadgerEngine) currentWriteTarget(kind bufferedEntityKind, id string) (writeTarget, error) {
+	var buffered bufferedEntityState
+	var target writeTarget
+	err := b.withReadView(func(w *WriteBehindBuffer) { buffered = w.entityStateLocked(kind, id) }, func(txn *badger.Txn) error {
+		key := nodeKey(NodeID(id))
+		var err error
+		if kind == bufferedNodeEntity {
+			target.head, err = b.loadNodeMVCCHeadInTxn(txn, NodeID(id))
+		} else {
+			key = edgeKey(EdgeID(id))
+			target.head, err = b.loadEdgeMVCCHeadInTxn(txn, EdgeID(id))
+		}
+		switch {
+		case err == nil:
+			target.headFound = true
+			target.gone = target.head.Tombstoned
+		case err == ErrNotFound:
+			if _, err := txn.Get(key); errors.Is(err, badger.ErrKeyNotFound) {
+				target.gone = true
+			} else if err != nil {
+				return err
+			}
+		default:
+			return err
+		}
+		if buffered.found {
+			target.gone = buffered.deleted
+		}
+		target.existed = target.headFound || buffered.found || !target.gone
+		return nil
+	})
+	return target, err
+}
+
 func (b *BadgerEngine) loadEdgeMVCCHeadWithPhysicalVersionInTxn(txn *badger.Txn, id EdgeID) (MVCCHead, uint64, error) {
 	numID, ok := b.idDict.lookupEdgeNumID(id)
 	if !ok {

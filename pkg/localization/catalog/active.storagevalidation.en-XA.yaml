@@ -142,6 +142,8 @@
   other: "[!! conflict detected: node {{.NodeID}} changed after transaction start !!]"
 - id: storage.transaction.node_changed_detailed
   other: "[!! conflict detected: node {{.NodeID}} changed after transaction start (head={{.Head}}, readTS={{.ReadTimestamp}}) !!]"
+- id: storage.transaction.snapshot_read_failed
+  other: "[!! failed to read transaction snapshot for node {{.NodeID}}: {{.Cause}} !!]"
 - id: storage.transaction.concurrent_modification
   other: "[!! conflict detected: concurrent transaction modified data before commit !!]"
 - id: storage.transaction.endpoint_deleted

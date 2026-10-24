@@ -224,6 +224,9 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	// Runs after the lock below is released: the reset's consumers may write.
 	var reset *commitNotification
 	defer func() { b.awaitCommitNotification(reset) }()
+	// The prefix's entities are not listed in advance, so the drop orders
+	// itself against every writing commit (entity_commit_order.go).
+	defer b.entityOrder.lockAll()()
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
 
@@ -321,15 +324,20 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	// Bulk deletion bypasses per-node marker writes. Invalidate even on a
 	// partial drop failure so future claims rebuild from the durable index.
 	defer b.InvalidatePendingEmbeddingsIndex()
-	if err := b.db.DropPrefix(dropPrefixes...); err != nil {
+	if err := b.db.dropPrefixes(dropPrefixes, func(txn *badger.Txn) ([][]byte, error) {
+		keys, err := b.nodeUniqueDropPrefixes(txn, prefix, namespace, wholeNamespace)
+		if err == nil && b.nodeUniquePrefixDropPlanned != nil {
+			b.nodeUniquePrefixDropPlanned()
+		}
+		return keys, err
+	}); err != nil {
 		return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
 	if err := b.deleteNamespaceKeyFamilies(prefixBytes, namespace, wholeNamespace, nodeNums, edgeNums); err != nil {
 		return 0, 0, err
 	}
 	// Node and edge dict entries are sharded: collect the victim IDs shard
-	// by shard, then remove each pair with the sharded helpers (the drop is
-	// exclusive, so the passes race with nothing).
+	// by shard, then remove each pair with the sharded helpers.
 	var nodeVictims []NodeID
 	for i := range b.idDict.nodes {
 		sh := &b.idDict.nodes[i]
@@ -494,6 +502,12 @@ func (b *BadgerEngine) deleteNamespaceKeyFamilies(prefix []byte, namespace strin
 	defer batch.Cancel()
 	pending := 0
 	for _, family := range badgerKeyFamilies {
+		// Primary nodes and their unique entries were removed together by
+		// the native drop. A later cleanup scan must not delete the body or
+		// reverse entry of a node committed after that boundary.
+		if family.prefix == prefixNode || family.prefix == prefixNodeUnique {
+			continue
+		}
 		err := b.db.View(func(txn *badger.Txn) error {
 			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{family.prefix}))
 			defer it.Close()

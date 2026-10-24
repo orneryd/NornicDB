@@ -17,8 +17,8 @@ const (
 
 // TestBadgerUniqueConstraintCommit_DisjointFunctionBatchesAreParallel proves
 // the exact lock contract through real BadgerTransaction.Commit calls. The
-// retained Eshu route updates existing Function nodes with disjoint uid values,
-// so unrelated writers must all reach commit-time UNIQUE validation together.
+// workload updates existing Function nodes with disjoint uid values,
+// so unrelated writers must all reach commit-time conflict validation together.
 func TestBadgerUniqueConstraintCommit_DisjointFunctionBatchesAreParallel(t *testing.T) {
 	engine := newTestEngine(t)
 	schema := engine.GetSchemaForNamespace("test")
@@ -27,7 +27,7 @@ func TestBadgerUniqueConstraintCommit_DisjointFunctionBatchesAreParallel(t *test
 	}
 
 	seedBadgerUniqueFunctions(t, engine)
-	if err := engine.rebuildUniqueConstraintValues("test", schema); err != nil {
+	if err := RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema); err != nil {
 		t.Fatalf("rebuildUniqueConstraintValues: %v", err)
 	}
 
@@ -49,27 +49,16 @@ func TestBadgerUniqueConstraintCommit_DisjointFunctionBatchesAreParallel(t *test
 		transactions[writer] = tx
 	}
 
-	schema.mu.RLock()
-	constraint := schema.uniqueConstraints["Function:uid"]
-	schema.mu.RUnlock()
-	if constraint == nil {
-		t.Fatal("Function.uid UNIQUE constraint missing")
-	}
-	constraint.mu.Lock()
-	constraint.valuesCacheComplete = false
-	constraint.mu.Unlock()
-
 	enteredValidation := make(chan struct{}, len(transactions))
 	releaseValidation := make(chan struct{})
-	restoreHook := setUniqueConstraintScanHook(func() {
+	engine.nodeBeforeConflictRead = func(NodeID) {
 		select {
 		case enteredValidation <- struct{}{}:
 		default:
 		}
 		<-releaseValidation
-	})
-	defer restoreHook()
-
+	}
+	defer func() { engine.nodeBeforeConflictRead = nil }()
 	start := make(chan struct{})
 	errors := make(chan error, len(transactions))
 	var wg sync.WaitGroup
@@ -106,7 +95,7 @@ collect:
 	close(errors)
 
 	if admitted != len(transactions) {
-		t.Fatalf("real disjoint Badger commits entered UNIQUE validation concurrently = %d/%d, want %d/%d", admitted, len(transactions), len(transactions), len(transactions))
+		t.Fatalf("real disjoint Badger commits entered conflict validation concurrently = %d/%d, want %d/%d", admitted, len(transactions), len(transactions), len(transactions))
 	}
 	for err := range errors {
 		if err != nil {
@@ -132,7 +121,7 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 	}); err != nil {
 		t.Fatalf("CreateNode seed: %v", err)
 	}
-	if err := engine.rebuildUniqueConstraintValues("test", schema); err != nil {
+	if err := RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema); err != nil {
 		t.Fatalf("rebuildUniqueConstraintValues: %v", err)
 	}
 
@@ -190,16 +179,12 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 		t.Fatalf("same-UID initial result winner=%+v loser=%+v, want one of each", winner, loser)
 	}
 	var violation *ConstraintViolationError
-	if !errors.As(loser.err, &violation) || violation.Type != ConstraintUnique {
-		t.Fatalf("same-UID loser error = %T %v, want UNIQUE ConstraintViolationError", loser.err, loser.err)
+	if errors.As(loser.err, &violation) {
+		t.Fatalf("same-UID loser error = %T %v, want ordinary conflict without UNIQUE", loser.err, loser.err)
 	}
 	if !errors.Is(loser.err, ErrConflict) {
 		t.Fatalf("same-UID loser error = %v, want ErrConflict cause", loser.err)
 	}
-	if violation.Label != "Function" || len(violation.Properties) != 1 || violation.Properties[0] != "uid" {
-		t.Fatalf("same-UID violation target = %s.%v, want Function.[uid]", violation.Label, violation.Properties)
-	}
-
 	retry, err := engine.BeginTransaction()
 	if err != nil {
 		t.Fatalf("BeginTransaction retry: %v", err)
@@ -242,7 +227,7 @@ func BenchmarkBadgerUniqueConstraintCommit_DisjointFunctionBatches(b *testing.B)
 		b.Fatalf("AddUniqueConstraint: %v", err)
 	}
 	seedBadgerUniqueFunctions(b, engine)
-	if err := engine.rebuildUniqueConstraintValues("test", schema); err != nil {
+	if err := RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema); err != nil {
 		b.Fatalf("rebuildUniqueConstraintValues: %v", err)
 	}
 	b.ReportMetric(float64(badgerUniqueLockWriters), "writers")

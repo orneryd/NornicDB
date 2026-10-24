@@ -96,8 +96,18 @@ func refreshUniqueConstraintValues(engine Engine, schema *SchemaManager, uniqueC
 	if len(uniqueConstraints) == 0 {
 		return nil
 	}
+	if schema.uniqueEngine != nil {
+		release, err := schema.uniqueEngine.beginSchemaWrite()
+		if err != nil {
+			return err
+		}
+		defer release()
+		defer clearUniqueBackfillValues(schema)
+	}
+	seen := make(map[*UniqueConstraint]constraintCreationValues, len(uniqueConstraints))
 
 	for _, uc := range uniqueConstraints {
+		seen[uc] = make(constraintCreationValues)
 		uc.mu.Lock()
 		uc.values = make(map[interface{}]NodeID)
 		uc.valuesCacheComplete = false
@@ -136,9 +146,17 @@ func refreshUniqueConstraintValues(engine Engine, schema *SchemaManager, uniqueC
 				if !ok {
 					continue
 				}
-				if err := schema.CheckUniqueConstraint(label, propName, propValue, storageNodeID); err != nil {
-					violation = localizedError(localization.StorageValidationRefreshUniqueFailed(err), err)
-					return violation
+				if propValue != nil {
+					for _, uc := range uniqueConstraints {
+						if uc.Label != label || uc.Property != propName {
+							continue
+						}
+						if holder, duplicate := seen[uc].add(string(storageNodeID), []interface{}{propValue}); duplicate && holder != string(storageNodeID) {
+							violation = uniqueConstraintViolation(label, propName, propValue, NodeID(holder))
+							violation = localizedError(localization.StorageValidationRefreshUniqueFailed(violation), violation)
+							return violation
+						}
+					}
 				}
 				schema.RegisterUniqueValue(label, propName, propValue, storageNodeID)
 			}
@@ -156,6 +174,13 @@ func refreshUniqueConstraintValues(engine Engine, schema *SchemaManager, uniqueC
 		uc.mu.Lock()
 		uc.valuesCacheComplete = true
 		uc.mu.Unlock()
+	}
+	if schema.uniqueEngine != nil {
+		if err := schema.uniqueEngine.commitEngineWrite(func(cw *commitWriter) error {
+			return stageNodeUniqueIndexes(&cw.batchWriter, schema.uniqueNamespace, schema)
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

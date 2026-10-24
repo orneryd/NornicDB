@@ -120,7 +120,7 @@ func TestBadgerTransactionUniqueConstraintUsesRegisteredValueIndex(t *testing.T)
 	if got, found, constrained := schema.LookupUniqueConstraintValue("User", "email", "alice@example.com"); !constrained || !found || got != firstID {
 		t.Fatalf("LookupUniqueConstraintValue() = (%q, %v, %v), want (%q, true, true)", got, found, constrained, firstID)
 	}
-	if err := engine.rebuildUniqueConstraintValues("test", schema); err != nil {
+	if err := RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema); err != nil {
 		t.Fatalf("rebuildUniqueConstraintValues failed: %v", err)
 	}
 
@@ -188,7 +188,7 @@ func TestBadgerTransactionUniqueConstraintIndexMatchesNumericCompareSemantics(t 
 	if err := tx1.Commit(); err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
-	if err := engine.rebuildUniqueConstraintValues("test", schema); err != nil {
+	if err := RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema); err != nil {
 		t.Fatalf("rebuildUniqueConstraintValues failed: %v", err)
 	}
 	if got, found, constrained := schema.LookupUniqueConstraintValue("User", "age", int(1)); !constrained || !found || got != firstID {

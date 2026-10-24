@@ -135,9 +135,10 @@ func (e *StorageExecutor) installPersistedProcedure(ctx context.Context, record 
 	}
 
 	if existing != nil {
+		before := *existing
 		existing.Labels = ensureLabel(existing.Labels, procedureCatalogLabel)
 		existing.Properties = props
-		if err := store.UpdateNode(existing); err != nil {
+		if err := storage.UpdateObservedNode(store, &before, existing); err != nil {
 			return localizedError(localization.CypherProceduresUpdateCatalogFailed(err), err)
 		}
 	} else {
