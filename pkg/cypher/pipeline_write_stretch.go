@@ -98,7 +98,20 @@ func pipelineWriteStretchConflicts(ctx context.Context, stretch, after []pipelin
 	}
 	for reader := range stretch {
 		for writer := range stretch {
-			if (reader != writer || stretch[reader].kind == pipelineClauseCreate) && reads[reader].observes(&writes[writer]) {
+			if reader == writer {
+				if stretch[reader].kind != pipelineClauseCreate {
+					continue
+				}
+				// Input-row properties cannot refer to entities this CREATE
+				// has not produced yet. Only reads of graph populations can
+				// observe this clause's newly created entities.
+				graphReads := reads[reader]
+				graphReads.keys = nil
+				graphReads.anyKey = false
+				if graphReads.observes(&writes[writer]) {
+					return true
+				}
+			} else if reads[reader].observes(&writes[writer]) {
 				return true
 			}
 		}
