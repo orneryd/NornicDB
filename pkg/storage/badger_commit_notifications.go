@@ -13,6 +13,12 @@ type commitNotification struct {
 	next     *commitNotification
 }
 
+// A direct event keeps its one-operation backing store with the queue entry.
+type singleCommitNotification struct {
+	commitNotification
+	operation [1]Operation
+}
+
 func (b *BadgerEngine) hasCommitListeners() bool {
 	b.callbackMu.RLock()
 	defer b.callbackMu.RUnlock()
@@ -26,7 +32,7 @@ func (b *BadgerEngine) hasCommitListeners() bool {
 // are released, so a database recreated after it returns never meets the
 // dropped one's derived state.
 func (b *BadgerEngine) publishNamespaceReset(prefix string) *commitNotification {
-	n := b.reserveCommitOperations(nil)
+	n := b.queueCommitOperations(nil, nil)
 	if n == nil {
 		return nil
 	}
@@ -44,11 +50,28 @@ func (b *BadgerEngine) awaitCommitNotification(n *commitNotification) {
 	}
 }
 
-func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotification {
+// queueCommitOperations owns queue admission, reservation and direct completion.
+// A direct operation is snapshotted into its inline entry; a transaction batch
+// retains its existing slice and is completed by its publication owner.
+func (b *BadgerEngine) queueCommitOperations(ops []Operation, direct *Operation) *commitNotification {
+	var n *commitNotification
+	if direct != nil {
+		if !b.hasCommitListeners() && !hasEmbeddingOutcome([]Operation{*direct}) {
+			return nil
+		}
+		operation := *direct
+		operation.snapshotForNotification()
+		single := &singleCommitNotification{operation: [1]Operation{operation}}
+		n = &single.commitNotification
+		ops = single.operation[:]
+	}
 	if !b.hasCommitListeners() && !hasEmbeddingOutcome(ops) {
 		return nil
 	}
-	n := &commitNotification{ops: ops}
+	if n == nil {
+		n = &commitNotification{}
+	}
+	n.ops = ops
 	b.notificationMu.Lock()
 	b.notifyWG.Add(1)
 	if b.notificationTail == nil {
@@ -58,16 +81,10 @@ func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotificat
 	}
 	b.notificationTail = n
 	b.notificationMu.Unlock()
-	return n
-}
-
-func (b *BadgerEngine) enqueueCommitOperation(op Operation) {
-	if !b.hasCommitListeners() && !hasEmbeddingOutcome([]Operation{op}) {
-		return
+	if direct != nil {
+		b.completeCommitNotification(n)
 	}
-	op.snapshotForNotification()
-	n := b.reserveCommitOperations([]Operation{op})
-	b.completeCommitNotification(n)
+	return n
 }
 
 func hasEmbeddingOutcome(ops []Operation) bool {
