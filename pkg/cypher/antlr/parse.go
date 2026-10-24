@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -24,6 +25,10 @@ func Parse(query string) (*ParseResult, error) {
 	if strings.TrimSpace(query) == "" {
 		message := localization.CypherANTLRParseEmptyQuery()
 		return nil, localization.NewLocalizedError(string(message.ID), message, nil)
+	}
+	if cyphertext.HasAdjacentStringLiterals(query) {
+		message := localization.CypherANTLRParseSyntaxError("adjacent string literals")
+		return &ParseResult{Errors: []string{"adjacent string literals"}}, localization.NewLocalizedError(string(message.ID), message, nil)
 	}
 	// Legacy AST consumers explicitly request their own mutable tree. They use
 	// the same parser lifecycle, and never receive the retained immutable tree.
@@ -56,6 +61,10 @@ func ValidateContext(ctx context.Context, query string) error {
 	}
 	if trimmed == "" {
 		message := localization.CypherANTLRValidateEmptyQuery()
+		return localization.NewLocalizedError(string(message.ID), message, nil)
+	}
+	if cyphertext.HasAdjacentStringLiterals(trimmed) {
+		message := localization.CypherANTLRValidateSyntaxError("adjacent string literals")
 		return localization.NewLocalizedError(string(message.ID), message, nil)
 	}
 	syntax, err := ParseSyntax(ctx, query, StatementEntry, false)

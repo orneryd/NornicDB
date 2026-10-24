@@ -262,6 +262,7 @@ type DB struct {
 	ownedEmbedders     []*embedderResource // protected by mu; released after workers join
 	foregroundWg       sync.WaitGroup      // admission under mu; joined before providers close
 	defaultEmbedKey    string              // key for the embedder set via SetEmbedder (global default)
+	defaultEmbedConfig *embed.Config       // protected by embedderRegistryMu; owns failure diagnostics
 	// embedderFactory allows tests to inject deterministic embedder creation behavior.
 	// Production uses embed.NewEmbedder.
 	embedderFactory func(ctx context.Context, cfg *embed.Config) (embed.Embedder, error)
@@ -1670,6 +1671,8 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 		log.Printf("🧠 Auto-embed queue started using %s (%d dims)",
 			embedder.Model(), embedder.Dimensions())
 		db.mu.Unlock()
+		db.registerDefaultEmbedder(embedder)
+		db.refreshEmbedFailureRedactor()
 		if nornicConfig.IsGPUClusteringEnabled() {
 			interval := db.config.Memory.KmeansClusterInterval
 			if interval > 0 {
@@ -1718,6 +1721,15 @@ func (db *DB) SetEmbedder(embedder embed.Embedder) bool {
 		embedder.Model(), embedder.Dimensions())
 
 	db.mu.Unlock()
+	db.registerDefaultEmbedder(embedder)
+	db.mu.RLock()
+	configResolver := db.embedConfigForDB
+	db.mu.RUnlock()
+	if configResolver != nil {
+		db.SetEmbedConfigForDB(configResolver)
+	} else {
+		db.refreshEmbedFailureRedactor()
+	}
 
 	if startClusterTimer {
 		db.startClusteringTimer(clusterInterval)
@@ -1737,9 +1749,9 @@ func (db *DB) SetEmbedQueueShouldYield(fn func() bool) {
 	}
 }
 
-// SetDefaultEmbedConfig registers the current global embedder (must have been set via SetEmbedder first)
-// under the given config key so the per-DB embedder registry can use it as the default when a database
-// has no overrides. Call this after SetEmbedder when per-DB config is available (e.g. server with dbConfigStore).
+// SetDefaultEmbedConfig binds the default provider configuration for per-database
+// embedder selection and failure diagnostics. It may be set before or after the
+// provider is published.
 func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
 	if defaultConfig == nil {
 		return
@@ -1748,20 +1760,39 @@ func (db *DB) SetDefaultEmbedConfig(defaultConfig *embed.Config) {
 	eq := db.embedQueue
 	closed := db.closed
 	db.mu.Unlock()
-	if eq == nil || closed {
-		return
-	}
-	defaultEmbedder := eq.currentEmbedder()
-	if defaultEmbedder == nil {
+	if closed {
 		return
 	}
 	key := embedConfigKey(defaultConfig)
+	configCopy := *defaultConfig
 	db.embedderRegistryMu.Lock()
+	db.defaultEmbedConfig = &configCopy
 	if db.embedderRegistry == nil {
 		db.embedderRegistry = make(map[string]embed.Embedder)
 	}
-	db.embedderRegistry[key] = defaultEmbedder
-	db.defaultEmbedKey = key
+	if eq != nil {
+		if defaultEmbedder := eq.currentEmbedder(); defaultEmbedder != nil {
+			db.embedderRegistry[key] = defaultEmbedder
+			db.defaultEmbedKey = key
+		}
+	}
+	db.embedderRegistryMu.Unlock()
+	db.refreshEmbedFailureRedactor()
+}
+
+func (db *DB) registerDefaultEmbedder(embedder embed.Embedder) {
+	if embedder == nil {
+		return
+	}
+	db.embedderRegistryMu.Lock()
+	if db.defaultEmbedConfig != nil {
+		if db.embedderRegistry == nil {
+			db.embedderRegistry = make(map[string]embed.Embedder)
+		}
+		key := embedConfigKey(db.defaultEmbedConfig)
+		db.embedderRegistry[key] = embedder
+		db.defaultEmbedKey = key
+	}
 	db.embedderRegistryMu.Unlock()
 }
 
@@ -1777,6 +1808,7 @@ func (db *DB) SetEmbedConfigForDB(fn func(dbName string) (*embed.Config, error))
 	}
 	if fn == nil {
 		queue.SetEmbedderResolver(nil)
+		db.refreshEmbedFailureRedactor()
 		return
 	}
 	queue.SetEmbedderResolver(func(nodeID storage.NodeID) (embed.Embedder, error) {
@@ -1785,6 +1817,41 @@ func (db *DB) SetEmbedConfigForDB(fn func(dbName string) (*embed.Config, error))
 			return nil, nil
 		}
 		return db.getOrCreateEmbedderForDB(dbName)
+	})
+	db.refreshEmbedFailureRedactor()
+}
+
+// refreshEmbedFailureRedactor binds the durable error owner to the same
+// default or per-database config that selects the provider. This runs when
+// configuration changes and on the worker's failure/read paths, not per query.
+func (db *DB) refreshEmbedFailureRedactor() {
+	db.mu.RLock()
+	queue := db.embedQueue
+	configForDB := db.embedConfigForDB
+	db.mu.RUnlock()
+	if queue == nil {
+		return
+	}
+	db.embedderRegistryMu.RLock()
+	var defaultConfig *embed.Config
+	if db.defaultEmbedConfig != nil {
+		copy := *db.defaultEmbedConfig
+		defaultConfig = &copy
+	}
+	db.embedderRegistryMu.RUnlock()
+	queue.SetFailureErrorRedactor(func(nodeID storage.NodeID, failure error) error {
+		config := defaultConfig
+		if configForDB != nil {
+			if dbName, _, qualified := splitQualifiedID(string(nodeID)); qualified {
+				if resolved, err := configForDB(dbName); err == nil && resolved != nil {
+					config = resolved
+				}
+			}
+		}
+		if config == nil {
+			return observability.RedactError(failure)
+		}
+		return observability.RedactClientError(failure, config.APIURL, config.APIKey)
 	})
 }
 

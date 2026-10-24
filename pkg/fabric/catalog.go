@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Catalog is the registry of all known graphs and their locations.
@@ -118,12 +119,17 @@ func (c *Catalog) PopulateFromManager(mgr *multidb.DatabaseManager) error {
 				qualifiedName := dbName + "." + strings.ToLower(ref.Alias)
 				switch ref.Type {
 				case "remote":
+					// Catalog lookup is case-insensitive, but the manager's
+					// composite key retains its original spelling.
+					managerName := db.Name + "." + ref.Alias
 					c.graphs[qualifiedName] = &LocationRemote{
-						DBName:   ref.DatabaseName,
-						URI:      ref.URI,
-						AuthMode: effectiveAuthMode(ref.AuthMode),
-						User:     ref.User,
-						Password: ref.Password,
+						GraphName: qualifiedName,
+						DBName:    ref.DatabaseName,
+						URI:       ref.URI,
+						AuthMode:  effectiveAuthMode(ref.AuthMode),
+						ResolveEngine: func(authToken string) (storage.Engine, error) {
+							return mgr.GetStorageWithAuth(managerName, authToken)
+						},
 					}
 				default:
 					c.graphs[qualifiedName] = &LocationLocal{

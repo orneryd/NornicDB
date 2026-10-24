@@ -156,7 +156,7 @@ func variableSyntaxRead(node cypherantlr.SyntaxNode) bool {
 }
 
 func (compilation *boundCompilation) bindSymbol(clause *boundClause, node cypherantlr.SyntaxNode) {
-	if !variableSyntaxRead(node) {
+	if clause.transparent || !variableSyntaxRead(node) {
 		return
 	}
 	name, _ := node.Name()

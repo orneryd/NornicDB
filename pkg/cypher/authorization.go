@@ -432,6 +432,9 @@ func resolveGraphSelection(manager GraphDatabaseResolver, database string) (sele
 	}
 	if dot := strings.IndexByte(database, '.'); dot > 0 && manager.IsCompositeDatabase(database[:dot]) {
 		composite := database[:dot]
+		// Manager snapshots contain canonical last winners. Match the catalog's
+		// lowercase keys, including Unicode distinctions that EqualFold collapses.
+		alias := strings.ToLower(database[dot+1:])
 		// Native adapters can return typed snapshots without boxing each reference.
 		if typed, ok := manager.(interface {
 			GetCompositeConstituents(string) ([]multidb.ConstituentRef, error)
@@ -441,7 +444,7 @@ func resolveGraphSelection(manager GraphDatabaseResolver, database string) (sele
 				return composite, database, false, err
 			}
 			for _, ref := range refs {
-				if strings.EqualFold(ref.Alias, database[dot+1:]) {
+				if strings.ToLower(ref.Alias) == alias {
 					return composite, ref.DatabaseName, ref.Type == "remote", nil
 				}
 			}
@@ -453,7 +456,7 @@ func resolveGraphSelection(manager GraphDatabaseResolver, database string) (sele
 				return composite, database, false, err
 			}
 			for _, item := range refs {
-				if ref, ok := toConstituentRef(item); ok && strings.EqualFold(ref.Alias, database[dot+1:]) {
+				if ref, ok := toConstituentRef(item); ok && strings.ToLower(ref.Alias) == alias {
 					return composite, ref.DatabaseName, ref.Type == "remote", nil
 				}
 			}

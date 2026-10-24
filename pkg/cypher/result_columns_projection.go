@@ -70,11 +70,46 @@ func returnProjectionPlanFor(clause string) *returnProjectionPlan {
 }
 
 func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
+	if isFlatReturnProjection(clause) {
+		return parseFlatReturnProjection(clause)
+	}
 	node, ok := canonicalQueryClause(clause)
 	if !ok {
 		return &returnProjectionPlan{}
 	}
 	return projectionPlanFromSyntax(node)
+}
+
+// isFlatReturnProjection keeps ordinary scalar RETURN clauses on the short
+// scanner path. Nested expressions, quoted identifiers, strings, wildcards,
+// modifiers, and UNION clauses use the canonical syntax owner above.
+func isFlatReturnProjection(clause string) bool {
+	clause = strings.TrimSpace(clause)
+	const keyword = "RETURN"
+	if len(clause) <= len(keyword) || !strings.EqualFold(clause[:len(keyword)], keyword) || isIdentByte(clause[len(keyword)]) {
+		return false
+	}
+	body := clause[len(keyword):]
+	if strings.ContainsAny(body, "\x60()[]{}\r\n*'\"") || firstTopLevelModifierIndex(body) >= 0 || topLevelKeywordIndex(body, "UNION") >= 0 {
+		return false
+	}
+	return true
+}
+
+func parseFlatReturnProjection(clause string) *returnProjectionPlan {
+	body := strings.TrimSpace(clause)
+	modifierStart := len(body)
+	if cut := firstTopLevelModifierIndex(body); cut >= 0 {
+		modifierStart = cut
+	}
+	plan := &returnProjectionPlan{modifiers: strings.TrimSpace(body[modifierStart:])}
+	body, plan.distinct = cutDistinct(pipelineClauseBody(body[:modifierStart], "RETURN"))
+	for _, rawItem := range splitTopLevelComma(body) {
+		expr, alias := parseProjectionExprAlias(strings.TrimSpace(rawItem))
+		plan.addProjection(expr, alias)
+	}
+	plan.valid = len(plan.projections) > 0
+	return plan
 }
 
 // withStarExpanded is the plan of RETURN *, items with the * written out

@@ -279,6 +279,10 @@ func appendQuerySyntax(branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
 	case cypherantlr.CypherParserRULE_useClause:
 		setQueryBodyUse(branch, node)
 		return
+	case cypherantlr.CypherParserRULE_embeddingSt:
+		// WITH EMBEDDING is an execution option on the preceding updates. It
+		// neither reads nor binds names, so it is not a scope operator.
+		return
 	}
 	if node.IsToken(cypherantlr.CypherLexerFINISH) {
 		branch.finished = true

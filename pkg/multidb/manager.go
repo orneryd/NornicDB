@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -89,6 +90,9 @@ type DatabaseInfo struct {
 	Aliases      []string         `json:"aliases,omitempty"`      // Database aliases (Neo4j-compatible)
 	Limits       *Limits          `json:"limits,omitempty"`       // Resource limits
 	Constituents []ConstituentRef `json:"constituents,omitempty"` // Constituent databases (for composite type)
+	// runtimeConstituentsByAlias is rebuilt when constituent metadata changes.
+	// It is private and never serialized or returned from metadata snapshots.
+	runtimeConstituentsByAlias map[string]*runtimeConstituent
 	// Options are the database's options (CREATE DATABASE … OPTIONS, ALTER
 	// DATABASE … SET OPTION), by Neo4j's option name.
 	Options map[string]string `json:"options,omitempty"`
@@ -475,17 +479,9 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 	// Resolve dotted composite constituent references first (e.g. "cmp.tr").
 	// This is required for protocol-level USE routing where the effective database
 	// name is a constituent graph reference, not a top-level database metadata key.
-	if ref, resolvedName, ok := m.resolveCompositeConstituentInternal(name); ok {
-		if strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
-			runtimeRef := ref
-			if strings.EqualFold(strings.TrimSpace(runtimeRef.AuthMode), "user_password") {
-				decrypted, decErr := m.decryptStoredRemotePassword(runtimeRef.Password)
-				if decErr != nil {
-					return nil, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(runtimeRef.Alias, decErr), decErr)
-				}
-				runtimeRef.Password = decrypted
-			}
-			return m.getRemoteStorageInternal(runtimeRef, authToken)
+	if constituent, resolvedName, ok := m.resolveCompositeConstituentInternal(name); ok {
+		if strings.EqualFold(strings.TrimSpace(constituent.ref.Type), "remote") {
+			return m.getRemoteStorageResolvedInternal(constituent, authToken)
 		}
 		return m.getStorageInternal(resolvedName)
 	}
@@ -507,31 +503,33 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 		constituentNames := make(map[string]string)
 		accessModes := make(map[string]string)
 
-		for _, ref := range info.Constituents {
+		for _, ref := range canonicalConstituents(info.Constituents, "") {
 			var constituentStorage storage.Engine
-			runtimeRef := ref
 			actualName := ref.DatabaseName
 			var err error
+			resolved := info.runtimeConstituentsByAlias[ref.Alias]
+			if resolved == nil {
+				m.rebuildRuntimeConstituentsFor(info)
+				resolved = info.runtimeConstituentsByAlias[ref.Alias]
+			}
 
 			switch ref.Type {
 			case "remote":
-				if strings.EqualFold(strings.TrimSpace(runtimeRef.AuthMode), "user_password") {
-					decrypted, decErr := m.decryptStoredRemotePassword(runtimeRef.Password)
-					if decErr != nil {
-						return nil, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(runtimeRef.Alias, decErr), decErr)
-					}
-					runtimeRef.Password = decrypted
+				if resolved == nil {
+					return nil, ErrDatabaseNotFound
 				}
-				constituentStorage, err = m.getRemoteStorageInternal(runtimeRef, authToken)
+				constituentStorage, err = m.getRemoteStorageResolvedInternal(resolved, authToken)
 				if err != nil {
 					return nil, localizedError(localization.MultidbManagerGetRemoteStorageFailed(ref.Alias, err), err)
 				}
 			default:
-				// Resolve actual database name (might be an alias)
-				actualName, err = m.resolveDatabaseInternal(ref.DatabaseName)
-				if err != nil {
+				if resolved == nil || resolved.err != nil {
+					if resolved != nil {
+						err = resolved.err
+					}
 					return nil, localizedError(localization.MultidbCompositeConstituentDatabaseNotFound(ref.DatabaseName, err), err)
 				}
+				actualName = resolved.resolvedDatabaseName
 
 				// Get storage for constituent
 				constituentStorage, err = m.getStorageInternal(actualName)
@@ -563,39 +561,42 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 }
 
 // resolveCompositeConstituentInternal resolves dotted graph references in the form
-// "<composite>.<alias>" to a constituent reference and resolved backing database name.
+// "<composite>.<alias>" to their precomputed constituent entry and backing database name.
 // Must be called with lock held.
-func (m *DatabaseManager) resolveCompositeConstituentInternal(name string) (ConstituentRef, string, bool) {
+func (m *DatabaseManager) resolveCompositeConstituentInternal(name string) (*runtimeConstituent, string, bool) {
 	dotIdx := strings.IndexByte(name, '.')
 	if dotIdx <= 0 || dotIdx >= len(name)-1 {
-		return ConstituentRef{}, "", false
+		return nil, "", false
 	}
 
 	compositeName := strings.TrimSpace(name[:dotIdx])
 	constituentAlias := strings.TrimSpace(name[dotIdx+1:])
 	if compositeName == "" || constituentAlias == "" {
-		return ConstituentRef{}, "", false
+		return nil, "", false
 	}
 
 	info, exists := m.databases[compositeName]
 	if !exists || info.Type != "composite" {
-		return ConstituentRef{}, "", false
+		return nil, "", false
 	}
-	for _, ref := range info.Constituents {
-		if !strings.EqualFold(ref.Alias, constituentAlias) {
-			continue
-		}
-		resolvedName := ref.DatabaseName
-		if !strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
-			var err error
-			resolvedName, err = m.resolveDatabaseInternal(ref.DatabaseName)
-			if err != nil {
-				return ConstituentRef{}, "", false
-			}
-		}
-		return ref, resolvedName, true
+	if info.runtimeConstituentsByAlias == nil {
+		m.rebuildRuntimeConstituentsFor(info)
 	}
-	return ConstituentRef{}, "", false
+	resolved := info.runtimeConstituentsByAlias[constituentAlias]
+	if resolved == nil {
+		_, ref, found := findCanonicalConstituent(info.Constituents, constituentAlias)
+		if !found {
+			return nil, "", false
+		}
+		resolved = info.runtimeConstituentsByAlias[ref.Alias]
+		if resolved == nil {
+			return nil, "", false
+		}
+	}
+	if resolved.err != nil && !strings.EqualFold(strings.TrimSpace(resolved.ref.Type), "remote") {
+		return nil, "", false
+	}
+	return resolved, resolved.resolvedDatabaseName, true
 }
 
 // getStorageInternal gets storage for a database without resolving aliases.
@@ -625,18 +626,38 @@ func (m *DatabaseManager) getStorageInternal(name string) (storage.Engine, error
 	return engine, nil
 }
 
-// getRemoteStorageInternal creates an engine for a remote constituent.
+// getRemoteStorageResolvedInternal creates an engine from a precomputed remote identity.
 // Must be called with lock held.
-func (m *DatabaseManager) getRemoteStorageInternal(ref ConstituentRef, authToken string) (storage.Engine, error) {
-	if m.remoteEngineFactory == nil {
-		return nil, localizedError(localization.MultidbManagerRemoteEngineFactoryNotConfigured(ref.Alias), nil)
+func (m *DatabaseManager) getRemoteStorageResolvedInternal(ref *runtimeConstituent, authToken string) (storage.Engine, error) {
+	if ref == nil {
+		return nil, ErrDatabaseNotFound
 	}
-	engine, err := m.remoteEngineFactory(ref, authToken)
+	if m.remoteEngineFactory == nil {
+		return nil, localizedError(localization.MultidbManagerRemoteEngineFactoryNotConfigured(ref.ref.Alias), nil)
+	}
+	runtimeRef := ref.storedRef
+	resolveErr := ref.err
+	if !ref.explicitAuth && strings.TrimSpace(authToken) != "" {
+		runtimeRef = ref.forwardedRef
+		resolveErr = ref.forwardedErr
+	}
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
+	engine, err := m.remoteEngineFactory(runtimeRef, authToken)
 	if err != nil {
-		return nil, err
+		secrets := ref.redactionValues
+		if authToken != "" {
+			secrets = append(append([]string(nil), ref.redactionValues...), authToken)
+		}
+		redactedErr := observability.RedactError(err, secrets...)
+		if ref.redactedIdentity != "" {
+			return nil, fmt.Errorf("remote constituent %s: %w", ref.redactedIdentity, redactedErr)
+		}
+		return nil, redactedErr
 	}
 	if engine == nil {
-		return nil, localizedError(localization.MultidbManagerRemoteEngineFactoryReturnedNil(ref.Alias), nil)
+		return nil, localizedError(localization.MultidbManagerRemoteEngineFactoryReturnedNil(ref.ref.Alias), nil)
 	}
 	return engine, nil
 }
@@ -681,7 +702,7 @@ func cloneDatabaseInfo(info *DatabaseInfo) *DatabaseInfo {
 	}
 
 	aliases := append([]string(nil), info.Aliases...)
-	constituents := append([]ConstituentRef(nil), info.Constituents...)
+	constituents := snapshotConstituents(info.Constituents)
 
 	info.sizeMu.RLock()
 	totalSize := info.totalSize
@@ -803,16 +824,14 @@ func (m *DatabaseManager) ResolveConnectionLimitOwner(selection string) (string,
 		if info == nil || info.Type != "composite" {
 			return "", ErrDatabaseNotFound
 		}
-		for _, constituent := range info.Constituents {
-			if constituent.Alias != selection[dot+1:] {
-				continue
-			}
-			if constituent.Type == "local" {
-				return m.resolveDatabaseInternal(constituent.DatabaseName)
-			}
-			return compositeName, nil
+		_, constituent, found := findCanonicalConstituent(info.Constituents, selection[dot+1:])
+		if !found {
+			return "", ErrDatabaseNotFound
 		}
-		return "", ErrDatabaseNotFound
+		if constituent.Type == "local" {
+			return m.resolveDatabaseInternal(constituent.DatabaseName)
+		}
+		return compositeName, nil
 	}
 	return m.resolveDatabaseInternal(selection)
 }

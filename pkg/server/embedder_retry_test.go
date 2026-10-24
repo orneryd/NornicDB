@@ -1,12 +1,17 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/mcp"
 	"github.com/stretchr/testify/require"
@@ -87,4 +92,80 @@ func TestInitEmbedderWithRetryStopsDuringCappedWait(t *testing.T) {
 	time.AfterFunc(50*time.Millisecond, cancel)
 	runEmbedderRetry(t, ctx, s, &embed.Config{Provider: "openai", APIURL: "http://127.0.0.1:1", Model: "m", Dimensions: 4}, 0, nil)
 	require.Equal(t, int32(1), attempts.Load())
+}
+
+func requireNoSyntheticProviderCredentials(t *testing.T, output string) {
+	t.Helper()
+	for _, value := range []string{
+		"synthetic-user",
+		"synthetic-pass",
+		"synthetic-query-token",
+		"synthetic-api-key",
+	} {
+		if strings.Contains(output, value) {
+			t.Fatal("server startup diagnostics exposed a configured provider credential; output withheld")
+		}
+	}
+}
+
+func TestInitEmbedderWithRetryRedactsReadyEndpoint(t *testing.T) {
+	s, _ := setupTestServer(t)
+	var output bytes.Buffer
+	s.log = slog.New(slog.NewJSONHandler(&output, nil))
+	s.newEmbedder = func(context.Context, *embed.Config) (embed.Embedder, error) {
+		return &countingEmbedder{dims: 4}, nil
+	}
+	cfg := &embed.Config{
+		Provider:   "openai",
+		APIURL:     "https://synthetic-user:synthetic-pass@embeddings.invalid/v1?access_token=synthetic-query-token",
+		APIKey:     "synthetic-api-key",
+		Model:      "test-model",
+		Dimensions: 4,
+	}
+	runEmbedderRetry(t, context.Background(), s, cfg, 0, nil)
+	if !strings.Contains(output.String(), "server.embedding.ready") {
+		t.Fatal("expected remote embedding ready event was not recorded; output withheld")
+	}
+	requireNoSyntheticProviderCredentials(t, output.String())
+}
+
+func TestInitEmbedderWithRetryRedactsFailureEndpointAndError(t *testing.T) {
+	s, _ := setupTestServer(t)
+	var output bytes.Buffer
+	s.log = slog.New(slog.NewJSONHandler(&output, nil))
+	s.embedderRetryInitialBackoff = time.Second
+	s.newEmbedder = func(_ context.Context, cfg *embed.Config) (embed.Embedder, error) {
+		return nil, fmt.Errorf("request to %s failed with %s", cfg.APIURL, cfg.APIKey)
+	}
+	cfg := &embed.Config{
+		Provider:   "openai",
+		APIURL:     "https://synthetic-user:synthetic-pass@embeddings.invalid/v1?access_token=synthetic-query-token",
+		APIKey:     "synthetic-api-key",
+		Model:      "test-model",
+		Dimensions: 4,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(30*time.Millisecond, cancel)
+	runEmbedderRetry(t, ctx, s, cfg, 0, nil)
+	if !strings.Contains(output.String(), "server.embedding.initialization_attempt_failed") {
+		t.Fatal("expected remote embedding failure event was not recorded; output withheld")
+	}
+	requireNoSyntheticProviderCredentials(t, output.String())
+}
+
+func TestSearchRerankerReadyRedactsConfiguredEndpoint(t *testing.T) {
+	var output bytes.Buffer
+	_, _ = setupTestServerWithConfig(t, func(cfg *Config) {
+		cfg.Logger = slog.New(slog.NewJSONHandler(&output, nil))
+		cfg.Features = &nornicConfig.FeatureFlagsConfig{
+			SearchRerankEnabled:  true,
+			SearchRerankProvider: "https://synthetic-user:synthetic-pass@reranker-provider.invalid/v1?access_token=synthetic-query-token",
+			SearchRerankAPIURL:   "https://synthetic-user:synthetic-pass@reranker.invalid/v1?access_token=synthetic-query-token",
+			SearchRerankAPIKey:   "synthetic-api-key",
+		}
+	})
+	if !strings.Contains(output.String(), "server.search_rerank.ready") {
+		t.Fatal("expected external reranker ready event was not recorded; output withheld")
+	}
+	requireNoSyntheticProviderCredentials(t, output.String())
 }
