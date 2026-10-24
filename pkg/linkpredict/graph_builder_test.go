@@ -3,6 +3,7 @@ package linkpredict
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,7 +20,7 @@ import (
 // =============================================================================
 
 func TestGraphBuilder_Basic(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
@@ -50,7 +51,7 @@ func TestGraphBuilder_Basic(t *testing.T) {
 }
 
 func TestGraphBuilder_Parallel(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
@@ -107,7 +108,7 @@ func TestGraphBuilder_Parallel(t *testing.T) {
 }
 
 func TestGraphBuilder_ChunkedProcessing(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
@@ -141,7 +142,7 @@ func TestGraphBuilder_ChunkedProcessing(t *testing.T) {
 }
 
 func TestGraphBuilder_ContextCancellation(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
@@ -170,7 +171,7 @@ func TestGraphBuilder_ContextCancellation(t *testing.T) {
 }
 
 func TestGraphBuilder_GCAfterChunk(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
@@ -207,7 +208,7 @@ func TestGraphBuilder_GCAfterChunk(t *testing.T) {
 // =============================================================================
 
 func TestGraphBuilder_DiskCache(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
@@ -260,7 +261,7 @@ func TestGraphBuilder_DiskCache(t *testing.T) {
 }
 
 func TestGraphBuilder_CacheInvalidation(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
@@ -302,7 +303,7 @@ func TestGraphBuilder_CacheInvalidation(t *testing.T) {
 }
 
 func TestGraphBuilder_CacheExpiration(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
@@ -341,7 +342,7 @@ func TestGraphBuilder_CacheExpiration(t *testing.T) {
 // =============================================================================
 
 func TestGraphBuilder_ApplyDelta_AddNodes(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultBuildConfig()
@@ -369,7 +370,7 @@ func TestGraphBuilder_ApplyDelta_AddNodes(t *testing.T) {
 }
 
 func TestGraphBuilder_ApplyDelta_AddEdges(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultBuildConfig()
@@ -406,7 +407,7 @@ func TestGraphBuilder_ApplyDelta_AddEdges(t *testing.T) {
 }
 
 func TestGraphBuilder_ApplyDelta_RemoveNodes(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultBuildConfig()
@@ -446,7 +447,7 @@ func TestGraphBuilder_ApplyDelta_RemoveNodes(t *testing.T) {
 }
 
 func TestGraphBuilder_ApplyDelta_RemoveEdges(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultBuildConfig()
@@ -487,7 +488,7 @@ func TestGraphBuilder_ApplyDelta_RemoveEdges(t *testing.T) {
 }
 
 func TestGraphBuilder_ApplyDelta_Complex(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultBuildConfig()
@@ -535,7 +536,7 @@ func TestGraphBuilder_ApplyDelta_Complex(t *testing.T) {
 // =============================================================================
 
 func TestParallelCommonNeighbors(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
@@ -560,7 +561,7 @@ func TestParallelCommonNeighbors(t *testing.T) {
 }
 
 func TestParallelAdamicAdar(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
@@ -579,7 +580,7 @@ func TestParallelAdamicAdar(t *testing.T) {
 }
 
 func TestParallelJaccard(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
@@ -598,7 +599,7 @@ func TestParallelJaccard(t *testing.T) {
 }
 
 func TestParallelAlgorithms_Cancellation(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
@@ -635,7 +636,7 @@ func TestParallelAlgorithms_Cancellation(t *testing.T) {
 // =============================================================================
 
 func TestGraphStreamer(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
@@ -661,7 +662,7 @@ func TestGraphStreamer(t *testing.T) {
 }
 
 func TestGraphStreamer_Cancellation(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 
@@ -752,7 +753,7 @@ func TestExportImport(t *testing.T) {
 // =============================================================================
 
 func BenchmarkGraphBuilder_Small(b *testing.B) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	for i := 0; i < 100; i++ {
@@ -771,7 +772,7 @@ func BenchmarkGraphBuilder_Small(b *testing.B) {
 }
 
 func BenchmarkGraphBuilder_Parallel(b *testing.B) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	for i := 0; i < 500; i++ {
@@ -804,7 +805,7 @@ func BenchmarkGraphBuilder_Parallel(b *testing.B) {
 }
 
 func BenchmarkParallelAdamicAdar(b *testing.B) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	nodeCount := 200
@@ -880,7 +881,7 @@ func setupTestGraphForBuilder(t *testing.T, engine storage.Engine) {
 // =============================================================================
 
 func TestGraphBuilder_ConcurrentBuilds(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	setupTestGraphForBuilder(t, engine)
@@ -914,7 +915,7 @@ func TestGraphBuilder_ConcurrentBuilds(t *testing.T) {
 }
 
 func TestGraphBuilder_ApplyDelta_Concurrent(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
 	config := DefaultBuildConfig()

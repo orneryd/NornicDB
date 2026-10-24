@@ -1,6 +1,8 @@
 package replication
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -10,7 +12,7 @@ import (
 )
 
 func TestReplicatedEngine_Standalone_ReplicatesWritesToInnerEngine(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	adapter, err := NewStorageAdapterWithWAL(base, t.TempDir())

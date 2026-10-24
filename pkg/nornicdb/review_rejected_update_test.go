@@ -1,6 +1,8 @@
 package nornicdb_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -32,7 +34,7 @@ func (s *reviewRejectedUpdateStore) UpdateNodeEmbeddingSidecar(node *storage.Nod
 func TestReviewR73RejectedSaveUpdateRequestsCurrentBody(t *testing.T) {
 	for _, mode := range []string{"unconsumed_enqueued", "unconsumed_no_enqueue", "consumed_enqueued"} {
 		t.Run(mode, func(t *testing.T) {
-			disk, err := storage.NewBadgerEngine(t.TempDir())
+			disk, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			defer disk.Close()
 			disk.SetEmbeddingsEnabled(true)

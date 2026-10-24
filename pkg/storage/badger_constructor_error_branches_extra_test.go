@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"encoding/gob"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,7 +22,10 @@ func (badgerNoopLogger) Debugf(string, ...interface{})   {}
 func seedBadgerDir(t *testing.T, seed func(txn *badger.Txn) error) string {
 	t.Helper()
 	dir := t.TempDir()
-	db, err := badger.Open(badger.DefaultOptions(dir).WithLogger(nil))
+	db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+	if db != nil {
+		fixtureowner.Own(t, db)
+	}
 	require.NoError(t, err)
 	require.NoError(t, db.Update(func(txn *badger.Txn) error {
 		return seed(txn)
@@ -32,10 +36,13 @@ func seedBadgerDir(t *testing.T, seed func(txn *badger.Txn) error) string {
 
 func TestNewBadgerEngineWithOptions_ConstructorErrorBranches(t *testing.T) {
 	t.Run("badger internal logger option path", func(t *testing.T) {
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 			InMemory:             true,
 			BadgerInternalLogger: badgerNoopLogger{},
-		})
+		}))
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 	})
@@ -43,7 +50,7 @@ func TestNewBadgerEngineWithOptions_ConstructorErrorBranches(t *testing.T) {
 	t.Run("data dir points to file", func(t *testing.T) {
 		filePath := filepath.Join(t.TempDir(), "not-a-dir")
 		require.NoError(t, os.WriteFile(filePath, []byte("x"), 0o644))
-		_, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: filePath})
+		_, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filePath}))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to open BadgerDB")
 	})
@@ -53,7 +60,7 @@ func TestNewBadgerEngineWithOptions_ConstructorErrorBranches(t *testing.T) {
 			badHeader := append([]byte(serializationMagic), byte(99), serializerIDMsgpack)
 			return txn.Set(nodeKey(NodeID("test:n1")), badHeader)
 		})
-		_, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		_, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "detecting storage serializer")
 	})
@@ -67,7 +74,10 @@ func TestNewBadgerEngineWithOptions_ConstructorErrorBranches(t *testing.T) {
 			}
 			return txn.Set(nodeKey(NodeID("test:n2")), buf.Bytes())
 		})
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true})
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true}))
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 	})
@@ -77,7 +87,7 @@ func TestNewBadgerEngineWithOptions_ConstructorErrorBranches(t *testing.T) {
 			// Wrong size; idDictionary.loadFromBadger expects exactly 8 bytes.
 			return txn.Set(nodeIDForwardKey(NodeID("test:bad-dict")), []byte{0x01})
 		})
-		_, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		_, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to load id dictionary")
 	})
@@ -87,7 +97,7 @@ func TestNewBadgerEngineWithOptions_ConstructorErrorBranches(t *testing.T) {
 			// Empty varint payload => malformed property-key forward value.
 			return txn.Set(propKeyForwardKey("test", "name"), []byte{})
 		})
-		_, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		_, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to load property key dictionary")
 	})
@@ -96,7 +106,7 @@ func TestNewBadgerEngineWithOptions_ConstructorErrorBranches(t *testing.T) {
 		dir := seedBadgerDir(t, func(txn *badger.Txn) error {
 			return txn.Set(schemaKey("test"), []byte("not-msgpack-schema"))
 		})
-		_, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		_, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to load persisted schema")
 	})
@@ -110,7 +120,7 @@ func TestNewBadgerEngineWithOptions_ConstructorErrorBranches(t *testing.T) {
 			// Malformed count payload (must be 8 bytes).
 			return txn.Set(labelCountKey("test", "person"), []byte{0x01})
 		})
-		_, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		_, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "failed to initialize label counts")
 	})
@@ -118,7 +128,7 @@ func TestNewBadgerEngineWithOptions_ConstructorErrorBranches(t *testing.T) {
 
 func TestBadgerEngine_ReopenForPostMigrationCompaction_ErrorBranches(t *testing.T) {
 	t.Run("reopen db fails with invalid data dir option", func(t *testing.T) {
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = engine.Close() })
 
@@ -131,7 +141,7 @@ func TestBadgerEngine_ReopenForPostMigrationCompaction_ErrorBranches(t *testing.
 
 	t.Run("reload id dictionary fails after reopen", func(t *testing.T) {
 		dir := t.TempDir()
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = engine.Close() })
 
@@ -146,7 +156,7 @@ func TestBadgerEngine_ReopenForPostMigrationCompaction_ErrorBranches(t *testing.
 
 	t.Run("reload property key dictionary fails after reopen", func(t *testing.T) {
 		dir := t.TempDir()
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = engine.Close() })
 
@@ -161,7 +171,7 @@ func TestBadgerEngine_ReopenForPostMigrationCompaction_ErrorBranches(t *testing.
 
 	t.Run("reinitialize mvcc sequence fails after reopen", func(t *testing.T) {
 		dir := t.TempDir()
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = engine.Close() })
 

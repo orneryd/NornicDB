@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -35,7 +36,10 @@ func dropDictionaryEntries(t *testing.T, engine *BadgerEngine, nodes []NodeID, e
 // right again, and reports the rest (#907, I29).
 func TestCheckAndRepairIDDictionary(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	for _, node := range []*Node{
 		{ID: "test:a", Labels: []string{"Doc"}}, {ID: "test:b", Labels: []string{"Doc", "Source"}},
@@ -63,7 +67,10 @@ func TestCheckAndRepairIDDictionary(t *testing.T) {
 
 	dropDictionaryEntries(t, engine, []NodeID{"test:b", "test:bare"}, []EdgeID{"test:link", "test:twin1", "test:twin2", "test:fromBare"})
 	require.NoError(t, engine.Close())
-	engine, err = NewBadgerEngine(dir)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -95,7 +102,10 @@ func TestCheckAndRepairIDDictionary(t *testing.T) {
 
 	// The repair persists: reopened, only the unresolved remain.
 	require.NoError(t, engine.Close())
-	engine, err = NewBadgerEngine(dir)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	report, err = engine.CheckIDDictionary()
 	require.NoError(t, err)
@@ -110,7 +120,10 @@ func TestCheckAndRepairIDDictionary(t *testing.T) {
 // (#907, I29).
 func TestRepairIDDictionaryMismatchedAfterHeadRebuild(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	for _, node := range []*Node{{ID: "test:a", Labels: []string{"Doc"}}, {ID: "test:lone", Labels: []string{"Doc"}}, {ID: "test:c", Labels: []string{"Doc"}}} {
 		_, err := engine.CreateNode(node)
@@ -127,14 +140,20 @@ func TestRepairIDDictionaryMismatchedAfterHeadRebuild(t *testing.T) {
 	// rebuild can't decode its relationships, which name it by number.
 	dropDictionaryEntries(t, engine, []NodeID{"test:lone"}, []EdgeID{"test:link"})
 	require.NoError(t, engine.Close())
-	engine, err = NewBadgerEngine(dir)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.RebuildMVCCHeads(context.Background()))
 	newLinkNum, ok := engine.idDict.lookupEdgeNumID("test:link")
 	require.True(t, ok, "the rebuild gave the lost relationship an entry")
 	require.NotEqual(t, linkNum, newLinkNum)
 	require.NoError(t, engine.Close())
-	engine, err = NewBadgerEngine(dir)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -180,7 +199,10 @@ func TestRepairIDDictionaryMismatchedAfterHeadRebuild(t *testing.T) {
 	}
 	check(t, engine)
 	require.NoError(t, engine.Close())
-	engine, err = NewBadgerEngine(dir)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	check(t, engine)
 }

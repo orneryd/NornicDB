@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -82,7 +84,7 @@ func TestConstraintContracts_ValidateKernel_DeterministicOrderAndParity(t *testi
 // kernel cost (schema resolution + contract collection + evaluator) after the
 // node/edge validator convergence.
 func BenchmarkConstraintContracts_ValidateLocked_Node(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}

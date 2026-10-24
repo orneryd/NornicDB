@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/resultstream"
@@ -13,7 +15,7 @@ import (
 
 func policySearchFixture(t *testing.T) (*storage.BadgerEngine, storage.Engine, *Service) {
 	t.Helper()
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { be.Close() })
 	schema := be.GetSchemaForNamespace("tenant")

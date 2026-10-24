@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -13,7 +14,7 @@ import (
 // read the database name see them (#683). Without them in the wrapped
 // engine, the namespace is "" and the label is counted.
 func TestSizeTrackingEnginePassesLabelCounterAndNamespace(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()

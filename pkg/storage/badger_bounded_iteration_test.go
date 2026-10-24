@@ -9,6 +9,8 @@ package storage
 // from 6 s to 36 min (#850).
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"fmt"
 	"testing"
@@ -19,7 +21,7 @@ import (
 )
 
 func TestAdjacencyReadsIgnoreDeletedNeighbourKeys(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -73,7 +75,7 @@ func TestAdjacencyReadsIgnoreDeletedNeighbourKeys(t *testing.T) {
 // The latest-at-or-before lookup returns the greatest version key at or
 // below the version and rejects a malformed key there, as the reverse seek did.
 func TestLoadMVCCRecordAtOrBeforeBoundedScan(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -120,7 +122,7 @@ func TestLoadMVCCRecordAtOrBeforeBoundedScan(t *testing.T) {
 // descendingPrefixKeys visits a prefix's keys at or below a bound, greatest
 // first, and its cost does not depend on deleted keys beside the prefix.
 func TestDescendingPrefixKeys(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	key := func(group byte, n int) []byte { return []byte{0xE0, group, byte(n >> 8), byte(n)} }

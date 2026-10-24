@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -11,7 +13,7 @@ import (
 // index holds every written value; writes apply synchronously.
 func newRangeIndexEngine(t *testing.T, flushed, pending []interface{}) *SchemaManager {
 	t.Helper()
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = badger.Close() })
 	schema := badger.GetSchemaForNamespace("nornic")

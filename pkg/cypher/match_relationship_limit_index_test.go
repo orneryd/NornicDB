@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -66,7 +68,7 @@ func seedRelationshipLimitData(t *testing.T, eng *relationshipScanGuardEngine, c
 }
 
 func TestRelationshipMatchLimitShortCircuitsTraversal(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &relationshipScanGuardEngine{MemoryEngine: base}
 	exec := NewStorageExecutor(eng)
@@ -85,7 +87,7 @@ LIMIT 1
 }
 
 func TestRelationshipMatchUsesIndexForIsNotNullStartNodeFilter(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &relationshipScanGuardEngine{MemoryEngine: base}
 	exec := NewStorageExecutor(eng)
@@ -129,7 +131,7 @@ LIMIT 1
 }
 
 func TestRelationshipMatchTranslationQueryFamily_EndNodeFilterOrderLimit(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &relationshipScanGuardEngine{MemoryEngine: base}
 	exec := NewStorageExecutor(eng)
@@ -181,7 +183,7 @@ LIMIT 3
 }
 
 func TestRelationshipMatchEndSeededTopKSupportsFixedMultiHop(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	exec := NewStorageExecutor(base)
 	ctx := context.Background()

@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math/rand"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 // This identical public-API fixture runs on the release base and the port.
 func lifecycleBenchmarkFixture(b *testing.B, indexed bool) (*Service, *storage.NamespacedEngine, []float32) {
 	b.Helper()
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "hnsw-bench")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "hnsw-bench")
 	svc := NewServiceWithDimensions(engine, 64)
 	svc.SetRuntimeStrategyTransitionsEnabled(false)
 	rng := rand.New(rand.NewSource(86))

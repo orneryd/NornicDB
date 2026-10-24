@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 
@@ -273,7 +275,7 @@ func TestConstraintContractEvaluation_EngineAndTransactionViewsAgree(t *testing.
 // BenchmarkConstraintContractEvaluation_EngineView pins the converged
 // evaluator cost (shared constraintGraphView kernel, count-pattern shape).
 func BenchmarkConstraintContractEvaluation_EngineView(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	defer engine.Close()
 	if _, err := engine.CreateNode(&Node{ID: "test:alice", Labels: []string{"Person"}, Properties: map[string]any{}}); err != nil {
 		b.Fatal(err)

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/embeddingsource"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -24,7 +25,8 @@ func TestEmbedWorkerConsumedSourceLifecycle(t *testing.T) {
 					worker.config.PropertiesInclude = []string{"text"}
 					ids := append([]storage.NodeID(nil), queue.pending...)
 					dir := t.TempDir()
-					disk, err := storage.NewBadgerEngine(dir)
+					disk, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+					fixtureowner.Own(t, disk)
 					require.NoError(t, err)
 					defer func() { _ = disk.Close() }()
 					disk.SetEmbeddingsEnabled(true)
@@ -127,7 +129,8 @@ func TestEmbedWorkerConsumedSourceLifecycle(t *testing.T) {
 					require.True(t, worker.processNextBatch())
 					worker.Close()
 					require.NoError(t, disk.Close())
-					disk, err = storage.NewBadgerEngine(dir)
+					disk, err = fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+					fixtureowner.Own(t, disk)
 					require.NoError(t, err)
 					disk.SetEmbeddingsEnabled(true)
 					store = storage.NewNamespacedEngine(disk, "contract")

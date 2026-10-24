@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -32,7 +33,7 @@ func TestFabricRemoteEntityGraphFunctions(t *testing.T) {
 		_, _ = w.Write(wire)
 	}))
 	t.Cleanup(server.Close)
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, &multidb.Config{
 		RemoteEngineFactory: func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
 			return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: token})

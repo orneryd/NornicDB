@@ -16,6 +16,7 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -31,7 +32,10 @@ func TestLabelIndex_SurvivesEngineReopen(t *testing.T) {
 	dir := t.TempDir()
 
 	// First open: create and label a node, close cleanly.
-	engine1, err := NewBadgerEngine(dir)
+	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine1 != nil {
+		fixtureowner.Own(t, engine1)
+	}
 	require.NoError(t, err)
 
 	node := &Node{
@@ -48,7 +52,7 @@ func TestLabelIndex_SurvivesEngineReopen(t *testing.T) {
 	require.NoError(t, engine1.Close())
 
 	// Reopen the same dir.
-	engine2, err := NewBadgerEngine(dir)
+	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine2.Close() })
 
@@ -74,7 +78,10 @@ func TestLabelIndex_SurvivesEngineReopen(t *testing.T) {
 func TestLabelIndex_BulkCreatedNodesSurviveReopen(t *testing.T) {
 	dir := t.TempDir()
 
-	engine1, err := NewBadgerEngine(dir)
+	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine1 != nil {
+		fixtureowner.Own(t, engine1)
+	}
 	require.NoError(t, err)
 
 	// 250 nodes is enough to flush across multiple Badger pages; pin the
@@ -95,7 +102,7 @@ func TestLabelIndex_BulkCreatedNodesSurviveReopen(t *testing.T) {
 	require.Len(t, pre, n)
 	require.NoError(t, engine1.Close())
 
-	engine2, err := NewBadgerEngine(dir)
+	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine2.Close() })
 
@@ -112,7 +119,10 @@ func TestLabelIndex_BulkCreatedNodesSurviveReopen(t *testing.T) {
 func TestLabelIndex_MultiLabelSurvivesReopen(t *testing.T) {
 	dir := t.TempDir()
 
-	engine1, err := NewBadgerEngine(dir)
+	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine1 != nil {
+		fixtureowner.Own(t, engine1)
+	}
 	require.NoError(t, err)
 
 	node := &Node{
@@ -123,7 +133,7 @@ func TestLabelIndex_MultiLabelSurvivesReopen(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine1.Close())
 
-	engine2, err := NewBadgerEngine(dir)
+	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine2.Close() })
 
@@ -148,7 +158,10 @@ func TestLabelIndex_MultiLabelSurvivesReopen(t *testing.T) {
 func TestLabelIndex_BadgerPersistsLabelEntriesAcrossReopen(t *testing.T) {
 	dir := t.TempDir()
 
-	inner, err := NewBadgerEngine(dir)
+	inner, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if inner != nil {
+		fixtureowner.Own(t, inner)
+	}
 	require.NoError(t, err)
 	store := NewNamespacedEngine(inner, "test")
 
@@ -162,7 +175,7 @@ func TestLabelIndex_BadgerPersistsLabelEntriesAcrossReopen(t *testing.T) {
 	require.NoError(t, inner.Close())
 
 	// Reopen JUST the BadgerEngine.
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -181,14 +194,17 @@ func TestLabelIndex_BadgerPersistsLabelEntriesAcrossReopen(t *testing.T) {
 func TestLabelIndex_DiskKeyExistsAfterReopen(t *testing.T) {
 	dir := t.TempDir()
 
-	engine1, err := NewBadgerEngine(dir)
+	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine1 != nil {
+		fixtureowner.Own(t, engine1)
+	}
 	require.NoError(t, err)
 	_, err = engine1.CreateNode(&Node{ID: "test:disk-1", Labels: []string{"DiskCheck"}})
 	require.NoError(t, err)
 	require.NoError(t, engine1.Close())
 
 	// Reopen and walk the label-index key range directly.
-	engine2, err := NewBadgerEngine(dir)
+	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine2.Close() })
 
@@ -217,7 +233,10 @@ func TestLabelIndex_DiskKeyExistsAfterReopen(t *testing.T) {
 func TestLabelIndex_IDDictionaryReverseMapPopulatedOnReopen(t *testing.T) {
 	dir := t.TempDir()
 
-	engine1, err := NewBadgerEngine(dir)
+	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine1 != nil {
+		fixtureowner.Own(t, engine1)
+	}
 	require.NoError(t, err)
 	_, err = engine1.CreateNode(&Node{ID: "test:dict-1", Labels: []string{"L"}})
 	require.NoError(t, err)
@@ -228,7 +247,7 @@ func TestLabelIndex_IDDictionaryReverseMapPopulatedOnReopen(t *testing.T) {
 	require.True(t, ok, "node must have a numID after CreateNode")
 	require.NoError(t, engine1.Close())
 
-	engine2, err := NewBadgerEngine(dir)
+	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine2.Close() })
 
@@ -246,7 +265,10 @@ func TestLabelIndex_IDDictionaryReverseMapPopulatedOnReopen(t *testing.T) {
 func TestLabelIndex_QueryMatchesPropertyAndLabelFunctions(t *testing.T) {
 	dir := t.TempDir()
 
-	engine1, err := NewBadgerEngine(dir)
+	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine1 != nil {
+		fixtureowner.Own(t, engine1)
+	}
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
 		_, err := engine1.CreateNode(&Node{
@@ -258,7 +280,7 @@ func TestLabelIndex_QueryMatchesPropertyAndLabelFunctions(t *testing.T) {
 	}
 	require.NoError(t, engine1.Close())
 
-	engine2, err := NewBadgerEngine(dir)
+	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine2.Close() })
 
@@ -294,7 +316,10 @@ func TestLabelIndex_QueryMatchesPropertyAndLabelFunctions(t *testing.T) {
 func TestLabelIndex_RoutedThroughNamespacedEngineSurvivesReopen(t *testing.T) {
 	dir := t.TempDir()
 
-	inner1, err := NewBadgerEngine(dir)
+	inner1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if inner1 != nil {
+		fixtureowner.Own(t, inner1)
+	}
 	require.NoError(t, err)
 	ns1 := NewNamespacedEngine(inner1, "nornic")
 
@@ -310,7 +335,7 @@ func TestLabelIndex_RoutedThroughNamespacedEngineSurvivesReopen(t *testing.T) {
 	}
 	require.NoError(t, inner1.Close())
 
-	inner2, err := NewBadgerEngine(dir)
+	inner2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = inner2.Close() })
 	ns2 := NewNamespacedEngine(inner2, "nornic")

@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -26,7 +28,7 @@ func TestQdrantCollectionOfOtherDimensionRejectsPointsBeforeStoring(t *testing.T
 	db, err := Open(t.TempDir(), cfg)
 	require.NoError(t, err)
 	defer db.Close()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer base.Close()
 	manager, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)

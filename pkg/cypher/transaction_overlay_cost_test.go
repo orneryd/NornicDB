@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -118,7 +119,7 @@ func BenchmarkTransactionOverlayDetachCost(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				engine := storage.NewMemoryEngine()
+				engine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 				exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
 				b.StartTimer()
 				result, err := exec.Execute(context.Background(), overlayCostCreate+"\n"+overlayCostDelete, map[string]interface{}{
@@ -156,7 +157,7 @@ func BenchmarkTransactionOverlayMergeCost(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					b.StopTimer()
-					engine := storage.NewMemoryEngine()
+					engine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 					store := storage.NewNamespacedEngine(engine, "test")
 					exec := NewStorageExecutor(store)
 					if committed {

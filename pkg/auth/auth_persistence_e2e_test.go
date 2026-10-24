@@ -3,6 +3,7 @@ package auth
 import (
 	"bytes"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -26,7 +27,10 @@ func TestAdminPasswordChangeSurvivesBootstrapRestart(t *testing.T) {
 	authConfig.JWTSecret = []byte("test-jwt-secret-at-least-32-bytes")
 
 	openAndBootstrap := func() (*Authenticator, *storage.BadgerEngine, storage.Engine, error) {
-		engine, err := storage.NewBadgerEngine(dataDir)
+		engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		if err != nil {
 			return nil, nil, nil, err
 		}

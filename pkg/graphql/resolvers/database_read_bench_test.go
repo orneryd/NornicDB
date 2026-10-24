@@ -2,6 +2,7 @@ package resolvers
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
@@ -12,7 +13,7 @@ import (
 
 func BenchmarkGraphQLDatabaseReads(b *testing.B) {
 	fixture := func(b *testing.B) (*Resolver, context.Context) {
-		manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+		manager, err := multidb.NewDatabaseManager(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 		if err != nil {
 			b.Fatal(err)
 		}

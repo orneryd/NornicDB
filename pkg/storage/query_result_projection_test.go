@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -27,7 +29,7 @@ func TestQueryResultProjectionDisabledAndNil(t *testing.T) {
 	require.Zero(t, testing.AllocsPerRun(100, func() { view.Node(n); view.Edge(e) }))
 }
 func TestQueryResultProjectionNamespaceDetachedAndRevealIsolation(t *testing.T) {
-	be, err := NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
 	schema := be.GetSchemaForNamespace("tenant")

@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 	"time"
@@ -15,11 +17,11 @@ func TestSnapshotOverlayQueryNodeVisibility(t *testing.T) {
 	for _, buffered := range []bool{false, true} {
 		for _, source := range []string{"engine-overlay", "engine-retired", "transaction-pending", "transaction-connected", "transaction-scan"} {
 			t.Run(fmt.Sprintf("buffered=%t/%s", buffered, source), func(t *testing.T) {
-				b, err := NewBadgerEngineWithOptions(BadgerOptions{
+				b, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 					DataDir:             t.TempDir(),
 					WriteBehind:         buffered,
 					WriteBehindInterval: time.Hour,
-				})
+				}))
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, b.Close()) })
 				if buffered {

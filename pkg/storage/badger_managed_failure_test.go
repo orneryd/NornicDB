@@ -1,6 +1,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"fmt"
 	"runtime"
@@ -230,7 +232,7 @@ func TestManagedBadger_OpenFailsWhenRecoveryCannotWrite(t *testing.T) {
 	}
 	dir := t.TempDir()
 	opts := badger.DefaultOptions(dir).WithLogger(nil)
-	m, err := openManagedBadger(opts)
+	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
 	require.NoError(t, err)
 	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("a")) }))
 	lc, err := m.beginLargeCommit()
@@ -240,10 +242,10 @@ func TestManagedBadger_OpenFailsWhenRecoveryCannotWrite(t *testing.T) {
 	require.NoError(t, lc.commitBatch(batch))
 	require.NoError(t, m.DB.Close())
 
-	_, err = openManagedBadger(opts.WithReadOnly(true))
+	_, err = fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts.WithReadOnly(true)))
 	require.ErrorContains(t, err, "rolling back interrupted large commit")
 
-	m, err = openManagedBadger(opts)
+	m, err = fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
 	require.NoError(t, err)
 	defer m.Close()
 	require.NoError(t, m.View(func(txn *badger.Txn) error {
@@ -260,12 +262,12 @@ func TestManagedBadger_LargeCommitCannotStartOnReadOnlyStore(t *testing.T) {
 	}
 	dir := t.TempDir()
 	opts := badger.DefaultOptions(dir).WithLogger(nil)
-	m, err := openManagedBadger(opts)
+	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
 	require.NoError(t, err)
 	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("a")) }))
 	require.NoError(t, m.Close())
 
-	m, err = openManagedBadger(opts.WithReadOnly(true))
+	m, err = fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts.WithReadOnly(true)))
 	require.NoError(t, err)
 	defer m.Close()
 	_, err = m.beginLargeCommit()
@@ -278,7 +280,7 @@ func TestManagedBadger_LargeCommitCannotStartOnReadOnlyStore(t *testing.T) {
 }
 
 func TestManagedBadger_ClosedHandleRefusesTransactions(t *testing.T) {
-	m, err := openManagedBadger(badger.DefaultOptions("").WithInMemory(true).WithLogger(nil))
+	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(badger.DefaultOptions("").WithInMemory(true).WithLogger(nil)))
 	require.NoError(t, err)
 	require.NoError(t, m.Close())
 	require.ErrorIs(t, m.View(func(*badger.Txn) error { return nil }), badger.ErrDBClosed)

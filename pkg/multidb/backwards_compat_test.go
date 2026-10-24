@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,7 +14,7 @@ import (
 // that doesn't specify a database continues to work after multi-database
 // support is added.
 func TestBackwardsCompatibility_ExistingCode(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	// Simulate old code: create manager with defaults
@@ -68,7 +70,7 @@ func TestBackwardsCompatibility_ExistingCode(t *testing.T) {
 // TestBackwardsCompatibility_LegacyDatabaseName verifies that the
 // legacy "nornicdb" database name still works if configured.
 func TestBackwardsCompatibility_LegacyDatabaseName(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	// Support legacy "nornicdb" name via config
@@ -99,7 +101,7 @@ func TestBackwardsCompatibility_NoBreakingChanges(t *testing.T) {
 	// This test ensures that all existing Engine methods still work
 	// and that we haven't introduced breaking changes.
 
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	// Create namespaced engine (new functionality)

@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func TestBoltLazyResultTimeoutSource(t *testing.T) {
 		{"tx_timeout shorter than database limit", 10 * time.Second, 150, nornicerrors.TransactionTimedOutClientConfiguration},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+			mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = mgr.Close() })
 			server := NewWithDatabaseManager(&Config{Port: 0, MaxConnections: 32, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, mgr)
@@ -79,7 +80,7 @@ func (engine expiredDatabaseLimitEngine) GetQueryLimitChecker() interface {
 // the client's tx_timeout has expired as well. The status is the deadline
 // that won, the server's, with its message (sol-r2-1392 P2).
 func TestBoltDatabaseDeadlineWinsAfterBothExpired(t *testing.T) {
-	store := expiredDatabaseLimitEngine{storage.NewNamespacedEngine(storage.NewMemoryEngine(), "deadline_winner")}
+	store := expiredDatabaseLimitEngine{storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "deadline_winner")}
 	_, port := startBoltIntegrationServer(t, store)
 	conn := openBoltTestConn(t, port)
 	require.NoError(t, conn.SetReadDeadline(time.Now().Add(10*time.Second)))

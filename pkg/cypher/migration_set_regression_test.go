@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"encoding/binary"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -69,7 +70,10 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 	dir := t.TempDir()
 	ctx := context.Background()
 
-	base, err := storage.NewBadgerEngine(dir)
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if base != nil {
+		fixtureowner.Own(t, base)
+	}
 	require.NoError(t, err)
 
 	namespaced := storage.NewNamespacedEngine(base, testNamespacedMigrationDB)
@@ -86,7 +90,10 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, base.Close())
 
-	rawDB, err := badger.Open(badger.DefaultOptions(dir).WithLogger(nil))
+	rawDB, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
+	if rawDB != nil {
+		fixtureowner.Own(t, rawDB)
+	}
 	require.NoError(t, err)
 
 	namespacedID := storage.NodeID(testNamespacedMigrationDB + ":session-1")
@@ -110,7 +117,7 @@ func TestBug_MigratedBadgerNode_MatchSetUpdatesExistingNode(t *testing.T) {
 	}))
 	require.NoError(t, rawDB.Close())
 
-	migrated, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, AllowStorageUpgrade: true})
+	migrated, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: dir, AllowStorageUpgrade: true}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = migrated.Close() })
 

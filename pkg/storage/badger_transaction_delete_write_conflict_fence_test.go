@@ -2,6 +2,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"log/slog"
 	"sync"
 	"testing"
@@ -22,7 +24,7 @@ func TestTransactionDeletePreservesPostValidationPeerWrite(t *testing.T) {
 		for _, target := range []string{"node", "connected_node", "relationship"} {
 			t.Run(name+"/"+target, func(t *testing.T) {
 				barrier := &writeConflictBarrier{reached: make(chan struct{}), resume: make(chan struct{})}
-				engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: highPerformance, LowMemory: !highPerformance, Logger: slog.New(barrier)})
+				engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), HighPerformance: highPerformance, LowMemory: !highPerformance, Logger: slog.New(barrier)}))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = engine.Close() })
 
@@ -107,7 +109,7 @@ func TestTransactionDeletePreservesPostValidationPeerWrite(t *testing.T) {
 func TestTransactionWriteFailsWhenConflictTrackingReadFails(t *testing.T) {
 	for _, op := range []string{"update node", "delete node", "delete connected node", "update relationship", "delete relationship"} {
 		t.Run(op, func(t *testing.T) {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			nodeID, otherID, edgeID := NodeID("test:tracking"), NodeID("test:tracking-other"), EdgeID("test:tracking-edge")

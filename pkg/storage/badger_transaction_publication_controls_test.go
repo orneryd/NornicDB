@@ -4,6 +4,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,10 @@ import (
 func TestOversizedTransactionLeavesPersistentGraphIntact(t *testing.T) {
 	dir := t.TempDir()
 	open := func() *BadgerEngine {
-		engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true})
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true}))
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		return engine
 	}

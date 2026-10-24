@@ -2,6 +2,7 @@ package storage
 
 import (
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 
@@ -73,7 +74,10 @@ func TestSchemaTokenOrderConcurrent(t *testing.T) {
 
 func TestSchemaTokenOrderReloadAndNamespaceIsolation(t *testing.T) {
 	path := t.TempDir()
-	engine, err := NewBadgerEngine(path)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	first := NewNamespacedEngine(engine, "first")
 	second := NewNamespacedEngine(engine, "second")
@@ -84,7 +88,7 @@ func TestSchemaTokenOrderReloadAndNamespaceIsolation(t *testing.T) {
 	require.NoError(t, first.DeleteEdge("x"))
 	require.NoError(t, first.DeleteNode("b"))
 	require.NoError(t, engine.Close())
-	engine, err = NewBadgerEngine(path)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	first = NewNamespacedEngine(engine, "first")

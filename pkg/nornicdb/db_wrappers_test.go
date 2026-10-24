@@ -2,6 +2,7 @@ package nornicdb
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -22,7 +23,7 @@ type pendingCountEngine struct {
 func (p *pendingCountEngine) PendingEmbeddingsCount() int { return p.count }
 
 func TestDBWrapperHelpers_StorageAccess(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	namespaced := storage.NewNamespacedEngine(base, "nornic")
@@ -72,7 +73,7 @@ func TestDBWrapperHelpers_EmbedConfigRegistration(t *testing.T) {
 }
 
 func TestDBWrapperHelpers_QueueAndExecutorAccess(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	queueCfg := DefaultEmbedQueueConfig()
@@ -138,7 +139,7 @@ func TestDBWrapperHelpers_VectorDimensionsHelpers(t *testing.T) {
 
 	// Cached helper falls back to configured dims when no service exists, then to 0.
 	db2 := &DB{embeddingDims: 9, searchServices: map[string]*dbSearchService{}}
-	namespaced := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	namespaced := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	db2.storage = namespaced
 	require.Equal(t, 9, db2.VectorIndexDimensionsCached())
 	db2.embeddingDims = 0
@@ -190,10 +191,10 @@ func TestDBWrapperHelpers_EmbeddingAndPendingCounts(t *testing.T) {
 	// Pending count uses optional storage fast-path interface. It is checked
 	// on separate DB values without background tasks: assigning baseStorage
 	// on the open db races with its clustering timer, which reads it.
-	counting := storage.NewMemoryEngine()
+	counting := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = counting.Close() })
 	require.Equal(t, 7, (&DB{baseStorage: &pendingCountEngine{Engine: counting, count: 7}}).PendingEmbeddingsCount())
-	plain := storage.NewMemoryEngine()
+	plain := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = plain.Close() })
 	require.Equal(t, 0, (&DB{baseStorage: plain}).PendingEmbeddingsCount())
 }
@@ -232,7 +233,7 @@ func TestDBWrapperHelpers_MaybeEnableReplicationPaths(t *testing.T) {
 		}
 	})
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	db := &DB{config: DefaultConfig()}
 
@@ -332,7 +333,7 @@ func TestDBWrapperHelpers_SetEmbedderBranches(t *testing.T) {
 	})
 
 	t.Run("creates embed queue when not present", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		cfg := DefaultConfig()
 		cfg.Memory.KmeansClusterInterval = 0 // avoid timer side effects
@@ -359,7 +360,7 @@ func TestDBWrapperHelpers_SetEmbedderBranches(t *testing.T) {
 	})
 
 	t.Run("reuses existing queue and swaps embedder", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		cfg := DefaultConfig()
 		cfg.Memory.KmeansClusterInterval = 0
@@ -388,7 +389,7 @@ func TestDBWrapperHelpers_SetEmbedderBranches(t *testing.T) {
 		cleanup := featureflags.WithGPUClusteringEnabled()
 		t.Cleanup(cleanup)
 
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		cfg := DefaultConfig()
 		cfg.Memory.KmeansClusterInterval = 5 * time.Millisecond
@@ -419,7 +420,7 @@ func TestDBWrapperHelpers_SetEmbedderBranches(t *testing.T) {
 }
 
 func TestDBWrapperHelpers_CountAndBuildBranches(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	db := &DB{
 		storage:             storage.NewNamespacedEngine(base, "nornic"),

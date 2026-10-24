@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -111,7 +112,7 @@ func TestEmbeddingFreeSingleReadsTraverseWALStack(t *testing.T) {
 
 func TestEmbeddingFreeSingleReadFallbackStripsEmbeddings(t *testing.T) {
 	t.Run("wal", func(t *testing.T) {
-		badger, err := NewBadgerEngineInMemory()
+		badger, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = badger.Close() })
 		id := NodeID("test:light-read")
@@ -142,7 +143,7 @@ func TestEmbeddingFreeSingleReadFallbackStripsEmbeddings(t *testing.T) {
 }
 
 func TestNamespacedEmbeddingFreeReadFallbackStripsEmbeddings(t *testing.T) {
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = badger.Close() })
 
@@ -172,7 +173,7 @@ func TestNamespacedEmbeddingFreeReadFallbackStripsEmbeddings(t *testing.T) {
 }
 
 func BenchmarkEmbeddingFreeSingleReadFallback(b *testing.B) {
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -289,7 +290,10 @@ func newEngineWithoutEmbeddingFreeReads(t *testing.T) Engine {
 }
 
 func BenchmarkNamespacedWALBatchNodeReads(b *testing.B) {
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if badger != nil {
+		fixtureowner.Own(b, badger)
+	}
 	require.NoError(b, err)
 	walLog, err := NewWAL(b.TempDir(), &WALConfig{SyncMode: "none"})
 	require.NoError(b, err)

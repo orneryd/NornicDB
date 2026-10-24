@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -13,7 +14,7 @@ import (
 func TestRule73HeimdallPublicColdAdmission(t *testing.T) {
 	for _, form := range []string{"direct", "use", "fabric"} {
 		t.Run(form, func(t *testing.T) {
-			manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+			manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 			if err != nil {
 				t.Fatal(err)
 			}

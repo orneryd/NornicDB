@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"bufio"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -10,7 +11,7 @@ import (
 func TestSessionGetExecutorForDatabaseUsesForwardedAuth(t *testing.T) {
 	manager := &mockDBManager{
 		stores: map[string]storage.Engine{
-			"nornic": storage.NewMemoryEngine(),
+			"nornic": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 		},
 		defaultDB: "nornic",
 	}
@@ -31,7 +32,7 @@ func TestSessionGetExecutorForDatabaseUsesForwardedAuth(t *testing.T) {
 func TestSessionGetExecutorForDatabase_CachesExecutorsWithoutForwardedAuth(t *testing.T) {
 	manager := &mockDBManager{
 		stores: map[string]storage.Engine{
-			"nornic": storage.NewMemoryEngine(),
+			"nornic": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 		},
 		defaultDB: "nornic",
 	}
@@ -62,7 +63,7 @@ func TestSessionGetExecutorForDatabase_CachesExecutorsWithoutForwardedAuth(t *te
 func TestSessionGetExecutorForDatabase_DoesNotCacheAuthScopedExecutors(t *testing.T) {
 	manager := &mockDBManager{
 		stores: map[string]storage.Engine{
-			"nornic": storage.NewMemoryEngine(),
+			"nornic": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 		},
 		defaultDB: "nornic",
 	}
@@ -94,8 +95,8 @@ func TestSessionGetExecutorForDatabase_DoesNotCacheAuthScopedExecutors(t *testin
 func TestHandleRunRejectsDatabaseSwitchInExplicitTransaction(t *testing.T) {
 	manager := &mockDBManager{
 		stores: map[string]storage.Engine{
-			"nornic":       storage.NewMemoryEngine(),
-			"translations": storage.NewMemoryEngine(),
+			"nornic":       fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+			"translations": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 		},
 		defaultDB: "nornic",
 	}

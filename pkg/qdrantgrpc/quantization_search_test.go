@@ -2,6 +2,7 @@ package qdrantgrpc
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func TestQuantizationControlsReachPublicSearchAndQuery(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", "binary")
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	provider := sharedSearchProvider()
@@ -94,7 +95,7 @@ func TestQuantizedCollectionConfigSurvivesServerRestart(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 	t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", "none")
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	first := startSharedIndexServer(t, dbm, base, sharedSearchProvider())
@@ -137,7 +138,7 @@ func TestCollectionQuantizationModesAndValidation(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, tc.mode, string(cfg.Mode))
 			require.Equal(t, tc.ratio, cfg.PQCompression)
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			dbm, err := multidb.NewDatabaseManager(base, nil)
 			require.NoError(t, err)
 			store, err := NewDatabaseCollectionStore(dbm, nil)
@@ -218,7 +219,7 @@ func TestQuantizedDropRecreateUsesDefaultAndPreservesOtherCollection(t *testing.
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 			t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", global)
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			dbm, err := multidb.NewDatabaseManager(base, nil)
 			require.NoError(t, err)
 			provider := sharedSearchProvider()
@@ -282,7 +283,7 @@ func TestMixedCompressionPoliciesSurviveRestart(t *testing.T) {
 			t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 			t.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", global)
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			dbm, err := multidb.NewDatabaseManager(base, nil)
 			require.NoError(t, err)
 			firstProvider := sharedSearchProvider()

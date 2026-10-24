@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -37,7 +38,10 @@ func TestHasRevealCall(t *testing.T) {
 }
 
 func TestRevealExpressionBypassesDecayDuringQuery(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,7 +120,10 @@ func TestRevealExpressionBypassesDecayDuringQuery(t *testing.T) {
 }
 
 func TestUnwrapBadgerEngine_Direct(t *testing.T) {
-	eng, err := storage.NewBadgerEngineInMemory()
+	eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +143,10 @@ func TestUnwrapBadgerEngine_NilInput(t *testing.T) {
 }
 
 func TestSetRevealOnEngine_BadgerEngine(t *testing.T) {
-	eng, err := storage.NewBadgerEngineInMemory()
+	eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +164,10 @@ func TestSetRevealOnEngine_NilEngine(t *testing.T) {
 }
 
 func TestSetRevealOnEngine_BlocksConcurrentNonRevealScope(t *testing.T) {
-	eng, err := storage.NewBadgerEngineInMemory()
+	eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +201,10 @@ func TestSetRevealOnEngine_BlocksConcurrentNonRevealScope(t *testing.T) {
 }
 
 func TestSetRevealOnEngine_ExecutionStateBlocksConcurrentRead(t *testing.T) {
-	eng, err := storage.NewBadgerEngineInMemory()
+	eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

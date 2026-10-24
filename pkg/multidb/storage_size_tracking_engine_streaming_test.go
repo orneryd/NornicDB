@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"strings"
 	"testing"
@@ -129,7 +131,7 @@ func (e *sizeTrackingStreamingInner) StreamNodesWithOptions(_ context.Context, o
 }
 
 func TestSizeTrackingEngine_StreamNodesByPrefix_Delegates(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	inner := &sizeTrackingStreamingInner{
@@ -192,7 +194,7 @@ func (e *sizeTrackingStreamingInner) StreamNodesByLabelProjected(label string, p
 // label-scoped MATCH fall through to a whole-namespace storage.StreamNodes
 // scan (O(store) instead of O(label)).
 func TestSizeTrackingEngine_StreamNodesByLabelProjected_Delegates(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	inner := &sizeTrackingStreamingInner{
@@ -222,7 +224,7 @@ func TestSizeTrackingEngine_StreamNodesByLabelProjected_Delegates(t *testing.T) 
 }
 
 func TestSizeTrackingEngine_ForEachNodeIDByLabel_Delegates(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	for i := 0; i < 5; i++ {
@@ -247,7 +249,7 @@ func TestSizeTrackingEngine_ForEachNodeIDByLabel_Delegates(t *testing.T) {
 }
 
 func TestSizeTrackingEngine_MVCCLifecycleDelegates(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	inner := &sizeTrackingLifecycleInner{

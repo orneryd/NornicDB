@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
@@ -35,7 +36,10 @@ func TestTransactionRetainedSidecarSurvivesVersionChange(t *testing.T) {
 		for _, writes := range []int{1, 3} {
 			t.Run(layout+time.Duration(writes).String(), func(t *testing.T) {
 				dir := t.TempDir()
-				b, err := NewBadgerEngine(dir)
+				b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+				if b != nil {
+					fixtureowner.Own(t, b)
+				}
 				require.NoError(t, err)
 				b.SetEmbeddingTextPolicy(EmbeddingTextPolicy{Include: []string{"text"}})
 				at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -62,7 +66,7 @@ func TestTransactionRetainedSidecarSurvivesVersionChange(t *testing.T) {
 				}
 				require.NoError(t, tx.Commit())
 				require.NoError(t, b.Close())
-				b, err = NewBadgerEngine(dir)
+				b, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 				require.NoError(t, err)
 				defer b.Close()
 				got, err := b.GetNode(n.ID)

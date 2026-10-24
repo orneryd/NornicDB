@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -90,7 +92,7 @@ func (e *collectNodesLabelProbeEngine) StreamNodesByLabelProjected(_ string, pro
 }
 
 func TestPipelineFilteredCountReducesProjectedLabelStream(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	probe := &collectNodesLabelProbeEngine{
 		Engine: base,
@@ -114,7 +116,7 @@ func TestPipelineFilteredCountReducesProjectedLabelStream(t *testing.T) {
 }
 
 func TestPipelineFilteredCount_PropagatesProjectedReaderError(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	probe := &collectNodesLabelProbeEngine{Engine: base}
 	result, err := NewStorageExecutor(probe).Execute(context.Background(),
@@ -124,7 +126,7 @@ func TestPipelineFilteredCount_PropagatesProjectedReaderError(t *testing.T) {
 }
 
 func TestCollectNodesWithStreaming_LabelLimitPrefersLabelLookup(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	for i := 0; i < 100; i++ {
@@ -158,7 +160,7 @@ func TestCollectNodesWithStreaming_LabelLimitPrefersLabelLookup(t *testing.T) {
 }
 
 func TestCollectNodesWithStreaming_UsesLabelIndexedStreamForResidualFilters(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	probe := &collectNodesLabelProbeEngine{
 		Engine: base,
@@ -182,7 +184,7 @@ func TestCollectNodesWithStreaming_UsesLabelIndexedStreamForResidualFilters(t *t
 }
 
 func TestMatchLimitStopsProjectedLabelStreamAfterRequestedRows(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	projectedNodes := make([]*storage.Node, 40)
 	for i := range projectedNodes {
@@ -202,7 +204,7 @@ func TestMatchLimitStopsProjectedLabelStreamAfterRequestedRows(t *testing.T) {
 }
 
 func TestCollectNodesWithStreaming_PropagatesProjectedReaderError(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	probe := &collectNodesLabelProbeEngine{Engine: base, labelIDs: []storage.NodeID{"nornic:one"}}
 	exec := NewStorageExecutor(probe)
@@ -213,7 +215,7 @@ func TestCollectNodesWithStreaming_PropagatesProjectedReaderError(t *testing.T) 
 }
 
 func TestCollectNodesWithStreaming_PropagatesLabelLookupReadError(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	probe := &collectNodesIDProbeEngine{
 		Engine: base, labelIDs: []storage.NodeID{"nornic:missing"}, getNodeErr: assert.AnError,

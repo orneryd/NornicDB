@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math/rand"
 	"testing"
 
@@ -50,7 +51,7 @@ func BenchmarkClusterAdmissionWritePath(b *testing.B) {
 					ChunkEmbeddings: [][]float32{vec},
 				}
 			}
-			svc := NewServiceWithDimensions(storage.NewMemoryEngine(), dims)
+			svc := NewServiceWithDimensions(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), dims)
 			b.Cleanup(func() { _ = svc.Close() })
 			if mode.clustering {
 				svc.EnableClustering(nil, 8)

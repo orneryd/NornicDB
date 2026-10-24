@@ -3,6 +3,7 @@ package storage
 import (
 	"bytes"
 	"encoding/gob"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strconv"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func writeV1CompactEdgeBody(t *testing.T, eng *BadgerEngine, edge *Edge) {
 func freshV1Engine(t *testing.T) *BadgerEngine {
 	t.Helper()
 	dir := t.TempDir()
-	eng, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })
 
@@ -435,7 +436,10 @@ func TestRunOnStartMigrations_GatedRefuses(t *testing.T) {
 
 	// Build a V1 data directory: open, write a node, force version 1, close.
 	{
-		eng, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+		if eng != nil {
+			fixtureowner.Own(t, eng)
+		}
 		require.NoError(t, err)
 		writeV1NodeBody(t, eng, &Node{
 			ID:         NodeID("test:gate"),
@@ -446,7 +450,7 @@ func TestRunOnStartMigrations_GatedRefuses(t *testing.T) {
 	}
 
 	// Reopen WITHOUT the upgrade flag — must refuse.
-	_, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: false})
+	_, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: false}))
 	require.Error(t, err)
 	var upgradeErr *ErrStorageUpgradeRequired
 	require.ErrorAs(t, err, &upgradeErr)
@@ -454,7 +458,7 @@ func TestRunOnStartMigrations_GatedRefuses(t *testing.T) {
 	require.Equal(t, storageVersionCurrent, upgradeErr.Current)
 
 	// Reopen WITH the upgrade flag — must succeed and finish at V2.
-	eng, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true})
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })
 	require.Equal(t, storageVersionCurrent, eng.storageVersion)
@@ -464,7 +468,7 @@ func TestRunOnStartMigrations_GatedRefuses(t *testing.T) {
 // fresh empty data directory works without the upgrade flag — there's
 // nothing to lose, so no operator decision is required.
 func TestRunOnStartMigrations_EmptyStoreSkipsGate(t *testing.T) {
-	eng, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true})
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })
 	require.Equal(t, storageVersionCurrent, eng.storageVersion)
@@ -479,7 +483,10 @@ func TestRunOnStartMigrations_ChainsV0ThroughV2(t *testing.T) {
 
 	// Build a V0 store: open, force version 0, write a legacy-shaped node.
 	{
-		eng, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+		if eng != nil {
+			fixtureowner.Own(t, eng)
+		}
 		require.NoError(t, err)
 		require.NoError(t, eng.writeSchemaVersion(0))
 
@@ -488,10 +495,10 @@ func TestRunOnStartMigrations_ChainsV0ThroughV2(t *testing.T) {
 	}
 
 	// Reopen with the upgrade flag — both arms run.
-	eng, err := NewBadgerEngineWithOptions(BadgerOptions{
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             dir,
 		AllowStorageUpgrade: true,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })
 	require.Equal(t, storageVersionCurrent, eng.storageVersion)

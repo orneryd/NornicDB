@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"testing"
 	"time"
@@ -142,7 +143,10 @@ func TestNodeDeleteRemovesHiddenRelationships(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			open := func() *BadgerEngine {
-				engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: writeBehind, WriteBehindInterval: time.Hour})
+				engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: writeBehind, WriteBehindInterval: time.Hour}))
+				if engine != nil {
+					fixtureowner.Own(t, engine)
+				}
 				require.NoError(t, err)
 				return engine
 			}

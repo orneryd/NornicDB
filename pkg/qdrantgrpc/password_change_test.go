@@ -1,6 +1,8 @@
 package qdrantgrpc
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/base64"
 	"testing"
@@ -17,13 +19,13 @@ func TestChangedPasswordStopsWorkingOverGRPC(t *testing.T) {
 	config := auth.DefaultAuthConfig()
 	config.JWTSecret = []byte("0123456789abcdef0123456789abcdef")
 	config.SecurityEnabled = true
-	authStore := storage.NewMemoryEngine()
+	authStore := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStore.Close() })
 	authenticator, err := auth.NewAuthenticator(config, authStore)
 	require.NoError(t, err)
 	_, err = authenticator.CreateUser("viewer4", "ViewerPass123!", []auth.Role{auth.RoleViewer})
 	require.NoError(t, err)
-	serverStore := storage.NewMemoryEngine()
+	serverStore := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = serverStore.Close() })
 	server, err := NewServer(DefaultConfig(), store, serverStore, nil, authenticator)
 	require.NoError(t, err)

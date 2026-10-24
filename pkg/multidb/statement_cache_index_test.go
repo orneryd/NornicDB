@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"sync"
 	"testing"
@@ -8,7 +9,7 @@ import (
 )
 
 func TestStatementCacheIndexCleanupOutsideMetadataLock(t *testing.T) {
-	manager, err := NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	manager, err := NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +52,7 @@ func TestStatementCacheIndexCleanupOutsideMetadataLock(t *testing.T) {
 }
 
 func TestStatementCacheIndexBindCloseRace(t *testing.T) {
-	manager, err := NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	manager, err := NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"reflect"
@@ -15,7 +17,7 @@ import (
 )
 
 func queryMemoryOutputFixture(t *testing.T) (*StorageExecutor, *storage.BadgerEngine) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 	schema := be.GetSchemaForNamespace("review")
@@ -167,7 +169,7 @@ func TestQueryMemoryOutputCarrierRepresentations(t *testing.T) {
 func TestQueryMemoryOutputScoredStreamRetention(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
-			be, err := storage.NewBadgerEngineInMemory()
+			be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			defer be.Close()
 			be.SetDecayEnabled(enabled)

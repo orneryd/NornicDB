@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"strings"
 	"testing"
@@ -142,7 +143,7 @@ func TestDynamicLabelPublicRemoteFabric(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = remote.QueryCypher(ctx, dynamiclabels.Fixture, nil)
 	require.NoError(t, err)
-	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), &multidb.Config{
+	manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
 		RemoteEngineFactory: func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
 			return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: token})
 		},

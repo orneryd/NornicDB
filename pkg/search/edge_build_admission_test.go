@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+
 	"runtime"
 	"strings"
 	"sync"

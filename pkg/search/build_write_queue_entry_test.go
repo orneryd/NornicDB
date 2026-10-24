@@ -7,6 +7,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"runtime"
 	"runtime/debug"
 	"runtime/metrics"
@@ -326,7 +327,7 @@ func TestBuildBaselineIsOneStoragePoint(t *testing.T) {
 // baseline, as every storage read sees it.
 func TestBuildIndexesAcknowledgedWriteBehindNodes(t *testing.T) {
 	t.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "1000")
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour})
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	tx, err := engine.BeginTransaction()

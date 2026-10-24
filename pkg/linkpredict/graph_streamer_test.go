@@ -3,6 +3,7 @@ package linkpredict
 import (
 	"bytes"
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,7 +13,7 @@ import (
 
 func newTestEngine(t *testing.T) storage.Engine {
 	t.Helper()
-	return storage.NewMemoryEngine()
+	return fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 }
 
 func TestGraphStreamer_StreamEdges(t *testing.T) {

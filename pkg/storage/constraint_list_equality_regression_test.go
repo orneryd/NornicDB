@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"math"
 	"sync"
@@ -54,7 +55,10 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 		for _, mode := range []string{"direct", "transaction", "pending", "restart", "composite"} {
 			t.Run(entity+"/"+mode, func(t *testing.T) {
 				path := t.TempDir()
-				engine, err := NewBadgerEngine(path)
+				engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+				if engine != nil {
+					fixtureowner.Own(t, engine)
+				}
 				require.NoError(t, err)
 				defer func() { require.NoError(t, engine.Close()) }()
 				for _, id := range []NodeID{"test:a", "test:b"} {
@@ -103,7 +107,10 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 				require.NoError(t, create(nil, "one", first))
 				if mode == "restart" {
 					require.NoError(t, engine.Close())
-					engine, err = NewBadgerEngine(path)
+					engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+					if engine != nil {
+						fixtureowner.Own(t, engine)
+					}
 					require.NoError(t, err)
 				}
 				if mode == "direct" {
@@ -125,14 +132,20 @@ func TestUniqueListDurableRoundTrip(t *testing.T) {
 
 func TestUniqueListPreservesLargeIntegerIdentityAfterRestart(t *testing.T) {
 	path := t.TempDir()
-	engine, err := NewBadgerEngine(path)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	defer func() { engine.Close() }()
 	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{Name: "large_list", Type: ConstraintUnique, Label: "LongList", Properties: []string{"id"}}))
 	_, err = engine.CreateNode(&Node{ID: "test:first", Labels: []string{"LongList"}, Properties: map[string]interface{}{"id": []int64{1 << 53}}})
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
-	engine, err = NewBadgerEngine(path)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(path))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&Node{ID: "test:distinct", Labels: []string{"LongList"}, Properties: map[string]interface{}{"id": []int64{1<<53 + 1}}})
 	require.NoError(t, err, "adjacent longs are different UNIQUE values, including after index rebuild")

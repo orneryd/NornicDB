@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -14,7 +16,7 @@ import (
 // session's nor the system database.
 func nestedUseRouterExecutor(t *testing.T, database string) (*StorageExecutor, map[string]storage.Engine) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	stores := map[string]storage.Engine{}
 	for _, name := range []string{"system", "nornic", "other"} {

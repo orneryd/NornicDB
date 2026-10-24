@@ -1,12 +1,14 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/stretchr/testify/require"
 	"testing"
 )
 
 func TestTransactionRevealLabelCacheKeyDoesNotAliasStoredLabels(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	const label = "Doc"

@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -16,7 +18,7 @@ import (
 
 func queryEmbeddingTestExecutor(t *testing.T, provider cypher.QueryEmbedder) *cypher.StorageExecutor {
 	t.Helper()
-	store := storage.NewMemoryEngine()
+	store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = store.Close() })
 	executor := cypher.NewStorageExecutor(storage.NewNamespacedEngine(store, "snapshot"))
 	executor.SetEmbedder(provider)

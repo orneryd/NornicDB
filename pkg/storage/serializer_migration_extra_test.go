@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -10,7 +12,7 @@ import (
 func openTestBadgerDB(t *testing.T) *badger.DB {
 	t.Helper()
 	dir := t.TempDir()
-	db, err := badger.Open(badger.DefaultOptions(dir).WithLogger(nil))
+	db, err := runtimeFixtureOwner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 	return db

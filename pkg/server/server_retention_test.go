@@ -1,6 +1,8 @@
 package server
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"encoding/json"
 	"net/http"
 	"os"
@@ -31,7 +33,7 @@ func setupRetentionTestServer(t *testing.T) (*Server, *auth.Authenticator) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	authStorage := storage.NewMemoryEngine()
+	authStorage := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = authStorage.Close() })
 	authenticator, err := auth.NewAuthenticator(auth.AuthConfig{
 		SecurityEnabled: true,

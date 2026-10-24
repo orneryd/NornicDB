@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 // round races several sessions on a fresh key, with other writes before the
 // MERGE to widen the window.
 func TestBoltConcurrentMergeOfUniqueKeyAfterOtherWrites(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 

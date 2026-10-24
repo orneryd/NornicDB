@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -32,7 +33,7 @@ func TestBug_DropDatabaseClearsSchema(t *testing.T) {
 	}
 
 	t.Run("drop then recreate", func(t *testing.T) {
-		inner := storage.NewMemoryEngine()
+		inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		defer inner.Close()
 		manager, err := NewDatabaseManager(inner, nil)
 		require.NoError(t, err)
@@ -56,7 +57,10 @@ func TestBug_DropDatabaseClearsSchema(t *testing.T) {
 
 	t.Run("dropped schema is not reloaded after restart", func(t *testing.T) {
 		dir := t.TempDir()
-		inner, err := storage.NewBadgerEngine(dir)
+		inner, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+		if inner != nil {
+			fixtureowner.Own(t, inner)
+		}
 		require.NoError(t, err)
 		manager, err := NewDatabaseManager(inner, nil)
 		require.NoError(t, err)
@@ -66,7 +70,7 @@ func TestBug_DropDatabaseClearsSchema(t *testing.T) {
 		require.NoError(t, manager.Close())
 		require.NoError(t, inner.Close())
 
-		reopened, err := storage.NewBadgerEngine(dir)
+		reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 		require.NoError(t, err)
 		defer reopened.Close()
 		manager, err = NewDatabaseManager(reopened, nil)

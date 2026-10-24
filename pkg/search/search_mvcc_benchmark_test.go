@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -62,8 +63,7 @@ func buildMVCCSearchFixture(tb testing.TB, nodeCount, historyDepth, dimensions i
 	// into per-version MVCC records. The head-only default (NewMemoryEngine)
 	// overwrites in place and the pruner has nothing to reclaim — which is
 	// exactly what a test asserting `deleted > 0` needs to exercise.
-	engine := storage.NewMemoryEngineWithMVCCHistory()
-	tb.Cleanup(func() { _ = engine.Close() })
+	engine := fixtureowner.Own(tb, fixtureowner.Track(tb, storage.NewMemoryEngineWithMVCCHistory(), storage.ErrStorageClosed))
 
 	ctx := context.Background()
 	for nodeIndex := 0; nodeIndex < nodeCount; nodeIndex++ {

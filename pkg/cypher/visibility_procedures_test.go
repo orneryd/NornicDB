@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -16,7 +18,7 @@ import (
 func TestDbVisibilitySuppress(t *testing.T) {
 	ctx := context.Background()
 	// An on-disk engine: reveal() opens its scope on a BadgerEngine.
-	engine, err := storage.NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))
@@ -81,7 +83,7 @@ func TestManualSuppressionEngineLookup(t *testing.T) {
 // indexes it again itself (#1064).
 func TestDbVisibilitySuppressUpdatesSearch(t *testing.T) {
 	ctx := context.Background()
-	engine, err := storage.NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	store := storage.NewNamespacedEngine(engine, "test")
@@ -140,7 +142,7 @@ func TestDbVisibilitySuppressErrors(t *testing.T) {
 	_, err = namespaced.callKpSuppress(ctx, "kp.unsuppress", []interface{}{&storage.Edge{ID: "x"}}, false)
 	require.ErrorContains(t, err, "not supported by this storage engine")
 
-	engine, err := storage.NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"))

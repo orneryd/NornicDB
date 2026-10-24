@@ -3,6 +3,7 @@ package multidb
 import (
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -287,7 +288,7 @@ func TestGetStorageWithAuth_ForwardsTokenToRemoteFactory(t *testing.T) {
 	var capturedToken string
 	manager.remoteEngineFactory = func(ref ConstituentRef, authToken string) (storage.Engine, error) {
 		capturedToken = authToken
-		return storage.NewMemoryEngine(), nil
+		return fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil
 	}
 
 	err := manager.CreateCompositeDatabase("composite_remote", []ConstituentRef{

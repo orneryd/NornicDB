@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"sort"
 	"testing"
 
@@ -96,7 +98,7 @@ func TestEdgeHeadersFromAdjacencyEntries(t *testing.T) {
 // relationships: writes apply synchronously and the namespaced engine
 // applies its prefix.
 func TestEdgeHeadersAcrossStack(t *testing.T) {
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer badger.Close()
 	walBacking, err := NewWAL(t.TempDir(), nil)

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -42,7 +44,7 @@ func (s *boundMatchCandidateEngine) StreamNodesByLabelProjected(label string, _ 
 
 func newBoundMatchCandidateStore(t testing.TB, size int) *storage.NamespacedEngine {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "bound_match")
 	for i := 0; i < size; i++ {

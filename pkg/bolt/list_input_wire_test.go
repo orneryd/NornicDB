@@ -7,13 +7,14 @@ import (
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/testing/cypher/listinputs"
 	"github.com/stretchr/testify/require"
 )
 
 func TestListInputBoltRepresentations(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	store := storage.NewNamespacedEngine(engine, "list_inputs")
 	inputs := listinputs.TransportInputs()

@@ -7,6 +7,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"encoding/json"
 	"hash/crc32"
 	"os"
@@ -328,7 +330,7 @@ func TestRecoverFromWALWithResultTracksErrors(t *testing.T) {
 	file.Close()
 
 	// Recovery should track results
-	baseEngine, result, err := RecoverFromWALWithResult(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}

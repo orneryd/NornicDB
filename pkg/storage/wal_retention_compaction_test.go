@@ -1,6 +1,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"encoding/json"
 	"fmt"
 	"os"
@@ -81,7 +83,7 @@ func TestAutoCompactionHonoursWALRetention(t *testing.T) {
 		paths, err := filepath.Glob(filepath.Join(walEngine.snapshotDir, "snapshot-*.json"))
 		require.NoError(t, err)
 		sort.Strings(paths)
-		recovered, result, err := RecoverFromWALWithResult(wal.config.Dir, paths[len(paths)-1])
+		recovered, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(wal.config.Dir, paths[len(paths)-1]))
 		require.NoError(t, err)
 		nodes, err := recovered.AllNodes()
 		require.NoError(t, err)

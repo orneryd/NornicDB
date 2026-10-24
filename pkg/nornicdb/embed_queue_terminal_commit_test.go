@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -66,7 +68,7 @@ func TestEmbedWorkerTerminalMarkerCommitFailureRemainsPending(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			path := t.TempDir()
-			disk, err := storage.NewBadgerEngine(path)
+			disk, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
 			require.NoError(t, err)
 			defer disk.Close()
 			disk.SetEmbeddingsEnabled(true)
@@ -136,7 +138,7 @@ func TestEmbedWorkerTerminalMarkerCommitFailureRemainsPending(t *testing.T) {
 				require.Equal(t, 2, worker.Stats().Processed, "healthy MAIN keeps moving during marker retries")
 				worker.Close()
 				require.NoError(t, disk.Close())
-				reopened, err := storage.NewBadgerEngine(path)
+				reopened, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
 				require.NoError(t, err)
 				defer reopened.Close()
 				node, err := reopened.GetNode("terminal:poison")

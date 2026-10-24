@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"sort"
 	"strings"
@@ -41,7 +43,7 @@ func (r bridgeFirstReranker) Rerank(_ context.Context, _ string, candidates []se
 // an unavailable one isn't called.
 func TestCallDbRRetrieveGraphReranksFusedPool(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	exec := NewStorageExecutor(store)

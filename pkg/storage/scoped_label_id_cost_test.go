@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -12,7 +14,7 @@ import (
 // AllocsPerRun observes that work without a production counter or timing noise.
 func TestScopedLabelIDReadCostIgnoresOtherDatabases(t *testing.T) {
 	makeStore := func(foreign int) *BadgerEngine {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = engine.Close() })
 		for _, population := range []struct {

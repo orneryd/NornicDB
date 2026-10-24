@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -295,7 +297,7 @@ func TestReadNodeRecordsInOnePassStopsOnCallbackError(t *testing.T) {
 // BenchmarkLabelRecordReads compares record reads and projected decoding, not
 // full queries or the label scan's initial point-lookup prefix.
 func BenchmarkLabelRecordReads(b *testing.B) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = eng.Close() })
 	const count = 40000

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -53,7 +55,7 @@ func (e *seedLabelBehaviorEngine) StreamNodesByLabelProjectedInScope(_, label st
 }
 
 func TestSeedNodesFromOuterMatch_ErrorAndNilBranches(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &seedLabelBehaviorEngine{MemoryEngine: base, errorLabel: "ErrSeed", nilLabel: "NilSeed"}
 	store := storage.NewNamespacedEngine(eng, "seed_nodes_err_paths_cov")

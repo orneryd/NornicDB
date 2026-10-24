@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -12,7 +14,7 @@ import (
 )
 
 func TestConcurrentTransactionsCreatingSameLabelCommitIndependently(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
@@ -40,7 +42,7 @@ func TestConcurrentTransactionsCreatingSameLabelCommitIndependently(t *testing.T
 }
 
 func TestConcurrentTransactionsChangingSameLabelsCommitIndependently(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
@@ -71,7 +73,7 @@ func TestConcurrentTransactionsChangingSameLabelsCommitIndependently(t *testing.
 }
 
 func TestConflictingTransactionDoesNotPublishLabelCountDelta(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	_, err = engine.CreateNode(&Node{ID: "db1:same-node", Labels: []string{"Pending"}})
@@ -102,7 +104,7 @@ func TestConflictingTransactionDoesNotPublishLabelCountDelta(t *testing.T) {
 }
 
 func TestTransactionRepairsMalformedDerivedLabelCountAfterCommit(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
@@ -123,7 +125,7 @@ func TestTransactionRepairsMalformedDerivedLabelCountAfterCommit(t *testing.T) {
 }
 
 func TestRolledBackTransactionDoesNotPublishLabelCountDelta(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
@@ -156,7 +158,7 @@ func commitTransactionsConcurrently(transactions []*BadgerTransaction) []error {
 }
 
 func BenchmarkConcurrentTransactionsCreatingSameLabel(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, engine.Close()) })
 

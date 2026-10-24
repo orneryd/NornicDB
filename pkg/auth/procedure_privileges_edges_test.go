@@ -1,6 +1,8 @@
 package auth
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"testing"
@@ -61,7 +63,7 @@ func TestProcedurePrivilegeStoreEdges(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, grants)
 
-	system := storage.NewMemoryEngine()
+	system := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = system.Close() })
 	_, err = system.CreateNode(&storage.Node{ID: "user:x", Labels: []string{"_User", "_System"}, Properties: map[string]any{"name": "x"}})
 	require.NoError(t, err)
@@ -119,7 +121,7 @@ func TestProcedurePrivilegeStoreEdges(t *testing.T) {
 // read before.
 func TestProcedurePrivilegeStoreDeniesWhenUnreadable(t *testing.T) {
 	ctx := context.Background()
-	system := storage.NewMemoryEngine()
+	system := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = system.Close() })
 	writer := NewProcedurePrivilegeStore(system)
 	require.NoError(t, writer.Grant(ctx, "ops", "db.cdc.*", true, false))
@@ -150,7 +152,7 @@ func TestProcedurePrivilegeStoreDeniesWhenUnreadable(t *testing.T) {
 // would leave its grants for a role created later under the same name.
 func TestDeleteRoleKeepsRoleWhenGrantsCannotBeRemoved(t *testing.T) {
 	ctx := context.Background()
-	system := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "system")
+	system := storage.NewNamespacedEngine(runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "system")
 	t.Cleanup(func() { _ = system.Close() })
 	engine := &failingPrivilegeEngine{Engine: system}
 	roles := NewRoleStore(engine)

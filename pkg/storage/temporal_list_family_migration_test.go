@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -76,7 +78,7 @@ func TestTemporalListFamilyTemporalFormat4Migration(t *testing.T) {
 				require.NoError(t, inner.MarkCleanShutdown(context.Background()))
 				require.NoError(t, inner.Close())
 
-				reopened, err := NewBadgerEngine(dir)
+				reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 				require.NoError(t, err)
 				defer reopened.Close()
 				clean, err := reopened.ConsumeCleanShutdownMarker(context.Background())

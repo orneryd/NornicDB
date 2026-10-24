@@ -5,6 +5,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -44,7 +45,10 @@ func TestBoundDeleteSnapshotSurvivesPeerEndpointCascade(t *testing.T) {
 		{name: "peer_detach_deletes_sink", deletedUIDKey: "sink"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			base, err := storage.NewBadgerEngineInMemory()
+			base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+			if base != nil {
+				fixtureowner.Own(t, base)
+			}
 			require.NoError(t, err)
 			defer func() { require.NoError(t, base.Close()) }()
 

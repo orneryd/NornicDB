@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -121,7 +122,8 @@ func (s *dlqPublicStore) UpdateNodeEmbeddingSidecar(n *storage.Node) error {
 func dlqPublicFixture(t *testing.T, p *dlqPublicProvider, configure ...func(*nornicdb.EmbedWorkerConfig)) (*nornicdb.EmbedWorker, *dlqPublicStore) {
 	t.Helper()
 	path := t.TempDir()
-	base, err := storage.NewBadgerEngine(path)
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
+	fixtureowner.Own(t, base)
 	require.NoError(t, err)
 	s := &dlqPublicStore{Engine: storage.NewNamespacedEngine(base, "dlq"), disk: base, path: path, reject: make(map[storage.NodeID]bool)}
 	cfg := nornicdb.DefaultEmbedWorkerConfig()
@@ -269,7 +271,8 @@ func TestEmbedWorkerDLQPublicTerminalSurvivesRestart(t *testing.T) {
 	require.Eventually(t, func() bool { return w.Stats().Parked == 1 }, 4*time.Second, time.Millisecond)
 	w.Close()
 	require.NoError(t, s.disk.Close())
-	reopened, err := storage.NewBadgerEngine(s.path)
+	reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(s.path))
+	fixtureowner.Own(t, reopened)
 	require.NoError(t, err)
 	s.disk = reopened
 	s.Engine = storage.NewNamespacedEngine(reopened, "dlq")

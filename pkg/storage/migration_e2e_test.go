@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"testing"
 	"time"
@@ -197,7 +198,10 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 	// schema version back to 0 so the next open sees a v0 store and
 	// runs the full migration chain.
 	{
-		eng, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+		if eng != nil {
+			fixtureowner.Own(t, eng)
+		}
 		require.NoError(t, err)
 
 		for _, fix := range nodeFixtures {
@@ -329,10 +333,10 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 	}
 
 	// Stage 2: reopen with the upgrade flag — the full chain runs.
-	eng, err := NewBadgerEngineWithOptions(BadgerOptions{
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             dir,
 		AllowStorageUpgrade: true,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })
 
@@ -831,7 +835,10 @@ func TestMigrationE2E_MVCCAsOfReadsSurvive(t *testing.T) {
 	// historical versions and an edge that has two. Force the schema
 	// version back to 0 at the end so the next open runs the chain.
 	{
-		eng, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+		eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
+		if eng != nil {
+			fixtureowner.Own(t, eng)
+		}
 		require.NoError(t, err)
 
 		// CreateNode for hero with the FINAL state — the primary key
@@ -935,10 +942,10 @@ func TestMigrationE2E_MVCCAsOfReadsSurvive(t *testing.T) {
 	}
 
 	// Stage 2: reopen with the upgrade flag — full chain runs.
-	eng, err := NewBadgerEngineWithOptions(BadgerOptions{
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             dir,
 		AllowStorageUpgrade: true,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })
 	require.Equal(t, storageVersionCurrent, eng.storageVersion)

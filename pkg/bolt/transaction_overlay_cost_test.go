@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"testing"
@@ -8,7 +9,7 @@ import (
 
 func TestTransactionOverlayBoltRoutes(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		t.Cleanup(func() { require.NoError(t, base.Close()) })
 		_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
 		conn := openBoltTestConn(t, port)

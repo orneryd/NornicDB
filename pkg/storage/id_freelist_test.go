@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -12,13 +14,13 @@ import (
 // create → delete → prune pushes to freelist → wait past TTL → allocate
 // reuses the numID.
 func TestFreelist_RecyclesNumIDAfterPruneAndTTL(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory: true,
 		EngineOptions: EngineOptions{
 			// Short TTL so the test completes quickly.
 			IDFreelistTTL: 50 * time.Millisecond,
 		},
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
@@ -53,12 +55,12 @@ func TestFreelist_RecyclesNumIDAfterPruneAndTTL(t *testing.T) {
 // TestFreelist_HeadIsFifo ensures the first numID pushed is the first
 // reclaimed — prevents scans from having to pick "oldest" by value.
 func TestFreelist_HeadIsFifo(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory: true,
 		EngineOptions: EngineOptions{
 			IDFreelistTTL: 20 * time.Millisecond,
 		},
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 

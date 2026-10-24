@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,7 +24,7 @@ func TestExpressionIdentityGeneratedBolt(t *testing.T) {
 func runExpressionIdentityBolt(t *testing.T, cases []expressionidentitymatrix.Case) {
 	prior := config.IsCypherQueryNormalizationEnabled()
 	t.Cleanup(func() { config.SetCypherQueryNormalizationEnabled(prior) })
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "neo4j"))
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())

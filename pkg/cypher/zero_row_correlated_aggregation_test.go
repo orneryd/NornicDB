@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"os"
 	"testing"
@@ -26,7 +28,7 @@ func TestZeroRowCorrelatedCallAggregation(t *testing.T) {
 					name = "nonempty"
 				}
 				t.Run(fixture+"/"+mode+"/"+name, func(t *testing.T) {
-					base := storage.NewMemoryEngine()
+					base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 					t.Cleanup(func() { require.NoError(t, base.Close()) })
 					exec := NewStorageExecutor(storage.NewNamespacedEngine(base, "zero_row_aggregate"))
 					ctx := context.Background()

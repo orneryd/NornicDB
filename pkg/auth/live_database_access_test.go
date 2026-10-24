@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -9,7 +10,7 @@ import (
 )
 
 func TestLiveAllowlistModeObservesChanges(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "system")
 	defer engine.Close()
 	roles := NewRoleStore(engine)
@@ -28,7 +29,7 @@ func TestLiveAllowlistModeObservesChanges(t *testing.T) {
 }
 
 func TestRolesAllowMatchesEffectiveEntitlementUnion(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	engine := storage.NewNamespacedEngine(base, "system")
 	defer engine.Close()
 	store := NewRoleEntitlementsStore(engine)

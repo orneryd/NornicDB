@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -1064,7 +1065,10 @@ func TestCreateIndex_RebuildsUsableEntriesAfterRestart(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 
-	base1, err := storage.NewBadgerEngine(dir)
+	base1, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if base1 != nil {
+		fixtureowner.Own(t, base1)
+	}
 	require.NoError(t, err)
 	store1 := storage.NewNamespacedEngine(base1, "test")
 	exec1 := NewStorageExecutor(store1)
@@ -1082,7 +1086,7 @@ func TestCreateIndex_RebuildsUsableEntriesAfterRestart(t *testing.T) {
 
 	require.NoError(t, base1.Close())
 
-	base2, err := storage.NewBadgerEngine(dir)
+	base2, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer base2.Close()
 	store2 := storage.NewNamespacedEngine(base2, "test")
@@ -1100,7 +1104,10 @@ func TestCreateRelationshipIndex_PersistsAcrossRestart_E2E(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 
-	base1, err := storage.NewBadgerEngine(dir)
+	base1, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if base1 != nil {
+		fixtureowner.Own(t, base1)
+	}
 	require.NoError(t, err)
 	store1 := storage.NewNamespacedEngine(base1, "test")
 	exec1 := NewStorageExecutor(store1)
@@ -1160,7 +1167,7 @@ func TestCreateRelationshipIndex_PersistsAcrossRestart_E2E(t *testing.T) {
 
 	require.NoError(t, base1.Close())
 
-	base2, err := storage.NewBadgerEngine(dir)
+	base2, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer base2.Close()
 	store2 := storage.NewNamespacedEngine(base2, "test")

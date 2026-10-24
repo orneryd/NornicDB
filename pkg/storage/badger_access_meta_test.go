@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
@@ -9,20 +10,14 @@ import (
 
 func newTestEngine(t *testing.T) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatalf("NewBadgerEngineInMemory: %v", err)
 	}
 	t.Cleanup(func() { engine.Close() })
-	return engine
-}
-
-// MemoryEngine owns an in-memory Badger store with background workers. Keep
-// its lifetime bound to its test even when an assertion exits the test early.
-func newTestMemoryEngine(t testing.TB) *MemoryEngine {
-	t.Helper()
-	engine := NewMemoryEngine()
-	t.Cleanup(func() { _ = engine.Close() })
 	return engine
 }
 

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -17,11 +19,11 @@ import (
 // nothing while the user writes were still buffered. The index seek must
 // merge acknowledged-but-unflushed nodes.
 func TestWriteBehind_IndexedMatchSeesBufferedNodes(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour, // nothing flushes during the test
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -67,11 +69,11 @@ func TestWriteBehind_IndexedMatchSeesBufferedNodes(t *testing.T) {
 // against the committed index after a flush, then again against a mix of
 // committed and buffered nodes.
 func TestWriteBehind_IndexedMatchReusesBufferedIndexAfterFlush(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -109,11 +111,11 @@ func TestWriteBehind_IndexedMatchReusesBufferedIndexAfterFlush(t *testing.T) {
 // buffered relationship, and DETACH DELETE must leave no orphan edges while
 // everything is still buffered.
 func TestWriteBehind_MergeAndDetachDeleteOverBufferedEdges(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 

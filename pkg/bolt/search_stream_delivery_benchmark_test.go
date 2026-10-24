@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"testing"
@@ -16,7 +18,7 @@ import (
 func BenchmarkBoltContinuationDelivery(b *testing.B) {
 	for _, kind := range []string{"raw", "json"} {
 		b.Run(kind, func(b *testing.B) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			b.Cleanup(func() { _ = base.Close() })
 			store := storage.NewNamespacedEngine(base, "nornic")
 			for _, id := range []storage.NodeID{"a", "b", "c"} {

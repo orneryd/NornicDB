@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net"
 	"sync"
@@ -82,10 +83,10 @@ func TestCompositeExplicitTx_FailureRollsBackRemoteParticipant(t *testing.T) {
 				config.SetParserType(mode)
 				t.Cleanup(func() { config.SetParserType(previous) })
 
-				_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(storage.NewMemoryEngine(), "remote"))
+				_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "remote"))
 				runBoltQueryAndCollectRecords(t, openBoltTestConn(t, port), "CREATE CONSTRAINT rk_u FOR (u:U) REQUIRE u.k IS UNIQUE")
 
-				mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), &multidb.Config{
+				mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
 					DefaultDatabase: "nornic",
 					SystemDatabase:  "system",
 					RemoteEngineFactory: func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {
@@ -256,9 +257,9 @@ func TestCompositeExplicitTx_FailureDoesNotWaitOnUnresponsiveRemote(t *testing.T
 			t.Cleanup(func() { config.SetParserType(previous) })
 			ctx := context.Background()
 
-			_, remotePort := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(storage.NewMemoryEngine(), "remote"))
+			_, remotePort := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "remote"))
 			proxy, port := startStallingProxy(t, remotePort)
-			mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), &multidb.Config{
+			mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
 				DefaultDatabase: "nornic",
 				SystemDatabase:  "system",
 				RemoteEngineFactory: func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {

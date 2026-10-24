@@ -3,6 +3,7 @@ package nornicgrpc
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	gen "github.com/orneryd/nornicdb/pkg/nornicgrpc/gen"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,7 +13,7 @@ import (
 
 func TestSearchTextContinuationIssuedDepthCompletion(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	service := search.NewService(engine)
 	t.Cleanup(func() { require.NoError(t, service.Close()) })
 	for i := 0; i < 1000; i++ {

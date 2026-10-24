@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"strings"
 	"testing"
@@ -99,7 +101,7 @@ func TestUnwindRewrittenOperatorsPreserveExecutionErrors(t *testing.T) {
 }
 
 func TestPipelineSimpleNodeReadPlan_HandlesBoundedLabelStream(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = store.Close() })
 	for index := 0; index < 20; index++ {
 		_, err := store.CreateNode(&storage.Node{

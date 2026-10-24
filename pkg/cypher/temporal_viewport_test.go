@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -22,7 +24,7 @@ func (e *temporalViewportProbeEngine) IsCurrentTemporalNode(node *storage.Node, 
 }
 
 func TestCollectNodesWithStreaming_RespectsTemporalViewport(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	_, err := base.CreateNode(&storage.Node{ID: "nornic:visible", Labels: []string{"Doc"}, Properties: map[string]any{"idx": 1}})

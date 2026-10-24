@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"sort"
 	"testing"
@@ -18,7 +20,7 @@ type nonStreamingEngine struct {
 
 func newNonStreamingEngine(t *testing.T) *nonStreamingEngine {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	return &nonStreamingEngine{Engine: base.BadgerEngine}
 }

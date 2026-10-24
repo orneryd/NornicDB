@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -90,9 +91,8 @@ func TestRemoteExtraNormalizeBoltValues(t *testing.T) {
 }
 
 func TestStorageExtraMVCCConstructorAndPendingNoop(t *testing.T) {
-	engine := NewMemoryEngineWithMVCCHistory()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, NewMemoryEngineWithMVCCHistory(), ErrStorageClosed))
 	require.NotNil(t, engine)
-	t.Cleanup(func() { _ = engine.Close() })
 
 	badger := newIsolatedBadgerEngine(t)
 	badger.AddToPendingEmbeddings("nornic:n1")

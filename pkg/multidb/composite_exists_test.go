@@ -1,13 +1,14 @@
 package multidb
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func TestExistsOrIsConstituent_StandardDB(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := NewDatabaseManager(base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
@@ -24,7 +25,7 @@ func TestExistsOrIsConstituent_StandardDB(t *testing.T) {
 }
 
 func TestExistsOrIsConstituent_CompositeDB(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := NewDatabaseManager(base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
@@ -46,7 +47,7 @@ func TestExistsOrIsConstituent_CompositeDB(t *testing.T) {
 }
 
 func TestExistsOrIsConstituent_ConstituentDotted(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := NewDatabaseManager(base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
@@ -68,7 +69,7 @@ func TestExistsOrIsConstituent_ConstituentDotted(t *testing.T) {
 }
 
 func TestExistsOrIsConstituent_ConstituentDotted_CaseInsensitive(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := NewDatabaseManager(base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
@@ -90,7 +91,7 @@ func TestExistsOrIsConstituent_ConstituentDotted_CaseInsensitive(t *testing.T) {
 }
 
 func TestExistsOrIsConstituent_Unknown(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := NewDatabaseManager(base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
@@ -103,7 +104,7 @@ func TestExistsOrIsConstituent_Unknown(t *testing.T) {
 }
 
 func TestExistsOrIsConstituent_DottedButNotComposite(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := NewDatabaseManager(base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
@@ -120,7 +121,7 @@ func TestExistsOrIsConstituent_DottedButNotComposite(t *testing.T) {
 }
 
 func TestExistsOrIsConstituent_DottedWrongAlias(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := NewDatabaseManager(base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
@@ -142,7 +143,7 @@ func TestExistsOrIsConstituent_DottedWrongAlias(t *testing.T) {
 }
 
 func TestExistsOrIsConstituent_Alias(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := NewDatabaseManager(base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
@@ -162,7 +163,7 @@ func TestExistsOrIsConstituent_Alias(t *testing.T) {
 }
 
 func TestGetStorageWithAuth_ConstituentDotted_Local(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := NewDatabaseManager(base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
@@ -188,13 +189,13 @@ func TestGetStorageWithAuth_ConstituentDotted_Local(t *testing.T) {
 }
 
 func TestGetStorageWithAuth_ConstituentDotted_RemoteFactory(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	var gotAuth string
 
 	mgr, err := NewDatabaseManager(base, &Config{
 		RemoteEngineFactory: func(_ ConstituentRef, authToken string) (storage.Engine, error) {
 			gotAuth = authToken
-			return storage.NewMemoryEngine(), nil
+			return fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil
 		},
 	})
 	if err != nil {

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -220,7 +221,10 @@ func TestPerNamespaceMVCC_LegacyGlobalCounterSeedsNewNamespace(t *testing.T) {
 
 func TestEnsureNamespaceMVCC_RecoversSequenceFromExistingHeadsAfterReopen(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	_, err = engine.CreateNode(&Node{ID: NodeID("nornic:node-1"), Labels: []string{"L"}})
@@ -233,7 +237,7 @@ func TestEnsureNamespaceMVCC_RecoversSequenceFromExistingHeadsAfterReopen(t *tes
 
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer reopened.Close()
 

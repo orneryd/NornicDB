@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"os"
@@ -22,7 +24,7 @@ func newFabricCallRowsExecutor(t testing.TB) *StorageExecutor {
 			User: ref.User, Password: ref.Password,
 		})
 	}
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), config)
+	mgr, err := multidb.NewDatabaseManager(runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed), config)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, mgr.Close()) })
 	for _, db := range []string{"one", "two"} {

@@ -2,6 +2,7 @@ package tck
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"testing"
 	"time"
@@ -37,7 +38,7 @@ func TestExistsSubqueryEvaluationOwnerExecute(t *testing.T) {
 	ref := newDifferentialBackend(t, driver, "neo4j", AutocommitMode)
 	resetDifferentialBackend(t, ctx, ref, "Neo4j")
 	defer resetDifferentialBackend(t, context.Background(), ref, "Neo4j")
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "exists_execute_reference")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "exists_execute_reference")
 	defer store.Close()
 	exec := cypher.NewStorageExecutor(store)
 	for _, setup := range subqueryeval.Setup {

@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
 
 func TestRuntimeMapWireContract(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "r73wire")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "r73wire")
 	defer store.Close()
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 	ctx := context.Background()

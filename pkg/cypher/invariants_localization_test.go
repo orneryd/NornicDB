@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"testing"
@@ -25,7 +27,7 @@ func (e *invariantCreateErrEngine) BulkCreateNodes(nodes []*storage.Node) error 
 
 func TestCypherInvariantErrorsHaveTypedIdentityAndExactEnglish(t *testing.T) {
 	t.Run("pipeline create failure", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		store := storage.NewNamespacedEngine(base, "pipeline_invariant")
 		seed := NewStorageExecutor(store)

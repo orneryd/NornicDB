@@ -2,6 +2,7 @@ package nornicdb
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -22,7 +23,7 @@ func TestSearchStreamResetSerializesInFlightServiceCreation(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	const database = "stream_reset_creation"
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(base, database)
 	for _, id := range []storage.NodeID{"a", "b"} {
 		_, err := store.CreateNode(&storage.Node{ID: id})

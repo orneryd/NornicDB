@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 	"time"
@@ -37,7 +39,7 @@ func TestBoltExplicitTransactionCommitTimeoutArbitration(t *testing.T) {
 // before the deadline and holds it across that deadline. COMMIT must remain the
 // sole terminal owner and its durable write must not be rolled back or relabeled.
 func testBoltCommitWinsBeforeTransactionTimeout(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})
@@ -86,7 +88,7 @@ func testBoltCommitWinsBeforeTransactionTimeout(t *testing.T) {
 // released the reader before sending COMMIT, making the opposite ordering
 // deterministic and requiring the Neo4j-compatible timeout failure.
 func testBoltTransactionTimeoutWinsBeforeCommit(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})

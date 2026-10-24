@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -43,11 +45,11 @@ func runInt(t *testing.T, exec *StorageExecutor, ctx context.Context, q string) 
 // FlushWriteBehind, including the shapes that previously missed buffered edges
 // (unnamed-relationship expansion, relationship-property reads in type scans).
 func TestWriteBehind_AdjacencyParity(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour, // buffer never drains mid-test
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -117,11 +119,11 @@ func TestWriteBehind_AdjacencyParity(t *testing.T) {
 // SET on a buffered relationship must succeed (not report a conflict) and the
 // write must survive the flush.
 func TestWriteBehind_SetBufferedRelationship(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -151,11 +153,11 @@ func TestWriteBehind_SetBufferedRelationship(t *testing.T) {
 // buffered, the type count must equal the post-flush count (no transient
 // under- or over-count).
 func TestWriteBehind_DetachDeleteCountConsistency(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -209,11 +211,11 @@ func TestWriteBehind_DetachDeleteCountConsistency(t *testing.T) {
 // stale until flush. With the default cache enabled the count must reflect a
 // buffered DETACH DELETE immediately.
 func TestWriteBehind_QueryCacheInvalidatesOnBufferedCommit(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 

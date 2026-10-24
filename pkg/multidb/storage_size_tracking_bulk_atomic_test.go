@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 
@@ -37,7 +39,7 @@ func (e *rejectingEngine) CreateEdge(edge *storage.Edge) error {
 func TestSizeTrackingEngine_BulkCreateIsAllOrNothing(t *testing.T) {
 	manager, dbName := setupTestManager(t)
 	id := func(name string) string { return dbName + ":" + name }
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	inner := &rejectingEngine{Engine: base, rejectNode: storage.NodeID(id("c")), rejectEdge: storage.EdgeID(id("e2"))}
 	wrapped := newSizeTrackingEngine(inner, manager, dbName)

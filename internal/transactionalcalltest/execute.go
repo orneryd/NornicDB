@@ -2,6 +2,7 @@ package transactionalcalltest
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -12,7 +13,7 @@ import (
 // CheckExecute runs the public Execute adapter shared by the fixture and Cypher tests.
 func CheckExecute(t *testing.T) {
 	ctx := context.Background()
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))

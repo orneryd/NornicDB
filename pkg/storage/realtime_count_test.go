@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -204,7 +205,10 @@ func TestCountAfterFlushAndRecreate(t *testing.T) {
 // Helper to create test BadgerEngine
 func createRealtimeTestBadgerEngine(t *testing.T) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	return engine
 }

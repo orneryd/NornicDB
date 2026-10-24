@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -698,7 +700,7 @@ func TestPendingEmbeddingsRespectDatabaseLabelPolicy(t *testing.T) {
 // newTestBadgerEngineForPending creates a BadgerEngine for pending embeddings tests
 func newTestBadgerEngineForPending(t *testing.T) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { engine.Close() })
 	// These tests are specifically exercising the pending-embed index. The

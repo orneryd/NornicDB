@@ -1,6 +1,8 @@
 package nornicgrpc
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -13,7 +15,7 @@ import (
 
 func TestSearchStreamRetryGRPC(t *testing.T) {
 	streamretrytest.Run(t, func(t *testing.T) streamretrytest.Fixture {
-		memory := storage.NewMemoryEngine()
+		memory := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { require.NoError(t, memory.Close()) })
 		engine := storage.NewNamespacedEngine(memory, "retry")
 		service := search.NewService(engine)

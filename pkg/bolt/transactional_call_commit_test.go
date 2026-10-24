@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -8,7 +9,7 @@ import (
 )
 
 func TestBoltTransactionalCallKeepsCommittedBatches(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "tenant"))
@@ -47,7 +48,7 @@ func TestBoltTransactionalCallBatchSizeExpressionContract(t *testing.T) {
 
 	for _, sample := range cases {
 		t.Run(sample.name, func(t *testing.T) {
-			base, err := storage.NewBadgerEngineInMemory()
+			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "tenant"))

@@ -1,6 +1,8 @@
 package cypher_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"strconv"
 	"testing"
@@ -12,7 +14,7 @@ import (
 func setupNorthwindBenchExecutor(b *testing.B, products int, orders int) *cypher.StorageExecutor {
 	b.Helper()
 
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "bench")
 

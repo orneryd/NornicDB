@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 )
@@ -13,7 +15,7 @@ func BenchmarkBadgerEngine_BulkOperations(b *testing.B) {
 			b.Run(fmt.Sprintf("%s/n=%d", op, n), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
 					b.StopTimer()
-					engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: b.TempDir()})
+					engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: b.TempDir()}))
 					if err != nil {
 						b.Fatal(err)
 					}

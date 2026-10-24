@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -21,7 +22,7 @@ func materializedPathAccessFixture() PathResult {
 
 func TestMaterializedPathUsesTypedCarrier(t *testing.T) {
 	path := materializedPathAccessFixture()
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	t.Cleanup(func() { _ = exec.storage.Close() })
 
 	for _, tc := range []struct {
@@ -59,7 +60,7 @@ func TestMaterializedPathAccessAcrossTransactions(t *testing.T) {
 			name = "explicit"
 		}
 		t.Run(name, func(t *testing.T) {
-			inner := &accessCountingEngine{MemoryEngine: storage.NewMemoryEngine()}
+			inner := &accessCountingEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 			t.Cleanup(func() { _ = inner.Close() })
 			store := storage.NewNamespacedEngine(inner, "materialized")
 			exec := NewStorageExecutor(store)
@@ -97,7 +98,7 @@ func (discardMaterializedAccessRecorder) RecordMaterializedAccess(string) {}
 
 func BenchmarkMaterializedValuePath(b *testing.B) {
 	path := materializedPathAccessFixture()
-	exec := NewStorageExecutor(storage.NewMemoryEngine())
+	exec := NewStorageExecutor(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	b.Cleanup(func() { _ = exec.storage.Close() })
 	recorder := discardMaterializedAccessRecorder{}
 	for _, tc := range []struct {

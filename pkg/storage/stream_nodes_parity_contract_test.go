@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"sort"
@@ -28,13 +30,13 @@ func TestStreamNodesOptionsParityAcrossStacks(t *testing.T) {
 			return engine
 		}},
 		{name: "badger", prefix: "db:", count: 3, build: func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			return engine
 		}},
 		{name: "wal", prefix: "db:", count: 3, build: func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			wal, err := NewWAL(t.TempDir(), nil)
@@ -43,13 +45,13 @@ func TestStreamNodesOptionsParityAcrossStacks(t *testing.T) {
 			return NewWALEngine(engine, wal)
 		}},
 		{name: "namespaced", prefix: "n-", count: 3, build: func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			return NewNamespacedEngine(engine, "db")
 		}},
 		{name: "composite", prefix: "", count: 2, build: func(t *testing.T) Engine {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
 			nsA := NewNamespacedEngine(engine, "a")

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -36,7 +38,7 @@ func TestSol1482R2CypherCommittedReadCannotResurrectNewerDelete(t *testing.T) {
 
 func TestSol1482R3ExplicitCommitAndRollback(t *testing.T) {
 	ctx := WithTransactionControl(context.Background())
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	svc := search.NewServiceWithDimensions(store, 2)
@@ -68,7 +70,7 @@ func TestSol1482R3ExplicitCommitAndRollback(t *testing.T) {
 
 func TestSol1482R3SuppressedEdgeDoesNotConsumeTopK(t *testing.T) {
 	ctx := context.Background()
-	base, err := storage.NewBadgerEngine(t.TempDir())
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")

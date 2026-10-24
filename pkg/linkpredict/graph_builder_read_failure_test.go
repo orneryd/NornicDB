@@ -1,6 +1,8 @@
 package linkpredict
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -21,7 +23,7 @@ func (e *graphBuilderReadEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage
 }
 
 func TestGraphBuilderPropagatesRelationshipReadFailure(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer store.Close()
 	_, err := store.CreateNode(&storage.Node{ID: "test:a"})
 	require.NoError(t, err)
@@ -40,7 +42,7 @@ func TestGraphBuilderPropagatesRelationshipReadFailure(t *testing.T) {
 	require.True(t, os.IsNotExist(err), "a failed partial graph must not be cached")
 }
 func TestGraphBuilderReportsCancellationDuringLastChunk(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer store.Close()
 	_, err := store.CreateNode(&storage.Node{ID: "test:a"})
 	require.NoError(t, err)
@@ -58,7 +60,7 @@ func TestGraphBuilderReportsCancellationDuringLastChunk(t *testing.T) {
 }
 
 func TestGraphBuilderCancellationWaitsForOwnedWorkers(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer store.Close()
 	for _, id := range []storage.NodeID{"test:a", "test:b", "test:c"} {
 		_, err := store.CreateNode(&storage.Node{ID: id})

@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -74,7 +76,7 @@ func TestIsEncryptedRemoteCredential(t *testing.T) {
 }
 
 func TestDatabaseManager_EncryptRemotePassword(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, &Config{
@@ -89,7 +91,7 @@ func TestDatabaseManager_EncryptRemotePassword(t *testing.T) {
 }
 
 func TestDatabaseManager_EncryptRemotePassword_EmptyReject(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, &Config{
@@ -107,7 +109,7 @@ func TestDatabaseManager_EncryptRemotePassword_EmptyReject(t *testing.T) {
 }
 
 func TestDatabaseManager_EncryptRemotePassword_NoCipherConfigured(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -120,7 +122,7 @@ func TestDatabaseManager_EncryptRemotePassword_NoCipherConfigured(t *testing.T) 
 }
 
 func TestDatabaseManager_DecryptStoredRemotePassword(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, &Config{
@@ -139,7 +141,7 @@ func TestDatabaseManager_DecryptStoredRemotePassword(t *testing.T) {
 }
 
 func TestDatabaseManager_DecryptStoredRemotePassword_PlaintextFallback(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, &Config{
@@ -155,7 +157,7 @@ func TestDatabaseManager_DecryptStoredRemotePassword_PlaintextFallback(t *testin
 }
 
 func TestDatabaseManager_DecryptStoredRemotePassword_EmptyReject(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)
@@ -171,7 +173,7 @@ func TestDatabaseManager_DecryptStoredRemotePassword_EmptyReject(t *testing.T) {
 }
 
 func TestDatabaseManager_DecryptStoredRemotePassword_NoCipherConfigured(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer inner.Close()
 
 	manager, err := NewDatabaseManager(inner, nil)

@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -10,7 +11,7 @@ import (
 
 func newTestManager(t *testing.T) *DatabaseManager {
 	t.Helper()
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	m, err := NewDatabaseManager(inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { m.Close() })

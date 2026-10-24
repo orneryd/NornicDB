@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net"
 	"testing"
@@ -90,7 +91,7 @@ func newBoltCoverageAuthenticator(t *testing.T) *auth.Authenticator {
 	cfg.JWTSecret = []byte("bolt-coverage-secret-key-123456789")
 	cfg.SecurityEnabled = true
 
-	authenticator, err := auth.NewAuthenticator(cfg, storage.NewMemoryEngine())
+	authenticator, err := auth.NewAuthenticator(cfg, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	require.NoError(t, err)
 
 	_, err = authenticator.CreateUser("tester", "secret-pass", []auth.Role{auth.RoleViewer})
@@ -824,7 +825,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			defer clientConn.Close()
 			session.server.config.Authenticator = adapter
 			session.server.config.AllowAnonymous = true
-			session.server.dbManager = &overrideDBManager{store: storage.NewMemoryEngine(), defaultDB: "graph", exists: true}
+			session.server.dbManager = &overrideDBManager{store: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), defaultDB: "graph", exists: true}
 
 			done := make(chan error, 1)
 			go func() { done <- session.handleHello(encodePackStreamMap(map[string]any{"scheme": "none"})) }()
@@ -836,7 +837,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			noAuthSession, noAuthServerConn, noAuthClientConn := makeHelloSession()
 			defer noAuthServerConn.Close()
 			defer noAuthClientConn.Close()
-			noAuthSession.server.dbManager = &overrideDBManager{store: storage.NewMemoryEngine(), defaultDB: "graph", exists: true}
+			noAuthSession.server.dbManager = &overrideDBManager{store: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), defaultDB: "graph", exists: true}
 
 			done = make(chan error, 1)
 			go func() { done <- noAuthSession.handleHello(encodePackStreamMap(map[string]any{"scheme": "none"})) }()
@@ -856,7 +857,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 			session.server.config.Authenticator = NewAuthenticatorAdapter(authenticator)
 			session.server.config.LogQueries = true
-			session.server.dbManager = &overrideDBManager{store: storage.NewMemoryEngine(), defaultDB: "graph", exists: true}
+			session.server.dbManager = &overrideDBManager{store: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), defaultDB: "graph", exists: true}
 
 			done = make(chan error, 1)
 			go func() {
@@ -926,7 +927,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			defer serverConn.Close()
 			defer clientConn.Close()
 			session.server.config.Authenticator = NewAuthenticatorAdapter(authenticator)
-			session.server.dbManager = &overrideDBManager{store: storage.NewMemoryEngine(), defaultDB: "graph", exists: false}
+			session.server.dbManager = &overrideDBManager{store: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), defaultDB: "graph", exists: false}
 
 			done := make(chan error, 1)
 			go func() {
@@ -1139,7 +1140,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 		_, err = session.getExecutorForDatabase("missing")
 		require.Error(t, err)
 
-		store := storage.NewMemoryEngine()
+		store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		session = &Session{server: &Server{dbManager: &mockDBManager{stores: map[string]storage.Engine{"graph": store}, defaultDB: "graph"}}}
 		exec, err := session.getExecutorForDatabase("graph")
 		require.NoError(t, err)
@@ -1181,7 +1182,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 				{name: "schema", query: "CREATE INDEX ON :Person(name)", message: "Schema operations require schema permission"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					session, serverConn, clientConn := makeSession(&cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
+					session, serverConn, clientConn := makeSession(&cypherQueryExecutor{executor: cypher.NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))})
 					defer serverConn.Close()
 					defer clientConn.Close()
 					session.authenticated = true
@@ -1225,7 +1226,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 				config:   DefaultConfig(),
 				sessions: map[string]*Session{},
 				dbManager: &mockDBManager{
-					stores:    map[string]storage.Engine{"graph": storage.NewMemoryEngine()},
+					stores:    map[string]storage.Engine{"graph": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))},
 					defaultDB: "graph",
 				},
 			}
@@ -1278,7 +1279,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 			serverConn2, clientConn2 := net.Pipe()
 			defer serverConn2.Close()
 			defer clientConn2.Close()
-			session = newTestSession(serverConn2, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
+			session = newTestSession(serverConn2, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))})
 			session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 			session.authenticated = true
 			session.authResult = &BoltAuthResult{Authenticated: true, Username: "editor", Roles: []string{"editor"}, Permissions: []string{"read", "write"}}
@@ -1363,7 +1364,7 @@ func TestBoltCoverage_ServerMessageAndRunHelpers(t *testing.T) {
 		})
 
 		t.Run("read permission secure default and db executor errors", func(t *testing.T) {
-			session, serverConn, clientConn := makeSession(&cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
+			session, serverConn, clientConn := makeSession(&cypherQueryExecutor{executor: cypher.NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))})
 			defer serverConn.Close()
 			defer clientConn.Close()
 			session.authenticated = true

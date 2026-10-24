@@ -2,6 +2,7 @@ package cypher_test
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -13,7 +14,7 @@ func TestTransactionalCallKeepsCommittedBatches(t *testing.T) {
 	for _, batch := range []string{"1 ROW", "1 ROWS", "1\tROW", "1\tROWS", "2 ROW", "2 ROWS"} {
 		for _, body := range []string{"WITH x CREATE (:B {v: 10/x})", "WITH x CREATE (:B {v: 10/x}) RETURN x AS value"} {
 			t.Run(batch+"/"+body, func(t *testing.T) {
-				base, err := storage.NewBadgerEngineInMemory()
+				base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, base.Close()) })
 				store := storage.NewNamespacedEngine(base, "tenant")
@@ -30,14 +31,14 @@ func TestTransactionalCallKeepsCommittedBatches(t *testing.T) {
 
 func TestTransactionalCallCommittedBatchesSurviveReopen(t *testing.T) {
 	dir := t.TempDir()
-	base, err := storage.NewBadgerEngine(dir)
+	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))
 	_, queryErr := exec.Execute(context.Background(), "UNWIND [1,2,3,0] AS x CALL { WITH x CREATE (:B {v: 12/x}) } IN TRANSACTIONS OF 2 ROW", nil)
 	closeErr := base.Close()
 	require.Error(t, queryErr)
 	require.NoError(t, closeErr)
-	reopened, err := storage.NewBadgerEngine(dir)
+	reopened, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
 	reader := cypher.NewStorageExecutor(storage.NewNamespacedEngine(reopened, "tenant"))
@@ -47,7 +48,7 @@ func TestTransactionalCallCommittedBatchesSurviveReopen(t *testing.T) {
 }
 
 func TestTransactionalCallSingularRowRetainsTail(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))
@@ -57,7 +58,7 @@ func TestTransactionalCallSingularRowRetainsTail(t *testing.T) {
 }
 
 func BenchmarkTransactionalCallBatchCommit(b *testing.B) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, base.Close()) })
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))
@@ -98,7 +99,7 @@ func TestTransactionalCallBatchSizeExpressionContract(t *testing.T) {
 
 	for _, sample := range cases {
 		t.Run(sample.name, func(t *testing.T) {
-			base, err := storage.NewBadgerEngineInMemory()
+			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))

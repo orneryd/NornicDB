@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 )
@@ -9,7 +10,7 @@ import (
 func BenchmarkManagedSourceWritePath(b *testing.B) {
 	for _, mode := range []string{"text", "structured", "body-unconsumed"} {
 		b.Run(mode, func(b *testing.B) {
-			engine := NewMemoryEngine().BadgerEngine
+			engine := testfixture.Own(b, testfixture.Track(b, NewMemoryEngine(), ErrStorageClosed)).BadgerEngine
 			defer engine.Close()
 			// Detect source-aware acceptance outside timing. Both trees use
 			// this identical fixture; the base writes its original payload,

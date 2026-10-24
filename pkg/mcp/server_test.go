@@ -1,6 +1,8 @@
 package mcp
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -588,7 +590,7 @@ func TestServerStorageAndExecutorHelpers(t *testing.T) {
 
 	t.Run("database scoped storage and related nodes", func(t *testing.T) {
 		server := NewServer(nil, nil)
-		engine := storage.NewMemoryEngine()
+		engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = engine.Close() })
 
 		_, err := engine.CreateNode(&storage.Node{ID: "tenant_a:1", Labels: []string{"Memory"}, Properties: map[string]interface{}{"title": "Root"}})

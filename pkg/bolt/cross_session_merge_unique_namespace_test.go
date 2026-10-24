@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -20,7 +21,7 @@ import (
 // value through the nornic schema cache, not repeatedly choose CREATE and
 // surface commit-time UNIQUE violations.
 func TestBoltCrossSessionMergeUniqueConflict_EshuDefaultNamespaceExplicitTx(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		_ = baseStore.Close()
 	})
@@ -76,7 +77,7 @@ func TestBoltCrossSessionMergeUniqueConflict_EshuDefaultNamespaceExplicitTx(t *t
 // commit-time UNIQUE conflict must become a successful retry because the next
 // ExecuteWrite attempt can MATCH the committed nornic-scoped node.
 func TestBoltDatabaseManagerExecuteWriteUniqueMerge_DefaultNamespace(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -176,7 +177,10 @@ func TestBoltDatabaseManagerExecuteWriteUniqueMerge_DefaultNamespace(t *testing.
 }
 
 func TestBoltDatabaseManagerExecuteWriteUniqueMerge_ProductionWrapperStackWithLookupIndex(t *testing.T) {
-	badger, err := storage.NewBadgerEngine(t.TempDir())
+	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+	if badger != nil {
+		fixtureowner.Own(t, badger)
+	}
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
@@ -295,7 +299,10 @@ SET r.name = row.name`,
 }
 
 func TestBoltDatabaseManagerMergeExistingNodeAfterLateSchemaBootstrap(t *testing.T) {
-	badger, err := storage.NewBadgerEngine(t.TempDir())
+	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+	if badger != nil {
+		fixtureowner.Own(t, badger)
+	}
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)

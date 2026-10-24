@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -12,7 +14,7 @@ func TestEmbedWorkerLegacyStructuredSourceLifecycle(t *testing.T) {
 	original, err := queue.GetNode("node-000")
 	require.NoError(t, err)
 	original.Properties["id"] = "old"
-	disk, err := storage.NewBadgerEngine(t.TempDir())
+	disk, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer disk.Close()
 	disk.SetEmbeddingsEnabled(true)

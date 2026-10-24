@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"reflect"
 	"testing"
@@ -161,7 +162,7 @@ func BenchmarkSelectHybridClusters(b *testing.B) {
 	defer os.Unsetenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_SEM")
 	defer os.Unsetenv("NORNICDB_VECTOR_HYBRID_ROUTING_W_LEX")
 
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	svc.EnableClustering(nil, 8)
 	svc.SetMinEmbeddingsForClustering(1)
 	for i := 0; i < 256; i++ {

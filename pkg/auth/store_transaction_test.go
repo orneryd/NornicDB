@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -73,7 +74,7 @@ func (e *mutationFault) AllNodes() ([]*storage.Node, error) {
 
 func TestRoleAndAllowlistRenameFailureChangesNothing(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	base := storage.NewNamespacedEngine(inner, "system")
 	t.Cleanup(func() { _ = base.Close() })
 	fault := &mutationFault{Engine: base}
@@ -140,7 +141,7 @@ func TestAllowlistBatchFailureChangesNothing(t *testing.T) {
 }
 
 func TestUserMutationFailureChangesNothing(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	fault := &mutationFault{Engine: base}
 	config := DefaultAuthConfig()
@@ -184,7 +185,7 @@ func TestUserMutationFailureChangesNothing(t *testing.T) {
 
 func TestCoordinatedRoleRenameFailureChangesNothing(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	base := storage.NewNamespacedEngine(inner, "system")
 	t.Cleanup(func() { _ = base.Close() })
 	fault := &mutationFault{Engine: base}
@@ -219,7 +220,7 @@ func TestCoordinatedRoleRenameFailureChangesNothing(t *testing.T) {
 
 func TestWithStoreTransactionNamespaceAndFailures(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	roles := NewRoleStore(system)
@@ -241,7 +242,7 @@ func TestWithStoreTransactionNamespaceAndFailures(t *testing.T) {
 	_, err = base.GetNode("role:cancel")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 	require.ErrorIs(t, WithStoreTransaction(ctx, nil, func(storage.Engine) error { return nil }), storage.ErrNotImplemented)
-	closed := storage.NewMemoryEngine()
+	closed := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	require.NoError(t, closed.Close())
 	require.Error(t, WithStoreTransaction(ctx, closed, func(storage.Engine) error { return nil }))
 }
@@ -269,7 +270,7 @@ func (e *transactionStartEngine) BeginTransaction() (*storage.BadgerTransaction,
 
 func TestStoreTransactionReadsItsOwnChangesAndStartFailures(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	require.NoError(t, WithStoreTransaction(ctx, base, func(view storage.Engine) error {
 		_, err := view.CreateNode(&storage.Node{ID: "role:ops", Labels: []string{roleLabel}, Properties: map[string]any{"name": "ops"}})
@@ -293,7 +294,7 @@ func TestStoreTransactionReadsItsOwnChangesAndStartFailures(t *testing.T) {
 
 func TestCoordinatedRoleRenameRejectsDistinctStores(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	other := storage.NewNamespacedEngine(base, "other")
@@ -306,7 +307,7 @@ func TestCoordinatedRoleRenameRejectsDistinctStores(t *testing.T) {
 	require.True(t, roles.Exists("ops"))
 	_, err := system.GetNode("role:new")
 	require.ErrorIs(t, err, storage.ErrNotFound)
-	separate := storage.NewMemoryEngine()
+	separate := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = separate.Close() })
 	require.False(t, sameSystemStore(system, separate))
 }
@@ -324,7 +325,7 @@ func TestCoordinatedRoleRenameStagedFailuresChangeNothing(t *testing.T) {
 	} {
 		t.Run(test.op+string(test.id), func(t *testing.T) {
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
 			fault := &mutationFault{Engine: system}
@@ -364,7 +365,7 @@ func TestEntitlementDeletionFailurePreservesState(t *testing.T) {
 
 func TestRoleGrantValidationUsesTheTransactionRecord(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	fault := &mutationFault{Engine: storage.NewNamespacedEngine(base, "system")}
 	roles := NewRoleStore(fault)

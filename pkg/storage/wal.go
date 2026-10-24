@@ -2599,7 +2599,9 @@ type TransactionState struct {
 // Incomplete transactions (no commit/abort) are rolled back using undo data.
 // Returns the engine state and recovery statistics.
 func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *TransactionRecoveryResult, error) {
-	engine := NewMemoryEngine()
+	store := newRecoveredStore()
+	defer store.close()
+	engine := store.engine
 	result := &TransactionRecoveryResult{
 		Transactions: make(map[string]*TransactionState),
 	}
@@ -2736,7 +2738,7 @@ func RecoverWithTransactions(walDir, snapshotPath string) (*MemoryEngine, *Trans
 		result.NonTxApplied++
 	}
 
-	return engine, result, nil
+	return store.release(), result, nil
 }
 
 // TransactionRecoveryResult contains detailed statistics from transaction-aware recovery.
@@ -2810,7 +2812,9 @@ func RecoverFromWALWithLogger(walDir, snapshotPath string, logger *slog.Logger) 
 // RecoverFromWALWithResult recovers database state and returns detailed results.
 // Use this for programmatic access to replay statistics and errors.
 func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, ReplayResult, error) {
-	engine := NewMemoryEngine()
+	store := newRecoveredStore()
+	defer store.close()
+	engine := store.engine
 	result := ReplayResult{}
 
 	// Load snapshot if available
@@ -2885,16 +2889,18 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 
 	// Replay WAL entries after snapshot
 	activePath := walActivePath(walDir)
-	manifest, _ := loadWALManifest(walDir)
+	manifest, err := loadWALManifest(walDir)
+	if err != nil {
+		return nil, result, fmt.Errorf("wal: failed to load recovery manifest: %w", err)
+	}
 	if _, statErr := os.Stat(activePath); os.IsNotExist(statErr) && len(manifest.Segments) == 0 {
-		return engine, result, nil // No WAL to replay, return engine as-is
+		return store.release(), result, nil // No WAL to replay, return engine as-is
 	}
 
 	// Ensure we don't have a torn tail record before reading for recovery.
 	// This is critical when recovery is invoked because the main server never started,
 	// so NewWAL() (which also repairs tails) was never called.
 	if _, _, repairErr := repairWALTailIfNeeded(activePath, defaultWALLogger{}); repairErr != nil {
-		_ = engine.Close()
 		return nil, result, fmt.Errorf("wal: failed to inspect recovery log: %w", repairErr)
 	}
 
@@ -2907,7 +2913,7 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 	// Each entry will use its own database name (stored in entry.Database)
 	result = ReplayWALEntries(engine, entries)
 
-	return engine, result, nil
+	return store.release(), result, nil
 }
 
 type engineSnapshotVisitor struct {

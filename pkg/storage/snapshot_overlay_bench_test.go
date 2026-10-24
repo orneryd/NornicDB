@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -12,7 +14,7 @@ import (
 func BenchmarkSnapshotOverlayReads(b *testing.B) {
 	for _, pending := range []bool{false, true} {
 		b.Run(fmt.Sprintf("pending=%v", pending), func(b *testing.B) {
-			engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: b.TempDir(), LowMemory: true, WriteBehind: true, WriteBehindInterval: time.Hour})
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: b.TempDir(), LowMemory: true, WriteBehind: true, WriteBehindInterval: time.Hour}))
 			if err != nil {
 				b.Fatal(err)
 			}

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"strings"
@@ -64,7 +66,7 @@ func TestAdministrationRoutingFailures(t *testing.T) {
 		require.ErrorIs(t, err, errSystemUnavailable)
 	})
 	t.Run("system database opens no transaction", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		// nonTransactionalEngine (executor_misc_test.go) opens no transaction.
 		exec := routed(t, nonTransactionalEngine{Engine: storage.NewNamespacedEngine(base, "system")}, nil)

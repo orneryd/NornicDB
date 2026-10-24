@@ -1,6 +1,8 @@
 package qdrantgrpc
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -20,7 +22,7 @@ func setupSimilarityPropertyPolicy(t *testing.T, be *storage.BadgerEngine, names
 }
 
 func TestQdrantQueriesProjectSuppressedPayload(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
 	dbm, err := multidb.NewDatabaseManager(be, nil)
