@@ -1,0 +1,71 @@
+{
+  "IAtomContext": {
+    "IAllReduceExpressionContext": "children",
+    "ICaseExpressionContext": "children",
+    "ICollectSubqueryContext": "effect",
+    "ICountAllContext": "effect",
+    "ICountSubqueryContext": "effect",
+    "IFilterWithContext": "children",
+    "IFunctionInvocationContext": "effect",
+    "IListComprehensionContext": "children",
+    "ILiteralContext": "children",
+    "IMapProjectionContext": "effect",
+    "IParameterContext": "children",
+    "IParenthesizedExpressionContext": "children",
+    "IPatternComprehensionContext": "children",
+    "IReduceExpressionContext": "children",
+    "IRelationshipsChainPatternContext": "children",
+    "ISubqueryExistContext": "effect",
+    "ISymbolContext": "children"
+  },
+  "IAtomicExpressionContext": {
+    "ILabelPredicateContext": "effect",
+    "IListExpressionContext": "effect",
+    "INormalizationPredicateContext": "children",
+    "INullExpressionContext": "children",
+    "IPropertyOrLabelExpressionContext": "effect",
+    "IStringExpressionContext": "children",
+    "ITypePredicateContext": "children"
+  },
+  "INotExpressionContext": {
+    "IComparisonExpressionContext": "children",
+    "IExistsSubqueryContext": "effect"
+  },
+  "IReadingStatementContext": {
+    "IMatchStContext": "effect",
+    "IUnwindStContext": "effect",
+    "ILetStContext": "effect",
+    "IFilterStContext": "effect",
+    "IForStContext": "effect",
+    "IQueryCallStContext": "effect",
+    "ICallSubqueryContext": "effect"
+  },
+  "IUpdatingStatementContext": {
+    "ICreateStContext": "effect",
+    "IMergeStContext": "effect",
+    "IDeleteStContext": "effect",
+    "ISetStContext": "effect",
+    "IRemoveStContext": "effect",
+    "IForeachStContext": "effect"
+  },
+  "ISinglePartQContext": {
+    "IReadingStatementContext": "children",
+    "IReturnStContext": "effect",
+    "IUpdatingStatementContext": "children",
+    "IEmbeddingStContext": "children",
+    "ICallSubqueryContext": "effect",
+    "IOrderStContext": "effect"
+  },
+  "IMultiPartQContext": {
+    "ISinglePartQContext": "children",
+    "IWithStContext": "effect",
+    "IReadingStatementContext": "children",
+    "IUpdatingStatementContext": "children"
+  },
+  "IProjectionBodyContext": {
+    "IProjectionItemsContext": "children",
+    "IOrderStContext": "effect",
+    "ISkipStContext": "effect",
+    "ILimitStContext": "effect"
+  }
+}

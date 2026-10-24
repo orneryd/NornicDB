@@ -477,63 +477,18 @@ func (e *StorageExecutor) seedNodeFromIDString(id string) *storage.Node {
 	return nil
 }
 
-// parseCallSubquery extracts the body from CALL { ... } and any trailing clauses
-// Returns: body, afterCall, inTransactions bool, batchSize int
-func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall string, inTransactions bool, batchSize int) {
-	batchSize = 1000 // Default batch size
-
-	trimmed := strings.TrimSpace(cypher)
-
-	// Find the opening brace
-	braceStart := strings.Index(trimmed, "{")
-	if braceStart == -1 {
-		return "", "", false, batchSize
+// parseCallSubquery is the compatibility adapter for body/plan consumers. The
+// shared grammar owns the body boundary and the complete transactional spec.
+func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall string, inTransactions bool, batch *transactionBatchSpec) {
+	call, err := readCallClause(context.Background(), cypher)
+	if err != nil {
+		return "", "", false, nil
 	}
-
-	// The matching closing brace; a brace in quoted text isn't one
-	// (CALL () { RETURN '}' AS y } …).
-	braceEnd := findMatchingDelimiter(trimmed, braceStart, '{', '}')
-	if braceEnd < 0 {
-		return "", "", false, batchSize
-	}
-
-	// Extract body (between braces)
-	body = strings.TrimSpace(trimmed[braceStart+1 : braceEnd])
+	body = call.Body
 	if stripped, finishes := stripUnionBranchFinishes(body); finishes && strings.TrimSpace(stripped) != "" {
 		body = stripped
 	}
-
-	// Get what's after the closing brace
-	afterCall = strings.TrimSpace(trimmed[braceEnd+1:])
-
-	// Check for IN TRANSACTIONS
-	upperAfter := upperASCII(afterCall)
-	if strings.HasPrefix(upperAfter, "IN TRANSACTIONS") {
-		inTransactions = true
-		afterTx := strings.TrimSpace(afterCall[15:])
-		upperAfterTx := upperASCII(afterTx)
-
-		// Check for OF n ROWS
-		if strings.HasPrefix(upperAfterTx, "OF ") {
-			// Parse batch size
-			ofPart := afterTx[3:]
-			// Find ROWS keyword
-			rowsIdx := strings.Index(upperASCII(ofPart), " ROWS")
-			if rowsIdx > 0 {
-				sizeStr := strings.TrimSpace(ofPart[:rowsIdx])
-				if size, err := strconv.Atoi(sizeStr); err == nil && size > 0 {
-					batchSize = size
-				}
-				afterCall = strings.TrimSpace(ofPart[rowsIdx+5:])
-			} else {
-				afterCall = ""
-			}
-		} else {
-			afterCall = afterTx
-		}
-	}
-
-	return body, afterCall, inTransactions, batchSize
+	return body, call.After, call.Batch != nil, call.Batch
 }
 
 // callSubqueryHasScopeClause reports whether a CALL subquery declares its
@@ -629,46 +584,6 @@ func importsVariable(vars []string, variable string) bool {
 		}
 	}
 	return false
-}
-
-// executeCallInTransactions executes a CALL {} IN TRANSACTIONS query
-// This batches operations for large datasets by processing results in separate transactions.
-//
-// The subquery is executed in batches where each batch is processed in its own transaction.
-// This is useful for large imports/updates to avoid memory issues and provide transaction boundaries.
-//
-// Example:
-//
-//	CALL {
-//	  MATCH (p:Person)
-//	  SET p.processed = true
-//	  RETURN p.name AS name
-//	} IN TRANSACTIONS OF 2 ROWS
-//
-// This will process Person nodes in batches of 2, each batch in a separate transaction.
-//
-// Strategy:
-//  1. First execute the subquery to determine the total number of rows (read-only)
-//  2. If it contains write operations, process in batches by adding LIMIT/SKIP to the MATCH
-//  3. Each batch is executed in its own transaction via executeWithImplicitTransaction
-//
-// rejectCallInTransactionsInExplicitTx enforces the Neo4j rule that
-// CALL { ... } IN TRANSACTIONS cannot run inside an explicit transaction:
-// its batches would execute inside the caller's transaction and survive a
-// ROLLBACK (#648).
-func (e *StorageExecutor) rejectCallInTransactionsInExplicitTx() error {
-	if e.txContext != nil && e.txContext.active {
-		if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok && tx.OperationCount() > 0 {
-			return &classifiedCypherError{
-				cause:  errors.New("Expected transaction state to be empty when calling transactional subquery. (Transactions committed: 0)"),
-				code:   "Neo.DatabaseError.Statement.ExecutionFailed",
-				detail: "InvalidCallInTransactions",
-			}
-		}
-		return newSemanticError("Neo.DatabaseError.Transaction.TransactionStartFailed", "InvalidCallInTransactions",
-			"CALL { ... } IN TRANSACTIONS is not allowed inside an explicit transaction")
-	}
-	return nil
 }
 
 // makeSubqueryReadOnly converts a subquery with writes to a read-only version for row counting.
