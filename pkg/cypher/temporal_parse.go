@@ -242,14 +242,15 @@ func parseCypherDateTimeTextWithError(text string) (time.Time, string, bool, err
 	}
 	local := time.Date(date.Year(), date.Month(), date.Day(), hour, minute, second, nanos, time.UTC)
 	if zoneID != "" {
-		return resolveNamedZoneLocalTime(local, location, false), zoneID, true, nil
+		return ResolveNamedZoneLocalTime(local, location, false), zoneID, true, nil
 	}
 	return time.Date(date.Year(), date.Month(), date.Day(), hour, minute, second, nanos, location), zoneID, true, nil
 }
 
-// resolveNamedZoneLocalTime shifts gaps forward. String constructors prefer
-// the earlier overlap instant; map constructors prefer the later instant.
-func resolveNamedZoneLocalTime(local time.Time, location *time.Location, preferLater bool) time.Time {
+// ResolveNamedZoneLocalTime interprets local's UTC clock components in location,
+// shifting gaps forward. String constructors and legacy Bolt values prefer the
+// earlier overlap instant; map constructors set preferLater for the later one.
+func ResolveNamedZoneLocalTime(local time.Time, location *time.Location, preferLater bool) time.Time {
 	_, before := local.Add(-48 * time.Hour).In(location).Zone()
 	_, after := local.Add(48 * time.Hour).In(location).Zone()
 	first := local.Add(-time.Duration(before) * time.Second).In(location)
