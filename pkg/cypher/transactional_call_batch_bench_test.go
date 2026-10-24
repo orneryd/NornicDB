@@ -2,6 +2,7 @@ package cypher_test
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strconv"
 	"testing"
 
@@ -13,7 +14,7 @@ import (
 // Varying a literal keeps this a compilation workload as well as execution.
 // Every size is positive and the CALL always has one input row.
 func BenchmarkTransactionalCallBatchCompile(b *testing.B) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, base.Close()) })
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))
@@ -34,7 +35,7 @@ func BenchmarkTransactionalCallChainPlanning(b *testing.B) {
 		{"match", "MATCH (n:BatchChainBenchmark) "},
 	} {
 		b.Run(sample.name, func(b *testing.B) {
-			base, err := storage.NewBadgerEngineInMemory()
+			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(b, err)
 			b.Cleanup(func() { require.NoError(b, base.Close()) })
 			exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))

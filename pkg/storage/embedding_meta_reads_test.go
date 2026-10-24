@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 // outdated reads as no metadata.
 func TestGetNodeEmbeddingMetaThroughStorageStack(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "db")
-	badgerEngine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: directory, WriteBehind: true, WriteBehindInterval: time.Hour})
+	badgerEngine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: directory, WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = badgerEngine.Close() })
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(directory, "wal"), SyncMode: "immediate"})
@@ -93,7 +94,10 @@ func TestGetNodeEmbeddingMetaThroughStorageStack(t *testing.T) {
 // The metadata read's failures: a closed engine, an unreadable node record or
 // sidecar record, and an engine without the read (the full node's metadata).
 func TestGetNodeEmbeddingMetaFailures(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&Node{ID: "nornic:a", Properties: map[string]any{"text": "x"}})
 	require.NoError(t, err)

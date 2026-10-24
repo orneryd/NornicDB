@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"sync/atomic"
@@ -19,7 +21,7 @@ import (
 // transient conflict retried by the driver, and the final graph must contain
 // one relationship.
 func TestBoltConcurrentBareRelationshipMergeConverges(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = baseStore.Close() })
 	store := storage.NewNamespacedEngine(baseStore, "neo4j")
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)

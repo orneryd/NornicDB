@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"

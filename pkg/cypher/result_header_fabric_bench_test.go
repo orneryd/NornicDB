@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/fabric"
@@ -26,7 +27,7 @@ func (e *resultHeaderBenchExecutor) ExecuteQueryWithRecord(ctx context.Context, 
 // No input rows means CREATE performs no writes. This measures Fabric's empty
 // field dispatch, including the formerly incorrect nested-RETURN fallback.
 func BenchmarkResultHeaderFabricDispatch(b *testing.B) {
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	b.Cleanup(func() { _ = store.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(store, "neo4j"))
 	adapter := &resultHeaderBenchExecutor{exec: exec}
@@ -48,7 +49,7 @@ func BenchmarkResultHeaderFabricDispatch(b *testing.B) {
 // Empty correlated CALLs must retain their declared fields through the next
 // APPLY and final projection. Parameters bypass result caching on every run.
 func BenchmarkResultHeaderFabricEmptyChain(b *testing.B) {
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := multidb.NewDatabaseManager(store, nil)
 	if err != nil {
 		b.Fatal(err)

@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -12,7 +14,7 @@ import (
 func TestPluginCanonicalProcedureABI(t *testing.T) {
 	cypher.ClearUserProcedures()
 	t.Cleanup(cypher.ClearUserProcedures)
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	e := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "plugin_abi"))
 	type key struct{}

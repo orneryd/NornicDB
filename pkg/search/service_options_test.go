@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+
 	"path/filepath"
 	"strings"
 	"testing"

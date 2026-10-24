@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,7 +18,7 @@ import (
 func TestReviewR73QueuedOutcomeRevisionBarrier(t *testing.T) {
 	for _, mode := range []string{"update", "delete", "unbound_update", "unbound_delete"} {
 		t.Run(mode, func(t *testing.T) {
-			disk, err := NewBadgerEngine(t.TempDir())
+			disk, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			defer disk.Close()
 			store := NewNamespacedEngine(disk, "queued")

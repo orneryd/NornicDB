@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 	"time"
@@ -192,7 +193,7 @@ func TestExecutionDeterminismPureParameterizedCacheHit(t *testing.T) {
 }
 
 func TestExecutionDeterminismFabricEmbeddedDeadline(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
 	require.NoError(t, manager.CreateDatabase("determinism_local"))

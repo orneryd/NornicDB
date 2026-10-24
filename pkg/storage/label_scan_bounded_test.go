@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"fmt"
 	"testing"
@@ -103,7 +105,7 @@ func TestLabelScanLargeTailPreservesReadErrors(t *testing.T) {
 }
 
 func BenchmarkLabelScanStreaming(b *testing.B) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = eng.Close() })
 	const count = 40000

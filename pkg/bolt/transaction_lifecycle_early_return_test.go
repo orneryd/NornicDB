@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"context"
 	"errors"
@@ -270,7 +272,7 @@ func TestBoltRawTransactionPinsBeginDatabaseAndRejectsCrossDatabaseRun(t *testin
 }
 
 func TestBoltFailedRunIgnoresCommitUntilResetAndRollsBack(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	executor := newFailingRunTransactionalExecutor(storage.NewNamespacedEngine(base, "nornic"))
 	port := startControlledTransactionServer(t, executor)
@@ -303,7 +305,7 @@ func TestBoltReturnRuntimeFailureKeepsConnectionAfterReset(t *testing.T) {
 		{"RETURN substring('abc', -1)", "Neo.DatabaseError.Statement.ExecutionFailed"},
 	} {
 		t.Run(testCase.query, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			executor := newFailingRunTransactionalExecutor(storage.NewNamespacedEngine(base, "nornic"))
 			port := startControlledTransactionServer(t, executor)

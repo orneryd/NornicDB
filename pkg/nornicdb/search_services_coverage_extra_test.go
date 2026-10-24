@@ -2,6 +2,7 @@ package nornicdb
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -10,8 +11,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newCoverageSearchDB() *DB {
-	base := storage.NewMemoryEngine()
+func newCoverageSearchDB(t testing.TB) *DB {
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	return &DB{
 		storage:             storage.NewNamespacedEngine(base, "nornic"),
 		baseStorage:         base,
@@ -23,7 +24,7 @@ func newCoverageSearchDB() *DB {
 }
 
 func TestSearchServices_Coverage_EmptyDBNameHelpers(t *testing.T) {
-	db := newCoverageSearchDB()
+	db := newCoverageSearchDB(t)
 	t.Cleanup(func() { _ = db.baseStorage.Close() })
 
 	status := db.GetDatabaseSearchStatus("")
@@ -33,13 +34,13 @@ func TestSearchServices_Coverage_EmptyDBNameHelpers(t *testing.T) {
 }
 
 func TestSearchServices_Coverage_StartBuildGuardsAndNilContext(t *testing.T) {
-	db := newCoverageSearchDB()
+	db := newCoverageSearchDB(t)
 	t.Cleanup(func() { _ = db.baseStorage.Close() })
 
 	db.startSearchIndexBuild(nil, nil)
 	db.startSearchIndexBuild(&dbSearchService{}, nil)
 
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "tenant-build")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant-build")
 	svc := search.NewServiceWithDimensions(engine, 3)
 	entry := &dbSearchService{dbName: "tenant-build", svc: svc, buildDone: make(chan struct{})}
 
@@ -53,15 +54,15 @@ func TestSearchServices_Coverage_StartBuildGuardsAndNilContext(t *testing.T) {
 
 func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 	t.Run("guards nil entry", func(t *testing.T) {
-		db := newCoverageSearchDB()
+		db := newCoverageSearchDB(t)
 		t.Cleanup(func() { _ = db.baseStorage.Close() })
 		db.ensurePendingFlush(nil)
 	})
 
 	t.Run("returns early when flush already running", func(t *testing.T) {
-		db := newCoverageSearchDB()
+		db := newCoverageSearchDB(t)
 		t.Cleanup(func() { _ = db.baseStorage.Close() })
-		svc := search.NewServiceWithDimensions(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "tenant"), 3)
+		svc := search.NewServiceWithDimensions(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant"), 3)
 		entry := &dbSearchService{
 			dbName:              "tenant",
 			svc:                 svc,
@@ -82,10 +83,10 @@ func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 	})
 
 	t.Run("startBackgroundTask false resets pendingFlushRunning", func(t *testing.T) {
-		db := newCoverageSearchDB()
+		db := newCoverageSearchDB(t)
 		t.Cleanup(func() { _ = db.baseStorage.Close() })
 		db.closed = true
-		svc := search.NewServiceWithDimensions(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "tenant"), 3)
+		svc := search.NewServiceWithDimensions(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "tenant"), 3)
 		entry := &dbSearchService{
 			dbName:            "tenant",
 			svc:               svc,
@@ -107,7 +108,7 @@ func TestSearchServices_Coverage_EnsurePendingFlushBranches(t *testing.T) {
 }
 
 func TestSearchServices_Coverage_EnsureBuiltAndStartedDefaultBranches(t *testing.T) {
-	db := newCoverageSearchDB()
+	db := newCoverageSearchDB(t)
 	t.Cleanup(func() { _ = db.baseStorage.Close() })
 
 	db.SetDbSearchFlagsResolver(func(dbName string) (bool, bool, string, string) {
@@ -127,7 +128,7 @@ func TestSearchServices_Coverage_EnsureBuiltAndStartedDefaultBranches(t *testing
 }
 
 func TestSearchServices_Coverage_EnsureBuildStartedUsesBackgroundWhenBuildCtxNil(t *testing.T) {
-	db := newCoverageSearchDB()
+	db := newCoverageSearchDB(t)
 	t.Cleanup(func() { _ = db.baseStorage.Close() })
 
 	db.SetDbSearchFlagsResolver(func(dbName string) (bool, bool, string, string) {
@@ -142,7 +143,7 @@ func TestSearchServices_Coverage_EnsureBuildStartedUsesBackgroundWhenBuildCtxNil
 }
 
 func TestSearchServices_Coverage_EventAndClusteringNilContextBranches(t *testing.T) {
-	db := newCoverageSearchDB()
+	db := newCoverageSearchDB(t)
 	t.Cleanup(func() { _ = db.baseStorage.Close() })
 
 	db.indexNodeFromEvent(nil)

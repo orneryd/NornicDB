@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,7 +18,7 @@ import (
 )
 
 func TestExecute_FabricCallUseChain_OnCompositeConstituents(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -92,7 +93,7 @@ RETURN translationId, textKey, textCount
 }
 
 func TestExecute_FabricNestedCallUseChain_OnCompositeConstituents(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -147,7 +148,7 @@ RETURN translationId, textKey
 }
 
 func TestExecute_FabricCallUseSubquery_OutOfScopeUseFails(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -181,7 +182,7 @@ RETURN x
 }
 
 func TestExecute_FabricCorrelatedCallUseChain_EmptyOuterRowsStillHasColumns(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -231,7 +232,7 @@ RETURN translationId, textKey, textKey128, texts;
 }
 
 func TestExecute_FabricCorrelatedCallUseChain_AppliesWherePerOuterRow(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -352,7 +353,7 @@ RETURN textKey, textKey128, texts
 }
 
 func TestExecute_FabricCorrelatedCallUseChain_ListComprehensionJoin(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -458,7 +459,7 @@ RETURN keys
 }
 
 func TestExecute_FabricCorrelatedCallUseChain_CoalesceReturn_NoInternalColumns(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -567,7 +568,7 @@ func TestNormalizeFabricRowWrapper_MapInterfaceKeys(t *testing.T) {
 }
 
 func TestExecute_FabricSetBasedSourceTranslationJoin_NoFabricRowLeak(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -655,7 +656,7 @@ ORDER BY sourceId, language
 }
 
 func TestExecute_FabricCorrelatedSourceTranslationCount_HotPathResult(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -736,7 +737,7 @@ func BenchmarkFabricCorrelatedSourceTranslationJoin_Profile(b *testing.B) {
 	const trNodeCount = 100000
 	const txrNodeCount = 100000
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(b, err)
 	defer mgr.Close()
@@ -847,7 +848,7 @@ ORDER BY sourceId, language
 }
 
 func TestExecute_FabricCorrelatedSourceTranslationJoin_HotPathTrace(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -931,7 +932,7 @@ ORDER BY sourceId
 }
 
 func TestExecute_FabricCorrelatedSourceTranslationJoin_HotPathShapeMatrix(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -1053,7 +1054,7 @@ ORDER BY sourceId, language
 }
 
 func TestExecute_FabricPlanCache_HitOnRepeatQuery(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -1114,7 +1115,7 @@ RETURN sourceId
 }
 
 func TestExecute_FabricResultCache_HitOnRepeatReadQuery(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -1197,7 +1198,7 @@ func TestExecute_FabricResultCache_SkipsRemoteConstituentTargets(t *testing.T) {
 	}))
 	defer remote.Close()
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()

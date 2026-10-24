@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -47,12 +49,12 @@ func TestBadgerEngine_GetEdgeKernel_DirectAndVisibleAgree(t *testing.T) {
 // BenchmarkBadger_GetEdge_DirectRead pins the direct edge read (decode +
 // decay filter) after the shared-kernel extraction.
 func BenchmarkBadger_GetEdge_DirectRead(b *testing.B) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory: true,
 		EngineOptions: EngineOptions{
 			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100},
 		},
-	})
+	}))
 	if err != nil {
 		b.Fatal(err)
 	}

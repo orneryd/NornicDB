@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -29,7 +30,10 @@ func TestSetTerminalErrorObserver(t *testing.T) {
 	})
 
 	// Create a session with a lifecycle controller that will trigger a terminal error
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatalf("failed to create badger engine: %v", err)
 	}
@@ -67,7 +71,10 @@ func TestSetTerminalErrorObserver(t *testing.T) {
 }
 
 func TestCommitAndDelete_TerminalError(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatalf("failed to create badger engine: %v", err)
 	}
@@ -102,7 +109,10 @@ func TestCommitAndDelete_TerminalError(t *testing.T) {
 }
 
 func TestRollbackAndDelete_TerminalError_Succeeds(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatalf("failed to create badger engine: %v", err)
 	}
@@ -224,7 +234,7 @@ func TestNotifyTerminalError_NotifyFalse(t *testing.T) {
 func TestOpenWithExecutorForOwner_OwnerTrimmed(t *testing.T) {
 	mgr := NewManager(time.Second, newExecutorFactory(t))
 
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = store.Close() })
 	exec := cypher.NewStorageExecutor(store)
 

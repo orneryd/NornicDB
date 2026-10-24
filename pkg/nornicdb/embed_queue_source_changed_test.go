@@ -2,6 +2,7 @@ package nornicdb
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"sync"
 	"testing"
@@ -53,7 +54,7 @@ func (e *changingEmbedder) embedded(fragment string) bool {
 func TestEmbedWorkerReembedsNodeChangedWhileEmbedding(t *testing.T) {
 	for _, route := range []string{"UpdateNode keeping UpdatedAt", "UpdateNode with a new UpdatedAt", "Cypher SET"} {
 		t.Run(route, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			base.SetEmbeddingsEnabled(true)
 			engine := storage.NewNamespacedEngine(base, "test")
 			_, err := engine.CreateNode(&storage.Node{ID: "doc", Labels: []string{"Memory"}, Properties: map[string]any{"content": "first version alpha"}})

@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -15,7 +17,7 @@ import (
 // change to open sessions at once.
 func TestBoltSessionLosesDeletedRole(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	// The system database, as the server gives it to the auth stores.
 	engine := storage.NewNamespacedEngine(base, "system")
@@ -64,7 +66,7 @@ func TestBoltSessionAuthenticationDisabled(t *testing.T) {
 	session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 	require.True(t, session.authenticationDisabled())
 	for _, enabled := range []bool{false, true} {
-		engine := storage.NewMemoryEngine()
+		engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = engine.Close() })
 		config := auth.DefaultAuthConfig()
 		config.SecurityEnabled = enabled
@@ -98,7 +100,7 @@ func boltAccountFixture(t *testing.T) (*auth.Authenticator, *AuthenticatorAdapte
 
 func boltProductionFixture(t *testing.T) (*auth.Authenticator, *AuthenticatorAdapter, *Server, boltStores) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	engine := storage.NewNamespacedEngine(base, "system")
 	config := auth.DefaultAuthConfig()

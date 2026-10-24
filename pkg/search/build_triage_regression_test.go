@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"errors"
+
 	"log/slog"
 	"os"
 	"path/filepath"

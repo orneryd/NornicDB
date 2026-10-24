@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -10,7 +12,7 @@ import (
 // BenchmarkBadgerEngine_NodeCountByPrefix_Warm measures the cached namespace
 // count path after the cache has been populated by mutations.
 func BenchmarkBadgerEngine_NodeCountByPrefix_Warm(b *testing.B) {
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	defer badger.Close()
 
@@ -40,7 +42,7 @@ func BenchmarkBadgerEngine_NodeCountByPrefix_Warm(b *testing.B) {
 // BenchmarkBadgerEngine_EdgeCountByPrefix_Warm measures the cached edge count
 // path after the cache has been populated by mutations.
 func BenchmarkBadgerEngine_EdgeCountByPrefix_Warm(b *testing.B) {
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	defer badger.Close()
 

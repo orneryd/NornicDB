@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -14,7 +15,8 @@ import (
 func newPoisonedQueryScanGraph(t *testing.T) *largeEmbeddingGraph {
 	t.Helper()
 	dir := t.TempDir()
-	engine, err := storage.NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	fixtureowner.Own(t, engine)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	manager, err := multidb.NewDatabaseManager(engine, nil)
@@ -29,7 +31,7 @@ func newPoisonedQueryScanGraph(t *testing.T) *largeEmbeddingGraph {
 	}
 	require.NoError(t, engine.Close())
 	// Corrupt offline, then let the engine reopen with its managed commit oracle.
-	raw, err := badger.Open(badger.DefaultOptions(dir).WithLogger(nil))
+	raw, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(dir).WithLogger(nil)))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = raw.Close() })
 	// The fixture's only large values are its four 2048D vectors. Select them
@@ -54,7 +56,8 @@ func newPoisonedQueryScanGraph(t *testing.T) *largeEmbeddingGraph {
 		return nil
 	}))
 	require.NoError(t, raw.Close())
-	engine, err = storage.NewBadgerEngine(dir)
+	engine, err = fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	fixtureowner.Own(t, engine)
 	require.NoError(t, err)
 	g.engine = engine
 	g.store = storage.NewNamespacedEngine(engine, "test")

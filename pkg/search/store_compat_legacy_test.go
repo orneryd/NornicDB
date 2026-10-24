@@ -15,6 +15,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"os"
 	"path/filepath"
@@ -325,7 +326,10 @@ func writeLegacyCompatStore(t *testing.T, dir string, scalar bool) {
 	graphDir := filepath.Join(dir, "graph")
 	require.NoError(t, os.MkdirAll(graphDir, 0o755))
 	// Direct third-party raw KV writes; never storage.NewBadgerEngine/CreateNode.
-	db, err := badger.Open(badger.DefaultOptions(graphDir).WithLogger(nil))
+	db, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(graphDir).WithLogger(nil)))
+	if db != nil {
+		fixtureowner.Own(t, db)
+	}
 	require.NoError(t, err)
 	err = db.Update(func(txn *badger.Txn) error {
 		for key, value := range records {

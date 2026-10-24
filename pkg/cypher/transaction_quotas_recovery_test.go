@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,7 +20,7 @@ func TestTransactionQuotaRejectionLeavesWALIndexesAndSearchUnchanged(t *testing.
 			t.Run(fmt.Sprintf("explicit=%v/%s", explicit, kind), func(t *testing.T) {
 				ctx := context.Background()
 				dir := t.TempDir()
-				base := storage.NewMemoryEngine()
+				base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 				wal, err := storage.NewWAL(dir, nil)
 				require.NoError(t, err)
 				logged := storage.NewWALEngine(base, wal)
@@ -94,7 +95,7 @@ func TestTransactionQuotaRejectionLeavesWALIndexesAndSearchUnchanged(t *testing.
 				}
 				verify(engine, svc)
 				require.NoError(t, wal.Close())
-				recovered, err := storage.RecoverFromWAL(dir, "")
+				recovered, err := fixtureowner.OwnResult[*storage.MemoryEngine](t, storage.ErrStorageClosed)(storage.RecoverFromWAL(dir, ""))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = recovered.Close() })
 				recoveredEngine := storage.NewNamespacedEngine(recovered, "quota")

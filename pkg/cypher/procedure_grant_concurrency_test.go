@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"strconv"
 	"strings"
@@ -41,7 +42,7 @@ func TestGrantsAndRoleChangesSerialize(t *testing.T) {
 	for _, rename := range []bool{false, true} {
 		t.Run(map[bool]string{false: "delete", true: "rename"}[rename], func(t *testing.T) {
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			system := storage.NewNamespacedEngine(base, "system")
 			roles := auth.NewRoleStore(system)
@@ -97,7 +98,7 @@ func (e *immutableUpgradeFailure) UpdateNode(node *storage.Node) error {
 
 func TestImmutableUpgradeFailureChangesNothing(t *testing.T) {
 	ctx := WithAuthenticationDisabled(context.Background())
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	grants := auth.NewProcedurePrivilegeStore(system)
@@ -127,7 +128,7 @@ func TestGrantRacingRoleChangeNeverLeavesTheGrant(t *testing.T) {
 	ctx := context.Background()
 	for i := 0; i < iterations; i++ {
 		rename := i%2 == 1
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		system := storage.NewNamespacedEngine(base, "system")
 		roles := auth.NewRoleStore(system)
 		require.NoError(t, roles.CreateRole(ctx, "ops"))

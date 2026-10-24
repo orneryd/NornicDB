@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -1418,7 +1419,7 @@ func TestTransaction_MultipleOperationTypes(t *testing.T) {
 
 // Benchmark transaction overhead
 func BenchmarkTransaction_CommitNodes(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -1435,7 +1436,7 @@ func BenchmarkTransaction_CommitNodes(b *testing.B) {
 }
 
 func BenchmarkTransaction_RollbackNodes(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

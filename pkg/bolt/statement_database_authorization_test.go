@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	neo4jdriver "github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -18,7 +19,7 @@ import (
 // a composite constituent, whose access is its composite's and its target
 // database's).
 func TestBoltEveryDatabaseAStatementSelectsIsAuthorized(t *testing.T) {
-	mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
 	for _, name := range []string{"da", "db"} {
@@ -32,7 +33,7 @@ func TestBoltEveryDatabaseAStatementSelectsIsAuthorized(t *testing.T) {
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	authCfg.SecurityEnabled = true
-	authenticator, err := auth.NewAuthenticator(authCfg, storage.NewMemoryEngine())
+	authenticator, err := auth.NewAuthenticator(authCfg, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	require.NoError(t, err)
 	_, err = authenticator.CreateUser("admin", "admin-password", []auth.Role{auth.RoleAdmin})
 	require.NoError(t, err)

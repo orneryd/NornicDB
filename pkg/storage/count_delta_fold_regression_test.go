@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 
@@ -15,7 +16,7 @@ import (
 // Folding is off the read path (PR #1043 issue B): a count read sums the
 // deltas in place and the background fold worker collapses them later.
 func TestCountDeltaFoldLargeBacklogChunked(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -63,7 +64,10 @@ func TestCountDeltaFoldLargeBacklogChunked(t *testing.T) {
 // real nodes must fold at close and reopen cleanly with the correct count.
 func TestCountDeltaLargeBacklogReopen(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	const nodes = countDeltaFoldChunk + 1000 // > one chunk of deltas
@@ -75,7 +79,7 @@ func TestCountDeltaLargeBacklogReopen(t *testing.T) {
 	// Close without ever reading the count, so every delta is folded at close.
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 
@@ -86,7 +90,7 @@ func TestCountDeltaLargeBacklogReopen(t *testing.T) {
 	// No deltas may survive the close-time fold: a further reopen must see a
 	// clean base and remain correct.
 	require.NoError(t, reopened.Close())
-	reopened2, err := NewBadgerEngine(dir)
+	reopened2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened2.Close() })
 	count, err = reopened2.NodeCountByLabelInNamespace("ns1", "ReopenBig")
@@ -99,7 +103,7 @@ func TestCountDeltaLargeBacklogReopen(t *testing.T) {
 // of one (label, type) pair must not conflict on the read-modify-write
 // positional counter and double-count.
 func TestConcurrentRelationshipCreateCountsExact(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 

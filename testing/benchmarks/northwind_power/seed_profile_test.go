@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"testing"
 	"time"
@@ -24,10 +25,13 @@ func TestSeedProfileInProcess(t *testing.T) {
 		t.Skip("set NORNICDB_SEED_PROFILE=1 to run the seed profile")
 	}
 
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:     t.TempDir(),
 		WriteBehind: true, // auto-sizing interval, like the benchmark harness
-	})
+	}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatalf("open engine: %v", err)
 	}

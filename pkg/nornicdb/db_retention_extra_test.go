@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -157,7 +159,7 @@ func TestStartRetentionSweep_NoOpWithoutManager(t *testing.T) {
 }
 
 func TestRetentionSweep_ProcessesExpiredAndSkipsExcluded(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	namespaced := storage.NewNamespacedEngine(engine, "nornic")
 	now := time.Now().UTC()
@@ -198,7 +200,7 @@ func TestRetentionSweep_ProcessesExpiredAndSkipsExcluded(t *testing.T) {
 }
 
 func TestRetentionSweep_BudgetAndStartBranches(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	namespaced := storage.NewNamespacedEngine(engine, "nornic")
 	_, err := namespaced.CreateNode(&storage.Node{ID: "first", Labels: []string{"User"}, CreatedAt: time.Now().Add(-2 * time.Hour), Properties: map[string]any{"owner_id": "alice"}})

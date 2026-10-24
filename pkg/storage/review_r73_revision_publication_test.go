@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,7 +17,7 @@ import (
 func TestReviewR73OutcomePublicationCommitOrder(t *testing.T) {
 	for _, deletion := range []bool{false, true} {
 		t.Run(map[bool]string{false: "update", true: "delete"}[deletion], func(t *testing.T) {
-			disk, err := NewBadgerEngine(t.TempDir())
+			disk, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			defer disk.Close()
 			disk.SetEmbeddingsEnabled(true)

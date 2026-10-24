@@ -2,6 +2,7 @@ package search
 
 import (
 	"context"
+
 	"sync/atomic"
 	"testing"
 	"time"

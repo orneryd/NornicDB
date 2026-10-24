@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"testing"
@@ -82,7 +84,7 @@ func TestProcedurePrivilegeCommandEdges(t *testing.T) {
 	system := storage.NewNamespacedEngine(systemBase, "system")
 	require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "a"))
 	require.NoError(t, auth.NewRoleStore(system).CreateRole(ctx, "b"))
-	user := storage.NewMemoryEngine()
+	user := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = user.Close() })
 	exec := NewStorageExecutor(user)
 	exec.SetDatabaseManager(systemOnlyManager{engine: system})

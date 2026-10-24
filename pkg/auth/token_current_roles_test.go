@@ -1,6 +1,8 @@
 package auth
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -66,7 +68,7 @@ func TestAuthenticationDisabledDefinition(t *testing.T) {
 	config.SecurityEnabled = false
 	config.DefaultAdminUsername = ""
 	config.JWTSecret = []byte("test-secret-key-for-testing-only-32b")
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	disabled, err := NewAuthenticator(config, engine)
 	require.NoError(t, err)

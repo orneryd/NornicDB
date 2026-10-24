@@ -1,6 +1,8 @@
 package auth
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"reflect"
@@ -136,7 +138,7 @@ func TestAllowlistStore_CopyAndSeedSkipPaths(t *testing.T) {
 
 func TestAllowlistStore_LoadAndHasDataHelpers(t *testing.T) {
 	ctx := context.Background()
-	eng := storage.NewMemoryEngine()
+	eng := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 
 	store := NewAllowlistStore(eng)

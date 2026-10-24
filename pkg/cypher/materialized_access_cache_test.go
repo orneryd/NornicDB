@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"sync"
 	"testing"
@@ -37,7 +38,7 @@ func (e *accessCountingEngine) take() []string {
 // as the statement that filled the cache did; a result without any records
 // nothing.
 func TestMaterializedAccessRecordedOnCacheHits(t *testing.T) {
-	inner := &accessCountingEngine{MemoryEngine: storage.NewMemoryEngine()}
+	inner := &accessCountingEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = inner.Close() })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(inner, "test"))
 	ctx := context.Background()

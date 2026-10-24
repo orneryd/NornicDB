@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"archive/zip"
 	"bytes"
 	"context"
@@ -21,8 +23,9 @@ import (
 // data and the colliding derived search artifacts.
 func TestWriteRelease143VectorFixture(t *testing.T) {
 	dir := t.TempDir()
-	base, err := storage.NewBadgerEngine(filepath.Join(dir, "graph"))
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(dir, "graph")))
 	require.NoError(t, err)
+	defer base.Close() // This generator also runs on v1.4.3, before testfixture existed.
 	engine := storage.NewNamespacedEngine(base, "nornic")
 	for _, node := range []*storage.Node{
 		{ID: "x", Labels: []string{"Doc"}, Properties: map[string]any{"text": "owner x"}, ChunkEmbeddings: [][]float32{{1, 0, 0, 0}, {0, 1, 0, 0}, {0, 0, 1, 0}}},
@@ -43,13 +46,21 @@ func TestWriteRelease143VectorFixture(t *testing.T) {
 	var buf bytes.Buffer
 	archive := zip.NewWriter(&buf)
 	require.NoError(t, filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil || entry.IsDir() { return err }
+		if err != nil || entry.IsDir() {
+			return err
+		}
 		rel, err := filepath.Rel(dir, path)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		out, err := archive.Create(filepath.ToSlash(rel))
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		in, err := os.Open(path)
-		if err != nil { return err }
+		if err != nil {
+			return err
+		}
 		defer in.Close()
 		_, err = io.Copy(out, in)
 		return err

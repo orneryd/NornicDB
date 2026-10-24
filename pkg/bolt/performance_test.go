@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"os"
 	"testing"
@@ -36,7 +37,7 @@ func startPerfTestServer(t *testing.T) (*Server, int) {
 	if !performanceTestsEnabled(os.Getenv("NORNICDB_RUN_PERFORMANCE_TESTS"), boltRaceEnabled, testing.Short()) {
 		t.Skip("timing assertions require NORNICDB_RUN_PERFORMANCE_TESTS=1, without -race or -short")
 	}
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &performanceQueryExecutor{executor: cypherExec}
 

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"io/fs"
 	"os"
@@ -34,7 +35,10 @@ func TestVectorEntryUpgradeFromRelease143Store(t *testing.T) {
 	}
 	require.NoError(t, archive.Close())
 	open := func() (*storage.BadgerEngine, storage.Engine, *Service) {
-		base, err := storage.NewBadgerEngine(filepath.Join(dir, "graph"))
+		base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(dir, "graph")))
+		if base != nil {
+			fixtureowner.Own(t, base)
+		}
 		require.NoError(t, err)
 		engine := storage.NewNamespacedEngine(base, "nornic")
 		svc := NewServiceWithDimensions(engine, vectorOwnerDims)

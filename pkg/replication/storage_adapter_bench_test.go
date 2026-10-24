@@ -2,6 +2,7 @@ package replication
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 )
 
 func BenchmarkStorageAdapter_GetWALEntries(b *testing.B) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	adapter, err := NewStorageAdapterWithWAL(engine, b.TempDir())
 	if err != nil {
 		b.Fatal(err)
@@ -44,7 +45,7 @@ func BenchmarkStorageAdapter_GetWALEntries(b *testing.B) {
 }
 
 func BenchmarkStorageAdapter_ApplyCommand_CreateNode(b *testing.B) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	adapter, err := NewStorageAdapterWithWAL(engine, b.TempDir())
 	if err != nil {
 		b.Fatal(err)

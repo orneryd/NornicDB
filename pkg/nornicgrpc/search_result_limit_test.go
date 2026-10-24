@@ -2,6 +2,7 @@ package nornicgrpc
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	gen "github.com/orneryd/nornicdb/pkg/nornicgrpc/gen"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,7 +13,7 @@ import (
 
 func TestGRPCContinuationResultLimitPublic(t *testing.T) {
 	contract.RunResultLimit(t, func(t *testing.T, vector bool) contract.LimitFixture {
-		engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "ceiling")
+		engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "ceiling")
 		service := search.NewServiceWithDimensions(engine, 2)
 		t.Cleanup(func() { require.NoError(t, service.Close()) })
 		var embed EmbedQueryFunc

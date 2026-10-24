@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"sync"
 	"testing"
@@ -55,7 +56,7 @@ func BenchmarkPendingDocumentsProviderBatching(b *testing.B) {
 	for _, batchSize := range []int{1, 32} {
 		b.Run(fmt.Sprintf("batch_size_%d", batchSize), func(b *testing.B) {
 			for range b.N {
-				base := storage.NewMemoryEngine()
+				base := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 				store := storage.NewNamespacedEngine(base, "embedding-batch-benchmark")
 				ids := make([]storage.NodeID, 64)
 				for i := range ids {
@@ -179,7 +180,7 @@ func TestUnclassifiedDocumentBatchLimitIsBisected(t *testing.T) {
 		rejectingContentEmbedder: rejectingContentEmbedder{calls: make(map[string]int)},
 		maxBatchBytes:            8,
 	}
-	worker := NewEmbedWorker(provider, storage.NewMemoryEngine(), &EmbedWorkerConfig{
+	worker := NewEmbedWorker(provider, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &EmbedWorkerConfig{
 		NumWorkers: 0, MaxRetries: 1, ChunkSize: 512, EmbedBatchSize: 8, DeferWorkerStart: true,
 	})
 	t.Cleanup(worker.Close)
@@ -198,7 +199,7 @@ func TestTransientDocumentBatchFailureDoesNotBisectProviderOutage(t *testing.T) 
 		rejectingContentEmbedder: rejectingContentEmbedder{calls: make(map[string]int)},
 		transient:                true,
 	}
-	worker := NewEmbedWorker(provider, storage.NewMemoryEngine(), &EmbedWorkerConfig{
+	worker := NewEmbedWorker(provider, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &EmbedWorkerConfig{
 		NumWorkers: 0, MaxRetries: 1, ChunkSize: 512, EmbedBatchSize: 8, DeferWorkerStart: true,
 	})
 	t.Cleanup(worker.Close)
@@ -229,7 +230,7 @@ func TestTransientProviderDelayIsPerNodeAndHonorsRequestedDelay(t *testing.T) {
 	require.Zero(t, queue.attempts[node.ID])
 }
 func TestTerminalEmbeddingFailuresRemainDiscoverableAndRetryableAfterWorkerRestart(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(base, "embedding-failure-recovery")
 	_, err := store.CreateNode(&storage.Node{
 		ID:         "picture",
@@ -266,7 +267,7 @@ func TestTerminalEmbeddingFailuresRemainDiscoverableAndRetryableAfterWorkerResta
 }
 
 func TestRejectedDocumentIsIsolatedFromBatchNeighbors(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(base, "embedding-batch-isolation")
 	ids := []storage.NodeID{"first", "poison", "third"}
 	for _, id := range ids {
@@ -303,7 +304,7 @@ func TestRejectedDocumentIsIsolatedFromBatchNeighbors(t *testing.T) {
 }
 
 func TestEmbedWorkerReportsClaimedNodesDuringBatchBisection(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(base, "embedding-bisect-stats")
 	ids := []storage.NodeID{"first", "second"}
 	for _, id := range ids {
@@ -347,7 +348,7 @@ func TestEmbedWorkerReportsClaimedNodesDuringBatchBisection(t *testing.T) {
 }
 
 func TestRejectedNodeIsParkedWhileFollowingNodeCompletes(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(base, "embedding-failure-progress")
 	for _, node := range []*storage.Node{
 		{ID: "poison", Labels: []string{"Doc"}, Properties: map[string]interface{}{"text": "poison"}},
@@ -379,7 +380,7 @@ func TestRejectedNodeIsParkedWhileFollowingNodeCompletes(t *testing.T) {
 }
 
 func TestPendingDocumentsShareProviderBatch(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(base, "embedding-cross-node-batch")
 	ids := []storage.NodeID{"first", "second", "third"}
 	for _, id := range ids {

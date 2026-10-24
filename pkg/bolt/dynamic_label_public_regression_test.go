@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"testing"
 
@@ -16,7 +17,7 @@ import (
 
 func TestDynamicLabelPublicBolt(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "dynamic_public")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "dynamic_public")
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 	driver, err := neo4j.NewDriverWithContext(fmt.Sprintf("bolt://127.0.0.1:%d", port), neo4j.NoAuth())

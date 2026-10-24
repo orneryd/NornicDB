@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -93,7 +94,10 @@ func TestBadgerStats_StreamNodesByPrefixAndClosedBranchCoverage(t *testing.T) {
 	})
 
 	t.Run("closed-engine stream guards", func(t *testing.T) {
-		closed, err := NewBadgerEngineInMemory()
+		closed, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+		if closed != nil {
+			fixtureowner.Own(t, closed)
+		}
 		require.NoError(t, err)
 		require.NoError(t, closed.Close())
 
@@ -109,7 +113,10 @@ func TestBadgerStats_StreamNodesByPrefixAndClosedBranchCoverage(t *testing.T) {
 }
 
 func TestBadgerStats_UnexpectedClosedDBErrorBranches(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	_, err = engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"L"}})

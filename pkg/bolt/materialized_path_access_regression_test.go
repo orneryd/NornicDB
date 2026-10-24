@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sort"
 	"sync"
 	"testing"
@@ -37,7 +38,7 @@ func TestMaterializedPathAccessBolt(t *testing.T) {
 			name = "explicit"
 		}
 		t.Run(name, func(t *testing.T) {
-			inner := &materializedPathAccessEngine{MemoryEngine: storage.NewMemoryEngine()}
+			inner := &materializedPathAccessEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 			t.Cleanup(func() { _ = inner.Close() })
 			store := storage.NewNamespacedEngine(inner, "materialized")
 			_, err := store.CreateNode(&storage.Node{ID: "a", Labels: []string{"MaterializedPathAccess"}, Properties: map[string]interface{}{"id": "a"}})

@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -57,10 +59,10 @@ func TestStagedKV_ExistenceSeesStagedWrites(t *testing.T) {
 // once: a transaction stages its freelist pops, so each later pop skips the
 // entries it already took.
 func TestTransaction_ReusesEachFreedNumericIDOnce(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory:      true,
 		EngineOptions: EngineOptions{IDFreelistTTL: 20 * time.Millisecond},
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 

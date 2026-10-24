@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"sort"
 	"testing"
@@ -17,9 +19,9 @@ func TestTransactionStoredReaderKeepsOverlayAndHiddenBodies(t *testing.T) {
 			name = "buffered"
 		}
 		t.Run(name, func(t *testing.T) {
-			base, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+			base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 				DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour,
-			})
+			}))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = base.Close() })
 			for _, db := range []string{"a", "b"} {
@@ -126,7 +128,7 @@ func TestTransactionStoredReaderKeepsOverlayAndHiddenBodies(t *testing.T) {
 }
 
 func TestTransactionStoredReaderKeepsSnapshot(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	ns := storage.NewNamespacedEngine(base, "a")
 	for _, id := range []storage.NodeID{"x", "y"} {

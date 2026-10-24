@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -14,7 +16,7 @@ func TestSol1482R3DeferredEdgeDrain(t *testing.T) {
 	for _, warm := range []bool{false, true} {
 		for _, remove := range []bool{false, true} {
 			t.Run(fmt.Sprintf("warm=%t/remove=%t", warm, remove), func(t *testing.T) {
-				base := storage.NewMemoryEngine()
+				base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 				t.Cleanup(func() { _ = base.Close() })
 				store := storage.NewNamespacedEngine(base, "test")
 				for _, id := range []storage.NodeID{"a", "b"} {

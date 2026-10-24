@@ -7,6 +7,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"os"
 	"path/filepath"
@@ -360,7 +362,7 @@ func TestWALFullDurabilityPath(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverFromWALWithResult(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}

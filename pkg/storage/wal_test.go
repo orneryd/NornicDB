@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1466,7 +1467,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		wal.Close()
 
 		// Recover.
-		recovered, err := RecoverFromWAL(walDir, snapshotPath)
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, snapshotPath))
 		require.NoError(t, err)
 
 		// Verify state (wrap recovered base engine with namespace used in WAL)
@@ -1501,7 +1502,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		require.NoError(t, wal.AppendWithDatabase(OpCreateNode, WALNodeData{Node: &Node{ID: "n2", Labels: []string{"Test"}}}, "test"))
 		wal.Close()
 
-		recovered, err := RecoverFromWAL(walDir, "")
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
 		require.NoError(t, err)
 
 		recoveredNS := NewNamespacedEngine(recovered, "test")
@@ -1516,7 +1517,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		walDir := filepath.Join(dir, "wal")
 		os.MkdirAll(walDir, 0755)
 
-		recovered, err := RecoverFromWAL(walDir, "")
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
 		// If no WAL file exists, should still return empty engine (not error)
 		require.NoError(t, err)
 
@@ -1542,7 +1543,7 @@ func TestRecoverFromWAL(t *testing.T) {
 		}, "test"))
 		require.NoError(t, wal.Close())
 
-		recovered, err := RecoverFromWAL(walDir, "")
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
@@ -1557,15 +1558,19 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 	defer config.DisableWAL()
 
 	t.Run("invalid snapshot payload returns load error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot.json")
 		require.NoError(t, os.WriteFile(snapshotPath, []byte("{invalid-json"), 0644))
 
-		_, _, err := RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshotPath)
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to load snapshot")
 	})
 
 	t.Run("snapshot restore edge failures return explicit errors", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 
 		edgeSnapshotPath := filepath.Join(dir, "snapshot-bad-edge.json")
@@ -1575,11 +1580,13 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 				{ID: "tenant_x:e1", StartNode: "tenant_x:a", EndNode: "tenant_x:b", Type: "REL"},
 			},
 		}, edgeSnapshotPath))
-		_, _, err := RecoverFromWALWithResult(filepath.Join(dir, "wal-edge"), edgeSnapshotPath)
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dir, "wal-edge"), edgeSnapshotPath))
 		require.ErrorContains(t, err, "failed to restore edges")
 	})
 
 	t.Run("snapshot edge prefix selects namespace for restore", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot-prefixed.json")
 		require.NoError(t, SaveSnapshot(&Snapshot{
@@ -1593,7 +1600,7 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 			},
 		}, snapshotPath))
 
-		engine, result, err := RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshotPath)
+		engine, result, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(filepath.Join(dir, "wal"), snapshotPath))
 		require.NoError(t, err)
 		require.Equal(t, 0, result.Failed)
 
@@ -1604,6 +1611,8 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 	})
 
 	t.Run("invalid manifest path bubbles as read wal error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		require.NoError(t, writeWALManifest(dir, &WALManifest{
 			Version: walManifestVersion,
@@ -1611,19 +1620,23 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 				{FirstSeq: 1, LastSeq: 1, Path: "../escape.wal"},
 			},
 		}))
-		_, _, err := RecoverFromWALWithResult(dir, "")
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, ReplayResult](t, ErrStorageClosed)(RecoverFromWALWithResult(dir, ""))
 		require.ErrorContains(t, err, "failed to read WAL")
 	})
 
 	t.Run("RecoverFromWAL returns wrapped error on invalid snapshot", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot-bad.json")
 		require.NoError(t, os.WriteFile(snapshotPath, []byte("{bad-json"), 0644))
-		_, err := RecoverFromWAL(filepath.Join(dir, "wal"), snapshotPath)
+		_, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to load snapshot")
 	})
 
 	t.Run("RecoverFromWAL succeeds even when replay has failed entries", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		walDir := filepath.Join(dir, "wal")
 		wal, err := NewWAL("", &WALConfig{Dir: walDir, SyncMode: "immediate"})
@@ -1636,7 +1649,7 @@ func TestRecoverFromWALWithResult_ErrorAndRoutingBranches(t *testing.T) {
 		}, "test"))
 		require.NoError(t, wal.Close())
 
-		engine, err := RecoverFromWAL(walDir, "")
+		engine, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
 		require.NoError(t, err)
 		require.NotNil(t, engine)
 	})
@@ -1973,7 +1986,7 @@ func BenchmarkWALEngine_CreateNode(b *testing.B) {
 	dir := b.TempDir()
 	cfg := &WALConfig{Dir: dir, SyncMode: "none"}
 	wal, _ := NewWAL("", cfg)
-	engine := NewMemoryEngine()
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
 	walEngine := NewWALEngine(engine, wal)
 	defer walEngine.Close()
 
@@ -2240,7 +2253,7 @@ func TestWAL_TruncateAfterSnapshot(t *testing.T) {
 		wal.Close()
 
 		// Recover from snapshot + truncated WAL
-		recovered, err := RecoverFromWAL(walDir, snapshotPath)
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, snapshotPath))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
@@ -2639,7 +2652,7 @@ func TestWALEngine_AutoCompaction(t *testing.T) {
 		latestSnapshot := filepath.Join(snapshotDir, jsonFiles[len(jsonFiles)-1].Name())
 
 		// Second session: recover from snapshot + WAL
-		recovered, err := RecoverFromWAL(walDir, latestSnapshot)
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, latestSnapshot))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
@@ -3364,7 +3377,7 @@ func TestFullStorageChain_Streaming(t *testing.T) {
 	dir := t.TempDir()
 
 	// Create the full storage chain
-	badgerEngine, err := NewBadgerEngineInMemory()
+	badgerEngine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer badgerEngine.Close()
 

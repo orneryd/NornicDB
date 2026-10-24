@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"path/filepath"
 	"testing"
@@ -13,7 +15,7 @@ import (
 // between two databases (#953). The result cache is off.
 func BenchmarkTxlogEntries(b *testing.B) {
 	dir := b.TempDir()
-	badger, err := storage.NewBadgerEngine(dir)
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	if err != nil {
 		b.Fatal(err)
 	}

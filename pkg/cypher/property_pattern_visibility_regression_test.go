@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"sync/atomic"
 	"testing"
@@ -35,7 +37,7 @@ func TestDisabledPropertyViewDoesNotRediscoverEnginePerValue(t *testing.T) {
 func TestInlinePatternsUseSuppressedPropertyView(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		t.Run(map[bool]string{false: "auto", true: "explicit"}[explicit], func(t *testing.T) {
-			be, err := storage.NewBadgerEngineInMemory()
+			be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = be.Close() })
 			schema := be.GetSchemaForNamespace("view")

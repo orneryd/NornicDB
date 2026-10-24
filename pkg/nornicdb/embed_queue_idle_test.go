@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -47,7 +48,7 @@ func (e *idleCountingEngine) UpdateNodeEmbeddingSidecar(node *storage.Node) erro
 
 func idleTestWorker(t *testing.T, workers int) (*EmbedWorker, *idleCountingEngine) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	base.SetEmbeddingsEnabled(true)
 	store := &idleCountingEngine{Engine: storage.NewNamespacedEngine(base, "idle")}
@@ -127,13 +128,16 @@ func TestEmbedWorkerIdleEnqueueRacesEmptyClaim(t *testing.T) {
 
 func TestEmbedWorkerIdleStartupPendingAfterRestart(t *testing.T) {
 	dir := t.TempDir()
-	base, err := storage.NewBadgerEngine(dir)
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if base != nil {
+		fixtureowner.Own(t, base)
+	}
 	require.NoError(t, err)
 	base.SetEmbeddingsEnabled(true)
 	store := storage.NewNamespacedEngine(base, "idle")
 	idleTestCreate(t, store, "persisted")
 	require.NoError(t, base.Close())
-	base, err = storage.NewBadgerEngine(dir)
+	base, err = fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	base.SetEmbeddingsEnabled(true)

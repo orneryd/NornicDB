@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math/big"
 	"net"
 	"os"
@@ -95,7 +96,7 @@ func replTestEnable(t *testing.T) (*DB, error) {
 	t.Helper()
 	db := &DB{config: DefaultConfig()}
 	db.config.Database.DataDir = t.TempDir()
-	_, err := db.maybeEnableReplication(storage.NewMemoryEngine())
+	_, err := db.maybeEnableReplication(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	if err == nil {
 		t.Cleanup(func() {
 			_ = db.replicator.Shutdown()

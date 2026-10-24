@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"math"
 	"testing"
@@ -22,7 +24,7 @@ func TestAccessMetaCustomValuesRoundTripThroughFlush(t *testing.T) {
 		open func(t *testing.T) *BadgerEngine
 	}{
 		{"disk", func(t *testing.T) *BadgerEngine {
-			engine, err := NewBadgerEngine(t.TempDir())
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			t.Cleanup(func() { engine.Close() })
 			return engine

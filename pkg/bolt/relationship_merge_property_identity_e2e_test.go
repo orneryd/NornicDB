@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -15,7 +16,10 @@ import (
 )
 
 func TestBoltExecuteWriteConcurrentRelationshipPropertyIdentityPersists(t *testing.T) {
-	badger, err := storage.NewBadgerEngine(t.TempDir())
+	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+	if badger != nil {
+		fixtureowner.Own(t, badger)
+	}
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
@@ -158,7 +162,10 @@ ORDER BY rel.scope_id`, nil)
 }
 
 func TestBoltProcedureWriteCommitInvalidatesSharedReadCache(t *testing.T) {
-	badger, err := storage.NewBadgerEngine(t.TempDir())
+	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+	if badger != nil {
+		fixtureowner.Own(t, badger)
+	}
 	require.NoError(t, err)
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)

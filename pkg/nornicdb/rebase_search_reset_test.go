@@ -2,6 +2,7 @@ package nornicdb
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/resultstream"
@@ -22,7 +23,7 @@ func TestRebaseSearchResetRetiresStateAndContinuation(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, db.Close()) })
 			const database = "reset_composition"
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			store := storage.NewNamespacedEngine(base, database)
 			for _, id := range []storage.NodeID{"a", "b"} {
 				_, err := store.CreateNode(&storage.Node{ID: id})

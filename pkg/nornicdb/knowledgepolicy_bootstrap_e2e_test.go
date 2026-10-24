@@ -2,6 +2,7 @@ package nornicdb
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -68,7 +69,10 @@ func TestOpen_DoesNotBootstrapDefaultKnowledgePolicyWhenDecayDisabledOrPoliciesE
 		config.Memory.DecayEnabled = true
 		dataDir := t.TempDir()
 
-		eng, err := storage.NewBadgerEngine(dataDir)
+		eng, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dataDir))
+		if eng != nil {
+			fixtureowner.Own(t, eng)
+		}
 		require.NoError(t, err)
 		schema := eng.GetSchemaForNamespace("nornic")
 		require.NoError(t, schema.CreateDecayProfileBundle(knowledgepolicy.DecayProfileBundle{

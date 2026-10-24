@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"math/big"
 	"reflect"
@@ -32,7 +34,7 @@ func TestNumericPropertyIndexExactAroundFloatPrecision(t *testing.T) {
 		{"unique", "CREATE CONSTRAINT precise_id FOR (n:PreciseNumber) REQUIRE n.id IS UNIQUE"},
 	} {
 		t.Run(index.name, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
 			conn := openBoltTestConn(t, port)

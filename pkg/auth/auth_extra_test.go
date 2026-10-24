@@ -1,6 +1,7 @@
 package auth
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -36,7 +37,7 @@ func TestAuthenticator_IsSecurityEnabled_True(t *testing.T) {
 		SecurityEnabled: true,
 		JWTSecret:       []byte("test-secret-that-is-long-enough-32chars"),
 	}
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	a, err := NewAuthenticator(cfg, eng)
 	if err != nil {
 		t.Skip("cannot create authenticator:", err)
@@ -49,7 +50,7 @@ func TestAuthenticator_IsSecurityEnabled_False(t *testing.T) {
 		SecurityEnabled: false,
 		JWTSecret:       []byte("test-secret-that-is-long-enough-32chars"),
 	}
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	a, err := NewAuthenticator(cfg, eng)
 	if err != nil {
 		t.Skip("cannot create authenticator:", err)
@@ -178,7 +179,7 @@ func TestAuthenticator_UserFromNode(t *testing.T) {
 }
 
 func TestAuthenticator_LoadUsers(t *testing.T) {
-	eng := storage.NewMemoryEngine()
+	eng := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 
 	_, err := eng.CreateNode(&storage.Node{

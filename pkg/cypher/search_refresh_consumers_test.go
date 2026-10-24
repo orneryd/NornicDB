@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"sync"
@@ -111,7 +113,7 @@ func consumerHits(t *testing.T, svc *search.Service, word string) int {
 // pauses whichever read decides the older statement's index change.
 func newConsumerVectorStore(t *testing.T, observed func(*storage.Node, error) bool) (storage.Engine, *consumerObservationBarrier, *search.Service) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")
 	node := &storage.Node{ID: "source", Labels: []string{"Doc"}, Properties: map[string]any{"content": "obsoleteword"}, ChunkEmbeddings: [][]float32{{1, 0}}}
@@ -202,7 +204,7 @@ func TestCypherVectorOrphanKeepsNewerIndex(t *testing.T) {
 // The unsuppress read must not resurrect a node deleted after it.
 func TestCypherDelayedUnsuppressCannotResurrectDelete(t *testing.T) {
 	ctx := context.Background()
-	engine, err := storage.NewBadgerEngine(t.TempDir())
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	store := storage.NewNamespacedEngine(engine, "test")
@@ -256,7 +258,7 @@ func TestCypherRelationshipDeleteRemovesVector(t *testing.T) {
 // doesn't take the k=1 place, a shown one takes it back.
 func TestCypherRelationshipVisibilityRefreshesSearch(t *testing.T) {
 	ctx := context.Background()
-	base, err := storage.NewBadgerEngine(t.TempDir())
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "test")

@@ -3,6 +3,7 @@ package multidb
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func (c *manualClock) Advance(d time.Duration) {
 // setupTestManager creates a DatabaseManager with a test database.
 func setupTestManager(t *testing.T) (*DatabaseManager, string) {
 	t.Helper()
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := NewDatabaseManager(inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {

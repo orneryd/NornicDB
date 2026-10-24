@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -16,7 +17,7 @@ import (
 func BenchmarkExistsSubqueryEvaluationOwner(b *testing.B) {
 	for _, evaluations := range []int{1000, 5000, 15000} {
 		b.Run(fmt.Sprintf("evaluations_%d", evaluations), func(b *testing.B) {
-			store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "exists_bench")
+			store := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "exists_bench")
 			defer store.Close()
 			e := NewStorageExecutor(store)
 			ctx := context.Background()

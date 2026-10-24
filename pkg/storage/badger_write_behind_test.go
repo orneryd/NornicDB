@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -28,30 +29,23 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 	if opts.wal {
 		t.Cleanup(config.WithWALEnabled())
 	}
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             opts.dataDir,
 		WriteBehind:         true,
 		WriteBehindInterval: interval,
-	})
+	}))
+	if engine != nil {
+		fixtureowner.OwnChecked(t, engine)
+	}
 	require.NoError(t, err)
-	// Register engine cleanup before WAL setup so failures also close storage.
-	// Crash tests already closed Badger and must not attempt a later flush.
-	t.Cleanup(func() {
-		engine.mu.RLock()
-		closed := engine.closed
-		engine.mu.RUnlock()
-		if !closed {
-			require.NoError(t, engine.Close())
-		}
-		if engine.bufferedCommitWAL != nil {
-			require.NoError(t, engine.bufferedCommitWAL.Close())
-		}
-	})
 	if opts.wal {
 		walCfg := DefaultWALConfig()
 		walCfg.Dir = filepath.Join(opts.dataDir, "wal")
 		walCfg.BatchSyncInterval = time.Hour
 		wal, err := NewWAL(walCfg.Dir, walCfg)
+		if wal != nil {
+			fixtureowner.OwnChecked(t, wal, engine)
+		}
 		require.NoError(t, err)
 		engine.SetBufferedCommitWAL(wal)
 	}
@@ -275,18 +269,21 @@ func TestWriteBehind_ExplicitBeginDrainsBufferedWrites(t *testing.T) {
 
 func TestWriteBehind_CloseDrainsAndPersists(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             dir,
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour,
-	})
+	}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	bufferedCreate(t, engine, &Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(7)}})
 	require.Greater(t, engine.writeBehind.PendingOps(), 0)
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = reopened.Close() })
 	got, err := reopened.GetNode("test:n1")
@@ -559,7 +556,7 @@ func TestWriteBehind_PropertyIndexKeepsUnchangedValueOnBufferedUpdate(t *testing
 }
 
 func TestWriteBehind_DisabledCommitIsSynchronous(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 

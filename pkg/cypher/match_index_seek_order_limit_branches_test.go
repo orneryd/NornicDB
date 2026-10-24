@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -10,7 +12,7 @@ import (
 )
 
 func TestTryCollectNodesFromPropertyIndexOrderLimit_Branches(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &allNodesForbiddenEngine{MemoryEngine: base}
 	exec := NewStorageExecutor(eng)
@@ -52,7 +54,7 @@ func TestTryCollectNodesFromPropertyIndexOrderLimit_Branches(t *testing.T) {
 }
 
 func TestTryCollectNodesFromPropertyIndexNotNullPaths(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "seek_notnull_cov")
 	exec := NewStorageExecutor(store)

@@ -3,6 +3,7 @@ package storage
 import (
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 )
 
@@ -15,7 +16,8 @@ func TestEmbeddingPendingCounterPublicWrappers(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			var base Engine
 			if backend == "badger" {
-				disk, err := NewBadgerEngine(t.TempDir())
+				disk, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
+				fixtureowner.Own(t, disk)
 				require.NoError(t, err)
 				disk.SetEmbeddingsEnabled(true)
 				base = disk

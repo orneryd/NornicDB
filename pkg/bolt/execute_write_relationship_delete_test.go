@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -12,7 +14,7 @@ import (
 )
 
 func TestDatabaseManagerBoltExecuteWriteDeletesUnwindMatchedRelationship(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})
@@ -201,7 +203,7 @@ ORDER BY s.uid, rel.evidence_source, t.uid`, nil)
 }
 
 func TestDatabaseManagerBoltExplicitTransactionPreservesBindingsAcrossUnwindMutationPipeline(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	mgr := &mockDBManager{
 		stores:    map[string]storage.Engine{"nornic": storage.NewNamespacedEngine(base, "nornic")},

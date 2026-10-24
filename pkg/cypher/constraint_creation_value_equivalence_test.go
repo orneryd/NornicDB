@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -42,7 +43,10 @@ func TestConstraintCreationValueEquivalence(t *testing.T) {
 							config.SetParserType(parser)
 							var base storage.Engine
 							if engine == "badger" {
-								b, err := storage.NewBadgerEngineInMemory()
+								b, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+								if b != nil {
+									fixtureowner.Own(t, b)
+								}
 								require.NoError(t, err)
 								base = b
 								t.Cleanup(func() { _ = b.Close() })

@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"net"
@@ -92,7 +94,7 @@ func BenchmarkBoltExplicitTransactionDisjoint(b *testing.B) {
 
 func startBoltTransactionBenchmarkServer(b *testing.B) int {
 	b.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() {
 		if err := base.Close(); err != nil {
 			b.Errorf("close benchmark store: %v", err)

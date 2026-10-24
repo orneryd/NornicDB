@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"path/filepath"
 	"testing"
@@ -21,7 +23,7 @@ func BenchmarkSetCreateRoutes(b *testing.B) {
 	}
 	asyncStack := func(b *testing.B) *StorageExecutor {
 		dir := b.TempDir()
-		badger, err := storage.NewBadgerEngine(dir)
+		badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 		require.NoError(b, err)
 		wal, err := storage.NewWAL(filepath.Join(dir, "wal"), nil)
 		require.NoError(b, err)

@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -11,7 +13,7 @@ import (
 // when it is set, when the manager loads, and off when the database is
 // dropped (#937).
 func TestTxLogEnrichmentSetsChangeCapture(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	manager, err := NewDatabaseManager(engine, nil)
 	require.NoError(t, err)
@@ -36,7 +38,7 @@ func TestTxLogEnrichmentSetsChangeCapture(t *testing.T) {
 
 // Options of a database that doesn't exist: ErrDatabaseNotFound.
 func TestDatabaseOptionsOfMissingDatabase(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	manager, err := NewDatabaseManager(engine, nil)
 	require.NoError(t, err)

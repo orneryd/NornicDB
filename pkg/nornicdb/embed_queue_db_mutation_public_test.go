@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -96,7 +97,8 @@ func (s *mutationWakeStore) StreamNodesWithOptions(ctx context.Context, opts sto
 func TestEmbedWorkerDLQPublicDBMutationWakesAndDrains(t *testing.T) {
 	for _, action := range []string{"idempotent_update", "source_preserving_update", "anonymize_user_data", "delete", "delete_user_data", "delete_after_update_claim"} {
 		t.Run(action, func(t *testing.T) {
-			disk, err := storage.NewBadgerEngine(t.TempDir())
+			disk, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+			fixtureowner.Own(t, disk)
 			require.NoError(t, err)
 			disk.SetEmbeddingsEnabled(true)
 			provider := &mutationWakeProvider{mockEmbedder: &mockEmbedder{dims: 2, model: "mutation-wake"}, entered: make(chan struct{}), release: make(chan struct{})}
