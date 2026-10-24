@@ -170,13 +170,16 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 
 	rows := make([][]interface{}, 0, len(nodeScores))
 	nodeCtx := map[string]*storage.Node{varName: nil}
-	hasMatchProps := len(matchProps) > 0
+	matchPattern := nodePatternInfo{variable: varName, properties: matchProps}
+	if label != "" {
+		matchPattern.labels = []string{label}
+	}
 	var preWhereFilter func(*storage.Node) bool
 	if preWhereClause != "" && preWhereNotNullProp == "" {
 		preWhereFilter = e.compileNodeWhereFilter(ctx, varName, preWhereClause)
 	}
 	for _, hit := range nodeScores {
-		if hasMatchProps && !e.nodeMatchesProps(hit.node, matchProps) {
+		if !e.pipelineNodeMatchesPattern(hit.node, matchPattern) {
 			continue
 		}
 		if preWhereClause != "" {
@@ -378,7 +381,6 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		needsExactCandidates = false
 	}
 	scoreExprIsAlias := make([]bool, len(returnItems))
-	hasMatchProps := len(matchProps) > 0
 	for i := range returnItems {
 		scoreExprIsAlias[i] = strings.EqualFold(strings.TrimSpace(returnItems[i].expr), scoreRef)
 	}
@@ -418,12 +420,16 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	}
 	rows := make([][]interface{}, 0, util.SafePreallocCap(len(nodeScores)))
 	nodeCtx := map[string]*storage.Node{varName: nil}
+	matchPattern := nodePatternInfo{variable: varName, properties: matchProps}
+	if label != "" {
+		matchPattern.labels = []string{label}
+	}
 	var preWhereFilter func(*storage.Node) bool
 	if preWhereClause != "" && preWhereNotNullProp == "" {
 		preWhereFilter = e.compileNodeWhereFilter(ctx, varName, preWhereClause)
 	}
 	for _, hit := range nodeScores {
-		if hasMatchProps && !e.nodeMatchesProps(hit.node, matchProps) {
+		if !e.pipelineNodeMatchesPattern(hit.node, matchPattern) {
 			continue
 		}
 		if preWhereClause != "" {
@@ -1552,10 +1558,10 @@ func (e *StorageExecutor) buildRelationshipContextInto(pattern parsedSimpleMatch
 		rightNode = endNode
 	}
 
-	if len(pattern.leftLabels) > 0 && !nodeHasAnyLabel(leftNode, pattern.leftLabels) {
+	if !e.pipelineNodeMatchesPattern(leftNode, nodePatternInfo{labels: pattern.leftLabels}) {
 		return false
 	}
-	if len(pattern.rightLabels) > 0 && !nodeHasAnyLabel(rightNode, pattern.rightLabels) {
+	if !e.pipelineNodeMatchesPattern(rightNode, nodePatternInfo{labels: pattern.rightLabels}) {
 		return false
 	}
 	if pattern.leftVar != "" {

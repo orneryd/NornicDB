@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -115,6 +116,13 @@ type transactionStorageWrapper struct {
 	// from the cross-clause speedup.
 	txNodeLookupCache   map[string]*storage.Node
 	txNodeLookupCacheMu *sync.RWMutex
+}
+
+// IsCurrentTemporalNode keeps candidate acceptance on the transaction's pinned
+// snapshot plus its own writes. The underlying engine's current view is not the
+// transaction's read view.
+func (w *transactionStorageWrapper) IsCurrentTemporalNode(node *storage.Node, asOf time.Time) (bool, error) {
+	return w.tx.IsCurrentTemporalNodeInNamespace(w.namespace, node, asOf)
 }
 
 // PropertyKeyKnown reports whether a write in the transaction's database has

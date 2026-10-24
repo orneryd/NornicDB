@@ -257,6 +257,7 @@ func readRelationshipPattern(ctx context.Context, pattern string, properties pat
 		// [r {name: 'value'}] and [r:TYPE {name: 'value'}].
 		if declaration.properties != "" {
 			var err error
+			// MATCH retains NULL equality predicates in every property map.
 			result.Properties, err = properties(ctx, declaration.properties, true)
 			if err != nil {
 				return nil, err
@@ -320,9 +321,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if earlyLimit == 0 {
 		return result, nil
 	}
-	if earlyLimit > 0 && whereClause == "" {
-		matches.TraversalLimit = earlyLimit
-	}
+	matches.TraversalLimit = traversalCompletePathLimit(matches, whereClause, earlyLimit)
 
 	// A plain relationship count is answered from the counters when they can
 	// (relationshipCountFromStore decides), instead of materializing paths.
@@ -344,7 +343,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	//   - MATCH (c)<-[:PART_OF]-(p) RETURN c.name, count(p)
 	//   - MATCH (s)-[:SUPPLIES]->(p)-[:PART_OF]->(c) RETURN s.name, c.name, count(p)
 	//   - MATCH (c)-[:PURCHASED]->(o)-[:ORDERS]->(p)-[:PART_OF]->(cat) RETURN c.name, cat.name, count(DISTINCT o)
-	if whereClause == "" && pathVariable == "" {
+	if whereClause == "" && pathVariable == "" && countStoreDescribesReads(ctx, e.getStorage(ctx)) {
 		if rows, ok, err := e.tryFastRelationshipAggregations(matches, returnItems); ok {
 			if err != nil {
 				return nil, err
@@ -363,57 +362,22 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if len(seedNodes) > 0 {
 		optimizedStartNodes = seedNodes
 		usedPropertyIndex = true
-	} else if whereClause != "" {
-		// Direct element/id equality seek on start variable:
-		// MATCH (o)-[:R]->(t) WHERE elementId(o) = '...'
-		// This avoids traversing from all start nodes for single-node lookups.
-		if matches.StartNode.variable != "" {
-			if nodes, used, idxErr := e.tryCollectNodesFromIDEqualityCompound(ctx, matches.StartNode, whereClause, nil); idxErr == nil && used {
-				optimizedStartNodes = nodes
-				usedPropertyIndex = true
+	} else if whereClause != "" && matches.StartNode.variable != "" {
+		var err error
+		optimizedStartNodes, _, usedPropertyIndex, err = e.collectPipelineIndexedNodeCandidates(ctx, matches.StartNode, whereClause, pipelineMatchPhysicalHint{})
+		if err != nil {
+			return nil, err
+		}
+		if !usedPropertyIndex {
+			optimizedStartNodes, usedPropertyIndex, err = e.tryCollectNodesFromStartPropertyScan(ctx, matches.StartNode, whereClause)
+			if err != nil {
+				return nil, err
 			}
 		}
-
-		// Prefer indexed start-node pruning for simple property predicates.
-		if matches.StartNode.variable != "" && len(optimizedStartNodes) == 0 {
-			if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndex(ctx, matches.StartNode, whereClause); idxErr == nil && used {
-				optimizedStartNodes = nodes
-				usedPropertyIndex = true
-			}
-			if !usedPropertyIndex {
-				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexNotNull(matches.StartNode, whereClause); idxErr == nil && used {
-					optimizedStartNodes = nodes
-					usedPropertyIndex = true
-				}
-			}
-			// BUG FIX: a start-node `WHERE var.prop IN [...]` / `IN $param`
-			// predicate previously fell through every branch above (none of
-			// them recognize IN-lists) straight to the O(all-label-nodes)
-			// scan below, even though match.go/clauses.go/executor_mutations.go
-			// already use this exact index-seek for plain node MATCH and
-			// single-clause DELETE. Reuse it here so a relationship-pattern
-			// traversal anchored by an IN-list seeds from the property index
-			// instead of scanning every node of the label.
-			if !usedPropertyIndex {
-				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexInCompound(ctx, matches.StartNode, whereClause, getParamsFromContext(ctx)); idxErr == nil && used {
-					optimizedStartNodes = nodes
-					usedPropertyIndex = true
-				}
-			}
-			// Fallback optimization: even when no property index exists, pre-prune start
-			// nodes for simple start-variable predicates before traversing relationships.
-			// This preserves semantics while avoiding expensive traversal from irrelevant
-			// start nodes in patterns like:
-			//   MATCH (n:Label)-[:R]->(m) WHERE n.prop = 'x' RETURN ...
-			if !usedPropertyIndex {
-				if nodes, used, scanErr := e.tryCollectNodesFromStartPropertyScan(ctx, matches.StartNode, whereClause); scanErr == nil && used {
-					optimizedStartNodes = nodes
-				}
-			}
+		if usedPropertyIndex && len(optimizedStartNodes) == 0 {
+			return result, nil
 		}
-
 	}
-
 	// Execute traversal with optimized start nodes if available
 	var paths []PathResult
 	if endSeededPaths, endSeeded := e.traverseFromEndSeeds(ctx, matches, optimizedStartNodes, endSeedNodes, whereClause); endSeeded {
@@ -736,153 +700,7 @@ const (
 )
 
 func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context, pattern string, whereClause string, returnItems []returnItem, pathVariable string, orderExpr string, limit int, seedSide traversalSeedSide) (*ExecuteResult, bool, error) {
-	if limit <= 0 || strings.TrimSpace(orderExpr) == "" {
-		return nil, false, nil
-	}
-
-	matches := e.parseTraversalPattern(ctx, pattern)
-	if matches == nil || (seedSide == traversalEndSeed && matches.IsChained) {
-		return nil, false, nil
-	}
-	if pathVariable != "" {
-		matches.PathVariable = pathVariable
-	}
-	if seedSide == traversalStartSeed {
-		if !matches.IsChained && strings.TrimSpace(matches.StartNode.variable) == "" {
-			return nil, false, nil
-		}
-		seedNodes, used, err := e.tryCollectTraversalStartSeedOrderNodes(ctx, matches.StartNode, whereClause, orderExpr, limit)
-		if err != nil {
-			return nil, true, err
-		}
-		if !used {
-			return nil, false, nil
-		}
-		result, err := e.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, whereClause, returnItems, seedNodes, nil, pathVariable, nil, -1)
-		if err != nil {
-			return nil, true, err
-		}
-		e.markTraversalStartSeedTopKUsed()
-		return result, true, nil
-	}
-	if strings.TrimSpace(matches.EndNode.variable) == "" || len(matches.EndNode.labels) == 0 {
-		return nil, false, nil
-	}
-
-	orderSpecs := e.parseNodeOrderSpecs(orderExpr, matches.EndNode.variable)
-	if len(orderSpecs) == 0 {
-		return nil, false, nil
-	}
-
-	seedWhere := e.extractTraversalSeedWhereClause(whereClause, matches.EndNode.variable, matches.StartNode.variable)
-	if strings.TrimSpace(seedWhere) == "" && strings.TrimSpace(whereClause) != "" {
-		return nil, false, nil
-	}
-
-	seedLimit := topKSeedLimit(limit)
-	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, matches.EndNode, seedWhere, orderExpr, seedLimit)
-	if err != nil {
-		return nil, true, err
-	}
-	if !used {
-		if seedNodes, used, err = e.tryCollectNodesFromPropertyIndexNotNullOrderLimit(ctx, matches.EndNode, seedWhere, orderExpr, seedLimit); err != nil {
-			return nil, true, err
-		}
-		if !used {
-			return nil, false, nil
-		}
-	}
-
-	result := &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}, Stats: &QueryStats{}}
-	for _, item := range returnItems {
-		result.Columns = append(result.Columns, item.column())
-	}
-	if len(seedNodes) == 0 {
-		e.markTraversalEndSeedTopKUsed()
-		return result, true, nil
-	}
-
-	reversed := reverseTraversalMatch(matches)
-	if reversed == nil {
-		return nil, false, nil
-	}
-
-	paths := make([]PathResult, 0, util.SafePreallocCap(len(seedNodes)))
-	for _, endNode := range seedNodes {
-		reversedPaths := e.traverseFromNode(ctx, endNode, reversed)
-		for _, reversedPath := range reversedPaths {
-			path := reversePathResult(reversedPath)
-			if whereClause != "" && !e.evaluateWhereOnPath(ctx, whereClause, e.buildPathContext(path, matches)) {
-				continue
-			}
-			paths = append(paths, path)
-			if len(paths) >= limit {
-				collector := newTraversalResultCollector(ctx, result)
-				defer collector.close()
-				if err := collector.appendPathRows(e, ctx, paths, matches, returnItems, limit); err != nil {
-					return nil, true, err
-				}
-				e.markTraversalEndSeedTopKUsed()
-				return result, true, nil
-			}
-		}
-	}
-
-	if len(paths) < limit && len(seedNodes) >= seedLimit {
-		return nil, false, nil
-	}
-
-	collector := newTraversalResultCollector(ctx, result)
-	defer collector.close()
-	if err := collector.appendPathRows(e, ctx, paths, matches, returnItems, limit); err != nil {
-		return nil, true, err
-	}
-	e.markTraversalEndSeedTopKUsed()
-	return result, true, nil
-}
-
-func (e *StorageExecutor) extractTraversalSeedWhereClause(whereClause string, seedVar string, blockedVars ...string) string {
-	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
-	if clause == "" {
-		return ""
-	}
-	parts := splitTopLevelAndConjuncts(clause)
-	selected := make([]string, 0, len(parts))
-	for _, part := range parts {
-		term := unwrapOuterParens(strings.TrimSpace(part))
-		if term == "" {
-			continue
-		}
-		if !referencesTraversalVariable(term, seedVar) {
-			continue
-		}
-		blocked := false
-		for _, blockedVar := range blockedVars {
-			if blockedVar == "" {
-				continue
-			}
-			if referencesTraversalVariable(term, blockedVar) {
-				blocked = true
-				break
-			}
-		}
-		if blocked {
-			continue
-		}
-		selected = append(selected, term)
-	}
-	return strings.Join(selected, " AND ")
-}
-
-func referencesTraversalVariable(expr string, variable string) bool {
-	if variable == "" {
-		return false
-	}
-	trimmed := strings.TrimSpace(expr)
-	if strings.Contains(trimmed, variable+".") || strings.Contains(lowerASCII(trimmed), "id("+lowerASCII(variable)+")") || strings.Contains(lowerASCII(trimmed), "elementid("+lowerASCII(variable)+")") {
-		return true
-	}
-	return false
+	return e.executeOrderedTraversalPrefix(ctx, pattern, whereClause, returnItems, pathVariable, orderExpr, limit, seedSide == traversalEndSeed)
 }
 
 // traverseFromEndSeeds walks a non-chained pattern backwards from nodes
@@ -944,40 +762,13 @@ func reversePathResult(path PathResult) PathResult {
 	return PathResult{Nodes: reversedNodes, Relationships: reversedEdges, Length: path.Length}
 }
 
-func topKSeedLimit(limit int) int {
-	seedLimit, ok := util.SafeIntProduct(limit, 4)
-	if !ok {
-		seedLimit = int(^uint(0) >> 1)
-	}
-	if seedLimit < 200 {
-		seedLimit = 200
-	}
-	return seedLimit
-}
-
 func (e *StorageExecutor) tryCollectTraversalStartSeedOrderNodes(
-	ctx context.Context,
-	nodePattern nodePatternInfo,
-	whereClause string,
-	orderExpr string,
-	limit int,
+	ctx context.Context, nodePattern nodePatternInfo, whereClause string, orderExpr string, limit int,
 ) ([]*storage.Node, bool, error) {
-	if limit <= 0 || strings.TrimSpace(orderExpr) == "" || strings.TrimSpace(nodePattern.variable) == "" || len(nodePattern.labels) == 0 {
+	if !compileMatchPredicateFrontier(ctx, whereClause).certifiesNodeWindow(nodePattern.variable) {
 		return nil, false, nil
 	}
-
-	seedNodes, used, err := e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, orderExpr, topKSeedLimit(limit))
-	if err != nil || !used {
-		return nil, used, err
-	}
-
-	if len(seedNodes) > limit {
-		if topK, ok := e.selectTopKNodesByOrder(seedNodes, nodePattern.variable, orderExpr, limit); ok {
-			seedNodes = topK
-		}
-	}
-
-	return seedNodes, true, nil
+	return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, orderExpr, limit)
 }
 
 // tryCollectNodesFromStartPropertyScan applies start-node predicate pruning for
@@ -989,22 +780,15 @@ func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Conte
 	if strings.TrimSpace(nodePattern.variable) == "" || strings.TrimSpace(whereClause) == "" {
 		return nil, false, nil
 	}
-	// Variable references alone do not establish a start-node predicate:
-	// graph predicates and producers can reference only the start variable,
-	// but must run once per matched row, never during seed pruning as well.
-	// The shared complete plan admits only simple, side-effect-free operands.
-	plan := planRowPredicate(whereClause)
-	if plan == nil || !plan.complete {
+	if !compileMatchPredicateFrontier(ctx, whereClause).certifiesNodeWindow(nodePattern.variable) {
 		return nil, false, nil
 	}
-	for _, reference := range semanticExpressionReferences(whereClause) {
-		if strings.SplitN(reference, ".", 2)[0] != nodePattern.variable {
-			return nil, false, nil
-		}
-	}
-	nodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
+	nodes, whereApplied, err := e.collectPipelineInitialNodeCandidates(ctx, nodePattern, whereClause, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 	if err != nil {
 		return nil, true, err
+	}
+	if whereApplied {
+		return nodes, true, nil
 	}
 	values := pipelineNodeRow(ctx, nodePattern.variable, nil)
 	filtered := nodes[:0]
@@ -1015,6 +799,17 @@ func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Conte
 		}
 	}
 	return filtered, true, nil
+}
+
+// Both start-only seed readers must wait for path bindings when WHERE reads
+// another variable. Reuse the canonical semantic dependency reader.
+func traversalSeedWhereOnlyReferences(whereClause, seedVariable string) bool {
+	for _, variable := range matchPredicateVariables(whereClause) {
+		if variable != seedVariable {
+			return false
+		}
+	}
+	return true
 }
 
 // isLengthPathExpr checks if an expression is length(path) for some path variable
@@ -1665,7 +1460,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 		if node == nil || (hideSystemNodes && isSystemNode(node)) {
 			return nil
 		}
-		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
+		if !e.pipelineNodeMatchesPattern(node, match.StartNode) {
 			return nil
 		}
 		visible, err := nodeVisibleInTemporalViewport(node, viewport, checker)
@@ -1703,6 +1498,9 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 	for _, startNode := range startNodes {
 		if remaining == 0 {
 			break
+		}
+		if !e.pipelineNodeMatchesPattern(startNode, match.StartNode) {
+			continue
 		}
 		ctxLimit := 0
 		if remaining > 0 {
@@ -1776,37 +1574,9 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 		go func(workerNodes []*storage.Node) {
 			defer wg.Done()
 
-			var workerPaths []PathResult
-			for _, startNode := range workerNodes {
-				if ctx != nil && ctx.Err() != nil {
-					break
-				}
-				// Each goroutine gets its own traversal state (no shared state)
-				traversalCtx := &TraversalContext{
-					startNode:                    startNode,
-					endNodeID:                    match.boundEndNodeID,
-					relTypes:                     match.Relationship.Types,
-					relTypeSet:                   buildRelTypeSet(match.Relationship.Types),
-					relProperties:                match.Relationship.Properties,
-					direction:                    match.Relationship.Direction,
-					minHops:                      match.Relationship.MinHops,
-					maxHops:                      match.Relationship.MaxHops,
-					usedEdges:                    make(map[storage.EdgeID]bool),
-					nodeCache:                    make(map[storage.NodeID]*storage.Node),
-					temporalViewport:             viewport,
-					temporalChecker:              checker,
-					cancelCtx:                    ctx,
-					repeatable:                   repeatableElements(ctx),
-					endpointsNeedOnlyExist:       traversalEndpointsNeedOnlyExist(match),
-					nodeProperties:               match.endpointProperties,
-					endpointsNeedOnlyLabels:      traversalEndpointsNeedOnlyLabels(match),
-					relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match),
-				}
-
-				paths := e.findPaths(traversalCtx, startNode, []*storage.Node{startNode}, []*storage.Edge{}, 0, &match.EndNode)
-				workerPaths = append(workerPaths, paths...)
-			}
-
+			// Each worker uses the same canonical start acceptance and expansion
+			// as sequential traversal, with its own traversal state.
+			workerPaths := e.traverseGraphSequential(ctx, match, workerNodes, viewport, checker)
 			resultsChan <- workerResult{paths: workerPaths}
 		}(startNodes[start:end])
 	}
@@ -2002,28 +1772,8 @@ func pathResultsReuseRelationship(left, right PathResult) bool {
 // traverseFromNode traverses from a specific node rather than finding start nodes by label
 func (e *StorageExecutor) traverseFromNode(traversalCtx context.Context, startNode *storage.Node, match *TraversalMatch) []PathResult {
 	// Verify the start node matches the expected pattern (labels and properties)
-	if len(match.StartNode.labels) > 0 {
-		found := false
-		for _, label := range startNode.Labels {
-			for _, requiredLabel := range match.StartNode.labels {
-				if label == requiredLabel {
-					found = true
-					break
-				}
-			}
-			if found {
-				break
-			}
-		}
-		if !found {
-			return nil
-		}
-	}
-
-	if len(match.StartNode.properties) > 0 {
-		if !e.nodeMatchesProps(startNode, match.StartNode.properties) {
-			return nil
-		}
+	if !e.pipelineNodeMatchesPattern(startNode, match.StartNode) {
+		return nil
 	}
 
 	ctx := e.newTraversalContext(traversalCtx, startNode, &match.Relationship)
@@ -2241,24 +1991,7 @@ func (e *StorageExecutor) matchesEndPattern(node *storage.Node, pattern *nodePat
 		return true
 	}
 
-	// Check labels
-	if len(pattern.labels) > 0 {
-		for _, reqLabel := range pattern.labels {
-			found := false
-			for _, nodeLabel := range node.Labels {
-				if nodeLabel == reqLabel {
-					found = true
-					break
-				}
-			}
-			if !found {
-				return false
-			}
-		}
-	}
-
-	// Check properties
-	return e.nodeMatchesProps(node, pattern.properties)
+	return e.pipelineNodeMatchesPattern(node, *pattern)
 }
 
 // PathContext holds node/relationship mappings for expression evaluation

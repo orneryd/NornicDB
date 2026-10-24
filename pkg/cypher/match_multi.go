@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/orneryd/nornicdb/pkg/util"
 )
 
 // countKeywordOccurrences counts how many times a keyword appears in the query
@@ -176,7 +175,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 
 			var paths []PathResult
 			if boundStartNode != nil {
-				if !e.pipelineNodeMatchesPattern(boundStartNode, matches.StartNode) {
+				if !e.nodeMatchesPatternInView(rowCtx, boundStartNode, matches.StartNode) {
 					continue
 				}
 				if matches.IsChained && len(matches.Segments) > 1 {
@@ -227,7 +226,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 
 			// Check if variable is already bound
 			if boundNode := existing[nodePattern.variable]; boundNode != nil {
-				if !e.pipelineNodeMatchesPattern(boundNode, nodePattern) {
+				if !e.nodeMatchesPatternInView(rowCtx, boundNode, nodePattern) {
 					continue
 				}
 				newBindings = append(newBindings, existing)
@@ -626,35 +625,15 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	visit func(*storage.Node) error,
 ) error {
 	store := e.getStorage(ctx)
-	viewport, hasViewport := TemporalViewportFromContext(ctx)
-	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
-	hideSystemNodes := shouldHideSystemNodes(store)
 	visited := 0
-	var whereFilter FilterFunc
-	if strings.TrimSpace(whereClause) != "" {
-		whereFilter = e.compileNodeWhereFilter(ctx, whereVariable, whereClause)
-	}
+	acceptance := e.compileNodePatternAcceptance(ctx, nodePatternInfo{variable: whereVariable, labels: labels, properties: properties}, whereClause)
 	collect := func(node *storage.Node) error {
-		if node == nil || (hideSystemNodes && isSystemNode(node)) {
-			return nil
+		accepted, err := acceptance.accepts(node)
+		if err != nil {
+			return err
 		}
-		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
+		if !accepted {
 			return nil
-		}
-		if len(properties) > 0 && !e.nodeMatchesProps(node, properties) {
-			return nil
-		}
-		if whereFilter != nil && !whereFilter(node) {
-			return nil
-		}
-		if hasViewport && canCheckViewport {
-			visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
-			if err != nil {
-				return err
-			}
-			if !visible {
-				return nil
-			}
 		}
 		if visit == nil {
 			*collected = append(*collected, node)
@@ -666,14 +645,6 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 			return storage.ErrIterationStopped
 		}
 		return nil
-	}
-	// A materialized fallback's nodes go to visit as a list.
-	visitAll := func(nodes []*storage.Node) error {
-		if visit == nil {
-			*collected = append(*collected, nodes...)
-			return nil
-		}
-		return visitNodeList(nodes, visit)
 	}
 	// Whole query rows use the scan's metadata-only hydration decision. The
 	// label body and its sidecar state are read together, once, including in
@@ -703,38 +674,29 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 
 	// Compatibility path for stores that expose label IDs but not label-node
 	// streaming. This still avoids a full graph scan for bounded simple reads.
-	if limit > 0 && len(labels) == 1 && len(properties) == 0 && strings.TrimSpace(whereClause) == "" {
-		ids, err := storage.NodeIDsByLabel(store, labels[0], limit)
-		if err != nil {
-			return err
-		}
-		filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
-		for _, id := range ids {
-			node, getErr := e.getQueryNode(store, id)
-			if getErr != nil {
-				return getErr
-			}
-			if node == nil {
-				continue
-			}
-			if hideSystemNodes && isSystemNode(node) {
-				continue
-			}
-			if hasViewport && canCheckViewport {
-				visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
+	if limit > 0 && len(labels) == 1 {
+		if reader, ok := store.(storage.LabelNodeIDLookupEngine); ok {
+			var visitErr error
+			err := reader.ForEachNodeIDByLabel(labels[0], func(id storage.NodeID) bool {
+				if visitErr = ctx.Err(); visitErr != nil {
+					return false
+				}
+				node, err := e.getQueryNode(store, id)
 				if err != nil {
-					return err
+					visitErr = err
+					return false
 				}
-				if !visible {
-					continue
-				}
+				visitErr = collect(node)
+				return visitErr == nil
+			})
+			if err != nil {
+				return err
 			}
-			filtered = append(filtered, node)
-			if len(filtered) >= limit {
-				break
+			if visitErr != storage.ErrIterationStopped {
+				return visitErr
 			}
+			return nil
 		}
-		return visitAll(filtered)
 	}
 
 	var nodes []*storage.Node
@@ -820,36 +782,15 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		return err
 	}
 
-	// Filter out system nodes (labels starting with _)
-	filteredNodes := make([]*storage.Node, 0, len(nodes))
 	for _, node := range nodes {
-		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
-			continue
-		}
-		if !hideSystemNodes || !isSystemNode(node) {
-			filteredNodes = append(filteredNodes, node)
-		}
-	}
-	nodes = filteredNodes
-	if hasViewport && canCheckViewport {
-		nodes, err = filterNodesByTemporalViewport(nodes, viewport, checker)
-		if err != nil {
+		if err := collect(node); err != nil {
+			if err == storage.ErrIterationStopped {
+				return nil
+			}
 			return err
 		}
 	}
-
-	// Apply property filters
-	if len(properties) > 0 {
-		nodes = e.filterNodesByProperties(nodes, properties)
-	}
-	if strings.TrimSpace(whereClause) != "" {
-		nodes = e.filterNodes(ctx, nodes, whereVariable, whereClause)
-	}
-	if limit > 0 && len(nodes) > limit {
-		nodes = nodes[:limit]
-	}
-
-	return visitAll(nodes)
+	return nil
 }
 
 // visitNodeList hands nodes to visit in order. visit returning
@@ -898,7 +839,9 @@ func shouldHideSystemNodes(engine storage.Engine) bool {
 	// Allow system nodes to be queried when the active database is system.
 	// For all other databases, hide internal nodes (labels starting with "_")
 	// to avoid leaking metadata into normal user queries.
-	if namespaced, ok := engine.(*storage.NamespacedEngine); ok {
+	// Read the active view's namespace, including transaction adapters. The
+	// concrete underlying engine does not identify the transaction's database.
+	if namespaced, ok := engine.(interface{ Namespace() string }); ok {
 		return namespaced.Namespace() != "system"
 	}
 	return true

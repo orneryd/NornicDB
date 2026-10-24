@@ -60,6 +60,9 @@ func (h *indexedOrderHeap) Pop() interface{} {
 // bounds (impliedPropertyBounds) skips the primary-key groups where can't
 // match.
 func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int, bounds storage.PropertyIndexBounds) ([]*storage.Node, bool, error) {
+	if !compileMatchPredicateFrontier(ctx, where).certifiesNodeWindow(pattern.variable) {
+		return nil, false, nil
+	}
 	schema := orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
@@ -71,10 +74,7 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 		return strings.Compare(string(a.ID), string(b.ID))
 	}
 	nodes := make([]*storage.Node, 0, limit)
-	var filter func(*storage.Node) bool
-	if strings.TrimSpace(where) != "" {
-		filter = e.compileNodeWhereFilter(ctx, pattern.variable, where)
-	}
+	acceptance := e.compileNodePatternAcceptance(ctx, pattern, where)
 	var visitErr error
 	visited := false
 	found := schema.VisitPropertyIndexGroupsInRange(label, specs[0].propName, specs[0].descending, bounds, func(ids []storage.NodeID) bool {
@@ -93,10 +93,12 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 			if err != nil || node == nil {
 				continue
 			}
-			if (len(pattern.labels) > 0 && !nodeHasAnyLabel(node, pattern.labels)) || !e.nodeMatchesProps(node, pattern.properties) {
-				continue
+			accepted, err := acceptance.accepts(node)
+			if err != nil {
+				visitErr = err
+				return false
 			}
-			if filter != nil && !filter(node) {
+			if !accepted {
 				continue
 			}
 			if groupTop.Len() < remaining {

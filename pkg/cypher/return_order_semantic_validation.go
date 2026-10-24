@@ -280,6 +280,16 @@ func semanticExpressionReferences(expression string) []string {
 // forEachSemanticExpressionReference calls visit with each reference
 // semanticExpressionReferences finds and the offset of its variable.
 func forEachSemanticExpressionReference(expression string, visit func(reference string, at int)) {
+	walkSemanticExpressionReferences(expression, true, visit)
+}
+
+// forEachSemanticVariableReference shares the reference grammar without
+// allocating qualified property names when a caller only needs their variables.
+func forEachSemanticVariableReference(expression string, visit func(variable string, at int)) {
+	walkSemanticExpressionReferences(expression, false, visit)
+}
+
+func walkSemanticExpressionReferences(expression string, includeProperty bool, visit func(reference string, at int)) {
 	for index := 0; index < len(expression); {
 		if end := queryGapEnd(expression, index); end > index {
 			index = end
@@ -339,7 +349,9 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		if propertyAccess {
 			property, propertyEnd, propertyOK := scanSymbolicName(expression, cursor+1)
 			if propertyOK {
-				normalized += "." + normalizePropertyKey(property)
+				if includeProperty {
+					normalized += "." + normalizePropertyKey(property)
+				}
 				index = propertyEnd
 			}
 		}

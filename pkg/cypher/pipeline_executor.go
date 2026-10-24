@@ -137,6 +137,15 @@ func pipelineLabelScanProjection(ctx context.Context, nodePattern nodePatternInf
 	if _, viewport := TemporalViewportFromContext(ctx); viewport {
 		return nil, false
 	}
+	// A deferred path binding may expose any property of this candidate.
+	// Already-bound row operands do not depend on the candidate's body.
+	for _, variable := range matchPredicateVariables(whereClause) {
+		if variable != nodePattern.variable {
+			if _, bound := valueBindingsFromContext(ctx)[variable]; !bound {
+				return nil, false
+			}
+		}
+	}
 	properties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
 	if properties == nil {
 		return nil, false
@@ -434,6 +443,10 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 		}
 	}
 
+	// Bind before physical shortcuts decide whether a plain RETURN may
+	// materialize. The statement's final clause identities are now stable.
+	bindResultStream(ctx, statement, clauses)
+
 	// Parameters remain typed bindings through every clause.
 	params := getParamsFromContext(ctx)
 	// The statement shortcuts read the store as if every variable were
@@ -473,7 +486,6 @@ func (e *StorageExecutor) executePipeline(ctx context.Context, cypher string) (o
 		scope[name] = struct{}{}
 	}
 
-	bindResultStream(ctx, statement, clauses)
 	result, handled, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, originalClauses, nil)
 	return newPipelineDispatchOutcome(result, handled, err)
 }
@@ -1146,16 +1158,19 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		}
 	}
 
-	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
+	// The count adapter owns both indexed candidates and the scan fallback.
+	// Select access there once, rather than repeating every unsuccessful seek
+	// before handing the same predicate to that adapter.
+	if filteredCount && (whereClause != "" || len(nodePattern.properties) > 0) {
+		if result, streamed, streamErr := e.tryStreamPipelineFilteredNodeCount(ctx, nodePattern, whereClause, countColumn); streamed || streamErr != nil {
+			return result, true, streamErr
+		}
+	}
+	candidates, _, usedIndex, err := e.collectPipelineIndexedNodeCandidates(ctx, nodePattern, whereClause, hint)
 	if err != nil {
 		return nil, true, err
 	}
 	if !usedIndex {
-		if filteredCount && (whereClause != "" || len(nodePattern.properties) > 0) {
-			if result, streamed, streamErr := e.tryStreamPipelineFilteredNodeCount(ctx, nodePattern, whereClause, countColumn); streamed || streamErr != nil {
-				return result, true, streamErr
-			}
-		}
 		if !boundedSimpleProjection {
 			return nil, false, nil
 		}
@@ -1240,25 +1255,20 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		}
 		return e.evaluateRowPredicate(ctx, whereClause, predicateRow)
 	}
-	hideSystemNodes := shouldHideSystemNodes(store)
-	viewport, hasViewport := TemporalViewportFromContext(ctx)
-	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
+	acceptance := e.compileNodePatternAcceptance(ctx, nodePattern, "")
+	acceptance.where = whereFilter
 	var count int64
 	countNode := func(node *storage.Node, whereApplied bool) error {
-		if node == nil || (hideSystemNodes && isSystemNode(node)) {
-			return nil
+		predicate := acceptance
+		if whereApplied {
+			predicate.where = nil
 		}
-		if !mergeNodeHasLabels(node, nodePattern.labels) || !e.nodeMatchesProps(node, nodePattern.properties) || (!whereApplied && !whereFilter(node)) {
-			return nil
+		accepted, err := predicate.accepts(node)
+		if err != nil {
+			return err
 		}
-		if hasViewport && canCheckViewport {
-			visible, visibleErr := checker.IsCurrentTemporalNode(node, viewport.AsOf)
-			if visibleErr != nil {
-				return visibleErr
-			}
-			if !visible {
-				return nil
-			}
+		if !accepted {
+			return nil
 		}
 		count++
 		return nil
@@ -1278,6 +1288,11 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		return &ExecuteResult{Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
 	}
 	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
+	if acceptance.checker != nil {
+		// Temporal constraints need the candidate's validity and grouping
+		// properties as well as the visible WHERE/count operands.
+		projectedProperties = nil
+	}
 	err = reader.StreamNodesByLabelProjected(nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
 		return countNode(node, false)
 	})
@@ -1661,7 +1676,14 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		}
 		if bound, exists := row[nodePattern.variable]; exists {
 			node, isNode := bound.(*storage.Node)
-			if !isNode || node == nil || !e.pipelineNodeMatchesPattern(node, nodePattern) {
+			if !isNode || node == nil {
+				continue
+			}
+			accepted, err := e.compileNodePatternAcceptance(ctx, nodePattern, "").accepts(node)
+			if err != nil {
+				return nil, true, err
+			}
+			if !accepted {
 				continue
 			}
 			// The WHERE sees the path too (WHERE length(p) = 0).
@@ -1675,21 +1697,15 @@ func (e *StorageExecutor) pipelineApplyInitialNodeMatch(ctx context.Context, row
 		for name := range row {
 			if name != nodePattern.variable && referencesVariable(whereClause, name) {
 				cacheKey = ""
-				candidateHint.earlyLimit = -1
 				break
 			}
 		}
-		// A WHERE that reads the path is tested below, where the path is
-		// bound; the candidates are collected without it.
-		candidateWhere := materializedWhere
-		if pathVariable != "" && referencesVariable(whereClause, pathVariable) {
-			candidateWhere = ""
-			cacheKey = ""
-		}
+		// The candidate owner receives the complete predicate, including path
+		// dependencies. It cannot mistake a deferred predicate for no WHERE.
 		candidates, cached := candidateCache[cacheKey]
 		if cacheKey == "" || !cached {
 			var err error
-			candidates.nodes, candidates.whereApplied, err = e.collectPipelineInitialNodeCandidates(withValueBindings(ctx, row), nodePattern, candidateWhere, candidateHint)
+			candidates.nodes, candidates.whereApplied, err = e.collectPipelineInitialNodeCandidates(withValueBindings(ctx, row), nodePattern, materializedWhere, candidateHint)
 			if err != nil {
 				return nil, true, err
 			}
@@ -1821,9 +1837,6 @@ func (e *StorageExecutor) whereIsSimpleIndexedIn(ctx context.Context, variable, 
 type pipelinePrefetchedNodeCandidatesKey struct{}
 
 func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, err error) {
-	if node := e.prefetchedPipelineCandidate(ctx, nodePattern); node != nil {
-		return []*storage.Node{node}, false, nil
-	}
 	// A property equal to null matches no node ({id: null}, nothing equals
 	// null): no index seek or label scan can find one.
 	for _, value := range nodePattern.properties {
@@ -1833,14 +1846,25 @@ func (e *StorageExecutor) collectPipelineInitialNodeCandidates(ctx context.Conte
 	}
 	nodes, whereApplied, used, err := e.collectPipelineIndexedNodeCandidates(ctx, nodePattern, whereClause, hint)
 	if err != nil || used {
+		// Unbounded access selection needs the full predicate, but no early
+		// window proof. Certify only a collector's claim to have applied it.
+		if err == nil && whereApplied {
+			whereApplied = compileMatchPredicateFrontier(ctx, whereClause).certifiesNodeWindow(nodePattern.variable)
+		}
 		return nodes, whereApplied, err
+	}
+	// A bounded scan can consume slots only after its predicate is complete.
+	// Index collectors own their own windows; an unsuccessful access probe
+	// must not make an unbounded scan pay for an unused window proof.
+	if (hint.limit > 0 || hint.earlyLimit > 0) && !compileMatchPredicateFrontier(ctx, whereClause).certifiesNodeWindow(nodePattern.variable) {
+		hint = hint.withoutSeedLimit()
 	}
 	properties, streamingWhere, projection := e.pipelineLabelScanArguments(ctx, nodePattern, whereClause, hint)
 	nodes, err = e.collectNodesWithStreamingProjection(ctx, nodePattern.labels, properties, nodePattern.variable, streamingWhere, hint.earlyLimit, projection)
 	if len(nodePattern.properties) > 0 {
 		e.markMergeScanFallbackUsed()
 	}
-	return nodes, false, err
+	return nodes, streamingWhere != "", err
 }
 
 // visitPipelineInitialNodeCandidates is collectPipelineInitialNodeCandidates
@@ -2134,13 +2158,6 @@ func traceRelationshipList(relationships []*storage.Edge, direction string) [][2
 		starts = next
 	}
 	return starts
-}
-
-func (e *StorageExecutor) pipelineNodeMatchesPattern(node *storage.Node, pattern nodePatternInfo) bool {
-	if !mergeNodeHasLabels(node, pattern.labels) {
-		return false
-	}
-	return e.nodeMatchesProps(node, pattern.properties)
 }
 
 // precededByOptionalKeyword reports whether the clause keyword at position in

@@ -108,10 +108,13 @@ func readNodePattern(ctx context.Context, pattern string, properties patternProp
 	return info, nil
 }
 
-// splitNodePatternProperties strips the outer parentheses of a node pattern
-// and splits it at the property map's '{' (outside backtick-quoted labels).
+// splitNodePatternProperties unwraps a single node's path assignment and outer
+// parentheses, then splits its property map outside backtick-quoted labels.
 func splitNodePatternProperties(pattern string) (head, props string) {
 	pattern = strings.TrimSpace(pattern)
+	if extractPathAssignmentVariable(pattern) != "" {
+		_, pattern, _ = splitPathAssignment(pattern)
+	}
 	if strings.HasPrefix(pattern, "(") && strings.HasSuffix(pattern, ")") {
 		pattern = pattern[1 : len(pattern)-1]
 	}
