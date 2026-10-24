@@ -32,6 +32,7 @@ type boundStatementProgram struct {
 	projections map[int]*returnProjectionPlan
 	effects     map[int]pipelineClauseEffects
 	scalars     map[int]scalarExpressionSyntax
+	calls       map[int]*resultmetadata.Call
 }
 
 func cloneBindingIDs(input map[string]statementBindingID) map[string]statementBindingID {
@@ -94,12 +95,7 @@ func syntaxDeclarationSpan(clause cypherantlr.SyntaxNode, name string) (start, e
 		if !symbol || identity != name {
 			return nil
 		}
-		parent, ok := node.Parent()
-		if !ok {
-			return nil
-		}
-		switch parent.Rule() {
-		case cypherantlr.CypherParserRULE_nodePattern, cypherantlr.CypherParserRULE_relationDetail, cypherantlr.CypherParserRULE_patternPart, cypherantlr.CypherParserRULE_projectionItem, cypherantlr.CypherParserRULE_unwindSt, cypherantlr.CypherParserRULE_forSt, cypherantlr.CypherParserRULE_letItem, cypherantlr.CypherParserRULE_yieldItem:
+		if syntaxBindingDefinition(node) {
 			start, end = node.Span()
 			found = true
 		}

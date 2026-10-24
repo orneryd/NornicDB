@@ -55,20 +55,7 @@ func (clause *boundClause) projectionTailBindings(read cypherantlr.SyntaxNode) (
 }
 
 func projectionSyntaxCore(node cypherantlr.SyntaxNode) cypherantlr.SyntaxNode {
-	for node.Valid() {
-		if _, symbol := node.Name(); symbol || node.Rule() == cypherantlr.CypherParserRULE_invocationName {
-			break
-		}
-		if node.Rule() == cypherantlr.CypherParserRULE_parenthesizedExpression {
-			node = node.ChildRule(cypherantlr.CypherParserRULE_expression)
-			continue
-		}
-		if node.ChildCount() != 1 {
-			break
-		}
-		node = node.Child(0)
-	}
-	return node
+	return node.SemanticExpression()
 }
 
 // Compare grammatical expression structure. Symbol identities are already

@@ -876,7 +876,11 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				wrote = true
 			}
 		case pipelineClauseCallSubquery:
-			callMetadata := &pipelineCallMetadata{scope: scope, batch: callBatch}
+			original := clause
+			if idx < len(originalClauses) {
+				original = originalClauses[idx]
+			}
+			callMetadata := &pipelineCallMetadata{scope: scope, batch: callBatch, call: executionCallFacts(ctx, original)}
 			var newRows []pipelineRow
 			var stats *QueryStats
 			ok := true

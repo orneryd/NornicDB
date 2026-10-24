@@ -346,7 +346,8 @@ func (names *quotedVariableNames) restore(result *ExecuteResult, err error, pars
 		}
 		if isExplainOrProfile(names.original) {
 			restored.Rows = names.restoreValue(result.Rows).([][]interface{})
-		} else if len(restored.Columns) > 0 {
+		}
+		if len(restored.Columns) > 0 {
 			names.restoreProjection(&restored, parseItems)
 		}
 		result = &restored
@@ -556,73 +557,10 @@ func (names *quotedVariableNames) originalText(start, end int) string {
 	return names.restoreText(names.canonical[start:end])
 }
 
-// finalReturnBody locates the body of text's last top-level RETURN (after
-// the keyword).
-func finalReturnBody(text string) (int, int, bool) {
-	positions := findAllTopLevelPipelineKeywordPositions(text, "RETURN")
-	if len(positions) == 0 {
-		return 0, 0, false
-	}
-	return positions[len(positions)-1] + len("RETURN"), len(text), true
-}
-
-// restoreProjection names the result columns from the client's final RETURN
-// items, one by one: an alias or a bare variable is its name, any other
-// item its text as written (x + 1 and `x` + 1 are different columns). For
-// RETURN * the columns are sorted by name, as Neo4j lists them, with the
-// rows reordered to match.
-func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parseItems func(string) []returnItem) {
-	start, end, ok := finalReturnBody(names.canonical)
-	if !ok {
-		return
-	}
-	body := strings.TrimSpace(names.canonical[start:end])
-	body, _ = cutDistinct(body)
-	if strings.HasPrefix(body, "*") && (len(body) == 1 || !isIdentByte(body[1])) && topLevelKeywordIndex(body, "UNION") < 0 {
-		sortColumnsByName(result)
-		return
-	}
-	items := parseItems(names.originalText(start, end))
-	canonicalItems := parseItems(names.canonical[start:end])
-	if len(items) != len(result.Columns) || len(canonicalItems) != len(items) {
-		return
-	}
-	for i, item := range items {
-		if item.alias != strings.TrimSpace(item.expr) {
-			// parseItems gives the alias's value already: unquoting it again
-			// would trim ` m` to m and read ```a``` as a.
-			result.Columns[i] = item.alias
-			continue
-		}
-		if name, isName := isOneSymbolicName(item.expr); isName {
-			result.Columns[i] = name
-			continue
-		}
-		result.Columns[i] = strings.TrimSpace(item.expr)
-	}
-}
-
-func sortColumnsByName(result *ExecuteResult) {
-	order := make([]int, len(result.Columns))
-	for i := range order {
-		order[i] = i
-	}
-	sort.SliceStable(order, func(a, b int) bool { return result.Columns[order[a]] < result.Columns[order[b]] })
-	columns := make([]string, len(order))
-	for i, from := range order {
-		columns[i] = result.Columns[from]
-	}
-	rows := make([][]interface{}, len(result.Rows))
-	for r, row := range result.Rows {
-		if len(row) != len(order) {
-			return
-		}
-		rows[r] = make([]interface{}, len(order))
-		for i, from := range order {
-			rows[r][i] = row[from]
-		}
-	}
-	result.Columns, result.Rows = columns, rows
+// restoreProjection is a presentation-only adapter of the canonical owner.
+// Keep the callback argument for existing callers; naming never invokes it.
+func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, _ func(string) []returnItem) {
+	restoreProjectionPresentation(names.original, result)
 }
 
 // restoreStatementText maps statement text taken from the canonical

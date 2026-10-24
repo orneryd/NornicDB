@@ -399,7 +399,7 @@ func validateWithProjectionSemantics(cypher string) error {
 			explicitAlias := projectionAliasIndex(item) > 0
 			// true, false and null are literals, not variables, even when a
 			// variable of that name was declared (isLiteralKeyword).
-			if !explicitAlias && expression != "*" && (simpleSemanticIdentifier(expression) == "" || isLiteralKeyword(expression)) {
+			if !explicitAlias && expression != "*" && !projectionHasVariableIdentity(expression) {
 				if containsMalformedCreateClauseToken(expression) {
 					continue
 				}

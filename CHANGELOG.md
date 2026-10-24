@@ -34,6 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve grouped variable identities and quoted mixed-star column order through
+  the canonical projection owner, and keep CALL input scopes local to each UNION
+  branch without extending the lifetime of explicit legacy imports. Read every
+  projection item from the incoming scope before publishing its outputs, so
+  shadowed CALL inputs do not depend on item order.
+
 - Keep transactional CALL batches independent while rolling back ordinary outer writes; preserve CREATE read phases, list element admission, and pagination opening order.
 
 - Keep transaction adjacency reads local to incident pending relationships and reuse bounded snapshot equality candidates for row MERGE. Reuse newly created edge bodies during same-transaction cascades instead of repeatedly sorting pending Badger writes.

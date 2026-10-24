@@ -25,12 +25,13 @@ type boundCompilation struct {
 }
 type boundEvent struct{ enter, leave []func() }
 type boundBody struct {
-	start, end             int
-	incoming, retained     resultmetadata.Names
-	graph                  projectionGraph
-	branches               []*boundBranch
-	program                *projectedScopeFacts
-	incomingIDs, outputIDs map[string]statementBindingID
+	start, end                   int
+	incoming, retained           resultmetadata.Names
+	graph                        projectionGraph
+	branches                     []*boundBranch
+	program                      *projectedScopeFacts
+	incomingIDs, outputIDs       map[string]statementBindingID
+	branchInputs, branchRetained map[int]resultmetadata.Names
 }
 type boundBranch struct {
 	body      *boundBody
@@ -38,6 +39,7 @@ type boundBranch struct {
 	scope     map[string]struct{}
 	ids       map[string]statementBindingID
 	outputs   resultmetadata.Names
+	retained  resultmetadata.Names
 	columns   resultmetadata.Columns
 	graph     projectionGraph
 	statement resultmetadata.Statement
@@ -84,7 +86,7 @@ func (compiler *projectionCompilation) compileBound(incoming, retained resultmet
 		statement := resultmetadata.Statement{Start: start, End: end, Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(showUsersColumns), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseOther, Start: start, End: end, Before: projectionScope(incoming), After: scope}}}
 		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
 	}
-	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
+	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}, calls: map[int]*resultmetadata.Call{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
 	body := compilation.prepareBody(queryBodyFromSyntax(query), query, start, end)
 	body.incoming, body.retained = incoming, retained
 	body.incomingIDs = map[string]statementBindingID{}
@@ -164,13 +166,24 @@ func (compilation *boundCompilation) prepareBody(shape queryBody, root cypherant
 		compilation.event(first).enter = append(compilation.event(first).enter, func() {
 			previousBranch, previousClause = compilation.current, compilation.clause
 			compilation.current, compilation.clause = branch, nil
-			branch.scope = projectedNameMap(body.incoming)
-			branch.ids = cloneBindingIDs(body.incomingIDs)
+			incoming := body.incoming
+			if selected, exists := body.branchInputs[branchShape.start]; exists {
+				incoming = selected
+			}
+			branch.retained = body.retained
+			if selected, exists := body.branchRetained[branchShape.start]; exists {
+				branch.retained = selected
+			}
+			branch.scope = projectedNameMap(incoming)
+			branch.ids = map[string]statementBindingID{}
+			for name := range branch.scope {
+				branch.ids[name] = body.incomingIDs[name]
+			}
 			branch.graph = body.graph
 			branch.outputs = resultmetadata.Known(nil)
 			branch.columns = resultmetadata.KnownColumns(nil)
-			branch.statement = resultmetadata.Statement{Start: branchShape.start, End: branchShape.end, Incoming: projectionScope(body.incoming), Retained: projectionScope(body.retained)}
-			if branch.scope == nil || projectedNameMap(body.retained) == nil {
+			branch.statement = resultmetadata.Statement{Start: branchShape.start, End: branchShape.end, Incoming: projectionScope(incoming), Retained: projectionScope(branch.retained)}
+			if branch.scope == nil || projectedNameMap(branch.retained) == nil {
 				compilation.fail(resultmetadata.ReasonDynamicSchema, branchShape.start, nil)
 			}
 		})
@@ -334,7 +347,8 @@ func (compilation *boundCompilation) enterClause(clause *boundClause) {
 		if source.kind == pipelineClauseWith {
 			clause.step.Kind = resultmetadata.ClauseWith
 		}
-		plan := projectionPlanFromSyntax(source.syntax, func(expression cypherantlr.SyntaxNode) {
+		projectionRule := projectionSemanticsForSyntax(source.syntax)
+		plan := projectionPlanFromSemantics(projectionRule, func(expression cypherantlr.SyntaxNode) {
 			clause.projectionSyntax = append(clause.projectionSyntax, expression)
 		})
 		if !plan.valid {
@@ -352,7 +366,7 @@ func (compilation *boundCompilation) enterClause(clause *boundClause) {
 		clause.outputs = resultmetadata.Known(plan.columns)
 		clause.after = projectionPlanScope(plan, clause.before)
 		if source.kind == pipelineClauseWith {
-			for name := range projectedNameMap(branch.body.retained) {
+			for name := range projectedNameMap(branch.retained) {
 				clause.after[name] = struct{}{}
 			}
 			clause.outputs = resultmetadata.Known(nil)
@@ -432,6 +446,7 @@ func (compilation *boundCompilation) leaveClause(clause *boundClause) {
 		if statementUsesParticipant(*program.statement) {
 			call.Resolution = resultmetadata.ResolvedByParticipant
 		}
+		compilation.product.calls[clause.source.syntax.ID()] = call
 	}
 	clause.step.After = projectionScope(projectedMapNames(clause.after))
 	clause.branch.statement.Clauses = append(clause.branch.statement.Clauses, clause.step)
@@ -496,7 +511,8 @@ func (compilation *boundCompilation) callImports(clause *boundClause) {
 	}
 	slices.Sort(outer)
 	mode := resultmetadata.ImportNone
-	var imports, implicit []string
+	var imports []string
+	var implicitRetained []string
 	if descriptor.scoped {
 		mode = resultmetadata.ImportListed
 		imports = append([]string{}, descriptor.names...)
@@ -505,28 +521,46 @@ func (compilation *boundCompilation) callImports(clause *boundClause) {
 			imports = outer
 		}
 	} else {
+		// Legacy WITH names are projected imports, so a later WITH can drop
+		// them. The documented implicit-import extension retains only other
+		// outer names read by this branch. Neither policy crosses UNION branches.
+		clause.body.branchInputs = map[int]resultmetadata.Names{}
+		clause.body.branchRetained = map[int]resultmetadata.Names{}
 		for _, branch := range clause.body.branches {
 			_, _, err := branchSyntaxImports(branch.shape, func(name string) bool { _, found := before[name]; return found }, false)
 			if err != nil {
 				compilation.fail(resultmetadata.ReasonInvalidImport, clause.source.start, err)
 				return
 			}
+			var branchImports []string
+			legacy := map[string]struct{}{}
 			for _, name := range importingWithSyntax(branch.shape) {
 				if name == "*" {
-					imports = append(imports, outer...)
+					branchImports = append(branchImports, outer...)
+					for _, name := range outer {
+						legacy[name] = struct{}{}
+					}
 				} else {
-					imports = append(imports, name)
+					branchImports = append(branchImports, name)
+					legacy[name] = struct{}{}
 				}
 			}
-		}
-		for _, branch := range clause.body.branches {
-			var nodes []cypherantlr.SyntaxNode
-			for _, clause := range branch.shape.clauses {
-				nodes = append(nodes, clause.syntax)
+			var retained []string
+			for _, name := range implicitBranchSyntaxImports(branch.shape, before) {
+				if _, explicit := legacy[name]; !explicit {
+					branchImports = append(branchImports, name)
+					retained = append(retained, name)
+				}
 			}
-			implicit = append(implicit, implicitSyntaxImports(before, nodes...)...)
+			clause.body.branchInputs[branch.shape.start] = resultmetadata.Known(branchImports)
+			clause.body.branchRetained[branch.shape.start] = resultmetadata.Known(retained)
+			imports = append(imports, branchImports...)
+			implicitRetained = append(implicitRetained, retained...)
 		}
-		imports = append(imports, implicit...)
+	}
+	if !descriptor.scoped {
+		slices.Sort(imports)
+		imports = slices.Compact(imports)
 	}
 	initial := map[string]struct{}{}
 	for _, name := range imports {
@@ -536,9 +570,12 @@ func (compilation *boundCompilation) callImports(clause *boundClause) {
 		}
 		initial[name] = struct{}{}
 	}
-	retained := resultmetadata.Known(implicit)
+	retained := resultmetadata.Known(nil)
 	if descriptor.scoped {
 		retained = projectedMapNames(initial)
+	} else {
+		slices.Sort(implicitRetained)
+		retained = resultmetadata.Known(slices.Compact(implicitRetained))
 	}
 	clause.body.incomingIDs = map[string]statementBindingID{}
 	for name := range initial {
@@ -550,57 +587,6 @@ func (compilation *boundCompilation) callImports(clause *boundClause) {
 	clause.body.graph.outer = projectedMapNames(before)
 	clause.body.graph.outerIDs = cloneBindingIDs(clause.branch.ids)
 	clause.step.Call = &resultmetadata.Call{Mode: mode, Imports: imports, Retained: projectionScope(retained), Optional: clause.source.optional}
-}
-
-// Implicit imports are an existing extension. The canonical expression slots
-// supply candidate dependencies; grammar-owned declarations never import a row
-// value under a name that this body declares for itself.
-func implicitSyntaxImports(outer map[string]struct{}, bodies ...cypherantlr.SyntaxNode) []string {
-	referenced, declared := map[string]bool{}, map[string]bool{}
-	if len(bodies) > 0 && bodies[0].Rule() == cypherantlr.CypherParserRULE_withSt {
-		for _, name := range importingWithNode(bodies[0]) {
-			if name == "*" {
-				return nil
-			}
-			// Explicit legacy imports follow ordinary WITH projection
-			// lifetime. Only other implicitly referenced outer names persist.
-			declared[name] = true
-		}
-	}
-	for _, body := range bodies {
-		body.Walk(func(node cypherantlr.SyntaxNode) func() {
-			if variableSyntaxRead(node) {
-				selected := false
-				for parent, ok := node.Parent(); ok && parent.ID() != body.ID(); parent, ok = parent.Parent() {
-					if parent.Rule() == cypherantlr.CypherParserRULE_useClause {
-						selected = true
-						break
-					}
-				}
-				if !selected {
-					name, _ := node.Name()
-					if !syntaxLocalAt(node, body, name, outer) {
-						referenced[name] = true
-					}
-				}
-			}
-			switch node.Rule() {
-			case cypherantlr.CypherParserRULE_nodePattern, cypherantlr.CypherParserRULE_relationDetail, cypherantlr.CypherParserRULE_patternPart, cypherantlr.CypherParserRULE_projectionItem, cypherantlr.CypherParserRULE_unwindSt, cypherantlr.CypherParserRULE_forSt, cypherantlr.CypherParserRULE_letItem, cypherantlr.CypherParserRULE_yieldItem:
-				if symbol := node.ChildRule(cypherantlr.CypherParserRULE_symbol); symbol.Valid() {
-					declared[syntaxSymbolName(symbol)] = true
-				}
-			}
-			return nil
-		})
-	}
-	var imports []string
-	for name := range outer {
-		if referenced[name] && !declared[name] {
-			imports = append(imports, name)
-		}
-	}
-	slices.Sort(imports)
-	return imports
 }
 
 func (compilation *boundCompilation) procedure(clause *boundClause) {
@@ -681,24 +667,31 @@ func (compilation *boundCompilation) expressionBindings(clause *boundClause, nod
 	case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseCreate, pipelineClauseMerge, pipelineClauseLet:
 		input, ids = clause.after, clause.afterIDs
 	}
-	for parent, ok := node.Parent(); ok && parent.ID() != clause.source.syntax.ID(); parent, ok = parent.Parent() {
-		switch parent.Rule() {
-		case cypherantlr.CypherParserRULE_yieldItems:
-			input, ids = clause.after, clause.afterIDs
-		case cypherantlr.CypherParserRULE_where:
-			owner, direct := parent.Parent()
-			if !direct || owner.ID() != clause.source.syntax.ID() {
-				continue // A comprehension predicate reads its expression's input.
-			}
-			if clause.source.kind == pipelineClauseWith {
-				input, ids, restricted = clause.projectionTailBindings(node)
-			} else if clause.source.kind == pipelineClauseUnwind {
-				input, ids = clause.after, clause.afterIDs
-			}
-		case cypherantlr.CypherParserRULE_orderSt:
+	if clause.plan != nil {
+		switch (projectionSemantics{clause: clause.source.syntax}).readPhase(node) {
+		case projectionProjected:
 			input, ids, restricted = clause.projectionTailBindings(node)
-		case cypherantlr.CypherParserRULE_skipSt, cypherantlr.CypherParserRULE_limitSt:
+		case projectionWindow:
 			input, ids = clause.combinedBindings()
+		}
+	} else {
+		for parent, ok := node.Parent(); ok && parent.ID() != clause.source.syntax.ID(); parent, ok = parent.Parent() {
+			switch parent.Rule() {
+			case cypherantlr.CypherParserRULE_yieldItems:
+				input, ids = clause.after, clause.afterIDs
+			case cypherantlr.CypherParserRULE_where:
+				owner, direct := parent.Parent()
+				if !direct || owner.ID() != clause.source.syntax.ID() {
+					continue // A comprehension predicate reads its expression's input.
+				}
+				if clause.source.kind == pipelineClauseUnwind {
+					input, ids = clause.after, clause.afterIDs
+				}
+			case cypherantlr.CypherParserRULE_orderSt:
+				input, ids, restricted = clause.projectionTailBindings(node)
+			case cypherantlr.CypherParserRULE_skipSt, cypherantlr.CypherParserRULE_limitSt:
+				input, ids = clause.combinedBindings()
+			}
 		}
 	}
 	start, _ := node.Span()
