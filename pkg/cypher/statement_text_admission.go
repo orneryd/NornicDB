@@ -89,6 +89,9 @@ func normalizeQueryText(query string) (string, *queryRewrite, error) {
 	if err == nil && rewrite != nil && strings.TrimSpace(canonical) == "" {
 		err = emptyStatementError()
 	}
+	if err == nil {
+		canonical, rewrite = preserveStatementPresentation(query, canonical, rewrite)
+	}
 	return canonical, rewrite, err
 }
 
