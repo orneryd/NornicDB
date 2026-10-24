@@ -780,7 +780,21 @@ func validateStaticFunctionVariables(text string, scope staticTypeScope) error {
 // validateStaticFunctionVariablesIn is validateStaticFunctionVariables with
 // the scope built only when a function has a variable argument.
 func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeScope) error {
+	return validateStaticFunctionVariablesTyped(text, scopeOf, staticTypeScope.staticExpressionType)
+}
+
+// validateStaticFunctionVariablesTyped is validateStaticFunctionVariablesIn
+// with the argument types read through typeOf (staticExpressionType, or a
+// local scope's checker, which types each text of its scope once).
+//
+// An argument that reads a variable a comprehension, quantifier or reduce of
+// text binds around it is not typed here: this scope doesn't hold that
+// variable, and the construct's own check (checkScoped) types the argument
+// with it. Typing it here as well typed every nested construct once for each
+// enclosing scope, which grew exponentially with the nesting depth (NOR-150).
+func validateStaticFunctionVariablesTyped(text string, scopeOf func() staticTypeScope, typeOf func(staticTypeScope, string) string) error {
 	var scope *staticTypeScope
+	var locals map[string]struct{}
 	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string, at int) error {
 		for {
 			// abs((d)) reads d (abs(( (d))) after checkedWithoutUnaryPlus
@@ -813,11 +827,15 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 			scope = &built
 		}
 		argument = argument.inVersion(scope.cypher25)
-		if startsWithKeywordFold(strings.TrimSpace(expression), "CASE") {
-			for _, reference := range semanticExpressionReferences(expression) {
-				if localVariableShadowsAt(text, at, reference) {
-					return nil // the comprehension owner checks its local types
-				}
+		if locals == nil {
+			locals = expressionLocalBindings(text)
+		}
+		for _, reference := range semanticExpressionReferences(expression) {
+			if dot := strings.IndexByte(reference, '.'); dot > 0 {
+				reference = reference[:dot]
+			}
+			if _, local := locals[reference]; local && localVariableShadowsAt(text, at, reference) {
+				return nil // the comprehension owner checks its local types
 			}
 		}
 		// The shared CASE result-type owner combines branches before checking
@@ -827,7 +845,7 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 		// entity or a map (labels(n.x), id(n.x), point(n.x) are Neo4j's
 		// compile-time SyntaxError); another base's member has the type the
 		// scope knows for it (a Cypher 25 map's), or none.
-		typeName := scope.staticExpressionType(expression)
+		typeName := typeOf(*scope, expression)
 		if typeName == "" || argument.accepts(typeName) {
 			return nil
 		}
