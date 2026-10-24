@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/orneryd/nornicdb/pkg/config"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
+
+// fabricCallCaseDeadline bounds one statement of fabricCallDescriptorRun.
+const fabricCallCaseDeadline = 10 * time.Second
 
 // fabricCallDescriptorRun runs query in autocommit and in an explicit
 // composite transaction, and with --ref neo-ref also on Neo4j 5.26.30 with the
@@ -33,16 +37,41 @@ func fabricCallDescriptorRun(t *testing.T, exec *StorageExecutor, driver neo4j.D
 	for _, mode := range []string{"autocommit", "transaction"} {
 		t.Run(mode, func(t *testing.T) {
 			runExec := exec
+			completed := true
 			if mode == "transaction" {
 				runExec = fabricCallRowsCompositeExecutor(t, exec)
 				_, err := runExec.Execute(ctx, "BEGIN", nil)
 				require.NoError(t, err)
 				defer func() {
+					if !completed {
+						return // the statement still holds the transaction
+					}
 					_, err := runExec.Execute(ctx, "ROLLBACK", nil)
 					require.NoError(t, err)
 				}()
 			}
-			result, err := runExec.Execute(ctx, query, params)
+			// A statement that never completes (a plan re-entering its
+			// composite) fails its case within the deadline instead of
+			// stalling the package.
+			runCtx, cancel := context.WithTimeout(ctx, fabricCallCaseDeadline)
+			defer cancel()
+			type outcome struct {
+				result *ExecuteResult
+				err    error
+			}
+			done := make(chan outcome, 1)
+			go func() {
+				result, err := runExec.Execute(runCtx, query, params)
+				done <- outcome{result, err}
+			}()
+			var out outcome
+			select {
+			case out = <-done:
+			case <-time.After(fabricCallCaseDeadline):
+				completed = false
+				t.Fatalf("statement did not complete within %v: %s", fabricCallCaseDeadline, query)
+			}
+			result, err := out.result, out.err
 			require.NoError(t, err)
 			encoded, err := json.Marshal(append(make([][]interface{}, 0, len(result.Rows)), result.Rows...))
 			require.NoError(t, err)
