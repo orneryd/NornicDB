@@ -12,8 +12,8 @@ import (
 type cypherEncodedKey string
 type cypherNaNKey uint64
 type cypherEntityKey struct {
-	kind byte
-	id   string
+	kind     byte
+	identity storage.EntityIdentity
 }
 
 // cypherComparableKey normalizes scalars without formatting numbers or
@@ -28,12 +28,12 @@ func cypherComparableKey(value interface{}, contract cypherComparisonContract) (
 		if value == nil {
 			return nil, true
 		}
-		return cypherEntityKey{'n', string(value.ID)}, true
+		return cypherEntityKey{'n', value.Identity()}, true
 	case *storage.Edge:
 		if value == nil {
 			return nil, true
 		}
-		return cypherEntityKey{'r', string(value.ID)}, true
+		return cypherEntityKey{'r', value.Identity()}, true
 	case storage.RemoteEntityValue:
 		if value == nil {
 			return nil, true

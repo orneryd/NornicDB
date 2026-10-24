@@ -75,6 +75,7 @@ func (e *StorageExecutor) sessionIsComposite() bool {
 
 func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor {
 	cloned := NewStorageExecutor(store)
+	cloned.graphIdentityScope = e.graphIdentityScope
 	cloned.ShareStatementCachesFrom(e)
 	cloned.deferFlush = e.deferFlush
 	cloned.ShareEmbedderFrom(e)

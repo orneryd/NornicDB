@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -10,18 +11,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestKnowledgePolicySchemaLookupErrorBoundaries(t *testing.T) {
+func TestPolicySchemaLookupAndClosedTransaction(t *testing.T) {
 	base := newTestMemoryEngine(t)
-	tx, err := base.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetNamespace("lookup"))
+	tx := fixtureowner.NamespaceTransaction(t, base.BeginTransaction, "lookup")
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "lookup"))
 	executor.txContext = &TransactionContext{tx: tx, active: true}
-	view, err := executor.knowledgePolicySchema()
+	_, view, err := executor.knowledgePolicyContext("")
 	require.NoError(t, err)
 	require.NotNil(t, view)
 	wrongNamespace := NewStorageExecutor(&transactionStorageWrapper{tx: tx, underlying: base, namespace: "other"})
-	_, err = wrongNamespace.knowledgePolicySchema()
+	_, _, err = wrongNamespace.knowledgePolicyContext("")
 	require.Error(t, err)
 	require.NoError(t, tx.Rollback())
 	for _, procedure := range []func() (*ExecuteResult, error){
@@ -245,22 +244,22 @@ func TestKnowledgePolicyFunctionHelpers_Branches(t *testing.T) {
 	node := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Fact"}, CreatedAt: now.Add(-2 * time.Hour), UpdatedAt: now.Add(-1 * time.Hour)}
 	edge := &storage.Edge{ID: storage.EdgeID("e1"), Type: "REL", CreatedAt: now.Add(-30 * time.Minute)}
 
-	ent, ok := exec.resolveEntityForDecay("n", map[string]*storage.Node{"n": node}, nil)
+	ent, ok := exec.resolveEntityForDecay(context.Background(), "n", map[string]*storage.Node{"n": node}, nil)
 	require.True(t, ok)
 	require.Equal(t, "test:n1", ent.entityID)
 	require.Equal(t, []string{"Fact"}, ent.labels)
 	require.False(t, ent.isEdge)
 
-	ent, ok = exec.resolveEntityForDecay("r", nil, map[string]*storage.Edge{"r": edge})
+	ent, ok = exec.resolveEntityForDecay(context.Background(), "r", nil, map[string]*storage.Edge{"r": edge})
 	require.True(t, ok)
 	require.Equal(t, "test:e1", ent.entityID)
 	require.True(t, ent.isEdge)
 	require.Equal(t, "REL", ent.edgeType)
 
-	_, ok = exec.resolveEntityForDecay("missing", nil, nil)
+	_, ok = exec.resolveEntityForDecay(context.Background(), "missing", nil, nil)
 	require.False(t, ok)
 
-	be, nowNanos, ok := exec.getDecayContext(context.Background())
+	be, nowNanos, ok := exec.getDecayContext(context.Background(), exec.storage)
 	require.False(t, ok)
 	require.Nil(t, be)
 	require.Zero(t, nowNanos)
@@ -310,14 +309,14 @@ func TestKnowledgePolicyFunctionHelpers_Branches(t *testing.T) {
 	require.Nil(t, v)
 
 	// Memory engine has no decay context, so decay helpers return neutral fallback values.
-	decayScore := exec.evalDecayScore(context.Background(), "decayScore(n, {unknown:'x'})", map[string]*storage.Node{"n": node}, nil)
+	decayScore := exec.evalKnowledgePolicy(context.Background(), "decayScore(n, {unknown:'x'})", map[string]*storage.Node{"n": node}, nil)
 	require.Equal(t, 1.0, decayScore)
-	decay := exec.evalDecay(context.Background(), "decay(n, {unknown:'x'})", map[string]*storage.Node{"n": node}, nil)
+	decay := exec.evalKnowledgePolicy(context.Background(), "decay(n, {unknown:'x'})", map[string]*storage.Node{"n": node}, nil)
 	require.Equal(t, map[string]interface{}{"score": 1.0, "applies": false, "reason": "no BadgerEngine"}, decay)
 
 	// Policy fallbacks on missing entity and missing argument.
-	policy := exec.evalPolicy(context.Background(), "policy()", map[string]*storage.Node{"n": node}, nil)
+	policy := exec.evalKnowledgePolicy(context.Background(), "policy()", map[string]*storage.Node{"n": node}, nil)
 	require.Equal(t, map[string]interface{}{"targetId": "", "targetScope": "NODE"}, policy)
-	policy = exec.evalPolicy(context.Background(), "policy(missing)", map[string]*storage.Node{"n": node}, nil)
+	policy = exec.evalKnowledgePolicy(context.Background(), "policy(missing)", map[string]*storage.Node{"n": node}, nil)
 	require.Equal(t, map[string]interface{}{"targetId": "", "targetScope": "NODE"}, policy)
 }

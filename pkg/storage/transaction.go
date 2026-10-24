@@ -162,6 +162,7 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 	}
 
 	nodeCopy := &Node{
+		Database:                   node.Database,
 		embeddingOwner:             node.embeddingOwner,
 		embeddingOwnerID:           node.embeddingOwnerID,
 		ID:                         node.ID,
@@ -216,6 +217,7 @@ func copyEdge(edge *Edge) *Edge {
 	}
 
 	edgeCopy := &Edge{
+		Database:             edge.Database,
 		ID:                   edge.ID,
 		StartNode:            edge.StartNode,
 		EndNode:              edge.EndNode,

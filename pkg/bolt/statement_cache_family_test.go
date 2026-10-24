@@ -17,14 +17,14 @@ func TestStatementCacheFamilyBoltTransactionCacheFamily(t *testing.T) {
 			t.Cleanup(func() { _ = store.Close() })
 			manager := &mockDBManager{stores: map[string]storage.Engine{"nornic": store}, defaultDB: "nornic"}
 			session := &Session{server: &Server{config: DefaultConfig(), dbManager: manager, executors: make(map[string]QueryExecutor)}, forwardedAuthHeader: auth}
-			first, err := session.getTransactionalExecutorForDatabase("nornic")
+			first, err := session.getExecutorForDatabase("nornic", true)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if _, err := first.Execute(context.Background(), "MATCH (n:StatementCacheFamily) RETURN count(n) AS c", nil); err != nil {
 				t.Fatal(err)
 			}
-			second, err := session.getTransactionalExecutorForDatabase("nornic")
+			second, err := session.getExecutorForDatabase("nornic", true)
 			if err != nil {
 				t.Fatal(err)
 			}

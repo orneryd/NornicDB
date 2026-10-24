@@ -1949,7 +1949,138 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 	case MsgReset:
 		err = s.handleReset(data)
 	case MsgBegin:
-		err = s.handleBegin(data)
+
+		if s.explicitTransactionsUnsupported {
+			err = s.sendTransactionControlFailure(
+				"Neo.ClientError.Transaction.TransactionStartFailed",
+				"explicit transactions require a SessionExecutorFactory that returns a distinct executor per connection",
+			)
+			break
+		}
+		// Reject a protocol-invalid nested BEGIN before decoding metadata or
+		// resolving another database executor. The active transaction retains its
+		// original executor and remains the sole owner of its storage transaction.
+		if s.inTransaction {
+			err = s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionStartFailed",
+				"an explicit transaction is already active")
+			break
+		}
+		s.refreshAuthResult()
+
+		// Parse BEGIN metadata (contains tx_timeout, bookmarks, etc.)
+		var metadata map[string]any
+		if len(data) > 0 {
+			m, _, beginErr := decodePackStreamMap(data, 0, s.useUTCDateTimeStructs())
+			if beginErr != nil {
+				if errors.Is(beginErr, errDateTimeSignature) {
+					err = beginErr
+					break
+				}
+				err = s.sendTransactionControlFailure("Neo.ClientError.Request.Invalid",
+					fmt.Sprintf("Failed to parse BEGIN metadata: %v", beginErr))
+				break
+			}
+			metadata = m
+		}
+		txTimeout, beginErr := validateTransactionTimeout(metadata)
+		if beginErr != nil {
+			err = s.sendTransactionControlFailure("Neo.ClientError.Request.Invalid", beginErr.Error())
+			break
+		}
+
+		// Pin every explicit transaction provider to the BEGIN database, not only
+		// database-manager adapters. Factory and single-connection raw executors are
+		// session-scoped rather than database-resolving, so a later RUN naming a
+		// different database must fail before it reaches that executor.
+		txDatabase := s.database
+		if metadataDB, ok := databaseFromMetadata(metadata); ok {
+			txDatabase = metadataDB
+		}
+		if txDatabase == "" {
+			txDatabase = "nornic"
+		}
+		if s.server != nil && s.server.dbManager != nil {
+			dbName := txDatabase
+			if _, explicitlyNamed := databaseFromMetadata(metadata); !explicitlyNamed && s.database == "" {
+				dbName = s.server.dbManager.DefaultDatabaseName()
+			}
+			txExec, beginErr := s.getExecutorForDatabase(dbName, true)
+			if beginErr != nil {
+				err = s.sendTransactionControlFailure("Neo.ClientError.Database.DatabaseNotFound",
+					s.localize(localization.BoltDatabaseNotFoundWithCause(dbName, beginErr)))
+				break
+			}
+			s.executor = txExec
+			txDatabase = dbName
+		}
+		if beginErr := s.bindDatabaseConnection(txDatabase); beginErr != nil {
+			err = s.sendTransactionControlFailure("Neo.TransientError.General.DatabaseUnavailable", beginErr.Error())
+			break
+		}
+
+		// TRC-14: extract traceparent from BEGIN metadata for distributed tracing.
+		txParent := s.connCtx
+		if txParent == nil {
+			txParent = s.spanCtx
+			if txParent == nil {
+				txParent = context.Background()
+			}
+		}
+		txParent = extractTraceparent(txParent, metadata)
+		// BEGIN's tx_metadata is the transaction's metadata.
+		txParent = cypher.WithTransactionMetadata(txParent, boltTxMetadata(metadata))
+		// The transaction is the session's: SHOW TRANSACTIONS lists it with the
+		// session's connection and user from BEGIN on.
+		txParent = s.withSessionIdentity(txParent)
+
+		txExec, _ := s.executor.(TransactionalExecutor)
+		s.txLifecycle.setTimeoutCleanupFailureHandler(s.failClosedTransactionCleanup)
+		if beginErr := s.txLifecycle.begin(
+			txParent,
+			txTimeout,
+			txDatabase,
+			txExec,
+			metadata,
+			s.observeTransactionTerminal,
+		); beginErr != nil {
+			if s.baseExec != nil {
+				s.executor = s.baseExec
+			}
+			if s.txLifecycle.isDefunct() {
+				s.markTransactionCleanupFailed()
+				if sendErr := s.sendTransactionControlFailure(
+					"Neo.ClientError.Transaction.TransactionStartFailed", beginErr.Error()); sendErr != nil {
+					err = sendErr
+					break
+				}
+				if flushErr := s.flushIfPending(); flushErr != nil {
+					err = flushErr
+					break
+				}
+				err = fmt.Errorf("BEGIN transaction cleanup failed: %w", beginErr)
+				break
+			}
+			err = s.sendTransactionControlFailure("Neo.ClientError.Transaction.TransactionStartFailed", beginErr.Error())
+			break
+		}
+
+		s.inTransaction = true
+		s.txMetadata = metadata
+		s.txDatabase = txDatabase
+		s.txHasMerge = false
+		s.txHasNonMergeWrite = false
+		s.txMergeStatements = nil
+		s.txWriteInfos = nil
+		s.queryId = 0
+		s.latestStatementID = -1
+		s.resultStreams = make(map[int64]*resultStream)
+		if beginErr := s.sendSuccessNoFlush(nil); beginErr != nil {
+			err = beginErr
+			break
+		}
+		err = s.flushIfPending()
+		break
+
 	case MsgCommit:
 		err = s.handleCommit(data)
 	case MsgRollback:
@@ -2297,7 +2428,7 @@ func helloExtraRequestsUTCPatch(extraMap map[string]any) bool {
 
 // getExecutorForDatabase returns a Cypher executor for the specified database.
 // This is used when DatabaseManager is configured to route queries to the correct database.
-func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
+func (s *Session) getExecutorForDatabase(dbName string, transaction ...bool) (QueryExecutor, error) {
 	if s.server == nil || s.server.dbManager == nil {
 		return nil, fmt.Errorf("database manager not available")
 	}
@@ -2310,11 +2441,12 @@ func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
 		useAuthScopedResolver = true
 	}
 
-	if !useAuthScopedResolver {
+	explicit := len(transaction) > 0 && transaction[0]
+	if !useAuthScopedResolver && !explicit {
 		return cypher.CachedDatabaseExecutor(&s.server.executorsMu, &s.server.executors, dbName,
 			func(executor QueryExecutor) bool { return !boltExecutorCachesDisposed(executor) },
 			func() (QueryExecutor, error) {
-				executor, err := s.newDatabaseScopedCypherExecutor(dbName, false)
+				executor, err := cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, false))
 				if err != nil {
 					return nil, err
 				}
@@ -2325,14 +2457,27 @@ func (s *Session) getExecutorForDatabase(dbName string) (QueryExecutor, error) {
 	}
 
 	// Auth-scoped resolvers cannot be cached under a database-only key.
-	executor, err := s.newDatabaseScopedCypherExecutor(dbName, true)
+	executor, err := cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, useAuthScopedResolver))
 	if err != nil {
 		return nil, err
 	}
 
+	if explicit {
+		base, err := s.getExecutorForDatabase(dbName)
+		if err != nil {
+			return nil, err
+		}
+		if adapter, ok := base.(*boltQueryExecutorAdapter); ok {
+			executor.ShareQueryStatisticsFrom(adapter.executor)
+		}
+		return &transactionalBoltQueryExecutorAdapter{
+			boltQueryExecutorAdapter: boltQueryExecutorAdapter{executor: executor},
+		}, nil
+	}
+
 	// The cached executor is shared by every auto-commit RUN of this
 	// database: a statement must never leave it inside a transaction.
-	// Explicit transactions use getTransactionalExecutorForDatabase, which
+	// Explicit transactions use getExecutorForDatabase with explicit ownership, which
 	// builds a fresh per-connection executor.
 	executor.SetSharedExecutor(true)
 
@@ -2351,32 +2496,7 @@ type baseCypherExecutorProvider interface {
 	BaseCypherExecutor() *cypher.StorageExecutor
 }
 
-func (s *Session) getTransactionalExecutorForDatabase(dbName string) (QueryExecutor, error) {
-	if s.server == nil || s.server.dbManager == nil {
-		return nil, fmt.Errorf("database manager not available")
-	}
-	useAuthScopedResolver := false
-	if resolver, ok := s.server.dbManager.(authAwareStorageResolver); ok && strings.TrimSpace(s.forwardedAuthHeader) != "" {
-		_ = resolver
-		useAuthScopedResolver = true
-	}
-	executor, err := s.newDatabaseScopedCypherExecutor(dbName, useAuthScopedResolver)
-	if err != nil {
-		return nil, err
-	}
-	base, err := s.getExecutorForDatabase(dbName)
-	if err != nil {
-		return nil, err
-	}
-	if adapter, ok := base.(*boltQueryExecutorAdapter); ok {
-		executor.ShareQueryStatisticsFrom(adapter.executor)
-	}
-	return &transactionalBoltQueryExecutorAdapter{
-		boltQueryExecutorAdapter: boltQueryExecutorAdapter{executor: executor},
-	}, nil
-}
-
-func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedResolver bool) (*cypher.StorageExecutor, error) {
+func (s *Session) databaseScopedExecutorOptions(dbName string, useAuthScopedResolver bool) cypher.DatabaseScopedExecutorOptions {
 	options := cypher.DatabaseScopedExecutorOptions{
 		Name: dbName, Storage: s.server.dbManager,
 		AuthToken: s.forwardedAuthHeader, UseAuthenticatedStorage: useAuthScopedResolver,
@@ -2406,7 +2526,7 @@ func (s *Session) newDatabaseScopedCypherExecutor(dbName string, useAuthScopedRe
 			executor.SetDatabaseManager(&boltDatabaseManagerAdapter{manager: mgr})
 		}
 	}
-	return cypher.NewDatabaseScopedExecutor(options)
+	return options
 }
 
 // boltQueryExecutorAdapter adapts cypher.StorageExecutor to bolt.QueryExecutor interface.

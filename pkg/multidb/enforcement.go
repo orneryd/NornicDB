@@ -391,9 +391,12 @@ func (c *databaseLimitChecker) calculateCurrentStorageSize(engine storage.Engine
 //	size, err := calculateNodeSize(node)
 //	// size is the exact byte count that will be stored
 func calculateNodeSize(node *storage.Node) (int64, error) {
-	if node != nil && node.Properties != nil && len(node.Properties) == 0 {
+	if node != nil {
 		canonical := *node
-		canonical.Properties = nil
+		canonical.Database = "" // Query provenance does not consume stored-byte quota.
+		if len(canonical.Properties) == 0 {
+			canonical.Properties = nil
+		}
 		node = &canonical
 	}
 	var buf bytes.Buffer
@@ -421,9 +424,12 @@ func calculateNodeSize(node *storage.Node) (int64, error) {
 //	size, err := calculateEdgeSize(edge)
 //	// size is the exact byte count that will be stored
 func calculateEdgeSize(edge *storage.Edge) (int64, error) {
-	if edge != nil && edge.Properties != nil && len(edge.Properties) == 0 {
+	if edge != nil {
 		canonical := *edge
-		canonical.Properties = nil
+		canonical.Database = ""
+		if len(canonical.Properties) == 0 {
+			canonical.Properties = nil
+		}
 		edge = &canonical
 	}
 	var buf bytes.Buffer

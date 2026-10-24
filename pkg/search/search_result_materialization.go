@@ -192,10 +192,15 @@ func searchResultFromNode(id string, node *storage.Node, projection resultProper
 // the source timestamps: later property-visibility checks must score the node
 // that was read, rather than a reconstruction with a zero creation time.
 // Managed vectors stay in storage; a user vector property remains a property.
-func (result SearchResult) MaterializedNode() *storage.Node {
+// A database context supplies provenance only when the result has no source
+// database, as with compact continuation results. Existing provenance wins.
+func (result SearchResult) MaterializedNode(database ...string) *storage.Node {
 	var node storage.Node
 	if result.sourceNode != nil {
 		node = *result.sourceNode
+	}
+	if node.Database == "" && len(database) > 0 {
+		node.Database = database[0]
 	}
 	node.ID = result.NodeID
 	if node.ID == "" {
