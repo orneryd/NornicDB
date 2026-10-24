@@ -53,13 +53,3 @@ func TestRetrieveWhereReadsPatternElementWhere(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{[]interface{}{"sb"}}}, result.Rows)
 }
-
-// patternHasInlineWhere finds a WHERE inside a node or relationship pattern,
-// not one after it or inside a string.
-func TestPatternHasInlineWhere(t *testing.T) {
-	require.True(t, patternHasInlineWhere("MATCH (n)-->(m:C WHERE m.id = 1)"))
-	require.True(t, patternHasInlineWhere("MATCH (n)-[r WHERE r.w > 1]->(m)"))
-	require.False(t, patternHasInlineWhere("MATCH (n)-->(m:C) WHERE m.id = 1"))
-	require.False(t, patternHasInlineWhere("MATCH (n {s: '(x WHERE y)'})-->(m)"))
-	require.False(t, patternHasInlineWhere("MATCH (n)-->(m {elsewhere: 1})"))
-}

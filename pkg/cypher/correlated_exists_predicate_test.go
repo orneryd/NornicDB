@@ -33,12 +33,13 @@ func TestCorrelatedExistsPredicatesApplyInnerFilter(t *testing.T) {
 	}
 
 	exists := func(row map[string]interface{}) bool {
-		matched, recognized := exec.rowExistsSubqueryMatches(ctx, `EXISTS {
+		value, recognized, err := exec.rowSubqueryValue(ctx, "EXISTS", `
 		MATCH (fn)-[:RUNS_IN]->(o:Workload)
 		WHERE o.id <> w.id
-	}`, row)
+	`, row)
+		require.NoError(t, err)
 		require.True(t, recognized)
-		return matched
+		return value.(bool)
 	}
 	require.False(t, exists(map[string]interface{}{"fn": fn1, "w": w1}))
 	require.True(t, exists(map[string]interface{}{"fn": fn2, "w": w2}))

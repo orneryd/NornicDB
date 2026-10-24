@@ -75,6 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Keep fresh nodes stable during traversal differential tests while retaining old-node decay and promotion controls.
 - Preserve node properties and source metadata in retrieval procedure rows, graph
   hits and continuation pages when property decay is enabled.
+- Evaluate EXISTS, COUNT and COLLECT subqueries through one expression owner in every clause. Preserve statement context for NOT EXISTS and reuse the cached indexed lookup for correlated predicates without OPTIONAL-row materialization.
 
 - Configure sampler recovery spacing and unleased rearm with positive-millisecond
   `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`
