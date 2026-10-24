@@ -212,10 +212,6 @@ func callSubqueryAt(query string, i int) bool {
 	return k < len(query) && query[k] == '{'
 }
 
-func hasCallInTransactions(query string) bool {
-	return hasCallSubqueryPattern(query) && findKeywordIndex(query, "IN TRANSACTIONS") >= 0
-}
-
 func hasNotExistsFollowedByBrace(query string) bool {
 	for i := 0; i < len(query); i++ {
 		if !matchKeywordAt(query, i, "NOT") {
@@ -1619,9 +1615,6 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	// For write operations, use implicit transaction for atomicity
 	// This ensures partial writes are rolled back on error
 	if needsTransaction {
-		if hasCallInTransactions(cypher) {
-			return e.executeWithoutTransaction(ctx, cypher, upperQuery)
-		}
 		return e.executeWithImplicitTransaction(ctx, cypher, upperQuery)
 	}
 

@@ -755,6 +755,9 @@ func (n *rowFallbackNode) eval(e *StorageExecutor, values map[string]interface{}
 
 // rowValueFallback is evaluateRowValueText's last step for expr.
 func (e *StorageExecutor) rowValueFallback(expr string, values map[string]interface{}) (interface{}, bool, error) {
+	if err := scalarExpressionEvaluationError(expr, values); err != nil {
+		return nil, false, err
+	}
 	if isValidIdentifier(expr) {
 		if value, bound := e.boundValue(rowStatementContextOrBackground(values), expr); bound {
 			return runtimeRowResult(value, true, nil)

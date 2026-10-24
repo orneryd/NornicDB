@@ -88,6 +88,9 @@ type CypherParserListener interface {
 	// EnterCallSubquery is called when entering the callSubquery production.
 	EnterCallSubquery(c *CallSubqueryContext)
 
+	// EnterTransactionBatch is called when entering the transactionBatch production.
+	EnterTransactionBatch(c *TransactionBatchContext)
+
 	// EnterSubqueryBody is called when entering the subqueryBody production.
 	EnterSubqueryBody(c *SubqueryBodyContext)
 
@@ -501,6 +504,9 @@ type CypherParserListener interface {
 
 	// ExitCallSubquery is called when exiting the callSubquery production.
 	ExitCallSubquery(c *CallSubqueryContext)
+
+	// ExitTransactionBatch is called when exiting the transactionBatch production.
+	ExitTransactionBatch(c *TransactionBatchContext)
 
 	// ExitSubqueryBody is called when exiting the subqueryBody production.
 	ExitSubqueryBody(c *SubqueryBodyContext)

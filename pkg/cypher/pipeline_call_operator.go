@@ -11,15 +11,27 @@ import (
 type pipelineCallMetadata struct {
 	scope   map[string]struct{}
 	columns []string
+	batch   *boundTransactionBatch
 }
 
 func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
-	body, afterCall, inTransactions, batchSize := e.parseCallSubquery(clause)
-	if body == "" {
-		return nil, nil, true, localizedError(localization.CypherSubqueriesCallBodyExpected(), nil)
+	body, afterCall, inTransactions, batchExpression := e.parseCallSubquery(clause)
+	if err := validateCallSubqueryBody(body); err != nil {
+		return nil, nil, true, err
 	}
 	if strings.TrimSpace(afterCall) != "" {
 		return nil, nil, false, nil
+	}
+	var batch *boundTransactionBatch
+	if inTransactions {
+		if metadata != nil {
+			batch = metadata.batch
+		}
+		var err error
+		batch, err = e.bindTransactionalCallBatch(ctx, batchExpression, batch)
+		if err != nil {
+			return nil, nil, true, err
+		}
 	}
 	// An unscoped body imports through its branches' leading WITHs
 	// (unscopedCallImports, #907).
@@ -257,23 +269,20 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		return run(targetExec, ctx, rows)
 	}
 
-	if err := targetExec.rejectCallInTransactionsInExplicitTx(); err != nil {
+	if err := targetExec.validateTransactionalCallInput(len(rows)); err != nil {
 		return nil, nil, true, err
-	}
-	if batchSize <= 0 {
-		batchSize = 1000
 	}
 	combined := make([]pipelineRow, 0, len(rows))
 	stats := &QueryStats{}
-	for start := 0; start < len(rows); start += batchSize {
-		end := start + batchSize
+	for start := 0; start < len(rows); start += batch.size {
+		end := start + batch.size
 		if end > len(rows) {
 			end = len(rows)
 		}
 		batch := rows[start:end]
 		var batchRows []pipelineRow
 		var batchStats *QueryStats
-		_, err := targetExec.executeWithImplicitTransactionCallback(ctx, clause, upperASCII(clause), func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
+		_, err := targetExec.executeTransactionBatch(ctx, clause, func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
 			var handled bool
 			var runErr error
 			batchRows, batchStats, handled, runErr = run(txExec, txCtx, batch)

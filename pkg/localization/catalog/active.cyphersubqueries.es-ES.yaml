@@ -52,6 +52,9 @@
 - id: cyphersubqueries.outer_match_projection_missing
   description: Falta una proyección del MATCH externo. Variable no se traduce.
   other: "el MATCH externo no proyectó la variable correlacionada {{.Variable}}"
+- id: cyphersubqueries.batch_size_invalid
+  description: Tamaño de lote de CALL IN TRANSACTIONS no válido. Value no se traduce.
+  other: "CALL IN TRANSACTIONS requiere un tamaño de lote INTEGER positivo; se recibió {{.Value}}"
 - id: cyphersubqueries.call_body_expected
   description: Cuerpo vacío de CALL con sintaxis esperada. La sintaxis no se traduce.
   other: "subconsulta CALL {} no válida: cuerpo vacío (se esperaba CALL { <query> })"
@@ -133,3 +136,9 @@
 - id: cyphersubqueries.rag_fail_closed_embedding_unavailable
   description: db.retrieve failClosed no obtuvo un embedding de consulta usable.
   other: "db.retrieve failClosed requiere un embedding de consulta usable: {{.Cause}}"
+- id: cyphersubqueries.batch_context_invalid
+  description: Invalid transactional CALL placement or unsupported option. Reason is untranslated diagnostic detail.
+  other: "contexto de CALL transaccional no válido: {{.Reason}}"
+- id: cyphersubqueries.batch_aggregate_invalid
+  description: An aggregate was evaluated outside an aggregation operator.
+  other: "Las agregaciones no deben utilizarse de esta manera."

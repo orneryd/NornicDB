@@ -191,7 +191,17 @@ collectSubquery
     ;
 
 callSubquery
-    : OPTIONAL? CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE (IN TRANSACTIONS (OF (numLit | parameter) (ROW | ROWS))?)?
+    : OPTIONAL? CALL (LPAREN (MULT | symbol (COMMA symbol)*)? RPAREN)? LBRACE subqueryBody RBRACE transactionBatch?
+    ;
+
+// Both executor parser modes read this production. Options are represented
+// even when execution does not support them, so admission can reject them
+// before a preceding clause commits.
+transactionBatch
+    : IN (concurrency=expression? CONCURRENT)? TRANSACTIONS
+      (OF size=expression (ROW | ROWS))?
+      (ON ERROR errorMode=(CONTINUE | BREAK | FAIL))?
+      (REPORT STATUS AS statusVariable=symbol)?
     ;
 
 // Subquery body can start with WITH (to import variables) or have statements
@@ -886,4 +896,11 @@ reservedWord
     | DROP
     | FOREACH
     | REDUCE
+    | CONCURRENT
+    | ERROR
+    | CONTINUE
+    | BREAK
+    | FAIL
+    | REPORT
+    | STATUS
     ;

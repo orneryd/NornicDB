@@ -182,6 +182,12 @@ func (s *BaseCypherParserListener) EnterCallSubquery(ctx *CallSubqueryContext) {
 // ExitCallSubquery is called when production callSubquery is exited.
 func (s *BaseCypherParserListener) ExitCallSubquery(ctx *CallSubqueryContext) {}
 
+// EnterTransactionBatch is called when production transactionBatch is entered.
+func (s *BaseCypherParserListener) EnterTransactionBatch(ctx *TransactionBatchContext) {}
+
+// ExitTransactionBatch is called when production transactionBatch is exited.
+func (s *BaseCypherParserListener) ExitTransactionBatch(ctx *TransactionBatchContext) {}
+
 // EnterSubqueryBody is called when production subqueryBody is entered.
 func (s *BaseCypherParserListener) EnterSubqueryBody(ctx *SubqueryBodyContext) {}
 

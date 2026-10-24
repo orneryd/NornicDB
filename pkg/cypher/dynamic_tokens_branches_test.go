@@ -161,14 +161,14 @@ func TestDynamicTokenBranches(t *testing.T) {
 	require.Contains(t, readText, "$(m.l)")
 	require.NotContains(t, readText, "Fixed")
 	var reads, writes stretchTokens
-	analyzeStretchClause(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n:$(m.l):A, n[m.k], n.p"}, &reads, &writes)
+	analyzeStretchClause(context.Background(), pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n:$(m.l):A, n[m.k], n.p"}, &reads, &writes)
 	require.True(t, writes.anyNode)
 	require.True(t, writes.anyKey)
 	require.Contains(t, writes.labels, "A")
 	require.Contains(t, reads.keys, "l")
 	require.Contains(t, reads.keys, "k")
 	reads, writes = stretchTokens{}, stretchTokens{}
-	analyzeStretchClause(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n"}, &reads, &writes)
+	analyzeStretchClause(context.Background(), pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n"}, &reads, &writes)
 	require.True(t, writes.everything)
 
 	// Label expressions: the predicate of %, a nested term's error.

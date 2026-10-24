@@ -52,6 +52,9 @@
 - id: cyphersubqueries.outer_match_projection_missing
   description: Expanded pseudo-locale missing outer MATCH projection.
   other: "[!! outer MATCH did not project correlated variable {{.Variable}} !!]"
+- id: cyphersubqueries.batch_size_invalid
+  description: Expanded pseudo-locale invalid CALL IN TRANSACTIONS batch size.
+  other: "[!! CALL IN TRANSACTIONS requires a positive INTEGER batch size, got {{.Value}} !!]"
 - id: cyphersubqueries.call_body_expected
   description: Expanded pseudo-locale expected CALL body.
   other: "[!! invalid CALL {} subquery: empty body (expected CALL { <query> }) !!]"
@@ -133,3 +136,9 @@
 - id: cyphersubqueries.rag_fail_closed_embedding_unavailable
   description: Expanded pseudo-locale missing fail-closed retrieve embedding.
   other: "[!! db.retrieve failClosed requires a usable query embedding: {{.Cause}} !!]"
+- id: cyphersubqueries.batch_context_invalid
+  description: Invalid transactional CALL placement or unsupported option. Reason is untranslated diagnostic detail.
+  other: "invalid transactional CALL context: {{.Reason}}"
+- id: cyphersubqueries.batch_aggregate_invalid
+  description: An aggregate was evaluated outside an aggregation operator.
+  other: "[!! Aggregations should not be used like this. !!]"
