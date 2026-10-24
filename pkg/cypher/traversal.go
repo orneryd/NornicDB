@@ -6,7 +6,6 @@ package cypher
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -338,24 +337,6 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		}
 	}
 
-	// Fast path: relationship aggregations and chained joins (Northwind-style query shapes).
-	//
-	// This avoids full path materialization for common patterns like:
-	//   - MATCH (c)<-[:PART_OF]-(p) RETURN c.name, count(p)
-	//   - MATCH (s)-[:SUPPLIES]->(p)-[:PART_OF]->(c) RETURN s.name, c.name, count(p)
-	//   - MATCH (c)-[:PURCHASED]->(o)-[:ORDERS]->(p)-[:PART_OF]->(cat) RETURN c.name, cat.name, count(DISTINCT o)
-	if whereClause == "" && pathVariable == "" {
-		if rows, ok, err := e.tryFastRelationshipAggregations(matches, returnItems); ok {
-			if err != nil {
-				return nil, err
-			}
-			if err := collector.appendRows(rows); err != nil {
-				return nil, err
-			}
-			return result, nil
-		}
-	}
-
 	// OPTIMIZATION: If WHERE clause filters by id(startNode) = value, filter start nodes before traversal
 	// This avoids traversing from all nodes when we only need one specific node
 	var optimizedStartNodes []*storage.Node
@@ -464,8 +445,11 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		}
 		paths = filtered
 	}
+	// Aggregates are the row pipeline's: its states (pipelineAggregateState)
+	// group by the grouping values and aggregate every item on its own, as
+	// every other MATCH ... RETURN does (NOR-70).
 	for _, item := range returnItems {
-		if !isAggregateFunc(item.expr) && containsAggregateFunc(item.expr) {
+		if containsAggregateFunc(item.expr) {
 			rows := make([]traversalOptRow, 0, len(paths))
 			for _, path := range paths {
 				pathContext := e.buildPathContext(path, matches)
@@ -480,156 +464,6 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			}
 			return result, nil
 		}
-	}
-
-	// Pre-compute upper-case expressions and aggregation flags ONCE for all items
-	// This avoids repeated upperASCII() calls in loops (major performance win)
-	upperExprs := make([]string, len(returnItems))
-	isAggFlags := make([]bool, len(returnItems))
-	for i, item := range returnItems {
-		upperExprs[i] = upperASCII(item.expr)
-		isAggFlags[i] = strings.HasPrefix(upperExprs[i], "COUNT(") ||
-			strings.HasPrefix(upperExprs[i], "SUM(") ||
-			strings.HasPrefix(upperExprs[i], "AVG(") ||
-			strings.HasPrefix(upperExprs[i], "MIN(") ||
-			strings.HasPrefix(upperExprs[i], "MAX(") ||
-			strings.HasPrefix(upperExprs[i], "COLLECT(")
-	}
-
-	// Check if this is an aggregation query
-	hasAggregation := false
-	for _, isAgg := range isAggFlags {
-		if isAgg {
-			hasAggregation = true
-			break
-		}
-	}
-
-	// Handle aggregation queries
-	if hasAggregation {
-		// Check if there are non-aggregation columns (implicit GROUP BY)
-		hasGrouping := false
-		for _, isAgg := range isAggFlags {
-			if !isAgg {
-				hasGrouping = true
-				break
-			}
-		}
-
-		// If no grouping, return single aggregated row
-		if !hasGrouping {
-			row := make([]interface{}, len(returnItems))
-			for i, item := range returnItems {
-				switch {
-				case isAggregateFuncName(item.expr, "count"):
-					row[i] = e.aggregatePathCount(ctx, paths, matches, item.expr)
-
-				case isAggregateFuncName(item.expr, "sum"):
-					row[i] = e.aggregatePathSum(ctx, paths, matches, extractFuncInner(item.expr))
-
-				case isAggregateFuncName(item.expr, "avg"):
-					row[i] = e.aggregatePathAvg(ctx, paths, matches, extractFuncInner(item.expr))
-
-				case isAggregateFuncName(item.expr, "min"):
-					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInner(item.expr), false)
-
-				case isAggregateFuncName(item.expr, "max"):
-					row[i] = e.aggregatePathMinMax(ctx, paths, matches, extractFuncInner(item.expr), true)
-
-				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInner(item.expr)):
-					row[i] = e.aggregatePathCollect(ctx, paths, matches, item.expr, true)
-
-				case isAggregateFuncName(item.expr, "collect"):
-					row[i] = e.aggregatePathCollect(ctx, paths, matches, item.expr, false)
-
-				default:
-					if len(paths) > 0 {
-						context := e.buildPathContext(paths[0], matches)
-						row[i] = e.evaluateExpressionWithPathContext(ctx, item.expr, context)
-					} else {
-						row[i] = nil
-					}
-				}
-			}
-			if err := collector.appendRow(row); err != nil {
-				return nil, err
-			}
-			return result, nil
-		}
-
-		// GROUP BY: group paths by non-aggregation column values
-		groups := make(map[string][]PathResult)
-		groupKeys := make(map[string][]interface{})
-
-		for _, path := range paths {
-			context := e.buildPathContext(path, matches)
-			keyParts := make([]interface{}, 0)
-
-			// Build group key from non-aggregation columns
-			for i, item := range returnItems {
-				if !isAggFlags[i] { // Use pre-computed flag
-					val := e.evaluateExpressionWithPathContext(ctx, item.expr, context)
-					keyParts = append(keyParts, val)
-				}
-			}
-
-			key := fmt.Sprintf("%v", keyParts)
-			groups[key] = append(groups[key], path)
-			if _, exists := groupKeys[key]; !exists {
-				groupKeys[key] = keyParts
-			}
-		}
-
-		// Build result rows for each group
-		for key, groupPaths := range groups {
-			row := make([]interface{}, len(returnItems))
-			keyIdx := 0
-
-			for i, item := range returnItems {
-				if !isAggFlags[i] { // Use pre-computed flag
-					// Non-aggregated column - use group key value
-					row[i] = groupKeys[key][keyIdx]
-					keyIdx++
-					continue
-				}
-
-				// Aggregation function - aggregate over this group
-				switch {
-				case isAggregateFuncName(item.expr, "count"):
-					row[i] = e.aggregatePathCount(ctx, groupPaths, matches, item.expr)
-
-				case isAggregateFuncName(item.expr, "sum"):
-					row[i] = e.aggregatePathSum(ctx, groupPaths, matches, extractFuncInner(item.expr))
-
-				case isAggregateFuncName(item.expr, "avg"):
-					row[i] = e.aggregatePathAvg(ctx, groupPaths, matches, extractFuncInner(item.expr))
-
-				case isAggregateFuncName(item.expr, "min"):
-					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInner(item.expr), false)
-
-				case isAggregateFuncName(item.expr, "max"):
-					row[i] = e.aggregatePathMinMax(ctx, groupPaths, matches, extractFuncInner(item.expr), true)
-
-				case isAggregateFuncName(item.expr, "collect") && startsWithDistinctArgument(extractFuncInner(item.expr)):
-					row[i] = e.aggregatePathCollect(ctx, groupPaths, matches, item.expr, true)
-
-				case isAggregateFuncName(item.expr, "collect"):
-					row[i] = e.aggregatePathCollect(ctx, groupPaths, matches, item.expr, false)
-
-				default:
-					if len(groupPaths) > 0 {
-						context := e.buildPathContext(groupPaths[0], matches)
-						row[i] = e.evaluateExpressionWithPathContext(ctx, item.expr, context)
-					} else {
-						row[i] = nil
-					}
-				}
-			}
-			if err := collector.appendRow(row); err != nil {
-				return nil, err
-			}
-		}
-		return result, nil
 	}
 
 	// Build result rows (non-aggregation)
@@ -1020,147 +854,6 @@ func (e *StorageExecutor) tryCollectNodesFromStartPropertyScan(ctx context.Conte
 // isLengthPathExpr checks if an expression is length(path) for some path variable
 func isLengthPathExpr(expr string) bool {
 	return matchFuncStartAndSuffix(expr, "length") && strings.Contains(lowerASCII(expr), "path")
-}
-
-func (e *StorageExecutor) aggregatePathSum(ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string) interface{} {
-	var sumInt int64
-	var sumFloat float64
-	hasFloat := false
-	for _, path := range paths {
-		bindings := e.buildPathContext(path, matches)
-		value := e.evaluateExpressionWithPathContext(ctx, inner, bindings)
-		floating, integer, isInteger, numeric := pipelineAggregateNumber(value)
-		if !numeric {
-			continue
-		}
-		sumFloat += floating
-		if isInteger {
-			sumInt += integer
-		} else {
-			hasFloat = true
-		}
-	}
-	if hasFloat {
-		return sumFloat
-	}
-	return sumInt
-}
-
-func (e *StorageExecutor) aggregatePathAvg(ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string) interface{} {
-	sum := 0.0
-	count := 0
-	for _, path := range paths {
-		context := e.buildPathContext(path, matches)
-		val := e.evaluateExpressionWithPathContext(ctx, inner, context)
-		if f, ok := toFloat64(val); ok {
-			sum += f
-			count++
-		}
-	}
-	if count == 0 {
-		return nil
-	}
-	return sum / float64(count)
-}
-
-func (e *StorageExecutor) aggregatePathMinMax(ctx context.Context, paths []PathResult, matches *TraversalMatch, inner string, wantMax bool) interface{} {
-	var best interface{}
-	hasBest := false
-	for _, path := range paths {
-		context := e.buildPathContext(path, matches)
-		val := e.evaluateExpressionWithPathContext(ctx, inner, context)
-		if val == nil {
-			continue
-		}
-		if !hasBest {
-			best = val
-			hasBest = true
-			continue
-		}
-		if wantMax {
-			if compareForSort(best, val) {
-				best = val
-			}
-			continue
-		}
-		if compareForSort(val, best) {
-			best = val
-		}
-	}
-	if !hasBest {
-		return nil
-	}
-	return best
-}
-
-func (e *StorageExecutor) aggregatePathCount(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string) int64 {
-	inner := strings.TrimSpace(extractFuncInner(expr))
-	if inner == "*" {
-		return int64(len(paths))
-	}
-	inner, distinct := cutDistinctArgument(inner)
-	seen := make(map[string]struct{}, len(paths))
-	var count int64
-	for _, path := range paths {
-		pathContext := e.buildPathContext(path, matches)
-		value := e.evaluateExpressionWithPathContext(ctx, inner, pathContext)
-		if value == nil {
-			continue
-		}
-		if distinct {
-			key := joinedValueKey(value)
-			if _, exists := seen[key]; exists {
-				continue
-			}
-			seen[key] = struct{}{}
-		}
-		count++
-	}
-	return count
-}
-
-func (e *StorageExecutor) aggregatePathCollect(ctx context.Context, paths []PathResult, matches *TraversalMatch, expr string, distinct bool) interface{} {
-	inner, suffix, _ := extractFuncArgsWithSuffix(expr, "collect")
-	if distinct {
-		inner, _ = cutDistinctArgument(inner)
-	}
-
-	collected := make([]interface{}, 0, len(paths))
-	// Collected values count against the statement's memory limit (#1343).
-	memory := memoryAccount{scope: memoryScopeFromContext(ctx)}
-	defer memory.close()
-	if distinct {
-		seen := make(map[string]struct{}, len(paths))
-		for _, path := range paths {
-			context := e.buildPathContext(path, matches)
-			val := e.evaluateExpressionWithPathContext(ctx, inner, context)
-			if val == nil {
-				continue
-			}
-			key := fmt.Sprintf("%v", val)
-			if _, exists := seen[key]; exists {
-				continue
-			}
-			seen[key] = struct{}{}
-			if memory.grow(estimateValueBytes(val)+estimateValueBytes(key)) != nil {
-				break
-			}
-			collected = append(collected, val)
-		}
-	} else {
-		for _, path := range paths {
-			context := e.buildPathContext(path, matches)
-			val := e.evaluateExpressionWithPathContext(ctx, inner, context)
-			if memory.growValue(val) != nil {
-				break
-			}
-			collected = append(collected, val)
-		}
-	}
-	if suffix == "" {
-		return collected
-	}
-	return e.applyArraySuffix(collected, suffix)
 }
 
 // TraversalMatch represents a parsed traversal pattern
