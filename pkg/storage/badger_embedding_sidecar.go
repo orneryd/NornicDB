@@ -93,7 +93,7 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	}
 	return commitEmbeddingOutcome(node, func() error { return b.persistNodeEmbeddingSidecar(node) }, func(accepted *Node) {
 		b.graphMutationVersions.changed(namespaceForNodeID(accepted.ID))
-		b.enqueueCommitOperation(Operation{Type: OpUpdateNode, Node: accepted, embeddingOutcome: true})
+		b.queueCommitOperations(nil, &Operation{Type: OpUpdateNode, Node: accepted, embeddingOutcome: true})
 	})
 }
 
