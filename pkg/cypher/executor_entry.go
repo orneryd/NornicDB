@@ -964,6 +964,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Retain the revision captured before execution. A read overlapping a
 	// mutation must not publish its stale result under the newer revision.
 	if err == nil && resultCacheKey != "" && !stream.streamed() {
+		if finishMode != nil {
+			result = finishMode(result)
+		}
 		e.cache.putWithLabelsAndTraceForEmbedding(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace(), embeddingGeneration)
 	}
 

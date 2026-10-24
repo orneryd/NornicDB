@@ -18,7 +18,7 @@ func readStatementExecutionContract(query string) (statementExecutionContract, e
 	if mode == ModeExplain {
 		return statementExecutionContract{}, nil
 	}
-	if isNornicExtensionStatement(body) || isSchemaCommandStatement(body) || bareTransactionCommand(body) != "" {
+	if startsWithKeywordFold(body, "SHOW") || isNornicExtensionStatement(body) || isSchemaCommandStatement(body) || bareTransactionCommand(body) != "" {
 		return statementExecutionContract{}, nil
 	}
 	if fabric.IsAdministrationCommand(body) {

@@ -25,14 +25,17 @@ func resolvedStatementModeResult(result *ExecuteResult, write bool) *ExecuteResu
 	if result == nil {
 		return nil
 	}
+	mode := "r"
+	if write {
+		mode = "w"
+	}
+	if current, ok := ResolvedStatementQueryType(result.Metadata); ok && current == mode {
+		return result
+	}
 	copy := *result
 	copy.Metadata = make(map[string]interface{}, len(result.Metadata)+1)
 	for key, value := range result.Metadata {
 		copy.Metadata[key] = value
-	}
-	mode := "r"
-	if write {
-		mode = "w"
 	}
 	copy.Metadata[resolvedStatementModeMetadata] = mode
 	return &copy

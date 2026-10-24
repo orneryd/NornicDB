@@ -132,7 +132,7 @@ func newRemoteModeExecutor(t *testing.T, policies [2]string) (*StorageExecutor, 
 				stats := map[string]interface{}{"contains_updates": updates}
 				if policy == "owner" {
 					if mode, ok := result.Metadata["resolved_query_type"]; ok {
-						stats["query_type"] = mode
+						item["query_type"] = mode
 					}
 				}
 				item["stats"] = stats
