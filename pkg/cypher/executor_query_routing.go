@@ -509,7 +509,7 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 			"Invalid input: adjacent string literals require an operator between them")
 	}
 	if explainProfileConflict(cypher) {
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "EXPLAIN cannot be combined with PROFILE")
+		return executionModeConflictError()
 	}
 	if _, ok := trailingBareFinish(cypher); ok {
 		// FINISH can't follow RETURN, as in Neo4j; every valid trailing

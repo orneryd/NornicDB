@@ -80,8 +80,15 @@ func scanQuotedText(text string, start int, doubled bool, expressionEnd func(int
 
 // CommentEnd returns the end of the Cypher comment at index, or -1.
 func CommentEnd(text string, index int) int {
+	end, _ := CommentEndStatus(text, index)
+	return end
+}
+
+// CommentEndStatus reads a comment through the shared lexical owner and
+// reports whether it terminated. A line comment at EOF is complete.
+func CommentEndStatus(text string, index int) (int, bool) {
 	if index+1 >= len(text) || text[index] != '/' {
-		return -1
+		return -1, false
 	}
 	switch text[index+1] {
 	case '/':
@@ -89,14 +96,14 @@ func CommentEnd(text string, index int) int {
 		for end < len(text) && text[end] != '\n' && text[end] != '\r' {
 			end++
 		}
-		return end
+		return end, true
 	case '*':
 		if close := strings.Index(text[index+2:], "*/"); close >= 0 {
-			return index + 2 + close + 2
+			return index + 2 + close + 2, true
 		}
-		return len(text)
+		return len(text), false
 	}
-	return -1
+	return -1, false
 }
 
 // SkipToken skips one quoted token or comment at index.
