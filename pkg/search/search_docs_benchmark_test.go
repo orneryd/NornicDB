@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"io/fs"
 	"math"
 	"os"

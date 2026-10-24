@@ -1,9 +1,9 @@
 package storage
 
+import "github.com/orneryd/nornicdb/internal/testfixture"
+
 import (
 	"testing"
-
-	"github.com/orneryd/nornicdb/internal/testfixture"
 )
 
 // Test fixtures own their Badger workers even when a wrapper's Close is a

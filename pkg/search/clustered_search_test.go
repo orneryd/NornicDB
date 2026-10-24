@@ -2,8 +2,6 @@
 package search
 
 import (
-	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
-
 	"context"
 	"strings"
 	"testing"

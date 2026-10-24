@@ -1,8 +1,6 @@
 package search
 
 import (
-	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
-
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/storage"

@@ -2,10 +2,9 @@ package storage
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
-
-	"github.com/orneryd/nornicdb/internal/testfixture"
 )
 
 func BenchmarkManagedSourceWritePath(b *testing.B) {

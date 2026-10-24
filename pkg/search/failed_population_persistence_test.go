@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"log/slog"
 	"os"
 	"path/filepath"

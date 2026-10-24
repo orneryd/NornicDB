@@ -1,7 +1,6 @@
 package search
 
 import (
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math/rand"
 	"path/filepath"
 	"sort"

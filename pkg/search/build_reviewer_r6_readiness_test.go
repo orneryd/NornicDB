@@ -3,7 +3,7 @@ package search
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"log/slog"
 	"os"
 	"strings"

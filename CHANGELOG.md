@@ -86,7 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   input expressions before effects. Expand wildcards from the known scope and
   procedure registry, and expose complete facts to composite query planning;
   unresolved metadata is a terminal error rather than a guessed or empty header.
-- Close internally allocated stores when snapshot or WAL recovery fails, and check test package boundaries for leaked database stores.
+- Close internally allocated stores and WAL resources when recovery or startup fails; propagate malformed WAL manifests without panicking. Check test package boundaries for leaked stores and follow allocator identities through fields and call parameters.
 
 - Configure sampler recovery spacing and unleased rearm with positive-millisecond
   `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`

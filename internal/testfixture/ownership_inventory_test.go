@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -233,50 +234,89 @@ func TestStorageFixtureConstructorInventory(t *testing.T) {
 				censusStoreTypes = append(censusStoreTypes, types.NewPointer(object.Type()))
 			}
 		}
-		// The reviewer's typed call graph, with fixed-point function-value aliases.
-		// Sets preserve all assigned targets; no fixed depth or declaration spelling.
+		// Follow function identities through variables, struct fields and
+		// call parameters to a fixed point. Field objects come from go/types,
+		// so aliases and selector spellings retain the same target identity.
 		aliases := map[types.Object]map[types.Object]bool{}
 		obj := func(e ast.Expr) types.Object { return allocationObj(e, info) }
+		targets := func(e ast.Expr) map[types.Object]bool {
+			source := obj(e)
+			if _, ok := source.(*types.Func); ok {
+				return map[types.Object]bool{source: true}
+			}
+			return aliases[source]
+		}
 		changed := true
 		for changed {
 			changed = false
+			bind := func(target types.Object, source ast.Expr) {
+				if target == nil {
+					return
+				}
+				for fn := range targets(source) {
+					if aliases[target] == nil {
+						aliases[target] = map[types.Object]bool{}
+					}
+					if !aliases[target][fn] {
+						aliases[target][fn] = true
+						changed = true
+					}
+				}
+			}
 			for _, file := range files {
 				ast.Inspect(file, func(n ast.Node) bool {
-					var left []*ast.Ident
-					var right []ast.Expr
-					switch n := n.(type) {
+					switch node := n.(type) {
 					case *ast.ValueSpec:
-						left = n.Names
-						right = n.Values
+						if len(node.Names) == len(node.Values) {
+							for i, name := range node.Names {
+								bind(info.ObjectOf(name), node.Values[i])
+							}
+						}
 					case *ast.AssignStmt:
-						for _, x := range n.Lhs {
-							v, _ := x.(*ast.Ident)
-							left = append(left, v)
+						if len(node.Lhs) == len(node.Rhs) {
+							for i, left := range node.Lhs {
+								bind(obj(left), node.Rhs[i])
+							}
 						}
-						right = n.Rhs
-					default:
-						return true
-					}
-					if len(left) != len(right) {
-						return true
-					}
-					for i, l := range left {
-						if l == nil {
-							continue
+					case *ast.CompositeLit:
+						typ := info.TypeOf(node)
+						if typ == nil {
+							break
 						}
-						target := info.ObjectOf(l)
-						if aliases[target] == nil {
-							aliases[target] = map[types.Object]bool{}
+						fields, ok := typ.Underlying().(*types.Struct)
+						if !ok {
+							break
 						}
-						source := obj(right[i])
-						candidates := aliases[source]
-						if _, ok := source.(*types.Func); ok {
-							candidates = map[types.Object]bool{source: true}
+						for i, element := range node.Elts {
+							fieldIndex, value := i, element
+							if pair, ok := element.(*ast.KeyValueExpr); ok {
+								name, ok := pair.Key.(*ast.Ident)
+								if !ok {
+									continue
+								}
+								fieldIndex = -1
+								for j := 0; j < fields.NumFields(); j++ {
+									if fields.Field(j).Name() == name.Name {
+										fieldIndex = j
+										break
+									}
+								}
+								value = pair.Value
+							}
+							if fieldIndex >= 0 && fieldIndex < fields.NumFields() {
+								bind(fields.Field(fieldIndex), value)
+							}
 						}
-						for f := range candidates {
-							if !aliases[target][f] {
-								aliases[target][f] = true
-								changed = true
+					case *ast.CallExpr:
+						for target := range targets(node.Fun) {
+							signature, ok := target.Type().Underlying().(*types.Signature)
+							if !ok {
+								continue
+							}
+							for i, arg := range node.Args {
+								if i < signature.Params().Len() {
+									bind(signature.Params().At(i), arg)
+								}
 							}
 						}
 					}
@@ -501,6 +541,8 @@ func allocationRegistered(call *ast.CallExpr, parents map[ast.Node]ast.Node, inf
 }
 
 var allocationMutations = map[string]string{
+	"struct_field":  "func allocationMutation()*MemoryEngine{f:=struct{Open func()*MemoryEngine}{Open:NewMemoryEngine};return f.Open()}",
+	"parameter":     "func allocationMutationApply(open func()*MemoryEngine)*MemoryEngine{return open()};func allocationMutation()*MemoryEngine{return allocationMutationApply(NewMemoryEngine)}",
 	"concrete":      "func allocationMutation() *MemoryEngine{return NewMemoryEngine()}",
 	"interface":     "func allocationMutation() Engine{return NewMemoryEngine()}",
 	"alias":         "type allocationMutationAlias = *MemoryEngine;func allocationMutation() allocationMutationAlias{return NewMemoryEngine()}",
@@ -513,7 +555,7 @@ func TestFixtureInventoryRejectsAllocatorMutations(t *testing.T) {
 	command := exec.Command(os.Args[0], "-test.run=^TestFixtureInventoryMutationChild$", "-test.count=1", "-test.v")
 	command.Env = append(os.Environ(), "NORNIC_FIXTURE_INVENTORY_MUTATION=all", "NORNIC_UPDATE_ALLOCATION_INVENTORY=0", "NORNIC_GENERATE_STORE_BOUNDARIES=0")
 	output, err := command.CombinedOutput()
-	for _, name := range []string{"concrete", "interface", "alias", "second_result", "method", "closure"} {
+	for _, name := range []string{"concrete", "interface", "alias", "second_result", "method", "closure", "struct_field", "parameter"} {
 		t.Run(name, func(t *testing.T) {
 			matched := false
 			for _, line := range strings.Split(string(output), "\n") {

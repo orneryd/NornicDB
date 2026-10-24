@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -11,7 +12,7 @@ import (
 // Incoming DateTime signatures must belong to the negotiated family, even
 // inside nested collections. The oracle uses the same independently built bytes.
 func TestLegacyDateTimeWireSignatureNegotiation(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 	for _, target := range []struct {
@@ -82,7 +83,7 @@ func TestLegacyDateTimeWireSignatureNegotiation(t *testing.T) {
 // RUN/BEGIN metadata and PULL/DISCARD options have separate consumers; each
 // must carry the same negotiated policy as the parameters consumer.
 func TestLegacyDateTimeWireMetadataSignatureNegotiation(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	_, port := startBoltIntegrationServerWithExplicitTx(t, store)
 	for _, target := range []struct {

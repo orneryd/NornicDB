@@ -2,6 +2,7 @@ package cypher_test
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -21,7 +22,7 @@ func TestTransactionalCallBatchSizePreflight(t *testing.T) {
 		"CALL { CREATE (:BatchValidationRecord) RETURN 1 AS x } RETURN x UNION ALL CALL { CREATE (:BatchValidationRecord) } IN TRANSACTIONS OF 0 ROWS RETURN 1 AS x",
 	} {
 		t.Run(query, func(t *testing.T) {
-			base, err := storage.NewBadgerEngineInMemory()
+			base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "tenant"))

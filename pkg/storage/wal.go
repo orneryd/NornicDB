@@ -2889,7 +2889,10 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 
 	// Replay WAL entries after snapshot
 	activePath := walActivePath(walDir)
-	manifest, _ := loadWALManifest(walDir)
+	manifest, err := loadWALManifest(walDir)
+	if err != nil {
+		return nil, result, fmt.Errorf("wal: failed to load recovery manifest: %w", err)
+	}
 	if _, statErr := os.Stat(activePath); os.IsNotExist(statErr) && len(manifest.Segments) == 0 {
 		return store.release(), result, nil // No WAL to replay, return engine as-is
 	}

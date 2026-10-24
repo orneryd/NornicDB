@@ -3,7 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"math/rand"
 	"path/filepath"
 	"sync/atomic"
