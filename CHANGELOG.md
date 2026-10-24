@@ -79,6 +79,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hits and continuation pages when property decay is enabled.
 - Evaluate EXISTS, COUNT and COLLECT subqueries through one expression owner in every clause. Preserve statement context for NOT EXISTS and reuse the cached indexed lookup for correlated predicates without OPTIONAL-row materialization.
 
+- Make cached node reads respect durable updates and deletions across node,
+  relationship, embedding and maintenance writers. Reject undeclared writer
+  scopes before any write becomes durable.
+- Return integer properties in the signed range as `int64` consistently through
+  cached, stored and historical reads, including legacy lists. Copy caller
+  property maps and lists before storage writes.
+
 - Configure sampler recovery spacing and unleased rearm with positive-millisecond
   `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`
   and matching YAML keys; preserve the 5000 / 30000 ms defaults.

@@ -41,7 +41,7 @@ func TestReadViewIdleCaptureRunsCommittedWork(t *testing.T) {
 				}
 				_, idle := b.writeBehind.idleReadEpoch("test")
 				require.True(t, idle)
-				b.adjCacheStoreOutgoing(b.adjCacheGen.current(), "test:holder", []EdgeID{"test:r"})
+				b.adjCacheStoreOutgoing(b.adjCacheGen.current(), "test:holder", []EdgeID{"test:r"}, b.nodeCacheCommitTs.Load())
 				calls := 0
 				var ids []EdgeID
 				var hit bool
@@ -137,8 +137,8 @@ func TestReadViewIdleAdjacencyCommittedIDs(t *testing.T) {
 					return out, err
 				},
 			} {
-				b.adjCacheStoreOutgoing(b.adjCacheGen.current(), "test:a", []EdgeID{edge.ID})
-				b.adjCacheStoreIncoming(b.adjCacheGen.current(), "test:b", []EdgeID{edge.ID})
+				b.adjCacheStoreOutgoing(b.adjCacheGen.current(), "test:a", []EdgeID{edge.ID}, b.nodeCacheCommitTs.Load())
+				b.adjCacheStoreIncoming(b.adjCacheGen.current(), "test:b", []EdgeID{edge.ID}, b.nodeCacheCommitTs.Load())
 				b.edgeCacheMu.Lock()
 				delete(b.edgeCache, edge.ID)
 				b.edgeCacheMu.Unlock()

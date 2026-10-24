@@ -51,6 +51,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	if edge.UpdatedAt.IsZero() {
 		edge.UpdatedAt = edge.CreatedAt
 	}
+	edge = edgeForStorageWrite(edge)
 
 	// PERFORMANCE OPTIMIZATION: Use WriteBatch to batch all writes (edge + indexes)
 	// This reduces write amplification from 4 separate writes to 1 batch operation.
@@ -95,8 +96,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	if exists {
 		return ErrAlreadyExists
 	}
-
-	err = b.withUpdate(func(txn *badger.Txn) error {
+	err = b.withScopedNodeCacheUpdate(relationshipBodyCacheWrites(edge), func(txn *badger.Txn) error {
 		// Validate relationship constraints before writing
 		dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
 		schema := b.GetSchemaForNamespace(dbName)
@@ -171,7 +171,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		}
 		// Create-only: primary key IS the current head body.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	})
+	}, nil)
 
 	// Invalidate only this edge type (not entire cache)
 	if err == nil {
@@ -304,6 +304,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	edge = edgeForStorageWrite(edge)
 	releaseConstraint, constraintErr := b.lockRelationshipConstraintEdge(edge)
 	if constraintErr != nil {
 		return constraintErr
@@ -311,7 +312,8 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	defer releaseConstraint()
 
 	var oldType string
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	var oldEdge *Edge
+	err := b.withScopedNodeCacheUpdate(relationshipUpdateCacheWrites(edge, &oldEdge), func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now())
 		if err != nil {
 			return err
@@ -337,6 +339,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		}
 
 		oldType = existing.Type
+		oldEdge = existing
 
 		// Validate relationship constraints on updated edge
 		dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
@@ -493,7 +496,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		}
 		// Primary key now holds the new body; archival above handled history.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	})
+	}, nil)
 
 	// Notify listeners on successful update
 	if err == nil {
@@ -533,12 +536,14 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		edgeType = edge.Type
 	}
 
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	var deletedEdge *Edge
+	err := b.withUpdate(relationshipUpdateCacheWrites(nil, &deletedEdge), func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now())
 		if err != nil {
 			return err
 		}
 		edgeForAdjacency, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, id)
+		deletedEdge = edgeForAdjacency
 		if err != nil && err != ErrNotFound {
 			return err
 		}

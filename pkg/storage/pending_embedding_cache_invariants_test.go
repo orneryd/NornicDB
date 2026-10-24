@@ -20,7 +20,7 @@ func TestPendingCandidatesVerifiedEmptyAvoidsRepeatedScans(t *testing.T) {
 
 	// A non-marker commit also invalidates the empty snapshot. Reconcile it
 	// once, then reuse the new verified snapshot without retaining storage.
-	require.NoError(t, e.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, e.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set([]byte("empty-snapshot-probe"), []byte("published"))
 	}))
 	require.Nil(t, e.FindNodeNeedingEmbedding())
@@ -41,7 +41,7 @@ func TestPendingCandidatesReviewLostHint(t *testing.T) {
 	require.NoError(t, err)
 	e.MarkNodeEmbedded(pendingCandidateNode(0).ID)
 	require.Nil(t, e.FindNodeNeedingEmbedding())
-	require.NoError(t, e.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, e.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		if err := e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID); err != nil {
 			return err
 		}
@@ -71,7 +71,7 @@ func TestPendingCandidatesLostHintAfterDrain(t *testing.T) {
 	}
 	e.MarkNodeEmbedded(pendingCandidateNode(2).ID)
 	require.Equal(t, pendingCandidateNode(0).ID, e.FindNodeNeedingEmbedding().ID)
-	require.NoError(t, e.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, e.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		if err := e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(2).ID); err != nil {
 			return err
 		}

@@ -397,7 +397,7 @@ func TestManagedBadger_RecoversInterruptedLargeCommit(t *testing.T) {
 		return txn.Set([]byte("k2"), []byte("b"))
 	}))
 
-	lc, err := m.beginLargeCommit()
+	lc, err := m.beginLargeCommit(unknownNodeCacheWrites(nodeCacheUnknownManaged))
 	require.NoError(t, err)
 	batch := lc.openBatch()
 	require.NoError(t, batch.Set([]byte("k1"), []byte("x")))
@@ -441,7 +441,7 @@ func TestManagedBadger_FirstBatchConflictWritesNothing(t *testing.T) {
 	require.NoError(t, txn.Set([]byte("other"), []byte("y")))
 	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("b")) }))
 
-	lc, err := m.beginLargeCommit()
+	lc, err := m.beginLargeCommit(unknownNodeCacheWrites(nodeCacheUnknownManaged))
 	require.NoError(t, err)
 	require.ErrorIs(t, lc.commitBatch(txn), badger.ErrConflict)
 	require.NoError(t, lc.abort())

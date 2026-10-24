@@ -17,7 +17,7 @@ func TestPropertyKeyDict_ResolveAndLookup(t *testing.T) {
 	dict := eng.propKeyDict
 
 	var idA, idB uint64
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		var err error
 		idA, err = dict.resolveOrAllocateInTxn(txn, "ns", "alpha")
 		if err != nil {
@@ -44,7 +44,7 @@ func TestPropertyKeyDict_ResolveAndLookup(t *testing.T) {
 
 	// Resolve of an already-allocated name returns the same ID without
 	// allocating a new one.
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		got, err := dict.resolveOrAllocateInTxn(txn, "ns", "alpha")
 		if err != nil {
 			return err
@@ -61,7 +61,7 @@ func TestPropertyKeyDict_NamespaceIsolation(t *testing.T) {
 	dict := eng.propKeyDict
 
 	var idNs1, idNs2 uint64
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		var err error
 		idNs1, err = dict.resolveOrAllocateInTxn(txn, "tenant1", "name")
 		if err != nil {
@@ -173,7 +173,7 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 
 	var allocated []uint64
 	var counters propKeyTxnDrain
-	require.NoError(t, first.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, first.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		for _, name := range []string{"productID", "productName", "sku"} {
 			id, err := first.propKeyDict.resolveOrAllocateInTxn(txn, "shop", name)
 			if err != nil {
@@ -200,7 +200,7 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 	}
 
 	// The next allocation continues the counter rather than restarting.
-	require.NoError(t, second.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, second.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		id, err := second.propKeyDict.resolveOrAllocateInTxn(txn, "shop", "newField")
 		if err != nil {
 			return err
@@ -221,7 +221,7 @@ func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 	require.NoError(t, err)
 
 	var counters propKeyTxnDrain
-	require.NoError(t, first.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, first.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		_, err := first.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "a")
 		require.NoError(t, err)
 		_, err = first.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "b")
@@ -247,7 +247,7 @@ func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 
 	// The next allocation still produces a fresh ID (not one that
 	// collides with "a" or "b").
-	require.NoError(t, second.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, second.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		id, err := second.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "c")
 		if err != nil {
 			return err
@@ -267,7 +267,7 @@ func TestPropertyKeyDict_CounterFlushesOncePerNamespace(t *testing.T) {
 	dict := eng.propKeyDict
 
 	var batchedCounters propKeyTxnDrain
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		for i := 0; i < 50; i++ {
 			_, err := dict.resolveOrAllocateInTxn(txn, "nsA", "k"+string(rune('a'+i%26)))
 			require.NoError(t, err)
@@ -301,7 +301,7 @@ func TestPropertyKeyDict_CounterFlushesOncePerNamespace(t *testing.T) {
 // branch of flushTxnCounters when no allocations were staged.
 func TestPropertyKeyDict_FlushOnEmptyTxnIsNoop(t *testing.T) {
 	eng := newTestEngine(t)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		got := eng.propKeyDict.flushTxnCounters(txn)
 		require.Nil(t, got.counters, "empty-txn drain must return nil counter map")
 		require.Nil(t, got.pending, "empty-txn drain must return nil pending entries")
@@ -325,7 +325,7 @@ func TestPropertyKeyDict_DiscardTxnCounters(t *testing.T) {
 
 	// A fresh txn that flushes immediately should not write a counter
 	// for "ns" — the staged state from the discarded txn is gone.
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		_ = dict.flushTxnCounters(txn)
 		return nil
 	}))
@@ -353,7 +353,7 @@ func TestPropertyKeyDict_ConcurrentAllocate(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			err := eng.withUpdate(func(txn *badger.Txn) error {
+			err := eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 				id, err := dict.resolveOrAllocateInTxn(txn, "race", "key")
 				if err != nil {
 					return err
@@ -524,7 +524,7 @@ func TestPropertyKeyDict_HydrateSkipsMalformedKeys(t *testing.T) {
 
 	// One real entry so reopen exercises the loop body.
 	var counters propKeyTxnDrain
-	require.NoError(t, first.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, first.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		_, err := first.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "real")
 		require.NoError(t, err)
 		counters = first.propKeyDict.flushTxnCounters(txn)

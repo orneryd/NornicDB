@@ -68,16 +68,22 @@ func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 // transaction and cannot be repeated, so its writes must fit one Badger
 // batch (badger.ErrTxnTooBig otherwise); writes of any size go through
 // withUpdateUnits.
-func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
-	return b.commitEngineWrite(func(cw *commitWriter) error { return cw.writeOnce(fn) })
+func (b *BadgerEngine) withUpdate(scope nodeCacheWriteScope, fn func(txn *badger.Txn) error) error {
+	return b.withScopedNodeCacheUpdate(scope, fn, nil)
+}
+
+func (b *BadgerEngine) withScopedNodeCacheUpdate(scope nodeCacheWriteScope, fn func(txn *badger.Txn) error, cacheToken []uint64) error {
+	return b.commitEngineWriteWithCache(scope, func(cw *commitWriter) error {
+		return cw.writeOnce(fn)
+	}, cacheToken)
 }
 
 // withUpdateUnits commits units as one atomic engine write of any size. Each
 // unit is a repeatable group of blind writes: when one does not fit the open
 // Badger batch, the commit becomes a large commit and the unit is repeated in
 // the next batch, and nothing is visible until every unit is written (#703).
-func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error) error {
-	return b.commitEngineWrite(func(cw *commitWriter) error {
+func (b *BadgerEngine) withUpdateUnits(scope nodeCacheWriteScope, units []func(txn *badger.Txn) error) error {
+	return b.commitEngineWrite(scope, func(cw *commitWriter) error {
 		for _, unit := range units {
 			if err := cw.write(unit); err != nil {
 				return err
@@ -96,7 +102,14 @@ func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error) erro
 // matching Neo4j's token-before-entity invariant), and the numeric-ID
 // counter high-water marks are persisted after the commit, in a separate
 // transaction, so concurrent writers never conflict on the shared keys.
-func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) error {
+func (b *BadgerEngine) commitEngineWrite(scope nodeCacheWriteScope, write func(cw *commitWriter) error) error {
+	return b.commitEngineWriteWithCache(scope, write, nil)
+}
+
+func (b *BadgerEngine) commitEngineWriteWithCache(scope nodeCacheWriteScope, write func(cw *commitWriter) error, cacheToken []uint64) error {
+	if err := admitDurableWrite(scope); err != nil {
+		return err
+	}
 	db, err := b.beginHelperTxn()
 	if err != nil {
 		return err
@@ -109,7 +122,11 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) err
 			return err
 		}
 		defer db.endRead(readTs)
-		cw := b.newCommitWriter(db, txn)
+		cw, err := b.newCommitWriter(scope, db, txn)
+		if err != nil {
+			txn.Discard()
+			return err
+		}
 		defer cw.discard()
 		fail := func(err error) error {
 			b.idDict.discardTxnCounters(cw.txn)
@@ -124,7 +141,7 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) err
 		}
 		nodeMax, edgeMax = b.idDict.flushTxnCounters(cw.txn)
 		committing := cw.txn
-		if err := cw.finish(); err != nil {
+		if err := cw.finish(cacheToken...); err != nil {
 			return fail(err)
 		}
 		b.idDict.markTxnCommitted(committing)

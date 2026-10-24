@@ -17,7 +17,7 @@ func TestBadgerMVCC_WithViewNodeMVCCVersionsFromKey_UnknownDecodeAndYieldError(t
 	unknownKey := mvccNodeVersionKey(8_888_888, v)
 	unknownRec, err := encodeMVCCNodeRecord(&Node{ID: "ghost:n", Labels: []string{"N"}}, false)
 	require.NoError(t, err)
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error { return txn.Set(unknownKey, unknownRec) }))
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error { return txn.Set(unknownKey, unknownRec) }))
 
 	yieldCount := 0
 	_, reachedEnd, err := engine.withViewNodeMVCCVersionsFromKey([]byte{prefixMVCCNode}, 1, func(NodeID, MVCCVersion, bool) error {
@@ -30,7 +30,7 @@ func TestBadgerMVCC_WithViewNodeMVCCVersionsFromKey_UnknownDecodeAndYieldError(t
 
 	_, err = engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"N"}})
 	require.NoError(t, err)
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		vk, keyErr := engine.mvccNodeVersionKeyString(txn, "test:n1", v)
 		if keyErr != nil {
 			return keyErr
@@ -45,7 +45,7 @@ func TestBadgerMVCC_WithViewNodeMVCCVersionsFromKey_UnknownDecodeAndYieldError(t
 	require.Contains(t, err.Error(), "msgpack")
 
 	// Restore a valid record so yield-error branch can be exercised.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		vk, keyErr := engine.mvccNodeVersionKeyString(txn, "test:n1", v)
 		if keyErr != nil {
 			return keyErr
@@ -73,7 +73,7 @@ func TestBadgerMVCC_BootstrapInTxn_HeadDecodeErrorBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:be1", StartNode: "test:bn1", EndNode: "test:bn2", Type: "R"}))
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		// prefix-only garbage keys exercise len(key)<=1 skip branches.
 		if err := txn.Set([]byte{prefixNode}, []byte("x")); err != nil {
 			return err
@@ -95,13 +95,13 @@ func TestBadgerMVCC_BootstrapInTxn_HeadDecodeErrorBranches(t *testing.T) {
 		return txn.Set(eh, []byte{0x01})
 	}))
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		err := engine.bootstrapNodeMVCCFromCurrentStateInTxn(txn)
 		require.Error(t, err)
 		return nil
 	}))
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		err := engine.bootstrapEdgeMVCCFromCurrentStateInTxn(txn)
 		require.Error(t, err)
 		return nil
@@ -113,7 +113,7 @@ func TestBadgerMVCC_PruneMVCCKeyspaceInTxn_TombstoneReclaim_NodeAndEdge(t *testi
 	v1 := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(-2 * time.Minute), CommitSequence: 10}
 	v2 := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(-time.Minute), CommitSequence: 11}
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		if err := engine.writeNodeMVCCVersionInTxn(txn, &Node{ID: "test:n-reclaim", Labels: []string{"N"}}, v1); err != nil {
 			return err
 		}
@@ -136,7 +136,7 @@ func TestBadgerMVCC_PruneMVCCKeyspaceInTxn_TombstoneReclaim_NodeAndEdge(t *testi
 		return nil
 	}))
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		nDeleted, err := engine.pruneMVCCKeyspaceInTxn(context.Background(), txn, []byte{prefixMVCCNode}, MVCCPruneOptions{MaxVersionsPerKey: 0}, false)
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, nDeleted, int64(2))

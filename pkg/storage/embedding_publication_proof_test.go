@@ -153,7 +153,7 @@ func TestEmbeddingPublicationProofUnobservedPredecessor(t *testing.T) {
 	require.NoError(t, previous.Set([]byte("publication-proof-predecessor"), []byte("earlier writer")))
 	done := make(chan error, 1)
 	go func() {
-		done <- b.commitEngineWrite(func(cw *commitWriter) error {
+		done <- b.commitEngineWrite(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(cw *commitWriter) error {
 			cw.embeddingOutcome = node
 			return cw.writeOnce(func(txn *badger.Txn) error {
 				if err := b.checkEmbeddingSourceInTxn(txn, node); err != nil {

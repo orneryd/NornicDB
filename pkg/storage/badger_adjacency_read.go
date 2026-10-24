@@ -12,6 +12,7 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v read
 	type direction struct {
 		ids        []EdgeID
 		hit        bool
+		epoch      uint64
 		live       []*Edge
 		suppressed map[EdgeID]struct{}
 		deleted    bool
@@ -19,13 +20,13 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v read
 	var out, in direction
 	load := func(w *WriteBehindBuffer) {
 		if wantOut {
-			out.ids, out.hit = b.adjCacheLoadOutgoing(nodeID)
+			out.ids, out.epoch, out.hit = b.adjCacheCapture(nodeID, true)
 			if w != nil {
 				out.live, out.suppressed, out.deleted = w.edgeAdjacencyOverlayLocked(nodeID, true)
 			}
 		}
 		if wantIn {
-			in.ids, in.hit = b.adjCacheLoadIncoming(nodeID)
+			in.ids, in.epoch, in.hit = b.adjCacheCapture(nodeID, false)
 			if w != nil {
 				in.live, in.suppressed, in.deleted = w.edgeAdjacencyOverlayLocked(nodeID, false)
 			}
@@ -44,7 +45,7 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v read
 				return nil, nil
 			}
 			var edges []*Edge
-			if !d.hit {
+			if !d.hit || d.epoch > txn.ReadTs() {
 				prefix := b.incomingIndexPrefixString(nodeID)
 				if outgoing {
 					prefix = b.outgoingIndexPrefixString(nodeID)
@@ -57,9 +58,9 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v read
 					}
 				}
 				if outgoing {
-					b.adjCacheStoreOutgoing(adjGen, nodeID, d.ids)
+					b.adjCacheStoreOutgoing(adjGen, nodeID, d.ids, txn.ReadTs())
 				} else {
-					b.adjCacheStoreIncoming(adjGen, nodeID, d.ids)
+					b.adjCacheStoreIncoming(adjGen, nodeID, d.ids, txn.ReadTs())
 				}
 			}
 			// Read cached IDs from this transaction, never a later body cache.
@@ -110,13 +111,43 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v read
 // cachedAdjacency resolves a traversal as one captured operation. The edge cache
 // is locked once for both directions; only pending adjacency entries are copied.
 func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool, v readVisibility) ([]*Edge, []*Edge, bool) {
+	out, in, ok := b.captureCachedAdjacency(w, id, wantOut, wantIn)
+	if !ok {
+		return nil, nil, false
+	}
+	// Scoring may read durable access metadata. Resolve visibility only after
+	// releasing both cache locks; a cache lock must never enclose storage I/O,
+	// schema locks, or a wait that can depend on durable issuance.
+	if v == visibleRead && b.visibilityFiltered() {
+		now := DecayScoringTime()
+		filter := func(edges []*Edge) []*Edge {
+			visible := edges[:0]
+			for _, edge := range edges {
+				if !b.hidesEdge(v, edge, now) {
+					visible = append(visible, edge)
+				}
+			}
+			return visible
+		}
+		out, in = filter(out), filter(in)
+	}
+	return out, in, true
+}
+
+func (b *BadgerEngine) captureCachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool) ([]*Edge, []*Edge, bool) {
+	// Hold the endpoint versions through body resolution. The durable owner
+	// locks in this same order, so a result covers one coherent set of keys.
+	b.adjCacheMu.RLock()
+	defer b.adjCacheMu.RUnlock()
 	var outIDs, inIDs []EdgeID
 	var outHit, inHit = !wantOut, !wantIn
 	if wantOut {
-		outIDs, outHit = b.adjCacheLoadOutgoing(id)
+		entry, ok := b.outgoingAdjCache[id]
+		outIDs, outHit = entry.ids, ok && entry.ids != nil && entry.coherence.admits(entry.readTs, 0, b.adjCoherence)
 	}
 	if wantIn {
-		inIDs, inHit = b.adjCacheLoadIncoming(id)
+		entry, ok := b.incomingAdjCache[id]
+		inIDs, inHit = entry.ids, ok && entry.ids != nil && entry.coherence.admits(entry.readTs, 0, b.adjCoherence)
 	}
 	if !outHit || !inHit {
 		return nil, nil, false
@@ -126,7 +157,6 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 	}
 	b.edgeCacheMu.RLock()
 	defer b.edgeCacheMu.RUnlock()
-	now := DecayScoringTime()
 	read := func(ids []EdgeID, outgoing bool) ([]*Edge, bool) {
 		var live []*Edge
 		if w != nil {
@@ -140,18 +170,15 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 			if w != nil && w.entityStateLocked(bufferedEdgeEntity, string(edgeID)).found {
 				continue
 			}
-			edge := b.edgeCache[edgeID]
-			if edge == nil {
+			entry := b.edgeCache[edgeID]
+			edge := entry.Edge
+			if edge == nil || !entry.coherence.admits(entry.readTs, 0, b.edgeCoherence) {
 				return nil, false
 			}
-			if !b.hidesEdge(v, edge, now) {
-				result = append(result, edge)
-			}
+			result = append(result, edge)
 		}
 		for _, edge := range live {
-			if !b.hidesEdge(v, edge, now) {
-				result = append(result, copyEdge(edge))
-			}
+			result = append(result, copyEdge(edge))
 		}
 		return result, true
 	}
@@ -170,6 +197,16 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 		}
 	}
 	return out, in, true
+}
+
+func (b *BadgerEngine) adjCacheCapture(id NodeID, outgoing bool) ([]EdgeID, uint64, bool) {
+	b.adjCacheMu.RLock()
+	defer b.adjCacheMu.RUnlock()
+	entry, ok := b.incomingAdjCache[id]
+	if outgoing {
+		entry, ok = b.outgoingAdjCache[id]
+	}
+	return entry.ids, entry.readTs, ok && entry.ids != nil && entry.coherence.admits(entry.readTs, 0, b.adjCoherence)
 }
 
 // liveAdjacencyLocked enumerates the overlapping adjacency index, not the

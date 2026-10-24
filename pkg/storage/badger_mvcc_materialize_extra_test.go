@@ -38,7 +38,7 @@ func TestBadgerEngine_MVCCArchiveHelpers_Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Exercise archive no-op branches (existing version, missing key, nil body).
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, a, nodeHead.Version, nil, MVCCVersion{}))
 		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, a, nodeHead.Version, nil, MVCCVersion{}))
 		require.NoError(t, engine.archiveNodePrimaryIntoMVCCVersionInTxn(txn, NodeID(prefixTestID("mvcc-arch-missing-node")), nodeHead.Version, nil, MVCCVersion{}))
@@ -56,7 +56,7 @@ func TestBadgerEngine_MVCCArchiveHelpers_Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Tombstoned heads should short-circuit archiveOnUpdate.
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		tombV := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1001}
 		require.NoError(t, engine.writeNodeMVCCHeadInTxn(txn, a, tombV, true))
 		require.NoError(t, engine.writeEdgeMVCCHeadInTxn(txn, eid, tombV, true))
@@ -67,7 +67,7 @@ func TestBadgerEngine_MVCCArchiveHelpers_Branches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Malformed existing head should propagate decode errors from load*Head.
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		badNodeID := NodeID(prefixTestID("mvcc-bad-head-node"))
 		badEdgeID := EdgeID(prefixTestID("mvcc-bad-head-edge"))
 		nodeHeadKey, keyErr := engine.mvccNodeHeadKeyString(txn, badNodeID)
@@ -80,7 +80,7 @@ func TestBadgerEngine_MVCCArchiveHelpers_Branches(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		v := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 2001}
 		require.Error(t, engine.writeNodeMVCCHeadInTxn(txn, NodeID(prefixTestID("mvcc-bad-head-node")), v, false))
 		require.Error(t, engine.writeEdgeMVCCHeadInTxn(txn, EdgeID(prefixTestID("mvcc-bad-head-edge")), v, false))
@@ -129,7 +129,7 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_OperationMatrix(t *testing.T) {
 	}
 
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 7777}
-	err = engine.withUpdate(func(txn *badger.Txn) error {
+	err = engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return engine.materializeMVCCCommit(singleBatchWriter(txn), version, ops)
 	})
 	require.NoError(t, err)
@@ -174,7 +174,7 @@ func TestBadgerEngine_MaterializeMVCCCommitInTxn_AdjacencyEffects(t *testing.T) 
 	newUpdate := &Edge{ID: "test:mat-update", StartNode: "test:mat-a", EndNode: "test:mat-d", Type: "REL2"}
 
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC().Add(2 * time.Second), CommitSequence: 8801}
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		createBody, err := engine.encodeEdgeInTxn(txn, namespaceForEdgeID(newCreate.ID), newCreate)
 		if err != nil {
 			return err

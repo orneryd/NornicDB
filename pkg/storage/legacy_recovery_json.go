@@ -50,6 +50,9 @@ func decodeLegacyRecoveryJSON(reader io.Reader, target any) error {
 		}
 		return edge
 	})
+	if firstErr == nil {
+		canonicalizeDecodedPropertyContainers(target)
+	}
 	return firstErr
 }
 

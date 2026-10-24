@@ -15,7 +15,7 @@ func (b *BadgerEngine) migrateV2ToV3() error {
 		if err != nil {
 			return fmt.Errorf("scan edges: %w", err)
 		}
-		if err := b.withUpdate(func(txn *badger.Txn) error {
+		if err := b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 			for _, edge := range edges {
 				head, err := b.loadEdgeMVCCHeadInTxn(txn, edge.ID)
 				if err == ErrNotFound {
@@ -103,7 +103,7 @@ func (b *BadgerEngine) repairArchivedEdgeAdjacency() error {
 			return err
 		}
 		if len(batch) > 0 {
-			if err := b.withUpdate(func(txn *badger.Txn) error {
+			if err := b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 				for _, record := range batch {
 					if err := b.ensureEdgeAdjacencyAtHeadInTxn(txn, record.edge, record.version); err != nil {
 						return err

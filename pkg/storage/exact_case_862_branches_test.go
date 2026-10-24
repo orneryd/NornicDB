@@ -23,7 +23,7 @@ var oversizedName = strings.Repeat("L", 70_000)
 
 func writeRawNode(t *testing.T, engine *BadgerEngine, node *Node) {
 	t.Helper()
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		namespace, _, _ := ParseDatabasePrefix(string(node.ID))
 		body, _, err := engine.encodeNodeInTxn(txn, namespace, node)
 		if err != nil {
@@ -35,7 +35,7 @@ func writeRawNode(t *testing.T, engine *BadgerEngine, node *Node) {
 
 func writeRawEdge(t *testing.T, engine *BadgerEngine, edge *Edge) {
 	t.Helper()
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		namespace, _, _ := ParseDatabasePrefix(string(edge.ID))
 		body, err := engine.encodeEdgeInTxn(txn, namespace, edge)
 		if err != nil {
@@ -47,7 +47,7 @@ func writeRawEdge(t *testing.T, engine *BadgerEngine, edge *Edge) {
 
 func writeRawValue(t *testing.T, engine *BadgerEngine, key, value []byte) {
 	t.Helper()
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set(key, value)
 	}))
 }
@@ -61,7 +61,7 @@ func TestForEachStoredRecordInChunks(t *testing.T) {
 	var logged bytes.Buffer
 	scan := storedRecordScan{prefix: prefixNode, batchSize: 1, logEvery: 2, log: slog.New(slog.NewTextHandler(&logged, nil)), message: "scan progress", unit: "nodes"}
 	var visited []string
-	processed, err := engine.forEachStoredRecordInChunks(context.Background(), scan, func(txn *badger.Txn, key, value []byte) (int, bool, error) {
+	processed, err := engine.forEachStoredRecordInChunks(noNodeCacheWrites(), context.Background(), scan, func(txn *badger.Txn, key, value []byte) (int, bool, error) {
 		visited = append(visited, string(key[1:]))
 		return 1, true, nil
 	})
@@ -73,7 +73,7 @@ func TestForEachStoredRecordInChunks(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err = engine.forEachStoredRecordInChunks(ctx, scan, func(*badger.Txn, []byte, []byte) (int, bool, error) { return 0, true, nil })
+	_, err = engine.forEachStoredRecordInChunks(noNodeCacheWrites(), ctx, scan, func(*badger.Txn, []byte, []byte) (int, bool, error) { return 0, true, nil })
 	require.ErrorIs(t, err, context.Canceled)
 }
 
@@ -269,7 +269,7 @@ func TestRebuildCaseSensitiveIndexesErrors(t *testing.T) {
 	})
 	t.Run("deindexed tombstone move", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			require.NoError(t, moveIndexTombstonesInTxn(txn, [][]byte{[]byte("old")}, [][]byte{[]byte("new")}))
 			return nil
 		}))

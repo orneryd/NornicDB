@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -21,13 +22,16 @@ func (b *BadgerEngine) GapProbeAcrossReplay(t *testing.T, run func() (int64, err
 	b.writeBehind.mu.RUnlock()
 	require.NotNil(t, frontier)
 	b.adjCacheInvalidateAll()
-	b.adjCacheMu.RLock()
-	adjHeld := true
-	defer func() {
-		if adjHeld {
-			b.adjCacheMu.RUnlock()
-		}
-	}()
+	// Pause the same old read immediately before its cache fill, without
+	// holding the durable issuer's adjacency lock. Issuance now precedes
+	// publication, so holding that lock would prevent the replay under test.
+	paused, resume := make(chan struct{}), make(chan struct{})
+	var pauseOnce, resumeOnce sync.Once
+	unblock := func() { resumeOnce.Do(func() { close(resume) }) }
+	hook := func() { pauseOnce.Do(func() { close(paused); <-resume }) }
+	previous := b.adjCacheFillHook.Swap(&hook)
+	defer b.adjCacheFillHook.Store(previous)
+	defer unblock()
 	type result struct {
 		count int64
 		err   error
@@ -35,12 +39,10 @@ func (b *BadgerEngine) GapProbeAcrossReplay(t *testing.T, run func() (int64, err
 	read := make(chan result, 1)
 	go func() { count, err := run(); read <- result{count, err} }()
 	deadline := time.Now().Add(3 * time.Second)
-	for b.adjCacheMu.TryRLock() {
-		b.adjCacheMu.RUnlock()
-		if time.Now().After(deadline) {
-			t.Fatal("public query did not reach adjacency cache publication")
-		}
-		time.Sleep(time.Millisecond)
+	select {
+	case <-paused:
+	case <-time.After(3 * time.Second):
+		t.Fatal("public query did not reach adjacency cache publication")
 	}
 	b.writeBehind.mu.Lock()
 	overlayHeld := true
@@ -57,8 +59,7 @@ func (b *BadgerEngine) GapProbeAcrossReplay(t *testing.T, run func() (int64, err
 		}
 		time.Sleep(time.Millisecond)
 	}
-	b.adjCacheMu.RUnlock()
-	adjHeld = false
+	unblock()
 	select {
 	case err := <-replayed:
 		require.NoError(t, err)

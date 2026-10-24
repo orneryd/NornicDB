@@ -272,10 +272,10 @@ RETURN f.file_tags as file_tags, f.tags as tags
 		require.NotNil(t, node)
 		_, storedAsString := node.Properties["file_tags"].(string)
 		assert.False(t, storedAsString, "file_tags must not be stored as literal expression text")
-		storedFileTags, ok := node.Properties["file_tags"].([]interface{})
+		storedFileTags, ok := node.Properties["file_tags"].([]string)
 		assert.True(t, ok, "stored file_tags should be list, got %T (%v)", node.Properties["file_tags"], node.Properties["file_tags"])
 		if ok {
-			assert.ElementsMatch(t, []interface{}{"existing", "hello"}, storedFileTags)
+			assert.ElementsMatch(t, []string{"existing", "hello"}, storedFileTags)
 		}
 	}
 

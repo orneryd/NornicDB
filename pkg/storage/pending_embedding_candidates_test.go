@@ -95,7 +95,7 @@ func TestPendingCandidatesFailedEngineWrite(t *testing.T) {
 	e.MarkNodeEmbedded(pendingCandidateNode(0).ID)
 	require.Nil(t, e.FindNodeNeedingEmbedding())
 	sentinel := errors.New("abort pending-marker write")
-	err = e.withUpdate(func(txn *badger.Txn) error {
+	err = e.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		require.NoError(t, e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID))
 		return sentinel
 	})
@@ -191,7 +191,7 @@ func TestPendingCandidatesLargeCommitPublication(t *testing.T) {
 					return txn.Set([]byte(fmt.Sprintf("pending-probe-%06d", i)), []byte(strings.Repeat("x", 256)))
 				}
 			}
-			err := e.withUpdateUnits(units)
+			err := e.withUpdateUnits(unknownNodeCacheWrites(nodeCacheUnknownManaged), units)
 			require.Greater(t, batches, 1, "fixture must split into multiple atomic batches")
 			if fail {
 				require.ErrorIs(t, err, sentinel)
@@ -287,7 +287,7 @@ func TestPendingCandidatesRestartAfterMarkerBeforeHint(t *testing.T) {
 	txn, readTs, err := e.db.beginTxn(true)
 	require.NoError(t, err)
 	require.NoError(t, e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID))
-	require.NoError(t, e.db.commit(txn))
+	require.NoError(t, e.db.commit(unknownNodeCacheWrites(nodeCacheUnknownManaged), txn))
 	txn.Discard()
 	e.db.endRead(readTs)
 	require.NoError(t, e.db.syncIfPersistent())

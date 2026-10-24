@@ -23,7 +23,7 @@ import (
 func wipeLabelIndexAndMarker(t *testing.T, eng *BadgerEngine) {
 	t.Helper()
 	require.NoError(t, eng.db.DropPrefix([]byte{prefixLabelIndex}))
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Delete(labelIndexReadyKey)
 	}))
 }
@@ -233,7 +233,7 @@ func TestLabelIndexBackfill_RebuildIsFreshNotMerged(t *testing.T) {
 	// Plant a fake stale index entry. Use a numID nobody allocated
 	// (max uint64 - 1) to ensure it can't accidentally point to a
 	// real node.
-	require.NoError(t, engine1.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine1.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		stale := labelIndexKey("ghost", 1<<63)
 		return txn.Set(stale, []byte{})
 	}))
@@ -262,7 +262,7 @@ func TestLabelIndexBackfill_RebuildIsFreshNotMerged(t *testing.T) {
 // existing (possibly stale) on-disk index.
 func wipeMarkerOnly(t *testing.T, eng *BadgerEngine) {
 	t.Helper()
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Delete(labelIndexReadyKey)
 	}))
 }
@@ -288,7 +288,7 @@ func TestLabelIndexBackfill_ReadyMarkerRequiresCurrentScheme(t *testing.T) {
 		{name: "malformed", value: []byte{3, 0}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 				if testCase.value == nil {
 					return txn.Delete(labelIndexReadyKey)
 				}
@@ -312,7 +312,7 @@ func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
 		require.NoError(t, err)
 	}
 	wipeLabelIndexAndMarker(t, engine)
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set(labelIndexReadyKey, []byte{1})
 	}))
 	require.NoError(t, engine.Close())
@@ -366,7 +366,7 @@ func TestLabelIndexBackfill_EmptyStoreMarksCurrentScheme(t *testing.T) {
 			engine, err := NewBadgerEngine(dir)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = engine.Close() })
-			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+			require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 				if legacy {
 					return txn.Set(labelIndexReadyKey, []byte{1})
 				}

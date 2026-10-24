@@ -32,7 +32,7 @@ func TestBadgerEngine_AllNodesPopulatesNodeCache(t *testing.T) {
 	require.NoError(t, err)
 
 	engine.nodeCacheMu.Lock()
-	engine.nodeCache = make(map[NodeID]*Node, engine.nodeCacheMaxEntries)
+	engine.nodeCache = make(map[NodeID]nodeCacheEntry, engine.nodeCacheMaxEntries)
 	engine.nodeCacheMu.Unlock()
 
 	nodes, err := engine.AllNodes()
@@ -44,7 +44,7 @@ func TestBadgerEngine_AllNodesPopulatesNodeCache(t *testing.T) {
 	cached, ok := engine.nodeCache[node.ID]
 	engine.nodeCacheMu.RUnlock()
 	require.True(t, ok, "AllNodes should populate cache for repeated scan workloads")
-	require.NotSame(t, nodes[0], cached)
+	require.NotSame(t, nodes[0], cached.Node)
 	require.Equal(t, "Alice", cached.Properties["name"])
 }
 

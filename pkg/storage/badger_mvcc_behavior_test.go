@@ -316,7 +316,7 @@ func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 	beforeHead, err := engine.GetNodeCurrentHead(nodeID)
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		key := engine.mvccNodeHeadKeyStringLookup(nodeID)
 		if key == nil {
 			return nil
@@ -335,7 +335,7 @@ func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 	// the version keyspace). The critical invariant is that reads
 	// still resolve to the current live body via the primary key.
 	require.LessOrEqual(t, afterHead.Version.Compare(beforeHead.Version), 0)
-	require.Equal(t, 3, mustGetNodeLatestVisible(t, engine, nodeID).Properties["version"])
+	require.Equal(t, int64(3), mustGetNodeLatestVisible(t, engine, nodeID).Properties["version"])
 
 	_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
 	require.NoError(t, err)
@@ -344,7 +344,7 @@ func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 	// many prior versions were archived — not on the number of
 	// commits. The invariant we care about here is that pruning
 	// preserves the live body (primary key).
-	require.Equal(t, 3, mustGetNodeLatestVisible(t, engine, nodeID).Properties["version"])
+	require.Equal(t, int64(3), mustGetNodeLatestVisible(t, engine, nodeID).Properties["version"])
 
 	oldVersion, err := engine.GetNodeVisibleAt(nodeID, MVCCVersion{CommitTimestamp: time.Now().UTC().Add(-24 * time.Hour), CommitSequence: ^uint64(0)})
 	if err == nil {
@@ -433,7 +433,7 @@ func TestBadgerTransaction_CreateEdge_AllowsReadableNodesWithoutMVCCHead(t *test
 	_, err = engine.CreateNode(&Node{ID: endID, Labels: []string{"Node"}})
 	require.NoError(t, err)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		if key := engine.mvccNodeHeadKeyStringLookup(startID); key != nil {
 			if err := txn.Delete(key); err != nil {
 				return err
@@ -1114,7 +1114,7 @@ func TestBadgerEngine_PruneMVCCVersions_AdjacencyKeyspaceErrorsSurface(t *testin
 		require.NoError(t, err)
 		prefix := engine.mvccOutgoingAdjacencyPrefixString("test:prune-out")
 		require.NotNil(t, prefix)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return txn.Set(append(append([]byte{}, prefix...), []byte("bad")...), []byte{0})
 		}))
 		_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
@@ -1127,7 +1127,7 @@ func TestBadgerEngine_PruneMVCCVersions_AdjacencyKeyspaceErrorsSurface(t *testin
 		require.NoError(t, err)
 		prefix := engine.mvccIncomingAdjacencyPrefixString("test:prune-in")
 		require.NotNil(t, prefix)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return txn.Set(append(append([]byte{}, prefix...), []byte("bad")...), []byte{0})
 		}))
 		_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})

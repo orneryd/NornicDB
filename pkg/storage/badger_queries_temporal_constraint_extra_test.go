@@ -45,10 +45,10 @@ func TestBadgerEngine_MaterializeAdjEdges_CacheMissAndDecodeError(t *testing.T) 
 	require.NoError(t, engine.CreateEdge(e2))
 
 	// Force one cache hit path.
-	engine.cacheStoreEdge(e1)
+	engine.cacheFillEdge(engine.edgeCacheGen.current(), e1, engine.nodeCacheCommitTs.Load())
 
 	// Corrupt records fail the read; missing records are still skipped.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set(edgeKey("test:e-corrupt"), []byte("bad-edge-bytes"))
 	}))
 
@@ -89,7 +89,7 @@ func TestBadgerEngine_TemporalIndexHelpers_ExtraBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	c := sm.GetConstraintsForLabels([]string{"Role"})[0]
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		// writeTemporalIndexForNodeInTxn !ok branch.
 		target, err := engine.writeTemporalIndexForNodeInTxn(txn, ns, &Node{ID: "test:bad", Labels: []string{"Role"}, Properties: map[string]any{}}, c)
 		require.NoError(t, err)

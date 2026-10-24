@@ -32,7 +32,7 @@ func TestMaintainPropertyIndexesOnNodeCreated_Updated_Deleted(t *testing.T) {
 	require.Equal(t, []NodeID{node.ID}, sm.PropertyIndexLookup("Person", "name", "Alicia"))
 
 	engine.nodeCacheMu.Lock()
-	engine.nodeCache[node.ID] = &Node{ID: node.ID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Alicia"}}
+	engine.nodeCache[node.ID] = nodeCacheEntry{Node: &Node{ID: node.ID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Alicia"}}, readTs: engine.nodeCacheCommitTs.Load()}
 	engine.nodeCacheMu.Unlock()
 
 	engine.maintainPropertyIndexesOnNodeDeletedWithLabels(node.ID, []string{"Person"})

@@ -67,7 +67,7 @@ func TestEdgeHeadersFromAdjacencyEntries(t *testing.T) {
 	// An entry written before the values existed reads the record.
 	aNum, _ := eng.idDict.lookupNodeNumID("test:a")
 	e2Num, _ := eng.idDict.lookupEdgeNumID("test:e2")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set(outgoingIndexKey(aNum, e2Num), []byte{})
 	}))
 	eng.edgeCacheMu.Lock()
@@ -167,7 +167,7 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 	bNum, _ := eng.idDict.lookupNodeNumID("test:b")
 	cachedNum, _ := eng.idDict.lookupEdgeNumID("test:cached")
 	goneNum, _ := eng.idDict.lookupEdgeNumID("test:gone")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		// No value, record in the edge cache.
 		if err := txn.Set(outgoingIndexKey(aNum, cachedNum), []byte{}); err != nil {
 			return err
@@ -188,7 +188,7 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 	// A relationship with an unreadable record and no value fails the read.
 	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:corrupt", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
 	corruptNum, _ := eng.idDict.lookupEdgeNumID("test:corrupt")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		if err := txn.Set(edgeKey("test:corrupt"), []byte{0xff}); err != nil {
 			return err
 		}
@@ -198,17 +198,17 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 	// from the record.
 	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:odd", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
 	oddNum, _ := eng.idDict.lookupEdgeNumID("test:odd")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set(outgoingIndexKey(aNum, oddNum), encodeEdgeCompactHeader(edgeFormatCompactV2, &Edge{Type: "X"}, 1<<42, bNum, 0))
 	}))
 	eng.edgeCacheMu.Lock()
 	clear(eng.edgeCache)
 	eng.edgeCacheMu.Unlock()
-	eng.cacheStoreEdge(&Edge{ID: "test:cached", StartNode: "test:a", EndNode: "test:b", Type: "K"})
+	eng.cacheFillEdge(eng.edgeCacheGen.current(), &Edge{ID: "test:cached", StartNode: "test:a", EndNode: "test:b", Type: "K"}, eng.nodeCacheCommitTs.Load())
 	out, answered, err := eng.OutgoingEdgeHeaders("test:a")
 	require.Error(t, err)
 	require.True(t, answered)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Delete(edgeKey("test:corrupt"))
 	}))
 	out, answered, err = eng.OutgoingEdgeHeaders("test:a")
@@ -297,7 +297,7 @@ func TestAdjacencyHeaderMatchesRecord(t *testing.T) {
 	require.NoError(t, tx.Commit())
 	same("transaction update")
 
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		_, _, err := eng.evaluateEdgeSuppressionInTxn(txn, "test:e")
 		return err
 	}))

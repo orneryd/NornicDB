@@ -19,7 +19,7 @@ func TestEmbeddingRangeReaderRetainedKeysAndLongCursor(t *testing.T) {
 	first, second := embeddingKey(id, 0), embeddingKey(id, 1)
 	child := append(append([]byte(nil), first...), 0, 0, 1)
 	short := [][]byte{first[:len(first)-4], first[:len(first)-3], first[:len(first)-2], first[:len(first)-1]}
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		for _, key := range append(append([][]byte(nil), short...), first, child, second) {
 			require.NoError(t, txn.Set(key, []byte("value")))
 		}
@@ -51,7 +51,7 @@ func TestEmbeddingRangeReaderSnapshotsAndStagedWrites(t *testing.T) {
 	prefix := embeddingPrefix(id)
 	first, second, expired := embeddingKey(id, 0), embeddingKey(id, 1), embeddingKey(id, 2)
 	child := append(append([]byte(nil), first...), 0, 0, 0)
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		require.NoError(t, txn.Set(first, []byte("original")))
 		return txn.Set(second, []byte("removed later"))
 	}))
@@ -62,7 +62,7 @@ func TestEmbeddingRangeReaderSnapshotsAndStagedWrites(t *testing.T) {
 		old.Discard()
 		db.endRead(readTs)
 	})
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		require.NoError(t, txn.Set(first, []byte("replacement")))
 		require.NoError(t, txn.Delete(second))
 		require.NoError(t, txn.Set(child, []byte("nested part")))
@@ -89,7 +89,7 @@ func TestEmbeddingRangeReaderSnapshotsAndStagedWrites(t *testing.T) {
 		}))
 		return nil
 	}))
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		require.NoError(t, txn.Delete(first))
 		require.NoError(t, txn.Set(second, []byte("staged replacement")))
 		require.Equal(t, [][]byte{child, second}, collect(txn, nil), "staged writes and tombstones share the read view")

@@ -152,6 +152,7 @@ func decodeMVCCNodeUndo(data []byte) (*mvccNodeUndo, error) {
 	if err := util.DecodeMsgpackBytes(data[1:], &undo); err != nil {
 		return nil, err
 	}
+	normalizePropertyMapShapes(undo.Restore)
 	return &undo, nil
 }
 
@@ -160,6 +161,7 @@ func decodeMVCCEdgeUndo(data []byte) (*mvccEdgeUndo, error) {
 	if err := util.DecodeMsgpackBytes(data[1:], &undo); err != nil {
 		return nil, err
 	}
+	normalizePropertyMapShapes(undo.Restore)
 	return &undo, nil
 }
 

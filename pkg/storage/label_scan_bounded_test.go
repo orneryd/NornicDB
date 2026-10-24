@@ -60,7 +60,7 @@ func TestLabelScanLargeTailStaysStreaming(t *testing.T) {
 func TestLabelScanLargeTailPreservesReadErrors(t *testing.T) {
 	const count = labelScanPointLookups + labelScanMaxBuffered + 2
 	eng, ids := labelScanFixture(t, count)
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		if err := txn.Delete(nodeKey(ids[labelScanPointLookups])); err != nil {
 			return err
 		}

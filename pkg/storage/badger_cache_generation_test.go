@@ -19,23 +19,23 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 
 	gen := engine.nodeCacheGen.current()
 	engine.cacheStoreNode(&Node{ID: "gen:n", Properties: map[string]any{"v": int64(2)}})
-	engine.cacheFillNode(gen, &Node{ID: "gen:n", Properties: map[string]any{"v": int64(1)}})
+	engine.cacheFillNode(gen, &Node{ID: "gen:n", Properties: map[string]any{"v": int64(1)}}, engine.nodeCacheCommitTs.Load())
 	require.EqualValues(t, 2, engine.nodeCache["gen:n"].Properties["v"])
 	gen = engine.nodeCacheGen.current()
 	engine.cacheDeleteNode("gen:n")
-	engine.cacheFillNode(gen, &Node{ID: "gen:n"})
+	engine.cacheFillNode(gen, &Node{ID: "gen:n"}, engine.nodeCacheCommitTs.Load())
 	require.NotContains(t, engine.nodeCache, NodeID("gen:n"), "a deleted node isn't put back")
-	engine.cacheFillNode(engine.nodeCacheGen.current(), &Node{ID: "gen:n"})
+	engine.cacheFillNode(engine.nodeCacheGen.current(), &Node{ID: "gen:n"}, engine.nodeCacheCommitTs.Load())
 	require.Contains(t, engine.nodeCache, NodeID("gen:n"), "a read that raced nothing fills")
-	engine.cacheFillNode(0, nil)
+	engine.cacheFillNode(0, nil, engine.nodeCacheCommitTs.Load())
 
 	gen = engine.edgeCacheGen.current()
 	engine.cacheDeleteEdge("gen:e")
-	engine.cacheFillEdge(gen, &Edge{ID: "gen:e"})
+	engine.cacheFillEdge(gen, &Edge{ID: "gen:e"}, engine.nodeCacheCommitTs.Load())
 	require.NotContains(t, engine.edgeCache, EdgeID("gen:e"))
-	engine.cacheFillEdge(engine.edgeCacheGen.current(), &Edge{ID: "gen:e"})
+	engine.cacheFillEdge(engine.edgeCacheGen.current(), &Edge{ID: "gen:e"}, engine.nodeCacheCommitTs.Load())
 	require.Contains(t, engine.edgeCache, EdgeID("gen:e"))
-	engine.cacheFillEdge(0, nil)
+	engine.cacheFillEdge(0, nil, engine.nodeCacheCommitTs.Load())
 
 	// A read through the adjacency cache fills the edge bodies it misses.
 	_, err = engine.CreateNode(&Node{ID: "gen:s"})
@@ -54,8 +54,8 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 
 	gen = engine.adjCacheGen.current()
 	engine.adjCacheInvalidateForEdge(&Edge{StartNode: "gen:a", EndNode: "gen:b"})
-	engine.adjCacheStoreOutgoing(gen, "gen:a", []EdgeID{"gen:e"})
-	engine.adjCacheStoreIncoming(gen, "gen:b", []EdgeID{"gen:e"})
+	engine.adjCacheStoreOutgoing(gen, "gen:a", []EdgeID{"gen:e"}, engine.nodeCacheCommitTs.Load())
+	engine.adjCacheStoreIncoming(gen, "gen:b", []EdgeID{"gen:e"}, engine.nodeCacheCommitTs.Load())
 	require.NotContains(t, engine.outgoingAdjCache, NodeID("gen:a"))
 	require.NotContains(t, engine.incomingAdjCache, NodeID("gen:b"))
 
@@ -78,11 +78,13 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 	_, err = engine.GetEdgesByType("T")
 	require.NoError(t, err)
 	require.Contains(t, engine.edgeTypeCache, "T")
+	stamp := engine.edgeTypeCache["T"].coherence.writeTs
 	engine.InvalidateEdgeTypeCacheForType("T")
-	require.NotContains(t, engine.edgeTypeCache, "T")
+	require.Nil(t, engine.edgeTypeCache["T"].edges, "payload is dropped while its durable revocation record remains")
+	require.Equal(t, stamp, engine.edgeTypeCache["T"].coherence.writeTs)
 	gen = engine.edgeTypeCacheGen.current()
 	engine.InvalidateEdgeTypeCache()
-	engine.edgeTypeCacheFill(gen, "T", nil)
+	engine.edgeTypeCacheFill(gen, "T", nil, engine.nodeCacheCommitTs.Load())
 	require.NotContains(t, engine.edgeTypeCache, "T")
 }
 

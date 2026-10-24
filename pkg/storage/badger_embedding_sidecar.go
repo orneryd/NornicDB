@@ -134,7 +134,7 @@ func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node) error {
 	// vectors, write or delete the metadata record at its reserved chunk
 	// index, and remove the pending-embeddings marker. Readers see the old
 	// embedding state or the new one — never a mix.
-	err := b.commitEngineWrite(func(cw *commitWriter) error {
+	err := b.commitEngineWrite(singleNodeCacheWrites(node.ID), func(cw *commitWriter) error {
 		cw.embeddingOutcome = node
 		if err := cw.writeOnce(func(txn *badger.Txn) error {
 			before := node.UpdatedAt

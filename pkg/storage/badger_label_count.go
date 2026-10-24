@@ -107,7 +107,7 @@ func (b *BadgerEngine) collectNodeLabelCountsByPrefix(keyPrefix []byte) (int64, 
 }
 
 func (b *BadgerEngine) decrementLabelCounts(counts map[namespaceLabel]int64) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		for key, count := range counts {
 			if err := b.adjustLabelCountInTxn(txn, key.namespace, key.label, -count); err != nil {
 				return err
@@ -227,7 +227,7 @@ func (b *BadgerEngine) applyLabelCountDeltasLocked(deltas map[namespaceLabel]int
 	if len(deltas) == 0 {
 		return nil
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		for key, delta := range deltas {
 			if err := b.adjustLabelCountInTxn(txn, key.namespace, key.label, delta); err != nil {
 				return err
@@ -296,7 +296,7 @@ func (b *BadgerEngine) readNodeCountByLabelInNamespace(namespace, label string) 
 // index after dropping the pair's persisted base and deltas. The caller must
 // hold labelCountWriteMu.
 func (b *BadgerEngine) repairLabelCountLocked(namespace, label string) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		prefix := countDeltaPrefixFor(countDeltaKindLabel, namespace, label)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
@@ -369,7 +369,7 @@ func (b *BadgerEngine) foldAllLabelCountDeltas() error {
 	}
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
-	return b.foldCountDeltasOn(b.withView, b.withUpdate, countDeltaKindLabel, labelCountKey, "", "")
+	return b.foldCountDeltasOn(b.withView, b.withMetadataUpdate, countDeltaKindLabel, labelCountKey, "", "")
 }
 
 func (b *BadgerEngine) NodeCountByLabel(label string) (int64, error) {
@@ -514,7 +514,7 @@ func sameLabelCounts(actual, persisted map[string]int64) bool {
 }
 
 func (b *BadgerEngine) rebuildLabelCounts(counts map[string]int64) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		prefix := labelCountPrefix()
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {

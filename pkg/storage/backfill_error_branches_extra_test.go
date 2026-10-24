@@ -36,7 +36,7 @@ func TestEdgeBetweenBackfill_AdditionalBranches(t *testing.T) {
 
 	t.Run("rebuild decode error branch", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return txn.Set(edgeKey(EdgeID("test:bad-edge")), []byte{0xFF, 0x00})
 		}))
 
@@ -84,7 +84,7 @@ func TestLabelBackfill_AdditionalBranches(t *testing.T) {
 
 	t.Run("rebuild decode error branch", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return txn.Set(nodeKey(NodeID("test:bad-node")), []byte{0xFF, 0x00})
 		}))
 

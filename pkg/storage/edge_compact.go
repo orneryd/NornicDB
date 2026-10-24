@@ -149,6 +149,7 @@ func decodeEdgeCompactV1(data []byte) (*Edge, uint64, uint64, error) {
 		if err := util.DecodeMsgpackBytes(data[offset:], &props); err != nil {
 			return nil, 0, 0, fmt.Errorf("compact edge v1: decoding properties: %w", err)
 		}
+		normalizePropertyMapShapes(props)
 	}
 	edge.Properties = props
 	return edge, startNum, endNum, nil
