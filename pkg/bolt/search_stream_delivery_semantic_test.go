@@ -15,7 +15,7 @@ func TestSearchStreamDeliveryBoltSemanticFailure(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			session, _, svc := newPageDeliverySession(t, 1)
 			if kind == "run_with_pending_statement" {
-				require.NoError(t, session.handleBegin(encodePackStreamMap(map[string]any{})))
+				require.NoError(t, session.dispatchInner(MsgBegin, encodePackStreamMap(map[string]any{}), "BEGIN", nil))
 			}
 			require.NoError(t, session.handleRun(buildRunMessageData("CALL db.retrieve({mode:'id',n:1})", nil, nil)))
 			switch kind {

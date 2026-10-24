@@ -501,7 +501,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		// enforced across statements within the same explicit transaction.
 		params := getParamsFromContext(ctx)
 		if e.shouldUseFabricPlanner(cypher) {
-			return e.executeViaFabric(ctx, cypher, params, ftx, false)
+			return e.executeViaFabricWithTx(ctx, cypher, params, ftx, false)
 		}
 		// Non-fabric-shaped queries still run on the scoped engine in explicit tx session.
 		return e.executeWithoutTransaction(ctx, cypher, upperQuery)

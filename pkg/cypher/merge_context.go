@@ -237,7 +237,90 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 
 	// A relationship pattern: (a)-[r:TYPE]->(b)
 	if containsRelationshipPattern(mergePattern) {
-		return e.executeMergeRelationshipWithContext(ctx, mergePattern, nodeContext, relContext)
+		parsedPattern, err := e.parseMergeRelationshipPattern(ctx, mergePattern, nodeContext, relContext)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateMergePatternProperties(parsedPattern.startNodePattern.properties, "node"); err != nil {
+			return nil, err
+		}
+		if err := validateMergePatternProperties(parsedPattern.endNodePattern.properties, "node"); err != nil {
+			return nil, err
+		}
+		if err := validateMergePatternProperties(parsedPattern.properties, "relationship"); err != nil {
+			return nil, err
+		}
+
+		// Both endpoints are bound by earlier clauses: a pattern with an endpoint
+		// the row doesn't bind is a whole-path MERGE (pipelineMergePath), which
+		// matches every existing path or creates the whole pattern (#509, #640).
+		startNode := nodeContext[parsedPattern.startVariable]
+		endNode := nodeContext[parsedPattern.endVariable]
+		if startNode == nil {
+			return nil, localizedError(localization.CypherMergeStartVariableNotBound(parsedPattern.startVariable, getKeys(nodeContext)), nil)
+		}
+		if endNode == nil {
+			return nil, localizedError(localization.CypherMergeEndVariableNotBound(parsedPattern.endVariable, getKeys(nodeContext)), nil)
+		}
+		var existingEdge *storage.Edge
+		mergeStartNode, mergeEndNode := startNode, endNode
+		if parsedPattern.direction == mergeRelationshipIncoming {
+			mergeStartNode, mergeEndNode = endNode, startNode
+		}
+		// Cypher relationship properties inside the MERGE pattern are identity
+		// fields. Scan the bounded endpoint pair so same-type relationships with
+		// different property identities remain distinct.
+		if existingEdge == nil {
+			existingEdge, err = findRelationshipForMerge(store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
+			if err != nil {
+				return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
+			}
+			if existingEdge == nil && parsedPattern.direction == mergeRelationshipUndirected {
+				existingEdge, err = findRelationshipForMerge(store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
+				if err != nil {
+					return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
+				}
+			}
+		}
+
+		var edge *storage.Edge
+		if existingEdge != nil {
+			edge = existingEdge
+		} else {
+			// Create new relationship
+			edge = &storage.Edge{
+				Database:   storage.DatabaseOf(store),
+				ID:         e.newRelationshipMergeEdgeID(mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties),
+				Type:       parsedPattern.relType,
+				StartNode:  mergeStartNode.ID,
+				EndNode:    mergeEndNode.ID,
+				Properties: parsedPattern.properties,
+			}
+			if err := edge.SetEndpoints(mergeStartNode, mergeEndNode); err != nil {
+				return nil, err
+			}
+			createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, parsedPattern.properties)
+			if createErr != nil {
+				return nil, localizedError(localization.CypherMergeCreateRelationshipFailed(createErr), createErr)
+			}
+			edge = createdEdge
+			if created {
+				result.Stats.RelationshipsCreated = 1
+				countCreatedEntity(result.Stats, nil, edge.Properties)
+				e.notifyEdgeMutated(string(edge.ID))
+				e.notifyNodeMutated(string(edge.StartNode))
+				if edge.EndNode != edge.StartNode {
+					e.notifyNodeMutated(string(edge.EndNode))
+				}
+			}
+		}
+
+		// Store in context
+		if parsedPattern.relVariable != "" {
+			relContext[parsedPattern.relVariable] = edge
+		}
+		return result, nil
+
 	}
 
 	// Parse node pattern
@@ -273,6 +356,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		node = existingNode
 	} else {
 		node = &storage.Node{
+			Database:   storage.DatabaseOf(store),
 			ID:         storage.NodeID(e.generateID()),
 			Labels:     labels,
 			Properties: matchProps,
@@ -335,98 +419,6 @@ func (e *StorageExecutor) parseMergeNodePattern(ctx context.Context, pattern str
 	}
 	properties, err := e.parseMergeProperties(ctx, props, nodeContext, relContext)
 	return variable, labels, properties, err
-}
-
-// executeMergeRelationshipWithContext runs a relationship MERGE pattern (see
-// executeMergeWithContext): it binds the relationship it matched or created,
-// and the endpoints, into relContext / nodeContext.
-func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*ExecuteResult, error) {
-	result := &ExecuteResult{
-		Columns: []string{},
-		Rows:    [][]interface{}{},
-		Stats:   &QueryStats{},
-	}
-	store := e.getStorage(ctx)
-
-	parsedPattern, err := e.parseMergeRelationshipPattern(ctx, pattern, nodeContext, relContext)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateMergePatternProperties(parsedPattern.startNodePattern.properties, "node"); err != nil {
-		return nil, err
-	}
-	if err := validateMergePatternProperties(parsedPattern.endNodePattern.properties, "node"); err != nil {
-		return nil, err
-	}
-	if err := validateMergePatternProperties(parsedPattern.properties, "relationship"); err != nil {
-		return nil, err
-	}
-
-	// Both endpoints are bound by earlier clauses: a pattern with an endpoint
-	// the row doesn't bind is a whole-path MERGE (pipelineMergePath), which
-	// matches every existing path or creates the whole pattern (#509, #640).
-	startNode := nodeContext[parsedPattern.startVariable]
-	endNode := nodeContext[parsedPattern.endVariable]
-	if startNode == nil {
-		return nil, localizedError(localization.CypherMergeStartVariableNotBound(parsedPattern.startVariable, getKeys(nodeContext)), nil)
-	}
-	if endNode == nil {
-		return nil, localizedError(localization.CypherMergeEndVariableNotBound(parsedPattern.endVariable, getKeys(nodeContext)), nil)
-	}
-	var existingEdge *storage.Edge
-	mergeStartNode, mergeEndNode := startNode, endNode
-	if parsedPattern.direction == mergeRelationshipIncoming {
-		mergeStartNode, mergeEndNode = endNode, startNode
-	}
-	// Cypher relationship properties inside the MERGE pattern are identity
-	// fields. Scan the bounded endpoint pair so same-type relationships with
-	// different property identities remain distinct.
-	if existingEdge == nil {
-		existingEdge, err = findRelationshipForMerge(store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
-		if err != nil {
-			return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
-		}
-		if existingEdge == nil && parsedPattern.direction == mergeRelationshipUndirected {
-			existingEdge, err = findRelationshipForMerge(store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
-			if err != nil {
-				return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
-			}
-		}
-	}
-
-	var edge *storage.Edge
-	if existingEdge != nil {
-		edge = existingEdge
-	} else {
-		// Create new relationship
-		edge = &storage.Edge{
-			ID:         e.newRelationshipMergeEdgeID(mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties),
-			Type:       parsedPattern.relType,
-			StartNode:  mergeStartNode.ID,
-			EndNode:    mergeEndNode.ID,
-			Properties: parsedPattern.properties,
-		}
-		createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, parsedPattern.properties)
-		if createErr != nil {
-			return nil, localizedError(localization.CypherMergeCreateRelationshipFailed(createErr), createErr)
-		}
-		edge = createdEdge
-		if created {
-			result.Stats.RelationshipsCreated = 1
-			countCreatedEntity(result.Stats, nil, edge.Properties)
-			e.notifyEdgeMutated(string(edge.ID))
-			e.notifyNodeMutated(string(edge.StartNode))
-			if edge.EndNode != edge.StartNode {
-				e.notifyNodeMutated(string(edge.EndNode))
-			}
-		}
-	}
-
-	// Store in context
-	if parsedPattern.relVariable != "" {
-		relContext[parsedPattern.relVariable] = edge
-	}
-	return result, nil
 }
 
 // applySetToRelationshipWithContext is the single per-relationship SET

@@ -109,7 +109,7 @@ func TestSearchStreamDeliveryBoltIndependentRecords(t *testing.T) {
 			session, _, svc := newPageDeliverySession(t, 2)
 			var firstQID string
 			if kind == "outstanding_statements" {
-				require.NoError(t, session.handleBegin(encodePackStreamMap(map[string]any{})))
+				require.NoError(t, session.dispatchInner(MsgBegin, encodePackStreamMap(map[string]any{}), "BEGIN", nil))
 				for i := 0; i < 2; i++ {
 					require.NoError(t, session.handleRun(buildRunMessageData("CALL db.retrieve({mode:'id',n:1})", nil, nil)))
 					if i == 0 {

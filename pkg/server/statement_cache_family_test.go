@@ -1,4 +1,6 @@
 package server
+import "github.com/orneryd/nornicdb/pkg/cypher"
+
 
 import (
 	"context"
@@ -19,14 +21,14 @@ func TestStatementCacheFamilyHTTPExecutorCacheFamily(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	first, err := server.newDatabaseScopedExecutor("review1477comp", "Bearer remote-token")
+	first, err := cypher.NewDatabaseScopedExecutor(server.databaseScopedExecutorOptions("review1477comp", "Bearer remote-token"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := first.Execute(context.Background(), "CALL { USE review1477comp.local1 RETURN 1 AS x } RETURN x", nil); err != nil {
 		t.Fatal(err)
 	}
-	second, err := server.newDatabaseScopedExecutor("review1477comp", "Bearer remote-token")
+	second, err := cypher.NewDatabaseScopedExecutor(server.databaseScopedExecutorOptions("review1477comp", "Bearer remote-token"))
 	if err != nil {
 		t.Fatal(err)
 	}

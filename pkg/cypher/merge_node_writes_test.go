@@ -12,7 +12,9 @@ import (
 // (NOR-117): those writes make the MERGE take its key lock.
 func TestMergeNodeWritesOf(t *testing.T) {
 	merge := func(text string) pipelineClause { return pipelineClause{kind: pipelineClauseMerge, text: text} }
-	clause := func(kind pipelineClauseKind, text string) pipelineClause { return pipelineClause{kind: kind, text: text} }
+	clause := func(kind pipelineClauseKind, text string) pipelineClause {
+		return pipelineClause{kind: kind, text: text}
+	}
 	for _, c := range []struct {
 		name     string
 		clauses  []pipelineClause

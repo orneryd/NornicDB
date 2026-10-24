@@ -8,22 +8,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func TestRevealDispatcher_InReturn(t *testing.T) {
-	_, exec := setupDecayEngine(t)
-
-	node := makeNode("nornic:ep_reveal", []string{"MemoryEpisode"}, 720*time.Hour)
-	nodes := map[string]*storage.Node{"n": node}
-	rels := map[string]*storage.Edge{}
-	ctx := context.Background()
-
-	// reveal(n) should pass through — the fn.Register builtin evaluates reveal(n) → n.
-	// Here we only verify the dispatcher does NOT intercept "reveal" as a decay function.
-	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, "reveal(n)", "reveal(n)", nodes, rels)
-	if handled {
-		t.Errorf("reveal(n) should NOT be handled by knowledgepolicy dispatcher, got %v", v)
-	}
-}
-
 func TestRevealDispatcher_DecayScoreNotIntercepted(t *testing.T) {
 	_, exec := setupDecayEngine(t)
 

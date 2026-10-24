@@ -162,7 +162,7 @@ func countUndirectedRelationshipMatches(store storage.Engine, types []string) (i
 		}
 		candidates = edges
 	} else {
-		seen := make(map[storage.EdgeID]struct{})
+		seen := make(map[storage.EntityIdentity]struct{})
 		for _, relationshipType := range types {
 			edges, err := store.GetEdgesByType(relationshipType)
 			if err != nil {
@@ -172,10 +172,10 @@ func countUndirectedRelationshipMatches(store storage.Engine, types []string) (i
 				if edge == nil {
 					continue
 				}
-				if _, exists := seen[edge.ID]; exists {
+				if _, exists := seen[edge.Identity()]; exists {
 					continue
 				}
-				seen[edge.ID] = struct{}{}
+				seen[edge.Identity()] = struct{}{}
 				candidates = append(candidates, edge)
 			}
 		}

@@ -27,7 +27,7 @@ func TestBoltTxMetadataIsTheTransactionMetadata(t *testing.T) {
 		boltQueryExecutorAdapter: boltQueryExecutorAdapter{executor: executor},
 	})
 
-	require.NoError(t, session.handleBegin(encodePackStreamMap(map[string]any{"tx_metadata": map[string]any{"writer": "explicit"}})))
+	require.NoError(t, session.dispatchInner(MsgBegin, encodePackStreamMap(map[string]any{"tx_metadata": map[string]any{"writer": "explicit"}}), "BEGIN", nil))
 	require.True(t, session.inTransaction)
 	require.NoError(t, session.handleRun(buildRunMessageData("CREATE (:N {v: 1})", nil, nil)))
 	require.NoError(t, session.handleCommit(nil))

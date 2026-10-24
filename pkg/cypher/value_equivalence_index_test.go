@@ -29,6 +29,17 @@ func TestCypherValueIndexCanonicalEquivalence(t *testing.T) {
 		storage.RemotePathValue{storage.RemoteEntityValue{"elementId": "remote-a"}},
 		storage.RemotePathValue{storage.RemoteEntityValue{"elementId": "remote-b"}},
 	}
+	values = append(values,
+		&storage.Node{ID: "shared", Database: "one"},
+		&storage.Node{ID: "shared", Database: "one", Properties: map[string]interface{}{"changed": true}},
+		&storage.Node{ID: "shared", Database: "two"},
+		&storage.Edge{ID: "shared", Database: "one"},
+		&storage.Edge{ID: "shared", Database: "two"},
+		[]interface{}{&storage.Node{ID: "shared", Database: "one"}},
+		[]interface{}{&storage.Node{ID: "shared", Database: "two"}},
+		map[string]interface{}{"node": &storage.Node{ID: "shared", Database: "one"}},
+		map[string]interface{}{"node": &storage.Node{ID: "shared", Database: "two"}},
+	)
 	values = append(values, pathCarriers()...)
 	for _, path := range pathCarriers() {
 		values = append(values, []interface{}{path}, map[string]interface{}{"p": path})

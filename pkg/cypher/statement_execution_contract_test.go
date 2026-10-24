@@ -253,7 +253,7 @@ func TestStatementExecutionAdmissionBoundary(t *testing.T) {
 			return true
 		})
 	}
-	for _, root := range []string{"readStatementExecutionContract", "statementNeedsTransaction", "StorageExecutor.admitResolvedStatementWrite", "StorageExecutor.observeResolvedStatementMode", "fabricProcedureWritePlan", "QueryPermissionRequirements"} {
+	for _, root := range []string{"readStatementExecutionContract", "statementNeedsTransaction", "StorageExecutor.admitResolvedStatementWrite", "StorageExecutor.observeResolvedStatementMode", "StorageExecutor.fabricProcedureWritePlan", "QueryPermissionRequirements"} {
 		require.Contains(t, functions, root)
 		seen := map[string]bool{}
 		var visit func(string, []string)

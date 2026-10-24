@@ -62,14 +62,19 @@ func planPipelineTraversalScan(match *TraversalMatch, where string, row pipeline
 func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor, match *TraversalMatch, visit func(*storage.Edge, storage.NodeID, storage.NodeID) error) error {
 	store := e.getStorage(ctx)
 	oriented := func(edge *storage.Edge) error {
-		if match.Relationship.Direction == "incoming" {
-			return visit(edge, edge.EndNode, edge.StartNode)
+		start, startOK := edge.StartIdentity().NodeLookupID(store)
+		end, endOK := edge.EndIdentity().NodeLookupID(store)
+		if !startOK || !endOK {
+			return nil
 		}
-		if err := visit(edge, edge.StartNode, edge.EndNode); err != nil {
+		if match.Relationship.Direction == "incoming" {
+			return visit(edge, end, start)
+		}
+		if err := visit(edge, start, end); err != nil {
 			return err
 		}
 		if match.Relationship.Direction == "both" && edge.StartNode != edge.EndNode {
-			return visit(edge, edge.EndNode, edge.StartNode)
+			return visit(edge, end, start)
 		}
 		return nil
 	}
@@ -91,16 +96,20 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 			if node == nil || !e.pipelineNodeMatchesPattern(node, match.StartNode) {
 				return nil
 			}
+			lookupID, validSource := node.Identity().NodeLookupID(store)
+			if !validSource {
+				return nil
+			}
 			traversal := &TraversalContext{relationshipsNeedOnlyHeaders: traversalRelationshipsNeedOnlyHeaders(match), cancelCtx: ctx}
 			var edges []*storage.Edge
 			var err error
 			switch match.Relationship.Direction {
 			case "incoming":
-				edges = e.traversalEdges(traversal, node.ID, false)
+				edges = e.traversalEdges(traversal, lookupID, false)
 			case "both":
-				edges, err = undirectedIncidentEdges(store, node.ID)
+				edges, err = undirectedIncidentEdges(store, lookupID)
 			default:
-				edges = e.traversalEdges(traversal, node.ID, true)
+				edges = e.traversalEdges(traversal, lookupID, true)
 			}
 			if err != nil {
 				return err
@@ -112,8 +121,12 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				start, end := edge.StartNode, edge.EndNode
-				if match.Relationship.Direction == "incoming" || (match.Relationship.Direction == "both" && start != node.ID) {
+				start, startOK := edge.StartIdentity().NodeLookupID(store)
+				end, endOK := edge.EndIdentity().NodeLookupID(store)
+				if !startOK || !endOK {
+					continue
+				}
+				if match.Relationship.Direction == "incoming" || (match.Relationship.Direction == "both" && edge.StartIdentity() != node.Identity()) {
 					start, end = end, start
 				}
 				if err := visit(edge, start, end); err != nil {

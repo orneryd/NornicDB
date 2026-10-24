@@ -96,6 +96,9 @@ type pathSearchEdgeKey struct {
 
 // pathSearch is the search of one selected pattern for one row.
 type pathSearch struct {
+	// native evaluates predicates outside the internal identity-key domain.
+	native *StorageExecutor
+
 	e          *StorageExecutor
 	ctx        context.Context
 	a          *pathSearchAutomaton
@@ -144,7 +147,7 @@ func (s *pathSearch) slotHolds(slot int, node *storage.Node) bool {
 	}
 	if held.variable != "" && !held.list {
 		if bound, exists := s.row[held.variable]; exists {
-			if boundNode, ok := bound.(*storage.Node); !ok || boundNode == nil || boundNode.ID != node.ID {
+			if boundNode, ok := bound.(*storage.Node); !ok || boundNode == nil || boundNode.Identity() != s.nativeNode(node).Identity() {
 				return false
 			}
 		}
@@ -180,7 +183,7 @@ func (s *pathSearch) transitionHolds(t *pathSearchTransition, edge *storage.Edge
 	}
 	if t.variable != "" && !t.list {
 		if bound, exists := s.row[t.variable]; exists {
-			if boundEdge, ok := bound.(*storage.Edge); !ok || boundEdge == nil || boundEdge.ID != edge.ID {
+			if boundEdge, ok := bound.(*storage.Edge); !ok || boundEdge == nil || boundEdge.Identity() != s.nativeEdge(edge).Identity() {
 				return false
 			}
 		}
@@ -199,11 +202,21 @@ func (s *pathSearch) predicatesHold(variable string, value interface{}, predicat
 			s.scratch[name] = value
 		}
 	}
+	evaluator := s.e
+	if s.native != nil {
+		evaluator = s.native
+		switch entity := value.(type) {
+		case *storage.Node:
+			value = s.nativeNode(entity)
+		case *storage.Edge:
+			value = s.nativeEdge(entity)
+		}
+	}
 	if variable != "" {
 		s.scratch[variable] = value
 	}
 	for _, predicate := range predicates {
-		if !s.e.evaluateWithWhereCondition(s.ctx, predicate, s.scratch) {
+		if !evaluator.evaluateWithWhereCondition(s.ctx, predicate, s.scratch) {
 			return false
 		}
 	}
@@ -829,4 +842,17 @@ func (s *pathSearch) dominate() {
 			}
 		}
 	}
+}
+
+func (s *pathSearch) nativeNode(node *storage.Node) *storage.Node {
+	if s.native != nil {
+		return graphIdentityNodeValue(node)
+	}
+	return node
+}
+func (s *pathSearch) nativeEdge(edge *storage.Edge) *storage.Edge {
+	if s.native != nil {
+		return graphIdentityEdgeValue(edge)
+	}
+	return edge
 }

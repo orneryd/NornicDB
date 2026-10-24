@@ -389,14 +389,14 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 	b := makeNode("b")
 
 	t.Run("parse error", func(t *testing.T) {
-		_, err := exec.createPatternsInScope(ctx, "(a)-[:KNOWS]->", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
+		_, err := exec.planCreatePatterns(ctx, "(a)-[:KNOWS]->", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, nil, &ExecuteResult{Stats: &QueryStats{}})
 		require.Error(t, err)
 	})
 
 	t.Run("unbound endpoint creates and binds node", func(t *testing.T) {
 		nodeCtx := map[string]*storage.Node{"a": a}
 		result := &ExecuteResult{Stats: &QueryStats{}}
-		_, err := exec.createPatternsInScope(ctx, "(a)-[:KNOWS]->(missing)", nodeCtx, map[string]*storage.Edge{}, result)
+		_, err := exec.planCreatePatterns(ctx, "(a)-[:KNOWS]->(missing)", nodeCtx, map[string]*storage.Edge{}, nil, result)
 		require.NoError(t, err)
 		require.Contains(t, nodeCtx, "missing")
 		require.Equal(t, 1, result.Stats.NodesCreated)
@@ -404,7 +404,7 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 	})
 
 	t.Run("relationship type required", func(t *testing.T) {
-		_, err := exec.createPatternsInScope(ctx, "(a)-[r]->(b)", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, &ExecuteResult{Stats: &QueryStats{}})
+		_, err := exec.planCreatePatterns(ctx, "(a)-[r]->(b)", map[string]*storage.Node{"a": a, "b": b}, map[string]*storage.Edge{}, nil, &ExecuteResult{Stats: &QueryStats{}})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "relationship type is required")
 	})
@@ -413,7 +413,7 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 		edgeCtx := map[string]*storage.Edge{}
 		result := &ExecuteResult{Stats: &QueryStats{}}
 
-		_, err := exec.createPatternsInScope(ctx, "(a)-[r:KNOWS {since: 2020}]->(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, result)
+		_, err := exec.planCreatePatterns(ctx, "(a)-[r:KNOWS {since: 2020}]->(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, nil, result)
 		require.NoError(t, err)
 		require.Equal(t, 1, result.Stats.RelationshipsCreated)
 		require.Contains(t, edgeCtx, "r")
@@ -422,7 +422,7 @@ func TestCreatePatternsInScope_RelationshipBranches(t *testing.T) {
 		assert.EqualValues(t, 2020, edgeCtx["r"].Properties["since"])
 
 		result2 := &ExecuteResult{Stats: &QueryStats{}}
-		_, err = exec.createPatternsInScope(ctx, "(a)<-[r2:KNOWS]-(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, result2)
+		_, err = exec.planCreatePatterns(ctx, "(a)<-[r2:KNOWS]-(b)", map[string]*storage.Node{"a": a, "b": b}, edgeCtx, nil, result2)
 		require.NoError(t, err)
 		require.Contains(t, edgeCtx, "r2")
 		assert.Equal(t, storage.NodeID("b"), edgeCtx["r2"].StartNode)

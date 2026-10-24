@@ -9,24 +9,41 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) knowledgePolicySchema() (*storage.SchemaManager, error) {
+// knowledgePolicyContext owns source and transactional schema selection for
+// policy procedures and scalar readers alike.
+func (e *StorageExecutor) knowledgePolicyContext(database string) (storage.Engine, *storage.SchemaManager, error) {
+	engine := e.storage
+	if source, ok := engine.(interface {
+		ConstituentStorage(string) (storage.Engine, error)
+	}); ok && database != "" {
+		var err error
+		engine, err = source.ConstituentStorage(database)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	var transaction *storage.BadgerTransaction
-	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+	if wrapper, ok := engine.(*transactionStorageWrapper); ok {
 		transaction = wrapper.tx
-	} else if e.txContext != nil && e.txContext.active {
+	} else if database == "" && e.txContext != nil && e.txContext.active {
 		transaction, _ = e.txContext.tx.(*storage.BadgerTransaction)
 	}
 	if transaction == nil {
-		return e.storage.GetSchema(), nil
+		return engine, engine.GetSchema(), nil
 	}
-	if err := transaction.SetNamespace(e.currentDatabaseName()); err != nil {
-		return nil, err
+	namespace := database
+	if namespace == "" {
+		namespace = e.currentDatabaseName()
 	}
-	return transaction.KnowledgePolicySchema()
+	if err := transaction.SetNamespace(namespace); err != nil {
+		return nil, nil, err
+	}
+	schema, err := transaction.KnowledgePolicySchema()
+	return engine, schema, err
 }
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult, error) {
-	schema, err := e.knowledgePolicySchema()
+	_, schema, err := e.knowledgePolicyContext("")
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +111,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyProfiles() (*ExecuteResult,
 }
 
 func (e *StorageExecutor) callNornicDbKnowledgePolicyPolicies() (*ExecuteResult, error) {
-	schema, err := e.knowledgePolicySchema()
+	_, schema, err := e.knowledgePolicyContext("")
 	if err != nil {
 		return nil, err
 	}
@@ -234,9 +251,9 @@ func parseKnowledgePolicyEntityID(entityID string) (string, knowledgePolicyEntit
 	}
 	switch parts[0] {
 	case "4":
-		return parts[2], knowledgePolicyEntityNode
+		return entityID, knowledgePolicyEntityNode
 	case "5":
-		return parts[2], knowledgePolicyEntityEdge
+		return entityID, knowledgePolicyEntityEdge
 	default:
 		return entityID, knowledgePolicyEntityAny
 	}
@@ -279,6 +296,17 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 	var resolution knowledgepolicy.ScoringResolution
 	if entityID != "" {
 		lookupID, entityKind := parseKnowledgePolicyEntityID(entityID)
+		if entityKind != knowledgePolicyEntityAny {
+			kind := "4"
+			if entityKind == knowledgePolicyEntityEdge {
+				kind = "5"
+			}
+			var found, applicable bool
+			lookupID, found, applicable = e.entitySeekLookup(lookupID, kind, "elementId")
+			if !found || !applicable {
+				return nil, localizedError(localization.CypherKnowledgePolicyEntityNotFound(entityID), nil)
+			}
+		}
 		if node, nodeErr := e.storage.GetNode(storage.NodeID(lookupID)); entityKind != knowledgePolicyEntityEdge && nodeErr == nil && node != nil {
 			createdNanos := node.CreatedAt.UnixNano()
 			versionNanos := createdNanos

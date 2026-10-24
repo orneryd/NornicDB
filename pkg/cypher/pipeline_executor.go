@@ -1597,10 +1597,10 @@ func pipelineBindingValuesEqual(left, right interface{}) bool {
 	switch typed := left.(type) {
 	case *storage.Node:
 		other, ok := right.(*storage.Node)
-		return ok && typed != nil && other != nil && typed.ID == other.ID
+		return ok && typed != nil && other != nil && typed.Identity() == other.Identity()
 	case *storage.Edge:
 		other, ok := right.(*storage.Edge)
-		return ok && typed != nil && other != nil && typed.ID == other.ID
+		return ok && typed != nil && other != nil && typed.Identity() == other.Identity()
 	default:
 		return reflect.DeepEqual(left, right)
 	}
@@ -2027,21 +2027,26 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 		}
 
 		for _, endpoints := range traceRelationshipList(relationships, match.Relationship.Direction) {
-			start, startErr := e.getQueryNode(store, endpoints[0])
-			end, endErr := e.getQueryNode(store, endpoints[1])
+			startID, startValid := endpoints[0].NodeLookupID(store)
+			endID, endValid := endpoints[1].NodeLookupID(store)
+			if !startValid || !endValid {
+				continue
+			}
+			start, startErr := e.getQueryNode(store, startID)
+			end, endErr := e.getQueryNode(store, endID)
 			if startErr != nil || endErr != nil || start == nil || end == nil ||
 				!e.pipelineNodeMatchesPattern(start, match.StartNode) || !e.pipelineNodeMatchesPattern(end, match.EndNode) {
 				continue
 			}
 			if bound, exists := row[match.StartNode.variable]; exists {
 				boundNode, isNode := bound.(*storage.Node)
-				if !isNode || boundNode == nil || boundNode.ID != start.ID {
+				if !isNode || boundNode == nil || boundNode.Identity() != start.Identity() {
 					continue
 				}
 			}
 			if bound, exists := row[match.EndNode.variable]; exists {
 				boundNode, isNode := bound.(*storage.Node)
-				if !isNode || boundNode == nil || boundNode.ID != end.ID {
+				if !isNode || boundNode == nil || boundNode.Identity() != end.Identity() {
 					continue
 				}
 			}
@@ -2087,47 +2092,47 @@ func pipelineRelationshipList(value interface{}) ([]*storage.Edge, bool) {
 }
 
 func relationshipListReusesEdge(relationships []*storage.Edge) bool {
-	seen := make(map[storage.EdgeID]struct{}, len(relationships))
+	seen := make(map[storage.EntityIdentity]struct{}, len(relationships))
 	for _, relationship := range relationships {
 		if relationship == nil {
 			return true
 		}
-		if _, exists := seen[relationship.ID]; exists {
+		if _, exists := seen[relationship.Identity()]; exists {
 			return true
 		}
-		seen[relationship.ID] = struct{}{}
+		seen[relationship.Identity()] = struct{}{}
 	}
 	return false
 }
 
-func traceRelationshipList(relationships []*storage.Edge, direction string) [][2]storage.NodeID {
+func traceRelationshipList(relationships []*storage.Edge, direction string) [][2]storage.EntityIdentity {
 	if len(relationships) == 0 {
 		return nil
 	}
-	starts := [][2]storage.NodeID{{relationships[0].StartNode, relationships[0].EndNode}}
+	starts := [][2]storage.EntityIdentity{{relationships[0].StartIdentity(), relationships[0].EndIdentity()}}
 	if direction == "incoming" {
-		starts[0] = [2]storage.NodeID{relationships[0].EndNode, relationships[0].StartNode}
-	} else if direction == "both" && relationships[0].StartNode != relationships[0].EndNode {
-		starts = append(starts, [2]storage.NodeID{relationships[0].EndNode, relationships[0].StartNode})
+		starts[0] = [2]storage.EntityIdentity{relationships[0].EndIdentity(), relationships[0].StartIdentity()}
+	} else if direction == "both" && relationships[0].StartIdentity() != relationships[0].EndIdentity() {
+		starts = append(starts, [2]storage.EntityIdentity{relationships[0].EndIdentity(), relationships[0].StartIdentity()})
 	}
 	for _, relationship := range relationships[1:] {
 		next := starts[:0]
 		for _, endpoints := range starts {
 			switch direction {
 			case "outgoing":
-				if endpoints[1] == relationship.StartNode {
-					next = append(next, [2]storage.NodeID{endpoints[0], relationship.EndNode})
+				if endpoints[1] == relationship.StartIdentity() {
+					next = append(next, [2]storage.EntityIdentity{endpoints[0], relationship.EndIdentity()})
 				}
 			case "incoming":
-				if endpoints[1] == relationship.EndNode {
-					next = append(next, [2]storage.NodeID{endpoints[0], relationship.StartNode})
+				if endpoints[1] == relationship.EndIdentity() {
+					next = append(next, [2]storage.EntityIdentity{endpoints[0], relationship.StartIdentity()})
 				}
 			default:
-				if endpoints[1] == relationship.StartNode {
-					next = append(next, [2]storage.NodeID{endpoints[0], relationship.EndNode})
+				if endpoints[1] == relationship.StartIdentity() {
+					next = append(next, [2]storage.EntityIdentity{endpoints[0], relationship.EndIdentity()})
 				}
-				if endpoints[1] == relationship.EndNode && relationship.StartNode != relationship.EndNode {
-					next = append(next, [2]storage.NodeID{endpoints[0], relationship.StartNode})
+				if endpoints[1] == relationship.EndIdentity() && relationship.StartIdentity() != relationship.EndIdentity() {
+					next = append(next, [2]storage.EntityIdentity{endpoints[0], relationship.StartIdentity()})
 				}
 			}
 		}

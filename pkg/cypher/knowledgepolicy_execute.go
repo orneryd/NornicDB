@@ -20,7 +20,7 @@ func (e *StorageExecutor) executeKnowledgePolicyDDL(ctx context.Context, cypher 
 		return nil, localizedError(localization.CypherKnowledgePolicyUnsupportedCommand(cypher), nil)
 	}
 
-	schema, err := e.knowledgePolicySchema()
+	_, schema, err := e.knowledgePolicyContext("")
 	if err != nil {
 		return nil, err
 	}

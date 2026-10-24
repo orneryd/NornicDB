@@ -160,10 +160,10 @@ func TestHandleBeginRejectsDuplicateWithoutReplacingActiveExecutor(t *testing.T)
 	original := &mockTransactionalExecutor{}
 	session := newTestSession(&mockConn{}, original)
 	session.baseExec = &mockExecutor{}
-	require.NoError(t, session.handleBegin(nil))
+	require.NoError(t, session.dispatchInner(MsgBegin, nil, "BEGIN", nil))
 	require.Same(t, original, session.executor)
 
-	require.NoError(t, session.handleBegin(nil))
+	require.NoError(t, session.dispatchInner(MsgBegin, nil, "BEGIN", nil))
 	require.True(t, session.inTransaction)
 	require.Same(t, original, session.executor,
 		"rejected duplicate BEGIN must not detach the active storage transaction")

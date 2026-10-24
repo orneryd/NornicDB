@@ -79,8 +79,8 @@ func TestMergeWholePathMatchesEveryPath(t *testing.T) {
 		run("MATCH ()-[r]->() RETURN type(r) AS t, count(*) AS c ORDER BY t").Rows)
 
 	// The relationship route takes only bound endpoints.
-	_, err := exec.executeMergeRelationshipWithContext(ctx, "(a)-[:R]->(b)", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	_, err := exec.executeMergeWithContext(ctx, "(a)-[:R]->(b)", map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.Error(t, err)
-	_, err = exec.executeMergeRelationshipWithContext(ctx, "(a)-[:R]->(b)", map[string]*storage.Node{"a": {ID: "x"}}, map[string]*storage.Edge{})
+	_, err = exec.executeMergeWithContext(ctx, "(a)-[:R]->(b)", map[string]*storage.Node{"a": {ID: "x"}}, map[string]*storage.Edge{})
 	require.Error(t, err)
 }

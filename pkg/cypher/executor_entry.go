@@ -528,12 +528,12 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		// across all statements in the session.
 		if inExplicitTx {
 			if ftx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
-				result, execErr = e.executeViaPreparedFabricWithTx(ctx, cypher, mergedParams, ftx, false, preparedFabric)
+				result, execErr = e.executeViaFabricWithTx(ctx, cypher, mergedParams, ftx, false, preparedFabric)
 			} else {
-				result, execErr = e.executeViaFabric(ctx, cypher, mergedParams, nil, true)
+				result, execErr = e.executeViaFabricWithTx(ctx, cypher, mergedParams, nil, true)
 			}
 		} else {
-			result, execErr = e.executeViaFabric(ctx, cypher, mergedParams, nil, true)
+			result, execErr = e.executeViaFabricWithTx(ctx, cypher, mergedParams, nil, true)
 		}
 		if execErr != nil {
 			return nil, execErr

@@ -77,14 +77,14 @@ func TestCompositeCapabilityParity_MVCCAndVisibilityReads(t *testing.T) {
 		require.Equal(t, []NodeID{"m-1", "n-1"}, ids)
 	})
 
-	t.Run("label ID iteration dedupes across constituents", func(t *testing.T) {
+	t.Run("label ID iteration preserves constituent namespace", func(t *testing.T) {
 		seen := make(map[NodeID]bool)
 		require.NoError(t, composite.ForEachNodeIDByLabel("Doc", func(id NodeID) bool {
 			seen[id] = true
 			return true
 		}))
 		require.Len(t, seen, 2)
-		require.True(t, seen["n-1"] && seen["m-1"])
+		require.True(t, seen["4:a:n-1"] && seen["4:b:m-1"])
 	})
 
 	t.Run("projected read routes by ID", func(t *testing.T) {

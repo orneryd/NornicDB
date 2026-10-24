@@ -242,38 +242,31 @@ func TestGh683_BoltCompositeCommit(t *testing.T) {
 	}
 }
 
-func TestSessionGetExecutorForDatabase_RollbackRemovesDatabaseScopedWrites(t *testing.T) {
-	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
-	exec := transactionalDatabaseScopedExecutor(t, store)
-	txExec, ok := exec.(TransactionalExecutor)
-	require.True(t, ok, "database-scoped Bolt executor must support real explicit transactions")
-
-	ctx := context.Background()
-	require.NoError(t, txExec.BeginTransaction(ctx, nil))
-	_, err := txExec.Execute(ctx, "CREATE (n:TxProbe {id: 'clean-rollback'})", nil)
-	require.NoError(t, err)
-	require.NoError(t, txExec.RollbackTransaction(ctx))
-
-	count := databaseScopedNodeCount(t, exec, "clean-rollback")
-	require.Equal(t, int64(0), count)
-}
-
-func TestSessionGetExecutorForDatabase_RollbackAfterStatementFailureRemovesPriorWrites(t *testing.T) {
-	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
-	exec := transactionalDatabaseScopedExecutor(t, store)
-	txExec, ok := exec.(TransactionalExecutor)
-	require.True(t, ok, "database-scoped Bolt executor must support real explicit transactions")
-
-	ctx := context.Background()
-	require.NoError(t, txExec.BeginTransaction(ctx, nil))
-	_, err := txExec.Execute(ctx, "CREATE (n:TxProbe {id: 'failed-statement-rollback'})", nil)
-	require.NoError(t, err)
-	_, err = txExec.Execute(ctx, "THIS IS NOT CYPHER", nil)
-	require.Error(t, err)
-	require.NoError(t, txExec.RollbackTransaction(ctx))
-
-	count := databaseScopedNodeCount(t, exec, "failed-statement-rollback")
-	require.Equal(t, int64(0), count)
+func TestDatabaseScopedRollbackBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		id, create      string
+		failedStatement bool
+	}{
+		{id: "clean-rollback", create: "CREATE (n:TxProbe {id: 'clean-rollback'})"},
+		{id: "failed-statement-rollback", create: "CREATE (n:TxProbe {id: 'failed-statement-rollback'})", failedStatement: true},
+	} {
+		t.Run(tc.id, func(t *testing.T) {
+			store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
+			exec := databaseScopedExecutor(t, store, true)
+			txExec, ok := exec.(TransactionalExecutor)
+			require.True(t, ok, "database-scoped Bolt executor must support real explicit transactions")
+			ctx := context.Background()
+			require.NoError(t, txExec.BeginTransaction(ctx, nil))
+			_, err := txExec.Execute(ctx, tc.create, nil)
+			require.NoError(t, err)
+			if tc.failedStatement {
+				_, err = txExec.Execute(ctx, "THIS IS NOT CYPHER", nil)
+				require.Error(t, err)
+			}
+			require.NoError(t, txExec.RollbackTransaction(ctx))
+			require.Equal(t, int64(0), databaseScopedNodeCount(t, exec, tc.id))
+		})
+	}
 }
 
 func TestDatabaseManagerBoltNeo4jDriverExecuteWriteRollsBackPriorWrites(t *testing.T) {
@@ -492,7 +485,7 @@ MERGE (r)-[:CONTAINS]->(d)`,
 	require.EqualValues(t, 1, res.Rows[0][0])
 }
 
-func databaseScopedExecutor(t *testing.T, store storage.Engine) QueryExecutor {
+func databaseScopedExecutor(t *testing.T, store storage.Engine, transaction ...bool) QueryExecutor {
 	t.Helper()
 
 	mgr := &mockDBManager{
@@ -506,7 +499,7 @@ func databaseScopedExecutor(t *testing.T, store storage.Engine) QueryExecutor {
 			dbManager: mgr,
 		},
 	}
-	exec, err := s.getExecutorForDatabase("nornic")
+	exec, err := s.getExecutorForDatabase("nornic", transaction...)
 	require.NoError(t, err)
 	return exec
 }
@@ -534,25 +527,6 @@ func startBoltTestServer(t *testing.T, server *Server) int {
 		require.NoError(t, <-errCh)
 	})
 	return addr.Port
-}
-
-func transactionalDatabaseScopedExecutor(t *testing.T, store storage.Engine) QueryExecutor {
-	t.Helper()
-
-	mgr := &mockDBManager{
-		stores: map[string]storage.Engine{
-			"nornic": store,
-		},
-		defaultDB: "nornic",
-	}
-	s := &Session{
-		server: &Server{
-			dbManager: mgr,
-		},
-	}
-	exec, err := s.getTransactionalExecutorForDatabase("nornic")
-	require.NoError(t, err)
-	return exec
 }
 
 func databaseScopedNodeCount(t *testing.T, exec QueryExecutor, id string) int64 {

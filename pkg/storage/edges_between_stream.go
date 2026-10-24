@@ -42,35 +42,11 @@ func filterEdgesBetween(edges []*Edge, startID, endID NodeID, edgeType string, p
 		if edge == nil || edge.StartNode != startID || edge.EndNode != endID || edge.Type != edgeType {
 			continue
 		}
-		if match(projectEdgeProperties(edge, properties)) {
+		if match((QueryResultProjection{}).Edge(edge, properties)) {
 			matched = append(matched, edge)
 		}
 	}
 	return matched
-}
-
-// projectEdgeProperties returns a copy of edge's identity with only the
-// listed properties (all of them when properties is nil).
-func projectEdgeProperties(edge *Edge, properties []string) *Edge {
-	if properties == nil {
-		return copyEdge(edge)
-	}
-	projected := &Edge{
-		ID:                   edge.ID,
-		Type:                 edge.Type,
-		StartNode:            edge.StartNode,
-		EndNode:              edge.EndNode,
-		VisibilitySuppressed: edge.VisibilitySuppressed,
-	}
-	for _, key := range properties {
-		if value, ok := edge.Properties[key]; ok {
-			if projected.Properties == nil {
-				projected.Properties = make(map[string]any, len(properties))
-			}
-			projected.Properties[key] = value
-		}
-	}
-	return projected
 }
 
 // MatchEdgesBetween matches the engine's edges between two nodes. Under
@@ -108,7 +84,7 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 		if e == nil || e.Type != edgeType {
 			continue
 		}
-		if match(projectEdgeProperties(e, properties)) {
+		if match((QueryResultProjection{}).Edge(e, properties)) {
 			matched = append(matched, copyEdge(e))
 		}
 	}
@@ -279,7 +255,7 @@ func (tx *BadgerTransaction) MatchEdgesBetween(startID, endID NodeID, edgeType s
 		if edge == nil || edge.StartNode != startID || edge.EndNode != endID || edge.Type != edgeType {
 			continue
 		}
-		if match(projectEdgeProperties(edge, properties)) {
+		if match((QueryResultProjection{}).Edge(edge, properties)) {
 			matched = append(matched, copyEdge(edge))
 		}
 	}

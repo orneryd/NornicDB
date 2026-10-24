@@ -106,14 +106,14 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 		if typed == nil {
 			return value, false
 		}
-		if _, deleted := v.nodes[typed.ID]; deleted {
+		if _, deleted := v.nodes[storage.NodeID(typed.IdentityKey())]; deleted {
 			return v.node(typed), true
 		}
 	case *storage.Edge:
 		if typed == nil {
 			return value, false
 		}
-		if _, deleted := v.edges[typed.ID]; deleted {
+		if _, deleted := v.edges[storage.EdgeID(typed.IdentityKey())]; deleted {
 			return v.edge(typed), true
 		}
 	case []interface{}:
@@ -166,11 +166,11 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 }
 
 func (v *deletedEntityViews) node(node *storage.Node) *storage.Node {
-	return &storage.Node{ID: node.ID}
+	return &storage.Node{ID: node.ID, Database: node.Database}
 }
 
 func (v *deletedEntityViews) edge(edge *storage.Edge) *storage.Edge {
-	return &storage.Edge{ID: edge.ID, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
+	return &storage.Edge{ID: edge.ID, Database: edge.Database, Type: edge.Type, StartNode: edge.StartNode, EndNode: edge.EndNode}
 }
 
 // validateDeletedEntityReads rejects a clause that, after a DELETE in the
@@ -285,13 +285,13 @@ func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool)
 		if relationshipOnly || entity == nil {
 			return false
 		}
-		_, found := d.nodes[entity.ID]
+		_, found := d.nodes[storage.NodeID(entity.IdentityKey())]
 		return found
 	case *storage.Edge:
 		if entity == nil {
 			return false
 		}
-		_, found := d.edges[entity.ID]
+		_, found := d.edges[storage.EdgeID(entity.IdentityKey())]
 		return found
 	default:
 		return false
@@ -401,4 +401,35 @@ func deletedEntityReadText(clause pipelineClause) string {
 		return values.String()
 	}
 	return clause.text
+}
+
+// deleteEdgeLookupID uses the same identity translation as collected targets
+// for relationships discovered while validating or detaching a node.
+func deleteEdgeLookupID(store storage.Engine, edge *storage.Edge) storage.EdgeID {
+	id, _ := edge.Identity().LookupID(store, "5")
+	return storage.EdgeID(id)
+}
+
+// addFromStorage records identities rather than engine-relative lookup IDs.
+// The statement registry can span constituent calls, aliases and later clauses.
+func (d *deletedEntities) addFromStorage(store storage.Engine, nodes []storage.NodeID, edges map[storage.EdgeID]struct{}) {
+	key := func(kind, value string) string {
+		identity := storage.EntityIdentity{Database: storage.DatabaseOf(store), LocalID: value}
+		if storage.CompositeDatabaseOf(store) != "" {
+			actual, database, local, qualified := storage.ParseElementID(value)
+			if qualified && actual == kind {
+				identity = storage.EntityIdentity{Database: database, LocalID: local}
+			}
+		}
+		return identity.Key()
+	}
+	nodeKeys := make([]storage.NodeID, len(nodes))
+	for i, id := range nodes {
+		nodeKeys[i] = storage.NodeID(key("4", string(id)))
+	}
+	edgeKeys := make(map[storage.EdgeID]struct{}, len(edges))
+	for id := range edges {
+		edgeKeys[storage.EdgeID(key("5", string(id)))] = struct{}{}
+	}
+	d.add(nodeKeys, edgeKeys)
 }

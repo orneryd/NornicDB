@@ -70,7 +70,7 @@ func TestFabricHelpers_MoreContextAndWrapperBranches(t *testing.T) {
 	require.NotNil(t, prepared)
 
 	// executeViaPreparedFabricWithTx nil prepared branch
-	_, err = exec.executeViaPreparedFabricWithTx(context.Background(), "RETURN 1", nil, fabric.NewFabricTransaction("tx-1"), true, nil)
+	_, err = exec.executeViaFabricWithTx(context.Background(), "RETURN 1", nil, fabric.NewFabricTransaction("tx-1"), true, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not prepared")
 
