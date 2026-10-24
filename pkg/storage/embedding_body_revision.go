@@ -62,7 +62,7 @@ func (b *BadgerEngine) embeddingRevisionIsCurrent(id NodeID, revision EmbeddingB
 	var buffered *Node
 	proven := false
 	view, err := b.captureReadView(nil, readViewOptions{scope: namespaceForNodeID(id), cached: func(w *WriteBehindBuffer) (bool, error) {
-		state := w.entityStateLocked(bufferedNodeEntity, string(id))
+		state := b.bufferedEntity(w, storedRead, bufferedNodeEntity, string(id))
 		if !state.found {
 			if len(proof) != 0 && proof[0].matches(b, id, revision) {
 				proven = true

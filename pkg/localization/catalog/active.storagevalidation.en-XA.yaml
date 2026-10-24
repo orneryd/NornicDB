@@ -124,6 +124,8 @@
   other: "[!! start node {{.NodeID}} does not exist !!]"
 - id: storage.transaction.end_node_missing
   other: "[!! end node {{.NodeID}} does not exist !!]"
+- id: storage.transaction.hidden_edge_identity_conflict
+  other: "[!! stored hidden relationship {{.EdgeID}} has a different final image !!]"
 - id: storage.transaction.constraint_violation
   other: "[!! constraint violation: {{.Cause}} !!]"
 - id: storage.transaction.commit_namespace_missing

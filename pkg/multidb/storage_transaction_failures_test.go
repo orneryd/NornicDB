@@ -16,21 +16,22 @@ import (
 // real Badger storage; an I/O failure must not consume capacity or publish data.
 type quotaAdmissionReadFailure struct {
 	storage.StreamingEngine
+	storage.StoredEntityReader
 	at  string
 	err error
 }
 
-func (e *quotaAdmissionReadFailure) GetNode(id storage.NodeID) (*storage.Node, error) {
+func (e *quotaAdmissionReadFailure) GetStoredNode(id storage.NodeID) (*storage.Node, error) {
 	if e.at == "node" {
 		return nil, e.err
 	}
-	return e.StreamingEngine.GetNode(id)
+	return e.StoredEntityReader.GetStoredNode(id)
 }
-func (e *quotaAdmissionReadFailure) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+func (e *quotaAdmissionReadFailure) GetStoredEdge(id storage.EdgeID) (*storage.Edge, error) {
 	if e.at == "edge" {
 		return nil, e.err
 	}
-	return e.StreamingEngine.GetEdge(id)
+	return e.StoredEntityReader.GetStoredEdge(id)
 }
 func (e *quotaAdmissionReadFailure) NodeCount() (int64, error) {
 	if e.at == "nodes" {
@@ -80,7 +81,9 @@ func TestTransactionQuotaAdmissionReadFailureRollsBack(t *testing.T) {
 			tracker := engine.(*sizeTrackingEngine)
 			underlying := tracker.Engine
 			injected := errors.New("test storage read failed")
-			tracker.Engine = &quotaAdmissionReadFailure{StreamingEngine: underlying.(storage.StreamingEngine), at: at, err: injected}
+			stored, ok := storage.StoredReader(underlying)
+			require.True(t, ok)
+			tracker.Engine = &quotaAdmissionReadFailure{StreamingEngine: underlying.(storage.StreamingEngine), StoredEntityReader: stored, at: at, err: injected}
 			tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction()
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace(db))

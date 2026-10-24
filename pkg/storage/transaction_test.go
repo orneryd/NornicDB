@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -240,7 +241,7 @@ func TestTransaction_UpdateNode(t *testing.T) {
 
 	// Engine should still have old version
 	old, _ := engine.GetNode(NodeID(prefixTestID("update-me")))
-	if old.Properties["version"] != 1 {
+	if version, _ := convert.ToInt64(old.Properties["version"]); version != 1 {
 		t.Error("Engine should still have old version before commit")
 	}
 
@@ -261,14 +262,8 @@ func TestTransaction_UpdateNode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetNode after commit failed: %v", err)
 	}
-	// Note: JSON serialization may convert int to float64
-	version, ok := updated.Properties["version"].(float64)
-	if !ok {
-		vInt, ok := updated.Properties["version"].(int)
-		if ok {
-			version = float64(vInt)
-		}
-	}
+	// Storage returns a Go int in the width its codec keeps.
+	version, _ := convert.ToFloat64(updated.Properties["version"])
 	if version != 2 {
 		t.Errorf("Engine should have new version after commit, got version=%v (type %T)",
 			updated.Properties["version"], updated.Properties["version"])

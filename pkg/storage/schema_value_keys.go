@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // indexValueKey is the one key every in-memory index, UNIQUE cache, key lock
@@ -21,6 +22,9 @@ func indexValueKey(value interface{}) (interface{}, bool) {
 	}
 	if value == nil {
 		return nil, false
+	}
+	if key, ok := temporalIndexKeyOf(value); ok {
+		return key, true
 	}
 	if reflect.TypeOf(value).Comparable() {
 		return value, true
@@ -148,3 +152,40 @@ func writeCompositeIndexKey(b *strings.Builder, value interface{}) bool {
 	b.WriteByte(']')
 	return true
 }
+
+// temporalIndexKey is the index key of a temporal value: its kind, instant,
+// UTC offset and text (a zone ID among it). A temporal value read from
+// storage carries a zone of its own, so as a map key it never equals the
+// same value written or given as a parameter. Ordered scans compare keys by
+// their text (compareSchemaIndexValues), as they compared the values.
+type temporalIndexKey struct {
+	kind   string
+	unix   int64
+	nanos  int
+	offset int
+	text   string
+}
+
+func temporalIndexKeyOf(value interface{}) (temporalIndexKey, bool) {
+	var at time.Time
+	kind := "time"
+	switch v := value.(type) {
+	case time.Time:
+		at = v
+	case interface{ TemporalTime() time.Time }:
+		at = v.TemporalTime()
+		kind = reflect.TypeOf(value).String()
+	default:
+		return temporalIndexKey{}, false
+	}
+	_, offset := at.Zone()
+	key := temporalIndexKey{kind: kind, unix: at.Unix(), nanos: at.Nanosecond(), offset: offset}
+	if text, ok := value.(interface{ String() string }); ok && kind != "time" {
+		key.text = text.String()
+	} else {
+		key.text = at.Format("2006-01-02 15:04:05.999999999 -0700")
+	}
+	return key, true
+}
+
+func (k temporalIndexKey) String() string { return k.text }

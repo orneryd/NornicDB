@@ -19,6 +19,10 @@ import (
 // Uses BadgerDB's streaming backup which creates a consistent snapshot.
 // The backup file is a self-contained, portable copy of the database.
 func (b *BadgerEngine) Backup(path string) error {
+	// Every write acknowledged before the backup is in it.
+	if err := b.FlushWriteBehind(); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -92,16 +96,23 @@ func (b *BadgerEngine) restartIndexBackfills() error {
 	return errors.Join(b.ensureEdgeBetweenIndex(), b.ensureLabelIndex())
 }
 
-// restoreOffline is Restore's work with writes and reads held off.
+// restoreOffline is Restore's work with writes and reads held off. Every
+// write acknowledged before it is applied first (beginLifecycleWrite), so
+// none lands over the restored store.
 func (b *BadgerEngine) restoreOffline(path string) error {
-	b.writeBarrier.Lock()
-	defer b.writeBarrier.Unlock()
+	lifecycle, err := b.beginLifecycleWrite("")
+	if err != nil {
+		if errors.Is(err, ErrStorageClosed) {
+			return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
+		}
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
+	defer lifecycle.finish()
 
 	b.mu.RLock()
-	closed := b.closed
 	db := b.db
 	b.mu.RUnlock()
-	if closed || db == nil {
+	if db == nil {
 		return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
 	}
 
@@ -121,6 +132,12 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	}
 	b.InvalidatePendingEmbeddingsIndex()
 	if err := db.Load(bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
+	// The restored derived-count deltas are folded, as open folds them:
+	// the engine that took the backup numbered them, and a new delta
+	// reusing one's suffix would overwrite it.
+	if err := b.foldRestoredCountDeltas(db); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	loader := heldViewer{db: db}
@@ -218,12 +235,17 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		return 0, 0, localizedError(localization.StorageClientDeletePrefixRequired(), nil)
 	}
 
-	if err := b.ensureOpen(); err != nil {
-		return 0, 0, err
-	}
-	// Runs after the lock below is released: the reset's consumers may write.
+	// Runs after the locks below are released: the reset's consumers may write.
 	var reset *commitNotification
 	defer func() { b.awaitCommitNotification(reset) }()
+	// Every write acknowledged before the delete is applied first, no write
+	// runs during it, and a transaction open across it that writes under the
+	// prefix fails its commit (beginLifecycleWrite).
+	lifecycle, err := b.beginLifecycleWrite(prefix)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer lifecycle.finish()
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
 
@@ -309,6 +331,8 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		append([]byte{prefixEdgeBetweenHead}, prefixBytes...),
 		append([]byte{prefixPendingEmbed}, prefixBytes...),
 		append([]byte{prefixEmbedding}, prefixBytes...),
+		manualSuppressionKey(manualSuppressionNode, prefix),
+		manualSuppressionKey(manualSuppressionEdge, prefix),
 	}
 	if wholeNamespace {
 		dropPrefixes = append(dropPrefixes, labelCountNamespacePrefix(namespace))
@@ -324,6 +348,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	if err := b.db.DropPrefix(dropPrefixes...); err != nil {
 		return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
+	b.dropManualSuppressions(prefix)
 	if err := b.deleteNamespaceKeyFamilies(prefixBytes, namespace, wholeNamespace, nodeNums, edgeNums); err != nil {
 		return 0, 0, err
 	}

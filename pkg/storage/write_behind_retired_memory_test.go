@@ -28,7 +28,7 @@ func TestWriteBehindBuffer_RetiredGenerationCollectible(t *testing.T) {
 					w.AppendNode(&Node{ID: "test:pending"})
 					w.rotate()
 				}
-				w.drainOne()
+				w.drainOne(true, nil)
 				return generation
 			}
 			generation := retire()

@@ -1,0 +1,64 @@
+package multidb
+
+import (
+	"strconv"
+	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
+
+// BenchmarkSizeTrackingFreshCreate is the paired A/B guard for the ordinary
+// no-conflict path. The hidden-ID classifier must not add a predecessor point
+// lookup to fresh creates; the relationship case also measures the O(1)
+// accounting outcome counters used by bulk compensation.
+func BenchmarkSizeTrackingFreshCreate(b *testing.B) {
+	b.Run("node", func(b *testing.B) {
+		manager, engine := benchmarkSizeTrackingEngine(b)
+		defer manager.Close()
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			id := storage.NodeID("fresh-node-" + strconv.Itoa(i))
+			if _, err := engine.CreateNode(&storage.Node{ID: id, Labels: []string{"Fresh"}}); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	b.Run("relationship", func(b *testing.B) {
+		manager, engine := benchmarkSizeTrackingEngine(b)
+		defer manager.Close()
+		for _, id := range []storage.NodeID{"start", "end"} {
+			if _, err := engine.CreateNode(&storage.Node{ID: id}); err != nil {
+				b.Fatal(err)
+			}
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			edge := &storage.Edge{
+				ID:        storage.EdgeID("fresh-edge-" + strconv.Itoa(i)),
+				StartNode: "start",
+				EndNode:   "end",
+				Type:      "FRESH",
+			}
+			if err := engine.CreateEdge(edge); err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+func benchmarkSizeTrackingEngine(b *testing.B) (*DatabaseManager, storage.Engine) {
+	b.Helper()
+	manager, err := NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	if err != nil {
+		b.Fatal(err)
+	}
+	engine, err := manager.GetStorage("nornic")
+	if err != nil {
+		_ = manager.Close()
+		b.Fatal(err)
+	}
+	return manager, engine
+}

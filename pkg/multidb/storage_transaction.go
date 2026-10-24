@@ -102,11 +102,18 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 			return err
 		}
 	}
+	// A stored read returns every acknowledged body as storage holds it, so a
+	// prior is sized as read; only a staged body is imaged first.
 	nodes, nodeBytes, err := transactionEntityDelta(changes.Nodes,
 		func(id storage.NodeID) (*storage.Node, error) {
-			return t.Engine.GetNode(storage.NodeID(strings.TrimPrefix(string(id), t.dbName+":")))
+			return storage.GetStoredNode(t.Engine, storage.NodeID(strings.TrimPrefix(string(id), t.dbName+":")))
 		},
+		calculateNodeSize,
 		func(node *storage.Node) (int64, error) {
+			node, err := tx.StoredNodeImage(node)
+			if err != nil {
+				return 0, err
+			}
 			node.ID = storage.NodeID(strings.TrimPrefix(string(node.ID), t.dbName+":"))
 			return calculateNodeSize(node)
 		}, trackBytes)
@@ -115,9 +122,14 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 	}
 	edges, edgeBytes, err := transactionEntityDelta(changes.Edges,
 		func(id storage.EdgeID) (*storage.Edge, error) {
-			return t.Engine.GetEdge(storage.EdgeID(strings.TrimPrefix(string(id), t.dbName+":")))
+			return storage.GetStoredEdge(t.Engine, storage.EdgeID(strings.TrimPrefix(string(id), t.dbName+":")))
 		},
+		calculateEdgeSize,
 		func(edge *storage.Edge) (int64, error) {
+			edge, err := tx.StoredEdgeImage(edge)
+			if err != nil {
+				return 0, err
+			}
 			edge.ID = storage.EdgeID(strings.TrimPrefix(string(edge.ID), t.dbName+":"))
 			edge.StartNode = storage.NodeID(strings.TrimPrefix(string(edge.StartNode), t.dbName+":"))
 			edge.EndNode = storage.NodeID(strings.TrimPrefix(string(edge.EndNode), t.dbName+":"))
@@ -163,7 +175,8 @@ func (t *sizeTrackingEngine) CommitTransaction(ctx context.Context, tx *storage.
 
 // Compare final staged entities with the current committed state, rather than
 // the transaction's older snapshot. Each ID contributes once; nil is deletion.
-func transactionEntityDelta[K comparable, V any](pending map[K]*V, get func(K) (*V, error), size func(*V) (int64, error), trackBytes bool) (count, bytes int64, err error) {
+// sizePrevious sizes a stored read, sizeNext a staged body.
+func transactionEntityDelta[K comparable, V any](pending map[K]*V, get func(K) (*V, error), sizePrevious, sizeNext func(*V) (int64, error), trackBytes bool) (count, bytes int64, err error) {
 	for id, next := range pending {
 		previous, getErr := get(id)
 		if getErr != nil && !errors.Is(getErr, storage.ErrNotFound) {
@@ -172,7 +185,7 @@ func transactionEntityDelta[K comparable, V any](pending map[K]*V, get func(K) (
 		if getErr == nil {
 			count--
 			if trackBytes {
-				n, err := size(previous)
+				n, err := sizePrevious(previous)
 				if err != nil {
 					return 0, 0, err
 				}
@@ -182,7 +195,7 @@ func transactionEntityDelta[K comparable, V any](pending map[K]*V, get func(K) (
 		if next != nil {
 			count++
 			if trackBytes {
-				n, err := size(next)
+				n, err := sizeNext(next)
 				if err != nil {
 					return 0, 0, err
 				}

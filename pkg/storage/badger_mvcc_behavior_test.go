@@ -335,7 +335,7 @@ func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 	// the version keyspace). The critical invariant is that reads
 	// still resolve to the current live body via the primary key.
 	require.LessOrEqual(t, afterHead.Version.Compare(beforeHead.Version), 0)
-	require.Equal(t, 3, mustGetNodeLatestVisible(t, engine, nodeID).Properties["version"])
+	require.EqualValues(t, 3, mustGetNodeLatestVisible(t, engine, nodeID).Properties["version"])
 
 	_, err = engine.PruneMVCCVersions(context.Background(), MVCCPruneOptions{MaxVersionsPerKey: 1})
 	require.NoError(t, err)
@@ -344,7 +344,7 @@ func TestBadgerEngine_RebuildAndPruneMVCC(t *testing.T) {
 	// many prior versions were archived — not on the number of
 	// commits. The invariant we care about here is that pruning
 	// preserves the live body (primary key).
-	require.Equal(t, 3, mustGetNodeLatestVisible(t, engine, nodeID).Properties["version"])
+	require.EqualValues(t, 3, mustGetNodeLatestVisible(t, engine, nodeID).Properties["version"])
 
 	oldVersion, err := engine.GetNodeVisibleAt(nodeID, MVCCVersion{CommitTimestamp: time.Now().UTC().Add(-24 * time.Hour), CommitSequence: ^uint64(0)})
 	if err == nil {

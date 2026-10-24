@@ -18,6 +18,19 @@ func (b *BadgerEngine) ensureOpen() error {
 	return nil
 }
 
+// ensureAdmitting is ensureOpen for a write: once Close started, no write is
+// admitted (ErrStorageClosed), so none is acknowledged after Close's final
+// drain of the write-behind buffer.
+func (b *BadgerEngine) ensureAdmitting() error {
+	b.mu.RLock()
+	closed := b.closed || b.closing
+	b.mu.RUnlock()
+	if closed {
+		return ErrStorageClosed
+	}
+	return nil
+}
+
 // beginWrite marks a durable write in flight so Close waits for it before
 // releasing engine state. It returns the release func the caller must defer,
 // or ErrStorageClosed when the engine has already closed (the caller must
@@ -26,16 +39,42 @@ func (b *BadgerEngine) ensureOpen() error {
 // started yet cannot slip in between the check and the write.
 func (b *BadgerEngine) beginWrite() (func(), error) {
 	b.writeBarrier.RLock()
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureAdmitting(); err != nil {
 		b.writeBarrier.RUnlock()
 		return nil, err
 	}
 	return b.writeBarrier.RUnlock, nil
 }
 
+// orderedWrite is a write ordered after the write-behind buffer
+// (orderAfterBufferedCommits), from its write barrier to its publication
+// point (beginOrderedWrite), kept on the writer's stack.
+type orderedWrite struct {
+	b    *BadgerEngine
+	held *commitNotification
+}
+
+// beginOrderedWrite is beginWrite for a write ordered after the write-behind
+// buffer. finish, deferred before every other lock the write takes, delivers
+// the notifications of the write, and of the commits its drain replays, after
+// the write released every other lock (holdPublication).
+func (b *BadgerEngine) beginOrderedWrite() (orderedWrite, error) {
+	b.writeBarrier.RLock()
+	if err := b.ensureAdmitting(); err != nil {
+		b.writeBarrier.RUnlock()
+		return orderedWrite{}, err
+	}
+	return orderedWrite{b: b, held: b.holdPublication()}, nil
+}
+
+func (w orderedWrite) finish() {
+	w.b.writeBarrier.RUnlock()
+	w.b.completeCommitNotification(w.held)
+}
+
 func (b *BadgerEngine) beginSchemaWrite() (func(), error) {
 	b.writeBarrier.Lock()
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureAdmitting(); err != nil {
 		b.writeBarrier.Unlock()
 		return nil, err
 	}

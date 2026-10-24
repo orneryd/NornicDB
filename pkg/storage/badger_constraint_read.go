@@ -19,13 +19,13 @@ func (b *BadgerEngine) keyConstraintNodes(idx *CompositeIndex, label, property s
 			return
 		}
 		if valueKey, ok := indexValueKey(values[0]); ok {
-			pending = w.keyCandidatesLocked(label, property, valueKey)
+			pending = b.bufferedKeyCandidates(w, storedRead, label, property, valueKey)
 		} else {
-			pending, _ = w.labelOverlayLocked(label)
+			pending, _ = b.bufferedLabelNodes(w, storedRead, label)
 		}
 		states = make(map[NodeID]bufferedEntityState, len(ids))
 		for _, id := range ids {
-			states[id] = w.entityStateLocked(bufferedNodeEntity, string(id))
+			states[id] = b.bufferedEntity(w, storedRead, bufferedNodeEntity, string(id))
 		}
 	}, func(txn *badger.Txn) error {
 		seen := make(map[NodeID]bool, len(ids)+len(pending))

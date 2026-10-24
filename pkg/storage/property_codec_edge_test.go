@@ -65,12 +65,26 @@ func TestStrictTypedArray_PreservesHomogeneousInts(t *testing.T) {
 	assert.Equal(t, []int64{-1, 0, 1, math.MaxInt64}, got)
 }
 
-// TestStrictTypedArray_PreservesHomogeneousUints — []uint64 round-trip.
-func TestStrictTypedArray_PreservesHomogeneousUints(t *testing.T) {
+// TestStrictTypedArray_ReadsUnsignedAsInt64 — an unsigned list reads as
+// []int64 while every value fits; a value above MaxInt64 keeps uint64 and
+// its neighbours stay int64.
+func TestStrictTypedArray_ReadsUnsignedAsInt64(t *testing.T) {
 	eng := newTestEngine(t)
-	got := roundTripValueThroughCodec(t, eng, "uints", []uint64{0, 1, math.MaxUint64})
-	require.IsType(t, []uint64{}, got)
-	assert.Equal(t, []uint64{0, 1, math.MaxUint64}, got)
+	got := roundTripValueThroughCodec(t, eng, "uints", []uint64{0, 1, math.MaxInt64})
+	require.IsType(t, []int64{}, got)
+	assert.Equal(t, []int64{0, 1, math.MaxInt64}, got)
+	got = roundTripValueThroughCodec(t, eng, "uints", []uint64{0, 1, math.MaxUint64})
+	assert.Equal(t, []any{int64(0), int64(1), uint64(math.MaxUint64)}, got)
+}
+
+// TestStrictTypedArray_PreservesHomogeneousFloat32s — []float32 round-trip.
+func TestStrictTypedArray_PreservesHomogeneousFloat32s(t *testing.T) {
+	eng := newTestEngine(t)
+	got := roundTripValueThroughCodec(t, eng, "vec", []float32{0.1, 0.2, 0.3})
+	require.IsType(t, []float32{}, got)
+	assert.Equal(t, []float32{0.1, 0.2, 0.3}, got)
+	got = roundTripValueThroughCodec(t, eng, "mixed", []any{float32(0.5), 1.5})
+	assert.Equal(t, []any{float32(0.5), 1.5}, got)
 }
 
 // TestStrictTypedArray_PreservesHomogeneousStrings — []string round-trip.

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"time"
 
@@ -227,17 +228,75 @@ func (b *BadgerEngine) DeleteMVCCVersion(ctx context.Context, logicalKey []byte,
 	if err != nil {
 		return err
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	// Ordered after the entity's acknowledged write-behind commits, as
+	// WriteMVCCHead is; the version the entity's head names is never deleted
+	// (a commit landed after the caller read its fence).
+	return b.withOrderedEntityUpdate(b.mvccLogicalEntities(logicalKey), func(txn *badger.Txn) error {
+		if len(logicalKey) == 1+8 {
+			head, err := b.loadMVCCHeadForLogicalKeyInTxn(txn, logicalKey)
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+			if err == nil && head.Version.Compare(version) == 0 {
+				return ErrConflict
+			}
+		}
 		return txn.Delete(fullKey)
 	})
 }
 
-// WriteMVCCHead writes an updated MVCC head for a logical key.
+// WriteMVCCHead writes an updated MVCC head for a logical key. A head never
+// moves backwards: when the stored head is newer than head (a commit of the
+// entity landed after the caller read it, as the lifecycle pruner does), its
+// version and tombstone stay and only the floor is raised. It is ordered
+// after the entity's acknowledged write-behind commits
+// (orderAfterBufferedCommits), so none of them lands over it afterwards.
 func (b *BadgerEngine) WriteMVCCHead(ctx context.Context, logicalKey []byte, head MVCCHead) error {
 	_ = ctx
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withOrderedEntityUpdate(b.mvccLogicalEntities(logicalKey), func(txn *badger.Txn) error {
+		current, err := b.loadMVCCHeadForLogicalKeyInTxn(txn, logicalKey)
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+		if err == nil && current.Version.Compare(head.Version) > 0 {
+			head.Version, head.Tombstoned = current.Version, current.Tombstoned
+			if current.FloorVersion.Compare(head.FloorVersion) > 0 {
+				head.FloorVersion = current.FloorVersion
+			}
+		}
 		return b.writeMVCCHeadForLogicalKeyInTxn(txn, logicalKey, head.Version, head.Tombstoned, head.FloorVersion)
 	})
+}
+
+// mvccLogicalEntities names, for the write order, the entity an MVCC logical
+// key belongs to (an adjacency key: its node and relationship); a number no
+// entity holds names none.
+func (b *BadgerEngine) mvccLogicalEntities(logical []byte) writtenEntities {
+	if len(logical) == 1+8+8 && (logical[0] == prefixMVCCOutgoingAdj || logical[0] == prefixMVCCIncomingAdj) {
+		var e writtenEntities
+		if id, ok := b.idDict.nodeReverseLookup(binary.BigEndian.Uint64(logical[1:9])); ok {
+			e.nodes = append(e.nodes, id)
+		}
+		if id, ok := b.idDict.edgeReverseLookup(binary.BigEndian.Uint64(logical[9:])); ok {
+			e.edges = append(e.edges, id)
+		}
+		return e
+	}
+	if len(logical) != 1+8 {
+		return writtenEntities{}
+	}
+	num := binary.BigEndian.Uint64(logical[1:])
+	switch logical[0] {
+	case prefixMVCCNode:
+		if id, ok := b.idDict.nodeReverseLookup(num); ok {
+			return writtenEntities{nodes: []NodeID{id}}
+		}
+	case prefixMVCCEdge:
+		if id, ok := b.idDict.edgeReverseLookup(num); ok {
+			return writtenEntities{edges: []EdgeID{id}}
+		}
+	}
+	return writtenEntities{}
 }
 
 // ReadMVCCHead loads the current MVCC head for a logical key.

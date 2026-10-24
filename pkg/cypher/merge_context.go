@@ -315,7 +315,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		if err := validatePropertyValues(node.Properties); err != nil {
 			return nil, err
 		}
-		actualID, err := store.CreateNode(node)
+		actualID, err := createMintedNode(store, node)
 		if err != nil {
 			if !mergeCreateConflict(err) {
 				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
@@ -446,6 +446,13 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 			return nil, localizedError(localization.CypherMergeCreateRelationshipFailed(createErr), createErr)
 		}
 		edge = createdEdge
+		if !created {
+			if reporter, ok := store.(interface {
+				EdgeCreateWasNoOp(storage.EdgeID) bool
+			}); ok && reporter.EdgeCreateWasNoOp(edge.ID) {
+				result.Stats.relationshipMergeNoOp = true
+			}
+		}
 		if created {
 			result.Stats.RelationshipsCreated = 1
 			countCreatedEntity(result.Stats, nil, edge.Properties)
