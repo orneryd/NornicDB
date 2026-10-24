@@ -57,32 +57,41 @@ func relationshipConstraintValueKeys(properties []string, values map[string]inte
 	return out, true
 }
 func (idx *relationshipUniqueIndex) remove(id EdgeID) {
-	previous, ok := idx.keys[id]
-	if !ok {
-		return
-	}
-	props := make(map[string]interface{}, len(previous))
-	for i, p := range idx.properties {
-		props[p] = previous[i]
-	}
-	idx.index.RemoveNode(NodeID(id), props)
-	delete(idx.keys, id)
+	idx.replace(id, nil)
 }
 func (idx *relationshipUniqueIndex) put(edge *Edge) {
-	idx.remove(edge.ID)
-	if edge.Type != idx.key.relType || !strings.HasPrefix(string(edge.ID), idx.key.namespace+":") {
+	var values []interface{}
+	if edge.Type == idx.key.relType && strings.HasPrefix(string(edge.ID), idx.key.namespace+":") {
+		values, _ = relationshipConstraintValues(idx.properties, edge.Properties)
+	}
+	idx.replace(edge.ID, values)
+}
+
+// replace moves the edge from its recorded key to values (nil: no key) in
+// one CompositeIndex.ReplaceNode, the owner of equality-index entries.
+func (idx *relationshipUniqueIndex) replace(id EdgeID, values []interface{}) {
+	previous, had := idx.keys[id]
+	if !had && values == nil {
 		return
 	}
-	values, ok := relationshipConstraintValues(idx.properties, edge.Properties)
-	if !ok {
+	idx.index.ReplaceNode(NodeID(id), idx.keyProperties(previous), idx.keyProperties(values))
+	if values == nil {
+		delete(idx.keys, id)
 		return
+	}
+	idx.keys[id] = values
+}
+
+// keyProperties spells key values as the property map the index files.
+func (idx *relationshipUniqueIndex) keyProperties(values []interface{}) map[string]interface{} {
+	if values == nil {
+		return nil
 	}
 	props := make(map[string]interface{}, len(values))
 	for i, prop := range idx.properties {
 		props[prop] = values[i]
 	}
-	_ = idx.index.IndexNode(NodeID(edge.ID), props)
-	idx.keys[edge.ID] = values
+	return props
 }
 
 // relationshipUniqueCandidates returns the exact-value equality candidates.

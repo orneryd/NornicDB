@@ -1028,97 +1028,6 @@ func compositeLookupKeyValues(values []interface{}) ([]interface{}, bool) {
 	return canonical, true
 }
 
-// IndexNodeComposite indexes a node in a composite index. An arity-1 index
-// files the node under its canonical single-property key (values, the
-// encoding ORDER BY / range / equality seeks read); an arity >= 2 index files
-// it under its full and every leading-prefix composite key.
-// Call this when creating or updating a node with the indexed properties.
-func (idx *CompositeIndex) IndexNode(nodeID NodeID, properties map[string]interface{}) error {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	if len(idx.Properties) == 1 {
-		value, exists := properties[idx.Properties[0]]
-		if !exists {
-			return nil
-		}
-		valueKey, ok := indexValueKey(value)
-		if !ok {
-			return nil // null / byte array / non-comparable: no key to file
-		}
-		if idx.values == nil {
-			idx.values = make(map[interface{}][]NodeID)
-		}
-		if _, exists := idx.values[valueKey]; !exists {
-			idx.keysDirty = true
-		}
-		idx.values[valueKey] = appendUnique(idx.values[valueKey], nodeID)
-		return nil
-	}
-
-	values := compositeIndexValues(idx, properties)
-
-	// Index full key if all properties present and keyable.
-	if len(values) == len(idx.Properties) {
-		key := NewCompositeKey(values...)
-		idx.fullIndex[key.Hash] = appendUnique(idx.fullIndex[key.Hash], nodeID)
-	}
-
-	// Index all prefixes for partial lookups.
-	for i := 1; i <= len(values); i++ {
-		prefixKey := NewCompositeKey(values[:i]...)
-		idx.prefixIndex[prefixKey.Hash] = appendUnique(idx.prefixIndex[prefixKey.Hash], nodeID)
-	}
-
-	return nil
-}
-
-// RemoveNode removes a node from the composite index.
-// Call this when deleting a node or updating its indexed properties.
-func (idx *CompositeIndex) RemoveNode(nodeID NodeID, properties map[string]interface{}) {
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	if len(idx.Properties) == 1 {
-		value, exists := properties[idx.Properties[0]]
-		if !exists {
-			return
-		}
-		valueKey, ok := indexValueKey(value)
-		if !ok {
-			return
-		}
-		ids := removeNodeID(idx.values[valueKey], nodeID)
-		if len(ids) > 0 {
-			idx.values[valueKey] = ids
-		} else {
-			delete(idx.values, valueKey)
-			idx.keysDirty = true
-		}
-		return
-	}
-
-	values := compositeIndexValues(idx, properties)
-
-	// Remove from full index.
-	if len(values) == len(idx.Properties) {
-		key := NewCompositeKey(values...)
-		idx.fullIndex[key.Hash] = removeNodeID(idx.fullIndex[key.Hash], nodeID)
-		if len(idx.fullIndex[key.Hash]) == 0 {
-			delete(idx.fullIndex, key.Hash)
-		}
-	}
-
-	// Remove from all prefix indexes.
-	for i := 1; i <= len(values); i++ {
-		prefixKey := NewCompositeKey(values[:i]...)
-		idx.prefixIndex[prefixKey.Hash] = removeNodeID(idx.prefixIndex[prefixKey.Hash], nodeID)
-		if len(idx.prefixIndex[prefixKey.Hash]) == 0 {
-			delete(idx.prefixIndex, prefixKey.Hash)
-		}
-	}
-}
-
 // LookupFull finds nodes matching all property values exactly.
 // All properties in the composite index must be specified.
 func (idx *CompositeIndex) LookupFull(values ...interface{}) []NodeID {
@@ -1964,24 +1873,15 @@ func (sm *SchemaManager) PropertyIndexInsert(label, property string, nodeID Node
 		return localizedError(localization.StorageSchemaPropertyIndexNotFound(label, property), nil)
 	}
 
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
-	if idx.values == nil {
-		idx.values = make(map[interface{}][]NodeID)
-	}
-
 	valueKey, ok := indexValueKey(value)
 	if !ok {
 		// Ignore non-comparable values (maps/slices). These cannot be stored in
 		// Go map keys and must not crash index maintenance paths.
 		return nil
 	}
-
-	if _, exists := idx.values[valueKey]; !exists {
-		idx.keysDirty = true
-	}
-	idx.values[valueKey] = appendUnique(idx.values[valueKey], nodeID)
+	idx.mu.Lock()
+	idx.fileValueLocked(nodeID, valueKey)
+	idx.mu.Unlock()
 	return nil
 }
 
@@ -2021,28 +1921,13 @@ func (sm *SchemaManager) PropertyIndexDelete(label, property string, nodeID Node
 		return nil // Not indexed
 	}
 
-	idx.mu.Lock()
-	defer idx.mu.Unlock()
-
 	valueKey, ok := indexValueKey(value)
 	if !ok {
 		return nil
 	}
-
-	if ids, ok := idx.values[valueKey]; ok {
-		newIDs := make([]NodeID, 0, len(ids)-1)
-		for _, id := range ids {
-			if id != nodeID {
-				newIDs = append(newIDs, id)
-			}
-		}
-		if len(newIDs) > 0 {
-			idx.values[valueKey] = newIDs
-		} else {
-			delete(idx.values, valueKey)
-			idx.keysDirty = true
-		}
-	}
+	idx.mu.Lock()
+	idx.unfileValueLocked(nodeID, valueKey)
+	idx.mu.Unlock()
 	return nil
 }
 
