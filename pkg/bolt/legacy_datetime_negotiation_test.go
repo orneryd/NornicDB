@@ -67,6 +67,9 @@ func TestLegacyDateTimeWireSignatureNegotiation(t *testing.T) {
 								code, _, err := AssertFailure(t, conn)
 								require.NoError(t, err)
 								require.Equal(t, "Neo.ClientError.Request.Invalid", code)
+								recovered := dateTimeWireQuery(t, conn, "RETURN 1", []byte{0xA0})
+								require.Equal(t, encodePackStreamValue([]any{int64(1)}), recovered)
+
 							}
 						})
 					}
@@ -135,6 +138,20 @@ func TestLegacyDateTimeWireMetadataSignatureNegotiation(t *testing.T) {
 							code, _, err := AssertFailure(t, conn)
 							require.NoError(t, err)
 							require.Equal(t, "Neo.ClientError.Request.Invalid", code)
+							if messageType == MsgPull || messageType == MsgDiscard {
+								require.NoError(t, SendMessage(conn, []byte{0xB1, messageType, 0xA1, 0x81, 'n', 0xFF}))
+								if messageType == MsgPull {
+									sig, record, err := ReadMessage(conn)
+									require.NoError(t, err)
+									require.Equal(t, byte(MsgRecord), sig)
+									require.Equal(t, encodePackStreamValue([]any{int64(1)}), record)
+								}
+								require.NoError(t, ReadSuccess(t, conn))
+							} else {
+								recovered := dateTimeWireQuery(t, conn, "RETURN 1", []byte{0xA0})
+								require.Equal(t, encodePackStreamValue([]any{int64(1)}), recovered)
+							}
+
 						} else {
 							if messageType == MsgPull {
 								signature, record, err := ReadMessage(conn)

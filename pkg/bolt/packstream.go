@@ -1680,13 +1680,13 @@ func decodeStructureFields(data []byte, offset int, fieldCount int, signature by
 	// Unscoped codec callers may inspect either family. Session readers pass
 	// their negotiated mode through every nested container and structure.
 	if len(utcDateTime) > 0 {
-		switch signature {
-		case 0x46, 0x66, 0x49, 0x69:
-			if utcDateTime[0] != (signature == 0x49 || signature == 0x69) {
-				return nil, 0, fmt.Errorf("%w: 0x%02X", errDateTimeSignature, signature)
-			}
+		utc := signature == 0x49 || signature == 0x69
+		legacy := signature == 0x46 || signature == 0x66
+		if (utc || legacy) && utcDateTime[0] != utc {
+			return nil, 0, fmt.Errorf("%w: 0x%02X", errDateTimeSignature, signature)
 		}
 	}
+
 	startOffset := offset
 	fields := make([]any, fieldCount)
 

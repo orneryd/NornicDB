@@ -61,6 +61,9 @@ func (s *Session) handleRun(data []byte) error {
 	// Parse PackStream to extract query, params, and metadata
 	query, params, metadata, err := s.parseRunMessage(data)
 	if err != nil {
+		if errors.Is(err, errDateTimeSignature) {
+			return err
+		}
 		return s.sendLocalizedRunFailure("Neo.ClientError.Request.Invalid", localization.BoltRunMessageParseFailed(err))
 	}
 	s.language = language.Und
@@ -824,7 +827,7 @@ func (s *Session) handlePull(data []byte) error {
 	options, err := parseStreamingOptions(data, s.useUTCDateTimeStructs())
 	if err != nil {
 		if errors.Is(err, errDateTimeSignature) {
-			return s.sendRunFailure("Neo.ClientError.Request.Invalid", err.Error())
+			return err
 		}
 		return s.sendStreamingFailure(err.Error())
 	}
@@ -1005,7 +1008,7 @@ func (s *Session) handleDiscard(data []byte) error {
 	options, err := parseStreamingOptions(data, s.useUTCDateTimeStructs())
 	if err != nil {
 		if errors.Is(err, errDateTimeSignature) {
-			return s.sendRunFailure("Neo.ClientError.Request.Invalid", err.Error())
+			return err
 		}
 		return s.sendStreamingFailure(err.Error())
 	}
@@ -1166,6 +1169,9 @@ func (s *Session) handleBegin(data []byte) error {
 	if len(data) > 0 {
 		m, _, err := decodePackStreamMap(data, 0, s.useUTCDateTimeStructs())
 		if err != nil {
+			if errors.Is(err, errDateTimeSignature) {
+				return err
+			}
 			return s.sendTransactionControlFailure("Neo.ClientError.Request.Invalid",
 				fmt.Sprintf("Failed to parse BEGIN metadata: %v", err))
 		}
