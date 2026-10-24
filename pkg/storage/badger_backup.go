@@ -19,6 +19,10 @@ import (
 // Uses BadgerDB's streaming backup which creates a consistent snapshot.
 // The backup file is a self-contained, portable copy of the database.
 func (b *BadgerEngine) Backup(path string) error {
+	// Every write acknowledged before the backup is in it.
+	if err := b.LandWriteBehind(); err != nil {
+		return err
+	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -76,7 +80,9 @@ var restoreReadDrainTimeout = 30 * time.Second
 func (b *BadgerEngine) Restore(path string) error {
 	b.stopEdgeBetweenIndexBackfill()
 	b.stopLabelIndexBackfill()
-	restoreErr := b.restoreOffline(path)
+	landing := b.newDirectLanding()
+	restoreErr := b.restoreOffline(path, &landing)
+	landing.deliver()
 	return errors.Join(restoreErr, b.restartIndexBackfills())
 }
 
@@ -93,9 +99,16 @@ func (b *BadgerEngine) restartIndexBackfills() error {
 }
 
 // restoreOffline is Restore's work with writes and reads held off.
-func (b *BadgerEngine) restoreOffline(path string) error {
+func (b *BadgerEngine) restoreOffline(path string, landing *directLanding) error {
 	b.writeBarrier.Lock()
 	defer b.writeBarrier.Unlock()
+	// Every acknowledged write-behind generation lands before the restore
+	// replaces the data; none can land on top of it afterwards.
+	releaseOrder, err := landing.enter(nil, nil, false, true)
+	if err != nil {
+		return err
+	}
+	defer releaseOrder()
 
 	b.mu.RLock()
 	closed := b.closed
@@ -222,6 +235,17 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	// Runs after the lock below is released: the reset's consumers may write.
 	var reset *commitNotification
 	defer func() { b.awaitCommitNotification(reset) }()
+	// A lifecycle write: ordered after every acknowledged write-behind
+	// generation, which it lands first so the drop removes and counts it as
+	// stored data. The listeners of what it landed run once it released its
+	// locks, before the reset is awaited.
+	landing := b.newDirectLanding()
+	defer landing.deliver()
+	releaseOrder, err := landing.enter(nil, nil, false, true)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer releaseOrder()
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
 

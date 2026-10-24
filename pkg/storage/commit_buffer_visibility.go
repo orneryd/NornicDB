@@ -15,6 +15,8 @@ type bufferedEntityState struct {
 	edge    *Edge
 	found   bool
 	deleted bool
+	// deletedAt is a typed tombstone's commit version; zero for generic deletes.
+	deletedAt MVCCVersion
 }
 
 // entityState is the single per-generation visibility owner. Typed commit
@@ -24,21 +26,38 @@ func (b *CommitBuffer) entityState(kind bufferedEntityKind, id string) bufferedE
 		return bufferedEntityState{found: true, deleted: true}
 	}
 	if kind == bufferedNodeEntity {
-		if _, deleted := b.deletedNodeIDs[NodeID(id)]; deleted {
-			return bufferedEntityState{found: true, deleted: true}
+		if version, deleted := b.deletedNodeIDs[NodeID(id)]; deleted {
+			return bufferedEntityState{found: true, deleted: true, deletedAt: version}
 		}
 		if node, found := b.nodes[NodeID(id)]; found {
 			return bufferedEntityState{node: node, found: true}
 		}
 	} else {
-		if _, deleted := b.deletedEdgeIDs[EdgeID(id)]; deleted {
-			return bufferedEntityState{found: true, deleted: true}
+		if version, deleted := b.deletedEdgeIDs[EdgeID(id)]; deleted {
+			return bufferedEntityState{found: true, deleted: true, deletedAt: version}
 		}
 		if edge, found := b.edges[EdgeID(id)]; found {
 			return bufferedEntityState{edge: edge, found: true}
 		}
 	}
 	return bufferedEntityState{}
+}
+
+// entityVersion is entityState plus the ACK version of that state: the
+// tombstone's for a delete, the body's for a live write. Zero means the state
+// came from the legacy untyped append API, which carries no version.
+func (b *CommitBuffer) entityVersion(kind bufferedEntityKind, id string) (bufferedEntityState, MVCCVersion) {
+	state := b.entityState(kind, id)
+	switch {
+	case !state.found:
+		return state, MVCCVersion{}
+	case state.deleted:
+		return state, state.deletedAt
+	case kind == bufferedNodeEntity:
+		return state, b.nodeVersions[NodeID(id)]
+	default:
+		return state, b.edgeVersions[EdgeID(id)]
+	}
 }
 
 func (b *CommitBuffer) clearEntityDeletion(kind bufferedEntityKind, id string) {
@@ -87,6 +106,20 @@ func (w *WriteBehindBuffer) entityStateLocked(kind bufferedEntityKind, id string
 		}
 	}
 	return bufferedEntityState{}
+}
+
+// entityVersionLocked is entityStateLocked with the resolved state's ACK
+// version (CommitBuffer.entityVersion). Caller holds w.mu.
+func (w *WriteBehindBuffer) entityVersionLocked(kind bufferedEntityKind, id string) (bufferedEntityState, MVCCVersion) {
+	if state, version := w.active.entityVersion(kind, id); state.found {
+		return state, version
+	}
+	for i := len(w.draining) - 1; i >= 0; i-- {
+		if state, version := w.draining[i].entityVersion(kind, id); state.found {
+			return state, version
+		}
+	}
+	return bufferedEntityState{}, MVCCVersion{}
 }
 
 // visitEntityOverlayLocked resolves each candidate only once. Enumeration

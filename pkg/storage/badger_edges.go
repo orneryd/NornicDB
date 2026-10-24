@@ -24,6 +24,8 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
+	landing := b.newDirectLanding()
+	defer landing.deliver()
 	release, barrierErr := b.beginWrite()
 	if barrierErr != nil {
 		return barrierErr
@@ -44,6 +46,14 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		return constraintErr
 	}
 	defer releaseConstraint()
+	// Write-behind: land after every older buffered image of what this writes
+	// (write_behind_commit_order.go).
+	releaseOrder, orderErr := landing.enter([]NodeID{edge.StartNode, edge.EndNode}, []EdgeID{edge.ID}, false,
+		b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID)).valueOrdered(ConstraintEntityRelationship, []string{edge.Type}))
+	if orderErr != nil {
+		return orderErr
+	}
+	defer releaseOrder()
 
 	if edge.CreatedAt.IsZero() {
 		edge.CreatedAt = time.Now()
@@ -289,6 +299,8 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
+	landing := b.newDirectLanding()
+	defer landing.deliver()
 	release, barrierErr := b.beginWrite()
 	if barrierErr != nil {
 		return barrierErr
@@ -310,6 +322,14 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		return constraintErr
 	}
 	defer releaseConstraint()
+	// Write-behind: land after every older buffered image of what this writes
+	// (write_behind_commit_order.go).
+	releaseOrder, orderErr := landing.enter([]NodeID{edge.StartNode, edge.EndNode}, []EdgeID{edge.ID}, false,
+		b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID)).valueOrdered(ConstraintEntityRelationship, []string{edge.Type}))
+	if orderErr != nil {
+		return orderErr
+	}
+	defer releaseOrder()
 
 	var oldType string
 	var oldEdge *Edge
@@ -516,6 +536,8 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
+	landing := b.newDirectLanding()
+	defer landing.deliver()
 	release, barrierErr := b.beginWrite()
 	if barrierErr != nil {
 		return barrierErr
@@ -528,6 +550,13 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	// Write-behind: land after every older buffered image of what this writes
+	// (write_behind_commit_order.go).
+	releaseOrder, orderErr := landing.enter(nil, []EdgeID{id}, false, b.GetSchemaForNamespace(namespaceForEdgeID(id)).valueOrdered(ConstraintEntityRelationship, nil))
+	if orderErr != nil {
+		return orderErr
+	}
+	defer releaseOrder()
 
 	// Get edge type before deletion for selective cache invalidation
 	edge, _ := b.GetEdge(id)

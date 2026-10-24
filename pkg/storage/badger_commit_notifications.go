@@ -48,7 +48,26 @@ func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotificat
 	if !b.hasCommitListeners() && !hasEmbeddingOutcome(ops) {
 		return nil
 	}
-	n := &commitNotification{ops: ops}
+	return b.queueCommitNotification(&commitNotification{ops: ops})
+}
+
+// holdCommitNotifications reserves a place in the notification order that
+// delivers nothing: every notification queued behind it waits until it is
+// completed. A write that holds the write-behind commit order exclusively
+// holds one from before it lands buffered generations until it released the
+// order, so no listener runs on a goroutine that holds the order or on one
+// that the holder waits for (write_behind_commit_order.go). Without listeners
+// it reserves nothing (nil): the only deliveries left, embedding outcomes,
+// read and hand off, so the hold would cost every synchronous write an
+// allocation and a queue round-trip for nothing.
+func (b *BadgerEngine) holdCommitNotifications() *commitNotification {
+	if !b.hasCommitListeners() {
+		return nil
+	}
+	return b.queueCommitNotification(&commitNotification{})
+}
+
+func (b *BadgerEngine) queueCommitNotification(n *commitNotification) *commitNotification {
 	b.notificationMu.Lock()
 	b.notifyWG.Add(1)
 	if b.notificationTail == nil {
@@ -108,21 +127,43 @@ func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool) {
 }
 
 func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
+	if b.readyCommitNotification(n) {
+		b.drainCommitNotifications()
+	}
+}
+
+// readyCommitNotification marks n deliverable without delivering anything;
+// the next drain delivers it in order.
+func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
 	if n == nil {
-		return
+		return false
 	}
 	b.notificationMu.Lock()
 	n.ready = true
+	b.notificationMu.Unlock()
+	return true
+}
+
+// drainCommitNotifications delivers the ready notifications at the head of
+// the order, unless another goroutine is delivering them already.
+func (b *BadgerEngine) drainCommitNotifications() {
+	b.notificationMu.Lock()
 	if b.notificationDraining {
 		b.notificationMu.Unlock()
 		return
 	}
 	b.notificationDraining = true
+	// A listener that flushes must not wait for its own delivery
+	// (WriteBehindBuffer.inDelivery), so the drainer records its goroutine
+	// before it runs one; without listeners nothing can flush from here and
+	// the drain skips the lookup.
+	recorded := false
 	var firstPanic any
 	for {
-		n = b.notificationHead
+		n := b.notificationHead
 		if n == nil || !n.ready {
 			b.notificationDraining = false
+			b.notificationDrainer.Store(0)
 			b.notificationMu.Unlock()
 			if firstPanic != nil {
 				panic(firstPanic)
@@ -132,6 +173,10 @@ func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
 		b.notificationHead = n.next
 		if b.notificationHead == nil {
 			b.notificationTail = nil
+		}
+		if !recorded && b.writeBehind != nil && b.hasCommitListeners() {
+			b.notificationDrainer.Store(currentGoroutineID())
+			recorded = true
 		}
 		b.notificationMu.Unlock()
 		func() {

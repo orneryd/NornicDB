@@ -578,10 +578,11 @@ func (tx *BadgerTransaction) snapshotHeadConflict(key []byte, version MVCCVersio
 		return true, nil
 	}
 	// The physical-version guard exists for peers that committed after the
-	// pinned snapshot. Under write-behind the flusher is the only writer
-	// landing heads mid-transaction and its heads are backdated to ACK
-	// time, so the MVCC comparison above is authoritative and the
-	// physical-version check would report false conflicts.
+	// pinned snapshot. Under write-behind the flusher lands heads under
+	// their ACK versions, and no snapshot is taken while a synchronous write
+	// is between its version and its publication (write_behind_commit_order.go),
+	// so the MVCC comparison above is authoritative and the physical-version
+	// check would report false conflicts.
 	if tx.snapshotTx == nil || key == nil || tx.engine.writeBehind != nil {
 		return false, nil
 	}

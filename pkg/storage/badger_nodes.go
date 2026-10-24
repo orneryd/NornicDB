@@ -31,6 +31,8 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
+	landing := b.newDirectLanding()
+	defer landing.deliver()
 	release, barrierErr := b.beginWrite()
 	if barrierErr != nil {
 		return "", barrierErr
@@ -70,6 +72,14 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	if lockErr != nil {
 		return "", lockErr
 	}
+	// Write-behind: land after every older buffered image of what this writes
+	// (write_behind_commit_order.go).
+	releaseOrder, orderErr := landing.enter([]NodeID{node.ID}, nil, false, schema.valueOrdered(ConstraintEntityNode, node.Labels))
+	if orderErr != nil {
+		releaseUniqueLocks()
+		return "", orderErr
+	}
+	defer releaseOrder()
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
 	cacheNode := node
@@ -381,6 +391,8 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
+	landing := b.newDirectLanding()
+	defer landing.deliver()
 	release, barrierErr := b.beginWrite()
 	if barrierErr != nil {
 		return barrierErr
@@ -415,6 +427,13 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		return lockErr
 	}
 	defer releaseUniqueLocks()
+	// Write-behind: land after every older buffered image of what this writes
+	// (write_behind_commit_order.go).
+	releaseOrder, orderErr := landing.enter([]NodeID{node.ID}, nil, false, schema.valueOrdered(ConstraintEntityNode, node.Labels))
+	if orderErr != nil {
+		return orderErr
+	}
+	defer releaseOrder()
 
 	// Track if this is an insert (new node) or update (existing node)
 	wasInsert := false
@@ -623,13 +642,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 			// Notify listeners about the new node
 			b.notifyNodeCreated(node)
 		} else {
-			if existingNode != nil {
-				for _, label := range existingNode.Labels {
-					for propName, propValue := range existingNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
+			schema.releaseNodeUniqueValues(node.ID, existingNode)
 			for _, label := range node.Labels {
 				for propName, propValue := range node.Properties {
 					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
@@ -665,6 +678,8 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
+	landing := b.newDirectLanding()
+	defer landing.deliver()
 	release, barrierErr := b.beginWrite()
 	if barrierErr != nil {
 		return barrierErr
@@ -677,6 +692,13 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	// Write-behind: land after every older buffered image of what this writes
+	// (write_behind_commit_order.go).
+	releaseOrder, orderErr := landing.enter([]NodeID{id}, nil, true, b.GetSchemaForNamespace(namespaceForNodeID(id)).valueOrdered(ConstraintEntityNode, nil))
+	if orderErr != nil {
+		return orderErr
+	}
+	defer releaseOrder()
 
 	// Track edge deletions for counter update after transaction
 	var totalEdgesDeleted int64
@@ -768,12 +790,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		if deletedNode != nil {
 			dbName, _, ok := ParseDatabasePrefix(string(deletedNode.ID))
 			if ok {
-				schema := b.GetSchemaForNamespace(dbName)
-				for _, label := range deletedNode.Labels {
-					for propName, propValue := range deletedNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
+				b.GetSchemaForNamespace(dbName).releaseNodeUniqueValues(deletedNode.ID, deletedNode)
 			}
 		}
 

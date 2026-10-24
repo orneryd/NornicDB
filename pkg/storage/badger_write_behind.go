@@ -152,16 +152,19 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 		writes:    tx.pendingWrites,
 		deletes:   tx.pendingDeletes,
 	}
-	// Allocate the commit's MVCC version NOW, at ACK time: the DB-local
-	// sequence counter pins the commit's place in history, so the flusher
-	// materializes heads that are already ordered against every later
-	// transaction's snapshot — no backdating or flush-time ordering games.
-	if version, err := tx.engine.allocateMVCCVersion(tx.badgerTx, tx.namespace, time.Now()); err != nil {
+	// Admission claims the write targets against newer buffered and
+	// in-flight commits and allocates the commit's MVCC version NOW, at ACK
+	// time, before anything durable is written (write_behind_commit_order.go):
+	// the DB-local sequence counter pins the commit's place in history, so the
+	// flusher materializes heads that are already ordered against every later
+	// transaction's snapshot, and snapshots stay below the version until the
+	// append makes it visible.
+	reservation, err := tx.reserveBufferedCommitLocked()
+	if err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err
-	} else {
-		c.version = version
 	}
+	c.version = reservation.version
 	c.counterNodeMax, c.counterEdgeMax = tx.engine.idDict.flushTxnCounters(tx.badgerTx)
 	c.idEntries = tx.engine.idDict.takeTxnCommitting(tx.badgerTx)
 	// The dictionary no longer owns these entries. A rejected pre-WAL commit
@@ -181,6 +184,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 		if c.memoryLease != nil {
 			c.memoryLease.Release()
 		}
+		tx.engine.writeBehind.releaseReservation(reservation)
 	}()
 	c.hasCounters = true
 	c.propKeyDrain = tx.engine.propKeyDict.flushTxnCounters(tx.badgerTx)
@@ -223,8 +227,9 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	}
 
 	tx.releaseSnapshotReaderLocked()
+	tx.engine.writeBehind.appendReservedCommit(c, reservation)
+	reservation = bufferedReservation{}
 	tx.bufferedStagingTransferred = true
-	tx.engine.writeBehind.AppendCommit(c)
 	transferred = true
 	// The write is committed and visible to every later read the moment it is
 	// buffered, so the query-result cache's revision token must advance NOW,
@@ -272,7 +277,11 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 	if len(commits) == 0 {
 		return nil
 	}
-	if err := b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }); err != nil {
+	// The generation's listeners run once it is retired (settle), whoever
+	// applied it: never while its applier or a drain holds a lock the
+	// listener's own writes need.
+	hold := func(n *commitNotification) { buf.publication = n }
+	if err := b.applyBufferedCommitsWithCountPublication(commits, func() { buf.countsApplied.Store(true) }, hold); err != nil {
 		return err
 	}
 	buf.markApplied()
@@ -287,12 +296,15 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 // durable exactly when the data is — recovery at open skips any commit whose
 // marker exists.
 func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
-	return b.applyBufferedCommitsWithCountPublication(commits, nil)
+	return b.applyBufferedCommitsWithCountPublication(commits, nil, nil)
 }
 
 // publishCounts retires the generation count overlay under the same locks that
-// publish persisted counters. Entity/cache callbacks run afterward without locks.
-func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func()) error {
+// publish persisted counters. The commits' listener notification is queued in
+// order; hold, when set, receives it held for its generation's retirement to
+// release (nil when no listener or embedding outcome needs one). Without hold
+// it is delivered before returning.
+func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []bufferedCommit, publishCounts func(), hold func(*commitNotification)) error {
 	if len(commits) == 0 {
 		return nil
 	}
@@ -510,30 +522,54 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	// Ordered operation callbacks below retain their count/index/listener
 	// semantics; they cannot install an intermediate cache payload.
 	schemas := make(map[string]*SchemaManager, 1)
+	var notified []Operation
 	for _, c := range commits {
 		schema := schemas[c.namespace]
 		if schema == nil && c.namespace != "" {
 			schema = b.GetSchemaForNamespace(c.namespace)
 			schemas[c.namespace] = schema
 		}
-		b.publishCommitOperations(c.namespace, schema, c.ops, c.recovered)
+		notified = b.publishCommitOperations(c.namespace, schema, c.ops, c.recovered, notified)
+	}
+	publication := b.reserveCommitOperations(notified)
+	if publication != nil {
+		publication.consumed = make(chan struct{})
+	}
+	if hold != nil {
+		hold(publication)
+	} else {
+		b.completeCommitNotification(publication)
 	}
 	return nil
 }
 
-// publishCommitOperations mirrors the commit tail's callback and unique-value
-// cache updates for one buffered statement.
-func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation, publishRevision bool) {
+// publishCommitOperations mirrors the commit tail's cache updates for one
+// buffered statement and appends its listener operations to notified, in the
+// order the sync tail publishes them.
+func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaManager, ops []Operation, publishRevision bool, notified []Operation) []Operation {
 	// Normal buffered writes already advanced their logical revision at ACK.
 	// Replaying durability must not invalidate stable query results once per row.
 	// Recovery has no prior ACK in this process and still publishes its revision.
-	notifyNodeCreated, notifyNodeUpdated := b.publishNodeCreated, b.publishNodeUpdated
-	notifyNodeDeleted := b.publishNodeDeleted
-	notifyEdgeCreated, notifyEdgeUpdated := b.publishEdgeCreated, b.publishEdgeUpdated
-	notifyEdgeDeleted := b.publishEdgeDeleted
-	if publishRevision {
-		notifyNodeCreated, notifyNodeUpdated, notifyNodeDeleted = b.notifyNodeCreated, b.notifyNodeUpdated, b.notifyNodeDeleted
-		notifyEdgeCreated, notifyEdgeUpdated, notifyEdgeDeleted = b.notifyEdgeCreated, b.notifyEdgeUpdated, b.notifyEdgeDeleted
+	notify := func(op Operation, namespace string) {
+		if publishRevision {
+			b.graphMutationVersions.changed(namespace)
+		}
+		op.snapshotForNotification()
+		notified = append(notified, op)
+	}
+	notifyNodeCreated := func(n *Node) { notify(Operation{Type: OpCreateNode, Node: n}, namespaceForNodeID(n.ID)) }
+	notifyNodeUpdated := func(n *Node) { notify(Operation{Type: OpUpdateNode, Node: n}, namespaceForNodeID(n.ID)) }
+	notifyNodeDeleted := func(id NodeID) {
+		b.forgetManualSuppression(manualSuppressionNode, string(id))
+		b.deleteCleanup.recordDelete()
+		notify(Operation{Type: OpDeleteNode, NodeID: id}, namespaceForNodeID(id))
+	}
+	notifyEdgeCreated := func(e *Edge) { notify(Operation{Type: OpCreateEdge, Edge: e}, namespaceForEdgeID(e.ID)) }
+	notifyEdgeUpdated := func(e *Edge) { notify(Operation{Type: OpUpdateEdge, Edge: e}, namespaceForEdgeID(e.ID)) }
+	notifyEdgeDeleted := func(id EdgeID) {
+		b.forgetManualSuppression(manualSuppressionEdge, string(id))
+		b.deleteCleanup.recordDelete()
+		notify(Operation{Type: OpDeleteEdge, EdgeID: id}, namespaceForEdgeID(id))
 	}
 
 	for _, op := range ops {
@@ -579,45 +615,10 @@ func (b *BadgerEngine) publishCommitOperations(namespace string, schema *SchemaM
 		}
 	}
 
-	if namespace != "" && schema != nil && schema.HasUniqueValueTracking() {
-		for _, op := range ops {
-			switch op.Type {
-			case OpCreateNode:
-				if op.Node == nil {
-					continue
-				}
-				for _, label := range op.Node.Labels {
-					for propName, propValue := range op.Node.Properties {
-						schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-					}
-				}
-			case OpUpdateNode:
-				if op.OldNode != nil {
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-				if op.Node != nil {
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				}
-			case OpDeleteNode:
-				if op.OldNode == nil {
-					continue
-				}
-				for _, label := range op.OldNode.Labels {
-					for propName, propValue := range op.OldNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-		}
+	if namespace != "" {
+		schema.publishUniqueValueOperations(ops)
 	}
+	return notified
 }
 
 // applyWriteBehindCountDeltasLocked persists one generation's merged

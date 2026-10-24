@@ -448,7 +448,13 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 	// OpBufferedCommit entries while their data still lives only in the
 	// in-memory buffer: the snapshot reads committed Badger state, and the
 	// truncation would otherwise delete the only durable copy.
-	if flusher, ok := w.engine.(interface{ FlushWriteBehind() error }); ok {
+	// mutationMu is held: land them without delivering their listeners here,
+	// where a listener's write through this engine would wait for it.
+	if lander, ok := w.engine.(interface{ LandWriteBehind() error }); ok {
+		if err := lander.LandWriteBehind(); err != nil {
+			return fmt.Errorf("failed to flush write-behind before snapshot: %w", err)
+		}
+	} else if flusher, ok := w.engine.(interface{ FlushWriteBehind() error }); ok {
 		if err := flusher.FlushWriteBehind(); err != nil {
 			return fmt.Errorf("failed to flush write-behind before snapshot: %w", err)
 		}
