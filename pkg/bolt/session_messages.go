@@ -1575,7 +1575,7 @@ func (s *Session) recordEntityDatabaseResolver(dbName string) boltEntityDatabase
 	if err != nil {
 		return nil
 	}
-	composite, ok := engine.(*storage.CompositeEngine)
+	composite, ok := storage.ViewMetadataForEngine[*storage.CompositeEngine](engine)
 	if !ok {
 		return nil
 	}

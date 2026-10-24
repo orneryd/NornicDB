@@ -82,12 +82,12 @@ func manualSuppressionEngine(engine storage.Engine) storage.ManualSuppressionEng
 	visited := map[storage.Engine]bool{}
 	for engine != nil && !visited[engine] {
 		visited[engine] = true
-		if _, transactional := engine.(*transactionStorageWrapper); !transactional {
-			if suppressor, ok := engine.(storage.ManualSuppressionEngine); ok {
+		if _, transactional := storage.ViewMetadataForEngine[*transactionStorageWrapper](engine); !transactional {
+			if suppressor, ok := storage.OwnedCapability[storage.ManualSuppressionEngine](engine); ok {
 				return suppressor
 			}
 		}
-		unwrapper, ok := engine.(storage.EngineUnwrapper)
+		unwrapper, ok := storage.OwnedCapability[storage.EngineUnwrapper](engine)
 		if !ok {
 			return nil
 		}

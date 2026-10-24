@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	storagecap "github.com/orneryd/nornicdb/pkg/storage"
 	"net/http"
 	"time"
 
@@ -240,11 +241,11 @@ func (s *Server) readableDatabaseCounts(r *http.Request, includeSystem bool, can
 
 	usedCachedPrefixCounts := false
 	if base := s.db.GetBaseStorageForManager(); base != nil {
-		if lister, ok := base.(interface{ ListNamespaces() []string }); ok {
-			if statsEngine, ok := base.(interface {
+		if lister, ok := storagecap.ViewMetadataForEngine[interface{ ListNamespaces() []string }](base); ok {
+			if statsEngine, ok := storagecap.ReadCapabilityForEngine[interface {
 				NodeCountByPrefix(prefix string) (int64, error)
 				EdgeCountByPrefix(prefix string) (int64, error)
-			}); ok {
+			}](base); ok {
 				for _, ns := range lister.ListNamespaces() {
 					select {
 					case <-r.Context().Done():

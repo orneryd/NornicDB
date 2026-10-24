@@ -12,7 +12,7 @@ import "errors"
 // back to GetNodesByLabel: still label-scoped, never a whole-graph AllNodes
 // scan.
 func streamNodesByLabelForValidation(engine Engine, label string, properties []string, visit func(*Node) error) error {
-	if reader, ok := engine.(ProjectedLabelNodeReader); ok {
+	if reader, ok := ReadCapabilityForEngine[ProjectedLabelNodeReader](engine); ok {
 		visited := false
 		err := reader.StreamNodesByLabelProjected(label, properties, func(node *Node) error {
 			visited = true

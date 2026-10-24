@@ -61,7 +61,7 @@ func (c *CompositeEngine) GetNodeLatestEffective(id NodeID) (*Node, error) {
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCLatestEffectiveEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCLatestEffectiveEngine](engine); ok {
 			node, err := provider.GetNodeLatestEffective(id)
 			if err == nil {
 				return node, nil
@@ -90,7 +90,7 @@ func (c *CompositeEngine) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCLatestEffectiveEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCLatestEffectiveEngine](engine); ok {
 			edge, err := provider.GetEdgeLatestEffective(id)
 			if err == nil {
 				return edge, nil
@@ -117,7 +117,7 @@ func (c *CompositeEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCVisibilityEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCVisibilityEngine](engine); ok {
 			node, err := provider.GetNodeLatestVisible(id)
 			if err == nil {
 				return node, nil
@@ -144,7 +144,7 @@ func (c *CompositeEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Nod
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCVisibilityEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCVisibilityEngine](engine); ok {
 			node, err := provider.GetNodeVisibleAt(id, version)
 			if err == nil {
 				return node, nil
@@ -171,7 +171,7 @@ func (c *CompositeEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCVisibilityEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCVisibilityEngine](engine); ok {
 			edge, err := provider.GetEdgeLatestVisible(id)
 			if err == nil {
 				return edge, nil
@@ -198,7 +198,7 @@ func (c *CompositeEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edg
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCVisibilityEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCVisibilityEngine](engine); ok {
 			edge, err := provider.GetEdgeVisibleAt(id, version)
 			if err == nil {
 				return edge, nil
@@ -227,7 +227,7 @@ func (c *CompositeEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCHeadEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCHeadEngine](engine); ok {
 			head, err := provider.GetNodeCurrentHead(id)
 			if err == nil {
 				return head, nil
@@ -246,7 +246,7 @@ func (c *CompositeEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCHeadEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCHeadEngine](engine); ok {
 			head, err := provider.GetEdgeCurrentHead(id)
 			if err == nil {
 				return head, nil
@@ -268,7 +268,7 @@ func (c *CompositeEngine) GetNodesByLabelVisibleAt(label string, version MVCCVer
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](engine); ok {
 			nodes, err := provider.GetNodesByLabelVisibleAt(label, version)
 			if err != nil {
 				return nil, err
@@ -292,7 +292,7 @@ func (c *CompositeEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCV
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](engine); ok {
 			edges, err := provider.GetOutgoingEdgesVisibleAt(nodeID, version)
 			if err != nil {
 				return nil, err
@@ -316,7 +316,7 @@ func (c *CompositeEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCV
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](engine); ok {
 			edges, err := provider.GetIncomingEdgesVisibleAt(nodeID, version)
 			if err != nil {
 				return nil, err
@@ -340,7 +340,7 @@ func (c *CompositeEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCV
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](engine); ok {
 			edges, err := provider.GetEdgesByTypeVisibleAt(edgeType, version)
 			if err != nil {
 				return nil, err
@@ -364,7 +364,7 @@ func (c *CompositeEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, versio
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
+		if provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](engine); ok {
 			edges, err := provider.GetEdgesBetweenVisibleAt(startID, endID, version)
 			if err != nil {
 				return nil, err
@@ -394,7 +394,7 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) 
 			continue
 		}
 		stop := false
-		if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
+		if lookup, ok := ReadCapabilityForEngine[LabelNodeIDLookupEngine](engine); ok {
 			err = lookup.ForEachNodeIDByLabel(label, func(id NodeID) bool {
 				if _, exists := seen[id]; exists {
 					return true
@@ -461,7 +461,7 @@ func (c *CompositeEngine) IterateNodes(fn func(*Node) bool) error {
 		if err != nil {
 			continue
 		}
-		if iterator, ok := engine.(NodeIterator); ok {
+		if iterator, ok := ReadCapabilityForEngine[NodeIterator](engine); ok {
 			stop := false
 			if err := iterator.IterateNodes(func(node *Node) bool {
 				if !fn(node) {
@@ -507,7 +507,7 @@ func (c *CompositeEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 			}
 			return err
 		}
-		sidecar, ok := engine.(EmbeddingSidecarUpdater)
+		sidecar, ok := OwnedCapability[EmbeddingSidecarUpdater](engine)
 		if !ok {
 			return fmt.Errorf("storage engine %T does not support embedding sidecar writes", engine)
 		}
@@ -525,7 +525,7 @@ func (c *CompositeEngine) StreamParkedEmbeddingFailures(ctx context.Context, vis
 		if err != nil {
 			continue
 		}
-		streamer, ok := engine.(EmbeddingFailureStreamer)
+		streamer, ok := ReadCapabilityForEngine[EmbeddingFailureStreamer](engine)
 		if !ok {
 			continue
 		}
@@ -547,7 +547,7 @@ func (c *CompositeEngine) PendingEmbeddingsCount() int {
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(EmbeddingCountProvider); ok {
+		if provider, ok := ReadCapabilityForEngine[EmbeddingCountProvider](engine); ok {
 			total += provider.PendingEmbeddingsCount()
 		}
 	}
@@ -562,7 +562,7 @@ func (c *CompositeEngine) ListNamespaces() []string {
 		if err != nil {
 			continue
 		}
-		if lister, ok := engine.(NamespaceLister); ok {
+		if lister, ok := ViewMetadataForEngine[NamespaceLister](engine); ok {
 			for _, namespace := range lister.ListNamespaces() {
 				if _, exists := seen[namespace]; exists {
 					continue
@@ -584,7 +584,7 @@ func (c *CompositeEngine) GetSchemaForNamespace(namespace string) *SchemaManager
 		if c.constituentNames[alias] != namespace {
 			continue
 		}
-		if provider, ok := engine.(NamespaceSchemaProvider); ok {
+		if provider, ok := ReadCapabilityForEngine[NamespaceSchemaProvider](engine); ok {
 			if schema := provider.GetSchemaForNamespace(namespace); schema != nil {
 				return schema
 			}
@@ -601,7 +601,7 @@ func (c *CompositeEngine) GraphMutationVersion() (uint64, bool) {
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(GraphMutationVersionProvider); ok {
+		if provider, ok := ViewMetadataForEngine[GraphMutationVersionProvider](engine); ok {
 			version, ok := provider.GraphMutationVersion()
 			if ok {
 				supported = true
@@ -619,7 +619,7 @@ func (c *CompositeEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool,
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(StartupMaintenanceStateEngine); ok {
+		if provider, ok := OwnedCapability[StartupMaintenanceStateEngine](engine); ok {
 			got, err := provider.ConsumeCleanShutdownMarker(ctx)
 			if err != nil {
 				return false, err
@@ -636,7 +636,7 @@ func (c *CompositeEngine) MarkCleanShutdown(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		if provider, ok := engine.(StartupMaintenanceStateEngine); ok {
+		if provider, ok := OwnedCapability[StartupMaintenanceStateEngine](engine); ok {
 			if err := provider.MarkCleanShutdown(ctx); err != nil {
 				return err
 			}
@@ -652,7 +652,7 @@ func (c *CompositeEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneO
 		if err != nil {
 			continue
 		}
-		if maint, ok := engine.(MVCCMaintenanceEngine); ok {
+		if maint, ok := OwnedCapability[MVCCMaintenanceEngine](engine); ok {
 			pruned, err := maint.PruneMVCCVersions(ctx, opts)
 			if err != nil {
 				return total, err
@@ -669,7 +669,7 @@ func (c *CompositeEngine) RebuildMVCCHeads(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		if maint, ok := engine.(MVCCMaintenanceEngine); ok {
+		if maint, ok := OwnedCapability[MVCCMaintenanceEngine](engine); ok {
 			if err := maint.RebuildMVCCHeads(ctx); err != nil {
 				return err
 			}
@@ -685,7 +685,7 @@ func (c *CompositeEngine) PruneTemporalHistory(ctx context.Context, opts Tempora
 		if err != nil {
 			continue
 		}
-		if maint, ok := engine.(TemporalMaintenanceEngine); ok {
+		if maint, ok := OwnedCapability[TemporalMaintenanceEngine](engine); ok {
 			pruned, err := maint.PruneTemporalHistory(ctx, opts)
 			if err != nil {
 				return total, err
@@ -702,7 +702,7 @@ func (c *CompositeEngine) RebuildTemporalIndexes(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		if maint, ok := engine.(TemporalMaintenanceEngine); ok {
+		if maint, ok := OwnedCapability[TemporalMaintenanceEngine](engine); ok {
 			if err := maint.RebuildTemporalIndexes(ctx); err != nil {
 				return err
 			}
@@ -720,7 +720,7 @@ func (c *CompositeEngine) RegisterSnapshotReader(info SnapshotReaderInfo) func()
 		if err != nil {
 			continue
 		}
-		if lifecycle, ok := engine.(MVCCLifecycleEngine); ok {
+		if lifecycle, ok := ReadCapabilityForEngine[MVCCLifecycleEngine](engine); ok {
 			releases = append(releases, lifecycle.RegisterSnapshotReader(info))
 		}
 	}
@@ -740,7 +740,7 @@ func (c *CompositeEngine) LifecycleStatus() map[string]interface{} {
 		if err != nil {
 			continue
 		}
-		if lifecycle, ok := engine.(MVCCLifecycleEngine); ok {
+		if lifecycle, ok := ReadCapabilityForEngine[MVCCLifecycleEngine](engine); ok {
 			for key, value := range lifecycle.LifecycleStatus() {
 				status[key] = value
 			}
@@ -755,7 +755,7 @@ func (c *CompositeEngine) TriggerPruneNow(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		if lifecycle, ok := engine.(MVCCLifecycleEngine); ok {
+		if lifecycle, ok := OwnedCapability[MVCCLifecycleEngine](engine); ok {
 			if err := lifecycle.TriggerPruneNow(ctx); err != nil {
 				return err
 			}
@@ -770,7 +770,7 @@ func (c *CompositeEngine) PauseLifecycle() {
 		if err != nil {
 			continue
 		}
-		if lifecycle, ok := engine.(MVCCLifecycleEngine); ok {
+		if lifecycle, ok := OwnedCapability[MVCCLifecycleEngine](engine); ok {
 			lifecycle.PauseLifecycle()
 		}
 	}
@@ -782,7 +782,7 @@ func (c *CompositeEngine) ResumeLifecycle() {
 		if err != nil {
 			continue
 		}
-		if lifecycle, ok := engine.(MVCCLifecycleEngine); ok {
+		if lifecycle, ok := OwnedCapability[MVCCLifecycleEngine](engine); ok {
 			lifecycle.ResumeLifecycle()
 		}
 	}
@@ -794,7 +794,7 @@ func (c *CompositeEngine) SetLifecycleSchedule(interval time.Duration) error {
 		if err != nil {
 			continue
 		}
-		if schedule, ok := engine.(MVCCLifecycleScheduleEngine); ok {
+		if schedule, ok := OwnedCapability[MVCCLifecycleScheduleEngine](engine); ok {
 			if err := schedule.SetLifecycleSchedule(interval); err != nil {
 				return err
 			}
@@ -826,7 +826,7 @@ func (c *CompositeEngine) eventTargets() []compositeEventTarget {
 			continue
 		}
 		var view *NamespacedEngine
-		if ns, ok := engine.(*NamespacedEngine); ok {
+		if ns, ok := ViewMetadataForEngine[*NamespacedEngine](engine); ok {
 			view = ns
 			engine = ns.GetInnerEngine()
 		}
@@ -848,7 +848,7 @@ func (c *CompositeEngine) eventTargets() []compositeEventTarget {
 
 func (c *CompositeEngine) OnNodeCreated(callback NodeEventCallback) {
 	for _, target := range c.eventTargets() {
-		notifier, ok := target.engine.(StorageEventNotifier)
+		notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](target.engine)
 		if !ok {
 			continue
 		}
@@ -872,7 +872,7 @@ func (c *CompositeEngine) OnNodeCreated(callback NodeEventCallback) {
 
 func (c *CompositeEngine) OnNodeUpdated(callback NodeEventCallback) {
 	for _, target := range c.eventTargets() {
-		notifier, ok := target.engine.(StorageEventNotifier)
+		notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](target.engine)
 		if !ok {
 			continue
 		}
@@ -896,7 +896,7 @@ func (c *CompositeEngine) OnNodeUpdated(callback NodeEventCallback) {
 
 func (c *CompositeEngine) OnNodeDeleted(callback NodeDeleteCallback) {
 	for _, target := range c.eventTargets() {
-		notifier, ok := target.engine.(StorageEventNotifier)
+		notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](target.engine)
 		if !ok {
 			continue
 		}
@@ -917,7 +917,7 @@ func (c *CompositeEngine) OnNodeDeleted(callback NodeDeleteCallback) {
 
 func (c *CompositeEngine) OnEdgeCreated(callback EdgeEventCallback) {
 	for _, target := range c.eventTargets() {
-		notifier, ok := target.engine.(StorageEventNotifier)
+		notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](target.engine)
 		if !ok {
 			continue
 		}
@@ -941,7 +941,7 @@ func (c *CompositeEngine) OnEdgeCreated(callback EdgeEventCallback) {
 
 func (c *CompositeEngine) OnEdgeUpdated(callback EdgeEventCallback) {
 	for _, target := range c.eventTargets() {
-		notifier, ok := target.engine.(StorageEventNotifier)
+		notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](target.engine)
 		if !ok {
 			continue
 		}
@@ -965,7 +965,7 @@ func (c *CompositeEngine) OnEdgeUpdated(callback EdgeEventCallback) {
 
 func (c *CompositeEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
 	for _, target := range c.eventTargets() {
-		notifier, ok := target.engine.(StorageEventNotifier)
+		notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](target.engine)
 		if !ok {
 			continue
 		}

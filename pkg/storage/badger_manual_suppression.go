@@ -179,7 +179,7 @@ type ManualSuppressionEngine interface {
 
 // SetNodeManuallySuppressed suppresses or shows a node of this namespace.
 func (n *NamespacedEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error {
-	inner, ok := n.inner.(ManualSuppressionEngine)
+	inner, ok := OwnedCapability[ManualSuppressionEngine](n.inner)
 	if !ok {
 		return ErrNotImplemented
 	}
@@ -189,7 +189,7 @@ func (n *NamespacedEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool)
 // SetEdgeManuallySuppressed suppresses or shows a relationship of this
 // namespace.
 func (n *NamespacedEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error {
-	inner, ok := n.inner.(ManualSuppressionEngine)
+	inner, ok := OwnedCapability[ManualSuppressionEngine](n.inner)
 	if !ok {
 		return ErrNotImplemented
 	}
@@ -200,7 +200,7 @@ func (n *NamespacedEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool)
 // suppression is storage metadata, like decay's suppression flag, not a
 // logged graph write.
 func (w *WALEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error {
-	inner, ok := w.engine.(ManualSuppressionEngine)
+	inner, ok := OwnedCapability[ManualSuppressionEngine](w.engine)
 	if !ok {
 		return ErrNotImplemented
 	}
@@ -209,7 +209,7 @@ func (w *WALEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error 
 
 // SetEdgeManuallySuppressed is SetNodeManuallySuppressed for a relationship.
 func (w *WALEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error {
-	inner, ok := w.engine.(ManualSuppressionEngine)
+	inner, ok := OwnedCapability[ManualSuppressionEngine](w.engine)
 	if !ok {
 		return ErrNotImplemented
 	}

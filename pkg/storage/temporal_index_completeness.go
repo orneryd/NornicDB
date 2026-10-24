@@ -122,7 +122,7 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 			return err
 		}
 		if !empty {
-			badgerEngine, ok := UnwrapEngine(engine).(*BadgerEngine)
+			badgerEngine, ok := OwnedCapability[*BadgerEngine](UnwrapEngine(engine))
 			if !ok {
 				schema.markTemporalIndexCreated(c, false)
 				continue

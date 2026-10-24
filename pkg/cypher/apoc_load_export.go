@@ -810,7 +810,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 	prefixIDs := true
 	dbName := GetUseDatabaseFromContext(ctx)
 	if dbName == "" {
-		if ns, ok := store.(*storage.NamespacedEngine); ok {
+		if ns, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](store); ok {
 			dbName = ns.Namespace()
 			prefixIDs = false
 		} else {

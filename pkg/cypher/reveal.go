@@ -105,7 +105,7 @@ func clearRevealScope(ctx context.Context, engine *storage.BadgerEngine) {
 // unwrapBadgerEngine walks the engine wrapper chain to find the underlying
 // BadgerEngine. Returns nil if the chain does not contain one.
 func unwrapBadgerEngine(eng storage.Engine) *storage.BadgerEngine {
-	badger, ok := storage.UnwrapEngine(eng).(*storage.BadgerEngine)
+	badger, ok := storage.OwnedCapability[*storage.BadgerEngine](storage.UnwrapEngine(eng))
 	if !ok {
 		return nil
 	}

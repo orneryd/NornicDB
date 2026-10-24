@@ -16,7 +16,7 @@ import (
 
 // ConsumeCleanShutdownMarker forwards the engine-wide shutdown-marker read.
 func (n *NamespacedEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, error) {
-	if provider, ok := n.inner.(StartupMaintenanceStateEngine); ok {
+	if provider, ok := OwnedCapability[StartupMaintenanceStateEngine](n.inner); ok {
 		return provider.ConsumeCleanShutdownMarker(ctx)
 	}
 	return false, ErrNotImplemented
@@ -24,7 +24,7 @@ func (n *NamespacedEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool
 
 // MarkCleanShutdown forwards the engine-wide shutdown-marker write.
 func (n *NamespacedEngine) MarkCleanShutdown(ctx context.Context) error {
-	if provider, ok := n.inner.(StartupMaintenanceStateEngine); ok {
+	if provider, ok := OwnedCapability[StartupMaintenanceStateEngine](n.inner); ok {
 		return provider.MarkCleanShutdown(ctx)
 	}
 	return ErrNotImplemented
@@ -33,7 +33,7 @@ func (n *NamespacedEngine) MarkCleanShutdown(ctx context.Context) error {
 // NodeCountByPrefix counts nodes in this namespace whose ID starts with prefix.
 // The caller-supplied prefix is namespace-relative.
 func (n *NamespacedEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	if stats, ok := n.inner.(PrefixStatsEngine); ok {
+	if stats, ok := ReadCapabilityForEngine[PrefixStatsEngine](n.inner); ok {
 		return stats.NodeCountByPrefix(string(n.prefixNodeID(NodeID(prefix))))
 	}
 	nodes, err := n.AllNodes()
@@ -52,7 +52,7 @@ func (n *NamespacedEngine) NodeCountByPrefix(prefix string) (int64, error) {
 // EdgeCountByPrefix counts edges in this namespace whose ID starts with prefix.
 // The caller-supplied prefix is namespace-relative.
 func (n *NamespacedEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	if stats, ok := n.inner.(PrefixStatsEngine); ok {
+	if stats, ok := ReadCapabilityForEngine[PrefixStatsEngine](n.inner); ok {
 		return stats.EdgeCountByPrefix(string(n.prefixEdgeID(EdgeID(prefix))))
 	}
 	edges, err := n.AllEdges()
@@ -70,7 +70,7 @@ func (n *NamespacedEngine) EdgeCountByPrefix(prefix string) (int64, error) {
 
 // GetSchemaForNamespace forwards the per-namespace schema lookup.
 func (n *NamespacedEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
-	if provider, ok := n.inner.(NamespaceSchemaProvider); ok {
+	if provider, ok := ReadCapabilityForEngine[NamespaceSchemaProvider](n.inner); ok {
 		return provider.GetSchemaForNamespace(namespace)
 	}
 	return n.GetSchema()
@@ -79,7 +79,7 @@ func (n *NamespacedEngine) GetSchemaForNamespace(namespace string) *SchemaManage
 // ListNamespaces reports the database namespaces of the underlying engine.
 // Inner engines without the capability still report this view's namespace.
 func (n *NamespacedEngine) ListNamespaces() []string {
-	if lister, ok := n.inner.(NamespaceLister); ok {
+	if lister, ok := ViewMetadataForEngine[NamespaceLister](n.inner); ok {
 		return lister.ListNamespaces()
 	}
 	return []string{n.namespace}
@@ -89,13 +89,13 @@ func (n *NamespacedEngine) ListNamespaces() []string {
 // stored a value under name (PropertyKeyLookup): false when the inner
 // engine keeps no PropertyKeyRegistry.
 func (n *NamespacedEngine) PropertyKeyKnown(name string) bool {
-	registry, ok := n.inner.(PropertyKeyRegistry)
+	registry, ok := ReadCapabilityForEngine[NamespacePropertyKeyLookup](n.inner)
 	return ok && registry.PropertyKeyKnownInNamespace(n.namespace, name)
 }
 
 // NodeCountByLabelInNamespace forwards the namespace-scoped label count.
 func (n *NamespacedEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
-	if stats, ok := n.inner.(NamespaceLabelStatsProvider); ok {
+	if stats, ok := ReadCapabilityForEngine[NamespaceLabelStatsProvider](n.inner); ok {
 		return stats.NodeCountByLabelInNamespace(namespace, label)
 	}
 	nodes, err := n.inner.GetNodesByLabel(label)
@@ -116,7 +116,7 @@ func (n *NamespacedEngine) NodeCountByLabelInNamespace(namespace, label string) 
 // Engines without IterateNodes fall back to a filtered AllNodes scan so the
 // capability still works over simpler inner engines.
 func (n *NamespacedEngine) IterateNodes(fn func(*Node) bool) error {
-	if iterator, ok := n.inner.(interface{ IterateNodes(func(*Node) bool) error }); ok {
+	if iterator, ok := ReadCapabilityForEngine[interface{ IterateNodes(func(*Node) bool) error }](n.inner); ok {
 		return iterator.IterateNodes(func(node *Node) bool {
 			if node == nil || !n.hasNodePrefix(node.ID) {
 				return true
@@ -141,7 +141,7 @@ func (n *NamespacedEngine) IterateNodes(fn func(*Node) bool) error {
 
 // PendingEmbeddingsCount forwards the pending embedding work-item count.
 func (n *NamespacedEngine) PendingEmbeddingsCount() int {
-	if provider, ok := n.inner.(interface{ PendingEmbeddingsCount() int }); ok {
+	if provider, ok := ReadCapabilityForEngine[interface{ PendingEmbeddingsCount() int }](n.inner); ok {
 		return provider.PendingEmbeddingsCount()
 	}
 	return 0
@@ -149,7 +149,7 @@ func (n *NamespacedEngine) PendingEmbeddingsCount() int {
 
 // PruneMVCCVersions forwards MVCC housekeeping to the underlying engine.
 func (n *NamespacedEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {
-	if maint, ok := n.inner.(MVCCMaintenanceEngine); ok {
+	if maint, ok := OwnedCapability[MVCCMaintenanceEngine](n.inner); ok {
 		return maint.PruneMVCCVersions(ctx, opts)
 	}
 	return 0, ErrNotImplemented
@@ -157,7 +157,7 @@ func (n *NamespacedEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPrune
 
 // PruneTemporalHistory forwards temporal-index housekeeping.
 func (n *NamespacedEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPruneOptions) (int64, error) {
-	if maint, ok := n.inner.(TemporalMaintenanceEngine); ok {
+	if maint, ok := OwnedCapability[TemporalMaintenanceEngine](n.inner); ok {
 		return maint.PruneTemporalHistory(ctx, opts)
 	}
 	return 0, nil
@@ -165,7 +165,7 @@ func (n *NamespacedEngine) PruneTemporalHistory(ctx context.Context, opts Tempor
 
 // RebuildMVCCHeads forwards the MVCC head rebuild.
 func (n *NamespacedEngine) RebuildMVCCHeads(ctx context.Context) error {
-	if maint, ok := n.inner.(MVCCMaintenanceEngine); ok {
+	if maint, ok := OwnedCapability[MVCCMaintenanceEngine](n.inner); ok {
 		return maint.RebuildMVCCHeads(ctx)
 	}
 	return ErrNotImplemented
@@ -173,7 +173,7 @@ func (n *NamespacedEngine) RebuildMVCCHeads(ctx context.Context) error {
 
 // RebuildTemporalIndexes forwards the temporal-index rebuild.
 func (n *NamespacedEngine) RebuildTemporalIndexes(ctx context.Context) error {
-	if maint, ok := n.inner.(TemporalMaintenanceEngine); ok {
+	if maint, ok := OwnedCapability[TemporalMaintenanceEngine](n.inner); ok {
 		return maint.RebuildTemporalIndexes(ctx)
 	}
 	return nil
@@ -187,7 +187,7 @@ func (n *NamespacedEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	if node == nil {
 		return ErrInvalidData
 	}
-	sidecar, ok := n.inner.(EmbeddingSidecarUpdater)
+	sidecar, ok := OwnedCapability[EmbeddingSidecarUpdater](n.inner)
 	if !ok {
 		return fmt.Errorf("storage engine %T does not support embedding sidecar writes", n.inner)
 	}
@@ -199,7 +199,7 @@ func (n *NamespacedEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 // StreamParkedEmbeddingFailures streams this namespace's sidecar failure
 // records with namespace-stripped IDs.
 func (n *NamespacedEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit func(nodeID NodeID, meta map[string]any) error) (int, error) {
-	if streamer, ok := n.inner.(EmbeddingFailureStreamer); ok {
+	if streamer, ok := ReadCapabilityForEngine[EmbeddingFailureStreamer](n.inner); ok {
 		count := 0
 		_, err := streamer.StreamParkedEmbeddingFailures(ctx, func(nodeID NodeID, meta map[string]any) error {
 			count++
@@ -213,7 +213,7 @@ func (n *NamespacedEngine) StreamParkedEmbeddingFailures(ctx context.Context, vi
 // Event-callback registration with namespace translation: callbacks only fire
 // for this namespace's entities and receive namespace-stripped IDs.
 func (n *NamespacedEngine) OnNodeCreated(callback NodeEventCallback) {
-	if notifier, ok := n.inner.(StorageEventNotifier); ok {
+	if notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](n.inner); ok {
 		notifier.OnNodeCreated(func(node *Node) {
 			if node == nil || !n.hasNodePrefix(node.ID) {
 				return
@@ -224,7 +224,7 @@ func (n *NamespacedEngine) OnNodeCreated(callback NodeEventCallback) {
 }
 
 func (n *NamespacedEngine) OnNodeUpdated(callback NodeEventCallback) {
-	if notifier, ok := n.inner.(StorageEventNotifier); ok {
+	if notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](n.inner); ok {
 		notifier.OnNodeUpdated(func(node *Node) {
 			if node == nil || !n.hasNodePrefix(node.ID) {
 				return
@@ -235,7 +235,7 @@ func (n *NamespacedEngine) OnNodeUpdated(callback NodeEventCallback) {
 }
 
 func (n *NamespacedEngine) OnNodeDeleted(callback NodeDeleteCallback) {
-	if notifier, ok := n.inner.(StorageEventNotifier); ok {
+	if notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](n.inner); ok {
 		notifier.OnNodeDeleted(func(nodeID NodeID) {
 			if !n.hasNodePrefix(nodeID) {
 				return
@@ -246,7 +246,7 @@ func (n *NamespacedEngine) OnNodeDeleted(callback NodeDeleteCallback) {
 }
 
 func (n *NamespacedEngine) OnEdgeCreated(callback EdgeEventCallback) {
-	if notifier, ok := n.inner.(StorageEventNotifier); ok {
+	if notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](n.inner); ok {
 		notifier.OnEdgeCreated(func(edge *Edge) {
 			if edge == nil || !n.hasEdgePrefix(edge.ID) {
 				return
@@ -257,7 +257,7 @@ func (n *NamespacedEngine) OnEdgeCreated(callback EdgeEventCallback) {
 }
 
 func (n *NamespacedEngine) OnEdgeUpdated(callback EdgeEventCallback) {
-	if notifier, ok := n.inner.(StorageEventNotifier); ok {
+	if notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](n.inner); ok {
 		notifier.OnEdgeUpdated(func(edge *Edge) {
 			if edge == nil || !n.hasEdgePrefix(edge.ID) {
 				return
@@ -268,7 +268,7 @@ func (n *NamespacedEngine) OnEdgeUpdated(callback EdgeEventCallback) {
 }
 
 func (n *NamespacedEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
-	if notifier, ok := n.inner.(StorageEventNotifier); ok {
+	if notifier, ok := ReadCapabilityForEngine[StorageEventNotifier](n.inner); ok {
 		notifier.OnEdgeDeleted(func(edgeID EdgeID) {
 			if !n.hasEdgePrefix(edgeID) {
 				return

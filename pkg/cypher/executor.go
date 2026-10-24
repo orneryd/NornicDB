@@ -310,8 +310,12 @@ type SettingsSnapshot struct {
 type SettingsResolver func() SettingsSnapshot
 
 type StorageExecutor struct {
-	parser  *Parser
-	storage storage.Engine
+	parser                  *Parser
+	storage                 storage.Engine
+	storageReadView         storage.Engine
+	storageReadViewKnown    bool
+	storageQueryLimits      executorQueryLimitProvider
+	storageQueryLimitsKnown bool
 	// The storage decorator chain is immutable for an executor. Discover the
 	// policy engine once; its enabled setting is still read dynamically.
 	propertyDecayEngine      *storage.BadgerEngine
@@ -527,6 +531,10 @@ type syntaxValidationCacheShard struct {
 
 func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExecutor {
 	e.ensureNodeLookupCache()
+	readView := e.storageReadView
+	if override != e.storage || !e.storageReadViewKnown {
+		readView = executorReadView(override)
+	}
 	// Transactional clones use the lookup cache pinned to the
 	// transactionStorageWrapper. Concurrent transactions hold distinct
 	// wrappers and therefore distinct caches — that isolation prevents
@@ -540,7 +548,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 	// benefit from the cross-query speedup.
 	lookupCache := e.nodeLookupCache
 	lookupCacheMu := e.nodeLookupCacheLock()
-	if txWrapper, isTxScoped := override.(*transactionStorageWrapper); isTxScoped {
+	if txWrapper, isTxScoped := storage.OwnedCapability[*transactionStorageWrapper](readView); isTxScoped {
 		// Seed the wrapper-scoped cache from the parent's committed
 		// entries on first clone so subsequent Execute calls retain
 		// the cross-query speedup. Concurrent transactions still hold
@@ -553,6 +561,10 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 	cloned := &StorageExecutor{
 		parser:                         e.parser,
 		storage:                        override,
+		storageReadView:                readView,
+		storageReadViewKnown:           true,
+		storageQueryLimits:             e.storageQueryLimits,
+		storageQueryLimitsKnown:        e.storageQueryLimitsKnown && override == e.storage,
 		propertyDecayEngine:            unwrapBadgerEngine(override),
 		propertyDecayEngineKnown:       true,
 		txContext:                      e.txContext,
@@ -756,6 +768,9 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 	exec := &StorageExecutor{
 		parser:                         NewParser(),
 		storage:                        store,
+		storageReadView:                executorReadView(store),
+		storageReadViewKnown:           true,
+		storageQueryLimitsKnown:        true,
 		propertyDecayEngine:            unwrapBadgerEngine(store),
 		propertyDecayEngineKnown:       true,
 		cache:                          queryCache,
@@ -785,6 +800,7 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 		apocRemoteURLAllowlist:         normalizeAPOCRemoteURLAllowlist(apocCfg.Security.RemoteURLAllowlist),
 		apocLocalFileAccessRoot:        strings.TrimSpace(apocCfg.Security.FileAccessRoot),
 	}
+	exec.storageQueryLimits, _ = storage.MetadataCapabilityForEngine[executorQueryLimitProvider](store)
 	exec.queryStatistics = (&queryStatisticsRegistry{}).forDatabase(exec.currentDatabaseName())
 	ensureBuiltInProceduresRegistered()
 	_ = exec.loadPersistedProcedures()
@@ -1281,7 +1297,7 @@ func (e *StorageExecutor) refreshSearch(node storage.NodeID, edge storage.EdgeID
 	if node == "" && edge == "" {
 		return
 	}
-	if tx, ok := e.storage.(*transactionStorageWrapper); ok {
+	if tx, ok := storage.ViewMetadataForEngine[*transactionStorageWrapper](e.storage); ok {
 		if e.searchResolver != nil || e.searchService != nil {
 			tx.deferSearchRefresh(node, edge)
 		}
@@ -1568,25 +1584,27 @@ func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
 	engine := e.storage
 	visited := make(map[storage.Engine]bool)
 	out := implicitTxEngines{}
+	if ns, ok := viewMetadataForExecutor[interface{ Namespace() string }](e); ok {
+		out.namespace = ns.Namespace()
+	}
 
 	for engine != nil && !visited[engine] {
 		visited[engine] = true
 
-		if out.namespace == "" {
-			if ns, ok := engine.(interface{ Namespace() string }); ok {
+		if out.namespace == "" && engine != e.storage {
+			if ns, ok := storage.ViewMetadataForEngine[interface{ Namespace() string }](engine); ok {
 				out.namespace = ns.Namespace()
 			}
 		}
 		if out.txEngine == nil {
-			if tc, ok := engine.(TransactionCapableEngine); ok {
+			if tc, ok := storage.OwnedCapability[TransactionCapableEngine](engine); ok {
 				out.txEngine = tc
 			}
 		}
 
-		switch wrapper := engine.(type) {
-		case storage.EngineUnwrapper:
+		if wrapper, ok := storage.OwnedCapability[storage.EngineUnwrapper](engine); ok {
 			engine = wrapper.GetInnerEngine()
-		default:
+		} else {
 			engine = nil
 		}
 	}
@@ -2034,7 +2052,7 @@ func GetAuthenticatedPrincipalFromContext(ctx context.Context) string {
 // getStorage returns the storage to use for the current execution.
 // If a transaction wrapper is present in context, it uses that; otherwise uses e.storage.
 func (e *StorageExecutor) getStorage(ctx context.Context) storage.Engine {
-	if txWrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
+	if txWrapper, ok := storage.OwnedCapability[*transactionStorageWrapper](ctx.Value(ctxKeyTxStorage)); ok {
 		return txWrapper
 	}
 	return e.storage
@@ -2049,16 +2067,15 @@ func (e *StorageExecutor) resolveWALAndDatabase() (*storage.WAL, string) {
 	// the cycle guard unnecessary and keeps this hot path allocation-free.
 	const maxDepth = 16
 	for depth := 0; engine != nil && depth < maxDepth; depth++ {
-		if ns, ok := engine.(interface{ Namespace() string }); ok && dbName == "" {
+		if ns, ok := storage.ViewMetadataForEngine[interface{ Namespace() string }](engine); ok && dbName == "" {
 			dbName = ns.Namespace()
 		}
-		if walProvider, ok := engine.(interface{ GetWAL() *storage.WAL }); ok {
+		if walProvider, ok := storage.MetadataCapabilityForEngine[interface{ GetWAL() *storage.WAL }](engine); ok {
 			return walProvider.GetWAL(), dbName
 		}
-		switch wrapper := engine.(type) {
-		case storage.EngineUnwrapper:
+		if wrapper, ok := storage.OwnedCapability[storage.EngineUnwrapper](engine); ok {
 			engine = wrapper.GetInnerEngine()
-		default:
+		} else {
 			return nil, dbName
 		}
 	}

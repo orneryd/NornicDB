@@ -44,13 +44,19 @@ func (e *ReplicatedEngine) GetInnerEngine() storage.Engine {
 	return e.Engine
 }
 
+// ReadCapabilitySource exposes the delegated local read view. Replicated writes
+// remain operations of this engine, independently of read capability discovery.
+func (e *ReplicatedEngine) ReadCapabilitySource() (storage.Engine, bool) {
+	return e.GetInnerEngine(), true
+}
+
 // Backup delegates a native backup to the local storage chain. Replication
 // writes are already applied locally before their acknowledgement returns.
 func (e *ReplicatedEngine) Backup(path string) error {
 	if e == nil || e.Engine == nil {
 		return storage.ErrStorageClosed
 	}
-	if backupable, ok := e.Engine.(interface{ Backup(string) error }); ok {
+	if backupable, ok := storage.OwnedCapability[interface{ Backup(string) error }](e.Engine); ok {
 		return backupable.Backup(path)
 	}
 	return storage.ErrNotImplemented
@@ -61,7 +67,7 @@ func (e *ReplicatedEngine) Restore(path string) error {
 	if e == nil || e.Engine == nil {
 		return storage.ErrStorageClosed
 	}
-	if restorable, ok := e.Engine.(interface{ Restore(string) error }); ok {
+	if restorable, ok := storage.OwnedCapability[interface{ Restore(string) error }](e.Engine); ok {
 		return restorable.Restore(path)
 	}
 	return storage.ErrNotImplemented
@@ -69,7 +75,7 @@ func (e *ReplicatedEngine) Restore(path string) error {
 
 // GraphMutationVersion exposes graph mutations applied to the local engine.
 func (e *ReplicatedEngine) GraphMutationVersion() (uint64, bool) {
-	provider, ok := e.Engine.(storage.GraphMutationVersionProvider)
+	provider, ok := storage.ViewMetadataForEngine[storage.GraphMutationVersionProvider](e.Engine)
 	if !ok {
 		return 0, false
 	}
@@ -79,7 +85,7 @@ func (e *ReplicatedEngine) GraphMutationVersion() (uint64, bool) {
 // GraphMutationVersionInNamespace preserves database-scoped invalidation
 // through the replication wrapper.
 func (e *ReplicatedEngine) GraphMutationVersionInNamespace(namespace string) (uint64, bool) {
-	provider, ok := e.Engine.(storage.NamespaceGraphMutationVersionProvider)
+	provider, ok := storage.ViewMetadataForEngine[storage.NamespaceGraphMutationVersionProvider](e.Engine)
 	if !ok {
 		return 0, false
 	}

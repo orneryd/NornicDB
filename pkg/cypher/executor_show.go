@@ -974,7 +974,7 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 		dbName = useDB
 	} else if e.dbManager != nil {
 		// Priority 2: Try to infer database name from storage (if it's a NamespacedEngine)
-		if namespacedEngine, ok := e.storage.(interface{ Namespace() string }); ok {
+		if namespacedEngine, ok := storage.ViewMetadataForEngine[interface{ Namespace() string }](e.storage); ok {
 			if namespace := namespacedEngine.Namespace(); namespace != "" {
 				dbName = namespace
 			}

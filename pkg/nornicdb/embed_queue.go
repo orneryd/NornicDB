@@ -470,7 +470,7 @@ func (ew *EmbedWorker) RetryParkedEmbeddingFailures(ctx context.Context, ids []s
 			}
 		}
 		var node *storage.Node
-		if reader, ok := ew.storage.(storage.NodeWithoutEmbeddingsReader); ok {
+		if reader, ok := storage.ReadCapabilityForEngine[storage.NodeWithoutEmbeddingsReader](ew.storage); ok {
 			node, err = reader.GetNodeWithoutEmbeddings(failure.NodeID)
 		} else {
 			node, err = ew.storage.GetNode(failure.NodeID)
@@ -509,7 +509,7 @@ func (ew *EmbedWorker) scanParkedEmbeddingFailures(ctx context.Context, visit fu
 	// Prefer the sidecar key-space scan: failure markers live in the
 	// embedding metadata record, not the node body, so no node body is
 	// decoded.
-	if streamer, ok := ew.storage.(storage.EmbeddingFailureStreamer); ok {
+	if streamer, ok := storage.ReadCapabilityForEngine[storage.EmbeddingFailureStreamer](ew.storage); ok {
 		count := 0
 		_, err := streamer.StreamParkedEmbeddingFailures(ctx, func(nodeID storage.NodeID, meta map[string]any) error {
 			count++
@@ -908,7 +908,7 @@ func (ew *EmbedWorker) processNextReadyBatch() bool {
 		return ew.processNextNode(selection)
 	}
 	if batcher, ok := embedder.(embed.DocumentBatchChunkEmbedder); ok && ew.config.EmbedBatchSize > 1 {
-		if _, indexed := ew.storage.(EmbeddingIndexManager); indexed {
+		if _, indexed := storage.OwnedCapability[EmbeddingIndexManager](ew.storage); indexed {
 			return ew.processNextDocumentBatch(embedder, batcher, selection)
 		}
 	}
@@ -1477,7 +1477,7 @@ func (ew *EmbedWorker) wasRecentlyProcessed(nodeID storage.NodeID) bool {
 // Uses efficient streaming iteration if available, falls back to AllNodes.
 func (ew *EmbedWorker) findNodeWithoutEmbedding() *storage.Node {
 	// Try efficient streaming method first (BadgerEngine, WALEngine)
-	if finder, ok := ew.storage.(EmbeddingFinder); ok {
+	if finder, ok := storage.ReadCapabilityForEngine[EmbeddingFinder](ew.storage); ok {
 		return finder.FindNodeNeedingEmbedding()
 	}
 
@@ -1489,7 +1489,7 @@ func (ew *EmbedWorker) findNodeWithoutEmbedding() *storage.Node {
 // to catch any nodes that were added during processing.
 // Returns the number of stale entries removed.
 func (ew *EmbedWorker) refreshEmbeddingIndex() int {
-	if mgr, ok := ew.storage.(EmbeddingIndexManager); ok {
+	if mgr, ok := storage.OwnedCapability[EmbeddingIndexManager](ew.storage); ok {
 		return mgr.RefreshPendingEmbeddingsIndex()
 	}
 	return 0
@@ -1511,14 +1511,14 @@ func (ew *EmbedWorker) refreshEmbeddingIndexIfDue(force bool) int {
 
 // markNodeEmbedded removes a node from the pending embeddings index.
 func (ew *EmbedWorker) markNodeEmbedded(nodeID storage.NodeID) {
-	if mgr, ok := ew.storage.(EmbeddingIndexManager); ok {
+	if mgr, ok := storage.OwnedCapability[EmbeddingIndexManager](ew.storage); ok {
 		mgr.MarkNodeEmbedded(nodeID)
 	}
 }
 
 // addNodeToPendingEmbeddings re-queues a node for embedding (e.g. after a failed attempt so another worker can retry).
 func (ew *EmbedWorker) addNodeToPendingEmbeddings(nodeID storage.NodeID) {
-	if adder, ok := ew.storage.(interface{ AddToPendingEmbeddings(storage.NodeID) }); ok {
+	if adder, ok := storage.OwnedCapability[interface{ AddToPendingEmbeddings(storage.NodeID) }](ew.storage); ok {
 		adder.AddToPendingEmbeddings(nodeID)
 	}
 }

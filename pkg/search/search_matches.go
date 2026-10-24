@@ -266,7 +266,7 @@ func (s *Service) readChunkSpans(node *storage.Node) []embeddingutil.ChunkSpan {
 // metadata out (Badger keeps it in the embedding sidecar), so it is read on
 // its own, without the vectors, from an engine that can.
 func (s *Service) hitEmbedMeta(node *storage.Node) map[string]any {
-	reader, canRead := s.engine.(storage.NodeEmbeddingMetaReader)
+	reader, canRead := storage.ReadCapabilityForEngine[storage.NodeEmbeddingMetaReader](s.engine)
 	if canRead {
 		if meta, err := reader.GetNodeEmbeddingMeta(node.ID); err == nil && len(meta) > 0 {
 			return meta

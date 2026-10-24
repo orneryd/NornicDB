@@ -292,7 +292,7 @@ func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, b
 // without a transaction (composite and remote databases) list what their
 // reads return.
 func connectingRelationships(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	if lister, ok := store.(storage.IncidentEdgeLister); ok {
+	if lister, ok := storage.ReadCapabilityForEngine[storage.IncidentEdgeLister](store); ok {
 		return lister.IncidentEdges(nodeID)
 	}
 	return undirectedIncidentEdges(store, nodeID)

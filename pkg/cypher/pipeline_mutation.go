@@ -82,8 +82,10 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	// commit, when the transaction can hold it (connectedNodeDeletes); a
 	// store without transactions checks here.
 	var connected map[storage.NodeID]struct{}
+	var connectedDeleter storage.ConnectedNodeDeleter
 	if !detach {
-		if _, deferred := store.(storage.ConnectedNodeDeleter); deferred {
+		var deferred bool
+		if connectedDeleter, deferred = storage.OwnedCapability[storage.ConnectedNodeDeleter](store); deferred {
 			var err error
 			if connected, err = connectedDeleteTargets(store, nodeIDs, edgeIDs); err != nil {
 				return nil, true, err
@@ -121,7 +123,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	for _, nodeID := range nodeIDs {
 		deleteNode := store.DeleteNode
 		if _, stillConnected := connected[nodeID]; stillConnected {
-			deleteNode = store.(storage.ConnectedNodeDeleter).DeleteConnectedNode
+			deleteNode = connectedDeleter.DeleteConnectedNode
 		}
 		if err := deleteNode(nodeID); err != nil {
 			if errors.Is(err, storage.ErrNotFound) {

@@ -136,7 +136,7 @@ func (e *StorageExecutor) cacheMergeNode(labels []string, props map[string]inter
 // (PrepareMergeNodeForWrite, NOR-117). Storage without a transaction admits
 // nothing.
 func prepareMergeKeys(ctx context.Context, store storage.Engine, labels []string, props map[string]interface{}, write bool) error {
-	preparer, ok := store.(storage.MergeNodePreparer)
+	preparer, ok := storage.OwnedCapability[storage.MergeNodePreparer](store)
 	if !ok || len(labels) == 0 || len(props) == 0 {
 		return nil
 	}
@@ -345,7 +345,7 @@ func (e *StorageExecutor) findMergeNodesScanned(store storage.Engine, labels []s
 		}
 		return matches, false, nil
 	}
-	if lookup, ok := store.(storage.TransactionEqualityLookup); ok && len(labels) > 0 && len(props) > 0 {
+	if lookup, ok := storage.ReadCapabilityForEngine[storage.TransactionEqualityLookup](store); ok && len(labels) > 0 && len(props) > 0 {
 		candidates, complete, lookupErr := lookup.LookupNodesByEquality(labels[0], props)
 		if lookupErr != nil {
 			return nil, false, lookupErr

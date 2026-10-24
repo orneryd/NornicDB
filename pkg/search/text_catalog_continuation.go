@@ -116,7 +116,7 @@ func (s *Service) newIDContinuationStream(ctx context.Context, options SearchOpt
 func (s *Service) streamCompleteContinuationNodes(ctx context.Context, options *SearchOptions, request SearchContinuationRequest, visit storage.NodeVisitor) error {
 	// A Where may read any property, so it gets whole nodes.
 	if request.AuthorizeNode == nil && options.Where == nil {
-		if reader, ok := s.engine.(storage.ProjectedPrefixNodeReader); ok {
+		if reader, ok := storage.ReadCapabilityForEngine[storage.ProjectedPrefixNodeReader](s.engine); ok {
 			return reader.StreamNodesByPrefixProjected(ctx, "", s.completeContinuationProjectionProperties(options, request), visit)
 		}
 	}
@@ -160,7 +160,7 @@ func (s *Service) newCompleteContinuationStream(ctx context.Context, options Sea
 	}
 	defer s.completeBuilds.Add(-1)
 
-	provider, ok := s.engine.(graphMutationVersionProvider)
+	provider, ok := storage.ViewMetadataForEngine[graphMutationVersionProvider](s.engine)
 	if !ok {
 		return nil, fmt.Errorf("complete continuation requires graph mutation revisions: %w", resultstream.ErrInvalidated)
 	}
@@ -498,7 +498,7 @@ func searchResultFromContinuationNode(node *storage.Node, projection resultPrope
 
 // CheckValid is shared by pulls and registry cleanup of abandoned cursors.
 func (s *catalogContinuationStream) CheckValid() error {
-	provider, ok := s.engine.(graphMutationVersionProvider)
+	provider, ok := storage.ViewMetadataForEngine[graphMutationVersionProvider](s.engine)
 	if !ok {
 		return resultstream.ErrInvalidated
 	}
@@ -644,7 +644,7 @@ func hydrateContinuationResultsContext(ctx context.Context, engine storage.Engin
 }
 
 func batchContinuationNodesWithoutEmbeddings(engine storage.Engine, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
-	if reader, ok := engine.(storage.BatchNodeWithoutEmbeddingsReader); ok {
+	if reader, ok := storage.ReadCapabilityForEngine[storage.BatchNodeWithoutEmbeddingsReader](engine); ok {
 		nodes, err := reader.BatchGetNodesWithoutEmbeddings(ids)
 		if err == nil {
 			return nodes, nil

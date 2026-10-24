@@ -234,7 +234,7 @@ func (ew *EmbedWorker) nextEmbeddingNodeID(now time.Time, mainOnly bool) storage
 	// Engines without a mutable pending index cannot advance past a DLQ
 	// candidate by removing its marker. Use their generic node stream and the
 	// same storage eligibility predicate, excluding the retry owner's IDs.
-	if _, indexed := ew.storage.(EmbeddingIndexManager); (blockedMain || !indexed) && len(ew.nodeRetries)+len(ew.claimedNodes) > 0 {
+	if _, indexed := storage.OwnedCapability[EmbeddingIndexManager](ew.storage); (blockedMain || !indexed) && len(ew.nodeRetries)+len(ew.claimedNodes) > 0 {
 		var fresh storage.NodeID
 		_ = ew.storage.StreamNodesWithOptions(ew.ctx, storage.StreamNodesOptions{WithEmbeddings: true}, func(node *storage.Node) error {
 			state := ew.nodeRetries[node.ID]

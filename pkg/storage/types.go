@@ -644,7 +644,14 @@ type NamespaceLister interface {
 // Reads, and writes of null, make no name known. Cypher's SET counts a null
 // written for a known key the entity lacks (properties_set, #907).
 type PropertyKeyRegistry interface {
+	NamespacePropertyKeyLookup
 	NotePropertyKeysInNamespace(namespace string, properties map[string]interface{})
+}
+
+// NamespacePropertyKeyLookup reads the key names known in a particular database.
+// It is the read-only part of PropertyKeyRegistry, so read discovery can retain
+// the database view without granting access to token registration operations.
+type NamespacePropertyKeyLookup interface {
 	PropertyKeyKnownInNamespace(namespace, name string) bool
 }
 
@@ -1405,7 +1412,7 @@ type EngineUnwrapper interface {
 // wrapped and never loops on self-referencing wrappers.
 func UnwrapEngine(engine Engine) Engine {
 	for {
-		unwrapper, ok := engine.(EngineUnwrapper)
+		unwrapper, ok := OwnedCapability[EngineUnwrapper](engine)
 		if !ok {
 			return engine
 		}
@@ -1422,7 +1429,7 @@ func UnwrapEngine(engine Engine) Engine {
 // Otherwise, it loads all nodes but processes them in chunks.
 func StreamNodesWithFallback(ctx context.Context, engine Engine, chunkSize int, fn NodeVisitor) error {
 	// Try streaming interface first
-	if streamer, ok := engine.(StreamingEngine); ok {
+	if streamer, ok := ReadCapabilityForEngine[StreamingEngine](engine); ok {
 		return streamer.StreamNodes(ctx, fn)
 	}
 
@@ -1456,7 +1463,7 @@ func StreamNodesWithFallback(ctx context.Context, engine Engine, chunkSize int, 
 // StreamEdgesWithFallback provides streaming iteration with fallback.
 func StreamEdgesWithFallback(ctx context.Context, engine Engine, chunkSize int, fn EdgeVisitor) error {
 	// Try streaming interface first
-	if streamer, ok := engine.(StreamingEngine); ok {
+	if streamer, ok := ReadCapabilityForEngine[StreamingEngine](engine); ok {
 		return streamer.StreamEdges(ctx, fn)
 	}
 
@@ -1541,7 +1548,7 @@ func NodeNeedsEmbedding(node *Node) bool {
 
 // CountNodesWithLabel counts nodes with a specific label using streaming.
 func CountNodesWithLabel(ctx context.Context, engine Engine, label string) (int64, error) {
-	if stats, ok := engine.(LabelStatsEngine); ok {
+	if stats, ok := ReadCapabilityForEngine[LabelStatsEngine](engine); ok {
 		return stats.NodeCountByLabel(label)
 	}
 

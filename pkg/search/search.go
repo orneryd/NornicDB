@@ -3246,7 +3246,7 @@ func (s *Service) lastWriteTime() time.Time {
 	if engine == nil {
 		return time.Time{}
 	}
-	if p, ok := engine.(interface{ LastWriteTime() time.Time }); ok {
+	if p, ok := storage.ViewMetadataForEngine[interface{ LastWriteTime() time.Time }](engine); ok {
 		return p.LastWriteTime()
 	}
 	return time.Time{}
@@ -3256,9 +3256,9 @@ func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
 	if node == nil {
 		return false, nil
 	}
-	provider, ok := s.engine.(interface {
+	provider, ok := storage.ReadCapabilityForEngine[interface {
 		IsCurrentTemporalNode(node *storage.Node, asOf time.Time) (bool, error)
-	})
+	}](s.engine)
 	if !ok {
 		return true, nil
 	}
@@ -3984,7 +3984,7 @@ func (s *Service) buildNodeIterator(snapshot storage.ReadSnapshotView) NodeItera
 	if snapshot != nil {
 		return snapshot
 	}
-	if iterator, ok := s.engine.(NodeIterator); ok {
+	if iterator, ok := storage.ReadCapabilityForEngine[NodeIterator](s.engine); ok {
 		return iterator
 	}
 	return nil
@@ -4290,7 +4290,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		// Only clear disk-backed indexes when we can prove storage changed after
 		// those artifacts were written (e.g., DB dropped/recreated with same name).
 		// This avoids breaking valid "disk-only bootstrap" test/restore scenarios.
-		if p, ok := s.engine.(interface{ LastWriteTime() time.Time }); ok {
+		if p, ok := storage.ViewMetadataForEngine[interface{ LastWriteTime() time.Time }](s.engine); ok {
 			if lastWrite := p.LastWriteTime(); !lastWrite.IsZero() {
 				if info, statErr := security.RootedStat(vectorPath + ".vec"); statErr == nil {
 					shouldClearStaleDisk = lastWrite.After(info.ModTime())
@@ -6750,7 +6750,7 @@ func envDurationSec(key string, fallbackSec int) time.Duration {
 }
 
 func (s *Service) getNodeWithoutEmbeddings(id storage.NodeID) (*storage.Node, error) {
-	if reader, ok := s.engine.(storage.NodeWithoutEmbeddingsReader); ok {
+	if reader, ok := storage.ReadCapabilityForEngine[storage.NodeWithoutEmbeddingsReader](s.engine); ok {
 		return reader.GetNodeWithoutEmbeddings(id)
 	}
 	return s.engine.GetNode(id)
@@ -6760,7 +6760,7 @@ func (s *Service) batchGetNodesWithoutEmbeddings(ids []storage.NodeID) (map[stor
 	if len(ids) == 0 {
 		return map[storage.NodeID]*storage.Node{}, nil
 	}
-	if reader, ok := s.engine.(storage.BatchNodeWithoutEmbeddingsReader); ok {
+	if reader, ok := storage.ReadCapabilityForEngine[storage.BatchNodeWithoutEmbeddingsReader](s.engine); ok {
 		nodes, err := reader.BatchGetNodesWithoutEmbeddings(ids)
 		if err == nil {
 			return nodes, nil
@@ -6784,14 +6784,8 @@ func (s *Service) batchGetNodesWithoutEmbeddings(ids []storage.NodeID) (map[stor
 }
 
 func (s *Service) supportsBatchNodesWithoutEmbeddings() bool {
-	reader, ok := s.engine.(storage.BatchNodeWithoutEmbeddingsReader)
-	if !ok {
-		return false
-	}
-	if capability, ok := reader.(storage.BatchNodeWithoutEmbeddingsCapability); ok {
-		return capability.BatchGetNodesWithoutEmbeddingsSupported()
-	}
-	return true
+	_, available := storage.ReadCapabilityForEngine[storage.BatchNodeWithoutEmbeddingsReader](s.engine)
+	return available
 }
 
 // filterCandidatesByType filters candidates by node type/label.

@@ -2229,7 +2229,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 	// Determine database name: use entry's database if present, otherwise infer from engine/config.
 	dbName := entry.Database
 	if dbName == "" {
-		if namespaced, ok := engine.(*NamespacedEngine); ok {
+		if namespaced, ok := ViewMetadataForEngine[*NamespacedEngine](engine); ok {
 			dbName = namespaced.Namespace()
 		} else {
 			globalConfig := config.LoadFromEnv()
@@ -2242,7 +2242,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 
 	// Unwrap NamespacedEngine if present to avoid double-wrapping.
 	baseEngine := engine
-	if namespaced, ok := engine.(*NamespacedEngine); ok {
+	if namespaced, ok := ViewMetadataForEngine[*NamespacedEngine](engine); ok {
 		baseEngine = namespaced.GetInnerEngine()
 	}
 
@@ -2342,7 +2342,7 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 		if err := decodeRecoveryPayload(payload, &data); err != nil {
 			return fmt.Errorf("wal: failed to unmarshal buffered commit: %w", err)
 		}
-		b, ok := baseEngine.(*BadgerEngine)
+		b, ok := OwnedCapability[*BadgerEngine](baseEngine)
 		if !ok || b == nil {
 			return fmt.Errorf("wal: buffered commit replay requires a BadgerEngine destination, got %T", baseEngine)
 		}
@@ -2392,7 +2392,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 	// Determine database name: use entry's database if present, otherwise infer from engine/config.
 	dbName := entry.Database
 	if dbName == "" {
-		if namespaced, ok := engine.(*NamespacedEngine); ok {
+		if namespaced, ok := ViewMetadataForEngine[*NamespacedEngine](engine); ok {
 			dbName = namespaced.Namespace()
 		} else {
 			globalConfig := config.LoadFromEnv()
@@ -2405,7 +2405,7 @@ func UndoWALEntry(engine Engine, entry WALEntry) error {
 
 	// Unwrap NamespacedEngine if present to avoid double-wrapping.
 	baseEngine := engine
-	if namespaced, ok := engine.(*NamespacedEngine); ok {
+	if namespaced, ok := ViewMetadataForEngine[*NamespacedEngine](engine); ok {
 		baseEngine = namespaced.GetInnerEngine()
 	}
 

@@ -76,23 +76,11 @@ func compareForSort(a, b interface{}) bool {
 }
 
 func storageHasDecayFiltering(engine storage.Engine) bool {
-	visited := make(map[storage.Engine]bool)
-	for engine != nil && !visited[engine] {
-		visited[engine] = true
-		if decay, ok := engine.(interface{ IsDecayEnabled() bool }); ok && decay.IsDecayEnabled() {
-			return true
-		}
-		if manual, ok := engine.(interface{ HasManualSuppressions() bool }); ok && manual.HasManualSuppressions() {
-			return true
-		}
-		switch wrapper := engine.(type) {
-		case storage.EngineUnwrapper:
-			engine = wrapper.GetInnerEngine()
-		default:
-			engine = nil
-		}
+	if decay, ok := storage.ViewMetadataForEngine[interface{ IsDecayEnabled() bool }](engine); ok && decay.IsDecayEnabled() {
+		return true
 	}
-	return false
+	manual, ok := storage.ViewMetadataForEngine[interface{ HasManualSuppressions() bool }](engine)
+	return ok && manual.HasManualSuppressions()
 }
 
 func extractMatchWhereClause(cypher string, whereIdx, returnIdx int) string {

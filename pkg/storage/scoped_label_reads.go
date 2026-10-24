@@ -14,9 +14,22 @@ import "strings"
 // a result may still hold nodes outside the scope: callers keep filtering by
 // database.
 type ScopedLabelNodeReader interface {
+	scopedLabelNodes
+	scopedLabelFirstNode
+	scopedProjectedLabelNodes
+	scopedHistoricalLabelNodes
+}
+
+type scopedLabelNodes interface {
 	GetNodesByLabelInScope(scope, label string) ([]*Node, error)
+}
+type scopedLabelFirstNode interface {
 	GetFirstNodeByLabelInScope(scope, label string) (*Node, error)
+}
+type scopedProjectedLabelNodes interface {
 	StreamNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error
+}
+type scopedHistoricalLabelNodes interface {
 	GetNodesByLabelVisibleAtInScope(scope, label string, version MVCCVersion) ([]*Node, error)
 }
 
@@ -46,34 +59,34 @@ func nodeIDInScope(id NodeID, scope string) bool {
 // otherwise.
 
 func getNodesByLabelInScope(engine Engine, scope, label string) ([]*Node, error) {
-	if scoped, ok := engine.(ScopedLabelNodeReader); ok {
+	if scoped, ok := ReadCapabilityForEngine[scopedLabelNodes](engine); ok {
 		return scoped.GetNodesByLabelInScope(scope, label)
 	}
 	return engine.GetNodesByLabel(label)
 }
 
 func getFirstNodeByLabelInScope(engine Engine, scope, label string) (*Node, error) {
-	if scoped, ok := engine.(ScopedLabelNodeReader); ok {
+	if scoped, ok := ReadCapabilityForEngine[scopedLabelFirstNode](engine); ok {
 		return scoped.GetFirstNodeByLabelInScope(scope, label)
 	}
 	return engine.GetFirstNodeByLabel(label)
 }
 
 func streamNodesByLabelProjectedInScope(engine Engine, scope, label string, properties []string, visit func(*Node) error) error {
-	if scoped, ok := engine.(ScopedLabelNodeReader); ok {
+	if scoped, ok := ReadCapabilityForEngine[scopedProjectedLabelNodes](engine); ok {
 		return scoped.StreamNodesByLabelProjectedInScope(scope, label, properties, visit)
 	}
-	if reader, ok := engine.(ProjectedLabelNodeReader); ok {
+	if reader, ok := ReadCapabilityForEngine[ProjectedLabelNodeReader](engine); ok {
 		return reader.StreamNodesByLabelProjected(label, properties, visit)
 	}
 	return ErrNotImplemented
 }
 
 func getNodesByLabelVisibleAtInScope(engine Engine, scope, label string, version MVCCVersion) ([]*Node, error) {
-	if scoped, ok := engine.(ScopedLabelNodeReader); ok {
+	if scoped, ok := ReadCapabilityForEngine[scopedHistoricalLabelNodes](engine); ok {
 		return scoped.GetNodesByLabelVisibleAtInScope(scope, label, version)
 	}
-	if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
+	if provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](engine); ok {
 		return provider.GetNodesByLabelVisibleAt(label, version)
 	}
 	return nil, ErrNotImplemented
@@ -83,13 +96,13 @@ func forEachNodeIDByLabelInScope(engine Engine, scope, label string, visit func(
 	if visit == nil {
 		return nil
 	}
-	if scoped, ok := engine.(ScopedLabelNodeIDReader); ok {
+	if scoped, ok := ReadCapabilityForEngine[ScopedLabelNodeIDReader](engine); ok {
 		return scoped.ForEachNodeIDByLabelInScope(scope, label, visit)
 	}
 	inScope := func(id NodeID) bool {
 		return !nodeIDInScope(id, scope) || visit(id)
 	}
-	if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
+	if lookup, ok := ReadCapabilityForEngine[LabelNodeIDLookupEngine](engine); ok {
 		return lookup.ForEachNodeIDByLabel(label, inScope)
 	}
 	nodes, err := getNodesByLabelInScope(engine, scope, label)

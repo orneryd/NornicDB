@@ -152,7 +152,7 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 	// DatabaseManager requires an un-namespaced base engine. It creates NamespacedEngines
 	// per database. Passing a NamespacedEngine here would double-prefix IDs and can
 	// leak system metadata into the default database (e.g., "nornic:system:...").
-	if _, ok := inner.(*storage.NamespacedEngine); ok {
+	if _, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](inner); ok {
 		return nil, fmt.Errorf("multidb: NewDatabaseManager requires base storage (non-namespaced); pass db.GetBaseStorageForManager()")
 	}
 	// Ensure callers can't accidentally make the system database the default.
@@ -196,7 +196,7 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 	// to create/migrate metadata. Standby nodes should start quickly and serve
 	// reads/UI while replication catches them up.
 	readOnly := false
-	if leader, ok := inner.(interface{ IsLeader() bool }); ok && !leader.IsLeader() {
+	if leader, ok := storage.MetadataCapabilityForEngine[interface{ IsLeader() bool }](inner); ok && !leader.IsLeader() {
 		readOnly = true
 	}
 
@@ -1073,7 +1073,7 @@ func (m *DatabaseManager) GetStorageSize(databaseName string) (int64, int64, int
 		return 0, 0, 0
 	}
 
-	if tracker, ok := engine.(*sizeTrackingEngine); ok {
+	if tracker, ok := storage.MetadataCapabilityForEngine[*sizeTrackingEngine](engine); ok {
 		_ = tracker.ensureStorageSizeInitialized()
 	} else {
 		_ = m.ensureStorageSizeInitialized(databaseName, engine)

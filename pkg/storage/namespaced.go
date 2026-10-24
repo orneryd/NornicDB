@@ -80,7 +80,7 @@ func (n *NamespacedEngine) namespaceLog() *slog.Logger {
 		return n.log
 	}
 	var base *slog.Logger
-	if sl, ok := n.inner.(StructuredLogger); ok {
+	if sl, ok := MetadataCapabilityForEngine[StructuredLogger](n.inner); ok {
 		base = sl.Logger()
 	}
 	if base == nil {
@@ -259,14 +259,14 @@ func (n *NamespacedEngine) GetNode(id NodeID) (*Node, error) {
 
 // RelationshipEndpointVisible forwards with the namespace prefix applied.
 func (n *NamespacedEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
-	if checker, ok := n.inner.(RelationshipEndpointChecker); ok {
+	if checker, ok := ReadCapabilityForEngine[RelationshipEndpointChecker](n.inner); ok {
 		return checker.RelationshipEndpointVisible(n.prefixNodeID(id))
 	}
 	return false, false
 }
 
 func (n *NamespacedEngine) GetNodeProjected(id NodeID, properties []string) (*Node, error) {
-	projected, ok := n.inner.(ProjectedNodeReader)
+	projected, ok := ReadCapabilityForEngine[ProjectedNodeReader](n.inner)
 	if !ok || properties == nil {
 		node, err := n.GetNode(id)
 		if err != nil || node == nil || properties == nil {
@@ -285,7 +285,7 @@ func (n *NamespacedEngine) GetNodeProjected(id NodeID, properties []string) (*No
 // GetQueryNode forwards the query-row node read (QueryNodeReader) with the
 // namespace prefix applied, else reads the full node.
 func (n *NamespacedEngine) GetQueryNode(id NodeID) (*Node, error) {
-	reader, ok := n.inner.(QueryNodeReader)
+	reader, ok := ReadCapabilityForEngine[QueryNodeReader](n.inner)
 	if !ok {
 		return n.GetNode(id)
 	}
@@ -297,7 +297,7 @@ func (n *NamespacedEngine) GetQueryNode(id NodeID) (*Node, error) {
 }
 
 func (n *NamespacedEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
-	reader, ok := n.inner.(NodeWithoutEmbeddingsReader)
+	reader, ok := ReadCapabilityForEngine[NodeWithoutEmbeddingsReader](n.inner)
 	if !ok {
 		node, err := n.GetNode(id)
 		if err != nil || node == nil {
@@ -318,7 +318,7 @@ func (n *NamespacedEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[Nod
 	if len(ids) == 0 {
 		return make(map[NodeID]*Node), nil
 	}
-	reader, ok := n.inner.(BatchNodeWithoutEmbeddingsReader)
+	reader, ok := ReadCapabilityForEngine[BatchNodeWithoutEmbeddingsReader](n.inner)
 	if !ok {
 		return nil, ErrNotImplemented
 	}
@@ -383,7 +383,7 @@ func (n *NamespacedEngine) DeleteNode(id NodeID) error {
 
 	// Remove from pending embeddings index (with namespace prefix)
 	// ALL node IDs in the index must be prefixed
-	if mgr, ok := n.inner.(interface{ MarkNodeEmbedded(NodeID) }); ok {
+	if mgr, ok := OwnedCapability[interface{ MarkNodeEmbedded(NodeID) }](n.inner); ok {
 		mgr.MarkNodeEmbedded(prefixedID)
 	}
 
@@ -533,7 +533,7 @@ func (n *NamespacedEngine) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, er
 }
 
 func (n *NamespacedEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
-	reader, ok := n.inner.(EdgeHeaderReader)
+	reader, ok := ReadCapabilityForEngine[EdgeHeaderReader](n.inner)
 	if !ok {
 		return nil, false, nil
 	}
@@ -581,7 +581,7 @@ func (n *NamespacedEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 func (n *NamespacedEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
 	namespacedID := n.prefixNodeID(nodeID)
 	var outgoing, incoming []*Edge
-	if inner, ok := n.inner.(AdjacentEdgesEngine); ok {
+	if inner, ok := ReadCapabilityForEngine[AdjacentEdgesEngine](n.inner); ok {
 		out, in, err := inner.GetAdjacentEdges(namespacedID)
 		if err != nil {
 			return nil, nil, err
@@ -678,7 +678,7 @@ func (n *NamespacedEngine) GetNodesByLabelVisibleAt(label string, version MVCCVe
 
 // GetOutgoingEdgesVisibleAt resolves snapshot-visible outgoing adjacency queries within the namespace.
 func (n *NamespacedEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	provider, ok := n.inner.(MVCCIndexedVisibilityEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](n.inner)
 	if !ok {
 		return nil, ErrNotImplemented
 	}
@@ -697,7 +697,7 @@ func (n *NamespacedEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCC
 
 // GetIncomingEdgesVisibleAt resolves snapshot-visible incoming adjacency queries within the namespace.
 func (n *NamespacedEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	provider, ok := n.inner.(MVCCIndexedVisibilityEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](n.inner)
 	if !ok {
 		return nil, ErrNotImplemented
 	}
@@ -716,7 +716,7 @@ func (n *NamespacedEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCC
 
 // GetEdgesByTypeVisibleAt resolves snapshot-visible edge-type queries within the namespace.
 func (n *NamespacedEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
-	provider, ok := n.inner.(MVCCIndexedVisibilityEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](n.inner)
 	if !ok {
 		return nil, ErrNotImplemented
 	}
@@ -735,7 +735,7 @@ func (n *NamespacedEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCC
 
 // GetEdgesBetweenVisibleAt resolves snapshot-visible topology queries within the namespace.
 func (n *NamespacedEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
-	provider, ok := n.inner.(MVCCIndexedVisibilityEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCIndexedVisibilityEngine](n.inner)
 	if !ok {
 		return nil, ErrNotImplemented
 	}
@@ -812,7 +812,7 @@ func (n *NamespacedEngine) GetOutDegree(nodeID NodeID) int {
 func (n *NamespacedEngine) GetSchema() *SchemaManager {
 	// Prefer per-namespace schema when supported by the underlying engine chain.
 	// This matches Neo4j behavior (each database has its own schema).
-	if p, ok := n.inner.(NamespaceSchemaProvider); ok {
+	if p, ok := ReadCapabilityForEngine[NamespaceSchemaProvider](n.inner); ok {
 		return p.GetSchemaForNamespace(n.namespace)
 	}
 	return n.inner.GetSchema()
@@ -820,7 +820,7 @@ func (n *NamespacedEngine) GetSchema() *SchemaManager {
 
 // GetTemporalNodeAsOf performs an efficient temporal lookup when the inner engine supports it.
 func (n *NamespacedEngine) GetTemporalNodeAsOf(label, keyProp string, keyValue interface{}, validFromProp, validToProp string, asOf time.Time) (*Node, error) {
-	provider, ok := n.inner.(NamespaceTemporalLookupProvider)
+	provider, ok := ReadCapabilityForEngine[NamespaceTemporalLookupProvider](n.inner)
 	if !ok {
 		return nil, nil
 	}
@@ -833,7 +833,7 @@ func (n *NamespacedEngine) GetTemporalNodeAsOf(label, keyProp string, keyValue i
 
 // IsCurrentTemporalNode reports whether node is the current/live temporal version.
 func (n *NamespacedEngine) IsCurrentTemporalNode(node *Node, asOf time.Time) (bool, error) {
-	provider, ok := n.inner.(NamespaceTemporalCurrentNodeProvider)
+	provider, ok := ReadCapabilityForEngine[NamespaceTemporalCurrentNodeProvider](n.inner)
 	if !ok {
 		return true, nil
 	}
@@ -842,7 +842,7 @@ func (n *NamespacedEngine) IsCurrentTemporalNode(node *Node, asOf time.Time) (bo
 
 // GetNodeLatestVisible resolves the latest visible node within the namespace.
 func (n *NamespacedEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
-	provider, ok := n.inner.(MVCCVisibilityEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCVisibilityEngine](n.inner)
 	if !ok {
 		return n.GetNode(id)
 	}
@@ -855,7 +855,7 @@ func (n *NamespacedEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
 
 // GetNodeVisibleAt resolves a snapshot-visible node within the namespace.
 func (n *NamespacedEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error) {
-	provider, ok := n.inner.(MVCCVisibilityEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCVisibilityEngine](n.inner)
 	if !ok {
 		return nil, ErrNotImplemented
 	}
@@ -868,7 +868,7 @@ func (n *NamespacedEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*No
 
 // GetEdgeLatestVisible resolves the latest visible edge within the namespace.
 func (n *NamespacedEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
-	provider, ok := n.inner.(MVCCVisibilityEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCVisibilityEngine](n.inner)
 	if !ok {
 		return n.GetEdge(id)
 	}
@@ -881,7 +881,7 @@ func (n *NamespacedEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
 
 // GetEdgeVisibleAt resolves a snapshot-visible edge within the namespace.
 func (n *NamespacedEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, error) {
-	provider, ok := n.inner.(MVCCVisibilityEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCVisibilityEngine](n.inner)
 	if !ok {
 		return nil, ErrNotImplemented
 	}
@@ -896,7 +896,7 @@ func (n *NamespacedEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Ed
 // namespace, delegating to the wrapped engine when it supports the
 // MVCCLatestEffectiveEngine capability.
 func (n *NamespacedEngine) GetNodeLatestEffective(id NodeID) (*Node, error) {
-	provider, ok := n.inner.(MVCCLatestEffectiveEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCLatestEffectiveEngine](n.inner)
 	if !ok {
 		return n.GetNode(id)
 	}
@@ -911,7 +911,7 @@ func (n *NamespacedEngine) GetNodeLatestEffective(id NodeID) (*Node, error) {
 // namespace, delegating to the wrapped engine when it supports the
 // MVCCLatestEffectiveEngine capability.
 func (n *NamespacedEngine) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
-	provider, ok := n.inner.(MVCCLatestEffectiveEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCLatestEffectiveEngine](n.inner)
 	if !ok {
 		return n.GetEdge(id)
 	}
@@ -924,7 +924,7 @@ func (n *NamespacedEngine) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
 
 // GetNodeCurrentHead resolves node head metadata within the namespace.
 func (n *NamespacedEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
-	provider, ok := n.inner.(MVCCHeadEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCHeadEngine](n.inner)
 	if !ok {
 		return MVCCHead{}, ErrNotImplemented
 	}
@@ -933,7 +933,7 @@ func (n *NamespacedEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
 
 // GetEdgeCurrentHead resolves edge head metadata within the namespace.
 func (n *NamespacedEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
-	provider, ok := n.inner.(MVCCHeadEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCHeadEngine](n.inner)
 	if !ok {
 		return MVCCHead{}, ErrNotImplemented
 	}
@@ -942,7 +942,7 @@ func (n *NamespacedEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 
 // RegisterSnapshotReader registers a reader scoped to the namespace when supported.
 func (n *NamespacedEngine) RegisterSnapshotReader(info SnapshotReaderInfo) func() {
-	provider, ok := n.inner.(MVCCLifecycleEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCLifecycleEngine](n.inner)
 	if !ok {
 		return func() {}
 	}
@@ -955,7 +955,7 @@ func (n *NamespacedEngine) RegisterSnapshotReader(info SnapshotReaderInfo) func(
 
 // LifecycleStatus delegates lifecycle status when supported.
 func (n *NamespacedEngine) LifecycleStatus() map[string]interface{} {
-	provider, ok := n.inner.(MVCCLifecycleEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCLifecycleEngine](n.inner)
 	if !ok {
 		return map[string]interface{}{"enabled": false}
 	}
@@ -966,7 +966,7 @@ func (n *NamespacedEngine) LifecycleStatus() map[string]interface{} {
 
 // TriggerPruneNow delegates lifecycle prune-now when supported.
 func (n *NamespacedEngine) TriggerPruneNow(ctx context.Context) error {
-	provider, ok := n.inner.(MVCCLifecycleEngine)
+	provider, ok := OwnedCapability[MVCCLifecycleEngine](n.inner)
 	if !ok {
 		return nil
 	}
@@ -975,7 +975,7 @@ func (n *NamespacedEngine) TriggerPruneNow(ctx context.Context) error {
 
 // PauseLifecycle delegates lifecycle pause when supported.
 func (n *NamespacedEngine) PauseLifecycle() {
-	provider, ok := n.inner.(MVCCLifecycleEngine)
+	provider, ok := OwnedCapability[MVCCLifecycleEngine](n.inner)
 	if ok {
 		provider.PauseLifecycle()
 	}
@@ -983,7 +983,7 @@ func (n *NamespacedEngine) PauseLifecycle() {
 
 // ResumeLifecycle delegates lifecycle resume when supported.
 func (n *NamespacedEngine) ResumeLifecycle() {
-	provider, ok := n.inner.(MVCCLifecycleEngine)
+	provider, ok := OwnedCapability[MVCCLifecycleEngine](n.inner)
 	if ok {
 		provider.ResumeLifecycle()
 	}
@@ -991,7 +991,7 @@ func (n *NamespacedEngine) ResumeLifecycle() {
 
 // SetLifecycleSchedule delegates lifecycle cadence updates when supported.
 func (n *NamespacedEngine) SetLifecycleSchedule(interval time.Duration) error {
-	provider, ok := n.inner.(MVCCLifecycleScheduleEngine)
+	provider, ok := OwnedCapability[MVCCLifecycleScheduleEngine](n.inner)
 	if !ok {
 		return nil
 	}
@@ -1000,7 +1000,7 @@ func (n *NamespacedEngine) SetLifecycleSchedule(interval time.Duration) error {
 
 // TopLifecycleDebtKeys delegates lifecycle debt inspection when supported.
 func (n *NamespacedEngine) TopLifecycleDebtKeys(limit int) []MVCCLifecycleDebtKey {
-	provider, ok := n.inner.(MVCCLifecycleDebtEngine)
+	provider, ok := ReadCapabilityForEngine[MVCCLifecycleDebtEngine](n.inner)
 	if !ok {
 		return nil
 	}
@@ -1108,12 +1108,12 @@ func (n *NamespacedEngine) Close() error {
 func (n *NamespacedEngine) NodeCount() (int64, error) {
 	// Prefer a prefix-scoped count from the inner engine to keep COUNT fast
 	// in multi-database deployments.
-	if stats, ok := n.inner.(PrefixStatsEngine); ok {
+	if stats, ok := ReadCapabilityForEngine[PrefixStatsEngine](n.inner); ok {
 		return stats.NodeCountByPrefix(n.namespace + n.separator)
 	}
 
 	// Fallback: streaming scan (correct but slower; should be rare in production).
-	if streamer, ok := n.inner.(StreamingEngine); ok {
+	if streamer, ok := ReadCapabilityForEngine[StreamingEngine](n.inner); ok {
 		var count int64
 		err := streamer.StreamNodes(context.Background(), func(node *Node) error {
 			if n.hasNodePrefix(node.ID) {
@@ -1136,12 +1136,12 @@ func (n *NamespacedEngine) NodeCount() (int64, error) {
 }
 
 func (n *NamespacedEngine) NodeCountByLabel(label string) (int64, error) {
-	if stats, ok := n.inner.(NamespaceLabelStatsProvider); ok {
+	if stats, ok := ReadCapabilityForEngine[NamespaceLabelStatsProvider](n.inner); ok {
 		return stats.NodeCountByLabelInNamespace(n.namespace, label)
 	}
 
 	var count int64
-	if streamer, ok := n.inner.(StreamingEngine); ok {
+	if streamer, ok := ReadCapabilityForEngine[StreamingEngine](n.inner); ok {
 		err := streamer.StreamNodes(context.Background(), func(node *Node) error {
 			if !n.hasNodePrefix(node.ID) {
 				return nil
@@ -1177,13 +1177,13 @@ func (n *NamespacedEngine) NodeCountByLabel(label string) (int64, error) {
 
 func (n *NamespacedEngine) EdgeCount() (int64, error) {
 	// Prefer a prefix-scoped count from the inner engine.
-	if stats, ok := n.inner.(PrefixStatsEngine); ok {
+	if stats, ok := ReadCapabilityForEngine[PrefixStatsEngine](n.inner); ok {
 		return stats.EdgeCountByPrefix(n.namespace + n.separator)
 	}
 
 	// Fallback: streaming scan (correct but slower; should be rare in production).
 	var count int64
-	if streamer, ok := n.inner.(StreamingEngine); ok {
+	if streamer, ok := ReadCapabilityForEngine[StreamingEngine](n.inner); ok {
 		err := streamer.StreamEdges(context.Background(), func(edge *Edge) error {
 			if n.hasEdgePrefix(edge.ID) {
 				count++
@@ -1210,7 +1210,7 @@ func (n *NamespacedEngine) EdgeCount() (int64, error) {
 // counters, otherwise the inner engine's own typed count. No edge
 // materialization on this path.
 func (n *NamespacedEngine) EdgeCountByType(edgeType string) (int64, error) {
-	if stats, ok := n.inner.(NamespaceEdgeTypeStatsProvider); ok {
+	if stats, ok := ReadCapabilityForEngine[NamespaceEdgeTypeStatsProvider](n.inner); ok {
 		return stats.EdgeCountByTypeInNamespace(n.namespace, edgeType)
 	}
 	return n.inner.EdgeCountByType(edgeType)
@@ -1219,7 +1219,7 @@ func (n *NamespacedEngine) EdgeCountByType(edgeType string) (int64, error) {
 // EdgeCountByStartLabel returns the namespace-scoped count of edges of the
 // given type whose physical start endpoint carries the label (issue #638).
 func (n *NamespacedEngine) EdgeCountByStartLabel(label, edgeType string) (int64, error) {
-	if stats, ok := n.inner.(NamespaceEdgeTypeStatsProvider); ok {
+	if stats, ok := ReadCapabilityForEngine[NamespaceEdgeTypeStatsProvider](n.inner); ok {
 		return stats.EdgeCountByStartLabelInNamespace(n.namespace, label, edgeType)
 	}
 	return n.inner.EdgeCountByStartLabel(label, edgeType)
@@ -1228,7 +1228,7 @@ func (n *NamespacedEngine) EdgeCountByStartLabel(label, edgeType string) (int64,
 // EdgeCountByEndLabel returns the namespace-scoped count of edges of the
 // given type whose physical end endpoint carries the label (issue #638).
 func (n *NamespacedEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error) {
-	if stats, ok := n.inner.(NamespaceEdgeTypeStatsProvider); ok {
+	if stats, ok := ReadCapabilityForEngine[NamespaceEdgeTypeStatsProvider](n.inner); ok {
 		return stats.EdgeCountByEndLabelInNamespace(n.namespace, label, edgeType)
 	}
 	return n.inner.EdgeCountByEndLabel(label, edgeType)
@@ -1288,7 +1288,7 @@ func (n *NamespacedEngine) StreamNodesByPrefixWithoutEmbeddings(ctx context.Cont
 
 // StreamEdges streams edges in the namespace.
 func (n *NamespacedEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
-	if streamer, ok := n.inner.(StreamingEngine); ok {
+	if streamer, ok := ReadCapabilityForEngine[StreamingEngine](n.inner); ok {
 		return streamer.StreamEdges(ctx, func(edge *Edge) error {
 			if n.hasEdgePrefix(edge.ID) {
 				return fn(n.toUserEdge(edge))
@@ -1311,7 +1311,7 @@ func (n *NamespacedEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) 
 
 // StreamNodeChunks streams nodes in chunks.
 func (n *NamespacedEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
-	if streamer, ok := n.inner.(StreamingEngine); ok {
+	if streamer, ok := ReadCapabilityForEngine[StreamingEngine](n.inner); ok {
 		return streamer.StreamNodeChunks(ctx, chunkSize, func(nodes []*Node) error {
 			var filtered []*Node
 			for _, node := range nodes {
@@ -1359,7 +1359,7 @@ func (n *NamespacedEngine) FindNodeNeedingEmbedding() *Node {
 	// already checks the cache, but we need to filter by namespace.
 	innerEngine := n.inner
 	// Unwrap WALEngine if present
-	if walEngine, ok := innerEngine.(*WALEngine); ok {
+	if walEngine, ok := OwnedCapability[*WALEngine](innerEngine); ok {
 		innerEngine = walEngine.GetInnerEngine()
 	}
 
@@ -1367,13 +1367,13 @@ func (n *NamespacedEngine) FindNodeNeedingEmbedding() *Node {
 	// But we still need to filter by namespace, so we'll do that in the loop below
 
 	// Get underlying engine's finder
-	finder, ok := n.inner.(interface{ FindNodeNeedingEmbedding() *Node })
+	finder, ok := ReadCapabilityForEngine[interface{ FindNodeNeedingEmbedding() *Node }](n.inner)
 	if !ok {
 		return nil
 	}
 
 	// Get underlying engine's marker for skipping nodes
-	marker, hasMarker := n.inner.(interface{ MarkNodeEmbedded(NodeID) })
+	marker, hasMarker := OwnedCapability[interface{ MarkNodeEmbedded(NodeID) }](n.inner)
 
 	// Keep trying until we find a node in our namespace or run out of nodes
 	maxAttempts := 10000 // Prevent infinite loop (but allow scanning many nodes)
@@ -1442,7 +1442,7 @@ func (n *NamespacedEngine) FindNodeNeedingEmbedding() *Node {
 		// Check if node needs embedding
 		if (len(node.ChunkEmbeddings) == 0 || len(node.ChunkEmbeddings[0]) == 0) && NodeNeedsEmbedding(node) {
 			// Found one! Add it to the pending index if not already there
-			if mgr, ok := n.inner.(interface{ AddToPendingEmbeddings(NodeID) }); ok {
+			if mgr, ok := OwnedCapability[interface{ AddToPendingEmbeddings(NodeID) }](n.inner); ok {
 				prefixedID := n.prefixNodeID(node.ID)
 				mgr.AddToPendingEmbeddings(prefixedID)
 			}
@@ -1457,15 +1457,15 @@ func (n *NamespacedEngine) FindNodeNeedingEmbedding() *Node {
 // the underlying engine and includes staged nodes in this namespace.
 func (n *NamespacedEngine) RefreshPendingEmbeddingsIndex() int {
 	underlyingAdded := 0
-	if underlyingMgr, ok := n.inner.(interface {
+	if underlyingMgr, ok := OwnedCapability[interface {
 		RefreshPendingEmbeddingsIndex() int
-	}); ok {
+	}](n.inner); ok {
 		underlyingAdded = underlyingMgr.RefreshPendingEmbeddingsIndex()
 		inner := n.inner
-		if wal, wrapped := inner.(*WALEngine); wrapped {
+		if wal, wrapped := OwnedCapability[*WALEngine](inner); wrapped {
 			inner = wal.engine
 		}
-		if _, complete := inner.(*BadgerEngine); complete {
+		if _, complete := OwnedCapability[*BadgerEngine](inner); complete {
 			return underlyingAdded
 		}
 	}
@@ -1480,11 +1480,11 @@ func (n *NamespacedEngine) RefreshPendingEmbeddingsIndex() int {
 	removed := 0
 
 	// Get underlying engine's pending index manager
-	mgr, ok := n.inner.(interface {
+	mgr, ok := OwnedCapability[interface {
 		AddToPendingEmbeddings(NodeID)
 		MarkNodeEmbedded(NodeID)
 		GetNode(NodeID) (*Node, error)
-	})
+	}](n.inner)
 	if !ok {
 		return underlyingAdded
 	}
@@ -1539,7 +1539,7 @@ func (n *NamespacedEngine) RefreshPendingEmbeddingsIndex() int {
 // MarkNodeEmbedded marks a node as embedded (removes from pending index).
 // The node ID should be unprefixed (without namespace).
 func (n *NamespacedEngine) MarkNodeEmbedded(nodeID NodeID) {
-	if mgr, ok := n.inner.(interface{ MarkNodeEmbedded(NodeID) }); ok {
+	if mgr, ok := OwnedCapability[interface{ MarkNodeEmbedded(NodeID) }](n.inner); ok {
 		// Add namespace prefix before marking
 		prefixedID := n.prefixNodeID(nodeID)
 		mgr.MarkNodeEmbedded(prefixedID)
@@ -1548,7 +1548,7 @@ func (n *NamespacedEngine) MarkNodeEmbedded(nodeID NodeID) {
 
 // AddToPendingEmbeddings adds a node back to the pending embeddings index (e.g. after a failed embed so it can be retried).
 func (n *NamespacedEngine) AddToPendingEmbeddings(nodeID NodeID) {
-	if mgr, ok := n.inner.(interface{ AddToPendingEmbeddings(NodeID) }); ok {
+	if mgr, ok := OwnedCapability[interface{ AddToPendingEmbeddings(NodeID) }](n.inner); ok {
 		prefixedID := n.prefixNodeID(nodeID)
 		mgr.AddToPendingEmbeddings(prefixedID)
 	}
@@ -1557,7 +1557,7 @@ func (n *NamespacedEngine) AddToPendingEmbeddings(nodeID NodeID) {
 // RecordMaterializedAccess records a result-materialization access against the
 // fully qualified entity ID in the underlying engine.
 func (n *NamespacedEngine) RecordMaterializedAccess(entityID string) {
-	if recorder, ok := n.inner.(interface{ RecordMaterializedAccess(string) }); ok {
+	if recorder, ok := ReadCapabilityForEngine[interface{ RecordMaterializedAccess(string) }](n.inner); ok {
 		recorder.RecordMaterializedAccess(QualifiedEntityID(n, entityID))
 	}
 }

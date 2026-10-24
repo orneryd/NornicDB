@@ -315,7 +315,7 @@ func SaveToNeo4jExport(engine Engine, path string) error {
 	// Collect all nodes
 	var allNodes []*Node
 	// Use ExportableEngine interface which both MemoryEngine and BadgerEngine implement
-	exportable, ok := engine.(ExportableEngine)
+	exportable, ok := ReadCapabilityForEngine[ExportableEngine](engine)
 	if !ok {
 		return localizedError(localization.StorageLoaderExportEngineUnsupported(fmt.Sprintf("%T", engine)), nil)
 	}
@@ -523,7 +523,7 @@ type ExportableEngine interface {
 // This is more efficient than AllNodes() as it stops after finding one.
 func FindNodeNeedingEmbedding(engine Engine) *Node {
 	// Use AllNodes but stop early - not ideal but works with any engine
-	if exportable, ok := engine.(ExportableEngine); ok {
+	if exportable, ok := ReadCapabilityForEngine[ExportableEngine](engine); ok {
 		nodes, err := exportable.AllNodes()
 		if err != nil {
 			return nil

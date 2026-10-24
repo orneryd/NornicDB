@@ -144,6 +144,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Stream fixed-length relationship MATCH inputs into aggregation and Bolt output,
   and preserve canonical query visibility before selecting scalar endpoint properties (#1496, #1497).
 
+- Preserve optional engine reads and composite targeting through transparent storage decorators, retain namespace and transaction views, and use core reads when an optional operation is unavailable.
 - Register existing quantization localization IDs in the typed catalog and repair
   benchmark-guide links required by strict release verification.
 

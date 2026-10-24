@@ -25,7 +25,7 @@ const bufferedRecoveryBatchBytes int64 = 8 << 20
 // deltas: crash recovery is rare, and the authoritative rebuild is the same
 // recovery boundary the sync path uses.
 func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
-	b, ok := engine.(*BadgerEngine)
+	b, ok := OwnedCapability[*BadgerEngine](engine)
 	if !ok || b == nil || wal == nil || b.writeBehind == nil {
 		return 0, nil
 	}

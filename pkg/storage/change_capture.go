@@ -807,10 +807,10 @@ func (j *changeRetentionJob) RunOnce(now time.Time) {
 // wrappers (namespace, async, WAL, tracing), if it has one.
 func ChangeCaptureOf(engine Engine) (ChangeCaptureEngine, bool) {
 	for engine != nil {
-		if capture, ok := engine.(ChangeCaptureEngine); ok {
+		if capture, ok := OwnedCapability[ChangeCaptureEngine](engine); ok {
 			return capture, true
 		}
-		wrapper, ok := engine.(EngineUnwrapper)
+		wrapper, ok := OwnedCapability[EngineUnwrapper](engine)
 		if !ok {
 			return nil, false
 		}

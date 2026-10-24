@@ -131,7 +131,7 @@ func traversalRelationshipsNeedOnlyHeaders(match *TraversalMatch) bool {
 // no relationship properties and storage can list them, full relationships
 // otherwise.
 func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.NodeID, outgoing bool) []*storage.Edge {
-	if reader, ok := e.storage.(storage.EdgeHeaderReader); ok && ctx.relationshipsNeedOnlyHeaders {
+	if reader, ok := storage.ReadCapabilityForEngine[storage.EdgeHeaderReader](e.storage); ok && ctx.relationshipsNeedOnlyHeaders {
 		var edges []*storage.Edge
 		var answered bool
 		var err error
@@ -428,7 +428,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			paths = e.traverseChainedGraph(ctx, matches, optimizedStartNodes)
 		} else {
 			viewport, _ := TemporalViewportFromContext(ctx)
-			checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
+			checker, _ := storage.ReadCapabilityForEngine[temporalCurrentNodeChecker](e.getStorage(ctx))
 			paths = e.traverseGraphSequential(ctx, matches, optimizedStartNodes, viewport, checker)
 		}
 		// Still need to apply WHERE clause filter (in case there are other conditions)
@@ -437,7 +437,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		}
 	} else if matches.TraversalLimit > 0 && !matches.IsChained && len(matches.StartNode.properties) == 0 {
 		viewport, _ := TemporalViewportFromContext(ctx)
-		checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
+		checker, _ := storage.ReadCapabilityForEngine[temporalCurrentNodeChecker](e.getStorage(ctx))
 		var streamed bool
 		var streamErr error
 		paths, streamed, streamErr = e.traverseGraphWithStreamingStartNodes(ctx, matches, viewport, checker)
@@ -1543,7 +1543,7 @@ func (e *StorageExecutor) parseNodePatternFromString(ctx context.Context, s stri
 // traverseGraph executes the traversal and returns all matching paths
 func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMatch) []PathResult {
 	viewport, _ := TemporalViewportFromContext(ctx)
-	checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
+	checker, _ := storage.ReadCapabilityForEngine[temporalCurrentNodeChecker](e.getStorage(ctx))
 	// Handle chained patterns differently (multi-segment traversal)
 	if match.IsChained && len(match.Segments) > 1 {
 		return e.traverseChainedGraph(ctx, match, nil)
@@ -1641,7 +1641,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 			return streamQueryNodes(ctx, store, labels, visit)
 		}
 	} else if len(labels) > 0 {
-		reader, ok := store.(storage.ProjectedLabelNodeReader)
+		reader, ok := storage.ReadCapabilityForEngine[storage.ProjectedLabelNodeReader](store)
 		if !ok {
 			return nil, false, nil
 		}
@@ -1649,7 +1649,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 			return reader.StreamNodesByLabelProjected(labels[0], nil, visit)
 		}
 	} else {
-		reader, ok := store.(storage.StreamingEngine)
+		reader, ok := storage.ReadCapabilityForEngine[storage.StreamingEngine](store)
 		if !ok {
 			return nil, false, nil
 		}
@@ -2058,7 +2058,7 @@ func (e *StorageExecutor) newTraversalContext(traversalCtx context.Context, star
 	}
 	if viewport, ok := TemporalViewportFromContext(traversalCtx); ok {
 		ctx.temporalViewport = viewport
-		if checker, canCheck := e.getStorage(traversalCtx).(temporalCurrentNodeChecker); canCheck {
+		if checker, canCheck := storage.ReadCapabilityForEngine[temporalCurrentNodeChecker](e.getStorage(traversalCtx)); canCheck {
 			ctx.temporalChecker = checker
 		}
 	}

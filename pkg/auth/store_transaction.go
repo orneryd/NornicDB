@@ -11,9 +11,9 @@ import (
 // existing view; otherwise this function owns begin, commit and rollback.
 // Callers publish their in-memory state only after this function succeeds.
 func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate func(storage.Engine) error) error {
-	if runner, ok := engine.(interface {
+	if runner, ok := storage.OwnedCapability[interface {
 		WithStoreTransaction(context.Context, func(storage.Engine) error) error
-	}); ok {
+	}](engine); ok {
 		return runner.WithStoreTransaction(ctx, mutate)
 	}
 	inner := engine
@@ -21,27 +21,27 @@ func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate fun
 	seen := make(map[storage.Engine]bool)
 	for inner != nil && !seen[inner] {
 		seen[inner] = true
-		if runner, ok := inner.(interface {
+		if runner, ok := storage.OwnedCapability[interface {
 			WithStoreTransaction(context.Context, func(storage.Engine) error) error
-		}); ok {
+		}](inner); ok {
 			return runner.WithStoreTransaction(ctx, func(storage.Engine) error { return mutate(engine) })
 		}
-		if scoped, ok := inner.(*storage.NamespacedEngine); ok && namespace == "" {
+		if scoped, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](inner); ok && namespace == "" {
 			namespace = scoped.Namespace()
 		}
-		if wrapper, ok := inner.(storage.EngineUnwrapper); ok {
+		if wrapper, ok := storage.OwnedCapability[storage.EngineUnwrapper](inner); ok {
 			inner = wrapper.GetInnerEngine()
 			continue
 		}
 		break
 	}
-	beginner, ok := inner.(interface {
+	beginner, ok := storage.OwnedCapability[interface {
 		BeginTransaction() (*storage.BadgerTransaction, error)
-	})
+	}](inner)
 	if !ok {
 		return storage.ErrNotImplemented
 	}
-	if drainer, ok := inner.(interface{ FlushWriteBehind() error }); ok {
+	if drainer, ok := storage.OwnedCapability[interface{ FlushWriteBehind() error }](inner); ok {
 		if err := drainer.FlushWriteBehind(); err != nil {
 			return err
 		}
@@ -73,6 +73,9 @@ type storeTransaction struct {
 	storage.Engine
 	tx *storage.BadgerTransaction
 }
+
+// ReadCapabilitySource keeps reads on this transaction's pending-write view.
+func (s *storeTransaction) ReadCapabilitySource() (storage.Engine, bool) { return nil, false }
 
 func (s *storeTransaction) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
 	return mutate(s)
