@@ -54,7 +54,11 @@ func importingWithSyntax(branch queryBodyBranch) []string {
 	if len(branch.clauses) == 0 || branch.clauses[0].kind != pipelineClauseWith {
 		return nil
 	}
-	plan := projectionPlanFromSyntax(branch.clauses[0].syntax)
+	return importingWithNode(branch.clauses[0].syntax)
+}
+
+func importingWithNode(node cypherantlr.SyntaxNode) []string {
+	plan := projectionPlanFromSyntax(node)
 	var names []string
 	if plan.star {
 		names = append(names, "*")

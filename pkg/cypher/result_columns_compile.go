@@ -541,6 +541,16 @@ func (compilation *boundCompilation) callImports(clause *boundClause) {
 // value under a name that this body declares for itself.
 func implicitSyntaxImports(outer map[string]struct{}, bodies ...cypherantlr.SyntaxNode) []string {
 	referenced, declared := map[string]bool{}, map[string]bool{}
+	if len(bodies) > 0 && bodies[0].Rule() == cypherantlr.CypherParserRULE_withSt {
+		for _, name := range importingWithNode(bodies[0]) {
+			if name == "*" {
+				return nil
+			}
+			// Explicit legacy imports follow ordinary WITH projection
+			// lifetime. Only other implicitly referenced outer names persist.
+			declared[name] = true
+		}
+	}
 	for _, body := range bodies {
 		body.Walk(func(node cypherantlr.SyntaxNode) func() {
 			if variableSyntaxRead(node) {
