@@ -2238,7 +2238,7 @@ func (s *Session) parseHelloAuth(data []byte) (map[string]string, error) {
 	}
 
 	// Parse the extra map
-	extraMap, _, err := decodePackStreamMap(data, offset)
+	extraMap, _, err := decodePackStreamMap(data, offset, s.useUTCDateTimeStructs())
 	if err != nil {
 		return result, fmt.Errorf("failed to decode HELLO extra map: %w", err)
 	}
