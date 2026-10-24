@@ -2228,8 +2228,8 @@ func statementReadsGraphText(cypher string) bool {
 // references a parameter it wasn't given ("Expected parameter(s): p"), or nil.
 // Neo4j reports it after the statement compiles, so a statement that is also
 // a syntax or semantic error reports that error (Execute calls this after
-// validateSyntax and validateSemanticScopes; the Fabric route, which has no
-// such validation, calls it first). EXPLAIN runs nothing and needs no
+// validateSyntax and validateSemanticScopes; the Fabric route after it plans
+// the statement). EXPLAIN runs nothing and needs no
 // values; in a procedure definition, $name is the procedure's argument.
 // Parameter names are reported as the statement wrote them (#734).
 func (e *StorageExecutor) statementParametersError(ctx context.Context, cypher string, params map[string]interface{}) error {

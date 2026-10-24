@@ -489,8 +489,12 @@ func callSubqueryHasScopeClause(cypher string) bool {
 
 // parseCallSubqueryImportVariables is the legacy names-only view. Scope and
 // result-schema consumers use StatementFacts, which preserves syntax errors.
-func parseCallSubqueryImportVariables(cypher string) []string {
-	return readCallSubqueryScope(cypher).names
+func parseCallSubqueryImportVariables(cypher string) ([]string, error) {
+	scope := readCallSubqueryScope(cypher)
+	if scope.invalid {
+		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
+	}
+	return scope.names, nil
 }
 
 // prefixUnionBranches puts prefix before body, or before each branch of a

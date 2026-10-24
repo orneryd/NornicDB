@@ -92,7 +92,10 @@ func TestPlan_DynamicUseInUnionBranches(t *testing.T) {
 // session graph, and the subquery body, with its importing WITH kept and
 // the USE removed, runs on the reference resolved from the imported row.
 func TestPlan_DynamicUseInImportingCallSubquery(t *testing.T) {
-	fragment, err := NewFabricPlanner(plannerUseCatalog()).Plan(
+	planner := NewFabricPlanner(plannerUseCatalog())
+	read, _ := recordedCallImports("g")
+	planner.SetCallImportReader(read)
+	fragment, err := planner.Plan(
 		"UNWIND $graphs AS g CALL { WITH g USE graph.byName(g) MATCH (n) RETURN count(n) AS c } RETURN g, c", "cmp")
 	require.NoError(t, err)
 

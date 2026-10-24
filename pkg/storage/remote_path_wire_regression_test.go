@@ -65,7 +65,7 @@ func TestRemoteHTTPRESTPathRejectsInconsistentCounts(t *testing.T) {
 }
 
 func TestRemoteHTTPMalformedPathEntitiesAreRejected(t *testing.T) {
-	node := map[string]interface{}{"elementId": "n", "labels": []interface{}{}, "properties": map[string]interface{}{"a": float64(1)}}
+	node := map[string]interface{}{"elementId": "n", "labels": []interface{}{}, "properties": map[string]interface{}{"a": int64(1)}}
 	meta := map[string]interface{}{"elementId": "n", "type": "node"}
 	for _, tc := range []struct {
 		raw      string

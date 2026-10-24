@@ -18,6 +18,34 @@ type FabricPlanner struct {
 	// keywordIsName is the Cypher executor's reader of a clause keyword that is
 	// a name where it stands; nil reads every keyword as a clause.
 	keywordIsName ClauseKeywordNameReader
+	// callImports is the Cypher executor's reader of the variables a CALL
+	// subquery imports; nil imports none.
+	callImports CallImportReader
+}
+
+// CallImportReader returns the variables a CALL subquery imports from its
+// enclosing query ("*" for every variable): the variables its scope clause
+// lists when scoped (scope is the text between CALL's parentheses), else the
+// ones its body's importing WITH lists (body is one UNION branch, without its
+// USE clause).
+//
+// An error, such as a scope clause item that is not a variable, fails the
+// plan.
+type CallImportReader func(scope string, scoped bool, body string) ([]string, error)
+
+// SetCallImportReader installs the Cypher executor's CALL subquery import
+// reader, so Fabric imports exactly the variables a single-database CALL
+// would.
+func (p *FabricPlanner) SetCallImportReader(read CallImportReader) {
+	p.callImports = read
+}
+
+// readCallImports applies the installed CallImportReader.
+func (p *FabricPlanner) readCallImports(scope string, scoped bool, body string) ([]string, error) {
+	if p.callImports == nil {
+		return nil, nil
+	}
+	return p.callImports(scope, scoped, body)
 }
 
 // ClauseKeywordNameReader reports whether the clause keyword at text[pos:end]
@@ -276,6 +304,82 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 	return p.planMultiGraph(top, scope, remaining, fabricBlocks)
 }
 
+// SingleGraphStatement is query with every USE clause the planner reads
+// removed: a statement's or a UNION branch's leading USE, one later in the
+// statement, and a CALL body's leading USE, after the body's importing WITH
+// too. It is the statement as one graph runs it, which is how Neo4j checks a
+// composite statement's variable scopes, whichever graphs its parts run on.
+func (p *FabricPlanner) SingleGraphStatement(query string) (string, error) {
+	return p.singleGraphStatement(strings.TrimSpace(query), false)
+}
+
+func (p *FabricPlanner) singleGraphStatement(query string, inSubquery bool) (string, error) {
+	parts, ops, hasUnion, err := splitTopLevelUnion(query, p.keywordIsName)
+	if err != nil {
+		return "", err
+	}
+	if hasUnion {
+		var b strings.Builder
+		for i, part := range parts {
+			branch, err := p.singleGraphStatement(strings.TrimSpace(part), inSubquery)
+			if err != nil {
+				return "", err
+			}
+			if i > 0 {
+				if ops[i-1] {
+					b.WriteString(" UNION ")
+				} else {
+					b.WriteString(" UNION ALL ")
+				}
+			}
+			b.WriteString(branch)
+		}
+		return b.String(), nil
+	}
+	_, rest, hasUse, err := parseLeadingUse(query, inSubquery)
+	if err == nil && !hasUse && inSubquery {
+		_, rest, hasUse, err = parseLeadingWithUse(query)
+	}
+	if err != nil {
+		return "", err
+	}
+	if hasUse {
+		query = strings.TrimSpace(rest)
+	}
+	if prefix, after, ok := splitAtTopLevelUse(query); ok {
+		_, rest, hasUse, err := parseLeadingUse(after, true)
+		if err != nil {
+			return "", err
+		}
+		if hasUse {
+			tail, err := p.singleGraphStatement(strings.TrimSpace(rest), true)
+			if err != nil {
+				return "", err
+			}
+			query = strings.TrimSpace(prefix) + " " + tail
+		}
+	}
+	blocks, err := extractTopLevelCallBlocks(query, p.keywordIsName)
+	if err != nil || len(blocks) == 0 {
+		return query, err
+	}
+	var b strings.Builder
+	last := 0
+	for _, block := range blocks {
+		body, err := p.singleGraphStatement(block.body, true)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(query[last : block.open+1])
+		b.WriteString(" ")
+		b.WriteString(body)
+		b.WriteString(" }")
+		last = block.endPos
+	}
+	b.WriteString(query[last:])
+	return b.String(), nil
+}
+
 // validatePlanTarget checks a static USE target at plan time; a dynamic
 // reference is checked when it resolves (FabricExecutor.resolveExecGraph).
 func (p *FabricPlanner) validatePlanTarget(scope string, target planTarget) error {
@@ -450,8 +554,17 @@ func trailingWithAliases(query string) []string {
 	if lastWith < 0 {
 		return nil
 	}
+	// The WITH's aliases are the prefix's columns only when it is the
+	// prefix's last clause, its WHERE, ORDER BY, SKIP and LIMIT aside; a
+	// later clause (UNWIND, MATCH, ...) keeps them and adds its own.
+	withEnd := nextTopLevelClause(query, lastWith+len("WITH"))
+	for end := withEnd; end < len(query); end = nextTopLevelClause(query, end+1) {
+		if !projectionModifierAt(query, end) {
+			return nil
+		}
+	}
 
-	clause := strings.TrimSpace(query[lastWith+len("WITH"):])
+	clause := strings.TrimSpace(query[lastWith+len("WITH") : withEnd])
 	if clause == "" {
 		return nil
 	}
@@ -513,10 +626,23 @@ func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery s
 			return nil, err
 		}
 
+		var scope []string
+		if block.scoped {
+			// The scope clause, not a leading WITH, imports the body's variables,
+			// and they stay visible throughout the body.
+			imports, err := p.readCallImports(block.scope, true, block.body)
+			if err != nil {
+				return nil, err
+			}
+			scope = imports
+			subqueryFragment = bindScopeImports(bindLeadingImportColumns(subqueryFragment, scope), scope)
+		}
 		currentInput = &FragmentApply{
 			Input:    currentInput,
 			Inner:    subqueryFragment,
 			Optional: block.optional,
+			Scoped:   block.scoped,
+			Scope:    scope,
 			Unit:     !callBodyReturns(block.body, p.keywordIsName),
 			Columns:  nil, // determined at execution time
 		}
@@ -556,13 +682,21 @@ func (p *FabricPlanner) planCallBranch(body string, top planTarget, scope string
 		if err != nil {
 			return nil, err
 		}
-		return bindLeadingImportColumns(fragment, extractWithImports(subBody)), nil
+		imports, err := p.readCallImports("", false, subBody)
+		if err != nil {
+			return nil, err
+		}
+		return bindLeadingImportColumns(fragment, imports), nil
 	}
 	fragment, err := p.planSingleQuery(body, top, scope, true)
 	if err != nil {
 		return nil, err
 	}
-	return bindLeadingImportColumns(fragment, extractWithImports(body)), nil
+	imports, err := p.readCallImports("", false, body)
+	if err != nil {
+		return nil, err
+	}
+	return bindLeadingImportColumns(fragment, imports), nil
 }
 
 // parseLeadingWithUse extracts a leading WITH ... USE <graph> pattern from a CALL body.
@@ -603,11 +737,19 @@ type callSubqueryBlock struct {
 	// startPos is the byte offset in the original query where CALL { starts.
 	startPos int
 
+	// open is the byte offset of the body's opening brace.
+	open int
+
 	// endPos is the byte offset after the closing }.
 	endPos int
 
 	// optional is true for OPTIONAL CALL { }; startPos is then OPTIONAL's.
 	optional bool
+
+	// scoped is true for CALL (...) { }; scope is its scope clause's text,
+	// between the parentheses.
+	scoped bool
+	scope  string
 }
 
 func (p *FabricPlanner) validateUseTarget(sessionDB string, targetDB string) error {
@@ -673,6 +815,35 @@ func bindLeadingImportColumns(fragment Fragment, importCols []string) Fragment {
 		copied := *f
 		copied.LHS = bindLeadingImportColumns(copied.LHS, importCols)
 		copied.RHS = bindLeadingImportColumns(copied.RHS, importCols)
+		return &copied
+	default:
+		return fragment
+	}
+}
+
+// bindScopeImports marks every executable fragment of a scoped CALL body
+// with the variables its scope clause imports: the body's leading fragments
+// and its continuations, but not a nested CALL's body, which imports its own.
+func bindScopeImports(fragment Fragment, scope []string) Fragment {
+	if len(scope) == 0 || fragment == nil {
+		return fragment
+	}
+	switch f := fragment.(type) {
+	case *FragmentExec:
+		copied := *f
+		copied.ScopeImports = scope
+		return &copied
+	case *FragmentApply:
+		copied := *f
+		copied.Input = bindScopeImports(copied.Input, scope)
+		if copied.Projection {
+			copied.Inner = bindScopeImports(copied.Inner, scope)
+		}
+		return &copied
+	case *FragmentUnion:
+		copied := *f
+		copied.LHS = bindScopeImports(copied.LHS, scope)
+		copied.RHS = bindScopeImports(copied.RHS, scope)
 		return &copied
 	default:
 		return fragment
@@ -759,9 +930,16 @@ func extractTopLevelCallBlocks(query string, isName ClauseKeywordNameReader) ([]
 			continue
 		}
 
-		j := i + len("CALL")
-		for j < len(query) && isWhitespace(query[j]) {
-			j++
+		j := skipSpacesAndComments(query, i+len("CALL"))
+		scoped, scope := false, ""
+		if j < len(query) && query[j] == '(' {
+			scopeEnd, ok := matchingParen(query, j)
+			if !ok {
+				i = start
+				continue
+			}
+			scoped, scope = true, query[j+1:scopeEnd]
+			j = skipSpacesAndComments(query, scopeEnd+1)
 		}
 		if j >= len(query) || query[j] != '{' {
 			i = start
@@ -775,9 +953,12 @@ func extractTopLevelCallBlocks(query string, isName ClauseKeywordNameReader) ([]
 		body := strings.TrimSpace(query[j+1 : closePos])
 		blocks = append(blocks, callSubqueryBlock{
 			body:     body,
+			open:     j,
 			startPos: start,
 			endPos:   closePos + 1,
 			optional: optional,
+			scoped:   scoped,
+			scope:    scope,
 		})
 		i = closePos
 	}
@@ -872,72 +1053,6 @@ func findMatchingBrace(s string, pos int) (int, error) {
 	}
 
 	return -1, fmt.Errorf("unmatched brace (depth=%d remaining)", depth)
-}
-
-// extractWithImports parses a leading WITH clause to extract imported variable names.
-// e.g. "WITH translationId MATCH ..." returns ["translationId"]
-func extractWithImports(body string) []string {
-	trimmed := strings.TrimSpace(body)
-	if !startsWithFold(trimmed, "WITH") {
-		return nil
-	}
-
-	// Must be followed by whitespace.
-	if len(trimmed) > 4 && !isWhitespace(trimmed[4]) {
-		return nil
-	}
-
-	rest := strings.TrimSpace(trimmed[4:])
-
-	// Extract identifiers until we hit a keyword (MATCH, RETURN, CREATE, etc.).
-	var imports []string
-	parts := strings.FieldsFunc(rest, func(r rune) bool {
-		return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
-	})
-
-	for _, part := range parts {
-		cleaned := strings.TrimSpace(part)
-		if cleaned == "" {
-			continue
-		}
-		if isWithImportStopKeyword(cleaned) {
-			break
-		}
-		// Strip AS alias if present.
-		if strings.EqualFold(cleaned, "AS") {
-			continue
-		}
-		imports = append(imports, cleaned)
-	}
-
-	return imports
-}
-
-func isWithImportStopKeyword(token string) bool {
-	switch {
-	case strings.EqualFold(token, "MATCH"),
-		strings.EqualFold(token, "OPTIONAL"),
-		strings.EqualFold(token, "CREATE"),
-		strings.EqualFold(token, "MERGE"),
-		strings.EqualFold(token, "DELETE"),
-		strings.EqualFold(token, "DETACH"),
-		strings.EqualFold(token, "SET"),
-		strings.EqualFold(token, "REMOVE"),
-		strings.EqualFold(token, "RETURN"),
-		strings.EqualFold(token, "WITH"),
-		strings.EqualFold(token, "WHERE"),
-		strings.EqualFold(token, "ORDER"),
-		strings.EqualFold(token, "SKIP"),
-		strings.EqualFold(token, "LIMIT"),
-		strings.EqualFold(token, "UNWIND"),
-		strings.EqualFold(token, "CALL"),
-		strings.EqualFold(token, "FOREACH"),
-		strings.EqualFold(token, "LOAD"),
-		strings.EqualFold(token, "USE"):
-		return true
-	default:
-		return false
-	}
 }
 
 // queryIsWrite performs a simple heuristic check for write operations.

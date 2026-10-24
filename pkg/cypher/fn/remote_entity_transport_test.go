@@ -41,7 +41,7 @@ func TestRemoteHTTPGraphFunctionTransportControls(t *testing.T) {
 		{"keys", node, []any{"id", "name"}},
 		{"type", relationship, "LINKS"},
 		{"elementid", relationship, "5:remote:rel"},
-		{"properties", relationship, map[string]any{"id": "local-rel", "weight": float64(2)}},
+		{"properties", relationship, map[string]any{"id": "local-rel", "weight": int64(2)}},
 		{"keys", relationship, []any{"id", "weight"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

@@ -18,7 +18,7 @@ import (
 var _ Engine = (*RemoteEngine)(nil)
 
 func TestRemoteHTTPValueDecoding(t *testing.T) {
-	node := RemoteEntityValue{"elementId": "4:db:n", "properties": map[string]interface{}{"a": float64(1)}}
+	node := RemoteEntityValue{"elementId": "4:db:n", "properties": map[string]interface{}{"a": int64(1)}}
 	entities := map[string]interface{}{"4:db:n": map[string]interface{}(node)}
 	meta := map[string]interface{}{"elementId": "4:db:n", "type": "node"}
 	for _, testCase := range []struct {
@@ -29,15 +29,16 @@ func TestRemoteHTTPValueDecoding(t *testing.T) {
 		consumed  int
 		wantError bool
 	}{
-		{"legacy scalar", `1`, nil, nil, float64(1), 0, false},
-		{"scalar", `1`, []interface{}{nil}, entities, float64(1), 1, false},
+		{"legacy scalar", `1`, nil, nil, int64(1), 0, false},
+		{"float", `1.0`, nil, nil, float64(1), 0, false},
+		{"scalar", `1`, []interface{}{nil}, entities, int64(1), 1, false},
 		{"missing metadata", `null`, nil, entities, nil, 0, false},
 		{"node", `{"a":1}`, []interface{}{meta}, entities, node, 1, false},
-		{"wire ordered map", `{"node":{"a":1},"k":1}`, []interface{}{meta, nil}, entities, map[string]interface{}{"node": node, "k": float64(1)}, 2, false},
+		{"wire ordered map", `{"node":{"a":1},"k":1}`, []interface{}{meta, nil}, entities, map[string]interface{}{"node": node, "k": int64(1)}, 2, false},
 		{"entity wrapper is ordinary map", `{"node":{"a":1}}`, []interface{}{meta}, entities, map[string]interface{}{"node": node}, 1, false},
-		{"list", `[{"a":1},1]`, []interface{}{meta, nil}, entities, []interface{}{node, float64(1)}, 2, false},
+		{"list", `[{"a":1},1]`, []interface{}{meta, nil}, entities, []interface{}{node, int64(1)}, 2, false},
 		{"path", `[{"a":1}]`, []interface{}{[]interface{}{meta}}, entities, RemotePathValue{node}, 1, false},
-		{"unknown identity", `{"a":1}`, []interface{}{map[string]interface{}{"elementId": "missing"}}, entities, map[string]interface{}{"a": float64(1)}, 1, false},
+		{"unknown identity", `{"a":1}`, []interface{}{map[string]interface{}{"elementId": "missing"}}, entities, map[string]interface{}{"a": int64(1)}, 1, false},
 		{"empty map", `{}`, nil, entities, map[string]interface{}{}, 0, false},
 		{"empty list", `[]`, nil, entities, []interface{}{}, 0, false},
 		{"invalid JSON", `{`, nil, entities, nil, 0, true},
@@ -1315,7 +1316,7 @@ func TestRemoteEngineQueryCypherAndHTTPClosedBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryCypher with nil context failed: %v", err)
 	}
-	if len(cols) != 1 || cols[0] != "n" || len(rows) != 1 || rows[0][0].(float64) != 42 {
+	if len(cols) != 1 || cols[0] != "n" || len(rows) != 1 || rows[0][0].(int64) != 42 {
 		t.Fatalf("unexpected query result cols=%v rows=%v", cols, rows)
 	}
 

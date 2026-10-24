@@ -220,6 +220,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cyphercommandrouting.call_tail_skip_invalid", Constructor: "CypherCommandRoutingCallTailSkipInvalid", Fields: []string{"Token"}, PluralForms: []string{"other"}},
 	{ID: "cyphercommandrouting.empty_command", Constructor: "CypherCommandRoutingEmptyCommand", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercommandrouting.fabric_constituents_failed", Constructor: "CypherCommandRoutingFabricConstituentsFailed", Fields: []string{"Cause", "Database"}, PluralForms: []string{"other"}},
+	{ID: "cyphercommandrouting.fabric_import_entity", Constructor: "CypherCommandRoutingFabricImportEntity", Fields: []string{"Kind"}, PluralForms: []string{"other"}},
 	{ID: "cyphercommandrouting.fabric_not_prepared", Constructor: "CypherCommandRoutingFabricNotPrepared", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercommandrouting.fabric_prepared_context_invalid", Constructor: "CypherCommandRoutingFabricPreparedContextInvalid", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cyphercommandrouting.fabric_shard_transaction_failed", Constructor: "CypherCommandRoutingFabricShardTransactionFailed", Fields: []string{"Cause", "Database"}, PluralForms: []string{"other"}},

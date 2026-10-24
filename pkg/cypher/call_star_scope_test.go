@@ -208,16 +208,16 @@ func TestCallScopeClauseSyntax(t *testing.T) {
 		{"CALL (x, `y`) { RETURN x+y AS a }", true, []string{"x", "y"}, false},
 		{"CALL (x+1) { RETURN 1 AS a }", true, []string{}, true},
 		{"CALL { RETURN 1 AS a }", false, nil, false},
-		{"CALL (x", false, nil, false},
+		{"CALL (x", false, nil, true},
 		{"CALL db.labels()", false, nil, false},
 		{"MATCH (n) CALL (n) { RETURN n }", false, nil, false},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
 			scope := readCallSubqueryScope(tc.query)
 			if tc.invalid {
-				// Invalid syntax has no CST-backed scope descriptor. Verify
-				// public rejection as well as the absence of partial facts.
-				require.Equal(t, callSubqueryScopeClause{}, scope)
+				// Invalid syntax retains its error without partial scope facts.
+				// Verify public rejection as well as the explicit invalid marker.
+				require.Equal(t, callSubqueryScopeClause{invalid: true}, scope)
 				exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "invalid_call_scope"))
 				_, err := exec.Execute(context.Background(), "WITH 1 AS x "+tc.query+" RETURN a", nil)
 				require.Error(t, err)
