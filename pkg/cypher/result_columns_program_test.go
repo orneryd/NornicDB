@@ -11,6 +11,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Direct operator tests supply the same declared scope and immutable CALL facts
+// as the public pipeline; they do not bypass statement compilation.
+func newPipelineCallMetadataForTest(t *testing.T, executor *StorageExecutor, query string, incoming []string) *pipelineCallMetadata {
+	t.Helper()
+	metadata := &pipelineCallMetadata{scope: map[string]struct{}{}}
+	for _, name := range incoming {
+		metadata.scope[name] = struct{}{}
+	}
+	executor.StatementFacts(query, resultmetadata.KnownScope(incoming), false).Visit(func(statement resultmetadata.Statement) {
+		require.Len(t, statement.Clauses, 1)
+		metadata.call = statement.Clauses[0].Call
+	}, func() { t.Fatal("CALL facts declined") }, func(reason resultmetadata.Unresolved) { t.Fatalf("CALL facts unresolved: %v", reason.Err) })
+	require.NotNil(t, metadata.call)
+	return metadata
+}
+
 func TestStatementFactsProgram(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "statement-facts"))
 	for _, tc := range []struct {

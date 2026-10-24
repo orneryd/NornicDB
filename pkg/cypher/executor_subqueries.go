@@ -843,87 +843,12 @@ func unscopedBranchLocals(branch string, names []string) []string {
 // Cypher gives such a branch a new variable; NornicDB's implicit import of an
 // outer variable applies only to a name the branch reads first (#907).
 func branchDeclaresVariable(branch, variable string) bool {
-	clauses, ok := splitPipelineClauses(strings.TrimSpace(branch))
-	if !ok {
+	body := readQueryBody(branch, 0, len(branch))
+	if body.status != queryBodyRead || len(body.branches) != 1 {
 		return false
 	}
-	for _, clause := range clauses {
-		index := firstVariableOccurrence(clause.text, variable)
-		if index < 0 {
-			continue
-		}
-		switch clause.kind {
-		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseCreate, pipelineClauseMerge:
-			return index < patternPartEnd(clause) && isPatternVariableAt(clause.text, index, len(variable))
-		case pipelineClauseUnwind, pipelineClauseWith:
-			return precededByAS(clause.text, index)
-		}
-		return false
-	}
-	return false
-}
-
-// patternPartEnd is where a MATCH, CREATE or MERGE clause's pattern ends:
-// at its WHERE, or MERGE's ON CREATE / ON MATCH, else the clause's end.
-func patternPartEnd(clause pipelineClause) int {
-	end := len(clause.text)
-	for _, keyword := range [...]string{"WHERE", "ON"} {
-		if index := topLevelKeywordIndex(clause.text, keyword); index > 0 && index < end {
-			end = index
-		}
-	}
-	return end
-}
-
-// firstVariableOccurrence is the index of the first use of variable in text
-// as a variable: a whole word outside string literals, not a property key
-// (m.variable), a parameter ($variable) or a map key ({variable: …}).
-// -1 when there is none.
-func firstVariableOccurrence(text, variable string) int {
-	for index := 0; index+len(variable) <= len(text); index++ {
-		switch c := text[index]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
-			index = skipCypherQuotedText(text, index, c) - 1
-			continue
-		}
-		if text[index:index+len(variable)] != variable {
-			continue
-		}
-		end := index + len(variable)
-		if (index > 0 && isIdentByte(text[index-1])) || (end < len(text) && isIdentByte(text[end])) {
-			continue
-		}
-		previous, next := previousNonSpace(text, index), nextNonSpace(text, end)
-		if previous == '.' || previous == '$' || ((previous == '{' || previous == ',') && next == ':') {
-			continue
-		}
-		return index
-	}
-	return -1
-}
-
-// isPatternVariableAt reports whether the word at index is a pattern's node
-// or relationship variable ((n:L), (n), -[r:T]->) or its path name (p = …).
-func isPatternVariableAt(text string, index, length int) bool {
-	next := nextNonSpace(text, index+length)
-	switch previousNonSpace(text, index) {
-	case '(':
-		// Not a function call's argument (size(n)): a name before the
-		// parenthesis is a function, unless it is the clause keyword
-		// (MATCH (n), OPTIONAL MATCH (n), CREATE (n), MERGE (n)).
-		opening := strings.LastIndexByte(text[:index], '(')
-		if word := wordBefore(text, opening); word != "" && !isPatternClauseKeyword(word) {
-			return false
-		}
-		return next == ':' || next == ')' || next == '{'
-	case '[':
-		opening := strings.LastIndexByte(text[:index], '[')
-		if before := previousNonSpace(text, opening); before != '-' && before != '<' {
-			return false
-		}
-		return next == ':' || next == ']' || next == '{' || next == '*'
-	}
-	return next == '=' && nextNonSpace(text, strings.IndexByte(text[index:], '=')+index+1) == '('
+	outer := map[string]struct{}{variable: {}}
+	return branchSyntaxVariableUses(body.branches[0], outer)[variable] == syntaxVariableDefined
 }
 
 // wordBefore is the identifier that ends right before index (spaces
@@ -946,16 +871,6 @@ func isPatternClauseKeyword(word string) bool {
 	return equalFoldASCII(word, "MATCH") || equalFoldASCII(word, "CREATE") || equalFoldASCII(word, "MERGE")
 }
 
-// precededByAS reports whether the word at index follows the keyword AS.
-func precededByAS(text string, index int) bool {
-	end := index
-	for end > 0 && isASCIISpace(text[end-1]) {
-		end--
-	}
-	return end >= 3 && equalFoldASCII(text[end-2:end], "AS") && !isIdentByte(text[end-3])
-}
-
-// previousNonSpace is the last non-space byte before index, 0 at the start.
 func previousNonSpace(text string, index int) byte {
 	for index > 0 {
 		index--

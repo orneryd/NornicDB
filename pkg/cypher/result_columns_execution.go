@@ -57,6 +57,14 @@ func executionReturnProjection(ctx context.Context, clause pipelineClause) (*ret
 	}
 	return plan, nil
 }
+func executionCallFacts(ctx context.Context, clause pipelineClause) *resultmetadata.Call {
+	program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram)
+	if !ok || program == nil || !clause.syntax.Valid() || program.syntax.Source() != clause.syntax.Source() {
+		return nil
+	}
+	return program.calls[clause.syntax.ID()]
+}
+
 func executionClauseEffects(ctx context.Context, clause pipelineClause) (pipelineClauseEffects, error) {
 	if clause.syntax.Valid() {
 		if program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); ok && program != nil && program.syntax.Source() == clause.syntax.Source() {
