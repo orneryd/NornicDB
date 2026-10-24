@@ -129,6 +129,9 @@ func TestTransactionalReviewClauseCensusMembership(t *testing.T) {
 	constructors := transactionalcalltest.SyntaxConstructors()
 	require.Contains(t, constructors, "IReadingStatementContext")
 	require.Contains(t, constructors, "IUpdatingStatementContext")
+	require.Contains(t, constructors, "ISinglePartQContext")
+	require.Contains(t, constructors, "IMultiPartQContext")
+	require.Contains(t, constructors, "IProjectionBodyContext")
 	require.Equal(t, "effect", constructors["IUpdatingStatementContext"]["ICreateStContext"])
 }
 

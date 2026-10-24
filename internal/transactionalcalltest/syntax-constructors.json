@@ -47,5 +47,25 @@
     "ISetStContext": "effect",
     "IRemoveStContext": "effect",
     "IForeachStContext": "effect"
+  },
+  "ISinglePartQContext": {
+    "IReadingStatementContext": "children",
+    "IReturnStContext": "effect",
+    "IUpdatingStatementContext": "children",
+    "IEmbeddingStContext": "children",
+    "ICallSubqueryContext": "effect",
+    "IOrderStContext": "effect"
+  },
+  "IMultiPartQContext": {
+    "ISinglePartQContext": "children",
+    "IWithStContext": "effect",
+    "IReadingStatementContext": "children",
+    "IUpdatingStatementContext": "children"
+  },
+  "IProjectionBodyContext": {
+    "IProjectionItemsContext": "children",
+    "IOrderStContext": "effect",
+    "ISkipStContext": "effect",
+    "ILimitStContext": "effect"
   }
 }
