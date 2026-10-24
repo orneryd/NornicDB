@@ -32,7 +32,7 @@ import (
 func roundTripValueThroughCodec(t *testing.T, eng *BadgerEngine, key string, val any) any {
 	t.Helper()
 	var data []byte
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		var err error
 		data, err = eng.encodeTokenizedProperties(txn, "ns", map[string]any{key: val})
 		if err != nil {
@@ -65,12 +65,12 @@ func TestStrictTypedArray_PreservesHomogeneousInts(t *testing.T) {
 	assert.Equal(t, []int64{-1, 0, 1, math.MaxInt64}, got)
 }
 
-// TestStrictTypedArray_PreservesHomogeneousUints — []uint64 round-trip.
-func TestStrictTypedArray_PreservesHomogeneousUints(t *testing.T) {
+// TestStrictTypedArray_CanonicalizesUnsignedIntegers — []uint64 round-trip.
+func TestStrictTypedArray_CanonicalizesUnsignedIntegers(t *testing.T) {
 	eng := newTestEngine(t)
 	got := roundTripValueThroughCodec(t, eng, "uints", []uint64{0, 1, math.MaxUint64})
-	require.IsType(t, []uint64{}, got)
-	assert.Equal(t, []uint64{0, 1, math.MaxUint64}, got)
+	require.IsType(t, []any{}, got)
+	assert.Equal(t, []any{int64(0), int64(1), uint64(math.MaxUint64)}, got)
 }
 
 // TestStrictTypedArray_PreservesHomogeneousStrings — []string round-trip.
@@ -114,16 +114,7 @@ func TestStrictTypedArray_MixedFallsBackToInterface(t *testing.T) {
 	asAny := got.([]interface{})
 	assert.Equal(t, float64(1.5), asAny[0])
 	assert.Equal(t, "two", asAny[1])
-	// msgpack encodes positive small ints as uint, so int64(3) round-trips
-	// as int8(3) → decoder normalizes to int64. Accept either int8 or int64.
-	switch v := asAny[2].(type) {
-	case int64:
-		assert.Equal(t, int64(3), v)
-	case int8:
-		assert.Equal(t, int8(3), v)
-	default:
-		t.Fatalf("expected int8 or int64, got %T", v)
-	}
+	assert.Equal(t, int64(3), asAny[2])
 	assert.Equal(t, true, asAny[3])
 }
 
@@ -207,9 +198,8 @@ func TestStrictTypedMap_EmptyMapIsNotNil(t *testing.T) {
 }
 
 // TestNumericTypePreservation — exercise every numeric kind msgpack
-// can produce. Each one must round-trip with at least its informational
-// content preserved (small positives may narrow to int8/uint8 due to
-// msgpack's compact-int encoding; that's expected).
+// can produce. Scalar integers use the canonical representation regardless
+// of the encoded width; unsigned overflow retains its full value.
 func TestNumericTypePreservation(t *testing.T) {
 	eng := newTestEngine(t)
 
@@ -260,7 +250,7 @@ func TestNamespaceIsolation_PropKeyDict(t *testing.T) {
 	eng := newTestEngine(t)
 
 	var dataNs1, dataNs2 []byte
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		var err error
 		dataNs1, err = eng.encodeTokenizedProperties(txn, "ns1", map[string]any{"k": "v1"})
 		if err != nil {
@@ -352,7 +342,7 @@ func TestDecodeStrictTypedMap_NonStringKeyErrors(t *testing.T) {
 func TestEncodeTokenizedProperties_ZeroLengthBuffer(t *testing.T) {
 	eng := newTestEngine(t)
 	var data []byte
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		var err error
 		data, err = eng.encodeTokenizedProperties(txn, "ns", map[string]any{})
 		return err
@@ -392,7 +382,7 @@ func TestDecodeTokenizedProperties_DuplicateKeyOverwrites(t *testing.T) {
 	eng := newTestEngine(t)
 	// Allocate "k" so the dict knows the id.
 	var keyID uint64
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		id, err := eng.propKeyDict.resolveOrAllocateInTxn(txn, "ns", "k")
 		require.NoError(t, err)
 		keyID = id
@@ -429,7 +419,7 @@ func TestRoundTrip_LargePropertyMap(t *testing.T) {
 	}
 
 	var data []byte
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		var err error
 		data, err = eng.encodeTokenizedProperties(txn, "ns", props)
 		if err != nil {

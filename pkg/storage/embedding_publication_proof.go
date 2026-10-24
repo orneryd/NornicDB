@@ -15,18 +15,19 @@ type embeddingPublicationProof struct {
 // commitOutcome preserves ordinary commit publication and carries its own
 // assigned timestamp out of that boundary. A later publication cannot be
 // mistaken for this commit, even when a commit-tail hook or listener reenters.
-func (cw *commitWriter) commitOutcome() error {
+func (cw *commitWriter) commitOutcome(cacheToken []uint64) error {
 	if node := cw.embeddingOutcome; node != nil {
 		node.embeddingPublication = embeddingPublicationProof{}
 	}
 	readTs := cw.txn.ReadTs()
-	ts, err := cw.commitOutcomeBatch()
+	ts, err := cw.commitOutcomeBatch(cacheToken)
 	if err != nil {
 		return err
 	}
 	if err := cw.db.oracle.waitPublished(ts); err != nil {
 		return err
 	}
+	cw.commitTs = ts
 	// Certify a closed interval: the accepted read saw every publication
 	// preceding this commit. An earlier in-flight commit, dictionary write or
 	// any other unobserved predecessor requires fresh validation after commit.

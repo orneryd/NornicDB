@@ -385,7 +385,7 @@ func (d *idDictionary) persistCounters(db badgerKV, nodeMax, edgeMax uint64) {
 	if db == nil || (nodeMax == 0 && edgeMax == 0) {
 		return
 	}
-	_ = db.Update(func(txn *badger.Txn) error {
+	_ = updateBadgerMetadata(db, func(txn *badger.Txn) error {
 		if nodeMax > 0 {
 			var buf [8]byte
 			binary.BigEndian.PutUint64(buf[:], nodeMax)

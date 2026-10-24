@@ -823,7 +823,7 @@ func TestCompositeEngine_UpdateNode(t *testing.T) {
 	// Verify update
 	retrieved, err := composite.GetNode(node1.ID)
 	require.NoError(t, err)
-	assert.Equal(t, 30, retrieved.Properties["age"])
+	assert.Equal(t, int64(30), retrieved.Properties["age"])
 }
 
 func TestCompositeEngine_DeleteNode(t *testing.T) {

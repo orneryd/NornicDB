@@ -27,6 +27,10 @@ import (
 // commit: a batch of their own ahead of each batch).
 type commitWriter struct {
 	batchWriter
+	cacheScope          nodeCacheWriteScope
+	cacheImages         commitCacheImages
+	cacheGeneration     [1]uint64
+	commitTs            uint64
 	engine              *BadgerEngine
 	embeddingOutcome    *Node
 	db                  *managedBadgerDB
@@ -42,21 +46,34 @@ type commitWriter struct {
 	onBatch func(next *badger.Txn)
 }
 
-func (b *BadgerEngine) newCommitWriter(db *managedBadgerDB, txn *badger.Txn) *commitWriter {
-	cw := &commitWriter{engine: b, db: db}
+func (b *BadgerEngine) newCommitWriter(scope nodeCacheWriteScope, db *managedBadgerDB, txn *badger.Txn) (*commitWriter, error) {
+	if err := admitDurableWrite(scope); err != nil {
+		return nil, err
+	}
+	var err error
+	scope, err = b.prepareRelationshipCacheWrites(scope, txn, true)
+	if err != nil {
+		return nil, err
+	}
+	cw := &commitWriter{engine: b, db: db, cacheScope: scope}
 	cw.batchWriter = batchWriter{txn: txn, to: cw}
-	return cw
+	return cw, nil
 }
 
 // commitBatch writes a full batch as the next batch of the large commit,
 // turning the commit into one first.
 func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
+	if nodeCacheScopeCheck != nil {
+		if err := nodeCacheScopeCheck(txn, cw.cacheScope); err != nil {
+			return err
+		}
+	}
 	cw.collectPendingEmbeddingAdds(txn)
 	if cw.large == nil {
 		if cw.beforeLarge != nil {
 			cw.beforeLarge()
 		}
-		lc, err := cw.db.beginLargeCommit()
+		lc, err := cw.db.beginLargeCommit(cw.cacheScope)
 		if err != nil {
 			return err
 		}
@@ -104,27 +121,34 @@ func (cw *commitWriter) commitTokens(txn *badger.Txn) error {
 // finish commits: an ordinary commit after persisting its property-key
 // tokens, or a large commit's last batch, publishing it. On error the
 // caller must abort.
-func (cw *commitWriter) finish() error {
+func (cw *commitWriter) finish(cacheToken ...uint64) error {
+	if err := admitDurableWrite(cw.cacheScope); err != nil {
+		return err
+	}
 	cw.collectPendingEmbeddingAdds(cw.txn)
+	if len(cacheToken) == 0 {
+		cacheToken = cw.cacheGeneration[:]
+	}
 	if cw.large == nil {
 		dict := cw.engine.propKeyDict
 		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
-		if err := cw.commitOutcome(); err != nil {
+		if err := cw.commitOutcome(cacheToken); err != nil {
 			return err
 		}
-		cw.publishPendingEmbeddingAdds()
-		return nil
+	} else {
+		if err := cw.commitTokens(cw.txn); err != nil {
+			return err
+		}
+		if err := cw.large.finish(&cw.batchWriter, cw.engine, cacheToken); err != nil {
+			return err
+		}
+		cw.commitTs = cw.large.lastTs
 	}
-	err := cw.commitTokens(cw.txn)
-	if err == nil {
-		err = cw.large.finish(&cw.batchWriter)
-	}
-	if err == nil {
-		cw.publishPendingEmbeddingAdds()
-	}
-	return err
+	cw.engine.publishCommitCacheImages(cw.cacheScope, cw.cacheImages, cw.commitTs, cacheToken)
+	cw.publishPendingEmbeddingAdds()
+	return nil
 }
 
 // abort rolls back the batches a large commit already wrote. The open batch
@@ -148,6 +172,6 @@ func (cw *commitWriter) abort() error {
 // commit writer existed.
 var errPersistingTokens = errors.New("persisting property key dictionary")
 
-func (cw *commitWriter) commitOutcomeBatch() (uint64, error) {
-	return cw.db.commitShared(cw.txn)
+func (cw *commitWriter) commitOutcomeBatch(cacheToken []uint64) (uint64, error) {
+	return cw.db.commitShared(cw.txn, cw.engine, cacheToken, cw.cacheScope)
 }

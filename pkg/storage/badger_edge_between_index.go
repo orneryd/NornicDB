@@ -76,7 +76,7 @@ func (b *BadgerEngine) hasAnyStoredEdges() (bool, error) {
 
 // markEdgeBetweenIndexReady records that no compatibility rebuild remains.
 func (b *BadgerEngine) markEdgeBetweenIndexReady() error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		return txn.Set(edgeBetweenIndexReadyKey, []byte{1})
 	})
 }
@@ -162,7 +162,7 @@ func (b *BadgerEngine) rebuildEdgeBetweenIndex(ctx context.Context) (int, error)
 		message:   "edge-between index backfill progress",
 		unit:      "edges",
 	}
-	processed, err := b.forEachStoredRecordInChunks(ctx, scan, func(txn *badger.Txn, key, val []byte) (int, bool, error) {
+	processed, err := b.forEachStoredRecordInChunks(noNodeCacheWrites(), ctx, scan, func(txn *badger.Txn, key, val []byte) (int, bool, error) {
 		var edgeID EdgeID
 		if len(key) > 1 {
 			edgeID = EdgeID(key[1:])
@@ -182,7 +182,7 @@ func (b *BadgerEngine) rebuildEdgeBetweenIndex(ctx context.Context) (int, error)
 	if err := ctx.Err(); err != nil {
 		return processed, err
 	}
-	return processed, b.withUpdate(func(txn *badger.Txn) error {
+	return processed, b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		return txn.Set(edgeBetweenIndexReadyKey, []byte{1})
 	})
 }

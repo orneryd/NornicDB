@@ -46,10 +46,10 @@ func TestBadgerEngine_HelperUpdateTailSurvivesConcurrentClose(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	closeDone := closeWhileTailRuns(t, engine)
-	err = engine.withUpdate(func(txn *badger.Txn) error { return txn.Set([]byte("helper-update"), []byte("value")) })
+	err = engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error { return txn.Set([]byte("helper-update"), []byte("value")) })
 	require.NoError(t, err)
 	require.NoError(t, <-closeDone)
-	require.ErrorIs(t, engine.withUpdate(func(*badger.Txn) error { t.Error("callback called after Close"); return nil }), ErrStorageClosed)
+	require.ErrorIs(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(*badger.Txn) error { t.Error("callback called after Close"); return nil }), ErrStorageClosed)
 }
 
 // TestBadgerTransaction_CommitTailSurvivesConcurrentClose pins the shutdown

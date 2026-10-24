@@ -1197,7 +1197,7 @@ func TestSizeTrackingEngine_UpdateNode(t *testing.T) {
 	got, err := store.GetNode(id)
 	require.NoError(t, err)
 	assert.Equal(t, "Alice Updated", got.Properties["name"])
-	assert.Equal(t, 30, got.Properties["age"])
+	assert.Equal(t, int64(30), got.Properties["age"])
 }
 
 func TestSizeTrackingEngine_DeleteNode(t *testing.T) {

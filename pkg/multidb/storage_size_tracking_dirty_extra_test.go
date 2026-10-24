@@ -320,7 +320,13 @@ func TestSizeTrackingEngineConnectedEdgeBytesDeduplicatesSelfLoop(t *testing.T) 
 
 	got, err := wrapper.connectedEdgeBytes(nodeID)
 	require.NoError(t, err)
-	want, err := calculateEdgeSize(edge)
+	// Size accounting describes the stored canonical value, while the caller
+	// retains its original int property after the copying write entry.
+	stored, err := base.GetEdge(edge.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), stored.Properties["weight"])
+	require.Equal(t, 1, edge.Properties["weight"])
+	want, err := calculateEdgeSize(stored)
 	require.NoError(t, err)
 	require.Equal(t, want, got)
 }

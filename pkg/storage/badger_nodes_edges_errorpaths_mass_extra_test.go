@@ -83,7 +83,7 @@ func TestBadgerEngine_DeleteNodeInTxnMissingNodeBranch(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		_, _, _, _, err := engine.deleteNodeInTxn(txn, "test:missing")
 		require.ErrorIs(t, err, ErrNotFound)
 		return nil

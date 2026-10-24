@@ -46,6 +46,9 @@ func decodeMVCCNodeRecord(data []byte) (mvccNodeRecord, error) {
 	if err := util.DecodeMsgpackBytes(data, &record); err != nil {
 		return mvccNodeRecord{}, err
 	}
+	if record.Node != nil {
+		normalizePropertyMapShapes(record.Node.Properties)
+	}
 	return record, nil
 }
 
@@ -75,6 +78,9 @@ func decodeMVCCEdgeRecord(data []byte) (mvccEdgeRecord, error) {
 	var record mvccEdgeRecord
 	if err := util.DecodeMsgpackBytes(data, &record); err != nil {
 		return mvccEdgeRecord{}, err
+	}
+	if record.Edge != nil {
+		normalizePropertyMapShapes(record.Edge.Properties)
 	}
 	return record, nil
 }
@@ -1031,7 +1037,7 @@ func (b *BadgerEngine) AppendNodeVersion(node *Node, version MVCCVersion) error 
 	if node == nil {
 		return ErrInvalidData
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(singleNodeCacheWrites(node.ID), func(txn *badger.Txn) error {
 		if err := b.writeNodeMVCCVersionInTxn(txn, node, version); err != nil {
 			return err
 		}
@@ -1040,7 +1046,7 @@ func (b *BadgerEngine) AppendNodeVersion(node *Node, version MVCCVersion) error 
 }
 
 func (b *BadgerEngine) AppendNodeTombstone(id NodeID, version MVCCVersion) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(singleNodeCacheWrites(id), func(txn *badger.Txn) error {
 		if err := b.writeNodeMVCCTombstoneInTxn(txn, id, version); err != nil {
 			return err
 		}
@@ -1052,7 +1058,7 @@ func (b *BadgerEngine) AppendEdgeVersion(edge *Edge, version MVCCVersion) error 
 	if edge == nil {
 		return ErrInvalidData
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		if err := b.writeEdgeMVCCVersionInTxn(txn, edge, version); err != nil {
 			return err
 		}
@@ -1061,7 +1067,7 @@ func (b *BadgerEngine) AppendEdgeVersion(edge *Edge, version MVCCVersion) error 
 }
 
 func (b *BadgerEngine) AppendEdgeTombstone(id EdgeID, version MVCCVersion) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		if err := b.writeEdgeMVCCTombstoneInTxn(txn, id, version); err != nil {
 			return err
 		}
@@ -1070,13 +1076,13 @@ func (b *BadgerEngine) AppendEdgeTombstone(id EdgeID, version MVCCVersion) error
 }
 
 func (b *BadgerEngine) UpdateNodeCurrentHead(id NodeID, version MVCCVersion, tombstoned bool) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(singleNodeCacheWrites(id), func(txn *badger.Txn) error {
 		return b.writeNodeMVCCHeadInTxn(txn, id, version, tombstoned)
 	})
 }
 
 func (b *BadgerEngine) UpdateEdgeCurrentHead(id EdgeID, version MVCCVersion, tombstoned bool) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, tombstoned)
 	})
 }
@@ -1676,7 +1682,7 @@ func (b *BadgerEngine) rebuildEdgeMVCCHeadsFromVersions(ctx context.Context) err
 }
 
 func (b *BadgerEngine) applyNodeHeadBatch(batch []nodeHeadWrite) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(nodeHeadCacheWrites(batch), func(txn *badger.Txn) error {
 		for _, write := range batch {
 			if err := b.writeNodeMVCCHeadWithFloorInTxn(txn, write.id, write.version, write.tombstoned, write.floorVersion); err != nil {
 				return err
@@ -1687,7 +1693,7 @@ func (b *BadgerEngine) applyNodeHeadBatch(batch []nodeHeadWrite) error {
 }
 
 func (b *BadgerEngine) applyEdgeHeadBatch(batch []edgeHeadWrite) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		for _, write := range batch {
 			if err := b.writeEdgeMVCCHeadWithFloorInTxn(txn, write.id, write.version, write.tombstoned, write.floorVersion); err != nil {
 				return err
@@ -1864,7 +1870,7 @@ func (b *BadgerEngine) collectNodeBootstrapBatch(ctx context.Context, start []by
 }
 
 func (b *BadgerEngine) applyNodeBootstrapBatch(nodes []*Node) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(bootstrapNodeCacheWrites(nodes), func(txn *badger.Txn) error {
 		for _, node := range nodes {
 			if node == nil {
 				continue
@@ -1952,7 +1958,7 @@ func (b *BadgerEngine) collectEdgeBootstrapBatch(ctx context.Context, start []by
 }
 
 func (b *BadgerEngine) applyEdgeBootstrapBatch(edges []*Edge) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		for _, edge := range edges {
 			if edge == nil {
 				continue
@@ -2082,7 +2088,7 @@ func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOpti
 				backoff := 50 * time.Microsecond
 				for {
 					var keyDeleted int64
-					err = b.withUpdate(func(update *badger.Txn) error {
+					err = b.withUpdate(noNodeCacheWrites(), func(update *badger.Txn) error {
 						var pruneErr error
 						keyDeleted, pruneErr = b.pruneMVCCKeyspaceInTxn(ctx, update, previous, effectiveOpts, false)
 						return pruneErr

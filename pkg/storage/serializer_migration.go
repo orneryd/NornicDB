@@ -42,7 +42,7 @@ func MigrateBadgerToMsgpack(dataDir string, opts SerializerMigrationOptions) (Se
 	}
 	defer db.Close()
 
-	return migrateBadgerToMsgpack(db, func() migrationBatch { return db.NewWriteBatch() }, dataDir, opts)
+	return migrateBadgerToMsgpack(db, func() migrationBatch { return db.NewWriteBatch(unknownNodeCacheWrites(nodeCacheUnknownSerializer)) }, dataDir, opts)
 }
 
 // MigrateBadgerToMsgpackWithDB is MigrateBadgerToMsgpack against an

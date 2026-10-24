@@ -277,7 +277,7 @@ func (b *BadgerEngine) restoreIDEntry(node NodeID, edge EdgeID, num uint64) erro
 	} else {
 		previous, hadPrevious = d.lookupNodeNumID(node)
 	}
-	if err := b.db.Update(func(txn *badger.Txn) error {
+	if err := b.db.updateWithScope(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		if hadPrevious && previous != num {
 			if err := txn.Delete(append([]byte{reversePrefix}, encodeNumID(previous)...)); err != nil {
 				return err

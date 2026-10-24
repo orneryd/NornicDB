@@ -23,7 +23,7 @@ func TestBadgerMVCC_CorruptionAndErrorPaths(t *testing.T) {
 	require.NoError(t, engine.UpdateEdgeCurrentHead(edge.ID, v2, false))
 
 	// Decode errors for head records.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		numNode, ok := engine.idDict.lookupNodeNumID(node.ID)
 		require.True(t, ok)
 		numEdge, ok := engine.idDict.lookupEdgeNumID(edge.ID)
@@ -39,7 +39,7 @@ func TestBadgerMVCC_CorruptionAndErrorPaths(t *testing.T) {
 	require.Error(t, err)
 
 	// Restore valid heads and inject malformed version records.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		numNode, ok := engine.idDict.lookupNodeNumID(node.ID)
 		require.True(t, ok)
 		nodeLogical := make([]byte, 9)
@@ -81,7 +81,7 @@ func TestBadgerMVCC_CorruptionAndErrorPaths(t *testing.T) {
 		return nil
 	}))
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		err := engine.writeMVCCHeadForLogicalKeyInTxn(txn, []byte{prefixMVCCNode}, v1, false, v1)
 		require.ErrorIs(t, err, ErrInvalidData)
 		bad := make([]byte, 9)
@@ -93,7 +93,7 @@ func TestBadgerMVCC_CorruptionAndErrorPaths(t *testing.T) {
 	}))
 
 	// Malformed mvcc key scan path.
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set([]byte{prefixMVCCNode, 0x01, 0x02}, []byte{0x00})
 	}))
 	_, _, err = engine.withViewNodeMVCCVersionsFromKey([]byte{prefixMVCCNode}, 10, func(NodeID, MVCCVersion, bool) error { return nil })

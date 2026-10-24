@@ -113,7 +113,12 @@ func encodeValue(value any) ([]byte, error) {
 // header-less gob body. Legacy gob handling exists solely so the
 // in-place migration tool can read old data; the engine's hot path will
 // only ever see msgpack bodies in databases written by current code.
-func decodeValue(data []byte, value any) error {
+func decodeValue(data []byte, value any) (err error) {
+	defer func() {
+		if err == nil {
+			canonicalizeDecodedPropertyContainers(value)
+		}
+	}()
 	headerSerializer, payload, ok, err := splitSerializationHeader(data)
 	if err != nil {
 		return err

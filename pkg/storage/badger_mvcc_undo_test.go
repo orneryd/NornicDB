@@ -50,7 +50,7 @@ func TestUndoHistoryRebuildsNodeVersions(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		big["p"+string(rune('a'+i%26))+string(rune('a'+i/26))] = "some longer property text that stays the same"
 	}
-	v1Props := map[string]any{"a": int64(1), "b": "x", "list": []any{int64(1), int64(2)}}
+	v1Props := map[string]any{"a": int64(1), "b": "x", "list": []int64{1, 2}}
 	for key, value := range big {
 		v1Props[key] = value
 	}
@@ -58,7 +58,7 @@ func TestUndoHistoryRebuildsNodeVersions(t *testing.T) {
 	require.NoError(t, err)
 	v1 := nodeHeadVersion(t, eng, id)
 
-	v2Props := map[string]any{"a": int64(2), "b": "x", "c": true, "list": []any{int64(1), int64(2)}}
+	v2Props := map[string]any{"a": int64(2), "b": "x", "c": true, "list": []int64{1, 2}}
 	for key, value := range big {
 		v2Props[key] = value
 	}
@@ -238,7 +238,7 @@ func TestUndoHistoryChainsAndRetention(t *testing.T) {
 	require.Equal(t, int64(2), got.Properties["v"])
 
 	// The v2 record's next version gone: v2 can't be rebuilt.
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		head, err := eng.loadNodeMVCCHeadInTxn(txn, id)
 		if err != nil {
 			return err
@@ -258,7 +258,7 @@ func TestUndoHistoryChainsAndRetention(t *testing.T) {
 	}))
 
 	// A link that doesn't point to a later version.
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		undo := newMVCCNodeUndo(&Node{ID: id}, &Node{ID: id}, v1)
 		encoded, err := encodeMVCCNodeUndoRecord(undo, false)
 		if err != nil {
@@ -311,7 +311,7 @@ func TestUndoHistoryEdgeChains(t *testing.T) {
 	}))
 
 	// v2's record replaced by a link past the head: not found.
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		head, err := eng.loadEdgeMVCCHeadInTxn(txn, id)
 		if err != nil {
 			return err
@@ -330,7 +330,7 @@ func TestUndoHistoryEdgeChains(t *testing.T) {
 	}))
 
 	// A link that doesn't point forward.
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		encoded, err := encodeMVCCEdgeUndoRecord(newMVCCEdgeUndo(&Edge{ID: id}, &Edge{ID: id}, v1), false)
 		if err != nil {
 			return err
@@ -382,7 +382,7 @@ func TestUndoHistoryErrorPaths(t *testing.T) {
 	}
 	set := func(key, value []byte) {
 		t.Helper()
-		require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error { return txn.Set(key, value) }))
+		require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error { return txn.Set(key, value) }))
 	}
 
 	// The current record at the live head can't be decoded, then is missing.
@@ -392,7 +392,7 @@ func TestUndoHistoryErrorPaths(t *testing.T) {
 	set(edgeKey("test:e"), []byte{0xff})
 	require.Error(t, nodeAt())
 	require.Error(t, edgeAt())
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		if err := txn.Delete(nodeKey("test:a")); err != nil {
 			return err
 		}
@@ -404,7 +404,7 @@ func TestUndoHistoryErrorPaths(t *testing.T) {
 	set(edgeKey("test:e"), edgeBody)
 
 	// The next version's record is a delete marker, then unreadable.
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		if err := eng.writeNodeMVCCTombstoneInTxn(txn, "test:a", v2); err != nil {
 			return err
 		}

@@ -17,7 +17,7 @@ func TestBadgerEngine_WithViewNodeMVCCVersionsFromKey_UnknownNumDecodeAndYield(t
 	unknownKey := mvccNodeVersionKey(8_888_888, version)
 	unknownRec, err := encodeMVCCNodeRecord(&Node{ID: "ghost:n", Labels: []string{"Ghost"}}, false)
 	require.NoError(t, err)
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set(unknownKey, unknownRec)
 	}))
 
@@ -34,7 +34,7 @@ func TestBadgerEngine_WithViewNodeMVCCVersionsFromKey_UnknownNumDecodeAndYield(t
 	// Prepare a known node and force decode failure on one MVCC record.
 	_, err = engine.CreateNode(&Node{ID: "test:n1", Labels: []string{"Doc"}, Properties: map[string]any{"v": 1}})
 	require.NoError(t, err)
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		key, keyErr := engine.mvccNodeVersionKeyString(txn, "test:n1", version)
 		if keyErr != nil {
 			return keyErr
@@ -58,7 +58,7 @@ func TestBadgerEngine_WithViewEdgeMVCCVersionsFromKey_YieldErrorAndLimit(t *test
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:a", EndNode: "test:b", Type: "REL"}))
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 202}
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		edgeNum, numErr := engine.idDict.resolveOrAllocateEdgeNumIDInTxn(txn, "test:e1")
 		if numErr != nil {
 			return numErr

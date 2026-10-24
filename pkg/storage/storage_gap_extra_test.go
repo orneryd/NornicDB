@@ -460,14 +460,14 @@ func TestBadgerSchemaHelpers(t *testing.T) {
 	t.Run("load persisted schema invalid key and invalid json", func(t *testing.T) {
 		engine := newIsolatedBadgerEngine(t)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			require.NoError(t, txn.Set([]byte{prefixSchema, 0}, []byte(`{}`)))
 			return nil
 		}))
 		require.Error(t, engine.loadPersistedSchemas())
 
 		engine2 := newIsolatedBadgerEngine(t)
-		require.NoError(t, engine2.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine2.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			require.NoError(t, txn.Set(schemaKey("broken"), []byte(`{not-json`)))
 			return nil
 		}))
@@ -888,7 +888,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			emb0, err := encodeEmbedding([]float32{1, 2})
 			if err != nil {
 				return err
@@ -924,7 +924,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return txn.Set(embeddingKey(nodeID, 0), []byte("bad-embedding"))
 		}))
 
@@ -964,7 +964,7 @@ func TestDecodeNodeWithEmbeddings(t *testing.T) {
 				require.NoError(t, err)
 
 				if tc.wantChunks > 0 {
-					require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+					require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 						emb, err := encodeEmbedding([]float32{7, 8})
 						if err != nil {
 							return err
@@ -1011,7 +1011,7 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 	t.Run("replaceSeparateEmbeddingChunks with no embeddings removes every chunk", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		nodeID := NodeID(prefixTestID("chunk-delete"))
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			for i := 0; i < 260; i++ {
 				emb, err := encodeEmbedding([]float32{float32(i)})
 				if err != nil {
@@ -1031,7 +1031,7 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 	t.Run("replaceSeparateEmbeddingChunks rewrites chunks and supports empty replacement", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		nodeID := NodeID(prefixTestID("chunk-replace"))
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			oldEmb, err := encodeEmbedding([]float32{1, 2, 3})
 			if err != nil {
 				return err
@@ -1076,7 +1076,7 @@ func TestBadgerConstraintValidationHelpers(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		require.NoError(t, engine.GetSchemaForNamespace("test").AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger))
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			schema := NewSchemaManager()
 			require.NoError(t, schema.AddConstraint(Constraint{
 				Name:       "ignored_multi_unique",
@@ -1103,7 +1103,7 @@ func TestBadgerConstraintValidationHelpers(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			schema := NewSchemaManager()
 			require.NoError(t, schema.AddUniqueConstraint("user_email", "User", "email"))
 			require.NoError(t, schema.AddConstraint(Constraint{

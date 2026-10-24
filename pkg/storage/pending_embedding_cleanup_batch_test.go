@@ -28,7 +28,7 @@ func TestPendingCandidatesStaleMarkerCleanupSpansBatches(t *testing.T) {
 			case "missing":
 				// Durable markers whose node bodies are gone.
 				for start := 0; start < stale; start += 5000 {
-					require.NoError(t, e.withUpdate(func(txn *badger.Txn) error {
+					require.NoError(t, e.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 						for i := start; i < start+5000; i++ {
 							if err := e.setPendingEmbeddingInTxn(txn, staleID(i)); err != nil {
 								return err
@@ -55,7 +55,7 @@ func TestPendingCandidatesStaleMarkerCleanupSpansBatches(t *testing.T) {
 
 			// The fixture must exceed one batch: deleting every stale marker in
 			// one transaction does not fit (and is rolled back).
-			err = e.withUpdate(func(txn *badger.Txn) error {
+			err = e.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 				for i := 0; i < stale; i++ {
 					if err := txn.Delete(pendingEmbedKey(staleID(i))); err != nil {
 						return err

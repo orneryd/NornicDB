@@ -17,7 +17,7 @@ func TestBadgerEngine_PruneMVCCKeyspace_HeadlessLogicalKeyFallback(t *testing.T)
 	v2 := MVCCVersion{CommitTimestamp: time.Now().Add(-1 * time.Hour).UTC(), CommitSequence: 2}
 	numID := uint64(4242)
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		rec1, err := encodeMVCCNodeRecord(&Node{ID: "test:headless", Labels: []string{"L"}}, false)
 		require.NoError(t, err)
 		rec2, err := encodeMVCCNodeRecord(nil, true)
@@ -30,7 +30,7 @@ func TestBadgerEngine_PruneMVCCKeyspace_HeadlessLogicalKeyFallback(t *testing.T)
 	// No head exists, so prune must synthesize one from latest record (v2 tombstone)
 	// and compact away older versions for this logical key.
 	var deleted int64
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		var err error
 		deleted, err = engine.pruneMVCCKeyspaceInTxn(
 			context.Background(),

@@ -9,7 +9,7 @@ import (
 
 func seedRawNodeForEdgeNamespaceTests(t *testing.T, engine *BadgerEngine, id NodeID) {
 	t.Helper()
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		data, _, err := engine.encodeNodeInTxn(txn, "", &Node{ID: id, Labels: []string{"N"}})
 		if err != nil {
 			return err
@@ -20,7 +20,7 @@ func seedRawNodeForEdgeNamespaceTests(t *testing.T, engine *BadgerEngine, id Nod
 
 func seedRawEdgeForNamespaceTests(t *testing.T, engine *BadgerEngine, edge *Edge) {
 	t.Helper()
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		data, err := engine.encodeEdgeInTxn(txn, "", edge)
 		if err != nil {
 			return err

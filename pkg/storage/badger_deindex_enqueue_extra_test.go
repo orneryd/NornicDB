@@ -21,13 +21,13 @@ func TestClearTombstonesForEntityInTxn_Branches(t *testing.T) {
 	engine := createTestBadgerEngine(t)
 
 	t.Run("missing catalog is no-op", func(t *testing.T) {
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return clearTombstonesForEntityInTxn(txn, "test:missing")
 		}))
 	})
 
 	t.Run("corrupt catalog payload is no-op", func(t *testing.T) {
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			if err := txn.Set(indexEntryCatalogKey("test:corrupt"), []byte("not-msgpack")); err != nil {
 				return err
 			}
@@ -51,7 +51,7 @@ func TestClearTombstonesForEntityInTxn_Branches(t *testing.T) {
 		encCat, err := msgpack.Marshal(cat)
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			if err := txn.Set(indexEntryCatalogKey(entityID), encCat); err != nil {
 				return err
 			}
@@ -67,7 +67,7 @@ func TestClearTombstonesForEntityInTxn_Branches(t *testing.T) {
 			return txn.Set(deindexWorkItemKey(workID), []byte{1})
 		}))
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return clearTombstonesForEntityInTxn(txn, entityID)
 		}))
 

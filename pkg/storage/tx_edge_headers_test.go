@@ -27,7 +27,7 @@ func TestTransactionEdgeHeaders(t *testing.T) {
 	// e3's entry predates the values.
 	aNum, _ := eng.idDict.lookupNodeNumID("test:a")
 	e3Num, _ := eng.idDict.lookupEdgeNumID("test:e3")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set(outgoingIndexKey(aNum, e3Num), []byte{})
 	}))
 
@@ -128,7 +128,7 @@ func TestTransactionEdgeHeadersUnresolvableEntries(t *testing.T) {
 	aNum, _ := eng.idDict.lookupNodeNumID("test:a")
 	bNum, _ := eng.idDict.lookupNodeNumID("test:b")
 	oddNum, _ := eng.idDict.lookupEdgeNumID("test:odd")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		// A malformed key, an unknown relationship, an unknown other end.
 		if err := txn.Set(append(outgoingIndexPrefix(aNum), 1, 2, 3), []byte{}); err != nil {
 			return err
@@ -154,7 +154,7 @@ func TestTransactionEdgeHeadersUnresolvableEntries(t *testing.T) {
 
 	require.NoError(t, eng.CreateEdge(&Edge{ID: "test:corrupt", StartNode: "test:a", EndNode: "test:b", Type: "K"}))
 	corruptNum, _ := eng.idDict.lookupEdgeNumID("test:corrupt")
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		if err := txn.Set(edgeKey("test:corrupt"), []byte{0xff}); err != nil {
 			return err
 		}

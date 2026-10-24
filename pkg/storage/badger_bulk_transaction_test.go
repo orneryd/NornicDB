@@ -200,7 +200,7 @@ func TestEngineWriteUnits(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
 	defer engine.Close()
 	failure := errors.New("unit failed")
-	err := engine.withUpdateUnits([]func(txn *badger.Txn) error{
+	err := engine.withUpdateUnits(unknownNodeCacheWrites(nodeCacheUnknownManaged), []func(txn *badger.Txn) error{
 		func(txn *badger.Txn) error { return txn.Set([]byte("unit-a"), []byte("a")) },
 		func(*badger.Txn) error { return failure },
 	})

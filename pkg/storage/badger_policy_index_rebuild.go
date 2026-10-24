@@ -51,7 +51,7 @@ func (b *BadgerEngine) rebuildCaseSensitiveIndexes() error {
 	if err := b.rewriteIndexEntryCatalogs(ctx); err != nil {
 		return fmt.Errorf("rewrite index entry catalogs: %w", err)
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		return txn.Delete(cleanShutdownMarkerKey)
 	})
 }
@@ -59,7 +59,7 @@ func (b *BadgerEngine) rebuildCaseSensitiveIndexes() error {
 func (b *BadgerEngine) migrateLegacyPolicyMetadata(ctx context.Context) error {
 	for _, prefix := range []byte{0x11, 0x12, 0x13, 0x17} {
 		scan := storedRecordScan{prefix: prefix, batchSize: indexEntryCatalogRewriteBatchSize}
-		_, err := b.forEachStoredRecordInChunks(ctx, scan, func(txn *badger.Txn, key, value []byte) (int, bool, error) {
+		_, err := b.forEachStoredRecordInChunks(noNodeCacheWrites(), ctx, scan, func(txn *badger.Txn, key, value []byte) (int, bool, error) {
 			serializedMap := len(value) > 0 && (msgpcode.IsFixedMap(value[0]) || value[0] == msgpcode.Map16 || value[0] == msgpcode.Map32)
 			if (prefix == 0x11 || prefix == 0x12) && bytes.IndexByte(key[1:], 0) >= 0 && !serializedMap {
 				return 0, false, nil
@@ -137,7 +137,7 @@ const indexEntryCatalogRewriteBatchSize = 5000
 // catalog whose entity no longer exists is left as it is.
 func (b *BadgerEngine) rewriteIndexEntryCatalogs(ctx context.Context) error {
 	scan := storedRecordScan{keyPrefix: accessMetaKey(""), batchSize: indexEntryCatalogRewriteBatchSize}
-	_, err := b.forEachStoredRecordInChunks(ctx, scan, func(txn *badger.Txn, key, value []byte) (int, bool, error) {
+	_, err := b.forEachStoredRecordInChunks(noNodeCacheWrites(), ctx, scan, func(txn *badger.Txn, key, value []byte) (int, bool, error) {
 		var entry knowledgepolicy.AccessMetaEntry
 		if err := msgpack.Unmarshal(value, &entry); err != nil {
 			return 0, false, fmt.Errorf("decode index entry catalog %q: %w", key[len(accessMetaKey("")):], err)

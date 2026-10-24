@@ -45,7 +45,7 @@ func TestBadgerTransaction_UpdateAndDelete_ReadCommittedDecodeErrors(t *testing.
 	require.NoError(t, err)
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e1", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}))
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		if err := txn.Set(nodeKey("test:n1"), []byte("corrupt-node")); err != nil {
 			return err
 		}

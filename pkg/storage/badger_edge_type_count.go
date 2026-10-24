@@ -140,7 +140,7 @@ func (b *BadgerEngine) readEdgeCountByTypeInNamespace(namespace, edgeType string
 // edge-type index after dropping the pair's persisted base and deltas. The
 // caller must hold edgeTypeCountWriteMu.
 func (b *BadgerEngine) repairEdgeTypeCountLocked(namespace, edgeType string) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		prefix := countDeltaPrefixFor(countDeltaKindEdgeType, namespace, edgeType)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
@@ -472,7 +472,7 @@ func (b *BadgerEngine) collectAuthoritativeEdgeTypeCounts() (map[string]int64, e
 }
 
 func (b *BadgerEngine) rebuildEdgeTypeCountsSnapshot(snap *edgeTypeCountSnapshot) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		prefixes := [][]byte{edgeTypeCountPrefix(), edgeTypeStartLabelCountPrefix(), edgeTypeEndLabelCountPrefix()}
 		for _, prefix := range prefixes {
 			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
@@ -560,7 +560,7 @@ func (b *BadgerEngine) foldAllEdgeTypeCountDeltas() error {
 	}
 	b.edgeTypeCountWriteMu.Lock()
 	defer b.edgeTypeCountWriteMu.Unlock()
-	return b.foldCountDeltasOn(b.withView, b.withUpdate, countDeltaKindEdgeType, edgeTypeCountKey, "", "")
+	return b.foldCountDeltasOn(b.withView, b.withMetadataUpdate, countDeltaKindEdgeType, edgeTypeCountKey, "", "")
 }
 
 // foldRemainingCountDeltasOnClose folds any deltas a graceful close leaves
@@ -573,7 +573,7 @@ func (b *BadgerEngine) foldRemainingCountDeltasOnClose(db *managedBadgerDB) {
 		return
 	}
 	view := func(fn func(txn *badger.Txn) error) error { return db.View(fn) }
-	run := func(fn func(txn *badger.Txn) error) error { return db.Update(fn) }
+	run := func(fn func(txn *badger.Txn) error) error { return db.updateWithScope(noNodeCacheWrites(), fn) }
 	b.labelCountWriteMu.Lock()
 	if err := b.foldCountDeltasOn(view, run, countDeltaKindLabel, labelCountKey, "", ""); err != nil && b.log != nil {
 		b.log.Warn("failed to fold label-count deltas at close", "error", err)
@@ -588,7 +588,7 @@ func (b *BadgerEngine) foldRemainingCountDeltasOnClose(db *managedBadgerDB) {
 
 // decrementEdgeTypeCounts applies a batch of negative deltas (DeleteByPrefix).
 func (b *BadgerEngine) decrementEdgeTypeCounts(counts map[namespaceEdgeType]int64) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		for key, count := range counts {
 			if err := b.adjustEdgeTypeCountInTxn(txn, key.namespace, key.edgeType, -count); err != nil {
 				return err
@@ -601,7 +601,7 @@ func (b *BadgerEngine) decrementEdgeTypeCounts(counts map[namespaceEdgeType]int6
 // decrementEdgeTypeLabelCounts applies a batch of negative positional deltas
 // (DeleteByPrefix).
 func (b *BadgerEngine) decrementEdgeTypeLabelCounts(sub byte, counts map[namespaceEdgeTypeLabel]int64) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		for key, count := range counts {
 			if err := b.adjustEdgeTypeLabelCountInTxn(txn, sub, key.namespace, key.label, key.edgeType, -count); err != nil {
 				return err
@@ -633,7 +633,7 @@ func (b *BadgerEngine) applyEdgeTypeCountDeltasLocked(deltas map[namespaceEdgeTy
 	if len(deltas) == 0 {
 		return nil
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		for key, delta := range deltas {
 			if err := b.adjustEdgeTypeCountInTxn(txn, key.namespace, key.edgeType, delta); err != nil {
 				return err
@@ -1175,7 +1175,7 @@ func (b *BadgerEngine) applyEdgeTypeLabelCountDeltasLocked(deltas map[edgeTypeLa
 	if len(deltas) == 0 {
 		return nil
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		for key, delta := range deltas {
 			if err := b.adjustEdgeTypeLabelCountInTxn(txn, key.sub, key.namespace, key.label, key.edgeType, delta); err != nil {
 				return err

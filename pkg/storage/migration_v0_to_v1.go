@@ -53,7 +53,7 @@ func (b *BadgerEngine) migrateV0ToV1() error {
 		if len(batch) == 0 {
 			return nil
 		}
-		err := b.db.Update(func(txn *badger.Txn) error {
+		err := b.db.updateWithScope(noNodeCacheWrites(), func(txn *badger.Txn) error {
 			for _, pe := range batch {
 				data, err := msgpack.Marshal(pe.entry)
 				if err != nil {

@@ -18,7 +18,7 @@ func (b *BadgerEngine) dropDerivedPrefixes(prefixes ...byte) error {
 		if err := b.ensureOpen(); err != nil {
 			return err
 		}
-		return b.db.DropPrefix(keys...)
+		return b.db.dropPrefixWithScope(noNodeCacheWrites(), keys...)
 	})
 }
 
@@ -40,7 +40,7 @@ type storedRecordScan struct {
 // batches. visit returns how many writes it made and whether the record
 // counts as processed; the scan returns the processed count and logs it
 // every scan.logEvery records.
-func (b *BadgerEngine) forEachStoredRecordInChunks(ctx context.Context, scan storedRecordScan, visit func(txn *badger.Txn, key, value []byte) (writes int, processed bool, err error)) (int, error) {
+func (b *BadgerEngine) forEachStoredRecordInChunks(scope nodeCacheWriteScope, ctx context.Context, scan storedRecordScan, visit func(txn *badger.Txn, key, value []byte) (writes int, processed bool, err error)) (int, error) {
 	prefix := scan.keyPrefix
 	if len(prefix) == 0 {
 		prefix = []byte{scan.prefix}
@@ -52,7 +52,7 @@ func (b *BadgerEngine) forEachStoredRecordInChunks(ctx context.Context, scan sto
 			return processed, err
 		}
 		done := false
-		err := b.withUpdate(func(txn *badger.Txn) error {
+		err := b.withUpdate(scope, func(txn *badger.Txn) error {
 			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 			defer it.Close()
 			start := cursor
@@ -112,7 +112,7 @@ func (b *BadgerEngine) rebuildEdgeTypeIndex(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("clear edge-type index before rebuild: %w", err)
 	}
 	scan := storedRecordScan{prefix: prefixEdge, batchSize: edgeTypeIndexRebuildBatchSize}
-	return b.forEachStoredRecordInChunks(ctx, scan, func(txn *badger.Txn, key, value []byte) (int, bool, error) {
+	return b.forEachStoredRecordInChunks(noNodeCacheWrites(), ctx, scan, func(txn *badger.Txn, key, value []byte) (int, bool, error) {
 		if len(key) <= 1 {
 			return 0, false, nil
 		}

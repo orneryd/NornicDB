@@ -248,7 +248,7 @@ func (b *BadgerEngine) persistReplayTxnCounters(cw *commitWriter, drain propKeyT
 	if drain.empty() {
 		return nil
 	}
-	var to batchTarget = b.db
+	var to batchTarget = scopedCacheBatches{b.db, noNodeCacheWrites()}
 	if cw.large != nil {
 		to = cw.large
 	}
@@ -296,9 +296,12 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	if len(commits) == 0 {
 		return nil
 	}
-
 	txn := b.db.DB.NewTransactionAt(b.db.oracle.published.Load(), true)
-	cw := b.newCommitWriter(b.db, txn)
+	cw, writerErr := b.newCommitWriter(bufferedNodeCacheWrites(commits), b.db, txn)
+	if writerErr != nil {
+		txn.Discard()
+		return writerErr
+	}
 	// Write through the commit writer's own batch writer, exactly like the
 	// sync commit path: cw.finish() commits cw.batchWriter's open batch, so
 	// a separate batchWriter whose txn never follows the batch rotation
@@ -503,10 +506,9 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	if holdLabel {
 		b.labelCountWriteMu.Unlock()
 	}
-	// publishCommitOperations below advances the node-cache generation per
-	// written node (cacheStoreNode) and invalidates per deleted node, the
-	// same protection the sync tail uses; clearing the whole cache here
-	// would only destroy warm entries and re-decode work for readers.
+	// The complete generation's final images were published by cw.finish.
+	// Ordered operation callbacks below retain their count/index/listener
+	// semantics; they cannot install an intermediate cache payload.
 	schemas := make(map[string]*SchemaManager, 1)
 	for _, c := range commits {
 		schema := schemas[c.namespace]
@@ -626,7 +628,7 @@ func (b *BadgerEngine) applyWriteBehindCountDeltasLocked(label map[namespaceLabe
 	if len(label) == 0 && len(edgeType) == 0 && len(edgeTypeLabel) == 0 {
 		return nil
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		for key, delta := range label {
 			if err := b.adjustLabelCountInTxn(txn, key.namespace, key.label, delta); err != nil {
 				return err

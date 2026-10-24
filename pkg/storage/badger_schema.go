@@ -129,9 +129,11 @@ func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefi
 		return fmt.Errorf("schema: marshal %q: %w", namespace, err)
 	}
 
-	return b.withUpdate(func(txn *badger.Txn) error {
+	// This writes only the schema record. Keep durable callback ordering,
+	// while preserving unrelated node bodies (including token registration).
+	return b.withScopedNodeCacheUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		return txn.Set(schemaKey(namespace), blob)
-	})
+	}, nil)
 }
 
 // dropNamespaceSchema removes a namespace's schema from memory and disk, so a
@@ -151,9 +153,9 @@ func (b *BadgerEngine) dropNamespaceSchema(namespace string) error {
 	}
 	b.schemasMu.Unlock()
 
-	if err := b.withUpdate(func(txn *badger.Txn) error {
+	if err := b.withScopedNodeCacheUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		return txn.Delete(schemaKey(namespace))
-	}); err != nil {
+	}, nil); err != nil {
 		return fmt.Errorf("schema: drop %q: %w", namespace, err)
 	}
 	return nil

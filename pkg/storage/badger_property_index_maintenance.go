@@ -153,7 +153,8 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithLabels(id NodeID,
 	// limitation; avoid it by calling DeleteNode paths that surface the
 	// old node (UpdateNode equivalents already do).
 	b.nodeCacheMu.RLock()
-	cached, hit := b.nodeCache[id]
+	cached := b.nodeCache[id].Node
+	hit := cached != nil
 	b.nodeCacheMu.RUnlock()
 	if !hit || cached == nil {
 		return

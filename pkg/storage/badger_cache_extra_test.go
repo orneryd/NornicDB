@@ -38,11 +38,16 @@ func TestBadgerCache_NodeCreateUpdateDelete_Extra(t *testing.T) {
 	b.cacheOnNodeCreated(n)
 	assert.EqualValues(t, 1, b.nodeCount.Load())
 	_, ok := b.nodeCache[n.ID]
-	assert.True(t, ok)
+	assert.False(t, ok)
+	b.cacheFillNode(b.nodeCacheGen.current(), n, b.nodeCacheCommitTs.Load())
 
 	n2 := &Node{ID: n.ID, Labels: []string{"Person", "Employee"}, Properties: map[string]interface{}{"name": "b"}}
+	// The durable issuer revokes payloads; operation callbacks only maintain
+	// counts/indexes and cannot install or replace a committed cache image.
+	issueNodeCacheCommit(b, b.nodeCacheCommitTs.Load()+1, nil, singleNodeCacheWrites(n.ID))
 	b.cacheOnNodeUpdated(n2)
-	assert.Equal(t, "b", b.nodeCache[n.ID].Properties["name"])
+	assert.NotContains(t, b.nodeCache, n.ID)
+	b.cacheFillNode(b.nodeCacheGen.current(), n2, b.nodeCacheCommitTs.Load())
 
 	old := &Node{ID: n.ID, Labels: []string{"Person", "Legacy"}, Properties: map[string]interface{}{}}
 	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Legacy", n.ID)
@@ -50,19 +55,23 @@ func TestBadgerCache_NodeCreateUpdateDelete_Extra(t *testing.T) {
 	_, ok = b.labelCacheGetFirst("Legacy")
 	assert.False(t, ok)
 
+	issueNodeCacheCommit(b, b.nodeCacheCommitTs.Load()+1, nil, singleNodeCacheWrites(n.ID))
 	b.cacheOnNodeDeleted(n.ID, 0)
 	assert.EqualValues(t, 0, b.nodeCount.Load())
 	_, ok = b.nodeCache[n.ID]
 	assert.False(t, ok)
 
 	b.edgeCount.Store(3)
-	b.edgeTypeCache["KNOWS"] = []*Edge{{ID: EdgeID(prefixTestID("edge-del")), Type: "KNOWS"}}
+	b.edgeTypeCache["KNOWS"] = edgeListCacheEntry{edges: []*Edge{{ID: EdgeID(prefixTestID("edge-del")), Type: "KNOWS"}}, readTs: b.nodeCacheCommitTs.Load()}
 	b.cacheOnNodeCreated(&Node{ID: NodeID(prefixTestID("tenant_cache:n2")), Labels: []string{"Person"}, Properties: map[string]interface{}{}})
 	beforeEdges := b.edgeCount.Load()
+	// Durable scope issuance owns invalidation; this hook only updates counts.
+	issueNodeCacheCommit(b, b.nodeCacheCommitTs.Load()+1, nil, relationshipCacheWrites(b.edgeTypeCache["KNOWS"].edges[0]))
 	b.cacheOnNodeDeleted(NodeID(prefixTestID("tenant_cache:n2")), 2)
 	assert.EqualValues(t, beforeEdges-2, b.edgeCount.Load())
-	_, ok = b.edgeTypeCache["KNOWS"]
-	assert.False(t, ok)
+	edges, err := b.GetEdgesByType("KNOWS")
+	assert.NoError(t, err)
+	assert.Empty(t, edges)
 }
 
 func TestBadgerCache_EdgeCreateUpdateDelete_Extra(t *testing.T) {
@@ -70,19 +79,23 @@ func TestBadgerCache_EdgeCreateUpdateDelete_Extra(t *testing.T) {
 	eid := EdgeID(prefixTestID("edge-1"))
 	e := &Edge{ID: eid, Type: "KNOWS"}
 
-	b.edgeTypeCache["KNOWS"] = []*Edge{{ID: eid, Type: "KNOWS"}}
+	b.edgeTypeCache["KNOWS"] = edgeListCacheEntry{edges: []*Edge{{ID: eid, Type: "KNOWS"}}, readTs: b.nodeCacheCommitTs.Load()}
+	issueNodeCacheCommit(b, b.nodeCacheCommitTs.Load()+1, nil, relationshipCacheWrites(e))
 	b.cacheOnEdgeCreated(e)
 	assert.EqualValues(t, 1, b.edgeCount.Load())
-	_, ok := b.edgeTypeCache["KNOWS"]
-	assert.False(t, ok)
+	edges, err := b.GetEdgesByType("KNOWS")
+	assert.NoError(t, err)
+	assert.Empty(t, edges)
 
-	b.edgeTypeCache["LIKES"] = []*Edge{{ID: eid, Type: "LIKES"}}
-	b.edgeTypeCache["HATES"] = []*Edge{{ID: eid, Type: "HATES"}}
+	b.edgeTypeCache["LIKES"] = edgeListCacheEntry{edges: []*Edge{{ID: eid, Type: "LIKES"}}, readTs: b.nodeCacheCommitTs.Load()}
+	b.edgeTypeCache["HATES"] = edgeListCacheEntry{edges: []*Edge{{ID: eid, Type: "HATES"}}, readTs: b.nodeCacheCommitTs.Load()}
+	issueNodeCacheCommit(b, b.nodeCacheCommitTs.Load()+1, nil, relationshipCacheWrites(&Edge{ID: eid, Type: "LIKES"}, &Edge{ID: eid, Type: "HATES"}))
 	b.cacheOnEdgeUpdated("LIKES", &Edge{ID: eid, Type: "HATES"})
-	_, ok = b.edgeTypeCache["LIKES"]
-	assert.False(t, ok)
-	_, ok = b.edgeTypeCache["HATES"]
-	assert.False(t, ok)
+	for _, kind := range []string{"LIKES", "HATES"} {
+		edges, err = b.GetEdgesByType(kind)
+		assert.NoError(t, err)
+		assert.Empty(t, edges)
+	}
 
 	b.cacheOnEdgeDeleted(eid, "KNOWS")
 	assert.EqualValues(t, 0, b.edgeCount.Load())
@@ -130,7 +143,7 @@ func TestBadgerCache_NoopBranches_Extra(t *testing.T) {
 func TestBadgerCache_AdjacencyInvalidateAll_Extra(t *testing.T) {
 	b := createTestBadgerEngine(t)
 	b.adjCacheMu.Lock()
-	b.outgoingAdjCache[NodeID(prefixTestID("a"))] = []EdgeID{EdgeID(prefixTestID("e"))}
+	b.outgoingAdjCache[NodeID(prefixTestID("a"))] = adjacencyCacheEntry{ids: []EdgeID{EdgeID(prefixTestID("e"))}, readTs: b.nodeCacheCommitTs.Load()}
 	b.adjCacheMu.Unlock()
 	b.adjCacheInvalidateAll()
 	assert.Empty(t, b.outgoingAdjCache)

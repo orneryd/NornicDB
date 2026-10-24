@@ -14,14 +14,14 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 	engine.SetDecayEnabled(true)
 
 	t.Run("evaluate node suppression handles missing and corrupt node payload", func(t *testing.T) {
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			changed, _, err := engine.evaluateNodeSuppressionInTxn(txn, NodeID("test:missing"))
 			require.NoError(t, err)
 			require.False(t, changed)
 			return nil
 		}))
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			const badNodeID = NodeID("test:bad-node")
 			require.NoError(t, txn.Set(nodeKey(badNodeID), []byte("not-a-node")))
 			changed, _, err := engine.evaluateNodeSuppressionInTxn(txn, badNodeID)
@@ -36,7 +36,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		_, err := engine.CreateNode(node)
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			changed, _, err := engine.evaluateNodeSuppressionInTxn(txn, node.ID)
 			require.NoError(t, err)
 			require.False(t, changed)
@@ -56,14 +56,14 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		_, err = engine.CreateNode(&Node{ID: NodeID("test:edge-b")})
 		require.NoError(t, err)
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			changed, _, err := engine.evaluateEdgeSuppressionInTxn(txn, EdgeID("test:missing-edge"))
 			require.NoError(t, err)
 			require.False(t, changed)
 			return nil
 		}))
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			const badEdgeID = EdgeID("test:bad-edge")
 			require.NoError(t, txn.Set(edgeKey(badEdgeID), []byte("not-an-edge")))
 			changed, _, err := engine.evaluateEdgeSuppressionInTxn(txn, badEdgeID)
@@ -81,7 +81,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		}
 		require.NoError(t, engine.CreateEdge(edge))
 
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			changed, _, err := engine.evaluateEdgeSuppressionInTxn(txn, edge.ID)
 			require.NoError(t, err)
 			require.False(t, changed)
@@ -100,12 +100,12 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		require.NoError(t, err)
 
 		engine.SetDecayEnabled(false)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", node)
 		}))
 
 		engine.SetDecayEnabled(true)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			require.NoError(t, engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", nil))
 			return engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", node)
 		}))
@@ -119,7 +119,7 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		node2 := &Node{ID: NodeID("test:rescore-no-change"), Labels: []string{"L"}}
 		_, err = engine.CreateNode(node2)
 		require.NoError(t, err)
-		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+		require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 			return engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", node2)
 		}))
 	})

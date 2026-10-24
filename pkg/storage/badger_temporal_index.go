@@ -587,7 +587,7 @@ func (b *BadgerEngine) clearBadgerPrefix(ctx context.Context, prefix byte) error
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
-	wb := b.db.NewWriteBatch()
+	wb := b.db.NewWriteBatch(noNodeCacheWrites())
 	defer wb.Cancel()
 	prefixBytes := []byte{prefix}
 	err := b.withView(func(txn *badger.Txn) error {
@@ -680,7 +680,7 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 	b.resetTemporalIndexCompleteness()
 	// A failed rebuild must not leave a current-format marker that a later
 	// clean shutdown could certify over partially cleared/refilled indexes.
-	if err := b.withUpdate(func(txn *badger.Txn) error {
+	if err := b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		return txn.Delete(temporalIndexFormatKey)
 	}); err != nil {
 		return err
@@ -696,7 +696,7 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		return b.withUpdate(func(txn *badger.Txn) error {
+		return b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 			return b.rebuildTemporalNodeInTxn(txn, node, asOf)
 		})
 	}); err != nil {
@@ -704,7 +704,7 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 	}
 	// Every node of every temporal constraint is indexed now, in the current
 	// key format; the per-schema runtime marks are superseded.
-	if err := b.withUpdate(func(txn *badger.Txn) error {
+	if err := b.withUpdate(noNodeCacheWrites(), func(txn *badger.Txn) error {
 		return txn.Set(temporalIndexFormatKey, temporalIndexFormatCurrent)
 	}); err != nil {
 		return err

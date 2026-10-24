@@ -23,7 +23,7 @@ func TestBadgerEngine_MVCCPruneOptionsAndWriteHelpers_InvalidIDs(t *testing.T) {
 
 	version := MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 1}
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		require.NoError(t, engine.writeNodeMVCCVersionInTxn(txn, &Node{ID: "bad-id", Labels: []string{"Doc"}}, version))
 		require.NoError(t, engine.writeNodeMVCCTombstoneInTxn(txn, NodeID("bad-id"), version))
 		require.NoError(t, engine.writeEdgeMVCCVersionInTxn(txn, &Edge{ID: "bad-edge", StartNode: "bad-id", EndNode: "bad-id", Type: "REL"}, version))
@@ -105,7 +105,7 @@ func TestBadgerEngine_MVCCLoadHelpers_DecodeAndLookupBranches(t *testing.T) {
 		return nil
 	}))
 
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, engine.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		nodeHeadKey, err := engine.mvccNodeHeadKeyString(txn, nodeID)
 		require.NoError(t, err)
 		require.NoError(t, txn.Set(nodeHeadKey, []byte("not-json")))

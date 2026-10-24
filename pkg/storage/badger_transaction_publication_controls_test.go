@@ -72,7 +72,7 @@ func stageReservedPublication(t *testing.T, peer *BadgerTransaction) {
 
 func publishReservedPublication(t *testing.T, peer *BadgerTransaction) {
 	t.Helper()
-	require.NoError(t, peer.engine.db.commit(peer.badgerTx))
+	require.NoError(t, peer.engine.db.commit(unknownNodeCacheWrites(nodeCacheUnknownManaged), peer.badgerTx))
 	peer.mu.Lock()
 	peer.closeLocked(TxStatusCommitted, false, nil)
 	peer.mu.Unlock()

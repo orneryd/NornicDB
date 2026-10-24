@@ -39,9 +39,9 @@ func TestCommittedCopyDoesNotHideAStoredEmbedding(t *testing.T) {
 	}
 }
 
-// A node written without the embedding it waits for isn't cached as written;
-// a node that has its embedding, or needs none, is.
-func TestWrittenNodeCachedUnlessAwaitingEmbedding(t *testing.T) {
+// A committed payload invalidates cached reads for every embedding state;
+// only a subsequent generation-checked storage read fills the node cache.
+func TestWrittenNodeInvalidatesCacheForEveryEmbeddingState(t *testing.T) {
 	b := newSidecarTestBadger(t)
 	b.SetEmbeddingsEnabled(true)
 	cached := func(id NodeID) bool {
@@ -51,14 +51,17 @@ func TestWrittenNodeCachedUnlessAwaitingEmbedding(t *testing.T) {
 		return ok
 	}
 	awaiting := &Node{ID: "test:awaiting", Labels: []string{"Doc"}, Properties: map[string]any{"title": "text"}}
-	b.cacheStoreWrittenNode(awaiting)
+	b.cacheFillNode(b.nodeCacheGen.current(), awaiting, b.nodeCacheCommitTs.Load())
+	b.publishCommittedNodeFixture(awaiting)
 	require.False(t, cached(awaiting.ID))
 
 	embedded := &Node{ID: "test:embedded", Labels: []string{"Doc"}, Properties: map[string]any{"title": "text"}, ChunkEmbeddings: [][]float32{{1, 0}}}
-	b.cacheStoreWrittenNode(embedded)
-	require.True(t, cached(embedded.ID))
+	b.cacheFillNode(b.nodeCacheGen.current(), embedded, b.nodeCacheCommitTs.Load())
+	b.publishCommittedNodeFixture(embedded)
+	require.False(t, cached(embedded.ID))
 
 	b.SetEmbeddingsEnabled(false)
-	b.cacheStoreWrittenNode(awaiting)
-	require.True(t, cached(awaiting.ID))
+	b.cacheFillNode(b.nodeCacheGen.current(), awaiting, b.nodeCacheCommitTs.Load())
+	b.publishCommittedNodeFixture(awaiting)
+	require.False(t, cached(awaiting.ID))
 }

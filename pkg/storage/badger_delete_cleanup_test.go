@@ -99,7 +99,7 @@ func TestManagedDropPrefixHoldsCommitGate(t *testing.T) {
 	eng, err := NewBadgerEngine(t.TempDir())
 	require.NoError(t, err)
 	defer eng.Close()
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
+	require.NoError(t, eng.withUpdate(unknownNodeCacheWrites(nodeCacheUnknownManaged), func(txn *badger.Txn) error {
 		return txn.Set(deleteCleanupMarkerKey, []byte{1})
 	}))
 

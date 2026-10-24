@@ -72,6 +72,9 @@ func (b *BadgerEngine) materializeMVCCCommit(w *batchWriter, version MVCCVersion
 func (b *BadgerEngine) materializeMVCCCommitWithHeads(w *batchWriter, version MVCCVersion, operations []Operation, staged bool) error {
 	heads := commitMVCCHeads{b: b, staged: staged}
 	states := newCommitStates(operations)
+	if cw, ok := w.to.(*commitWriter); ok {
+		cw.cacheImages.absorb(states.commitCacheImages)
+	}
 	// Bodies of edges created in this commit are already known. Reading their
 	// nonexistent committed body during a cascade opens a Badger history
 	// iterator per edge and repeatedly sorts the growing pending-write set.
@@ -313,16 +316,17 @@ type commitStates struct {
 	committedEdges map[EdgeID]*Edge
 	// finalNodes and finalEdges hold the state the commit leaves, nil for
 	// one it deletes, so an update archived as an undo record names it.
-	finalNodes map[NodeID]*Node
-	finalEdges map[EdgeID]*Edge
+	commitCacheImages
 }
 
 func newCommitStates(operations []Operation) commitStates {
 	states := commitStates{
 		committedNodes: make(map[NodeID]*Node),
 		committedEdges: make(map[EdgeID]*Edge),
-		finalNodes:     make(map[NodeID]*Node),
-		finalEdges:     make(map[EdgeID]*Edge),
+		commitCacheImages: commitCacheImages{
+			finalNodes: make(map[NodeID]*Node),
+			finalEdges: make(map[EdgeID]*Edge),
+		},
 	}
 	committedNode := func(id NodeID, old *Node) {
 		if _, seen := states.committedNodes[id]; !seen {
@@ -354,6 +358,9 @@ func newCommitStates(operations []Operation) commitStates {
 		case op.Type == OpDeleteEdge:
 			committedEdge(op.EdgeID, op.OldEdge)
 			states.finalEdges[op.EdgeID] = nil
+		}
+		for _, id := range op.DeletedEdgeIDs {
+			states.finalEdges[id] = nil
 		}
 	}
 	return states
