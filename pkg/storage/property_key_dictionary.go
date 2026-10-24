@@ -439,6 +439,21 @@ func (d *propertyKeyDictionary) discardTxnCounters(txn *badger.Txn) {
 	d.txnMu.Unlock()
 }
 
+// moveTxnCounters preserves staged tokens when the same logical transaction
+// continues on a newer physical read view after an independently owned commit.
+func (d *propertyKeyDictionary) moveTxnCounters(from, to *badger.Txn) {
+	d.txnMu.Lock()
+	if counters, ok := d.txnCounters[from]; ok {
+		d.txnCounters[to] = counters
+		delete(d.txnCounters, from)
+	}
+	if pending, ok := d.txnPendingForward[from]; ok {
+		d.txnPendingForward[to] = pending
+		delete(d.txnPendingForward, from)
+	}
+	d.txnMu.Unlock()
+}
+
 // loadFromBadger hydrates the in-memory dictionary from persisted
 // forward, reverse, and counter keys. Called once on engine open.
 func (d *propertyKeyDictionary) loadFromBadger(db badgerViewer) error {

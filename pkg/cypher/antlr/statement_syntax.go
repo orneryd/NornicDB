@@ -363,26 +363,22 @@ func (syntax StatementSyntax) Walk(visitors ...SyntaxVisitor) {
 // Walk visits this existing subtree without parsing a fragment or changing its
 // original-source spans. All consumers use the same non-pruning traversal.
 func (root SyntaxNode) Walk(visitors ...SyntaxVisitor) {
-	walkSyntax(root, func(node SyntaxNode) []SyntaxNode {
-		children := node.data.nodes[node.id].children
-		views := make([]SyntaxNode, len(children))
-		for i, child := range children {
-			views[i] = SyntaxNode{node.data, child}
+	var local [4]func()
+	leaves := local[:]
+	if len(visitors) > len(local) {
+		leaves = make([]func(), len(visitors))
+	}
+	for i, visitor := range visitors {
+		leaves[i] = visitor(root)
+	}
+	for _, child := range root.data.nodes[root.id].children {
+		(SyntaxNode{root.data, child}).Walk(visitors...)
+	}
+	for i := len(visitors) - 1; i >= 0; i-- {
+		if leaves[i] != nil {
+			leaves[i]()
 		}
-		return views
-	}, func(node SyntaxNode) func() {
-		leaves := make([]func(), len(visitors))
-		for i, visitor := range visitors {
-			leaves[i] = visitor(node)
-		}
-		return func() {
-			for i := len(leaves) - 1; i >= 0; i-- {
-				if leaves[i] != nil {
-					leaves[i]()
-				}
-			}
-		}
-	})
+	}
 }
 
 // ID returns this node's stable identity in its statement product.

@@ -229,8 +229,11 @@ func (e *StorageExecutor) compilePersistedProcedure(record persistedProcedureRec
 		return ProcedureSpec{}, nil, record, localizedError(localization.CypherProceduresInvalidMode(record.Mode), nil)
 	}
 
-	info := e.analyzer.Analyze(record.Body)
-	if mode == ProcedureModeRead && info.IsWriteQuery {
+	contract, err := readStatementExecutionContract(record.Body)
+	if err != nil {
+		return ProcedureSpec{}, nil, record, err
+	}
+	if mode == ProcedureModeRead && contract.writes {
 		return ProcedureSpec{}, nil, record, localizedError(localization.CypherProceduresReadContainsWrite(), nil)
 	}
 

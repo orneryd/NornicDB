@@ -18,6 +18,9 @@ func WithTransactionMetadata(ctx context.Context, metadata map[string]any) conte
 	if len(metadata) == 0 {
 		return ctx
 	}
+	if owned, _ := metadata[storage.CoordinatorOwnedTransactionMetadataKey].(bool); owned {
+		ctx = storage.WithCoordinatorOwnedTransaction(ctx)
+	}
 	return context.WithValue(ctx, transactionMetadataKey{}, metadata)
 }
 
