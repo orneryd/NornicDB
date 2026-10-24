@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"reflect"
 	"sort"
 	"strconv"
@@ -1759,6 +1760,18 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
 	if !ok || len(queries) < 2 {
+		// A failed product is diagnostic framing only: no branch executes.
+		if syntax, parseErr := cypherantlr.ParseSyntax(context.Background(), cypher, cypherantlr.StatementEntry, false); parseErr != nil && syntax.Valid() {
+			body := queryBodyFromSyntax(statementSyntaxQuery(syntax))
+			if len(body.branches) > 1 {
+				for index, branch := range body.branches {
+					text := cypher[branch.start:branch.end]
+					if _, err := cypherantlr.ParseSyntax(context.Background(), text, cypherantlr.StatementEntry, false); err != nil {
+						return nil, localizedError(localization.CypherResidualUnionBranchFailed(index+1, truncateQuery(text, 50), err), err)
+					}
+				}
+			}
+		}
 		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 	if mixed {

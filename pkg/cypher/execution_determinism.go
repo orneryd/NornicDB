@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 )
 
@@ -134,7 +135,18 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 		if len(declaration.CypherInputs) == 0 {
 			continue
 		}
-		arguments := explicitProcedureArgumentTexts(text[at:])
+		var arguments []string
+		syntax, err := cypherantlr.ParseSyntax(context.Background(), text, cypherantlr.FragmentEntry, false)
+		if err != nil {
+			return policy
+		}
+		syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
+			start, _ := node.Span()
+			if start == at && (node.Rule() == cypherantlr.CypherParserRULE_queryCallSt || node.Rule() == cypherantlr.CypherParserRULE_standaloneCall) {
+				arguments = procedureArgumentTextsFromSyntax(node)
+			}
+			return nil
+		})
 		call := executionCallPolicy{name: name, continuation: declaration.Continuation}
 		var request map[string]any
 		if declaration.RetrievalRequest {

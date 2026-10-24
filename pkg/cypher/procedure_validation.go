@@ -173,6 +173,10 @@ func explicitProcedureArgumentTexts(source string) []string {
 	if !ok {
 		return nil
 	}
+	return procedureArgumentTextsFromSyntax(clause)
+}
+
+func procedureArgumentTextsFromSyntax(clause cypherantlr.SyntaxNode) []string {
 	arguments := clause.ChildRule(cypherantlr.CypherParserRULE_parenExpressionChain)
 	if !arguments.Valid() {
 		return nil
@@ -400,4 +404,9 @@ func procedureCallContainsAggregation(callCypher string) bool {
 		}
 	}
 	return false
+}
+
+// unknownProcedureError is the shared planning/execution terminal for a missing procedure.
+func unknownProcedureError(name string) error {
+	return newSemanticError("Neo.ClientError.Procedure.ProcedureNotFound", "ProcedureNotFound", fmt.Sprintf("There is no procedure with the name `%s` registered for this database instance. Please ensure you've spelled the procedure name correctly and that the procedure is properly deployed.", name))
 }

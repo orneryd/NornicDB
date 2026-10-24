@@ -19,7 +19,7 @@ func (e *StorageExecutor) ResultColumns(query string, incoming resultmetadata.Sc
 		}
 		return nil, unresolvedStatementError()
 	}
-	program.outputs.Visit(func(known []string) { columns = known }, func() { failure = unresolvedStatementError() })
+	program.statement.Columns.Visit(func(known []string) { columns = known }, func() { failure = unresolvedStatementError() })
 	return columns, failure
 }
 
@@ -46,7 +46,7 @@ func (e *StorageExecutor) resultIncomingScope() resultmetadata.Scope {
 // Execution and rewriting consumers use ResultColumns or StatementFacts.
 func (e *StorageExecutor) StatementColumns(query string) []string {
 	columns, err := e.StatementResultColumns(query)
-	if err != nil || len(columns) == 0 {
+	if err != nil {
 		return nil
 	}
 	return columns

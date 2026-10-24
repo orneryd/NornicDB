@@ -507,7 +507,7 @@ func (e *StorageExecutor) callApocExportJsonAll(ctx context.Context, args []inte
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"file", "nodes", "relationships", "properties", "data"},
+		Columns: legacyProcedureColumns("apoc.export.json.all"),
 		Rows: [][]interface{}{{
 			filePath,
 			len(nodes),
@@ -564,7 +564,7 @@ func (e *StorageExecutor) callApocExportJsonQuery(ctx context.Context, args []in
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"file", "rows", "data"},
+		Columns: legacyProcedureColumns("apoc.export.json.query"),
 		Rows: [][]interface{}{{
 			filePath,
 			len(result.Rows),
@@ -636,7 +636,7 @@ func (e *StorageExecutor) callApocExportCsvAll(ctx context.Context, args []inter
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"file", "nodes", "relationships", "rows"},
+		Columns: legacyProcedureColumns("apoc.export.csv.all"),
 		Rows: [][]interface{}{{
 			filePath,
 			len(nodes),
@@ -708,7 +708,7 @@ func (e *StorageExecutor) callApocExportCsvQuery(ctx context.Context, args []int
 	}
 
 	return &ExecuteResult{
-		Columns: []string{"file", "rows", "data"},
+		Columns: legacyProcedureColumns("apoc.export.csv.query"),
 		Rows: [][]interface{}{{
 			filePath,
 			len(result.Rows),

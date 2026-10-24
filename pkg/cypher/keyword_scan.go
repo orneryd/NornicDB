@@ -2098,3 +2098,12 @@ func followedByTimeZone(s string, pos int) bool {
 	}
 	return true
 }
+
+// keywordEndAt preserves the source width of a compound keyword's trivia.
+func keywordEndAt(source string, at int, keyword string) int {
+	start, end := trimKeywordWSBounds(keyword)
+	if next, ok := keywordMatchAt(source, at, keyword, start, end); ok {
+		return next
+	}
+	return at
+}

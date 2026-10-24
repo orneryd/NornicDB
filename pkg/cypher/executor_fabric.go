@@ -165,7 +165,13 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	if stream == nil {
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
-	if len(stream.Columns) == 0 {
+	// Schema commands have a void result established by their command executor.
+	// USE selects the participant; it does not turn DDL into a graph projection.
+	_, command, _, useErr := parseUseClause(cypher, false)
+	if useErr != nil {
+		return nil, useErr
+	}
+	if len(stream.Columns) == 0 && !isSchemaCommandStatement(command) {
 		columns, err := e.ResultColumns(cypher, e.resultIncomingScope(), cypherVersionFromContext(ctx) == "25")
 		if err != nil {
 			return nil, err

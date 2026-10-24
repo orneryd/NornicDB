@@ -108,6 +108,14 @@ func hasKeywordPrefixFoldASCII(text, keyword string) bool {
 }
 
 func operatorMatchesAt(expr, op string, idx int, caseInsensitive bool) bool {
+	if strings.HasPrefix(op, " ") && strings.HasSuffix(op, " ") {
+		word := strings.TrimSpace(op)
+		start := queryGapEnd(expr, idx)
+		if start > idx {
+			_, ok := keywordMatchAt(expr, start, word, 0, len(word))
+			return ok
+		}
+	}
 	for offset := 0; offset < len(op); offset++ {
 		exprByte := expr[idx+offset]
 		opByte := op[offset]
@@ -229,7 +237,11 @@ func splitAtOperator(expr, op string, idx int) (string, string, bool) {
 		return "", "", false
 	}
 	left := strings.TrimSpace(expr[:idx])
-	right := strings.TrimSpace(expr[idx+len(op):])
+	end := idx + len(op)
+	if strings.IndexFunc(strings.TrimSpace(op), func(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }) >= 0 {
+		end = keywordEndAt(expr, queryGapEnd(expr, idx), strings.TrimSpace(op))
+	}
+	right := strings.TrimSpace(expr[end:])
 	return left, right, true
 }
 
@@ -964,4 +976,12 @@ func (e *StorageExecutor) subtract(left, right interface{}) interface{} {
 //	hasStringPredicate("'CONTAINS' = n.name", " CONTAINS ")     // false (in quotes)
 func (e *StorageExecutor) hasStringPredicate(expr, predicate string) bool {
 	return findTopLevelOperator(expr, predicate, true, true) >= 0
+}
+
+func nullPredicateOperand(expression, keyword string) (string, bool) {
+	at := topLevelKeywordIndex(expression, keyword)
+	if at <= 0 || strings.TrimSpace(expression[keywordEndAt(expression, at, keyword):]) != "" {
+		return "", false
+	}
+	return strings.TrimSpace(expression[:at]), true
 }

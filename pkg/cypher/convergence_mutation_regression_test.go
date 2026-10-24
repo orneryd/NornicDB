@@ -85,6 +85,7 @@ func (e *StorageExecutor) sharedTrailingRowsHandledForTest(ctx context.Context, 
 		err = getExpressionFailure(ctx)
 	}
 	if err != nil {
+		recordExpressionFailure(ctx, err)
 		return nil, handled, err
 	}
 	if result != nil {
@@ -321,6 +322,11 @@ func (e *StorageExecutor) sharedPipelineRowsForTest(ctx context.Context, query s
 func (e *StorageExecutor) sharedCreateBindingsForTest(ctx context.Context, query string) (*ExecuteResult, map[string]*storage.Node, map[string]*storage.Edge, error) {
 	clauses, ok, _ := parsePipelineClauses(query)
 	if !ok || len(clauses) == 0 || clauses[0].kind != pipelineClauseCreate {
+		if pattern := strings.TrimSpace(strings.TrimPrefix(query, "CREATE")); patternHasRelationship(pattern) {
+			if err := validateCreateRelationshipShape(pattern); err != nil {
+				return nil, nil, nil, fmt.Errorf("invalid relationship pattern: %w", err)
+			}
+		}
 		return nil, nil, nil, fmt.Errorf("invalid CREATE pipeline")
 	}
 	ctx = withExpressionFailureSlot(ctx)

@@ -3,10 +3,10 @@ package cypher
 import (
 	"context"
 	"slices"
+	"strings"
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
-	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // boundCompilation schedules scope transfers on the canonical CST. Binding and
@@ -38,6 +38,7 @@ type boundBranch struct {
 	scope     map[string]struct{}
 	ids       map[string]statementBindingID
 	outputs   resultmetadata.Names
+	columns   resultmetadata.Columns
 	graph     projectionGraph
 	statement resultmetadata.Statement
 }
@@ -57,7 +58,7 @@ type boundClause struct {
 func (compiler *projectionCompilation) compileBound(incoming, retained resultmetadata.Names) *projectedScopeFacts {
 	syntax, err := cypherantlr.ParseSyntax(context.Background(), compiler.source, cypherantlr.StatementEntry, compiler.cypher25)
 	if err != nil {
-		return programFailure(resultmetadata.ReasonParserDecline, 0, &classifiedCypherError{cause: err, code: "Neo.ClientError.Statement.SyntaxError", detail: "UnexpectedSyntax"})
+		return programFailure(resultmetadata.ReasonParserDecline, 0, syntaxAdmissionError(compiler.source, err))
 	}
 	compiler.syntax = syntax
 	query := statementSyntaxQuery(syntax)
@@ -157,6 +158,7 @@ func (compilation *boundCompilation) prepareBody(shape queryBody, root cypherant
 			branch.ids = cloneBindingIDs(body.incomingIDs)
 			branch.graph = body.graph
 			branch.outputs = resultmetadata.Known(nil)
+			branch.columns = resultmetadata.KnownColumns(nil)
 			branch.statement = resultmetadata.Statement{Start: branchShape.start, End: branchShape.end, Incoming: projectionScope(body.incoming), Retained: projectionScope(body.retained)}
 			if branch.scope == nil || projectedNameMap(body.retained) == nil {
 				compilation.fail(resultmetadata.ReasonDynamicSchema, branchShape.start, nil)
@@ -164,7 +166,7 @@ func (compilation *boundCompilation) prepareBody(shape queryBody, root cypherant
 		})
 		compilation.event(last).leave = append(compilation.event(last).leave, func() {
 			branch.statement.After = projectionScope(projectedMapNames(branch.scope))
-			branch.statement.Columns = projectionColumns(branch.outputs)
+			branch.statement.Columns = branch.columns
 			compilation.current, compilation.clause = previousBranch, previousClause
 		})
 		if branchShape.useSyntax.Valid() {
@@ -175,6 +177,7 @@ func (compilation *boundCompilation) prepareBody(shape queryBody, root cypherant
 				scope := projectionScope(projectedMapNames(branch.scope))
 				branch.statement.Clauses = append(branch.statement.Clauses, resultmetadata.Clause{Kind: resultmetadata.ClauseFinish, Start: branchShape.finishStart, End: branchShape.finishEnd, Before: scope, After: scope})
 				branch.outputs = resultmetadata.Known(nil)
+				branch.columns = resultmetadata.KnownColumns(nil)
 			})
 		}
 		for _, clause := range branchShape.clauses {
@@ -217,6 +220,15 @@ func (compilation *boundCompilation) prepareClause(branch *boundBranch, source q
 		compilation.clause = clause
 		if compilation.failure != nil {
 			return
+		}
+		if source.kind == pipelineClauseReturn && strings.EqualFold(strings.TrimSpace(pipelineClauseBody(source.text, "RETURN")), "distinct") {
+			tail := strings.TrimSpace(compilation.owner.source[source.end:])
+			if startsWithKeywordFold(tail, "UNION") && !startsWithKeywordFold(strings.TrimSpace(tail[len("UNION"):]), "ALL") {
+				// DISTINCT consumes UNION as its operand in Neo4j; it is
+				// a variable reference here, rather than a composition boundary.
+				compilation.fail(resultmetadata.ReasonUndefinedVariable, source.end, createUndefinedVariableError("UNION"))
+				return
+			}
 		}
 		compilation.enterClause(clause)
 		compilation.defineClause(clause)
@@ -408,6 +420,15 @@ func (compilation *boundCompilation) leaveClause(clause *boundClause) {
 	clause.step.After = projectionScope(projectedMapNames(clause.after))
 	clause.branch.statement.Clauses = append(clause.branch.statement.Clauses, clause.step)
 	clause.branch.scope, clause.branch.outputs = clause.after, clause.outputs
+	clause.branch.columns = projectionColumns(clause.outputs)
+	if clause.source.kind == pipelineClauseCall {
+		node := clause.source.syntax
+		proc, found := globalProcedureRegistry.Get(node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName())
+		yield := yieldFromSyntax(node)
+		if found && proc.Spec.ResultSchemas != nil && (yield == nil || yield.yieldAll) {
+			clause.branch.columns = resultmetadata.KnownColumnAlternatives(proc.Spec.ResultSchemas())
+		}
+	}
 	clause.branch.ids = clause.afterIDs
 }
 
@@ -459,7 +480,7 @@ func (compilation *boundCompilation) callImports(clause *boundClause) {
 	}
 	slices.Sort(outer)
 	mode := resultmetadata.ImportNone
-	var imports []string
+	var imports, implicit []string
 	if descriptor.scoped {
 		mode = resultmetadata.ImportListed
 		imports = append([]string{}, descriptor.names...)
@@ -482,9 +503,14 @@ func (compilation *boundCompilation) callImports(clause *boundClause) {
 				}
 			}
 		}
-		if len(imports) == 0 {
-			imports = implicitSyntaxImports(clause.source.syntax.ChildRule(cypherantlr.CypherParserRULE_subqueryBody), before)
+		for _, branch := range clause.body.branches {
+			var nodes []cypherantlr.SyntaxNode
+			for _, clause := range branch.shape.clauses {
+				nodes = append(nodes, clause.syntax)
+			}
+			implicit = append(implicit, implicitSyntaxImports(before, nodes...)...)
 		}
+		imports = append(imports, implicit...)
 	}
 	initial := map[string]struct{}{}
 	for _, name := range imports {
@@ -494,7 +520,7 @@ func (compilation *boundCompilation) callImports(clause *boundClause) {
 		}
 		initial[name] = struct{}{}
 	}
-	retained := resultmetadata.Known(nil)
+	retained := resultmetadata.Known(implicit)
 	if descriptor.scoped {
 		retained = projectedMapNames(initial)
 	}
@@ -513,32 +539,34 @@ func (compilation *boundCompilation) callImports(clause *boundClause) {
 // Implicit imports are an existing extension. The canonical expression slots
 // supply candidate dependencies; grammar-owned declarations never import a row
 // value under a name that this body declares for itself.
-func implicitSyntaxImports(body cypherantlr.SyntaxNode, outer map[string]struct{}) []string {
+func implicitSyntaxImports(outer map[string]struct{}, bodies ...cypherantlr.SyntaxNode) []string {
 	referenced, declared := map[string]bool{}, map[string]bool{}
-	body.Walk(func(node cypherantlr.SyntaxNode) func() {
-		if variableSyntaxRead(node) {
-			selected := false
-			for parent, ok := node.Parent(); ok && parent.ID() != body.ID(); parent, ok = parent.Parent() {
-				if parent.Rule() == cypherantlr.CypherParserRULE_useClause {
-					selected = true
-					break
+	for _, body := range bodies {
+		body.Walk(func(node cypherantlr.SyntaxNode) func() {
+			if variableSyntaxRead(node) {
+				selected := false
+				for parent, ok := node.Parent(); ok && parent.ID() != body.ID(); parent, ok = parent.Parent() {
+					if parent.Rule() == cypherantlr.CypherParserRULE_useClause {
+						selected = true
+						break
+					}
+				}
+				if !selected {
+					name, _ := node.Name()
+					if !syntaxLocalAt(node, body, name, outer) {
+						referenced[name] = true
+					}
 				}
 			}
-			if !selected {
-				name, _ := node.Name()
-				if !syntaxLocalAt(node, body, name, outer) {
-					referenced[name] = true
+			switch node.Rule() {
+			case cypherantlr.CypherParserRULE_nodePattern, cypherantlr.CypherParserRULE_relationDetail, cypherantlr.CypherParserRULE_patternPart, cypherantlr.CypherParserRULE_projectionItem, cypherantlr.CypherParserRULE_unwindSt, cypherantlr.CypherParserRULE_forSt, cypherantlr.CypherParserRULE_letItem, cypherantlr.CypherParserRULE_yieldItem:
+				if symbol := node.ChildRule(cypherantlr.CypherParserRULE_symbol); symbol.Valid() {
+					declared[syntaxSymbolName(symbol)] = true
 				}
 			}
-		}
-		switch node.Rule() {
-		case cypherantlr.CypherParserRULE_nodePattern, cypherantlr.CypherParserRULE_relationDetail, cypherantlr.CypherParserRULE_patternPart, cypherantlr.CypherParserRULE_projectionItem, cypherantlr.CypherParserRULE_unwindSt, cypherantlr.CypherParserRULE_forSt, cypherantlr.CypherParserRULE_letItem, cypherantlr.CypherParserRULE_yieldItem:
-			if symbol := node.ChildRule(cypherantlr.CypherParserRULE_symbol); symbol.Valid() {
-				declared[syntaxSymbolName(symbol)] = true
-			}
-		}
-		return nil
-	})
+			return nil
+		})
+	}
 	var imports []string
 	for name := range outer {
 		if referenced[name] && !declared[name] {
@@ -558,7 +586,7 @@ func (compilation *boundCompilation) procedure(clause *boundClause) {
 	outputs := projectedProcedureNodeNames(node)
 	if !found {
 		if !clause.branch.graph.selected {
-			compilation.fail(resultmetadata.ReasonUnknownProcedure, clause.source.start, localizedStatusError("Neo.ClientError.Procedure.ProcedureNotFound", "ProcedureNotFound", localization.CypherCommandRoutingUnknownProcedure(name)))
+			compilation.fail(resultmetadata.ReasonUnknownProcedure, clause.source.start, unknownProcedureError(name))
 			return
 		}
 		clause.step.ParticipantResolved = true

@@ -115,3 +115,30 @@ func TestColumnsVerifyKnownAndUnknown(t *testing.T) {
 		}
 	}
 }
+
+func TestClosedProcedureColumnAlternatives(t *testing.T) {
+	headers := [][]string{{"node", "score"}, {"page"}}
+	columns := KnownColumnAlternatives(headers)
+	headers[0][0] = "changed"
+	for _, valid := range [][]string{{"node", "score"}, {"page"}} {
+		if err := columns.Verify(valid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, invalid := range [][]string{nil, {"node"}, {"score", "node"}, {"node", "score", "page"}, {"changed", "score"}} {
+		if err := columns.Verify(invalid); err == nil {
+			t.Fatalf("undeclared header admitted: %v", invalid)
+		}
+	}
+	columns.Visit(func([]string) { t.Fatal("conditional columns reported one fixed header") }, func() {})
+	scope := KnownScope(nil)
+	facts, err := KnownFacts(Statement{Incoming: scope, Retained: scope, After: scope, Columns: columns})
+	if err != nil {
+		t.Fatal(err)
+	}
+	facts.Visit(func(statement Statement) {
+		if err := statement.Columns.Verify([]string{"page"}); err != nil {
+			t.Fatal(err)
+		}
+	}, func() { t.Fatal("declined declared variants") }, func(Unresolved) { t.Fatal("lost declared variants") })
+}

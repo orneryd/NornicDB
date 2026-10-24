@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"sort"
 	"strings"
 
@@ -195,6 +196,20 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				if scoped {
 					carried = make(pipelineRow, len(imports))
 					for _, name := range imports {
+						carried[name] = branchInput[name]
+					}
+				}
+				if !scoped && hasLegacyImports {
+					names := map[string]struct{}{}
+					var nodes []cypherantlr.SyntaxNode
+					for name := range branchInput {
+						names[name] = struct{}{}
+					}
+					for _, clause := range branchClauses {
+						nodes = append(nodes, clause.syntax)
+					}
+					carried = pipelineRow{}
+					for _, name := range implicitSyntaxImports(names, nodes...) {
 						carried[name] = branchInput[name]
 					}
 				}

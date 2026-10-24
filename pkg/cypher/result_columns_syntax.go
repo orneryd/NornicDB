@@ -164,6 +164,9 @@ func yieldFromSyntax(clause cypherantlr.SyntaxNode) *yieldClause {
 	for i := 0; i < clause.ChildCount(); i++ {
 		part := clause.Child(i)
 		switch part.Rule() {
+		case cypherantlr.CypherParserRULE_where:
+			yield.where = part.ChildRule(cypherantlr.CypherParserRULE_expression).Code()
+			yield.misplacedWhere = yield.orderBy != "" || yield.skip != "" || yield.limit != ""
 		case cypherantlr.CypherParserRULE_orderSt:
 			var terms []string
 			for j := 0; j < part.ChildCount(); j++ {

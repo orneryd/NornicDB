@@ -15,7 +15,7 @@ func validateReturnOrderBySemanticScopeIn(clause string, retained typeScope) err
 		return nil
 	}
 	projectionBody := strings.TrimSpace(body[:orderIndex])
-	orderBody := strings.TrimSpace(body[orderIndex+len("ORDER BY"):])
+	orderBody := strings.TrimSpace(body[keywordEndAt(body, orderIndex, "ORDER BY"):])
 	for _, keyword := range []string{"SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(orderBody, keyword); index >= 0 {
 			orderBody = strings.TrimSpace(orderBody[:index])

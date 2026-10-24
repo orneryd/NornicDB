@@ -174,7 +174,7 @@ singleQuery
     ;
 
 standaloneCall
-    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT | yieldItems) orderSt? skipSt? limitSt?)?
+    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? where?)?
     ;
 
 // Subqueries
@@ -323,7 +323,7 @@ foreachSt
     ;
 
 queryCallSt
-    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT | yieldItems) orderSt? skipSt? limitSt?)?
+    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? where?)?
     ;
 
 parenExpressionChain
@@ -552,7 +552,8 @@ nodePattern
     ;
 
 atom
-    : literal
+    : listComprehension
+    | literal
     | parameter
     | mapProjection
     | caseExpression
@@ -561,7 +562,6 @@ atom
     | countAll
     | countSubquery
     | collectSubquery
-    | listComprehension
     | patternComprehension
     | filterWith
     | relationshipsChainPattern

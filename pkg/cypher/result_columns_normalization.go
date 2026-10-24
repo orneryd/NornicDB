@@ -31,23 +31,7 @@ func canonicalizeStatementText(source string) (string, *queryRewrite) {
 		// syntax owner still receives this text and determines its outcome.
 		return canonical, rewrite
 	}
-	type sourceSpan struct{ start, end int }
-	var protected []sourceSpan
-	syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
-		if node.Rule() != cypherantlr.CypherParserRULE_projectionItem || node.ChildRule(cypherantlr.CypherParserRULE_symbol).Valid() {
-			return nil
-		}
-		expression := node.ChildRule(cypherantlr.CypherParserRULE_expression)
-		if !expression.Valid() {
-			return nil
-		}
-		if _, variable := projectionVariableFromSyntax(expression); variable {
-			return nil
-		}
-		start, end := expression.Span()
-		protected = append(protected, sourceSpan{start, end})
-		return nil
-	})
+	protected := statementExpressionNameSpans(syntax)
 	var output strings.Builder
 	var kept []queryTextEdit
 	last, removed := 0, false
@@ -82,4 +66,28 @@ func canonicalizeStatementText(source string) (string, *queryRewrite) {
 	rewrite = &queryRewrite{original: source, canonical: canonical, edits: kept, verbatimColumns: rewrite.verbatimColumns}
 	statementPresentationRewrites.put(source, rewrite)
 	return canonical, rewrite
+}
+
+// statementExpressionNameSpans identifies source whose trivia is an output name.
+// Cache keys and presentation normalization preserve the same grammar-owned spans.
+type statementPresentationSpan struct{ start, end int }
+
+func statementExpressionNameSpans(syntax cypherantlr.StatementSyntax) []statementPresentationSpan {
+	var protected []statementPresentationSpan
+	syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
+		if node.Rule() != cypherantlr.CypherParserRULE_projectionItem || node.ChildRule(cypherantlr.CypherParserRULE_symbol).Valid() {
+			return nil
+		}
+		expression := node.ChildRule(cypherantlr.CypherParserRULE_expression)
+		if !expression.Valid() {
+			return nil
+		}
+		if _, variable := projectionVariableFromSyntax(expression); variable {
+			return nil
+		}
+		start, end := expression.Span()
+		protected = append(protected, statementPresentationSpan{start, end})
+		return nil
+	})
+	return protected
 }

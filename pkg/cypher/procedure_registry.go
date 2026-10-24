@@ -68,8 +68,11 @@ type ProcedureSpec struct {
 	DeprecatedBy       string
 	Params             []ProcedureParam
 	Returns            []ProcedureColumn
-	MinArgs            int
-	MaxArgs            int
+	// ResultSchemas declares a closed set of headers for a value-dependent procedure.
+	// Returns still describes every legal YIELD field; no runtime observation extends it.
+	ResultSchemas func() [][]string `json:"-"`
+	MinArgs       int
+	MaxArgs       int
 	// ResultCache declares execution dependencies; an undeclared handler is
 	// opaque to the determinism owner and cannot supply cached results.
 	ResultCache ProcedureResultCache

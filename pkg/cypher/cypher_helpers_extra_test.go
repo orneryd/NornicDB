@@ -3293,7 +3293,7 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 	// (#740), so there is no RETURN clause; the statement is a SyntaxError
 	// for the n after the alias, as in Neo4j.
 	_, handled, err = exec.sharedTrailingRowsHandledForTest(ctx, "WITH n AS RETURN n", mr, &ExecuteResult{Stats: &QueryStats{}})
-	require.NoError(t, err)
+	require.Error(t, err)
 	_, err = exec.Execute(ctx, "MATCH (n) SET n.x = 1 WITH n AS RETURN n", nil)
 	require.Error(t, err)
 

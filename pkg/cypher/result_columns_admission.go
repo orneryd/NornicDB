@@ -4,6 +4,7 @@ import (
 	"context"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
+	"strings"
 )
 
 type boundScopeAdmission struct {
@@ -29,12 +30,16 @@ func (admission boundScopeAdmission) verifyColumns(actual []string) error {
 func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string) (boundScopeAdmission, error) {
 	// Extensions have a real command continuation with its own syntax and
 	// result contract. The graph grammar must not reject them before routing.
-	if isNornicExtensionStatement(source) {
+	if isNornicExtensionStatement(source) || isSchemaCommandStatement(source) || isSystemCommandNoGraph(source) {
 		return boundScopeAdmission{command: true}, nil
 	}
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
-		return boundScopeAdmission{}, &classifiedCypherError{cause: err, code: "Neo.ClientError.Statement.SyntaxError", detail: "UnexpectedSyntax"}
+		// Non-graph commands retain their command owner's terminal diagnostic.
+		if startsWithKeywordFold(strings.TrimSpace(source), "SHOW") || startsWithKeywordFold(strings.TrimSpace(source), "DROP") {
+			return boundScopeAdmission{command: true}, nil
+		}
+		return boundScopeAdmission{}, syntaxAdmissionError(source, err)
 	}
 	query := statementSyntaxQuery(syntax)
 	if !query.Valid() {

@@ -633,8 +633,8 @@ func (e *StorageExecutor) addLimitSkipToSubquery(subquery string, limit, skip in
 			afterOp := subquery[matchEnd:]
 
 			// Extract variable name from MATCH pattern (e.g., "MATCH (s:Source)" -> "s")
-			varNames := e.extractVariableNamesFromPattern(matchPart[5:]) // Skip "MATCH"
-			varName := "n"                                               // Default fallback
+			varNames := e.extractVariableNamesFromPattern(matchPatternStructure(matchPart[5:])) // Skip "MATCH"
+			varName := "n"                                                                      // Default fallback
 			if len(varNames) > 0 {
 				varName = varNames[0]
 			}
@@ -1770,7 +1770,10 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 		}
 		rows = append(rows, row)
 	}
-	clauses := []pipelineClause{{kind: pipelineClauseReturn, text: afterCall}}
+	clauses, valid, _ := parsePipelineClauses(afterCall)
+	if !valid {
+		return nil, unresolvedStatementError()
+	}
 	result, handled, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, clauses, nil)
 	if err != nil {
 		return nil, err
@@ -1859,7 +1862,7 @@ func parseOrderByTerms(modifiers string) []orderByTerm {
 	if orderByIndex < 0 {
 		return nil
 	}
-	return parseOrderByClause(modifiers[orderByIndex+len("ORDER BY"):])
+	return parseOrderByClause(modifiers[keywordEndAt(modifiers, orderByIndex, "ORDER BY"):])
 }
 
 // parseOrderByClause parses the sort items that follow ORDER BY. The list ends

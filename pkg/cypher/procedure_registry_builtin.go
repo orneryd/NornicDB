@@ -191,7 +191,7 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbmsListConnectionsWithContext(ctx)
 			})
-		registerBuiltInProcedure("dbms.procedures", "dbms.procedures() :: (name :: STRING, signature :: STRING, description :: STRING, mode :: STRING)", localization.CypherProcedureMetadata("dbms.procedures"), ProcedureModeDBMS, 0, 0, true,
+		registerBuiltInProcedure("dbms.procedures", "dbms.procedures() :: (name :: STRING, description :: STRING, mode :: STRING, signature :: STRING)", localization.CypherProcedureMetadata("dbms.procedures"), ProcedureModeDBMS, 0, 0, true,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callDbmsProcedures()
 			})
@@ -291,11 +291,11 @@ func ensureBuiltInProceduresRegistered() {
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyInfo()
 			})
-		registerBuiltInProcedure("kp.profiles", "kp.profiles() :: (kind :: STRING, Name :: STRING, HalfLifeSeconds :: INTEGER, VisibilityThreshold :: FLOAT, ScoreFloor :: FLOAT, Function :: STRING, Scope :: STRING, DecayEnabled :: BOOLEAN, ScoreFrom :: STRING, ScoreFromProperty :: STRING, Enabled :: BOOLEAN, TargetLabels :: LIST<STRING>, TargetEdgeType :: STRING, IsWildcard :: BOOLEAN, IsEdge :: BOOLEAN, ProfileRef :: STRING, NoDecay :: BOOLEAN, Order :: INTEGER)", localization.CypherProcedureMetadata("kp.profiles"), ProcedureModeRead, 0, 0, false,
+		registerBuiltInProcedure("kp.profiles", "kp.profiles() :: (kind :: STRING, Name :: STRING, HalfLifeSeconds :: INTEGER, VisibilityThreshold :: FLOAT, ScoreFloor :: FLOAT, Function :: STRING, Scope :: STRING, DecayEnabled :: BOOLEAN, ScoreFrom :: STRING, ScoreFromProperty :: STRING, Enabled :: BOOLEAN, TargetLabels :: LIST<STRING>, TargetEdgeType :: STRING, IsWildcard :: BOOLEAN, IsEdge :: BOOLEAN, ProfileRef :: STRING, NoDecay :: BOOLEAN, Order :: INTEGER, Apply :: STRING)", localization.CypherProcedureMetadata("kp.profiles"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyProfiles()
 			})
-		registerBuiltInProcedure("kp.policies", "kp.policies() :: (kind :: STRING, Name :: STRING, Scope :: STRING, Multiplier :: FLOAT, ScoreFloor :: FLOAT, ScoreCap :: FLOAT, Enabled :: BOOLEAN, TargetLabels :: LIST<STRING>, TargetEdgeType :: STRING, IsWildcard :: BOOLEAN, IsEdge :: BOOLEAN)", localization.CypherProcedureMetadata("kp.policies"), ProcedureModeRead, 0, 0, false,
+		registerBuiltInProcedure("kp.policies", "kp.policies() :: (kind :: STRING, Name :: STRING, Scope :: STRING, Multiplier :: FLOAT, ScoreFloor :: FLOAT, ScoreCap :: FLOAT, Enabled :: BOOLEAN, TargetLabels :: LIST<STRING>, TargetEdgeType :: STRING, IsWildcard :: BOOLEAN, IsEdge :: BOOLEAN, Apply :: STRING)", localization.CypherProcedureMetadata("kp.policies"), ProcedureModeRead, 0, 0, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
 				return e.callNornicDbKnowledgePolicyPolicies()
 			})
@@ -931,6 +931,16 @@ func registerAdminBuiltInProcedureLiteral(name, signature, description string, m
 }
 
 func registerProcedure(spec ProcedureSpec, handler ProcedureHandler) {
+	if legacyProcedureColumns(spec.Name) != nil {
+		name := spec.Name
+		spec.ResultSchemas = func() [][]string { return [][]string{legacyProcedureColumns(name)} }
+	}
+	switch spec.Name {
+	case "db.retrieve", "db.rretrieve":
+		spec.ResultSchemas = func() [][]string { return retrievalResultSchemas(false) }
+	case "db.retrieveGraph", "db.rretrieveGraph":
+		spec.ResultSchemas = func() [][]string { return retrievalResultSchemas(true) }
+	}
 	if dependencies, declared := builtinProcedureResultCache[spec.Name]; declared {
 		spec.ResultCache = dependencies
 	}

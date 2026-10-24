@@ -23,10 +23,27 @@ func UnknownScope() Scope { return Scope{} }
 func (s Scope) Visit(known func([]string), unknown func()) { s.names.Visit(known, unknown) }
 
 // Columns is an ordered result schema, distinct from a variable scope.
-type Columns struct{ names Names }
+type Columns struct {
+	names        Names
+	alternatives [][]string
+}
 
 // KnownColumns copies a header in projection order, including a known empty header.
 func KnownColumns(names []string) Columns { return Columns{names: Known(names)} }
+
+// KnownColumnAlternatives declares a closed set of ordered procedure headers.
+// A value-dependent procedure can produce one declared shape, never an observed
+// header that was absent from this contract. Single-header consumers remain unresolved.
+func KnownColumnAlternatives(headers [][]string) Columns {
+	if len(headers) == 1 {
+		return KnownColumns(headers[0])
+	}
+	alternatives := make([][]string, len(headers))
+	for i, header := range headers {
+		alternatives[i] = append([]string{}, header...)
+	}
+	return Columns{alternatives: alternatives}
+}
 
 // UnknownColumns has no authoritative result schema.
 func UnknownColumns() Columns { return Columns{} }
@@ -37,6 +54,14 @@ func (c Columns) Visit(known func([]string), unknown func()) { c.names.Visit(kno
 // Verify checks actual stream fields against the established ordered schema.
 // Unknown columns are terminal; observed fields never complete missing facts.
 func (c Columns) Verify(actual []string) error {
+	if len(c.alternatives) > 0 {
+		for _, header := range c.alternatives {
+			if slices.Equal(header, actual) {
+				return nil
+			}
+		}
+		return localization.NewLocalizedError("Neo.DatabaseError.Statement.ExecutionFailed", localization.CypherResultMetadataMismatch(), nil)
+	}
 	if !c.names.known {
 		return unresolvedError()
 	}
@@ -216,7 +241,7 @@ func unresolvedError() error {
 }
 
 func completeStatement(statement *Statement, visiting map[*Statement]bool) bool {
-	if visiting[statement] || !statement.Incoming.names.known || !statement.Retained.names.known || !statement.After.names.known || !statement.Columns.names.known || len(statement.UnionAll) != max(0, len(statement.Branches)-1) {
+	if visiting[statement] || !statement.Incoming.names.known || !statement.Retained.names.known || !statement.After.names.known || !(statement.Columns.names.known || len(statement.Columns.alternatives) > 0) || len(statement.UnionAll) != max(0, len(statement.Branches)-1) {
 		return false
 	}
 	visiting[statement] = true
@@ -226,7 +251,7 @@ func completeStatement(statement *Statement, visiting map[*Statement]bool) bool 
 			return false
 		}
 		if call := clause.Call; call != nil {
-			if !call.Retained.names.known || !call.Body.names.known || !call.After.names.known || (call.Kind != CallUnit && call.Kind != CallReturning) || call.Statement == nil || !completeStatement(call.Statement, visiting) {
+			if !call.Retained.names.known || !(call.Body.names.known || len(call.Body.alternatives) > 0) || !call.After.names.known || (call.Kind != CallUnit && call.Kind != CallReturning) || call.Statement == nil || !completeStatement(call.Statement, visiting) {
 				return false
 			}
 		}

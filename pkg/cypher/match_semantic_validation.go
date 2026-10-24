@@ -603,7 +603,7 @@ func validateWithOrderBySemanticScope(input matchSemanticScope, clause string, r
 	if orderIndex < 0 {
 		return nil
 	}
-	orderBody := strings.TrimSpace(body[orderIndex+len("ORDER BY"):])
+	orderBody := strings.TrimSpace(body[keywordEndAt(body, orderIndex, "ORDER BY"):])
 	projectionBody := strings.TrimSpace(body[:orderIndex])
 	hasProjectionAggregate := false
 	for _, item := range splitTopLevelComma(projectionBody) {
@@ -693,7 +693,7 @@ func validateReturnSemanticScopeIn(scope matchSemanticScope, clause string, oute
 	}
 	if orderIndex := topLevelKeywordIndex(clauseText, "ORDER BY"); orderIndex >= len("RETURN") {
 		projection := strings.TrimSpace(clauseText[len("RETURN"):orderIndex])
-		if err := validateOrderByReferences(scope, projectMatchSemanticScope(scope, "WITH "+projection), strings.TrimSpace(clauseText[orderIndex+len("ORDER BY"):])); err != nil {
+		if err := validateOrderByReferences(scope, projectMatchSemanticScope(scope, "WITH "+projection), strings.TrimSpace(clauseText[keywordEndAt(clauseText, orderIndex, "ORDER BY"):])); err != nil {
 			return err
 		}
 	}

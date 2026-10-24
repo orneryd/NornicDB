@@ -182,7 +182,7 @@ func extractPathAssignmentVariable(pattern string) string {
 		if isPatternVariableName(candidate) && (strings.HasPrefix(right, "(") ||
 			matchFuncStartAndSuffix(right, "shortestpath") ||
 			matchFuncStartAndSuffix(right, "allshortestpaths")) {
-			return candidate
+			return normalizeProjectionColumnName(candidate)
 		}
 	}
 	return ""

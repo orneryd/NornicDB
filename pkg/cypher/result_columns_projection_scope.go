@@ -21,6 +21,14 @@ func (clause *boundClause) combinedBindings() (map[string]struct{}, map[string]s
 // second expression parser or a scope walk over rewritten text.
 func (clause *boundClause) projectionTailBindings(read cypherantlr.SyntaxNode) (map[string]struct{}, map[string]statementBindingID, bool) {
 	restricted := clause.plan != nil && (clause.plan.distinct || clause.plan.hasAggregate)
+	if restricted {
+		if name, symbol := read.Name(); symbol {
+			if _, retained := projectedNameMap(clause.branch.body.retained)[name]; retained {
+				names, ids := clause.combinedBindings()
+				return names, ids, false
+			}
+		}
+	}
 	if !restricted {
 		names, ids := clause.combinedBindings()
 		return names, ids, false

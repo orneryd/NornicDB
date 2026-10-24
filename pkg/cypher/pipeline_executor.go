@@ -938,10 +938,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source == nil {
 				source = pipelineRowsSource(rows)
 			}
+			// Fused input operators can change clause indexes; each retained
+			// syntax node still names its own canonical projection.
 			original := clause
-			if idx < len(originalClauses) {
-				original = originalClauses[idx]
-			}
 			plan, planErr := executionReturnProjection(ctx, original)
 			if planErr != nil {
 				return nil, true, planErr

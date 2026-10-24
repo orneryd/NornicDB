@@ -193,6 +193,22 @@ func parseStatementSyntax(ctx context.Context, source string, entry SyntaxEntry,
 	case ExpressionEntry:
 		tree = parser.Expression()
 	case FragmentEntry:
+		// The lexer identifies statement entries before prediction. Choosing
+		// Script directly avoids the overlapping script/body/expression
+		// alternatives for a complete query, while retaining the same grammar.
+		switch stream.LA(1) {
+		case CypherLexerMATCH, CypherLexerOPTIONAL, CypherLexerRETURN, CypherLexerWITH,
+			CypherLexerUNWIND, CypherLexerCALL, CypherLexerCREATE, CypherLexerMERGE,
+			CypherLexerDELETE, CypherLexerDETACH, CypherLexerSET, CypherLexerREMOVE,
+			CypherLexerFOREACH, CypherLexerLET, CypherLexerFILTER, CypherLexerFOR,
+			CypherLexerUSE, CypherLexerSHOW, CypherLexerEXPLAIN, CypherLexerPROFILE,
+			CypherLexerCYPHER, CypherLexerFINISH:
+			tree = parser.Script()
+			break
+		}
+		if tree != nil {
+			break
+		}
 		fragment := parser.SyntaxFragment()
 		tree = fragment
 		switch {

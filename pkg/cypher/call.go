@@ -142,6 +142,16 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	if strings.TrimSpace(tail) == "" {
 		return seed, nil
 	}
+	if _, all, _, union := parseTopLevelUnionBranches(tail); union {
+		first := true
+		return e.executeUnionBranches(tail, all, func(branch string) (*ExecuteResult, error) {
+			if first {
+				first = false
+				return e.executeCallTail(ctx, seed, branch)
+			}
+			return e.executeInternal(ctx, branch, nil)
+		})
+	}
 	if projected, ok, err := e.projectCallTailReturnAll(seed, tail); ok || err != nil {
 		return projected, err
 	}
@@ -301,34 +311,38 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 
 func splitChainedProcedureCall(source string) callSplit { return splitCallAndTail(source) }
 func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
-	trimmed := strings.TrimSpace(tail)
-	if !hasPrefixFoldASCII(trimmed, "RETURN ") {
-		return nil, false, nil
-	}
-	body := strings.TrimSpace(trimmed[len("RETURN "):])
-	modifierStart := len(body)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := findKeywordIndexInContext(body, keyword); index >= 0 && index < modifierStart {
-			modifierStart = index
-		}
-	}
-	if strings.TrimSpace(body[:modifierStart]) != "*" {
-		return nil, false, nil
-	}
 
-	result := &ExecuteResult{
-		Columns: append([]string(nil), seed.Columns...),
-		Rows:    make([][]interface{}, len(seed.Rows)),
-		Stats:   seed.Stats,
+	node, valid := canonicalQueryClause(tail)
+	if !valid || node.Rule() != cypherantlr.CypherParserRULE_returnSt {
+		return nil, false, nil
 	}
+	_, end := node.Span()
+	if strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(tail[end:]), ";")) != "" {
+		return nil, false, nil
+	}
+	plan := projectionPlanFromSyntax(node)
+	if !plan.valid || !plan.star || plan.distinct || len(plan.starProjections) != 0 {
+		return nil, false, nil
+	}
+	columns := append([]string{}, seed.Columns...)
+	sort.Strings(columns)
+	expanded := plan.withStarExpanded(columns)
+	positions := make(map[string]int, len(seed.Columns))
+	for index, name := range seed.Columns {
+		positions[name] = index
+	}
+	result := &ExecuteResult{Columns: expanded.columns, Rows: make([][]interface{}, len(seed.Rows)), Stats: seed.Stats}
 	for index, row := range seed.Rows {
-		result.Rows[index] = append([]interface{}(nil), row...)
+		projected := make([]interface{}, len(columns))
+		for target, name := range columns {
+			projected[target] = row[positions[name]]
+		}
+		result.Rows[index] = projected
 	}
-	modifiers := strings.TrimSpace(body[modifierStart:])
-	if modifiers == "" {
+	if plan.modifiers == "" {
 		return result, true, nil
 	}
-	result, err := e.applyResultModifiers(context.Background(), result, modifiers)
+	result, err := e.applyResultModifiers(context.Background(), result, plan.modifiers)
 	return result, true, err
 }
 
@@ -1293,11 +1307,7 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 
 	// Terminal chokepoint of the converged procedure router: every built-in
 	// procedure is registered, so an unrecognized name is rejected here.
-	return nil, newSemanticError(
-		"Neo.ClientError.Procedure.ProcedureNotFound",
-		"ProcedureNotFound",
-		fmt.Sprintf("There is no procedure with the name `%s` registered for this database instance. Please ensure you've spelled the procedure name correctly and that the procedure is properly deployed.", procName),
-	)
+	return nil, unknownProcedureError(procName)
 }
 
 func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {

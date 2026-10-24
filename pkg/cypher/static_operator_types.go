@@ -455,7 +455,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	scan := maskCaseBlocks(expression)
 	for _, keyword := range []string{"OR", "XOR", "AND"} {
 		if index := infixKeywordIndex(scan, keyword); index > 0 {
-			for _, side := range [2]string{expression[:index], expression[index+len(keyword):]} {
+			for _, side := range [2]string{expression[:index], expression[keywordEndAt(expression, index, keyword):]} {
 				operand, err := checker.check(side)
 				if err != nil {
 					return staticOperand{}, err
@@ -495,7 +495,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 			if _, err := checker.check(expression[:index]); err != nil {
 				return staticOperand{}, err
 			}
-			right, err := checker.check(expression[index+len(keyword):])
+			right, err := checker.check(expression[keywordEndAt(expression, index, keyword):])
 			if err != nil {
 				return staticOperand{}, err
 			}

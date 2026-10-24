@@ -30,7 +30,13 @@ func (e *StorageExecutor) bindPipelineProgram(ctx context.Context, clauses []pip
 	for name := range pipelineImports(ctx) {
 		retained = append(retained, name)
 	}
-	program := e.projectedStatementScope(source, resultmetadata.Known(pipelineScopeColumns(incoming)), resultmetadata.Known(retained), cypherVersionFromContext(ctx) == "25")
+	names := make([]string, 0, len(incoming))
+	for name := range incoming {
+		if len(name) == 0 || name[0] != '$' {
+			names = append(names, name)
+		}
+	}
+	program := e.projectedStatementScope(source, resultmetadata.Known(names), resultmetadata.Known(retained), cypherVersionFromContext(ctx) == "25")
 	if !program.complete {
 		if program.err != nil {
 			return ctx, program.err

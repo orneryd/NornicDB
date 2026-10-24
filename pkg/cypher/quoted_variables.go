@@ -275,7 +275,7 @@ func scanQuotedTokens(source string) []quotedToken {
 			token.variable = true
 		case cypherantlr.CypherParserRULE_mapProjectionItem:
 			token.variable, token.selector = true, true
-		case cypherantlr.CypherParserRULE_nodePattern, cypherantlr.CypherParserRULE_relationDetail, cypherantlr.CypherParserRULE_patternPart, cypherantlr.CypherParserRULE_projectionItem, cypherantlr.CypherParserRULE_unwindSt, cypherantlr.CypherParserRULE_forSt, cypherantlr.CypherParserRULE_filterExpression, cypherantlr.CypherParserRULE_reduceExpression, cypherantlr.CypherParserRULE_allReduceExpression, cypherantlr.CypherParserRULE_foreachSt, cypherantlr.CypherParserRULE_letItem:
+		case cypherantlr.CypherParserRULE_nodePattern, cypherantlr.CypherParserRULE_relationDetail, cypherantlr.CypherParserRULE_patternPart, cypherantlr.CypherParserRULE_lhs, cypherantlr.CypherParserRULE_projectionItem, cypherantlr.CypherParserRULE_unwindSt, cypherantlr.CypherParserRULE_forSt, cypherantlr.CypherParserRULE_filterExpression, cypherantlr.CypherParserRULE_reduceExpression, cypherantlr.CypherParserRULE_allReduceExpression, cypherantlr.CypherParserRULE_foreachSt, cypherantlr.CypherParserRULE_letItem:
 			token.variable, token.binding = true, true
 		case cypherantlr.CypherParserRULE_yieldItem:
 			first := parent.ChildRule(cypherantlr.CypherParserRULE_symbol)

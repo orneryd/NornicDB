@@ -115,6 +115,32 @@ func variableSyntaxRead(node cypherantlr.SyntaxNode) bool {
 	if node.Rule() != cypherantlr.CypherParserRULE_symbol {
 		return false
 	}
+	// normalize's second argument is a grammar keyword, not a variable read.
+	if name, named := node.Name(); named {
+		if name != "" {
+			for ancestor, ok := node.Parent(); ok; ancestor, ok = ancestor.Parent() {
+				if ancestor.Rule() == cypherantlr.CypherParserRULE_functionInvocation {
+					if invocation := ancestor.ChildRule(cypherantlr.CypherParserRULE_invocationName); invocation.Valid() && strings.EqualFold(invocation.QualifiedName(), "normalize") {
+						chain := ancestor.ChildRule(cypherantlr.CypherParserRULE_expressionChain)
+						argument := 0
+						for index := 0; index < chain.ChildCount(); index++ {
+							child := chain.Child(index)
+							if child.Rule() != cypherantlr.CypherParserRULE_expression {
+								continue
+							}
+							start, end := child.Span()
+							at, until := node.Span()
+							if argument == 1 && start == at && end == until {
+								return false
+							}
+							argument++
+						}
+					}
+					break
+				}
+			}
+		}
+	}
 	parent, ok := node.Parent()
 	if !ok {
 		return false
