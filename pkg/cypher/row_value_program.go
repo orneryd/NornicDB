@@ -286,8 +286,8 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 		}
 		return bound(expr, &rowLiteralNode{text: expr}, rowValueInfo{pure: true, trivial: true})
 	}
-	if _, _, subquery := rowSubqueryAtom(expr); subquery {
-		return rowTextValue(expr)
+	if kind, open, subquery := rowSubqueryAtom(expr); subquery {
+		return bound(expr, &rowSubqueryNode{text: expr, kind: kind, body: strings.TrimSpace(expr[open+1 : len(expr)-1])}, impureRowValue())
 	}
 	if _, _, comprehension := rowPatternComprehensionAtom(expr); comprehension {
 		return rowTextValue(expr)
@@ -482,9 +482,6 @@ func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValu
 		parts := make([]rowValueNode, len(operands))
 		infos := make([]rowValueInfo, len(operands))
 		for i, operand := range operands {
-			if _, whole := wholeExistsPredicate(strings.TrimSpace(operand)); whole {
-				return rowTextValue(expr)
-			}
 			parts[i], infos[i] = c.part(operand)
 
 		}
@@ -651,6 +648,32 @@ func (n *rowCaseNode) eval(e *StorageExecutor, values map[string]interface{}, fr
 		}
 		return value, ok, err
 	})
+}
+
+// rowSubqueryNode is an EXISTS / COUNT / COLLECT { … } subquery read once:
+// its keyword and body. It runs the body for the row in the statement
+// context the row carries, as evaluateRowSubqueryAtom does, without reading
+// the text again. A row without a statement context, or a body the
+// subquery evaluator doesn't resolve, takes the text route.
+type rowSubqueryNode struct {
+	text string
+	kind string
+	body string
+}
+
+func (n *rowSubqueryNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
+	ctx := rowStatementContext(values)
+	if ctx == nil {
+		return e.evaluateRowValueText(n.text, values)
+	}
+	value, resolved, err := e.rowSubqueryValue(ctx, n.kind, n.body, values)
+	if err != nil {
+		return nil, false, err
+	}
+	if !resolved {
+		return e.evaluateRowValueText(n.text, values)
+	}
+	return value, true, nil
 }
 
 // rowTextNode evaluates its text with evaluateRowValueText.
