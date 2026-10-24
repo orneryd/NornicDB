@@ -158,7 +158,7 @@ func (e *StorageExecutor) validateSharedClause(scope matchSemanticScope, values 
 	return e.validateStaticOperatorTypes(clause, input, nil, nil)
 }
 
-func (e *StorageExecutor) pipelineSharedClauseSource(ctx context.Context, input pipelineRowSource, clause pipelineClause) (pipelineRowSource, error) {
+func (e *StorageExecutor) pipelineSharedClauseSource(admission admittedRelationshipStatement, ctx context.Context, input pipelineRowSource, clause pipelineClause) (pipelineRowSource, error) {
 	if clause.kind == pipelineClauseFilter {
 		expression := pipelineFilterExpression(clause.text)
 		if expression == "" {
@@ -172,7 +172,7 @@ func (e *StorageExecutor) pipelineSharedClauseSource(ctx context.Context, input 
 					valid = false
 					return false
 				}
-				accepted := e.evaluateWithWhereCondition(ctx, expression, row)
+				accepted := e.evaluateWithWhereCondition(admission, ctx, expression, row)
 				if getExpressionFailure(ctx) != nil {
 					valid = false
 					return false
@@ -187,5 +187,5 @@ func (e *StorageExecutor) pipelineSharedClauseSource(ctx context.Context, input 
 		return nil, err
 	}
 	plan := pipelineRowWith{star: true, projections: projections}
-	return e.pipelineWithRowSource(ctx, input, plan), nil
+	return e.pipelineWithRowSource(admission, ctx, input, plan), nil
 }

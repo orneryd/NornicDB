@@ -110,14 +110,15 @@ func TestResultStreamDeclineBeforeAndAfterStreaming(t *testing.T) {
 		}
 	}
 	scope := map[string]struct{}{"x": {}}
-	ctx, bindErr := exec.bindPipelineProgram(context.Background(), clauses, scope)
+	ctx, admission := pipelineTestContext(context.Background(), clauses)
+	ctx, bindErr := exec.bindPipelineProgram(ctx, clauses, scope)
 	require.NoError(t, bindErr)
-	columns, _, handled, err := exec.pipelineStreamReturn(ctx, NewResultStream(1, nil), nil, declineAfter(0), clauses, clauses, 0, scope, false)
+	columns, _, handled, err := exec.pipelineStreamReturn(admission, ctx, NewResultStream(1, nil), nil, declineAfter(0), clauses, clauses, 0, scope, false)
 	require.NoError(t, err)
 	require.False(t, handled)
 	require.Nil(t, columns)
 
-	_, _, handled, err = exec.pipelineStreamReturn(ctx, NewResultStream(1, nil), nil, declineAfter(2), clauses, clauses, 0, scope, false)
+	_, _, handled, err = exec.pipelineStreamReturn(admission, ctx, NewResultStream(1, nil), nil, declineAfter(2), clauses, clauses, 0, scope, false)
 	require.True(t, handled)
 	require.ErrorContains(t, err, "after it had sent rows")
 }
@@ -179,7 +180,9 @@ func TestStreamedNodeMatchSourceFailures(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	template := exec.pipelineNodeMatchTemplateFor("MATCH (n:Item)")
-	source := exec.pipelineStreamedNodeMatchSource(withExpressionFailureSlot(ctx), pipelineRowsSource([]pipelineRow{{}}), template, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, streamScan: true})
+	fixtureAdmission1791Context, fixtureAdmission1791 := statementTestContext(withExpressionFailureSlot(ctx), "RETURN "+("MATCH (n:Item)"))
+	_ = fixtureAdmission1791Context
+	source := exec.pipelineStreamedNodeMatchSource(fixtureAdmission1791, fixtureAdmission1791Context, pipelineRowsSource([]pipelineRow{{}}), template, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, streamScan: true})
 	yielded := 0
 	require.False(t, source(func(pipelineRow) bool { yielded++; return true }))
 	require.Zero(t, yielded)

@@ -15,7 +15,7 @@ type pathSearchBack struct {
 // products before it. The slot a step leaves is checked by its own
 // predicates only, so a walk of such steps from a product the search from
 // the start reached is a walk of the pattern.
-func (s *pathSearch) backSteps(node *storage.Node, slot int) []pathSearchBack {
+func (s *pathSearch) backSteps(admission admittedRelationshipStatement, node *storage.Node, slot int) []pathSearchBack {
 	var steps []pathSearchBack
 	for _, index := range s.a.into[slot] {
 		if s.ctx.Err() != nil {
@@ -23,7 +23,7 @@ func (s *pathSearch) backSteps(node *storage.Node, slot int) []pathSearchBack {
 		}
 		move := s.a.moves[index]
 		transition := &s.a.slots[move.from].transitions[move.transition]
-		if !s.chainHolds(s.a.chains[transition.to][move.chain], node) {
+		if !s.chainHolds(admission, s.a.chains[transition.to][move.chain], node) {
 			continue
 		}
 		direction := reverseDirection(transition.direction)
@@ -31,11 +31,11 @@ func (s *pathSearch) backSteps(node *storage.Node, slot int) []pathSearchBack {
 			if s.ctx.Err() != nil {
 				return nil
 			}
-			if !s.transitionHolds(transition, edge) {
+			if !s.transitionHolds(admission, transition, edge) {
 				continue
 			}
 			before, ok := s.e.loadTraversalEndpointNode(s.traversal, otherEnd(edge, node.ID))
-			if !ok || !s.slotHolds(move.from, before) {
+			if !ok || !s.slotHolds(admission, move.from, before) {
 				continue
 			}
 			steps = append(steps, pathSearchBack{edge: edge, move: index, key: pathSearchKey{node: before.ID, slot: int32(move.from)}, node: before})
@@ -62,7 +62,7 @@ type pathSearchWalks struct {
 }
 
 // expandForward adds the next level of the walk search from the start.
-func (s *pathSearch) expandForward(w *pathSearchWalks) {
+func (s *pathSearch) expandForward(admission admittedRelationshipStatement, w *pathSearchWalks) {
 	if s.ctx.Err() != nil {
 		return
 	}
@@ -71,7 +71,7 @@ func (s *pathSearch) expandForward(w *pathSearchWalks) {
 		if s.ctx.Err() != nil {
 			return
 		}
-		s.expand(p)
+		s.expand(admission, p)
 		for stepIndex, step := range s.products[p].steps {
 			if s.ctx.Err() != nil {
 				return
@@ -93,7 +93,7 @@ func (s *pathSearch) expandForward(w *pathSearchWalks) {
 }
 
 // expandBackward adds the next level of the walk search from the end.
-func (s *pathSearch) expandBackward(w *pathSearchWalks) {
+func (s *pathSearch) expandBackward(admission admittedRelationshipStatement, w *pathSearchWalks) {
 	if s.ctx.Err() != nil {
 		return
 	}
@@ -102,7 +102,7 @@ func (s *pathSearch) expandBackward(w *pathSearchWalks) {
 		if s.ctx.Err() != nil {
 			return
 		}
-		for _, step := range s.backSteps(w.nodes[key], int(key.slot)) {
+		for _, step := range s.backSteps(admission, w.nodes[key], int(key.slot)) {
 			if s.ctx.Err() != nil {
 				return
 			}
@@ -145,23 +145,23 @@ func (s *pathSearch) meet(w *pathSearchWalks, p int32) {
 // shortest walks that are paths are the answer. Otherwise the search from
 // source runs toward target, skipping the products that can't reach it in
 // the length left.
-func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direct bool, bind func(pathSearchPath) (pipelineRow, bool)) []pipelineRow {
+func (s *pathSearch) pair(admission admittedRelationshipStatement, source, target *storage.Node, count int, groups, direct bool, bind func(pathSearchPath) (pipelineRow, bool)) []pipelineRow {
 	if s.ctx.Err() != nil {
 		return nil
 	}
 	s.target = target
 	if direct && count == 1 {
-		if rows, ok := s.uniformPair(source, target, groups, bind); ok {
+		if rows, ok := s.uniformPair(admission, source, target, groups, bind); ok {
 			return rows
 		}
 	}
 	if len(s.a.counters) > 0 {
-		return s.run(source, count, groups, bind)
+		return s.run(admission, source, count, groups, bind)
 	}
 	if s.ctx.Err() != nil {
 		return nil
 	}
-	s.begin(source)
+	s.begin(admission, source)
 	if s.ctx.Err() != nil {
 		return nil
 	}
@@ -171,7 +171,7 @@ func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direc
 		w.forward[entry.product] = 0
 		w.frontier = append(w.frontier, entry.product)
 	}
-	if end := (pathSearchKey{node: target.ID, slot: int32(s.a.final)}); s.slotHolds(s.a.final, target) {
+	if end := (pathSearchKey{node: target.ID, slot: int32(s.a.final)}); s.slotHolds(admission, s.a.final, target) {
 		w.backward[end] = 0
 		w.nodes[end] = target
 		w.back = append(w.back, end)
@@ -182,9 +182,9 @@ func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direc
 	for w.shortest < 0 && len(w.frontier) > 0 && len(w.back) > 0 && s.ctx.Err() == nil &&
 		(s.maxLength < 0 || w.forwardRadius+w.backwardRadius < s.maxLength) {
 		if len(w.frontier) <= len(w.back) {
-			s.expandForward(w)
+			s.expandForward(admission, w)
 		} else {
-			s.expandBackward(w)
+			s.expandBackward(admission, w)
 		}
 	}
 	if w.shortest < 0 || s.maxLength >= 0 && w.shortest > s.maxLength {
@@ -196,10 +196,10 @@ func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direc
 		}
 	}
 	for len(w.back) > 0 && s.ctx.Err() == nil && (s.maxLength < 0 || w.backwardRadius < s.maxLength) {
-		s.expandBackward(w)
+		s.expandBackward(admission, w)
 	}
 	s.distance = w.backward
-	return s.run(source, count, groups, bind)
+	return s.run(admission, source, count, groups, bind)
 }
 
 // shortestWalkPaths returns the rows of the shortest walks of a pair that

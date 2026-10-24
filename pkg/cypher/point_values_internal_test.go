@@ -125,9 +125,19 @@ func TestPointOfAnEntityAndMixedSpatialArguments(t *testing.T) {
 	ctx := context.Background()
 	nodes := map[string]*storage.Node{"n": {ID: "n1", Properties: map[string]interface{}{"x": 1.0, "y": 2.0}}}
 	rels := map[string]*storage.Edge{"r": {ID: "r1", Properties: map[string]interface{}{"latitude": 1.0, "longitude": 2.0}}}
-	require.Equal(t, CypherPoint{SRID: 7203, X: 1, Y: 2}, e.evaluateExpressionWithContext(ctx, "point(n)", nodes, rels))
-	require.Equal(t, CypherPoint{SRID: 4326, X: 2, Y: 1}, e.evaluateExpressionWithContext(ctx, "point(r)", nodes, rels))
-	require.Nil(t, e.evaluateExpressionWithContext(ctx, "point(1)", nodes, rels))
-	require.Nil(t, e.evaluateExpressionWithContext(ctx, "distance(point({x: 0, y: 0}), point({latitude: 0, longitude: 1}))", nodes, rels))
-	require.Nil(t, e.evaluateExpressionWithContext(ctx, "withinBBox(point({x: 1, y: 1}), point({x: 0, y: 0}), point({latitude: 2, longitude: 2}))", nodes, rels))
+	fixtureAdmission820Context, fixtureAdmission820 := expressionTestContext(ctx, "point(n)")
+	_ = fixtureAdmission820
+	require.Equal(t, CypherPoint{SRID: 7203, X: 1, Y: 2}, e.evaluateExpressionWithContext(fixtureAdmission820, fixtureAdmission820Context, "point(n)", nodes, rels))
+	fixtureAdmission821Context, fixtureAdmission821 := expressionTestContext(ctx, "point(r)")
+	_ = fixtureAdmission821
+	require.Equal(t, CypherPoint{SRID: 4326, X: 2, Y: 1}, e.evaluateExpressionWithContext(fixtureAdmission821, fixtureAdmission821Context, "point(r)", nodes, rels))
+	fixtureAdmission822Context, fixtureAdmission822 := expressionTestContext(ctx, "point(1)")
+	_ = fixtureAdmission822
+	require.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission822, fixtureAdmission822Context, "point(1)", nodes, rels))
+	fixtureAdmission823Context, fixtureAdmission823 := expressionTestContext(ctx, "distance(point({x: 0, y: 0}), point({latitude: 0, longitude: 1}))")
+	_ = fixtureAdmission823
+	require.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission823, fixtureAdmission823Context, "distance(point({x: 0, y: 0}), point({latitude: 0, longitude: 1}))", nodes, rels))
+	fixtureAdmission824Context, fixtureAdmission824 := expressionTestContext(ctx, "withinBBox(point({x: 1, y: 1}), point({x: 0, y: 0}), point({latitude: 2, longitude: 2}))")
+	_ = fixtureAdmission824
+	require.Nil(t, e.evaluateExpressionWithContext(fixtureAdmission824, fixtureAdmission824Context, "withinBBox(point({x: 1, y: 1}), point({x: 0, y: 0}), point({latitude: 2, longitude: 2}))", nodes, rels))
 }

@@ -190,14 +190,18 @@ func TestVectorPropertyProcedureBranches(t *testing.T) {
 	}
 
 	// Success paths.
-	result, err := exec.callDbCreateSetNodeVectorProperty(ctx, "CALL db.create.setNodeVectorProperty('n1','embedding',[1.0,2.0])")
+	fixtureAdmission1069Context, fixtureAdmission1069 := statementTestContext(ctx, "CALL db.create.setNodeVectorProperty('n1','embedding',[1.0,2.0])")
+	_ = fixtureAdmission1069Context
+	result, err := exec.callDbCreateSetNodeVectorProperty(fixtureAdmission1069, fixtureAdmission1069Context, "CALL db.create.setNodeVectorProperty('n1','embedding',[1.0,2.0])")
 	if err != nil {
 		t.Fatalf("setNodeVectorProperty success path failed: %v", err)
 	}
 	if len(result.Columns) != 0 || len(result.Rows) != 0 {
 		t.Errorf("Expected void node setter result, got %#v", result)
 	}
-	result, err = exec.callDbCreateSetRelationshipVectorProperty(ctx, "CALL db.create.setRelationshipVectorProperty('e1','embedding',[1.0,2.0])")
+	fixtureAdmission1070Context, fixtureAdmission1070 := statementTestContext(ctx, "CALL db.create.setRelationshipVectorProperty('e1','embedding',[1.0,2.0])")
+	_ = fixtureAdmission1070Context
+	result, err = exec.callDbCreateSetRelationshipVectorProperty(fixtureAdmission1070, fixtureAdmission1070Context, "CALL db.create.setRelationshipVectorProperty('e1','embedding',[1.0,2.0])")
 	if err != nil {
 		t.Fatalf("setRelationshipVectorProperty success path failed: %v", err)
 	}
@@ -206,36 +210,52 @@ func TestVectorPropertyProcedureBranches(t *testing.T) {
 	}
 
 	// Argument/syntax errors.
-	_, err = exec.callDbCreateSetNodeVectorProperty(ctx, "CALL db.create.setNodeVectorProperty")
+	fixtureAdmission1071Context, fixtureAdmission1071 := statementTestContext(ctx, "CALL db.create.setNodeVectorProperty")
+	_ = fixtureAdmission1071Context
+	_, err = exec.callDbCreateSetNodeVectorProperty(fixtureAdmission1071, fixtureAdmission1071Context, "CALL db.create.setNodeVectorProperty")
 	if err == nil {
 		t.Fatal("expected invalid syntax error for setNodeVectorProperty")
 	}
-	_, err = exec.callDbCreateSetNodeVectorProperty(ctx, "CALL db.create.setNodeVectorProperty('n1')")
+	fixtureAdmission1072Context, fixtureAdmission1072 := statementTestContext(ctx, "CALL db.create.setNodeVectorProperty('n1')")
+	_ = fixtureAdmission1072Context
+	_, err = exec.callDbCreateSetNodeVectorProperty(fixtureAdmission1072, fixtureAdmission1072Context, "CALL db.create.setNodeVectorProperty('n1')")
 	if err == nil {
 		t.Fatal("expected requires 3 arguments error for setNodeVectorProperty")
 	}
-	_, err = exec.callDbCreateSetNodeVectorProperty(ctx, "CALL db.create.setNodeVectorProperty('n1','embedding')")
+	fixtureAdmission1073Context, fixtureAdmission1073 := statementTestContext(ctx, "CALL db.create.setNodeVectorProperty('n1','embedding')")
+	_ = fixtureAdmission1073Context
+	_, err = exec.callDbCreateSetNodeVectorProperty(fixtureAdmission1073, fixtureAdmission1073Context, "CALL db.create.setNodeVectorProperty('n1','embedding')")
 	if err == nil {
 		t.Fatal("expected missing vector argument error for setNodeVectorProperty")
 	}
-	_, err = exec.callDbCreateSetNodeVectorProperty(ctx, "CALL db.create.setNodeVectorProperty('missing','embedding',[1.0])")
+	fixtureAdmission1074Context, fixtureAdmission1074 := statementTestContext(ctx, "CALL db.create.setNodeVectorProperty('missing','embedding',[1.0])")
+	_ = fixtureAdmission1074Context
+	_, err = exec.callDbCreateSetNodeVectorProperty(fixtureAdmission1074, fixtureAdmission1074Context, "CALL db.create.setNodeVectorProperty('missing','embedding',[1.0])")
 	if err == nil || !strings.Contains(err.Error(), "node not found") {
 		t.Fatalf("expected node not found error, got: %v", err)
 	}
 
-	_, err = exec.callDbCreateSetRelationshipVectorProperty(ctx, "CALL db.create.setRelationshipVectorProperty")
+	fixtureAdmission1075Context, fixtureAdmission1075 := statementTestContext(ctx, "CALL db.create.setRelationshipVectorProperty")
+	_ = fixtureAdmission1075Context
+	_, err = exec.callDbCreateSetRelationshipVectorProperty(fixtureAdmission1075, fixtureAdmission1075Context, "CALL db.create.setRelationshipVectorProperty")
 	if err == nil {
 		t.Fatal("expected invalid syntax error for setRelationshipVectorProperty")
 	}
-	_, err = exec.callDbCreateSetRelationshipVectorProperty(ctx, "CALL db.create.setRelationshipVectorProperty('e1')")
+	fixtureAdmission1076Context, fixtureAdmission1076 := statementTestContext(ctx, "CALL db.create.setRelationshipVectorProperty('e1')")
+	_ = fixtureAdmission1076Context
+	_, err = exec.callDbCreateSetRelationshipVectorProperty(fixtureAdmission1076, fixtureAdmission1076Context, "CALL db.create.setRelationshipVectorProperty('e1')")
 	if err == nil {
 		t.Fatal("expected requires 3 arguments error for setRelationshipVectorProperty")
 	}
-	_, err = exec.callDbCreateSetRelationshipVectorProperty(ctx, "CALL db.create.setRelationshipVectorProperty('e1','embedding')")
+	fixtureAdmission1077Context, fixtureAdmission1077 := statementTestContext(ctx, "CALL db.create.setRelationshipVectorProperty('e1','embedding')")
+	_ = fixtureAdmission1077Context
+	_, err = exec.callDbCreateSetRelationshipVectorProperty(fixtureAdmission1077, fixtureAdmission1077Context, "CALL db.create.setRelationshipVectorProperty('e1','embedding')")
 	if err == nil {
 		t.Fatal("expected missing vector argument error for setRelationshipVectorProperty")
 	}
-	_, err = exec.callDbCreateSetRelationshipVectorProperty(ctx, "CALL db.create.setRelationshipVectorProperty('missing','embedding',[1.0])")
+	fixtureAdmission1078Context, fixtureAdmission1078 := statementTestContext(ctx, "CALL db.create.setRelationshipVectorProperty('missing','embedding',[1.0])")
+	_ = fixtureAdmission1078Context
+	_, err = exec.callDbCreateSetRelationshipVectorProperty(fixtureAdmission1078, fixtureAdmission1078Context, "CALL db.create.setRelationshipVectorProperty('missing','embedding',[1.0])")
 	if err == nil || !strings.Contains(err.Error(), "relationship not found") {
 		t.Fatalf("expected relationship not found error, got: %v", err)
 	}
@@ -248,11 +268,15 @@ func TestVectorPropertyProcedureBranches(t *testing.T) {
 	}
 	errExec := NewStorageExecutor(errStore)
 
-	_, err = errExec.callDbCreateSetNodeVectorProperty(ctx, "CALL db.create.setNodeVectorProperty('n1','embedding',[1.0])")
+	fixtureAdmission1079Context, fixtureAdmission1079 := statementTestContext(ctx, "CALL db.create.setNodeVectorProperty('n1','embedding',[1.0])")
+	_ = fixtureAdmission1079Context
+	_, err = errExec.callDbCreateSetNodeVectorProperty(fixtureAdmission1079, fixtureAdmission1079Context, "CALL db.create.setNodeVectorProperty('n1','embedding',[1.0])")
 	if err == nil || !strings.Contains(err.Error(), "failed to update node") {
 		t.Fatalf("expected failed to update node error, got: %v", err)
 	}
-	_, err = errExec.callDbCreateSetRelationshipVectorProperty(ctx, "CALL db.create.setRelationshipVectorProperty('e1','embedding',[1.0])")
+	fixtureAdmission1080Context, fixtureAdmission1080 := statementTestContext(ctx, "CALL db.create.setRelationshipVectorProperty('e1','embedding',[1.0])")
+	_ = fixtureAdmission1080Context
+	_, err = errExec.callDbCreateSetRelationshipVectorProperty(fixtureAdmission1080, fixtureAdmission1080Context, "CALL db.create.setRelationshipVectorProperty('e1','embedding',[1.0])")
 	if err == nil || !strings.Contains(err.Error(), "failed to update relationship") {
 		t.Fatalf("expected failed to update relationship error, got: %v", err)
 	}

@@ -89,7 +89,12 @@ func TestForeach_BoundStandaloneDelete_StringIDs(t *testing.T) {
 // BenchmarkForeach_BoundStandaloneDelete pins the bound standalone delete path
 // (resolve binding, residual guard, node delete) on a memory engine.
 func BenchmarkForeach_BoundStandaloneDelete(b *testing.B) {
-	ctx := context.Background()
+	const query = "FOREACH (x IN $items | DELETE x)"
+	clauses, ok, _ := parsePipelineClauses(query)
+	if !ok {
+		b.Fatal("FOREACH benchmark source must parse")
+	}
+	ctx, statement := pipelineTestContext(context.Background(), clauses)
 	for i := 0; i < b.N; i++ {
 		exec, engine := newTestExecutor(b)
 		if _, err := exec.Execute(ctx, `CREATE (:BDel)`, nil); err != nil {
@@ -100,7 +105,9 @@ func BenchmarkForeach_BoundStandaloneDelete(b *testing.B) {
 			b.Fatalf("setup: %v %d", err, len(nodes))
 		}
 		foreachCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{"items": []interface{}{nodes[0]}})
-		if _, err := exec.sharedForeachForTest(foreachCtx, "FOREACH (x IN $items | DELETE x)", map[string]*storage.Node{}, map[string]*storage.Edge{}); err != nil {
+		row := make(pipelineRow)
+		bindParameterRow(foreachCtx, row)
+		if _, err := exec.runPreparedForeachForTest(statement, foreachCtx, row, clauses); err != nil {
 			b.Fatal(err)
 		}
 	}

@@ -121,8 +121,8 @@ func endpointPropertyNode(base, property string) *rowEndpointPropertyNode {
 	return &rowEndpointPropertyNode{argument: strings.TrimSpace(argument), property: property, end: equalFoldASCII(function, "endNode")}
 }
 
-func (n *rowEndpointPropertyNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
-	value, resolved, err := e.evaluateRowValue(n.argument, values)
+func (n *rowEndpointPropertyNode) eval(fixtureAdmission943 admittedRelationshipStatement, e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
+	value, resolved, err := e.evaluateRowValue(fixtureAdmission943, n.argument, values)
 	if !resolved || err != nil {
 		return nil, resolved, err
 	}

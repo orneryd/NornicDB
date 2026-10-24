@@ -14,7 +14,9 @@ func TestParseTraversalPattern_Chained_NorthwindSupplierCategory(t *testing.T) {
 	ctx := context.Background()
 
 	pattern := "(s:Supplier)-[:SUPPLIES]->(p:Product)-[:PART_OF]->(c:Category)"
-	m := exec.parseTraversalPattern(ctx, pattern)
+	fixtureAdmission904Context, fixtureAdmission904 := traversalTestContext(ctx, pattern, "", nil)
+	_ = fixtureAdmission904
+	m := exec.parseTraversalPattern(fixtureAdmission904, fixtureAdmission904Context, pattern)
 	require.NotNil(t, m)
 	require.True(t, m.IsChained, "expected chained pattern")
 	require.Len(t, m.Segments, 2)

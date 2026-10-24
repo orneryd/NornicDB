@@ -7,7 +7,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
+func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(admission admittedRelationshipStatement,
 	ctx context.Context,
 	expr string,
 	lowerExpr string,
@@ -23,10 +23,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 
 	// BETWEEN must be checked before AND (because BETWEEN x AND y uses AND)
 	if betweenLeft, betweenRight, ok := splitByOperatorWithOptions(expr, " BETWEEN ", true, true); ok {
-		value := e.evaluateExpressionWithContextFull(ctx, betweenLeft, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		value := e.evaluateExpressionWithContextFull(admission, ctx, betweenLeft, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if minPart, maxPart, ok := splitByOperatorWithOptions(betweenRight, " AND ", true, true); ok {
-			minVal := e.evaluateExpressionWithContextFull(ctx, minPart, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			maxVal := e.evaluateExpressionWithContextFull(ctx, maxPart, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			minVal := e.evaluateExpressionWithContextFull(admission, ctx, minPart, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			maxVal := e.evaluateExpressionWithContextFull(admission, ctx, maxPart, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			return (e.compareGreater(value, minVal) || e.compareEqual(value, minVal)) &&
 				(e.compareLess(value, maxVal) || e.compareEqual(value, maxVal))
 		}
@@ -35,7 +35,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	// OR, XOR, AND and NOT (evaluateLogicalExpression).
 	if value, logical, _, err := evaluateLogicalExpression(expr, func(operand string) (interface{}, bool, error) {
 		return deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
-			return e.evaluateExpressionWithContextFull(ctx, operand, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			return e.evaluateExpressionWithContextFull(admission, ctx, operand, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		})
 	}); logical {
 		if err != nil {
@@ -50,12 +50,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	// ========================================
 	if hasSuffixFoldASCII(expr, " is null") {
 		inner := strings.TrimSpace(expr[:len(expr)-8])
-		result := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		result := e.evaluateExpressionWithContextFull(admission, ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return nullEvaluationHandler(false).evaluate(result)
 	}
 	if hasSuffixFoldASCII(expr, " is not null") {
 		inner := strings.TrimSpace(expr[:len(expr)-12])
-		result := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		result := e.evaluateExpressionWithContextFull(admission, ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return nullEvaluationHandler(true).evaluate(result)
 	}
 
@@ -69,8 +69,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 		{" STARTS WITH ", strings.HasPrefix}, {" ENDS WITH ", strings.HasSuffix}, {" CONTAINS ", strings.Contains},
 	} {
 		if left, right, ok := splitByOperatorOutsideCase(expr, p.operator, true, true); ok {
-			l := e.evaluateExpressionWithContextFull(ctx, left, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			r := e.evaluateExpressionWithContextFull(ctx, right, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			l := e.evaluateExpressionWithContextFull(admission, ctx, left, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			r := e.evaluateExpressionWithContextFull(admission, ctx, right, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			return rowStringPredicateValue(l, r, p.match)
 		}
 	}
@@ -80,7 +80,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	// ========================================
 	// NOT IN must be checked before IN (because "NOT IN" contains " IN ")
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " NOT IN ", true, true); ok {
-		result, validList := e.evaluateInOperator(ctx, leftExpr, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		result, validList := e.evaluateInOperator(admission, ctx, leftExpr, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if !validList {
 			return true
 		}
@@ -90,7 +90,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 		return !result.(bool)
 	}
 	if leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, " IN ", true, true); ok {
-		result, validList := e.evaluateInOperator(ctx, leftExpr, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		result, validList := e.evaluateInOperator(admission, ctx, leftExpr, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if !validList {
 			return false
 		}
@@ -98,20 +98,20 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	}
 
 	// Comparison operators (=, <>, <, >, <=, >=)
-	if result, matched := e.evaluateComparisonExpr(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); matched {
+	if result, matched := e.evaluateComparisonExpr(admission, ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); matched {
 		return result
 	}
 
 	// Arithmetic operators (*, /, %, -, +), including string and list +.
 	// A null result (null + 1, [1] + null) is the expression's value.
-	if result, handled := e.evaluateArithmeticExpr(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); handled {
+	if result, handled := e.evaluateArithmeticExpr(admission, ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); handled {
 		return result
 	}
 
 	// Unary minus
 	if strings.HasPrefix(expr, "-") && len(expr) > 1 {
 		inner := strings.TrimSpace(expr[1:])
-		result := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		result := e.evaluateExpressionWithContextFull(admission, ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if result == nil {
 			return nil
 		}
@@ -126,12 +126,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullOperators(
 	if lowerExpr == "" {
 		lowerExpr = lowerASCII(expr)
 	}
-	return e.evaluateExpressionWithContextFullPropsLiterals(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	return e.evaluateExpressionWithContextFullPropsLiterals(admission, ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 }
 
-func (e *StorageExecutor) evaluateInOperator(ctx context.Context, leftExpr, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
-	value := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-	listValue := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+func (e *StorageExecutor) evaluateInOperator(admission admittedRelationshipStatement, ctx context.Context, leftExpr, rightExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
+	value := e.evaluateExpressionWithContextFull(admission, ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	listValue := e.evaluateExpressionWithContextFull(admission, ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	return cypherMembership(value, listValue)
 }
 

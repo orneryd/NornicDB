@@ -75,7 +75,9 @@ func TestUnwindRewrittenOperatorsPreserveExecutionErrors(t *testing.T) {
 			require.True(t, ok)
 			_, expectedErr := exec.Execute(ctx, rewritten, map[string]interface{}{"__unwind_items": plan.items})
 			require.Error(t, expectedErr)
-			outcome := exec.executePipeline(withQueryParams(ctx, map[string]interface{}{"__unwind_items": plan.items}), rewritten)
+			fixtureAdmission810Context, fixtureAdmission810 := statementTestContext(withQueryParams(ctx, map[string]interface{}{"__unwind_items": plan.items}), rewritten)
+			_ = fixtureAdmission810
+			outcome := exec.executePipeline(fixtureAdmission810, fixtureAdmission810Context, rewritten)
 			require.Error(t, outcome.err)
 			require.Equal(t, expectedErr.Error(), outcome.err.Error())
 			require.True(t, outcome.terminal())
@@ -83,9 +85,13 @@ func TestUnwindRewrittenOperatorsPreserveExecutionErrors(t *testing.T) {
 			var result *ExecuteResult
 			var handled bool
 			if fixture.create {
-				result, handled, err = exec.executeSetBasedUnwindCreateOperator(ctx, plan)
+				fixtureAdmission1745Context, fixtureAdmission1745 := statementTestContext(ctx, "RETURN "+(fixture.remainder))
+				_ = fixtureAdmission1745Context
+				result, handled, err = exec.executeSetBasedUnwindCreateOperator(fixtureAdmission1745, fixtureAdmission1745Context, plan)
 			} else {
-				result, handled, err = exec.executeUnwindBatchOperator(ctx, plan)
+				fixtureAdmission1746Context, fixtureAdmission1746 := statementTestContext(ctx, "RETURN "+(fixture.remainder))
+				_ = fixtureAdmission1746Context
+				result, handled, err = exec.executeUnwindBatchOperator(fixtureAdmission1746, fixtureAdmission1746Context, plan)
 			}
 			require.Error(t, err)
 			require.Equal(t, expectedErr.Error(), err.Error())
@@ -114,7 +120,9 @@ func TestPipelineSimpleNodeReadPlan_HandlesBoundedLabelStream(t *testing.T) {
 	clauses, ok := canExecuteAsPipeline(query)
 	require.True(t, ok)
 
-	result, handled, err := exec.tryExecutePipelineSimpleNodeReadPlan(context.Background(), clauses, nil)
+	fixtureAdmission1747Context, fixtureAdmission1747 := statementTestContext(context.Background(), query)
+	_ = fixtureAdmission1747Context
+	result, handled, err := exec.tryExecutePipelineSimpleNodeReadPlan(fixtureAdmission1747, fixtureAdmission1747Context, clauses, nil)
 	require.NoError(t, err)
 	require.True(t, handled, "bounded single-node reads must use the pipeline's fused physical operator")
 	require.Len(t, result.Rows, 3)

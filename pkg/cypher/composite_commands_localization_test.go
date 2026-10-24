@@ -46,7 +46,9 @@ func TestCypherCompositeLocalizedErrorsHaveTypedIdentity(t *testing.T) {
 
 	t.Run("manager unavailable", func(t *testing.T) {
 		exec := &StorageExecutor{}
-		_, err := exec.executeShowCompositeDatabases(context.Background(), "SHOW COMPOSITE DATABASES")
+		fixtureAdmission1503Context, fixtureAdmission1503 := statementTestContext(context.Background(), "SHOW COMPOSITE DATABASES")
+		_ = fixtureAdmission1503Context
+		_, err := exec.executeShowCompositeDatabases(fixtureAdmission1503, fixtureAdmission1503Context, "SHOW COMPOSITE DATABASES")
 		localizedErr := requireCypherCompositeLocalizedError(t, err, localization.MessageCypherCompositeDatabaseManagerUnavailable, "database manager not available - SHOW COMPOSITE DATABASES requires multi-database support")
 		require.Equal(t, "SHOW COMPOSITE DATABASES", localizedErr.Message.Data["Command"])
 	})

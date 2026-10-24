@@ -25,7 +25,9 @@ func TestCreatePipelineTemplateMatchesGeneralRoute(t *testing.T) {
 	}
 	clause := "CREATE (n:N {id: id, name: name})"
 	t.Run(clause, func(t *testing.T) {
-		planned := compareCreateRoutes(t, exec, ctx, rows, clause)
+		fixtureAdmission970Context, fixtureAdmission970 := statementTestContext(ctx, clause)
+		_ = fixtureAdmission970Context
+		planned := compareCreateRoutes(fixtureAdmission970, t, exec, fixtureAdmission970Context, rows, clause)
 		require.True(t, planned, "the template must plan every row of %q", clause)
 	})
 
@@ -38,7 +40,9 @@ func TestCreatePipelineTemplateMatchesGeneralRoute(t *testing.T) {
 	}
 	clauseEdge := "CREATE (n)-[:R {w: id + 1}]->(m)"
 	t.Run(clauseEdge, func(t *testing.T) {
-		planned := compareCreateRoutes(t, exec, ctx, edgeRows, clauseEdge)
+		fixtureAdmission1007Context, fixtureAdmission1007 := statementTestContext(ctx, clauseEdge)
+		_ = fixtureAdmission1007Context
+		planned := compareCreateRoutes(fixtureAdmission1007, t, exec, fixtureAdmission1007Context, edgeRows, clauseEdge)
 		require.True(t, planned, "the template must plan every row of %q", clauseEdge)
 	})
 
@@ -64,7 +68,9 @@ func TestCreatePipelineTemplatePlanIsAtomic(t *testing.T) {
 
 	plan := acquireCreatePlan()
 	nodes, edges := plan.bindings()
-	paths, planned, err := tpl.plan(ctx, exec, pipelineRow{}, nodes, edges, plan)
+	fixtureAdmission1562Context, fixtureAdmission1562 := statementTestContext(ctx, "RETURN "+("CREATE (a:T {id: 1}), (b:U {name: properties(1)})"))
+	_ = fixtureAdmission1562Context
+	paths, planned, err := tpl.plan(fixtureAdmission1562, fixtureAdmission1562Context, exec, pipelineRow{}, nodes, edges, plan)
 	require.True(t, planned, "an evaluation failure never retries another route")
 	require.Error(t, err)
 	require.Nil(t, paths)
@@ -74,7 +80,9 @@ func TestCreatePipelineTemplatePlanIsAtomic(t *testing.T) {
 	require.Empty(t, edges)
 
 	nullTemplate := exec.pipelineCreateTemplateFor("CREATE (a:T {id: 1}), (b:U {name: a.missing + 1})")
-	paths, planned, err = nullTemplate.plan(ctx, exec, pipelineRow{}, nodes, edges, plan)
+	fixtureAdmission1563Context, fixtureAdmission1563 := statementTestContext(ctx, "RETURN "+("CREATE (a:T {id: 1}), (b:U {name: a.missing + 1})"))
+	_ = fixtureAdmission1563Context
+	paths, planned, err = nullTemplate.plan(fixtureAdmission1563, fixtureAdmission1563Context, exec, pipelineRow{}, nodes, edges, plan)
 	require.NoError(t, err)
 	require.True(t, planned)
 	require.Len(t, plan.nodes, 2)
@@ -86,7 +94,9 @@ func TestCreatePipelineTemplatePlanIsAtomic(t *testing.T) {
 	require.True(t, okTemplate.usable)
 	plan = acquireCreatePlan()
 	nodes, edges = plan.bindings()
-	paths, planned, err = okTemplate.plan(ctx, exec, pipelineRow{"name": "x"}, nodes, edges, plan)
+	fixtureAdmission1564Context, fixtureAdmission1564 := statementTestContext(ctx, "RETURN "+("CREATE (a:T {id: 1}), (b:U {name: name})"))
+	_ = fixtureAdmission1564Context
+	paths, planned, err = okTemplate.plan(fixtureAdmission1564, fixtureAdmission1564Context, exec, pipelineRow{"name": "x"}, nodes, edges, plan)
 	require.NoError(t, err)
 	require.True(t, planned)
 	require.Len(t, plan.nodes, 2)
@@ -96,11 +106,11 @@ func TestCreatePipelineTemplatePlanIsAtomic(t *testing.T) {
 	require.Empty(t, edges)
 }
 
-func compareCreateRoutes(t *testing.T, exec *StorageExecutor, ctx context.Context, rows []pipelineRow, clause string) bool {
+func compareCreateRoutes(admission admittedRelationshipStatement, t *testing.T, exec *StorageExecutor, ctx context.Context, rows []pipelineRow, clause string) bool {
 	t.Helper()
-	generalNodes, generalEdges, err := planRowsGeneral(t, exec, ctx, rows, clause)
+	generalNodes, generalEdges, err := planRowsGeneral(admission, t, exec, ctx, rows, clause)
 	require.NoError(t, err)
-	templateNodes, templateEdges, planned := planRowsTemplate(t, exec, ctx, rows, clause)
+	templateNodes, templateEdges, planned := planRowsTemplate(admission, t, exec, ctx, rows, clause)
 	if !planned {
 		// Template declined (acceptable); nothing to compare.
 		return false
@@ -120,7 +130,7 @@ func compareCreateRoutes(t *testing.T, exec *StorageExecutor, ctx context.Contex
 
 // planRowsGeneral plans every row through planCreatePatterns, returning the
 // nodes and edges appended in row order.
-func planRowsGeneral(t *testing.T, exec *StorageExecutor, ctx context.Context, rows []pipelineRow, clause string) ([]*storageNodeLite, []*storageEdgeLite, error) {
+func planRowsGeneral(admission admittedRelationshipStatement, t *testing.T, exec *StorageExecutor, ctx context.Context, rows []pipelineRow, clause string) ([]*storageNodeLite, []*storageEdgeLite, error) {
 	t.Helper()
 	var outNodes []*storageNodeLite
 	var outEdges []*storageEdgeLite
@@ -135,7 +145,7 @@ func planRowsGeneral(t *testing.T, exec *StorageExecutor, ctx context.Context, r
 			}
 		}
 		pattern := pipelineClauseBody(clause, "CREATE")
-		_, err := exec.planCreatePatterns(withValueBindings(ctx, newRow), pattern, nodes, edges, plan)
+		_, err := exec.planCreatePatterns(admission, withValueBindings(ctx, newRow), pattern, nodes, edges, plan)
 		if err != nil {
 			plan.release()
 			return nil, nil, err
@@ -153,7 +163,7 @@ func planRowsGeneral(t *testing.T, exec *StorageExecutor, ctx context.Context, r
 
 // planRowsTemplate plans every row through the template, reporting whether
 // every row used it.
-func planRowsTemplate(t *testing.T, exec *StorageExecutor, ctx context.Context, rows []pipelineRow, clause string) ([]*storageNodeLite, []*storageEdgeLite, bool) {
+func planRowsTemplate(admission admittedRelationshipStatement, t *testing.T, exec *StorageExecutor, ctx context.Context, rows []pipelineRow, clause string) ([]*storageNodeLite, []*storageEdgeLite, bool) {
 	t.Helper()
 	template := exec.pipelineCreateTemplateFor(clause)
 	if template == nil || !template.usable {
@@ -174,7 +184,7 @@ func planRowsTemplate(t *testing.T, exec *StorageExecutor, ctx context.Context, 
 				edges[name] = typed
 			}
 		}
-		_, planned, err := template.plan(ctx, exec, row, nodes, edges, plan)
+		_, planned, err := template.plan(admission, ctx, exec, row, nodes, edges, plan)
 		require.NoError(t, err)
 		if !planned {
 			allPlanned = false

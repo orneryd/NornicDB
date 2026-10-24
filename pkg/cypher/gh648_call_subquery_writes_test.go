@@ -277,21 +277,29 @@ func TestGh648_SharedReturnBoundary(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 	inner := &ExecuteResult{Columns: []string{"value", "missing"}, Rows: [][]interface{}{{int64(1)}}, Stats: &QueryStats{}}
-	unchanged, err := exec.processCallSubqueryReturn(ctx, inner, "")
+	fixtureAdmission1609Context, fixtureAdmission1609 := statementTestContext(ctx, "")
+	_ = fixtureAdmission1609Context
+	unchanged, err := exec.processCallSubqueryReturn(fixtureAdmission1609, fixtureAdmission1609Context, inner, "")
 	require.NoError(t, err)
 	require.Same(t, inner, unchanged)
-	projected, err := exec.processCallSubqueryReturn(ctx, inner, "RETURN value, missing")
+	fixtureAdmission1610Context, fixtureAdmission1610 := statementTestContext(ctx, "RETURN value, missing")
+	_ = fixtureAdmission1610Context
+	projected, err := exec.processCallSubqueryReturn(fixtureAdmission1610, fixtureAdmission1610Context, inner, "RETURN value, missing")
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1), nil}}, projected.Rows)
 	require.Same(t, inner.Stats, projected.Stats)
-	_, err = exec.processCallSubqueryReturn(ctx, inner, "RETURN range(1, 2, 0)")
+	fixtureAdmission1611Context, fixtureAdmission1611 := statementTestContext(ctx, "RETURN range(1, 2, 0)")
+	_ = fixtureAdmission1611Context
+	_, err = exec.processCallSubqueryReturn(fixtureAdmission1611, fixtureAdmission1611Context, inner, "RETURN range(1, 2, 0)")
 	require.Error(t, err)
 }
 
 func TestGh648_OuterScopeAndColumnNames(t *testing.T) {
 	t.Run("independent_return_bindings", func(t *testing.T) {
 		exec := newGh648Executor(t)
-		rows, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(context.Background(), []pipelineRow{{"v": int64(1)}}, "CALL { RETURN 2 AS c }", nil)
+		fixtureAdmission424Context, fixtureAdmission424 := statementTestContext(context.Background(), "CALL { RETURN 2 AS c }")
+		_ = fixtureAdmission424Context
+		rows, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(fixtureAdmission424, fixtureAdmission424Context, []pipelineRow{{"v": int64(1)}}, "CALL { RETURN 2 AS c }", nil)
 		require.NoError(t, err)
 		require.True(t, handled)
 		require.Equal(t, []pipelineRow{{"v": int64(1), "c": int64(2)}}, rows)
@@ -433,15 +441,25 @@ func TestPR771TransactionalCallChainedRows(t *testing.T) {
 	query := "CALL { UNWIND [1,2,3] AS i RETURN i } CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS RETURN i ORDER BY i"
 	clauses, split := splitPipelineClausesAllowingProcedureCalls(query)
 	t.Logf("clauses: split=%v values=%+v", split, clauses)
-	callRows, callStats, callHandled, callErr := newGh648Executor(t).pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, "CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS", nil)
+	fixtureAdmission565Context, fixtureAdmission565 := statementTestContext(ctx, "CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS")
+	_ = fixtureAdmission565Context
+	callRows, callStats, callHandled, callErr := newGh648Executor(t).pipelineApplyCallSubqueryWithMetadata(fixtureAdmission565, fixtureAdmission565Context, []pipelineRow{{"i": int64(1)}}, "CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS", nil)
 	t.Logf("call probe: rows=%+v stats=%+v handled=%v err=%v", callRows, callStats, callHandled, callErr)
 	runner := newGh648Executor(t)
-	firstRows, firstStats, firstHandled, firstErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{}}, clauses[0].text, nil)
-	secondRows, secondStats, secondHandled, secondErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, firstRows, clauses[1].text, nil)
+	fixtureAdmission566Context, fixtureAdmission566 := statementTestContext(ctx, clauses[0].text)
+	_ = fixtureAdmission566Context
+	firstRows, firstStats, firstHandled, firstErr := runner.pipelineApplyCallSubqueryWithMetadata(fixtureAdmission566, fixtureAdmission566Context, []pipelineRow{{}}, clauses[0].text, nil)
+	fixtureAdmission567Context, fixtureAdmission567 := statementTestContext(ctx, clauses[1].text)
+	_ = fixtureAdmission567Context
+	secondRows, secondStats, secondHandled, secondErr := runner.pipelineApplyCallSubqueryWithMetadata(fixtureAdmission567, fixtureAdmission567Context, firstRows, clauses[1].text, nil)
 	t.Logf("step probes: first=%+v stats=%+v handled=%v err=%v second=%+v stats=%+v handled=%v err=%v", firstRows, firstStats, firstHandled, firstErr, secondRows, secondStats, secondHandled, secondErr)
-	manual, manualHandled, manualErr := runner.runPipelineClauseRows(ctx, []pipelineRow{{}}, map[string]struct{}{}, clauses, clauses, nil)
+	fixtureAdmission568Context, fixtureAdmission568 := statementTestContext(ctx, query)
+	_ = fixtureAdmission568Context
+	manual, manualHandled, manualErr := runner.runPipelineClauseRows(fixtureAdmission568, fixtureAdmission568Context, []pipelineRow{{}}, map[string]struct{}{}, clauses, clauses, nil)
 	t.Logf("runner probe: handled=%v err=%v result=%+v", manualHandled, manualErr, manual)
-	probe := newGh648Executor(t).executePipeline(ctx, query)
+	fixtureAdmission667Context, fixtureAdmission667 := statementTestContext(ctx, query)
+	_ = fixtureAdmission667
+	probe := newGh648Executor(t).executePipeline(fixtureAdmission667, fixtureAdmission667Context, query)
 	t.Logf("pipeline probe: handled=%v err=%v result=%+v", probe.terminal(), probe.err, probe.result)
 	result, err := exec.Execute(ctx, query, nil)
 	require.NoError(t, err)

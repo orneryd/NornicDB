@@ -783,6 +783,9 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 			b.cacheOnNodeDeleted(id, totalEdgesDeleted)
 		}
 
+		// Cascades publish the same equality invalidation as explicit edge deletes.
+		b.deleteRelationshipUniqueIndexes(deletedEdgeIDs...)
+
 		// Notify listeners about deleted edges
 		for _, edgeID := range deletedEdgeIDs {
 			b.notifyEdgeDeleted(edgeID)

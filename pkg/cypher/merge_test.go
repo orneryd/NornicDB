@@ -623,12 +623,16 @@ func TestMergeHelpers_ParseReturnAndClauseSplitBranches(t *testing.T) {
 	ctx := context.Background()
 
 	row := []pipelineRow{e.mergeBindingRow(ctx, nodeCtx, relCtx)}
-	result, err := e.projectMergeReturn(ctx, row, "RETURN *")
+	fixtureAdmission1673Context, fixtureAdmission1673 := statementTestContext(ctx, "RETURN *")
+	_ = fixtureAdmission1673Context
+	result, err := e.projectMergeReturn(fixtureAdmission1673, fixtureAdmission1673Context, row, "RETURN *")
 	require.NoError(t, err)
 	require.Equal(t, []string{"a", "b", "r"}, result.Columns)
 	require.Len(t, result.Rows, 1)
 
-	result, err = e.projectMergeReturn(ctx, row, "RETURN a.name AS name, id(a) AS aid")
+	fixtureAdmission1674Context, fixtureAdmission1674 := statementTestContext(ctx, "RETURN a.name AS name, id(a) AS aid")
+	_ = fixtureAdmission1674Context
+	result, err = e.projectMergeReturn(fixtureAdmission1674, fixtureAdmission1674Context, row, "RETURN a.name AS name, id(a) AS aid")
 	require.NoError(t, err)
 	require.Equal(t, []string{"name", "aid"}, result.Columns)
 	require.Equal(t, [][]interface{}{{"alice", "n-a"}}, result.Rows)
@@ -1058,17 +1062,25 @@ func TestApplyWithProjection_Branches(t *testing.T) {
 	r := &storage.Edge{ID: "e1", Type: "KNOWS", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{}}
 	ctx := context.Background()
 	input := []pipelineRow{{"n": n, "r": r, "answer": int64(42)}}
-	projected, ok := exec.pipelineApplyWith(ctx, input, "WITH *")
+	fixtureAdmission1336Context, fixtureAdmission1336 := statementTestContext(ctx, "WITH *")
+	_ = fixtureAdmission1336Context
+	projected, ok := exec.pipelineApplyWith(fixtureAdmission1336, fixtureAdmission1336Context, input, "WITH *")
 	require.True(t, ok)
 	require.Equal(t, input, projected)
-	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH n")
+	fixtureAdmission1337Context, fixtureAdmission1337 := statementTestContext(ctx, "WITH n")
+	_ = fixtureAdmission1337Context
+	projected, ok = exec.pipelineApplyWith(fixtureAdmission1337, fixtureAdmission1337Context, input, "WITH n")
 	require.True(t, ok)
 	require.Equal(t, []pipelineRow{{"n": n}}, projected)
-	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH answer AS projected")
+	fixtureAdmission1338Context, fixtureAdmission1338 := statementTestContext(ctx, "WITH answer AS projected")
+	_ = fixtureAdmission1338Context
+	projected, ok = exec.pipelineApplyWith(fixtureAdmission1338, fixtureAdmission1338Context, input, "WITH answer AS projected")
 	require.True(t, ok)
 	require.Equal(t, []pipelineRow{{"projected": int64(42)}}, projected)
 	failureCtx := withExpressionFailureSlot(ctx)
-	projected, ok = exec.pipelineApplyWith(failureCtx, input, "WITH n + 1 AS invalid")
+	fixtureAdmission1339Context, fixtureAdmission1339 := statementTestContext(failureCtx, "WITH n + 1 AS invalid")
+	_ = fixtureAdmission1339Context
+	projected, ok = exec.pipelineApplyWith(fixtureAdmission1339, fixtureAdmission1339Context, input, "WITH n + 1 AS invalid")
 	require.False(t, ok)
 	require.Nil(t, projected)
 	require.Error(t, getExpressionFailure(failureCtx))
@@ -1300,7 +1312,9 @@ MERGE (c)-[:TOUCHED]->(ck)
 func TestProjectWithContext_PreservesScalarAliases(t *testing.T) {
 	ctx := context.Background()
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	projected, ok := exec.pipelineApplyWith(ctx, []pipelineRow{{}},
+	fixtureAdmission1340Context, fixtureAdmission1340 := statementTestContext(ctx, `WITH 'entity-single' AS entity_id, 'calls' AS relation_type, 'state-single' AS state_id, 'commit-single-row' AS commit_hash`)
+	_ = fixtureAdmission1340Context
+	projected, ok := exec.pipelineApplyWith(fixtureAdmission1340, fixtureAdmission1340Context, []pipelineRow{{}},
 		`WITH 'entity-single' AS entity_id, 'calls' AS relation_type, 'state-single' AS state_id, 'commit-single-row' AS commit_hash`)
 	require.True(t, ok)
 	require.Equal(t, []pipelineRow{{

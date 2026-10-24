@@ -223,7 +223,9 @@ func TestEvaluateWithWhereConditionConcurrent(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			tc := predicates[i%len(predicates)]
-			got := exec.evaluateWithWhereCondition(ctx, tc.clause, values)
+			fixtureAdmission935Context, fixtureAdmission935 := expressionTestContext(ctx, tc.clause)
+			_ = fixtureAdmission935
+			got := exec.evaluateWithWhereCondition(fixtureAdmission935, fixtureAdmission935Context, tc.clause, values)
 			assert.Equal(t, tc.want, got, "predicate %q under concurrency", tc.clause)
 		}(i)
 	}
@@ -326,7 +328,9 @@ func TestEvaluateWithWhereConditionResolvesBoundProperties(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, exec.evaluateWithWhereCondition(ctx, tc.clause, tc.values))
+			fixtureAdmission936Context, fixtureAdmission936 := expressionTestContext(ctx, tc.clause)
+			_ = fixtureAdmission936
+			assert.Equal(t, tc.want, exec.evaluateWithWhereCondition(fixtureAdmission936, fixtureAdmission936Context, tc.clause, tc.values))
 		})
 	}
 }

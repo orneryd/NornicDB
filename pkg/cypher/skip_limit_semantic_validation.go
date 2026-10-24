@@ -24,9 +24,9 @@ func extractPaginationExpressions(cypher string) []paginationExpression {
 	return effects.pagination
 }
 
-func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) error {
+func (e *StorageExecutor) validateStaticPaginationExpressions(admission admittedRelationshipStatement, cypher string) error {
 	for _, pagination := range extractPaginationExpressions(cypher) {
-		if err := e.validateStaticPaginationExpression(pagination.keyword, pagination.value); err != nil {
+		if err := e.validateStaticPaginationExpression(admission, pagination.keyword, pagination.value); err != nil {
 			return err
 		}
 	}
@@ -37,7 +37,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(cypher string) err
 // the statement is compiled: it must not use a row variable, and unless it
 // reads a parameter it must be a non-negative integer. WITH, RETURN and a
 // procedure call's YIELD share it.
-func (e *StorageExecutor) validateStaticPaginationExpression(keyword, expression string) error {
+func (e *StorageExecutor) validateStaticPaginationExpression(admission admittedRelationshipStatement, keyword, expression string) error {
 	if expression == "" {
 		return paginationCompileTypeError(keyword, nil)
 	}
@@ -60,7 +60,7 @@ func (e *StorageExecutor) validateStaticPaginationExpression(keyword, expression
 	if strings.Contains(expression, "$") {
 		return nil
 	}
-	value, evaluated, err := e.evaluateRowValue(expression, pipelineRow{})
+	value, evaluated, err := e.evaluateRowValue(admission, expression, pipelineRow{})
 	if err != nil {
 		return err
 	}
@@ -77,12 +77,12 @@ func (e *StorageExecutor) validateStaticPaginationExpression(keyword, expression
 	return nil
 }
 
-func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Context, cypher string) error {
+func (e *StorageExecutor) validateRuntimePaginationExpressions(admission admittedRelationshipStatement, ctx context.Context, cypher string) error {
 	if !strings.Contains(cypher, "$") || (!containsFold(cypher, "SKIP") && !containsFold(cypher, "LIMIT")) {
 		return nil
 	}
 	for _, pagination := range extractPaginationExpressions(cypher) {
-		if err := e.validateRuntimePaginationExpression(ctx, pagination); err != nil {
+		if err := e.validateRuntimePaginationExpression(admission, ctx, pagination); err != nil {
 			return err
 		}
 	}
@@ -91,13 +91,13 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 
 // validateRuntimePaginationClause checks only the projection operator opening
 // now. Nested subqueries and later clauses keep their own runtime boundary.
-func (e *StorageExecutor) validateRuntimePaginationClause(ctx context.Context, clause string) error {
+func (e *StorageExecutor) validateRuntimePaginationClause(admission admittedRelationshipStatement, ctx context.Context, clause string) error {
 	if !strings.Contains(clause, "$") {
 		return nil
 	}
 	for _, keyword := range []string{"SKIP", "LIMIT"} {
 		if topLevelKeywordIndex(clause, keyword) >= 0 {
-			if err := e.validateRuntimePaginationExpression(ctx, paginationExpression{keyword: keyword, value: pipelinePaginationExpression(clause, keyword)}); err != nil {
+			if err := e.validateRuntimePaginationExpression(admission, ctx, paginationExpression{keyword: keyword, value: pipelinePaginationExpression(clause, keyword)}); err != nil {
 				return err
 			}
 		}
@@ -105,7 +105,7 @@ func (e *StorageExecutor) validateRuntimePaginationClause(ctx context.Context, c
 	return nil
 }
 
-func (e *StorageExecutor) validateRuntimePaginationExpression(ctx context.Context, pagination paginationExpression) error {
+func (e *StorageExecutor) validateRuntimePaginationExpression(admission admittedRelationshipStatement, ctx context.Context, pagination paginationExpression) error {
 	if !strings.Contains(pagination.value, "$") {
 		return nil
 	}
@@ -115,7 +115,7 @@ func (e *StorageExecutor) validateRuntimePaginationExpression(ctx context.Contex
 	}
 	values := make(pipelineRow, len(params))
 	bindParameterRow(ctx, values)
-	value, evaluated, err := e.evaluateRowValue(pagination.value, values)
+	value, evaluated, err := e.evaluateRowValue(admission, pagination.value, values)
 	if err != nil {
 		return err
 	}

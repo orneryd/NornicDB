@@ -116,9 +116,9 @@ func (s *procedureStatementStats) Value(key interface{}) interface{} {
 // Their output rows (including APOC statistics rows) are independent of the
 // statement summary. Replace their hand-built summary with the successful
 // nested statements' counters, including iterator/export/custom bodies.
-func (e *StorageExecutor) executeProcedureHandler(ctx context.Context, proc registeredProcedure, query string, args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeProcedureHandler(statement admittedRelationshipStatement, ctx context.Context, proc registeredProcedure, query string, args []interface{}) (*ExecuteResult, error) {
 	totals := &procedureStatementStats{Context: ctx}
-	result, err := proc.Handler(totals, e, query, args)
+	result, err := proc.invoke(statement, totals, e, query, args)
 	if err == nil && (totals.stats != nil || totals.committed != nil) {
 		if result == nil {
 			result = &ExecuteResult{}

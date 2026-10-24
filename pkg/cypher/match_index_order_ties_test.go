@@ -205,7 +205,9 @@ func TestIndexedOrderPatternPropertiesAndCancellation(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(3)}, {int64(6)}, {int64(9)}}, result.Rows)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _, err = exec.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePatternInfo{variable: "n", labels: []string{"OrderedItem"}}, "", "n.title ASC,n.rank ASC", 3)
+	fixtureAdmission1280Context, fixtureAdmission1280 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission1280Context
+	_, _, err = exec.tryCollectNodesFromPropertyIndexOrderLimit(fixtureAdmission1280, fixtureAdmission1280Context, nodePatternInfo{variable: "n", labels: []string{"OrderedItem"}}, "", "n.title ASC,n.rank ASC", 3)
 	require.ErrorIs(t, err, context.Canceled)
 }
 

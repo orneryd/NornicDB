@@ -259,7 +259,7 @@ func simplifiedPipelinePredicate(expression string) (interface{}, bool, error) {
 	return value, logical && resolved, err
 }
 
-func (e *StorageExecutor) pipelineClauseBoundary(ctx context.Context, effects pipelineClauseEffects, writes *stretchTokens, maximumRows int) (bool, int) {
+func (e *StorageExecutor) pipelineClauseBoundary(admission admittedRelationshipStatement, ctx context.Context, effects pipelineClauseEffects, writes *stretchTokens, maximumRows int) (bool, int) {
 	boundary := effects.barrier || effects.reads.observes(writes)
 	for _, predicate := range effects.predicates {
 		if value, resolved, err := simplifiedPipelinePredicate(predicate); err == nil && resolved && value == false {
@@ -270,13 +270,13 @@ func (e *StorageExecutor) pipelineClauseBoundary(ctx context.Context, effects pi
 		maximumRows = -1
 	}
 	if effects.skip != "" {
-		if skip, ok := e.evaluatePipelinePagination(ctx, effects.skip, nil); ok && maximumRows >= 0 {
+		if skip, ok := e.evaluatePipelinePagination(admission, ctx, effects.skip, nil); ok && maximumRows >= 0 {
 			boundary = boundary || (skip > 0 && skip >= maximumRows)
 			maximumRows = max(0, maximumRows-skip)
 		}
 	}
 	if effects.limit != "" {
-		if limit, ok := e.evaluatePipelinePagination(ctx, effects.limit, nil); ok {
+		if limit, ok := e.evaluatePipelinePagination(admission, ctx, effects.limit, nil); ok {
 			boundary = boundary || limit == 0
 			if maximumRows < 0 || limit < maximumRows {
 				maximumRows = limit

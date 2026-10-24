@@ -82,7 +82,7 @@ func compilePipelineRowWith(clause string) (pipelineRowWith, bool) {
 	return plan, true
 }
 
-func (e *StorageExecutor) pipelineProjectWithRow(ctx context.Context, row pipelineRow, plan pipelineRowWith, projected, scope pipelineRow) (pipelineRow, bool, bool) {
+func (e *StorageExecutor) pipelineProjectWithRow(admission admittedRelationshipStatement, ctx context.Context, row pipelineRow, plan pipelineRowWith, projected, scope pipelineRow) (pipelineRow, bool, bool) {
 	if projected == nil {
 		projected = pipelineRow{}
 	} else {
@@ -96,7 +96,7 @@ func (e *StorageExecutor) pipelineProjectWithRow(ctx context.Context, row pipeli
 	for _, projection := range plan.projections {
 		value, found := row[projection.expression]
 		if !found {
-			value, found = e.evaluateRowExpressionWithContext(ctx, projection.expression, row)
+			value, found = e.evaluateRowExpressionWithContext(admission, ctx, projection.expression, row)
 		}
 		if !found {
 			pipelineItemUnevaluable(ctx, projection.expression)
@@ -122,7 +122,7 @@ func (e *StorageExecutor) pipelineProjectWithRow(ctx context.Context, row pipeli
 	if plan.where == "" {
 		return projected, true, true
 	}
-	return projected, e.evaluateWithWhereCondition(ctx, plan.where, scope), getExpressionFailure(ctx) == nil
+	return projected, e.evaluateWithWhereCondition(admission, ctx, plan.where, scope), getExpressionFailure(ctx) == nil
 }
 
 func pipelineUnwindUsesRange(clause string) bool {
@@ -131,13 +131,13 @@ func pipelineUnwindUsesRange(clause string) bool {
 	return ok && call && strings.EqualFold(function, "range")
 }
 
-func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression string, row pipelineRow) (iter.Seq[interface{}], bool) {
+func (e *StorageExecutor) pipelineUnwindValues(admission admittedRelationshipStatement, ctx context.Context, expression string, row pipelineRow) (iter.Seq[interface{}], bool) {
 	function, arguments, call := parseFunctionCallWS(strings.TrimSpace(expression))
 	if call && strings.EqualFold(function, "range") {
 		parts := e.splitFunctionArgs(arguments)
 		values := make([]interface{}, len(parts))
 		for index, part := range parts {
-			value, resolved := e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(part), row)
+			value, resolved := e.evaluateRowExpressionWithContext(admission, ctx, strings.TrimSpace(part), row)
 			if !resolved {
 				pipelineItemUnevaluable(ctx, part)
 				return nil, false
@@ -157,7 +157,7 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 			}
 		}, true
 	}
-	items, ok := e.evaluateListForPipelineWithContext(ctx, expression, row)
+	items, ok := e.evaluateListForPipelineWithContext(admission, ctx, expression, row)
 	if !ok {
 		pipelineItemUnevaluable(ctx, expression)
 		return nil, false
@@ -171,27 +171,27 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 	}, true
 }
 
-func (e *StorageExecutor) validatePipelineWithRows(rows []pipelineRow, clause string) error {
-	if err := e.validatePipelinePercentileArguments(rows, clause, "WITH"); err != nil {
+func (e *StorageExecutor) validatePipelineWithRows(admission admittedRelationshipStatement, rows []pipelineRow, clause string) error {
+	if err := e.validatePipelinePercentileArguments(admission, rows, clause, "WITH"); err != nil {
 		return err
 	}
-	return e.validatePipelineProjectionValues(rows, clause, "WITH")
+	return e.validatePipelineProjectionValues(admission, rows, clause, "WITH")
 }
 
-func (e *StorageExecutor) validatePipelineProjectionValues(rows []pipelineRow, clause, keyword string) error {
-	for _, validate := range []func([]pipelineRow, string, string) error{
+func (e *StorageExecutor) validatePipelineProjectionValues(admission admittedRelationshipStatement, rows []pipelineRow, clause, keyword string) error {
+	for _, validate := range []func(admittedRelationshipStatement, []pipelineRow, string, string) error{
 		e.validatePipelineRangeArguments,
 		e.validatePipelineProjectionSubscripts, e.validatePipelineSizeArguments,
 	} {
-		if err := validate(rows, clause, keyword); err != nil {
+		if err := validate(admission, rows, clause, keyword); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) ([]pipelineRow, int, bool) {
-	source, consumed, ok := e.pipelineUnwindSource(ctx, rows, clauses)
+func (e *StorageExecutor) pipelineApplyUnwindPrefix(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clauses []pipelineClause) ([]pipelineRow, int, bool) {
+	source, consumed, ok := e.pipelineUnwindSource(admission, ctx, rows, clauses)
 	if !ok {
 		return nil, 0, false
 	}
@@ -199,10 +199,10 @@ func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []
 	return out, consumed, ok
 }
 
-func (e *StorageExecutor) pipelineProjectReturnRow(ctx context.Context, projections []returnProjection, row pipelineRow) ([]interface{}, bool) {
+func (e *StorageExecutor) pipelineProjectReturnRow(admission admittedRelationshipStatement, ctx context.Context, projections []returnProjection, row pipelineRow) ([]interface{}, bool) {
 	values := make([]interface{}, len(projections))
 	for index, projection := range projections {
-		value, evaluated := e.evaluateRowExpressionWithContext(ctx, projection.expr, row)
+		value, evaluated := e.evaluateRowExpressionWithContext(admission, ctx, projection.expr, row)
 		if !evaluated {
 			pipelineItemUnevaluable(ctx, projection.expr)
 			return nil, false
@@ -252,15 +252,15 @@ func materializePipelineSource(ctx context.Context, source pipelineRowSource) ([
 	return collected.out, ok
 }
 
-func (e *StorageExecutor) pipelineNodeProductSource(ctx context.Context, rows []pipelineRow, clause string) (pipelineRowSource, bool, error) {
+func (e *StorageExecutor) pipelineNodeProductSource(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clause string) (pipelineRowSource, bool, error) {
 	if len(splitTopLevelComma(pipelineClauseBody(clause, "MATCH"))) < 2 {
 		return nil, false, nil
 	}
-	return e.pipelineNodeMatchSource(ctx, pipelineRowsSource(rows), clause, nil)
+	return e.pipelineNodeMatchSource(admission, ctx, pipelineRowsSource(rows), clause, nil)
 }
 
-func (e *StorageExecutor) pipelineNodeMatchSource(ctx context.Context, inputSource pipelineRowSource, clause string, readTail []string) (pipelineRowSource, bool, error) {
-	return e.pipelineNodeMatchSourceWithHint(ctx, inputSource, clause, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: readTail})
+func (e *StorageExecutor) pipelineNodeMatchSource(admission admittedRelationshipStatement, ctx context.Context, inputSource pipelineRowSource, clause string, readTail []string) (pipelineRowSource, bool, error) {
+	return e.pipelineNodeMatchSourceWithHint(admission, ctx, inputSource, clause, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: readTail})
 }
 
 type pipelineNodeMatchSourcePlan struct {
@@ -315,8 +315,8 @@ func (e *StorageExecutor) compilePipelineNodeMatchSource(clause string) pipeline
 	return plan
 }
 
-func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, inputSource pipelineRowSource, clause string, hint pipelineMatchPhysicalHint) (pipelineRowSource, bool, error) {
-	if source, supported, err := e.pipelineTraversalSource(ctx, inputSource, clause, hint); supported || err != nil {
+func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(admission admittedRelationshipStatement, ctx context.Context, inputSource pipelineRowSource, clause string, hint pipelineMatchPhysicalHint) (pipelineRowSource, bool, error) {
+	if source, supported, err := e.pipelineTraversalSource(admission, ctx, inputSource, clause, hint); supported || err != nil {
 		return source, supported, err
 	}
 	plan, cached := pipelineNodeMatchSourcePlans.get(clause)
@@ -332,7 +332,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 	}
 	templates := plan.templates
 	if hint.streamScan && len(templates) == 1 {
-		return e.pipelineStreamedNodeMatchSource(ctx, inputSource, templates[0], hint), true, nil
+		return e.pipelineStreamedNodeMatchSource(admission, ctx, inputSource, templates[0], hint), true, nil
 	}
 	type candidateCache struct {
 		key          string
@@ -359,7 +359,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 			candidateCtx := ctx
 			candidatesBound := false
 			for index, template := range templates {
-				pattern, ok, evalErr := template.node(ctx, e, input)
+				pattern, ok, evalErr := template.node(admission, ctx, e, input)
 				if evalErr != nil {
 					recordExpressionFailure(ctx, evalErr)
 					valid = false
@@ -433,7 +433,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 								candidatesBound = true
 							}
 							var err error
-							nodes, _, err = e.collectPipelineInitialNodeCandidates(candidateCtx, pattern, "", hint)
+							nodes, _, err = e.collectPipelineInitialNodeCandidates(admission, candidateCtx, pattern, "", hint)
 							if err != nil {
 								recordExpressionFailure(ctx, err)
 								valid = false
@@ -478,7 +478,7 @@ func (e *StorageExecutor) pipelineNodeMatchSourceWithHint(ctx context.Context, i
 // rows are consumed (visitPipelineInitialNodeCandidates) instead of
 // collecting them first, with the same matching as
 // pipelineNodeMatchSourceWithHint.
-func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, inputSource pipelineRowSource, template *pipelineNodeMatchTemplate, hint pipelineMatchPhysicalHint) pipelineRowSource {
+func (e *StorageExecutor) pipelineStreamedNodeMatchSource(admission admittedRelationshipStatement, ctx context.Context, inputSource pipelineRowSource, template *pipelineNodeMatchTemplate, hint pipelineMatchPhysicalHint) pipelineRowSource {
 	return func(yield func(pipelineRow) bool) bool {
 		valid := true
 		current := make(pipelineRow)
@@ -487,7 +487,7 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 			for name, value := range input {
 				current[name] = value
 			}
-			pattern, ok, evalErr := template.node(ctx, e, input)
+			pattern, ok, evalErr := template.node(admission, ctx, e, input)
 			if evalErr != nil {
 				recordExpressionFailure(ctx, evalErr)
 				valid = false
@@ -505,7 +505,7 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 				candidateCtx = withValueBindings(ctx, input)
 			}
 			accepted := true
-			err := e.visitPipelineInitialNodeCandidates(candidateCtx, pattern, hint, func(node *storage.Node) error {
+			err := e.visitPipelineInitialNodeCandidates(admission, candidateCtx, pattern, hint, func(node *storage.Node) error {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
@@ -531,7 +531,7 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 	}
 }
 
-func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipelineRowSource, plan pipelineRowWith) pipelineRowSource {
+func (e *StorageExecutor) pipelineWithRowSource(admission admittedRelationshipStatement, ctx context.Context, input pipelineRowSource, plan pipelineRowWith) pipelineRowSource {
 	return func(yield func(pipelineRow) bool) bool {
 		// Bind the imports per run, inside the closure: the outer function
 		// stays small enough to inline, so its closures need not escape.
@@ -549,13 +549,13 @@ func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipel
 				return false
 			}
 			if strings.ContainsAny(plan.clause, "([") {
-				if err := e.validatePipelineWithRows([]pipelineRow{row}, plan.clause); err != nil {
+				if err := e.validatePipelineWithRows(admission, []pipelineRow{row}, plan.clause); err != nil {
 					recordExpressionFailure(ctx, err)
 					valid = false
 					return false
 				}
 			}
-			current, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, projected, scope)
+			current, accepted, resolved := e.pipelineProjectWithRow(admission, ctx, row, plan, projected, scope)
 			if !resolved {
 				valid = false
 				return false
@@ -566,7 +566,7 @@ func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipel
 	}
 }
 
-func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pipelineRowSource, rows []pipelineRow, clause string) (pipelineRowSource, bool) {
+func (e *StorageExecutor) pipelineWithWindowSource(admission admittedRelationshipStatement, ctx context.Context, input pipelineRowSource, rows []pipelineRow, clause string) (pipelineRowSource, bool) {
 	end := len(clause)
 	for _, keyword := range []string{"SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
@@ -582,18 +582,18 @@ func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pi
 	}
 	skip, limit := 0, -1
 	if topLevelKeywordIndex(clause, "SKIP") >= 0 {
-		skip, ok = e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(clause, "SKIP"), rows)
+		skip, ok = e.evaluatePipelinePagination(admission, ctx, pipelinePaginationExpression(clause, "SKIP"), rows)
 		if !ok {
 			return nil, false
 		}
 	}
 	if topLevelKeywordIndex(clause, "LIMIT") >= 0 {
-		limit, ok = e.evaluatePipelinePagination(ctx, pipelinePaginationExpression(clause, "LIMIT"), rows)
+		limit, ok = e.evaluatePipelinePagination(admission, ctx, pipelinePaginationExpression(clause, "LIMIT"), rows)
 		if !ok {
 			return nil, false
 		}
 	}
-	projected := e.pipelineWithRowSource(ctx, input, plan)
+	projected := e.pipelineWithRowSource(admission, ctx, input, plan)
 	return func(yield func(pipelineRow) bool) bool {
 		if limit == 0 {
 			return true
@@ -610,7 +610,7 @@ func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pi
 	}, true
 }
 
-func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) (pipelineRowSource, int, bool) {
+func (e *StorageExecutor) pipelineUnwindSource(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clauses []pipelineClause) (pipelineRowSource, int, bool) {
 	expression, alias, ok := parsePipelineIteration(clauses[0].text)
 	if !ok {
 		return nil, 0, false
@@ -630,7 +630,7 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 	}
 	source := pipelineRowSource(func(yield func(pipelineRow) bool) bool {
 		for _, input := range rows {
-			values, ok := e.pipelineUnwindValues(ctx, expression, input)
+			values, ok := e.pipelineUnwindValues(admission, ctx, expression, input)
 			if !ok {
 				return false
 			}
@@ -652,7 +652,7 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 		return true
 	})
 	for _, plan := range plans {
-		source = e.pipelineWithRowSource(ctx, source, plan)
+		source = e.pipelineWithRowSource(admission, ctx, source, plan)
 	}
 	return source, len(plans), true
 }

@@ -204,7 +204,9 @@ func TestMonsterUnresolvedExpressionProtocol(t *testing.T) {
 	exec, _ := newTestExecutor(t)
 	for _, expression := range []string{"unknownVariable", "(n)-->()", "->()", ">()"} {
 		ctx := withExpressionFailureSlot(context.Background())
-		value, resolved, err := exec.evaluateExpressionFromValuesResult(ctx, expression, map[string]interface{}{})
+		fixtureAdmission968Context, fixtureAdmission968 := expressionTestContext(ctx, expression)
+		_ = fixtureAdmission968Context
+		value, resolved, err := exec.evaluateExpressionFromValuesResult(fixtureAdmission968, fixtureAdmission968Context, expression, map[string]interface{}{})
 		require.Nil(t, value)
 		require.False(t, resolved)
 		_, err = checkedPropertyResult(ctx, expression, value, resolved, err)

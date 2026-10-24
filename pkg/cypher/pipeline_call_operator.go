@@ -16,7 +16,7 @@ type pipelineCallMetadata struct {
 	batch   *boundTransactionBatch
 }
 
-func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
+func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
 	body, afterCall, inTransactions, batchExpression := e.parseCallSubquery(clause)
 	if err := validateCallSubqueryBody(body); err != nil {
 		return nil, nil, true, err
@@ -30,7 +30,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			batch = metadata.batch
 		}
 		var err error
-		batch, err = e.bindTransactionalCallBatch(ctx, batchExpression, batch)
+		batch, err = e.bindTransactionalCallBatch(admission, ctx, batchExpression, batch)
 		if err != nil {
 			return nil, nil, true, err
 		}
@@ -215,7 +215,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				}
 				branchCtx := withPipelineImports(withValueBindings(runCtx, branchInput), carried)
 
-				inner, handled, execErr := runExec.runPipelineClauseRows(branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
+				inner, handled, execErr := runExec.runPipelineClauseRows(admission, branchCtx, []pipelineRow{branchInput}, scope, branchClauses, branchClauses, &pipelineRowOutput{})
 				if execErr == nil {
 					execErr = getExpressionFailure(runCtx)
 				}

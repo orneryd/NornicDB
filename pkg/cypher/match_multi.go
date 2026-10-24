@@ -136,7 +136,7 @@ type relationshipBinding map[string]interface{}
 // relationship-binding slice is index-aligned with the returned bindings and
 // carries forward any relationship bound earlier in the chain plus any
 // relationship variable bound by this clause's own pattern.
-func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern string, existingBindings []binding, existingRelBindings []relationshipBinding) ([]binding, []relationshipBinding) {
+func (e *StorageExecutor) executeChainedMatch(admission admittedRelationshipStatement, ctx context.Context, pattern string, existingBindings []binding, existingRelBindings []relationshipBinding) ([]binding, []relationshipBinding) {
 	var newBindings []binding
 	var newRelBindings []relationshipBinding
 	// Bracketed (-[r]->) and bare (-->, <--, --) relationships both make a
@@ -156,14 +156,14 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 		for name, relationship := range existingRels {
 			rowScope[name] = relationship
 		}
-		rowCtx, rowPattern, prepareErr := e.preparePatternRow(ctx, pattern, rowScope)
+		rowCtx, rowPattern, prepareErr := e.preparePatternRow(admission, ctx, pattern, rowScope)
 		if prepareErr != nil {
 			recordExpressionFailure(ctx, prepareErr)
 			return nil, nil
 		}
 		var matches *TraversalMatch
 		if isRelationshipPattern {
-			matches = e.parseTraversalPattern(rowCtx, rowPattern)
+			matches = e.parseTraversalPattern(admission, rowCtx, rowPattern)
 			if matches == nil {
 				return newBindings, newRelBindings
 			}
@@ -174,18 +174,19 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			boundStartNode := existing[matches.StartNode.variable]
 			boundEndNode := existing[matches.EndNode.variable]
 
+			run := e.relationshipExecutionFor(admission, rowCtx, pattern, "")
 			var paths []PathResult
 			if boundStartNode != nil {
 				if !e.pipelineNodeMatchesPattern(boundStartNode, matches.StartNode) {
 					continue
 				}
 				if matches.IsChained && len(matches.Segments) > 1 {
-					paths = e.traverseChainedGraph(rowCtx, matches, []*storage.Node{boundStartNode})
+					paths = run.traverseChainedGraph(rowCtx, matches, []*storage.Node{boundStartNode})
 				} else {
-					paths = e.traverseFromNode(rowCtx, boundStartNode, matches)
+					paths = run.traverseFromNode(rowCtx, boundStartNode, matches)
 				}
 			} else {
-				paths = e.traverseGraph(rowCtx, matches)
+				paths = run.traverseGraph(rowCtx, matches)
 			}
 			for _, path := range paths {
 				if len(path.Nodes) == 0 {
@@ -219,7 +220,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 			}
 		} else {
 			// Simple node pattern
-			nodePattern, parseErr := e.parseNodePattern(rowCtx, rowPattern)
+			nodePattern, parseErr := e.parseNodePattern(admission, rowCtx, rowPattern)
 			if parseErr != nil {
 				recordExpressionFailure(ctx, parseErr)
 				return nil, nil
@@ -235,7 +236,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 				continue
 			}
 
-			nodes, _ := e.loadPatternNodes(rowCtx, nodePattern.labels, nodePattern.properties)
+			nodes, _ := e.loadPatternNodes(admission, rowCtx, nodePattern.labels, nodePattern.properties)
 
 			for _, node := range nodes {
 				b := make(binding)
@@ -363,12 +364,12 @@ func edgeRelationshipBindings(bindings relationshipBinding) map[string]*storage.
 // directly with plain []binding for queries that bind no relationship
 // variable. See filterBindingsByWhereWithRels for the relationship-aware
 // variant used by executeMultiMatch.
-func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []binding, whereClause string, params map[string]interface{}) []binding {
+func (e *StorageExecutor) filterBindingsByWhere(admission admittedRelationshipStatement, ctx context.Context, bindings []binding, whereClause string, params map[string]interface{}) []binding {
 	compiled := e.newBindingFilterPredicate(ctx, whereClause, params)
 	result := make([]binding, 0, len(bindings))
 
 	for _, b := range bindings {
-		if compiled.matches(b, params) {
+		if compiled.matches(admission, b, params) {
 			result = append(result, b)
 		}
 	}
@@ -387,7 +388,7 @@ func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []
 // the duration of the WHERE check only — see bindingWithRelView. The real
 // *storage.Edge values (needed for RETURN/DELETE) are returned separately
 // and never replaced by the view.
-func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bindings []binding, relBindings []relationshipBinding, whereClause string, params map[string]interface{}) ([]binding, []relationshipBinding) {
+func (e *StorageExecutor) filterBindingsByWhereWithRels(admission admittedRelationshipStatement, ctx context.Context, bindings []binding, relBindings []relationshipBinding, whereClause string, params map[string]interface{}) ([]binding, []relationshipBinding) {
 	compiled := e.newBindingFilterPredicate(ctx, whereClause, params)
 	resultBindings := make([]binding, 0, len(bindings))
 	resultRels := make([]relationshipBinding, 0, len(bindings))
@@ -397,7 +398,7 @@ func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bin
 		if i < len(relBindings) {
 			rels = relBindings[i]
 		}
-		if compiled.matchesRelationships(b, rels, params) {
+		if compiled.matchesRelationships(admission, b, rels, params) {
 			resultBindings = append(resultBindings, b)
 			resultRels = append(resultRels, rels)
 		}
@@ -433,11 +434,11 @@ func bindingWithRelView(b binding, rels map[string]*storage.Edge) binding {
 }
 
 // evaluateBindingWhere evaluates WHERE clause against a binding
-func (e *StorageExecutor) evaluateBindingWhere(ctx context.Context, b binding, whereClause string, params map[string]interface{}) bool {
-	return e.evaluateBindingWhereGeneric(ctx, b, whereClause, params)
+func (e *StorageExecutor) evaluateBindingWhere(admission admittedRelationshipStatement, ctx context.Context, b binding, whereClause string, params map[string]interface{}) bool {
+	return e.evaluateBindingWhereGeneric(admission, ctx, b, whereClause, params)
 }
 
-func (e *StorageExecutor) resolveWhereValue(ctx context.Context, raw string, params map[string]interface{}) interface{} {
+func (e *StorageExecutor) resolveWhereValue(admission admittedRelationshipStatement, ctx context.Context, raw string, params map[string]interface{}) interface{} {
 	s := strings.TrimSpace(raw)
 	if strings.HasPrefix(s, "$") {
 		name := strings.TrimSpace(strings.TrimPrefix(s, "$"))
@@ -447,7 +448,7 @@ func (e *StorageExecutor) resolveWhereValue(ctx context.Context, raw string, par
 			}
 		}
 	}
-	value, err := e.parseValue(ctx, s)
+	value, err := e.parseValue(admission, ctx, s)
 	recordExpressionFailure(ctx, err)
 	return value
 }
@@ -456,23 +457,23 @@ func (e *StorageExecutor) resolveWhereValue(ctx context.Context, raw string, par
 // any relationship variable(s) bound for this specific row (index-aligned
 // counterpart produced by executeFirstMatch/executeChainedMatch); pass nil
 // when the row binds no relationship variable.
-func (e *StorageExecutor) resolveBindingItemWithRelationships(ctx context.Context, item returnItem, b binding, rels relationshipBinding) interface{} {
+func (e *StorageExecutor) resolveBindingItemWithRelationships(admission admittedRelationshipStatement, ctx context.Context, item returnItem, b binding, rels relationshipBinding) interface{} {
 	expr := strings.TrimSpace(item.expr)
 	if expr == "" {
 		return nil
 	}
-	return e.resolveBindingExprWithRelationships(ctx, expr, b, rels)
+	return e.resolveBindingExprWithRelationships(admission, ctx, expr, b, rels)
 }
 
-func (e *StorageExecutor) resolveBindingItem(ctx context.Context, item returnItem, b binding, rels map[string]*storage.Edge) interface{} {
-	return e.resolveBindingItemWithRelationships(ctx, item, b, relationshipBindingFromEdges(rels))
+func (e *StorageExecutor) resolveBindingItem(admission admittedRelationshipStatement, ctx context.Context, item returnItem, b binding, rels map[string]*storage.Edge) interface{} {
+	return e.resolveBindingItemWithRelationships(admission, ctx, item, b, relationshipBindingFromEdges(rels))
 }
 
-func (e *StorageExecutor) resolveBindingExpr(ctx context.Context, expr string, b binding, rels map[string]*storage.Edge) interface{} {
-	return e.resolveBindingExprWithRelationships(ctx, expr, b, relationshipBindingFromEdges(rels))
+func (e *StorageExecutor) resolveBindingExpr(admission admittedRelationshipStatement, ctx context.Context, expr string, b binding, rels map[string]*storage.Edge) interface{} {
+	return e.resolveBindingExprWithRelationships(admission, ctx, expr, b, relationshipBindingFromEdges(rels))
 }
 
-func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Context, expr string, b binding, rels relationshipBinding) interface{} {
+func (e *StorageExecutor) resolveBindingExprWithRelationships(admission admittedRelationshipStatement, ctx context.Context, expr string, b binding, rels relationshipBinding) interface{} {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
@@ -499,7 +500,7 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	if strings.HasPrefix(expr, "'") || strings.HasPrefix(expr, "\"") ||
 		strings.EqualFold(expr, "true") || strings.EqualFold(expr, "false") ||
 		strings.EqualFold(expr, "null") || isNumericLiteral(expr) {
-		value, err := e.parseValue(ctx, expr)
+		value, err := e.parseValue(admission, ctx, expr)
 		recordExpressionFailure(ctx, err)
 		return value
 	}
@@ -541,7 +542,7 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	// paths. It already accepts a relationship map (previously always passed
 	// nil here), so expressions like count(rel) / collect(rel.prop) resolve
 	// correctly once rels is populated.
-	if val := e.evaluateExpressionWithContext(ctx, expr, b, edgeRelationshipBindings(rels)); val != nil {
+	if val := e.evaluateExpressionWithContext(admission, ctx, expr, b, edgeRelationshipBindings(rels)); val != nil {
 		return val
 	}
 
@@ -574,7 +575,7 @@ func isNumericLiteral(s string) bool {
 //   - limit: Maximum number of nodes to collect (-1 for unlimited)
 //
 // Returns collected nodes or error.
-func (e *StorageExecutor) collectNodesWithStreaming(
+func (e *StorageExecutor) collectNodesWithStreaming(admission admittedRelationshipStatement,
 	ctx context.Context,
 	labels []string,
 	properties map[string]interface{},
@@ -582,14 +583,14 @@ func (e *StorageExecutor) collectNodesWithStreaming(
 	whereClause string,
 	limit int,
 ) ([]*storage.Node, error) {
-	return e.collectNodesWithStreamingProjection(ctx, labels, properties, whereVariable, whereClause, limit, nil)
+	return e.collectNodesWithStreamingProjection(admission, ctx, labels, properties, whereVariable, whereClause, limit, nil)
 }
 
 // collectNodesWithStreamingProjection is collectNodesWithStreaming whose
 // label scan reads only the projection's user properties; nil reads whole
 // nodes. The caller guarantees nothing else in the statement uses the
 // returned nodes' other properties.
-func (e *StorageExecutor) collectNodesWithStreamingProjection(
+func (e *StorageExecutor) collectNodesWithStreamingProjection(admission admittedRelationshipStatement,
 	ctx context.Context,
 	labels []string,
 	properties map[string]interface{},
@@ -603,7 +604,7 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 		capacity = limit
 	}
 	collected := make([]*storage.Node, 0, capacity)
-	if err := e.visitNodesWithStreamingProjection(ctx, labels, properties, whereVariable, whereClause, limit, projection, &collected, nil); err != nil {
+	if err := e.visitNodesWithStreamingProjection(admission, ctx, labels, properties, whereVariable, whereClause, limit, projection, &collected, nil); err != nil {
 		return nil, err
 	}
 	return collected, nil
@@ -614,7 +615,7 @@ func (e *StorageExecutor) collectNodesWithStreamingProjection(
 // set, as the scan reads it, in the same order. visit returning
 // storage.ErrIterationStopped ends the scan without error; any other error
 // ends it with that error.
-func (e *StorageExecutor) visitNodesWithStreamingProjection(
+func (e *StorageExecutor) visitNodesWithStreamingProjection(admission admittedRelationshipStatement,
 	ctx context.Context,
 	labels []string,
 	properties map[string]interface{},
@@ -632,7 +633,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	visited := 0
 	var whereFilter FilterFunc
 	if strings.TrimSpace(whereClause) != "" {
-		whereFilter = e.compileNodeWhereFilter(ctx, whereVariable, whereClause)
+		whereFilter = e.compileNodeWhereFilter(admission, ctx, whereVariable, whereClause)
 	}
 	collect := func(node *storage.Node) error {
 		if node == nil || (hideSystemNodes && isSystemNode(node)) {
@@ -750,7 +751,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// the variable (WHERE n.id = $id, #857), which every match satisfies.
 	var required map[string]interface{}
 	if len(labels) == 0 {
-		required = e.labellessScanRequiredProperties(ctx, properties, whereVariable, whereClause)
+		required = e.labellessScanRequiredProperties(admission, ctx, properties, whereVariable, whereClause)
 	}
 	if len(required) > 0 {
 		keys := make([]string, 0, len(required))
@@ -843,7 +844,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		nodes = e.filterNodesByProperties(nodes, properties)
 	}
 	if strings.TrimSpace(whereClause) != "" {
-		nodes = e.filterNodes(ctx, nodes, whereVariable, whereClause)
+		nodes = e.filterNodes(admission, ctx, nodes, whereVariable, whereClause)
 	}
 	if limit > 0 && len(nodes) > limit {
 		nodes = nodes[:limit]
@@ -873,7 +874,7 @@ func visitNodeList(nodes []*storage.Node, visit func(*storage.Node) error) error
 // (parameter, literal or bound value; parseSimpleIndexedEquality). Over-
 // approximating the WHERE is safe because the caller still evaluates it on
 // every node the scan returns.
-func (e *StorageExecutor) labellessScanRequiredProperties(ctx context.Context, properties map[string]interface{}, variable, whereClause string) map[string]interface{} {
+func (e *StorageExecutor) labellessScanRequiredProperties(admission admittedRelationshipStatement, ctx context.Context, properties map[string]interface{}, variable, whereClause string) map[string]interface{} {
 	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
 	if clause == "" || strings.TrimSpace(variable) == "" {
 		return properties
@@ -883,7 +884,7 @@ func (e *StorageExecutor) labellessScanRequiredProperties(ctx context.Context, p
 		required[key] = value
 	}
 	for _, conjunct := range splitTopLevelAndConjuncts(clause) {
-		property, value, ok := e.parseSimpleIndexedEquality(ctx, variable, unwrapOuterParens(strings.TrimSpace(conjunct)))
+		property, value, ok := e.parseSimpleIndexedEquality(admission, ctx, variable, unwrapOuterParens(strings.TrimSpace(conjunct)))
 		if !ok {
 			continue
 		}
@@ -933,7 +934,7 @@ type cartesianEqConstraint struct {
 	offset int64
 }
 
-func (e *StorageExecutor) applyCartesianWherePushdown(
+func (e *StorageExecutor) applyCartesianWherePushdown(admission admittedRelationshipStatement,
 	ctx context.Context,
 	patternMatches []struct {
 		variable string
@@ -1003,7 +1004,7 @@ func (e *StorageExecutor) applyCartesianWherePushdown(
 			if !exists {
 				continue
 			}
-			predicate, supported := e.getCompiledSimpleWhere(ctx, variable, term)
+			predicate, supported := e.getCompiledSimpleWhere(admission, ctx, variable, term)
 			if !supported {
 				continue
 			}
@@ -1408,40 +1409,40 @@ func filterNodesByNullConstraint(nodes []*storage.Node, prop string, expectNotNu
 }
 
 // evaluateWhereForContext evaluates a WHERE clause against a node context
-func (e *StorageExecutor) evaluateWhereForContext(ctx context.Context, whereClause string, nodes map[string]*storage.Node) bool {
+func (e *StorageExecutor) evaluateWhereForContext(admission admittedRelationshipStatement, ctx context.Context, whereClause string, nodes map[string]*storage.Node) bool {
 	if strings.TrimSpace(whereClause) == "" {
 		return true
 	}
 	predicate := e.newBindingFilterPredicate(ctx, whereClause, nil)
-	return predicate.matches(binding(nodes), nil)
+	return predicate.matches(admission, binding(nodes), nil)
 }
 
 // evaluateBoundRelationshipPattern evaluates a WHERE pattern against the
 // current bindings using the same parser and traversal implementation as a
 // MATCH clause. The second return value distinguishes a valid pattern that did
 // not match from an expression that is not a relationship pattern.
-func (e *StorageExecutor) evaluateBoundRelationshipPattern(ctx context.Context, clause string, nodes map[string]*storage.Node) (bool, bool) {
-	return e.evaluateRowRelationshipPattern(ctx, clause, entityRow(ctx, nodes, nil))
+func (e *StorageExecutor) evaluateBoundRelationshipPattern(admission admittedRelationshipStatement, ctx context.Context, clause string, nodes map[string]*storage.Node) (bool, bool) {
+	return e.evaluateRowRelationshipPattern(admission, ctx, clause, entityRow(ctx, nodes, nil))
 }
 
 // Every predicate adapter passes its complete row here, including scalar,
 // relationship and node bindings. Parsing consumes the same prepared values
 // as MATCH, instead of evaluating a node-only view during recognition.
-func (e *StorageExecutor) evaluateRowRelationshipPattern(ctx context.Context, clause string, values map[string]interface{}) (bool, bool) {
+func (e *StorageExecutor) evaluateRowRelationshipPattern(admission admittedRelationshipStatement, ctx context.Context, clause string, values map[string]interface{}) (bool, bool) {
 	if !isRelationshipPatternOperand(strings.TrimSpace(clause)) {
 		return false, false
 	}
-	rowCtx, pattern, err := e.preparePatternRow(ctx, strings.TrimSpace(clause), values)
+	rowCtx, pattern, err := e.preparePatternRow(admission, ctx, strings.TrimSpace(clause), values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false, true
 	}
-	match, recognized := e.parseBoundRelationshipPattern(rowCtx, pattern)
+	match, recognized := e.parseBoundRelationshipPattern(admission, rowCtx, pattern)
 	if !recognized {
 		return false, false
 	}
 	nodes, _ := withWhereValueContext(values)
-	return e.evaluateParsedBoundRelationshipPattern(rowCtx, match, nodes), true
+	return e.evaluateParsedBoundRelationshipPattern(admission, rowCtx, match, nodes), true
 }
 
 // parseBoundRelationshipPattern parses clause as a relationship pattern
@@ -1449,8 +1450,8 @@ func (e *StorageExecutor) evaluateRowRelationshipPattern(ctx context.Context, cl
 // (isRelationshipPatternOperand) is a pattern: a parenthesised expression
 // whose subqueries hold patterns, (NOT EXISTS { (h)-[:C]->(x) } AND …), is
 // not one.
-func (e *StorageExecutor) parseBoundRelationshipPattern(ctx context.Context, clause string) (*TraversalMatch, bool) {
-	return readBoundRelationshipPattern(ctx, clause, e.parseTraversalPattern)
+func (e *StorageExecutor) parseBoundRelationshipPattern(admission admittedRelationshipStatement, ctx context.Context, clause string) (*TraversalMatch, bool) {
+	return readBoundRelationshipPattern(ctx, clause, e.admittedPatternReader(admission).parseTraversalPattern)
 }
 
 func (e *StorageExecutor) parseBoundRelationshipPatternStructure(ctx context.Context, clause string) (*TraversalMatch, bool) {
@@ -1470,7 +1471,7 @@ func readBoundRelationshipPattern(ctx context.Context, clause string, read func(
 	return match, true
 }
 
-func (e *StorageExecutor) evaluateParsedBoundRelationshipPattern(ctx context.Context, match *TraversalMatch, nodes map[string]*storage.Node) bool {
+func (e *StorageExecutor) evaluateParsedBoundRelationshipPattern(admission admittedRelationshipStatement, ctx context.Context, match *TraversalMatch, nodes map[string]*storage.Node) bool {
 	if match.StartNode.variable != "" && nodes[match.StartNode.variable] == nil ||
 		match.EndNode.variable != "" && nodes[match.EndNode.variable] == nil {
 		return false
@@ -1480,27 +1481,18 @@ func (e *StorageExecutor) evaluateParsedBoundRelationshipPattern(ctx context.Con
 			return false
 		}
 	}
-	if !match.IsChained && match.Relationship.MinHops == 1 && match.Relationship.MaxHops == 1 {
-		return e.evaluateBoundOneHopPattern(ctx, match, nodes)
+	var start, end []*storage.Node
+	if node := nodes[match.StartNode.variable]; node != nil {
+		start = []*storage.Node{node}
 	}
-
-	var paths []PathResult
-	if start := nodes[match.StartNode.variable]; start != nil {
-		if match.IsChained && len(match.Segments) > 1 {
-			paths = e.traverseChainedGraph(ctx, match, []*storage.Node{start})
-		} else {
-			paths = e.traverseFromNode(ctx, start, match)
-		}
-	} else if end := nodes[match.EndNode.variable]; end != nil && !match.IsChained {
-		reversed := reverseTraversalMatch(match)
-		if reversed == nil {
-			return false
-		}
-		for _, reversedPath := range e.traverseFromNode(ctx, end, reversed) {
-			paths = append(paths, reversePathResult(reversedPath))
-		}
-	} else {
-		paths = e.traverseGraph(ctx, match)
+	if node := nodes[match.EndNode.variable]; node != nil {
+		end = []*storage.Node{node}
+	}
+	execution := e.relationshipExecutionFor(admission, ctx, match.accessPattern, "")
+	paths, err := execution.paths(ctx, match, start, end, nil)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
 	}
 
 	existing := binding(nodes)
@@ -1513,7 +1505,7 @@ func (e *StorageExecutor) evaluateParsedBoundRelationshipPattern(ctx context.Con
 	return false
 }
 
-func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match *TraversalMatch, nodes map[string]*storage.Node) bool {
+func (e *StorageExecutor) evaluateBoundOneHopPattern(admission admittedRelationshipStatement, ctx context.Context, match *TraversalMatch, nodes map[string]*storage.Node) bool {
 	start := nodes[match.StartNode.variable]
 	if start == nil {
 		end := nodes[match.EndNode.variable]
@@ -1521,14 +1513,17 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match 
 			return false
 		}
 		reversed := reverseTraversalMatch(match)
-		return reversed != nil && e.evaluateBoundOneHopPattern(ctx, reversed, nodes)
+		return reversed != nil && e.evaluateBoundOneHopPattern(admission, ctx, reversed, nodes)
 	}
 	if !e.pipelineNodeMatchesPattern(start, match.StartNode) {
 		return false
 	}
-	viewport, _ := TemporalViewportFromContext(ctx)
-	checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
-	paths := e.traverseGraphSequential(ctx, match, []*storage.Node{start}, viewport, checker)
+	execution := e.relationshipExecutionFor(admission, ctx, match.accessPattern, "")
+	paths, err := execution.paths(ctx, match, []*storage.Node{start}, nil, nil)
+	if err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
+	}
 	end, bound := nodes[match.EndNode.variable]
 	for _, path := range paths {
 		if len(path.Nodes) == 0 {

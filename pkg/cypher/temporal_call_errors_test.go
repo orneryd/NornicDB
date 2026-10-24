@@ -60,7 +60,9 @@ func TestTemporalFunctionCallErrors(t *testing.T) {
 	// The context evaluator reports the same error through the statement's
 	// failure slot.
 	failureCtx := withExpressionFailureSlot(context.Background())
-	require.Nil(t, exec.evaluateExpressionWithContext(failureCtx, "date.truncate('day', 'x')", nil, nil))
+	fixtureAdmission891Context, fixtureAdmission891 := expressionTestContext(failureCtx, "date.truncate('day', 'x')")
+	_ = fixtureAdmission891
+	require.Nil(t, exec.evaluateExpressionWithContext(fixtureAdmission891, fixtureAdmission891Context, "date.truncate('day', 'x')", nil, nil))
 	require.Contains(t, statusText(getExpressionFailure(failureCtx)), "Neo.ClientError.Procedure.ProcedureCallFailed")
 
 	require.Equal(t, "NO_VALUE", neo4jProvidedValue(nil))

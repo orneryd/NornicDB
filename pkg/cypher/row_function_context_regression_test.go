@@ -76,12 +76,16 @@ func TestRowFunctionContextBindingDoesNotEscapeEvaluation(t *testing.T) {
 	for _, database := range []string{"first_context", "second_context", "first_context"} {
 		ctx := withExpressionFailureSlot(context.WithValue(context.Background(), ctxKeyUseDatabase, database))
 		for range 3 {
-			value, ok := exec.evaluateRowExpressionWithContext(ctx, "[elementId(n)]", row)
+			fixtureAdmission840Context, fixtureAdmission840 := expressionTestContext(ctx, "[elementId(n)]")
+			_ = fixtureAdmission840
+			value, ok := exec.evaluateRowExpressionWithContext(fixtureAdmission840, fixtureAdmission840Context, "[elementId(n)]", row)
 			require.True(t, ok)
 			require.Equal(t, []interface{}{"4:" + database + ":n"}, value)
 			require.NotContains(t, row, rowStatementContextKey)
 			predicate := "head([elementId(n)]) STARTS WITH '4:" + database + ":'"
-			require.True(t, exec.evaluateRowPredicate(ctx, predicate, row))
+			fixtureAdmission841Context, fixtureAdmission841 := expressionTestContext(ctx, predicate)
+			_ = fixtureAdmission841
+			require.True(t, exec.evaluateRowPredicate(fixtureAdmission841, fixtureAdmission841Context, predicate, row))
 			require.NotContains(t, row, rowStatementContextKey)
 			require.NoError(t, getExpressionFailure(ctx))
 		}
@@ -91,16 +95,22 @@ func TestRowFunctionContextBindingDoesNotEscapeEvaluation(t *testing.T) {
 	outer := context.WithValue(context.Background(), ctxKeyUseDatabase, "outer_context")
 	row[rowStatementContextKey] = outer
 	inner := context.WithValue(context.Background(), ctxKeyUseDatabase, "inner_context")
-	value, ok := exec.evaluateRowExpressionWithContext(inner, "[elementId(n)]", row)
+	fixtureAdmission842Context, fixtureAdmission842 := expressionTestContext(inner, "[elementId(n)]")
+	_ = fixtureAdmission842
+	value, ok := exec.evaluateRowExpressionWithContext(fixtureAdmission842, fixtureAdmission842Context, "[elementId(n)]", row)
 	require.True(t, ok)
 	require.Equal(t, []interface{}{"4:outer_context:n"}, value)
 	require.Same(t, outer, row[rowStatementContextKey])
-	require.True(t, exec.evaluateRowPredicate(inner, "toLower(x) = 'a'", row))
+	fixtureAdmission843Context, fixtureAdmission843 := expressionTestContext(inner, "toLower(x) = 'a'")
+	_ = fixtureAdmission843
+	require.True(t, exec.evaluateRowPredicate(fixtureAdmission843, fixtureAdmission843Context, "toLower(x) = 'a'", row))
 	require.Same(t, outer, row[rowStatementContextKey])
 	delete(row, rowStatementContextKey)
 	// Error returns also release the temporary binding.
 	ctx := withExpressionFailureSlot(context.Background())
-	_, _ = exec.evaluateRowExpressionWithContext(ctx, "substring('abc', 0, -1)", row)
+	fixtureAdmission844Context, fixtureAdmission844 := expressionTestContext(ctx, "substring('abc', 0, -1)")
+	_ = fixtureAdmission844
+	_, _ = exec.evaluateRowExpressionWithContext(fixtureAdmission844, fixtureAdmission844Context, "substring('abc', 0, -1)", row)
 	require.Error(t, getExpressionFailure(ctx))
 	require.NotContains(t, row, rowStatementContextKey)
 	require.Equal(t, pipelineRow{"n": &storage.Node{ID: "n"}, "x": "a"}, row)

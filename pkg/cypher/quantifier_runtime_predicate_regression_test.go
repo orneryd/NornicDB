@@ -32,7 +32,9 @@ func TestQuantifierRuntimePredicateEvaluatorParity(t *testing.T) {
 	for _, function := range []string{"all", "any", "none", "single"} {
 		expression := fmt.Sprintf("%s(x IN [1,2] WHERE x+n.id)", function)
 		t.Run(function+"/text", func(t *testing.T) {
-			_, _, err := exec.evaluateRowValueText(expression, values)
+			fixtureAdmission827Context, fixtureAdmission827 := expressionTestRow(context.Background(), expression, values)
+			_ = fixtureAdmission827
+			_, _, err := exec.evaluateRowValueText(fixtureAdmission827, expression, fixtureAdmission827Context)
 			requireQuantifierRuntimeTypeError(t, err)
 		})
 		t.Run(function+"/compiled", func(t *testing.T) {
@@ -41,12 +43,16 @@ func TestQuantifierRuntimePredicateEvaluatorParity(t *testing.T) {
 			// which tests ran before.
 			root, _ := (&rowValueCompiler{}).compile(expression)
 			require.Empty(t, firstRowTextNode(root), "the quantifier must not be read from the text")
-			_, _, err := root.eval(exec, values, nil)
+			fixtureAdmission1773Context, fixtureAdmission1773 := statementTestContext(context.Background(), "RETURN "+(expression))
+			_ = fixtureAdmission1773Context
+			_, _, err := root.eval(fixtureAdmission1773, exec, values, nil)
 			requireQuantifierRuntimeTypeError(t, err)
 		})
 		t.Run(function+"/context", func(t *testing.T) {
 			ctx := withExpressionFailureSlot(withValueBindings(context.Background(), values))
-			result := exec.evaluateQuantifierWithContext(ctx, function, "x IN [1,2] WHERE x+n.id", nil, nil, nil, nil, nil, 0)
+			fixtureAdmission1774Context, fixtureAdmission1774 := expressionTestContext(ctx, "x IN [1,2] WHERE x+n.id")
+			_ = fixtureAdmission1774Context
+			result := exec.evaluateQuantifierWithContext(fixtureAdmission1774, fixtureAdmission1774Context, function, "x IN [1,2] WHERE x+n.id", nil, nil, nil, nil, nil, 0)
 			require.Nil(t, result)
 			requireQuantifierRuntimeTypeError(t, getExpressionFailure(ctx))
 		})

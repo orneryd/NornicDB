@@ -82,13 +82,19 @@ func TestRowPredicateCombinesEqualityWithParenthesizedAlternative(t *testing.T) 
 			"textKey":    "other",
 		}},
 	}
-	require.False(t, exec.evaluateRowPredicate(context.Background(), `o.textKey128 = "needle"`, row))
+	fixtureAdmission342Context, fixtureAdmission342 := expressionTestContext(context.Background(), `o.textKey128 = "needle"`)
+	_ = fixtureAdmission342
+	require.False(t, exec.evaluateRowPredicate(fixtureAdmission342, fixtureAdmission342Context, `o.textKey128 = "needle"`, row))
 	value, ok := rowValue(t, exec, `"unique-key" IS NOT NULL AND o.textKey = "unique-key"`, row)
 	require.True(t, ok)
 	require.Equal(t, false, value)
-	require.False(t, exec.evaluateRowPredicate(context.Background(),
+	fixtureAdmission343Context, fixtureAdmission343 := expressionTestContext(context.Background(), `("unique-key" IS NOT NULL AND o.textKey = "unique-key")`)
+	_ = fixtureAdmission343
+	require.False(t, exec.evaluateRowPredicate(fixtureAdmission343, fixtureAdmission343Context,
 		`("unique-key" IS NOT NULL AND o.textKey = "unique-key")`, row))
-	require.False(t, exec.evaluateRowPredicate(context.Background(),
+	fixtureAdmission344Context, fixtureAdmission344 := expressionTestContext(context.Background(), `o.textKey128 = "needle" OR ("unique-key" IS NOT NULL AND o.textKey = "unique-key")`)
+	_ = fixtureAdmission344
+	require.False(t, exec.evaluateRowPredicate(fixtureAdmission344, fixtureAdmission344Context,
 		`o.textKey128 = "needle" OR ("unique-key" IS NOT NULL AND o.textKey = "unique-key")`, row))
 }
 
@@ -97,7 +103,9 @@ func TestRowPredicateCombinesNumericBounds(t *testing.T) {
 	row := map[string]interface{}{
 		"other": &storage.Node{Properties: map[string]interface{}{"age": int64(25)}},
 	}
-	require.True(t, exec.evaluateRowPredicate(context.Background(),
+	fixtureAdmission345Context, fixtureAdmission345 := expressionTestContext(context.Background(), "other.age > 24 AND other.age < 26")
+	_ = fixtureAdmission345
+	require.True(t, exec.evaluateRowPredicate(fixtureAdmission345, fixtureAdmission345Context,
 		"other.age > 24 AND other.age < 26", row))
 }
 
@@ -177,7 +185,9 @@ func TestPathWhereRejectsNonBooleanProperty(t *testing.T) {
 		"n": {Properties: map[string]interface{}{"id": "string"}},
 	}}
 
-	require.False(t, exec.evaluateWhereOnPath(ctx, "n.id", pathContext))
+	fixtureAdmission1217Context, fixtureAdmission1217 := expressionTestContext(ctx, "n.id")
+	_ = fixtureAdmission1217Context
+	require.False(t, exec.evaluateWhereOnPath(fixtureAdmission1217, fixtureAdmission1217Context, "n.id", pathContext))
 	require.ErrorContains(t, getExpressionFailure(ctx), "Type mismatch: expected Boolean")
 }
 
@@ -185,7 +195,9 @@ func TestBindingWhereRejectsNonBooleanResult(t *testing.T) {
 	exec := &StorageExecutor{}
 	ctx := withExpressionFailureSlot(context.Background())
 
-	require.False(t, exec.evaluateBindingWhereGeneric(ctx, binding{}, "1", nil))
+	fixtureAdmission346Context, fixtureAdmission346 := expressionTestContext(ctx, "1")
+	_ = fixtureAdmission346
+	require.False(t, exec.evaluateBindingWhereGeneric(fixtureAdmission346, fixtureAdmission346Context, binding{}, "1", nil))
 	require.ErrorContains(t, getExpressionFailure(ctx), "Type mismatch: expected Boolean")
 }
 

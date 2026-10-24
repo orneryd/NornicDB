@@ -505,7 +505,7 @@ func (e *StorageExecutor) hasOperatorOutsideQuotes(expr, op string) bool {
 //	evaluateComparisonExpr("5 > 3", nodes, rels)        // true
 //	evaluateComparisonExpr("'abc' = 'abc'", nodes, rels) // true
 //	evaluateComparisonExpr("n.age >= 18", nodes, rels)   // depends on n.age
-func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
+func (e *StorageExecutor) evaluateComparisonExpr(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
 	// Try operators in order of specificity
 	ops := []struct {
 		op   string
@@ -526,8 +526,8 @@ func (e *StorageExecutor) evaluateComparisonExpr(ctx context.Context, expr strin
 		// comparison ([CASE WHEN a = 1 THEN 1 END] is a list, #907).
 		leftExpr, rightExpr, ok := splitByOperatorWithOptions(expr, op.op, false, true)
 		if ok {
-			left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			left := e.evaluateExpressionWithContextFull(admission, ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			right := e.evaluateExpressionWithContextFull(admission, ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if left == nil || right == nil {
 				return nil, true
 			}
@@ -616,15 +616,15 @@ func (e *StorageExecutor) hasArithmeticOperator(expr string) bool {
 //	evaluateArithmeticExpr("5 + 3", nodes, rels)             // int64(8)
 //	evaluateArithmeticExpr("10 / 3", nodes, rels)            // float64(3.333...)
 //	evaluateArithmeticExpr("date('2025-01-01') + duration('P5D')", ...) // "2025-01-06..."
-func (e *StorageExecutor) evaluateArithmeticExpr(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
+func (e *StorageExecutor) evaluateArithmeticExpr(admission admittedRelationshipStatement, ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (interface{}, bool) {
 	// A relationship pattern or a map projection has - and * that aren't
 	// arithmetic.
 	if !isOperatorExpressionText(expr) {
 		return nil, false
 	}
 	operands := func(leftExpr, rightExpr string) (interface{}, interface{}) {
-		left := e.evaluateExpressionWithContextFull(ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		right := e.evaluateExpressionWithContextFull(ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		left := e.evaluateExpressionWithContextFull(admission, ctx, leftExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		right := e.evaluateExpressionWithContextFull(admission, ctx, rightExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return left, right
 	}
 	// result reports an operator's statement error (overflow, operand type)

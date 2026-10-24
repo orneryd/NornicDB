@@ -78,7 +78,9 @@ func TestGh713SimpleMatchLimitUsesSharedProjectionAndPagination(t *testing.T) {
 				var result *ExecuteResult
 				if route == "direct" {
 					var handled bool
-					result, handled = exec.tryFastPathSimpleMatchReturnLimit(withQueryParams(ctx, params), query, upperASCII(query))
+					fixtureAdmission1592Context, fixtureAdmission1592 := statementTestContext(withQueryParams(ctx, params), query)
+					_ = fixtureAdmission1592Context
+					result, handled = exec.tryFastPathSimpleMatchReturnLimit(fixtureAdmission1592, fixtureAdmission1592Context, query, upperASCII(query))
 					require.True(t, handled)
 				} else {
 					if route == "explicit transaction" {
@@ -129,7 +131,9 @@ func TestGh713SimpleMatchLimitDeclinesInvalidCompleteWindows(t *testing.T) {
 		t.Run(limit, func(t *testing.T) {
 			exec, ctx := newUnitExecutor(t)
 			query := "MATCH (n) RETURN n LIMIT " + limit
-			result, handled := exec.tryFastPathSimpleMatchReturnLimit(ctx, query, upperASCII(query))
+			fixtureAdmission980Context, fixtureAdmission980 := statementTestContext(ctx, query)
+			_ = fixtureAdmission980Context
+			result, handled := exec.tryFastPathSimpleMatchReturnLimit(fixtureAdmission980, fixtureAdmission980Context, query, upperASCII(query))
 			require.False(t, handled)
 			require.Nil(t, result)
 		})
@@ -148,7 +152,9 @@ func TestSimpleMatchLimitFastPath_UsesStreamingOnly(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	fastResult, handled := exec.tryFastPathSimpleMatchReturnLimit(ctx, "MATCH (n) RETURN n LIMIT 25 /* cache_bust_a */", "MATCH (N) RETURN N LIMIT 25 /* CACHE_BUST_A */")
+	fixtureAdmission1189Context, fixtureAdmission1189 := statementTestContext(ctx, "MATCH (n) RETURN n LIMIT 25 /* cache_bust_a */")
+	_ = fixtureAdmission1189Context
+	fastResult, handled := exec.tryFastPathSimpleMatchReturnLimit(fixtureAdmission1189, fixtureAdmission1189Context, "MATCH (n) RETURN n LIMIT 25 /* cache_bust_a */", "MATCH (N) RETURN N LIMIT 25 /* CACHE_BUST_A */")
 	require.True(t, handled, "fast-path parser should handle simple shape")
 	require.NotNil(t, fastResult)
 	require.Equal(t, 25, len(fastResult.Rows))
@@ -176,7 +182,9 @@ func TestSimpleMatchLimitFastPath_LabelAndAlias(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	fastResult, handled := exec.tryFastPathSimpleMatchReturnLimit(ctx, "MATCH (n:Thing) RETURN n AS node LIMIT 10 /* cache_bust_b */", "MATCH (N:THING) RETURN N AS NODE LIMIT 10 /* CACHE_BUST_B */")
+	fixtureAdmission1190Context, fixtureAdmission1190 := statementTestContext(ctx, "MATCH (n:Thing) RETURN n AS node LIMIT 10 /* cache_bust_b */")
+	_ = fixtureAdmission1190Context
+	fastResult, handled := exec.tryFastPathSimpleMatchReturnLimit(fixtureAdmission1190, fixtureAdmission1190Context, "MATCH (n:Thing) RETURN n AS node LIMIT 10 /* cache_bust_b */", "MATCH (N:THING) RETURN N AS NODE LIMIT 10 /* CACHE_BUST_B */")
 	require.True(t, handled)
 	require.NotNil(t, fastResult)
 	require.Equal(t, 10, len(fastResult.Rows))

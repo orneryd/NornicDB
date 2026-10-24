@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -269,8 +270,8 @@ func deletingEdgeSet(edgeIDs []storage.EdgeID) map[storage.EdgeID]struct{} {
 
 // nodeHasResidualRelationships reports whether a relationship other than
 // those beingDeleted connects nodeID (connectingRelationships).
-func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
-	connecting, err := connectingRelationships(store, nodeID)
+func (run relationshipEntityExecution) nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
+	connecting, err := run.connectingRelationships(context.Background(), store, nodeID)
 	if err != nil {
 		return false, err
 	}
@@ -282,6 +283,10 @@ func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, b
 	return false, nil
 }
 
+func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
+	return relationshipStorageExecution().nodeHasResidualRelationships(store, nodeID, beingDeleted)
+}
+
 // connectingRelationships returns the relationships that connect nodeID for
 // a DELETE: those DETACH DELETE removes with the node, and those that keep a
 // non-DETACH DELETE from removing it. A store that lists the relationships the
@@ -291,11 +296,15 @@ func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, b
 // in Neo4j it fails with DeleteConnectedNode for any relationship. Stores run
 // without a transaction (composite and remote databases) list what their
 // reads return.
-func connectingRelationships(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+func (run relationshipEntityExecution) connectingRelationships(ctx context.Context, store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	if lister, ok := store.(storage.IncidentEdgeLister); ok {
 		return lister.IncidentEdges(nodeID)
 	}
-	return undirectedIncidentEdges(store, nodeID)
+	return run.undirectedIncidentEdges(ctx, store, nodeID)
+}
+
+func connectingRelationships(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	return relationshipStorageExecution().connectingRelationships(context.Background(), store, nodeID)
 }
 
 // residualRelationshipDeleteError builds the error returned when a

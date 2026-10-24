@@ -86,12 +86,12 @@ func invalidRangeArgumentType(message string, value interface{}) error {
 	)
 }
 
-func (e *StorageExecutor) validateRangeCalls(expression string, row pipelineRow) error {
+func (e *StorageExecutor) validateRangeCalls(admission admittedRelationshipStatement, expression string, row pipelineRow) error {
 	for _, argumentText := range namedFunctionArguments(expression, "range") {
 		parts := e.splitFunctionArgs(argumentText)
 		arguments := make([]interface{}, len(parts))
 		for index, part := range parts {
-			value, resolved, err := e.evaluateRowValue(strings.TrimSpace(part), row)
+			value, resolved, err := e.evaluateRowValue(admission, strings.TrimSpace(part), row)
 			if err != nil {
 				return err
 			}
@@ -111,7 +111,7 @@ func (e *StorageExecutor) validateRangeCalls(expression string, row pipelineRow)
 	return nil
 }
 
-func (e *StorageExecutor) validatePipelineRangeArguments(rows []pipelineRow, clause, keyword string) error {
+func (e *StorageExecutor) validatePipelineRangeArguments(admission admittedRelationshipStatement, rows []pipelineRow, clause, keyword string) error {
 	expressions := projectionExpressions(clause, keyword)
 	if len(expressions) == 0 {
 		return nil
@@ -121,7 +121,7 @@ func (e *StorageExecutor) validatePipelineRangeArguments(rows []pipelineRow, cla
 	}
 	for _, expression := range expressions {
 		for _, row := range rows {
-			if err := e.validateRangeCalls(expression, row); err != nil {
+			if err := e.validateRangeCalls(admission, expression, row); err != nil {
 				return err
 			}
 		}

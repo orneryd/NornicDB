@@ -65,12 +65,16 @@ func TestSeedNodesFromOuterMatch_ErrorAndNilBranches(t *testing.T) {
 	_, err = store.CreateNode(&storage.Node{ID: storage.NodeID("n1"), Labels: []string{"NilSeed"}, Properties: map[string]interface{}{"id": "n1", "team": "red"}})
 	require.NoError(t, err)
 
-	_, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:ErrSeed)", "n")
+	fixtureAdmission323Context, fixtureAdmission323 := statementTestContext(ctx, "MATCH (n:ErrSeed)")
+	_ = fixtureAdmission323
+	_, err = exec.seedNodesFromOuterMatch(fixtureAdmission323, fixtureAdmission323Context, "MATCH (n:ErrSeed)", "n")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "forced label error")
 
 	// Property-matching loop should skip nil nodes in the candidate list.
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (n:NilSeed {team:'red'})", "n")
+	fixtureAdmission324Context, fixtureAdmission324 := statementTestContext(ctx, "MATCH (n:NilSeed {team:'red'})")
+	_ = fixtureAdmission324
+	nodes, err := exec.seedNodesFromOuterMatch(fixtureAdmission324, fixtureAdmission324Context, "MATCH (n:NilSeed {team:'red'})", "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("n1"), nodes[0].ID)
@@ -87,7 +91,9 @@ func TestSeedNodesFromOuterMatch_PropertyAndWhereFallbackBranch(t *testing.T) {
 
 	// Hits the branch where pattern properties are present and a non-empty WHERE
 	// forces fallback execution to preserve full semantics.
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Seed {team:'red'}) WHERE n.id = 's1'", "n")
+	fixtureAdmission325Context, fixtureAdmission325 := statementTestContext(ctx, "MATCH (n:Seed {team:'red'}) WHERE n.id = 's1'")
+	_ = fixtureAdmission325
+	nodes, err := exec.seedNodesFromOuterMatch(fixtureAdmission325, fixtureAdmission325Context, "MATCH (n:Seed {team:'red'}) WHERE n.id = 's1'", "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, "s1", nodes[0].Properties["id"])

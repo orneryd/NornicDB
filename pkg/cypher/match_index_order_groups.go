@@ -59,7 +59,7 @@ func (h *indexedOrderHeap) Pop() interface{} {
 // only the best limit nodes are retained while every boundary tie is examined.
 // bounds (impliedPropertyBounds) skips the primary-key groups where can't
 // match.
-func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int, bounds storage.PropertyIndexBounds) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) collectIndexedOrderWindow(admission admittedRelationshipStatement, ctx context.Context, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int, bounds storage.PropertyIndexBounds) ([]*storage.Node, bool, error) {
 	schema := orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
@@ -73,7 +73,7 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 	nodes := make([]*storage.Node, 0, limit)
 	var filter func(*storage.Node) bool
 	if strings.TrimSpace(where) != "" {
-		filter = e.compileNodeWhereFilter(ctx, pattern.variable, where)
+		filter = e.compileNodeWhereFilter(admission, ctx, pattern.variable, where)
 	}
 	var visitErr error
 	visited := false

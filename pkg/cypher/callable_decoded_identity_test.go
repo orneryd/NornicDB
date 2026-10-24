@@ -43,8 +43,12 @@ func testCallableDecodedIdentity(t *testing.T) {
 			r, err := e.Execute(context.Background(), "RETURN "+tc.expr+" AS v", nil)
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{tc.want}}, r.Rows)
-			require.Equal(t, tc.want, e.evaluateExpressionWithContext(context.Background(), tc.expr, nil, nil))
-			v, ok, err := e.evaluateRowValue(tc.expr, nil)
+			fixtureAdmission127Context, fixtureAdmission127 := expressionTestContext(context.Background(), tc.expr)
+			_ = fixtureAdmission127
+			require.Equal(t, tc.want, e.evaluateExpressionWithContext(fixtureAdmission127, fixtureAdmission127Context, tc.expr, nil, nil))
+			fixtureAdmission128Context, fixtureAdmission128 := expressionTestRow(context.Background(), tc.expr, nil)
+			_ = fixtureAdmission128
+			v, ok, err := e.evaluateRowValue(fixtureAdmission128, tc.expr, fixtureAdmission128Context)
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Equal(t, tc.want, v)

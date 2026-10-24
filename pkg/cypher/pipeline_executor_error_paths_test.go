@@ -63,12 +63,16 @@ func TestExecutePipeline_ErrorAndFallbackBranches(t *testing.T) {
 	// MATCH application hard error path via storage failure.
 	matchErr := errors.New("match lookup failed")
 	errExec := NewStorageExecutor(&matchErrEngine{Engine: store, err: matchErr})
-	outcome := errExec.executePipeline(ctx, "MATCH (n:Person) WITH n RETURN n")
+	fixtureAdmission803Context, fixtureAdmission803 := statementTestContext(ctx, "MATCH (n:Person) WITH n RETURN n")
+	_ = fixtureAdmission803
+	outcome := errExec.executePipeline(fixtureAdmission803, fixtureAdmission803Context, "MATCH (n:Person) WITH n RETURN n")
 	require.Equal(t, pipelineDispatchFailed, outcome.state)
 	require.ErrorIs(t, outcome.err, matchErr)
 	require.Nil(t, outcome.result)
 
-	outcome = exec.executePipeline(ctx, "MATCH (n:Person) WITH unknownExpr AS x RETURN x")
+	fixtureAdmission804Context, fixtureAdmission804 := statementTestContext(ctx, "MATCH (n:Person) WITH unknownExpr AS x RETURN x")
+	_ = fixtureAdmission804
+	outcome = exec.executePipeline(fixtureAdmission804, fixtureAdmission804Context, "MATCH (n:Person) WITH unknownExpr AS x RETURN x")
 	require.Equal(t, pipelineDispatchParseRejected, outcome.state)
 	require.ErrorContains(t, outcome.err, "unknownExpr")
 	require.Nil(t, outcome.result)
@@ -76,19 +80,25 @@ func TestExecutePipeline_ErrorAndFallbackBranches(t *testing.T) {
 	// CREATE application hard error path.
 	createErr := errors.New("create failed")
 	createExec := NewStorageExecutor(&createErrEngine{Engine: store, err: createErr})
-	outcome = createExec.executePipeline(ctx, "MATCH (n:Person) WITH n CREATE (:Tmp {id:'t1'}) RETURN n")
+	fixtureAdmission805Context, fixtureAdmission805 := statementTestContext(ctx, "MATCH (n:Person) WITH n CREATE (:Tmp {id:'t1'}) RETURN n")
+	_ = fixtureAdmission805
+	outcome = createExec.executePipeline(fixtureAdmission805, fixtureAdmission805Context, "MATCH (n:Person) WITH n CREATE (:Tmp {id:'t1'}) RETURN n")
 	require.Equal(t, pipelineDispatchFailed, outcome.state)
 	require.ErrorIs(t, outcome.err, createErr)
 	require.Nil(t, outcome.result)
 
 	// UNWIND parse fallback path.
-	outcome = exec.executePipeline(ctx, "MATCH (n:Person) WITH n UNWIND [1] RETURN n")
+	fixtureAdmission806Context, fixtureAdmission806 := statementTestContext(ctx, "MATCH (n:Person) WITH n UNWIND [1] RETURN n")
+	_ = fixtureAdmission806
+	outcome = exec.executePipeline(fixtureAdmission806, fixtureAdmission806Context, "MATCH (n:Person) WITH n UNWIND [1] RETURN n")
 	require.Equal(t, pipelineDispatchNotApplicable, outcome.state)
 	require.NoError(t, outcome.err)
 	require.Nil(t, outcome.result)
 
 	// RETURN projection fallback path.
-	outcome = exec.executePipeline(ctx, "MATCH (n:Person) WITH n RETURN missing")
+	fixtureAdmission807Context, fixtureAdmission807 := statementTestContext(ctx, "MATCH (n:Person) WITH n RETURN missing")
+	_ = fixtureAdmission807
+	outcome = exec.executePipeline(fixtureAdmission807, fixtureAdmission807Context, "MATCH (n:Person) WITH n RETURN missing")
 	require.Equal(t, pipelineDispatchParseRejected, outcome.state)
 	require.ErrorContains(t, outcome.err, "missing")
 	require.Nil(t, outcome.result)
@@ -214,7 +224,9 @@ func TestPipelineApplyMatch_AdditionalBranches(t *testing.T) {
 		"unused":        countedLiteralStringer{calls: &unusedCalls},
 	}}
 
-	out, ok, err := exec.pipelineApplyMatch(ctx, rows, "MATCH (p:Person {id: m.id})")
+	fixtureAdmission808Context, fixtureAdmission808 := statementTestContext(ctx, "MATCH (p:Person {id: m.id})")
+	_ = fixtureAdmission808
+	out, ok, err := exec.pipelineApplyMatch(fixtureAdmission808, fixtureAdmission808Context, rows, "MATCH (p:Person {id: m.id})")
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, out, 1)
@@ -223,7 +235,9 @@ func TestPipelineApplyMatch_AdditionalBranches(t *testing.T) {
 
 	matchErr := errors.New("match lookup failed")
 	errExec := NewStorageExecutor(&matchErrEngine{Engine: store, err: matchErr})
-	out, ok, err = errExec.pipelineApplyMatch(ctx, rows, "MATCH (p:Person)")
+	fixtureAdmission809Context, fixtureAdmission809 := statementTestContext(ctx, "MATCH (p:Person)")
+	_ = fixtureAdmission809
+	out, ok, err = errExec.pipelineApplyMatch(fixtureAdmission809, fixtureAdmission809Context, rows, "MATCH (p:Person)")
 	require.Error(t, err)
 	require.ErrorIs(t, err, matchErr)
 	require.True(t, ok)

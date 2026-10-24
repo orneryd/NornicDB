@@ -78,14 +78,14 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 	return nil, false
 }
 
-func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context, expr string, row pipelineRow) ([]interface{}, bool) {
+func (e *StorageExecutor) evaluateListForPipelineWithContext(admission admittedRelationshipStatement, ctx context.Context, expr string, row pipelineRow) ([]interface{}, bool) {
 	if inner, wrapped := stripEnclosingExpressionParentheses(strings.TrimSpace(expr)); wrapped {
 		expr = inner
 	}
 	if items, ok := evaluateStaticListForPipeline(expr, row); ok {
 		return items, true
 	}
-	value, err := e.checkedPropertyExpression(ctx, expr, row)
+	value, err := e.checkedPropertyExpression(admission, ctx, expr, row)
 	if err != nil {
 		return nil, false
 	}

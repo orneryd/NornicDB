@@ -442,7 +442,8 @@ func (x *apocExpansion) verdict(node *storage.Node, depth int) (include, expand 
 // apocSteps lists the relationships the filter steps follow from node: no
 // steps follow every relationship. The path algorithms (dijkstra, aStar,
 // allSimplePaths) read their relTypesAndDirections through it too (#1185).
-func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshipStep) []*storage.Edge {
+func (run relationshipEntityExecution) apocSteps(node storage.NodeID, steps []apocRelationshipStep) []*storage.Edge {
+	e := run.executor
 	if len(steps) == 0 {
 		steps = []apocRelationshipStep{{direction: "both"}}
 	}
@@ -469,6 +470,10 @@ func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshi
 		}
 	}
 	return edges
+}
+
+func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshipStep) []*storage.Edge {
+	return e.relationshipEntityExecution().apocSteps(node, steps)
 }
 
 // otherEnd is the node edge leads to from the node from.
@@ -743,7 +748,8 @@ func (e *StorageExecutor) callApocPathSpanningTree(ctx context.Context, args []i
 // callApocPathSubgraphAll implements apoc.path.subgraphAll(start, config) ::
 // (nodes, relationships): the nodes subgraphNodes returns and every
 // relationship between two of them.
-func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+func (run relationshipEntityExecution) callApocPathSubgraphAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	e := run.executor
 	x, err := e.apocExpansionFromArguments(args, apocPathSubgraphAllProcedure)
 	if err != nil {
 		return nil, err
@@ -773,4 +779,8 @@ func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []in
 	// One row, with empty lists when nothing is reached, optional or not,
 	// as in APOC.
 	return &ExecuteResult{Columns: []string{"nodes", "relationships"}, Rows: [][]interface{}{{nodes, relationships}}}, nil
+}
+
+func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callApocPathSubgraphAll(ctx, args)
 }

@@ -44,13 +44,13 @@ type compiledTraversalProjection func(row traversalOptRow) interface{}
 // compileTraversalProjection compiles expr into a per-row evaluator. It always
 // succeeds: expressions outside the compilable subset return a closure over
 // the full expression evaluator, which is the exact pre-compilation behavior.
-func (e *StorageExecutor) compileTraversalProjection(ctx context.Context, expr string) compiledTraversalProjection {
-	if fn, ok := e.tryCompileTraversalExpr(ctx, expr); ok {
+func (e *StorageExecutor) compileTraversalProjection(admission admittedRelationshipStatement, ctx context.Context, expr string) compiledTraversalProjection {
+	if fn, ok := e.tryCompileTraversalExpr(admission, ctx, expr); ok {
 		return fn
 	}
 	captured := expr
 	return func(row traversalOptRow) interface{} {
-		return e.evaluateTraversalRowExpression(ctx, captured, row)
+		return e.evaluateTraversalRowExpression(admission, ctx, captured, row)
 	}
 }
 
@@ -58,7 +58,7 @@ func (e *StorageExecutor) compileTraversalProjection(ctx context.Context, expr s
 // the shared heterogeneous row evaluator used by the converged pipeline. The
 // same typed projection failure is recorded when that evaluator declines;
 // unresolved query text is never a projected value.
-func (e *StorageExecutor) evaluateTraversalRowExpression(ctx context.Context, expr string, row traversalOptRow) interface{} {
+func (e *StorageExecutor) evaluateTraversalRowExpression(admission admittedRelationshipStatement, ctx context.Context, expr string, row traversalOptRow) interface{} {
 	values := make(map[string]interface{}, len(row.nodes)+len(row.rels)+len(row.values))
 	for variable, node := range row.nodes {
 		if node == nil {
@@ -77,7 +77,7 @@ func (e *StorageExecutor) evaluateTraversalRowExpression(ctx context.Context, ex
 	for variable, value := range row.values {
 		values[variable] = value
 	}
-	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, values); ok {
+	if value, ok := e.evaluateRowExpressionWithContext(admission, ctx, expr, values); ok {
 		return value
 	}
 	pipelineItemUnevaluable(ctx, expr)
@@ -86,7 +86,7 @@ func (e *StorageExecutor) evaluateTraversalRowExpression(ctx context.Context, ex
 
 // tryCompileTraversalExpr compiles the supported expression shapes. ok=false
 // means the caller must evaluate the expression with the full evaluator.
-func (e *StorageExecutor) tryCompileTraversalExpr(ctx context.Context, expr string) (compiledTraversalProjection, bool) {
+func (e *StorageExecutor) tryCompileTraversalExpr(admission admittedRelationshipStatement, ctx context.Context, expr string) (compiledTraversalProjection, bool) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil, false
@@ -128,11 +128,11 @@ func (e *StorageExecutor) tryCompileTraversalExpr(ctx context.Context, expr stri
 			if v, ok := fastTraversalExprValue(captured, row); ok {
 				return v
 			}
-			return e.evaluateTraversalRowExpression(ctx, captured, row)
+			return e.evaluateTraversalRowExpression(admission, ctx, captured, row)
 		}, true
 	}
 
-	return e.tryCompileTraversalFunctionCall(ctx, expr)
+	return e.tryCompileTraversalFunctionCall(admission, ctx, expr)
 }
 
 // isCompilableTraversalVarExpr reports whether expr is a bare identifier or a
@@ -150,7 +150,7 @@ func isCompilableTraversalVarExpr(expr string) bool {
 // pre-split once; arguments that themselves compile are evaluated through
 // their compiled form when the function requests lazy evaluation via
 // Context.Eval, and everything else routes through the full evaluator.
-func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, expr string) (compiledTraversalProjection, bool) {
+func (e *StorageExecutor) tryCompileTraversalFunctionCall(admission admittedRelationshipStatement, ctx context.Context, expr string) (compiledTraversalProjection, bool) {
 	name, inner, ok := parseFunctionCallWS(expr)
 	if !ok {
 		return nil, false
@@ -164,7 +164,7 @@ func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, e
 	args := e.splitFunctionArgs(inner)
 	compiledArgs := make(map[string]compiledTraversalProjection, len(args))
 	for _, arg := range args {
-		if argFn, ok := e.tryCompileTraversalExpr(ctx, arg); ok {
+		if argFn, ok := e.tryCompileTraversalExpr(admission, ctx, arg); ok {
 			compiledArgs[strings.TrimSpace(arg)] = argFn
 		}
 	}
@@ -175,7 +175,7 @@ func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, e
 			if argFn, ok := compiledArgs[strings.TrimSpace(argExpr)]; ok {
 				return argFn(row), nil
 			}
-			return e.evaluateExpressionWithContext(ctx, argExpr, row.nodes, row.rels), nil
+			return e.evaluateExpressionWithContext(admission, ctx, argExpr, row.nodes, row.rels), nil
 		})
 		fnCtx.Nodes = row.nodes
 		fnCtx.Rels = row.rels
@@ -188,6 +188,6 @@ func (e *StorageExecutor) tryCompileTraversalFunctionCall(ctx context.Context, e
 		}
 		// Function not in the registry (e.g. length(), exists()): defer to the
 		// full evaluator's legacy branches.
-		return e.evaluateTraversalRowExpression(ctx, captured, row)
+		return e.evaluateTraversalRowExpression(admission, ctx, captured, row)
 	}, true
 }

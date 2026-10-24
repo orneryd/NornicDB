@@ -24,7 +24,9 @@ func TestCompoundCASEKeepsTypedValues(t *testing.T) {
 		require.Equal(t, [][]any{{true}}, r.Rows)
 		// The scalar evaluator also serves expression contexts outside the row
 		// pipeline and must preserve opaque CASE values there.
-		require.Equal(t, true, exec.evaluateExpressionWithContext(withQueryParams(context.Background(), params), strings.TrimPrefix(query, "RETURN "), nil, nil))
+		fixtureAdmission923Context, fixtureAdmission923 := statementTestContext(withQueryParams(context.Background(), params), query)
+		_ = fixtureAdmission923
+		require.Equal(t, true, exec.evaluateExpressionWithContext(fixtureAdmission923, fixtureAdmission923Context, strings.TrimPrefix(query, "RETURN "), nil, nil))
 	}
 	require.Equal(t, "client", params["__nornic_expression_0"])
 }

@@ -163,21 +163,33 @@ func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
 	require.True(t, desc)
 
 	e, _ := newTestExecutor(t)
-	value, ok := e.parseIntModifier(context.Background(), "ORDER BY n.age DESC SKIP 1 LIMIT 2", "SKIP")
+	fixtureAdmission1809Context, fixtureAdmission1809 := statementTestContext(context.Background(), "ORDER BY n.age DESC SKIP 1 LIMIT 2")
+	_ = fixtureAdmission1809Context
+	value, ok := e.parseIntModifier(fixtureAdmission1809, fixtureAdmission1809Context, "ORDER BY n.age DESC SKIP 1 LIMIT 2", "SKIP")
 	require.True(t, ok)
 	require.Equal(t, 1, value)
-	value, ok = e.parseIntModifier(context.Background(), "ORDER BY n.age DESC SKIP 1 LIMIT 2", "LIMIT")
+	fixtureAdmission1810Context, fixtureAdmission1810 := statementTestContext(context.Background(), "ORDER BY n.age DESC SKIP 1 LIMIT 2")
+	_ = fixtureAdmission1810Context
+	value, ok = e.parseIntModifier(fixtureAdmission1810, fixtureAdmission1810Context, "ORDER BY n.age DESC SKIP 1 LIMIT 2", "LIMIT")
 	require.True(t, ok)
 	require.Equal(t, 2, value)
-	_, ok = e.parseIntModifier(context.Background(), "LIMIT nope", "LIMIT")
+	fixtureAdmission1811Context, fixtureAdmission1811 := statementTestContext(context.Background(), "LIMIT nope")
+	_ = fixtureAdmission1811Context
+	_, ok = e.parseIntModifier(fixtureAdmission1811, fixtureAdmission1811Context, "LIMIT nope", "LIMIT")
 	require.False(t, ok)
-	value, ok = e.parseIntModifier(context.Background(), "ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')", "SKIP")
+	fixtureAdmission1812Context, fixtureAdmission1812 := statementTestContext(context.Background(), "ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')")
+	_ = fixtureAdmission1812Context
+	value, ok = e.parseIntModifier(fixtureAdmission1812, fixtureAdmission1812Context, "ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')", "SKIP")
 	require.True(t, ok)
 	require.Equal(t, 2, value)
-	value, ok = e.parseIntModifier(context.Background(), "ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')", "LIMIT")
+	fixtureAdmission1813Context, fixtureAdmission1813 := statementTestContext(context.Background(), "ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')")
+	_ = fixtureAdmission1813Context
+	value, ok = e.parseIntModifier(fixtureAdmission1813, fixtureAdmission1813Context, "ORDER BY n.age SKIP 1 + 1 LIMIT toInteger('3')", "LIMIT")
 	require.True(t, ok)
 	require.Equal(t, 3, value)
-	_, ok = e.parseIntModifier(context.Background(), "LIMIT 1 - 2", "LIMIT")
+	fixtureAdmission1814Context, fixtureAdmission1814 := statementTestContext(context.Background(), "LIMIT 1 - 2")
+	_ = fixtureAdmission1814Context
+	_, ok = e.parseIntModifier(fixtureAdmission1814, fixtureAdmission1814Context, "LIMIT 1 - 2", "LIMIT")
 	require.False(t, ok)
 
 	require.Equal(t, "<nil>", callSubqueryLookupKeyString(nil))

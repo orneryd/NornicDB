@@ -496,7 +496,9 @@ func TestFinishTerminatorReturnsNoRows(t *testing.T) {
 	require.False(t, callSubqueryHasScopeClause("MATCH (n) CALL () { RETURN 1 }"))
 	_, err = exec.Execute(ctx, "UNWIND [1] AS i CALL { WITH i } RETURN 1 AS one", nil)
 	require.Error(t, err)
-	_, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, "CALL { WITH i }", nil)
+	fixtureAdmission580Context, fixtureAdmission580 := statementTestContext(ctx, "CALL { WITH i }")
+	_ = fixtureAdmission580Context
+	_, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(fixtureAdmission580, fixtureAdmission580Context, []pipelineRow{{"i": int64(1)}}, "CALL { WITH i }", nil)
 	require.True(t, handled)
 	require.Error(t, err)
 

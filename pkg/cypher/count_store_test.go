@@ -73,16 +73,25 @@ func TestRelationshipCountFromStoreDeclines(t *testing.T) {
 		"({id: 1})-[r:Friend]->()", "()-[r:Likes {w: 1}]->()", "(a)-[r:Friend]->(a)", "()-[r:Friend*1..2]->()",
 		"(:User)-[r:Friend]->()-[s:Friend]->()",
 	} {
-		_, ok, err := exec.relationshipCountFromStore(ctx, exec.parseTraversalPattern(ctx, pattern), returnItem{expr: "count(r)"})
+		fixtureAdmission189Context, fixtureAdmission189 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission189
+		fixtureAdmission1506Context, fixtureAdmission1506 := statementTestContext(ctx, (("MATCH "+(pattern))+"\n"+("RETURN "+("count(r)")))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1506Context
+		_, ok, err := exec.relationshipExecutionFor(fixtureAdmission1506, fixtureAdmission1506Context, pattern, "").relationshipCountFromStore(ctx, exec.parseTraversalPattern(fixtureAdmission189, fixtureAdmission189Context, pattern), returnItem{expr: "count(r)"})
 		require.NoError(t, err, pattern)
 		require.False(t, ok, pattern)
 	}
-	matches := exec.parseTraversalPattern(ctx, "()-[r:Friend]->()")
+	fixtureAdmission190Context, fixtureAdmission190 := traversalTestContext(ctx, "()-[r:Friend]->()", "", nil)
+	_ = fixtureAdmission190
+	matches := exec.parseTraversalPattern(fixtureAdmission190, fixtureAdmission190Context, "()-[r:Friend]->()")
 	for _, expr := range []string{"count(DISTINCT r)", "count(r) + 1", "sum(r)", "count(x)"} {
-		_, ok, _ := exec.relationshipCountFromStore(ctx, matches, returnItem{expr: expr})
+		fixtureAdmission1507Context, fixtureAdmission1507 := statementTestContext(ctx, (("MATCH "+("()-[r:Friend]->()"))+"\n"+("RETURN "+(expr)))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1507Context
+		_, ok, _ := exec.relationshipExecutionFor(fixtureAdmission1507, fixtureAdmission1507Context, "()-[r:Friend]->()", "").relationshipCountFromStore(ctx, matches, returnItem{expr: expr})
 		require.False(t, ok, expr)
 	}
-	_, ok, _ := exec.relationshipCountFromStore(ctx, nil, returnItem{expr: "count(*)"})
+	emptyMatchContext, emptyMatchStatement := expressionTestContext(ctx, "count(*)")
+	_, ok, _ := exec.relationshipExecutionFor(emptyMatchStatement, emptyMatchContext, "", "").relationshipCountFromStore(ctx, nil, returnItem{expr: "count(*)"})
 	require.False(t, ok)
 	for _, node := range []nodePatternInfo{{variable: "n"}, {variable: "n", labels: []string{"A", "B"}}, {variable: "n", labels: []string{"A"}, properties: map[string]interface{}{"id": 1}}} {
 		_, ok, _ := exec.nodeCountFromStore(ctx, node, returnItem{expr: "count(n)"})
@@ -104,15 +113,23 @@ func TestCountFromStoreNotUnderDecayOrViewport(t *testing.T) {
 	ctx := context.Background()
 	_, store := countStoreGraph(t)
 	decayed := NewStorageExecutor(decayFilteringEngine{Engine: store})
-	matches := decayed.parseTraversalPattern(ctx, "()-[r:Friend]->()")
-	_, ok, _ := decayed.relationshipCountFromStore(ctx, matches, returnItem{expr: "count(r)"})
+	fixtureAdmission191Context, fixtureAdmission191 := traversalTestContext(ctx, "()-[r:Friend]->()", "", nil)
+	_ = fixtureAdmission191
+	matches := decayed.parseTraversalPattern(fixtureAdmission191, fixtureAdmission191Context, "()-[r:Friend]->()")
+	fixtureAdmission1508Context, fixtureAdmission1508 := statementTestContext(ctx, (("MATCH "+("()-[r:Friend]->()"))+"\n"+("RETURN "+("count(r)")))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1508Context
+	_, ok, _ := decayed.relationshipExecutionFor(fixtureAdmission1508, fixtureAdmission1508Context, "()-[r:Friend]->()", "").relationshipCountFromStore(ctx, matches, returnItem{expr: "count(r)"})
 	require.False(t, ok)
 	_, ok, _ = decayed.nodeCountFromStore(ctx, nodePatternInfo{variable: "n", labels: []string{"User"}}, returnItem{expr: "count(n)"})
 	require.False(t, ok)
 
 	plain := NewStorageExecutor(store)
 	viewport := WithTemporalViewport(ctx, AsOfTemporalViewport(time.Now()))
-	_, ok, _ = plain.relationshipCountFromStore(viewport, plain.parseTraversalPattern(ctx, "()-[r:Friend]->()"), returnItem{expr: "count(r)"})
+	fixtureAdmission192Context, fixtureAdmission192 := traversalTestContext(ctx, "()-[r:Friend]->()", "", nil)
+	_ = fixtureAdmission192
+	fixtureAdmission1509Context, fixtureAdmission1509 := statementTestContext(viewport, (("MATCH "+("()-[r:Friend]->()"))+"\n"+("RETURN "+("count(r)")))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1509Context
+	_, ok, _ = plain.relationshipExecutionFor(fixtureAdmission1509, fixtureAdmission1509Context, "()-[r:Friend]->()", "").relationshipCountFromStore(viewport, plain.parseTraversalPattern(fixtureAdmission192, fixtureAdmission192Context, "()-[r:Friend]->()"), returnItem{expr: "count(r)"})
 	require.False(t, ok)
 	_, ok, _ = plain.nodeCountFromStore(viewport, nodePatternInfo{variable: "n", labels: []string{"User"}}, returnItem{expr: "count(n)"})
 	require.False(t, ok)
@@ -202,7 +219,11 @@ func TestCountFromStoreErrorsAndDuplicates(t *testing.T) {
 
 	failing := NewStorageExecutor(failingCountEngine{Engine: store})
 	for _, pattern := range []string{"(:User)-[r:Friend]->()", "()-[r:Friend]->(:User)", "()-[r]-()", "()-[r:Friend]-()"} {
-		_, ok, err := failing.relationshipCountFromStore(ctx, failing.parseTraversalPattern(ctx, pattern), returnItem{expr: "count(r)"})
+		fixtureAdmission193Context, fixtureAdmission193 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission193
+		fixtureAdmission1510Context, fixtureAdmission1510 := statementTestContext(ctx, (("MATCH "+(pattern))+"\n"+("RETURN "+("count(r)")))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1510Context
+		_, ok, err := failing.relationshipExecutionFor(fixtureAdmission1510, fixtureAdmission1510Context, pattern, "").relationshipCountFromStore(ctx, failing.parseTraversalPattern(fixtureAdmission193, fixtureAdmission193Context, pattern), returnItem{expr: "count(r)"})
 		require.True(t, ok, pattern)
 		require.ErrorIs(t, err, errCountStore, pattern)
 	}
@@ -210,7 +231,11 @@ func TestCountFromStoreErrorsAndDuplicates(t *testing.T) {
 	require.ErrorIs(t, err, errCountStore)
 	nils := NewStorageExecutor(failingCountEngine{Engine: store, nilEdges: true})
 	for _, pattern := range []string{"()-[r]-()", "()-[r:Friend]-()"} {
-		count, ok, err := nils.relationshipCountFromStore(ctx, nils.parseTraversalPattern(ctx, pattern), returnItem{expr: "count(r)"})
+		fixtureAdmission194Context, fixtureAdmission194 := traversalTestContext(ctx, pattern, "", nil)
+		_ = fixtureAdmission194
+		fixtureAdmission1511Context, fixtureAdmission1511 := statementTestContext(ctx, (("MATCH "+(pattern))+"\n"+("RETURN "+("count(r)")))+"\n"+("RETURN "+("")))
+		_ = fixtureAdmission1511Context
+		count, ok, err := nils.relationshipExecutionFor(fixtureAdmission1511, fixtureAdmission1511Context, pattern, "").relationshipCountFromStore(ctx, nils.parseTraversalPattern(fixtureAdmission194, fixtureAdmission194Context, pattern), returnItem{expr: "count(r)"})
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.Zero(t, count, pattern)

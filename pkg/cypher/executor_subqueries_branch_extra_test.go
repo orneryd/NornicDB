@@ -125,11 +125,15 @@ func TestSeedNodesFromOuterMatch_Branches(t *testing.T) {
 	_, err := store.CreateNode(&storage.Node{ID: "s1", Labels: []string{"Seed"}, Properties: map[string]interface{}{"name": "A"}})
 	require.NoError(t, err)
 
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (seed:Seed {name:'A'})", "seed")
+	fixtureAdmission316Context, fixtureAdmission316 := statementTestContext(ctx, "MATCH (seed:Seed {name:'A'})")
+	_ = fixtureAdmission316
+	nodes, err := exec.seedNodesFromOuterMatch(fixtureAdmission316, fixtureAdmission316Context, "MATCH (seed:Seed {name:'A'})", "seed")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("s1"), nodes[0].ID)
 
-	_, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (seed:Seed) RETURN 1", "missing")
+	fixtureAdmission317Context, fixtureAdmission317 := statementTestContext(ctx, "MATCH (seed:Seed) RETURN 1")
+	_ = fixtureAdmission317
+	_, err = exec.seedNodesFromOuterMatch(fixtureAdmission317, fixtureAdmission317Context, "MATCH (seed:Seed) RETURN 1", "missing")
 	require.Error(t, err)
 }

@@ -30,7 +30,9 @@ func TestTryFastSingleHopAgg_GroupValue(t *testing.T) {
 	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e3", Type: "PART_OF", StartNode: p3, EndNode: c2, Properties: map[string]interface{}{}}))
 	ctx := context.Background()
 
-	matches := exec.parseTraversalPattern(ctx, "(c:Category)<-[:PART_OF]-(p:Product)")
+	fixtureAdmission892Context, fixtureAdmission892 := traversalTestContext(ctx, "(c:Category)<-[:PART_OF]-(p:Product)", "", nil)
+	_ = fixtureAdmission892
+	matches := exec.parseTraversalPattern(fixtureAdmission892, fixtureAdmission892Context, "(c:Category)<-[:PART_OF]-(p:Product)")
 	require.NotNil(t, matches)
 
 	items := []returnItem{
@@ -38,7 +40,7 @@ func TestTryFastSingleHopAgg_GroupValue(t *testing.T) {
 		{expr: "count(p)", alias: "productCount"},
 	}
 
-	rows, ok, err := exec.tryFastRelationshipAggregations(matches, items)
+	rows, ok, err := relationshipAggregationTest(exec, ctx, "(c:Category)<-[:PART_OF]-(p:Product)", "", matches, items)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, rows, 2)
@@ -56,9 +58,11 @@ func TestTryFastRelationshipAggregations_EarlyGuards(t *testing.T) {
 	items := []returnItem{{expr: "c.categoryName"}, {expr: "count(p)"}}
 	ctx := context.Background()
 
-	matches := exec.parseTraversalPattern(ctx, "(c:Category)<-[:PART_OF*1..2]-(p:Product)")
+	fixtureAdmission893Context, fixtureAdmission893 := traversalTestContext(ctx, "(c:Category)<-[:PART_OF*1..2]-(p:Product)", "", nil)
+	_ = fixtureAdmission893
+	matches := exec.parseTraversalPattern(fixtureAdmission893, fixtureAdmission893Context, "(c:Category)<-[:PART_OF*1..2]-(p:Product)")
 	require.NotNil(t, matches)
-	_, ok, err := exec.tryFastRelationshipAggregations(matches, items)
+	_, ok, err := relationshipAggregationTest(exec, ctx, "(c:Category)<-[:PART_OF*1..2]-(p:Product)", "", matches, items)
 	require.NoError(t, err)
 	assert.False(t, ok)
 
@@ -70,7 +74,7 @@ func TestTryFastRelationshipAggregations_EarlyGuards(t *testing.T) {
 			MaxHops: 1,
 		},
 	}
-	_, ok, err = exec.tryFastRelationshipAggregations(chained, items)
+	_, ok, err = relationshipTestExecution(exec, ctx, "()--()--()--()--()", "", items).tryFastRelationshipAggregations(chained, items)
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
@@ -143,10 +147,12 @@ func TestTryFastSingleHopAgg_AggregateVariants(t *testing.T) {
 	}))
 	ctx := context.Background()
 
-	matches := exec.parseTraversalPattern(ctx, "(c:Category)<-[r:PART_OF]-(p:Product)")
+	fixtureAdmission894Context, fixtureAdmission894 := traversalTestContext(ctx, "(c:Category)<-[r:PART_OF]-(p:Product)", "", nil)
+	_ = fixtureAdmission894
+	matches := exec.parseTraversalPattern(fixtureAdmission894, fixtureAdmission894Context, "(c:Category)<-[r:PART_OF]-(p:Product)")
 	require.NotNil(t, matches)
 
-	rows, ok, err := exec.tryFastRelationshipAggregations(matches, []returnItem{
+	rows, ok, err := relationshipAggregationTest(exec, ctx, "(c:Category)<-[r:PART_OF]-(p:Product)", "", matches, []returnItem{
 		{expr: "c.categoryName"},
 		{expr: "sum(r.weight)"},
 	})
@@ -156,7 +162,7 @@ func TestTryFastSingleHopAgg_AggregateVariants(t *testing.T) {
 	assert.Equal(t, "Beverages", rows[0][0])
 	assert.Equal(t, float64(5.5), rows[0][1])
 
-	rows, ok, err = exec.tryFastRelationshipAggregations(matches, []returnItem{
+	rows, ok, err = relationshipAggregationTest(exec, ctx, "(c:Category)<-[r:PART_OF]-(p:Product)", "", matches, []returnItem{
 		{expr: "c.categoryName"},
 		{expr: "avg(p.unitPrice)"},
 	})
@@ -165,7 +171,7 @@ func TestTryFastSingleHopAgg_AggregateVariants(t *testing.T) {
 	require.Len(t, rows, 1)
 	assert.Equal(t, float64(15), rows[0][1])
 
-	rows, ok, err = exec.tryFastRelationshipAggregations(matches, []returnItem{
+	rows, ok, err = relationshipAggregationTest(exec, ctx, "(c:Category)<-[r:PART_OF]-(p:Product)", "", matches, []returnItem{
 		{expr: "c.categoryName"},
 		{expr: "collect(p.name)"},
 	})
@@ -198,9 +204,11 @@ func TestTryFastChainedAgg_SupplierCategoryAndDistinctOrders(t *testing.T) {
 	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e-partof", Type: "PART_OF", StartNode: productID, EndNode: categoryID, Properties: map[string]interface{}{}}))
 	ctx := context.Background()
 
-	supplierCategory := exec.parseTraversalPattern(ctx, "(s:Supplier)-[:SUPPLIES]->(p:Product)-[:PART_OF]->(c:Category)")
+	fixtureAdmission895Context, fixtureAdmission895 := traversalTestContext(ctx, "(s:Supplier)-[:SUPPLIES]->(p:Product)-[:PART_OF]->(c:Category)", "", nil)
+	_ = fixtureAdmission895
+	supplierCategory := exec.parseTraversalPattern(fixtureAdmission895, fixtureAdmission895Context, "(s:Supplier)-[:SUPPLIES]->(p:Product)-[:PART_OF]->(c:Category)")
 	require.NotNil(t, supplierCategory)
-	rows, ok, err := exec.tryFastRelationshipAggregations(supplierCategory, []returnItem{
+	rows, ok, err := relationshipAggregationTest(exec, ctx, "(s:Supplier)-[:SUPPLIES]->(p:Product)-[:PART_OF]->(c:Category)", "", supplierCategory, []returnItem{
 		{expr: "s.companyName"},
 		{expr: "c.categoryName"},
 		{expr: "count(p)"},
@@ -212,9 +220,11 @@ func TestTryFastChainedAgg_SupplierCategoryAndDistinctOrders(t *testing.T) {
 	assert.Equal(t, "Beverages", rows[0][1])
 	assert.Equal(t, int64(1), rows[0][2])
 
-	customerCategory := exec.parseTraversalPattern(ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)-[:PART_OF]->(cat:Category)")
+	fixtureAdmission896Context, fixtureAdmission896 := traversalTestContext(ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)-[:PART_OF]->(cat:Category)", "", nil)
+	_ = fixtureAdmission896
+	customerCategory := exec.parseTraversalPattern(fixtureAdmission896, fixtureAdmission896Context, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)-[:PART_OF]->(cat:Category)")
 	require.NotNil(t, customerCategory)
-	rows, ok, err = exec.tryFastRelationshipAggregations(customerCategory, []returnItem{
+	rows, ok, err = relationshipAggregationTest(exec, ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)-[:PART_OF]->(cat:Category)", "", customerCategory, []returnItem{
 		{expr: "c.companyName"},
 		{expr: "cat.categoryName"},
 		{expr: "count(DISTINCT o)"},
@@ -226,9 +236,11 @@ func TestTryFastChainedAgg_SupplierCategoryAndDistinctOrders(t *testing.T) {
 	assert.Equal(t, "Beverages", rows[0][1])
 	assert.Equal(t, int64(1), rows[0][2])
 
-	customerSupplier := exec.parseTraversalPattern(ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)")
+	fixtureAdmission897Context, fixtureAdmission897 := traversalTestContext(ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)", "", nil)
+	_ = fixtureAdmission897
+	customerSupplier := exec.parseTraversalPattern(fixtureAdmission897, fixtureAdmission897Context, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)")
 	require.NotNil(t, customerSupplier)
-	rows, ok, err = exec.tryFastRelationshipAggregations(customerSupplier, []returnItem{
+	rows, ok, err = relationshipAggregationTest(exec, ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)", "", customerSupplier, []returnItem{
 		{expr: "c.companyName"},
 		{expr: "s.companyName"},
 		{expr: "count(DISTINCT o)"},
@@ -241,7 +253,7 @@ func TestTryFastChainedAgg_SupplierCategoryAndDistinctOrders(t *testing.T) {
 	assert.Equal(t, int64(1), rows[0][2])
 
 	// Shape mismatch guard in chained fast path.
-	_, ok, err = exec.tryFastRelationshipAggregations(customerSupplier, []returnItem{
+	_, ok, err = relationshipAggregationTest(exec, ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)", "", customerSupplier, []returnItem{
 		{expr: "c.companyName"},
 		{expr: "s.companyName"},
 		{expr: "count(o)"},
@@ -281,9 +293,11 @@ func TestTryFastChainedAgg_CustomerSupplierDistinctOrders_MultiRow(t *testing.T)
 	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e-supplies-3", Type: "SUPPLIES", StartNode: supplier1ID, EndNode: product3ID, Properties: map[string]interface{}{}}))
 	ctx := context.Background()
 
-	matches := exec.parseTraversalPattern(ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)")
+	fixtureAdmission898Context, fixtureAdmission898 := traversalTestContext(ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)", "", nil)
+	_ = fixtureAdmission898
+	matches := exec.parseTraversalPattern(fixtureAdmission898, fixtureAdmission898Context, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)")
 	require.NotNil(t, matches)
-	rows, ok, err := exec.tryFastRelationshipAggregations(matches, []returnItem{
+	rows, ok, err := relationshipAggregationTest(exec, ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)", "", matches, []returnItem{
 		{expr: "c.companyName"},
 		{expr: "s.companyName"},
 		{expr: "count(DISTINCT o)"},
@@ -321,9 +335,11 @@ func TestTryFastChainedAgg_UsesProjectedBoundaryProperties(t *testing.T) {
 	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "e-partof", Type: "PART_OF", StartNode: productID, EndNode: categoryID, Properties: map[string]interface{}{}}))
 	ctx := context.Background()
 
-	supplierCategory := exec.parseTraversalPattern(ctx, "(s:Supplier)-[:SUPPLIES]->(p:Product)-[:PART_OF]->(c:Category)")
+	fixtureAdmission899Context, fixtureAdmission899 := traversalTestContext(ctx, "(s:Supplier)-[:SUPPLIES]->(p:Product)-[:PART_OF]->(c:Category)", "", nil)
+	_ = fixtureAdmission899
+	supplierCategory := exec.parseTraversalPattern(fixtureAdmission899, fixtureAdmission899Context, "(s:Supplier)-[:SUPPLIES]->(p:Product)-[:PART_OF]->(c:Category)")
 	require.NotNil(t, supplierCategory)
-	rows, ok, err := exec.tryFastRelationshipAggregations(supplierCategory, []returnItem{
+	rows, ok, err := relationshipAggregationTest(exec, ctx, "(s:Supplier)-[:SUPPLIES]->(p:Product)-[:PART_OF]->(c:Category)", "", supplierCategory, []returnItem{
 		{expr: "s.display"},
 		{expr: "c.bucket"},
 		{expr: "count(p)"},
@@ -335,9 +351,11 @@ func TestTryFastChainedAgg_UsesProjectedBoundaryProperties(t *testing.T) {
 	assert.Equal(t, "Beverages", rows[0][1])
 	assert.Equal(t, int64(1), rows[0][2])
 
-	customerCategory := exec.parseTraversalPattern(ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)-[:PART_OF]->(cat:Category)")
+	fixtureAdmission900Context, fixtureAdmission900 := traversalTestContext(ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)-[:PART_OF]->(cat:Category)", "", nil)
+	_ = fixtureAdmission900
+	customerCategory := exec.parseTraversalPattern(fixtureAdmission900, fixtureAdmission900Context, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)-[:PART_OF]->(cat:Category)")
 	require.NotNil(t, customerCategory)
-	rows, ok, err = exec.tryFastRelationshipAggregations(customerCategory, []returnItem{
+	rows, ok, err = relationshipAggregationTest(exec, ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)-[:PART_OF]->(cat:Category)", "", customerCategory, []returnItem{
 		{expr: "c.buyer"},
 		{expr: "cat.bucket"},
 		{expr: "count(DISTINCT o)"},
@@ -349,9 +367,11 @@ func TestTryFastChainedAgg_UsesProjectedBoundaryProperties(t *testing.T) {
 	assert.Equal(t, "Beverages", rows[0][1])
 	assert.Equal(t, int64(1), rows[0][2])
 
-	customerSupplier := exec.parseTraversalPattern(ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)")
+	fixtureAdmission901Context, fixtureAdmission901 := traversalTestContext(ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)", "", nil)
+	_ = fixtureAdmission901
+	customerSupplier := exec.parseTraversalPattern(fixtureAdmission901, fixtureAdmission901Context, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)")
 	require.NotNil(t, customerSupplier)
-	rows, ok, err = exec.tryFastRelationshipAggregations(customerSupplier, []returnItem{
+	rows, ok, err = relationshipAggregationTest(exec, ctx, "(c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)", "", customerSupplier, []returnItem{
 		{expr: "c.buyer"},
 		{expr: "s.vendor"},
 		{expr: "count(DISTINCT o)"},

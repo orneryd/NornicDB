@@ -59,7 +59,9 @@ func planPipelineTraversalScan(match *TraversalMatch, where string, row pipeline
 
 // visitEdges streams a whole graph only for a plan with no selective seed.
 // Label plans expand adjacency; type alternatives each use their own index.
-func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor, match *TraversalMatch, visit func(*storage.Edge, storage.NodeID, storage.NodeID) error) error {
+func (run relationshipAccessExecution) visitTraversalScanEdges(ctx context.Context, plan traversalScanPlan, match *TraversalMatch, visit func(*storage.Edge, storage.NodeID, storage.NodeID) error) error {
+	e := run.executor
+	recordRelationshipSeekFallback(ctx, run.identity.id, run.access.variable)
 	store := e.getStorage(ctx)
 	oriented := func(edge *storage.Edge) error {
 		if match.Relationship.Direction == "incoming" {
@@ -87,7 +89,7 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 		}
 		return nil
 	case traversalLabelScan:
-		return e.visitPipelineInitialNodeCandidates(ctx, match.StartNode, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1}, func(node *storage.Node) error {
+		return e.visitPipelineInitialNodeCandidates(run.statement(), ctx, match.StartNode, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1}, func(node *storage.Node) error {
 			if node == nil || !e.pipelineNodeMatchesPattern(node, match.StartNode) {
 				return nil
 			}
@@ -96,11 +98,11 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 			var err error
 			switch match.Relationship.Direction {
 			case "incoming":
-				edges = e.traversalEdges(traversal, node.ID, false)
+				edges = run.traversalEdges(traversal, node.ID, false)
 			case "both":
-				edges, err = undirectedIncidentEdges(store, node.ID)
+				edges, err = run.undirectedIncidentEdges(ctx, store, node.ID)
 			default:
-				edges = e.traversalEdges(traversal, node.ID, true)
+				edges = run.traversalEdges(traversal, node.ID, true)
 			}
 			if err != nil {
 				return err

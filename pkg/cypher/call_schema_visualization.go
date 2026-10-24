@@ -9,7 +9,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Context) (*ExecuteResult, error) {
+func (run relationshipEntityExecution) callDbSchemaVisualizationWithContext(ctx context.Context) (*ExecuteResult, error) {
+	e := run.executor
 	store := e.getStorage(ctx)
 	nodes, err := store.AllNodes()
 	if err != nil {
@@ -77,6 +78,10 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 		Columns: []string{"nodes", "relationships"},
 		Rows:    [][]interface{}{{virtualNodes, virtualEdges}},
 	}, nil
+}
+
+func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Context) (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().callDbSchemaVisualizationWithContext(ctx)
 }
 
 func schemaVisualizationLabelMetadata(schema *storage.SchemaManager, label string) ([]string, []string) {

@@ -22,8 +22,10 @@ func TestPipelineWithProjectionDoesNotAllocatePredicateScope(t *testing.T) {
 		}
 		return true
 	}
+	fixtureAdmission1909Context, fixtureAdmission1909 := statementTestContext(ctx, "RETURN "+("WITH a AS b"))
+	_ = fixtureAdmission1909Context
 	allocations := testing.AllocsPerRun(100, func() {
-		if !executor.pipelineWithRowSource(ctx, input, plan)(yield) {
+		if !executor.pipelineWithRowSource(fixtureAdmission1909, fixtureAdmission1909Context, input, plan)(yield) {
 			t.Fatal("projection source did not complete")
 		}
 	})

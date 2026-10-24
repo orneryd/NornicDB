@@ -436,7 +436,9 @@ func TestCreateConstraint_BranchMatrix_NodeAndRelationshipVariants(t *testing.T)
 	}
 
 	for _, q := range queries {
-		_, err := exec.executeCreateConstraint(ctx, q)
+		fixtureAdmission1406Context, fixtureAdmission1406 := statementTestContext(ctx, q)
+		_ = fixtureAdmission1406Context
+		_, err := exec.executeCreateConstraint(fixtureAdmission1406, fixtureAdmission1406Context, q)
 		if strings.Contains(q, " ASSERT ") {
 			require.Error(t, err, q)
 			continue
@@ -455,21 +457,31 @@ func TestCreateConstraint_BranchMatrix_DuplicateAndErrorPaths(t *testing.T) {
 	ctx := context.Background()
 
 	// Duplicate name with different shape must surface conflict.
-	_, err := exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT dup_name_collision FOR ()-[r:DUPREL]-() REQUIRE r.k IS UNIQUE")
+	fixtureAdmission1407Context, fixtureAdmission1407 := statementTestContext(ctx, "CREATE CONSTRAINT dup_name_collision FOR ()-[r:DUPREL]-() REQUIRE r.k IS UNIQUE")
+	_ = fixtureAdmission1407Context
+	_, err := exec.executeCreateConstraint(fixtureAdmission1407, fixtureAdmission1407Context, "CREATE CONSTRAINT dup_name_collision FOR ()-[r:DUPREL]-() REQUIRE r.k IS UNIQUE")
 	require.NoError(t, err)
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT dup_name_collision FOR ()-[r:DUPREL]-() REQUIRE r.other IS UNIQUE")
+	fixtureAdmission1408Context, fixtureAdmission1408 := statementTestContext(ctx, "CREATE CONSTRAINT dup_name_collision FOR ()-[r:DUPREL]-() REQUIRE r.other IS UNIQUE")
+	_ = fixtureAdmission1408Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1408, fixtureAdmission1408Context, "CREATE CONSTRAINT dup_name_collision FOR ()-[r:DUPREL]-() REQUIRE r.other IS UNIQUE")
 	require.Error(t, err)
 
 	// Temporal arity failures.
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT bad_temporal_node FOR (n:BadTemporal) REQUIRE (n.k, n.valid_from) IS TEMPORAL")
+	fixtureAdmission1409Context, fixtureAdmission1409 := statementTestContext(ctx, "CREATE CONSTRAINT bad_temporal_node FOR (n:BadTemporal) REQUIRE (n.k, n.valid_from) IS TEMPORAL")
+	_ = fixtureAdmission1409Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1409, fixtureAdmission1409Context, "CREATE CONSTRAINT bad_temporal_node FOR (n:BadTemporal) REQUIRE (n.k, n.valid_from) IS TEMPORAL")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "TEMPORAL constraint")
 
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT bad_temporal_rel FOR ()-[r:BadTemporalRel]-() REQUIRE (r.k, r.valid_from) IS TEMPORAL")
+	fixtureAdmission1410Context, fixtureAdmission1410 := statementTestContext(ctx, "CREATE CONSTRAINT bad_temporal_rel FOR ()-[r:BadTemporalRel]-() REQUIRE (r.k, r.valid_from) IS TEMPORAL")
+	_ = fixtureAdmission1410Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1410, fixtureAdmission1410Context, "CREATE CONSTRAINT bad_temporal_rel FOR ()-[r:BadTemporalRel]-() REQUIRE (r.k, r.valid_from) IS TEMPORAL")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "TEMPORAL constraint")
 
 	// Relationship KEY with empty property tuple should fail syntax matching and error deterministically.
-	_, err = exec.executeCreateConstraint(ctx, "CREATE CONSTRAINT bad_rel_key FOR ()-[r:BadRelKey]-() REQUIRE () IS RELATIONSHIP KEY")
+	fixtureAdmission1411Context, fixtureAdmission1411 := statementTestContext(ctx, "CREATE CONSTRAINT bad_rel_key FOR ()-[r:BadRelKey]-() REQUIRE () IS RELATIONSHIP KEY")
+	_ = fixtureAdmission1411Context
+	_, err = exec.executeCreateConstraint(fixtureAdmission1411, fixtureAdmission1411Context, "CREATE CONSTRAINT bad_rel_key FOR ()-[r:BadRelKey]-() REQUIRE () IS RELATIONSHIP KEY")
 	require.Error(t, err)
 }

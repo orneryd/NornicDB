@@ -17,11 +17,13 @@ func BenchmarkSemanticValidationUncached(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			exec := &StorageExecutor{}
 			b.ReportAllocs()
+			fixtureAdmission1801Context, fixtureAdmission1801 := statementTestContext(context.Background(), statement)
+			_ = fixtureAdmission1801Context
 			for i := 0; i < b.N; i++ {
 				exec.semanticValidationCache = newSemanticValidationCache(1)
 				exec.matchSemanticValidationCache = newSemanticValidationCache(1)
 				exec.mergeSemanticValidationCache = newSemanticValidationCache(1)
-				if err := exec.validateSemanticScopes(context.Background(), statement); err != nil {
+				if err := exec.validateSemanticScopes(fixtureAdmission1801, fixtureAdmission1801Context, statement); err != nil {
 					b.Fatal(err)
 				}
 			}

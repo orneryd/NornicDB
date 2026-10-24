@@ -27,7 +27,7 @@ var (
 // index of an entity type is Neo.ClientError.Schema.IndexAlreadyExists, and a
 // name another index has is IndexWithNameAlreadyExists; IF NOT EXISTS makes
 // both a no-op.
-func (e *StorageExecutor) executeCreateLookupIndex(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateLookupIndex(fixtureAdmission1031 admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	name, ifNotExists, entityType, ok := parseCreateLookupIndex(cypher)
 	if !ok {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",

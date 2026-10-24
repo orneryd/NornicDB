@@ -19,38 +19,52 @@ func TestSeedNodesFromOuterMatch_FastPathsAndFallbacks(t *testing.T) {
 	_, err = exec.Execute(ctx, "MATCH (a:Person {name:'Alice'}), (b:Person {name:'Bob'}) CREATE (a)-[:KNOWS]->(b)", nil)
 	require.NoError(t, err)
 
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Person)", "n")
+	fixtureAdmission334Context, fixtureAdmission334 := statementTestContext(ctx, "MATCH (n:Person)")
+	_ = fixtureAdmission334
+	nodes, err := exec.seedNodesFromOuterMatch(fixtureAdmission334, fixtureAdmission334Context, "MATCH (n:Person)", "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 
-	nodes, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Person {name:'Alice'})", "n")
+	fixtureAdmission335Context, fixtureAdmission335 := statementTestContext(ctx, "MATCH (n:Person {name:'Alice'})")
+	_ = fixtureAdmission335
+	nodes, err = exec.seedNodesFromOuterMatch(fixtureAdmission335, fixtureAdmission335Context, "MATCH (n:Person {name:'Alice'})", "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, "Alice", nodes[0].Properties["name"])
 
 	// WHERE clause should preserve semantics via generic executor.
-	nodes, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Person) WHERE n.team = 'blue'", "n")
+	fixtureAdmission336Context, fixtureAdmission336 := statementTestContext(ctx, "MATCH (n:Person) WHERE n.team = 'blue'")
+	_ = fixtureAdmission336
+	nodes, err = exec.seedNodesFromOuterMatch(fixtureAdmission336, fixtureAdmission336Context, "MATCH (n:Person) WHERE n.team = 'blue'", "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, "Bob", nodes[0].Properties["name"])
 
 	// Relationship pattern bypasses simple fast path and falls back to executeInternal.
-	nodes, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Person)-[:KNOWS]->(m:Person)", "n")
+	fixtureAdmission337Context, fixtureAdmission337 := statementTestContext(ctx, "MATCH (n:Person)-[:KNOWS]->(m:Person)")
+	_ = fixtureAdmission337
+	nodes, err = exec.seedNodesFromOuterMatch(fixtureAdmission337, fixtureAdmission337Context, "MATCH (n:Person)-[:KNOWS]->(m:Person)", "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, "Alice", nodes[0].Properties["name"])
 
 	// WITH in outer part forces fallback execution path.
-	nodes, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Person) WITH n", "n")
+	fixtureAdmission338Context, fixtureAdmission338 := statementTestContext(ctx, "MATCH (n:Person) WITH n")
+	_ = fixtureAdmission338
+	nodes, err = exec.seedNodesFromOuterMatch(fixtureAdmission338, fixtureAdmission338Context, "MATCH (n:Person) WITH n", "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 
-	_, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Person)", "")
+	fixtureAdmission339Context, fixtureAdmission339 := statementTestContext(ctx, "MATCH (n:Person)")
+	_ = fixtureAdmission339
+	_, err = exec.seedNodesFromOuterMatch(fixtureAdmission339, fixtureAdmission339Context, "MATCH (n:Person)", "")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "empty correlated variable")
 
 	// Variable mismatch returns empty seeds.
-	nodes, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Person)", "missing")
+	fixtureAdmission340Context, fixtureAdmission340 := statementTestContext(ctx, "MATCH (n:Person)")
+	_ = fixtureAdmission340
+	nodes, err = exec.seedNodesFromOuterMatch(fixtureAdmission340, fixtureAdmission340Context, "MATCH (n:Person)", "missing")
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }

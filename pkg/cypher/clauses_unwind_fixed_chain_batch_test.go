@@ -37,7 +37,9 @@ RETURN count(o) AS linked
 		map[string]interface{}{"textKey": "b"},
 	}
 
-	res, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+	fixtureAdmission1399Context, fixtureAdmission1399 := statementTestContext(ctx, rest)
+	_ = fixtureAdmission1399Context
+	res, supported, err := exec.executeUnwindFixedChainLinkBatch(fixtureAdmission1399, fixtureAdmission1399Context, "row", items, rest)
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.Equal(t, []string{"linked"}, res.Columns)
@@ -50,7 +52,9 @@ RETURN count(o) AS linked
 	require.EqualValues(t, 4, verify.Rows[0][0])
 
 	// Re-running the same batch should not create duplicates.
-	res2, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+	fixtureAdmission1400Context, fixtureAdmission1400 := statementTestContext(ctx, rest)
+	_ = fixtureAdmission1400Context
+	res2, supported, err := exec.executeUnwindFixedChainLinkBatch(fixtureAdmission1400, fixtureAdmission1400Context, "row", items, rest)
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.EqualValues(t, 2, res2.Rows[0][0])
@@ -82,7 +86,9 @@ RETURN count(o) AS linked
 		map[string]interface{}{"root_id": string(rootID), "prefix": "k"},
 	}
 
-	res, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+	fixtureAdmission1497Context, fixtureAdmission1497 := statementTestContext(ctx, rest)
+	_ = fixtureAdmission1497Context
+	res, supported, err := exec.executeUnwindFixedChainLinkBatch(fixtureAdmission1497, fixtureAdmission1497Context, "row", items, rest)
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.EqualValues(t, 1, res.Rows[0][0])
@@ -94,11 +100,15 @@ func TestExecuteUnwindFixedChainLinkBatch_RejectsUnsupportedShapes(t *testing.T)
 	ctx := context.Background()
 	items := []interface{}{map[string]interface{}{"textKey": "a"}}
 
-	_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, "MATCH (o:OriginalText {textKey: row.textKey})")
+	fixtureAdmission1498Context, fixtureAdmission1498 := statementTestContext(ctx, "MATCH (o:OriginalText {textKey: row.textKey})")
+	_ = fixtureAdmission1498Context
+	_, supported, err := exec.executeUnwindFixedChainLinkBatch(fixtureAdmission1498, fixtureAdmission1498Context, "row", items, "MATCH (o:OriginalText {textKey: row.textKey})")
 	require.NoError(t, err)
 	require.False(t, supported)
 
-	_, supported, err = exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, "MATCH (o:OriginalText {textKey: row.textKey}) RETURN count(x) AS c")
+	fixtureAdmission1499Context, fixtureAdmission1499 := statementTestContext(ctx, "MATCH (o:OriginalText {textKey: row.textKey}) RETURN count(x) AS c")
+	_ = fixtureAdmission1499Context
+	_, supported, err = exec.executeUnwindFixedChainLinkBatch(fixtureAdmission1499, fixtureAdmission1499Context, "row", items, "MATCH (o:OriginalText {textKey: row.textKey}) RETURN count(x) AS c")
 	require.NoError(t, err)
 	require.False(t, supported)
 
@@ -111,7 +121,9 @@ MERGE (o)-[:NEXT]->(h1)
 MERGE (h1)-[:NEXT]->(h3)
 RETURN count(o) AS linked
 `
-	_, supported, err = exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, restNonContig)
+	fixtureAdmission1500Context, fixtureAdmission1500 := statementTestContext(ctx, restNonContig)
+	_ = fixtureAdmission1500Context
+	_, supported, err = exec.executeUnwindFixedChainLinkBatch(fixtureAdmission1500, fixtureAdmission1500Context, "row", items, restNonContig)
 	require.NoError(t, err)
 	require.False(t, supported)
 
@@ -122,7 +134,9 @@ MATCH (h1:Hop {hopId: row.textKey + ':1'})
 MERGE (o)-[:NEXT]->(h1)
 RETURN count(o) AS linked
 `
-	_, supported, err = exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, restWrongVar)
+	fixtureAdmission1501Context, fixtureAdmission1501 := statementTestContext(ctx, restWrongVar)
+	_ = fixtureAdmission1501Context
+	_, supported, err = exec.executeUnwindFixedChainLinkBatch(fixtureAdmission1501, fixtureAdmission1501Context, "row", items, restWrongVar)
 	require.NoError(t, err)
 	require.False(t, supported)
 }

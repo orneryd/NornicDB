@@ -329,7 +329,7 @@ func TestExecuteEdgePropertyAggOptimized_Branches(t *testing.T) {
 		AggFunctions: []string{"avg", "count", "min", "max", "sum"},
 		Limit:        10,
 	}
-	res, err := exec.executeEdgePropertyAggOptimized(ctx,
+	res, err := relationshipOptimizedAggregationTest(t, exec, ctx,
 		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS product, avg(r.rating) AS avg, count(r) AS cnt, min(r.rating) AS min, max(r.rating) AS max, sum(r.rating) AS total",
 		info,
 	)

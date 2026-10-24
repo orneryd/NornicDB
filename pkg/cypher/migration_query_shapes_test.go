@@ -991,11 +991,15 @@ RETURN count(t) AS c
 	nodeT, _ := store.GetNode("tr-list-1")
 	require.NotNil(t, nodeO)
 	require.NotNil(t, nodeT)
-	require.True(t, exec.evaluateBindingWhere(ctx, binding{
+	fixtureAdmission764Context, fixtureAdmission764 := expressionTestContext(ctx, "t.language = $language AND t.isReviewed = false AND o.pagePath STARTS WITH $pagePath")
+	_ = fixtureAdmission764
+	require.True(t, exec.evaluateBindingWhere(fixtureAdmission764, fixtureAdmission764Context, binding{
 		"o": nodeO,
 		"t": nodeT,
 	}, "t.language = $language AND t.isReviewed = false AND o.pagePath STARTS WITH $pagePath", map[string]interface{}{"language": "es", "pagePath": "/benefits"}))
-	require.True(t, exec.evaluateBindingWhere(ctx, binding{
+	fixtureAdmission765Context, fixtureAdmission765 := expressionTestContext(ctx, "t.language = 'es' AND t.isReviewed = false AND o.pagePath STARTS WITH '/benefits'")
+	_ = fixtureAdmission765
+	require.True(t, exec.evaluateBindingWhere(fixtureAdmission765, fixtureAdmission765Context, binding{
 		"o": nodeO,
 		"t": nodeT,
 	}, "t.language = 'es' AND t.isReviewed = false AND o.pagePath STARTS WITH '/benefits'", nil))
@@ -1012,12 +1016,16 @@ RETURN count(t) AS c
 	require.Len(t, matchClauses, 2)
 	bindings, relBindings := exec.sharedFirstMatchForTest(context.Background(), matchClauses[0])
 	require.NotEmpty(t, bindings)
-	bindings, _ = exec.executeChainedMatch(context.Background(), matchClauses[1], bindings, relBindings)
+	fixtureAdmission766Context, fixtureAdmission766 := traversalTestContext(context.Background(), matchClauses[1], "", nil)
+	_ = fixtureAdmission766
+	bindings, _ = exec.executeChainedMatch(fixtureAdmission766, fixtureAdmission766Context, matchClauses[1], bindings, relBindings)
 	require.NotEmpty(t, bindings)
 	require.NotNil(t, bindings[0]["o"], "chained match must bind o variable")
 	require.NotNil(t, bindings[0]["t"], "chained match must preserve t variable")
 	rawWhere := strings.TrimSpace(normalized[whereIdx+5 : returnIdx])
-	filteredBindings := exec.filterBindingsByWhere(ctx, bindings, rawWhere, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
+	fixtureAdmission972Context, fixtureAdmission972 := expressionTestContext(ctx, rawWhere)
+	_ = fixtureAdmission972Context
+	filteredBindings := exec.filterBindingsByWhere(fixtureAdmission972, fixtureAdmission972Context, bindings, rawWhere, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
 	require.NotEmpty(t, filteredBindings, "combined where predicate should keep matching binding")
 	directCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
 	directRes, directErr := exec.Execute(directCtx, normalized, getParamsFromContext(directCtx))

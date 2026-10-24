@@ -75,6 +75,8 @@ func TestSharedEvaluatorSubstitutesCaseInCompoundExpression(t *testing.T) {
 		"CASE WHEN n.x > 9 THEN 1 ELSE 2 END * 3":                      int64(6),
 		"CASE WHEN n.x > 3 THEN 'a' END + CASE WHEN true THEN 'b' END": "ab",
 	} {
-		require.Equal(t, want, exec.evaluateExpressionWithContext(ctx, expr, nodes, nil), expr)
+		fixtureAdmission142Context, fixtureAdmission142 := expressionTestContext(ctx, expr)
+		_ = fixtureAdmission142
+		require.Equal(t, want, exec.evaluateExpressionWithContext(fixtureAdmission142, fixtureAdmission142Context, expr, nodes, nil), expr)
 	}
 }

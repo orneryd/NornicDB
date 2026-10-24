@@ -252,14 +252,18 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	nodePattern := nodePatternInfo{variable: "s", labels: []string{"CloudResource"}}
 
 	t.Run("empty clause", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern, "   ", nil)
+		fixtureAdmission1222Context, fixtureAdmission1222 := expressionTestContext(ctx, "   ")
+		_ = fixtureAdmission1222Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(fixtureAdmission1222, fixtureAdmission1222Context, nodePattern, "   ", nil)
 		require.NoError(t, err)
 		require.False(t, used)
 		require.Nil(t, nodes)
 	})
 
 	t.Run("simple param form", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		fixtureAdmission1223Context, fixtureAdmission1223 := expressionTestContext(ctx, "s.uid IN $u")
+		_ = fixtureAdmission1223Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(fixtureAdmission1223, fixtureAdmission1223Context, nodePattern,
 			"s.uid IN $u", map[string]interface{}{"u": []interface{}{"a1", "a2"}})
 		require.NoError(t, err)
 		require.True(t, used)
@@ -267,7 +271,9 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	})
 
 	t.Run("simple literal form", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		fixtureAdmission1224Context, fixtureAdmission1224 := expressionTestContext(ctx, "s.uid IN ['a1', 'a3']")
+		_ = fixtureAdmission1224Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(fixtureAdmission1224, fixtureAdmission1224Context, nodePattern,
 			"s.uid IN ['a1', 'a3']", nil)
 		require.NoError(t, err)
 		require.True(t, used)
@@ -275,7 +281,9 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	})
 
 	t.Run("AND-conjunct param form", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		fixtureAdmission1225Context, fixtureAdmission1225 := expressionTestContext(ctx, "s.uid IN $u AND rel.evidence_source = $e")
+		_ = fixtureAdmission1225Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(fixtureAdmission1225, fixtureAdmission1225Context, nodePattern,
 			"s.uid IN $u AND rel.evidence_source = $e",
 			map[string]interface{}{"u": []interface{}{"a1"}, "e": "reducer"})
 		require.NoError(t, err)
@@ -284,7 +292,9 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	})
 
 	t.Run("AND-conjunct literal form", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		fixtureAdmission1226Context, fixtureAdmission1226 := expressionTestContext(ctx, "rel.evidence_source = 'reducer' AND s.uid IN ['a2', 'a3']")
+		_ = fixtureAdmission1226Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(fixtureAdmission1226, fixtureAdmission1226Context, nodePattern,
 			"rel.evidence_source = 'reducer' AND s.uid IN ['a2', 'a3']", nil)
 		require.NoError(t, err)
 		require.True(t, used)
@@ -292,7 +302,9 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	})
 
 	t.Run("empty conjunct term is skipped", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		fixtureAdmission1227Context, fixtureAdmission1227 := expressionTestContext(ctx, "() AND s.uid IN ['a1']")
+		_ = fixtureAdmission1227Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(fixtureAdmission1227, fixtureAdmission1227Context, nodePattern,
 			"() AND s.uid IN ['a1']", nil)
 		require.NoError(t, err)
 		require.True(t, used)
@@ -300,7 +312,9 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	})
 
 	t.Run("no recognized IN-list conjunct falls back", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
+		fixtureAdmission1228Context, fixtureAdmission1228 := expressionTestContext(ctx, "s.uid = 'a1' AND rel.evidence_source = 'reducer'")
+		_ = fixtureAdmission1228Context
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(fixtureAdmission1228, fixtureAdmission1228Context, nodePattern,
 			"s.uid = 'a1' AND rel.evidence_source = 'reducer'", nil)
 		require.NoError(t, err)
 		require.False(t, used)

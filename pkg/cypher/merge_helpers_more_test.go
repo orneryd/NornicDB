@@ -30,10 +30,14 @@ func TestMergeContextHelpers_MoreBranches(t *testing.T) {
 	_, err := exec.Execute(ctx, "WITH RETURN 1", nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
-	projected, ok := exec.pipelineApplyWith(ctx, input, "WITH *")
+	fixtureAdmission1332Context, fixtureAdmission1332 := statementTestContext(ctx, "WITH *")
+	_ = fixtureAdmission1332Context
+	projected, ok := exec.pipelineApplyWith(fixtureAdmission1332, fixtureAdmission1332Context, input, "WITH *")
 	require.True(t, ok)
 	require.Equal(t, input, projected)
-	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH n AS nn, r AS rr, s AS ss")
+	fixtureAdmission1333Context, fixtureAdmission1333 := statementTestContext(ctx, "WITH n AS nn, r AS rr, s AS ss")
+	_ = fixtureAdmission1333Context
+	projected, ok = exec.pipelineApplyWith(fixtureAdmission1333, fixtureAdmission1333Context, input, "WITH n AS nn, r AS rr, s AS ss")
 	require.True(t, ok)
 	require.Equal(t, []pipelineRow{{"nn": node, "rr": rel, "ss": int64(7)}}, projected)
 	_, err = exec.Execute(ctx, "WITH 7 AS s WITH s AS ss, ghost AS gg RETURN ss", nil)

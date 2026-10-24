@@ -150,15 +150,15 @@ func splitArithmeticExpression(expr string) []string {
 
 // evaluateWithWhereCondition evaluates a WHERE condition against computed WITH values.
 // This is for filtering after WITH aggregation (like SQL HAVING).
-func (e *StorageExecutor) evaluateWithWhereCondition(ctx context.Context, whereClause string, values map[string]interface{}) bool {
-	return e.evaluateRowPredicate(ctx, whereClause, values)
+func (e *StorageExecutor) evaluateWithWhereCondition(admission admittedRelationshipStatement, ctx context.Context, whereClause string, values map[string]interface{}) bool {
+	return e.evaluateRowPredicate(admission, ctx, whereClause, values)
 }
 
 // evaluateMatchWhereCondition is the MATCH-clause entry into the shared row
 // predicate evaluator: every WHERE position evaluates identically — a
 // non-boolean value is a TypeError, null drops the row (#728).
-func (e *StorageExecutor) evaluateMatchWhereCondition(ctx context.Context, whereClause string, values map[string]interface{}) bool {
-	return e.evaluateMatchRowPredicate(ctx, whereClause, values)
+func (e *StorageExecutor) evaluateMatchWhereCondition(admission admittedRelationshipStatement, ctx context.Context, whereClause string, values map[string]interface{}) bool {
+	return e.evaluateMatchRowPredicate(admission, ctx, whereClause, values)
 }
 
 // withWhereNeedsFullEvaluator reports whether a WITH-attached WHERE predicate
@@ -349,12 +349,12 @@ func withWhereValueContext(values map[string]interface{}) (map[string]*storage.N
 
 // filterNodesByWhereClause filters nodes based on a WHERE clause condition.
 // Uses evaluateWhere for consistent condition evaluation.
-func (e *StorageExecutor) filterNodesByWhereClause(ctx context.Context, nodes []*storage.Node, whereClause, variable string) []*storage.Node {
+func (e *StorageExecutor) filterNodesByWhereClause(admission admittedRelationshipStatement, ctx context.Context, nodes []*storage.Node, whereClause, variable string) []*storage.Node {
 	if whereClause == "" {
 		return nodes
 	}
 
-	filterFn := e.compileNodeWhereFilter(ctx, variable, whereClause)
+	filterFn := e.compileNodeWhereFilter(admission, ctx, variable, whereClause)
 
 	return parallelFilterNodes(nodes, filterFn)
 }

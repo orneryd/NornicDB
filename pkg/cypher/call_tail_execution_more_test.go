@@ -12,22 +12,30 @@ func TestExecuteCallTail_GuardsAndEmptySeedRows(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "call_tail_exec_guards"))
 	ctx := context.Background()
 
-	_, err := exec.executeCallTail(ctx, nil, "RETURN 1 AS v")
+	fixtureAdmission116Context, fixtureAdmission116 := statementTestContext(ctx, "RETURN 1 AS v")
+	_ = fixtureAdmission116
+	_, err := exec.executeCallTail(fixtureAdmission116, fixtureAdmission116Context, nil, "RETURN 1 AS v")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "requires seed result")
 
 	seed := &ExecuteResult{Columns: []string{"v"}, Rows: [][]interface{}{{int64(1)}}}
-	res, err := exec.executeCallTail(ctx, seed, "   ")
+	fixtureAdmission117Context, fixtureAdmission117 := statementTestContext(ctx, "   ")
+	_ = fixtureAdmission117
+	res, err := exec.executeCallTail(fixtureAdmission117, fixtureAdmission117Context, seed, "   ")
 	require.NoError(t, err)
 	require.Same(t, seed, res)
 
 	emptySeed := &ExecuteResult{Columns: []string{"v"}, Rows: [][]interface{}{}}
-	res, err = exec.executeCallTail(ctx, emptySeed, "WITH v RETURN v AS renamed ORDER BY renamed")
+	fixtureAdmission118Context, fixtureAdmission118 := statementTestContext(ctx, "WITH v RETURN v AS renamed ORDER BY renamed")
+	_ = fixtureAdmission118
+	res, err = exec.executeCallTail(fixtureAdmission118, fixtureAdmission118Context, emptySeed, "WITH v RETURN v AS renamed ORDER BY renamed")
 	require.NoError(t, err)
 	require.Equal(t, []string{"renamed"}, res.Columns)
 	require.Empty(t, res.Rows)
 
-	res, err = exec.executeCallTail(ctx, emptySeed, "WITH v")
+	fixtureAdmission119Context, fixtureAdmission119 := statementTestContext(ctx, "WITH v")
+	_ = fixtureAdmission119
+	res, err = exec.executeCallTail(fixtureAdmission119, fixtureAdmission119Context, emptySeed, "WITH v")
 	require.NoError(t, err)
 	require.Empty(t, res.Columns)
 	require.Empty(t, res.Rows)
@@ -38,24 +46,32 @@ func TestExecuteCallTailParallel_BranchesAndErrorPropagation(t *testing.T) {
 	ctx := context.Background()
 	seed := &ExecuteResult{Columns: []string{"v"}, Rows: [][]interface{}{{int64(2)}, {int64(1)}}}
 
-	res, ok, err := exec.executeCallTailParallel(ctx, seed, "RETURN v AS out", nil, nil)
+	fixtureAdmission120Context, fixtureAdmission120 := statementTestContext(ctx, "RETURN v AS out")
+	_ = fixtureAdmission120
+	res, ok, err := exec.executeCallTailParallel(fixtureAdmission120, fixtureAdmission120Context, seed, "RETURN v AS out", nil, nil)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Nil(t, res)
 
 	single := &ExecuteResult{Columns: []string{"v"}, Rows: [][]interface{}{{int64(2)}}}
-	res, ok, err = exec.executeCallTailParallel(ctx, single, "RETURN v AS out", []int{0}, nil)
+	fixtureAdmission121Context, fixtureAdmission121 := statementTestContext(ctx, "RETURN v AS out")
+	_ = fixtureAdmission121
+	res, ok, err = exec.executeCallTailParallel(fixtureAdmission121, fixtureAdmission121Context, single, "RETURN v AS out", []int{0}, nil)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Nil(t, res)
 
-	res, ok, err = exec.executeCallTailParallel(ctx, seed, "RETURN v AS out", []int{0}, []string{"renamed"})
+	fixtureAdmission122Context, fixtureAdmission122 := statementTestContext(ctx, "RETURN v AS out")
+	_ = fixtureAdmission122
+	res, ok, err = exec.executeCallTailParallel(fixtureAdmission122, fixtureAdmission122Context, seed, "RETURN v AS out", []int{0}, []string{"renamed"})
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []string{"renamed"}, res.Columns)
 	require.Equal(t, [][]interface{}{{int64(2)}, {int64(1)}}, res.Rows)
 
-	_, ok, err = exec.executeCallTailParallel(ctx, seed, "RETURN (", []int{0}, nil)
+	fixtureAdmission123Context, fixtureAdmission123 := statementTestContext(ctx, "RETURN (")
+	_ = fixtureAdmission123
+	_, ok, err = exec.executeCallTailParallel(fixtureAdmission123, fixtureAdmission123Context, seed, "RETURN (", []int{0}, nil)
 	require.True(t, ok)
 	require.Error(t, err)
 }
@@ -75,8 +91,10 @@ func TestExecuteCallTailSingleRow_NodeAndScalarBindings(t *testing.T) {
 	require.NoError(t, err)
 
 	seedCols := []string{"n", "score"}
-	res, err := exec.executeCallTailSingleRow(
-		ctx,
+	fixtureAdmission124Context, fixtureAdmission124 := statementTestContext(ctx, "MATCH (n) RETURN n.id AS id, score")
+	_ = fixtureAdmission124
+	res, err := exec.executeCallTailSingleRow(fixtureAdmission124,
+		fixtureAdmission124Context,
 		seedCols,
 		[]interface{}{node, int64(7)},
 		"MATCH (n) RETURN n.id AS id, score",
@@ -87,8 +105,10 @@ func TestExecuteCallTailSingleRow_NodeAndScalarBindings(t *testing.T) {
 	require.Equal(t, []string{"id", "score"}, res.Columns)
 	require.Equal(t, [][]interface{}{{"n1", int64(7)}}, res.Rows)
 
-	res, err = exec.executeCallTailSingleRow(
-		ctx,
+	fixtureAdmission125Context, fixtureAdmission125 := statementTestContext(ctx, "RETURN n.id AS id, score")
+	_ = fixtureAdmission125
+	res, err = exec.executeCallTailSingleRow(fixtureAdmission125,
+		fixtureAdmission125Context,
 		seedCols,
 		[]interface{}{node, int64(8)},
 		"RETURN n.id AS id, score",
@@ -98,8 +118,10 @@ func TestExecuteCallTailSingleRow_NodeAndScalarBindings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"n1", int64(8)}}, res.Rows)
 
-	res, err = exec.executeCallTailSingleRow(
-		ctx,
+	fixtureAdmission126Context, fixtureAdmission126 := statementTestContext(ctx, "RETURN 1 AS one")
+	_ = fixtureAdmission126
+	res, err = exec.executeCallTailSingleRow(fixtureAdmission126,
+		fixtureAdmission126Context,
 		seedCols,
 		[]interface{}{node},
 		"RETURN 1 AS one",

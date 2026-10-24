@@ -97,6 +97,9 @@ type BadgerTransaction struct {
 	// Independent read-only snapshot keeps planning reads out of writer SSI
 	// while excluding MVCC versions reserved but not yet physically committed.
 	snapshotTx *badger.Txn
+	// Immutable relationship indexes are owned by this pinned view, never the
+	// engine. Closing or refreshing the snapshot releases the entire set.
+	relationshipSeekIndexes *relationshipUniqueIndexSet
 
 	// badgerDB is the engine's Badger handle the transaction began on; the
 	// engine clears its own reference on Close.
@@ -427,6 +430,7 @@ func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool,
 // snapshot.
 func (tx *BadgerTransaction) clearSnapshotCachesLocked() {
 	tx.snapshotEquality = nil
+	tx.relationshipSeekIndexes = nil
 	tx.snapshotOutgoingAdjacency.clear()
 	tx.snapshotIncomingAdjacency.clear()
 	tx.snapshotLabelPrefixNodes = nil
@@ -3126,6 +3130,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		case OpUpdateNode:
 			tx.engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
 		case OpDeleteNode:
+			tx.engine.deleteRelationshipUniqueIndexes(op.DeletedEdgeIDs...)
 			if op.OldNode != nil {
 				tx.engine.cacheOnNodeDeletedWithLabels(op.NodeID, op.OldNode.Labels, op.EdgesDeleted)
 			} else {

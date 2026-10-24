@@ -85,7 +85,7 @@ type createEdgeSpec struct {
 // executeUnwindMultiMatchCreateBatch attempts the fast path. Returns
 // (result, true, err) on success, (nil, false, nil) if the shape doesn't
 // match (caller falls back), or (nil, true, err) on mid-execution error.
-func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
+func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(admission admittedRelationshipStatement,
 	ctx context.Context, unwindVar string, items []interface{}, restQuery string,
 ) (*ExecuteResult, bool, error) {
 	// Bail on shapes we don't handle.
@@ -163,7 +163,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 				matches = append(matches, match)
 			}
 		}
-		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, matches)
+		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(admission, e.getStorage(ctx), rows, matches)
 		if err != nil {
 			return nil, true, err
 		}
@@ -173,7 +173,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 		ctx = context.WithValue(ctx, pipelinePrefetchedNodeCandidatesKey{}, prefetched)
 	}
 	ctx = context.WithValue(ctx, pipelineIndependentCreateBatchKey{}, true)
-	result, handled, err := e.executeUnwindRowsPipeline(ctx, unwindVar, items, restQuery)
+	result, handled, err := e.executeUnwindRowsPipeline(admission, ctx, unwindVar, items, restQuery)
 	if handled && err == nil {
 		e.markUnwindMultiMatchCreateBatchUsed()
 	}
@@ -210,11 +210,11 @@ func isSimpleWithPassthroughClause(clause string) bool {
 	return true
 }
 
-func (e *StorageExecutor) evaluateUnwindBatchLookupExpr(match matchClauseSpec, row unwindBatchRow) (interface{}, bool) {
-	return e.evaluateBatchLookupExpr(match, row.item, row.itemMap)
+func (e *StorageExecutor) evaluateUnwindBatchLookupExpr(admission admittedRelationshipStatement, match matchClauseSpec, row unwindBatchRow) (interface{}, bool) {
+	return e.evaluateBatchLookupExpr(admission, match, row.item, row.itemMap)
 }
 
-func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
+func (e *StorageExecutor) evaluateBatchLookupExpr(admission admittedRelationshipStatement, match matchClauseSpec, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
 	if match.rowField != "" && bindingMap != nil {
 		if v, ok := bindingMap[match.rowField]; ok {
 			return normalizePropValue(v), true
@@ -232,7 +232,7 @@ func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, binding
 	if match.bindingVar != "" {
 		values[match.bindingVar] = bindingValue
 	}
-	value, resolved, err := e.evaluateExpressionFromValuesResult(rowStatementContextOrBackground(values), expr, values)
+	value, resolved, err := e.evaluateExpressionFromValuesResult(admission, rowStatementContextOrBackground(values), expr, values)
 	return normalizePropValue(value), resolved && err == nil
 }
 

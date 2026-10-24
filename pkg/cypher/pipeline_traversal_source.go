@@ -11,7 +11,7 @@ import (
 // pipelineTraversalSource feeds fixed-length relationship MATCH rows directly
 // to the next operator. In particular, aggregation and Bolt projection must
 // not first collect a graph-sized PathResult or binding-map slice.
-func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pipelineRowSource, clause string, hint pipelineMatchPhysicalHint) (pipelineRowSource, bool, error) {
+func (e *StorageExecutor) pipelineTraversalSource(admission admittedRelationshipStatement, ctx context.Context, input pipelineRowSource, clause string, hint pipelineMatchPhysicalHint) (pipelineRowSource, bool, error) {
 	if materialize, _ := ctx.Value(traversalMaterializeKey{}).(bool); materialize {
 		return nil, false, nil
 	}
@@ -69,7 +69,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 			}
 			plan := planPipelineTraversalScan(shape, where, row)
 			if plan.access == traversalSeededAccess {
-				rows, _, err := e.pipelineApplySeededTraversalMatch(ctx, []pipelineRow{row}, clause, hint)
+				rows, _, err := e.pipelineApplySeededTraversalMatch(admission, ctx, []pipelineRow{row}, clause, hint)
 				if err != nil {
 					recordExpressionFailure(ctx, err)
 					valid = false
@@ -83,7 +83,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				return true
 			}
 			rowCtx := withValueBindings(ctx, row)
-			match := e.parseTraversalPattern(rowCtx, pattern)
+			match := e.parseTraversalPattern(admission, rowCtx, pattern)
 			if match == nil {
 				valid = false
 				return false
@@ -150,7 +150,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 						return nil
 					}
 				}
-				if where != "" && !predicate.holds(e, rowCtx, current) {
+				if where != "" && !predicate.holds(admission, e, rowCtx, current) {
 					return getExpressionFailure(ctx)
 				}
 				if !yield(current) {
@@ -158,7 +158,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				}
 				return nil
 			}
-			err := plan.visitEdges(rowCtx, e, match, func(edge *storage.Edge, start, end storage.NodeID) error {
+			err := e.relationshipExecutionFor(admission, rowCtx, pattern, where).visitTraversalScanEdges(rowCtx, plan, match, func(edge *storage.Edge, start, end storage.NodeID) error {
 				if err := ctx.Err(); err != nil {
 					return err
 				}

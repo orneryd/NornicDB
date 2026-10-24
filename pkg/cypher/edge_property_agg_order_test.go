@@ -30,7 +30,7 @@ func TestEdgePropertyAggMinMaxIgnoreReadOrder(t *testing.T) {
 			require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e%02d-%d", i, j)), StartNode: "c", EndNode: id, Type: "REVIEWED", Properties: map[string]interface{}{"rating": rating}}))
 		}
 	}
-	res, err := exec.executeEdgePropertyAggOptimized(context.Background(),
+	res, err := relationshipOptimizedAggregationTest(t, exec, context.Background(),
 		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS product, min(r.rating) AS min, max(r.rating) AS max",
 		PatternInfo{Pattern: PatternEdgePropertyAgg, RelType: "REVIEWED", AggProperty: "rating", AggFunctions: []string{"min", "max"}, Limit: products})
 	require.NoError(t, err)

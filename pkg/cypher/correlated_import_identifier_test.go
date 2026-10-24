@@ -79,11 +79,15 @@ func TestCorrelatedPipelineImportedIdentifierShortcutParity(t *testing.T) {
 						// These direct callers supply clause text before the public
 						// quoted-variable rewrite. Preserve the general path's existing
 						// name/scope behavior and compare dispatch against it verbatim.
-						general, handled, err := exec.runPipelineClauseRows(runCtx, []pipelineRow{bindings}, map[string]struct{}{name: {}}, clauses, clauses, nil)
+						fixtureAdmission186Context, fixtureAdmission186 := statementTestContext(runCtx, body)
+						_ = fixtureAdmission186Context
+						general, handled, err := exec.runPipelineClauseRows(fixtureAdmission186, fixtureAdmission186Context, []pipelineRow{bindings}, map[string]struct{}{name: {}}, clauses, clauses, nil)
 						require.NoError(t, err)
 						require.True(t, handled)
 						require.NotEmpty(t, general.Rows)
-						actual := exec.executePipeline(runCtx, body)
+						fixtureAdmission187Context, fixtureAdmission187 := statementTestContext(runCtx, body)
+						_ = fixtureAdmission187
+						actual := exec.executePipeline(fixtureAdmission187, fixtureAdmission187Context, body)
 						require.NoError(t, actual.err)
 						require.True(t, actual.handled())
 						require.Equal(t, general.Columns, actual.result.Columns)
@@ -93,7 +97,9 @@ func TestCorrelatedPipelineImportedIdentifierShortcutParity(t *testing.T) {
 					unrelatedClauses, ok := canExecuteAsPipeline(unrelated)
 					require.True(t, ok)
 					require.False(t, exec.pipelineReadsImportedBinding(withValueBindings(ctx, pipelineRow{name: seeds.Rows[0][0]}), unrelatedClauses))
-					unrelatedResult := exec.executePipeline(ctx, unrelated)
+					fixtureAdmission188Context, fixtureAdmission188 := statementTestContext(ctx, unrelated)
+					_ = fixtureAdmission188
+					unrelatedResult := exec.executePipeline(fixtureAdmission188, fixtureAdmission188Context, unrelated)
 					require.NoError(t, unrelatedResult.err)
 					require.True(t, unrelatedResult.handled())
 					require.Equal(t, [][]interface{}{{int64(2)}}, unrelatedResult.result.Rows)

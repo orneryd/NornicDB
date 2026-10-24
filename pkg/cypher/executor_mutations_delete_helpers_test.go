@@ -53,33 +53,45 @@ CREATE (:Person {id:'p1', team:'red'}),
 	_, err = exec.Execute(ctx, "CREATE INDEX person_team_idx IF NOT EXISTS FOR (n:Person) ON (n.team)", nil)
 	require.NoError(t, err)
 
-	nodes, handled, err := exec.collectDeleteWithLimitCandidates(ctx, "RETURN 1", "n", 10, nil)
+	fixtureAdmission1596Context, fixtureAdmission1596 := statementTestContext(ctx, "RETURN 1")
+	_ = fixtureAdmission1596Context
+	nodes, handled, err := exec.collectDeleteWithLimitCandidates(fixtureAdmission1596, fixtureAdmission1596Context, "RETURN 1", "n", 10, nil)
 	require.NoError(t, err)
 	require.False(t, handled)
 	require.Nil(t, nodes)
 
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person)", "x", 10, nil)
+	fixtureAdmission1597Context, fixtureAdmission1597 := statementTestContext(ctx, "MATCH (n:Person)")
+	_ = fixtureAdmission1597Context
+	nodes, handled, err = exec.collectDeleteWithLimitCandidates(fixtureAdmission1597, fixtureAdmission1597Context, "MATCH (n:Person)", "x", 10, nil)
 	require.NoError(t, err)
 	require.False(t, handled)
 	require.Nil(t, nodes)
 
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person) WHERE n.team = 'red'", "n", 1, nil)
+	fixtureAdmission1598Context, fixtureAdmission1598 := statementTestContext(ctx, "MATCH (n:Person) WHERE n.team = 'red'")
+	_ = fixtureAdmission1598Context
+	nodes, handled, err = exec.collectDeleteWithLimitCandidates(fixtureAdmission1598, fixtureAdmission1598Context, "MATCH (n:Person) WHERE n.team = 'red'", "n", 1, nil)
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Len(t, nodes, 1)
 
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person) WHERE n.team IN $teams", "n", 10, map[string]interface{}{"teams": []string{"blue"}})
+	fixtureAdmission1599Context, fixtureAdmission1599 := statementTestContext(ctx, "MATCH (n:Person) WHERE n.team IN $teams")
+	_ = fixtureAdmission1599Context
+	nodes, handled, err = exec.collectDeleteWithLimitCandidates(fixtureAdmission1599, fixtureAdmission1599Context, "MATCH (n:Person) WHERE n.team IN $teams", "n", 10, map[string]interface{}{"teams": []string{"blue"}})
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Len(t, nodes, 1)
 	require.Equal(t, "blue", nodes[0].Properties["team"])
 
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person) WHERE n.team IN $teams", "n", 10, map[string]interface{}{"teams": int64(1)})
+	fixtureAdmission1600Context, fixtureAdmission1600 := statementTestContext(ctx, "MATCH (n:Person) WHERE n.team IN $teams")
+	_ = fixtureAdmission1600Context
+	nodes, handled, err = exec.collectDeleteWithLimitCandidates(fixtureAdmission1600, fixtureAdmission1600Context, "MATCH (n:Person) WHERE n.team IN $teams", "n", 10, map[string]interface{}{"teams": int64(1)})
 	require.NoError(t, err)
 	require.False(t, handled)
 	require.Nil(t, nodes)
 
-	nodes, handled, err = exec.collectDeleteWithLimitCandidates(ctx, "MATCH (n:Person) WHERE n.team > 'a'", "n", 10, nil)
+	fixtureAdmission1601Context, fixtureAdmission1601 := statementTestContext(ctx, "MATCH (n:Person) WHERE n.team > 'a'")
+	_ = fixtureAdmission1601Context
+	nodes, handled, err = exec.collectDeleteWithLimitCandidates(fixtureAdmission1601, fixtureAdmission1601Context, "MATCH (n:Person) WHERE n.team > 'a'", "n", 10, nil)
 	require.NoError(t, err)
 	require.False(t, handled)
 	require.Nil(t, nodes)
@@ -87,20 +99,26 @@ CREATE (:Person {id:'p1', team:'red'}),
 	res := &ExecuteResult{Stats: &QueryStats{NodesDeleted: 2, RelationshipsDeleted: 3}}
 	node := &storage.Node{ID: "n1"}
 	input := &ExecuteResult{Columns: []string{"n"}, Rows: [][]interface{}{{node}, {node}}}
-	exec.applyDeleteReturnProjection(res, "MATCH (n) DELETE n RETURN count(*), count(n), 42 AS literal", "n", deleteProjectionInfo{ctx: ctx, input: input})
+	fixtureAdmission1196Context, fixtureAdmission1196 := statementTestContext(context.Background(), "MATCH (n) DELETE n RETURN count(*), count(n), 42 AS literal")
+	_ = fixtureAdmission1196Context
+	exec.applyDeleteReturnProjection(fixtureAdmission1196, res, "MATCH (n) DELETE n RETURN count(*), count(n), 42 AS literal", "n", deleteProjectionInfo{ctx: ctx, input: input})
 	require.Equal(t, []string{"count(*)", "count(n)", "literal"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 	require.EqualValues(t, 2, res.Rows[0][0])
 	require.EqualValues(t, 2, res.Rows[0][1])
 	require.EqualValues(t, 42, res.Rows[0][2])
 	deletedCtx := withExpressionFailureSlot(ctx)
-	exec.applyDeleteReturnProjection(res, "MATCH (n) DELETE n RETURN n.name", "n", deleteProjectionInfo{ctx: deletedCtx, input: input})
+	fixtureAdmission1197Context, fixtureAdmission1197 := statementTestContext(context.Background(), "MATCH (n) DELETE n RETURN n.name")
+	_ = fixtureAdmission1197Context
+	exec.applyDeleteReturnProjection(fixtureAdmission1197, res, "MATCH (n) DELETE n RETURN n.name", "n", deleteProjectionInfo{ctx: deletedCtx, input: input})
 	requireDeletedEntityError(t, getExpressionFailure(deletedCtx))
 
 	res = &ExecuteResult{Stats: &QueryStats{RelationshipsDeleted: 3}}
 	edge := &storage.Edge{ID: "r1", Type: "R"}
 	input = &ExecuteResult{Columns: []string{"r"}, Rows: [][]interface{}{{edge}, {edge}, {edge}}}
-	exec.applyDeleteReturnProjection(res, "MATCH ()-[r]->() DELETE r RETURN count(r), r, type(r)", "r", deleteProjectionInfo{ctx: ctx, input: input})
+	fixtureAdmission1198Context, fixtureAdmission1198 := statementTestContext(context.Background(), "MATCH ()-[r]->() DELETE r RETURN count(r), r, type(r)")
+	_ = fixtureAdmission1198Context
+	exec.applyDeleteReturnProjection(fixtureAdmission1198, res, "MATCH ()-[r]->() DELETE r RETURN count(r), r, type(r)", "r", deleteProjectionInfo{ctx: ctx, input: input})
 	require.Equal(t, []string{"count(r)", "r", "type(r)"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 	require.EqualValues(t, 3, res.Rows[0][0])
@@ -110,7 +128,9 @@ CREATE (:Person {id:'p1', team:'red'}),
 
 	res = &ExecuteResult{Stats: &QueryStats{NodesDeleted: 2, RelationshipsDeleted: 3}}
 	info := deleteProjectionInfo{ctx: ctx, input: &ExecuteResult{Columns: []string{"n", "r"}, Rows: [][]interface{}{{node, edge}}}}
-	exec.applyDeleteReturnProjection(res, "MATCH (n)-[r]->() DELETE n, r RETURN count(n), count(r), count(*)", "n, r", info)
+	fixtureAdmission1199Context, fixtureAdmission1199 := statementTestContext(context.Background(), "MATCH (n)-[r]->() DELETE n, r RETURN count(n), count(r), count(*)")
+	_ = fixtureAdmission1199Context
+	exec.applyDeleteReturnProjection(fixtureAdmission1199, res, "MATCH (n)-[r]->() DELETE n, r RETURN count(n), count(r), count(*)", "n, r", info)
 	require.Equal(t, []string{"count(n)", "count(r)", "count(*)"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 	require.EqualValues(t, 1, res.Rows[0][0])

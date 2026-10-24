@@ -10,11 +10,11 @@ import (
 // parseSetMergeMapLiteralStrict parses an inline map literal used by SET +=.
 // Unlike permissive property parsing helpers, this enforces Cypher semantics:
 // malformed maps must return an error instead of becoming an empty map/no-op.
-func (e *StorageExecutor) parseSetMergeMapLiteralStrict(ctx context.Context, s string) (map[string]interface{}, error) {
+func (e *StorageExecutor) parseSetMergeMapLiteralStrict(admission admittedRelationshipStatement, ctx context.Context, s string) (map[string]interface{}, error) {
 	if err := validateMapLiteralSyntax(s); err != nil {
 		return nil, err
 	}
-	return e.materializePropertyMap(ctx, s, e.fabricRecordBindings, true, false)
+	return e.materializePropertyMap(admission, ctx, s, e.fabricRecordBindings, true, false)
 }
 
 // parseSetMergeMapExpressionsStrict validates an inline SET += map while

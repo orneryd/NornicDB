@@ -53,7 +53,9 @@ func TestPipelinePreservesParameterSpellingInImplicitColumnName(t *testing.T) {
 	if clauses, ok := canExecuteAsPipeline(query); !ok {
 		t.Fatalf("query was not accepted by pipeline decomposition: %#v", clauses)
 	}
-	outcome := executor.executePipeline(ctx, query)
+	fixtureAdmission837Context, fixtureAdmission837 := statementTestContext(ctx, query)
+	_ = fixtureAdmission837
+	outcome := executor.executePipeline(fixtureAdmission837, fixtureAdmission837Context, query)
 	if !outcome.handled() || outcome.err != nil {
 		t.Fatalf("pipeline execution failed: outcome=%+v", outcome)
 	}

@@ -438,9 +438,13 @@ func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
-	_, err := exec.callQueryStatistics(ctx, "collect", []interface{}{"QUERIES", map[string]interface{}{"durationSeconds": int64(0)}})
+	var fixtureAdmission1870Arguments []interface{} = []interface{}{"QUERIES", map[string]interface{}{"durationSeconds": int64(0)}}
+	fixtureAdmission1870Context, fixtureAdmission1870 := procedureTestContext(ctx, "db.stats."+("collect"), fixtureAdmission1870Arguments)
+	_, err := exec.callQueryStatistics(fixtureAdmission1870, fixtureAdmission1870Context, "collect", fixtureAdmission1870Arguments)
 	require.NoError(t, err)
-	result, err := exec.callQueryStatistics(ctx, "collect", []interface{}{"QUERIES"})
+	var fixtureAdmission1871Arguments []interface{} = []interface{}{"QUERIES"}
+	fixtureAdmission1871Context, fixtureAdmission1871 := procedureTestContext(ctx, "db.stats."+("collect"), fixtureAdmission1871Arguments)
+	result, err := exec.callQueryStatistics(fixtureAdmission1871, fixtureAdmission1871Context, "collect", fixtureAdmission1871Arguments)
 	require.NoError(t, err)
 	require.Equal(t, "Collection is already ongoing.", result.Rows[0][2])
 	var workers sync.WaitGroup
@@ -454,7 +458,9 @@ func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
 				started := time.Now()
 				generation := exec.queryStatistics.start(query, started)
 				exec.queryStatistics.record(generation, query, started, time.Microsecond, true)
-				if _, err := exec.callQueryStatistics(ctx, "retrieve", []interface{}{"QUERIES"}); err != nil {
+				var fixtureAdmission1872Arguments []interface{} = []interface{}{"QUERIES"}
+				fixtureAdmission1872Context, fixtureAdmission1872 := procedureTestContext(ctx, "db.stats."+("retrieve"), fixtureAdmission1872Arguments)
+				if _, err := exec.callQueryStatistics(fixtureAdmission1872, fixtureAdmission1872Context, "retrieve", fixtureAdmission1872Arguments); err != nil {
 					failures <- err
 					return
 				}
@@ -466,7 +472,9 @@ func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
 	for err := range failures {
 		require.NoError(t, err)
 	}
-	result, err = exec.callQueryStatistics(ctx, "retrieve", []interface{}{"QUERIES"})
+	var fixtureAdmission1873Arguments []interface{} = []interface{}{"QUERIES"}
+	fixtureAdmission1873Context, fixtureAdmission1873 := procedureTestContext(ctx, "db.stats."+("retrieve"), fixtureAdmission1873Arguments)
+	result, err = exec.callQueryStatistics(fixtureAdmission1873, fixtureAdmission1873Context, "retrieve", fixtureAdmission1873Arguments)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 8)
 	for _, row := range result.Rows {
@@ -475,16 +483,22 @@ func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
 	}
 	data := result.Rows[0][1].(map[string]interface{})
 	data["invocations"].([]interface{})[0].(map[string]interface{})["elapsedExecutionTimeInUs"] = int64(-1)
-	result, err = exec.callQueryStatistics(ctx, "retrieve", []interface{}{"QUERIES"})
+	var fixtureAdmission1874Arguments []interface{} = []interface{}{"QUERIES"}
+	fixtureAdmission1874Context, fixtureAdmission1874 := procedureTestContext(ctx, "db.stats."+("retrieve"), fixtureAdmission1874Arguments)
+	result, err = exec.callQueryStatistics(fixtureAdmission1874, fixtureAdmission1874Context, "retrieve", fixtureAdmission1874Arguments)
 	require.NoError(t, err)
 	data = result.Rows[0][1].(map[string]interface{})
 	require.Equal(t, int64(1), data["invocations"].([]interface{})[0].(map[string]interface{})["elapsedExecutionTimeInUs"])
 	started := time.Now()
 	generation := exec.queryStatistics.start("RETURN stale", started)
 	// A query that started before stop and clear is not recorded after them.
-	_, err = exec.callQueryStatistics(ctx, "stop", nil)
+	var fixtureAdmission1875Arguments []interface{} = nil
+	fixtureAdmission1875Context, fixtureAdmission1875 := procedureTestContext(ctx, "db.stats."+("stop"), fixtureAdmission1875Arguments)
+	_, err = exec.callQueryStatistics(fixtureAdmission1875, fixtureAdmission1875Context, "stop", fixtureAdmission1875Arguments)
 	require.NoError(t, err)
-	_, err = exec.callQueryStatistics(ctx, "clear", nil)
+	var fixtureAdmission1876Arguments []interface{} = nil
+	fixtureAdmission1876Context, fixtureAdmission1876 := procedureTestContext(ctx, "db.stats."+("clear"), fixtureAdmission1876Arguments)
+	_, err = exec.callQueryStatistics(fixtureAdmission1876, fixtureAdmission1876Context, "clear", fixtureAdmission1876Arguments)
 	require.NoError(t, err)
 	exec.queryStatistics.record(generation, "RETURN stale", started, time.Microsecond, true)
 	exec.queryStatistics.record(generation, "RETURN failed", started, time.Microsecond, false)
@@ -493,7 +507,9 @@ func TestDbStatsConcurrentCollectionAndRetrieval(t *testing.T) {
 	exec.queryStatistics.deadline = started.Add(-time.Second)
 	exec.queryStatistics.mu.Unlock()
 	require.Zero(t, exec.queryStatistics.start("RETURN expired", started))
-	result, err = exec.callQueryStatistics(ctx, "retrieve", nil)
+	var fixtureAdmission1877Arguments []interface{} = nil
+	fixtureAdmission1877Context, fixtureAdmission1877 := procedureTestContext(ctx, "db.stats."+("retrieve"), fixtureAdmission1877Arguments)
+	result, err = exec.callQueryStatistics(fixtureAdmission1877, fixtureAdmission1877Context, "retrieve", fixtureAdmission1877Arguments)
 	require.NoError(t, err)
 	require.Empty(t, result.Rows)
 }
@@ -536,7 +552,10 @@ func TestDbStatsStorageErrorsAndLegacyHelpers(t *testing.T) {
 	for _, failNodes := range []bool{true, false} {
 		failure := errors.New("statistics storage failure")
 		exec := NewStorageExecutor(visualizationErrorEngine{Engine: store, failNodes: failNodes, err: failure})
-		_, err := exec.retrieveGraphStatistics(context.Background(), "GRAPH COUNTS")
+		var fixtureAdmission1878Value string = "GRAPH COUNTS"
+		var fixtureAdmission1878Arguments []interface{} = []interface{}{(fixtureAdmission1878Value)}
+		fixtureAdmission1878Context, fixtureAdmission1878 := procedureTestContext(context.Background(), "db.stats.retrieve", fixtureAdmission1878Arguments)
+		_, err := exec.retrieveGraphStatistics(fixtureAdmission1878, fixtureAdmission1878Context, fixtureAdmission1878Value)
 		require.ErrorIs(t, err, failure)
 	}
 	exec := NewStorageExecutor(store)
@@ -551,10 +570,14 @@ func TestDbStatsStorageErrorsAndLegacyHelpers(t *testing.T) {
 		_, err := exec.Execute(context.Background(), call, nil)
 		require.NoError(t, err, call)
 	}
-	_, err := exec.callQueryStatistics(context.Background(), "collect", []interface{}{"GRAPH COUNTS"})
+	var fixtureAdmission1879Arguments []interface{} = []interface{}{"GRAPH COUNTS"}
+	fixtureAdmission1879Context, fixtureAdmission1879 := procedureTestContext(context.Background(), "db.stats."+("collect"), fixtureAdmission1879Arguments)
+	_, err := exec.callQueryStatistics(fixtureAdmission1879, fixtureAdmission1879Context, "collect", fixtureAdmission1879Arguments)
 	require.ErrorContains(t, err, "does not have to be explicitly collected")
 	exec.queryStatistics = nil
-	_, err = exec.callQueryStatistics(context.Background(), "status", nil)
+	var fixtureAdmission1880Arguments []interface{} = nil
+	fixtureAdmission1880Context, fixtureAdmission1880 := procedureTestContext(context.Background(), "db.stats."+("status"), fixtureAdmission1880Arguments)
+	_, err = exec.callQueryStatistics(fixtureAdmission1880, fixtureAdmission1880Context, "status", fixtureAdmission1880Arguments)
 	require.ErrorContains(t, err, "unavailable")
 }
 

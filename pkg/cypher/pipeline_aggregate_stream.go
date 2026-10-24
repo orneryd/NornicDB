@@ -76,7 +76,7 @@ type pipelineAggregateRun struct {
 // validated as they stream in, unless rowsValidated says the caller already
 // validated exactly these rows; validating them again doubled the cost of
 // aggregating projections (#823).
-func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pipelineRowSource, projections []returnProjection, rowsValidated bool) ([]*pipelineAggregateGroup, bool) {
+func (e *StorageExecutor) pipelineAggregateGroups(admission admittedRelationshipStatement, ctx context.Context, source pipelineRowSource, projections []returnProjection, rowsValidated bool) ([]*pipelineAggregateGroup, bool) {
 	templates := make([]pipelineAggregateProjection, len(projections))
 	memory := memoryScopeFromContext(ctx)
 	validationClauses := make([]string, 0)
@@ -130,7 +130,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			return false
 		}
 		for _, clause := range validationClauses {
-			if err := e.validatePipelineProjectionValues([]pipelineRow{row}, clause, "WITH"); err != nil {
+			if err := e.validatePipelineProjectionValues(admission, []pipelineRow{row}, clause, "WITH"); err != nil {
 				recordExpressionFailure(ctx, err)
 				run.valid = false
 				return false
@@ -142,7 +142,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 				if projection.isAggr {
 					continue
 				}
-				value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, row)
+				value, ok := e.evaluateRowExpressionWithContext(admission, ctx, projection.expr, row)
 				if !ok {
 					pipelineItemUnevaluable(ctx, projection.expr)
 					run.valid = false
@@ -162,7 +162,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 		group := ordered[position]
 		for index := range group.projections {
 			for offset := range group.projections[index].states {
-				if !group.projections[index].states[offset].add(ctx, e, row) {
+				if !group.projections[index].states[offset].add(admission, ctx, e, row) {
 					run.valid = false
 					return false
 				}
@@ -209,7 +209,7 @@ func cartesianAggregateProperty(expression string, patterns []struct {
 	return 0, "", false
 }
 
-func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, patterns []struct {
+func (e *StorageExecutor) tryCartesianAggregatePartitions(admission admittedRelationshipStatement, ctx context.Context, patterns []struct {
 	variable string
 	nodes    []*storage.Node
 }, plan *returnProjectionPlan, forcedWorkers int) ([]*pipelineAggregateGroup, bool, error) {
@@ -326,7 +326,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 				}
 			}
 		}
-		groups, valid := e.pipelineAggregateGroups(workerContext, source, plan.projections, true)
+		groups, valid := e.pipelineAggregateGroups(admission, workerContext, source, plan.projections, true)
 		partitions[worker].groups = groups
 		if !valid {
 			partitions[worker].err = getExpressionFailure(workerContext)
@@ -382,7 +382,7 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 			var parts []interface{}
 			for _, projection := range plan.projections {
 				if !projection.isAggr {
-					value, ok := e.evaluateRowExpressionWithContext(ctx, projection.expr, partial.first)
+					value, ok := e.evaluateRowExpressionWithContext(admission, ctx, projection.expr, partial.first)
 					if !ok {
 						return nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidAggregate", "invalid Cartesian grouping expression")
 					}
@@ -420,23 +420,23 @@ func (e *StorageExecutor) tryCartesianAggregatePartitions(ctx context.Context, p
 	return result, true, nil
 }
 
-func (group *pipelineAggregateGroup) value(ctx context.Context, executor *StorageExecutor, index int) (interface{}, bool) {
+func (group *pipelineAggregateGroup) value(admission admittedRelationshipStatement, ctx context.Context, executor *StorageExecutor, index int) (interface{}, bool) {
 	projection := &group.projections[index]
 	if len(projection.states) == 0 {
-		return executor.evaluateRowExpressionWithContext(ctx, projection.expression, group.first)
+		return executor.evaluateRowExpressionWithContext(admission, ctx, projection.expression, group.first)
 	}
 	values := make(pipelineRow, len(group.first)+len(projection.states))
 	for name, value := range group.first {
 		values[name] = value
 	}
 	for offset := range projection.states {
-		value, ok := projection.states[offset].result(ctx, executor)
+		value, ok := projection.states[offset].result(admission, ctx, executor)
 		if !ok {
 			return nil, false
 		}
 		values[traversalAggPlaceholder(offset)] = value
 	}
-	return executor.evaluateRowExpressionWithContext(ctx, projection.expression, values)
+	return executor.evaluateRowExpressionWithContext(admission, ctx, projection.expression, values)
 }
 
 type pipelineAggregateState struct {
@@ -459,7 +459,7 @@ type pipelineAggregateState struct {
 	memory memoryAccount
 }
 
-func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageExecutor, row pipelineRow) bool {
+func (state *pipelineAggregateState) add(admission admittedRelationshipStatement, ctx context.Context, executor *StorageExecutor, row pipelineRow) bool {
 	if state.name == "count" && state.expression == "*" {
 		state.count++
 		return true
@@ -471,7 +471,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		}
 		stored := pipelineRow{}
 		if len(state.percentileRows) == 0 {
-			if err := executor.validatePercentileCalls(state.name+"("+state.expression+")", row); err != nil {
+			if err := executor.validatePercentileCalls(admission, state.name+"("+state.expression+")", row); err != nil {
 				recordExpressionFailure(ctx, err)
 				return false
 			}
@@ -480,7 +480,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 		}
 		for _, argument := range arguments {
 			argument = strings.TrimSpace(argument)
-			value, ok := executor.evaluateRowExpressionWithContext(ctx, argument, row)
+			value, ok := executor.evaluateRowExpressionWithContext(admission, ctx, argument, row)
 			if !ok {
 				return false
 			}
@@ -498,7 +498,7 @@ func (state *pipelineAggregateState) add(ctx context.Context, executor *StorageE
 	}
 	value, ok := row[state.expression]
 	if !ok || isLiteralKeyword(state.expression) {
-		value, ok = executor.evaluateRowExpressionWithContext(ctx, state.expression, row)
+		value, ok = executor.evaluateRowExpressionWithContext(admission, ctx, state.expression, row)
 	}
 	if !ok {
 		return false
@@ -615,7 +615,7 @@ func addInt64(left, right int64) (int64, bool) {
 	return total, (right > 0 && total < left) || (right < 0 && total > left)
 }
 
-func (state *pipelineAggregateState) result(ctx context.Context, executor *StorageExecutor) (interface{}, bool) {
+func (state *pipelineAggregateState) result(admission admittedRelationshipStatement, ctx context.Context, executor *StorageExecutor) (interface{}, bool) {
 	switch state.name {
 	case "count":
 		return state.count, true
@@ -661,7 +661,7 @@ func (state *pipelineAggregateState) result(ctx context.Context, executor *Stora
 		}
 		return math.Sqrt(state.squared / float64(divisor)), true
 	case "percentilecont", "percentiledisc":
-		return executor.evaluatePipelinePercentile(ctx, state.percentileRows, state.name, state.expression, state.distinct)
+		return executor.evaluatePipelinePercentile(admission, ctx, state.percentileRows, state.name, state.expression, state.distinct)
 	default:
 		return nil, false
 	}

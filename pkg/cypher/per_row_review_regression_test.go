@@ -107,7 +107,9 @@ func TestRowPredicateCaseExpectedResults(t *testing.T) {
 				rowValueProgramsDisabled.Store(text)
 				ctx := withExpressionFailureSlot(context.Background())
 				row := map[string]interface{}{"x": int64(1), "y": int64(2), "z": int64(0), rowStatementContextKey: ctx}
-				got := compileRowPredicateProgram(tc.expression).holds(exec, ctx, row)
+				fixtureAdmission1743Context, fixtureAdmission1743 := statementTestContext(ctx, "RETURN "+(tc.expression))
+				_ = fixtureAdmission1743Context
+				got := compileRowPredicateProgram(tc.expression).holds(fixtureAdmission1743, exec, fixtureAdmission1743Context, row)
 				rowValueProgramsDisabled.Store(false)
 				if tc.errorText != "" {
 					require.ErrorContains(t, getExpressionFailure(ctx), tc.errorText)

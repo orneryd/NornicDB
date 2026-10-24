@@ -69,14 +69,20 @@ func TestPaginationExpressionsWithoutRowVariables(t *testing.T) {
 // check.
 func TestPaginationValidationEdgeBranches(t *testing.T) {
 	exec, _ := newTestExecutor(t)
-	require.Error(t, exec.validateStaticPaginationExpression("LIMIT", "1 / 0"))
-	require.Error(t, exec.validateStaticPaginationExpression("LIMIT", "nosuchfunction(1)"))
+	fixtureAdmission1360Context, fixtureAdmission1360 := expressionTestContext(context.Background(), "1 / 0")
+	_ = fixtureAdmission1360Context
+	require.Error(t, exec.validateStaticPaginationExpression(fixtureAdmission1360, "LIMIT", "1 / 0"))
+	fixtureAdmission1361Context, fixtureAdmission1361 := expressionTestContext(context.Background(), "nosuchfunction(1)")
+	_ = fixtureAdmission1361Context
+	require.Error(t, exec.validateStaticPaginationExpression(fixtureAdmission1361, "LIMIT", "nosuchfunction(1)"))
 
 	query := "MATCH (n) RETURN n LIMIT $n"
-	require.NoError(t, exec.validateRuntimePaginationExpressions(context.Background(), query))
+	_, admission := statementTestContext(context.Background(), query)
+	_, divisionAdmission := statementTestContext(context.Background(), "MATCH (n) RETURN n LIMIT $n / 0")
+	require.NoError(t, exec.validateRuntimePaginationExpressions(admission, context.Background(), query))
 	withParams := func(params map[string]interface{}) context.Context {
 		return context.WithValue(context.Background(), paramsKey, params)
 	}
-	require.NoError(t, exec.validateRuntimePaginationExpressions(withParams(map[string]interface{}{"other": int64(1)}), query))
-	require.Error(t, exec.validateRuntimePaginationExpressions(withParams(map[string]interface{}{"n": int64(1)}), "MATCH (n) RETURN n LIMIT $n / 0"))
+	require.NoError(t, exec.validateRuntimePaginationExpressions(admission, withParams(map[string]interface{}{"other": int64(1)}), query))
+	require.Error(t, exec.validateRuntimePaginationExpressions(divisionAdmission, withParams(map[string]interface{}{"n": int64(1)}), "MATCH (n) RETURN n LIMIT $n / 0"))
 }

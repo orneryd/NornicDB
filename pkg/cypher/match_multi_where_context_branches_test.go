@@ -30,26 +30,50 @@ func TestEvaluateWhereForContext_Branches(t *testing.T) {
 	nodes["a"] = nA
 	nodes["b"] = nB
 
-	require.True(t, exec.evaluateWhereForContext(ctx, "", nodes))
-	require.False(t, exec.evaluateWhereForContext(ctx, "NOT a.age > 10", nodes))
-	require.True(t, exec.evaluateWhereForContext(ctx, "a.age > 20 AND b.age < 30", nodes))
-	require.True(t, exec.evaluateWhereForContext(ctx, "a.age < 20 OR b.age < 30", nodes))
+	fixtureAdmission704Context, fixtureAdmission704 := expressionTestContext(ctx, "")
+	_ = fixtureAdmission704
+	require.True(t, exec.evaluateWhereForContext(fixtureAdmission704, fixtureAdmission704Context, "", nodes))
+	fixtureAdmission705Context, fixtureAdmission705 := expressionTestContext(ctx, "NOT a.age > 10")
+	_ = fixtureAdmission705
+	require.False(t, exec.evaluateWhereForContext(fixtureAdmission705, fixtureAdmission705Context, "NOT a.age > 10", nodes))
+	fixtureAdmission706Context, fixtureAdmission706 := expressionTestContext(ctx, "a.age > 20 AND b.age < 30")
+	_ = fixtureAdmission706
+	require.True(t, exec.evaluateWhereForContext(fixtureAdmission706, fixtureAdmission706Context, "a.age > 20 AND b.age < 30", nodes))
+	fixtureAdmission707Context, fixtureAdmission707 := expressionTestContext(ctx, "a.age < 20 OR b.age < 30")
+	_ = fixtureAdmission707
+	require.True(t, exec.evaluateWhereForContext(fixtureAdmission707, fixtureAdmission707Context, "a.age < 20 OR b.age < 30", nodes))
 
 	// Single-variable clauses route through evaluateWhere.
-	require.True(t, exec.evaluateWhereForContext(ctx, "a.name = 'Ada'", nodes))
-	require.False(t, exec.evaluateWhereForContext(ctx, "a.name = 'Unknown'", nodes))
+	fixtureAdmission708Context, fixtureAdmission708 := expressionTestContext(ctx, "a.name = 'Ada'")
+	_ = fixtureAdmission708
+	require.True(t, exec.evaluateWhereForContext(fixtureAdmission708, fixtureAdmission708Context, "a.name = 'Ada'", nodes))
+	fixtureAdmission709Context, fixtureAdmission709 := expressionTestContext(ctx, "a.name = 'Unknown'")
+	_ = fixtureAdmission709
+	require.False(t, exec.evaluateWhereForContext(fixtureAdmission709, fixtureAdmission709Context, "a.name = 'Unknown'", nodes))
 
 	// Relationship existence predicates across two bound variables.
-	require.True(t, exec.evaluateWhereForContext(ctx, "(a)-[:KNOWS]->(b)", nodes))
-	require.True(t, exec.evaluateWhereForContext(ctx, "(b)<-[:KNOWS]-(a)", nodes))
-	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:LIKES]->(b)", nodes))
+	fixtureAdmission710Context, fixtureAdmission710 := expressionTestContext(ctx, "(a)-[:KNOWS]->(b)")
+	_ = fixtureAdmission710
+	require.True(t, exec.evaluateWhereForContext(fixtureAdmission710, fixtureAdmission710Context, "(a)-[:KNOWS]->(b)", nodes))
+	fixtureAdmission711Context, fixtureAdmission711 := expressionTestContext(ctx, "(b)<-[:KNOWS]-(a)")
+	_ = fixtureAdmission711
+	require.True(t, exec.evaluateWhereForContext(fixtureAdmission711, fixtureAdmission711Context, "(b)<-[:KNOWS]-(a)", nodes))
+	fixtureAdmission712Context, fixtureAdmission712 := expressionTestContext(ctx, "(a)-[:LIKES]->(b)")
+	_ = fixtureAdmission712
+	require.False(t, exec.evaluateWhereForContext(fixtureAdmission712, fixtureAdmission712Context, "(a)-[:LIKES]->(b)", nodes))
 
 	// Missing node in a relationship predicate should return false.
-	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:KNOWS]->(c)", nodes))
+	fixtureAdmission713Context, fixtureAdmission713 := expressionTestContext(ctx, "(a)-[:KNOWS]->(c)")
+	_ = fixtureAdmission713
+	require.False(t, exec.evaluateWhereForContext(fixtureAdmission713, fixtureAdmission713Context, "(a)-[:KNOWS]->(c)", nodes))
 
 	// Fallback expression evaluation branch.
-	require.True(t, exec.evaluateWhereForContext(ctx, "1 = 1", nodes))
-	require.False(t, exec.evaluateWhereForContext(ctx, "'x'", nodes))
+	fixtureAdmission714Context, fixtureAdmission714 := expressionTestContext(ctx, "1 = 1")
+	_ = fixtureAdmission714
+	require.True(t, exec.evaluateWhereForContext(fixtureAdmission714, fixtureAdmission714Context, "1 = 1", nodes))
+	fixtureAdmission715Context, fixtureAdmission715 := expressionTestContext(ctx, "'x'")
+	_ = fixtureAdmission715
+	require.False(t, exec.evaluateWhereForContext(fixtureAdmission715, fixtureAdmission715Context, "'x'", nodes))
 }
 
 func TestIsNumericLiteral_Branches(t *testing.T) {

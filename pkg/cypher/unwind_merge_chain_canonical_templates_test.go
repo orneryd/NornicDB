@@ -231,7 +231,9 @@ func TestGh713RelationshipBatchReturnUsesSharedColumns(t *testing.T) {
 		t.Run(clause, func(t *testing.T) {
 			exec, ctx := newUnitExecutor(t)
 			row := map[string]interface{}{"source": "a", "target": "b"}
-			shared, err := exec.projectMergeReturn(ctx, []pipelineRow{{"row": row}}, "RETURN "+clause)
+			fixtureAdmission1849Context, fixtureAdmission1849 := statementTestContext(ctx, "RETURN "+clause)
+			_ = fixtureAdmission1849Context
+			shared, err := exec.projectMergeReturn(fixtureAdmission1849, fixtureAdmission1849Context, []pipelineRow{{"row": row}}, "RETURN "+clause)
 			require.NoError(t, err)
 			compiled, ok := parseRelationshipBatchReturn(clause, "row")
 			require.True(t, ok)

@@ -31,7 +31,9 @@ func TestExtractCreateVariableRefs_IgnoresEmptyPatternSegments(t *testing.T) {
 
 func TestDatetimeFunction_PassthroughTypedDateTime(t *testing.T) {
 	exec := &StorageExecutor{}
-	out := exec.evaluateExpressionWithContext(context.Background(), "datetime(datetime())", nil, nil)
+	fixtureAdmission195Context, fixtureAdmission195 := expressionTestContext(context.Background(), "datetime(datetime())")
+	_ = fixtureAdmission195
+	out := exec.evaluateExpressionWithContext(fixtureAdmission195, fixtureAdmission195Context, "datetime(datetime())", nil, nil)
 	_, ok := out.(CypherDateTime)
 	require.True(t, ok)
 }

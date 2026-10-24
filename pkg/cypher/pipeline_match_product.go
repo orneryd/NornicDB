@@ -15,7 +15,7 @@ import (
 // narrow the part before any combination is built, as Neo4j plans it below
 // its CartesianProduct; only the other conditions are evaluated on the
 // combinations (#940).
-func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
+func (e *StorageExecutor) pipelineApplyMatchProduct(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
 	nodeVariables := make([]string, 0, len(parts))
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
@@ -26,7 +26,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 		}
 	}
 	nodeWhere, rest := splitWhereByVariable(where, nodeVariables)
-	if joined, handled, err := e.pipelineApplyNodeJoinProduct(ctx, rows, parts, where); handled || err != nil {
+	if joined, handled, err := e.pipelineApplyNodeJoinProduct(admission, ctx, rows, parts, where); handled || err != nil {
 		return joined, handled, err
 	}
 	where = rest
@@ -71,7 +71,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 				part += " WHERE " + own
 			}
 		}
-		expanded, handled, err := e.pipelineApplyMatch(ctx, rows, "MATCH "+part)
+		expanded, handled, err := e.pipelineApplyMatch(admission, ctx, rows, "MATCH "+part)
 		if !handled || err != nil {
 			return expanded, handled, err
 		}
@@ -88,7 +88,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 	}
 	filtered := rows[:0]
 	for _, row := range rows {
-		if strings.TrimSpace(where) != "" && !e.evaluateRowPredicate(ctx, where, row) {
+		if strings.TrimSpace(where) != "" && !e.evaluateRowPredicate(admission, ctx, where, row) {
 			continue
 		}
 		for _, name := range hidden {
@@ -106,7 +106,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 // equality (a.k = b.k) instead of building every combination. Each part's
 // candidates are narrowed by the conditions that read its variable only
 // (splitWhereByVariable) first.
-func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
+func (e *StorageExecutor) pipelineApplyNodeJoinProduct(admission admittedRelationshipStatement, ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
 	if strings.TrimSpace(where) == "" {
 		return nil, false, nil
 	}
@@ -158,7 +158,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 			nodes    []*storage.Node
 		}, len(templates))
 		for index, template := range templates {
-			pattern, resolved, evalErr := template.node(ctx, e, row)
+			pattern, resolved, evalErr := template.node(admission, ctx, e, row)
 			if evalErr != nil {
 				return nil, true, evalErr
 			}
@@ -175,12 +175,12 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 				rowCtx := withValueBindings(ctx, row)
 				var whereApplied bool
 				var err error
-				nodes, whereApplied, err = e.collectPipelineInitialNodeCandidates(rowCtx, pattern, own, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
+				nodes, whereApplied, err = e.collectPipelineInitialNodeCandidates(admission, rowCtx, pattern, own, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1})
 				if err != nil {
 					return nil, true, err
 				}
 				if own != "" && !whereApplied {
-					nodes = e.filterNodes(rowCtx, nodes, pattern.variable, own)
+					nodes = e.filterNodes(admission, rowCtx, nodes, pattern.variable, own)
 				}
 			}
 			matches[index].variable, matches[index].nodes = pattern.variable, nodes
@@ -194,7 +194,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 			for name, node := range combination {
 				joined[name] = node
 			}
-			if e.evaluateRowPredicate(ctx, where, joined) {
+			if e.evaluateRowPredicate(admission, ctx, where, joined) {
 				out = append(out, joined)
 			}
 		}

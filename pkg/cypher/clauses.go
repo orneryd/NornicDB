@@ -78,14 +78,14 @@ func normalizeInterfaceMap(input map[interface{}]interface{}) map[string]interfa
 }
 
 // evaluateWithWhere evaluates typed WITH bindings through the shared row predicate.
-func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, whereExpr string, boundVars map[string]interface{}) (bool, error) {
+func (e *StorageExecutor) evaluateWithWhere(admission admittedRelationshipStatement, ctx context.Context, whereExpr string, boundVars map[string]interface{}) (bool, error) {
 	expr := strings.TrimSpace(whereExpr)
 	if expr == "" {
 		return true, nil
 	}
 	ctx = withExpressionFailureSlot(ctx)
 	if plan := planRowPredicate(expr); plan != nil && plan.complete {
-		accepted := e.evaluateRowPredicatePartScope(ctx, &plan.root, compiledRowScope{values: boundVars, parameters: getParamsFromContext(ctx)}, nil)
+		accepted := e.evaluateRowPredicatePartScope(admission, ctx, &plan.root, compiledRowScope{values: boundVars, parameters: getParamsFromContext(ctx)}, nil)
 		return accepted, getExpressionFailure(ctx)
 	}
 	values := boundVars
@@ -98,7 +98,7 @@ func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, whereExpr strin
 			values[name] = value
 		}
 	}
-	accepted := e.evaluateRowPredicate(ctx, expr, values)
+	accepted := e.evaluateRowPredicate(admission, ctx, expr, values)
 	return accepted, getExpressionFailure(ctx)
 }
 
@@ -796,7 +796,7 @@ func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar str
 	return stages, len(stages) > 1
 }
 
-func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context, unwindVar, unwindParamName string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) executeUnwindCompoundMutationBatch(admission admittedRelationshipStatement, ctx context.Context, unwindVar, unwindParamName string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
 	stages, ok := splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar)
 	if !ok {
 		return nil, false, nil
@@ -808,7 +808,7 @@ func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context
 		Stats:   &QueryStats{},
 	}
 	for _, stage := range stages {
-		fast, supported, err := e.executeUnwindMergeChainBatch(ctx, unwindVar, items, stage, "")
+		fast, supported, err := e.executeUnwindMergeChainBatch(admission, ctx, unwindVar, items, stage, "")
 		if err != nil {
 			return nil, true, err
 		}
@@ -1098,7 +1098,7 @@ func setRelationshipPropertyIfChanged(edge *storage.Edge, prop string, value int
 	return true
 }
 
-func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwindVar string, items []interface{}, mutationPart, returnPart string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) executeUnwindMergeChainBatch(admission admittedRelationshipStatement, ctx context.Context, unwindVar string, items []interface{}, mutationPart, returnPart string) (*ExecuteResult, bool, error) {
 	plan := e.cachedUnwindMergeChainPlan(mutationPart)
 	if !plan.supported {
 		return nil, false, nil
@@ -1113,10 +1113,10 @@ func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwi
 	if plan.simple {
 		e.markUnwindSimpleMergeBatchUsed()
 	}
-	return e.executeUnwindRowsPipeline(ctx, unwindVar, items, strings.TrimSpace(mutationPart+" "+returnPart))
+	return e.executeUnwindRowsPipeline(admission, ctx, unwindVar, items, strings.TrimSpace(mutationPart+" "+returnPart))
 }
 
-func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, unwindVar string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(admission admittedRelationshipStatement, ctx context.Context, unwindVar string, items []interface{}, restQuery string) (*ExecuteResult, bool, error) {
 	returnIdx := topLevelKeywordIndex(restQuery, "RETURN")
 	if returnIdx <= 0 {
 		return nil, false, nil
@@ -1470,7 +1470,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 		}
 	}
 
-	result, handled, err := e.executeUnwindRowsPipeline(ctx, unwindVar, items, restQuery)
+	result, handled, err := e.executeUnwindRowsPipeline(admission, ctx, unwindVar, items, restQuery)
 	if handled && err == nil {
 		e.markUnwindFixedChainLinkBatchUsed()
 	}
@@ -1751,9 +1751,9 @@ func normalizeMultiMatchWhereClauses(query string) string {
 // executeUnion handles UNION / UNION ALL
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
-func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeUnion(admission admittedRelationshipStatement, ctx context.Context, cypher string, unionAll bool) (*ExecuteResult, error) {
 	return e.executeUnionBranches(cypher, unionAll, func(query string) (*ExecuteResult, error) {
-		return e.executeInternal(ctx, query, nil)
+		return e.executeFragment(admission, ctx, query, nil)
 	})
 }
 
@@ -1940,7 +1940,7 @@ type optionalRelResult struct {
 
 // resolveReturnExprFromVarMap resolves a RETURN expression against a variable
 // map built from a multi-variable MATCH result row and optional OPTIONAL MATCH results.
-func (e *StorageExecutor) resolveReturnExprFromVarMap(
+func (e *StorageExecutor) resolveReturnExprFromVarMap(admission admittedRelationshipStatement,
 	ctx context.Context,
 	expr string,
 	varMap map[string]interface{},
@@ -1956,7 +1956,7 @@ func (e *StorageExecutor) resolveReturnExprFromVarMap(
 			row[name] = value
 		}
 	}
-	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, "RETURN "+strings.TrimSpace(expr))
+	projected, err := e.projectMergeReturn(admission, ctx, []pipelineRow{row}, "RETURN "+strings.TrimSpace(expr))
 	if err != nil || len(projected.Rows) == 0 || len(projected.Rows[0]) == 0 {
 		return nil
 	}
@@ -1964,7 +1964,7 @@ func (e *StorageExecutor) resolveReturnExprFromVarMap(
 }
 
 // parseOptionalRelPattern parses patterns like (a)-[r:TYPE]->(b:Label)
-func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern string) optionalRelPattern {
+func (e *StorageExecutor) parseOptionalRelPattern(admission admittedRelationshipStatement, ctx context.Context, pattern string) optionalRelPattern {
 	result := optionalRelPattern{
 		direction:   "out",
 		targetProps: make(map[string]interface{}),
@@ -2015,7 +2015,7 @@ func (e *StorageExecutor) parseOptionalRelPattern(ctx context.Context, pattern s
 			endIdx := strings.Index(remaining[idx:], ")")
 			if endIdx > 0 {
 				targetStr := remaining[idx+1 : idx+endIdx]
-				targetInfo, parseErr := e.parseNodePattern(ctx, "("+targetStr+")")
+				targetInfo, parseErr := e.parseNodePattern(admission, ctx, "("+targetStr+")")
 				if parseErr != nil {
 					recordExpressionFailure(ctx, parseErr)
 					return optionalRelPattern{}

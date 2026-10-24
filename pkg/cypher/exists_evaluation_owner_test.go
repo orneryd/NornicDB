@@ -43,7 +43,8 @@ func TestExistsSubqueryEvaluationOwnerPrograms(t *testing.T) {
 			predicate := "NOT EXISTS { MATCH (s:Source {id:$prefix + toString(i)}) }"
 			for _, prefix := range []string{"present", "missing", "present"} {
 				ctx := withExpressionFailureSlot(withParams(context.Background(), map[string]any{"prefix": prefix}))
-				held := e.evaluateRowPredicate(ctx, predicate, map[string]any{"i": int64(1)})
+				ctx, admission := expressionTestContext(ctx, predicate)
+				held := e.evaluateRowPredicate(admission, ctx, predicate, map[string]any{"i": int64(1)})
 				require.NoError(t, getExpressionFailure(ctx))
 				require.Equal(t, prefix != "present", held)
 			}
@@ -83,7 +84,8 @@ func TestExistsSubqueryEvaluationOwnerIndex(t *testing.T) {
 				expected = items
 			}
 			spy.nodesVisited = 0
-			value, resolved, err := e.rowSubqueryValue(ctx, kind, query, values)
+			statementCtx, admission := expressionTestContext(ctx, kind+" { "+query+" }")
+			value, resolved, err := e.rowSubqueryValue(admission, statementCtx, kind, query, values)
 			require.NoError(t, err, "%s key=%v", kind, key)
 			require.NoError(t, getExpressionFailure(ctx))
 			require.True(t, resolved)

@@ -50,7 +50,7 @@ func readCallClause(ctx context.Context, clause string) (cypherantlr.CallClause,
 
 // validateTransactionalCalls belongs to statement semantics, before EXPLAIN
 // and execution diverge and before literal-normalized semantic cache hits.
-func (e *StorageExecutor) validateTransactionalCalls(ctx context.Context, query string, params map[string]interface{}) error {
+func (e *StorageExecutor) validateTransactionalCalls(admission admittedRelationshipStatement, ctx context.Context, query string, params map[string]interface{}) error {
 	calls, err := readTransactionalStatement(ctx, query)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -82,7 +82,7 @@ func (e *StorageExecutor) validateTransactionalCalls(ctx context.Context, query 
 		if reason != "" {
 			return transactionalCallContextError(reason)
 		}
-		if err := e.classifyTransactionalBatchExpression(ctx, spec, params); err != nil {
+		if err := e.classifyTransactionalBatchExpression(admission, ctx, spec, params); err != nil {
 			return err
 		}
 	}
@@ -104,7 +104,7 @@ func validateCallSubqueryBody(body string) error {
 // before that CALL can mutate, including when its input is empty. A runtime
 // error in a later CALL preserves an earlier CALL's independent commits, as
 // Neo4j does. Static errors instead reject the complete statement above.
-func (e *StorageExecutor) resolveCallBatchSize(ctx context.Context, spec *transactionBatchSpec) (int, error) {
+func (e *StorageExecutor) resolveCallBatchSize(admission admittedRelationshipStatement, ctx context.Context, spec *transactionBatchSpec) (int, error) {
 	shape, err := describeScalarExpression(ctx, spec.Expression)
 	if err != nil {
 		return 0, err
@@ -116,7 +116,7 @@ func (e *StorageExecutor) resolveCallBatchSize(ctx context.Context, spec *transa
 		values = rowValuesInExpressionContext(ctx, values)
 		values[scalarExpressionSyntaxKey] = shape
 	}
-	value, resolved, err := e.evaluateRowValue(spec.Expression, values)
+	value, resolved, err := e.evaluateRowValue(admission, spec.Expression, values)
 	if err != nil {
 		return 0, err
 	}
@@ -137,11 +137,11 @@ func (e *StorageExecutor) resolveCallBatchSize(ctx context.Context, spec *transa
 // bindTransactionalCallBatch is also used by direct operator callers. A
 // pipeline passes its binding back here, so a size is evaluated once when
 // that operator opens, regardless of how many rows consume it.
-func (e *StorageExecutor) bindTransactionalCallBatch(ctx context.Context, spec *transactionBatchSpec, bound *boundTransactionBatch) (*boundTransactionBatch, error) {
+func (e *StorageExecutor) bindTransactionalCallBatch(admission admittedRelationshipStatement, ctx context.Context, spec *transactionBatchSpec, bound *boundTransactionBatch) (*boundTransactionBatch, error) {
 	if bound != nil {
 		return bound, nil
 	}
-	size, err := e.resolveCallBatchSize(ctx, spec)
+	size, err := e.resolveCallBatchSize(admission, ctx, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -180,13 +180,13 @@ type boundCallChain struct {
 	pagination map[int]bool
 }
 
-func (e *StorageExecutor) bindTransactionalCallChain(ctx context.Context, plan pipelineCallChainPlan) (boundCallChain, error) {
+func (e *StorageExecutor) bindTransactionalCallChain(admission admittedRelationshipStatement, ctx context.Context, plan pipelineCallChainPlan) (boundCallChain, error) {
 	bound := boundCallChain{batches: make(map[int]*boundTransactionBatch, len(plan.operators))}
 	// Open consumers before their inputs, including pagination in this chain.
 	for index := len(plan.operators) - 1; index >= 0; index-- {
 		operator := plan.operators[index]
 		for _, pagination := range operator.pagination {
-			if err := e.validateRuntimePaginationExpression(ctx, pagination); err != nil {
+			if err := e.validateRuntimePaginationExpression(admission, ctx, pagination); err != nil {
 				return boundCallChain{}, err
 			}
 			if bound.pagination == nil {
@@ -195,7 +195,7 @@ func (e *StorageExecutor) bindTransactionalCallChain(ctx context.Context, plan p
 			bound.pagination[operator.index] = true
 		}
 		if operator.spec != nil {
-			batch, err := e.bindTransactionalCallBatch(ctx, operator.spec, nil)
+			batch, err := e.bindTransactionalCallBatch(admission, ctx, operator.spec, nil)
 			if err != nil {
 				return boundCallChain{}, err
 			}

@@ -20,13 +20,17 @@ func TestApplyOrderByToResult_DottedPropertyBranches(t *testing.T) {
 		},
 	}
 
-	ordered := exec.applyOrderByToResult(result, "ORDER BY t.createdAt ASC")
+	fixtureAdmission1913Context, fixtureAdmission1913 := statementTestContext(context.Background(), "ORDER BY t.createdAt ASC")
+	_ = fixtureAdmission1913Context
+	ordered := exec.applyOrderByToResult(fixtureAdmission1913, result, "ORDER BY t.createdAt ASC")
 	require.Len(t, ordered.Rows, 3)
 	require.EqualValues(t, int64(1), extractPropertyFromValue(ordered.Rows[0][0], "createdAt"))
 	require.EqualValues(t, int64(2), extractPropertyFromValue(ordered.Rows[1][0], "createdAt"))
 	require.EqualValues(t, int64(3), extractPropertyFromValue(ordered.Rows[2][0], "createdAt"))
 
-	ordered = exec.applyOrderByToResult(result, "ORDER BY t.createdAt DESC LIMIT 2")
+	fixtureAdmission1914Context, fixtureAdmission1914 := statementTestContext(context.Background(), "ORDER BY t.createdAt DESC LIMIT 2")
+	_ = fixtureAdmission1914Context
+	ordered = exec.applyOrderByToResult(fixtureAdmission1914, result, "ORDER BY t.createdAt DESC LIMIT 2")
 	require.Len(t, ordered.Rows, 3)
 	require.EqualValues(t, int64(3), extractPropertyFromValue(ordered.Rows[0][0], "createdAt"))
 }
@@ -42,10 +46,14 @@ func TestApplyOrderByToResult_UnknownAndEmptyBranches(t *testing.T) {
 		},
 	}
 
-	unchanged := exec.applyOrderByToResult(base, "ORDER BY missing")
+	fixtureAdmission1915Context, fixtureAdmission1915 := statementTestContext(context.Background(), "ORDER BY missing")
+	_ = fixtureAdmission1915Context
+	unchanged := exec.applyOrderByToResult(fixtureAdmission1915, base, "ORDER BY missing")
 	require.Equal(t, [][]interface{}{{"b"}, {"a"}}, unchanged.Rows)
 
-	unchanged = exec.applyOrderByToResult(base, "ORDER BY")
+	fixtureAdmission1916Context, fixtureAdmission1916 := statementTestContext(context.Background(), "ORDER BY")
+	_ = fixtureAdmission1916Context
+	unchanged = exec.applyOrderByToResult(fixtureAdmission1916, base, "ORDER BY")
 	require.Equal(t, [][]interface{}{{"b"}, {"a"}}, unchanged.Rows)
 }
 
@@ -62,7 +70,9 @@ func TestApplyResultModifiers_KZeroAndUnknownOrderColumn(t *testing.T) {
 	}
 
 	// k=0 branch: LIMIT 0 with ORDER BY should return no rows.
-	out, err := exec.applyResultModifiers(context.Background(), in, "ORDER BY age ASC LIMIT 0")
+	fixtureAdmission1815Context, fixtureAdmission1815 := statementTestContext(context.Background(), "ORDER BY age ASC LIMIT 0")
+	_ = fixtureAdmission1815Context
+	out, err := exec.applyResultModifiers(fixtureAdmission1815, fixtureAdmission1815Context, in, "ORDER BY age ASC LIMIT 0")
 	require.NoError(t, err)
 	require.Empty(t, out.Rows)
 
@@ -77,7 +87,9 @@ func TestApplyResultModifiers_KZeroAndUnknownOrderColumn(t *testing.T) {
 
 	// Unknown ORDER BY column with LIMIT should preserve previous behavior
 	// and still apply LIMIT after no-op ORDER BY.
-	out2, err := exec.applyResultModifiers(context.Background(), in2, "ORDER BY missing DESC LIMIT 2")
+	fixtureAdmission1816Context, fixtureAdmission1816 := statementTestContext(context.Background(), "ORDER BY missing DESC LIMIT 2")
+	_ = fixtureAdmission1816Context
+	out2, err := exec.applyResultModifiers(fixtureAdmission1816, fixtureAdmission1816Context, in2, "ORDER BY missing DESC LIMIT 2")
 	require.NoError(t, err)
 	require.Len(t, out2.Rows, 2)
 	require.Equal(t, "c", out2.Rows[0][0])
@@ -95,7 +107,9 @@ func TestApplyResultModifiersOrdersByEveryTermBeforeMultilineWindow(t *testing.T
 		},
 	}
 
-	result, err := exec.applyResultModifiers(context.Background(), input, "ORDER BY group ASC, rank DESC, name ASC\nSKIP 1\nLIMIT 1")
+	fixtureAdmission1817Context, fixtureAdmission1817 := statementTestContext(context.Background(), "ORDER BY group ASC, rank DESC, name ASC\nSKIP 1\nLIMIT 1")
+	_ = fixtureAdmission1817Context
+	result, err := exec.applyResultModifiers(fixtureAdmission1817, fixtureAdmission1817Context, input, "ORDER BY group ASC, rank DESC, name ASC\nSKIP 1\nLIMIT 1")
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"a", int64(1), "third"}}, result.Rows)
 }
@@ -107,7 +121,9 @@ func TestApplyResultModifiersSelectsAscendingNumericTopK(t *testing.T) {
 		Rows:    [][]interface{}{{0.56}, {0.52}, {0.44}, {0.41}, {0.38}, {0.32}},
 	}
 
-	result, err := exec.applyResultModifiers(context.Background(), input, "ORDER BY score ASC\nLIMIT 5")
+	fixtureAdmission1818Context, fixtureAdmission1818 := statementTestContext(context.Background(), "ORDER BY score ASC\nLIMIT 5")
+	_ = fixtureAdmission1818Context
+	result, err := exec.applyResultModifiers(fixtureAdmission1818, fixtureAdmission1818Context, input, "ORDER BY score ASC\nLIMIT 5")
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{0.32}, {0.38}, {0.41}, {0.44}, {0.52}}, result.Rows)
 }
@@ -126,7 +142,9 @@ func TestPipelineOrderByEvaluatesCompleteBooleanExpressions(t *testing.T) {
 	require.Len(t, terms, 1)
 	require.Equal(t, "NOT (first AND second)", terms[0].column)
 	require.True(t, terms[0].descending)
-	require.True(t, exec.orderPipelineRows(context.Background(), rows, terms))
+	fixtureAdmission1819Context, fixtureAdmission1819 := statementTestContext(context.Background(), "ORDER BY NOT (first AND second) DESCENDING LIMIT 3")
+	_ = fixtureAdmission1819Context
+	require.True(t, exec.orderPipelineRows(fixtureAdmission1819, fixtureAdmission1819Context, rows, terms))
 	require.Equal(t, []string{"B", "C", "E", "A", "D"}, []string{
 		rows[0]["name"].(string),
 		rows[1]["name"].(string),
@@ -147,7 +165,9 @@ func TestPipelineOrderByUsesIncomingAndProjectedScopeWithoutLeakingBindings(t *t
 		{"a": map[string]interface{}{"name": "C"}, "name": "C"},
 	}
 
-	require.True(t, exec.orderPipelineRowsWithScopes(context.Background(), rows, scopes, parseOrderByTerms("ORDER BY a.name + 'C' DESC")))
+	fixtureAdmission1820Context, fixtureAdmission1820 := statementTestContext(context.Background(), "ORDER BY a.name + 'C' DESC")
+	_ = fixtureAdmission1820Context
+	require.True(t, exec.orderPipelineRowsWithScopes(fixtureAdmission1820, fixtureAdmission1820Context, rows, scopes, parseOrderByTerms("ORDER BY a.name + 'C' DESC")))
 	require.Equal(t, []pipelineRow{{"name": "C"}, {"name": "C"}, {"name": "B"}, {"name": "A"}, {"name": "A"}}, rows)
 	for _, row := range rows {
 		require.NotContains(t, row, "a")
@@ -163,7 +183,9 @@ func TestPipelineOrderByUsesGroupingKeyFromIncomingScope(t *testing.T) {
 		{"a": map[string]interface{}{"name": "C"}, "name": "C", "count": int64(2)},
 	}
 
-	require.True(t, exec.orderPipelineRowsWithScopes(context.Background(), rows, scopes, parseOrderByTerms("ORDER BY a.name DESC")))
+	fixtureAdmission1821Context, fixtureAdmission1821 := statementTestContext(context.Background(), "ORDER BY a.name DESC")
+	_ = fixtureAdmission1821Context
+	require.True(t, exec.orderPipelineRowsWithScopes(fixtureAdmission1821, fixtureAdmission1821Context, rows, scopes, parseOrderByTerms("ORDER BY a.name DESC")))
 	require.Equal(t, "C", rows[0]["name"])
 	require.NotContains(t, rows[0], "a")
 }

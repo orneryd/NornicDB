@@ -94,20 +94,20 @@ func (e *StorageExecutor) parseMergeRelationshipShape(pattern string) (*mergeRel
 // parseMergeRelationshipPattern parses a relationship MERGE pattern's text
 // with its property maps read against the bound nodes and relationships
 // (parseMergeProperties).
-func (e *StorageExecutor) parseMergeRelationshipPattern(ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*mergeRelationshipPattern, error) {
+func (e *StorageExecutor) parseMergeRelationshipPattern(admission admittedRelationshipStatement, ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*mergeRelationshipPattern, error) {
 	shape, err := e.parseMergeRelationshipShape(pattern)
 	if err != nil {
 		return nil, err
 	}
-	start, err := e.parseMergeEndpointPattern(ctx, shape.startContent, nodeContext, relContext)
+	start, err := e.parseMergeEndpointPattern(admission, ctx, shape.startContent, nodeContext, relContext)
 	if err != nil {
 		return nil, err
 	}
-	end, err := e.parseMergeEndpointPattern(ctx, shape.endContent, nodeContext, relContext)
+	end, err := e.parseMergeEndpointPattern(admission, ctx, shape.endContent, nodeContext, relContext)
 	if err != nil {
 		return nil, err
 	}
-	props, err := e.parseMergeProperties(ctx, shape.relProps, nodeContext, relContext)
+	props, err := e.parseMergeProperties(admission, ctx, shape.relProps, nodeContext, relContext)
 	if err != nil {
 		return nil, err
 	}
@@ -121,12 +121,12 @@ func (e *StorageExecutor) parseMergeRelationshipPattern(ctx context.Context, pat
 
 // parseMergeEndpointPattern parses an endpoint of a relationship MERGE
 // ("a:L {k: v}") with its properties read by parseMergeProperties.
-func (e *StorageExecutor) parseMergeEndpointPattern(ctx context.Context, content string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (nodePatternInfo, error) {
+func (e *StorageExecutor) parseMergeEndpointPattern(admission admittedRelationshipStatement, ctx context.Context, content string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (nodePatternInfo, error) {
 	head, props := splitNodePatternProperties("(" + content + ")")
 	info := nodePatternInfo{}
 	info.variable, info.labels, info.labelErr = parseNodeHead(head)
 	var err error
-	info.properties, err = e.parseMergeProperties(ctx, props, nodeContext, relContext)
+	info.properties, err = e.parseMergeProperties(admission, ctx, props, nodeContext, relContext)
 	return info, err
 }
 

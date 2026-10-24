@@ -49,7 +49,7 @@ func appendCorrelatedBinding(result *ExecuteResult, name string, value interface
 	return result
 }
 
-func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, outerPart, seedVar, seedID, importVar string, cache map[string]map[string]interface{}) (interface{}, bool, error) {
+func (e *StorageExecutor) resolveCorrelatedImportValue(admission admittedRelationshipStatement, ctx context.Context, outerPart, seedVar, seedID, importVar string, cache map[string]map[string]interface{}) (interface{}, bool, error) {
 	if cache != nil {
 		if byVar, ok := cache[seedID]; ok {
 			if val, exists := byVar[importVar]; exists {
@@ -59,7 +59,7 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 	}
 
 	outerQuery := strings.TrimSpace(outerPart) + " RETURN " + seedVar + ", " + importVar
-	outerResult, err := e.executeInternal(ctx, outerQuery, nil)
+	outerResult, err := e.executeFragment(admission, ctx, outerQuery, nil)
 	if err != nil {
 		return nil, false, localizedError(localization.CypherSubqueriesCorrelatedImportFailed(importVar, err), err)
 	}
@@ -120,7 +120,7 @@ func (e *StorageExecutor) resolveCorrelatedImportValue(ctx context.Context, oute
 					requiredPart = "MATCH" + requiredPart[len("OPTIONAL MATCH"):]
 				}
 				seedScoped := fmt.Sprintf("MATCH (%s) WHERE id(%s) = %s %s RETURN %s", seedVar, seedVar, quoteCypherStringLiteral(seedID), requiredPart, importVar)
-				fallbackRes, fallbackErr := e.executeInternal(ctx, seedScoped, nil)
+				fallbackRes, fallbackErr := e.executeFragment(admission, ctx, seedScoped, nil)
 				if fallbackErr != nil {
 					return nil, false, localizedError(localization.CypherSubqueriesOptionalImportFallbackFailed(importVar, fallbackErr), fallbackErr)
 				}
@@ -207,13 +207,13 @@ func isCallSubqueryPureReturn(innerBody string) bool {
 		findKeywordIndex(trimmed, "UNION") < 0
 }
 
-func (e *StorageExecutor) tryExecuteCorrelatedReturnProjection(ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string) (*ExecuteResult, bool, error) {
-	return e.tryExecuteCorrelatedReturnProjectionPreChecked(ctx, seedRow, seedCols, withVars, innerBody, false)
+func (e *StorageExecutor) tryExecuteCorrelatedReturnProjection(admission admittedRelationshipStatement, ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string) (*ExecuteResult, bool, error) {
+	return e.tryExecuteCorrelatedReturnProjectionPreChecked(admission, ctx, seedRow, seedCols, withVars, innerBody, false)
 }
 
 // tryExecuteCorrelatedReturnProjectionPreChecked is the same as tryExecuteCorrelatedReturnProjection
 // but accepts a precomputed isPureReturn flag to skip redundant keyword scanning.
-func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string, isPureReturn bool) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(admission admittedRelationshipStatement, ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string, isPureReturn bool) (*ExecuteResult, bool, error) {
 	if !isPureReturn {
 		// Caller didn't precompute — do the check now.
 		if !isCallSubqueryPureReturn(innerBody) {
@@ -241,7 +241,7 @@ func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(ctx con
 		Columns: cols,
 		Rows:    [][]interface{}{row},
 	}
-	res, err := e.processCallSubqueryReturn(ctx, seedOnly, trimmed)
+	res, err := e.processCallSubqueryReturn(admission, ctx, seedOnly, trimmed)
 	if err != nil {
 		return nil, true, err
 	}
@@ -251,7 +251,7 @@ func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(ctx con
 // seedNodesFromOuterMatch executes the outer MATCH/WHERE segment through the normal
 // execution pipeline (instead of manual scan/filter) so index/hot-path optimizations
 // apply before correlated CALL {} expansion.
-func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart, variable string) ([]*storage.Node, error) {
+func (e *StorageExecutor) seedNodesFromOuterMatch(admission admittedRelationshipStatement, ctx context.Context, outerPart, variable string) ([]*storage.Node, error) {
 	variable = strings.TrimSpace(variable)
 	if variable == "" {
 		return nil, localizedError(localization.CypherSubqueriesCorrelatedVariableEmpty(), nil)
@@ -292,23 +292,23 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			return nil, nil
 		}
 		if strings.EqualFold(strings.TrimSpace(np.variable), variable) {
-			rowCtx, prepared, prepareErr := e.preparePatternRow(ctx, matchBody, nil)
+			rowCtx, prepared, prepareErr := e.preparePatternRow(admission, ctx, matchBody, nil)
 			if prepareErr != nil {
 				return nil, prepareErr
 			}
 			ctx, matchBody = rowCtx, prepared
-			np, parseErr = e.parseNodePattern(ctx, matchBody)
+			np, parseErr = e.parseNodePattern(admission, ctx, matchBody)
 			if parseErr != nil {
 				return nil, parseErr
 			}
 			if whereClause != "" {
 				// O(1) direct ID seek path for: MATCH (v) WHERE id(v)=...
-				if nodes, ok, err := e.tryCollectNodesFromIDEquality(ctx, np, whereClause); ok || err != nil {
+				if nodes, ok, err := e.tryCollectNodesFromIDEquality(admission, ctx, np, whereClause); ok || err != nil {
 					return nodes, err
 				}
 				// O(k) batched ID seek path for: MATCH (v) WHERE id(v) IN $ids
 				if params := getParamsFromContext(ctx); params != nil {
-					if nodes, ok, err := e.tryCollectNodesFromIDIn(ctx, np, whereClause, params); ok || err != nil {
+					if nodes, ok, err := e.tryCollectNodesFromIDIn(admission, ctx, np, whereClause, params); ok || err != nil {
 						return nodes, err
 					}
 				}
@@ -319,13 +319,13 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 					}
 				}
 				// Indexed equality path.
-				if nodes, ok, err := e.tryCollectNodesFromPropertyIndex(ctx, np, whereClause); ok || err != nil {
+				if nodes, ok, err := e.tryCollectNodesFromPropertyIndex(admission, ctx, np, whereClause); ok || err != nil {
 					return nodes, err
 				}
 			}
 
 			// Label/property-only fast path.
-			nodes, err := e.loadPatternNodes(ctx, np.labels, np.properties)
+			nodes, err := e.loadPatternNodes(admission, ctx, np.labels, np.properties)
 			if err != nil {
 				return nil, err
 			}
@@ -335,7 +335,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 					return nodes, nil
 				}
 				seedQuery := "MATCH " + matchBody + " WHERE " + whereClause + " RETURN " + variable
-				outerRes, err := e.executeInternal(ctx, seedQuery, nil)
+				outerRes, err := e.executeFragment(admission, ctx, seedQuery, nil)
 				if err != nil {
 					return nil, err
 				}
@@ -353,7 +353,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 			// Same rule: preserve non-indexable WHERE semantics through generic executor.
 			if whereClause != "" {
 				seedQuery := "MATCH " + matchBody + " WHERE " + whereClause + " RETURN " + variable
-				outerRes, err := e.executeInternal(ctx, seedQuery, nil)
+				outerRes, err := e.executeFragment(admission, ctx, seedQuery, nil)
 				if err != nil {
 					return nil, err
 				}
@@ -367,7 +367,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 	if topLevelKeywordIndex(seedQuery, "RETURN") < 0 {
 		seedQuery += " RETURN " + variable
 	}
-	outerRes, err := e.executeInternal(ctx, seedQuery, nil)
+	outerRes, err := e.executeFragment(admission, ctx, seedQuery, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -467,6 +467,10 @@ func (e *StorageExecutor) seedNodeFromIDString(id string) *storage.Node {
 // parseCallSubquery is the compatibility adapter for body/plan consumers. The
 // shared grammar owns the body boundary and the complete transactional spec.
 func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall string, inTransactions bool, batch *transactionBatchSpec) {
+	return parseCallSubquery(cypher)
+}
+
+func parseCallSubquery(cypher string) (body, afterCall string, inTransactions bool, batch *transactionBatchSpec) {
 	call, err := readCallClause(context.Background(), cypher)
 	if err != nil {
 		return "", "", false, nil
@@ -1232,7 +1236,7 @@ func queryStatsMayContainNodeMutation(stats *QueryStats) bool {
 	return stats != nil && (stats.PropertiesSet > 0 || stats.LabelsAdded > 0 || stats.LabelsRemoved > 0)
 }
 
-func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
+func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(admission admittedRelationshipStatement,
 	ctx context.Context,
 	seedResult *ExecuteResult,
 	innerBody string,
@@ -1346,7 +1350,7 @@ func (e *StorageExecutor) tryExecuteCorrelatedBatchedLookup(
 	params := map[string]interface{}{
 		"__call_subquery_lookup_keys": keys,
 	}
-	innerRes, err := e.executeInternal(ctx, rewritten.String(), params)
+	innerRes, err := e.executeFragment(admission, ctx, rewritten.String(), params)
 	if err != nil {
 		return nil, true, localizedError(localization.CypherSubqueriesBatchedLookupFailed(err), err)
 	}
@@ -1750,7 +1754,7 @@ func crossJoinCallResults(left, right *ExecuteResult) *ExecuteResult {
 }
 
 // processCallSubqueryReturn processes the RETURN clause after CALL {}
-func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerResult *ExecuteResult, afterCall string) (*ExecuteResult, error) {
+func (e *StorageExecutor) processCallSubqueryReturn(admission admittedRelationshipStatement, ctx context.Context, innerResult *ExecuteResult, afterCall string) (*ExecuteResult, error) {
 	if findKeywordIndex(afterCall, "RETURN") == -1 {
 		return innerResult, nil
 	}
@@ -1774,7 +1778,7 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 	if !valid {
 		return nil, unresolvedStatementError()
 	}
-	result, handled, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, clauses, nil)
+	result, handled, err := e.runPipelineClauseRows(admission, ctx, rows, scope, clauses, clauses, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1786,29 +1790,29 @@ func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerRe
 }
 
 // applyResultModifiers applies ORDER BY, LIMIT, SKIP to a result
-func (e *StorageExecutor) applyResultModifiers(ctx context.Context, result *ExecuteResult, modifiers string) (*ExecuteResult, error) {
+func (e *StorageExecutor) applyResultModifiers(admission admittedRelationshipStatement, ctx context.Context, result *ExecuteResult, modifiers string) (*ExecuteResult, error) {
 	skip := 0
-	if value, ok := e.parseIntModifier(ctx, modifiers, "SKIP"); ok {
+	if value, ok := e.parseIntModifier(admission, ctx, modifiers, "SKIP"); ok {
 		skip = value
 	}
 	limit := -1
-	if value, ok := e.parseIntModifier(ctx, modifiers, "LIMIT"); ok {
+	if value, ok := e.parseIntModifier(admission, ctx, modifiers, "LIMIT"); ok {
 		limit = value
 	}
-	return e.applyCallResultOrderWindow(ctx, result, parseOrderByTerms(modifiers), skip, limit)
+	return e.applyCallResultOrderWindow(admission, ctx, result, parseOrderByTerms(modifiers), skip, limit)
 }
 
 // applyOrderByToResult applies ORDER BY to a result set
-func (e *StorageExecutor) applyOrderByToResult(result *ExecuteResult, orderByClause string) *ExecuteResult {
+func (e *StorageExecutor) applyOrderByToResult(admission admittedRelationshipStatement, result *ExecuteResult, orderByClause string) *ExecuteResult {
 	terms := parseOrderByTerms(orderByClause)
 	if len(terms) == 0 {
 		terms = parseOrderByClause(orderByClause)
 	}
-	_, _ = e.applyCallResultOrderWindow(context.Background(), result, terms, 0, -1)
+	_, _ = e.applyCallResultOrderWindow(admission, context.Background(), result, terms, 0, -1)
 	return result
 }
 
-func (e *StorageExecutor) applyCallResultOrderWindow(ctx context.Context, result *ExecuteResult, terms []orderByTerm, skip, limit int) (*ExecuteResult, error) {
+func (e *StorageExecutor) applyCallResultOrderWindow(admission admittedRelationshipStatement, ctx context.Context, result *ExecuteResult, terms []orderByTerm, skip, limit int) (*ExecuteResult, error) {
 	rows := make([]pipelineRow, 0, len(result.Rows))
 	for _, values := range result.Rows {
 		row := make(pipelineRow, len(result.Columns))
@@ -1832,7 +1836,7 @@ func (e *StorageExecutor) applyCallResultOrderWindow(ctx context.Context, result
 		}
 		rows = append(rows, row)
 	}
-	if !e.orderPipelineRows(ctx, rows, terms) {
+	if !e.orderPipelineRows(admission, ctx, rows, terms) {
 		if err := getExpressionFailure(ctx); err != nil {
 			return nil, err
 		}
@@ -2057,7 +2061,7 @@ func parseOrderByModifier(modifiers string) (column string, descending bool, ok 
 // so every route applies SKIP/LIMIT expressions instead of ignoring them.
 // ok is false when the keyword is absent or the value is not a non-negative
 // integer.
-func (e *StorageExecutor) parseIntModifier(ctx context.Context, modifiers, keyword string) (value int, ok bool) {
+func (e *StorageExecutor) parseIntModifier(admission admittedRelationshipStatement, ctx context.Context, modifiers, keyword string) (value int, ok bool) {
 	idx := topLevelKeywordIndex(modifiers, keyword)
 	if idx == -1 {
 		return 0, false
@@ -2079,7 +2083,7 @@ func (e *StorageExecutor) parseIntModifier(ctx context.Context, modifiers, keywo
 	if vs == "" {
 		return 0, false
 	}
-	return e.evaluatePipelinePagination(ctx, vs, nil)
+	return e.evaluatePipelinePagination(admission, ctx, vs, nil)
 }
 
 func findColumnIndexByName(cols []string, name string) int {

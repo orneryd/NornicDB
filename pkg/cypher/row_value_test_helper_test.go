@@ -11,7 +11,9 @@ import (
 // "unresolved".
 func rowValue(t testing.TB, e *StorageExecutor, expr string, values map[string]interface{}) (interface{}, bool) {
 	t.Helper()
-	value, ok, err := e.evaluateRowValue(expr, values)
+	fixtureAdmission849Context, fixtureAdmission849 := expressionTestRow(rowStatementContextOrBackground(values), expr, values)
+	_ = fixtureAdmission849
+	value, ok, err := e.evaluateRowValue(fixtureAdmission849, expr, fixtureAdmission849Context)
 	require.NoError(t, err, expr)
 	return value, ok
 }

@@ -20,15 +20,15 @@ func BenchmarkFilterBindingsByWhere_CompiledJoin(b *testing.B) {
 	}
 	params := map[string]interface{}{"keys": []interface{}{"k1", "k2", "k3", "k4"}}
 	whereClause := "o.joinKey IN $keys AND t.joinKey = o.joinKey AND o.status IS NOT NULL AND t.status IS NOT NULL"
-	ctx := context.Background()
-	if got := len(exec.filterBindingsByWhere(ctx, bindings, whereClause, params)); got != 128 {
+	ctx, statement := expressionTestContext(context.Background(), whereClause)
+	if got := len(exec.filterBindingsByWhere(statement, ctx, bindings, whereClause, params)); got != 128 {
 		b.Fatalf("expected 128 bindings, got %d", got)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = exec.filterBindingsByWhere(ctx, bindings, whereClause, params)
+		_ = exec.filterBindingsByWhere(statement, ctx, bindings, whereClause, params)
 	}
 	b.StopTimer()
 }
@@ -42,17 +42,17 @@ func BenchmarkFilterBindingsByWhere_SharedExpressionPlan(b *testing.B) {
 		})
 	}
 	whereClause := "size(n.name) + n.count >= 0"
-	ctx := context.Background()
+	ctx, statement := expressionTestContext(context.Background(), whereClause)
 	if plan := planRowPredicate(whereClause); plan == nil || !plan.complete {
 		b.Fatal("workload must use a complete shared expression plan")
 	}
-	if got := len(exec.filterBindingsByWhere(ctx, bindings, whereClause, nil)); got != len(bindings) {
+	if got := len(exec.filterBindingsByWhere(statement, ctx, bindings, whereClause, nil)); got != len(bindings) {
 		b.Fatalf("expected %d bindings, got %d", len(bindings), got)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = exec.filterBindingsByWhere(ctx, bindings, whereClause, nil)
+		_ = exec.filterBindingsByWhere(statement, ctx, bindings, whereClause, nil)
 	}
 	b.StopTimer()
 }
@@ -64,6 +64,9 @@ func BenchmarkBindingWherePipelineHandlers(b *testing.B) {
 				exec := &StorageExecutor{}
 				ctx := withExpressionFailureSlot(context.Background())
 				clause := "size(n.name) + n.count >= 0"
+				var fixtureAdmission56 admittedRelationshipStatement
+				ctx, fixtureAdmission56 = expressionTestContext(ctx, clause)
+				_ = fixtureAdmission56
 				if plan := planRowPredicate(clause); plan == nil || !plan.complete {
 					b.Fatal("workload must use a complete shared expression plan")
 				}
@@ -76,11 +79,11 @@ func BenchmarkBindingWherePipelineHandlers(b *testing.B) {
 				}
 				apply := func() int {
 					if handler == "binding" {
-						return len(exec.filterBindingsByWhere(ctx, rows, clause, nil))
+						return len(exec.filterBindingsByWhere(fixtureAdmission56, ctx, rows, clause, nil))
 					}
 					accepted := 0
 					for _, row := range values {
-						keep, err := exec.evaluateWithWhere(ctx, clause, row)
+						keep, err := exec.evaluateWithWhere(fixtureAdmission56, ctx, clause, row)
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -116,13 +119,15 @@ func BenchmarkGh728ContextWhere(b *testing.B) {
 		{"parameters", "n.count + $offset >= $minimum"},
 	} {
 		b.Run(workload.name, func(b *testing.B) {
-			if !exec.evaluateWhereForContext(ctx, workload.clause, nodes) {
+			ctx, fixtureAdmission57 := expressionTestContext(ctx, workload.clause)
+			_ = fixtureAdmission57
+			if !exec.evaluateWhereForContext(fixtureAdmission57, ctx, workload.clause, nodes) {
 				b.Fatal("context predicate must accept the row")
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
-				if !exec.evaluateWhereForContext(ctx, workload.clause, nodes) {
+				if !exec.evaluateWhereForContext(fixtureAdmission57, ctx, workload.clause, nodes) {
 					b.Fatal("context predicate changed its result")
 				}
 			}
@@ -134,17 +139,20 @@ func BenchmarkGh728SharedComparisonHandlers(b *testing.B) {
 	exec := &StorageExecutor{}
 	ctx := context.Background()
 	clause := "n.value >= $floor AND n.value < $limit"
+	var fixtureAdmission58 admittedRelationshipStatement
+	ctx, fixtureAdmission58 = expressionTestContext(ctx, clause)
+	_ = fixtureAdmission58
 	row := map[string]interface{}{
 		"n":      &storage.Node{ID: "node", Properties: map[string]interface{}{"value": int64(3)}},
 		"$floor": int64(1), "$limit": int64(5),
 	}
-	if !exec.evaluateRowPredicate(ctx, clause, row) {
+	if !exec.evaluateRowPredicate(fixtureAdmission58, ctx, clause, row) {
 		b.Fatal("comparison must accept the row")
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
-		if !exec.evaluateRowPredicate(ctx, clause, row) {
+		if !exec.evaluateRowPredicate(fixtureAdmission58, ctx, clause, row) {
 			b.Fatal("comparison must accept the row")
 		}
 	}

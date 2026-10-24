@@ -47,6 +47,9 @@ func topLevelUnion(cypher, upperQuery string) (unionAll, union bool) {
 
 // executeWithoutTransaction executes query without transaction wrapping (original path).
 func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher string, upperQuery string) (result *ExecuteResult, err error) {
+	var fixtureAdmission5 admittedRelationshipStatement
+	ctx, fixtureAdmission5 = compileRelationshipStatement(ctx, cypher, nil)
+	_ = fixtureAdmission5
 	ctx, cleanupReveal, readScopeEngine := setRevealOnEngine(ctx, e.storage, hasRevealCall(cypher))
 	defer cleanupReveal()
 	if readScopeEngine != nil {
@@ -74,21 +77,21 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	// A top-level UNION composes complete single queries. Route it before any
 	// handler can consume the leading MATCH, RETURN, or UNWIND branch.
 	if unionAll, union := topLevelUnion(cypher, upperQuery); union {
-		return e.executeUnion(ctx, cypher, unionAll)
+		return e.executeUnion(fixtureAdmission5, ctx, cypher, unionAll)
 	}
-	if result, handled, err := e.executeShowStatement(ctx, cypher); handled {
+	if result, handled, err := e.executeShowStatement(fixtureAdmission5, ctx, cypher); handled {
 		return result, err
 	}
 	if strings.Contains(upperQuery, "CALL") {
 		if firstTopLevelCallSubquery(cypher) >= 0 {
-			return e.executeRequiredPipeline(ctx, cypher)
+			return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 		}
 	}
 
-	if result, handled := e.tryFastPathSimpleMatchReturnLimit(ctx, cypher, upperQuery); handled {
+	if result, handled := e.tryFastPathSimpleMatchReturnLimit(fixtureAdmission5, ctx, cypher, upperQuery); handled {
 		return result, nil
 	}
-	if result, handled := e.tryFastPathAnyMatchVectorCosine(ctx, cypher, upperQuery); handled {
+	if result, handled := e.tryFastPathAnyMatchVectorCosine(fixtureAdmission5, ctx, cypher, upperQuery); handled {
 		return result, nil
 	}
 
@@ -97,11 +100,11 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	startsWithMerge := strings.HasPrefix(upperQuery, "MERGE")
 
 	if startsWithMatch && topLevelKeywordIndex(cypher, "CALL") > 0 {
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	}
 
 	if startsWithMerge {
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	}
 
 	var mergeIdx, createIdx, withIdx, optionalMatchIdx int = -1, -1, -1, -1
@@ -116,51 +119,51 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 			!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
 			!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") {
 			if _, ok := canExecuteAsPipeline(cypher); ok {
-				return e.executeRequiredPipeline(ctx, cypher)
+				return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 			}
 		}
 		withIdx = findKeywordIndex(cypher, "WITH")
 	}
 
 	if startsWithMatch && mergeIdx > 0 {
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	}
 	if startsWithMatch && createIdx > 0 {
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	}
 	if startsWithCreate && withIdx > 0 {
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	}
 	if findKeywordIndex(cypher, "UNWIND") == 0 || startsWithKeywordFold(cypher, "FOR") ||
 		startsWithKeywordFold(cypher, "LET") || startsWithKeywordFold(cypher, "FILTER") {
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	}
 
 	hasDelete := findKeywordIndex(cypher, "DELETE") >= 0
 	hasDetachDelete := containsKeywordOutsideStrings(cypher, "DETACH DELETE")
 	if hasDelete || hasDetachDelete {
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	}
 
 	hasSet := containsKeywordOutsideStrings(cypher, "SET")
 	hasOnCreateSet := containsKeywordOutsideStrings(cypher, "ON CREATE SET")
 	hasOnMatchSet := containsKeywordOutsideStrings(cypher, "ON MATCH SET")
 	if startsWithMatch && hasSet && containsKeywordOutsideStrings(cypher, "REMOVE") {
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	}
 
 	if startsWithCreate && hasSet && containsKeywordOutsideStrings(cypher, "REMOVE") {
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	}
 	if startsWithCreate && !isCreateProcedureCommand(cypher) && hasSet && !hasOnCreateSet && !hasOnMatchSet &&
 		!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
 		!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
 		!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") {
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	}
 
 	if startsWithKeywords(cypher, "ALTER", "DATABASE") {
-		return e.executeAlterDatabase(ctx, cypher)
+		return e.executeAlterDatabase(fixtureAdmission5, ctx, cypher)
 	}
 
 	if hasSet && !isCreateProcedureCommand(cypher) && !hasOnCreateSet && !hasOnMatchSet &&
@@ -171,16 +174,16 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		!startsWithKeywords(cypher, "ALTER", "PROMOTION PROFILE") &&
 		!startsWithKeywords(cypher, "ALTER", "PROMOTION POLICY") {
 		if startsWithMatch || findKeywordIndex(cypher, "SET") == 0 {
-			return e.executeRequiredPipeline(ctx, cypher)
+			return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 		}
 	}
 
 	if containsKeywordOutsideStrings(cypher, "REMOVE") {
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	}
 
 	if startsWithMatch && optionalMatchIdx > 0 {
-		if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
+		if outcome := e.executePipeline(fixtureAdmission5, ctx, cypher); outcome.terminal() {
 			return outcome.result, outcome.err
 		}
 		// The pipeline is the one executor for MATCH … OPTIONAL MATCH: a
@@ -200,12 +203,12 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	case startsWithKeywords(cypher, "CREATE", "DECAY PROFILE"),
 		startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE"),
 		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY"):
-		return e.executeKnowledgePolicyDDL(ctx, cypher)
+		return e.executeKnowledgePolicyDDL(fixtureAdmission5, ctx, cypher)
 	case startsWithKeywords(cypher, "OPTIONAL", "MATCH"),
 		startsWithKeywords(cypher, "OPTIONAL", "CALL"):
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	case startsWithMatch:
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	case startsWithKeywords(cypher, "CREATE", "CONSTRAINT"),
 		startsWithKeywords(cypher, "CREATE", "RANGE INDEX"),
 		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX"),
@@ -214,21 +217,21 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		startsWithKeywords(cypher, "CREATE", "POINT INDEX"),
 		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX"),
 		findKeywordIndex(cypher, "CREATE INDEX") == 0:
-		return e.executeSchemaCommand(ctx, cypher)
+		return e.executeSchemaCommand(fixtureAdmission5, ctx, cypher)
 	case startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE"):
 		return e.executeCreateCompositeDatabase(ctx, cypher)
 	case isCreateOrReplaceDatabaseQuery(cypher):
 		return e.executeCreateOrReplaceDatabase(ctx, cypher)
 	case startsWithKeywords(cypher, "CREATE", "DATABASE"):
-		return e.executeCreateDatabase(ctx, cypher)
+		return e.executeCreateDatabase(fixtureAdmission5, ctx, cypher)
 	case startsWithKeywords(cypher, "CREATE", "ALIAS"):
 		return e.executeCreateAlias(ctx, cypher)
 	case startsWithCreate:
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	case findKeywordIndex(cypher, "CALL") == 0:
-		return e.executeCall(ctx, cypher)
+		return e.executeCall(fixtureAdmission5, ctx, cypher)
 	case findKeywordIndex(cypher, "RETURN") == 0:
-		return e.executeReturn(ctx, cypher)
+		return e.executeReturn(fixtureAdmission5, ctx, cypher)
 	case startsWithKeywords(cypher, "DROP", "COMPOSITE DATABASE"):
 		return e.executeDropCompositeDatabase(ctx, cypher)
 	case startsWithKeywords(cypher, "DROP", "DATABASE"):
@@ -236,26 +239,26 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	case startsWithKeywords(cypher, "DROP", "ALIAS"):
 		return e.executeDropAlias(ctx, cypher)
 	case startsWithKeywords(cypher, "DROP", "CONSTRAINT"):
-		return e.executeSchemaCommand(ctx, cypher)
+		return e.executeSchemaCommand(fixtureAdmission5, ctx, cypher)
 	case startsWithKeywords(cypher, "DROP", "DECAY PROFILE"),
 		startsWithKeywords(cypher, "DROP", "PROMOTION PROFILE"),
 		startsWithKeywords(cypher, "DROP", "PROMOTION POLICY"):
-		return e.executeKnowledgePolicyDDL(ctx, cypher)
+		return e.executeKnowledgePolicyDDL(fixtureAdmission5, ctx, cypher)
 	case isDropProcedureCommand(cypher):
 		return e.executeDropProcedure(ctx, cypher)
 	case startsWithKeywords(cypher, "DROP", "INDEX"):
-		return e.executeSchemaCommand(ctx, cypher)
+		return e.executeSchemaCommand(fixtureAdmission5, ctx, cypher)
 	case isDropRoleCommand(cypher):
 		return nil, localizedStatusError("Neo.ClientError.Statement.UnsupportedAdministrationCommand", "UnsupportedAdministrationCommand",
 			localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(cypher)))
 	case findKeywordIndex(cypher, "DROP") == 0:
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid DROP clause: "+truncateQuery(cypher, 80))
 	case findKeywordIndex(cypher, "WITH") == 0:
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	case findKeywordIndex(cypher, "UNWIND") == 0:
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	case findKeywordIndex(cypher, "FOREACH") == 0:
-		return e.executeRequiredPipeline(ctx, cypher)
+		return e.executeRequiredPipeline(fixtureAdmission5, ctx, cypher)
 	case findKeywordIndex(cypher, "LOAD CSV") == 0:
 		return e.executeLoadCSV(ctx, cypher)
 	case startsWithKeywords(cypher, "ALTER", "COMPOSITE DATABASE"):
@@ -263,7 +266,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	case startsWithKeywords(cypher, "ALTER", "DECAY PROFILE"),
 		startsWithKeywords(cypher, "ALTER", "PROMOTION PROFILE"),
 		startsWithKeywords(cypher, "ALTER", "PROMOTION POLICY"):
-		return e.executeKnowledgePolicyDDL(ctx, cypher)
+		return e.executeKnowledgePolicyDDL(fixtureAdmission5, ctx, cypher)
 	default:
 		// Terminal chokepoint of the converged router: a statement that passed
 		// syntax validation but matches no handler is rejected here — never a
@@ -280,8 +283,8 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	}
 }
 
-func (e *StorageExecutor) executeRequiredPipeline(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if outcome := e.executePipeline(ctx, cypher); outcome.terminal() {
+func (e *StorageExecutor) executeRequiredPipeline(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
+	if outcome := e.executePipeline(admission, ctx, cypher); outcome.terminal() {
 		return outcome.result, outcome.err
 	}
 	return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "query could not be planned as a clause pipeline")
@@ -292,7 +295,7 @@ func (e *StorageExecutor) executeRequiredPipeline(ctx context.Context, cypher st
 // shared RETURN projection (pipelineApplyReturn) over one row holding the
 // parameters and bound values, so DISTINCT, aggregation, ORDER BY, SKIP and
 // LIMIT behave as after any other clause (#713).
-func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeReturn(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, error) {
 	// Parameters are row values ($name), not text: a substituted value would
 	// read as a literal (RETURN $a / $b with a = 1.0, b = 0 would fold like
 	// RETURN 1.0 / 0).
@@ -326,13 +329,13 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		// Same alias parsing as every projection (parseProjectionExprAlias).
 		part, _ = parseProjectionExprAlias(strings.TrimSpace(part))
 		parts[index] = part
-		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
+		if err := e.validateStaticBooleanOperands(admission, ctx, part); err != nil {
 			return nil, err
 		}
-		if err := e.validateRangeCalls(part, pipelineRow{}); err != nil {
+		if err := e.validateRangeCalls(admission, part, pipelineRow{}); err != nil {
 			return nil, err
 		}
-		if err := e.validateRowSubscriptTypes(part, pipelineRow{}); err != nil {
+		if err := e.validateRowSubscriptTypes(admission, part, pipelineRow{}); err != nil {
 			return nil, err
 		}
 
@@ -345,7 +348,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		}
 	}
 
-	if result, ok := e.pipelineApplyReturn(ctx, []pipelineRow{row}, "RETURN "+body); ok {
+	if result, ok := e.pipelineApplyReturn(admission, ctx, []pipelineRow{row}, "RETURN "+body); ok {
 		return result, nil
 	}
 	if failure := getExpressionFailure(ctx); failure != nil {
@@ -353,7 +356,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	}
 	unparsed := body
 	for _, part := range parts {
-		if _, defined := e.evaluateRowExpressionWithContext(ctx, part, row); !defined {
+		if _, defined := e.evaluateRowExpressionWithContext(admission, ctx, part, row); !defined {
 			unparsed = part
 			break
 		}
@@ -967,7 +970,7 @@ func unsupportedOptionalMatchShapeError(cypher string) error {
 // statement to the clause pipeline by the clauses it contains: since Cypher 25
 // a SHOW command's YIELD may be followed by any clause (CALL { … }, DELETE,
 // SET, …), and the command still runs as a SHOW (#907).
-func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) executeShowStatement(admission admittedRelationshipStatement, ctx context.Context, cypher string) (*ExecuteResult, bool, error) {
 	// Every statement passes here: one prefix test spares the others the
 	// command checks below.
 	if !hasPrefixFold(cypher, "SHOW") && !hasPrefixFold(cypher, "TERMINATE") {
@@ -978,7 +981,7 @@ func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher strin
 		if err != nil {
 			return nil, true, err
 		}
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowConstraints)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowConstraints)
 		return result, true, err
 	}
 	switch {
@@ -990,47 +993,47 @@ func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher strin
 		startsWithKeywords(cypher, "SHOW", "VECTOR INDEX"),
 		startsWithKeywords(cypher, "SHOW", "LOOKUP INDEXES"),
 		startsWithKeywords(cypher, "SHOW", "LOOKUP INDEX"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowIndexes)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "INDEXES"),
 		startsWithKeywords(cypher, "SHOW", "INDEX"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowIndexes)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "DECAY PROFILES"),
 		startsWithKeywords(cypher, "SHOW", "PROMOTION PROFILES"),
 		startsWithKeywords(cypher, "SHOW", "PROMOTION POLICIES"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeKnowledgePolicyDDL)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeKnowledgePolicyDDL)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "PROCEDURES"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowProcedures)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowProcedures)
 		return result, true, err
 	case findKeywordIndex(cypher, "SHOW FUNCTIONS") == 0:
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowFunctions)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowFunctions)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "COMPOSITE DATABASES"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowCompositeDatabases)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowCompositeDatabases)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "CONSTITUENTS"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowConstituents)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowConstituents)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "DEFAULT DATABASE"),
 		startsWithKeywords(cypher, "SHOW", "HOME DATABASE"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDefaultDatabase)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowDefaultDatabase)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "USERS"),
 		startsWithKeywords(cypher, "SHOW", "CURRENT USER"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowUsers)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowUsers)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "TRANSACTIONS"),
 		startsWithKeywords(cypher, "SHOW", "TRANSACTION"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowTransactions)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowTransactions)
 		return result, true, err
 	case startsWithKeywords(cypher, "TERMINATE", "TRANSACTIONS"),
 		startsWithKeywords(cypher, "TERMINATE", "TRANSACTION"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeTerminateTransactions)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeTerminateTransactions)
 		return result, true, err
 	case isShowPrivilegesCommand(cypher):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowPrivileges)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowPrivileges)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "ROLES"),
 		startsWithKeywords(cypher, "SHOW", "ROLE"),
@@ -1040,20 +1043,20 @@ func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher strin
 		startsWithKeywords(cypher, "SHOW", "SERVER"):
 		return nil, true, unsupportedAdministrationCommandError(cypher)
 	case startsWithKeywords(cypher, "SHOW", "DATABASES"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDatabases)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowDatabases)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "DATABASE"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDatabase)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowDatabase)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "ALIASES"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowAliases)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowAliases)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "SETTINGS"),
 		startsWithKeywords(cypher, "SHOW", "SETTING"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowSettings)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowSettings)
 		return result, true, err
 	case startsWithKeywords(cypher, "SHOW", "LIMITS"):
-		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowLimits)
+		result, err := e.executeShowWithTail(admission, ctx, cypher, e.executeShowLimits)
 		return result, true, err
 	}
 	return nil, false, nil

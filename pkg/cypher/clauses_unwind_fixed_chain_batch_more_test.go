@@ -50,7 +50,9 @@ RETURN count(o) AS linked
 	t.Run("root_label_lookup_error", func(t *testing.T) {
 		base := storage.NewNamespacedEngine(newTestMemoryEngine(t), "fixed_chain_root_err")
 		exec := NewStorageExecutor(&getNodesByLabelErrEngine{Engine: base, label: "OriginalText", err: errors.New("root label boom")})
-		_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+		fixtureAdmission1384Context, fixtureAdmission1384 := statementTestContext(ctx, rest)
+		_ = fixtureAdmission1384Context
+		_, supported, err := exec.executeUnwindFixedChainLinkBatch(fixtureAdmission1384, fixtureAdmission1384Context, "row", items, rest)
 		require.Error(t, err)
 		require.True(t, supported)
 		require.Contains(t, err.Error(), "root label boom")
@@ -61,7 +63,9 @@ RETURN count(o) AS linked
 		_, err := base.CreateNode(&storage.Node{ID: storage.NodeID("orig-a"), Labels: []string{"OriginalText"}, Properties: map[string]interface{}{"textKey": "a"}})
 		require.NoError(t, err)
 		exec := NewStorageExecutor(&getNodesByLabelErrEngine{Engine: base, label: "Hop", err: errors.New("hop label boom")})
-		_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+		fixtureAdmission1385Context, fixtureAdmission1385 := statementTestContext(ctx, rest)
+		_ = fixtureAdmission1385Context
+		_, supported, err := exec.executeUnwindFixedChainLinkBatch(fixtureAdmission1385, fixtureAdmission1385Context, "row", items, rest)
 		require.Error(t, err)
 		require.True(t, supported)
 		require.Contains(t, err.Error(), "hop label boom")
@@ -76,7 +80,9 @@ RETURN count(o) AS linked
 			require.NoError(t, err)
 		}
 		exec := NewStorageExecutor(&createEdgeErrEngine{Engine: base, err: errors.New("edge create boom")})
-		_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+		fixtureAdmission1386Context, fixtureAdmission1386 := statementTestContext(ctx, rest)
+		_ = fixtureAdmission1386Context
+		_, supported, err := exec.executeUnwindFixedChainLinkBatch(fixtureAdmission1386, fixtureAdmission1386Context, "row", items, rest)
 		require.Error(t, err)
 		require.True(t, supported)
 		require.Contains(t, err.Error(), "edge create boom")
@@ -99,7 +105,9 @@ func TestExecuteUnwindFixedChainLinkBatch_MalformedShapesMoreBranches(t *testing
 	}
 
 	for i, rest := range cases {
-		result, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+		fixtureAdmission1387Context, fixtureAdmission1387 := statementTestContext(ctx, rest)
+		_ = fixtureAdmission1387Context
+		result, supported, err := exec.executeUnwindFixedChainLinkBatch(fixtureAdmission1387, fixtureAdmission1387Context, "row", items, rest)
 		require.NoError(t, err, "case %d", i)
 		if i == 1 {
 			require.True(t, supported)
@@ -117,7 +125,9 @@ MATCH (h1:Hop {hopId: row.textKey + ':1'})
 MERGE (o)-[:NEXT]->(h1)
 RETURN count(o) AS linked
 `
-	res, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", []interface{}{int64(1), "bad"}, validRest)
+	fixtureAdmission1388Context, fixtureAdmission1388 := statementTestContext(ctx, validRest)
+	_ = fixtureAdmission1388Context
+	res, supported, err := exec.executeUnwindFixedChainLinkBatch(fixtureAdmission1388, fixtureAdmission1388Context, "row", []interface{}{int64(1), "bad"}, validRest)
 	require.Error(t, err)
 	require.True(t, supported)
 	require.Nil(t, res)

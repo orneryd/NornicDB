@@ -67,12 +67,16 @@ func TestLabellessPropertyMatchFullReadOutcomes(t *testing.T) {
 	require.NoError(t, err)
 
 	gone := &vanishingNodeEngine{NamespacedEngine: inner, getNodeErr: storage.ErrNotFound}
-	nodes, err := NewStorageExecutor(gone).collectNodesWithStreaming(context.Background(), nil, map[string]interface{}{"id": "a"}, "", "", -1)
+	fixtureAdmission1637Context, fixtureAdmission1637 := expressionTestContext(context.Background(), "")
+	_ = fixtureAdmission1637Context
+	nodes, err := NewStorageExecutor(gone).collectNodesWithStreaming(fixtureAdmission1637, fixtureAdmission1637Context, nil, map[string]interface{}{"id": "a"}, "", "", -1)
 	require.NoError(t, err)
 	require.Empty(t, nodes, "a node deleted between the scan and its read is not a match")
 
 	failure := errors.New("read failed")
 	failing := &vanishingNodeEngine{NamespacedEngine: inner, getNodeErr: failure}
-	_, err = NewStorageExecutor(failing).collectNodesWithStreaming(context.Background(), nil, map[string]interface{}{"id": "a"}, "", "", -1)
+	fixtureAdmission1638Context, fixtureAdmission1638 := expressionTestContext(context.Background(), "")
+	_ = fixtureAdmission1638Context
+	_, err = NewStorageExecutor(failing).collectNodesWithStreaming(fixtureAdmission1638, fixtureAdmission1638Context, nil, map[string]interface{}{"id": "a"}, "", "", -1)
 	require.ErrorIs(t, err, failure)
 }

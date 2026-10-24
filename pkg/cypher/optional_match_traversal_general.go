@@ -131,11 +131,11 @@ func extendTraversalRowMulti(row traversalOptRow, nodeBinds map[string]*storage.
 // introduced variables — with none, the optional match is a row-preserving
 // no-op). An unbound variable is an independent node scan: each row joins
 // with every matching node, or carries a null binding when nothing matches.
-func (e *StorageExecutor) applySingleNodeOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
+func (e *StorageExecutor) applySingleNodeOptionalClause(admission admittedRelationshipStatement, ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
 	if firstParenGroup(clause.pattern) == "" {
 		return rows, nil
 	}
-	return e.applyGeneralOptionalClause(ctx, rows, clause)
+	return e.applyGeneralOptionalClause(admission, ctx, rows, clause)
 }
 func pipelineRowFromTraversalOptionalRow(row traversalOptRow) pipelineRow {
 	scope := make(pipelineRow, len(row.nodes)+len(row.rels)+len(row.values))
@@ -166,7 +166,7 @@ func pipelineRowFromTraversalOptionalRow(row traversalOptRow) pipelineRow {
 // shared-variable bindings agree by identity, and left rows with no agreeing
 // candidate are preserved with null bindings for the new variables — the
 // Apply + Optional contract.
-func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
+func (e *StorageExecutor) applyGeneralOptionalClause(admission admittedRelationshipStatement, ctx context.Context, rows []traversalOptRow, clause optionalMatchClause) ([]traversalOptRow, error) {
 	pattern := ensureLeadingNodeNamed(clause.pattern)
 	nodeVars := extractNodeVariables(matchPatternStructure(pattern))
 	relVars := extractRelationshipVariables(matchPatternStructure(pattern))
@@ -192,7 +192,7 @@ func (e *StorageExecutor) applyGeneralOptionalClause(ctx context.Context, rows [
 		if !patternVariableBoundToNull(scope, allVars) {
 			var handled bool
 			var err error
-			matched, handled, err = e.pipelineApplyMatch(withValueBindings(ctx, scope), []pipelineRow{scope}, matchClause)
+			matched, handled, err = e.pipelineApplyMatch(admission, withValueBindings(ctx, scope), []pipelineRow{scope}, matchClause)
 			if err != nil {
 				return nil, err
 			}

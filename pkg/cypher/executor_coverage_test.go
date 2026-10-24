@@ -2191,42 +2191,82 @@ func TestResolveReturnItem_AdditionalBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// Wildcard and direct variable branches.
-	assert.Equal(t, node, exec.resolveReturnItem(ctx, returnItem{expr: "*"}, "p", node))
-	assert.Equal(t, node, exec.resolveReturnItem(ctx, returnItem{expr: "p"}, "p", node))
+	fixtureAdmission278Context, fixtureAdmission278 := expressionTestContext(ctx, "*")
+	_ = fixtureAdmission278
+	assert.Equal(t, node, exec.resolveReturnItem(fixtureAdmission278, fixtureAdmission278Context, returnItem{expr: "*"}, "p", node))
+	fixtureAdmission279Context, fixtureAdmission279 := expressionTestContext(ctx, "p")
+	_ = fixtureAdmission279
+	assert.Equal(t, node, exec.resolveReturnItem(fixtureAdmission279, fixtureAdmission279Context, returnItem{expr: "p"}, "p", node))
 
 	// Collect subqueries use the canonical projection operator.
-	assert.Equal(t, []interface{}{}, exec.resolveReturnItem(ctx, returnItem{expr: "COLLECT { MATCH (p)-[:R]->(q) RETURN q }"}, "p", node))
+	fixtureAdmission280Context, fixtureAdmission280 := expressionTestContext(ctx, "COLLECT { MATCH (p)-[:R]->(q) RETURN q }")
+	_ = fixtureAdmission280
+	assert.Equal(t, []interface{}{}, exec.resolveReturnItem(fixtureAdmission280, fixtureAdmission280Context, returnItem{expr: "COLLECT { MATCH (p)-[:R]->(q) RETURN q }"}, "p", node))
 
 	// CASE/function/IS NULL/arithmetic evaluation branches.
-	assert.Equal(t, "adult", exec.resolveReturnItem(ctx, returnItem{expr: "CASE WHEN p.age > 20 THEN 'adult' ELSE 'child' END"}, "p", node))
-	assert.Equal(t, "30", exec.resolveReturnItem(ctx, returnItem{expr: "toString(p.age)"}, "p", node))
-	assert.Equal(t, true, exec.resolveReturnItem(ctx, returnItem{expr: "p.missing IS NULL"}, "p", node))
-	assert.Equal(t, int64(31), exec.resolveReturnItem(ctx, returnItem{expr: "p.age + 1"}, "p", node))
+	fixtureAdmission281Context, fixtureAdmission281 := expressionTestContext(ctx, "CASE WHEN p.age > 20 THEN 'adult' ELSE 'child' END")
+	_ = fixtureAdmission281
+	assert.Equal(t, "adult", exec.resolveReturnItem(fixtureAdmission281, fixtureAdmission281Context, returnItem{expr: "CASE WHEN p.age > 20 THEN 'adult' ELSE 'child' END"}, "p", node))
+	fixtureAdmission282Context, fixtureAdmission282 := expressionTestContext(ctx, "toString(p.age)")
+	_ = fixtureAdmission282
+	assert.Equal(t, "30", exec.resolveReturnItem(fixtureAdmission282, fixtureAdmission282Context, returnItem{expr: "toString(p.age)"}, "p", node))
+	fixtureAdmission283Context, fixtureAdmission283 := expressionTestContext(ctx, "p.missing IS NULL")
+	_ = fixtureAdmission283
+	assert.Equal(t, true, exec.resolveReturnItem(fixtureAdmission283, fixtureAdmission283Context, returnItem{expr: "p.missing IS NULL"}, "p", node))
+	fixtureAdmission284Context, fixtureAdmission284 := expressionTestContext(ctx, "p.age + 1")
+	_ = fixtureAdmission284
+	assert.Equal(t, int64(31), exec.resolveReturnItem(fixtureAdmission284, fixtureAdmission284Context, returnItem{expr: "p.age + 1"}, "p", node))
 
 	// Property-access branches.
-	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "q.age"}, "p", node))             // var mismatch
-	assert.Equal(t, "prop-id", exec.resolveReturnItem(ctx, returnItem{expr: "p.id"}, "p", node)) // id from property
-	assert.Equal(t, []float32{0.1, 0.2}, exec.resolveReturnItem(ctx, returnItem{expr: "p.embedding"}, "p", node))
-	assert.Equal(t, "alice", exec.resolveReturnItem(ctx, returnItem{expr: "p.name"}, "p", node))
-	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "p.unknown"}, "p", node))
+	fixtureAdmission285Context, fixtureAdmission285 := expressionTestContext(ctx, "q.age")
+	_ = fixtureAdmission285
+	assert.Nil(t, exec.resolveReturnItem(fixtureAdmission285, fixtureAdmission285Context, returnItem{expr: "q.age"}, "p", node)) // var mismatch
+	fixtureAdmission286Context, fixtureAdmission286 := expressionTestContext(ctx, "p.id")
+	_ = fixtureAdmission286
+	assert.Equal(t, "prop-id", exec.resolveReturnItem(fixtureAdmission286, fixtureAdmission286Context, returnItem{expr: "p.id"}, "p", node)) // id from property
+	fixtureAdmission287Context, fixtureAdmission287 := expressionTestContext(ctx, "p.embedding")
+	_ = fixtureAdmission287
+	assert.Equal(t, []float32{0.1, 0.2}, exec.resolveReturnItem(fixtureAdmission287, fixtureAdmission287Context, returnItem{expr: "p.embedding"}, "p", node))
+	fixtureAdmission288Context, fixtureAdmission288 := expressionTestContext(ctx, "p.name")
+	_ = fixtureAdmission288
+	assert.Equal(t, "alice", exec.resolveReturnItem(fixtureAdmission288, fixtureAdmission288Context, returnItem{expr: "p.name"}, "p", node))
+	fixtureAdmission289Context, fixtureAdmission289 := expressionTestContext(ctx, "p.unknown")
+	_ = fixtureAdmission289
+	assert.Nil(t, exec.resolveReturnItem(fixtureAdmission289, fixtureAdmission289Context, returnItem{expr: "p.unknown"}, "p", node))
 
 	// embedding is a regular property — no special routing from ChunkEmbeddings/EmbedMeta.
 	noEmbedding := &storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{}}
-	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "p.embedding"}, "p", noEmbedding))
+	fixtureAdmission290Context, fixtureAdmission290 := expressionTestContext(ctx, "p.embedding")
+	_ = fixtureAdmission290
+	assert.Nil(t, exec.resolveReturnItem(fixtureAdmission290, fixtureAdmission290Context, returnItem{expr: "p.embedding"}, "p", noEmbedding))
 	withChunkOnly := &storage.Node{ID: "n3", Labels: []string{"Person"}, ChunkEmbeddings: [][]float32{{0.3, 0.4}}, Properties: map[string]interface{}{}}
-	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "p.embedding"}, "p", withChunkOnly)) // not in Properties
+	fixtureAdmission291Context, fixtureAdmission291 := expressionTestContext(ctx, "p.embedding")
+	_ = fixtureAdmission291
+	assert.Nil(t, exec.resolveReturnItem(fixtureAdmission291, fixtureAdmission291Context, returnItem{expr: "p.embedding"}, "p", withChunkOnly)) // not in Properties
 	withEmbProp := &storage.Node{ID: "n3b", Labels: []string{"Person"}, Properties: map[string]interface{}{"embedding": []float32{0.3, 0.4}}}
-	assert.Equal(t, []float32{0.3, 0.4}, exec.resolveReturnItem(ctx, returnItem{expr: "p.embedding"}, "p", withEmbProp))
+	fixtureAdmission292Context, fixtureAdmission292 := expressionTestContext(ctx, "p.embedding")
+	_ = fixtureAdmission292
+	assert.Equal(t, []float32{0.3, 0.4}, exec.resolveReturnItem(fixtureAdmission292, fixtureAdmission292Context, returnItem{expr: "p.embedding"}, "p", withEmbProp))
 	withMeta := &storage.Node{ID: "n4", Labels: []string{"Person"}, EmbedMeta: map[string]interface{}{"has_embedding": true}}
-	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "p.embedding"}, "p", withMeta)) // not in Properties
+	fixtureAdmission293Context, fixtureAdmission293 := expressionTestContext(ctx, "p.embedding")
+	_ = fixtureAdmission293
+	assert.Nil(t, exec.resolveReturnItem(fixtureAdmission293, fixtureAdmission293Context, returnItem{expr: "p.embedding"}, "p", withMeta)) // not in Properties
 
 	// has_embedding branches (from EmbedMeta).
-	assert.Equal(t, true, exec.resolveReturnItem(ctx, returnItem{expr: "p.has_embedding"}, "p", withMeta))
-	assert.Equal(t, true, exec.resolveReturnItem(ctx, returnItem{expr: "p.has_embedding"}, "p", &storage.Node{ID: "n5", Labels: []string{"Person"}, ChunkEmbeddings: [][]float32{{0.3, 0.4}}}))
-	assert.Equal(t, false, exec.resolveReturnItem(ctx, returnItem{expr: "p.has_embedding"}, "p", noEmbedding))
+	fixtureAdmission294Context, fixtureAdmission294 := expressionTestContext(ctx, "p.has_embedding")
+	_ = fixtureAdmission294
+	assert.Equal(t, true, exec.resolveReturnItem(fixtureAdmission294, fixtureAdmission294Context, returnItem{expr: "p.has_embedding"}, "p", withMeta))
+	fixtureAdmission295Context, fixtureAdmission295 := expressionTestContext(ctx, "p.has_embedding")
+	_ = fixtureAdmission295
+	assert.Equal(t, true, exec.resolveReturnItem(fixtureAdmission295, fixtureAdmission295Context, returnItem{expr: "p.has_embedding"}, "p", &storage.Node{ID: "n5", Labels: []string{"Person"}, ChunkEmbeddings: [][]float32{{0.3, 0.4}}}))
+	fixtureAdmission296Context, fixtureAdmission296 := expressionTestContext(ctx, "p.has_embedding")
+	_ = fixtureAdmission296
+	assert.Equal(t, false, exec.resolveReturnItem(fixtureAdmission296, fixtureAdmission296Context, returnItem{expr: "p.has_embedding"}, "p", noEmbedding))
 
 	// Fallback unresolved expression branch.
-	assert.Nil(t, exec.resolveReturnItem(ctx, returnItem{expr: "unknownExpressionToken"}, "p", node))
+	fixtureAdmission297Context, fixtureAdmission297 := expressionTestContext(ctx, "unknownExpressionToken")
+	_ = fixtureAdmission297
+	assert.Nil(t, exec.resolveReturnItem(fixtureAdmission297, fixtureAdmission297Context, returnItem{expr: "unknownExpressionToken"}, "p", node))
 }
 
 func TestExecuteCreateWithRefs_AdditionalBranches(t *testing.T) {
@@ -2237,8 +2277,10 @@ func TestExecuteCreateWithRefs_AdditionalBranches(t *testing.T) {
 
 	// Parameter substitution + function return item variable extraction.
 	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{"name": "alice"})
-	res, nodes, edges, err := exec.sharedCreateBindingsForTest(
-		ctxWithParams,
+	fixtureAdmission1171Context, fixtureAdmission1171 := statementTestContext(ctxWithParams, "CREATE (a:Person {name: $name})-[:KNOWS]->(b:Person {name:'bob'}) RETURN id(a) AS aid, b.name AS bname")
+	_ = fixtureAdmission1171Context
+	res, nodes, edges, err := exec.sharedCreateBindingsForTest(fixtureAdmission1171,
+		fixtureAdmission1171Context,
 		"CREATE (a:Person {name: $name})-[:KNOWS]->(b:Person {name:'bob'}) RETURN id(a) AS aid, b.name AS bname",
 	)
 	require.NoError(t, err)
@@ -2251,8 +2293,10 @@ func TestExecuteCreateWithRefs_AdditionalBranches(t *testing.T) {
 	assert.Equal(t, "bob", res.Rows[0][1])
 
 	// Chain remainder branch and relationship variable capture.
-	res, nodes, edges, err = exec.sharedCreateBindingsForTest(
-		ctx,
+	fixtureAdmission1172Context, fixtureAdmission1172 := statementTestContext(ctx, "CREATE (x:A {name:'x'})-[r1:R1]->(y:B {name:'y'})-[r2:R2]->(z:C {name:'z'}) RETURN z.name")
+	_ = fixtureAdmission1172Context
+	res, nodes, edges, err = exec.sharedCreateBindingsForTest(fixtureAdmission1172,
+		fixtureAdmission1172Context,
 		"CREATE (x:A {name:'x'})-[r1:R1]->(y:B {name:'y'})-[r2:R2]->(z:C {name:'z'}) RETURN z.name",
 	)
 	require.NoError(t, err)
@@ -2265,8 +2309,10 @@ func TestExecuteCreateWithRefs_AdditionalBranches(t *testing.T) {
 	assert.Equal(t, "z", res.Rows[0][0])
 
 	// Reverse direction branch.
-	_, nodes, edges, err = exec.sharedCreateBindingsForTest(
-		ctx,
+	fixtureAdmission1173Context, fixtureAdmission1173 := statementTestContext(ctx, "CREATE (l:Left {name:'l'})<-[rr:BACK]-(r:Right {name:'r'}) RETURN l.name, r.name")
+	_ = fixtureAdmission1173Context
+	_, nodes, edges, err = exec.sharedCreateBindingsForTest(fixtureAdmission1173,
+		fixtureAdmission1173Context,
 		"CREATE (l:Left {name:'l'})<-[rr:BACK]-(r:Right {name:'r'}) RETURN l.name, r.name",
 	)
 	require.NoError(t, err)
@@ -2275,7 +2321,9 @@ func TestExecuteCreateWithRefs_AdditionalBranches(t *testing.T) {
 	require.Contains(t, edges, "rr")
 
 	// Invalid relationship syntax branch.
-	_, _, _, err = exec.sharedCreateBindingsForTest(ctx, "CREATE (a)-[:BROKEN](b)")
+	fixtureAdmission1174Context, fixtureAdmission1174 := statementTestContext(ctx, "CREATE (a)-[:BROKEN](b)")
+	_ = fixtureAdmission1174Context
+	_, _, _, err = exec.sharedCreateBindingsForTest(fixtureAdmission1174, fixtureAdmission1174Context, "CREATE (a)-[:BROKEN](b)")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid relationship pattern")
 }
@@ -2301,20 +2349,28 @@ func TestLowLevelHelpers_AdditionalCoverage(t *testing.T) {
 	// createPatternsInScope: the shared CREATE core
 	nodes := map[string]*storage.Node{}
 	created := &ExecuteResult{Stats: &QueryStats{}}
-	_, err := exec.createPatternsInScope(ctx, "(:Person {name:'x'})", nodes, map[string]*storage.Edge{}, created)
+	fixtureAdmission1175Context, fixtureAdmission1175 := traversalTestContext(ctx, "(:Person {name:'x'})", "", nil)
+	_ = fixtureAdmission1175Context
+	_, err := exec.createPatternsInScope(fixtureAdmission1175, fixtureAdmission1175Context, "(:Person {name:'x'})", nodes, map[string]*storage.Edge{}, created)
 	require.NoError(t, err)
 	assert.Equal(t, 1, created.Stats.NodesCreated)
 	assert.Empty(t, nodes, "an anonymous node binds no variable")
 
-	_, err = exec.createPatternsInScope(ctx, "(n:123Bad)", nodes, map[string]*storage.Edge{}, created)
+	fixtureAdmission1176Context, fixtureAdmission1176 := traversalTestContext(ctx, "(n:123Bad)", "", nil)
+	_ = fixtureAdmission1176Context
+	_, err = exec.createPatternsInScope(fixtureAdmission1176, fixtureAdmission1176Context, "(n:123Bad)", nodes, map[string]*storage.Edge{}, created)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid label name")
 
-	_, err = exec.createPatternsInScope(ctx, "(n:Person {1bad: 1})", nodes, map[string]*storage.Edge{}, created)
+	fixtureAdmission1177Context, fixtureAdmission1177 := traversalTestContext(ctx, "(n:Person {1bad: 1})", "", nil)
+	_ = fixtureAdmission1177Context
+	_, err = exec.createPatternsInScope(fixtureAdmission1177, fixtureAdmission1177Context, "(n:Person {1bad: 1})", nodes, map[string]*storage.Edge{}, created)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "map literal keys must be valid symbolic names")
 
-	_, err = exec.createPatternsInScope(ctx, "(n:Person)", nodes, map[string]*storage.Edge{}, created)
+	fixtureAdmission1178Context, fixtureAdmission1178 := traversalTestContext(ctx, "(n:Person)", "", nil)
+	_ = fixtureAdmission1178Context
+	_, err = exec.createPatternsInScope(fixtureAdmission1178, fixtureAdmission1178Context, "(n:Person)", nodes, map[string]*storage.Edge{}, created)
 	require.NoError(t, err)
 	require.NotNil(t, nodes["n"])
 	require.NotNil(t, nodes["n"].Properties) // initialized for empty-property create
@@ -2374,12 +2430,16 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	edgeVars := map[string]*storage.Edge{}
 	result := &ExecuteResult{Stats: &QueryStats{}}
 
-	_, err := exec.createPatternsInScope(ctx, "(a:Person {name:'alice'})", nodeVars, edgeVars, result)
+	fixtureAdmission1179Context, fixtureAdmission1179 := traversalTestContext(ctx, "(a:Person {name:'alice'})", "", nil)
+	_ = fixtureAdmission1179Context
+	_, err := exec.createPatternsInScope(fixtureAdmission1179, fixtureAdmission1179Context, "(a:Person {name:'alice'})", nodeVars, edgeVars, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "a")
 	assert.Equal(t, 1, result.Stats.NodesCreated)
 
-	_, err = exec.createPatternsInScope(ctx, "(a)-[r:KNOWS {since: 2020}]->(b:Person {name:'bob'})", nodeVars, edgeVars, result)
+	fixtureAdmission1180Context, fixtureAdmission1180 := traversalTestContext(ctx, "(a)-[r:KNOWS {since: 2020}]->(b:Person {name:'bob'})", "", nil)
+	_ = fixtureAdmission1180Context
+	_, err = exec.createPatternsInScope(fixtureAdmission1180, fixtureAdmission1180Context, "(a)-[r:KNOWS {since: 2020}]->(b:Person {name:'bob'})", nodeVars, edgeVars, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "b")
 	require.Contains(t, edgeVars, "r")
@@ -2387,7 +2447,9 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	assert.Equal(t, int64(2020), edgeVars["r"].Properties["since"])
 
 	// Reverse arrow branch: created edge should start at inline node c and end at a.
-	_, err = exec.createPatternsInScope(ctx, "(a)<-[rb:BACK]-(c:Person {name:'carol'})", nodeVars, edgeVars, result)
+	fixtureAdmission1181Context, fixtureAdmission1181 := traversalTestContext(ctx, "(a)<-[rb:BACK]-(c:Person {name:'carol'})", "", nil)
+	_ = fixtureAdmission1181Context
+	_, err = exec.createPatternsInScope(fixtureAdmission1181, fixtureAdmission1181Context, "(a)<-[rb:BACK]-(c:Person {name:'carol'})", nodeVars, edgeVars, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "c")
 	require.Contains(t, edgeVars, "rb")
@@ -2395,11 +2457,15 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	assert.Equal(t, nodeVars["a"].ID, edgeVars["rb"].EndNode)
 
 	// Invalid relationship shape.
-	_, err = exec.createPatternsInScope(ctx, "(a)-[:BROKEN](b)", nodeVars, edgeVars, result)
+	fixtureAdmission1182Context, fixtureAdmission1182 := traversalTestContext(ctx, "(a)-[:BROKEN](b)", "", nil)
+	_ = fixtureAdmission1182Context
+	_, err = exec.createPatternsInScope(fixtureAdmission1182, fixtureAdmission1182Context, "(a)-[:BROKEN](b)", nodeVars, edgeVars, result)
 	require.Error(t, err)
 
 	// An endpoint variable not in scope is a new node (Neo4j CREATE semantics).
-	_, err = exec.createPatternsInScope(ctx, "(missing)-[:REL]->(a)", nodeVars, edgeVars, result)
+	fixtureAdmission1183Context, fixtureAdmission1183 := traversalTestContext(ctx, "(missing)-[:REL]->(a)", "", nil)
+	_ = fixtureAdmission1183Context
+	_, err = exec.createPatternsInScope(fixtureAdmission1183, fixtureAdmission1183Context, "(missing)-[:REL]->(a)", nodeVars, edgeVars, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "missing")
 
@@ -2411,7 +2477,9 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	for name, edge := range edgeVars {
 		row[name] = edge
 	}
-	stats, handled, err := exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET a += {score: 5, active: true}")
+	fixtureAdmission1184Context, fixtureAdmission1184 := statementTestContext(ctx, "SET a += {score: 5, active: true}")
+	_ = fixtureAdmission1184Context
+	stats, handled, err := exec.pipelineApplySet(fixtureAdmission1184, fixtureAdmission1184Context, []pipelineRow{row}, "SET a += {score: 5, active: true}")
 	require.NoError(t, err)
 	require.True(t, handled)
 	assert.Equal(t, int64(5), nodeVars["a"].Properties["score"])
@@ -2421,24 +2489,33 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{
 		"edgeProps": map[string]interface{}{"rank": int64(9)},
 	})
-	stats, _, err = exec.pipelineApplySet(ctxWithParams, []pipelineRow{row}, "SET r += $edgeProps")
+	fixtureAdmission1185Context, fixtureAdmission1185 := statementTestContext(ctxWithParams, "SET r += $edgeProps")
+	_ = fixtureAdmission1185Context
+	stats, _, err = exec.pipelineApplySet(fixtureAdmission1185, fixtureAdmission1185Context, []pipelineRow{row}, "SET r += $edgeProps")
 	require.NoError(t, err)
 	assert.Equal(t, int64(9), edgeVars["r"].Properties["rank"])
 	assert.Equal(t, 1, stats.PropertiesSet)
 
 	// Strict error branches.
-	_, _, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET a + {x:1}")
+	fixtureAdmission1186Context, fixtureAdmission1186 := statementTestContext(ctx, "SET a + {x:1}")
+	_ = fixtureAdmission1186Context
+	_, _, err = exec.pipelineApplySet(fixtureAdmission1186, fixtureAdmission1186Context, []pipelineRow{row}, "SET a + {x:1}")
 	require.Error(t, err)
 
-	_, _, err = exec.pipelineApplySet(context.WithValue(ctx, paramsKey, map[string]interface{}{"missing": int64(1)}), []pipelineRow{row}, "SET a += $missing")
+	_, typedSetStatement := statementTestContext(ctx, "SET a += $missing")
+	_, _, err = exec.pipelineApplySet(typedSetStatement, context.WithValue(ctx, paramsKey, map[string]interface{}{"missing": int64(1)}), []pipelineRow{row}, "SET a += $missing")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires a map")
 
-	_, _, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET a += {broken")
+	fixtureAdmission1187Context, fixtureAdmission1187 := statementTestContext(ctx, "SET a += {broken")
+	_ = fixtureAdmission1187Context
+	_, _, err = exec.pipelineApplySet(fixtureAdmission1187, fixtureAdmission1187Context, []pipelineRow{row}, "SET a += {broken")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse properties")
 
-	_, handled, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET unknown += {x:1}")
+	fixtureAdmission1188Context, fixtureAdmission1188 := statementTestContext(ctx, "SET unknown += {x:1}")
+	_ = fixtureAdmission1188Context
+	_, handled, err = exec.pipelineApplySet(fixtureAdmission1188, fixtureAdmission1188Context, []pipelineRow{row}, "SET unknown += {x:1}")
 	require.NoError(t, err)
 	assert.False(t, handled, "an unbound target is left to the caller")
 }
@@ -2476,16 +2553,22 @@ func TestCreateHelpers_ParsersAndValidators(t *testing.T) {
 	assert.Contains(t, nodes[0], "(a:A")
 	assert.Contains(t, nodes[1], "(b:B")
 
-	relType, relProps, _ := exec.parseRelationshipTypeAndProps(ctx, "r:KNOWS {since: 2021, note: 'x'}", nil)
+	fixtureAdmission1882Context, fixtureAdmission1882 := expressionTestContext(ctx, "r:KNOWS {since: 2021, note: 'x'}")
+	_ = fixtureAdmission1882Context
+	relType, relProps, _ := exec.parseRelationshipTypeAndProps(fixtureAdmission1882, fixtureAdmission1882Context, "r:KNOWS {since: 2021, note: 'x'}", nil)
 	assert.Equal(t, "KNOWS", relType)
 	assert.Equal(t, int64(2021), relProps["since"])
 	assert.Equal(t, "x", relProps["note"])
 
-	relType, relProps, _ = exec.parseRelationshipTypeAndProps(ctx, "r", nil)
+	fixtureAdmission1883Context, fixtureAdmission1883 := expressionTestContext(ctx, "r")
+	_ = fixtureAdmission1883Context
+	relType, relProps, _ = exec.parseRelationshipTypeAndProps(fixtureAdmission1883, fixtureAdmission1883Context, "r", nil)
 	assert.Equal(t, "", relType)
 	assert.Empty(t, relProps)
 
-	relType, relProps, _ = exec.parseRelationshipTypeAndProps(ctx, ":", nil)
+	fixtureAdmission1884Context, fixtureAdmission1884 := expressionTestContext(ctx, ":")
+	_ = fixtureAdmission1884Context
+	relType, relProps, _ = exec.parseRelationshipTypeAndProps(fixtureAdmission1884, fixtureAdmission1884Context, ":", nil)
 	assert.Equal(t, "", relType)
 	assert.Empty(t, relProps)
 
@@ -2530,26 +2613,34 @@ func TestCreateHelpers_ResolveOrCreateAndMultipleCreates(t *testing.T) {
 	edgeVars := map[string]*storage.Edge{}
 
 	// An endpoint variable not in scope is a new node (Neo4j CREATE semantics).
-	missing, err := exec.planCreateEndpoint(ctx, "missingVar", nodeVars, edgeVars, &plan)
+	fixtureAdmission1885Context, fixtureAdmission1885 := expressionTestContext(ctx, "missingVar")
+	_ = fixtureAdmission1885Context
+	missing, err := exec.planCreateEndpoint(fixtureAdmission1885, fixtureAdmission1885Context, "missingVar", nodeVars, edgeVars, &plan)
 	require.NoError(t, err)
 	require.NotNil(t, missing)
 	require.Contains(t, nodeVars, "missingVar")
 	assert.Len(t, plan.nodes, 1)
 
-	n, err := exec.planCreateEndpoint(ctx, "x:Node {id:'x1'}", nodeVars, edgeVars, &plan)
+	fixtureAdmission1886Context, fixtureAdmission1886 := expressionTestContext(ctx, "x:Node {id:'x1'}")
+	_ = fixtureAdmission1886Context
+	n, err := exec.planCreateEndpoint(fixtureAdmission1886, fixtureAdmission1886Context, "x:Node {id:'x1'}", nodeVars, edgeVars, &plan)
 	require.NoError(t, err)
 	require.NotNil(t, n)
 	require.Contains(t, nodeVars, "x")
 	assert.Len(t, plan.nodes, 2)
 
 	// Existing variable returns same node without creating a new one.
-	same, err := exec.planCreateEndpoint(ctx, "x:Node {id:'different'}", nodeVars, edgeVars, &plan)
+	fixtureAdmission1887Context, fixtureAdmission1887 := expressionTestContext(ctx, "x:Node {id:'different'}")
+	_ = fixtureAdmission1887Context
+	same, err := exec.planCreateEndpoint(fixtureAdmission1887, fixtureAdmission1887Context, "x:Node {id:'different'}", nodeVars, edgeVars, &plan)
 	require.NoError(t, err)
 	assert.Equal(t, n.ID, same.ID)
 	assert.Len(t, plan.nodes, 2)
 
 	// Inline node without variable is created but not added to nodeVars.
-	inline, err := exec.planCreateEndpoint(ctx, ":Leaf {k:1}", nodeVars, edgeVars, &plan)
+	fixtureAdmission1888Context, fixtureAdmission1888 := expressionTestContext(ctx, ":Leaf {k:1}")
+	_ = fixtureAdmission1888Context
+	inline, err := exec.planCreateEndpoint(fixtureAdmission1888, fixtureAdmission1888Context, ":Leaf {k:1}", nodeVars, edgeVars, &plan)
 	require.NoError(t, err)
 	require.NotNil(t, inline)
 	assert.Len(t, plan.nodes, 3)

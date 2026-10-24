@@ -34,9 +34,13 @@ func TestSelectedPathCancelledReconstruction(t *testing.T) {
 	if !ok {
 		t.Fatal("compile")
 	}
-	s := e.newPathSearch(c, plan.forward, pipelineRow{}, -1, start)
+	fixtureAdmission1698Context, fixtureAdmission1698 := statementTestContext(c, ("MATCH "+("(a)-[:T*]->(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1698Context
+	s := e.relationshipExecutionFor(fixtureAdmission1698, fixtureAdmission1698Context, "(a)-[:T*]->(b)", "").newPathSearch(c, plan.forward, pipelineRow{}, -1, start)
 	calls := 0
-	rows, ok := s.uniformPair(start, previous, true, func(p pathSearchPath) (pipelineRow, bool) {
+	fixtureAdmission1699Context, fixtureAdmission1699 := statementTestContext(context.Background(), ("MATCH "+("(a)-[:T*]->(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1699Context
+	rows, ok := s.uniformPair(fixtureAdmission1699, start, previous, true, func(p pathSearchPath) (pipelineRow, bool) {
 		calls++
 		if calls == 1 {
 			cancel()
@@ -51,7 +55,9 @@ func TestSelectedPathCancelledReconstruction(t *testing.T) {
 
 func TestSelectedPathCancelledLevel(t *testing.T) {
 	e, c := newShortestSelectorExecutor(t)
-	ns, err := e.pipelineMatchRows(c, pipelineRow{}, "MATCH (a:S {id: 1})")
+	fixtureAdmission773Context, fixtureAdmission773 := statementTestContext(c, "MATCH (a:S {id: 1})")
+	_ = fixtureAdmission773
+	ns, err := e.pipelineMatchRows(fixtureAdmission773, fixtureAdmission773Context, pipelineRow{}, "MATCH (a:S {id: 1})")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,11 +67,17 @@ func TestSelectedPathCancelledLevel(t *testing.T) {
 		t.Fatal("compile")
 	}
 	c, cancel := context.WithCancel(c)
-	s := e.newPathSearch(c, p.forward, pipelineRow{}, -1, source)
-	s.begin(source)
+	fixtureAdmission1700Context, fixtureAdmission1700 := statementTestContext(c, ("MATCH "+("(a)(()-[:T]->())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1700Context
+	s := e.relationshipExecutionFor(fixtureAdmission1700, fixtureAdmission1700Context, "(a)(()-[:T]->())+(b)", "").newPathSearch(c, p.forward, pipelineRow{}, -1, source)
+	fixtureAdmission1701Context, fixtureAdmission1701 := statementTestContext(context.Background(), ("MATCH "+("(a)(()-[:T]->())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1701Context
+	s.begin(fixtureAdmission1701, source)
 	before := len(s.products)
 	cancel()
-	s.nextLevel()
+	fixtureAdmission1702Context, fixtureAdmission1702 := statementTestContext(context.Background(), ("MATCH "+("(a)(()-[:T]->())+(b)"))+"\n"+("RETURN "+("")))
+	_ = fixtureAdmission1702Context
+	s.nextLevel(fixtureAdmission1702)
 	t.Logf("products before cancellation=%d after canceled nextLevel=%d", before, len(s.products))
 	if len(s.products) > before {
 		t.Fatal("expanded after cancellation")

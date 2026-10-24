@@ -30,8 +30,9 @@ func TestLiveTraversalCancellationProbeWork(t *testing.T) {
 				engine.edges = append(engine.edges, &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e%d", i)), StartNode: "root", EndNode: id, Type: "R"})
 			}
 			exec := NewStorageExecutor(engine)
+			fixtureContext, fixtureStatement := traversalTestContext(ctx, "()-[*1]->()", "", nil)
 			state := exec.newTraversalContext(ctx, root, &RelationshipPattern{Direction: "outgoing", MinHops: 1, MaxHops: 1})
-			paths := exec.findPaths(state, root, []*storage.Node{root}, nil, 0, nil)
+			paths := exec.relationshipExecutionFor(fixtureStatement, fixtureContext, "()-[*1]->()", "").findPaths(state, root, []*storage.Node{root}, nil, 0, nil)
 			require.Len(t, paths, count)
 			require.LessOrEqual(t, ctx.probes, 2, "healthy traversal must not call Context.Err per frame/candidate")
 		})
@@ -50,11 +51,12 @@ func BenchmarkLiveTraversalCancellationProbe(b *testing.B) {
 		engine.edges = append(engine.edges, &storage.Edge{ID: storage.EdgeID(fmt.Sprintf("e%d", i)), StartNode: "root", EndNode: id, Type: "R"})
 	}
 	exec := NewStorageExecutor(engine)
+	fixtureContext, fixtureStatement := traversalTestContext(ctx, "()-[*1]->()", "", nil)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		state := exec.newTraversalContext(ctx, root, &RelationshipPattern{Direction: "outgoing", MinHops: 1, MaxHops: 1})
-		paths := exec.findPaths(state, root, []*storage.Node{root}, nil, 0, nil)
+		paths := exec.relationshipExecutionFor(fixtureStatement, fixtureContext, "()-[*1]->()", "").findPaths(state, root, []*storage.Node{root}, nil, 0, nil)
 		if len(paths) != 1024 {
 			b.Fatal(len(paths))
 		}

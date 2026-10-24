@@ -88,48 +88,62 @@ func TestParseSetMergeMapLiteralStrict_Branches(t *testing.T) {
 
 	t.Run("missing braces", func(t *testing.T) {
 		ctx := context.Background()
-		_, err := exec.parseSetMergeMapLiteralStrict(ctx, "a:1")
+		fixtureAdmission1566Context, fixtureAdmission1566 := expressionTestContext(ctx, "a:1")
+		_ = fixtureAdmission1566Context
+		_, err := exec.parseSetMergeMapLiteralStrict(fixtureAdmission1566, fixtureAdmission1566Context, "a:1")
 		require.Error(t, err)
 	})
 
 	t.Run("empty map", func(t *testing.T) {
 		ctx := context.Background()
-		props, err := exec.parseSetMergeMapLiteralStrict(ctx, "{}")
+		fixtureAdmission1567Context, fixtureAdmission1567 := expressionTestContext(ctx, "{}")
+		_ = fixtureAdmission1567Context
+		props, err := exec.parseSetMergeMapLiteralStrict(fixtureAdmission1567, fixtureAdmission1567Context, "{}")
 		require.NoError(t, err)
 		require.Empty(t, props)
 	})
 
 	t.Run("trailing comma entry", func(t *testing.T) {
 		ctx := context.Background()
-		_, err := exec.parseSetMergeMapLiteralStrict(ctx, "{a: 1,}")
+		fixtureAdmission1568Context, fixtureAdmission1568 := expressionTestContext(ctx, "{a: 1,}")
+		_ = fixtureAdmission1568Context
+		_, err := exec.parseSetMergeMapLiteralStrict(fixtureAdmission1568, fixtureAdmission1568Context, "{a: 1,}")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "empty map entry")
 	})
 
 	t.Run("missing colon", func(t *testing.T) {
 		ctx := context.Background()
-		_, err := exec.parseSetMergeMapLiteralStrict(ctx, "{a}")
+		fixtureAdmission1569Context, fixtureAdmission1569 := expressionTestContext(ctx, "{a}")
+		_ = fixtureAdmission1569Context
+		_, err := exec.parseSetMergeMapLiteralStrict(fixtureAdmission1569, fixtureAdmission1569Context, "{a}")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid map entry")
 	})
 
 	t.Run("empty key", func(t *testing.T) {
 		ctx := context.Background()
-		_, err := exec.parseSetMergeMapLiteralStrict(ctx, "{: 1}")
+		fixtureAdmission1570Context, fixtureAdmission1570 := expressionTestContext(ctx, "{: 1}")
+		_ = fixtureAdmission1570Context
+		_, err := exec.parseSetMergeMapLiteralStrict(fixtureAdmission1570, fixtureAdmission1570Context, "{: 1}")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid map entry")
 	})
 
 	t.Run("empty value", func(t *testing.T) {
 		ctx := context.Background()
-		_, err := exec.parseSetMergeMapLiteralStrict(ctx, "{a: }")
+		fixtureAdmission1571Context, fixtureAdmission1571 := expressionTestContext(ctx, "{a: }")
+		_ = fixtureAdmission1571Context
+		_, err := exec.parseSetMergeMapLiteralStrict(fixtureAdmission1571, fixtureAdmission1571Context, "{a: }")
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid map entry")
 	})
 
 	t.Run("quoted key and nested value", func(t *testing.T) {
 		ctx := context.Background()
-		props, err := exec.parseSetMergeMapLiteralStrict(ctx, "{'a': 1, 'key:key': 'value', b: {x: 2}, c: [1,2]}")
+		fixtureAdmission1572Context, fixtureAdmission1572 := expressionTestContext(ctx, "{'a': 1, 'key:key': 'value', b: {x: 2}, c: [1,2]}")
+		_ = fixtureAdmission1572Context
+		props, err := exec.parseSetMergeMapLiteralStrict(fixtureAdmission1572, fixtureAdmission1572Context, "{'a': 1, 'key:key': 'value', b: {x: 2}, c: [1,2]}")
 		require.NoError(t, err)
 		assert.EqualValues(t, int64(1), props["a"])
 		assert.Equal(t, "value", props["key:key"])

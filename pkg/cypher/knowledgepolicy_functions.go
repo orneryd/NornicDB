@@ -13,7 +13,7 @@ import (
 
 // evaluateKnowledgePolicyFunction dispatches decayScore(), decay(), and policy()
 // calls. Returns (result, true) if the expression was handled, (nil, false) otherwise.
-func (e *StorageExecutor) evaluateKnowledgePolicyFunction(
+func (e *StorageExecutor) evaluateKnowledgePolicyFunction(admission admittedRelationshipStatement,
 	ctx context.Context,
 	expr string,
 	lowerExpr string,
@@ -21,14 +21,14 @@ func (e *StorageExecutor) evaluateKnowledgePolicyFunction(
 	rels map[string]*storage.Edge,
 ) (interface{}, bool) {
 	if matchFuncStartAndSuffix(expr, "decayScore") || matchFuncStartAndSuffix(expr, "decayscore") {
-		return e.evalDecayScore(ctx, expr, nodes, rels), true
+		return e.evalDecayScore(admission, ctx, expr, nodes, rels), true
 	}
 	if matchFuncStartAndSuffix(expr, "decay") {
 		inner := extractFuncArgs(expr, "decay")
 		if inner == "" {
 			return nil, false
 		}
-		return e.evalDecay(ctx, expr, nodes, rels), true
+		return e.evalDecay(admission, ctx, expr, nodes, rels), true
 	}
 	if matchFuncStartAndSuffix(expr, "policy") {
 		return e.evalPolicy(ctx, expr, nodes, rels), true
@@ -107,7 +107,7 @@ func (e *StorageExecutor) logDecayMismatchOnce() {
 }
 
 // evalDecayScore implements decayScore(entity) and decayScore(entity, {property: "key"}).
-func (e *StorageExecutor) evalDecayScore(
+func (e *StorageExecutor) evalDecayScore(admission admittedRelationshipStatement,
 	ctx context.Context,
 	expr string,
 	nodes map[string]*storage.Node,
@@ -150,7 +150,7 @@ func (e *StorageExecutor) evalDecayScore(
 	var property string
 	if len(args) >= 2 {
 		var err error
-		property, err = validateDecayOptions(ctx, args[1], nodes, rels, e)
+		property, err = validateDecayOptions(admission, ctx, args[1], nodes, rels, e)
 		if err != nil {
 			return nil
 		}
@@ -160,7 +160,7 @@ func (e *StorageExecutor) evalDecayScore(
 }
 
 // evalDecay implements decay(entity) and decay(entity, {property: "key"}).
-func (e *StorageExecutor) evalDecay(
+func (e *StorageExecutor) evalDecay(admission admittedRelationshipStatement,
 	ctx context.Context,
 	expr string,
 	nodes map[string]*storage.Node,
@@ -200,7 +200,7 @@ func (e *StorageExecutor) evalDecay(
 	var property string
 	if len(args) >= 2 {
 		var err error
-		property, err = validateDecayOptions(ctx, args[1], nodes, rels, e)
+		property, err = validateDecayOptions(admission, ctx, args[1], nodes, rels, e)
 		if err != nil {
 			return nil
 		}
@@ -298,14 +298,14 @@ func minimalPolicyMap(entityID string) map[string]interface{} {
 
 // validateDecayOptions parses the second argument to decayScore/decay as a
 // map literal and extracts the "property" key. Returns an error for unknown keys.
-func validateDecayOptions(
+func validateDecayOptions(admission admittedRelationshipStatement,
 	ctx context.Context,
 	optExpr string,
 	nodes map[string]*storage.Node,
 	rels map[string]*storage.Edge,
 	e *StorageExecutor,
 ) (string, error) {
-	val := e.evaluateExpressionWithContext(ctx, optExpr, nodes, rels)
+	val := e.evaluateExpressionWithContext(admission, ctx, optExpr, nodes, rels)
 	m, ok := val.(map[string]interface{})
 	if !ok {
 		return "", localizedError(localization.CypherKnowledgePolicyDecayOptionsMapRequired(fmt.Sprintf("%T", val)), nil)

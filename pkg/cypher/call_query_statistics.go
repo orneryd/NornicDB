@@ -124,7 +124,7 @@ func (collector *queryStatisticsCollector) record(generation uint64, query strin
 	record.invocations = append(invocations, queryStatisticsInvocation{elapsedUs: elapsed, startMillis: started.UnixMilli()})
 }
 
-func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string, arguments []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callQueryStatistics(admission admittedRelationshipStatement, ctx context.Context, action string, arguments []interface{}) (*ExecuteResult, error) {
 	collector := e.queryStatistics
 	if collector == nil {
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "StatisticsUnavailable", "query statistics collector is unavailable")
@@ -146,7 +146,7 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 		var valid bool
 		configuration, valid = toStringAnyMap(arguments[1])
 		if expression, raw := arguments[1].(string); raw {
-			configuration, valid = toStringAnyMap(e.evaluateExpressionWithContext(ctx, expression, nil, nil))
+			configuration, valid = toStringAnyMap(e.evaluateExpressionWithContext(admission, ctx, expression, nil, nil))
 		}
 		if !valid {
 			return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "statistics configuration must be a MAP")
@@ -154,7 +154,7 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 	}
 	if section != "QUERIES" {
 		if action == "retrieve" && (section == "GRAPH COUNTS" || section == "TOKENS" || section == "META" || section == "ALL") {
-			return e.retrieveGraphStatistics(ctx, section)
+			return e.retrieveGraphStatistics(admission, ctx, section)
 		}
 		message := fmt.Sprintf("Unknown section '%s', known sections are [GRAPH COUNTS, TOKENS, QUERIES]", section)
 		if section == "GRAPH COUNTS" || section == "TOKENS" {
@@ -245,7 +245,8 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 	return result, nil
 }
 
-func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section string) (*ExecuteResult, error) {
+func (run relationshipEntityExecution) retrieveGraphStatistics(admission admittedRelationshipStatement, ctx context.Context, section string) (*ExecuteResult, error) {
+	e := run.executor
 	store := e.getStorage(ctx)
 	nodes, err := store.AllNodes()
 	if err != nil {
@@ -287,7 +288,7 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 			edgeRows = append(edgeRows, map[string]interface{}{"relationshipType": relationship, "count": typeCounts[relationship]})
 		}
 		scoped := e.cloneWithStorage(store)
-		constraints, err := scoped.executeShowConstraints(ctx, "SHOW CONSTRAINTS YIELD *")
+		constraints, err := scoped.executeShowConstraints(admission, ctx, "SHOW CONSTRAINTS YIELD *")
 		if err != nil {
 			return nil, err
 		}
@@ -312,11 +313,15 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 		}})
 	}
 	if section == "ALL" {
-		queries, err := e.callQueryStatistics(ctx, "retrieve", []interface{}{"QUERIES"})
+		queries, err := e.callQueryStatistics(admission, ctx, "retrieve", []interface{}{"QUERIES"})
 		if err != nil {
 			return nil, err
 		}
 		result.Rows = append(result.Rows, queries.Rows...)
 	}
 	return result, nil
+}
+
+func (e *StorageExecutor) retrieveGraphStatistics(admission admittedRelationshipStatement, ctx context.Context, section string) (*ExecuteResult, error) {
+	return e.relationshipEntityExecution().retrieveGraphStatistics(admission, ctx, section)
 }

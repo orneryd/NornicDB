@@ -48,7 +48,8 @@ func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interf
 // helps, then merges each community into one node; levels repeat until a
 // level moves nothing (louvain.Run, louvain.DefaultOptions). Communities are
 // numbered by their first node.
-func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string) map[storage.NodeID]int {
+func (run relationshipEntityExecution) computeLouvain(nodes []*storage.Node, weightProp string) map[storage.NodeID]int {
+	e := run.executor
 	if len(nodes) == 0 {
 		return map[storage.NodeID]int{}
 	}
@@ -266,4 +267,8 @@ func (e *StorageExecutor) computeWCC(nodes []*storage.Node) map[storage.NodeID]i
 	}
 
 	return result
+}
+
+func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp string) map[storage.NodeID]int {
+	return e.relationshipEntityExecution().computeLouvain(nodes, weightProp)
 }

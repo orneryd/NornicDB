@@ -35,7 +35,9 @@ func TestWithListSubscriptPreservesNodeProjection(t *testing.T) {
 		RETURN w2.name AS name
 	`
 
-	outcome := exec.executePipeline(ctx, query)
+	fixtureAdmission934Context, fixtureAdmission934 := statementTestContext(ctx, query)
+	_ = fixtureAdmission934
+	outcome := exec.executePipeline(fixtureAdmission934, fixtureAdmission934Context, query)
 	require.NoError(t, outcome.err)
 	require.True(t, outcome.handled())
 	require.Equal(t, []string{"name"}, outcome.result.Columns)

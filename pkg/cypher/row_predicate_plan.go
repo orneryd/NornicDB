@@ -601,18 +601,18 @@ func (memberships *compiledRowMemberships) find(part *rowPredicatePart) *compile
 	return nil
 }
 
-func (e *StorageExecutor) evaluateRowPredicatePlan(ctx context.Context, plan *rowPredicatePlan, values map[string]interface{}) bool {
-	return e.evaluateRowPredicatePart(ctx, &plan.root, values)
+func (e *StorageExecutor) evaluateRowPredicatePlan(admission admittedRelationshipStatement, ctx context.Context, plan *rowPredicatePlan, values map[string]interface{}) bool {
+	return e.evaluateRowPredicatePart(admission, ctx, &plan.root, values)
 }
 
-func (e *StorageExecutor) evaluateRowPredicatePart(ctx context.Context, part *rowPredicatePart, values map[string]interface{}) bool {
-	return e.evaluateRowPredicatePartScope(ctx, part, compiledRowScope{values: values}, nil)
+func (e *StorageExecutor) evaluateRowPredicatePart(admission admittedRelationshipStatement, ctx context.Context, part *rowPredicatePart, values map[string]interface{}) bool {
+	return e.evaluateRowPredicatePartScope(admission, ctx, part, compiledRowScope{values: values}, nil)
 }
 
 // evaluateRowPredicatePartScope reads the plan's value as a WHERE predicate.
 // Values and errors stay explicit inside a junction until its logical fold decides.
-func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) bool {
-	value, err := e.rowPredicatePartValue(ctx, part, scope, memberships)
+func (e *StorageExecutor) evaluateRowPredicatePartScope(admission admittedRelationshipStatement, ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) bool {
+	value, err := e.rowPredicatePartValue(admission, ctx, part, scope, memberships)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false
@@ -620,12 +620,12 @@ func (e *StorageExecutor) evaluateRowPredicatePartScope(ctx context.Context, par
 	return predicateValueHolds(ctx, value, false)
 }
 
-func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) (interface{}, error) {
+func (e *StorageExecutor) rowPredicatePartValue(admission admittedRelationshipStatement, ctx context.Context, part *rowPredicatePart, scope compiledRowScope, memberships *compiledRowMemberships) (interface{}, error) {
 	scope.executor = e
 	textValue := func() (interface{}, error) {
 		value, _, err := deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
 			values := rowValuesInExpressionContext(ctx, scope.materialize())
-			value, ok, err := e.evaluateRowValue(part.text, values)
+			value, ok, err := e.evaluateRowValue(admission, part.text, values)
 			if err != nil {
 				recordExpressionFailure(ctx, err)
 				return nil
@@ -633,14 +633,14 @@ func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPr
 			if ok {
 				return value
 			}
-			return e.evaluateRowPredicateText(ctx, part.text, values)
+			return e.evaluateRowPredicateText(admission, ctx, part.text, values)
 		})
 		return value, err
 	}
 	switch part.kind {
 	case rowPredicateAnd, rowPredicateOr:
 		value, _, err := evaluateLogicalOperands(len(part.parts), part.kind == rowPredicateOr, func(i int) (interface{}, bool, error) {
-			value, err := e.rowPredicatePartValue(ctx, &part.parts[i], scope, memberships)
+			value, err := e.rowPredicatePartValue(admission, ctx, &part.parts[i], scope, memberships)
 			return value, true, err
 		})
 		return value, err

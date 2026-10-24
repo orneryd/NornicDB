@@ -448,9 +448,13 @@ WITH rel LIMIT 1`, "rel")
 	whereIdx := lastKeywordIndexBefore(pseudo, "WHERE", returnIdx)
 	clauses := splitMatchClauses(pseudo, whereIdx, returnIdx)
 	require.Len(t, clauses, 2)
-	sourcePattern := parsedTestValue(exec.parseNodePattern(context.Background(), clauses[0]))
+	fixtureAdmission1666Context, fixtureAdmission1666 := nodePatternTestContext(context.Background(), clauses[0])
+	_ = fixtureAdmission1666Context
+	sourcePattern := parsedTestValue(exec.parseNodePattern(fixtureAdmission1666, fixtureAdmission1666Context, clauses[0]))
 	require.Equal(t, "source_repo", sourcePattern.variable)
-	relMatch := exec.parseTraversalPattern(context.Background(), clauses[1])
+	fixtureAdmission716Context, fixtureAdmission716 := traversalTestContext(context.Background(), clauses[1], "", nil)
+	_ = fixtureAdmission716
+	relMatch := exec.parseTraversalPattern(fixtureAdmission716, fixtureAdmission716Context, clauses[1])
 	require.NotNil(t, relMatch)
 	require.Equal(t, "source_repo", relMatch.StartNode.variable)
 	require.Equal(t, "rel", relMatch.Relationship.Variable)
@@ -481,7 +485,9 @@ MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'
 DELETE rel
 `
-	result, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, `
+	fixtureAdmission940Context, fixtureAdmission940 := statementTestContext(ctx, cypher)
+	_ = fixtureAdmission940Context
+	result, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission940, fixtureAdmission940Context, `
 MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'
@@ -514,7 +520,8 @@ func TestMatchPatternProperty_BoundRelationshipDeleteTransactionSourceUsesIndex(
 			"id": "repository:source",
 		},
 	}
-	sources, err := exec.collectBoundRelationshipDeleteSources(ctx, sourcePattern, true)
+	sourceContext, sourceStatement := nodePatternTestContext(withQueryParams(ctx, map[string]interface{}{"fixtureSourceID": sourcePattern.properties["id"]}), "(source_repo:Repository {id:$fixtureSourceID})")
+	sources, err := exec.collectBoundRelationshipDeleteSources(sourceStatement, sourceContext, sourcePattern, true)
 	require.NoError(t, err)
 	require.Len(t, sources, 1)
 	require.Equal(t, "repository:source", sources[0].Properties["id"])
@@ -555,7 +562,8 @@ func TestMatchPatternProperty_BoundRelationshipDeleteTransactionSourceKeepsPendi
 			"id": "repository:pending-source",
 		},
 	}
-	sources, err := txExec.collectBoundRelationshipDeleteSources(txCtx, sourcePattern, true)
+	sourceContext, sourceStatement := nodePatternTestContext(withQueryParams(txCtx, map[string]interface{}{"fixtureSourceID": sourcePattern.properties["id"]}), "(source_repo:Repository {id:$fixtureSourceID})")
+	sources, err := txExec.collectBoundRelationshipDeleteSources(sourceStatement, sourceContext, sourcePattern, true)
 	require.NoError(t, err)
 	require.Len(t, sources, 1)
 	require.Equal(t, "repository:pending-source", sources[0].Properties["id"])
@@ -585,10 +593,11 @@ func BenchmarkMatchPatternProperty_BoundRelationshipDeleteTransactionSourceLooku
 				},
 			}
 
+			sourceContext, sourceStatement := nodePatternTestContext(withQueryParams(ctx, map[string]interface{}{"fixtureSourceID": sourcePattern.properties["id"]}), "(source_repo:Repository {id:$fixtureSourceID})")
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				sources, err := exec.collectBoundRelationshipDeleteSources(ctx, sourcePattern, true)
+				sources, err := exec.collectBoundRelationshipDeleteSources(sourceStatement, sourceContext, sourcePattern, true)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -621,7 +630,9 @@ CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target
 		require.NoError(t, err)
 	}
 
-	result, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, `
+	fixtureAdmission1323Context, fixtureAdmission1323 := statementTestContext(ctx, "")
+	_ = fixtureAdmission1323Context
+	result, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission1323, fixtureAdmission1323Context, `
 MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPENDS_ON|DEPLOYS_FROM|USES_MODULE]->(:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'
@@ -749,7 +760,9 @@ CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target
 	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
 	txExec := exec.cloneWithStorage(txWrapper)
 
-	result, ok, err := txExec.tryExecuteBoundRelationshipDelete(txCtx, `
+	fixtureAdmission1324Context, fixtureAdmission1324 := statementTestContext(txCtx, "")
+	_ = fixtureAdmission1324Context
+	result, ok, err := txExec.tryExecuteBoundRelationshipDelete(fixtureAdmission1324, fixtureAdmission1324Context, `
 MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'
@@ -843,7 +856,9 @@ MATCH (source_repo)-[rel:DEPENDS_ON|DEPLOYS_FROM|USES_MODULE]->(:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'
 DELETE rel
 `
-	result, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx,
+	fixtureAdmission941Context, fixtureAdmission941 := statementTestContext(ctx, cypher)
+	_ = fixtureAdmission941Context
+	result, ok, err := exec.tryExecuteBoundRelationshipDelete(fixtureAdmission941, fixtureAdmission941Context,
 		`MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPENDS_ON|DEPLOYS_FROM|USES_MODULE]->(:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'`,
