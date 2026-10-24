@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
@@ -31,7 +32,7 @@ func TestBoltWriteProcedureStatementRollback(t *testing.T) {
 	}, func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
 		return nil, failure
 	}))
-	base, err := storage.NewBadgerEngine(t.TempDir())
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "u5_wire")

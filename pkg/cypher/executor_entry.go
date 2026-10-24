@@ -530,10 +530,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			if ftx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
 				result, execErr = e.executeViaPreparedFabricWithTx(ctx, cypher, mergedParams, ftx, false, preparedFabric)
 			} else {
-				result, execErr = e.executeViaFabric(ctx, cypher, mergedParams)
+				result, execErr = e.executeViaFabric(ctx, cypher, mergedParams, nil, true)
 			}
 		} else {
-			result, execErr = e.executeViaFabric(ctx, cypher, mergedParams)
+			result, execErr = e.executeViaFabric(ctx, cypher, mergedParams, nil, true)
 		}
 		if execErr != nil {
 			return nil, execErr

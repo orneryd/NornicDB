@@ -47,7 +47,7 @@ func TestRemoteDynamicHTTPModePreservesStandardUpdateCounters(t *testing.T) {
 			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
 			require.Empty(t, result.Errors)
 			require.Len(t, result.Results, 1)
-			require.Equal(t, tc.mode, result.Results[0].Stats.QueryType)
+			require.Equal(t, tc.mode, result.Results[0].QueryType)
 			native, err := server.db.GetCypherExecutor().Execute(context.Background(), query, map[string]interface{}{"body": tc.body})
 			require.NoError(t, err)
 			expected := queryStatsFromResult(native)
@@ -63,7 +63,9 @@ func TestRemoteHTTPModeLeavesCountersIndependent(t *testing.T) {
 		for _, created := range []int{0, 1} {
 			result := &cypher.ExecuteResult{Metadata: map[string]interface{}{"resolved_query_type": mode}, Stats: &cypher.QueryStats{NodesCreated: created}}
 			stats := queryStatsFromResult(result)
-			require.Equal(t, mode, stats.QueryType)
+			var response TransactionResponse
+			(&Server{}).appendStatementResult(&response, result, "nornic", true)
+			require.Equal(t, mode, response.Results[0].QueryType)
 			require.Equal(t, created > 0, stats.ContainsUpdates)
 			require.Equal(t, created, stats.NodesCreated)
 		}

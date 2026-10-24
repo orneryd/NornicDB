@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -10,7 +11,7 @@ import (
 func BenchmarkWriteProcedureAtomicity(b *testing.B) {
 	for _, route := range []string{"registered", "apoc", "dynamicWrite", "dynamicRead"} {
 		b.Run(route, func(b *testing.B) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			b.Cleanup(func() { _ = base.Close() })
 			exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(base, "u5_bench"), 0, 0)
 			ctx := context.Background()

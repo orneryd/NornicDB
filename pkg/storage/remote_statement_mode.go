@@ -9,9 +9,8 @@ const (
 )
 
 type remoteQueryStats struct {
-	ContainsUpdates       *bool  `json:"contains_updates"`
-	ContainsSystemUpdates *bool  `json:"contains_system_updates"`
-	QueryType             string `json:"query_type"`
+	ContainsUpdates       *bool `json:"contains_updates"`
+	ContainsSystemUpdates *bool `json:"contains_system_updates"`
 }
 
 func remoteQueryTypeMode(queryType string) int32 {
@@ -28,14 +27,14 @@ func remoteQueryTypeMode(queryType string) int32 {
 // READ: a WRITE callback can return no counters. HTTP has no standard query-
 // type field; our optional owner-produced mode supplies that missing evidence.
 // Older/foreign responses without it remain unknown and fail safe at admission.
-func remoteHTTPQueryMode(stats *remoteQueryStats) int32 {
+func remoteHTTPQueryMode(stats *remoteQueryStats, queryType string) int32 {
 	if stats == nil {
-		return remoteModeUnknown
+		return remoteQueryTypeMode(queryType)
 	}
 	if stats.ContainsUpdates != nil && *stats.ContainsUpdates || stats.ContainsSystemUpdates != nil && *stats.ContainsSystemUpdates {
 		return remoteModeWrite
 	}
-	return remoteQueryTypeMode(stats.QueryType)
+	return remoteQueryTypeMode(queryType)
 }
 
 func remoteBoltQueryMode(summary neo4j.ResultSummary) int32 {

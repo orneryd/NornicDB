@@ -6,7 +6,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
-	"github.com/orneryd/nornicdb/pkg/txphase"
 )
 
 // A Fabric coordinator cannot undo independently committed batches. Reject
@@ -47,11 +46,17 @@ func (e *StorageExecutor) executePeriodicBatch(ctx context.Context, procedure st
 	}
 	batch := e.cloneForStorage(store)
 	batch.txContext = nil
-	ctx = periodicBatchContext{Context: txphase.Statements(ctx)}
+	ctx = periodicBatchContext{Context: ctx}
 	ctx = context.WithValue(ctx, expressionFailureKey{}, &expressionFailure{})
 	ctx = context.WithValue(ctx, expressionOperandFailureKey{}, &expressionFailure{})
 	result, err := batch.executeWithImplicitTransactionCallback(ctx, "CALL "+procedure, "CALL "+procedure, run)
 	if err != nil {
+		// A fatal expression error belongs to the enclosing statement too.
+		// Independent batch isolation must not turn arithmetic/type failures
+		// into a successful outer HTTP/Bolt summary.
+		if failure := getExpressionFailure(ctx); failure != nil {
+			recordExpressionFailure(callerContext, failure)
+		}
 		return result, err
 	}
 	// The implicit wrapper is still the same rollback owner. Its staged outer

@@ -501,7 +501,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		// enforced across statements within the same explicit transaction.
 		params := getParamsFromContext(ctx)
 		if e.shouldUseFabricPlanner(cypher) {
-			return e.executeViaFabricWithTx(ctx, cypher, params, ftx, false)
+			return e.executeViaFabric(ctx, cypher, params, ftx, false)
 		}
 		// Non-fabric-shaped queries still run on the scoped engine in explicit tx session.
 		return e.executeWithoutTransaction(ctx, cypher, upperQuery)
@@ -579,6 +579,7 @@ func (e *StorageExecutor) transactionStorageFor(tx *storage.BadgerTransaction) *
 		tx: tx, underlying: e.storage, namespace: engines.namespace, separator: separator,
 		mutatedNodeIDs: make(map[string]struct{}),
 	}
+	wrapper.initNamespacePrefix()
 	e.txContext.storageWrapper = wrapper
 	return wrapper
 }

@@ -460,9 +460,10 @@ type remoteTxRequest struct {
 
 type remoteTxResponse struct {
 	Results []struct {
-		Columns []string          `json:"columns"`
-		Stats   *remoteQueryStats `json:"stats"`
-		Data    []struct {
+		Columns   []string          `json:"columns"`
+		Stats     *remoteQueryStats `json:"stats"`
+		QueryType string            `json:"query_type"`
+		Data      []struct {
 			RawRow []json.RawMessage `json:"row"`
 			Row    []interface{}     `json:"-"`
 			Meta   []interface{}     `json:"meta"`
@@ -705,7 +706,7 @@ func (t *httpCypherTx) QueryCypher(ctx context.Context, statement string, params
 		return []string{}, [][]interface{}{}, nil
 	}
 	result := txResp.Results[0]
-	t.resolvedMode.Store(remoteHTTPQueryMode(result.Stats))
+	t.resolvedMode.Store(remoteHTTPQueryMode(result.Stats, result.QueryType))
 	rows := make([][]interface{}, 0, len(result.Data))
 	for _, data := range result.Data {
 		rows = append(rows, data.Row)

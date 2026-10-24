@@ -68,12 +68,10 @@ func (e *StorageExecutor) useTargetRequiresFabric(target string) bool {
 	return false
 }
 
-func (e *StorageExecutor) executeViaFabric(ctx context.Context, cypher string, params map[string]interface{}) (*ExecuteResult, error) {
-	tx := fabric.NewFabricTransaction(fmt.Sprintf("fab-%d", time.Now().UnixNano()))
-	return e.executeViaFabricWithTx(ctx, cypher, params, tx, true)
-}
-
-func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, autoCommit bool) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeViaFabric(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, autoCommit bool) (*ExecuteResult, error) {
+	if tx == nil {
+		tx = fabric.NewFabricTransaction(fmt.Sprintf("fab-%d", time.Now().UnixNano()))
+	}
 	prepared, err := e.preparedFabricFromContext(ctx)
 	if err != nil {
 		return nil, err
@@ -88,6 +86,9 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 }
 
 func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, autoCommit bool, prepared *fabricPreparedExec) (*ExecuteResult, error) {
+	if prepared == nil {
+		return nil, localizedError(localization.CypherCommandRoutingFabricNotPrepared(), nil)
+	}
 	contract, err := readStatementExecutionContract(cypher)
 	if err != nil {
 		return nil, err
@@ -96,9 +97,6 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	if err != nil {
 		return nil, err
 	}
-	if prepared == nil {
-		return nil, localizedError(localization.CypherCommandRoutingFabricNotPrepared(), nil)
-	}
 	if hasCallInTransactions(cypher) {
 		return nil, transactionalCallContextError("transactional CALL on composite targets is not supported")
 	}
@@ -106,9 +104,10 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 
 	authToken := GetAuthTokenFromContext(ctx)
 	localExec := fabric.NewLocalFragmentExecutor(&cypherFabricExecutor{
-		base:       e,
-		authToken:  authToken,
-		autoCommit: autoCommit,
+		base:        e,
+		authToken:   authToken,
+		autoCommit:  autoCommit,
+		transaction: tx,
 	}, func(dbName string) (storage.Engine, error) {
 		if e.dbManager != nil {
 			engineIface, err := e.dbManager.GetStorageForUse(dbName, authToken)
@@ -678,9 +677,11 @@ func mapString(m map[string]interface{}, key string) string {
 }
 
 type cypherFabricExecutor struct {
-	base       *StorageExecutor
-	authToken  string
-	autoCommit bool
+	base            *StorageExecutor
+	authToken       string
+	autoCommit      bool
+	transaction     *fabric.FabricTransaction
+	localDispatchMu sync.Mutex
 
 	mu sync.Mutex
 	// localTxExecBySub holds the sub-transaction executors of a statement
@@ -894,23 +895,14 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 		_, err := txExec.Execute(terminalCtx, "ROLLBACK", nil)
 		return err
 	}
-	if err := c.bindCallbacksOnce(sub, commitFn, rollbackFn); err != nil {
-		return nil, err
+	if tx := c.fabricTransaction(); tx != nil {
+		if err := tx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn); err != nil {
+			return nil, err
+		}
 	}
 
 	executors[sub.ShardName] = txExec
 	return txExec, nil
-}
-
-func (c *cypherFabricExecutor) bindCallbacksOnce(sub *fabric.SubTransaction, commitFn fabric.CommitCallback, rollbackFn fabric.RollbackCallback) error {
-	if c.base == nil || c.base.txContext == nil {
-		return nil
-	}
-	tx, ok := c.base.txContext.tx.(*fabric.FabricTransaction)
-	if !ok || tx == nil {
-		return nil
-	}
-	return tx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn)
 }
 
 // evaluateGraphArguments evaluates a dynamic graph reference's arguments
@@ -967,4 +959,15 @@ func (e *cypherFabricExecutor) CachedResultColumns(ctx context.Context, query st
 
 func (e *cypherFabricExecutor) ResultProjection(query string, incoming []string) resultmetadata.Projection {
 	return e.base.ResultProjection(query, incoming)
+}
+
+func (c *cypherFabricExecutor) fabricTransaction() *fabric.FabricTransaction {
+	if c.transaction != nil {
+		return c.transaction
+	}
+	if c.base != nil && c.base.txContext != nil {
+		tx, _ := c.base.txContext.tx.(*fabric.FabricTransaction)
+		return tx
+	}
+	return nil
 }

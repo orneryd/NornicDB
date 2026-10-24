@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -10,7 +11,7 @@ import (
 )
 
 func TestRemoteDynamicModeUsesBoltSuccessType(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	manager := &mockDBManager{stores: map[string]storage.Engine{"nornic": storage.NewNamespacedEngine(base, "nornic")}, defaultDB: "nornic"}
 	server := NewWithDatabaseManager(&Config{Port: 0, MaxConnections: 8, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
@@ -42,7 +43,7 @@ func TestRemoteDynamicModeUsesBoltSuccessType(t *testing.T) {
 }
 
 func TestRemotePeriodicCoordinatorMetadataBolt(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	manager := &mockDBManager{stores: map[string]storage.Engine{"nornic": store}, defaultDB: "nornic"}

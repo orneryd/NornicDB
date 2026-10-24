@@ -34,7 +34,7 @@ type FabricExecutor struct {
 
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
-	remoteModeUncertain func(string) bool
+	remoteModeUncertain    func(string) bool
 	union                  UnionContract
 	resultColumns          resultmetadata.Provider
 	codec                  RemoteValueCodec
@@ -213,7 +213,9 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 		if err != nil {
 			return nil, 0, err
 		}
-		if e.remoteModeUncertain != nil && e.remoteModeUncertain(f.Query) { ctx = WithUnresolvedRemoteMode(ctx) }
+		if e.remoteModeUncertain != nil && e.remoteModeUncertain(f.Query) {
+			ctx = WithUnresolvedRemoteMode(ctx)
+		}
 		res, err := e.remote.Execute(ctx, l, query, remoteParams, authToken)
 		if err != nil {
 			return nil, 0, err

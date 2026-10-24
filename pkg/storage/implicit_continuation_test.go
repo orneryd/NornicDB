@@ -1,6 +1,7 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,7 +11,7 @@ func TestImplicitContinuationPreservesWritesAndTokens(t *testing.T) {
 	for _, rollback := range []bool{false, true} {
 		t.Run(map[bool]string{false: "commit", true: "rollback"}[rollback], func(t *testing.T) {
 			dir := t.TempDir()
-			engine, err := NewBadgerEngine(dir)
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)
 			tx, err := engine.BeginTransaction()
 			require.NoError(t, err)
@@ -41,7 +42,7 @@ func TestImplicitContinuationPreservesWritesAndTokens(t *testing.T) {
 				require.NoError(t, tx.Commit())
 			}
 			require.NoError(t, engine.Close())
-			engine, err = NewBadgerEngine(dir)
+			engine, err = runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 			require.NoError(t, err)
 			defer engine.Close()
 			batchNode, err := engine.GetNode("continue:batch")
@@ -70,7 +71,7 @@ func TestImplicitContinuationPreservesWritesAndTokens(t *testing.T) {
 func TestImplicitContinuationRetainsConflictChecks(t *testing.T) {
 	for _, beforeResume := range []bool{false, true} {
 		t.Run(map[bool]string{false: "after-resume", true: "before-resume"}[beforeResume], func(t *testing.T) {
-			engine := NewMemoryEngine()
+			engine := runtimeFixtureOwner.Track(t, NewMemoryEngine(), ErrStorageClosed)
 			defer engine.Close()
 			_, err := engine.CreateNode(&Node{ID: "continue:same", Properties: map[string]interface{}{"value": int64(0)}})
 			require.NoError(t, err)

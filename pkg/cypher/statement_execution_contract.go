@@ -1,6 +1,10 @@
 package cypher
 
-import "github.com/orneryd/nornicdb/pkg/fabric"
+import (
+	"context"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"github.com/orneryd/nornicdb/pkg/fabric"
+)
 
 // Statement execution modes come only from grammar-owned clauses and the live
 // procedure registry. QueryInfo's substring hints belong to cache optimization;
@@ -10,27 +14,34 @@ type statementExecutionContract struct {
 }
 
 func readStatementExecutionContract(query string) (statementExecutionContract, error) {
-	structure := fabric.ReadQueryStructure(query)
-	if structure.Err != nil {
-		return statementExecutionContract{}, structure.Err
-	}
-	if structure.First("EXPLAIN") != nil {
+	mode, body := parseExecutionMode(query)
+	if mode == ModeExplain {
 		return statementExecutionContract{}, nil
 	}
-	contract := statementExecutionContract{writes: structure.Writes(), transaction: structure.Writes()}
-	var visit func(*fabric.QueryStructure)
-	visit = func(scope *fabric.QueryStructure) {
-		for _, clause := range scope.Clauses {
-			if clause.Nested != nil {
-				visit(clause.Nested)
-			}
-			if clause.Kind != "CALL" || clause.Nested != nil {
-				continue
-			}
+	if isNornicExtensionStatement(body) || isSchemaCommandStatement(body) || bareTransactionCommand(body) != "" {
+		return statementExecutionContract{}, nil
+	}
+	if fabric.IsAdministrationCommand(body) {
+		// Administration keeps its existing routing and error owner. CREATE
+		// commands not handled by the system router retain the implicit
+		// wrapper used before procedure admission was introduced.
+		writes := startsWithKeywordFold(body, "CREATE")
+		return statementExecutionContract{writes: writes, transaction: writes}, nil
+	}
+	structure, err := cypherantlr.ParseSyntax(context.Background(), body, cypherantlr.FragmentEntry, false)
+	if err != nil {
+		return statementExecutionContract{}, syntaxAdmissionError(body, err)
+	}
+	contract := statementExecutionContract{}
+	structure.Walk(func(node cypherantlr.SyntaxNode) func() {
+		switch node.Rule() {
+		case cypherantlr.CypherParserRULE_updatingStatement:
+			contract.writes, contract.transaction = true, true
+		case cypherantlr.CypherParserRULE_queryCallSt, cypherantlr.CypherParserRULE_standaloneCall:
 			contract.calls = true
 		}
-	}
-	visit(structure)
+		return nil
+	})
 	visitStructuredProcedureCalls(structure, func(spec ProcedureSpec, _ string) bool {
 		// SCHEMA procedures keep their existing schema-transaction owner;
 		// this contract admits registered data WRITE procedures.

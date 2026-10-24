@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -11,7 +12,7 @@ import (
 func BenchmarkFabricProcedureAdmission(b *testing.B) {
 	for _, route := range []string{"read", "create", "registered", "apoc", "dynamicWrite", "dynamicRead"} {
 		b.Run(route, func(b *testing.B) {
-			manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+			manager, err := multidb.NewDatabaseManager(runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed), nil)
 			if err != nil {
 				b.Fatal(err)
 			}
