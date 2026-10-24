@@ -3534,6 +3534,12 @@ func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransac
 // and the pipeline's row wrapper column is resolved after execution.
 func (e *FabricExecutor) mergeUnion(f *FragmentUnion, lhsCols []string, lhs RowIterator, rhsCols []string, rhs RowIterator) ([]string, RowIterator, error) {
 	lhsWrapper, rhsWrapper := isRowWrapperRows(lhs), isRowWrapperRows(rhs)
+	if lhsCols == nil && f.LHS != nil && !lhsWrapper {
+		lhsCols = f.LHS.OutputColumns()
+	}
+	if rhsCols == nil && f.RHS != nil && !rhsWrapper {
+		rhsCols = f.RHS.OutputColumns()
+	}
 	cols, wrapper := f.Columns, false
 	if len(cols) == 0 {
 		cols, wrapper = lhsCols, lhsWrapper
@@ -3541,25 +3547,42 @@ func (e *FabricExecutor) mergeUnion(f *FragmentUnion, lhsCols []string, lhs RowI
 			cols, wrapper = rhsCols, rhsWrapper
 		}
 	}
-	if e.union.ColumnOrder != nil && len(lhsCols) > 0 && len(rhsCols) > 0 && !lhsWrapper && !rhsWrapper {
-		order, sameNames := e.union.ColumnOrder(lhsCols, rhsCols)
-		if !sameNames {
-			_ = lhs.Close()
-			_ = rhs.Close()
-			return nil, nil, e.union.ColumnsError(lhsCols, rhsCols)
+	align := func(branch []string, rows RowIterator) (RowIterator, error) {
+		if e.union.ColumnOrder == nil || branch == nil || lhsWrapper || rhsWrapper {
+			return rows, nil
 		}
-		if order != nil {
-			rhs = NewConvertingRowIterator(rhs, func(row []interface{}) []interface{} {
-				values := make([]interface{}, len(order))
-				for column, position := range order {
-					if position < len(row) {
-						values[column] = row[position]
-					}
+		order, same := e.union.ColumnOrder(cols, branch)
+		if !same {
+			return nil, e.union.ColumnsError(cols, branch)
+		}
+		if order == nil {
+			return rows, nil
+		}
+		return NewConvertingRowIterator(rows, func(row []interface{}) []interface{} {
+			values := make([]interface{}, len(order))
+			for column, position := range order {
+				if position < len(row) {
+					values[column] = row[position]
 				}
-				return values
-			})
-		}
+			}
+			return values
+		}), nil
 	}
+	left, err := align(lhsCols, lhs)
+	var right RowIterator
+	if err == nil {
+		right, err = align(rhsCols, rhs)
+	}
+	if err != nil {
+		if lhs != nil {
+			_ = lhs.Close()
+		}
+		if rhs != nil {
+			_ = rhs.Close()
+		}
+		return nil, nil, err
+	}
+	lhs, rhs = left, right
 	out := NewConcatRowIterator(lhs, rhs)
 	if f.Distinct {
 		distinct := NewDistinctRowIterator(out)
