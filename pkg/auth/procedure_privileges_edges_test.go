@@ -152,7 +152,7 @@ func TestProcedurePrivilegeStoreDeniesWhenUnreadable(t *testing.T) {
 // would leave its grants for a role created later under the same name.
 func TestDeleteRoleKeepsRoleWhenGrantsCannotBeRemoved(t *testing.T) {
 	ctx := context.Background()
-	system := storage.NewNamespacedEngine(runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed), "system")
+	system := storage.NewNamespacedEngine(runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "system")
 	t.Cleanup(func() { _ = system.Close() })
 	engine := &failingPrivilegeEngine{Engine: system}
 	roles := NewRoleStore(engine)
