@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Preserve remote CALL imports, outer bindings and typed Bolt/HTTP values, including exact integer numbers and temporal offsets. Reject invalid scope imports before writes and retain scoped imports across constituent WITH clauses.
 
+- Keep the compile-time type check of nested list comprehensions, quantifiers and reduce linear in their nesting: each
+  local scope types its arguments once, and enclosing scopes no longer type arguments that read its variables.
+  Deeply nested reads in new explicit transactions no longer spend seconds in validation.
+
 - Keep transactional CALL batches independent while rolling back ordinary outer writes; preserve CREATE read phases, list element admission, and pagination opening order.
 
 - Keep transaction adjacency reads local to incident pending relationships and reuse bounded snapshot equality candidates for row MERGE. Reuse newly created edge bodies during same-transaction cascades instead of repeatedly sorting pending Badger writes.

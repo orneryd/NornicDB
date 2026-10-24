@@ -9,11 +9,35 @@ import (
 // checkScoped types text in a local scope (a list or pattern
 // comprehension's, reduce's): the function signatures the statement's
 // visitor leaves to the scope that binds their variables, then its operand.
+//
+// Both passes read the scope's texts through the scope's own results
+// (checked), so an argument the signature check types is not typed again by
+// the operator check, nor its nested scopes.
 func (checker staticOperatorChecker) checkScoped(text string) (staticOperand, error) {
-	if err := validateStaticFunctionVariables(text, checker.scope); err != nil {
+	if checker.checked == nil {
+		checker.checked = make(map[string]staticCheckResult)
+	}
+	// The signature check types without parameter values (operandOf).
+	typer := staticOperatorChecker{scope: checker.scope, checked: checker.checked}
+	if checker.params != nil {
+		typer.checked = make(map[string]staticCheckResult)
+	}
+	if err := validateStaticFunctionVariablesTyped(text, func() staticTypeScope { return checker.scope }, typer.argumentType); err != nil {
 		return staticOperand{}, err
 	}
 	return checker.check(text)
+}
+
+// argumentType is staticExpressionType through the checker's results.
+func (checker staticOperatorChecker) argumentType(scope staticTypeScope, expression string) string {
+	if len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
+		return propertyAccessExpressionType(expression, scope.values, scope.params)
+	}
+	operand, err := checker.check(expression)
+	if err != nil {
+		return ""
+	}
+	return operand.typeName()
 }
 
 // checkListComprehension validates the source before execution and checks the
@@ -70,6 +94,7 @@ func (checker staticOperatorChecker) checkPatternComprehension(pattern, projecti
 	bindings := make(matchSemanticScope)
 	addMatchPatternBindingKinds(bindings, pattern)
 	nested := checker
+	nested.checked = nil // the pattern's bindings make another scope
 	nested.scope.kinds = maps.Clone(checker.scope.kinds)
 	if nested.scope.kinds == nil {
 		nested.scope.kinds = make(matchSemanticScope)
