@@ -47,7 +47,37 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 	}
 	callees := func(body ast.Node, receiver string) []string {
 		var names []string
+		receivers := map[string]bool{receiver: true}
+		callbacks := map[*ast.FuncLit]bool{}
 		ast.Inspect(body, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			for _, argument := range call.Args {
+				literal, ok := argument.(*ast.FuncLit)
+				if !ok {
+					continue
+				}
+				callbacks[literal] = true
+				for _, field := range literal.Type.Params.List {
+					pointer, ok := field.Type.(*ast.StarExpr)
+					if !ok {
+						continue
+					}
+					if name, ok := pointer.X.(*ast.Ident); ok && name.Name == "StorageExecutor" {
+						for _, name := range field.Names {
+							receivers[name.Name] = true
+						}
+					}
+				}
+			}
+			return true
+		})
+		ast.Inspect(body, func(node ast.Node) bool {
+			if literal, ok := node.(*ast.FuncLit); ok && !callbacks[literal] {
+				return false
+			}
 			call, ok := node.(*ast.CallExpr)
 			if !ok {
 				return true
@@ -57,7 +87,7 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 				return true
 			}
 			object, ok := selector.X.(*ast.Ident)
-			if ok && object.Name == receiver {
+			if ok && receivers[object.Name] {
 				names = append(names, selector.Sel.Name)
 			}
 			return true
@@ -120,7 +150,7 @@ func TestExecutionInputRegistryInventory(t *testing.T) {
 		}
 		// Generic engines consume syntax already present in the outer text.
 		// Do not walk their downstream fanout as a handler dependency.
-		if strings.HasPrefix(name, "evaluate") || strings.HasPrefix(name, "parse") || name == "executeInternal" || name == "executeWithoutTransaction" {
+		if strings.HasPrefix(name, "evaluate") || strings.HasPrefix(name, "parse") || name == "executeInternal" || name == "executeWithoutTransaction" || name == "executeWithImplicitTransactionCallback" || name == "executeWithImplicitTransaction" || name == "executePeriodicBatch" {
 			return false
 		}
 		if minimum, adapter := rawText[name]; adapter && (maxArgs < 0 || maxArgs >= minimum) {

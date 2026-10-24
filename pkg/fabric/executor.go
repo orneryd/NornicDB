@@ -34,6 +34,7 @@ type FabricExecutor struct {
 
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
+	remoteModeUncertain    func(string) bool
 	union                  UnionContract
 	resultColumns          resultmetadata.Provider
 	codec                  RemoteValueCodec
@@ -211,6 +212,9 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 		query, remoteParams, scoped, err := e.remoteImportStatement(f, params, recordBindings)
 		if err != nil {
 			return nil, 0, err
+		}
+		if e.remoteModeUncertain != nil && e.remoteModeUncertain(f.Query) {
+			ctx = WithUnresolvedRemoteMode(ctx)
 		}
 		res, err := e.remote.Execute(ctx, l, query, remoteParams, authToken)
 		if err != nil {
@@ -3467,7 +3471,7 @@ func (e *FabricExecutor) executeUnion(ctx context.Context, tx *FabricTransaction
 func (e *FabricExecutor) executeUnionRows(ctx context.Context, tx *FabricTransaction, f *FragmentUnion, params map[string]interface{}, authToken string) ([]string, RowIterator, error) {
 	// Keep write branch execution sequential so shard write-routing remains deterministic.
 	// Read-only UNION branches execute concurrently and are merged in LHS/RHS order.
-	if fragmentContainsWrite(f.LHS) || fragmentContainsWrite(f.RHS) {
+	if e.serializeExec || fragmentContainsWrite(f.LHS) || fragmentContainsWrite(f.RHS) {
 		lhsCols, lhsIt, err := e.executeRows(ctx, tx, f.LHS, params, authToken)
 		if err != nil {
 			return nil, nil, fmt.Errorf("union LHS failed: %w", err)
@@ -3888,4 +3892,10 @@ func (e *FabricExecutor) executionColumnNames(query string, incoming []string) [
 	var columns []string
 	e.executionProjection(query, incoming).Names.Visit(func(names []string) { columns = names }, func() {})
 	return columns
+}
+
+// SetRemoteModeUncertainty marks remote procedure calls whose actual mode must
+// come from their result summary. Missing mode evidence never means READ.
+func (e *FabricExecutor) SetRemoteModeUncertainty(uncertain func(string) bool) {
+	e.remoteModeUncertain = uncertain
 }

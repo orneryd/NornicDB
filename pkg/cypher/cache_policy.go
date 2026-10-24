@@ -2,6 +2,25 @@ package cypher
 
 import "context"
 
+// These conservative hints can over-invalidate caches. Execution admission and
+// resolved statement modes use readStatementExecutionContract instead.
+func (e *StorageExecutor) invalidateResultCacheForQuery(info *QueryInfo) {
+	if info.IsWriteQuery && e.cache != nil {
+		if len(info.Labels) > 0 {
+			e.cache.InvalidateLabels(info.Labels)
+		} else {
+			e.cache.Invalidate()
+		}
+	}
+}
+
+func (e *StorageExecutor) invalidateCachesForQuery(info *QueryInfo, query string) {
+	if info.IsWriteQuery && info.HasDelete && queryDeletesNodes(query) {
+		e.invalidateNodeLookupCache()
+	}
+	e.invalidateResultCacheForQuery(info)
+}
+
 // canUseResultCache combines the one determinism decision with existing cache,
 // transaction and visibility boundaries. Keys retain their typed parameters,
 // database/principal scope, graph/search revisions and embedding generation.

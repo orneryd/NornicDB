@@ -195,6 +195,8 @@ func buildsOnLinux(file *ast.File) bool {
 // derives from. Adding a mutator without a row fails
 // TestStorageMutatorPopulationIsClassified.
 var storageMutatorClassification = map[string]string{
+	"BadgerTransaction.AdvanceImplicitSnapshot":         "advances a read snapshot only; independent child commits publish their own events",
+	"BadgerTransaction.ResumeAfterIndependentCommit":    "advances a read snapshot while retaining pending mutations; only Commit publishes those writes",
 	"BadgerEngine.CreateNode":                           scenarioPublishes,
 	"BadgerEngine.UpdateNode":                           scenarioPublishes,
 	"BadgerEngine.DeleteNode":                           scenarioPublishes,
