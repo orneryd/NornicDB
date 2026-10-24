@@ -44,7 +44,7 @@ type TraversalContext struct {
 	direction        string // "outgoing", "incoming", "both"
 	minHops          int
 	maxHops          int
-	usedEdges        map[storage.EdgeID]bool
+	usedEdges        map[storage.EntityIdentity]bool
 	nodeProperties   []string                         // nil requires full entities; otherwise only demanded fields
 	nodeCache        map[storage.NodeID]*storage.Node // Cache for batch-fetched nodes
 	limit            int                              // OPTIMIZATION: Early termination limit (0 = no limit)
@@ -293,7 +293,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		return result, localizedError(localization.CypherMatchingTraversalPatternInvalid(pattern), nil)
 	}
 	if !matches.IsChained && len(seedNodes) > 0 && len(endSeedNodes) == 1 {
-		matches.boundEndNodeID = endSeedNodes[0].ID
+		matches.boundEndNodeID = storage.NodeID(endSeedNodes[0].IdentityKey())
 	}
 	returnItems = expandTraversalWildcardReturnItems(returnItems, matches, pathVariable)
 	for _, item := range returnItems {
@@ -439,7 +439,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 	if matches.StartNode.variable != "" && matches.StartNode.variable == matches.EndNode.variable {
 		filtered := paths[:0]
 		for _, path := range paths {
-			if len(path.Nodes) > 0 && path.Nodes[0].ID == path.Nodes[len(path.Nodes)-1].ID {
+			if len(path.Nodes) > 0 && path.Nodes[0].Identity() == path.Nodes[len(path.Nodes)-1].Identity() {
 				filtered = append(filtered, path)
 			}
 		}
@@ -1308,12 +1308,20 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 			}
 			switch relationship.Direction {
 			case "outgoing":
-				add(edge.StartNode)
+				if id, ok := edge.StartIdentity().NodeLookupID(store); ok {
+					add(id)
+				}
 			case "incoming":
-				add(edge.EndNode)
+				if id, ok := edge.EndIdentity().NodeLookupID(store); ok {
+					add(id)
+				}
 			default:
-				add(edge.StartNode)
-				add(edge.EndNode)
+				if id, ok := edge.StartIdentity().NodeLookupID(store); ok {
+					add(id)
+				}
+				if id, ok := edge.EndIdentity().NodeLookupID(store); ok {
+					add(id)
+				}
 			}
 		}
 	}
@@ -1410,7 +1418,7 @@ func (e *StorageExecutor) traverseGraphSequential(ctx context.Context, match *Tr
 			direction:                    match.Relationship.Direction,
 			minHops:                      match.Relationship.MinHops,
 			maxHops:                      match.Relationship.MaxHops,
-			usedEdges:                    make(map[storage.EdgeID]bool),
+			usedEdges:                    make(map[storage.EntityIdentity]bool),
 			nodeCache:                    make(map[storage.NodeID]*storage.Node),
 			limit:                        ctxLimit,
 			temporalViewport:             viewport,
@@ -1484,7 +1492,7 @@ func (e *StorageExecutor) traverseGraphParallel(ctx context.Context, match *Trav
 					direction:                    match.Relationship.Direction,
 					minHops:                      match.Relationship.MinHops,
 					maxHops:                      match.Relationship.MaxHops,
-					usedEdges:                    make(map[storage.EdgeID]bool),
+					usedEdges:                    make(map[storage.EntityIdentity]bool),
 					nodeCache:                    make(map[storage.NodeID]*storage.Node),
 					temporalViewport:             viewport,
 					temporalChecker:              checker,
@@ -1670,7 +1678,7 @@ func (repeats chainNodeRepeats) consistent(path PathResult, position int) bool {
 	if repeats == nil || repeats[position] < 0 {
 		return true
 	}
-	return chainPositionNode(path, position).ID == chainPositionNode(path, repeats[position]).ID
+	return chainPositionNode(path, position).Identity() == chainPositionNode(path, repeats[position]).Identity()
 }
 
 func chainPositionNode(path PathResult, position int) *storage.Node {
@@ -1684,7 +1692,7 @@ func chainPositionNode(path PathResult, position int) *storage.Node {
 func pathResultsReuseRelationship(left, right PathResult) bool {
 	for _, leftRelationship := range left.Relationships {
 		for _, rightRelationship := range right.Relationships {
-			if leftRelationship != nil && rightRelationship != nil && leftRelationship.ID == rightRelationship.ID {
+			if leftRelationship != nil && rightRelationship != nil && leftRelationship.Identity() == rightRelationship.Identity() {
 				return true
 			}
 		}
@@ -1744,7 +1752,7 @@ func (e *StorageExecutor) newTraversalContext(traversalCtx context.Context, star
 		direction:     rel.Direction,
 		minHops:       rel.MinHops,
 		maxHops:       rel.MaxHops,
-		usedEdges:     make(map[storage.EdgeID]bool),
+		usedEdges:     make(map[storage.EntityIdentity]bool),
 		nodeCache:     make(map[storage.NodeID]*storage.Node),
 		cancelCtx:     traversalCtx,
 		repeatable:    repeatableElements(traversalCtx),
@@ -1815,7 +1823,7 @@ func (e *StorageExecutor) findPaths(
 	}
 
 	// Check if current path meets minimum length and endpoint requirements
-	if depth >= ctx.minHops && (ctx.endNodeID == "" || currentNode.ID == ctx.endNodeID) {
+	if depth >= ctx.minHops && (ctx.endNodeID == "" || storage.NodeID(currentNode.IdentityKey()) == ctx.endNodeID) {
 		if e.matchesEndPattern(currentNode, endPattern) {
 			// A path the expansion keeps counts against the statement's
 			// memory limit; going over cancels the statement (#1343).
@@ -1841,16 +1849,22 @@ func (e *StorageExecutor) findPaths(
 		return results
 	}
 
+	// Translate the native source once at the storage boundary. Local IDs
+	// alone cannot select adjacency in a composite with duplicate IDs.
+	lookupID, validSource := currentNode.Identity().NodeLookupID(e.storage)
+	if !validSource {
+		return results
+	}
 	// Get edges based on direction
 	var edges []*storage.Edge
 	switch ctx.direction {
 	case "outgoing":
-		edges = e.traversalEdges(ctx, currentNode.ID, true)
+		edges = e.traversalEdges(ctx, lookupID, true)
 	case "incoming":
-		edges = e.traversalEdges(ctx, currentNode.ID, false)
+		edges = e.traversalEdges(ctx, lookupID, false)
 	case "both":
 		var err error
-		edges, err = undirectedIncidentEdges(e.storage, currentNode.ID)
+		edges, err = undirectedIncidentEdges(e.storage, lookupID)
 		if err != nil && ctx.cancelCtx != nil {
 			recordExpressionFailure(ctx.cancelCtx, err)
 			return results
@@ -1865,7 +1879,7 @@ func (e *StorageExecutor) findPaths(
 		// A Cypher path may revisit a node, but it cannot reuse a relationship.
 		// This also prevents an undirected expansion from walking the same edge
 		// immediately back in the opposite direction.
-		if ctx.usedEdges[edge.ID] && !ctx.repeatable {
+		if ctx.usedEdges[edge.Identity()] && !ctx.repeatable {
 			continue
 		}
 		// Check relationship type filter
@@ -1885,11 +1899,13 @@ func (e *StorageExecutor) findPaths(
 		}
 
 		// Get next node
-		var nextNodeID storage.NodeID
-		if ctx.direction == "outgoing" || (ctx.direction == "both" && edge.StartNode == currentNode.ID) {
-			nextNodeID = edge.EndNode
-		} else {
-			nextNodeID = edge.StartNode
+		nextIdentity := edge.StartIdentity()
+		if ctx.direction == "outgoing" || (ctx.direction == "both" && edge.StartIdentity() == currentNode.Identity()) {
+			nextIdentity = edge.EndIdentity()
+		}
+		nextNodeID, validSource := nextIdentity.NodeLookupID(e.storage)
+		if !validSource {
+			continue
 		}
 
 		nextNode, ok := e.loadTraversalEndpointNode(ctx, nextNodeID)
@@ -1897,12 +1913,12 @@ func (e *StorageExecutor) findPaths(
 			continue
 		}
 
-		ctx.usedEdges[edge.ID] = true
+		ctx.usedEdges[edge.Identity()] = true
 
 		// Recurse with optimized path copying (pre-allocate exact size)
 		nextNodesLen, ok := util.SafeIntAdd(len(pathNodes), 1)
 		if !ok {
-			ctx.usedEdges[edge.ID] = false
+			ctx.usedEdges[edge.Identity()] = false
 			continue
 		}
 		newPathNodes := make([]*storage.Node, nextNodesLen)
@@ -1911,7 +1927,7 @@ func (e *StorageExecutor) findPaths(
 
 		nextEdgesLen, ok := util.SafeIntAdd(len(pathEdges), 1)
 		if !ok {
-			ctx.usedEdges[edge.ID] = false
+			ctx.usedEdges[edge.Identity()] = false
 			continue
 		}
 		newPathEdges := make([]*storage.Edge, nextEdgesLen)
@@ -1922,7 +1938,7 @@ func (e *StorageExecutor) findPaths(
 		results = append(results, subPaths...)
 
 		// Unmark for sibling paths.
-		ctx.usedEdges[edge.ID] = false
+		ctx.usedEdges[edge.Identity()] = false
 	}
 
 	return results

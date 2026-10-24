@@ -52,6 +52,7 @@ func evaluateComparisonChain(
 	resolve func(string) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
+	domains ...graphIdentityDomain,
 ) (interface{}, bool, bool, error) {
 	scan, ok := scanComparisonChain(expression)
 	if !ok {
@@ -59,7 +60,7 @@ func evaluateComparisonChain(
 	}
 	value, resolved, err := evaluateScannedComparisonChain(expression, &scan, comparisonChainHasIdentity(expression, &scan), func(_ int, operand string) (interface{}, bool, error) {
 		return resolve(operand)
-	}, compare, cypher25)
+	}, compare, cypher25, domains...)
 	return value, true, resolved, err
 }
 
@@ -86,11 +87,9 @@ func evaluateScannedComparisonChain(
 	resolve func(int, string) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
+	domains ...graphIdentityDomain,
 ) (interface{}, bool, error) {
 	left, leftOK, leftErr := resolve(0, scan.operand(expression, 0))
-	if normalizeIdentity {
-		left = rowIdentityPayload(left)
-	}
 	hasNull, resolved := false, leftOK
 	firstErr := leftErr
 	for index := 0; index < scan.count; index++ {
@@ -101,19 +100,20 @@ func evaluateScannedComparisonChain(
 			firstErr = rightErr
 		}
 		resolved = resolved && rightOK
-		if normalizeIdentity {
-			right = rowIdentityPayload(right)
-		}
 		// A later false discards an earlier error; a decided false never
 		// evaluates the remaining operands. Each operand is evaluated once.
 		if leftOK && rightOK && leftErr == nil && rightErr == nil {
+			comparisonLeft, comparisonRight := left, right
+			if normalizeIdentity {
+				comparisonLeft, comparisonRight = normalizeRowIdentityValues(left, right, domains...)
+			}
 			if left == nil || right == nil {
 				hasNull = true
 			} else {
 				if operator == "!=" {
 					operator = "<>"
 				}
-				leftValue, rightValue := promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), left, right, cypher25)
+				leftValue, rightValue := promoteConstantNumbers(operator, scan.operand(expression, index), scan.operand(expression, index+1), comparisonLeft, comparisonRight, cypher25)
 				comparison := compare(leftValue, rightValue, operator)
 				if comparison == nil {
 					hasNull = true

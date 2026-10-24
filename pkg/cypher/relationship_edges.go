@@ -31,7 +31,7 @@ func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, 
 		if index&bfsCancelCheckMask == 0 && ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		if edge != nil && edge.StartNode == nodeID && edge.EndNode == nodeID {
+		if edge != nil && edge.StartIdentity() == edge.EndIdentity() {
 			continue
 		}
 		edges = append(edges, edge)

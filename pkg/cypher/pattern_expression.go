@@ -451,29 +451,16 @@ func (e *StorageExecutor) evaluateRowEntityIdentity(ctx context.Context, functio
 		if strings.EqualFold(function, "id") {
 			return string(node.ID), true
 		}
-		return storage.NodeElementID(e.entityIdentityDatabase(ctx, node.ID), node.ID), true
+		value, _ := cypherfn.EntityElementID(e.registryFunctionContext(ctx, nil), node)
+		return value, true
 	case edge != nil:
 		if strings.EqualFold(function, "id") {
 			return string(edge.ID), true
 		}
-		return storage.RelationshipElementID(e.entityIdentityDatabase(ctx, storage.NodeID(edge.StartNode)), edge.ID), true
+		value, _ := cypherfn.EntityElementID(e.registryFunctionContext(ctx, nil), edge)
+		return value, true
 	}
 	return nil, false
-}
-
-// entityIdentityDatabase is the database an entity identity should name: the
-// statement's execution database, or — on a composite coordinator — the
-// constituent that actually holds the entity (#745 §3).
-func (e *StorageExecutor) entityIdentityDatabase(ctx context.Context, anchor storage.NodeID) string {
-	db := e.executionDatabaseName(ctx)
-	if e.dbManager != nil && e.dbManager.IsCompositeDatabase(db) {
-		if composite, ok := e.storage.(*storage.CompositeEngine); ok {
-			if constituent := composite.ConstituentDatabaseForNode(anchor); constituent != "" {
-				return constituent
-			}
-		}
-	}
-	return db
 }
 
 // evaluatePatternPredicateValue is the value of a pattern predicate in a

@@ -102,14 +102,15 @@ func (v *statementPropertyViews) node(source *storage.Node) *storage.Node {
 		v.nodes = make(map[*storage.Node]*storage.Node)
 		v.nodeBodies = make(map[storage.NodeID]nodePropertyViewBody)
 	}
-	body, ok := v.nodeBodies[source.ID]
+	identity := storage.NodeID(source.IdentityKey())
+	body, ok := v.nodeBodies[identity]
 	// A wrapper may return a fresh pointer on every index recheck. Reuse only
 	// when its complete scoring input equals our detached snapshot: timestamps
 	// alone are not a body version, and an ID alone is never sufficient.
 	if !ok || !source.CreatedAt.Equal(body.source.CreatedAt) || !source.UpdatedAt.Equal(body.source.UpdatedAt) || !slices.Equal(source.Labels, body.source.Labels) || !reflect.DeepEqual(source.Properties, body.source.Properties) {
-		snapshot := storage.CopyNode(&storage.Node{ID: source.ID, Labels: source.Labels, Properties: source.Properties, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt})
+		snapshot := storage.CopyNode(&storage.Node{ID: source.ID, Database: source.Database, Labels: source.Labels, Properties: source.Properties, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt})
 		body = nodePropertyViewBody{snapshot, v.projection.NodeProperties(source)}
-		v.nodeBodies[source.ID] = body
+		v.nodeBodies[identity] = body
 	}
 	out := *source
 	out.Properties = body.properties
@@ -137,11 +138,12 @@ func (v *statementPropertyViews) edge(source *storage.Edge) *storage.Edge {
 		v.edges = make(map[*storage.Edge]*storage.Edge)
 		v.edgeBodies = make(map[storage.EdgeID]edgePropertyViewBody)
 	}
-	body, ok := v.edgeBodies[source.ID]
+	identity := storage.EdgeID(source.IdentityKey())
+	body, ok := v.edgeBodies[identity]
 	if !ok || source.Type != body.source.Type || !source.CreatedAt.Equal(body.source.CreatedAt) || !source.UpdatedAt.Equal(body.source.UpdatedAt) || !reflect.DeepEqual(source.Properties, body.source.Properties) {
-		snapshot := storage.CopyEdge(&storage.Edge{ID: source.ID, Type: source.Type, Properties: source.Properties, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt})
+		snapshot := storage.CopyEdge(&storage.Edge{ID: source.ID, Database: source.Database, Type: source.Type, Properties: source.Properties, CreatedAt: source.CreatedAt, UpdatedAt: source.UpdatedAt})
 		body = edgePropertyViewBody{snapshot, v.projection.EdgeProperties(source)}
-		v.edgeBodies[source.ID] = body
+		v.edgeBodies[identity] = body
 	}
 	out := *source
 	out.Properties = body.properties

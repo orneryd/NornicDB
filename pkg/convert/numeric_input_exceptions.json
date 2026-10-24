@@ -57,15 +57,15 @@
   },
   "pkg/cypher/call_apoc_path.go:apocNodes": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "e51d6bfc5cad1246c5db53585baa3276b2c5fd8301c591a4405a2e0e5e38b044"
+    "sha256": "97eea6b8125d733d486c7ecdfebcc5829d8f372837c61b307e73cd8eea4386da"
   },
   "pkg/cypher/deleted_entity_projection.go:replace": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "9e29bd92fc994b786edba8bee42e5ac8f015f111ce907a08e867c013baae2e8f"
+    "sha256": "16b048e61e7619c3803b7628a8c1db2914025c8f9af783e02b487bc5e7b11da8"
   },
   "pkg/cypher/deleted_entity_projection.go:holdsDeleted": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "5688233240561f1a16bb36b2933560c02b77620a5af46433d1a64abe0e260aec"
+    "sha256": "5ee9c0ed14082de119efa62e3e208c4a55ac3183d15e48c215cebbbf6be4e886"
   },
   "pkg/cypher/executor_fabric.go:lookupColumnBySourceIDInRows": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
@@ -77,7 +77,7 @@
   },
   "pkg/cypher/executor_mutations_delete_guard.go:collectDeleteTargetValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "7ef43a6fcbb0d48ef6fb87dcb544b98f3a3306c61f8509aa488750153d3fafcb"
+    "sha256": "b3c30a36f59cb2baa25c4b4b9d2ce127df30a90d39025ce9e295ed3657fe5453"
   },
   "pkg/cypher/executor_mutations_delete_guard.go:isDeleteTargetValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
@@ -157,7 +157,7 @@
   },
   "pkg/cypher/value_equivalence.go:cypherValueKey": {
     "reason": "Existing storage/identity/comparison-key contract, distinct from generic coordinate reading; do not change adjudicated equivalence or physical write detection.",
-    "sha256": "497bda05e205566813aacde5b5a1c1075f771f6a0830a9a6d4a75e0f10766c92"
+    "sha256": "b55b25dbdda67c326f5784855c1da83f21da56e60902576522e071ecaf99c911"
   },
   "pkg/cypher/value_equivalence.go:appendValueKey": {
     "reason": "Existing storage/identity/comparison-key contract, distinct from generic coordinate reading; do not change adjudicated equivalence or physical write detection.",
