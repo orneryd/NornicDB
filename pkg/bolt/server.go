@@ -1959,6 +1959,12 @@ func (s *Session) dispatchInner(msgType byte, data []byte, op string, lease *mem
 	default:
 		err = fmt.Errorf("unknown message type: 0x%02X", msgType)
 	}
+	// Neo4j reports a disallowed temporal signature as a decode failure
+	// before applying the message's state transition. Preserve the current
+	// transaction/stream and permit a subsequent valid message without RESET.
+	if errors.Is(err, errDateTimeSignature) {
+		return s.sendFailure("Neo.ClientError.Request.Invalid", err.Error())
+	}
 	recordBoltError(msgSpan, err)
 	return err
 }
@@ -2020,6 +2026,9 @@ func (s *Session) handleHello(data []byte) error {
 	// Parse HELLO message to extract authentication details
 	authParams, err := s.parseHelloAuth(data)
 	if err != nil {
+		if errors.Is(err, errDateTimeSignature) {
+			return err
+		}
 		return s.sendFailure("Neo.ClientError.Request.Invalid", fmt.Sprintf("Failed to parse HELLO: %v", err))
 	}
 
@@ -2238,7 +2247,7 @@ func (s *Session) parseHelloAuth(data []byte) (map[string]string, error) {
 	}
 
 	// Parse the extra map
-	extraMap, _, err := decodePackStreamMap(data, offset)
+	extraMap, _, err := decodePackStreamMap(data, offset, s.useUTCDateTimeStructs())
 	if err != nil {
 		return result, fmt.Errorf("failed to decode HELLO extra map: %w", err)
 	}

@@ -39,6 +39,38 @@ func TestLegacyDateTimeWireNeo4j526(t *testing.T) {
 	testDateTimeWire(t, dateTimeReferenceAddress(t), true)
 }
 
+func dateTimeWireConnect(t *testing.T, address string, version byte, patch, reference bool) net.Conn {
+	t.Helper()
+	conn, err := net.DialTimeout("tcp", address, 5*time.Second)
+	require.NoError(t, err)
+	t.Cleanup(func() { conn.Close() })
+	require.NoError(t, conn.SetDeadline(time.Now().Add(time.Minute)))
+	handshake := make([]byte, 20)
+	copy(handshake, []byte{0x60, 0x60, 0xB0, 0x17})
+	handshake[7] = version
+	if version == 4 {
+		handshake[6] = 4
+	}
+	_, err = conn.Write(handshake)
+	require.NoError(t, err)
+	selected := make([]byte, 4)
+	_, err = io.ReadFull(conn, selected)
+	require.NoError(t, err)
+	require.Equal(t, handshake[4:8], selected, "must negotiate the exact requested protocol")
+	hello := map[string]any{"user_agent": "nornicdb-datetime-regression", "scheme": "none"}
+	if patch {
+		hello["patch_bolt"] = []any{"utc"}
+	}
+	require.NoError(t, SendMessage(conn, buildHelloMessageWithPatchBolt(hello)))
+	metadata, err := AssertSuccess(t, conn)
+	require.NoError(t, err)
+	if reference {
+		require.True(t, strings.HasPrefix(fmt.Sprint(metadata["server"]), "Neo4j/5.26."))
+		t.Logf("reference=%s protocol=%x utc_requested=%t", metadata["server"], selected, patch)
+	}
+	return conn
+}
+
 func testDateTimeWire(t *testing.T, address string, reference bool) {
 	t.Helper()
 	for _, protocol := range []struct {
@@ -47,33 +79,8 @@ func testDateTimeWire(t *testing.T, address string, reference bool) {
 		patch   bool
 	}{{"4.4 legacy", 4, false}, {"4.4 utc", 4, true}, {"5.0", 5, false}} {
 		t.Run(protocol.name, func(t *testing.T) {
-			conn, err := net.DialTimeout("tcp", address, 5*time.Second)
-			require.NoError(t, err)
+			conn := dateTimeWireConnect(t, address, protocol.version, protocol.patch, reference)
 			defer conn.Close()
-			require.NoError(t, conn.SetDeadline(time.Now().Add(time.Minute)))
-			handshake := make([]byte, 20)
-			copy(handshake, []byte{0x60, 0x60, 0xB0, 0x17})
-			handshake[7] = protocol.version
-			if protocol.version == 4 {
-				handshake[6] = 4
-			}
-			_, err = conn.Write(handshake)
-			require.NoError(t, err)
-			selected := make([]byte, 4)
-			_, err = io.ReadFull(conn, selected)
-			require.NoError(t, err)
-			require.Equal(t, handshake[4:8], selected, "must negotiate the exact requested protocol")
-			hello := map[string]any{"user_agent": "nornicdb-datetime-regression", "scheme": "none"}
-			if protocol.patch {
-				hello["patch_bolt"] = []any{"utc"}
-			}
-			require.NoError(t, SendMessage(conn, buildHelloMessageWithPatchBolt(hello)))
-			metadata, err := AssertSuccess(t, conn)
-			require.NoError(t, err)
-			if reference {
-				require.True(t, strings.HasPrefix(fmt.Sprint(metadata["server"]), "Neo4j/5.26."))
-				t.Logf("reference=%s protocol=%x utc_requested=%t", metadata["server"], selected, protocol.patch)
-			}
 			utc := protocol.patch || protocol.version == 5
 			for i, value := range legacyDateTimeCases(t) {
 				literal := value.Time.Format(time.RFC3339Nano)
