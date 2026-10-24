@@ -159,13 +159,6 @@ func cutDistinctArgument(text string) (string, bool) {
 	return cutDistinct(text)
 }
 
-// startsWithDistinctArgument reports whether a function's argument list
-// starts with the DISTINCT keyword (cutDistinctArgument).
-func startsWithDistinctArgument(text string) bool {
-	_, distinct := cutDistinctArgument(text)
-	return distinct
-}
-
 // keywordScan provides high-performance, allocation-free keyword searching with:
 //   - case-insensitive matching
 //   - flexible whitespace between keyword tokens
