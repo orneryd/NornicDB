@@ -113,7 +113,7 @@ func operatorMatchesAt(expr, op string, idx int, caseInsensitive bool) bool {
 		start := queryGapEnd(expr, idx)
 		if start > idx {
 			before := skipBackSpaces(expr, idx)
-			if before > 0 && strings.IndexByte(".:$", expr[before-1]) >= 0 {
+			if before > 0 && strings.IndexByte(".:", expr[before-1]) >= 0 {
 				return false
 			}
 			end, ok := keywordMatchAt(expr, start, word, 0, len(word))
@@ -260,7 +260,8 @@ func splitAtOperator(expr, op string, idx int) (string, string, bool) {
 	}
 	left := strings.TrimSpace(expr[:idx])
 	end := idx + len(op)
-	if strings.IndexFunc(strings.TrimSpace(op), func(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }) >= 0 {
+	if strings.HasPrefix(op, " ") && strings.HasSuffix(op, " ") ||
+		strings.IndexFunc(strings.TrimSpace(op), func(r rune) bool { return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' }) >= 0 {
 		end = keywordEndAt(expr, queryGapEnd(expr, idx), strings.TrimSpace(op))
 	}
 	right := strings.TrimSpace(expr[end:])
