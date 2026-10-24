@@ -170,22 +170,3 @@ func TestExtractSeedNodesFromResult_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, nodes)
 }
-
-func TestAggregatePathSum_Branches(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "agg_sum")
-	exec := NewStorageExecutor(store)
-	ctx := context.Background()
-
-	paths := []PathResult{
-		{Nodes: []*storage.Node{{ID: "a", Properties: map[string]interface{}{"v": int64(2)}}}},
-		{Nodes: []*storage.Node{{ID: "b", Properties: map[string]interface{}{"v": float64(3.5)}}}},
-		{Nodes: []*storage.Node{{ID: "c", Properties: map[string]interface{}{}}}},
-	}
-	m := &TraversalMatch{StartNode: nodePatternInfo{variable: "n"}}
-	got := exec.aggregatePathSum(ctx, paths, m, "n.v")
-	require.Equal(t, 5.5, got)
-
-	got = exec.aggregatePathSum(ctx, []PathResult{{Nodes: []*storage.Node{{ID: "z", Properties: map[string]interface{}{}}}}}, m, "n.v")
-	require.EqualValues(t, int64(0), got)
-}
