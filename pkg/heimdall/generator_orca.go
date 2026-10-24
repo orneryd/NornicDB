@@ -3,6 +3,7 @@ package heimdall
 import (
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -31,11 +32,15 @@ func newOrcaGenerator(cfg Config) (Generator, error) {
 	if strings.TrimSpace(cfg.APIKey) == "" {
 		return nil, fmt.Errorf("orca provider requires NORNICDB_HEIMDALL_API_KEY")
 	}
-	baseURL := strings.TrimRight(strings.TrimSpace(cfg.APIURL), "/")
+	baseURL := strings.TrimSpace(cfg.APIURL)
 	if baseURL == "" {
 		baseURL = defaultOrcaBaseURL
 	}
-	baseURL = strings.TrimSuffix(baseURL, "/v1")
+	if parsed, err := url.Parse(baseURL); err == nil {
+		parsed.Path = strings.TrimSuffix(strings.TrimSuffix(parsed.Path, "/"), "/v1")
+		parsed.RawPath = strings.TrimSuffix(strings.TrimSuffix(parsed.RawPath, "/"), "/v1")
+		baseURL = parsed.String()
+	}
 	model := strings.TrimSpace(cfg.Model)
 	if model == "" || looksLikeLocalModel(model) {
 		model = defaultOrcaModel
