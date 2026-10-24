@@ -34,6 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retain declared UNION branch schemas when participant metadata is absent, align both branch streams before DISTINCT, and keep nested planning on the UNION-aware entry.
+
 - Preserve remote CALL imports, outer bindings and typed Bolt/HTTP values, including exact integer numbers and temporal offsets. Reject invalid scope imports before writes and retain scoped imports across constituent WITH clauses.
 
 - Keep transactional CALL batches independent while rolling back ordinary outer writes; preserve CREATE read phases, list element admission, and pagination opening order.
