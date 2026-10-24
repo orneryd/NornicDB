@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,10 +13,9 @@ import (
 	"strings"
 	"time"
 
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
-
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -790,8 +788,7 @@ type StatementRequest struct {
 var errInvalidTransactionRequestFormat = errors.New("invalid transaction request format")
 
 func decodeTransactionRequest(body io.Reader, req *TransactionRequest) error {
-	decoder := json.NewDecoder(body)
-	decoder.UseNumber()
+	decoder := valueconvert.CypherInputJSON.NewCompatibilityDecoder(body)
 	if err := decoder.Decode(req); err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.Is(err, io.EOF) || errors.As(err, &tooLarge) {
@@ -804,11 +801,6 @@ func decodeTransactionRequest(body io.Reader, req *TransactionRequest) error {
 	}
 	if _, err := io.Copy(io.Discard, body); err != nil {
 		return err
-	}
-	for i := range req.Statements {
-		for key, value := range req.Statements[i].Parameters {
-			req.Statements[i].Parameters[key] = cypher.JSONNumbers(value)
-		}
 	}
 	return nil
 }
@@ -1314,11 +1306,7 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 // number in Java's text (cypher.FormatFloat: 1.0, 1.0E20, 1.0E-7), or, for a
 // value JSON can't hold, the string "Infinity", "-Infinity" or "NaN".
 func transactionHTTPFloat(value float64, bits int) interface{} {
-	text := cypher.FormatFloat(value, bits)
-	if math.IsInf(value, 0) || math.IsNaN(value) {
-		return text
-	}
-	return json.Number(text)
+	return valueconvert.PropertyJSON.Float(value, bits)
 }
 
 // entityDatabase resolves the database an entity actually lives in for

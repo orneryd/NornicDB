@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +15,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -582,13 +582,13 @@ func (w *responseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter 
 func (s *Server) readJSON(r *http.Request, v interface{}) error {
 	// Limit body size
 	body := io.LimitReader(r.Body, s.config.MaxRequestSize)
-	return json.NewDecoder(body).Decode(v)
+	return valueconvert.CypherInputJSON.NewDecoder(body).Decode(v)
 }
 
 func (s *Server) writeJSON(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	valueconvert.PropertyJSON.NewEncoder(w).Encode(v)
 }
 
 func (s *Server) applyMVCCPressureWarnings(w http.ResponseWriter, dbName string, response *TransactionResponse) {

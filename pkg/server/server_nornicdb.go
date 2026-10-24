@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
@@ -797,7 +798,7 @@ func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, r *http.Requ
 	addQueryChunkCounts(body, page.QueryChunksSearched, page.QueryChunksTotal)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	err := json.NewEncoder(w).Encode(body)
+	err := valueconvert.PropertyJSON.NewEncoder(w).Encode(body)
 	if err == nil {
 		err = r.Context().Err()
 	}

@@ -1,12 +1,11 @@
 package cypher
 
 import (
-	"bytes"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // formatCypherValueString is the text toString() gives a number or temporal
@@ -55,51 +54,8 @@ func formatCypherValueString(value interface{}) string {
 	}
 }
 
-// FormatFloat writes a float as Neo4j does (Java's Double.toString): plain
-// decimals with at least one fractional digit from 10^-3 up to 10^7
-// ("0.001", "9999999.0"), scientific notation with an upper-case E outside
-// that range ("1.0E7", "1.23456789E-4"), and "Infinity", "-Infinity" and
-// "NaN". bits is the value's precision (32 or 64), so a float32 keeps its
-// shortest text. It is the one text of a float: toString(), point text and
-// the HTTP API's numbers use it.
-func FormatFloat(value float64, bits int) string {
-	if math.IsInf(value, 1) {
-		return "Infinity"
-	}
-	if math.IsInf(value, -1) {
-		return "-Infinity"
-	}
-	if math.IsNaN(value) {
-		return "NaN"
-	}
-	magnitude := math.Abs(value)
-	if magnitude == 0 || magnitude >= 1e-3 && magnitude < 1e7 {
-		var buffer [32]byte
-		text := strconv.AppendFloat(buffer[:0], value, 'f', -1, bits)
-		if bytes.IndexByte(text, '.') < 0 {
-			text = append(text, '.', '0')
-		}
-		return string(text)
-	}
-	// Go writes 1.23456789e+08 or 1e-07: keep the mantissa (with a
-	// fractional digit), then E, the exponent's sign when negative and its
-	// digits without leading zeros.
-	var buffer [32]byte
-	scientific := strconv.AppendFloat(buffer[:0], value, 'e', -1, bits)
-	marker := bytes.IndexByte(scientific, 'e')
-	var out [40]byte
-	text := append(out[:0], scientific[:marker]...)
-	if bytes.IndexByte(text, '.') < 0 {
-		text = append(text, '.', '0')
-	}
-	text = append(text, 'E')
-	exponent := scientific[marker+1:]
-	if exponent[0] == '-' {
-		text = append(text, '-')
-	}
-	exponent = bytes.TrimLeft(exponent[1:], "0")
-	return string(append(text, exponent...))
-}
+// FormatFloat delegates the shared numeric text contract.
+func FormatFloat(value float64, bits int) string { return convert.FormatFloat(value, bits) }
 
 func formatZonedDateTimeString(value time.Time, zoneID string) string {
 	if zoneID == "" && strings.Contains(value.Location().String(), "/") {

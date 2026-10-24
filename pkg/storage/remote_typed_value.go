@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
+	"github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // RemoteTypedValue is a temporal or spatial value a remote participant
@@ -18,6 +19,12 @@ type RemoteTypedValue struct {
 	Text        string
 	SRID        int
 	Coordinates []float64
+}
+
+// Point coordinates deliberately convert numeric components to FLOAT; property
+// values themselves are already canonicalized by the persisted JSON owner.
+func remoteHTTPFloat64(value interface{}) (float64, bool) {
+	return convert.NumericFloat64(value)
 }
 
 // remoteTypedFromBolt converts a driver temporal or point value. A zoned

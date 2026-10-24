@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -371,7 +372,7 @@ type WAL struct {
 	config   *WALConfig
 	file     *os.File
 	writer   *bufio.Writer
-	encoder  *json.Encoder
+	encoder  *valueconvert.JSONEncoder
 	sequence atomic.Uint64
 	entries  atomic.Int64
 	bytes    atomic.Int64
@@ -496,7 +497,7 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 		walLog: cfg.SlogLogger.With("subsystem", "wal"),
 	}
 	// cfg.Logger is guaranteed non-nil above.
-	w.encoder = json.NewEncoder(w.writer)
+	w.encoder = valueconvert.PropertyJSON.NewEncoder(w.writer)
 
 	// Load existing sequence number
 	if seq, err := w.loadLastSequence(); err == nil {
@@ -958,7 +959,7 @@ func (w *WAL) rotateSegmentLocked(lastSeq uint64) error {
 
 	w.file = file
 	w.writer = bufio.NewWriterSize(file, 64*1024)
-	w.encoder = json.NewEncoder(w.writer)
+	w.encoder = valueconvert.PropertyJSON.NewEncoder(w.writer)
 	w.segmentFirstSeq = 0
 	w.segmentEntries = 0
 	w.segmentBytes = 0
@@ -1745,7 +1746,7 @@ func (w *WAL) reopenWAL() error {
 
 	w.file = file
 	w.writer = bufio.NewWriterSize(file, 64*1024)
-	w.encoder = json.NewEncoder(w.writer)
+	w.encoder = valueconvert.PropertyJSON.NewEncoder(w.writer)
 	w.segmentFirstSeq = 0
 	w.segmentEntries = 0
 	w.segmentBytes = 0

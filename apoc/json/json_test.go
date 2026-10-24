@@ -25,6 +25,9 @@ func TestJSONBasicOps(t *testing.T) {
 	if got := Type(input); got != "object" {
 		t.Fatalf("type mismatch: %s", got)
 	}
+	if got := Type("9007199254740993"); got != "number" {
+		t.Fatalf("integer type mismatch: %s", got)
+	}
 	if got := Size(input); got != 3 {
 		t.Fatalf("size mismatch: %d", got)
 	}
@@ -67,7 +70,7 @@ func TestJSONFlattenUnflattenAndArrayTransforms(t *testing.T) {
 	}
 
 	filtered := Filter(`[1,2,3,4,5]`, func(v interface{}) bool {
-		n, ok := v.(float64)
+		n, ok := v.(int64)
 		return ok && n > 3
 	})
 	if Size(filtered) != 2 {
@@ -75,14 +78,14 @@ func TestJSONFlattenUnflattenAndArrayTransforms(t *testing.T) {
 	}
 
 	mapped := Map(`[1,2,3]`, func(v interface{}) interface{} {
-		return int(v.(float64)) * 2
+		return v.(int64) * 2
 	})
 	if Path(mapped, "$.0") != nil && !Validate(mapped) {
 		t.Fatalf("mapped should be valid json")
 	}
 
 	sum := Reduce(`[1,2,3,4]`, 0.0, func(acc interface{}, v interface{}) interface{} {
-		return acc.(float64) + v.(float64)
+		return acc.(float64) + float64(v.(int64))
 	})
 	if sum.(float64) != 10 {
 		t.Fatalf("reduce sum mismatch: %#v", sum)

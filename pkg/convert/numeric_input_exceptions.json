@@ -13,7 +13,7 @@
   },
   "pkg/cypher/call_cdc.go:cdcValue": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "ff99c8ef12abc395894ad721fdd1fba3249ffd8fdf4ef9d36518e830b7becaac"
+    "sha256": "102fcd01d6fa11fd44582810c1c6f3792271174d8d78d46e31673e216371714b"
   },
   "pkg/cypher/clauses.go:canonicalUnwindMergeValue": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
@@ -22,10 +22,6 @@
   "pkg/cypher/executor_subqueries.go:callSubqueryLookupKeyString": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
     "sha256": "64e92d0a0e50b1dc5ad1128d903f7a6babfbae8a95e50d5abad21bdc6e0aa828"
-  },
-  "pkg/cypher/json_values.go:JSONNumbers": {
-    "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "fb310fa3afd7df60cfa3c09ca9a437dc2b71d78a35f4f2f144bf164253d0a357"
   },
   "pkg/cypher/plan_hash.go:writeArgValue": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
@@ -40,12 +36,12 @@
     "sha256": "2f7a4bea69fd6ddd9ac9444c5fbf42e140d81d829fa3a9adebb0613a15626894"
   },
   "apoc/json/json.go:Type": {
-    "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "105d1f7f01359f7960cfa9bdbb6e1bb37524844c4de428c4cd1390e5c22fb77b"
+    "reason": "JSON document kind inspection; numeric kinds delegate to ReadNumber and the document reader is property-domain bound.",
+    "sha256": "9333b9119d9cd189b9b2f1eac4fcedc59d567be1f67d2c19d1b4012161d60e7d"
   },
   "apoc/json/json.go:Size": {
-    "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
-    "sha256": "736b8bc6afb48936bafea8574d7f3f3e028887a1268bb2caed88a0f17e2f0c4e"
+    "reason": "JSON document container shape/size inspection, not numeric coordinate conversion.",
+    "sha256": "a5f424530ef09472f9e67dd274fa5a710f0fab160f66c42d19eef474a356ec6e"
   },
   "apoc/json/json.go:extractPath": {
     "reason": "Serialization/decoding owns a fixed wire or internal key representation; it does not narrow runtime list coordinates.",
@@ -294,5 +290,13 @@
   "pkg/cypher/executor_mutations.go:normalizedCypherValue": {
     "reason": "Runtime/property admission shares temporal/null/container traversal; numeric classification and checked property coercion use ReadNumber/Number.Int64, while runtime numeric carriers stay exact.",
     "sha256": "669666ccb6e2abce773554afd5848d65c33f6174136d3fc4c79b1236e35115f6"
+  },
+  "pkg/convert/json.go:jsonNumbers": {
+    "reason": "Shared JSON wire-number policy: signed Cypher input versus exact legacy persisted integer domain. Containers recurse here; native numeric recognition remains ReadNumber.",
+    "sha256": "30c227f13d1e4c34c60b18a8b4b06cd7db4cbbe1da8035151575860a63569da8"
+  },
+  "pkg/convert/json_encode.go:any": {
+    "reason": "Shared domain-bound JSON wire writer emits exact native scalar text without coercing input values. Reflective/custom values retain their declared writer; numeric text is owned here and by appendFloatText.",
+    "sha256": "7a1d733a754f10c6dc037195ce0c13b2f0d7fd5c2ae8756dd7e9b363736c58b4"
   }
 }

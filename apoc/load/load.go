@@ -6,12 +6,13 @@ package load
 
 import (
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // Json loads JSON data from a URL or file.
@@ -51,7 +52,7 @@ func loadJsonFromURL(url string) (interface{}, error) {
 	}
 
 	var data interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := valueconvert.CypherInputJSON.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, err
 	}
 
@@ -67,7 +68,7 @@ func loadJsonFromFile(path string) (interface{}, error) {
 	defer file.Close()
 
 	var data interface{}
-	if err := json.NewDecoder(file).Decode(&data); err != nil {
+	if err := valueconvert.CypherInputJSON.NewDecoder(file).Decode(&data); err != nil {
 		return nil, err
 	}
 
@@ -135,7 +136,7 @@ func JsonParams(url string, headers map[string]string, method string) (interface
 	defer resp.Body.Close()
 
 	var data interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := valueconvert.CypherInputJSON.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, err
 	}
 
@@ -469,7 +470,7 @@ func GraphQL(url string, query string, variables map[string]interface{}) (interf
 		"variables": variables,
 	}
 
-	jsonData, err := json.Marshal(payload)
+	jsonData, err := valueconvert.CypherInputJSON.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +482,7 @@ func GraphQL(url string, query string, variables map[string]interface{}) (interf
 	defer resp.Body.Close()
 
 	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := valueconvert.PropertyJSON.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
@@ -518,7 +519,7 @@ func Rest(url string, config map[string]interface{}) (interface{}, error) {
 	defer resp.Body.Close()
 
 	var data interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	if err := valueconvert.PropertyJSON.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, err
 	}
 

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // encodeRecoveryPayload preserves entity metadata and exact property types.
@@ -11,7 +13,7 @@ import (
 func encodeRecoveryPayload(value any) ([]byte, error) {
 	payload, typed := copyRecoveryPayload(value)
 	if !typed {
-		return json.Marshal(value)
+		return valueconvert.PropertyJSON.Marshal(value)
 	}
 	transformRecoveryEntities(payload, prepareRecoveryNode, prepareRecoveryEdge)
 	return encodeValue(payload)
@@ -31,7 +33,7 @@ func marshalWALRecoveryPayload(buffer *bytes.Buffer, value any) ([]byte, error) 
 	var legacy []byte
 	var err error
 	if buffer == nil {
-		legacy, err = json.Marshal(value)
+		legacy, err = valueconvert.PropertyJSON.Marshal(value)
 	} else {
 		legacy, err = marshalJSONCompact(buffer, value)
 	}
@@ -45,7 +47,7 @@ func marshalWALRecoveryPayload(buffer *bytes.Buffer, value any) ([]byte, error) 
 	if err != nil {
 		return nil, err
 	}
-	sidecar, err := json.Marshal(walRecoverySidecar{Encoding: walRecoveryEncoding, Data: encoded})
+	sidecar, err := valueconvert.PropertyJSON.Marshal(walRecoverySidecar{Encoding: walRecoveryEncoding, Data: encoded})
 	if err != nil {
 		return nil, err
 	}
@@ -65,14 +67,14 @@ func decodeRecoveryPayload(data []byte, target any) error {
 	if !hasHeader {
 		trimmed := bytes.TrimSpace(data)
 		if len(trimmed) == 0 || trimmed[0] != '{' {
-			return decodeLegacyRecoveryJSON(bytes.NewReader(data), target)
+			return valueconvert.PropertyJSON.Unmarshal(data, target)
 		}
 		var sidecar walRecoverySidecar
 		if err := json.Unmarshal(data, &sidecar); err != nil {
 			return err
 		}
 		if sidecar.Encoding == "" {
-			return decodeLegacyRecoveryJSON(bytes.NewReader(data), target)
+			return valueconvert.PropertyJSON.Unmarshal(data, target)
 		}
 		if sidecar.Encoding != walRecoveryEncoding {
 			return fmt.Errorf("unsupported recovery encoding %q", sidecar.Encoding)

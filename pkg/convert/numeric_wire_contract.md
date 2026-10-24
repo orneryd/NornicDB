@@ -1,0 +1,83 @@
+# Numeric JSON data paths
+
+`convert.PropertyJSON` owns existing graph/property documents. It encodes and
+reads graph exports/imports, backups, APOC JSON document transforms, legacy
+recovery/replication, and result properties. Integer lexemes retain exact values:
+int64 first, then uint64 above MaxInt64. Integers outside both domains fail.
+FLOATs, including whole and subnormal values, retain a fractional/exponent token.
+JSON does not carry unsigned-width tags: uint64 at or below MaxInt64 reads as the
+canonical signed INTEGER with the same value.
+
+`convert.CypherInputJSON` owns external values: Cypher parameters, HTTP/tool
+request bodies, explicit fromJson conversion and load.json. Decimal/exponent
+lexemes and integers outside int64 follow Neo4j's FLOAT policy. Its named
+compatibility decoder retains the established text fallback for unrepresentable
+FLOATs only at the classified HTTP transaction and explicit APOC conversion
+paths. Input serialization preserves FLOAT lexemes before those external readers.
+
+These are distinct, zero-state domain types. Their constructors expose no number
+policy argument or stdlib decoder. The generic JSON entry points are removed.
+APOC source-opening helpers return readers; they cannot accept a decoder factory.
+The public graph-import operation selects its persisted domain directly.
+
+Both domain writers use the same direct encoder. It traverses borrowed values
+once, appends numeric text at the leaf, and caches field metadata without
+materializing proxy structs or cloning maps/lists. Typed fields and array elements
+reuse compiled scalar operations. Custom JSON/text marshalers,
+raw JSON, binary values and supported `,string` fields retain their standard
+library handling. Unsupported `,string` options on containers are ignored while
+their nested FLOATs still retain type. FLOAT text and the public string formatter
+share the same append routine, including shortest float32 text and negative zero.
+Private writer state cannot be constructed or escaped outside the domain owner;
+the source guard has mutation fixtures for direct state, pooled state, initializer,
+prepared-wrapper and encoder-construction bypasses.
+
+Readers cache which declared types can contain interface values. Only those
+fields need number normalization: typed control records, vectors and binary
+payloads retain their standard decoder behavior without another object walk.
+Each private decoder's concrete domain type fixes its numeric policy; there is
+no per-reader policy field or exported standard decoder. Recursive type plans
+cache only complete searches, so an interface reachable through a parent cannot
+be mistaken for a fully typed subtree. The policy remains at the domain owner.
+
+The authority for production consumers is [json_data_paths.json](json_data_paths.json).
+Every registered consumer has one domain per data direction and an exact set of
+entry-point references. HTTP/MCP/remote boundaries may read input and write
+properties, or send input and receive properties; those are separate paths.
+Changing a reader/writer or its domain fails `TestNumericWireOwnership`.
+`TestNumericDomainPolicyMutations` checks the positive fixture and flips every
+registered reference to the opposite domain, requiring the semantic diagnostic.
+The legacy `cypher.JSONNumbers` forwarding API is classified as external input.
+
+The guard scans production Go source across the repository, including all `pkg/`
+and `apoc/` packages, replication and future files/packages. Raw JSON readers and
+writers, method-value aliases and package initializers require individually
+reviewed non-property exceptions in [numeric_wire_exceptions.json](numeric_wire_exceptions.json).
+Those freeze typed binary/RawMessage envelopes, schemas, hashes, model protocols,
+configuration, diagnostics and offline corpus/test tooling. They never exempt
+wrong-domain owner calls. Vendored dependencies, the generated ANTLR parser and remote operator helper
+overlays are outside the scan. Other generated Go source remains scanned. Mutation fixtures insert raw
+`Unmarshal`/`NewDecoder` readers of any/interface/map values into storage,
+replication, APOC and a new package; all must be rejected. Domain handles cannot
+escape into unclassified aliases.
+
+CDC uses the same native number/equality owners on stored values; its binary
+capture format is unchanged. Bolt numeric leaves remain at `convert`: signed
+int64 and IEEE float64. Native uint64 above MaxInt64 travels as an exact decimal
+STRING, never a signed wrap or rounded FLOAT. Neo4j 5.26 has no unsigned
+PackStream integer; this is NornicDB's extension representation, not unsigned or
+Enterprise CDC parity. HTTP transaction nonfinite FLOATs retain Neo4j's text
+representation; ordinary JSON rejects nonfinite values. Existing custom
+serializers, raw JSON, binary data and float32 shortest-text behavior remain.
+
+The complete boundary includes graph loading/conversion, graph export/import,
+backup/restore/retention export, document transforms and JSONL parsing, WAL and
+legacy recovery, replication fallback, HTTP and remote values, MCP/GraphQL/tool
+arguments/results, and the migration script's source properties and destination
+parameters. Native MessagePack/Gob and declared CSV/GraphML numeric types keep
+their existing protocol contracts. The PR Evidence table lists each registered
+consumer and its domains; non-property exceptions retain their own reasons.
+
+Old backups/exports may already contain `2` for a whole FLOAT originally equal to
+`2.0`. That text cannot distinguish it from INTEGER `2`; it remains INTEGER when
+read. No heuristic can recover the lost type. New writers preserve the token.

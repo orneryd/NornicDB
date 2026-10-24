@@ -30,7 +30,6 @@ package nornicdb
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -43,6 +42,7 @@ import (
 
 	"github.com/google/uuid"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
@@ -855,7 +855,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				if err != nil {
 					return err
 				}
-				data, err := json.Marshal(node)
+				data, err := valueconvert.PropertyJSON.Marshal(node)
 				if err != nil {
 					return err
 				}
