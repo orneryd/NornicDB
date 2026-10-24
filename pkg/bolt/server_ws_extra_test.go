@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"crypto/tls"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net"
 	"net/http"
@@ -41,7 +42,7 @@ func startTLSBoltServer(t *testing.T, modify func(*Config)) (port int, clientTLS
 		modify(cfg)
 	}
 
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "wstls-test")
 	executor := &cypherQueryExecutor{executor: cypher.NewStorageExecutor(store)}
 	server := New(cfg, executor)
@@ -375,7 +376,7 @@ func TestWSBolt_CookieWinsOverHeader(t *testing.T) {
 	authCfg := auth.DefaultAuthConfig()
 	authCfg.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	authCfg.SecurityEnabled = true
-	mem := storage.NewMemoryEngine()
+	mem := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, err := auth.NewAuthenticator(authCfg, mem)
 	requireNoError(t, err)
 	_, err = authenticator.CreateUser("alice", "alice-password", []auth.Role{auth.RoleAdmin})

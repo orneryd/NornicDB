@@ -3,6 +3,7 @@ package bolt
 import (
 	"bytes"
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"log/slog"
 	"testing"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func TestTransactionalAdapterTransactionBranches(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	adapter := &transactionalBoltQueryExecutorAdapter{
 		boltQueryExecutorAdapter: boltQueryExecutorAdapter{
@@ -34,7 +35,7 @@ func TestTransactionalAdapterTransactionBranches(t *testing.T) {
 }
 
 func TestTransactionalAdapterPropagatesBeginAndCommitErrors(t *testing.T) {
-	closed := storage.NewMemoryEngine()
+	closed := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	require.NoError(t, closed.Close())
 	beginAdapter := &transactionalBoltQueryExecutorAdapter{
 		boltQueryExecutorAdapter: boltQueryExecutorAdapter{
@@ -46,7 +47,7 @@ func TestTransactionalAdapterPropagatesBeginAndCommitErrors(t *testing.T) {
 		"a returned StorageExecutor BEGIN error is self-cleaned and must remain recoverable")
 	require.NoError(t, beginAdapter.RollbackTransaction(context.Background()))
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	commitAdapter := &transactionalBoltQueryExecutorAdapter{
 		boltQueryExecutorAdapter: boltQueryExecutorAdapter{
@@ -71,7 +72,7 @@ func TestTransactionalAdapterRollbackAfterRunError(t *testing.T) {
 		{"RETURN range(1, 10, 0) AS x", true},
 	} {
 		t.Run(testCase.query, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			adapter := &transactionalBoltQueryExecutorAdapter{
 				boltQueryExecutorAdapter: boltQueryExecutorAdapter{executor: cypher.NewStorageExecutor(base)},
@@ -90,7 +91,7 @@ func TestTransactionalAdapterRollbackAfterRunError(t *testing.T) {
 }
 
 func TestBoltResetAfterExpressionErrorKeepsConnection(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	mgr := &mockDBManager{
 		stores: map[string]storage.Engine{"nornic": storage.NewNamespacedEngine(base, "nornic")}, defaultDB: "nornic",

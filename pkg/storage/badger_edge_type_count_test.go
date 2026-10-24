@@ -2,6 +2,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -222,7 +224,7 @@ func TestEdgeTypeCounts_ReopenRebuildsDrift(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer reopened.Close()
 
@@ -256,7 +258,7 @@ func TestEdgeTypeCounts_DeleteByPrefixWholeNamespace(t *testing.T) {
 // maintaining the per-type and positional counters on every edge create
 // (issue #638): endpoint label reads plus tier updates inside the write txn.
 func BenchmarkBadgerEngine_CreateEdge_WithCounters(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}

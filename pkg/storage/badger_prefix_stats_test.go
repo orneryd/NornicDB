@@ -2,13 +2,14 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestBadgerEngine_PrefixStatsAreO1AndCorrect(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -50,7 +51,7 @@ func TestBadgerEngine_PrefixStatsAreO1AndCorrect(t *testing.T) {
 }
 
 func TestBadgerEngine_EdgePrefixStatsAreCorrect_TransactionalAndNonTransactional(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
@@ -93,7 +94,10 @@ func TestBadgerEngine_EdgePrefixStatsAreCorrect_TransactionalAndNonTransactional
 }
 
 func TestBadgerEngine_EdgeCountByPrefix_ClosedEngine(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
@@ -102,7 +106,10 @@ func TestBadgerEngine_EdgeCountByPrefix_ClosedEngine(t *testing.T) {
 }
 
 func TestBadgerEngine_NodeCountByPrefix_ClosedEngine(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
@@ -132,7 +139,10 @@ func TestBadgerEngine_IterateNodes_EarlyStop(t *testing.T) {
 }
 
 func TestBadgerEngine_IterateNodes_ClosedEngine(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 

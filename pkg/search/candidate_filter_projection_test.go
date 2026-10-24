@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -21,7 +22,7 @@ type candidateFilterReadSpy struct {
 }
 
 func BenchmarkTypeOnlyCandidateFilterFromMetadata(b *testing.B) {
-	service := NewService(storage.NewMemoryEngine())
+	service := NewService(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	b.Cleanup(func() { require.NoError(b, service.engine.Close()) })
 	results := make([]indexResult, 1000)
 	for i := range results {

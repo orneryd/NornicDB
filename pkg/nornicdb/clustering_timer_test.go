@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -70,7 +71,7 @@ func TestClusteringTimer_ClustersBulkLoadWhenItStops(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = db.Close() })
 
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "bulk")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "bulk")
 	svc := search.NewServiceWithDimensions(engine, 3)
 	svc.EnableClustering(nil, 4)
 	svc.SetMinEmbeddingsForClustering(10)

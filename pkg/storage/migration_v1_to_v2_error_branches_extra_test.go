@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"strings"
 	"testing"
 
@@ -10,7 +12,7 @@ import (
 
 func TestMigrationV1ToV2_RebuildLabelIndex_ErrorBranches(t *testing.T) {
 	t.Run("node key without namespace prefix fails", func(t *testing.T) {
-		eng, err := NewBadgerEngineInMemory()
+		eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = eng.Close() })
 
@@ -25,7 +27,7 @@ func TestMigrationV1ToV2_RebuildLabelIndex_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("corrupt v2 node body fails decode", func(t *testing.T) {
-		eng, err := NewBadgerEngineInMemory()
+		eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = eng.Close() })
 
@@ -42,7 +44,7 @@ func TestMigrationV1ToV2_RebuildLabelIndex_ErrorBranches(t *testing.T) {
 
 func TestMigrationV1ToV2_RebuildEdgeIndexes_ErrorBranches(t *testing.T) {
 	t.Run("corrupt v2 edge body fails decode", func(t *testing.T) {
-		eng, err := NewBadgerEngineInMemory()
+		eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = eng.Close() })
 
@@ -58,7 +60,7 @@ func TestMigrationV1ToV2_RebuildEdgeIndexes_ErrorBranches(t *testing.T) {
 }
 
 func TestMigrationV1ToV2_DecodeEdgeAnyV1_ErrorBranches(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = eng.Close() })
 

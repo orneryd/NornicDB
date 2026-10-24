@@ -6,6 +6,7 @@ package search
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -61,7 +62,10 @@ var compatStoreLiveNode = &storage.Node{ID: "nornic:d", Labels: []string{"Doc"},
 
 func writeCompatStore(t *testing.T, dir string) {
 	t.Helper()
-	engine, err := storage.NewBadgerEngine(filepath.Join(dir, "graph"))
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(dir, "graph")))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	for _, n := range compatStoreNodes {
 		_, err := engine.CreateNode(storage.CopyNode(n))
@@ -80,7 +84,10 @@ func writeCompatStore(t *testing.T, dir string) {
 
 func requireCompatStoreServes(t *testing.T, dir string, wantIterations int32) {
 	t.Helper()
-	badger, err := storage.NewBadgerEngine(filepath.Join(dir, "graph"))
+	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(dir, "graph")))
+	if badger != nil {
+		fixtureowner.Own(t, badger)
+	}
 	require.NoError(t, err)
 	engine := &countingStoreEngine{BadgerEngine: badger}
 	svc := compatStoreService(engine, dir)

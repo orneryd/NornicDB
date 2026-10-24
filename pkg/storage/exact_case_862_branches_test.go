@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -111,7 +112,10 @@ func TestRebuildEdgeTypeIndexBranches(t *testing.T) {
 		require.ErrorContains(t, err, "write edge-type index")
 	})
 	t.Run("closed engine", func(t *testing.T) {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 		_, err = engine.rebuildEdgeTypeIndex(context.Background())
@@ -296,7 +300,10 @@ func hasTombstoneKey(t *testing.T, engine *BadgerEngine, key []byte) bool {
 
 func TestStartupUpgradeFailsOnAFailedV2ToV3IndexRebuild(t *testing.T) {
 	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger")}
-	engine, err := NewBadgerEngineWithOptions(options)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&Node{ID: "test:a", Labels: []string{"L"}})
 	require.NoError(t, err)
@@ -305,7 +312,7 @@ func TestStartupUpgradeFailsOnAFailedV2ToV3IndexRebuild(t *testing.T) {
 	require.NoError(t, engine.Close())
 
 	options.AllowStorageUpgrade = true
-	_, err = NewBadgerEngineWithOptions(options)
+	_, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
 	require.ErrorContains(t, err, "migration v2→v3 failed")
 }
 

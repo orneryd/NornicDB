@@ -1,6 +1,8 @@
 package replication_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -12,7 +14,7 @@ import (
 )
 
 func TestReplicatedDeleteInvalidatesWarmLocalQuery(t *testing.T) {
-	base, err := storage.NewBadgerEngine(t.TempDir())
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer base.Close()
 	_, err = base.CreateNode(&storage.Node{ID: "library:item", Labels: []string{"Document"}})

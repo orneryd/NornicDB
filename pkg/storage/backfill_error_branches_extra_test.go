@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -46,7 +47,10 @@ func TestEdgeBetweenBackfill_AdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("rebuild with closed db hits drop-prefix error", func(t *testing.T) {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 
@@ -94,7 +98,10 @@ func TestLabelBackfill_AdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("rebuild with closed db hits drop-prefix error", func(t *testing.T) {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 

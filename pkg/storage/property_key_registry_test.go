@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,7 +13,7 @@ import (
 // a transaction's write even when rolled back, and an encoded write. Reads,
 // null values and other namespaces know nothing (PropertyKeyRegistry, #907).
 func TestPropertyKeyRegistryAcrossStack(t *testing.T) {
-	badger, err := NewBadgerEngineInMemory()
+	badger, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer badger.Close()
 	walBacking, err := NewWAL(t.TempDir(), nil)

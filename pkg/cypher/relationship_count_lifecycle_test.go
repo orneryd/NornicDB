@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -9,7 +10,10 @@ import (
 )
 
 func TestRelationshipCountRemainsExactAfterDetachDeleteAndRecreate(t *testing.T) {
-	base, err := storage.NewBadgerEngineInMemory()
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if base != nil {
+		fixtureowner.Own(t, base)
+	}
 	require.NoError(t, err)
 	defer func() { require.NoError(t, base.Close()) }()
 

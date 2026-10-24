@@ -3,6 +3,7 @@ package qdrantgrpc
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func (denyCollectionChecker) VisibleDatabases(ctx context.Context, candidates []
 
 func newTestCollectionStore(t *testing.T) CollectionStore {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	store, err := NewDatabaseCollectionStore(dbm, nil)
@@ -380,7 +381,7 @@ func TestCollectionsService_AccessCheckerPaths(t *testing.T) {
 func TestCollectionStore_MetaAndOpenBranches(t *testing.T) {
 	t.Parallel()
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	storeI, err := NewDatabaseCollectionStore(dbm, nil)
@@ -515,7 +516,7 @@ func TestCollectionsService_CreateAdditionalBranches(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	storeNilVec, err := NewDatabaseCollectionStore(dbm, nil)

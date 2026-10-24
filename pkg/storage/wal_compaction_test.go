@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"sort"
@@ -441,7 +442,7 @@ func TestWALTruncateAfterSnapshot(t *testing.T) {
 
 		// Session 2: Recover from snapshot + truncated WAL
 		snapshotPath := filepath.Join(snapshotDir, "snapshot.json")
-		recovered, err := RecoverFromWAL(walDir, snapshotPath)
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, snapshotPath))
 		require.NoError(t, err)
 		recoveredNS := NewNamespacedEngine(recovered, "test")
 
@@ -813,7 +814,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 		latestSnapshot := filepath.Join(snapshotDir, names[len(names)-1])
 
 		// Session 2: Recover
-		recovered, err := RecoverFromWAL(walDir, latestSnapshot)
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, latestSnapshot))
 		require.NoError(t, err)
 
 		// Should have all 100 nodes (5 batches x 20 nodes)
@@ -844,7 +845,7 @@ func TestWALSnapshotRecovery(t *testing.T) {
 		}()
 
 		// Session 2: Recover without snapshot
-		recovered, err := RecoverFromWAL(walDir, "")
+		recovered, err := fixtureowner.OwnResult[*MemoryEngine](t, ErrStorageClosed)(RecoverFromWAL(walDir, ""))
 		require.NoError(t, err)
 
 		count, err := recovered.NodeCount()
@@ -934,7 +935,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 			cfg := &WALConfig{Dir: dir, SyncMode: "none"}
 			wal, _ := NewWAL("", cfg)
 
-			engine := NewMemoryEngine()
+			engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
 			walEngine := NewWALEngine(engine, wal)
 
 			// Create data
@@ -961,7 +962,7 @@ func BenchmarkWALCompaction(b *testing.B) {
 		cfg := &WALConfig{Dir: dir, SyncMode: "none"}
 		wal, _ := NewWAL("", cfg)
 
-		engine := NewMemoryEngine()
+		engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed))
 		walEngine := NewWALEngine(engine, wal)
 
 		// Create test data

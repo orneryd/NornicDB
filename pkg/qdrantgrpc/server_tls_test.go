@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math/big"
 	"net"
 	"testing"
@@ -63,7 +64,7 @@ func TestServerTLS(t *testing.T) {
 
 func startTLSTestServer(t *testing.T, tlsConfig *tls.Config) *Server {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	databaseManager, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 

@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"sync"
 	"testing"
 	"time"
@@ -14,7 +16,7 @@ import (
 func TestEmbeddingOutcomeSnapshotOwnership(t *testing.T) {
 	for _, mode := range []string{"bound_no_listeners", "bound_listener", "unbound_listener"} {
 		t.Run(mode, func(t *testing.T) {
-			b, err := NewBadgerEngine(t.TempDir())
+			b, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			defer b.Close()
 			_, err = b.CreateNode(&Node{ID: "test:doc", Properties: map[string]any{"text": "original"}})

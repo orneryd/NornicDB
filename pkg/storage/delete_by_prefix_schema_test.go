@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,7 +13,7 @@ import (
 // namespace ("db:sub:") only removes data and keeps the schema.
 func TestDeleteByPrefix_SchemaLifecycle(t *testing.T) {
 	t.Run("whole namespace drops schema in memory and on disk", func(t *testing.T) {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 		require.NoError(t, err)
 		defer engine.Close()
 
@@ -35,7 +37,7 @@ func TestDeleteByPrefix_SchemaLifecycle(t *testing.T) {
 	})
 
 	t.Run("sub-prefix keeps schema", func(t *testing.T) {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 		require.NoError(t, err)
 		defer engine.Close()
 

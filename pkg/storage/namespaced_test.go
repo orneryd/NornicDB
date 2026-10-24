@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"fmt"
@@ -815,7 +817,7 @@ func TestNamespacedEngine_EmbeddingWrappersAndLastWriteTime(t *testing.T) {
 }
 
 func TestNamespacedEngine_RefreshPendingEmbeddingsIndexNoOpReturnsZero(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetEmbeddingsEnabled(true)
@@ -834,7 +836,7 @@ func TestNamespacedEngine_RefreshPendingEmbeddingsIndexNoOpReturnsZero(t *testin
 }
 
 func TestNamespacedEngine_RefreshPendingEmbeddingsIndexAlreadyPendingReturnsZero(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetEmbeddingsEnabled(true)
@@ -857,7 +859,7 @@ func TestNamespacedEngine_RefreshPendingEmbeddingsIndexAlreadyPendingReturnsZero
 }
 
 func TestNamespacedEngine_RefreshPendingEmbeddingsIndexThroughWALReturnsZero(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetEmbeddingsEnabled(true)
@@ -882,7 +884,7 @@ func TestNamespacedEngine_RefreshPendingEmbeddingsIndexThroughWALReturnsZero(t *
 }
 
 func BenchmarkNamespacedRefreshPendingEmbeddingsIndex(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -1569,7 +1571,7 @@ func TestNamespacedEngine_UserConversionHelpers(t *testing.T) {
 }
 
 func TestNamespacedEngine_UnprefixFallback(t *testing.T) {
-	inner, err := NewBadgerEngineInMemory()
+	inner, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer inner.Close()
 
@@ -1587,7 +1589,7 @@ func TestNamespacedEngine_UnprefixFallback(t *testing.T) {
 }
 
 func TestNamespacedEngine_GetEdgeBetween_NotFound(t *testing.T) {
-	inner, err := NewBadgerEngineInMemory()
+	inner, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer inner.Close()
 
@@ -1599,7 +1601,7 @@ func TestNamespacedEngine_GetEdgeBetween_NotFound(t *testing.T) {
 }
 
 func TestNamespacedEngine_ForEachNodeIDByLabel_EarlyStop(t *testing.T) {
-	inner, err := NewBadgerEngineInMemory()
+	inner, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer inner.Close()
 
@@ -1626,7 +1628,7 @@ func TestNamespacedEngine_ForEachNodeIDByLabel_EarlyStop(t *testing.T) {
 }
 
 func TestNamespacedEngine_GetEdgesByType(t *testing.T) {
-	inner, err := NewBadgerEngineInMemory()
+	inner, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer inner.Close()
 

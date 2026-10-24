@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"testing"
 
@@ -20,7 +21,7 @@ func BenchmarkSearchTextContinuationRankedHNSW(b *testing.B) {
 	build := func(b *testing.B, cache bool) *Service {
 		b.Helper()
 		b.Setenv(EnvSearchResultCacheEnabled, fmt.Sprint(cache))
-		engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+		engine := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 		service := NewServiceWithDimensions(engine, 2)
 		b.Cleanup(func() { _ = service.Close() })
 		for i := 0; i < docs; i++ {

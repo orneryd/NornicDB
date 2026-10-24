@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -40,7 +41,7 @@ func TestProcedureGlobMatches(t *testing.T) {
 // database sees each change.
 func TestProcedurePrivilegeStore(t *testing.T) {
 	ctx := context.Background()
-	system := storage.NewMemoryEngine()
+	system := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = system.Close() })
 	store := NewProcedurePrivilegeStore(system)
 	other := NewProcedurePrivilegeStore(system)
@@ -85,7 +86,7 @@ func TestProcedurePrivilegeStore(t *testing.T) {
 //   - a plain REVOKE removes the grant, immutable or not.
 func TestProcedurePrivilegeStoreImmutableGrants(t *testing.T) {
 	ctx := context.Background()
-	system := storage.NewMemoryEngine()
+	system := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = system.Close() })
 	store := NewProcedurePrivilegeStore(system)
 	list := func() []ProcedurePrivilege {
@@ -135,7 +136,7 @@ func TestProcedurePrivilegeStoreImmutableGrants(t *testing.T) {
 // as two servers each open their own.
 func TestProcedurePrivilegeStoreSharedStorage(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	first := NewProcedurePrivilegeStore(storage.NewNamespacedEngine(engine, "system"))
 	second := NewProcedurePrivilegeStore(storage.NewNamespacedEngine(engine, "system"))
@@ -156,7 +157,7 @@ func TestProcedurePrivilegeStoreSharedStorage(t *testing.T) {
 // be granted through a different role.
 func TestProcedurePrivilegeStoreRoleUnion(t *testing.T) {
 	ctx := context.Background()
-	system := storage.NewMemoryEngine()
+	system := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = system.Close() })
 	store := NewProcedurePrivilegeStore(system)
 	require.NoError(t, store.Grant(ctx, "a", "db.cdc.earliest", true, false))
@@ -173,7 +174,7 @@ func TestProcedurePrivilegeStoreRoleUnion(t *testing.T) {
 // GRANT wrote it) is not a grant.
 func TestProcedurePrivilegeStoreReadsOnlyItsOwnNodes(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	system := storage.NewNamespacedEngine(engine, "system")
 	_, err := system.CreateNode(&storage.Node{
@@ -201,7 +202,7 @@ func TestProcedurePrivilegeStoreReadsOnlyItsOwnNodes(t *testing.T) {
 // under the same name starts without them; other roles keep theirs.
 func TestDeleteRoleRemovesProcedureGrants(t *testing.T) {
 	ctx := context.Background()
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	system := storage.NewNamespacedEngine(inner, "system")
 	t.Cleanup(func() { _ = system.Close() })
 	roles := NewRoleStore(system)

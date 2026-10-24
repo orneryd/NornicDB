@@ -3,6 +3,7 @@ package bolt
 import (
 	"bytes"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -33,7 +34,7 @@ func TestLegacyDateTimeGraphPropertiesNeo4j526(t *testing.T) {
 	}{{"legacy44", 4, false}, {"utc44", 4, true}, {"bolt50", 5, false}} {
 		for i, value := range legacyDateTimeCases(t) {
 			t.Run(fmt.Sprintf("%s/%d", protocol.name, i), func(t *testing.T) {
-				inner := storage.NewMemoryEngine()
+				inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 				t.Cleanup(func() { require.NoError(t, inner.Close()) })
 				store := storage.NewNamespacedEngine(inner, "datetime")
 				for _, id := range []storage.NodeID{"a", "b"} {

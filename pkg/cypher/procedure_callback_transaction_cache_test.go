@@ -1,6 +1,8 @@
 package cypher_test
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -14,7 +16,7 @@ import (
 func TestPublicProcedureCallbackReadsPendingImplicitWrites(t *testing.T) {
 	for _, carrier := range []string{"callback context and storage", "storage only", "context only"} {
 		t.Run(carrier, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			t.Cleanup(cypher.ClearUserProcedures)
 			exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "nornic"))

@@ -4,6 +4,8 @@ package storage
 // properties the filter rejects, before decoding the rest of them (#824).
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -11,7 +13,7 @@ import (
 )
 
 func TestBadgerStreamNodesPropertyFilter(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	for _, node := range []*Node{
@@ -46,7 +48,7 @@ func TestBadgerStreamNodesPropertyFilter(t *testing.T) {
 }
 
 func TestDecodeNodeRejectsMalformedBodies(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	scan := newProjectedNodeDecoder(engine, StreamNodesOptions{Projection: []string{"id"}})

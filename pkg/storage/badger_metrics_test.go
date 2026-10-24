@@ -9,6 +9,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 	"time"
 
@@ -22,7 +24,7 @@ import (
 // setupAttachedEngine builds an engine with metrics attached.
 func setupAttachedEngine(t *testing.T) (*BadgerEngine, *prometheus.Registry, *observability.StorageMetrics, *observability.MVCCMetrics) {
 	t.Helper()
-	be, err := NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 
@@ -119,7 +121,7 @@ func TestStorageOp_ObservesScan(t *testing.T) {
 // TestStorageOp_NoOpWithoutAttach: when metrics are not attached, no
 // observation runs and Gather() reports zero samples for the family.
 func TestStorageOp_NoOpWithoutAttach(t *testing.T) {
-	be, err := NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 

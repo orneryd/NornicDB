@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"runtime"
 	"strings"
 	"sync"
@@ -129,7 +130,7 @@ func TestStatisticsSetsGoThroughTheirOwningLock(t *testing.T) {
 		requireWaitsFor(t, "Stats", &ci.searches.mu, "inference.(*searchCounters).snapshot", func() { ci.Stats() })
 	})
 	t.Run("topology builds", func(t *testing.T) {
-		store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+		store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 		setupTestGraph(t, store)
 		cfg := DefaultTopologyConfig()
 		cfg.Enabled = true
@@ -145,7 +146,7 @@ func TestStatisticsSetsGoThroughTheirOwningLock(t *testing.T) {
 	t.Run("edge decay scans", func(t *testing.T) {
 		cfg := DefaultEdgeDecayConfig()
 		cfg.Enabled = true
-		ed := NewEdgeDecay(cfg, storage.NewMemoryEngine())
+		ed := NewEdgeDecay(cfg, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 		requireWaitsFor(t, "TriggerScan", &ed.stats.mu, "inference.(*EdgeDecay).scanAndDecay", func() { _, _, _, _ = ed.TriggerScan(context.Background()) })
 		requireWaitsFor(t, "GetStats", &ed.stats.mu, "inference.(*EdgeDecay).GetStats", func() { ed.GetStats() })
 	})

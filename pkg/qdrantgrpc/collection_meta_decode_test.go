@@ -2,6 +2,7 @@ package qdrantgrpc
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -14,7 +15,7 @@ import (
 // compact integer type that fits them (int8 for 4 dimensions), not the int it
 // was written with; it still reads as the same collection.
 func TestReadCollectionMeta_CompactIntegerTypes(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "c")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "c")
 	_, err := engine.CreateNode(&storage.Node{ID: collectionMetaNodeID, Labels: []string{collectionMetaNodeLabel},
 		Properties: map[string]any{"dimensions": int8(4), "distance": int8(qpb.Distance_Dot)}})
 	require.NoError(t, err)
@@ -29,7 +30,7 @@ func TestReadCollectionMeta_CompactIntegerTypes(t *testing.T) {
 // storage node cache and is decoded from disk (about 10,000 points).
 func TestUpsert_CollectionStaysOpenPastTenThousandPoints(t *testing.T) {
 	ctx := context.Background()
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
 	dbm, err := multidb.NewDatabaseManager(be, nil)

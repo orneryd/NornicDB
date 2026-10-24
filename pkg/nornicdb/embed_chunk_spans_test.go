@@ -2,6 +2,7 @@ package nornicdb
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -100,7 +101,7 @@ func TestEmbedWorkerRecordsChunkSpans(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
+			engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			node := &storage.Node{ID: "docs:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "Rent is due monthly. Notices go to Müller."}}
 			_, err := engine.CreateNode(node)
 			require.NoError(t, err)

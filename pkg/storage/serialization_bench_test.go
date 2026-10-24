@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 	"time"
 
@@ -12,7 +14,7 @@ import (
 // end (dictionary allocation included).
 func benchEngine(b *testing.B) *BadgerEngine {
 	b.Helper()
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}

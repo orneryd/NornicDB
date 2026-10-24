@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -41,7 +43,7 @@ func TestTemporalIndexFormat_CleanStartRebuildsOldFormat(t *testing.T) {
 	require.NoError(t, engine.MarkCleanShutdown(context.Background()))
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer reopened.Close()
 	clean, err := reopened.ConsumeCleanShutdownMarker(context.Background())

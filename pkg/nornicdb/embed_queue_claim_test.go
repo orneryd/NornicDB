@@ -2,6 +2,7 @@ package nornicdb
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -92,7 +93,7 @@ func (e *blockingStructuredEmbedder) EmbedDocumentPropertyChunks(context.Context
 }
 
 func TestEmbedWorkerClaimsStructuredNodeOnceAcrossConcurrentWorkers(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	node := &storage.Node{ID: "test:visual", Properties: map[string]any{"title": "diagram"}}
 	_, err := base.CreateNode(node)
 	require.NoError(t, err)
@@ -157,7 +158,7 @@ func TestEmbedWorkerClaimsStructuredNodeOnceAcrossConcurrentWorkers(t *testing.T
 }
 
 func TestEmbedWorkerBatchesStructuredNodesForTheSameProvider(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	nodes := []*storage.Node{
 		{ID: "test:first", Properties: map[string]any{"title": "first"}},
 		{ID: "test:second", Properties: map[string]any{"title": "second"}},

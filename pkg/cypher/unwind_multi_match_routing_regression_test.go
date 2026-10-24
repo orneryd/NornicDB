@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"regexp"
@@ -353,7 +355,7 @@ func TestRewriteTopLevelMultiMatchToCartesianMatch(t *testing.T) {
 }
 
 func TestBug_UnwindMatchCount_RewriteAvoidsPerItemLabelScans(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &limitedLabelScanEngine{MemoryEngine: base, maxCalls: 3}
 	exec := NewStorageExecutor(eng)

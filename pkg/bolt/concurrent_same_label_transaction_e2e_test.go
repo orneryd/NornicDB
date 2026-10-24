@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 
@@ -8,7 +9,10 @@ import (
 )
 
 func TestBoltExplicitTransactionsCreateIndependentSameLabelNodes(t *testing.T) {
-	baseStore, err := storage.NewBadgerEngineInMemory()
+	baseStore, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if baseStore != nil {
+		fixtureowner.Own(t, baseStore)
+	}
 	if err != nil {
 		t.Fatalf("create Badger store: %v", err)
 	}

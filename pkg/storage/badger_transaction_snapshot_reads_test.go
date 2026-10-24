@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -284,7 +286,7 @@ func TestTransaction_CommittedAdjacencyNoSnapshotUsesCurrentIndex(t *testing.T) 
 func BenchmarkTransaction_SnapshotAdjacency(b *testing.B) {
 	for _, unrelatedEdges := range []int{100, 1000, 5000} {
 		b.Run(fmt.Sprintf("edges=%d", unrelatedEdges), func(b *testing.B) {
-			engine, err := NewBadgerEngineInMemory()
+			engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 			require.NoError(b, err)
 			b.Cleanup(func() { engine.Close() })
 
@@ -314,7 +316,7 @@ func BenchmarkTransaction_SnapshotAdjacency(b *testing.B) {
 // with the explicit-transaction index path. The target label remains sparse as
 // database cardinality grows, matching selective Cypher label predicates.
 func BenchmarkTransaction_LabelLookup(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() { _ = engine.Close() })
 

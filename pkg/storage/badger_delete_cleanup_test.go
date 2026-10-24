@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func countDeleteMarkers(t *testing.T, eng *BadgerEngine, prefix byte) int {
 // marker in the node records or the label index, and a writer committing
 // throughout never fails.
 func TestDeleteCleanupDropsDeleteMarkers(t *testing.T) {
-	eng, err := NewBadgerEngine(t.TempDir())
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer eng.Close()
 	c := eng.deleteCleanup
@@ -96,7 +97,7 @@ func TestDeleteCleanupDropsDeleteMarkers(t *testing.T) {
 // DropPrefix waits for a commit in progress instead of failing it, and a
 // commit waits for DropPrefix.
 func TestManagedDropPrefixHoldsCommitGate(t *testing.T) {
-	eng, err := NewBadgerEngine(t.TempDir())
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer eng.Close()
 	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
@@ -123,7 +124,10 @@ func TestManagedDropPrefixHoldsCommitGate(t *testing.T) {
 // Closing the engine stops a clean-up that is waiting for deletes to stop;
 // a clean-up that fails keeps its count; an in-memory engine runs none.
 func TestDeleteCleanupLifecycle(t *testing.T) {
-	eng, err := NewBadgerEngine(t.TempDir())
+	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
+	if eng != nil {
+		fixtureowner.Own(t, eng)
+	}
 	require.NoError(t, err)
 	c := eng.deleteCleanup
 	c.threshold, c.quiet = 1, time.Hour
@@ -144,7 +148,10 @@ func TestDeleteCleanupLifecycle(t *testing.T) {
 	eng.runDeleteCleanup(5)
 	require.Equal(t, int64(5), c.deletes.Load())
 
-	mem, err := NewBadgerEngineInMemory()
+	mem, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if mem != nil {
+		fixtureowner.Own(t, mem)
+	}
 	require.NoError(t, err)
 	require.Nil(t, mem.deleteCleanup)
 	_, err = mem.CreateNode(&Node{ID: "test:a", Labels: []string{"N"}})

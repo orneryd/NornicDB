@@ -1,6 +1,7 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"testing"
@@ -10,7 +11,10 @@ import (
 func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 	dir := t.TempDir()
 	open := func() (*BadgerEngine, *WAL) {
-		b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}})
+		b, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+		if b != nil {
+			fixtureowner.Own(t, b)
+		}
 		require.NoError(t, err)
 		cfg := DefaultWALConfig()
 		cfg.Dir = filepath.Join(dir, "wal")

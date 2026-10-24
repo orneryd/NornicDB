@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/json"
 	"os"
@@ -23,7 +25,7 @@ func TestOuterRowBindingInComprehensionProjection(t *testing.T) {
 			mode = "explicit"
 		}
 		t.Run(mode, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			executor := NewStorageExecutor(storage.NewNamespacedEngine(base, "outer_row_binding"))
 			ctx := context.Background()

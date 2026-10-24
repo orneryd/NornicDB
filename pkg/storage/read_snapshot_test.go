@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/hex"
 	"fmt"
@@ -15,11 +17,11 @@ import (
 
 func newReadSnapshotTestEngine(t testing.TB, writeBehind bool) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             t.TempDir(),
 		WriteBehind:         writeBehind,
 		WriteBehindInterval: time.Hour,
-	})
+	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	return engine

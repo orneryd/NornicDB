@@ -3,6 +3,7 @@ package storage
 
 import (
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"testing"
 
@@ -855,7 +856,10 @@ func TestBadgerTransaction_ConstraintAcrossCommits(t *testing.T) {
 func setupTestBadgerEngine(t *testing.T) (*BadgerEngine, func()) {
 	dir := fmt.Sprintf("/tmp/badger-test-%d", os.Getpid())
 
-	engine, err := NewBadgerEngine(dir)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}

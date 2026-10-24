@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 )
 
@@ -27,7 +29,7 @@ const (
 
 func setupLargeOtherDatabase(b *testing.B) *NamespacedEngine {
 	b.Helper()
-	inner := NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	b.Cleanup(func() { _ = inner.Close() })
 	populateOtherDatabase(b, inner, benchOtherDBNodes, benchOtherDBEdges-benchOtherDBSameTypes, benchOtherDBSameTypes)
 	return NewNamespacedEngine(inner, "a")

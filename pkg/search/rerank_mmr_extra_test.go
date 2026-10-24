@@ -8,6 +8,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -323,7 +324,7 @@ func TestStage2RerankMemoRebindsMovedCandidatesByIdentity(t *testing.T) {
 var benchmarkRerankCandidateContent string
 
 func BenchmarkRerankCandidateContentForLongDocument(b *testing.B) {
-	svc := NewServiceWithDimensions(storage.NewMemoryEngine(), 2)
+	svc := NewServiceWithDimensions(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), 2)
 	text := strings.Repeat("предисловие ", 7000) + "alpha tango" + strings.Repeat(" заключение", 7000)
 	node := &storage.Node{
 		ID:         "nornic:long",

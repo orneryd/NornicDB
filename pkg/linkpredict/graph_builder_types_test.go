@@ -2,6 +2,7 @@ package linkpredict
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -11,7 +12,7 @@ import (
 // TestGraphBuilderRelationshipTypes keeps only the relationships of the
 // given types (#1185).
 func TestGraphBuilderRelationshipTypes(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	for _, id := range []string{"a", "b", "c"} {
 		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id)})
 		require.NoError(t, err)
@@ -34,7 +35,7 @@ func TestGraphBuilderRelationshipTypes(t *testing.T) {
 // TestGraphBuilderCacheKeepsOptionsApart: a graph cached for every type is
 // not loaded for a build of some types only (#1185).
 func TestGraphBuilderCacheKeepsOptionsApart(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	for _, id := range []string{"a", "b", "c"} {
 		_, err := engine.CreateNode(&storage.Node{ID: storage.NodeID(id)})
 		require.NoError(t, err)

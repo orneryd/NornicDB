@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"os"
 	"path/filepath"
@@ -972,7 +973,7 @@ func TestApplySchemaDefinition_ErrorsOnMissingAndInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 
 	t.Run("missing file returns os error", func(t *testing.T) {
-		err := applySchemaDefinition(storage.NewMemoryEngine(),
+		err := applySchemaDefinition(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 			filepath.Join(dir, "missing.json"))
 		require.Error(t, err)
 		require.True(t, os.IsNotExist(err) || errors.Is(err, os.ErrNotExist))
@@ -981,7 +982,7 @@ func TestApplySchemaDefinition_ErrorsOnMissingAndInvalidJSON(t *testing.T) {
 	t.Run("malformed JSON returns decode error", func(t *testing.T) {
 		path := filepath.Join(dir, "bad.json")
 		require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o600))
-		err := applySchemaDefinition(storage.NewMemoryEngine(), path)
+		err := applySchemaDefinition(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), path)
 		require.Error(t, err)
 	})
 }
@@ -1007,7 +1008,7 @@ func TestApplySchema_DispatchesByExtension(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(path, raw, 0o600))
 
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		target := storage.NewNamespacedEngine(base, "appdb")
 		require.NoError(t, applySchema(ctx, target, path))
 
@@ -1026,7 +1027,7 @@ func TestApplySchema_DispatchesByExtension(t *testing.T) {
 				"CREATE CONSTRAINT person_email_unique IF NOT EXISTS FOR (n:Person) REQUIRE n.email IS UNIQUE;\n",
 		), 0o600))
 
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		target := storage.NewNamespacedEngine(base, "appdb-cypher")
 		require.NoError(t, applySchema(ctx, target, path))
 
@@ -1038,7 +1039,7 @@ func TestApplySchema_DispatchesByExtension(t *testing.T) {
 	})
 
 	t.Run("cypher path bubbles up read errors", func(t *testing.T) {
-		err := applySchema(ctx, storage.NewMemoryEngine(),
+		err := applySchema(ctx, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 			filepath.Join(dir, "missing.cypher"))
 		require.Error(t, err)
 	})
@@ -1211,13 +1212,13 @@ func TestCSVSourceReader_ReadHeaderTwiceReturnsEOF(t *testing.T) {
 // ============================================================================
 
 func TestEnsureEmpty_RejectsNonEmptyEngine(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	ns := storage.NewNamespacedEngine(base, "occupied")
 	_, err := ns.CreateNode(&storage.Node{ID: "n1", Labels: []string{"X"}})
 	require.NoError(t, err)
 	require.Error(t, ensureEmpty(ns))
 
-	empty := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "empty")
+	empty := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "empty")
 	require.NoError(t, ensureEmpty(empty))
 }
 
@@ -1227,7 +1228,7 @@ func TestEnsureEmpty_RejectsNonEmptyEngine(t *testing.T) {
 // ============================================================================
 
 func TestRebuildSchemaDerivedState_IndexesExistingNodes(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	ns := storage.NewNamespacedEngine(base, "rebuild-db")
 
 	// Seed two Person nodes BEFORE the schema knows about indexes.
@@ -1547,7 +1548,7 @@ func TestHasSchemaDefinitionContent_HandlesAllKinds(t *testing.T) {
 // ============================================================================
 
 func TestExportNeo4jCSV_RequiresOutputDirAndDefaultQuote(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	ns := storage.NewNamespacedEngine(base, "export-db")
 
 	t.Run("empty output dir errors with ExitUnsupported", func(t *testing.T) {
@@ -1679,7 +1680,7 @@ func TestImportFull_ValidatesInputsBeforeAnyWrite(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			report, err := ImportFull(ctx, base, tc.opts)
 			require.Error(t, err)
 			require.Equal(t, "failed", report.Status)
@@ -1702,7 +1703,7 @@ func TestImportFull_ValidatesInputsBeforeAnyWrite(t *testing.T) {
 	})
 
 	t.Run("non-empty target database is rejected", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		// Pre-seed a node under the target namespace.
 		ns := storage.NewNamespacedEngine(base, "occupied")
 		_, err := ns.CreateNode(&storage.Node{ID: "n1", Labels: []string{"X"}})

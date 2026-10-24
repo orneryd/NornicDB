@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"reflect"
 	"testing"
 
@@ -14,7 +15,7 @@ import (
 // Adopted from the #1382 review: bearer executors must not leave cache roots
 // after repeated create/query/drop cycles, including drops through another adapter.
 func TestStatementCacheFamilyDroppedDatabaseCaches(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	manager, err := multidb.NewDatabaseManager(inner, nil)
 	if err != nil {
 		t.Fatal(err)

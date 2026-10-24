@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 
@@ -25,7 +26,7 @@ func testBoltRejectsWriteModeProcedure(t *testing.T, inTransaction bool) {
 	defer serverConn.Close()
 	defer clientConn.Close()
 
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	session := newTestSession(serverConn, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(store)})
 	session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 	session.authenticated = true
@@ -80,7 +81,7 @@ func TestBoltProcedureModesRequireDeclaredPermissions(t *testing.T) {
 		defer serverConn.Close()
 		defer clientConn.Close()
 
-		session := newTestSession(serverConn, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
+		session := newTestSession(serverConn, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))})
 		session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 		session.authenticated = true
 		session.authResult = &BoltAuthResult{Authenticated: true, Permissions: []string{string(auth.PermRead)}}
@@ -104,7 +105,7 @@ func TestBoltProcedureModesRequireDeclaredPermissions(t *testing.T) {
 		defer serverConn.Close()
 		defer clientConn.Close()
 
-		session := newTestSession(serverConn, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
+		session := newTestSession(serverConn, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))})
 		session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 		session.authenticated = true
 		session.authResult = &BoltAuthResult{Authenticated: true, Permissions: []string{string(auth.PermRead)}}
@@ -128,7 +129,7 @@ func TestBoltProcedureModesRequireDeclaredPermissions(t *testing.T) {
 		defer serverConn.Close()
 		defer clientConn.Close()
 
-		session := newTestSession(serverConn, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())})
+		session := newTestSession(serverConn, &cypherQueryExecutor{executor: cypher.NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))})
 		session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 		session.authenticated = true
 		session.authResult = &BoltAuthResult{Authenticated: true, Permissions: []string{string(auth.PermRead)}}
@@ -149,7 +150,7 @@ func TestBoltRejectsParameterizedDynamicWriteForReadOnlyPrincipal(t *testing.T) 
 	defer serverConn.Close()
 	defer clientConn.Close()
 
-	executor := &cypherQueryExecutor{executor: cypher.NewStorageExecutor(storage.NewMemoryEngine())}
+	executor := &cypherQueryExecutor{executor: cypher.NewStorageExecutor(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))}
 	session := newTestSession(serverConn, executor)
 	session.server = &Server{config: DefaultConfig(), sessions: map[string]*Session{}}
 	session.authenticated = true

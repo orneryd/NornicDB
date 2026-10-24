@@ -1,13 +1,17 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
 
 func TestBytePropertyRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	disk, err := NewBadgerEngine(dir)
+	disk, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
+	if disk != nil {
+		fixtureowner.Own(t, disk)
+	}
 	require.NoError(t, err)
 	values := [][]byte{{0, 127, 128, 255}, {}}
 	write := func(engine Engine) {
@@ -42,7 +46,7 @@ func TestBytePropertyRoundTrip(t *testing.T) {
 	write(disk)
 	read(disk)
 	require.NoError(t, disk.Close())
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer reopened.Close()
 	read(reopened)

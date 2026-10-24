@@ -2,6 +2,7 @@ package bolt
 
 import (
 	"bufio"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -28,7 +29,7 @@ func (m *compositeAwareMockDBManager) ExistsOrIsConstituent(name string) bool {
 func TestConstituentAwareExists_FallbackToExists(t *testing.T) {
 	mgr := &mockDBManager{
 		stores: map[string]storage.Engine{
-			"nornic": storage.NewMemoryEngine(),
+			"nornic": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 		},
 		defaultDB: "nornic",
 	}
@@ -45,7 +46,7 @@ func TestConstituentAwareExists_WithConstituentResolver(t *testing.T) {
 	mgr := &compositeAwareMockDBManager{
 		mockDBManager: mockDBManager{
 			stores: map[string]storage.Engine{
-				"translations": storage.NewMemoryEngine(),
+				"translations": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 			},
 			defaultDB: "translations",
 		},
@@ -70,7 +71,7 @@ func TestBoltHandleHello_CompositeAliasNotRejected(t *testing.T) {
 	mgr := &compositeAwareMockDBManager{
 		mockDBManager: mockDBManager{
 			stores: map[string]storage.Engine{
-				"translations": storage.NewMemoryEngine(),
+				"translations": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 			},
 			defaultDB: "translations",
 		},
@@ -121,9 +122,9 @@ func TestBoltHandleRun_CompositeAliasExistenceCheckPasses(t *testing.T) {
 	mgr := &compositeAwareMockDBManager{
 		mockDBManager: mockDBManager{
 			stores: map[string]storage.Engine{
-				"nornic":          storage.NewMemoryEngine(),
-				"translations":    storage.NewMemoryEngine(),
-				"translations.tr": storage.NewMemoryEngine(),
+				"nornic":          fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+				"translations":    fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+				"translations.tr": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 			},
 			defaultDB: "nornic",
 		},

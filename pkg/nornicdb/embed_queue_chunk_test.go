@@ -2,6 +2,7 @@ package nornicdb
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 // are chunked and all chunks are stored on the same node.
 func TestNonFileNodeChunking(t *testing.T) {
 	t.Run("single_chunk_stored_normally", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -65,7 +66,7 @@ func TestNonFileNodeChunking(t *testing.T) {
 	})
 
 	t.Run("multiple_chunks_stored_on_same_node", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -141,7 +142,7 @@ func TestNonFileNodeChunking(t *testing.T) {
 	})
 
 	t.Run("chunk_embeddings_preserved_on_update", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		baseEngine.SetEmbeddingsEnabled(true)
 
 		engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -215,7 +216,7 @@ func TestNonFileNodeChunking(t *testing.T) {
 // TestChunkEmbeddingSearch tests that all chunk embeddings are searchable
 // and results are properly deduplicated.
 func TestChunkEmbeddingSearch(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	baseEngine.SetEmbeddingsEnabled(true)
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")
@@ -308,7 +309,7 @@ func TestChunkEmbeddingSearch(t *testing.T) {
 // TestChunkEmbeddingRemoval tests that chunk embeddings are properly removed
 // when a node is deleted.
 func TestChunkEmbeddingRemoval(t *testing.T) {
-	baseEngine := storage.NewMemoryEngine()
+	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	baseEngine.SetEmbeddingsEnabled(true)
 
 	engine := storage.NewNamespacedEngine(baseEngine, "test")

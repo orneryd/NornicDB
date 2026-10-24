@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,7 +78,7 @@ func TestStorageClientReceiptValidationErrors(t *testing.T) {
 }
 
 func TestStorageClientNodeNamespaceValidation(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
@@ -120,7 +121,7 @@ func TestStorageClientNodeNamespaceValidation(t *testing.T) {
 
 func TestStorageClientBackupAndDeletePrefixErrorsPreserveCauses(t *testing.T) {
 	t.Run("backup create file", func(t *testing.T) {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, engine.Close()) })
 
@@ -135,7 +136,10 @@ func TestStorageClientBackupAndDeletePrefixErrorsPreserveCauses(t *testing.T) {
 	})
 
 	t.Run("closed backup", func(t *testing.T) {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 
@@ -145,7 +149,7 @@ func TestStorageClientBackupAndDeletePrefixErrorsPreserveCauses(t *testing.T) {
 	})
 
 	t.Run("empty delete prefix", func(t *testing.T) {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 		require.NoError(t, err)
 		t.Cleanup(func() { require.NoError(t, engine.Close()) })
 

@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"os"
 	"path/filepath"
@@ -402,14 +403,14 @@ func TestClose(t *testing.T) {
 		cfg.Database.PersistSearchIndexes = true
 		cfg.Database.DataDir = t.TempDir()
 
-		searchEngine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+		searchEngine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 		svc := search.NewServiceWithDimensions(searchEngine, 3)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		db := &DB{
 			config: cfg,
 			baseStorage: &failingCloseEngine{
-				Engine:   storage.NewMemoryEngine(),
+				Engine:   fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 				closeErr: errors.New("base close failed"),
 			},
 			searchServices: map[string]*dbSearchService{
@@ -467,7 +468,7 @@ func TestClose(t *testing.T) {
 func TestMaybeEnableReplication(t *testing.T) {
 	t.Run("standalone mode returns base storage unchanged", func(t *testing.T) {
 		t.Setenv("NORNICDB_CLUSTER_MODE", string(replication.ModeStandalone))
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 
 		db := &DB{config: DefaultConfig()}
@@ -482,7 +483,7 @@ func TestMaybeEnableReplication(t *testing.T) {
 		require.NoError(t, os.WriteFile(filePath, []byte("x"), 0600))
 		t.Setenv("NORNICDB_CLUSTER_DATA_DIR", filePath)
 
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 
 		db := &DB{config: DefaultConfig()}
@@ -1622,7 +1623,7 @@ func TestFindSimilar(t *testing.T) {
 	})
 
 	t.Run("propagates streaming storage errors", func(t *testing.T) {
-		base := storage.NewMemoryEngine()
+		base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = base.Close() })
 		ns := storage.NewNamespacedEngine(base, "test")
 		_, err := ns.CreateNode(&storage.Node{
@@ -1646,7 +1647,7 @@ func TestFindSimilar(t *testing.T) {
 
 func TestSearchAndHybridSearch_RetryWhileIndexBuilding(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	ns := storage.NewNamespacedEngine(base, "nornic")
 	svc := search.NewService(ns) // Intentionally not pre-built.
@@ -1676,7 +1677,7 @@ func TestSearchAndHybridSearch_RetryWhileIndexBuilding(t *testing.T) {
 }
 
 func TestRemoveNodeFromSearchIndexes_WaitsForBuildCompletion(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	ns := storage.NewNamespacedEngine(base, "nornic")
 	svc := search.NewServiceWithDimensions(ns, 3)
@@ -1975,7 +1976,7 @@ func TestRestore(t *testing.T) {
 	})
 
 	t.Run("returns parse error for invalid backup json", func(t *testing.T) {
-		base := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+		base := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 		t.Cleanup(func() { _ = base.Close() })
 		db := &DB{storage: base, config: DefaultConfig()}
 		closeTestDBOnCleanup(t, db)
@@ -1988,7 +1989,7 @@ func TestRestore(t *testing.T) {
 	})
 
 	t.Run("returns node restore error when create and update fail", func(t *testing.T) {
-		base := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+		base := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 		t.Cleanup(func() { _ = base.Close() })
 		db := &DB{
 			storage: &restoreFailEngine{
@@ -2009,7 +2010,7 @@ func TestRestore(t *testing.T) {
 	})
 
 	t.Run("returns edge restore error when create and update fail", func(t *testing.T) {
-		base := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+		base := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 		t.Cleanup(func() { _ = base.Close() })
 		db := &DB{
 			storage: &restoreFailEngine{
@@ -2030,7 +2031,7 @@ func TestRestore(t *testing.T) {
 	})
 
 	t.Run("updates existing nodes and edges when ids already exist", func(t *testing.T) {
-		base := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+		base := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 		t.Cleanup(func() { _ = base.Close() })
 		db := &DB{
 			storage:        base,
@@ -2090,7 +2091,7 @@ func TestRestore(t *testing.T) {
 	})
 
 	t.Run("rebuilds mvcc heads after restore", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		maint := &temporalMaintenanceTestEngine{Engine: baseEngine}
 		db := &DB{
@@ -2114,7 +2115,7 @@ func TestRestore(t *testing.T) {
 	})
 
 	t.Run("returns temporal rebuild error after restore", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		maint := &temporalMaintenanceTestEngine{Engine: baseEngine, rebuildErr: errors.New("temporal rebuild failed")}
 		db := &DB{
@@ -2139,7 +2140,7 @@ func TestRestore(t *testing.T) {
 	})
 
 	t.Run("returns mvcc rebuild error after restore", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		maint := &temporalMaintenanceTestEngine{Engine: baseEngine, mvccRebuildErr: errors.New("mvcc rebuild failed")}
 		db := &DB{
@@ -2216,7 +2217,7 @@ func TestDB_TemporalMaintenance(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("delegates rebuild and prune to base storage", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		maint := &temporalMaintenanceTestEngine{
 			Engine:      baseEngine,
@@ -2242,7 +2243,7 @@ func TestDB_TemporalMaintenance(t *testing.T) {
 	})
 
 	t.Run("returns zero when maintenance is unsupported", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		db := &DB{
 			storage:     storage.NewNamespacedEngine(baseEngine, "nornic"),
@@ -2257,7 +2258,7 @@ func TestDB_TemporalMaintenance(t *testing.T) {
 	})
 
 	t.Run("returns ErrClosed", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		maint := &temporalMaintenanceTestEngine{Engine: baseEngine}
 		db := &DB{
@@ -2273,7 +2274,7 @@ func TestDB_TemporalMaintenance(t *testing.T) {
 	})
 
 	t.Run("lifecycle admin methods delegate to base storage", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		maint := &temporalMaintenanceTestEngine{
 			Engine:          baseEngine,
@@ -2299,7 +2300,7 @@ func TestDB_TemporalMaintenance(t *testing.T) {
 	})
 
 	t.Run("lifecycle admin methods fallback and closed handling", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		db := &DB{
 			storage:     storage.NewNamespacedEngine(baseEngine, "nornic"),
@@ -2327,7 +2328,7 @@ func TestDB_MVCCMaintenance(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("delegates rebuild and prune to base storage", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		maint := &temporalMaintenanceTestEngine{
 			Engine:          baseEngine,
@@ -2353,7 +2354,7 @@ func TestDB_MVCCMaintenance(t *testing.T) {
 	})
 
 	t.Run("returns zero when maintenance is unsupported", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		db := &DB{
 			storage:     storage.NewNamespacedEngine(baseEngine, "nornic"),
@@ -2368,7 +2369,7 @@ func TestDB_MVCCMaintenance(t *testing.T) {
 	})
 
 	t.Run("returns ErrClosed", func(t *testing.T) {
-		baseEngine := storage.NewMemoryEngine()
+		baseEngine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = baseEngine.Close() })
 		maint := &temporalMaintenanceTestEngine{Engine: baseEngine}
 		db := &DB{

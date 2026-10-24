@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"sync"
 	"testing"
@@ -30,7 +32,7 @@ func (p *reviewOldProviderFailure) EmbedBatch(ctx context.Context, _ []string) (
 func TestReviewOldProviderFailureAfterSetter(t *testing.T) {
 	for _, setter := range []string{"single", "resolver"} {
 		t.Run(setter, func(t *testing.T) {
-			disk, err := storage.NewBadgerEngine(t.TempDir())
+			disk, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
 			defer disk.Close()
 			disk.SetEmbeddingsEnabled(true)

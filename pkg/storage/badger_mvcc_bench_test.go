@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -37,12 +38,15 @@ const mvccBenchRetainedVersions = 4096
 // nothing (#731).
 func newMVCCHistoryBenchEngine(b *testing.B) *MemoryEngine {
 	b.Helper()
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		InMemory: true,
 		EngineOptions: EngineOptions{
 			RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: mvccBenchRetainedVersions},
 		},
-	})
+	}))
+	if engine != nil {
+		fixtureowner.Own(b, engine)
+	}
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -287,7 +291,7 @@ func benchmarkMVCCTombstonePositionAfterPrune(b *testing.B, cycles, maxVersionsP
 }
 
 func BenchmarkBadgerEngine_CreateNode_MVCC(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	b.Cleanup(func() { _ = engine.Close() })
 	b.ReportAllocs()
 
@@ -305,7 +309,7 @@ func BenchmarkBadgerEngine_CreateNode_MVCC(b *testing.B) {
 }
 
 func BenchmarkBadgerEngine_UpdateNode_MVCC(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	b.Cleanup(func() { _ = engine.Close() })
 
 	nodeID := NodeID(prefixTestID("bench-mvcc-update-target"))
@@ -344,7 +348,7 @@ func BenchmarkBadgerEngine_GetNodeVisibleAt(b *testing.B) {
 }
 
 func BenchmarkBadgerEngine_GetNodeVisibleAt_CurrentHeadGraphitiVector(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	b.Cleanup(func() { _ = engine.Close() })
 
 	nodeID := NodeID(prefixTestID("bench-mvcc-current-graphiti-vector"))
@@ -382,7 +386,7 @@ func BenchmarkBadgerEngine_GetNodeVisibleAt_CurrentHeadGraphitiVector(b *testing
 }
 
 func BenchmarkBadgerEngine_GetNodesByLabelVisibleAt(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	b.Cleanup(func() { _ = engine.Close() })
 	b.ReportAllocs()
 

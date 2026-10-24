@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"testing"
 	"time"
@@ -30,7 +32,7 @@ func TestMVCCNodeVersionKeyOrdersByCommitVersion(t *testing.T) {
 
 func TestBadgerTransaction_AssignsMonotonicMVCCCommitVersions(t *testing.T) {
 	dir := t.TempDir()
-	engine, err := NewBadgerEngine(dir)
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
@@ -67,7 +69,7 @@ func TestBadgerTransaction_AssignsMonotonicMVCCCommitVersions(t *testing.T) {
 
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer reopened.Close()
 

@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"strings"
 	"testing"
 	"time"
@@ -19,7 +21,6 @@ func TestBufferedRecoveryRetiresBatchBeforeReadingLaterInvalidRecord(t *testing.
 	engine = newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 
 	wal = engine.bufferedCommitWAL
-	t.Cleanup(func() { _ = engine.Close(); _ = wal.Close() })
 	replayed, err := RecoverBufferedCommits(engine, wal)
 	require.ErrorContains(t, err, "unmarshal buffered commit")
 	require.Equal(t, 1, replayed, "a completed bounded batch must not remain retained until WAL EOF")
@@ -57,6 +58,8 @@ func crashClose(t testing.TB, engine *BadgerEngine, wal *WAL) {
 	engine.writeBarrier.Lock()
 	engine.mu.Lock()
 	engine.closed = true
+	// A crash discards the buffer; later fixture cleanup must not drain it.
+	engine.writeBehind = nil
 	db := engine.db
 	engine.mu.Unlock()
 	require.NoError(t, db.Close())
@@ -98,7 +101,6 @@ func TestWriteBehind_BufferedCommitSurvivesCrashAndReplays(t *testing.T) {
 	// Reopen a fresh engine + WAL on the same directories.
 	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal2 := recovered.bufferedCommitWAL
-	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
 
 	// Before recovery the node is gone from Badger.
 	_, err = recovered.GetNode("test:n1")
@@ -123,7 +125,6 @@ func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	dir := t.TempDir()
 	engine := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 	wal := engine.bufferedCommitWAL
-	t.Cleanup(func() { _ = wal.Close(); _ = engine.Close() })
 
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
@@ -144,7 +145,6 @@ func TestWriteBehind_RecoverSkipsFlushedCommits(t *testing.T) {
 	recovered := newWriteBehindTestEngine(t, time.Hour, writeBehindTestOptions{dataDir: dir, wal: true})
 
 	wal2 := recovered.bufferedCommitWAL
-	t.Cleanup(func() { _ = wal2.Close(); _ = recovered.Close() })
 
 	// The marker says the commit is already applied: nothing to replay, and
 	// no double-apply.
@@ -190,7 +190,7 @@ func TestReplayWALEntry_AppliesBufferedCommit(t *testing.T) {
 
 	// A fresh Badger engine, no WAL wiring needed: ReplayWALEntry must apply
 	// the payload through the buffered-commit application path.
-	fresh, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	fresh, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = fresh.Close() })
 

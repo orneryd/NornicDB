@@ -2,6 +2,7 @@ package qdrantgrpc
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"log/slog"
 	"sync"
@@ -49,7 +50,7 @@ func TestServerRequestLoggingPublicRPCs(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.ListenAddr = "127.0.0.1:0"
 	cfg.Logger = slog.New(capture)
-	srv, err := NewServer(cfg, newTestCollectionStore(t), storage.NewMemoryEngine(), nil, nil)
+	srv, err := NewServer(cfg, newTestCollectionStore(t), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil, nil)
 	require.NoError(t, err)
 	unary := func(_ interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 		req := new(wrapperspb.Int32Value)

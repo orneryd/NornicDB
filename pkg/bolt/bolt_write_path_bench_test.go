@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"net"
@@ -111,11 +113,11 @@ func BenchmarkDirectAutocommitCreateParameterized(b *testing.B) {
 // Badger engine in a temp dir.
 func newBoltPathBenchExecutor(b *testing.B) (*cypher.StorageExecutor, *storage.BadgerEngine) {
 	b.Helper()
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir:             b.TempDir(),
 		WriteBehind:         true,
 		WriteBehindInterval: time.Hour,
-	})
+	}))
 	if err != nil {
 		b.Fatal(err)
 	}

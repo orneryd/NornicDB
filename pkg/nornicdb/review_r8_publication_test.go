@@ -1,6 +1,8 @@
 package nornicdb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -15,7 +17,7 @@ import (
 
 func TestReviewSourcePreservingAcceptancePublication(t *testing.T) {
 	ctx := context.Background()
-	disk, err := storage.NewBadgerEngine(t.TempDir())
+	disk, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer disk.Close()
 	store := storage.NewNamespacedEngine(disk, "review")

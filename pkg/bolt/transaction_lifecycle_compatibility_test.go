@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 	"time"
@@ -19,7 +20,7 @@ const (
 func startTransactionLifecycleServer(t *testing.T) (*storage.MemoryEngine, int) {
 	t.Helper()
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})
@@ -193,7 +194,7 @@ func TestBoltExplicitTransactionRejectsInvalidTimeoutBeforeStorageAllocation(t *
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { require.NoError(t, base.Close()) })
 			counting := &countingTransactionEngine{Engine: base, inner: base}
 			store := storage.NewNamespacedEngine(counting, "nornic")
@@ -222,8 +223,8 @@ func TestBoltExplicitTransactionRejectsInvalidTimeoutBeforeStorageAllocation(t *
 }
 
 func TestBoltDuplicateBeginPreservesOriginalTransactionExecutor(t *testing.T) {
-	originalBase := storage.NewMemoryEngine()
-	otherBase := storage.NewMemoryEngine()
+	originalBase := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+	otherBase := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, originalBase.Close())
 		require.NoError(t, otherBase.Close())

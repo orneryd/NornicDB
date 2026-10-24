@@ -3,6 +3,7 @@ package nornicdb
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -55,7 +56,7 @@ func storedContent(word string) func(*storage.Node, error) bool {
 
 func newMutationOrderDB(t *testing.T) (*DB, *dbSearchService, storage.Engine, *refreshReadBarrier) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(base, "test")
 	barrier := &refreshReadBarrier{Engine: store, entered: make(chan struct{}), release: make(chan struct{})}
 	svc := search.NewServiceWithDimensions(barrier, 2)

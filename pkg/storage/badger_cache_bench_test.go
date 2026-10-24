@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"strings"
 	"testing"
 )
@@ -21,7 +23,7 @@ func BenchmarkNodeBodyCacheStoreAndEvict(b *testing.B) {
 }
 
 func BenchmarkBadger_GetNode_CacheHit(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -46,7 +48,7 @@ func BenchmarkBadger_GetNode_CacheHit(b *testing.B) {
 }
 
 func BenchmarkBadger_GetEdgesByType_CacheHit(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	if err != nil {
 		b.Fatal(err)
 	}

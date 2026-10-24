@@ -3,6 +3,7 @@ package linkpredict
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math/rand"
 	"sync"
 	"testing"
@@ -358,7 +359,7 @@ func TestChaosExtremeValues(t *testing.T) {
 // TestComplexMultiLayerGraph tests with nodes that have multiple edge types.
 func TestComplexMultiLayerGraph(t *testing.T) {
 	ctx := context.Background()
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 
 	// Create a multi-layer social network:
 	// - Friendship layer
@@ -584,7 +585,7 @@ func TestComplexEnsembleDisagreement(t *testing.T) {
 
 // TestComplexContextCancellation tests proper context handling.
 func TestComplexContextCancellation(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 
 	// Create large graph
 	for i := 0; i < 100; i++ {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -18,7 +19,7 @@ import (
 // property-key dictionary, and returns its path.
 func restoreFixture(t *testing.T, nodes int) string {
 	t.Helper()
-	source, err := NewBadgerEngine(t.TempDir())
+	source, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer source.Close()
 	for i := 0; i < nodes; i++ {
@@ -40,7 +41,7 @@ func restoreFixture(t *testing.T, nodes int) string {
 func TestBadgerEngine_RestoreWithConcurrentReaders(t *testing.T) {
 	const nodes = 200
 	backup := restoreFixture(t, nodes)
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
 	require.NoError(t, engine.Restore(backup))
@@ -117,7 +118,7 @@ func TestBadgerEngine_RestoreWithConcurrentReaders(t *testing.T) {
 // transaction ends.
 func TestBadgerEngine_RestoreWaitsForOpenTransaction(t *testing.T) {
 	backup := restoreFixture(t, 3)
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
 	_, err = engine.CreateNode(&Node{ID: "restore:before", Labels: []string{"Doc"}})
@@ -152,7 +153,7 @@ func TestBadgerEngine_RestoreWaitsForOpenTransaction(t *testing.T) {
 // A transaction still open after the wait leaves the store as it was.
 func TestBadgerEngine_RestoreBusyChangesNothing(t *testing.T) {
 	backup := restoreFixture(t, 3)
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
 	_, err = engine.CreateNode(&Node{ID: "restore:kept", Labels: []string{"Doc"}})
@@ -176,7 +177,10 @@ func TestBadgerEngine_RestoreBusyChangesNothing(t *testing.T) {
 // Restore on a closed engine reports it and touches nothing.
 func TestBadgerEngine_RestoreClosedEngine(t *testing.T) {
 	backup := restoreFixture(t, 1)
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 	require.ErrorIs(t, engine.Restore(backup), ErrStorageClosed)
@@ -185,7 +189,7 @@ func TestBadgerEngine_RestoreClosedEngine(t *testing.T) {
 // While reads are held, every entry point that opens a Badger read is turned
 // away, and a transaction's snapshot refresh keeps its current snapshot.
 func TestManagedBadgerReadsHeld(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer engine.Close()
 	_, err = engine.CreateNode(&Node{ID: "held:n", Labels: []string{"Doc"}})
@@ -222,7 +226,10 @@ func TestManagedBadgerReadsHeld(t *testing.T) {
 
 // viewHeld on a closed Badger handle reports it.
 func TestManagedBadgerViewHeldClosed(t *testing.T) {
-	engine, err := NewBadgerEngine(t.TempDir())
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	db := engine.db
 	require.NoError(t, engine.Close())

@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 	"time"
@@ -69,7 +70,7 @@ func TestVectorDimensionReadersAndFirstIndex(t *testing.T) {
 // node stored has none (a Qdrant collection's metadata node, a document). A
 // rebuild after a restart then indexes the database's vectors.
 func TestBuildIndexesUnfixedDimensionsFollowFirstStoredVector(t *testing.T) {
-	badger, err := storage.NewBadgerEngineInMemory()
+	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = badger.Close() })
 	engine := storage.NewNamespacedEngine(badger, "points")

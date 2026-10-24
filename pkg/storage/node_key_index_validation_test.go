@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"sync/atomic"
 	"testing"
@@ -117,7 +119,7 @@ func TestNodeKeyIndex_FilledAfterReopen(t *testing.T) {
 	commitNodes(t, engine, factNode("a", 1, "name", 1))
 	require.NoError(t, engine.Close())
 
-	reopened, err := NewBadgerEngine(dir)
+	reopened, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.NoError(t, err)
 	defer reopened.Close()
 	sm = reopened.GetSchemaForNamespace("test")

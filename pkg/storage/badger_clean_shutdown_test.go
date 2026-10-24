@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"testing"
 
@@ -23,7 +24,10 @@ func (c *cancelAfterInitialCheckContext) Err() error {
 
 func TestCleanShutdownMarkerIsConsumedByNextStartup(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "db")
-	engine, err := NewBadgerEngine(directory)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	clean, err := engine.ConsumeCleanShutdownMarker(context.Background())
@@ -32,7 +36,7 @@ func TestCleanShutdownMarkerIsConsumedByNextStartup(t *testing.T) {
 	require.NoError(t, engine.MarkCleanShutdown(context.Background()))
 	require.NoError(t, engine.Close())
 
-	restarted, err := NewBadgerEngine(directory)
+	restarted, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
 	clean, err = restarted.ConsumeCleanShutdownMarker(context.Background())
@@ -56,7 +60,10 @@ func TestCanceledMaintenanceMarkerOperationsLeaveStateConservative(t *testing.T)
 }
 
 func TestMaintenanceMarkerAcceptsNilContextAndRejectsClosedStorage(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.MarkCleanShutdown(nil))
 	clean, err := engine.ConsumeCleanShutdownMarker(nil)
@@ -82,7 +89,10 @@ func TestMaintenanceMarkerHonorsCancellationAtStorageBoundary(t *testing.T) {
 
 func TestCleanShutdownMarkerTraversesWALStorageStack(t *testing.T) {
 	directory := filepath.Join(t.TempDir(), "db")
-	badgerEngine, err := NewBadgerEngine(directory)
+	badgerEngine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
+	if badgerEngine != nil {
+		fixtureowner.Own(t, badgerEngine)
+	}
 	require.NoError(t, err)
 	wal, err := NewWAL("", &WALConfig{Dir: filepath.Join(directory, "wal"), SyncMode: "immediate"})
 	require.NoError(t, err)
@@ -92,7 +102,7 @@ func TestCleanShutdownMarkerTraversesWALStorageStack(t *testing.T) {
 	require.NoError(t, stack.MarkCleanShutdown(context.Background()))
 	require.NoError(t, stack.Close())
 
-	restarted, err := NewBadgerEngine(directory)
+	restarted, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(directory))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = restarted.Close() })
 	clean, err := restarted.ConsumeCleanShutdownMarker(context.Background())
