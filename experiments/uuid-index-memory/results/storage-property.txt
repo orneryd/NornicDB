@@ -1,0 +1,5 @@
+=== RUN   TestUUIDMemorySpikeProbe
+SPIKE_RESULT {"build_ms":3160.454,"corpus":"namespace","go":"go1.26.9","mode":"property","n":1000000,"retained_bytes":180566712,"retained_objects":3004164,"sampled_public_lookup_check":"pass","scan_heap_bytes":129238504}
+--- PASS: TestUUIDMemorySpikeProbe (3.37s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	3.434s

@@ -1,0 +1,5 @@
+=== RUN   TestUUIDMemorySpikeProbe
+SPIKE_RESULT {"build_ms":2545.192,"corpus":"namespace","empty_after_delete_retained_bytes":111631952,"empty_pair_count_check":"pass","full_bidirectional_check":"pass","go":"go1.26.9","mode":"dictionary","n":1000000,"retained_bytes":159631208,"retained_objects":1008746,"scan_heap_bytes":111571824}
+--- PASS: TestUUIDMemorySpikeProbe (6.09s)
+PASS
+ok  	github.com/orneryd/nornicdb/pkg/storage	6.137s

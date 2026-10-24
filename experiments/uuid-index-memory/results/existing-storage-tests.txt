@@ -1,0 +1,1 @@
+ok  	github.com/orneryd/nornicdb/pkg/storage	3.274s
