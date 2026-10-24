@@ -422,3 +422,9 @@ func graphEntityLookupID(engine storage.Engine, value interface{}, domains ...gr
 	}
 	return reference.NodeLookupID(engine)
 }
+
+// SubscribeEvents retains the underlying engine's publication owner through
+// the identity read view; the adapter never publishes a second event stream.
+func (v *graphIdentityStorage) SubscribeEvents(handlers storage.EventHandlers) error {
+	return storage.SubscribeEvents(v.Engine, handlers)
+}

@@ -2301,20 +2301,20 @@ func TestLowLevelHelpers_AdditionalCoverage(t *testing.T) {
 	// createPatternsInScope: the shared CREATE core
 	nodes := map[string]*storage.Node{}
 	created := &ExecuteResult{Stats: &QueryStats{}}
-	_, err := exec.createPatternsInScope(ctx, "(:Person {name:'x'})", nodes, map[string]*storage.Edge{}, created)
+	_, err := exec.planCreatePatterns(ctx, "(:Person {name:'x'})", nodes, map[string]*storage.Edge{}, nil, created)
 	require.NoError(t, err)
 	assert.Equal(t, 1, created.Stats.NodesCreated)
 	assert.Empty(t, nodes, "an anonymous node binds no variable")
 
-	_, err = exec.createPatternsInScope(ctx, "(n:123Bad)", nodes, map[string]*storage.Edge{}, created)
+	_, err = exec.planCreatePatterns(ctx, "(n:123Bad)", nodes, map[string]*storage.Edge{}, nil, created)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid label name")
 
-	_, err = exec.createPatternsInScope(ctx, "(n:Person {1bad: 1})", nodes, map[string]*storage.Edge{}, created)
+	_, err = exec.planCreatePatterns(ctx, "(n:Person {1bad: 1})", nodes, map[string]*storage.Edge{}, nil, created)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "map literal keys must be valid symbolic names")
 
-	_, err = exec.createPatternsInScope(ctx, "(n:Person)", nodes, map[string]*storage.Edge{}, created)
+	_, err = exec.planCreatePatterns(ctx, "(n:Person)", nodes, map[string]*storage.Edge{}, nil, created)
 	require.NoError(t, err)
 	require.NotNil(t, nodes["n"])
 	require.NotNil(t, nodes["n"].Properties) // initialized for empty-property create
@@ -2374,12 +2374,12 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	edgeVars := map[string]*storage.Edge{}
 	result := &ExecuteResult{Stats: &QueryStats{}}
 
-	_, err := exec.createPatternsInScope(ctx, "(a:Person {name:'alice'})", nodeVars, edgeVars, result)
+	_, err := exec.planCreatePatterns(ctx, "(a:Person {name:'alice'})", nodeVars, edgeVars, nil, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "a")
 	assert.Equal(t, 1, result.Stats.NodesCreated)
 
-	_, err = exec.createPatternsInScope(ctx, "(a)-[r:KNOWS {since: 2020}]->(b:Person {name:'bob'})", nodeVars, edgeVars, result)
+	_, err = exec.planCreatePatterns(ctx, "(a)-[r:KNOWS {since: 2020}]->(b:Person {name:'bob'})", nodeVars, edgeVars, nil, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "b")
 	require.Contains(t, edgeVars, "r")
@@ -2387,7 +2387,7 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	assert.Equal(t, int64(2020), edgeVars["r"].Properties["since"])
 
 	// Reverse arrow branch: created edge should start at inline node c and end at a.
-	_, err = exec.createPatternsInScope(ctx, "(a)<-[rb:BACK]-(c:Person {name:'carol'})", nodeVars, edgeVars, result)
+	_, err = exec.planCreatePatterns(ctx, "(a)<-[rb:BACK]-(c:Person {name:'carol'})", nodeVars, edgeVars, nil, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "c")
 	require.Contains(t, edgeVars, "rb")
@@ -2395,11 +2395,11 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	assert.Equal(t, nodeVars["a"].ID, edgeVars["rb"].EndNode)
 
 	// Invalid relationship shape.
-	_, err = exec.createPatternsInScope(ctx, "(a)-[:BROKEN](b)", nodeVars, edgeVars, result)
+	_, err = exec.planCreatePatterns(ctx, "(a)-[:BROKEN](b)", nodeVars, edgeVars, nil, result)
 	require.Error(t, err)
 
 	// An endpoint variable not in scope is a new node (Neo4j CREATE semantics).
-	_, err = exec.createPatternsInScope(ctx, "(missing)-[:REL]->(a)", nodeVars, edgeVars, result)
+	_, err = exec.planCreatePatterns(ctx, "(missing)-[:REL]->(a)", nodeVars, edgeVars, nil, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "missing")
 

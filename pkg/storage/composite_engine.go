@@ -21,7 +21,8 @@ import (
 // view spans multiple physical databases.
 type CompositeEngine struct {
 	// name is the composite database's name (SetCompositeName).
-	name string
+	name              string
+	accessConstituent func(string, Engine, bool) (Engine, error)
 
 	// Constituents maps alias names to their storage engines
 	constituents map[string]Engine
@@ -203,13 +204,29 @@ func (c *CompositeEngine) getConstituentsForWrite() []string {
 // getConstituent returns a constituent engine by alias.
 func (c *CompositeEngine) getConstituent(alias string) (Engine, error) {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-
 	engine, exists := c.constituents[alias]
+	c.mu.RUnlock()
 	if !exists {
 		return nil, localizedError(localization.StorageCompositeConstituentNotFound(alias), nil)
 	}
+	if c.accessConstituent != nil {
+		return c.accessConstituent(c.constituentDatabase(alias, engine), engine, false)
+	}
 	return engine, nil
+}
+
+func (c *CompositeEngine) getConstituentForWrite(alias string) (Engine, error) {
+	c.mu.RLock()
+	mode := c.accessModes[alias]
+	c.mu.RUnlock()
+	if mode != "write" && mode != "read_write" {
+		return nil, fmt.Errorf("constituent %q is read-only", alias)
+	}
+	engine, err := c.getConstituent(alias)
+	if err != nil || c.accessConstituent == nil {
+		return engine, err
+	}
+	return c.accessConstituent(c.constituentDatabase(alias, engine), engine, true)
 }
 
 // GetConstituentByAlias returns the storage engine for a specific constituent
@@ -316,7 +333,7 @@ func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
 		return "", localizedError(localization.StorageCompositeWriteTargetAmbiguous(), nil)
 	}
 
-	engine, err := c.getConstituent(targetConstituent)
+	engine, err := c.getConstituentForWrite(targetConstituent)
 	if err != nil {
 		return "", err
 	}
@@ -342,7 +359,8 @@ func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
 	c.nodeToConstituent[actualPrefixedID] = targetConstituent
 	c.mu.Unlock()
 
-	// Return unprefixed ID to user (user-facing API)
+	// The caller retains the selected native identity; stored IDs stay local.
+	node.Database = c.constituentDatabase(targetConstituent, engine)
 	return nodeID, nil
 }
 
@@ -415,7 +433,11 @@ func (c *CompositeEngine) UpdateNode(node *Node) error {
 		_, err = engine.GetNode(node.ID)
 		if err == nil {
 			// Found it, update in this constituent
-			return engine.UpdateNode(node)
+			writer, err := c.getConstituentForWrite(alias)
+			if err != nil {
+				return err
+			}
+			return writer.UpdateNode(node)
 		}
 		if err != ErrNotFound {
 			return err
@@ -439,7 +461,11 @@ func (c *CompositeEngine) DeleteNode(id NodeID) error {
 		_, err = engine.GetNode(id)
 		if err == nil {
 			// Found it, delete from this constituent
-			return engine.DeleteNode(id)
+			writer, err := c.getConstituentForWrite(alias)
+			if err != nil {
+				return err
+			}
+			return writer.DeleteNode(id)
 		}
 		if err != ErrNotFound {
 			return err
@@ -459,6 +485,17 @@ func (c *CompositeEngine) DeleteNode(id NodeID) error {
 func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 	if edge == nil {
 		return localizedError(localization.StorageCompositeEdgeRequired(), nil)
+	}
+
+	if alias, qualified, err := c.edgeSourceAlias(edge); qualified {
+		if err != nil {
+			return err
+		}
+		engine, err := c.getConstituentForWrite(alias)
+		if err != nil {
+			return err
+		}
+		return engine.CreateEdge(edge)
 	}
 
 	writeConstituents := c.getConstituentsForWrite()
@@ -506,7 +543,7 @@ func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 	// Following Neo4j pattern: trust transaction state, don't verify with GetNode
 	// The underlying engine will verify nodes exist when creating the edge
 	if startNodeInTx && endNodeInTx && startConstituent == endConstituent {
-		engine, err := c.getConstituent(startConstituent)
+		engine, err := c.getConstituentForWrite(startConstituent)
 		if err == nil && engine != nil {
 			// Trust transaction state - nodes were created here, so try creating edge
 			createErr := engine.CreateEdge(edge)
@@ -522,7 +559,7 @@ func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 
 	// If start node was created in transaction, try that constituent first
 	if startNodeInTx && startConstituent != "" {
-		engine, err := c.getConstituent(startConstituent)
+		engine, err := c.getConstituentForWrite(startConstituent)
 		if err == nil && engine != nil {
 			createErr := engine.CreateEdge(edge)
 			if createErr == nil {
@@ -560,8 +597,12 @@ func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 			continue // End node not in this constituent
 		}
 
-		// Both nodes exist - try creating edge
-		createErr := engine.CreateEdge(edge)
+		// Both nodes exist: claim exactly their physical write owner.
+		writer, err := c.getConstituentForWrite(alias)
+		if err != nil {
+			return err
+		}
+		createErr := writer.CreateEdge(edge)
 		if createErr == nil {
 			return nil
 		}
@@ -648,7 +689,11 @@ func (c *CompositeEngine) UpdateEdge(edge *Edge) error {
 
 		_, err = engine.GetEdge(edge.ID)
 		if err == nil {
-			return engine.UpdateEdge(edge)
+			writer, err := c.getConstituentForWrite(alias)
+			if err != nil {
+				return err
+			}
+			return writer.UpdateEdge(edge)
 		}
 		if err != ErrNotFound {
 			return err
@@ -671,7 +716,11 @@ func (c *CompositeEngine) DeleteEdge(id EdgeID) error {
 
 		_, err = engine.GetEdge(id)
 		if err == nil {
-			return engine.DeleteEdge(id)
+			writer, err := c.getConstituentForWrite(alias)
+			if err != nil {
+				return err
+			}
+			return writer.DeleteEdge(id)
 		}
 		if err != ErrNotFound {
 			return err
@@ -1224,12 +1273,15 @@ func (c *CompositeEngine) BulkCreateNodes(nodes []*Node) error {
 
 	// Create nodes in each constituent
 	for constituent, groupNodes := range nodeGroups {
-		engine, err := c.getConstituent(constituent)
+		engine, err := c.getConstituentForWrite(constituent)
 		if err != nil {
 			return localizedError(localization.StorageCompositeConstituentLookupFailed(constituent, err), err)
 		}
 		if err := engine.BulkCreateNodes(groupNodes); err != nil {
 			return localizedError(localization.StorageCompositeNodeBulkCreateFailed(constituent, err), err)
+		}
+		for _, node := range groupNodes {
+			node.Database = c.constituentDatabase(constituent, engine)
 		}
 	}
 
@@ -1250,6 +1302,13 @@ func (c *CompositeEngine) BulkCreateEdges(edges []*Edge) error {
 	unroutedEdges := []*Edge{}
 
 	for _, edge := range edges {
+		if alias, qualified, err := c.edgeSourceAlias(edge); qualified {
+			if err != nil {
+				return err
+			}
+			edgeGroups[alias] = append(edgeGroups[alias], edge)
+			continue
+		}
 		// Find constituent with start node
 		routed := false
 		for _, alias := range readConstituents {
@@ -1277,7 +1336,7 @@ func (c *CompositeEngine) BulkCreateEdges(edges []*Edge) error {
 
 	// Create edges in each constituent
 	for constituent, groupEdges := range edgeGroups {
-		engine, err := c.getConstituent(constituent)
+		engine, err := c.getConstituentForWrite(constituent)
 		if err != nil {
 			return localizedError(localization.StorageCompositeConstituentLookupFailed(constituent, err), err)
 		}
@@ -1288,7 +1347,7 @@ func (c *CompositeEngine) BulkCreateEdges(edges []*Edge) error {
 
 	// Handle unrouted edges (start node not found) - route to first writable
 	if len(unroutedEdges) > 0 {
-		engine, err := c.getConstituent(writeConstituents[0])
+		engine, err := c.getConstituentForWrite(writeConstituents[0])
 		if err != nil {
 			return localizedError(localization.StorageCompositeDefaultConstituentLookupFailed(err), err)
 		}

@@ -140,3 +140,28 @@ func (c *CompositeEngine) constituentForNodePair(start, end NodeID) (Engine, Nod
 func (c *CompositeEngine) constituentNodeElementID(alias string, engine Engine, id NodeID) NodeID {
 	return NodeID(SourceNodeElementID(c.constituentDatabase(alias, engine), id))
 }
+
+// ConstituentStorage resolves a native entity's database through the same
+// selector as qualified reads, retaining the statement's participant view.
+func (c *CompositeEngine) ConstituentStorage(database string) (Engine, error) {
+	aliases, _, _ := c.constituentsForEntity("4", SourceNodeElementID(database, ""))
+	if len(aliases) == 0 {
+		return nil, ErrNotFound
+	}
+	return c.getConstituent(aliases[0])
+}
+
+// edgeSourceAlias is the source decision shared by single and bulk creation.
+func (c *CompositeEngine) edgeSourceAlias(edge *Edge) (string, bool, error) {
+	if edge == nil {
+		return "", true, ErrNotFound
+	}
+	if edge.Database == "" {
+		return "", false, nil
+	}
+	aliases, _, _ := c.constituentsForEntity("4", SourceNodeElementID(edge.Database, edge.StartNode))
+	if len(aliases) == 0 {
+		return "", true, ErrNotFound
+	}
+	return aliases[0], true, nil
+}

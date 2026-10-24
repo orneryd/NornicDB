@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,13 +26,14 @@ func TestCompositeIdentityReadContract(t *testing.T) {
 			modes := map[string]string{"one": "read_write", "one_alias": "read", "two": "read_write"}
 			var version MVCCVersion
 			for _, database := range []string{"one", "two"} {
-				var engine Engine = NewMemoryEngine()
+				var engine Engine
 				if namespaced {
-					base, err := NewBadgerEngineInMemory()
+					base, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 					require.NoError(t, err)
-					engine = NewNamespacedEngine(base, database)
+					engine = NewNamespacedEngine(runtimeFixtureOwner.Own(t, base), database)
+				} else {
+					engine = runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, NewMemoryEngine(), ErrStorageClosed))
 				}
-				t.Cleanup(func() { _ = engine.Close() })
 				engines[database] = engine
 				for _, id := range []NodeID{same, localTarget} {
 					_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"P"}, Properties: map[string]interface{}{"db": database}})

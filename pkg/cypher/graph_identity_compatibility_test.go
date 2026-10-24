@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -15,7 +16,7 @@ func TestPlainDatabaseLegacyElementIDRoundTrip(t *testing.T) {
 	for _, database := range []string{"test", "nornic", "archive"} {
 		for _, explicit := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/explicit=%v", database, explicit), func(t *testing.T) {
-				engine, err := storage.NewBadgerEngine(t.TempDir())
+				engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = engine.Close() })
 				store := storage.NewNamespacedEngine(engine, database)

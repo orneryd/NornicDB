@@ -12,10 +12,9 @@ import (
 )
 
 func init() {
-	Register("id", evalID)
-	Register("elementid", evalElementID)
-	Register("labels", evalLabels)
-	Register("type", evalType)
+	for _, name := range []string{"id", "elementid", "labels", "type"} {
+		Register(name, func(ctx Context, args []string) (interface{}, error) { return evaluateEntityScalar(ctx, name, args) })
+	}
 	Register("keys", evalKeys)
 	Register("properties", evalProperties)
 	Register("size", evalSize)
@@ -30,24 +29,6 @@ func init() {
 			return nil, nil
 		})
 	}
-}
-
-func evalID(ctx Context, args []string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, nil
-	}
-	inner := strings.TrimSpace(args[0])
-	if node, ok := ctx.Nodes[inner]; ok {
-		return entityID(node)
-	}
-	if edge, ok := ctx.Rels[inner]; ok {
-		return entityID(edge)
-	}
-	value, err := ctx.Eval(inner)
-	if err != nil {
-		return nil, err
-	}
-	return entityID(value)
 }
 
 // entityID returns an entity's existing identifier, null for null, or a type
@@ -80,25 +61,8 @@ func entityID(value interface{}) (interface{}, error) {
 	}
 }
 
-func evalElementID(ctx Context, args []string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, nil
-	}
-	inner := strings.TrimSpace(args[0])
-	if node, ok := ctx.Nodes[inner]; ok {
-		return entityElementID(node, ctx.Database)
-	}
-	if edge, ok := ctx.Rels[inner]; ok {
-		return entityElementID(edge, ctx.Database)
-	}
-	value, err := ctx.Eval(inner)
-	if err != nil {
-		return nil, err
-	}
-	return entityElementID(value, ctx.Database)
-}
-
-func entityElementID(value interface{}, database string) (interface{}, error) {
+// EntityElementID renders a native value using the caller's execution domain.
+func EntityElementID(ctx Context, value interface{}) (interface{}, error) {
 	switch entity := value.(type) {
 	case nil:
 		return nil, nil
@@ -106,32 +70,27 @@ func entityElementID(value interface{}, database string) (interface{}, error) {
 		if entity == nil {
 			return nil, nil
 		}
-		return entity.ElementID(database), nil
+		if resolver, ok := ctx.Graphs.(interface{ EntityElementIDDatabase(string, string) string }); ok {
+			copy := *entity
+			copy.Database = resolver.EntityElementIDDatabase(entity.Database, ctx.Database)
+			return copy.ElementID(ctx.Database), nil
+		}
+		return entity.ElementID(ctx.Database), nil
 	case *storage.Edge:
 		if entity == nil {
 			return nil, nil
 		}
-		return entity.ElementID(database), nil
+		if resolver, ok := ctx.Graphs.(interface{ EntityElementIDDatabase(string, string) string }); ok {
+			copy := *entity
+			copy.Database = resolver.EntityElementIDDatabase(entity.Database, ctx.Database)
+			return copy.ElementID(ctx.Database), nil
+		}
+		return entity.ElementID(ctx.Database), nil
 	case storage.RemoteEntityValue:
 		return entity["elementId"], nil
 	default:
 		return nil, &ArgumentTypeError{Function: "elementid", Value: value}
 	}
-}
-
-func evalLabels(ctx Context, args []string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, nil
-	}
-	inner := strings.TrimSpace(args[0])
-	if node, ok := ctx.Nodes[inner]; ok {
-		return Labels(node)
-	}
-	value, err := ctx.Eval(inner)
-	if err != nil {
-		return nil, err
-	}
-	return Labels(value)
 }
 
 // Labels returns the labels of a node, null for null, or an argument error.
@@ -161,21 +120,6 @@ func Labels(value interface{}) (interface{}, error) {
 		result[i] = label
 	}
 	return result, nil
-}
-
-func evalType(ctx Context, args []string) (interface{}, error) {
-	if len(args) != 1 {
-		return nil, nil
-	}
-	inner := strings.TrimSpace(args[0])
-	if edge, ok := ctx.Rels[inner]; ok {
-		return RelationshipType(edge)
-	}
-	value, err := ctx.Eval(inner)
-	if err != nil {
-		return nil, err
-	}
-	return RelationshipType(value)
 }
 
 // RelationshipType returns a relationship's type, null for null, or an argument
@@ -405,4 +349,41 @@ func Coalesce(n int, eval func(index int) (interface{}, bool, error)) (interface
 		}
 	}
 	return nil, true, nil
+}
+
+// evaluateEntityScalar is the argument and binding owner for entity scalars.
+func evaluateEntityScalar(ctx Context, name string, args []string) (interface{}, error) {
+	if len(args) != 1 {
+		return nil, nil
+	}
+	argument := strings.TrimSpace(args[0])
+	var value interface{}
+	bound := false
+	if name != "type" {
+		if node, ok := ctx.Nodes[argument]; ok {
+			value, bound = node, true
+		}
+	}
+	if !bound && name != "labels" {
+		if edge, ok := ctx.Rels[argument]; ok {
+			value, bound = edge, true
+		}
+	}
+	if !bound {
+		var err error
+		value, err = ctx.Eval(argument)
+		if err != nil {
+			return nil, err
+		}
+	}
+	switch name {
+	case "id":
+		return entityID(value)
+	case "elementid":
+		return EntityElementID(ctx, value)
+	case "labels":
+		return Labels(value)
+	default:
+		return RelationshipType(value)
+	}
 }

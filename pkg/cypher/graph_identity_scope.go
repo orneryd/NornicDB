@@ -117,3 +117,12 @@ func graphFunctionIdentityDomain(ctx cypherfn.Context, engine storage.Engine) gr
 	}
 	return domain
 }
+
+// EntityElementIDDatabase preserves source identity on composite values while
+// retaining an ordinary statement's explicit execution-database presentation.
+func (e *StorageExecutor) EntityElementIDDatabase(native, selected string) string {
+	if selected != "" && e.graphIdentityScope == nil && storage.CompositeDatabaseOf(e.storage) == "" {
+		return selected
+	}
+	return native
+}

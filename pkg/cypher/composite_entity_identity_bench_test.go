@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -17,7 +18,7 @@ func BenchmarkCompositeEntityIdentity(b *testing.B) {
 		{"distinct", "UNWIND [n,m,n] AS x RETURN count(DISTINCT x)"},
 	} {
 		b.Run(query.name, func(b *testing.B) {
-			mgr, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+			mgr, err := multidb.NewDatabaseManager(runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed), nil)
 			require.NoError(b, err)
 			b.Cleanup(func() { _ = mgr.Close() })
 			for _, database := range []string{"one", "two"} {

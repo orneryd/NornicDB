@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -17,7 +18,7 @@ func TestCompositeConstituentEntityIdentity(t *testing.T) {
 
 func newCompositeIdentityExecutor(t *testing.T, explicit bool) (*StorageExecutor, *multidb.DatabaseManager) {
 	t.Helper()
-	base, err := storage.NewBadgerEngine(t.TempDir())
+	base, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
@@ -93,7 +94,9 @@ func testCompositeConstituentEntityIdentity(t *testing.T, explicit bool) {
 		t.Run("projected algorithm keys", func(t *testing.T) {
 			_, err := exec.Execute(context.Background(), "USE comp CALL gds.graph.project('composite_identity', '*', '*')", nil)
 			require.NoError(t, err)
-			t.Cleanup(func() { _, _ = exec.Execute(context.Background(), "USE comp CALL gds.graph.drop('composite_identity')", nil) })
+			t.Cleanup(func() {
+				_, _ = exec.Execute(context.Background(), "USE comp CALL gds.graph.drop('composite_identity')", nil)
+			})
 			result, err := exec.Execute(context.Background(), "USE comp CALL gds.fastRP.stream('composite_identity', {embeddingDimension: 4}) YIELD nodeId RETURN count(DISTINCT nodeId)", nil)
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{int64(4)}}, result.Rows)

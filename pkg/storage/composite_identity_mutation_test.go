@@ -1,17 +1,19 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
 	"testing"
 )
 
 func TestCompositeIdentityMutationRouting(t *testing.T) {
-	for _, operation := range []string{"update node", "update edge", "delete node", "delete edge"} {
+	for _, operation := range []string{"update node", "update edge", "delete node", "delete edge", "create edge", "bulk create edge"} {
 		t.Run(operation, func(t *testing.T) {
 			engines := map[string]Engine{}
 			for _, database := range []string{"one", "two"} {
-				base, err := NewBadgerEngineInMemory()
+				base, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 				require.NoError(t, err)
+				base = runtimeFixtureOwner.Own(t, base)
 				engine := NewNamespacedEngine(base, database)
 				t.Cleanup(func() { require.NoError(t, engine.Close()) })
 				engines[database] = engine
@@ -24,6 +26,19 @@ func TestCompositeIdentityMutationRouting(t *testing.T) {
 			composite := NewCompositeEngine(engines, map[string]string{"one": "one", "two": "two"}, map[string]string{"one": "read_write", "two": "read_write"})
 			composite.SetCompositeName("comp")
 			switch operation {
+			case "create edge", "bulk create edge":
+				edge := &Edge{ID: "new", Database: "two", StartNode: "same", EndNode: "target", Type: "CREATED"}
+				if operation == "create edge" {
+					require.NoError(t, composite.CreateEdge(edge))
+				} else {
+					require.NoError(t, composite.BulkCreateEdges([]*Edge{edge}))
+				}
+				_, err := engines["one"].GetEdge("new")
+				require.ErrorIs(t, err, ErrNotFound)
+				created, err := engines["two"].GetEdge("new")
+				require.NoError(t, err)
+				require.Equal(t, NodeID("same"), created.StartNode)
+
 			case "update node":
 				node, err := composite.GetNode("4:two:same")
 				require.NoError(t, err)

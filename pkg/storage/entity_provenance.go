@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -149,4 +150,18 @@ func DatabaseOf(engine Engine) string {
 		engine = inner
 	}
 	return ""
+}
+
+// SetEndpoints binds an edge to native endpoint identities before storage can
+// discard their source. A stored relationship cannot span physical databases.
+func (edge *Edge) SetEndpoints(start, end *Node) error {
+	if start.Database != "" && end.Database != "" && start.Database != end.Database {
+		return fmt.Errorf("cannot create a relationship between databases %q and %q", start.Database, end.Database)
+	}
+	edge.StartNode, edge.EndNode = start.ID, end.ID
+	edge.Database = start.Database
+	if edge.Database == "" {
+		edge.Database = end.Database
+	}
+	return nil
 }

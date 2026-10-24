@@ -5,6 +5,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -126,6 +127,69 @@ func TestGraphEntityIdentityInputAndContextOwners(t *testing.T) {
 				}
 				return true
 			})
+		}
+	}
+}
+
+// Native entity projections must copy provenance alongside the local ID.
+// Public write and policy regression tests cover consumers of those carriers.
+func TestNativeEntityProjectionPreservesSource(t *testing.T) {
+	for _, directory := range []string{".", "../storage", "../search", "../bolt", "../server"} {
+		err := filepath.WalkDir(directory, func(path string, entry os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+				return nil
+			}
+			positions := token.NewFileSet()
+			file, err := parser.ParseFile(positions, path, nil, 0)
+			if err != nil {
+				return err
+			}
+			ast.Inspect(file, func(node ast.Node) bool {
+				literal, ok := node.(*ast.CompositeLit)
+				if !ok {
+					return true
+				}
+				name := ""
+				switch typ := literal.Type.(type) {
+				case *ast.Ident:
+					name = typ.Name
+				case *ast.SelectorExpr:
+					name = typ.Sel.Name
+				}
+				if name != "Node" && name != "Edge" {
+					return true
+				}
+				copiedID, source := false, false
+				for _, element := range literal.Elts {
+					field, ok := element.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					key, ok := field.Key.(*ast.Ident)
+					if !ok {
+						continue
+					}
+					if key.Name == "Database" {
+						source = true
+					}
+					if key.Name == "ID" {
+						if value, ok := field.Value.(*ast.SelectorExpr); ok && value.Sel.Name == "ID" {
+							copiedID = true
+						}
+					}
+				}
+				if copiedID && !source {
+					t.Errorf("%s: native %s projection drops source database", positions.Position(literal.Pos()), name)
+				}
+				return true
+			})
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 }

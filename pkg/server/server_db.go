@@ -122,7 +122,7 @@ func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 	if err != nil {
 		return nil, err
 	}
-	executor, err := s.newDatabaseScopedExecutor(dbName, "")
+	executor, err := cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, ""))
 	if err != nil {
 		return nil, err
 	}
@@ -130,12 +130,12 @@ func (s *Server) newExecutorForDatabase(dbName string) (*cypher.StorageExecutor,
 	return executor, nil
 }
 
-func (s *Server) newDatabaseScopedExecutor(dbName, authToken string) (*cypher.StorageExecutor, error) {
+func (s *Server) databaseScopedExecutorOptions(dbName, authToken string) cypher.DatabaseScopedExecutorOptions {
 	overrides := s.dbConfigStore.GetOverrides(dbName)
 	resolved := dbconfig.Resolve(s.processConfig, overrides)
 	s.applyTransactionMemoryLimits(dbName, resolved)
 	base := s.db.GetCypherExecutor()
-	return cypher.NewDatabaseScopedExecutor(cypher.DatabaseScopedExecutorOptions{
+	return cypher.DatabaseScopedExecutorOptions{
 		Name: dbName, Storage: s.dbManager,
 		AuthToken: authToken, UseAuthenticatedStorage: authToken != "" && s.databaseHasRemoteConstituent(dbName),
 		QueryCachePolicy: true, QueryCacheMaxEntries: resolved.QueryCacheMaxEntries, QueryCacheTTL: resolved.QueryCacheTTL,
@@ -150,7 +150,8 @@ func (s *Server) newDatabaseScopedExecutor(dbName, authToken string) (*cypher.St
 			executor.SetDatabaseManager(s.databaseManager())
 
 			// Reuse DB's cached search service instead of creating a new one.
-			// Composite roots do not own a search service; search/index operations must target constituents.
+			// Composite roots resolve constituent services without creating a root index.
+			executor.SetSearchServiceResolver(dbName, s.db.SearchServiceResolver())
 			if !s.dbManager.IsCompositeDatabase(dbName) {
 				if _, err := s.db.GetOrCreateSearchService(dbName, storageEngine); err == nil {
 					executor.SetSearchServiceResolver(dbName, s.db.SearchServiceResolver())
@@ -179,7 +180,7 @@ func (s *Server) newDatabaseScopedExecutor(dbName, authToken string) (*cypher.St
 				})
 			}
 		},
-	})
+	}
 }
 
 // invalidateExecutor removes a cached executor for a dropped database.
@@ -1514,7 +1515,7 @@ func (s *Server) autoCommitStatementRunner(authToken string) statementRunner {
 		var executor *cypher.StorageExecutor
 		var err error
 		if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
-			executor, err = s.newDatabaseScopedExecutor(dbName, authToken)
+			executor, err = cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, authToken))
 		} else {
 			executor, err = s.executorCache.Get(dbName)
 		}
@@ -1736,7 +1737,7 @@ func (s *Server) openRequestTransaction(r *http.Request, claims *auth.JWTClaims,
 	authToken := r.Header.Get("Authorization")
 	ownerKey := transactionOwnerKey(r, claims)
 	if authToken != "" && s.databaseHasRemoteConstituent(dbName) {
-		executor, execErr := s.newDatabaseScopedExecutor(dbName, authToken)
+		executor, execErr := cypher.NewDatabaseScopedExecutor(s.databaseScopedExecutorOptions(dbName, authToken))
 		if execErr != nil {
 			return nil, &QueryError{Code: "Neo.ClientError.Transaction.TransactionStartFailed", Message: execErr.Error()}
 		}

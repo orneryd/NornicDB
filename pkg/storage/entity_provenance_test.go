@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strconv"
 	"testing"
 
@@ -9,7 +10,7 @@ import (
 )
 
 func TestNamespacedEntityProvenance(t *testing.T) {
-	base := NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, NewMemoryEngine(), ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	for _, database := range []string{"one", "two"} {
 		store := NewNamespacedEngine(base, database)
@@ -38,7 +39,7 @@ func TestNamespacedEntityProvenance(t *testing.T) {
 }
 
 func TestCompositeScansKeepConstituentIdentities(t *testing.T) {
-	base := NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, NewMemoryEngine(), ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	one, two := NewNamespacedEngine(base, "one"), NewNamespacedEngine(base, "two")
 	for _, store := range []*NamespacedEngine{one, two} {
@@ -88,7 +89,7 @@ func TestCompositeScansKeepConstituentIdentities(t *testing.T) {
 		node, err := composite.GetNode(NodeID("4:" + database + ":same"))
 		require.NoError(t, err)
 		require.Equal(t, database, node.Database)
-		node, err = composite.GetNodeProjected(NodeID("4:" + database + ":same"), nil)
+		node, err = composite.GetNodeProjected(NodeID("4:"+database+":same"), nil)
 		require.NoError(t, err)
 		require.Equal(t, database, node.Database)
 		edge, err := composite.GetEdge(EdgeID("5:" + database + ":rel"))
@@ -121,7 +122,7 @@ func (s *provenanceStreamEngine) StreamEdgesByType(ctx context.Context, edgeType
 }
 
 func TestCompositeIdentityStreamKeepsBoundedMemory(t *testing.T) {
-	base := NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, NewMemoryEngine(), ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	one := &provenanceStreamEngine{Engine: base, database: "one"}
 	two := &provenanceStreamEngine{Engine: base, database: "two"}
