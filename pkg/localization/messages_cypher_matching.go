@@ -50,6 +50,10 @@ const (
 	MessageCypherMatchingPatternPredicateVariableLength           MessageID = "cyphermatching.pattern_predicate_variable_length"
 	MessageCypherMatchingIsNotOperandInvalid                      MessageID = "cyphermatching.is_not_operand_invalid"
 	MessageCypherMatchingReturnStarNoVariables                    MessageID = "cyphermatching.return_star_no_variables"
+	MessageCypherMatchingQueryCannotConclude                      MessageID = "cyphermatching.query_cannot_conclude"
+	MessageCypherMatchingExistsExpressionUpdates                  MessageID = "cyphermatching.exists_expression_updates"
+	MessageCypherMatchingCountExpressionUpdates                   MessageID = "cyphermatching.count_expression_updates"
+	MessageCypherMatchingCollectExpressionUpdates                 MessageID = "cyphermatching.collect_expression_updates"
 	MessageCypherMatchingOptionalMatchShapeUnsupported            MessageID = "cyphermatching.optional_match_shape_unsupported"
 	MessageCypherMatchingPathSelectorPathCountNotPositive         MessageID = "cyphermatching.path_selector_path_count_not_positive"
 	MessageCypherMatchingPathSelectorGroupCountNotPositive        MessageID = "cyphermatching.path_selector_group_count_not_positive"
@@ -277,6 +281,31 @@ func CypherMatchingPatternPredicateVariableLength() Message {
 // no variable in scope (Neo4j's code; NornicDB's wording).
 func CypherMatchingReturnStarNoVariables() Message {
 	return cypherMatchingMessage(MessageCypherMatchingReturnStarNoVariables, "RETURN * requires at least one variable in scope", nil)
+}
+
+// CypherMatchingQueryCannotConclude is Neo4j's SyntaxError for a query or
+// CALL subquery body whose last clause can't conclude it (clause is its
+// keyword: CALL for a CALL that returns columns, MATCH, WITH, UNWIND).
+func CypherMatchingQueryCannotConclude(clause string) Message {
+	return cypherMatchingMessage(MessageCypherMatchingQueryCannotConclude, "Query cannot conclude with "+clause+" (must be a RETURN clause, a FINISH clause, an update clause, a unit subquery call, or a procedure call with no YIELD).", map[string]any{"Clause": clause})
+}
+
+// CypherMatchingExistsExpressionUpdates is Neo4j's SyntaxError for an update
+// clause anywhere in an EXISTS { … } body.
+func CypherMatchingExistsExpressionUpdates() Message {
+	return cypherMatchingMessage(MessageCypherMatchingExistsExpressionUpdates, "An Exists Expression cannot contain any updates", nil)
+}
+
+// CypherMatchingCountExpressionUpdates is Neo4j's SyntaxError for an update
+// clause anywhere in a COUNT { … } body.
+func CypherMatchingCountExpressionUpdates() Message {
+	return cypherMatchingMessage(MessageCypherMatchingCountExpressionUpdates, "A Count Expression cannot contain any updates", nil)
+}
+
+// CypherMatchingCollectExpressionUpdates is Neo4j's SyntaxError for an update
+// clause anywhere in a COLLECT { … } body.
+func CypherMatchingCollectExpressionUpdates() Message {
+	return cypherMatchingMessage(MessageCypherMatchingCollectExpressionUpdates, "A Collect Expression cannot contain any updates", nil)
 }
 
 // CypherMatchingOptionalMatchShapeUnsupported is the SyntaxError for a

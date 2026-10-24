@@ -200,9 +200,15 @@ func TestTemporalFieldsAndUnaryPlusMatchNeo4j(t *testing.T) {
 	// A datetime passed as a parameter (a time.Time) has fields like any
 	// other datetime.
 	params := map[string]interface{}{"dt": time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC)}
-	result, err = exec.Execute(ctx, "WITH $dt AS d RETURN d{.year}, d['month'], (+d).day", params)
+	result, err = exec.Execute(ctx, "WITH $dt AS d RETURN d{.year}, d['month'], d.day", params)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{map[string]interface{}{"year": int64(2020)}, int64(1), int64(2)}}, result.Rows)
+	// +d is a number to Neo4j 5.26.30's type check whatever the parameter
+	// holds ((+$p).day is "expected Map, … but was Float or Integer" for 5,
+	// null, a string or a map), so it has no fields.
+	_, err = exec.Execute(ctx, "WITH $dt AS d RETURN (+d).day AS v", params)
+	require.Error(t, err)
+	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	_, err = exec.Execute(ctx, "WITH $dt AS d RETURN d{.nope} AS v", params)
 	require.Error(t, err)
 	requireStatusCode(t, err, "Neo.ClientError.Statement.TypeError")

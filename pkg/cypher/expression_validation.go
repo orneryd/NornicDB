@@ -105,12 +105,8 @@ func staticListOperandTypeError(text string, scope staticTypeScope) error {
 // mayBeListType reports whether a static type is a list or names one among
 // its choices (a property value's type may be a List<T>).
 func mayBeListType(typeName string) bool {
-	for _, choice := range staticTypeChoices(typeName) {
-		if strings.HasPrefix(choice, "List<") {
-			return true
-		}
-	}
-	return false
+	// The owner's admission: a null alternative fits too.
+	return typeName != "" && !typedOperand(typeName).proved().excludes(isListTypeName)
 }
 
 // foreachDeclaration reports whether the IN at offset in is FOREACH's own
@@ -408,7 +404,8 @@ func localBindingStep(text string, open int, name string) (int, localBinding, bo
 // localBindingOperand is the static type of the local name read at offset
 // at of text (localBindingOf): a named path is a Path; an element is its
 // list's element (listElementOperand: an Integer of [1], a node of [y]
-// for a node y); reduce's accumulator is its initial value's type. The
+// for a node y); reduce's accumulator is typed from its initial value as the
+// deriver types it (reduceAccumulatorOperand). The
 // source is typed in the scope at its own position, with the locals
 // around it typed first (withLocalTypes): in
 // all(x IN [y] WHERE all(r IN [x] WHERE …)) [x] holds the outer local's
@@ -419,7 +416,7 @@ func localBindingOperand(text string, at int, name string, scope staticTypeScope
 		return staticOperand{}
 	}
 	if binding.path[index] {
-		return typedOperand("Path")
+		return provenOperand("Path")
 	}
 	span := binding.source[index]
 	if span[0] <= 0 || span[1] <= span[0] || span[1] > len(text) {
@@ -431,7 +428,8 @@ func localBindingOperand(text string, at int, name string, scope staticTypeScope
 	if binding.element[index] {
 		return listElementOperand(types, inner, source)
 	}
-	return projectedOperand(types, inner, source)
+	// The one other local is reduce's accumulator.
+	return reduceAccumulatorOperand(projectedOperand(types, inner, source))
 }
 
 // localBindingKind is localBindingOperand's binding kind.
@@ -698,41 +696,35 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 		for end < len(cypher) && (cypher[end] != c || isBackslashEscaped(cypher, end)) {
 			end++
 		}
-		return end + 1, "String", ""
+		end++
 	case c == '{':
 		close := findMatchingDelimiter(cypher, start, '{', '}')
 		if close < 0 {
 			return start, "", ""
 		}
-		return close + 1, "Map", ""
+		end = close + 1
 	default:
 		end = start
 		for end < len(cypher) && (isIdentByte(cypher[end]) || cypher[end] == '.' || cypher[end] == '-' && end == start) {
 			end++
 		}
-		word := cypher[start:end]
-		switch {
-		case strings.EqualFold(word, "true"), strings.EqualFold(word, "false"):
-			return end, "Boolean", ""
-		case c != '-' && c != '.' && (c < '0' || c > '9'):
-			// A call returning a vector or UUID ([x IN vector(…) | x],
-			// 1 IN uuid()) is Neo4j's type mismatch; a variable, a property
-			// or any other function is known per row.
+		// A whole call ([x IN vector(…) | x], 1 IN size(l)) is the operand.
+		if c != '-' && c != '.' && (c < '0' || c > '9') {
 			if open := queryGapEnd(cypher, end); open < len(cypher) && cypher[open] == '(' {
 				if close := findMatchingParen(cypher, open); close > open {
-					if result := staticValueCallType(cypher[start : close+1]); result != "" {
-						return close + 1, result, ""
-					}
+					end = close + 1
 				}
 			}
-			return end, "", ""
 		}
-		value, literal := parseLiteralValueFromComputedRow(word)
-		if !literal || value == nil {
-			return end, "", ""
-		}
-		return end, cypherTypeName(value), ""
 	}
+	// The operator check types the operand (a variable or a property is
+	// known per row); a list position rejects a type with no list or null
+	// alternative.
+	operand := (staticTypeScope{}).operandOf(cypher[start:end])
+	if operand.typeName() == "" || !operand.excludes(isListTypeName) {
+		return end, "", ""
+	}
+	return end, operand.typeName(), ""
 }
 
 func isCypherListParameter(value interface{}) bool {

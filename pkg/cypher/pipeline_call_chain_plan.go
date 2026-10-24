@@ -19,7 +19,7 @@ func (e *StorageExecutor) planPipelineCallChain(ctx context.Context, clauses []p
 	plan := pipelineCallChainPlan{end: len(clauses)}
 	var writes stretchTokens
 	for index := start; index < len(clauses); index++ {
-		effects, err := pipelineClauseEffectsFor(ctx, clauses[index].text)
+		effects, err := executionClauseEffects(ctx, clauses[index])
 		if err != nil {
 			return plan, err
 		}

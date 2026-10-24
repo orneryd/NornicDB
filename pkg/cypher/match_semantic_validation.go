@@ -36,7 +36,9 @@ func (e *StorageExecutor) validateMatchSemanticScopes(cypher string, cypher25 bo
 	if cacheable && e.matchSemanticValidationCache.contains(key) {
 		return nil
 	}
-	if err := e.validateMatchSemanticScopesUncached(cypher, cypher25); err != nil {
+	if err := checkedWithoutUnaryPlus(cypher, cypher25, func(text string) error {
+		return e.validateMatchSemanticScopesUncached(text, cypher25)
+	}); err != nil {
 		return err
 	}
 	if cacheable {
@@ -71,6 +73,9 @@ func (e *StorageExecutor) validateMatchSemanticScopesUncached(cypher string, cyp
 	if !ok {
 		return nil
 	}
+	if err := validateQueryBodyComposition(cypher); err != nil {
+		return err
+	}
 	// types is the one static type of every variable (#1055).
 	types := make(typeScope, len(e.fabricRecordBindings))
 	// A Fabric APPLY binds its input record's variables for the statement.
@@ -95,6 +100,151 @@ type subqueryScope struct {
 	// that ("is shadowing an imported variable"); NornicDB keeps it as an
 	// extension (#907).
 	outer bool
+}
+
+// callBodyReturnStarError is Neo4j's error for RETURN * in a CALL
+// subquery's body that declares no variable of its own: the variables it
+// imports (CALL (*), CALL (x), or NornicDB's implicit imports of a CALL
+// { … }) are the enclosing query's, so RETURN * has none to return, even
+// beside other items (RETURN *, 2 AS y). nil outside a CALL body, or when
+// the body binds a variable (WITH 1 AS y, UNWIND, MATCH (n)).
+func callBodyReturnStarError(scope matchSemanticScope, clause string, enclosing subqueryScope) error {
+	if enclosing.outer || enclosing.visible == nil {
+		return nil
+	}
+	if !returnsStar(clause) {
+		return nil
+	}
+	for name := range scope {
+		if _, imported := enclosing.visible[name]; !imported {
+			return nil
+		}
+	}
+	return &classifiedCypherError{
+		cause:  localizedError(localization.CypherMatchingReturnStarNoVariables(), nil),
+		code:   "Neo.ClientError.Statement.SyntaxError",
+		detail: "NoVariablesInScope",
+	}
+}
+
+// validateQueryBodyComposition is Neo4j 5.26's rules for what a query body
+// holds, applied to every body in cypher, at any depth and in any container
+// (forEachQueryBody). An EXISTS, COUNT or COLLECT body holds no update
+// clause, in a CALL body nested in it too ("A Count Expression cannot
+// contain any updates"). Each UNION branch of a CALL body ends with RETURN,
+// FINISH, an update clause, a unit subquery call (one whose body returns
+// nothing) or a procedure call. A branch ending with a CALL that returns
+// columns, or with MATCH, WITH or UNWIND, is "Query cannot conclude with
+// CALL" (CALL { CALL { RETURN 'x' AS y } } RETURN *), also inside a body
+// that ends with FINISH or inside EXISTS, COUNT and COLLECT, whose own
+// bodies conclude as their forms do. It reads the text, so an old-style body
+// (whose walk errors NornicDB's implicit imports keep) is held to it too;
+// EXPLAIN reads it as well. A statement ending with a CALL that returns
+// columns stays NornicDB's extension.
+func validateQueryBodyComposition(cypher string) error {
+	return forEachQueryBody(cypher, queryBodyContainerKeywords[:], func(container string, start, end int) error {
+		if container != "CALL" {
+			if queryBodyUpdates(cypher, start, end) {
+				return &classifiedCypherError{
+					cause:  localizedError(expressionBodyUpdatesMessages[container](), nil),
+					code:   "Neo.ClientError.Statement.SyntaxError",
+					detail: "InvalidClauseComposition",
+				}
+			}
+			return nil
+		}
+		for _, branch := range readQueryBody(cypher, start, end).branches {
+			if keyword := unconcludedClause(cypher, branch); keyword != "" {
+				return &classifiedCypherError{
+					cause:  localizedError(localization.CypherMatchingQueryCannotConclude(keyword), nil),
+					code:   "Neo.ClientError.Statement.SyntaxError",
+					detail: "InvalidClauseComposition",
+				}
+			}
+		}
+		return nil
+	})
+}
+
+// expressionBodyUpdatesMessages is the error for an update in each
+// expression container's body.
+var expressionBodyUpdatesMessages = map[string]func() localization.Message{
+	"EXISTS":  localization.CypherMatchingExistsExpressionUpdates,
+	"COUNT":   localization.CypherMatchingCountExpressionUpdates,
+	"COLLECT": localization.CypherMatchingCollectExpressionUpdates,
+}
+
+// updatingClauses are the clause kinds that update the graph.
+var updatingClauses = map[pipelineClauseKind]bool{
+	pipelineClauseCreate: true, pipelineClauseMerge: true, pipelineClauseDelete: true,
+	pipelineClauseSet: true, pipelineClauseRemove: true, pipelineClauseForeach: true,
+}
+
+// queryBodyUpdates reports whether the query body source[start:end] holds
+// an update clause, in any branch (readQueryBody) or in a CALL body at any
+// depth in it. A declined branch holds no clause it can read.
+func queryBodyUpdates(source string, start, end int) bool {
+	for _, branch := range readQueryBody(source, start, end).branches {
+		for _, clause := range branch.clauses {
+			if updatingClauses[clause.kind] {
+				return true
+			}
+			if from, to, ok := callClauseBody(clause); ok && queryBodyUpdates(source, from, to) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// queryBodyEndings is how each clause kind ends a query body: the keyword
+// Neo4j names when it can't ("Query cannot conclude with MATCH"), or "" when
+// it concludes the body (RETURN, an update clause, a procedure call). A CALL
+// subquery concludes only as a unit subquery (callSubqueryReturnsColumns).
+// Every clause kind is listed (TestQueryBodyEndingsCoverEveryClauseKind).
+var queryBodyEndings = map[pipelineClauseKind]string{
+	pipelineClauseMatch: "MATCH", pipelineClauseOptionalMatch: "MATCH", pipelineClauseWith: "WITH",
+	pipelineClauseUnwind: "UNWIND", pipelineClauseLet: "LET", pipelineClauseFilter: "FILTER",
+	pipelineClauseCallSubquery: "CALL",
+	pipelineClauseReturn:       "", pipelineClauseCreate: "", pipelineClauseMerge: "", pipelineClauseDelete: "",
+	pipelineClauseSet: "", pipelineClauseRemove: "", pipelineClauseForeach: "", pipelineClauseCall: "",
+}
+
+// unconcludedClause is the keyword of a query body branch's last clause when
+// it can't conclude the body (queryBodyEndings), or "" when it can (FINISH
+// too) or the reader declined it. source is the text the branch was read
+// from.
+func unconcludedClause(source string, branch queryBodyBranch) string {
+	if branch.finished || len(branch.clauses) == 0 {
+		return ""
+	}
+	last := branch.clauses[len(branch.clauses)-1]
+	if last.kind == pipelineClauseCallSubquery && !callSubqueryReturnsColumns(source, last) {
+		return ""
+	}
+	return queryBodyEndings[last.kind]
+}
+
+// callSubqueryReturnsColumns reports whether a CALL subquery clause returns
+// columns: a branch of its body, as written, ends with RETURN. source is
+// the text the clause was read from.
+func callSubqueryReturnsColumns(source string, clause queryBodyClause) bool {
+	start, end, ok := callClauseBody(clause)
+	if !ok {
+		return false
+	}
+	for _, branch := range readQueryBody(source, start, end).branches {
+		if !branch.finished && len(branch.clauses) > 0 && branch.clauses[len(branch.clauses)-1].kind == pipelineClauseReturn {
+			return true
+		}
+	}
+	return false
+}
+
+// returnsStar reads the canonical projection fact, including comments and DISTINCT.
+func returnsStar(clause string) bool {
+	node, found := canonicalQueryClause(clause)
+	return found && projectionPlanFromSyntax(node).star
 }
 
 // redeclarationError is the error for a WITH … AS or UNWIND … AS that
@@ -223,11 +373,22 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			if returnIndex := topLevelKeywordIndex(branches[0], "RETURN"); returnIndex >= 0 {
 				columns := pipelineReturnSourceColumns(branches[0][returnIndex:])
 				if columns == nil || slices.Contains(columns, "*") {
-					// RETURN * returns every variable of the body, which
-					// names nothing statically: as after YIELD *, the rest
-					// of the statement isn't checked (#907; checking it
-					// rejected CALL { UNWIND [2] AS b RETURN * } RETURN b).
-					return types, false, nil
+					// RETURN * (which names no column of its own) returns
+					// every variable of the body. When the
+					// body's variables are typed, the statement goes on
+					// with them; otherwise, as after YIELD *, the rest of
+					// it isn't checked (#907: CALL { UNWIND [2] AS b
+					// RETURN * } RETURN b).
+					if returned == nil {
+						return types, false, nil
+					}
+					for name, operand := range returned {
+						if _, bound := scope[name]; !bound {
+							types[name] = operand
+							scope[name] = operand.bindingKind()
+						}
+					}
+					continue
 				}
 				for _, name := range columns {
 					// A returned column is a new variable of the enclosing
@@ -261,17 +422,15 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			}
 			outputTypes := procedureOutputTypes(clause.text)
 			for _, item := range yield.items {
-				name := item.name
-				if item.alias != "" {
-					name = item.alias
-				}
+				name := item.column()
 				if _, bound := types[name]; bound {
 					return types, false, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "VariableAlreadyBound",
 						localization.CypherCoreProcedureOutputShadowsVariable(name))
 				}
 				types[name] = staticOperand{}
 				if typeName := outputTypes[item.name]; typeName != "" {
-					types[name] = knownOperand(typeName)
+					// A procedure's declared output type.
+					types[name] = provenOperand(typeName)
 				}
 			}
 			// Like WITH, the invocation reads the incoming scope and the
@@ -351,14 +510,10 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 			if err := e.validateStaticOperatorTypes(clause, input, func() staticTypeScope { return projectionAliasScope(input, clause.text) }, nil); err != nil {
 				return types, false, err
 			}
+			// Retain each import's current operand after a rebinding, using
+			// the same rule that carries runtime values across WITH.
+			carryStaticSubqueryImports(projectedTypes, types, enclosing.visible, projectionBody)
 			types = projectedTypes
-			// A subquery's body keeps seeing what it sees of the query
-			// around it.
-			for name, operand := range enclosing.visible {
-				if _, projected := types[name]; !projected {
-					types[name] = operand
-				}
-			}
 			unwound = projectUnwoundValues(unwound, clause.text)
 			projected := types.static(cypher25)
 			scope, valueTypes, valueMembers = projected.kinds, projected.values, projected.members
@@ -389,10 +544,13 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 				}
 				input := view
 				input.complete = false
+				// Neo4j types an element of a list UNWIND binds only when a
+				// procedure call runs; UNWIND 5 binds 5 statically.
+				source := projectedOperand(types, input, unwindSourceExpression(clause.text))
 				types[alias] = unwoundOperand(types, input, clause.text)
 				scope[alias] = types[alias].bindingKind()
 				delete(unwound, alias)
-				if typeName := unwindStaticValueType(clause.text); typeName != "" {
+				if types[alias].typeName() != "" && !source.excludes(isListTypeName) {
 					if unwound == nil {
 						unwound = make(map[string]struct{})
 					}
@@ -402,6 +560,9 @@ func (e *StorageExecutor) semanticScopeWalk(clauses []pipelineClause, types type
 		case pipelineClauseReturn:
 			stale = false
 			if err := validateReturnSemanticScopeIn(scope, clause.text, enclosing.visible); err != nil {
+				return types, false, err
+			}
+			if err := callBodyReturnStarError(scope, clause.text, enclosing); err != nil {
 				return types, false, err
 			}
 			if err := e.validateStaticClauseTypes(clause, staticTypeScope{kinds: scope, values: valueTypes, members: valueMembers, derived: view.derived, complete: true, cypher25: cypher25}); err != nil {

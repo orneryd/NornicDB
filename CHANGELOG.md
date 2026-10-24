@@ -78,6 +78,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve node properties and source metadata in retrieval procedure rows, graph
   hits and continuation pages when property decay is enabled.
 - Evaluate EXISTS, COUNT and COLLECT subqueries through one expression owner in every clause. Preserve statement context for NOT EXISTS and reuse the cached indexed lookup for correlated predicates without OPTIONAL-row materialization.
+- Share retained statement syntax, bound variable scopes and ordered result
+  columns across execution, EXPLAIN, PROFILE and empty CALL results. Decode
+  quoted YIELD aliases, preserve comment boundaries and bind every clause's
+  input expressions before effects. Expand wildcards from the known scope and
+  procedure registry, and expose complete facts to composite query planning;
+  unresolved metadata is a terminal error rather than a guessed or empty header.
 
 - Configure sampler recovery spacing and unleased rearm with positive-millisecond
   `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`
@@ -212,6 +218,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Keep scoped CALL imports available after WITH while excluding unprojected imports from DISTINCT and grouping keys.
   Use structural value comparison for DISTINCT, grouping and collection deduplication without serializing lists or maps.
+- Treat CALL (*) as a scope clause and keep imported variable types, including aggregate imports, in static validation.
+  A CASE result keeps every alternative through list, function, operator and binding checks, which reject it only where none fits.
 
 - Use store-owned read-only mappings for file-backed query rescoring and final
   vector selection, avoiding repeated file reads and internal vector copies.

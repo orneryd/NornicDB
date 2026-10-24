@@ -64,5 +64,4 @@ func TestListComprehensionElementTypes(t *testing.T) {
 	require.Equal(t, "List<Integer>", listElementOperand(typeScopeOf(scope), scope, "[at IN range(0, 1) | [at]]").typeName())
 	require.Equal(t, "Integer", listElementOperand(typeScopeOf(scope), scope, "[at IN range(0, 3) WHERE at > 1]").typeName())
 	require.Equal(t, "List<T>", listElementOperand(typeScopeOf(scope), scope, "[at IN x | [at, 'p']]").typeName())
-	require.Equal(t, "", staticListElementType("[at IN range(0, 1) | [at]]"))
 }

@@ -18,28 +18,6 @@ func TestRowMatchesSeedID_MoreBranches(t *testing.T) {
 	require.False(t, rowMatchesSeedID("n7", "n8"))
 }
 
-func TestNormalizeUnionBranchColumns_MoreBranches(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
-
-	// nil result should be ignored
-	exec.normalizeUnionBranchColumns("RETURN 1 AS x", nil)
-
-	// pre-populated columns should be preserved
-	res := &ExecuteResult{Columns: []string{"x"}, Rows: nil}
-	exec.normalizeUnionBranchColumns("RETURN 1 AS y", res)
-	require.Equal(t, []string{"x"}, res.Columns)
-
-	// infer from top-level RETURN
-	res = &ExecuteResult{Columns: nil, Rows: nil}
-	exec.normalizeUnionBranchColumns("MATCH (n) RETURN n.name AS name", res)
-	require.Equal(t, []string{"name"}, res.Columns)
-
-	// infer from CALL/YIELD explain path when RETURN inference is empty
-	res = &ExecuteResult{Columns: nil, Rows: nil}
-	exec.normalizeUnionBranchColumns("CALL db.labels() YIELD label", res)
-	require.NotEmpty(t, res.Columns)
-}
-
 func TestSubqueryIdentifierAndEqualitySplit_MoreBranches(t *testing.T) {
 	lhs, rhs, ok := splitTopLevelEqualityCallSubquery("`a` = {x: [1,2], y: 'a=b'}")
 	require.True(t, ok)

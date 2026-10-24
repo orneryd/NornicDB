@@ -945,11 +945,17 @@ func statementError(err error) QueryError {
 // compiled and failed while running, its result with its columns and no rows
 // is recorded in response first, as Neo4j's HTTP API reports it (#668); a
 // statement failing at compile time has no result.
-func statementFailure(response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error, localize func(localization.Message) string) QueryError {
+func statementFailure(ctx context.Context, response *TransactionResponse, executor *cypher.StorageExecutor, query string, err error, localize func(localization.Message) string) QueryError {
 	failure := statementError(err)
 	localizeStatementError(&failure, err, localize)
 	if executor != nil && !nornicerrors.IsCompileTimeError(err) {
-		if columns := executor.StatementColumns(query); len(columns) > 0 {
+		columns, columnErr := executor.StatementResultColumnsContext(ctx, query)
+		if columnErr != nil {
+			failure = statementError(columnErr)
+			localizeStatementError(&failure, columnErr, localize)
+			return failure
+		}
+		if len(columns) > 0 {
 			response.Results = append(response.Results, QueryResult{Columns: columns, Data: []ResultRow{}})
 		}
 	}
@@ -1573,17 +1579,16 @@ func (s *Server) runRequestStatements(
 			}
 		}
 
-		// Cypher comments are removed before the statement checks and execution
-		// (the executor's quote-aware rule: // in a string literal is text), and a
-		// UTF-8 BOM (some clients send one; it breaks executor routing, e.g.
-		// CREATE DATABASE).
-		queryStatement = strings.TrimSpace(cypher.StripComments(queryStatement))
+		// Preserve statement text for the shared syntax/column owner. Comments
+		// inside an unaliased expression are part of its public column name.
+		// Only transport whitespace and an optional UTF-8 BOM are framing.
+		queryStatement = strings.TrimSpace(queryStatement)
 		if strings.HasPrefix(queryStatement, "\xef\xbb\xbf") {
 			queryStatement = strings.TrimSpace(strings.TrimPrefix(queryStatement, "\xef\xbb\xbf"))
 		}
 		// An empty statement (or only a comment) is Neo4j's SyntaxError, so it
 		// fails its request like any other invalid statement.
-		if queryStatement == "" {
+		if strings.TrimSpace(cypher.StripComments(queryStatement)) == "" {
 			return &QueryError{
 				Code:    "Neo.ClientError.Statement.SyntaxError",
 				Message: "Unexpected end of input: expected CYPHER, EXPLAIN, PROFILE or Query",
@@ -1610,7 +1615,7 @@ func (s *Server) runRequestStatements(
 				s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
 				return &failure
 			}
-			queryErr := statementFailure(response, executor, queryStatement, err, localize)
+			queryErr := statementFailure(ctx, response, executor, queryStatement, err, localize)
 			return &queryErr
 		}
 

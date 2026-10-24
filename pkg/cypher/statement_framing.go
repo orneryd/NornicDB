@@ -20,7 +20,7 @@ func (e *StorageExecutor) validateStatementFraming(cypher string) error {
 			"Can't specify multiple conflicting values for execution mode"))
 	}
 	// Only a statement with the word UNION in it can have UNION branches.
-	if findKeywordIndex(cypher, "UNION") < 0 {
+	if findKeywordIndex(cypher, "UNION") < 0 || findKeywordIndex(cypher, "FINISH") < 0 {
 		return nil
 	}
 	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
@@ -29,7 +29,7 @@ func (e *StorageExecutor) validateStatementFraming(cypher string) error {
 			_, finishes := stripTrailingFinish(branch)
 			if finishes {
 				hasFinish = true
-			} else if len(e.StatementColumns(branch)) > 0 {
+			} else if e.statementProducesColumns(branch) {
 				hasColumns = true
 			}
 		}

@@ -258,27 +258,6 @@ func containsFunctionCallNamed(expression, expected string) bool {
 	return false
 }
 
-func pipelineReturnSourceColumns(clause string) []string {
-	body := strings.TrimSpace(clause[len("RETURN"):])
-	end := len(body)
-	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
-			end = index
-		}
-	}
-	body = strings.TrimSpace(body[:end])
-	body, _ = cutDistinct(body)
-	if body == "*" || body == "" {
-		return nil
-	}
-	columns := make([]string, 0)
-	for _, item := range splitTopLevelComma(body) {
-		_, alias := parseProjectionExprAlias(strings.TrimSpace(item))
-		columns = append(columns, alias)
-	}
-	return columns
-}
-
 func directSemanticReference(expression string) string {
 	expression = strings.TrimSpace(expression)
 	if identifier := simpleSemanticIdentifier(expression); identifier != "" {

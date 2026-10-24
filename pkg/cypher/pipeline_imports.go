@@ -23,6 +23,13 @@ func pipelineImports(ctx context.Context) pipelineRow {
 // aliases alone. A projected or rebound name keeps its current value, as in
 // the existing imported-name rebinding extension.
 func carryPipelineRowImports(projected, input, imports pipelineRow) {
+	carrySubqueryImports(projected, input, imports)
+}
+
+// carrySubqueryImports applies the same retention rule to runtime values and
+// static operands: the projection wins, then the current input, then the
+// original import. This preserves imported-name rebinding across WITH.
+func carrySubqueryImports[T any](projected, input, imports map[string]T) {
 	for name, imported := range imports {
 		if _, exists := projected[name]; exists {
 			continue

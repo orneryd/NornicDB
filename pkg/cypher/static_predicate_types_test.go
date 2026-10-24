@@ -49,11 +49,16 @@ func TestStaticPredicateTypesMatchNeo4j(t *testing.T) {
 	}
 }
 
+// The function table types only results that don't depend on the
+// arguments; reduce is typed by the operator check from its initial value and
+// its step, wherever it is read.
 func TestStaticFunctionResultType(t *testing.T) {
-	require.Equal(t, "Integer", staticFunctionResultType("REDUCE", "a = 0, x IN l | a + x"))
-	require.Equal(t, "String", staticFunctionResultType("reduce", "a = '', x IN l | a + x"))
-	// The accumulator's type is unknown without a literal initializer.
-	require.Equal(t, "", staticFunctionResultType("reduce", "a = $p, x IN l | a + x"))
-	require.Equal(t, "", staticFunctionResultType("reduce", "x IN l | x"))
+	require.Equal(t, "", staticFunctionResultType("REDUCE", "a = 0, x IN l | a + x"))
+	require.Equal(t, "Integer", staticTextType("reduce(a = 0, x IN [1] | a + x)"))
+	require.Equal(t, "String", staticTextType("reduce(a = '', x IN [1] | a + x)"))
+	// An initial value of no known type leaves the result unknown.
+	require.Equal(t, "", staticTextType("reduce(a = $p, x IN [1] | a + x)"))
+	// Neo4j types reduce as its accumulator, whatever its step.
+	require.Equal(t, "Integer", staticTextType("reduce(a = 1, x IN l | x)"))
 	require.Equal(t, "Date", staticFunctionResultType("date.truncate", "'day', d"))
 }

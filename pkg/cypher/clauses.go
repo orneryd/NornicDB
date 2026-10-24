@@ -1784,12 +1784,11 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 		// even though the query has an explicit RETURN/YIELD projection. For UNION semantics we
 		// must validate/provide branch column shapes deterministically.
 		if len(result.Columns) == 0 {
-			result.Columns = e.inferExplainColumns(query)
-			if len(result.Columns) == 0 {
-				// UNION branch execution can legitimately return zero rows; still preserve
-				// projected column shape from the branch RETURN clause.
-				result.Columns = e.inferTopLevelReturnColumns(query)
+			columns, err := e.ResultColumns(query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25")
+			if err != nil {
+				return nil, err
 			}
+			result.Columns = columns
 		}
 
 		if combinedResult == nil {

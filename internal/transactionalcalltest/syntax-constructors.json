@@ -38,7 +38,8 @@
     "IFilterStContext": "effect",
     "IForStContext": "effect",
     "IQueryCallStContext": "effect",
-    "ICallSubqueryContext": "effect"
+    "ICallSubqueryContext": "effect",
+    "IUseClauseContext": "children"
   },
   "IUpdatingStatementContext": {
     "ICreateStContext": "effect",

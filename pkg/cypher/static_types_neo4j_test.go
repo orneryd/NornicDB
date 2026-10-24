@@ -43,6 +43,14 @@ func TestStaticTypeChecksMatchNeo4j(t *testing.T) {
 		{query: "RETURN duration('P1D') * 9007199254740993 AS v", code: argument},
 		{query: "MATCH (n:Probe) WHERE n.big > 5 RETURN duration('PT1H') * n.big AS v", code: argument},
 		{query: "RETURN toString(duration('PT1H') / 0.5) AS v", rows: [][]interface{}{{"PT2H"}}},
+		// Unary plus over a duration is a number to the type check and the
+		// duration itself once +d is rewritten to d (both are Neo4j 5.26's).
+		{query: "UNWIND [] AS r WITH duration('PT1S') AS d RETURN (+d).day AS v", code: syntax},
+		{query: "UNWIND [] AS r WITH duration('PT1S') AS d RETURN abs(+d) AS v", code: syntax},
+		{query: "UNWIND [] AS r WITH duration('PT1S') AS d RETURN +d - 1 AS v", code: syntax},
+		{query: "WITH duration('PT1S') AS d RETURN +d = d AS v", rows: [][]interface{}{{true}}},
+		// An operator signature's result keeps its types in a list.
+		{query: "UNWIND [] AS r MATCH (n) WITH (CASE WHEN true THEN n.k ELSE [1] END) - 2 AS v RETURN [x IN [v] | toUpper(x)] AS answer", code: syntax},
 		// Map projections take a map, a node or a relationship.
 		{query: "WITH 'ab' AS s RETURN s{.a} AS v", code: syntax},
 		{query: "WITH 1 AS i RETURN i{.a} AS v", code: syntax},
@@ -103,19 +111,21 @@ func TestStaticOperatorCheckerScopedBranches(t *testing.T) {
 		want  string
 		fails bool
 	}{
-		{expr: "duration('P1D') + [1]", want: "List<T>"},
+		// A duration and an Integer have no common type but Any.
+		{expr: "duration('P1D') + [1]", want: "List<Any>"},
 		{expr: "(1 + true) IS :: INTEGER", fails: true},
 		{expr: "s IS :: STRING", want: "Boolean"},
 		{expr: "+(1 + true)", fails: true},
 		{expr: "+'a'", fails: true},
-		{expr: "+date('2020-01-01')", want: "Date"},
+		// +date(…) is a number to Neo4j 5.26's type check.
+		{expr: "+date('2020-01-01')", want: "Float or Integer"},
 		{expr: "CASE (1 + true) WHEN 1 THEN 1 END", fails: true},
 		{expr: "CASE 1 WHEN 1 + true THEN 1 END", fails: true},
 		{expr: "CASE WHEN 1 + true THEN 1 END", fails: true},
 		{expr: "CASE WHEN 1 THEN 1 END", fails: true},
 		{expr: "CASE WHEN true THEN 1 + true END", fails: true},
 		{expr: "CASE WHEN true THEN 1 ELSE 1 + true END", fails: true},
-		{expr: "CASE 1 WHEN 1 THEN 'a' ELSE 2 END", want: ""},
+		{expr: "CASE 1 WHEN 1 THEN 'a' ELSE 2 END", want: "String or Integer"},
 		{expr: "s.x", fails: true},
 		{expr: "z.x", want: ""},
 		{expr: "l[1 + true..]", fails: true},
@@ -145,7 +155,7 @@ func TestStaticOperatorCheckerScopedBranches(t *testing.T) {
 			continue
 		}
 		require.NoError(t, err, tc.expr)
-		require.Equal(t, tc.want, got.kind, tc.expr)
+		require.Equal(t, tc.want, got.typeName(), tc.expr)
 	}
 	complete := checker
 	complete.scope.complete = true

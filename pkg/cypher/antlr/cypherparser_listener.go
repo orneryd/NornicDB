@@ -424,6 +424,18 @@ type CypherParserListener interface {
 	// EnterReservedWord is called when entering the reservedWord production.
 	EnterReservedWord(c *ReservedWordContext)
 
+	// EnterSyntaxFragment is called when entering the syntaxFragment production.
+	EnterSyntaxFragment(c *SyntaxFragmentContext)
+
+	// EnterPathSelector is called when entering the pathSelector production.
+	EnterPathSelector(c *PathSelectorContext)
+
+	// EnterPrivilegeCommand is called when entering the privilegeCommand production.
+	EnterPrivilegeCommand(c *PrivilegeCommandContext)
+
+	// EnterProcedurePrivilegePattern is called when entering the procedurePrivilegePattern production.
+	EnterProcedurePrivilegePattern(c *ProcedurePrivilegePatternContext)
+
 	// ExitScript is called when exiting the script production.
 	ExitScript(c *ScriptContext)
 
@@ -840,4 +852,16 @@ type CypherParserListener interface {
 
 	// ExitReservedWord is called when exiting the reservedWord production.
 	ExitReservedWord(c *ReservedWordContext)
+
+	// ExitSyntaxFragment is called when exiting the syntaxFragment production.
+	ExitSyntaxFragment(c *SyntaxFragmentContext)
+
+	// ExitPathSelector is called when exiting the pathSelector production.
+	ExitPathSelector(c *PathSelectorContext)
+
+	// ExitPrivilegeCommand is called when exiting the privilegeCommand production.
+	ExitPrivilegeCommand(c *PrivilegeCommandContext)
+
+	// ExitProcedurePrivilegePattern is called when exiting the procedurePrivilegePattern production.
+	ExitProcedurePrivilegePattern(c *ProcedurePrivilegePatternContext)
 }
