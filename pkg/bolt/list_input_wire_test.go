@@ -13,6 +13,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// runListInputBoltStatement owns the transaction of one independent assertion.
+// A statement error ends its transaction without affecting sibling cases.
+func runListInputBoltStatement(ctx context.Context, driver neo4j.DriverWithContext, database string, explicit bool, query string, params map[string]interface{}) ([]*neo4j.Record, error) {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: database})
+	defer session.Close(ctx)
+	execute := func(ctx context.Context, query string, params map[string]interface{}) (neo4j.ResultWithContext, error) {
+		return session.Run(ctx, query, params)
+	}
+	var tx neo4j.ExplicitTransaction
+	if explicit {
+		var err error
+		tx, err = session.BeginTransaction(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Close(ctx)
+		execute = tx.Run
+	}
+	result, err := execute(ctx, query, params)
+	if err != nil {
+		return nil, err
+	}
+	records, err := result.Collect(ctx)
+	if err == nil && explicit {
+		err = tx.Commit(ctx)
+	}
+	return records, err
+}
+
 func TestListInputBoltRepresentations(t *testing.T) {
 	engine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
@@ -30,33 +59,8 @@ func TestListInputBoltRepresentations(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		for _, input := range inputs {
 			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, input.Name), func(t *testing.T) {
-				// An expected statement error ends an explicit transaction. Give
-				// each form its own transaction so every assertion executes.
 				run := func(query string, params map[string]interface{}) ([]*neo4j.Record, error) {
-					session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "list_inputs"})
-					defer session.Close(ctx)
-					execute := func(ctx context.Context, query string, params map[string]interface{}) (neo4j.ResultWithContext, error) {
-						return session.Run(ctx, query, params)
-					}
-					var tx neo4j.ExplicitTransaction
-					if explicit {
-						var err error
-						tx, err = session.BeginTransaction(ctx)
-						if err != nil {
-							return nil, err
-						}
-						defer tx.Close(ctx)
-						execute = tx.Run
-					}
-					result, err := execute(ctx, query, params)
-					if err != nil {
-						return nil, err
-					}
-					records, err := result.Collect(ctx)
-					if err == nil && explicit {
-						err = tx.Commit(ctx)
-					}
-					return records, err
+					return runListInputBoltStatement(ctx, driver, "list_inputs", explicit, query, params)
 				}
 				params := map[string]interface{}{"xs": input.Value, "name": input.Name}
 				read := func(t *testing.T, query string, params map[string]interface{}) interface{} {
@@ -95,6 +99,7 @@ func TestListInputBoltRepresentations(t *testing.T) {
 										var status *neo4j.Neo4jError
 										require.ErrorAs(t, err, &status, query)
 										require.Equal(t, oracle.Code, status.Code, query)
+										require.Equal(t, int64(7), read(t, "RETURN 7 AS v", nil), "the next independent case survives a rejected input")
 										return
 									}
 									require.NoError(t, json.Unmarshal([]byte(oracle.JSON), &formWant))

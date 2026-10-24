@@ -27,22 +27,9 @@ func TestTypedNumericBoltBoundaries(t *testing.T) {
 	for _, explicit := range []bool{false, true} {
 		for _, input := range listinputs.NumericInputs() {
 			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, input.Name), func(t *testing.T) {
-				session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "numeric_wire"})
-				defer session.Close(ctx)
-				run := func(ctx context.Context, query string, params map[string]interface{}) (neo4j.ResultWithContext, error) {
-					return session.Run(ctx, query, params)
-				}
-				if explicit {
-					tx, err := session.BeginTransaction(ctx)
-					require.NoError(t, err)
-					defer tx.Close(ctx)
-					run = tx.Run
-				}
 				read := func(t *testing.T, query string, params map[string]interface{}) interface{} {
 					t.Helper()
-					result, err := run(ctx, query, params)
-					require.NoError(t, err, query)
-					records, err := result.Collect(ctx)
+					records, err := runListInputBoltStatement(ctx, driver, "numeric_wire", explicit, query, params)
 					require.NoError(t, err, query)
 					require.Len(t, records, 1, query)
 					return records[0].Values[0]
@@ -70,11 +57,8 @@ func TestTypedNumericBoltBoundaries(t *testing.T) {
 						require.Equal(t, map[string]interface{}{"v": want}, got)
 					})
 				}
-				result, err := run(ctx, "MATCH (n:NumericWireWritten) DETACH DELETE n", nil)
+				_, err := runListInputBoltStatement(ctx, driver, "numeric_wire", explicit, "MATCH (n:NumericWireWritten) DETACH DELETE n", nil)
 				require.NoError(t, err)
-				_, err = result.Consume(ctx)
-				require.NoError(t, err)
-				// Explicit cases roll back their fixture writes when tx.Close runs.
 			})
 		}
 	}
