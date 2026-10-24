@@ -203,7 +203,7 @@ func executeManagedStatement(
 	onRecord func(columns []string, record *neo4j.Record),
 ) ([]string, error) {
 	runInTx := func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		result, err := tx.Run(ctx, statement, params)
+		result, err := tx.Run(ctx, statement, remoteBoltParameters(params))
 		if err != nil {
 			return nil, err
 		}
@@ -245,7 +245,7 @@ func (b *boltTransport) queryBatch(ctx context.Context, statements []remoteState
 
 	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
 		for _, stmt := range statements {
-			result, err := tx.Run(ctx, stmt.Statement, stmt.Parameters)
+			result, err := tx.Run(ctx, stmt.Statement, remoteBoltParameters(stmt.Parameters))
 			if err != nil {
 				return nil, err
 			}
@@ -273,7 +273,7 @@ func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 }
 
 func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	result, err := t.tx.Run(ctx, statement, params)
+	result, err := t.tx.Run(ctx, statement, remoteBoltParameters(params))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -322,7 +322,8 @@ func accessModeForStatement(statement string) neo4j.AccessMode {
 }
 
 // normalizeBoltValue converts neo4j dbtype values into the map shapes that
-// valueToNode/valueToEdge expect, so all downstream code works for both transports.
+// valueToNode/valueToEdge expect, and temporal and point values into
+// RemoteTypedValue, so all downstream code works for both transports.
 func normalizeBoltValue(v interface{}) interface{} {
 	value, _ := normalizeBoltGraphValue(v)
 	return value
@@ -332,6 +333,9 @@ func normalizeBoltValue(v interface{}) interface{} {
 // needs normalization. Ordinary remote row maps/lists retain their zero-allocation
 // baseline; a recursive graph conversion never mutates the driver's input value.
 func normalizeBoltGraphValue(v interface{}) (interface{}, bool) {
+	if typed, ok := remoteTypedFromBolt(v); ok {
+		return typed, true
+	}
 	switch n := v.(type) {
 	case dbtype.Node:
 		m := RemoteEntityValue{
@@ -527,7 +531,7 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 		return nil, err
 	}
 	var txResp remoteTxResponse
-	if err := json.Unmarshal(respBody, &txResp); err != nil {
+	if err := unmarshalRemoteHTTPJSON(respBody, &txResp); err != nil {
 		return nil, localizedError(localization.StorageRemoteTransactionDecodeFailed(resp.StatusCode, err), err)
 	}
 	if len(txResp.Errors) > 0 {
@@ -539,6 +543,12 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 			data := &txResp.Results[resultIndex].Data[rowIndex]
 			if data.REST != nil && len(data.REST) != len(data.RawRow) {
 				return nil, localizedError(localization.StorageRemoteRESTRowLengthMismatch(), nil)
+			}
+			for _, entry := range data.Meta {
+				remoteHTTPNumbers(entry)
+			}
+			for _, entity := range append(append([]map[string]interface{}(nil), data.Graph.Nodes...), data.Graph.Relationships...) {
+				remoteHTTPNumbers(entity)
 			}
 			entities := make(map[string]interface{})
 			for _, node := range data.Graph.Nodes {

@@ -152,6 +152,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"pkg/cypher/functions_text_locate.go:textLocatePattern":      "builds a regex from decoded function argument text, not Cypher source",
 		"cmd/nornicdb-admin/main.go:runImportFull":                   "reads a CSV quote command-line option, not Cypher text",
 		"cmd/nornicdb-admin/main.go:runExportNeo4jCSV":               "reads a CSV quote command-line option, not Cypher text",
+		"pkg/storage/remote_parameters.go:appendRemoteJSONString":    "emits JSON string escapes for an HTTP request body and does not read Cypher text",
 	}
 	// These production helpers exist only on one maintained branch. They are
 	// still explicit, reasoned exceptions when present, but absence on the

@@ -545,7 +545,8 @@ func TestNormalizeFabricRowWrapper_MapInterfaceKeys(t *testing.T) {
 	query := "RETURN sourceId, textKey, originalText, language, translatedText"
 	exec.fabricRecordBindings = map[string]interface{}{"sourceId": nil, "textKey": nil, "originalText": nil, "language": nil, "translatedText": nil}
 	stream := &fabric.ResultStream{
-		Columns: []string{"__fabric_row"},
+		Columns:    []string{"__fabric_row"},
+		RowWrapper: true,
 		Rows: [][]interface{}{
 			{
 				map[interface{}]interface{}{
