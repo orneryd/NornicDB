@@ -68,24 +68,26 @@ func (e *StorageExecutor) useTargetRequiresFabric(target string) bool {
 	return false
 }
 
-func (e *StorageExecutor) executeViaFabric(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, autoCommit bool) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, autoCommit bool, preparation ...*fabricPreparedExec) (*ExecuteResult, error) {
 	if tx == nil {
 		tx = fabric.NewFabricTransaction(fmt.Sprintf("fab-%d", time.Now().UnixNano()))
 	}
-	prepared, err := e.preparedFabricFromContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if prepared == nil {
-		prepared, err = e.prepareFabricExecution(ctx, cypher)
+	var prepared *fabricPreparedExec
+	if len(preparation) > 0 {
+		prepared = preparation[0]
+	} else {
+		var err error
+		prepared, err = e.preparedFabricFromContext(ctx)
 		if err != nil {
 			return nil, err
 		}
+		if prepared == nil {
+			prepared, err = e.prepareFabricExecution(ctx, cypher)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
-	return e.executeViaPreparedFabricWithTx(ctx, cypher, params, tx, autoCommit, prepared)
-}
-
-func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cypher string, params map[string]interface{}, tx *fabric.FabricTransaction, autoCommit bool, prepared *fabricPreparedExec) (*ExecuteResult, error) {
 	if prepared == nil {
 		return nil, localizedError(localization.CypherCommandRoutingFabricNotPrepared(), nil)
 	}
@@ -93,7 +95,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 	if err != nil {
 		return nil, err
 	}
-	fragment, err := fabricProcedureWritePlan(prepared.fragment)
+	fragment, err := e.fabricProcedureWritePlan(prepared.fragment)
 	if err != nil {
 		return nil, err
 	}
@@ -434,10 +436,10 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 // admission, just as the native transaction route does. Cached structural plans
 // stay immutable and do not retain an obsolete procedure mode after registration.
 // The existing Fabric participant owner then handles writes and their rollback.
-func fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error) {
+func (e *StorageExecutor) fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error) {
 	switch current := fragment.(type) {
 	case *fabric.FragmentExec:
-		input, err := fabricProcedureWritePlan(current.Input)
+		input, err := e.fabricProcedureWritePlan(current.Input)
 		if err != nil {
 			return nil, err
 		}
@@ -446,6 +448,9 @@ func fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error)
 			return nil, err
 		}
 		write := contract.writes
+		if e.dbManager != nil && e.dbManager.IsCompositeDatabase(current.GraphName) {
+			write = false
+		}
 		if input == current.Input && write == current.IsWrite {
 			return current, nil
 		}
@@ -453,11 +458,11 @@ func fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error)
 		copy.Input, copy.IsWrite = input, write
 		return &copy, nil
 	case *fabric.FragmentApply:
-		input, err := fabricProcedureWritePlan(current.Input)
+		input, err := e.fabricProcedureWritePlan(current.Input)
 		if err != nil {
 			return nil, err
 		}
-		inner, err := fabricProcedureWritePlan(current.Inner)
+		inner, err := e.fabricProcedureWritePlan(current.Inner)
 		if err != nil {
 			return nil, err
 		}
@@ -468,11 +473,11 @@ func fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error)
 		copy.Input, copy.Inner = input, inner
 		return &copy, nil
 	case *fabric.FragmentUnion:
-		left, err := fabricProcedureWritePlan(current.LHS)
+		left, err := e.fabricProcedureWritePlan(current.LHS)
 		if err != nil {
 			return nil, err
 		}
-		right, err := fabricProcedureWritePlan(current.RHS)
+		right, err := e.fabricProcedureWritePlan(current.RHS)
 		if err != nil {
 			return nil, err
 		}
@@ -483,7 +488,7 @@ func fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error)
 		copy.LHS, copy.RHS = left, right
 		return &copy, nil
 	case *fabric.FragmentLeaf:
-		input, err := fabricProcedureWritePlan(current.Input)
+		input, err := e.fabricProcedureWritePlan(current.Input)
 		if err != nil {
 			return nil, err
 		}
@@ -724,7 +729,8 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 	if keywords["MATCH"] || keywords["STARTNODE"] || keywords["ENDNODE"] || keywords["SHORTESTPATH"] {
 		return nil, nil, false, nil
 	}
-	executor := c.base.cloneForStorage(c.base.storage)
+	engine := c.base.storage
+	executor := c.base.cloneForStorage(engine)
 	if err := executor.bindFabricStatementCacheScope(ctx, dbName); err != nil {
 		return nil, nil, true, err
 	}
@@ -736,11 +742,21 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
+	base := c.base
+	composite, compositeRoot := engine.(*storage.CompositeEngine)
 	ctx = context.WithValue(ctx, dynamicWriteAdmissionKey{}, dynamicWriteAdmission(func(callCtx context.Context, caller *StorageExecutor, statement string) error {
+		if compositeRoot {
+			return nil
+		} // The actual mutation selects its physical owner below.
 		return c.promoteResolvedStatement(callCtx, caller, dbName, engine, statement)
 	}))
-	base := c.base
-	if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
+	if compositeRoot {
+		c.localDispatchMu.Lock()
+		defer c.localDispatchMu.Unlock()
+		engine = composite.WithConstituentAccess(func(database string, physical storage.Engine, write bool) (storage.Engine, error) {
+			return c.compositeParticipantStorage(ctx, database, physical, write)
+		})
+	} else if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
 		if !c.autoCommit || c.transaction != nil && c.transaction.WriteShard() == sub.ShardName {
 			// Fabric has one write participant. Its local fragments share one
 			// transactional executor until the coordinator admits COMMIT.
@@ -772,6 +788,13 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 }
 
 func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+	previousIdentityScope := exec.graphIdentityScope
+	var catalog *fabric.Catalog
+	if prepared, err := exec.preparedFabricFromContext(ctx); err == nil && prepared != nil {
+		catalog = prepared.catalog
+	}
+	exec.graphIdentityScope = newGraphIdentityScope(catalog, exec.executionDatabaseName(ctx), exec.dbManager, c.authToken)
+	defer func() { exec.graphIdentityScope = previousIdentityScope }()
 	// Local fragments bypass implicit execution's decision. Classify this
 	// fragment itself: writes and procedures must retain full node reads.
 	exec.readOnlyQueryNodes = exec.readsQueryNodesWithoutVectors(exec.analyzer.Analyze(query))

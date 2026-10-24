@@ -141,7 +141,7 @@ func TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold(t *t
 	}))
 
 	require.True(t, server.databaseHasRemoteConstituent("obs_comp_remote"))
-	exec, err := server.newDatabaseScopedExecutor("obs_comp_remote", "Bearer remote-token")
+	exec, err := cypher.NewDatabaseScopedExecutor(server.databaseScopedExecutorOptions("obs_comp_remote", "Bearer remote-token"))
 	require.NoError(t, err)
 	require.NotNil(t, exec)
 

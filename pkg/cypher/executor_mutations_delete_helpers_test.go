@@ -85,7 +85,8 @@ CREATE (:Person {id:'p1', team:'red'}),
 	require.Nil(t, nodes)
 
 	res := &ExecuteResult{Stats: &QueryStats{NodesDeleted: 2, RelationshipsDeleted: 3}}
-	node := &storage.Node{ID: "n1"}
+	// A retained native value carries the source of this fixture's store.
+	node := &storage.Node{ID: "n1", Database: "delete_helpers_cov"}
 	input := &ExecuteResult{Columns: []string{"n"}, Rows: [][]interface{}{{node}, {node}}}
 	exec.applyDeleteReturnProjection(res, "MATCH (n) DELETE n RETURN count(*), count(n), 42 AS literal", "n", deleteProjectionInfo{ctx: ctx, input: input})
 	require.Equal(t, []string{"count(*)", "count(n)", "literal"}, res.Columns)
@@ -98,14 +99,14 @@ CREATE (:Person {id:'p1', team:'red'}),
 	requireDeletedEntityError(t, getExpressionFailure(deletedCtx))
 
 	res = &ExecuteResult{Stats: &QueryStats{RelationshipsDeleted: 3}}
-	edge := &storage.Edge{ID: "r1", Type: "R"}
+	edge := &storage.Edge{ID: "r1", Database: "delete_helpers_cov", Type: "R"}
 	input = &ExecuteResult{Columns: []string{"r"}, Rows: [][]interface{}{{edge}, {edge}, {edge}}}
 	exec.applyDeleteReturnProjection(res, "MATCH ()-[r]->() DELETE r RETURN count(r), r, type(r)", "r", deleteProjectionInfo{ctx: ctx, input: input})
 	require.Equal(t, []string{"count(r)", "r", "type(r)"}, res.Columns)
 	require.Len(t, res.Rows, 1)
 	require.EqualValues(t, 3, res.Rows[0][0])
 	// The deleted relationship reads as its empty view (#907).
-	require.Equal(t, &storage.Edge{ID: "r1", Type: "R"}, res.Rows[0][1])
+	require.Equal(t, &storage.Edge{ID: "r1", Database: "delete_helpers_cov", Type: "R"}, res.Rows[0][1])
 	require.Equal(t, "R", res.Rows[0][2])
 
 	res = &ExecuteResult{Stats: &QueryStats{NodesDeleted: 2, RelationshipsDeleted: 3}}

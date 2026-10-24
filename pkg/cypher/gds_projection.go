@@ -456,6 +456,7 @@ func readGDSPropertySpecs(value interface{}, aggregation string, elementKinds ..
 func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs []gdsElementSpec, validateRelationships bool) (*GraphProjection, error) {
 	projection := &GraphProjection{
 		Name:                     name,
+		Database:                 e.databaseName(),
 		NodeLabels:               make(map[string][]string),
 		NodeProperties:           make(map[string]map[string]interface{}),
 		NodePropertyTypes:        make(map[string]string),
@@ -494,7 +495,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				if !ok {
 					continue
 				}
-				id := string(node.ID)
+				id := projection.nodeIdentity(node.Database, node.ID)
 				if projection.NodeProperties[id] == nil {
 					projection.NodeProperties[id] = make(map[string]interface{})
 				}
@@ -502,8 +503,9 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 			}
 		}
 		if labels != nil {
-			projection.NodeIDs = append(projection.NodeIDs, string(node.ID))
-			projection.NodeLabels[string(node.ID)] = labels
+			id := projection.nodeIdentity(node.Database, node.ID)
+			projection.NodeIDs = append(projection.NodeIDs, id)
+			projection.NodeLabels[id] = labels
 		}
 		return nil
 	})
@@ -554,8 +556,8 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 		if !gdsTypeProjected(relSpecs, edge.Type) {
 			return nil
 		}
-		_, hasStart := projection.nodeIndex[string(edge.StartNode)]
-		_, hasEnd := projection.nodeIndex[string(edge.EndNode)]
+		_, hasStart := projection.nodeIndex[projection.nodeIdentity(edge.Database, edge.StartNode)]
+		_, hasEnd := projection.nodeIndex[projection.nodeIdentity(edge.Database, edge.EndNode)]
 		if hasStart && hasEnd || validateRelationships {
 			edges = append(edges, edge)
 		}
@@ -567,7 +569,7 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
 	for _, edge := range edges {
 		typesSeen[edge.Type] = true
-		start, end := string(edge.StartNode), string(edge.EndNode)
+		start, end := projection.nodeIdentity(edge.Database, edge.StartNode), projection.nodeIdentity(edge.Database, edge.EndNode)
 		_, hasStart := projection.nodeIndex[start]
 		_, hasEnd := projection.nodeIndex[end]
 		if !hasStart || !hasEnd {
@@ -610,7 +612,11 @@ func (e *StorageExecutor) buildGraphProjection(name string, nodeSpecs, relSpecs 
 				directions = [][2]string{{start, end}, {end, start}}
 			}
 			for _, direction := range directions {
-				relationship := ProjectedRelationship{ID: string(edge.ID), Source: direction[0], Target: direction[1], Type: spec.name, Properties: properties}
+				id := string(edge.ID)
+				if edge.Database != "" && edge.Database != projection.Database {
+					id = edge.ElementID(projection.Database)
+				}
+				relationship := ProjectedRelationship{ID: id, Source: direction[0], Target: direction[1], Type: spec.name, Properties: properties}
 				if !spec.merges() {
 					projection.Relationships = append(projection.Relationships, relationship)
 					continue

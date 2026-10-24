@@ -45,7 +45,7 @@ func TestCypherCommandRoutingErrorsHaveTypedIdentity(t *testing.T) {
 	})
 
 	t.Run("Fabric", func(t *testing.T) {
-		_, err := exec.executeViaPreparedFabricWithTx(context.Background(), "RETURN 1", nil, nil, true, nil)
+		_, err := exec.executeViaFabricWithTx(context.Background(), "RETURN 1", nil, nil, true, nil)
 		requireCypherCommandRoutingLocalizedError(t, err, localization.MessageCypherCommandRoutingFabricNotPrepared, "fabric execution was not prepared")
 	})
 

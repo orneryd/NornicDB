@@ -1,4 +1,6 @@
 package server
+import "github.com/orneryd/nornicdb/pkg/cypher"
+
 
 import (
 	"context"
@@ -25,7 +27,7 @@ func TestStatementCacheFamilyHTTPMetadataRemoval(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			first, err := server.newDatabaseScopedExecutor("cache_comp", "Bearer lifecycle-test")
+			first, err := cypher.NewDatabaseScopedExecutor(server.databaseScopedExecutorOptions("cache_comp", "Bearer lifecycle-test"))
 			if err != nil {
 				t.Fatal(err)
 			}

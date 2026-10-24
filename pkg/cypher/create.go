@@ -116,24 +116,15 @@ func (e *StorageExecutor) pipelineCreateSource(ctx context.Context, source pipel
 	return out, created, true, nil
 }
 
-func (e *StorageExecutor) createPatternsInScope(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, result *ExecuteResult) (map[string]PathResult, error) {
-	plan := acquireCreatePlan()
-	defer plan.release()
-	createdPaths, err := e.planCreatePatterns(ctx, pattern, createdNodes, createdEdges, plan)
-	if err != nil {
-		return nil, err
-	}
-	if err := e.applyCreatePlan(ctx, plan, result); err != nil {
-		return nil, err
-	}
-	return createdPaths, nil
-}
-
 // planCreatePatterns plans one CREATE clause into plan without writing:
 // every node and relationship is parsed, evaluated and validated, and bound
 // into createdNodes / createdEdges for later patterns and clauses. Adjacent
 // pipeline CREATE clauses share one plan and are published atomically.
-func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan) (map[string]PathResult, error) {
+func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string, createdNodes map[string]*storage.Node, createdEdges map[string]*storage.Edge, plan *createPlan, publication ...*ExecuteResult) (map[string]PathResult, error) {
+	if plan == nil {
+		plan = acquireCreatePlan()
+		defer plan.release()
+	}
 	for _, fragment := range splitTopLevelComma(pattern) {
 		_, body := parseCreatePathAssignment(strings.TrimSpace(fragment))
 		if !strings.HasPrefix(body, "(") || !strings.HasSuffix(strings.TrimSpace(body), ")") {
@@ -230,6 +221,9 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 				Type:       relType,
 				Properties: relProps,
 			}
+			if err := edge.SetEndpoints(startNode, endNode); err != nil {
+				return nil, err
+			}
 			plan.edges = append(plan.edges, edge)
 			if relVar != "" {
 				createdEdges[relVar] = edge
@@ -262,6 +256,11 @@ func (e *StorageExecutor) planCreatePatterns(ctx context.Context, pattern string
 			}
 		}
 	}
+	if len(publication) > 0 {
+		if err := e.applyCreatePlan(ctx, plan, publication[0]); err != nil {
+			return nil, err
+		}
+	}
 	return createdPaths, nil
 }
 
@@ -279,6 +278,16 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 		return failure
 	}
 	store := e.getStorage(ctx)
+	for _, node := range plan.nodes {
+		if node.Database == "" {
+			node.Database = storage.DatabaseOf(store)
+		}
+	}
+	for _, edge := range plan.edges {
+		if edge.Database == "" {
+			edge.Database = storage.DatabaseOf(store)
+		}
+	}
 	switch len(plan.nodes) {
 	case 0:
 	case 1:
@@ -1483,12 +1492,11 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 		}
 	}
 
-	// Strip canonical element ID prefix (4:dbname:rawid).
-	lookupID := idValue
-	if kind == "elementId" || strings.HasPrefix(lookupID, "4:") {
-		if parts := strings.SplitN(lookupID, ":", 3); len(parts) == 3 && parts[0] == "4" {
-			lookupID = parts[2]
-		}
+	// Endpoint seeks use the same source selection as ordinary MATCH seeks.
+	// Ambiguous composite raw IDs stay on the normal predicate path.
+	lookupID, found, applicable := e.entitySeekLookup(idValue, "4", kind)
+	if !applicable || !found {
+		return "", nil
 	}
 
 	node, err := e.getQueryNode(e.storage, storage.NodeID(lookupID))

@@ -43,14 +43,14 @@ func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{
 			return nil, nil, nil, procedureArgumentTypeError(procedure, "config", "MAP", args[2])
 		}
 	}
-	nodes, err := e.algorithmNodes(procedure, args)
+	graph, nodes, err := e.algorithmIdentityInput(procedure, args)
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	if types == nil {
-		return e, nodes, config, nil
+		return graph, nodes, config, nil
 	}
-	return e.cloneWithStorage(&algorithmRelationshipReader{Engine: e.storage, types: types}), nodes, config, nil
+	return graph.cloneWithStorage(&algorithmRelationshipReader{Engine: graph.storage, types: types}), nodes, config, nil
 }
 
 // Filter each adjacency read at the shared storage boundary, keeping direction,

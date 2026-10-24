@@ -802,6 +802,7 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 			BM25Rank:   c.bm25Rank,
 			Relationship: &storage.Edge{
 				ID:         edge.ID,
+				Database:   edge.Database,
 				Type:       edge.Type,
 				StartNode:  edge.StartNode,
 				EndNode:    edge.EndNode,
