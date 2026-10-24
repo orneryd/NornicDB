@@ -45,7 +45,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 		cacheable := true
 		keyable := false
 		for _, value := range properties {
-			if _, ok := indexValueKey(value); ok {
+			if _, ok := transactionEqualityKey(value); ok {
 				keyable = true
 				break
 			}
@@ -58,11 +58,11 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 				return false
 			}
 			for property, value := range properties {
-				expected, ok := indexValueKey(value)
+				expected, ok := transactionEqualityKey(value)
 				if !ok {
 					continue
 				}
-				actual, ok := indexValueKey(node.Properties[property])
+				actual, ok := transactionEqualityKey(node.Properties[property])
 				if !ok || actual != expected {
 					return false
 				}
@@ -113,7 +113,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 	var committed, pending []NodeID
 	found := false
 	for _, property := range names {
-		value, ok := indexValueKey(properties[property])
+		value, ok := transactionEqualityKey(properties[property])
 		if !ok {
 			continue
 		}
@@ -143,4 +143,16 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 		}
 	}
 	return result, true, nil
+}
+
+// transactionEqualityKey limits pruning to scalar keys whose equality agrees
+// with Cypher. Comparable temporal structs and composite values may have a
+// different language equality contract, so the caller must evaluate them.
+func transactionEqualityKey(value interface{}) (interface{}, bool) {
+	switch value.(type) {
+	case string, bool:
+		return value, true
+	default:
+		return numericIndexKey(value)
+	}
 }

@@ -186,3 +186,31 @@ func BenchmarkTransactionOverlayMergeCost(b *testing.B) {
 		}
 	}
 }
+
+// Candidate pruning must be no stricter than Cypher equality: a temporal
+// value reconstructed from storage can have a different location pointer.
+func TestTransactionOverlayTemporalEqualityIsNotPruned(t *testing.T) {
+	base := newTestMemoryEngine(t)
+	store := storage.NewNamespacedEngine(base, "test")
+	exec := NewStorageExecutor(store)
+	value := CypherDateTime{Time: time.Date(2026, 1, 2, 3, 4, 5, 42, time.FixedZone("offset", 4500))}
+	_, err := exec.Execute(context.Background(), "CREATE (:TemporalOverlay {at:$at, id:1})", map[string]interface{}{"at": value})
+	require.NoError(t, err)
+	tx, err := base.BeginTransaction()
+	require.NoError(t, err)
+	defer tx.Rollback()
+	wrapper := &transactionStorageWrapper{tx: tx, underlying: store, namespace: "test", separator: ":", mutatedNodeIDs: make(map[string]struct{})}
+	candidates, err := wrapper.GetNodesByLabel("TemporalOverlay")
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	props := map[string]interface{}{"at": value}
+	require.True(t, nodePropertiesMatch(candidates[0], props), "baseline Cypher equality accepts the stored value")
+	reader := exec.cloneWithStorage(wrapper)
+	nodes, _, err := reader.findMergeNodesScanned(wrapper, []string{"TemporalOverlay"}, props)
+	require.NoError(t, err)
+	require.Len(t, nodes, 1, "candidate keys cannot discard a Cypher-equal temporal value")
+	props["id"] = int64(1)
+	nodes, _, err = reader.findMergeNodesScanned(wrapper, []string{"TemporalOverlay"}, props)
+	require.NoError(t, err)
+	require.Len(t, nodes, 1, "scalar pruning leaves temporal equality to Cypher")
+}
