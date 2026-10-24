@@ -282,6 +282,19 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 	visit func(*Node) error,
 	queryRead ...bool,
 ) error {
+	return b.streamNodesByLabelAtSnapshotWithViewContext(context.Background(), scope, label, version, view, properties, v, visit, queryRead...)
+}
+
+func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithViewContext(
+	ctx context.Context,
+	scope, label string,
+	version MVCCVersion,
+	view func(func(*badger.Txn) error) error,
+	properties []string,
+	v readVisibility,
+	visit func(*Node) error,
+	queryRead ...bool,
+) error {
 	queryNodes := len(queryRead) > 0 && queryRead[0]
 	if visit == nil {
 		return ErrInvalidData
@@ -293,9 +306,14 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 	defer deregister()
 
 	return view(func(txn *badger.Txn) error {
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
+		it := b.newLabelIndexReaderWithContext(ctx, txn, scope, label, "", v, true)
 		defer it.Close()
 		for it.Next() {
+			if it.UsesLabelFallback() {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+			}
 			nodeID := it.NodeID()
 			node, getErr := b.getNodeAtInTxn(txn, nodeID, version, !queryNodes, v)
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
@@ -339,6 +357,19 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfter(
 }
 
 func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
+	scope, label string,
+	view func(func(*badger.Txn) error) error,
+	properties []string,
+	afterNodeID NodeID,
+	v readVisibility,
+	visit func(*Node) error,
+	queryRead ...bool,
+) error {
+	return b.streamNodesByLabelFromPhysicalSnapshotAfterReadWithContext(context.Background(), scope, label, view, properties, afterNodeID, v, visit, queryRead...)
+}
+
+func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterReadWithContext(
+	ctx context.Context,
 	scope, label string,
 	view func(func(*badger.Txn) error) error,
 	properties []string,
@@ -391,14 +422,24 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			return emit(node)
 		}
 
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), afterNodeID)
+		it := b.newLabelIndexReaderWithContext(ctx, txn, scope, label, afterNodeID, v, false)
 		defer it.Close()
 		var pending []NodeID
 		lookups := 0
 		for it.Next() {
-			indexKey := it.Item().Key()
+			indexKey := it.IndexKey()
 			nodeID := it.NodeID()
-			if b.checksIndexTombstones(v) && hasIndexTombstone(txn, indexKey) {
+			if b.checksIndexTombstones(v) && len(indexKey) > 0 && hasIndexTombstone(txn, indexKey) {
+				continue
+			}
+			if it.UsesLabelFallback() {
+				node, err := readItem(nodeID, it.Item())
+				if err != nil {
+					return err
+				}
+				if err := emit(node); err != nil {
+					return err
+				}
 				continue
 			}
 			if !coversDecided && lookups >= labelScanPointLookups {

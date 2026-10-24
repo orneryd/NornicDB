@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"sort"
@@ -8,16 +9,14 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
-// nodeIndexReader walks a numeric node index in its existing key order. A
-// scoped read walks the index only until its first foreign or unresolved
-// entry, then derives remaining candidates from the forward dictionary's
-// physical namespace range and probes membership in the same transaction.
-// The global label and MVCC-head indexes contain no namespace in their keys;
-// walking them and filtering afterwards makes a small database pay for all
-// other databases. The first boundary entry stops that walk: no foreign run
-// is enumerated. A sparse label or LIMIT satisfied before the boundary keeps
-// its original streaming cost. No node bodies, embeddings or unrelated
-// dictionary ranges are read while selecting candidates.
+// nodeIndexReader walks a numeric node index in its existing key order. Label
+// reads use the index after its ready marker is committed, and scan stored
+// node bodies while that index is being rebuilt. In ready mode, a scoped read
+// walks the index only until its first foreign or unresolved entry, then
+// derives remaining candidates from the forward dictionary's physical
+// namespace range and probes membership in the same transaction. This avoids
+// reading node bodies, embeddings or unrelated dictionary ranges on the fast
+// path.
 type nodeIndexReader struct {
 	engine     *BadgerEngine
 	txn        *badger.Txn
@@ -44,9 +43,12 @@ func (b *BadgerEngine) newNodeIndexReader(txn *badger.Txn, scope string, prefix 
 	r.index = txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	if scope == "" {
 		if after != "" {
-			num, ok := b.idDict.lookupNodeNumID(after)
-			if !ok {
-				r.err = ErrNotFound
+			num, ok, err := b.labelIndexNodeNumInTxn(txn, after)
+			if err == nil && !ok {
+				err = ErrNotFound
+			}
+			if err != nil {
+				r.err = err
 				return r
 			}
 			r.key = append(append([]byte(nil), prefix...), encodeNumID(num)...)
@@ -138,7 +140,7 @@ func (r *nodeIndexReader) Next() bool {
 				continue
 			}
 			num := binary.BigEndian.Uint64(key[len(r.prefix):])
-			id, ok := r.engine.idDict.lookupNodeIDByNum(num)
+			id, ok := r.engine.labelIndexNodeID(num)
 			if r.scope != "" && (!ok || id == "" || !nodeIDInScope(id, r.scope)) {
 				r.useScopedCandidates()
 				return r.Next()
@@ -169,12 +171,147 @@ func (r *nodeIndexReader) Next() bool {
 	return false
 }
 
+func (r *labelFallbackReader) nextLabelBody() bool {
+	for {
+		if err := r.labelContext.Err(); err != nil {
+			r.err = err
+			return false
+		}
+		if !r.bodyScanStarted {
+			r.bodyScanStarted = true
+			if r.after == "" {
+				r.bodyScan.Rewind()
+			} else {
+				start := nodeKey(r.after)
+				r.bodyScan.Seek(start)
+				if r.bodyScan.Valid() && string(r.bodyScan.Item().Key()) == string(start) {
+					r.bodyScan.Next()
+				}
+			}
+		} else {
+			r.bodyScan.Next()
+		}
+		if !r.bodyScan.ValidForPrefix(r.bodyPrefix) {
+			return false
+		}
+
+		item := r.bodyScan.Item()
+		key := item.Key()
+		if len(key) <= len(r.bodyPrefix) {
+			continue
+		}
+		id := NodeID(key[1:])
+
+		var node *Node
+		include := map[string]struct{}{}
+		if r.visibility == visibleRead && r.engine.decayEnabled && !r.engine.revealAll.Load() {
+			include = nil
+		}
+		if err := item.Value(func(value []byte) error {
+			var err error
+			node, err = r.engine.decodeNodeProjected(namespaceForNodeID(id), value, include)
+			return err
+		}); err != nil {
+			r.err = err
+			return false
+		}
+		if !nodeHasLabel(node, r.label) || r.engine.hidesNode(r.visibility, node, r.nowNanos) {
+			continue
+		}
+
+		r.item = item
+		r.id = id
+		return true
+	}
+}
+
+func (r *labelFallbackReader) nextLabelID() bool {
+	if !r.idScanStarted {
+		r.idScanStarted = true
+		r.forwardScan = r.txn.NewIterator(badgerPrefixIteratorOptions(r.forwardPrefix))
+		r.bodyScan = r.txn.NewIterator(badgerPrefixIteratorOptions(r.bodyPrefix))
+		seekAfter := func(it *badger.Iterator, prefix, start []byte) {
+			if r.after == "" {
+				it.Rewind()
+				return
+			}
+			it.Seek(start)
+			if it.ValidForPrefix(prefix) && string(it.Item().Key()) == string(start) {
+				it.Next()
+			}
+		}
+		seekAfter(r.forwardScan, r.forwardPrefix, nodeIDForwardKey(r.after))
+		seekAfter(r.bodyScan, r.bodyPrefix, nodeKey(r.after))
+	}
+
+	for {
+		if err := r.labelContext.Err(); err != nil {
+			r.err = err
+			return false
+		}
+		forwardValid := r.forwardScan.ValidForPrefix(r.forwardPrefix)
+		bodyValid := r.bodyScan.ValidForPrefix(r.bodyPrefix)
+		if !forwardValid && !bodyValid {
+			return false
+		}
+
+		var id NodeID
+		switch {
+		case !bodyValid:
+			key := r.forwardScan.Item().Key()
+			if len(key) > 1 {
+				id = NodeID(key[1:])
+			}
+			r.forwardScan.Next()
+		case !forwardValid:
+			key := r.bodyScan.Item().Key()
+			if len(key) > 1 {
+				id = NodeID(key[1:])
+			}
+			r.bodyScan.Next()
+		default:
+			forwardKey := r.forwardScan.Item().Key()
+			bodyKey := r.bodyScan.Item().Key()
+			forwardID := forwardKey[1:]
+			bodyID := bodyKey[1:]
+			switch bytes.Compare(forwardID, bodyID) {
+			case -1:
+				id = NodeID(forwardID)
+				r.forwardScan.Next()
+			case 1:
+				id = NodeID(bodyID)
+				r.bodyScan.Next()
+			default:
+				id = NodeID(forwardID)
+				r.forwardScan.Next()
+				r.bodyScan.Next()
+			}
+		}
+		if id == "" {
+			continue
+		}
+		r.id = id
+		r.item = nil
+		return true
+	}
+}
+
 func (r *nodeIndexReader) Close() {
 	if r.index != nil {
 		r.index.Close()
 	}
 }
 
-func (r *nodeIndexReader) Item() *badger.Item { return r.item }
-func (r *nodeIndexReader) NodeID() NodeID     { return r.id }
-func (r *nodeIndexReader) Err() error         { return r.err }
+func (r *nodeIndexReader) Item() *badger.Item      { return r.item }
+func (r *nodeIndexReader) NodeID() NodeID          { return r.id }
+func (r *nodeIndexReader) Err() error              { return r.err }
+func (r *nodeIndexReader) UsesLabelFallback() bool { return false }
+
+// IndexKey returns the actual key when candidates came from the label index.
+// A body-scan fallback has no index key to check for tombstones.
+func (r *nodeIndexReader) IndexKey() []byte {
+	if r.item == nil {
+		return nil
+	}
+	return r.item.Key()
+}

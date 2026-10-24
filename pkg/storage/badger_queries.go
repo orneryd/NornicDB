@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"time"
@@ -38,14 +39,14 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 	}
 	nowNanos := DecayScoringTime()
 	err := b.withView(func(txn *badger.Txn) error {
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
+		it := b.newLabelIndexReader(txn, scope, label, "", visibleRead, false)
 		defer it.Close()
 
 		for it.Next() {
-			indexKey := it.Item().KeyCopy(nil)
+			indexKey := it.IndexKey()
 			nodeID := it.NodeID()
 
-			if b.decayEnabled && !b.revealAll.Load() && hasIndexTombstone(txn, indexKey) {
+			if b.decayEnabled && !b.revealAll.Load() && len(indexKey) > 0 && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 
@@ -116,36 +117,45 @@ func (b *BadgerEngine) ForEachNodeIDByLabelInScope(scope, label string, visit fu
 	labelGen := b.labelFirstCacheGen.current()
 	err := b.withView(func(txn *badger.Txn) error {
 		if cachedOK && cachedID != "" {
-			cachedKey := b.labelIndexKeyStringLookup(label, cachedID)
-			if cachedKey == nil {
-				labelGen = b.labelCacheDropStaleFirst(labelGen, label, cachedID)
-			} else {
-				_, err := txn.Get(cachedKey)
-				switch err {
-				case nil:
-					cachedValid = true
-					if !visit(cachedID) {
-						return ErrIterationStopped
-					}
-				case badger.ErrKeyNotFound:
-					labelGen = b.labelCacheDropStaleFirst(labelGen, label, cachedID)
-				default:
+			ready, err := b.labelIndexReadyInTxn(txn)
+			if err != nil {
+				return err
+			}
+			if ready {
+				cachedKey, err := b.labelIndexKeyStringLookupInTxn(txn, label, cachedID)
+				if err != nil {
 					return err
+				}
+				if cachedKey == nil {
+					labelGen = b.labelCacheDropStaleFirst(labelGen, label, cachedID)
+				} else {
+					_, err := txn.Get(cachedKey)
+					switch err {
+					case nil:
+						cachedValid = true
+						if !visit(cachedID) {
+							return ErrIterationStopped
+						}
+					case badger.ErrKeyNotFound:
+						labelGen = b.labelCacheDropStaleFirst(labelGen, label, cachedID)
+					default:
+						return err
+					}
 				}
 			}
 		}
 
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
+		it := b.newLabelIndexReader(txn, scope, label, "", visibleRead, false)
 		defer it.Close()
 
 		checkTombstones := b.decayEnabled && !b.revealAll.Load()
 		for it.Next() {
-			indexKey := it.Item().KeyCopy(nil)
+			indexKey := it.IndexKey()
 			nodeID := it.NodeID()
 			if cachedValid && nodeID == cachedID {
 				continue
 			}
-			if checkTombstones && hasIndexTombstone(txn, indexKey) {
+			if checkTombstones && len(indexKey) > 0 && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 			if !cachedValid {
@@ -198,14 +208,14 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 	err := b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = w.labelOverlayLocked(label) }, func(txn *badger.Txn) error {
 		nodes = nil
 		loaded = nil
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
+		it := b.newLabelIndexReader(txn, scope, label, "", v, false)
 		defer it.Close()
 
 		for it.Next() {
-			indexKey := it.Item().KeyCopy(nil)
+			indexKey := it.IndexKey()
 			nodeID := it.NodeID()
 
-			if checkTombstones && hasIndexTombstone(txn, indexKey) {
+			if checkTombstones && len(indexKey) > 0 && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 
@@ -293,6 +303,10 @@ func (b *BadgerEngine) StreamStoredNodesByLabelProjected(label string, propertie
 }
 
 func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, properties []string, v readVisibility, visit func(*Node) error, queryRead ...bool) error {
+	return b.streamNodesByLabelProjectedInScopeWithContext(context.Background(), scope, label, properties, v, visit, queryRead...)
+}
+
+func (b *BadgerEngine) streamNodesByLabelProjectedInScopeWithContext(ctx context.Context, scope, label string, properties []string, v readVisibility, visit func(*Node) error, queryRead ...bool) error {
 	queryNodes := len(queryRead) > 0 && queryRead[0]
 	if visit == nil {
 		return ErrInvalidData
@@ -368,19 +382,32 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 			err  error
 		}
 		var pending []pendingNode
-		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
+		it := b.newLabelIndexReaderWithContext(ctx, txn, scope, label, "", v, false)
 		defer it.Close()
 		lookups := 0
 		for it.Next() {
-			indexKey := it.Item().KeyCopy(nil)
+			indexKey := it.IndexKey()
 			nodeID := it.NodeID()
-			if checkTombstones && hasIndexTombstone(txn, indexKey) {
+			if checkTombstones && len(indexKey) > 0 && hasIndexTombstone(txn, indexKey) {
 				continue
 			}
 
 			if !coversDecided && lookups >= labelScanPointLookups {
-				covers = b.labelCoversScope(scope, label)
 				coversDecided = true
+				if !it.UsesLabelFallback() {
+					covers = b.labelCoversScope(scope, label)
+				}
+			}
+
+			if it.UsesLabelFallback() {
+				node, err := readItem(nodeID, it.Item())
+				if err != nil {
+					return err
+				}
+				if err := emit(node); err != nil {
+					return err
+				}
+				continue
 			}
 			if pending != nil || (covers && lookups >= labelScanPointLookups) {
 				if len(pending) < labelScanMaxBuffered {
@@ -944,8 +971,8 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 	return result, nil
 }
 
-// HasLabelBatch checks label membership for a batch of node IDs using the label index.
-// This avoids decoding node records and is significantly faster for large batches.
+// HasLabelBatch uses the label index when ready and checks stored node bodies
+// while the index is being rebuilt. The ready-index path avoids decoding nodes.
 func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]bool, error) {
 	if len(ids) == 0 {
 		return make(map[NodeID]bool), nil
@@ -963,6 +990,10 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 			}
 		}
 	}, func(txn *badger.Txn) error {
+		ready, err := b.labelIndexReadyInTxn(txn)
+		if err != nil {
+			return err
+		}
 		for _, id := range ids {
 			if state, found := states[id]; found {
 				if !state.deleted && hasLabel(state.node.Labels, label) {
@@ -973,11 +1004,24 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 			if id == "" {
 				continue
 			}
-			key := b.labelIndexKeyStringLookup(label, id)
+			if !ready {
+				matches, err := b.nodeHasLabelInTxn(txn, id, label)
+				if err != nil {
+					return err
+				}
+				if matches {
+					result[id] = true
+				}
+				continue
+			}
+			key, err := b.labelIndexKeyStringLookupInTxn(txn, label, id)
+			if err != nil {
+				return err
+			}
 			if key == nil {
 				continue
 			}
-			_, err := txn.Get(key)
+			_, err = txn.Get(key)
 			if err == nil {
 				result[id] = true
 				continue

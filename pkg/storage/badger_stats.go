@@ -207,6 +207,7 @@ func (b *BadgerEngine) Close() error {
 	// this goroutine holds while it waits for them to stop.
 	b.stopEdgeBetweenIndexBackfill()
 	b.stopLabelIndexBackfill()
+	b.labelIndex.retired.stop()
 	b.stopDeleteCleanup()
 	b.stopChangeRetention()
 	b.stopCountDeltaFoldWorker()
@@ -739,7 +740,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			}
 			return fn(node)
 		}
-		err := b.streamNodesByLabelProjectedInScope(opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
+		err := b.streamNodesByLabelProjectedInScopeWithContext(ctx, opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
 		if err == ErrIterationStopped {
 			return nil
 		}

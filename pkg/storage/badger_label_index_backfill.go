@@ -37,15 +37,10 @@ import (
 // Cost model: O(N) walk over node bodies, batched into Badger txn-
 // sized chunks so each batch's dict allocations + label-index writes
 // commit together. Runs in the background after engine open so
-// non-empty stores don't block server startup; reads can fall through
-// to AllNodes-and-filter (the workaround the bug report noted) until
-// the rebuild completes, but in practice the rebuild finishes before
-// most workloads warm up because every batch commits durably.
-
-var labelIndexReadyKey = []byte{prefixMVCCMeta, prefixMVCCMetaLabelIndexReady}
+// non-empty stores don't block server startup. Label readers use a
+// complete node-body scan until the ready marker is committed.
 
 const (
-	labelIndexSchemeVersion    = 3
 	labelIndexRebuildBatchSize = 50_000
 	labelIndexRebuildLogEvery  = 100_000
 )
@@ -53,12 +48,9 @@ const (
 // ensureLabelIndex schedules the label-index startup backfill once.
 //
 // Empty stores mark the backfill complete immediately. Non-empty
-// stores rebuild in the background; until the rebuild marker key is
-// written, MATCH (n:Label) reads still hit the on-disk index — they
-// just see a partial view that will be made whole on next read once
-// the rebuild advances past those entries. This matches the same
-// "non-blocking, opportunistic self-heal" stance as
-// ensureEdgeBetweenIndex.
+// stores rebuild in the background; label-index readers use a complete
+// node-body scan until the ready marker is committed. This keeps startup
+// non-blocking without exposing partial index contents to queries.
 func (b *BadgerEngine) ensureLabelIndex() error {
 	ready, err := b.labelIndexReady()
 	if err != nil {
@@ -73,30 +65,11 @@ func (b *BadgerEngine) ensureLabelIndex() error {
 		return err
 	}
 	if !hasNodes {
-		return b.markLabelIndexReady()
+		return b.markEmptyLabelIndexReady()
 	}
 
 	b.startLabelIndexBackfill()
 	return nil
-}
-
-// labelIndexReady reports whether the compatibility backfill completed.
-func (b *BadgerEngine) labelIndexReady() (bool, error) {
-	var ready bool
-	err := b.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(labelIndexReadyKey)
-		if err == nil {
-			return item.Value(func(value []byte) error {
-				ready = len(value) == 1 && value[0] == labelIndexSchemeVersion
-				return nil
-			})
-		}
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			return nil
-		}
-		return err
-	})
-	return ready, err
 }
 
 // hasAnyStoredNodes detects whether a startup rebuild has work to do.
@@ -110,13 +83,6 @@ func (b *BadgerEngine) hasAnyStoredNodes() (bool, error) {
 		return nil
 	})
 	return hasNodes, err
-}
-
-// markLabelIndexReady records that no compatibility rebuild remains.
-func (b *BadgerEngine) markLabelIndexReady() error {
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Set(labelIndexReadyKey, []byte{labelIndexSchemeVersion})
-	})
 }
 
 // startLabelIndexBackfill launches one cancellable background rebuild.
@@ -177,10 +143,9 @@ func (b *BadgerEngine) stopLabelIndexBackfill() {
 }
 
 // rebuildLabelIndex scans every stored node and re-emits the
-// `(label, nodeNumID)` index entries from the node body's Labels slice
-// (the authoritative source). The existing prefixLabelIndex range is
-// dropped first so any stale entries from past dict allocations or
-// half-applied writes don't shadow the rebuilt set.
+// `(label, nodeNumID)` index entries from the node body's Labels slice.
+// Clearing and rebuilding uses versioned writes, so a reader admitted before
+// the building marker keeps its complete index generation in its snapshot.
 func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -188,9 +153,21 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if err := b.dropDerivedPrefixes(prefixLabelIndex); err != nil {
+	if err := b.ensureOpen(); err != nil {
 		return 0, fmt.Errorf("clear label index before rebuild: %w", err)
 	}
+	generation, err := b.beginLabelIndexRebuild(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if err := b.clearLabelIndexPrefixVersioned(ctx); err != nil {
+		return 0, fmt.Errorf("clear label index before rebuild: %w", err)
+	}
+	if hook := b.labelIndexAfterClearHook; hook != nil {
+		hook()
+	}
+	idxLog := b.log.With("subsystem", "index_rebuild", "index", "label")
+	idxLog.Debug("label index backfill index cleared")
 	scan := storedRecordScan{
 		prefix:    prefixNode,
 		batchSize: labelIndexRebuildBatchSize,
@@ -232,5 +209,64 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return processed, err
 	}
-	return processed, b.markLabelIndexReady()
+	if err := b.completeLabelIndexGeneration(generation); err != nil {
+		return processed, err
+	}
+	return processed, nil
+}
+
+// clearLabelIndexPrefixVersioned writes tombstones through managed Badger
+// transactions. The old values remain available to every reader whose
+// snapshot predates this generation's building marker; DropPrefix would
+// physically remove those values and truncate already-admitted streams.
+func (b *BadgerEngine) clearLabelIndexPrefixVersioned(ctx context.Context) error {
+	prefix := []byte{prefixLabelIndex}
+	const maxBatch = 5000
+	batchSize := maxBatch
+	var cursor []byte
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		nextCursor := []byte(nil)
+		done := false
+		err := b.withUpdate(func(txn *badger.Txn) error {
+			it := txn.NewIterator(badger.IteratorOptions{Prefix: prefix, PrefetchValues: false})
+			defer it.Close()
+			start := cursor
+			if len(start) == 0 {
+				start = prefix
+			}
+			deleted := 0
+			for it.Seek(start); it.ValidForPrefix(prefix); it.Next() {
+				if err := txn.Delete(it.Item().KeyCopy(nil)); err != nil {
+					return err
+				}
+				deleted++
+				if deleted >= batchSize {
+					it.Next()
+					if it.ValidForPrefix(prefix) {
+						nextCursor = it.Item().KeyCopy(nil)
+					} else {
+						done = true
+					}
+					return nil
+				}
+			}
+			done = true
+			return nil
+		})
+		if errors.Is(err, badger.ErrConflict) && batchSize > 1 {
+			batchSize /= 2
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if done {
+			return nil
+		}
+		cursor = nextCursor
+		batchSize = maxBatch
+	}
 }

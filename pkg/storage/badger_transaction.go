@@ -2343,6 +2343,10 @@ func (tx *BadgerTransaction) StreamNodesByLabelProjected(label string, propertie
 }
 
 func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, properties []string, v readVisibility, visit func(*Node) error, queryRead ...bool) error {
+	return tx.streamNodesByLabelProjectedWithContext(context.Background(), label, properties, v, visit, queryRead...)
+}
+
+func (tx *BadgerTransaction) streamNodesByLabelProjectedWithContext(ctx context.Context, label string, properties []string, v readVisibility, visit func(*Node) error, queryRead ...bool) error {
 	queryNodes := len(queryRead) > 0 && queryRead[0]
 	if visit == nil {
 		return ErrInvalidData
@@ -2472,11 +2476,11 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 		return emitCommitted(node)
 	}
 	if tx.snapshotTx != nil && tx.engine.writeBehind == nil {
-		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, properties, afterNodeID, v, streamVisit, queryNodes)
+		err = tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterReadWithContext(ctx, tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, properties, afterNodeID, v, streamVisit, queryNodes)
 	} else if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
-		err = tx.engine.streamNodesByLabelProjectedInScope(tx.labelScanScopeLocked(), label, properties, v, streamVisit, queryNodes)
+		err = tx.engine.streamNodesByLabelProjectedInScopeWithContext(ctx, tx.labelScanScopeLocked(), label, properties, v, streamVisit, queryNodes)
 	} else {
-		err = tx.engine.streamNodesByLabelAtSnapshotWithView(
+		err = tx.engine.streamNodesByLabelAtSnapshotWithViewContext(ctx,
 			tx.labelScanScopeLocked(),
 			label, tx.readTS, tx.withSnapshotViewLocked, properties, v, streamVisit, queryNodes,
 		)
@@ -2532,7 +2536,7 @@ func (tx *BadgerTransaction) StreamNodesWithOptions(ctx context.Context, opts St
 	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" {
 		queryVisit := borrowQueryNodeScanVisitor(ctx, opts, visit)
 		defer queryVisit.release()
-		err := tx.streamNodesByLabelProjected(opts.Label, nil, opts.readVisibility(), queryVisit.callback, true)
+		err := tx.streamNodesByLabelProjectedWithContext(ctx, opts.Label, nil, opts.readVisibility(), queryVisit.callback, true)
 		if err == ErrIterationStopped {
 			return nil
 		}
