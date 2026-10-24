@@ -892,7 +892,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// buffer. Runs before any traffic; a no-op when write-behind is
 		// disabled or nothing is pending.
 		if badgerOpts.WriteBehind {
-			if recovered, recErr := storage.RecoverBufferedCommits(badgerEngine, wal); recErr != nil {
+			if recovered, recErr := storage.RecoverBufferedCommitsAtOpen(badgerEngine, wal); recErr != nil {
 				// The WAL wrapper owns both the log worker/file and Badger.
 				_ = walEngine.Close()
 				return nil, fmt.Errorf("failed to replay buffered commits from WAL: %w", recErr)
