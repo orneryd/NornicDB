@@ -1,0 +1,176 @@
+package storage
+
+import (
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"runtime"
+	"runtime/debug"
+	"runtime/metrics"
+	"runtime/pprof"
+	"strings"
+	"testing"
+	"time"
+)
+
+func spikeMix(x uint64) uint64 {
+	x += 0x9e3779b97f4a7c15
+	x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9
+	x = (x ^ (x >> 27)) * 0x94d049bb133111eb
+	return x ^ (x >> 31)
+}
+func spikeID(i int, corpus string) string {
+	var raw [16]byte
+	binary.BigEndian.PutUint64(raw[:8], spikeMix(uint64(i)))
+	binary.BigEndian.PutUint64(raw[8:], spikeMix(uint64(i)^0xd1b54a32d192ed03))
+	raw[6] = (raw[6] & 15) | 64
+	raw[8] = (raw[8] & 63) | 128
+	var out [36]byte
+	hex.Encode(out[:8], raw[:4])
+	out[8] = '-'
+	hex.Encode(out[9:13], raw[4:6])
+	out[13] = '-'
+	hex.Encode(out[14:18], raw[6:8])
+	out[18] = '-'
+	hex.Encode(out[19:23], raw[8:10])
+	out[23] = '-'
+	hex.Encode(out[24:], raw[10:])
+	v := string(out[:])
+	if corpus == "uuid" {
+		return v
+	}
+	if corpus == "mixed" {
+		switch i % 5 {
+		case 0:
+			return fmt.Sprintf("tenant-%d:arbitrary/%d/\x00", i%17, i)
+		case 1:
+			return "tenant:" + strings.ToUpper(v)
+		case 2:
+			return "tenant:" + strings.ReplaceAll(v, "-", "")
+		case 3:
+			return "tenant:urn:uuid:" + v
+		}
+	}
+	return "nornic:" + v
+}
+
+func TestUUIDMemorySpikeProbe(t *testing.T) {
+	const n = 1000000
+	mode := os.Getenv("SPIKE_MODE")
+	corpus := os.Getenv("SPIKE_CORPUS")
+	if corpus == "" {
+		corpus = "namespace"
+	}
+	runtime.GC()
+	debug.FreeOSMemory()
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	sample := []metrics.Sample{{Name: "/gc/scan/heap:bytes"}}
+	metrics.Read(sample)
+	scanBefore := sample[0].Value.Uint64()
+	start := time.Now()
+	var owner any
+	switch mode {
+	case "dictionary":
+		d := newIDDictionary()
+		for i := 0; i < n; i++ {
+			id := NodeID(spikeID(i, corpus))
+			if got, ok := d.nodePairStore(id, uint64(i)+1, nil); !ok || got != uint64(i)+1 {
+				t.Fatal("pair store", i)
+			}
+		}
+		owner = d
+	case "property":
+		s := NewSchemaManager()
+		if err := s.AddPropertyIndex("uuid", "Item", []string{"uuid"}); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < n; i++ {
+			id := NodeID(spikeID(i, corpus))
+			if err := s.PropertyIndexInsert("Item", "uuid", id, string(id)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		owner = s
+	case "property-names":
+		d := newPropertyKeyDictionary()
+		d.mu.Lock()
+		d.ensureNamespace("nornic")
+		for i := 0; i < n; i++ {
+			name := spikeID(i, corpus)
+			num := uint64(i) + 1
+			d.forward["nornic"][name] = num
+			d.reverse["nornic"][num] = name
+			d.persisted["nornic"][name] = true
+		}
+		d.mu.Unlock()
+		owner = d
+	default:
+		t.Fatal("SPIKE_MODE required")
+	}
+	build := time.Since(start)
+	runtime.GC()
+	debug.FreeOSMemory()
+	runtime.ReadMemStats(&after)
+	metrics.Read(sample)
+	result := map[string]any{"mode": mode, "corpus": corpus, "n": n, "go": runtime.Version(), "retained_bytes": after.HeapAlloc - before.HeapAlloc, "retained_objects": after.HeapObjects - before.HeapObjects, "scan_heap_bytes": sample[0].Value.Uint64() - scanBefore, "build_ms": float64(build.Microseconds()) / 1000}
+	if mode == "dictionary" {
+		d := owner.(*idDictionary)
+		for i := 0; i < n; i++ {
+			id := NodeID(spikeID(i, corpus))
+			num, ok := d.nodeForwardLookup(id)
+			if !ok || num != uint64(i)+1 {
+				t.Fatal("forward", i)
+			}
+			back, ok := d.nodeReverseLookup(num)
+			if !ok || back != id {
+				t.Fatal("reverse", i)
+			}
+		}
+		result["full_bidirectional_check"] = "pass"
+		if os.Getenv("SPIKE_DELETE_ALL") == "1" {
+			for i := 0; i < n; i++ {
+				if _, ok := d.nodePairRemoveByID(NodeID(spikeID(i, corpus))); !ok {
+					t.Fatal("delete", i)
+				}
+			}
+			runtime.GC()
+			debug.FreeOSMemory()
+			var empty runtime.MemStats
+			runtime.ReadMemStats(&empty)
+			result["empty_after_delete_retained_bytes"] = empty.HeapAlloc - before.HeapAlloc
+			for i := range d.nodes {
+				if len(d.nodes[i].forward) != 0 || len(d.nodes[i].reverse) != 0 {
+					t.Fatal("nonempty dictionary")
+				}
+			}
+			result["empty_pair_count_check"] = "pass"
+		}
+
+	}
+	if mode == "property" {
+		s := owner.(*SchemaManager)
+		for i := 0; i < n; i += 997 {
+			ids := s.PropertyIndexLookup("Item", "uuid", spikeID(i, corpus))
+			if len(ids) != 1 || ids[0] != NodeID(spikeID(i, corpus)) {
+				t.Fatal("property lookup", i)
+			}
+		}
+		result["sampled_public_lookup_check"] = "pass"
+	}
+	if path := os.Getenv("SPIKE_PROFILE"); path != "" {
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = pprof.WriteHeapProfile(f); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+	b, _ := json.Marshal(result)
+	fmt.Println("SPIKE_RESULT " + string(b))
+	runtime.KeepAlive(owner)
+}

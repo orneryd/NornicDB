@@ -1,0 +1,1030 @@
+[
+  {
+    "n": 100000,
+    "corpus": "namespace",
+    "sparse": false,
+    "mode": "baseline",
+    "file": "verified.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 11818848,
+      "min": 11813640,
+      "max": 11819200
+    },
+    "scan_heap_bytes": {
+      "median": 7003408,
+      "min": 7000880,
+      "max": 7003832
+    },
+    "retained_objects": {
+      "median": 100829,
+      "min": 100824,
+      "max": 100833
+    },
+    "forward_hit_ns": {
+      "median": 589.1702537536621,
+      "min": 421.8971138000488,
+      "max": 675.7951774597168
+    },
+    "forward_miss_ns": {
+      "median": 250.86790084838867,
+      "min": 222.3824005126953,
+      "max": 261.957706451416
+    },
+    "reverse_hit_ns": {
+      "median": 97.47094345092773,
+      "min": 94.55913925170898,
+      "max": 97.88031768798828
+    },
+    "reverse_bytes_per_op": {
+      "median": 0.0001220703125,
+      "min": 0.0001220703125,
+      "max": 0.0001220703125
+    },
+    "build_ms": {
+      "median": 125.559,
+      "min": 114.971,
+      "max": 229.03
+    },
+    "half_deleted_retained_bytes": {
+      "median": 9422008,
+      "min": 9421896,
+      "max": 9422232
+    },
+    "churn_retained_bytes": {
+      "median": 11958824,
+      "min": 11876648,
+      "max": 11985784
+    }
+  },
+  {
+    "n": 100000,
+    "corpus": "namespace",
+    "sparse": false,
+    "mode": "packed-hash",
+    "file": "verified.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 9740096,
+      "min": 9734888,
+      "max": 9740192
+    },
+    "scan_heap_bytes": {
+      "median": 28368,
+      "min": 25792,
+      "max": 28472
+    },
+    "retained_objects": {
+      "median": 641,
+      "min": 636,
+      "max": 641
+    },
+    "forward_hit_ns": {
+      "median": 468.9594192504883,
+      "min": 389.24011993408203,
+      "max": 517.8670234680176
+    },
+    "forward_miss_ns": {
+      "median": 298.57207107543945,
+      "min": 187.56493377685547,
+      "max": 392.56261825561523
+    },
+    "reverse_hit_ns": {
+      "median": 400.32568359375,
+      "min": 333.1483497619629,
+      "max": 448.41577529907227
+    },
+    "reverse_bytes_per_op": {
+      "median": 48.002960205078125,
+      "min": 48.002960205078125,
+      "max": 48.003387451171875
+    },
+    "build_ms": {
+      "median": 181.601,
+      "min": 146.635,
+      "max": 371.102
+    },
+    "half_deleted_retained_bytes": {
+      "median": 9743256,
+      "min": 9743144,
+      "max": 9743384
+    },
+    "churn_retained_bytes": {
+      "median": 12327864,
+      "min": 12315040,
+      "max": 12327976
+    },
+    "rebuilt_retained_bytes": {
+      "median": 9745064,
+      "min": 9745048,
+      "max": 9750480
+    },
+    "rebuild_ms": {
+      "median": 232.167,
+      "min": 193.81,
+      "max": 294.496
+    }
+  },
+  {
+    "n": 1000000,
+    "corpus": "namespace",
+    "sparse": false,
+    "mode": "baseline",
+    "file": "verified.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 159620672,
+      "min": 159511600,
+      "max": 159730288
+    },
+    "scan_heap_bytes": {
+      "median": 111555744,
+      "min": 111447240,
+      "max": 111668792
+    },
+    "retained_objects": {
+      "median": 1008493,
+      "min": 1008486,
+      "max": 1008504
+    },
+    "forward_hit_ns": {
+      "median": 507.17348861694336,
+      "min": 299.8925361633301,
+      "max": 1040.0651969909668
+    },
+    "forward_miss_ns": {
+      "median": 249.9353370666504,
+      "min": 167.49749374389648,
+      "max": 259.5370674133301
+    },
+    "reverse_hit_ns": {
+      "median": 100.11970901489258,
+      "min": 72.09861755371094,
+      "max": 172.88489532470703
+    },
+    "reverse_bytes_per_op": {
+      "median": 0.0001220703125,
+      "min": 0.0001220703125,
+      "max": 0.0009765625
+    },
+    "build_ms": {
+      "median": 2793.221,
+      "min": 2752.588,
+      "max": 6386.038
+    },
+    "half_deleted_retained_bytes": {
+      "median": 135629056,
+      "min": 135514664,
+      "max": 135733352
+    },
+    "churn_retained_bytes": {
+      "median": 159787640,
+      "min": 159760680,
+      "max": 159874736
+    }
+  },
+  {
+    "n": 1000000,
+    "corpus": "namespace",
+    "sparse": false,
+    "mode": "packed-hash",
+    "file": "verified.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 102804736,
+      "min": 102767248,
+      "max": 102822512
+    },
+    "scan_heap_bytes": {
+      "median": 104928,
+      "min": 104792,
+      "max": 108576
+    },
+    "retained_objects": {
+      "median": 4474,
+      "min": 4470,
+      "max": 4479
+    },
+    "forward_hit_ns": {
+      "median": 535.9437446594238,
+      "min": 359.96142959594727,
+      "max": 612.0218505859375
+    },
+    "forward_miss_ns": {
+      "median": 313.41817474365234,
+      "min": 292.8580665588379,
+      "max": 385.1102485656738
+    },
+    "reverse_hit_ns": {
+      "median": 400.03688049316406,
+      "min": 382.6910095214844,
+      "max": 431.8843803405762
+    },
+    "reverse_bytes_per_op": {
+      "median": 48.0001220703125,
+      "min": 48.0001220703125,
+      "max": 48.0001220703125
+    },
+    "build_ms": {
+      "median": 2517.288,
+      "min": 2511.907,
+      "max": 3570.529
+    },
+    "half_deleted_retained_bytes": {
+      "median": 102807800,
+      "min": 102770520,
+      "max": 102825576
+    },
+    "churn_retained_bytes": {
+      "median": 135856440,
+      "min": 135837624,
+      "max": 135874248
+    },
+    "rebuilt_retained_bytes": {
+      "median": 102828264,
+      "min": 102827608,
+      "max": 102845848
+    },
+    "rebuild_ms": {
+      "median": 2711.784,
+      "min": 2628.314,
+      "max": 2854.965
+    }
+  },
+  {
+    "n": 1000000,
+    "corpus": "mixed",
+    "sparse": false,
+    "mode": "baseline",
+    "file": "verified.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 159619536,
+      "min": 159515800,
+      "max": 159641624
+    },
+    "scan_heap_bytes": {
+      "median": 111559256,
+      "min": 111452400,
+      "max": 111583784
+    },
+    "retained_objects": {
+      "median": 1008491,
+      "min": 1008488,
+      "max": 1008491
+    },
+    "forward_hit_ns": {
+      "median": 392.38986587524414,
+      "min": 358.7556457519531,
+      "max": 434.63783264160156
+    },
+    "forward_miss_ns": {
+      "median": 239.23902130126953,
+      "min": 179.85789108276367,
+      "max": 3058.725513458252
+    },
+    "reverse_hit_ns": {
+      "median": 118.56377029418945,
+      "min": 95.46830368041992,
+      "max": 158.31579208374023
+    },
+    "reverse_bytes_per_op": {
+      "median": 0.0001220703125,
+      "min": 0.0001220703125,
+      "max": 0.0001220703125
+    },
+    "build_ms": {
+      "median": 3290.687,
+      "min": 2869.579,
+      "max": 20031.762
+    },
+    "half_deleted_retained_bytes": {
+      "median": 135623104,
+      "min": 135519384,
+      "max": 135650624
+    },
+    "churn_retained_bytes": {
+      "median": 159814432,
+      "min": 159732320,
+      "max": 159819672
+    }
+  },
+  {
+    "n": 1000000,
+    "corpus": "mixed",
+    "sparse": false,
+    "mode": "packed-hash",
+    "file": "verified.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 102804496,
+      "min": 102799288,
+      "max": 102828072
+    },
+    "scan_heap_bytes": {
+      "median": 105392,
+      "min": 102840,
+      "max": 107856
+    },
+    "retained_objects": {
+      "median": 4476,
+      "min": 4471,
+      "max": 4483
+    },
+    "forward_hit_ns": {
+      "median": 693.5769577026367,
+      "min": 692.4043960571289,
+      "max": 910.4145011901855
+    },
+    "forward_miss_ns": {
+      "median": 507.6459655761719,
+      "min": 419.08627700805664,
+      "max": 672.4178237915039
+    },
+    "reverse_hit_ns": {
+      "median": 724.9199523925781,
+      "min": 567.0464553833008,
+      "max": 739.8134765625
+    },
+    "reverse_bytes_per_op": {
+      "median": 47.9942626953125,
+      "min": 47.9942626953125,
+      "max": 47.9942626953125
+    },
+    "build_ms": {
+      "median": 3956.24,
+      "min": 2232.378,
+      "max": 4355.688
+    },
+    "half_deleted_retained_bytes": {
+      "median": 102807688,
+      "min": 102802352,
+      "max": 102831136
+    },
+    "churn_retained_bytes": {
+      "median": 135856328,
+      "min": 135851008,
+      "max": 135898256
+    },
+    "rebuilt_retained_bytes": {
+      "median": 102804048,
+      "min": 102796208,
+      "max": 102832816
+    },
+    "rebuild_ms": {
+      "median": 3970.459,
+      "min": 2379.776,
+      "max": 4434.809
+    }
+  },
+  {
+    "n": 4096,
+    "corpus": "namespace",
+    "sparse": true,
+    "mode": "baseline",
+    "file": "verified.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 649496,
+      "min": 649496,
+      "max": 654816
+    },
+    "scan_heap_bytes": {
+      "median": 442568,
+      "min": 442384,
+      "max": 442784
+    },
+    "retained_objects": {
+      "median": 4663,
+      "min": 4663,
+      "max": 4669
+    },
+    "forward_hit_ns": {
+      "median": 148.61950302124023,
+      "min": 138.98107147216797,
+      "max": 866.3173789978027
+    },
+    "forward_miss_ns": {
+      "median": 113.38777542114258,
+      "min": 111.86853790283203,
+      "max": 369.1558418273926
+    },
+    "reverse_hit_ns": {
+      "median": 31.872570037841797,
+      "min": 30.076011657714844,
+      "max": 60.622108459472656
+    },
+    "reverse_bytes_per_op": {
+      "median": 0.0001220703125,
+      "min": 0.0001220703125,
+      "max": 0.0001220703125
+    },
+    "build_ms": {
+      "median": 15.845,
+      "min": 2.867,
+      "max": 17.845
+    },
+    "half_deleted_retained_bytes": {
+      "median": 554336,
+      "min": 554224,
+      "max": 559672
+    },
+    "churn_retained_bytes": {
+      "median": 671176,
+      "min": 666080,
+      "max": 673080
+    }
+  },
+  {
+    "n": 4096,
+    "corpus": "namespace",
+    "sparse": true,
+    "mode": "packed-hash",
+    "file": "verified.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 480240,
+      "min": 475016,
+      "max": 480336
+    },
+    "scan_heap_bytes": {
+      "median": 25440,
+      "min": 22136,
+      "max": 25640
+    },
+    "retained_objects": {
+      "median": 510,
+      "min": 504,
+      "max": 510
+    },
+    "forward_hit_ns": {
+      "median": 190.12311172485352,
+      "min": 177.3568344116211,
+      "max": 210.72676467895508
+    },
+    "forward_miss_ns": {
+      "median": 231.71539306640625,
+      "min": 215.8139305114746,
+      "max": 286.963680267334
+    },
+    "reverse_hit_ns": {
+      "median": 156.52293014526367,
+      "min": 153.4208984375,
+      "max": 239.08441162109375
+    },
+    "reverse_bytes_per_op": {
+      "median": 48.023681640625,
+      "min": 48.003875732421875,
+      "max": 48.02374267578125
+    },
+    "build_ms": {
+      "median": 5.147,
+      "min": 3.242,
+      "max": 6.31
+    },
+    "half_deleted_retained_bytes": {
+      "median": 483512,
+      "min": 483496,
+      "max": 488800
+    },
+    "churn_retained_bytes": {
+      "median": 614456,
+      "min": 614344,
+      "max": 619632
+    },
+    "rebuilt_retained_bytes": {
+      "median": 484616,
+      "min": 484392,
+      "max": 489792
+    },
+    "rebuild_ms": {
+      "median": 9.099,
+      "min": 6.764,
+      "max": 9.12
+    }
+  },
+  {
+    "n": 100000,
+    "corpus": "namespace",
+    "sparse": false,
+    "mode": "packed-hash",
+    "file": "builder.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 9739984,
+      "min": 9734872,
+      "max": 9740336
+    },
+    "scan_heap_bytes": {
+      "median": 28424,
+      "min": 25744,
+      "max": 28712
+    },
+    "retained_objects": {
+      "median": 640,
+      "min": 635,
+      "max": 644
+    },
+    "forward_hit_ns": {
+      "median": 299.00296783447266,
+      "min": 273.5992546081543,
+      "max": 342.0958709716797
+    },
+    "forward_miss_ns": {
+      "median": 219.5898094177246,
+      "min": 206.644287109375,
+      "max": 252.67659759521484
+    },
+    "reverse_hit_ns": {
+      "median": 74.10434341430664,
+      "min": 70.85519790649414,
+      "max": 101.76852798461914
+    },
+    "reverse_bytes_per_op": {
+      "median": 0.0001220703125,
+      "min": 0.0001220703125,
+      "max": 0.0001220703125
+    },
+    "build_ms": {
+      "median": 118.861,
+      "min": 107.549,
+      "max": 184.207
+    },
+    "half_deleted_retained_bytes": {
+      "median": 9743128,
+      "min": 9737920,
+      "max": 9743384
+    },
+    "churn_retained_bytes": {
+      "median": 12346568,
+      "min": 12309592,
+      "max": 12364792
+    },
+    "rebuilt_retained_bytes": {
+      "median": 9745064,
+      "min": 9744808,
+      "max": 9750352
+    },
+    "rebuild_ms": {
+      "median": 156.028,
+      "min": 150.931,
+      "max": 222.056
+    }
+  },
+  {
+    "n": 1000000,
+    "corpus": "namespace",
+    "sparse": false,
+    "mode": "packed-hash",
+    "file": "builder.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 102822384,
+      "min": 102809704,
+      "max": 102878128
+    },
+    "scan_heap_bytes": {
+      "median": 105336,
+      "min": 104952,
+      "max": 108088
+    },
+    "retained_objects": {
+      "median": 4481,
+      "min": 4472,
+      "max": 4482
+    },
+    "forward_hit_ns": {
+      "median": 424.2446517944336,
+      "min": 420.6855049133301,
+      "max": 439.22692108154297
+    },
+    "forward_miss_ns": {
+      "median": 300.0641326904297,
+      "min": 274.69433212280273,
+      "max": 448.5900115966797
+    },
+    "reverse_hit_ns": {
+      "median": 148.89706802368164,
+      "min": 121.65231704711914,
+      "max": 527.8442192077637
+    },
+    "reverse_bytes_per_op": {
+      "median": 0.0009765625,
+      "min": 0.0001220703125,
+      "max": 0.0009765625
+    },
+    "build_ms": {
+      "median": 1796.058,
+      "min": 1570.265,
+      "max": 1866.338
+    },
+    "half_deleted_retained_bytes": {
+      "median": 102825544,
+      "min": 102812848,
+      "max": 102881192
+    },
+    "churn_retained_bytes": {
+      "median": 135898096,
+      "min": 135861600,
+      "max": 135911384
+    },
+    "rebuilt_retained_bytes": {
+      "median": 102832688,
+      "min": 102777840,
+      "max": 102851280
+    },
+    "rebuild_ms": {
+      "median": 2411.59,
+      "min": 2089.984,
+      "max": 2800.787
+    }
+  },
+  {
+    "n": 1000000,
+    "corpus": "mixed",
+    "sparse": false,
+    "mode": "packed-hash",
+    "file": "builder.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 102817512,
+      "min": 102693392,
+      "max": 102817848
+    },
+    "scan_heap_bytes": {
+      "median": 102360,
+      "min": 102280,
+      "max": 104824
+    },
+    "retained_objects": {
+      "median": 4470,
+      "min": 4462,
+      "max": 4473
+    },
+    "forward_hit_ns": {
+      "median": 465.1215629577637,
+      "min": 379.69884490966797,
+      "max": 497.7681579589844
+    },
+    "forward_miss_ns": {
+      "median": 333.4104537963867,
+      "min": 310.7599296569824,
+      "max": 334.1174736022949
+    },
+    "reverse_hit_ns": {
+      "median": 156.1693878173828,
+      "min": 130.46863555908203,
+      "max": 179.16492080688477
+    },
+    "reverse_bytes_per_op": {
+      "median": 0.0001220703125,
+      "min": 0.0001220703125,
+      "max": 0.0001220703125
+    },
+    "build_ms": {
+      "median": 1995.753,
+      "min": 1965.95,
+      "max": 2672.554
+    },
+    "half_deleted_retained_bytes": {
+      "median": 102825896,
+      "min": 102696456,
+      "max": 102826232
+    },
+    "churn_retained_bytes": {
+      "median": 135893016,
+      "min": 135818968,
+      "max": 135893384
+    },
+    "rebuilt_retained_bytes": {
+      "median": 102808920,
+      "min": 102772552,
+      "max": 102869840
+    },
+    "rebuild_ms": {
+      "median": 2168.181,
+      "min": 2105.42,
+      "max": 2254.569
+    }
+  },
+  {
+    "n": 4096,
+    "corpus": "namespace",
+    "sparse": true,
+    "mode": "packed-hash",
+    "file": "builder.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 474904,
+      "min": 474904,
+      "max": 480336
+    },
+    "scan_heap_bytes": {
+      "median": 22752,
+      "min": 22248,
+      "max": 25784
+    },
+    "retained_objects": {
+      "median": 503,
+      "min": 503,
+      "max": 510
+    },
+    "forward_hit_ns": {
+      "median": 202.19588470458984,
+      "min": 180.55098724365234,
+      "max": 276.2342948913574
+    },
+    "forward_miss_ns": {
+      "median": 268.3398017883301,
+      "min": 177.1123390197754,
+      "max": 277.8948631286621
+    },
+    "reverse_hit_ns": {
+      "median": 80.60034561157227,
+      "min": 78.34391403198242,
+      "max": 85.81618881225586
+    },
+    "reverse_bytes_per_op": {
+      "median": 0.0001220703125,
+      "min": 0.0001220703125,
+      "max": 0.0001220703125
+    },
+    "build_ms": {
+      "median": 8.166,
+      "min": 4.647,
+      "max": 13.277
+    },
+    "half_deleted_retained_bytes": {
+      "median": 483496,
+      "min": 483272,
+      "max": 488688
+    },
+    "churn_retained_bytes": {
+      "median": 614328,
+      "min": 614120,
+      "max": 619520
+    },
+    "rebuilt_retained_bytes": {
+      "median": 484376,
+      "min": 484168,
+      "max": 489568
+    },
+    "rebuild_ms": {
+      "median": 14.165,
+      "min": 5.512,
+      "max": 15.795
+    }
+  },
+  {
+    "n": 1000000,
+    "corpus": "namespace",
+    "sparse": false,
+    "mode": "paged",
+    "file": "rejected.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 122752336,
+      "min": 122615856,
+      "max": 122801608
+    },
+    "scan_heap_bytes": {
+      "median": 74707344,
+      "min": 74570688,
+      "max": 74759008
+    },
+    "retained_objects": {
+      "median": 1005556,
+      "min": 1005548,
+      "max": 1005558
+    },
+    "forward_hit_ns": {
+      "median": 476.7800178527832,
+      "min": 359.39809799194336,
+      "max": 679.4652786254883
+    },
+    "forward_miss_ns": {
+      "median": 294.08553314208984,
+      "min": 163.76324081420898,
+      "max": 815.0889663696289
+    },
+    "reverse_hit_ns": {
+      "median": 125.34842681884766,
+      "min": 41.91193389892578,
+      "max": 252.40556716918945
+    },
+    "reverse_bytes_per_op": {
+      "median": 0.0001220703125,
+      "min": 0.0001220703125,
+      "max": 0.0001220703125
+    },
+    "build_ms": {
+      "median": 2149.358,
+      "min": 1570.681,
+      "max": 2695.914
+    },
+    "half_deleted_retained_bytes": {
+      "median": 98755400,
+      "min": 98619016,
+      "max": 98809976
+    },
+    "churn_retained_bytes": {
+      "median": 122869936,
+      "min": 122864584,
+      "max": 122870032
+    }
+  },
+  {
+    "n": 1000000,
+    "corpus": "namespace",
+    "sparse": false,
+    "mode": "packed",
+    "file": "rejected.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 73467000,
+      "min": 73466872,
+      "max": 73472528
+    },
+    "scan_heap_bytes": {
+      "median": 56800,
+      "min": 56488,
+      "max": 59712
+    },
+    "retained_objects": {
+      "median": 1467,
+      "min": 1465,
+      "max": 1474
+    },
+    "forward_hit_ns": {
+      "median": 572.2563133239746,
+      "min": 435.31872940063477,
+      "max": 772.1003341674805
+    },
+    "forward_miss_ns": {
+      "median": 533.947681427002,
+      "min": 335.1032943725586,
+      "max": 582.0367012023926
+    },
+    "reverse_hit_ns": {
+      "median": 445.20404052734375,
+      "min": 282.488338470459,
+      "max": 1324.8747787475586
+    },
+    "reverse_bytes_per_op": {
+      "median": 48.0001220703125,
+      "min": 48.0001220703125,
+      "max": 48.0009765625
+    },
+    "build_ms": {
+      "median": 1906.671,
+      "min": 1312.545,
+      "max": 1971.619
+    },
+    "half_deleted_retained_bytes": {
+      "median": 73470064,
+      "min": 73469936,
+      "max": 73475704
+    },
+    "churn_retained_bytes": {
+      "median": 106505448,
+      "min": 106500272,
+      "max": 106511312
+    },
+    "rebuilt_retained_bytes": {
+      "median": 73477064,
+      "min": 73471760,
+      "max": 73482928
+    },
+    "rebuild_ms": {
+      "median": 1698.525,
+      "min": 1330.579,
+      "max": 4607.423
+    }
+  },
+  {
+    "n": 4096,
+    "corpus": "namespace",
+    "sparse": true,
+    "mode": "paged",
+    "file": "rejected.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 76078672,
+      "min": 76073256,
+      "max": 76083992
+    },
+    "scan_heap_bytes": {
+      "median": 75869360,
+      "min": 75866304,
+      "max": 75872088
+    },
+    "retained_objects": {
+      "median": 8766,
+      "min": 8760,
+      "max": 8772
+    },
+    "forward_hit_ns": {
+      "median": 822.7293357849121,
+      "min": 297.48205184936523,
+      "max": 7253.2041015625
+    },
+    "forward_miss_ns": {
+      "median": 198.11186981201172,
+      "min": 135.6905174255371,
+      "max": 686.6696662902832
+    },
+    "reverse_hit_ns": {
+      "median": 529.6806983947754,
+      "min": 155.4460563659668,
+      "max": 14855.039978027344
+    },
+    "reverse_bytes_per_op": {
+      "median": 0.0001220703125,
+      "min": 0.0001220703125,
+      "max": 0.0009765625
+    },
+    "build_ms": {
+      "median": 2823.616,
+      "min": 858.875,
+      "max": 2958.346
+    },
+    "half_deleted_retained_bytes": {
+      "median": 75983400,
+      "min": 75977984,
+      "max": 75988720
+    },
+    "churn_retained_bytes": {
+      "median": 76096696,
+      "min": 76087952,
+      "max": 76098688
+    }
+  },
+  {
+    "n": 4096,
+    "corpus": "namespace",
+    "sparse": true,
+    "mode": "packed",
+    "file": "rejected.jsonl",
+    "samples": 3,
+    "retained_bytes": {
+      "median": 34031696,
+      "min": 34031584,
+      "max": 34031808
+    },
+    "scan_heap_bytes": {
+      "median": 169760,
+      "min": 169560,
+      "max": 170024
+    },
+    "retained_objects": {
+      "median": 4542,
+      "min": 4541,
+      "max": 4543
+    },
+    "forward_hit_ns": {
+      "median": 316.6541633605957,
+      "min": 176.65748596191406,
+      "max": 946.6875648498535
+    },
+    "forward_miss_ns": {
+      "median": 220.07289123535156,
+      "min": 190.8221664428711,
+      "max": 1951.4802322387695
+    },
+    "reverse_hit_ns": {
+      "median": 5129.798091888428,
+      "min": 296.63048934936523,
+      "max": 25551.336624145508
+    },
+    "reverse_bytes_per_op": {
+      "median": 48.0001220703125,
+      "min": 48.0001220703125,
+      "max": 48.0001220703125
+    },
+    "build_ms": {
+      "median": 76.429,
+      "min": 45.019,
+      "max": 1889.966
+    },
+    "half_deleted_retained_bytes": {
+      "median": 34034728,
+      "min": 34034616,
+      "max": 34034856
+    },
+    "churn_retained_bytes": {
+      "median": 34165560,
+      "min": 34165464,
+      "max": 34165688
+    },
+    "rebuilt_retained_bytes": {
+      "median": 34035624,
+      "min": 34035528,
+      "max": 34035736
+    },
+    "rebuild_ms": {
+      "median": 752.302,
+      "min": 60.197,
+      "max": 1955.351
+    }
+  }
+]
