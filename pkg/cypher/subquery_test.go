@@ -3395,26 +3395,28 @@ func TestSubqueryHelpers_ParseCallSubquery_EdgeBranches(t *testing.T) {
 	assert.Empty(t, body)
 	assert.Empty(t, after)
 	assert.False(t, inTx)
-	assert.Equal(t, 1000, batch)
+	assert.Nil(t, batch)
 
 	body, after, inTx, batch = exec.parseCallSubquery("CALL { RETURN 1 ")
 	assert.Empty(t, body)
 	assert.Empty(t, after)
 	assert.False(t, inTx)
-	assert.Equal(t, 1000, batch)
+	assert.Nil(t, batch)
 
 	body, after, inTx, batch = exec.parseCallSubquery("CALL { RETURN 1 AS x } IN TRANSACTIONS OF nope ROWS RETURN x")
 	assert.Equal(t, "RETURN 1 AS x", body)
 	assert.Equal(t, "RETURN x", after)
 	assert.True(t, inTx)
-	// Invalid batch size falls back to default.
-	assert.Equal(t, 1000, batch)
+	// Parsing preserves explicit text; execution validates it before writes.
+	require.NotNil(t, batch)
+	assert.Equal(t, "nope", batch.Expression)
 
 	body, after, inTx, batch = exec.parseCallSubquery("CALL { RETURN 1 AS x } IN TRANSACTIONS OF 7 ROWS RETURN x")
 	assert.Equal(t, "RETURN 1 AS x", body)
 	assert.Equal(t, "RETURN x", after)
 	assert.True(t, inTx)
-	assert.Equal(t, 7, batch)
+	require.NotNil(t, batch)
+	assert.Equal(t, "7", batch.Expression)
 }
 
 func TestSubqueryHelpers_ExecuteMatchWithCallProcedure_ParamAndWhereBranches(t *testing.T) {
