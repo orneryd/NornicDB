@@ -106,3 +106,5 @@
   other: "Accessing more than one database per transaction is not allowed. Attempted access to {{.Target}}, currently using {{.Current}}"
 - id: cyphercommandrouting.graph_function_only_in_use
   other: "`{{.Function}}` is only allowed at the first position of a USE clause."
+- id: cyphercommandrouting.fabric_import_entity
+  other: "Importing {{.Kind}} values in remote subqueries is currently not supported"

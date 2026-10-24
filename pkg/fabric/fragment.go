@@ -83,6 +83,11 @@ type FragmentExec struct {
 	// reference may name.
 	Scope string
 
+	// ScopeImports lists the variables a CALL scope clause imports into the
+	// body this fragment belongs to ("*" for every variable). They stay
+	// visible throughout that body, after its WITH clauses too.
+	ScopeImports []string
+
 	// Columns lists the output column names produced by this execution.
 	Columns []string
 
@@ -113,6 +118,10 @@ type FragmentApply struct {
 	Optional bool
 	// Unit marks a CALL body without RETURN, which keeps every input row.
 	Unit bool
+	// Scoped marks CALL (...) { }: the body sees only Scope, the variables
+	// its scope clause imports ("*" for every variable).
+	Scoped bool
+	Scope  []string
 
 	// Columns lists the combined output columns from Input and Inner.
 	Columns []string

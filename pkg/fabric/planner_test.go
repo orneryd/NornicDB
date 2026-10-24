@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -432,11 +433,24 @@ RETURN tt.textKey128 AS k, collect(tt) AS texts`
 	}
 }
 
+// recordedCallImports is a CallImportReader that answers imports and
+// records what the planner asked it (scoped|scope|body): the planner decides
+// where a CALL's imports bind, the Cypher executor's reader what they are.
+func recordedCallImports(imports ...string) (CallImportReader, *[]string) {
+	asked := &[]string{}
+	return func(scope string, scoped bool, body string) ([]string, error) {
+		*asked = append(*asked, strconv.FormatBool(scoped)+"|"+scope+"|"+body)
+		return imports, nil
+	}, asked
+}
+
 func TestPlan_CorrelatedWithImports(t *testing.T) {
 	catalog := NewCatalog()
 	catalog.Register("db", &LocationLocal{DBName: "db"})
 	catalog.Register("db.shard", &LocationLocal{DBName: "shard"})
 	p := NewFabricPlanner(catalog)
+	read, asked := recordedCallImports("myVar")
+	p.SetCallImportReader(read)
 
 	query := `USE db
 CALL {
@@ -465,6 +479,63 @@ RETURN n`
 	if len(init.ImportColumns) != 1 || init.ImportColumns[0] != "myVar" {
 		t.Errorf("expected import columns [myVar], got %v", init.ImportColumns)
 	}
+	// The reader reads the body without its USE clause.
+	if len(*asked) != 1 || !strings.HasPrefix((*asked)[0], "false||WITH myVar") || strings.Contains((*asked)[0], "USE") {
+		t.Errorf("expected the reader to read the body without USE, got %q", *asked)
+	}
+}
+
+func TestPlan_ScopedCallImportsLiveThroughBody(t *testing.T) {
+	catalog := NewCatalog()
+	catalog.Register("db", &LocationLocal{DBName: "db"})
+	catalog.Register("db.shard", &LocationLocal{DBName: "shard"})
+	catalog.Register("db.other", &LocationLocal{DBName: "other"})
+	p := NewFabricPlanner(catalog)
+	read, asked := recordedCallImports("x")
+	p.SetCallImportReader(read)
+
+	frag, err := p.Plan("USE db UNWIND [1] AS x CALL (x /* c */) { USE db.shard WITH 10 AS y CALL { USE db.other RETURN 1 AS z } RETURN x + y + z AS v } RETURN v", "db")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	readScope := false
+	for _, question := range *asked {
+		readScope = readScope || question == "true|x /* c */|USE db.shard WITH 10 AS y CALL { USE db.other RETURN 1 AS z } RETURN x + y + z AS v"
+	}
+	if !readScope {
+		t.Fatalf("expected the reader to read the scope clause, got %q", *asked)
+	}
+	shard := collectExecsByGraph(frag, "db.shard")
+	if len(shard) != 2 {
+		t.Fatalf("expected the scoped body's two db.shard fragments, got %d", len(shard))
+	}
+	for _, exec := range shard {
+		if len(exec.ScopeImports) != 1 || exec.ScopeImports[0] != "x" {
+			t.Fatalf("expected scope imports [x] on %q, got %v", exec.Query, exec.ScopeImports)
+		}
+	}
+	for _, exec := range collectExecsByGraph(frag, "db.other") {
+		if len(exec.ScopeImports) != 0 {
+			t.Fatalf("a nested CALL body imports its own variables, got %v on %q", exec.ScopeImports, exec.Query)
+		}
+	}
+}
+
+func collectExecsByGraph(fragment Fragment, graph string) []*FragmentExec {
+	var out []*FragmentExec
+	switch f := fragment.(type) {
+	case *FragmentExec:
+		if f.GraphName == graph {
+			out = append(out, f)
+		}
+	case *FragmentApply:
+		out = append(out, collectExecsByGraph(f.Input, graph)...)
+		out = append(out, collectExecsByGraph(f.Inner, graph)...)
+	case *FragmentUnion:
+		out = append(out, collectExecsByGraph(f.LHS, graph)...)
+		out = append(out, collectExecsByGraph(f.RHS, graph)...)
+	}
+	return out
 }
 
 func TestPlan_WriteDetection(t *testing.T) {
@@ -541,6 +612,8 @@ func TestPlan_NestedCallUseSubquery(t *testing.T) {
 	catalog.Register("nornic", &LocationLocal{DBName: "nornic"})
 	catalog.Register("nornic.tr", &LocationRemote{DBName: "tr", URI: "bolt://a:7687"})
 	p := NewFabricPlanner(catalog)
+	read, _ := recordedCallImports("outerId")
+	p.SetCallImportReader(read)
 
 	query := `USE nornic
 WITH "t-1" AS outerId
@@ -755,33 +828,6 @@ func TestFindMatchingBrace_Unmatched(t *testing.T) {
 	}
 }
 
-func TestExtractWithImports(t *testing.T) {
-	tests := []struct {
-		body string
-		want []string
-	}{
-		{"WITH translationId MATCH (n)", []string{"translationId"}},
-		{"WITH a, b MATCH (n)", []string{"a", "b"}},
-		{"with a, b match (n)", []string{"a", "b"}},
-		{"MATCH (n) RETURN n", nil},
-		{"WITH x RETURN x", []string{"x"}},
-		{"WITHOUT something", nil},
-	}
-
-	for _, tt := range tests {
-		got := extractWithImports(tt.body)
-		if len(got) != len(tt.want) {
-			t.Errorf("extractWithImports(%q) = %v, want %v", tt.body, got, tt.want)
-			continue
-		}
-		for i := range got {
-			if got[i] != tt.want[i] {
-				t.Errorf("extractWithImports(%q)[%d] = %s, want %s", tt.body, i, got[i], tt.want[i])
-			}
-		}
-	}
-}
-
 func TestQueryIsWrite(t *testing.T) {
 	tests := []struct {
 		query string
@@ -950,6 +996,20 @@ func TestEnsureRowProducingPrefix(t *testing.T) {
 	got = ensureRowProducingPrefix("MATCH (n)")
 	if !strings.HasSuffix(got, "RETURN *") {
 		t.Fatalf("expected RETURN * appended, got %q", got)
+	}
+	// A clause after the WITH keeps the WITH's variables and adds its own.
+	got = ensureRowProducingPrefix("WITH 'ab' AS s UNWIND [1, 2] AS x")
+	if got != "WITH 'ab' AS s UNWIND [1, 2] AS x RETURN *" {
+		t.Fatalf("expected RETURN * after a later clause, got %q", got)
+	}
+	// The WITH's own WHERE, ORDER BY, SKIP and LIMIT are part of it.
+	got = ensureRowProducingPrefix("UNWIND [3, 1] AS y WITH y AS x WHERE x > 0 ORDER BY x SKIP 0 LIMIT 2")
+	if !strings.HasSuffix(got, "LIMIT 2 RETURN *") {
+		t.Fatalf("expected RETURN * for a prefix starting with UNWIND, got %q", got)
+	}
+	got = ensureRowProducingPrefix("WITH [3, 1] AS ys, 1 AS z WITH z AS x WHERE x > 0 ORDER BY x SKIP 0 LIMIT 2")
+	if !strings.HasSuffix(got, "LIMIT 2 RETURN x") {
+		t.Fatalf("expected the last WITH's alias, got %q", got)
 	}
 }
 
@@ -1373,29 +1433,6 @@ func TestHasGraphWithPrefix_Match(t *testing.T) {
 	c.Register("comp.shard", &LocationLocal{DBName: "shard"})
 	if !c.HasGraphWithPrefix("comp.") {
 		t.Fatal("expected true for matching prefix")
-	}
-}
-
-func TestExtractWithImports_WithoutKeyword(t *testing.T) {
-	got := extractWithImports("WITHOUT something")
-	if got != nil {
-		t.Fatalf("expected nil for WITHOUT, got %v", got)
-	}
-}
-
-func TestExtractWithImports_NotFollowedByWhitespace(t *testing.T) {
-	got := extractWithImports("WITHX something")
-	if got != nil {
-		t.Fatalf("expected nil for WITHX, got %v", got)
-	}
-}
-
-func TestExtractWithImports_WithASKeyword(t *testing.T) {
-	// AS is skipped as a keyword.
-	got := extractWithImports("WITH x AS y MATCH (n)")
-	// "x" is parsed, "AS" is skipped, "y" is parsed, "MATCH" stops.
-	if len(got) != 2 || got[0] != "x" || got[1] != "y" {
-		t.Fatalf("expected [x y], got %v", got)
 	}
 }
 

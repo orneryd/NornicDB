@@ -13,6 +13,12 @@ type ResultStream struct {
 
 	// Rows holds the result data. Each row has len(Columns) elements.
 	Rows [][]interface{}
+
+	// RowWrapper marks a result whose one column holds the APPLY pipeline's
+	// row wrapper maps (executeApplyAsPipeline), not a query column. Only
+	// the pipeline sets it, so no query column is ever read as the wrapper,
+	// whatever its name.
+	RowWrapper bool
 }
 
 // RowIterator iterates result rows without requiring callers to index into a
