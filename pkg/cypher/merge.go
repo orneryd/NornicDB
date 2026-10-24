@@ -330,7 +330,7 @@ func (e *StorageExecutor) findMergeNode(store storage.Engine, labels []string, p
 }
 
 // findMergeNodesScanned is findMergeNodes, also reporting whether it read
-// the pattern's whole label (or every node, without a label). Only such an
+// the pattern's whole label (or its complete pinned equality population). Only such an
 // answer is complete: a node any other lookup (the MERGE cache, a schema
 // index) could return carries the label, so a scan that found none means
 // there is none. An index answer is not; findMergeNode tries further
@@ -344,6 +344,21 @@ func (e *StorageExecutor) findMergeNodesScanned(store storage.Engine, labels []s
 			}
 		}
 		return matches, false, nil
+	}
+	if lookup, ok := store.(storage.TransactionEqualityLookup); ok && len(labels) > 0 && len(props) > 0 {
+		candidates, complete, lookupErr := lookup.LookupNodesByEquality(labels[0], props)
+		if lookupErr != nil {
+			return nil, false, lookupErr
+		}
+		if complete {
+			e.markMergeScanFallbackUsed()
+			for _, candidate := range candidates {
+				if mergeNodeMatches(candidate, labels, props) {
+					matches = append(matches, candidate)
+				}
+			}
+			return matches, true, nil
+		}
 	}
 	var candidates []*storage.Node
 	if len(labels) > 0 && len(props) > 0 {
