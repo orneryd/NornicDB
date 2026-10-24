@@ -264,8 +264,8 @@
     "sha256": "c9b0f4987a0b88f9b895d553bfaf9e5104bc48f3f78aae2b693981d45b02023f"
   },
   "pkg/cypher/row_value_program.go:compileValue": {
-    "reason": "Compiler specialization handles fixed native shapes and falls back to the generic owner for other representations. #1618 (349a6668e) adds invariant endpoint-property hoisting. #1651 ports subquery dispatch to the shared rowSubqueryNode; the native literal type switch and numeric/list input boundary are unchanged.",
-    "sha256": "6d2f013a558a9b6e84a810fc5a39a7855ed466230981e63e58606fc31ca05d84"
+    "reason": "Compiler specialization handles fixed native shapes and falls back to the generic owner for other representations. #1618 (349a6668e) adds invariant endpoint-property hoisting. #1651 ports subquery dispatch to the shared rowSubqueryNode; the native literal type switch and numeric/list input boundary are unchanged. NOR-15 uses the source-width-aware null predicate reader; review confirms the native literal cases and generic input boundary remain unchanged.",
+    "sha256": "04f9a78cc16f59bae28b412f8d49c63a7e91832a48695ed40927ec645ffec8ee"
   },
   "pkg/cypher/fn/runtime_value.go:RuntimeValue": {
     "reason": "Runtime null normalization at the producer boundary; numeric scalars and primitive lists pass through unchanged, with no narrowing or numeric interpretation.",

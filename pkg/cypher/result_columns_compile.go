@@ -74,6 +74,16 @@ func (compiler *projectionCompilation) compileBound(incoming, retained resultmet
 		statement := resultmetadata.Statement{Start: start, End: end, Incoming: scope, Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(nil), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseWrite, Start: start, End: end, Before: scope, After: scope}}}
 		return &projectedScopeFacts{after: incoming, outputs: resultmetadata.Known(nil), statement: &statement}
 	}
+	// These commands already declare their fixed schema in the typed SHOW
+	// owner. EXPLAIN reads that declaration without enumerating users.
+	show := query.ChildRule(cypherantlr.CypherParserRULE_showCommand)
+	if show.Valid() && !show.ChildRule(cypherantlr.CypherParserRULE_showTail).Valid() &&
+		(startsWithKeywords(show.Code(), "SHOW", "USERS") || startsWithKeywords(show.Code(), "SHOW", "CURRENT USER")) {
+		names := resultmetadata.Known(showUsersColumns)
+		scope := projectionScope(names)
+		statement := resultmetadata.Statement{Start: start, End: end, Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(showUsersColumns), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseOther, Start: start, End: end, Before: projectionScope(incoming), After: scope}}}
+		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
+	}
 	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
 	body := compilation.prepareBody(queryBodyFromSyntax(query), query, start, end)
 	body.incoming, body.retained = incoming, retained
@@ -192,6 +202,12 @@ func (compilation *boundCompilation) prepareUse(branch *boundBranch, node cypher
 	compilation.event(node).enter = append(compilation.event(node).enter, func() {
 		prior = compilation.clause
 		start, end := node.Span()
+		if !node.ChildRule(cypherantlr.CypherParserRULE_functionInvocation).Valid() && strings.EqualFold(node.QualifiedName(), "system") {
+			if err := systemDatabaseStatementError(strings.TrimSpace(compilation.owner.source[end:branch.shape.end])); err != nil {
+				compilation.fail(resultmetadata.ReasonUnsupportedSyntax, start, err)
+				return
+			}
+		}
 		branch.graph = projectionGraph{start: start, end: end, selected: true, outer: branch.body.graph.outer, outerIDs: branch.body.graph.outerIDs}
 		if parent, ok := node.Parent(); ok && parent.Rule() == cypherantlr.CypherParserRULE_query {
 			branch.body.graph = branch.graph

@@ -112,8 +112,30 @@ func operatorMatchesAt(expr, op string, idx int, caseInsensitive bool) bool {
 		word := strings.TrimSpace(op)
 		start := queryGapEnd(expr, idx)
 		if start > idx {
-			_, ok := keywordMatchAt(expr, start, word, 0, len(word))
-			return ok
+			before := skipBackSpaces(expr, idx)
+			if before > 0 && strings.IndexByte(".:$", expr[before-1]) >= 0 {
+				return false
+			}
+			end, ok := keywordMatchAt(expr, start, word, 0, len(word))
+			if !ok || !keywordRightBoundaryOK(expr, end, keywordBoundaryWord) {
+				return false
+			}
+			if !caseInsensitive {
+				at := start
+				for index := 0; index < len(word); index++ {
+					if isASCIISpace(word[index]) {
+						for at < end && isASCIISpace(expr[at]) {
+							at++
+						}
+					} else {
+						if expr[at] != word[index] {
+							return false
+						}
+						at++
+					}
+				}
+			}
+			return true
 		}
 	}
 	for offset := 0; offset < len(op); offset++ {

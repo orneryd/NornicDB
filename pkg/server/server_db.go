@@ -951,8 +951,9 @@ func statementFailure(ctx context.Context, response *TransactionResponse, execut
 	if executor != nil && !nornicerrors.IsCompileTimeError(err) {
 		columns, columnErr := executor.StatementResultColumnsContext(ctx, query)
 		if columnErr != nil {
-			failure = statementError(columnErr)
-			localizeStatementError(&failure, columnErr, localize)
+			// The engine's failure is authoritative. A failed statement does
+			// not become a successful empty result when no fixed header is
+			// available, and metadata inspection cannot replace its status.
 			return failure
 		}
 		if len(columns) > 0 {

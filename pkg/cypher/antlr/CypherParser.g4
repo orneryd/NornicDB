@@ -174,7 +174,7 @@ singleQuery
     ;
 
 standaloneCall
-    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? where?)?
+    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt?)?
     ;
 
 // Subqueries
@@ -323,7 +323,7 @@ foreachSt
     ;
 
 queryCallSt
-    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt? where?)?
+    : OPTIONAL? CALL invocationName parenExpressionChain? (YIELD (MULT where? | yieldItems) orderSt? skipSt? limitSt?)?
     ;
 
 parenExpressionChain

@@ -331,6 +331,8 @@ func TestCachedHeadersPreserveDeclaredProcedureShapes(t *testing.T) {
 	}{
 		{"CALL db.index.fulltext.createNodeIndex('closed_header', ['Memory'], ['content'])", []string{"name", "labels", "properties"}},
 		{"CALL db.rretrieve({query:'closed header'})", nil},
+		{"SHOW USERS", showUsersColumns},
+		{"SHOW CURRENT USER", showUsersColumns},
 	} {
 		t.Run(sample.query, func(t *testing.T) {
 			exec.StatementFacts(sample.query, resultmetadata.KnownScope(nil), false).Visit(func(resultmetadata.Statement) {}, func() { t.Fatal("missing procedure facts") }, func(reason resultmetadata.Unresolved) { t.Fatalf("unresolved: %+v", reason) })
