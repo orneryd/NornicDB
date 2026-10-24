@@ -62,7 +62,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 	cypher = normalizeCypherSyntaxConfusables(cypher)
 	if config.IsCypherQueryNormalizationEnabled() {
-		cypher, _ = canonicalizeQueryText(cypher)
+		cypher, _ = canonicalizeStatementText(cypher)
 	}
 	cypher, _ = canonicalizeNumericLiterals(cypher)
 	cypher, _ = canonicalizeFunctionAliases(cypher)

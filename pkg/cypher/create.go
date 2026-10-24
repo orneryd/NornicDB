@@ -489,17 +489,10 @@ func (e *StorageExecutor) validateCreatePatternPropertyMap(ctx context.Context, 
 }
 
 func parseCreatePathAssignment(pattern string) (string, string) {
-	trimmed := strings.TrimSpace(pattern)
-	eqIdx := strings.Index(trimmed, "=")
-	if eqIdx <= 0 {
-		return "", pattern
+	if name, _, start, ok := namedPathDeclaration(pattern, 0); ok {
+		return name, strings.TrimSpace(pattern[start:])
 	}
-	left := strings.TrimSpace(trimmed[:eqIdx])
-	right := strings.TrimSpace(trimmed[eqIdx+1:])
-	if left == "" || !isValidIdentifier(left) || !strings.HasPrefix(right, "(") {
-		return "", pattern
-	}
-	return left, right
+	return "", pattern
 }
 
 // splitCreatePatterns splits a CREATE pattern into individual patterns (nodes and relationships)

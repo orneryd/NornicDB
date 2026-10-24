@@ -57,15 +57,17 @@ func TestGh713QuotedProjectionRoutes(t *testing.T) {
 }
 
 func TestGh713CallTailColumnsUseSharedReturnPlan(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "headers"))
 	for _, test := range []struct {
 		clause  string
 		columns []string
 	}{
 		{"RETURN", nil},
-		{"RETURN *", []string{"*"}},
-		{"CALL { RETURN 2 AS ignored }", nil},
+		{"RETURN *", nil},
+		{"CALL { RETURN 2 AS ignored }", []string{"ignored"}},
 		{"CALL { RETURN 2 AS ignored } RETURN ignored AS value ORDER BY value LIMIT 1", []string{"value"}},
-		{"RETURN DISTINCT value", []string{"value"}},
+		{"RETURN DISTINCT value", nil},
+		{"WITH 1 AS value RETURN DISTINCT value", []string{"value"}},
 		{"RETURN DISTINCT $value", []string{"$value"}},
 		{"RETURN 1 AS `left,right`", []string{"left,right"}},
 		{"RETURN 1 AS `a``b`", []string{"a`b"}},
@@ -73,12 +75,14 @@ func TestGh713CallTailColumnsUseSharedReturnPlan(t *testing.T) {
 		{"RETURN count(*) AS total ORDER BY total SKIP 0 LIMIT 1", []string{"total"}},
 	} {
 		t.Run(test.clause, func(t *testing.T) {
-			require.Equal(t, test.columns, expectedReturnColumnsFromTail(test.clause))
+			exec.StatementColumns(test.clause)
+			require.Equal(t, test.columns, exec.StatementColumns(test.clause))
 		})
 	}
-	columns := expectedReturnColumnsFromTail("RETURN 1 AS value")
+	exec.StatementColumns("RETURN 1 AS value")
+	columns := exec.StatementColumns("RETURN 1 AS value")
 	columns[0] = "changed"
-	require.Equal(t, []string{"value"}, expectedReturnColumnsFromTail("RETURN 1 AS value"))
+	require.Equal(t, []string{"value"}, exec.StatementColumns("RETURN 1 AS value"))
 }
 
 func TestGh713ProjectionSplittersShareQuotedLexing(t *testing.T) {

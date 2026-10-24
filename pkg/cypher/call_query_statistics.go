@@ -276,7 +276,7 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 	orderedLabels := store.GetSchema().OrderTokens(sortedStringSet(labels), false)
 	orderedRelationships := store.GetSchema().OrderTokens(sortedStringSet(relationships), true)
 	tokens := map[string]interface{}{"labels": orderedLabels, "relationshipTypes": orderedRelationships, "propertyKeys": sortedStringSet(properties)}
-	result := &ExecuteResult{Columns: []string{"section", "data"}, Rows: [][]interface{}{}}
+	result := &ExecuteResult{Columns: legacyProcedureColumns("db.stats.retrieveAllAnTheStats"), Rows: [][]interface{}{}}
 	if section == "GRAPH COUNTS" || section == "ALL" {
 		nodeRows := []interface{}{map[string]interface{}{"count": int64(len(nodes))}}
 		for _, label := range orderedLabels {

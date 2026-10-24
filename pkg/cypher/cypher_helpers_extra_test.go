@@ -2712,7 +2712,11 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 	assert.Equal(t, "1", parsed.skip)
 	assert.Equal(t, "2", parsed.limit)
 	assert.False(t, parsed.misplacedWhere)
-	assert.True(t, parseYieldClause("CALL proc() YIELD s ORDER BY s WHERE s > 0 RETURN s").misplacedWhere)
+	malformed := "CALL proc() YIELD s ORDER BY s WHERE s > 0 RETURN s"
+	require.Nil(t, parseYieldClause(malformed), "the canonical reader declines malformed clause order")
+	_, syntaxErr := exec.Execute(context.Background(), malformed, nil)
+	require.Error(t, syntaxErr)
+	requireStatusCode(t, syntaxErr, "Neo.ClientError.Statement.SyntaxError")
 	// STARTS WITH and a WHERE inside a subquery are part of the predicate.
 	parsedPredicate := parseYieldClause("CALL proc() YIELD s WHERE s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s } RETURN s")
 	assert.Equal(t, "s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s }", parsedPredicate.where)
@@ -3019,11 +3023,11 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 func TestCypherHelpers_ExplainInferenceAndCostHelpers(t *testing.T) {
 	exec := &StorageExecutor{}
 
-	cols := exec.inferExplainColumns("CALL db.labels() YIELD label AS lbl RETURN lbl")
+	cols := exec.StatementColumns("CALL db.labels() YIELD label AS lbl RETURN lbl")
 	require.Equal(t, []string{"lbl"}, cols)
-	cols = exec.inferExplainColumns("MATCH (n) RETURN n.name AS name, n.age")
+	cols = exec.StatementColumns("MATCH (n) RETURN n.name AS name, n.age")
 	require.Equal(t, []string{"name", "n.age"}, cols)
-	cols = exec.inferExplainColumns("MATCH (n)")
+	cols = exec.StatementColumns("MATCH (n)")
 	require.Empty(t, cols)
 
 	limit := exec.analyzeLimitSkip("MATCH (n) RETURN n SKIP 5 LIMIT 10")
@@ -3289,7 +3293,7 @@ func TestCypherHelpers_SetTrailingWithReturnAndRowNormalizationBranches(t *testi
 	// (#740), so there is no RETURN clause; the statement is a SyntaxError
 	// for the n after the alias, as in Neo4j.
 	_, handled, err = exec.sharedTrailingRowsHandledForTest(ctx, "WITH n AS RETURN n", mr, &ExecuteResult{Stats: &QueryStats{}})
-	require.NoError(t, err)
+	require.Error(t, err)
 	_, err = exec.Execute(ctx, "MATCH (n) SET n.x = 1 WITH n AS RETURN n", nil)
 	require.Error(t, err)
 

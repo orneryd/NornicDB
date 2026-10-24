@@ -273,9 +273,10 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		if err := validateWriteExpressionScope(expression, scope); err != nil {
 			return err
 		}
-		// Literal sources here; the statement walker
-		// (validatePropertyAccessClauses) also knows WITH / UNWIND types.
-		if err := setSourceTypeError(property, operator, expression, nil, nil); err != nil {
+		// A literal source here, in item order; the shared clause validator
+		// checks every source with the statement's types
+		// (staticSetItemsTokenError).
+		if err := setSourceTypeError(property, operator, (staticTypeScope{}).operandOf(expression)); err != nil {
 			return err
 		}
 	}

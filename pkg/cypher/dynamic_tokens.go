@@ -145,7 +145,7 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 	// Every item check needs a label item or a dynamic key (: or [), or a
 	// target that isn't an entity: other clauses cost one scan. A Cypher 25
 	// statement's items are also checked for an entity assigned whole.
-	if !scope.cypher25 && !strings.ContainsAny(clause.text, ":[") && !mentionsNonEntity(clause.text, scope) {
+	if !scope.cypher25 && !strings.ContainsAny(clause.text, ":[=") && !mentionsNonEntity(clause.text, scope) {
 		return nil
 	}
 	switch clause.kind {
@@ -156,7 +156,7 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 		if set < 0 {
 			return nil // no ON CREATE / ON MATCH SET
 		}
-		if actions := clause.text[set:]; !strings.ContainsAny(actions, ":[") && !mentionsNonEntity(actions, scope) {
+		if actions := clause.text[set:]; !strings.ContainsAny(actions, ":[=") && !mentionsNonEntity(actions, scope) {
 			return nil // the pattern's labels aren't items
 		}
 		actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"))
@@ -232,18 +232,23 @@ func staticSetItemsTokenError(assignments []string, scope staticTypeScope) error
 			// Cypher 25 (Neo4j 2026.09) removed SET x = e and SET x += e for
 			// a node or relationship e: the right side is a map there
 			// (properties(e)).
-			switch typeName := scope.staticExpressionType(right); typeName {
-			case "Node", "Relationship":
-				return typeNameMismatchError("Map", typeName)
+			if operand := scope.operandOf(right); operand.is("Node") || operand.is("Relationship") {
+				return typeNameMismatchError("Map", operand.typeName())
 			}
 		}
 		if operator != ":" && operator != "" {
 			// A property write (x.p = v, x[k] = v, x = m, x += m) needs a node
 			// or a relationship.
-			switch typeName := scope.typeOf(target); typeName {
-			case "", "Node", "Relationship":
-			default:
-				return typeNameMismatchError("Node or Relationship", typeName)
+			if operand := scope.operandOf(target); operand.excludes(isNodeOrRelationshipTypeName) {
+				return typeNameMismatchError("Node or Relationship", operand.typeName())
+			}
+		}
+		// SET x = m and SET x += m take a map, node or relationship, read in
+		// the statement's one type scope (an unbound target is the scope
+		// check's UndefinedVariable first).
+		if scope.bound(target) {
+			if err := setSourceTypeError(property, operator, scope.operandOf(right)); err != nil {
+				return err
 			}
 		}
 		switch operator {
@@ -282,8 +287,8 @@ func staticLabelChainTokenError(items []labelChainItem, scope staticTypeScope) e
 // staticLabelTargetError rejects a label item on a variable whose static type
 // isn't a node: only nodes have labels.
 func staticLabelTargetError(variable string, scope staticTypeScope) error {
-	if typeName := scope.typeOf(variable); typeName != "" && typeName != "Node" {
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreLabelTargetTypeMismatch(typeName))
+	if operand := scope.operandOf(variable); operand.excludes(isNodeTypeName) {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreLabelTargetTypeMismatch(operand.typeName()))
 	}
 	return nil
 }
@@ -325,18 +330,17 @@ func staticDynamicTokenError(expression string, scope staticTypeScope, use dynam
 			}
 		}
 	}
-	typeName := scope.staticExpressionType(expression)
-	switch {
-	case typeName == "" || typeName == "String" || typeName == "Any":
-		return nil
-	case use == dynamicTokenLabel:
-		if strings.HasPrefix(typeName, "List<") && (typeName == "List<String>" || typeName == "List<T>" || typeName == "List<Any>") {
-			return nil
+	operand := scope.operandOf(expression)
+	if use == dynamicTokenLabel {
+		if operand.excludes(isLabelTokenTypeName) {
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreDynamicLabelTypeMismatch(operand.typeName()))
 		}
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreDynamicLabelTypeMismatch(typeName))
-	default:
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreEntityPropertyKeyTypeMismatch(typeName))
+		return nil
 	}
+	if operand.excludes(isKeyTokenTypeName) {
+		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType", localization.CypherCoreEntityPropertyKeyTypeMismatch(operand.typeName()))
+	}
+	return nil
 }
 
 // dynamicLabelTestFunction is the predicate a dynamic label or type in a

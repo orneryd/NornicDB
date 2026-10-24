@@ -4,13 +4,10 @@ import (
 	"context"
 	"strings"
 
-	antlr4 "github.com/antlr4-go/antlr/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-// TransactionBatch is syntax, independent of an execution's parameters.
-// LiteralKind describes the expression's Cypher literal, through parentheses
-// and a unary sign; a computed expression is not a literal.
+// TransactionBatch is immutable syntax, independent of runtime row values.
 type TransactionBatch struct {
 	Expression            string
 	LiteralKind           string
@@ -18,9 +15,16 @@ type TransactionBatch struct {
 	ConcurrencyExpression string
 	ErrorMode             string
 	ReportVariable        string
+	expressionSyntax      SyntaxNode
 }
 
-// CallClause is the shared structural read used by execution and validation.
+// ExpressionSyntax is the size expression in its original retained statement.
+// The implicit default has no written node. Explicit consumers never re-lex it.
+func (spec *TransactionBatch) ExpressionSyntax() (SyntaxNode, bool) {
+	return spec.expressionSyntax, spec.expressionSyntax.Valid()
+}
+
+// CallClause is a compatibility view of an existing canonical CALL node.
 type CallClause struct {
 	Body           string
 	After          string
@@ -28,33 +32,32 @@ type CallClause struct {
 	PlacementError string
 }
 
-type batchReadRule uint8
-
-const (
-	batchReadStatement batchReadRule = iota
-	batchReadCall
-	batchReadClause
-	batchReadExpression
-)
-
-// ReadCallClause reads one CALL prefix, leaving any following clause in After.
-func ReadCallClause(ctx context.Context, query string) (call CallClause, err error) {
-	err = readBatchTree(ctx, query, batchReadCall, func(tree antlr4.Tree, text []rune) {
-		call = describeCall(tree.(*CallSubqueryContext), text)
-	})
-	return
+// ReadCallClause is the standalone entry adapter. Statement consumers call
+// DescribeCall on the retained node instead of parsing a second CALL fragment.
+func ReadCallClause(ctx context.Context, query string) (CallClause, error) {
+	syntax, err := ParseSyntax(ctx, query, FragmentEntry, false)
+	if err != nil {
+		return CallClause{}, err
+	}
+	call, found := syntax.LeadingCall()
+	if !found || call.Rule() != CypherParserRULE_callSubquery {
+		message := localization.CypherANTLRParseSyntaxError("expected a CALL subquery")
+		return CallClause{}, localization.NewLocalizedError(string(message.ID), message, nil)
+	}
+	return DescribeCall(call), nil
 }
 
-// ReadTransactionalCalls reads enclosing query structure as well as the batch
-// production. Default and ANTLR execution share these exact token boundaries.
-func ReadTransactionalCalls(ctx context.Context, query string) (calls []CallClause, err error) {
-	tokens, err := LexContext(ctx, query)
+// ReadTransactionalCalls consumes the one product and traversal. Placement
+// state belongs to each enclosing query; independently committed writes are
+// not writes of the containing query. No preliminary lexer or recursion remains.
+func ReadTransactionalCalls(ctx context.Context, query string) ([]CallClause, error) {
+	syntax, err := ParseSyntax(ctx, query, StatementEntry, false)
 	if err != nil {
 		return nil, err
 	}
 	candidate := false
-	for _, token := range tokens {
-		if token.GetTokenType() == CypherLexerTRANSACTIONS {
+	for index := 0; index < syntax.TokenCount(); index++ {
+		if syntax.Token(index).Kind() == CypherLexerTRANSACTIONS {
 			candidate = true
 			break
 		}
@@ -62,166 +65,139 @@ func ReadTransactionalCalls(ctx context.Context, query string) (calls []CallClau
 	if !candidate {
 		return nil, nil
 	}
-	err = readBatchTree(ctx, query, batchReadStatement, func(tree antlr4.Tree, text []rune) {
-		// Each recursion returns writes owned by its containing query. A
-		// transactional CALL's writes belong to its independent batches.
-		var walk func(antlr4.Tree, int, bool, bool) bool
-		walk = func(node antlr4.Tree, nesting int, union, precedingWrite bool) bool {
-			switch n := node.(type) {
-			case *RegularQueryContext:
-				union = len(n.AllUnionSt()) != 0
-			case *CallSubqueryContext:
-				call := describeCall(n, text)
-				if call.Batch != nil {
-					switch {
-					case nesting != 0:
-						call.PlacementError = "nested"
-					case union:
-						call.PlacementError = "union"
-					case precedingWrite:
-						call.PlacementError = "write"
-					}
-				}
-				calls = append(calls, call)
-				writes := walk(n.SubqueryBody(), nesting+1, false, false)
-				return call.Batch == nil && writes
-			case *ExistsSubqueryContext, *SubqueryExistContext, *CountSubqueryContext, *CollectSubqueryContext:
-				nesting++
-			}
-			writes := false
-			for _, child := range node.GetChildren() {
-				writes = walk(child, nesting, union, precedingWrite || writes) || writes
-			}
-			if _, updating := node.(*UpdatingStatementContext); updating {
-				return true
-			}
-			return writes
-		}
-		walk(tree, 0, false, false)
-	})
-	if err != nil {
-		return nil, err
+	type frame struct {
+		writes bool
+		union  bool
 	}
-	return calls, nil
+	current := &frame{}
+	nesting := 0
+	var calls []CallClause
+	syntax.Walk(func(node SyntaxNode) func() {
+		switch node.Rule() {
+		case CypherParserRULE_regularQuery:
+			old := current.union
+			current.union = node.ChildRule(CypherParserRULE_unionSt).Valid()
+			return func() { current.union = old }
+		case CypherParserRULE_callSubquery:
+			call := DescribeCall(node)
+			if call.Batch != nil {
+				switch {
+				case nesting != 0:
+					call.PlacementError = "nested"
+				case current.union:
+					call.PlacementError = "union"
+				case current.writes:
+					call.PlacementError = "write"
+				}
+			}
+			calls = append(calls, call)
+			parent := current
+			current = &frame{}
+			nesting++
+			return func() {
+				if call.Batch == nil {
+					parent.writes = parent.writes || current.writes
+				}
+				current = parent
+				nesting--
+			}
+		case CypherParserRULE_existsSubquery, CypherParserRULE_subqueryExist,
+			CypherParserRULE_countSubquery, CypherParserRULE_collectSubquery:
+			nesting++
+			return func() { nesting-- }
+		case CypherParserRULE_updatingStatement:
+			return func() { current.writes = true }
+		}
+		return nil
+	})
+	return calls, ctx.Err()
 }
 
-func describeCall(call *CallSubqueryContext, text []rune) CallClause {
+// DescribeCall reads an already parsed callSubquery rule. Its body, suffix and
+// batch expressions remain slices of the original source, including Unicode.
+func DescribeCall(call SyntaxNode) CallClause {
+	open, _ := call.DirectToken(CypherLexerLBRACE)
+	close, _ := call.DirectToken(CypherLexerRBRACE)
+	_, bodyStart := open.Span()
+	bodyEnd, _ := close.Span()
+	_, end := call.Span()
 	result := CallClause{
-		Body:  strings.TrimSpace(string(text[call.LBRACE().GetSymbol().GetStop()+1 : call.RBRACE().GetSymbol().GetStart()])),
-		After: strings.TrimSpace(string(text[call.GetStop().GetStop()+1:])),
+		Body:  strings.TrimSpace(call.data.source[bodyStart:bodyEnd]),
+		After: strings.TrimSpace(call.data.source[end:]),
 	}
-	if batch, ok := call.TransactionBatch().(*TransactionBatchContext); ok {
-		spec := &TransactionBatch{Expression: "1000", Concurrent: batch.CONCURRENT() != nil}
-		if expression := batch.GetSize(); expression != nil {
-			spec.Expression = sourceExpression(expression, text)
-			spec.LiteralKind = batchLiteralKind(expression)
-		} else {
-			spec.LiteralKind = "Integer"
-		}
-		if expression := batch.GetConcurrency(); expression != nil {
-			spec.ConcurrencyExpression = sourceExpression(expression, text)
-		}
-		if mode := batch.GetErrorMode(); mode != nil {
-			spec.ErrorMode = mode.GetText()
-		}
-		if variable := batch.GetStatusVariable(); variable != nil {
-			spec.ReportVariable = variable.GetText()
-		}
-		result.Batch = spec
+	batch := call.ChildRule(CypherParserRULE_transactionBatch)
+	if !batch.Valid() {
+		return result
 	}
+	spec := &TransactionBatch{Expression: "1000", LiteralKind: "Integer"}
+	afterOf := false
+	for index := 0; index < batch.ChildCount(); index++ {
+		child := batch.Child(index)
+		switch {
+		case child.IsToken(CypherLexerOF):
+			afterOf = true
+		case child.IsToken(CypherLexerCONCURRENT):
+			spec.Concurrent = true
+		case child.IsToken(CypherLexerCONTINUE), child.IsToken(CypherLexerBREAK), child.IsToken(CypherLexerFAIL):
+			spec.ErrorMode = child.Text()
+		case child.Rule() == CypherParserRULE_symbol:
+			spec.ReportVariable, _ = child.Name()
+		case child.Rule() == CypherParserRULE_expression:
+			if afterOf {
+				spec.Expression, spec.LiteralKind = child.Text(), batchLiteralKind(child)
+				spec.expressionSyntax = child
+			} else {
+				spec.ConcurrencyExpression = child.Text()
+			}
+		}
+	}
+	result.Batch = spec
 	return result
 }
 
-func sourceExpression(expression antlr4.ParserRuleContext, text []rune) string {
-	return string(text[expression.GetStart().GetStart() : expression.GetStop().GetStop()+1])
-}
-
-func batchLiteralKind(node antlr4.Tree) string {
-	if literal := batchLiteral(node); literal != nil {
-		switch {
-		case literal.NULL_W() != nil:
-			return "Null"
-		case literal.BoolLit() != nil:
-			return "Boolean"
-		case literal.StringLit() != nil, literal.CharLit() != nil:
-			return "String"
-		case literal.ListLit() != nil:
-			return "List"
-		case literal.MapLit() != nil:
-			return "Map"
-		case literal.NumLit() != nil:
-			if literal.NumLit().(*NumLitContext).FLOAT() != nil {
-				return "Float"
+// batchLiteralKind follows only the existing literal/unary-parenthesis shape;
+// computed expressions remain runtime-dependent, rather than guessed by value.
+func batchLiteralKind(node SyntaxNode) string {
+	for node.Rule() != CypherParserRULE_literal {
+		var next SyntaxNode
+		for index := 0; index < node.ChildCount(); index++ {
+			child := node.Child(index)
+			if child.Rule() < 0 {
+				if !child.IsToken(CypherLexerPLUS) && !child.IsToken(CypherLexerSUB) && !child.IsToken(CypherLexerLPAREN) && !child.IsToken(CypherLexerRPAREN) {
+					return ""
+				}
+			} else {
+				if next.Valid() {
+					return ""
+				}
+				next = child
 			}
-			return "Integer"
 		}
+		if !next.Valid() {
+			return ""
+		}
+		node = next
+	}
+	if _, null := node.DirectToken(CypherLexerNULL_W); null {
+		return "Null"
+	}
+	for _, kind := range []struct {
+		rule int
+		name string
+	}{
+		{CypherParserRULE_boolLit, "Boolean"}, {CypherParserRULE_stringLit, "String"},
+		{CypherParserRULE_charLit, "String"}, {CypherParserRULE_listLit, "List"},
+		{CypherParserRULE_mapLit, "Map"},
+	} {
+		if node.ChildRule(kind.rule).Valid() {
+			return kind.name
+		}
+	}
+	if number := node.ChildRule(CypherParserRULE_numLit); number.Valid() {
+		if _, floating := number.DirectToken(CypherLexerFLOAT); floating {
+			return "Float"
+		}
+		return "Integer"
 	}
 	return ""
-}
-
-func batchLiteral(node antlr4.Tree) ILiteralContext {
-	if literal, ok := node.(ILiteralContext); ok {
-		return literal
-	}
-	var child antlr4.Tree
-	for _, next := range node.GetChildren() {
-		if terminal, ok := next.(antlr4.TerminalNode); ok {
-			switch terminal.GetSymbol().GetTokenType() {
-			case CypherLexerPLUS, CypherLexerSUB, CypherLexerLPAREN, CypherLexerRPAREN:
-			default:
-				return nil
-			}
-		} else {
-			if child != nil {
-				return nil
-			}
-			child = next
-		}
-	}
-	if child == nil {
-		return nil
-	}
-	return batchLiteral(child)
-}
-
-func readBatchTree(ctx context.Context, query string, rule batchReadRule, consume func(antlr4.Tree, []rune)) (err error) {
-	defer recoverPredictionCancellation(&err)
-	if err = ctx.Err(); err != nil {
-		return err
-	}
-	lexer := NewCypherLexer(contextInputStream(ctx, query))
-	listener := &parseErrorListener{}
-	lexer.RemoveErrorListeners()
-	lexer.AddErrorListener(listener)
-	tokens := antlr4.NewCommonTokenStream(lexer, antlr4.TokenDefaultChannel)
-	var stream antlr4.TokenStream = tokens
-	if ctx.Done() != nil {
-		stream = &contextTokenStream{TokenStream: tokens, ctx: ctx}
-	}
-	parser := NewCypherParser(stream)
-	parser.RemoveErrorListeners()
-	parser.AddErrorListener(listener)
-	prediction := acquirePrediction()
-	usePrediction(parser, prediction)
-	defer func() { parser.Interpreter = nil; prediction.release() }()
-	var tree antlr4.Tree
-	switch rule {
-	case batchReadCall:
-		tree = parser.CallSubquery()
-	case batchReadClause:
-		tree = parser.SubqueryBody()
-	case batchReadExpression:
-		tree = parser.Expression()
-	default:
-		tree = parser.Script()
-	}
-	if (rule == batchReadClause || rule == batchReadExpression) && stream.LA(1) != antlr4.TokenEOF {
-		listener.errors = append(listener.errors, "unexpected trailing input")
-	}
-	if len(listener.errors) != 0 {
-		message := localization.CypherANTLRParseSyntaxError(strings.Join(listener.errors, "; "))
-		return localization.NewLocalizedError(string(message.ID), message, nil)
-	}
-	consume(tree, []rune(query))
-	return ctx.Err()
 }

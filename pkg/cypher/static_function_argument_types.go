@@ -324,62 +324,34 @@ func lookupLowerASCII[V any](table map[string]V, name string) (V, bool) {
 // ("Float, Integer, String or List<T>", the type of 1 + x for an unknown x)
 // into them; a single type is itself.
 func staticTypeChoices(typeName string) []string {
-	return strings.Split(strings.ReplaceAll(typeName, " or ", ", "), ", ")
-}
-
-func (argument staticArgumentType) accepts(typeName string) bool {
-	if typeName == "" || len(argument.options) == 0 {
-		return true
+	if !strings.Contains(typeName, ", ") && !strings.Contains(typeName, " or ") {
+		return []string{typeName}
 	}
-	if argument.nestedLists {
-		// The inner element can itself be a union (List<List<Map>,
-		// List<Node> or List<Relationship>>). Its outer element is a list.
-		if strings.HasPrefix(typeName, "List<List<") && strings.HasSuffix(typeName, ">>") {
-			return true
+	var choices []string
+	start, depth := 0, 0
+	for index := 0; index < len(typeName); index++ {
+		switch typeName[index] {
+		case '<':
+			depth++
+		case '>':
+			depth--
 		}
-		for _, choice := range staticTypeChoices(typeName) {
-			switch choice {
-			case "List<T>", "List<Boolean>", "List<Float>", "List<Integer>", "List<Number>":
-				// Neo4j leaves these list-element coercions to runtime.
-			default:
-				if !strings.HasPrefix(choice, "List<List<") {
-					return false
-				}
-			}
+		if depth != 0 {
+			continue
 		}
-		return true
-	}
-	if strings.Contains(typeName, ", ") || strings.Contains(typeName, " or ") {
-		choices := staticTypeChoices(typeName)
-		for _, choice := range choices {
-			if argument.accepts(choice) {
-				return true
-			}
+		width := 0
+		if strings.HasPrefix(typeName[index:], ", ") {
+			width = 2
+		} else if strings.HasPrefix(typeName[index:], " or ") {
+			width = 4
 		}
-		return false
-	}
-	if typeName == "Number" {
-		return argument.accepts("Integer") || argument.accepts("Float")
-	}
-	isList := strings.HasPrefix(typeName, "List<")
-	if isList && argument.acceptsLists || containsString(argument.unlisted, typeName) {
-		return true
-	}
-	for _, option := range argument.options {
-		switch {
-		case option == typeName:
-			return true
-		case option == "Float" && typeName == "Integer":
-			return true
-		case option == "Number" && (typeName == "Integer" || typeName == "Float"):
-			return true
-		case option == "List<T>" && isList:
-			return true
-		case typeName == "List<T>" && strings.HasPrefix(option, "List<"):
-			return true
+		if width > 0 {
+			choices = append(choices, typeName[start:index])
+			start = index + width
+			index = start - 1
 		}
 	}
-	return false
+	return append(choices, typeName[start:])
 }
 
 // staticArgumentMismatch is Neo4j's compile-time error for an argument of the
@@ -409,9 +381,17 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			index++
 			continue
 		}
-		if index > 0 && (text[index-1] == '.' || text[index-1] == '$' || text[index-1] == ':' || isIdentByte(text[index-1])) {
+		if index > 0 && (text[index-1] == '.' || text[index-1] == '$' || isIdentByte(text[index-1])) {
 			index = next
 			continue
+		}
+		if index > 0 && text[index-1] == ':' {
+			// A label or type name (n:Label, [:TYPE]); a map value written
+			// without a space ({a:toUpper(x)}) is a call like any other.
+			if open := skipSpaces(text, next); open >= len(text) || text[open] != '(' {
+				index = next
+				continue
+			}
 		}
 		if precededByTypeAnnotation(text, index) {
 			// `x IS :: DATE` names a type, not a call: in a REQUIRE { ... }
@@ -556,10 +536,7 @@ func trimFromArguments(inner string) (arguments []string, fromForm bool) {
 func validateStaticFunctionArguments(cypher string, cypher25 bool) error {
 	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string, _ int) error {
 		argument = argument.inVersion(cypher25)
-		typeName := staticLiteralTypeName(expression)
-		if typeName == "" {
-			typeName = staticValueCallType(expression)
-		}
+		typeName := staticTextType(expression)
 		if !argument.accepts(typeName) {
 			return staticArgumentMismatch(argument, typeName)
 		}
@@ -580,11 +557,7 @@ func staticFormatArguments(expressions []string) []staticArgumentType {
 	value := staticTypeChoices(staticFormatTemporalTypes + " or String")
 	arguments := []staticArgumentType{{expected: staticFormatTemporalTypes, options: value}}
 	if len(expressions) == 2 {
-		first := strings.TrimSpace(expressions[0])
-		typeName := staticLiteralTypeName(first)
-		if function, inner, call := parseFunctionCallWS(first); call && typeName == "" {
-			typeName = staticFunctionResultType(function, inner)
-		}
+		typeName := staticTextType(expressions[0])
 		if typeName != "" && containsString(staticTypeChoices(staticFormatTemporalTypes), typeName) {
 			arguments = append(arguments, staticArgumentType{expected: "String", options: []string{"String"}})
 		}
@@ -618,7 +591,7 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 			// UNWIND [$s] AS x binds x to $s's value, typed as Neo4j
 			// types it: radians(x) for s = 'xy' is a type mismatch.
 			operand := staticParameterOperand(params[parameter])
-			if !operand.known() || operand.kind == "Float" || argument.accepts(operand.kind) {
+			if !operand.known() || operand.is("Float") || operand.fits(argument.accepts) {
 				return nil
 			}
 			return typeNameMismatchError(argument.expected, operand.display)
@@ -632,7 +605,7 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 		}
 		// A missing parameter (nil) has no static type.
 		operand := staticParameterOperand(params[name])
-		if !operand.known() || operand.kind == "Float" || argument.accepts(operand.kind) {
+		if !operand.known() || operand.is("Float") || operand.fits(argument.accepts) {
 			return nil
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
@@ -784,38 +757,14 @@ func staticMemberAccessBase(expression string) (string, bool) {
 	return base, true
 }
 
-// staticExpressionType is the static type of expression in scope: a
-// literal's type or a variable's, or in a Cypher 25 statement a known
-// member's (m.a for m bound to {a: 2}).
+// staticExpressionType is the static type of expression in scope, the
+// operator check's (operandOf); a parameter read with the run's values is
+// the parameter's (propertyAccessExpressionType).
 func (scope staticTypeScope) staticExpressionType(expression string) string {
 	if len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
 		return propertyAccessExpressionType(expression, scope.values, scope.params)
 	}
-	if typeName := staticLiteralTypeName(expression); typeName != "" {
-		return typeName
-	}
-	if variable := simpleSemanticIdentifier(expression); variable != "" {
-		return scope.typeOf(variable)
-	}
-	if _, member := staticMemberAccessBase(expression); member && scope.cypher25 {
-		if operand, err := (staticOperatorChecker{scope: scope}).check(expression); err == nil {
-			return operand.kind
-		}
-		return ""
-	}
-	function, _, call := parseFunctionCallWS(strings.TrimSpace(expression))
-	if mayNeedStaticTypeCheck(expression) || call && strings.EqualFold(function, "coalesce") {
-		operand, err := (staticOperatorChecker{scope: scope}).check(expression)
-		if err == nil {
-			if operand.known() {
-				return operand.kind
-			}
-			if operand.nonBoolean {
-				return operand.display
-			}
-		}
-	}
-	return ""
+	return scope.operandOf(expression).typeName()
 }
 
 // validateStaticFunctionVariables rejects a function called with a variable
@@ -833,29 +782,29 @@ func validateStaticFunctionVariables(text string, scope staticTypeScope) error {
 func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeScope) error {
 	var scope *staticTypeScope
 	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string, at int) error {
+		for {
+			// abs((d)) reads d (abs(( (d))) after checkedWithoutUnaryPlus
+			// blanks a unary plus).
+			inner, enclosed := stripEnclosingExpressionParentheses(strings.TrimSpace(expression))
+			if !enclosed {
+				break
+			}
+			expression = inner
+		}
 		variable := simpleSemanticIdentifier(expression)
 		base, property := entityPropertyRead(expression)
-		// A call's result type, when it doesn't depend on its arguments
+		// A call is typed by the operator check like any other argument
 		// (size(properties(m)) is size of a Map, Neo4j's compile-time type
 		// mismatch); the call's own arguments are checked as calls of
 		// their own.
-		function, inner, call := parseFunctionCallWS(strings.TrimSpace(expression))
-		result := ""
-		if call {
-			result = staticFunctionResultType(function, inner)
-		}
+		_, _, call := parseFunctionCallWS(strings.TrimSpace(expression))
 		switch {
 		case property:
 			variable = base
-		case result != "":
-			if !argument.accepts(result) {
-				return staticArgumentMismatch(argument, result)
-			}
-			return nil
 		default:
 			if memberBase, member := staticMemberAccessBase(expression); member {
 				variable = memberBase // its members' types (Cypher 25)
-			} else if variable == "" && !mayNeedStaticTypeCheck(expression) && !strings.EqualFold(function, "coalesce") {
+			} else if variable == "" && !mayNeedStaticTypeCheck(expression) && !call {
 				return nil
 			}
 		}
@@ -871,17 +820,14 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 				}
 			}
 		}
+		// The shared CASE result-type owner combines branches before checking
+		// the signature: reject only when no result type fits, otherwise
+		// retain runtime validation of the selected branch.
+		// A node's or relationship's property is a property value, never an
+		// entity or a map (labels(n.x), id(n.x), point(n.x) are Neo4j's
+		// compile-time SyntaxError); another base's member has the type the
+		// scope knows for it (a Cypher 25 map's), or none.
 		typeName := scope.staticExpressionType(expression)
-		if property {
-			// A node's or relationship's property is a property value,
-			// never an entity or a map (labels(n.x), id(n.x), point(n.x)
-			// are Neo4j's compile-time SyntaxError); another base's member
-			// has the type the scope knows for it (a Cypher 25 map's), or
-			// none.
-			if kind := scope.typeOf(base); kind == "Node" || kind == "Relationship" {
-				typeName = staticPropertyValueType
-			}
-		}
 		if typeName == "" || argument.accepts(typeName) {
 			return nil
 		}
@@ -905,80 +851,6 @@ func entityPropertyRead(expression string) (string, bool) {
 		return "", false
 	}
 	return base, true
-}
-
-// unwindStaticValueType is the element type of an UNWIND over a list literal
-// (UNWIND [1, 2] AS x binds an Integer), or "".
-func unwindStaticValueType(clause string) string {
-	body := strings.TrimSpace(clause[len("UNWIND"):])
-	if asIndex := findKeywordIndexInContext(body, "AS"); asIndex >= 0 {
-		body = strings.TrimSpace(body[:asIndex])
-	}
-	return staticListElementType(body)
-}
-
-// staticListElementType is the element type of a list expression whose
-// elements are typed before the statement runs, "" otherwise.
-func staticListElementType(body string) string {
-	if elementType := literalListElementType(body); elementType != "" {
-		return elementType
-	}
-	// A list of computed expressions of one known type ([date('2020-01-01'),
-	// date('2021-01-01')]) binds that type, as Neo4j types it before the
-	// statement runs; a mixed list ([1, date(…)]) binds no static type.
-	return uniformListElementType(body)
-}
-
-// literalListElementType is the element type of a list literal of literals,
-// as Neo4j names it, "" when the literal typing doesn't type the list.
-func literalListElementType(body string) string {
-	listType := staticLiteralTypeName(body)
-	// A list typed as several list types gives an element of any of their
-	// element types, as Neo4j names it: UNWIND [{k: 1}] binds a "Map, Node or
-	// Relationship", UNWIND [1, 2.5] a "Float, Integer or Number".
-	choices := staticTypeChoices(listType)
-	elements := make([]string, 0, len(choices))
-	for _, choice := range choices {
-		if !strings.HasPrefix(choice, "List<") || choice == "List<T>" {
-			return ""
-		}
-		elements = append(elements, strings.TrimSuffix(strings.TrimPrefix(choice, "List<"), ">"))
-	}
-	return joinTypeNames(elements)
-}
-
-// uniformListElementType is the static type every element of a list literal
-// has (a literal's, or a computed element's as the operator check infers it),
-// "" when the text isn't a list literal, an element's type is
-// unknown or several types, or the elements differ.
-func uniformListElementType(list string) string {
-	inner, isList := stripEnclosingRowDelimiter(strings.TrimSpace(list), '[', ']')
-	if !isList || strings.TrimSpace(inner) == "" {
-		return ""
-	}
-	// A comprehension isn't a list literal: its elements are its
-	// projection's (projectedListOperand), not the one element
-	// at IN l | [at] would read as.
-	if _, _, _, _, comprehension := parseListComprehension(inner); comprehension {
-		return ""
-	}
-	elementType := ""
-	for _, element := range splitTopLevelComma(inner) {
-		element = strings.TrimSpace(element)
-		typeName := staticLiteralTypeName(element)
-		if typeName == "" {
-			// A computed element (date('…')) keeps the type the operator check
-			// infers for it, as a WITH projection does.
-			if operand, err := (staticOperatorChecker{}).check(element); err == nil && operand.known() {
-				typeName = operand.kind
-			}
-		}
-		if typeName == "" || len(staticTypeChoices(typeName)) != 1 || (elementType != "" && typeName != elementType) {
-			return ""
-		}
-		elementType = typeName
-	}
-	return elementType
 }
 
 // checkReduceForm is Neo4j's compile-time check of a reduce or allReduce

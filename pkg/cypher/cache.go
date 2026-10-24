@@ -3,7 +3,9 @@ package cypher
 
 import (
 	"container/list"
+	"context"
 	"fmt"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"slices"
 	"strings"
 	"sync"
@@ -880,9 +882,16 @@ func extractLabelsFromQuery(cypher string) []string {
 // normalized statement text and the parameters, encoded in full
 // (statementCacheKey), so an entry is served only for the same statement
 // text and the same parameter values (#729). Normalizing the text keeps
-// formatting, whitespace and a trailing semicolon from defeating a hit.
+// trivia outside expression-derived column names and a trailing semicolon
+// from defeating a hit. Column-name spelling remains part of the key.
 func resultCacheEntryKey(cypher string, params map[string]interface{}) string {
-	return statementCacheKey(normalizeQuery(trimTrailingStatementDelimiters(cypher)), params)
+	source := trimTrailingStatementDelimiters(cypher)
+	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.StatementEntry, false)
+	var protected []statementPresentationSpan
+	if err == nil {
+		protected = statementExpressionNameSpans(syntax)
+	}
+	return statementCacheKey(normalizeQueryWithPresentation(source, protected), params)
 }
 
 // =============================================================================
@@ -1065,7 +1074,9 @@ func (pc *QueryPlanCache) Clear() {
 
 // normalizeQuery normalizes a Cypher query for cache key generation.
 // Collapses whitespace and lowercases keywords for consistent matching.
-func normalizeQuery(cypher string) string {
+func normalizeQuery(cypher string) string { return normalizeQueryWithPresentation(cypher, nil) }
+
+func normalizeQueryWithPresentation(cypher string, protected []statementPresentationSpan) string {
 	// Collapse consecutive whitespace to a single ASCII space without allocating
 	// the intermediate []string created by strings.Fields. Text inside a
 	// string literal or a backtick-quoted name is kept as it is: 'a  b' and
@@ -1077,6 +1088,18 @@ func normalizeQuery(cypher string) string {
 	b.Grow(len(cypher))
 	prevSpace := true
 	for i := 0; i < len(cypher); i++ {
+		end := i
+		for _, span := range protected {
+			if span.start == i && span.end > end {
+				end = span.end
+			}
+		}
+		if end > i {
+			b.WriteString(cypher[i:end])
+			i = end - 1
+			prevSpace = false
+			continue
+		}
 		if end, quoted := skipCypherLexicalToken(cypher, i); quoted {
 			b.WriteString(cypher[i:end])
 			i = end - 1

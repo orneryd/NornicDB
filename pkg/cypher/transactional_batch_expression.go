@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	antlr4 "github.com/antlr4-go/antlr/v4"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -20,45 +19,68 @@ var scalarExpressionSyntaxCache = newBoundedCache[string, scalarExpressionSyntax
 // including constructs hidden inside CASE branches and function arguments.
 // Structural admission and result types are separate from runtime values.
 func describeScalarExpression(ctx context.Context, expression string) (scalarExpressionSyntax, error) {
-	if shape, ok := scalarExpressionSyntaxCache.get(expression); ok {
+	if shape, found := scalarExpressionSyntaxCache.get(expression); found {
+		return shape, ctx.Err()
+	}
+	syntax, err := cypherantlr.ParseSyntax(ctx, expression, cypherantlr.ExpressionEntry, cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		return scalarExpressionSyntax{}, err
+	}
+	return describeScalarSyntax(ctx, syntax.Root())
+}
+
+func describeScalarSyntax(ctx context.Context, node cypherantlr.SyntaxNode) (scalarExpressionSyntax, error) {
+	expression := node.Text()
+	if shape, found := scalarExpressionSyntaxCache.get(expression); found {
 		return shape, ctx.Err()
 	}
 	var shape scalarExpressionSyntax
+	node.Walk(scalarAdmissionVisitor(&shape))
+	if err := ctx.Err(); err != nil {
+		return shape, err
+	}
+	scalarExpressionSyntaxCache.put(expression, shape)
+	return shape, nil
+}
+
+// scalarAdmissionVisitor observes the same product as binding and graph effects.
+// It records forbidden structure and aggregate atoms without evaluating a value.
+func scalarAdmissionVisitor(shape *scalarExpressionSyntax) cypherantlr.SyntaxVisitor {
 	recordAggregate := func(text string) {
 		if shape.aggregates == nil {
 			shape.aggregates = make(map[string]struct{})
 		}
 		shape.aggregates[text] = struct{}{}
 	}
-	err := cypherantlr.ReadExpressionSyntax(ctx, expression, func(tree antlr4.Tree, source []rune) {
-		walkCypherSyntax(tree, func(node antlr4.Tree) func() {
-			switch n := node.(type) {
-			case *cypherantlr.ExistsSubqueryContext, *cypherantlr.SubqueryExistContext,
-				*cypherantlr.CountSubqueryContext, *cypherantlr.CollectSubqueryContext,
-				*cypherantlr.PatternComprehensionContext, *cypherantlr.RelationshipsChainPatternContext:
-				shape.forbidden = true
-			case *cypherantlr.CountAllContext:
-				recordAggregate(cypherantlr.SyntaxText(n, source))
-			case *cypherantlr.FunctionInvocationContext:
-				text := cypherantlr.SyntaxText(n, source)
-				if _, _, _, aggregate := parsePipelineAggregate(text); aggregate {
-					recordAggregate(text)
-				}
+	return func(node cypherantlr.SyntaxNode) func() {
+		switch node.Rule() {
+		case cypherantlr.CypherParserRULE_existsSubquery, cypherantlr.CypherParserRULE_subqueryExist,
+			cypherantlr.CypherParserRULE_countSubquery, cypherantlr.CypherParserRULE_collectSubquery,
+			cypherantlr.CypherParserRULE_patternComprehension, cypherantlr.CypherParserRULE_relationshipsChainPattern:
+			shape.forbidden = true
+		case cypherantlr.CypherParserRULE_countAll:
+			recordAggregate(node.Code())
+		case cypherantlr.CypherParserRULE_functionInvocation:
+			text := node.Code()
+			if _, _, _, aggregate := parsePipelineAggregate(text); aggregate {
+				recordAggregate(text)
 			}
-			return nil
-		})
-	})
-	if err == nil {
-		scalarExpressionSyntaxCache.put(expression, shape)
+		}
+		return nil
 	}
-	return shape, err
 }
 
 // classifyTransactionalBatchExpression is the single semantic admission point
 // for execution and EXPLAIN. The shared type checker propagates parameter list
 // element types; union results such as CASE and coalesce remain runtime values.
 func (e *StorageExecutor) classifyTransactionalBatchExpression(ctx context.Context, spec *transactionBatchSpec, params map[string]interface{}) error {
-	shape, err := describeScalarExpression(ctx, spec.Expression)
+	var shape scalarExpressionSyntax
+	var err error
+	if syntax, found := spec.ExpressionSyntax(); found {
+		shape, err = describeScalarSyntax(ctx, syntax)
+	} else {
+		shape, err = describeScalarExpression(ctx, spec.Expression)
+	}
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -73,7 +95,7 @@ func (e *StorageExecutor) classifyTransactionalBatchExpression(ctx context.Conte
 	if err != nil {
 		return err
 	}
-	if operand.kind == "Float" || (operand.known() && !operand.numeric() && operand.kind != "Null") {
+	if operand.excludes(isIntegerOrNumberTypeName) {
 		return callBatchSizeError(operand.display, "Neo.ClientError.Statement.SyntaxError")
 	}
 	if params != nil {
@@ -82,7 +104,7 @@ func (e *StorageExecutor) classifyTransactionalBatchExpression(ctx context.Conte
 		if err != nil {
 			return err
 		}
-		if operand.known() && !operand.numeric() && operand.kind != "Null" {
+		if operand.excludes(isNumericTypeName) {
 			return callBatchSizeError(operand.display, "Neo.ClientError.Statement.SyntaxError")
 		}
 	}

@@ -97,7 +97,8 @@ func TestResultStreamChecksReturnArguments(t *testing.T) {
 // statement before any row was handed on, and fails it after.
 func TestResultStreamDeclineBeforeAndAfterStreaming(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	clauses := []pipelineClause{{kind: pipelineClauseReturn, text: "RETURN x"}}
+	clauses, valid, _ := parsePipelineClauses("RETURN x")
+	require.True(t, valid)
 	declineAfter := func(rows int) pipelineRowSource {
 		return func(yield func(pipelineRow) bool) bool {
 			for i := 0; i < rows; i++ {
@@ -109,7 +110,8 @@ func TestResultStreamDeclineBeforeAndAfterStreaming(t *testing.T) {
 		}
 	}
 	scope := map[string]struct{}{"x": {}}
-	ctx := context.Background()
+	ctx, bindErr := exec.bindPipelineProgram(context.Background(), clauses, scope)
+	require.NoError(t, bindErr)
 	columns, _, handled, err := exec.pipelineStreamReturn(ctx, NewResultStream(1, nil), nil, declineAfter(0), clauses, clauses, 0, scope, false)
 	require.NoError(t, err)
 	require.False(t, handled)
