@@ -134,7 +134,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"pkg/cypher/keyword_scan.go:firstKeywordIndexFromDefault":    "canonical multi-keyword lexical scanner",
 		"pkg/cypher/keyword_scan.go:queryMayNeedCanonicalRewrite":    "canonical query-rewrite lexical admission reader",
 		"pkg/cypher/keyword_scan.go:gluedAliasKeywordAt":             "canonical alias-keyword boundary reader",
-		"pkg/cypher/keyword_scan.go:scanCanonicalQueryText":          "canonical query text, quotation and comment rewrite owner",
+		"pkg/cypher/keyword_scan.go:readCanonicalQueryText":          "canonical query text, quotation and comment rewrite owner",
 		"pkg/cypher/keyword_scan.go:inPatternClause":                 "canonical clause-boundary reader",
 		"pkg/cypher/keyword_scan.go:StripComments":                   "canonical Cypher comment and quotation reader",
 		"pkg/cypher/keyword_scan.go:restoreMessage":                  "canonical query-position restoration reader",
