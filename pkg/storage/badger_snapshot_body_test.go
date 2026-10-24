@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -72,7 +74,7 @@ func TestSnapshotOverlayBodyCacheHydratesSidecarsAtReadPoint(t *testing.T) {
 }
 
 func TestSnapshotOverlayProjectionDoesNotHydrateCachedVectors(t *testing.T) {
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), LowMemory: true})
+	b, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), LowMemory: true}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, b.Close()) })
 	vector := make([]float32, 20_000)

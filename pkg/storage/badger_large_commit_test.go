@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -18,7 +19,10 @@ import (
 
 func openLargeCommitTestEngine(t *testing.T, dir string) *BadgerEngine {
 	t.Helper()
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true})
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, LowMemory: true}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	return engine
 }
@@ -390,7 +394,7 @@ func TestDeleteByPrefix_FlushesPeriodicallyAndCompletes(t *testing.T) {
 func TestManagedBadger_RecoversInterruptedLargeCommit(t *testing.T) {
 	dir := t.TempDir()
 	opts := badger.DefaultOptions(dir).WithLogger(nil)
-	m, err := openManagedBadger(opts)
+	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
 	require.NoError(t, err)
 	require.NoError(t, m.Update(func(txn *badger.Txn) error {
 		require.NoError(t, txn.Set([]byte("k1"), []byte("a")))
@@ -412,7 +416,7 @@ func TestManagedBadger_RecoversInterruptedLargeCommit(t *testing.T) {
 	require.NoError(t, partial.CommitAt(restoreTs, nil))
 	require.NoError(t, m.DB.Close())
 
-	m, err = openManagedBadger(opts)
+	m, err = fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
 	require.NoError(t, err)
 	defer m.Close()
 	require.NoError(t, m.View(func(txn *badger.Txn) error {
@@ -428,7 +432,7 @@ func TestManagedBadger_RecoversInterruptedLargeCommit(t *testing.T) {
 }
 
 func TestManagedBadger_FirstBatchConflictWritesNothing(t *testing.T) {
-	m, err := openManagedBadger(badger.DefaultOptions("").WithInMemory(true).WithLogger(nil))
+	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(badger.DefaultOptions("").WithInMemory(true).WithLogger(nil)))
 	require.NoError(t, err)
 	defer m.Close()
 	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("a")) }))
@@ -459,7 +463,10 @@ func TestManagedBadger_FirstBatchConflictWritesNothing(t *testing.T) {
 func TestManagedBadger_OpensUnmanagedStoreBothWays(t *testing.T) {
 	dir := t.TempDir()
 	opts := badger.DefaultOptions(dir).WithLogger(nil)
-	raw, err := badger.Open(opts)
+	raw, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(opts))
+	if raw != nil {
+		fixtureowner.Own(t, raw)
+	}
 	require.NoError(t, err)
 	for i := 0; i < 10; i++ {
 		require.NoError(t, raw.Update(func(txn *badger.Txn) error {
@@ -468,7 +475,7 @@ func TestManagedBadger_OpensUnmanagedStoreBothWays(t *testing.T) {
 	}
 	require.NoError(t, raw.Close())
 
-	m, err := openManagedBadger(opts)
+	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
 	require.NoError(t, err)
 	require.NoError(t, m.View(func(txn *badger.Txn) error {
 		requireValue(t, txn, "old-9", "v")
@@ -481,7 +488,7 @@ func TestManagedBadger_OpensUnmanagedStoreBothWays(t *testing.T) {
 	}))
 	require.NoError(t, m.Close())
 
-	raw, err = badger.Open(opts)
+	raw, err = fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(opts))
 	require.NoError(t, err)
 	defer raw.Close()
 	require.NoError(t, raw.View(func(txn *badger.Txn) error {

@@ -1,6 +1,8 @@
 package search
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"path/filepath"
@@ -17,7 +19,7 @@ func BenchmarkRelationshipEmbeddingBatch(b *testing.B) {
 	for _, persist := range []bool{false, true} {
 		for _, chunks := range []int{1, 4} {
 			b.Run(fmt.Sprintf("persist=%t/chunks=%d", persist, chunks), func(b *testing.B) {
-				engine := storage.NewMemoryEngine()
+				engine := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 				defer engine.Close()
 				svc := NewServiceWithDimensions(engine, 128)
 				defer svc.Close()

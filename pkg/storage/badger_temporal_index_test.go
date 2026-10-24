@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 	"time"
@@ -261,7 +263,7 @@ func TestBadgerEngine_PruneTemporalHistory(t *testing.T) {
 }
 
 func BenchmarkBadgerTemporalAsOfGhostOfVersioning(b *testing.B) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](b, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(b, err)
 	b.Cleanup(func() {
 		require.NoError(b, engine.Close())

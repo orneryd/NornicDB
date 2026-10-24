@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"testing"
 
@@ -14,7 +16,7 @@ func BenchmarkPendingEmbeddingClaim(b *testing.B) {
 	for _, deleted := range []int{0, 10000} {
 		for _, pending := range []int{1, 128, 1024} {
 			b.Run(fmt.Sprintf("deleted=%d/pending=%d", deleted, pending), func(b *testing.B) {
-				e, err := storage.NewBadgerEngine(b.TempDir())
+				e, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngine(b.TempDir()))
 				if err != nil {
 					b.Fatal(err)
 				}

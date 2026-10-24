@@ -7,6 +7,7 @@ package storage
 // clean.
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,7 +16,10 @@ import (
 )
 
 func TestGh726_BulkDeleteNotificationsDrainedBeforeClose(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	var notifications atomic.Int64
@@ -40,7 +44,10 @@ func TestGh726_BulkDeleteNotificationsDrainedBeforeClose(t *testing.T) {
 }
 
 func TestGh726_BulkDeleteNotificationsAfterCloseAreSkipped(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 
 	var notifications atomic.Int64
@@ -59,7 +66,10 @@ func TestGh726_BulkDeleteNotificationsAfterCloseAreSkipped(t *testing.T) {
 }
 
 func TestGh726_CloseWaitsForInFlightBulkDeleteNotification(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&Node{ID: "nornic:n-1", Labels: []string{"T"}})
 	require.NoError(t, err)
@@ -106,7 +116,10 @@ func TestGh726_CloseWaitsForInFlightBulkDeleteNotification(t *testing.T) {
 }
 
 func TestEnsureNamespaceMVCC_ClosedEngineReturnsClosed(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 	require.ErrorIs(t, engine.EnsureNamespaceMVCC("nornic"), ErrStorageClosed)

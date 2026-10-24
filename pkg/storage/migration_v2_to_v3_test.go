@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -156,7 +157,10 @@ func TestInstalledSnapshotCombinedUpgrade(t *testing.T) {
 	require.True(t, strings.HasPrefix(resolved, "/private/tmp/nornicdb-v3-installed-snapshot-"), "only scratch snapshots are allowed")
 	copyDir := filepath.Join(t.TempDir(), "badger")
 	require.NoError(t, exec.Command("/bin/cp", "-cR", source, copyDir).Run())
-	raw, err := badger.Open(badger.DefaultOptions(copyDir).WithLogger(nil))
+	raw, err := fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(copyDir).WithLogger(nil)))
+	if raw != nil {
+		fixtureowner.Own(t, raw)
+	}
 	require.NoError(t, err)
 	before, nodes, edges := snapshotGraphDigest(t, raw)
 	var observed uint64
@@ -177,13 +181,19 @@ func TestInstalledSnapshotCombinedUpgrade(t *testing.T) {
 	}))
 	require.NoError(t, raw.Close())
 	t.Logf("offline snapshot version=%d, nodes=%d, edges=%d; only scratch clone replays the combined upgrade", observed, nodes, edges)
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: copyDir, AllowStorageUpgrade: true})
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: copyDir, AllowStorageUpgrade: true}))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	version, err := engine.readSchemaVersion()
 	require.NoError(t, err)
 	require.Equal(t, storageVersionEdgeAdjacencyV3, version)
 	require.NoError(t, engine.Close())
-	raw, err = badger.Open(badger.DefaultOptions(copyDir).WithReadOnly(true).WithLogger(nil))
+	raw, err = fixtureowner.TrackResult[*badger.DB](t, nil)(badger.Open(badger.DefaultOptions(copyDir).WithReadOnly(true).WithLogger(nil)))
+	if raw != nil {
+		fixtureowner.Own(t, raw)
+	}
 	require.NoError(t, err)
 	after, afterNodes, afterEdges := snapshotGraphDigest(t, raw)
 	require.NoError(t, raw.Close())
@@ -219,7 +229,10 @@ func TestStoragePrefixAssignmentsRemainStable(t *testing.T) {
 
 func TestMigrationV2ToV3PreservesLegacyPolicyMetadata(t *testing.T) {
 	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger"), AllowStorageUpgrade: true}
-	engine, err := NewBadgerEngineWithOptions(options)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
@@ -263,7 +276,10 @@ func TestMigrationV2ToV3PreservesLegacyPolicyMetadata(t *testing.T) {
 	require.NoError(t, engine.writeSchemaVersion(storageVersionPropKeyDictV2))
 	require.NoError(t, engine.Close())
 	engine = nil
-	engine, err = NewBadgerEngineWithOptions(options)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	got, err := engine.GetAccessMeta(string(node.ID))
 	require.NoError(t, err)
@@ -280,7 +296,10 @@ func TestMigrationV2ToV3PreservesLegacyPolicyMetadata(t *testing.T) {
 
 func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
 	options := BadgerOptions{DataDir: filepath.Join(t.TempDir(), "badger"), AllowStorageUpgrade: true}
-	engine, err := NewBadgerEngineWithOptions(options)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
@@ -302,7 +321,10 @@ func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
 	require.NoError(t, engine.writeSchemaVersion(storageVersionPropKeyDictV2))
 	require.NoError(t, engine.Close())
 	engine = nil
-	engine, err = NewBadgerEngineWithOptions(options)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	version, err := engine.readSchemaVersion()
 	require.NoError(t, err)
@@ -324,7 +346,10 @@ func TestMigrationV3LegacyRelationshipHeadCatalogCollision(t *testing.T) {
 func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 	dataDir := filepath.Join(t.TempDir(), "badger")
 	options := BadgerOptions{DataDir: dataDir}
-	engine, err := NewBadgerEngineWithOptions(options)
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		if engine != nil {
@@ -370,13 +395,19 @@ func TestMigrationV2ToV3MakesLabelAndTypeKeysExactCase(t *testing.T) {
 	require.NoError(t, engine.Close())
 	engine = nil
 
-	_, err = NewBadgerEngineWithOptions(options)
+	unexpected, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if unexpected != nil {
+		fixtureowner.Own(t, unexpected)
+	}
 	var upgradeErr *ErrStorageUpgradeRequired
 	require.ErrorAs(t, err, &upgradeErr)
 	require.Equal(t, storageVersionPropKeyDictV2, upgradeErr.OnDisk)
 
 	options.AllowStorageUpgrade = true
-	engine, err = NewBadgerEngineWithOptions(options)
+	engine, err = fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(options))
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	version, err := engine.readSchemaVersion()
 	require.NoError(t, err)

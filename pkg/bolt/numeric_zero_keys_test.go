@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"math"
 	"reflect"
@@ -22,7 +24,7 @@ func TestNumericZeroAndNaNIndexKeys(t *testing.T) {
 		{"composite_index", "CREATE INDEX zero_tv FOR (n:ZeroKey) ON (n.tenant, n.v)", "MATCH (n:ZeroKey {tenant:7, v:$b}) RETURN n.k"},
 	} {
 		t.Run(index.name, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
 			conn := openBoltTestConn(t, port)
@@ -62,7 +64,7 @@ func TestCompositeKeyZeroSigns(t *testing.T) {
 	large := int64(9007199254740993)
 	for _, kind := range []string{"UNIQUE", "NODE KEY"} {
 		t.Run(kind, func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = base.Close() })
 			_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(base, "test"))
 			peer := openBoltTestConn(t, port)

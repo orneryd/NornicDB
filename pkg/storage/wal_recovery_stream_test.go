@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"path/filepath"
 	"testing"
@@ -55,7 +57,7 @@ func TestRecoverIntoEngineStreamsMixedNamespaces(t *testing.T) {
 	}
 	snapshotPath := filepath.Join(t.TempDir(), "mixed.nds")
 	require.NoError(t, SaveStreamingSnapshot(context.Background(), source, snapshotPath, SnapshotOptions{}))
-	destination, err := NewBadgerEngine(t.TempDir())
+	destination, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 	require.NoError(t, err)
 	defer destination.Close()
 	_, status, err := RecoverIntoEngine(destination, t.TempDir(), snapshotPath)

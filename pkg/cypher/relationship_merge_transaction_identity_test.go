@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -163,7 +164,10 @@ ORDER BY rel.scope_id`, nil)
 func TestUnwindRelationshipMergeIdentityNormalizesNumericReplayValues(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	baseStore, err := storage.NewBadgerEngine(dir)
+	baseStore, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if baseStore != nil {
+		fixtureowner.Own(t, baseStore)
+	}
 	require.NoError(t, err)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
@@ -183,7 +187,7 @@ SET rel.last_seen = row.last_seen`
 	require.True(t, exec.LastHotPathTrace().UnwindMergeChainBatch)
 	require.NoError(t, baseStore.Close())
 
-	reopened, err := storage.NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, reopened.Close())
@@ -202,7 +206,10 @@ RETURN count(rel)`, nil)
 func TestUnwindRelationshipMergeIdentityNormalizesTypedSliceReplayValues(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
-	baseStore, err := storage.NewBadgerEngine(dir)
+	baseStore, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
+	if baseStore != nil {
+		fixtureowner.Own(t, baseStore)
+	}
 	require.NoError(t, err)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	exec := NewStorageExecutor(store)
@@ -222,7 +229,7 @@ SET rel.last_seen = row.last_seen`
 	require.True(t, exec.LastHotPathTrace().UnwindMergeChainBatch)
 	require.NoError(t, baseStore.Close())
 
-	reopened, err := storage.NewBadgerEngine(dir)
+	reopened, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(dir))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, reopened.Close())

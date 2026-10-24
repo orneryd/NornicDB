@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -60,7 +61,7 @@ func (m *mvccDelegatingEngine) GetEdgeCurrentHead(id storage.EdgeID) (storage.MV
 func TestSizeTrackingEngine_MVCCDelegation_NotImplementedFallback(t *testing.T) {
 	t.Parallel()
 
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	unsupported := &sizeTrackingStreamingInner{Engine: base}
 	engine := newSizeTrackingEngine(unsupported, &DatabaseManager{}, "tenant_a")
@@ -106,7 +107,7 @@ func TestSizeTrackingEngine_MVCCDelegation_NotImplementedFallback(t *testing.T) 
 func TestSizeTrackingEngine_MVCCDelegation_Supported(t *testing.T) {
 	t.Parallel()
 
-	delegate := &mvccDelegatingEngine{Engine: storage.NewMemoryEngine()}
+	delegate := &mvccDelegatingEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	engine := newSizeTrackingEngine(delegate, &DatabaseManager{}, "tenant_a")
 	tracker, ok := engine.(*sizeTrackingEngine)
 	require.True(t, ok)

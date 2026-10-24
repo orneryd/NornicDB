@@ -1,6 +1,8 @@
 package auth
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"reflect"
@@ -101,7 +103,7 @@ func TestRequestRBACContextRoundTrip(t *testing.T) {
 }
 
 func TestRoleEntitlementsStore_SetLoadAndPermissions(t *testing.T) {
-	eng := storage.NewMemoryEngine()
+	eng := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 	ctx := context.Background()
 
@@ -245,7 +247,7 @@ func TestRoleEntitlementsStore_LoadAndUpdatePaths(t *testing.T) {
 }
 
 func TestPrivilegesStore_SaveLoadResolveAndPutMatrix(t *testing.T) {
-	eng := storage.NewMemoryEngine()
+	eng := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer eng.Close()
 	ctx := context.Background()
 

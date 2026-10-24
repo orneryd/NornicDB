@@ -1,6 +1,8 @@
 package lifecycle
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bytes"
 	"context"
 	"errors"
@@ -13,9 +15,9 @@ import (
 )
 
 func TestManagerRunPruneNow_RealEngineKeepsClosedVersions(t *testing.T) {
-	engine, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{InMemory: true, EngineOptions: storage.EngineOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{InMemory: true, EngineOptions: storage.EngineOptions{
 		RetentionPolicy: storage.RetentionPolicy{MaxVersionsPerKey: 100},
-	}})
+	}}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	nodeID := storage.NodeID("lifecycle:n")

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net"
 	"testing"
@@ -1688,8 +1689,8 @@ func TestParseRunMessage(t *testing.T) {
 func TestHandleRun_UsesRunMetadataDatabase(t *testing.T) {
 	manager := &mockDBManager{
 		stores: map[string]storage.Engine{
-			"nornic":       storage.NewMemoryEngine(),
-			"translations": storage.NewMemoryEngine(),
+			"nornic":       fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+			"translations": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 		},
 		defaultDB: "nornic",
 	}
@@ -1733,8 +1734,8 @@ func TestHandleRun_UsesRunMetadataDatabase(t *testing.T) {
 func TestHandleRun_UsesBeginDatabaseWhenRunOmitsDatabase(t *testing.T) {
 	manager := &mockDBManager{
 		stores: map[string]storage.Engine{
-			"nornic":       storage.NewMemoryEngine(),
-			"translations": storage.NewMemoryEngine(),
+			"nornic":       fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
+			"translations": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)),
 		},
 		defaultDB: "nornic",
 	}

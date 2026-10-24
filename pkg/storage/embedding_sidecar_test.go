@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 
@@ -222,7 +223,7 @@ type EmbeddingFailureLike struct {
 // writeback in the production shape: a persistent engine and a pool of nodes,
 // each writeback targeting the next node (bounded per-key churn).
 func BenchmarkUpdateNodeEmbeddingSidecar(b *testing.B) {
-	engine := NewMemoryEngine().BadgerEngine
+	engine := fixtureowner.Own(b, fixtureowner.Track(b, NewMemoryEngine(), ErrStorageClosed)).BadgerEngine
 	defer engine.Close()
 	now := time.Now()
 	const pool = 2000

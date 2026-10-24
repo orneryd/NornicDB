@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"os"
@@ -250,7 +252,7 @@ func TestNeo4jCompatE2EWithServerStorageAndEmbeddings(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create BadgerEngine -> NamespacedEngine stack (matches production order)
-	badger, err := storage.NewBadgerEngine(filepath.Join(tmpDir, "data"))
+	badger, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(filepath.Join(tmpDir, "data")))
 	require.NoError(t, err)
 	defer badger.Close()
 

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"testing"
 
@@ -23,7 +25,7 @@ func (m administrationReviewManager) Exists(name string) bool                   
 
 func administrationReviewExecutor(t *testing.T, database string) (*StorageExecutor, storage.Engine) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	system := storage.NewNamespacedEngine(base, "system")
 	manager := administrationReviewManager{stores: map[string]storage.Engine{

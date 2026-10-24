@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -47,7 +49,7 @@ func TestExecuteDeleteStreaming_FallbackMapEdgeBranch(t *testing.T) {
 }
 
 func TestExecuteDeleteStreaming_FallbackDeletesAfterInitialDeleteFailure(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	eng := &failFirstDeleteNodeEngine{MemoryEngine: base, failuresRemaining: 1}
 	store := storage.NewNamespacedEngine(eng, "delete_stream_fallback_delete_cov")

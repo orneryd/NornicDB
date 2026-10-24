@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +14,10 @@ import (
 // default) and always keeps the last transaction's; dropping a database
 // removes its events; Close stops the job.
 func TestChangeEventRetentionAndDrop(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.Equal(t, ChangeCaptureOff, engine.ChangeCapture("cdc"))
 	require.Equal(t, defaultChangeRetention, engine.changeRetention())
@@ -62,7 +66,7 @@ func TestChangeEventRetentionAndDrop(t *testing.T) {
 // A capturing database's direct writes run as transactions: the bulk and
 // relationship writes too, each one transaction.
 func TestChangeCaptureDirectBulkWrites(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	engine.SetChangeCapture("cdc", ChangeCaptureFull)
@@ -108,7 +112,7 @@ func changeShape(events []ChangeEvent) []string {
 // relationship first), endpoint labels read from stored nodes, metadata,
 // a rollback (nothing), and reading after a position.
 func TestChangeCaptureTransactions(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	require.Equal(t, ChangeCaptureDiff, ParseChangeCaptureMode(" diff "))
@@ -189,7 +193,7 @@ func TestChangeCaptureTransactions(t *testing.T) {
 // The retention job starts and stops, and ChangeCaptureOf finds the Badger
 // engine under a namespace wrapper, and nothing for no engine.
 func TestChangeRetentionJobAndCaptureOf(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	job := newChangeRetentionJob(engine, 0)
@@ -213,7 +217,7 @@ func TestChangeRetentionJobAndCaptureOf(t *testing.T) {
 // creates, updates and deletes alike; an upsert of a missing node creates
 // it; a failing direct write rolls back and records nothing.
 func TestChangeCaptureWithWriteBehindAndFailedWrites(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: true})
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, WriteBehind: true}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	require.True(t, engine.writeBehindEnabled())

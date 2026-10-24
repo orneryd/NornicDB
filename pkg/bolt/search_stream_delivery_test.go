@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"bufio"
 	"context"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -13,7 +15,7 @@ import (
 )
 
 func TestSearchStreamDeliveryBoltFailedPullAfterRunSuccess(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	for _, id := range []storage.NodeID{"a", "b"} {
@@ -42,7 +44,7 @@ func TestSearchStreamDeliveryBoltFailedPullAfterRunSuccess(t *testing.T) {
 
 func newPageDeliverySession(t *testing.T, capacity int) (*Session, *errorConn, *search.Service) {
 	t.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	store := storage.NewNamespacedEngine(base, "nornic")
 	for _, id := range []storage.NodeID{"a", "b", "c"} {

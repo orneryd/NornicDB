@@ -7,6 +7,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"os"
 	"runtime"
@@ -233,7 +234,7 @@ func runBoltQueryExpectFailure(t *testing.T, conn net.Conn, query string) (strin
 func TestBoltCypherIntegration(t *testing.T) {
 	// Create storage and executor
 	// Wrap with NamespacedEngine to handle ID prefixing (required by BadgerEngine)
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &cypherQueryExecutor{executor: cypherExec}
@@ -454,7 +455,7 @@ func TestBoltCypherIntegration(t *testing.T) {
 }
 
 func TestBoltConstraintIntegration_NewerConstraintTypes(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	_, port := startBoltIntegrationServer(t, store)
 	conn := openBoltTestConn(t, port)
@@ -521,7 +522,7 @@ func TestBoltConstraintIntegration_NewerConstraintTypes(t *testing.T) {
 }
 
 func TestBoltConstraintIntegration_AllConstraintFamilies(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	_, port := startBoltIntegrationServer(t, store)
 	conn := openBoltTestConn(t, port)
@@ -617,7 +618,7 @@ func TestBoltConstraintIntegration_AllConstraintFamilies(t *testing.T) {
 }
 
 func TestBoltConstraintIntegration_ConstraintContracts(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	_, port := startBoltIntegrationServer(t, store)
 	conn := openBoltTestConn(t, port)
@@ -685,7 +686,7 @@ func TestBoltConstraintIntegration_ConstraintContracts(t *testing.T) {
 
 func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	t.Run("domain", func(t *testing.T) {
-		baseStore := storage.NewMemoryEngine()
+		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		_, port := startBoltIntegrationServer(t, store)
 		conn := openBoltTestConn(t, port)
@@ -698,7 +699,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	})
 
 	t.Run("cardinality", func(t *testing.T) {
-		baseStore := storage.NewMemoryEngine()
+		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		_, port := startBoltIntegrationServer(t, store)
 		conn := openBoltTestConn(t, port)
@@ -714,7 +715,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	})
 
 	t.Run("policy", func(t *testing.T) {
-		baseStore := storage.NewMemoryEngine()
+		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		_, port := startBoltIntegrationServer(t, store)
 		conn := openBoltTestConn(t, port)
@@ -728,7 +729,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	})
 
 	t.Run("policy_disallowed", func(t *testing.T) {
-		baseStore := storage.NewMemoryEngine()
+		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		_, port := startBoltIntegrationServer(t, store)
 		conn := openBoltTestConn(t, port)
@@ -742,7 +743,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	})
 
 	t.Run("relationship_domain", func(t *testing.T) {
-		baseStore := storage.NewMemoryEngine()
+		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		_, port := startBoltIntegrationServer(t, store)
 		conn := openBoltTestConn(t, port)
@@ -756,7 +757,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	})
 
 	t.Run("contract_runtime", func(t *testing.T) {
-		baseStore := storage.NewMemoryEngine()
+		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		_, port := startBoltIntegrationServer(t, store)
 		conn := openBoltTestConn(t, port)
@@ -778,7 +779,7 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 	})
 
 	t.Run("contract_relationship_runtime", func(t *testing.T) {
-		baseStore := storage.NewMemoryEngine()
+		baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		store := storage.NewNamespacedEngine(baseStore, "test")
 		_, port := startBoltIntegrationServer(t, store)
 		conn := openBoltTestConn(t, port)
@@ -807,7 +808,10 @@ func TestBoltConstraintIntegration_EnforcementForNewFamilies(t *testing.T) {
 }
 
 func TestBoltIntegration_G2GVersionNodesFallbackRowShape_ServerStack(t *testing.T) {
-	baseStore, err := storage.NewBadgerEngineInMemory()
+	baseStore, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if baseStore != nil {
+		fixtureowner.Own(t, baseStore)
+	}
 	requireNoError(t, err)
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	requireNoError(t, err)
@@ -954,7 +958,7 @@ FOREACH (_ IN CASE WHEN row.target_entity_id IS NULL OR row.target_entity_id = '
 }
 
 func TestBoltExplicitTransactionRollbackRevertsCreate(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	executor := newTxCapableCypherQueryExecutor(store)
 
@@ -1040,7 +1044,7 @@ func TestBoltServerStress(t *testing.T) {
 
 	// Create storage and executor using the production-matching chain
 	// (namespaced engine so Cypher-generated node IDs are accepted).
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	cypherExec := cypher.NewStorageExecutor(store)
 	executor := &cypherQueryExecutor{executor: cypherExec}
 
@@ -1139,7 +1143,7 @@ func TestBoltServerStress(t *testing.T) {
 func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
 	// Create storage chain matching production: base -> async -> namespaced.
 	// AsyncEngine requires fully-qualified IDs; NamespacedEngine provides that for Cypher-generated IDs.
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	asyncBase := baseStore
 	store := storage.NewNamespacedEngine(asyncBase, "test")
 	cypherExec := cypher.NewStorageExecutor(store)
@@ -1211,7 +1215,7 @@ func TestBoltBenchmarkCreateDeleteRelationship(t *testing.T) {
 // TestBoltBenchmarkCreateDeleteRelationship_LargeDataset simulates real benchmark conditions
 // KEEP THIS TEST - this shows performance with realistic data volume (100 actors, 150 movies)
 func TestBoltBenchmarkCreateDeleteRelationship_LargeDataset(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	asyncBase := baseStore
 	store := storage.NewNamespacedEngine(asyncBase, "test")
 	cypherExec := cypher.NewStorageExecutor(store)
@@ -1276,7 +1280,10 @@ func TestBoltBenchmarkCreateDeleteRelationship_LargeDataset(t *testing.T) {
 func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 	skipDiskIOTestOnWindows(t)
 	tmpDir := t.TempDir()
-	badgerEngine, err := storage.NewBadgerEngine(tmpDir)
+	badgerEngine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(tmpDir))
+	if badgerEngine != nil {
+		fixtureowner.Own(t, badgerEngine)
+	}
 	if err != nil {
 		t.Fatalf("Failed to create BadgerEngine: %v", err)
 	}
@@ -1381,7 +1388,7 @@ func TestBoltBenchmarkCreateDeleteRelationship_Badger(t *testing.T) {
 // TestBoltResponseMetadata verifies Neo4j-compatible metadata in responses
 // KEEP THIS TEST - ensures JS driver compatibility
 func TestBoltResponseMetadata(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	asyncBase := baseStore
 	store := storage.NewNamespacedEngine(asyncBase, "test")
 	cypherExec := cypher.NewStorageExecutor(store)
@@ -1424,7 +1431,7 @@ func TestBoltResponseMetadata(t *testing.T) {
 // TestBoltLatencyBreakdown measures where time is spent in protocol exchange
 // KEEP THIS TEST - helps identify bottlenecks in protocol handling
 func TestBoltLatencyBreakdown(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	asyncBase := baseStore
 	store := storage.NewNamespacedEngine(asyncBase, "test")
 	cypherExec := cypher.NewStorageExecutor(store)

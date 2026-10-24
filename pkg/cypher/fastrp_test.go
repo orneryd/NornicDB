@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	mathrand "math/rand"
 	"strings"
@@ -22,7 +23,10 @@ import (
 func setupFastRPTestStorage(t *testing.T) storage.Engine {
 	t.Helper()
 	// Use in-memory Badger for tests to avoid disk I/O and Windows OOM issues
-	baseEngine, err := storage.NewBadgerEngineInMemory()
+	baseEngine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if baseEngine != nil {
+		fixtureowner.Own(t, baseEngine)
+	}
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}

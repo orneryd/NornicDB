@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
 	"testing"
 	"time"
@@ -67,7 +68,7 @@ func (s *lifecycleControllerStub) ReaderRegistry() storage.SnapshotReaderRegistr
 func newExecutorFactory(t *testing.T) ExecutorFactory {
 	t.Helper()
 	return func(_ string) (*cypher.StorageExecutor, error) {
-		store := storage.NewMemoryEngine()
+		store := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 		t.Cleanup(func() { _ = store.Close() })
 		return cypher.NewStorageExecutor(store), nil
 	}
@@ -164,7 +165,7 @@ func TestManagerLifecycle_RollbackAndErrorGuards(t *testing.T) {
 func TestManagerOpenWithExecutor(t *testing.T) {
 	mgr := NewManager(time.Second, newExecutorFactory(t))
 
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = store.Close() })
 	exec := cypher.NewStorageExecutor(store)
 
@@ -235,7 +236,7 @@ func TestManagerOpenWithExecutorCompositeBeginSupported(t *testing.T) {
 
 	// CompositeEngine explicit BEGIN is supported via Fabric transaction context.
 	c := storage.NewCompositeEngine(
-		map[string]storage.Engine{"a": storage.NewMemoryEngine()},
+		map[string]storage.Engine{"a": fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))},
 		map[string]string{"a": "a"},
 		map[string]string{"a": "read_write"},
 	)
@@ -252,7 +253,10 @@ func TestManagerOpenWithExecutorCompositeBeginSupported(t *testing.T) {
 }
 
 func TestManagerExecuteInSession_ReplaysTerminalLifecycleError(t *testing.T) {
-	engine, err := storage.NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatalf("failed to create badger engine: %v", err)
 	}

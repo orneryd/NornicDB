@@ -3,6 +3,7 @@ package bolt
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net"
 	"testing"
 	"time"
@@ -16,7 +17,7 @@ import (
 )
 
 func TestSessionGetExecutorForDatabase_WiresDatabaseManagerCommands(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
@@ -40,7 +41,7 @@ func TestSessionGetExecutorForDatabase_WiresDatabaseManagerCommands(t *testing.T
 }
 
 func TestBoltListConnectionsReportsLiveConnection(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
@@ -78,7 +79,7 @@ func TestBoltListConnectionsReportsLiveConnection(t *testing.T) {
 }
 
 func TestGh738_BoltStatementAdmission(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
 	server := NewWithDatabaseManager(&Config{Port: 0, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, manager)
@@ -130,7 +131,7 @@ func TestGh738_BoltStatementAdmission(t *testing.T) {
 }
 
 func TestGh745_BoltCompositeSubqueryResults(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(storage.NewMemoryEngine(), nil)
+	manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
 	require.NoError(t, manager.CreateDatabase("pother"))
@@ -200,7 +201,7 @@ func TestGh745_BoltCompositeSubqueryResults(t *testing.T) {
 func TestGh683_BoltCompositeCommit(t *testing.T) {
 	for _, writes := range []int{1, 2} {
 		t.Run(fmt.Sprint(writes), func(t *testing.T) {
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			manager, err := multidb.NewDatabaseManager(base, nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = manager.Close() })
@@ -242,7 +243,7 @@ func TestGh683_BoltCompositeCommit(t *testing.T) {
 }
 
 func TestSessionGetExecutorForDatabase_RollbackRemovesDatabaseScopedWrites(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	exec := transactionalDatabaseScopedExecutor(t, store)
 	txExec, ok := exec.(TransactionalExecutor)
 	require.True(t, ok, "database-scoped Bolt executor must support real explicit transactions")
@@ -258,7 +259,7 @@ func TestSessionGetExecutorForDatabase_RollbackRemovesDatabaseScopedWrites(t *te
 }
 
 func TestSessionGetExecutorForDatabase_RollbackAfterStatementFailureRemovesPriorWrites(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	exec := transactionalDatabaseScopedExecutor(t, store)
 	txExec, ok := exec.(TransactionalExecutor)
 	require.True(t, ok, "database-scoped Bolt executor must support real explicit transactions")
@@ -276,7 +277,7 @@ func TestSessionGetExecutorForDatabase_RollbackAfterStatementFailureRemovesPrior
 }
 
 func TestDatabaseManagerBoltNeo4jDriverExecuteWriteRollsBackPriorWrites(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 	mgr := &mockDBManager{
 		stores: map[string]storage.Engine{
 			"nornic": store,
@@ -334,7 +335,7 @@ func TestDatabaseManagerBoltNeo4jDriverExecuteWriteRollsBackPriorWrites(t *testi
 }
 
 func TestDatabaseManagerBoltNeo4jDriverExecuteWritePrefixesGeneratedNodeIDs(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -396,7 +397,7 @@ func TestDatabaseManagerBoltNeo4jDriverExecuteWritePrefixesGeneratedNodeIDs(t *t
 }
 
 func TestDatabaseManagerBoltNeo4jDriverExecuteWritePrefixesCanonicalUnwindIDs(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	mgr, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -628,7 +629,7 @@ func (p *providerBackedExecutor) ConfigureDatabaseExecutor(exec *cypher.StorageE
 }
 
 func TestSessionGetExecutorForDatabase_InheritsEmbedder_ForStringVectorQuery(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "nornic")
 	require.NoError(t, store.GetSchema().AddVectorIndex("idx_doc", "Doc", "embedding", 3, "cosine"))
 	_, err := store.CreateNode(&storage.Node{
@@ -678,7 +679,7 @@ func TestSessionGetExecutorForDatabase_InheritsEmbedder_ForStringVectorQuery(t *
 }
 
 func TestSessionGetExecutorForDatabase_InheritsEmbedder_FromBaseExecutorProvider(t *testing.T) {
-	baseStore := storage.NewMemoryEngine()
+	baseStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	store := storage.NewNamespacedEngine(baseStore, "nornic")
 	require.NoError(t, store.GetSchema().AddVectorIndex("idx_doc", "Doc", "embedding", 3, "cosine"))
 	_, err := store.CreateNode(&storage.Node{

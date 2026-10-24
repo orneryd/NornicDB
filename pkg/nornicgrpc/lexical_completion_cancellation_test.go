@@ -1,6 +1,8 @@
 package nornicgrpc
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"testing"
@@ -26,7 +28,7 @@ func (s *lexicalCancellationSearcher) Search(ctx context.Context, query string, 
 func TestSearchTextCancellationDuringLexicalSearch(t *testing.T) {
 	for _, mode := range []string{"no_embedder", "single_fallback", "multi_fallback", "hybrid_control"} {
 		t.Run(mode, func(t *testing.T) {
-			engine := storage.NewMemoryEngine()
+			engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			t.Cleanup(func() { _ = engine.Close() })
 			store := storage.NewNamespacedEngine(engine, "nornic")
 			_, err := store.CreateNode(&storage.Node{ID: "seed", Labels: []string{"Doc"}, Properties: map[string]interface{}{"content": "needle"}})

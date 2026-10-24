@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"archive/zip"
 	"context"
 	"encoding/json"
@@ -144,7 +146,7 @@ func TestDistinctTupleBoundaries(t *testing.T) {
 }
 
 func BenchmarkScopedCallDistinct(b *testing.B) {
-	store := storage.NewMemoryEngine()
+	store := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { require.NoError(b, store.Close()) })
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(store, "scoped_distinct_bench"))
 	for _, control := range scopedDistinctControls(b) {

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"fmt"
 	"testing"
@@ -12,7 +14,7 @@ import (
 // 20 :Q nodes, half of which have k = 1.
 func existsBenchExecutor(b *testing.B) *StorageExecutor {
 	b.Helper()
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "bench")
 	nodes := make([]*storage.Node, 0, 2020)

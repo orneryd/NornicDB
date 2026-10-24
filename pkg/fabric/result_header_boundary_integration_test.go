@@ -2,6 +2,7 @@ package fabric_test
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"testing"
 
@@ -47,7 +48,7 @@ func (l *headerBoundaryLocal) ExecuteQueryWithRecord(ctx context.Context, db str
 
 func TestResultHeaderFabricBoundary(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(base, "neo4j"))
 	adapter := &headerBoundaryLocal{exec: exec, cache: map[string]resultmetadata.Names{}}

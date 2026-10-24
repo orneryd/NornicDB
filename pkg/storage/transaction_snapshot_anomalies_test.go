@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"fmt"
 	"sort"
@@ -332,7 +334,7 @@ func TestTransaction_EdgeTraversalRemainsSnapshotConsistentAcrossConcurrentDelet
 }
 
 func BenchmarkTransaction_HighContentionAbortRate(b *testing.B) {
-	engine := NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(b, NewMemoryEngine(), ErrStorageClosed)
 	b.Cleanup(func() { _ = engine.Close() })
 
 	hotNodeIDs := make([]NodeID, 5)

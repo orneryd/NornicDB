@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -113,7 +114,7 @@ func searchIDs(t *testing.T, ctx context.Context, points qpb.PointsClient, req *
 // the gRPC server (#1370).
 func TestSearch_SharedIndex_PointsSurviveServerRestart(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	provider := sharedSearchProvider()
@@ -136,7 +137,7 @@ func TestSearch_SharedIndex_PointsSurviveServerRestart(t *testing.T) {
 // fixed overfetch first (#1370).
 func TestSearch_SharedIndex_SelectiveFilterFindsDistantMatch(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	srv := startSharedIndexServer(t, dbm, base, sharedSearchProvider())
@@ -168,7 +169,7 @@ func TestSearch_SharedIndex_SelectiveFilterFindsDistantMatch(t *testing.T) {
 // serving the vectors (#1370).
 func TestSearch_SharedIndex_VectorSearchDisabledReturnsNoHits(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	enabled := sharedSearchProvider()
@@ -210,7 +211,7 @@ func TestQdrantSearchEf(t *testing.T) {
 
 func TestSearchSharedIndexDefaultDropRecreateAndIsolation(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	srv := startSharedIndexServer(t, dbm, base, sharedSearchProvider())
@@ -229,7 +230,7 @@ func TestSearchSharedIndexDefaultDropRecreateAndIsolation(t *testing.T) {
 
 func TestSharedIndexProviderFailureIsNotAcknowledged(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	srv := startSharedIndexServer(t, dbm, base, func(string, storage.Engine) (*search.Service, error) { return nil, errors.New("index unavailable") })
@@ -243,7 +244,10 @@ func TestSharedIndexProviderFailureIsNotAcknowledged(t *testing.T) {
 func TestSharedIndexColdDatabaseAndServiceReconstruction(t *testing.T) {
 	ctx := context.Background()
 	path := t.TempDir()
-	base, err := storage.NewBadgerEngine(path)
+	base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
+	if base != nil {
+		fixtureowner.Own(t, base)
+	}
 	require.NoError(t, err)
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
@@ -252,7 +256,10 @@ func TestSharedIndexColdDatabaseAndServiceReconstruction(t *testing.T) {
 	upsertPoint(t, ctx, first.points, "cold", 1, unitVector(4, 0), nil)
 	first.stop()
 	require.NoError(t, dbm.Close())
-	base, err = storage.NewBadgerEngine(path)
+	base, err = fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(path))
+	if base != nil {
+		fixtureowner.Own(t, base)
+	}
 	require.NoError(t, err)
 	dbm, err = multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
@@ -265,7 +272,7 @@ func TestSharedIndexColdDatabaseAndServiceReconstruction(t *testing.T) {
 
 func TestSharedIndexFixedProviderDoesNotAcknowledgeLostVectors(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	var svc *search.Service
@@ -292,7 +299,7 @@ func TestSharedIndexFixedProviderDoesNotAcknowledgeLostVectors(t *testing.T) {
 // point stores nothing.
 func TestSharedIndexFixedProviderRejectsVectorWritesBeforeStoring(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	var fixed atomic.Bool
@@ -340,7 +347,7 @@ func TestSharedIndexLazySearchAndQueryWarmBeforeAnswering(t *testing.T) {
 	for _, useQuery := range []bool{false, true} {
 		t.Run(fmt.Sprint("query=", useQuery), func(t *testing.T) {
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			dbm, err := multidb.NewDatabaseManager(base, nil)
 			require.NoError(t, err)
 			var svc *search.Service
@@ -374,7 +381,7 @@ func TestSharedIndexLazySearchAndQueryWarmBeforeAnswering(t *testing.T) {
 
 func TestSharedIndexDefaultDropRemovesPersistedCoordinates(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "vectors")
@@ -414,7 +421,7 @@ func TestSharedIndexPersistedScoresUseOriginalMagnitudes(t *testing.T) {
 	}{{qpb.Distance_Dot, 25}, {qpb.Distance_Euclid, 1}} {
 		t.Run(metric.distance.String(), func(t *testing.T) {
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			dbm, err := multidb.NewDatabaseManager(base, nil)
 			require.NoError(t, err)
 			var svc *search.Service
@@ -449,7 +456,7 @@ func TestSharedIndexDropRecreateRetiresCapacityAndText(t *testing.T) {
 	for _, lower := range []bool{false, true} {
 		t.Run(fmt.Sprint(lower), func(t *testing.T) {
 			ctx := context.Background()
-			base := storage.NewMemoryEngine()
+			base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 			dbm, err := multidb.NewDatabaseManager(base, nil)
 			require.NoError(t, err)
 			var svc *search.Service
@@ -499,7 +506,7 @@ func TestSharedIndexDropRecreateRetiresCapacityAndText(t *testing.T) {
 // acknowledged with points the index never holds.
 func TestSharedIndexEmptyFileBackedStoreRejectsOtherDimension(t *testing.T) {
 	ctx := context.Background()
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	dbm, err := multidb.NewDatabaseManager(base, nil)
 	require.NoError(t, err)
 	services := make(map[string]*search.Service)

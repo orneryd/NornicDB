@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -11,7 +13,7 @@ import (
 
 func reviewPropertyExecutor(t testing.TB) (*StorageExecutor, *storage.BadgerEngine) {
 	t.Helper()
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { be.Close() })
 	schema := be.GetSchemaForNamespace("review")

@@ -7,6 +7,8 @@
 package main
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,7 +18,7 @@ import (
 
 // TestUnwrapBadgerEngine_DirectReturn covers the direct-return path.
 func TestUnwrapBadgerEngine_DirectReturn(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
 
@@ -26,7 +28,7 @@ func TestUnwrapBadgerEngine_DirectReturn(t *testing.T) {
 
 // TestUnwrapBadgerEngine_NamespacedWrap covers a NamespacedEngine wrap.
 func TestUnwrapBadgerEngine_NamespacedWrap(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
 
@@ -38,7 +40,7 @@ func TestUnwrapBadgerEngine_NamespacedWrap(t *testing.T) {
 // TestBadgerStorageProbe_RoutesAccessors verifies the probe adapter
 // returns int64 values from the engine accessors.
 func TestBadgerStorageProbe_RoutesAccessors(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
 
@@ -50,7 +52,7 @@ func TestBadgerStorageProbe_RoutesAccessors(t *testing.T) {
 // TestBadgerMVCCProbe_RoutesAccessors verifies the MVCC probe adapter
 // routes to the RISK-2 accessors.
 func TestBadgerMVCCProbe_RoutesAccessors(t *testing.T) {
-	be, err := storage.NewBadgerEngineInMemory()
+	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
 

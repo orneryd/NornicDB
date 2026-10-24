@@ -2,6 +2,7 @@ package auth
 
 import (
 	"encoding/json"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -20,7 +21,7 @@ func newOAuthTestManager(t *testing.T, issuer string) *OAuthManager {
 
 	cfg := DefaultAuthConfig()
 	cfg.JWTSecret = []byte("oauth-additional-test-secret-32bytes")
-	auth, err := NewAuthenticator(cfg, storage.NewMemoryEngine())
+	auth, err := NewAuthenticator(cfg, fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)))
 	if err != nil {
 		t.Fatalf("new authenticator: %v", err)
 	}

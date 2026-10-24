@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,7 +50,7 @@ func (e *coverageQueryEmbedder) Backend() string { return "cpu" }
 var _ embed.Embedder = (*coverageQueryEmbedder)(nil)
 
 func TestDBCachingAccessorAndNoopBranches(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	queue := NewEmbedQueue(nil, engine, &EmbedQueueConfig{DeferWorkerStart: true})
 	t.Cleanup(func() { queue.Close() })
@@ -101,7 +102,7 @@ func TestDBRetentionPoliciesPathBranches(t *testing.T) {
 }
 
 func TestDBCollectSubjectRetentionRecords(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(&storage.Node{ID: "nornic:n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"owner_id": "alice", "category": "note"}})
 	require.NoError(t, err)
@@ -122,7 +123,7 @@ func TestDBCollectSubjectRetentionRecords(t *testing.T) {
 }
 
 func TestDBSearchServicePendingAndIgnoreBranches(t *testing.T) {
-	entry := &dbSearchService{svc: search.NewServiceWithDimensions(storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test"), 3)}
+	entry := &dbSearchService{svc: search.NewServiceWithDimensions(storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test"), 3)}
 	require.False(t, entry.hasPending())
 	nodes, edges := (*dbSearchService)(nil).drainPending()
 	require.Nil(t, nodes)
@@ -344,7 +345,7 @@ func TestDBPublicQueryEmbeddingAndChunkingBranches(t *testing.T) {
 }
 
 func TestDBSearchStatusAndDropStateBranches(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	cfg := DefaultConfig()
 	db := &DB{

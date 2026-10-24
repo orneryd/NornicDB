@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -8,7 +10,7 @@ import (
 )
 
 func TestListDatabaseNamesPreservesCatalogPopulation(t *testing.T) {
-	inner := storage.NewMemoryEngine()
+	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, inner.Close()) })
 	manager, err := NewDatabaseManager(inner, nil)
 	require.NoError(t, err)

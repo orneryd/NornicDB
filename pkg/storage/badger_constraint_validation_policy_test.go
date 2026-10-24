@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
@@ -118,7 +120,7 @@ func TestCompareValues_NumericConstraintValue_WidenedTypes(t *testing.T) {
 // ============================================================================
 
 func TestValidatePolicyForEdgesWithPrefix_DisallowedViolation(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -171,7 +173,7 @@ func TestValidatePolicyForEdgesWithPrefix_DisallowedViolation(t *testing.T) {
 }
 
 func TestValidatePolicyForEdgesWithPrefix_AllowedViolation(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -220,7 +222,7 @@ func TestValidatePolicyForEdgesWithPrefix_AllowedViolation(t *testing.T) {
 }
 
 func TestValidatePolicyForEdgesWithPrefix_NoPolicies_NoError(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -252,7 +254,7 @@ func TestValidatePolicyForEdgesWithPrefix_NoPolicies_NoError(t *testing.T) {
 }
 
 func TestValidatePolicyForEdgesWithPrefix_AllowedMatch_NoError(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -295,7 +297,7 @@ func TestValidatePolicyForEdgesWithPrefix_AllowedMatch_NoError(t *testing.T) {
 }
 
 func TestValidatePolicyForEdgesWithPrefix_IncomingDirection(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -349,7 +351,7 @@ func TestValidatePolicyForEdgesWithPrefix_IncomingDirection(t *testing.T) {
 // ============================================================================
 
 func TestValidateEdgeConstraintsInTxn_NilArgs(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -373,7 +375,7 @@ func TestValidateEdgeConstraintsInTxn_NilArgs(t *testing.T) {
 }
 
 func TestValidateEdgeConstraintsInTxn_ExistsViolation(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -402,7 +404,7 @@ func TestValidateEdgeConstraintsInTxn_ExistsViolation(t *testing.T) {
 }
 
 func TestValidateEdgeConstraintsInTxn_DomainViolation(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -433,7 +435,7 @@ func TestValidateEdgeConstraintsInTxn_DomainViolation(t *testing.T) {
 }
 
 func TestValidateEdgeConstraintsInTxn_DomainPass(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 
@@ -460,7 +462,7 @@ func TestValidateEdgeConstraintsInTxn_DomainPass(t *testing.T) {
 }
 
 func TestValidateEdgeConstraintsInTxn_ExistsPass(t *testing.T) {
-	eng, err := NewBadgerEngineInMemory()
+	eng, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer eng.Close()
 

@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/binary"
 	"testing"
@@ -59,9 +61,9 @@ func TestBadgerEngine_DeleteByPrefix_DropsOnlyMatchingNamespace(t *testing.T) {
 }
 
 func TestBadgerEngine_DeleteByPrefix_RemovesNumericHistoryAndDictionary(t *testing.T) {
-	engine, err := NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, EngineOptions: EngineOptions{
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{InMemory: true, EngineOptions: EngineOptions{
 		RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100},
-	}})
+	}}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, engine.Close()) })
 	_, err = engine.CreateNode(&Node{ID: "drop:n", Labels: []string{"Person"}, Properties: map[string]any{"v": 1}})

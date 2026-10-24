@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -10,7 +12,7 @@ import (
 // relationship-type count changes, for its own namespace only; a transaction
 // not pinned to the namespace keeps none (ok false).
 func TestBadgerTransactionPendingCountDeltas(t *testing.T) {
-	base, err := NewBadgerEngineInMemory()
+	base, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = base.Close() })
 

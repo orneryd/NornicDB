@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -11,7 +13,7 @@ import (
 // (compaction, GC) from racing with subsequent tests.
 func newTestMemoryEngine(t testing.TB) *storage.MemoryEngine {
 	t.Helper()
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		if err := engine.Close(); err != nil {
 			t.Errorf("close test store: %v", err)

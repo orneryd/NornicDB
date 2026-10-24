@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -356,7 +357,7 @@ func TestNewAuthMiddleware(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, err := auth.NewAuthenticator(authConfig, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
@@ -419,7 +420,7 @@ func TestAuthMiddlewareSecurityDisabled(t *testing.T) {
 	authConfig := auth.AuthConfig{
 		SecurityEnabled: false,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	config := DefaultAuthConfig()
@@ -462,7 +463,7 @@ func TestAuthMiddlewareHealthEndpoint(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 	middleware := NewAuthMiddleware(authenticator, DefaultAuthConfig())
 
@@ -491,7 +492,7 @@ func TestAuthMiddlewareRequiresToken(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 	middleware := NewAuthMiddleware(authenticator, DefaultAuthConfig())
 
@@ -515,7 +516,7 @@ func TestAuthMiddlewareValidToken(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	// Create a user and get a token
@@ -558,7 +559,7 @@ func TestAuthMiddlewareInvalidToken(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 	middleware := NewAuthMiddleware(authenticator, DefaultAuthConfig())
 
@@ -583,7 +584,7 @@ func TestAuthMiddlewareAllowAnonymous(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	config := DefaultAuthConfig()
@@ -621,7 +622,7 @@ func TestAuthMiddlewareXAPIKeyHeader(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	_, _ = authenticator.CreateUser("apiuser", "ApiPassword123!", []auth.Role{auth.RoleAdmin})
@@ -654,7 +655,7 @@ func TestAuthMiddlewareQueryToken(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	_, _ = authenticator.CreateUser("queryuser", "QueryPassword123!", []auth.Role{auth.RoleViewer})
@@ -690,7 +691,7 @@ func TestCheckToolAccess(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 	middleware := NewAuthMiddleware(authenticator, DefaultAuthConfig())
 
@@ -727,7 +728,7 @@ func TestCheckToolAccessNoContext(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 	middleware := NewAuthMiddleware(authenticator, DefaultAuthConfig())
 
@@ -746,7 +747,7 @@ func TestLogToolCall(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	config := DefaultAuthConfig()
@@ -792,7 +793,7 @@ func TestLogToolCallDisabled(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 
 	config := DefaultAuthConfig()
@@ -846,7 +847,7 @@ func TestIsSecurityEnabled(t *testing.T) {
 		JWTSecret:       []byte("test-secret-key-32-chars-minimum!"),
 		SecurityEnabled: true,
 	}
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(authConfig, memoryStorage)
 	middleware := NewAuthMiddleware(authenticator, DefaultAuthConfig())
 
@@ -856,7 +857,7 @@ func TestIsSecurityEnabled(t *testing.T) {
 
 	// With disabled authenticator
 	authConfig.SecurityEnabled = false
-	memoryStorage2 := storage.NewMemoryEngine()
+	memoryStorage2 := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator2, _ := auth.NewAuthenticator(authConfig, memoryStorage2)
 	middleware2 := NewAuthMiddleware(authenticator2, DefaultAuthConfig())
 

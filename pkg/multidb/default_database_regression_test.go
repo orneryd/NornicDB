@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -8,7 +10,7 @@ import (
 )
 
 func TestDatabaseManager_RejectsNamespacedInnerEngine(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	inner := storage.NewNamespacedEngine(base, "nornic")
@@ -17,7 +19,7 @@ func TestDatabaseManager_RejectsNamespacedInnerEngine(t *testing.T) {
 }
 
 func TestDatabaseManager_DefaultDatabaseName_NeverSystem(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	manager, err := NewDatabaseManager(engine, &Config{
@@ -34,7 +36,7 @@ func TestDatabaseManager_DefaultDatabaseName_NeverSystem(t *testing.T) {
 }
 
 func TestDatabaseManager_ConfigDefaults_AreApplied(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	manager, err := NewDatabaseManager(engine, &Config{
@@ -50,7 +52,7 @@ func TestDatabaseManager_ConfigDefaults_AreApplied(t *testing.T) {
 }
 
 func TestDatabaseManager_CleanupLeakedSystemNodes_FromDefaultDatabase(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 
 	// Simulate the historical bug: system metadata stored under the default namespace

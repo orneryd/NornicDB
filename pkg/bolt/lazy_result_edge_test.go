@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"io"
 	"net"
 	"testing"
@@ -35,7 +36,7 @@ func (p panicAfterExecutor) Execute(ctx context.Context, query string, params ma
 // reaches its end, and the panic goes on as the statement's; one that
 // panics before panics at RUN, as any statement does.
 func TestLazyResultStatementPanics(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	exec := cypher.NewStorageExecutor(store)
 	_, err := exec.Execute(context.Background(), "UNWIND range(1, 1500) AS i CREATE (:Item {k: i})", nil)
 	require.NoError(t, err)
@@ -76,7 +77,7 @@ func TestLazyResultStatementPanics(t *testing.T) {
 // A connection that fails or closes while a result streams ends the
 // statement, and the message loop then sees the failure.
 func TestLazyResultEndsWhenTheConnectionGoes(t *testing.T) {
-	store := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "test")
+	store := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "test")
 	exec := cypher.NewStorageExecutor(store)
 	_, err := exec.Execute(context.Background(), "UNWIND range(1, 1500) AS i CREATE (:Item {k: i})", nil)
 	require.NoError(t, err)

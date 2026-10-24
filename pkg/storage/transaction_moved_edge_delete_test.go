@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 	"time"
 
@@ -18,9 +20,9 @@ func TestTransactionDeleteFormerEndpointKeepsMovedEdge(t *testing.T) {
 				name += "/buffered"
 			}
 			t.Run(name, func(t *testing.T) {
-				engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+				engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 					DataDir: t.TempDir(), WriteBehind: buffered, WriteBehindInterval: time.Hour,
-				})
+				}))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = engine.Close() })
 				for _, node := range []*Node{

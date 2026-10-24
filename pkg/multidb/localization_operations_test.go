@@ -1,6 +1,8 @@
 package multidb
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"errors"
 	"testing"
 
@@ -49,7 +51,7 @@ func TestMultidbCompositeAndManagerErrorsHaveTypedIdentity(t *testing.T) {
 
 func TestMultidbStorageErrorsPreserveCauses(t *testing.T) {
 	manager, _ := setupTestManager(t)
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 
 	nodesErr := errors.New("nodes unavailable")

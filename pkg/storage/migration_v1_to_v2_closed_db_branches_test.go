@@ -1,13 +1,17 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestMigrationV1ToV2_ClosedDB_ErrorBranches(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	require.NoError(t, err)
 	require.NoError(t, engine.Close())
 
@@ -57,7 +61,10 @@ func TestMigrationV1ToV2_CompactAfterMigration_NilAndClosedDB(t *testing.T) {
 	})
 
 	t.Run("closed db hits flatten/gc error branches without panic", func(t *testing.T) {
-		engine, err := NewBadgerEngineInMemory()
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+		if engine != nil {
+			fixtureowner.Own(t, engine)
+		}
 		require.NoError(t, err)
 		require.NoError(t, engine.Close())
 

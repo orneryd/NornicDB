@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"fmt"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"math"
 	"math/rand"
 	"path/filepath"
@@ -151,7 +152,7 @@ func BenchmarkChunkedCorpusVectorSearch(b *testing.B) {
 			b.Setenv(EnvSearchResultCacheEnabled, "false")
 			b.Setenv("NORNICDB_VECTOR_CPU_BRUTE_MAX_N", "0")
 			b.Setenv("NORNICDB_VECTOR_HNSW_QUANTIZATION", mode)
-			engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "nornic")
+			engine := storage.NewNamespacedEngine(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "nornic")
 			svc := NewServiceWithDimensions(engine, dims)
 			b.Cleanup(func() { closeAfterBuilds(b, svc) })
 			rng := rand.New(rand.NewSource(1))

@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 	"time"
 
@@ -19,9 +21,9 @@ func TestEdgeOverwriteKeepsPhysicalCounts(t *testing.T) {
 					name += "/move"
 				}
 				t.Run(name, func(t *testing.T) {
-					engine, err := NewBadgerEngineWithOptions(BadgerOptions{
+					engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 						DataDir: t.TempDir(), WriteBehind: writeBehind, WriteBehindInterval: time.Hour,
-					})
+					}))
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = engine.Close() })
 					for _, node := range []*Node{

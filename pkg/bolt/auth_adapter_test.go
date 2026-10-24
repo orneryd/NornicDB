@@ -1,6 +1,7 @@
 package bolt
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +16,7 @@ func TestAuthenticatorAdapter(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
@@ -215,7 +216,7 @@ func TestAuthenticatorAdapterIntegrationWithBoltConfig(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
@@ -252,7 +253,7 @@ func TestBearerTokenAuthentication(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
@@ -385,7 +386,7 @@ func TestJWTAsBasicAuth(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
@@ -440,7 +441,7 @@ func TestGenerateClusterToken(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
@@ -507,7 +508,7 @@ func TestGenerateClusterTokenWithExpiry(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, err := auth.NewAuthenticator(config, memoryStorage)
 	if err != nil {
 		t.Fatalf("Failed to create authenticator: %v", err)
@@ -617,7 +618,7 @@ func TestClusterAuthenticationE2E(t *testing.T) {
 	config1 := auth.DefaultAuthConfig()
 	config1.JWTSecret = sharedSecret
 	config1.SecurityEnabled = true
-	memoryStorage1 := storage.NewMemoryEngine()
+	memoryStorage1 := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	node1Auth, _ := auth.NewAuthenticator(config1, memoryStorage1)
 	node1Adapter := NewAuthenticatorAdapter(node1Auth)
 
@@ -625,7 +626,7 @@ func TestClusterAuthenticationE2E(t *testing.T) {
 	config2 := auth.DefaultAuthConfig()
 	config2.JWTSecret = sharedSecret
 	config2.SecurityEnabled = true
-	memoryStorage2 := storage.NewMemoryEngine()
+	memoryStorage2 := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	node2Auth, _ := auth.NewAuthenticator(config2, memoryStorage2)
 	node2Adapter := NewAuthenticatorAdapter(node2Auth)
 
@@ -673,7 +674,7 @@ func TestClusterAuthenticationE2E(t *testing.T) {
 		rogueConfig := auth.DefaultAuthConfig()
 		rogueConfig.JWTSecret = []byte("different-secret-not-trusted!!!")
 		rogueConfig.SecurityEnabled = true
-		memoryStorage := storage.NewMemoryEngine()
+		memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 		rogueAuth, _ := auth.NewAuthenticator(rogueConfig, memoryStorage)
 
 		// Generate token with rogue secret
@@ -833,7 +834,7 @@ func TestConcurrentAuthentication(t *testing.T) {
 	config.JWTSecret = []byte("test-secret-key-for-jwt-signing!!")
 	config.SecurityEnabled = true
 
-	memoryStorage := storage.NewMemoryEngine()
+	memoryStorage := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authenticator, _ := auth.NewAuthenticator(config, memoryStorage)
 	authenticator.CreateUser("testuser", "testpass", []auth.Role{auth.RoleEditor})
 

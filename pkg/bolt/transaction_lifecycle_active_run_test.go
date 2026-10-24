@@ -1,6 +1,8 @@
 package bolt
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"errors"
 	"testing"
@@ -11,7 +13,7 @@ import (
 )
 
 func TestBoltExplicitTransactionTimeoutCancelsActiveRunBeforeRollback(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() {
 		require.NoError(t, base.Close())
 	})
@@ -104,7 +106,7 @@ func TestBoltExplicitTransactionRunAfterTimeoutFailsUntilReset(t *testing.T) {
 }
 
 func TestBoltExplicitTransactionTimeoutRejectsExecutorSuccessAfterCancel(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	executor := newControlledTransactionExecutor(storage.NewNamespacedEngine(base, "nornic"))
 	executor.succeedAfterCancel = true
@@ -134,7 +136,7 @@ func TestBoltExplicitTransactionTimeoutRejectsExecutorSuccessAfterCancel(t *test
 }
 
 func TestTransactionLifecycleDefersCompletionTelemetryUntilRunOwnedRollback(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	executor := newControlledTransactionExecutor(storage.NewNamespacedEngine(base, "nornic"))
 	release := make(chan struct{})

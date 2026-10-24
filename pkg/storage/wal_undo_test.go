@@ -8,6 +8,8 @@
 package storage
 
 import (
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -335,7 +337,7 @@ func TestRecoverCommittedTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -377,7 +379,7 @@ func TestRecoverIncompleteTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -416,7 +418,7 @@ func TestRecoverAbortedTransaction(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -468,7 +470,7 @@ func TestRecoverMixedTransactions(t *testing.T) {
 	wal.Close()
 
 	// Recover
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	if err != nil {
 		t.Fatalf("Recovery failed: %v", err)
 	}
@@ -548,7 +550,7 @@ func TestRecoverWithTransactions_ErrorAccountingPaths(t *testing.T) {
 
 	require.NoError(t, wal.Close())
 
-	baseEngine, result, err := RecoverWithTransactions(dir, "")
+	baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 	require.NoError(t, err)
 	require.NotNil(t, baseEngine)
 
@@ -823,15 +825,19 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 	defer config.DisableWAL()
 
 	t.Run("invalid snapshot returns load error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot.json")
 		require.NoError(t, os.WriteFile(snapshotPath, []byte("{bad-json"), 0644))
 
-		_, _, err := RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to load snapshot")
 	})
 
 	t.Run("invalid wal manifest returns read error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		require.NoError(t, writeWALManifest(dir, &WALManifest{
 			Version: walManifestVersion,
@@ -840,11 +846,13 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 			},
 		}))
 
-		_, _, err := RecoverWithTransactions(dir, "")
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(dir, ""))
 		require.ErrorContains(t, err, "failed to read WAL")
 	})
 
 	t.Run("snapshot restore succeeds with namespaced replay base", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot.json")
 		require.NoError(t, SaveSnapshot(&Snapshot{
@@ -859,7 +867,7 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 			Version: "1.0",
 		}, snapshotPath))
 
-		baseEngine, result, err := RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		baseEngine, result, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.NoError(t, err)
 		require.NotNil(t, baseEngine)
 		require.Equal(t, uint64(7), result.SnapshotSeq)
@@ -874,6 +882,8 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 	})
 
 	t.Run("snapshot restore returns node restore error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot-dupe.json")
 		// The current writer rejects nil entities. Keep the legacy loader's
@@ -884,11 +894,13 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(snapshotPath, legacy, 0600))
 
-		_, _, err = RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		_, _, err = fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to restore nodes")
 	})
 
 	t.Run("snapshot restore returns edge restore error", func(t *testing.T) {
+		requireRecoveryStoresClosed(t)
+
 		dir := t.TempDir()
 		snapshotPath := filepath.Join(dir, "snapshot-bad-edge.json")
 		require.NoError(t, SaveSnapshot(&Snapshot{
@@ -900,7 +912,7 @@ func TestRecoverWithTransactions_ErrorBranches(t *testing.T) {
 			Version: "1.0",
 		}, snapshotPath))
 
-		_, _, err := RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath)
+		_, _, err := fixtureowner.OwnResult3[*MemoryEngine, *TransactionRecoveryResult](t, ErrStorageClosed)(RecoverWithTransactions(filepath.Join(dir, "wal"), snapshotPath))
 		require.ErrorContains(t, err, "failed to restore edges")
 	})
 }

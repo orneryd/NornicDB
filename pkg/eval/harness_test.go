@@ -3,6 +3,7 @@ package eval
 import (
 	"bytes"
 	"context"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/search"
@@ -162,7 +163,7 @@ func TestHitRate(t *testing.T) {
 
 func TestHarnessBasic(t *testing.T) {
 	// Create a search service with test data
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	service := search.NewService(store)
 
 	// Add test nodes
@@ -200,7 +201,7 @@ func TestHarnessBasic(t *testing.T) {
 }
 
 func TestHarnessMultipleTests(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	service := search.NewService(store)
 
 	// Add diverse test nodes
@@ -253,7 +254,7 @@ func TestHarnessMultipleTests(t *testing.T) {
 }
 
 func TestHarnessNoTestCases(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	service := search.NewService(store)
 	harness := NewHarness(service)
 
@@ -355,7 +356,7 @@ func TestLoadSuiteJSON(t *testing.T) {
 // =============================================================================
 
 func TestGradedRelevance(t *testing.T) {
-	store := storage.NewMemoryEngine()
+	store := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	service := search.NewService(store)
 
 	// Add nodes

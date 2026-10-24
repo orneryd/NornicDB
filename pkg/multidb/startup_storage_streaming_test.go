@@ -3,6 +3,7 @@ package multidb
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -140,7 +141,7 @@ func (e *startupStreamingEngine) StreamNodesWithOptions(ctx context.Context, opt
 
 // Regression: initially reported in #373.
 func TestStartupCleanupScansOnlyLeakedSystemNodePrefixes(t *testing.T) {
-	engine := &startupStreamingEngine{MemoryEngine: storage.NewMemoryEngine()}
+	engine := &startupStreamingEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = engine.Close() })
 
 	nodes := []*storage.Node{
@@ -193,7 +194,7 @@ func TestStartupCleanupScansOnlyLeakedSystemNodePrefixes(t *testing.T) {
 }
 
 func TestStorageSizeReconciliationStreamsEntities(t *testing.T) {
-	engine := &startupStreamingEngine{MemoryEngine: storage.NewMemoryEngine()}
+	engine := &startupStreamingEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
 	t.Cleanup(func() { _ = engine.Close() })
 	node := &storage.Node{ID: "nornic:node", Labels: []string{"Application"}, Properties: map[string]interface{}{"payload": strings.Repeat("x", 4096)}}
 	edge := &storage.Edge{ID: "nornic:edge", StartNode: node.ID, EndNode: node.ID, Type: "SELF", Properties: map[string]interface{}{"weight": int64(1)}}
@@ -218,7 +219,7 @@ func TestStorageSizeReconciliationStreamsEntities(t *testing.T) {
 }
 
 func TestDatabaseManagerRestartDefersStorageSizeScan(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
 	first, err := NewDatabaseManager(base, nil)
@@ -240,7 +241,7 @@ func TestDatabaseManagerRestartDefersStorageSizeScan(t *testing.T) {
 }
 
 func TestWriteDoesNotForceDeferredStorageSizeScanWithoutByteLimit(t *testing.T) {
-	base := storage.NewMemoryEngine()
+	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 	_, err := NewDatabaseManager(base, nil)
 	require.NoError(t, err)

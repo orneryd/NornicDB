@@ -2,12 +2,16 @@ package storage
 
 import (
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 )
 
 func TestBadgerMVCC_AppendAndFallbackVisibility(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatalf("NewBadgerEngineInMemory failed: %v", err)
 	}
@@ -87,7 +91,10 @@ func TestBadgerMVCC_AppendAndFallbackVisibility(t *testing.T) {
 }
 
 func TestBadgerMVCC_RebuildHeads_NilContext(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
+	if engine != nil {
+		fixtureowner.Own(t, engine)
+	}
 	if err != nil {
 		t.Fatalf("NewBadgerEngineInMemory failed: %v", err)
 	}

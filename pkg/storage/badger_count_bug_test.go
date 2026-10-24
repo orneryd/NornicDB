@@ -1,6 +1,8 @@
 package storage
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"fmt"
 	"os"
 	"testing"
@@ -19,7 +21,7 @@ func TestBadgerEngine_UpdateNode_WasInsertAfterDelete(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	// Create BadgerEngine directly (no AsyncEngine, no WALEngine)
-	engine, err := NewBadgerEngine(tmpDir)
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
 	defer engine.Close()
 
@@ -77,7 +79,7 @@ func TestBadgerEngine_UpdateNode_WasInsertWithSameIDs(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	engine, err := NewBadgerEngine(tmpDir)
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
 	defer engine.Close()
 
@@ -122,7 +124,7 @@ func TestBadgerEngine_DeleteActuallyRemovesKey(t *testing.T) {
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
-	engine, err := NewBadgerEngine(tmpDir)
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(tmpDir))
 	require.NoError(t, err)
 	defer engine.Close()
 

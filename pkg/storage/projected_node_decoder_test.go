@@ -6,6 +6,8 @@ package storage
 // rejects a node whose stored value is not a required string by its bytes.
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"context"
 	"encoding/binary"
 	"sort"
@@ -19,7 +21,7 @@ import (
 )
 
 func TestProjectedNodeDecoderAcrossDatabases(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	day := time.Date(2026, 10, 4, 0, 0, 0, 0, time.UTC)
@@ -62,7 +64,7 @@ func TestProjectedNodeDecoderAcrossDatabases(t *testing.T) {
 }
 
 func TestProjectedNodeDecoderRejectedNodeAllocations(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err = engine.CreateNode(&Node{ID: "a:1", Labels: []string{"P"}, Properties: map[string]interface{}{"id": 7, "name": "x", "body": "some body text"}})
@@ -142,7 +144,7 @@ func TestMsgpackStringEquals(t *testing.T) {
 // whatever its type, without decoding it; a node without the property is left
 // to the PropertyFilter.
 func TestProjectedNodeDecoderPropertyStringEquals(t *testing.T) {
-	engine, err := NewBadgerEngineInMemory()
+	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 	long := strings.Repeat("k", 300)

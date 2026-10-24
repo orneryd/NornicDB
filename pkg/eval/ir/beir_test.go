@@ -3,6 +3,7 @@ package ir
 import (
 	"context"
 	"errors"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"strings"
 	"testing"
 
@@ -75,7 +76,7 @@ func TestIngestDocuments(t *testing.T) {
 }
 
 func TestNornicDocumentSinkPreservesBEIRID(t *testing.T) {
-	engine := storage.NewNamespacedEngine(storage.NewMemoryEngine(), "bench")
+	engine := storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "bench")
 	index := search.NewServiceWithDimensions(engine, 2)
 	sink := &NornicDocumentSink{Engine: engine, Indexer: index}
 	require.NoError(t, sink.StoreDocument(context.Background(), Document{ID: "doc-1", Title: "Title", Text: "retrieval text"}))

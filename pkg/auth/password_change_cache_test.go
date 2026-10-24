@@ -1,6 +1,8 @@
 package auth
 
 import (
+	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
+
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -11,7 +13,7 @@ import (
 // registered with OnPasswordChange forgets the user's entries, and only
 // that user's.
 func TestPasswordChangeForgetsCachedCredentials(t *testing.T) {
-	engine := storage.NewMemoryEngine()
+	engine := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = engine.Close() })
 	config := DefaultAuthConfig()
 	config.DefaultAdminUsername = ""
