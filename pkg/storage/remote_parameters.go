@@ -208,6 +208,9 @@ func (s remoteStatement) MarshalJSON() ([]byte, error) {
 	}
 	w.buf = append(w.buf, `"statement":`...)
 	w.buf = appendRemoteJSONString(w.buf, remoteHTTPRewrite(s.Statement, shapes))
+	if s.IncludeStats {
+		w.buf = append(w.buf, `,"includeStats":true`...)
+	}
 	if len(s.ResultDataContents) > 0 {
 		w.buf = append(w.buf, `,"resultDataContents":[`...)
 		for i, content := range s.ResultDataContents {

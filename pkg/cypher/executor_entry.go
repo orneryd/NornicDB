@@ -530,10 +530,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			if ftx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
 				result, execErr = e.executeViaPreparedFabricWithTx(ctx, cypher, mergedParams, ftx, false, preparedFabric)
 			} else {
-				result, execErr = e.executeViaFabric(ctx, cypher, mergedParams)
+				result, execErr = e.executeViaFabric(ctx, cypher, mergedParams, nil, true)
 			}
 		} else {
-			result, execErr = e.executeViaFabric(ctx, cypher, mergedParams)
+			result, execErr = e.executeViaFabric(ctx, cypher, mergedParams, nil, true)
 		}
 		if execErr != nil {
 			return nil, execErr
@@ -543,13 +543,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			e.cache.putWithLabelsAndTraceForEmbedding(fabricResultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), HotPathTrace{}, embeddingGeneration)
 		}
 
-		if info.IsWriteQuery && e.cache != nil {
-			if len(info.Labels) > 0 {
-				e.cache.InvalidateLabels(info.Labels)
-			} else {
-				e.cache.Invalidate()
-			}
-		}
+		e.invalidateResultCacheForQuery(info)
 
 		return result, nil
 	}
@@ -644,6 +638,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 	if result, err := e.parseTransactionStatement(ctx, cypher); result != nil || err != nil {
 		if err == nil && e.txContext != nil && e.txContext.active {
+			e.txContext.coordinatorOwned = e.txContext.coordinatorOwned || storage.CoordinatorOwnsTransaction(ctx)
 			// BEGIN: the client's transaction metadata (WithTransactionMetadata).
 			if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
 				if metadataErr := applyTransactionMetadata(ctx, tx); metadataErr != nil {
@@ -817,6 +812,20 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// This extracts query metadata (HasMatch, IsReadOnly, Labels, etc.) once
 	// and caches it for repeated queries, avoiding redundant string parsing
 	info := e.analyzer.Analyze(cypher)
+	ctx, finishMode, modeErr := e.observeResolvedStatementMode(ctx, cypher)
+	if modeErr != nil {
+		return nil, modeErr
+	}
+	if finishMode != nil {
+		defer func() {
+			if retErr == nil {
+				result = finishMode(result)
+			}
+		}()
+	}
+	if err := e.admitResolvedStatementWrite(ctx, cypher); err != nil {
+		return nil, err
+	}
 
 	// Plan 04-03 Sites 1 + 3 (RISK-1 corrected): classify ONCE post-Analyze.
 	// isFabric=false here because the fabric branch returns at line ~963
@@ -955,26 +964,13 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Retain the revision captured before execution. A read overlapping a
 	// mutation must not publish its stale result under the newer revision.
 	if err == nil && resultCacheKey != "" && !stream.streamed() {
+		if finishMode != nil {
+			result = finishMode(result)
+		}
 		e.cache.putWithLabelsAndTraceForEmbedding(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace(), embeddingGeneration)
 	}
 
-	// Invalidate caches on write operations (using cached analysis)
-	if info.IsWriteQuery {
-		// Only invalidate node lookup cache when NODES are deleted
-		// Relationship-only deletes (like benchmark CREATE rel DELETE rel) don't affect node cache
-		if info.HasDelete && queryDeletesNodes(cypher) {
-			e.invalidateNodeLookupCache()
-		}
-
-		// Invalidate query result cache using cached labels
-		if e.cache != nil {
-			if len(info.Labels) > 0 {
-				e.cache.InvalidateLabels(info.Labels)
-			} else {
-				e.cache.Invalidate()
-			}
-		}
-	}
+	e.invalidateCachesForQuery(info, cypher)
 
 	return result, err
 }
