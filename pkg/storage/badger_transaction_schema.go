@@ -20,6 +20,10 @@ func (tx *BadgerTransaction) Schema() (*SchemaManager, error) {
 		tx.mu.Unlock()
 		return nil, mixedSchemaAndDataError(true)
 	}
+	if err := tx.admitWriteLocked(); err != nil {
+		tx.mu.Unlock()
+		return nil, err
+	}
 	tx.schemaTransaction = true
 	tx.mu.Unlock()
 	return tx.KnowledgePolicySchema()
@@ -40,7 +44,7 @@ func (tx *BadgerTransaction) ensureDataWriteAllowedLocked() error {
 	if tx.schemaTransaction {
 		return mixedSchemaAndDataError(false)
 	}
-	return nil
+	return tx.admitWriteLocked()
 }
 
 // StageSchemaChanges captures ordinary DDL and its runtime backfills for commit.

@@ -67,18 +67,6 @@ func TestSmallCypherHelperBranches(t *testing.T) {
 	policy := minimalPolicyMap("node-1")
 	require.Equal(t, "node-1", policy["targetId"])
 	require.Equal(t, string(knowledgepolicy.ScopeNode), policy["targetScope"])
-
-	writeQueries := []string{
-		"CREATE (n)",
-		"match (n) merge (m)",
-		"MATCH (n) DELETE n",
-		"MATCH (n) SET n.name = 'a'",
-		"MATCH (n) REMOVE n.name",
-	}
-	for _, query := range writeQueries {
-		require.True(t, looksLikeWriteQuery(query), query)
-	}
-	require.False(t, looksLikeWriteQuery("MATCH (n) RETURN n"))
 }
 
 func TestSliceAndNumericCoercionHelpers(t *testing.T) {

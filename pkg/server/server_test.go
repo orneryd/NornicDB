@@ -56,6 +56,13 @@ func stopTestServer(t testing.TB, server *Server) {
 
 func setupTestServerWithConfig(t testing.TB, configure func(*Config)) (*Server, *auth.Authenticator) {
 	t.Helper()
+	return setupTestServerWithDatabaseConfig(t, nil, configure)
+}
+
+// setupTestServerWithDatabaseConfig is setupTestServerWithConfig whose
+// database configuration configureDatabase may change first.
+func setupTestServerWithDatabaseConfig(t testing.TB, configureDatabase func(*nornicdb.Config), configure func(*Config)) (*Server, *auth.Authenticator) {
+	t.Helper()
 
 	// Create temporary directory for test database
 	tmpDir, err := os.MkdirTemp("", "nornicdb-server-test-*")
@@ -77,6 +84,9 @@ func setupTestServerWithConfig(t testing.TB, configure func(*Config)) (*Server, 
 	// tests opt in here so prior-version fixtures aren't silently erased
 	// by the overwrite-in-place update path.
 	config.Database.MVCCRetentionMaxVersions = 100
+	if configureDatabase != nil {
+		configureDatabase(config)
+	}
 
 	db, err := nornicdb.Open(tmpDir, config)
 	if err != nil {

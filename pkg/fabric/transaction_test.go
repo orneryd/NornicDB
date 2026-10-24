@@ -286,43 +286,105 @@ func TestFabricTransaction_CommitFailureRollsBackRemaining(t *testing.T) {
 	}
 }
 
-func TestFabricTransaction_CommitFailureCompensatesCommittedShards(t *testing.T) {
+// The read-only participants end first and the write participant commits
+// last, whatever order they joined in: the transaction's outcome is the
+// writer's.
+func TestFabricTransaction_CommitEndsReadersBeforeTheWriter(t *testing.T) {
 	tx := NewFabricTransaction("tx-013")
-
+	_, _ = tx.GetOrOpen("shard_c", false)
+	_, _ = tx.GetOrOpen("shard_w", true)
 	_, _ = tx.GetOrOpen("shard_a", false)
-	_, _ = tx.GetOrOpen("shard_b", false)
 
-	committed := make([]string, 0, 2)
-	rolledBack := make([]string, 0, 2)
+	var order []string
+	err := tx.Commit(func(sub *SubTransaction) error {
+		order = append(order, sub.ShardName)
+		return nil
+	}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Join(order, ",") != "shard_a,shard_c,shard_w" {
+		t.Fatalf("expected the readers first and the writer last, got %v", order)
+	}
+}
+
+// A read-only participant that fails to end rolls the writer back before it
+// commits: the failed transaction leaves no write.
+func TestFabricTransaction_ReaderCommitFailureRollsBackTheWriter(t *testing.T) {
+	tx := NewFabricTransaction("tx-013b")
+	_, _ = tx.GetOrOpen("shard_r", false)
+	_, _ = tx.GetOrOpen("shard_w", true)
+
+	var committed, rolledBack []string
 	err := tx.Commit(
 		func(sub *SubTransaction) error {
-			committed = append(committed, sub.ShardName)
-			if sub.ShardName == "shard_b" {
-				return fmt.Errorf("commit failed")
+			if sub.ShardName == "shard_r" {
+				return fmt.Errorf("reader commit failed")
 			}
+			committed = append(committed, sub.ShardName)
 			return nil
 		},
 		func(sub *SubTransaction) error {
 			rolledBack = append(rolledBack, sub.ShardName)
-			return nil
+			return fmt.Errorf("rollback of %s failed", sub.ShardName)
 		},
 	)
-	if err == nil {
-		t.Fatal("expected commit error")
+	if err == nil || !strings.Contains(err.Error(), "commit failed on shard 'shard_r'") || !strings.Contains(err.Error(), "rollback failed on") {
+		t.Fatalf("expected the reader's commit failure, got %v", err)
+	}
+	if len(committed) != 0 {
+		t.Fatalf("the writer committed after a reader failed: %v", committed)
+	}
+	if !strings.Contains(strings.Join(rolledBack, ","), "shard_w") {
+		t.Fatalf("expected the writer rolled back, got %v", rolledBack)
 	}
 	if tx.State() != "rolledback" {
-		t.Fatalf("expected rolledback state, got %s", tx.State())
+		t.Fatalf("expected rolledback, got %s", tx.State())
 	}
+}
 
-	if len(rolledBack) != 2 {
-		t.Fatalf("expected compensation rollback on all participants, got %v", rolledBack)
-	}
+// The writer's own commit failure is the transaction's outcome; the
+// read-only participants have already ended and hold nothing.
+func TestFabricTransaction_WriterCommitFailureIsTheOutcome(t *testing.T) {
+	tx := NewFabricTransaction("tx-013c")
+	_, _ = tx.GetOrOpen("shard_r", false)
+	_, _ = tx.GetOrOpen("shard_w", true)
 
-	state := tx.SubTransactions()
-	for name, sub := range state {
-		if sub.State != "rolledback" {
-			t.Fatalf("expected subtransaction %s to be rolledback, got %s", name, sub.State)
+	err := tx.Commit(func(sub *SubTransaction) error {
+		if sub.ShardName == "shard_w" {
+			return fmt.Errorf("writer commit failed")
 		}
+		return nil
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "commit failed on shard 'shard_w'") {
+		t.Fatalf("expected the writer's commit failure, got %v", err)
+	}
+	subs := tx.SubTransactions()
+	if subs["shard_r"].State != "committed" || subs["shard_w"].State != "rolledback" || tx.State() != "rolledback" {
+		t.Fatalf("unexpected states: reader %s, writer %s, transaction %s", subs["shard_r"].State, subs["shard_w"].State, tx.State())
+	}
+}
+
+// ClaimWrite makes a participant the write participant, again for its next
+// write, and refuses a second one; a participant that only reads never
+// becomes the writer.
+func TestClaimWrite(t *testing.T) {
+	tx := NewFabricTransaction("tx-claim")
+	if _, err := tx.GetOrOpen("shard_b", false); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	sub, err := tx.ClaimWrite("shard_a")
+	if err != nil || sub.ShardName != "shard_a" || !sub.IsWrite {
+		t.Fatalf("first write: %v %+v", err, sub)
+	}
+	if _, err := tx.ClaimWrite("shard_a"); err != nil {
+		t.Fatalf("the writer's next write: %v", err)
+	}
+	if _, err := tx.ClaimWrite("shard_b"); err != ErrSecondWriteShard {
+		t.Fatalf("expected ErrSecondWriteShard, got %v", err)
+	}
+	if tx.WriteShard() != "shard_a" || tx.SubTransactions()["shard_b"].IsWrite {
+		t.Fatalf("expected only shard_a to write, got %q", tx.WriteShard())
 	}
 }
 

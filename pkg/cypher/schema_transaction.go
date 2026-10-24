@@ -20,10 +20,16 @@ func (e *StorageExecutor) prepareSchemaTransaction(ctx context.Context) error {
 	if !ok {
 		return nil
 	}
-	if err := wrapper.tx.SetNamespace(e.currentDatabaseName()); err != nil {
+	// A schema change is a write: on a composite statement's participant
+	// storage it begins the transaction (writable).
+	tx, err := wrapper.writable()
+	if err != nil {
 		return err
 	}
-	view, err := wrapper.tx.Schema()
+	if err := tx.SetNamespace(e.currentDatabaseName()); err != nil {
+		return err
+	}
+	view, err := tx.Schema()
 	if err != nil {
 		return err
 	}
@@ -50,7 +56,11 @@ func (e *StorageExecutor) mutateSchema(ctx context.Context, mutation func(*stora
 		return err
 	}
 	if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
-		return wrapper.tx.StageSchemaChanges()
+		tx, err := wrapper.writable()
+		if err != nil {
+			return err
+		}
+		return tx.StageSchemaChanges()
 	}
 	return nil
 }

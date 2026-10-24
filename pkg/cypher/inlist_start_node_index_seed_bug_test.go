@@ -152,8 +152,8 @@ func TestBug_InListStartNodeDoesNotIndexSeed_NoLabelScan(t *testing.T) {
 // bound relationship.
 //
 // NOTE: this only pins correctness, not the scan budget. DELETE mutations
-// auto-wrap in an implicit transaction (looksLikeWriteQuery in
-// transaction.go), and transactionStorageWrapper.GetNodesByLabel /
+// auto-wrap in an implicit transaction, and
+// transactionStorageWrapper.GetNodesByLabel /
 // GetOutgoingEdges (transaction_storage_wrapper.go) read through
 // `w.tx` (*storage.BadgerTransaction), not through `w.underlying` — the
 // engine scanCountingEngine wraps. So a scan-count assertion here would

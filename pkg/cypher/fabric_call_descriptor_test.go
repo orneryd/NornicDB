@@ -145,8 +145,12 @@ func TestFabricCallBodyUnionNames(t *testing.T) {
 	}
 }
 
-// A FOREACH update is a write: a second constituent's write in the same
-// transaction is rejected, also between UNION branches.
+// A FOREACH that writes claims its database: a second constituent's write
+// in the same transaction is rejected, also between UNION branches. A FOREACH
+// over no node writes nothing and claims nothing, so the second write is
+// accepted: unlike Neo4j, which takes the write database from the statement's
+// access mode, NornicDB takes it where a write is made, and whether this
+// statement claims depends on the data it matches.
 func TestFabricForeachWriteOccupiesWriteShard(t *testing.T) {
 	ctx := context.Background()
 	exec := newFabricCallRowsExecutor(t)
@@ -165,6 +169,12 @@ func TestFabricForeachWriteOccupiesWriteShard(t *testing.T) {
 			_, err = runExec.Execute(ctx, "USE comp.one "+body, nil)
 			require.NoError(t, err)
 			_, err = runExec.Execute(ctx, "USE comp.two CREATE (:FabricForeachWrite)", nil)
+			if body != "FOREACH (x IN [1] | "+action+")" {
+				// The FOREACH over a missing node writes nothing, so it claims
+				// no database (the database is claimed where a write is made).
+				require.NoError(t, err)
+				return
+			}
 			require.ErrorContains(t, err, second)
 		})
 	}

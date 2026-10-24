@@ -99,7 +99,9 @@ import (
 //	Returns detailed error messages for syntax errors, type mismatches,
 //	and execution failures with Neo4j-compatible error codes.
 func (e *StorageExecutor) Execute(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
-	return e.execute(ctx, cypher, params, nil, true)
+	return e.inCompositeStatement(ctx, cypher, func(ctx context.Context, target *StorageExecutor) (*ExecuteResult, error) {
+		return target.execute(ctx, cypher, params, nil, true)
+	})
 }
 
 // executeRouted continues the same semantic statement through a transparent
@@ -128,9 +130,17 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		}
 	}()
 	// Every rejection of the caller's statement fails its explicit transaction,
-	// including errors before parsing, routing or the system statement policy.
+	// including errors before parsing, routing or the system statement policy,
+	// and a panic: the transaction can't commit what the statement wrote
+	// before it, and the panic goes on to the caller.
 	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
-		defer func() { e.failTransaction(ctx, retErr) }()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				e.failTransaction(ctx, fmt.Errorf("statement panicked: %v", recovered))
+				panic(recovered)
+			}
+			e.failTransaction(ctx, retErr)
+		}()
 	}
 	defer func() {
 		if result != nil && retErr == nil && result.MapKeyOrders == nil {
@@ -628,18 +638,6 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		return result, err
 	}
 	if result, err := e.parseTransactionStatement(ctx, cypher); result != nil || err != nil {
-		if err == nil && e.txContext != nil && e.txContext.active {
-			// BEGIN: the client's transaction metadata (WithTransactionMetadata).
-			if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
-				if metadataErr := applyTransactionMetadata(ctx, tx); metadataErr != nil {
-					_, _ = e.handleRollback()
-					return nil, metadataErr
-				}
-			}
-		}
-		if err == nil && e.txContext != nil && e.txContext.active && e.txContext.running == nil {
-			e.txContext.running = runningTransactions.begin(ctx, e.currentDatabaseName())
-		}
 		return result, err
 	}
 	// A statement that fails in an explicit transaction marks it failed, as in

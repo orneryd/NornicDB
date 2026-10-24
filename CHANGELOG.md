@@ -84,6 +84,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   input expressions before effects. Expand wildcards from the known scope and
   procedure registry, and expose complete facts to composite query planning;
   unresolved metadata is a terminal error rather than a guessed or empty header.
+- A composite-database statement run outside an explicit transaction keeps its writes only when the whole statement
+  succeeds: a later runtime error, or an error from a remote constituent, now leaves none of them, as in Neo4j. A
+  statement writes to one database: the first write that reaches a database takes it as the statement's write
+  database, wherever it runs (a part of the statement, a statement a procedure runs, a database a `USE` there selects,
+  a composite statement run inside it, a remote constituent's write session), and a write to a second database is
+  refused before it is made, with nothing kept. A statement that writes nothing takes nothing, and the composite
+  database itself is never the write database, so a procedure called on it that writes one database works. On a
+  remote constituent only a built-in procedure's mode counts as reading; parts that read run in a read session, which
+  keeps nothing. A statement a procedure runs inside a composite statement is refused a `CALL { ... } IN TRANSACTIONS`
+  batch, as the composite statement itself is.
 
 - Configure sampler recovery spacing and unleased rearm with positive-millisecond
   `NORNICDB_MEMORY_RECOVERY_INTERVAL_MS` / `NORNICDB_MEMORY_RECOVERY_REARM_MS`

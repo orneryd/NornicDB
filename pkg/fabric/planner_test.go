@@ -25,9 +25,6 @@ func TestPlan_SimpleQueryNoUse(t *testing.T) {
 	if exec.Query != "MATCH (n) RETURN n" {
 		t.Errorf("expected original query, got %s", exec.Query)
 	}
-	if exec.IsWrite {
-		t.Error("expected IsWrite=false for read query")
-	}
 }
 
 func TestPlan_PreservesOuterClausesAroundCallUseBlocks(t *testing.T) {
@@ -467,36 +464,6 @@ RETURN n`
 	}
 }
 
-func TestPlan_WriteDetection(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db", &LocationLocal{DBName: "db"})
-	p := NewFabricPlanner(catalog)
-
-	tests := []struct {
-		query   string
-		isWrite bool
-	}{
-		{"MATCH (n) RETURN n", false},
-		{"CREATE (n:Test)", true},
-		{"MERGE (n:Test {id: 1})", true},
-		{"MATCH (n) DELETE n", true},
-		{"MATCH (n) DETACH DELETE n", true},
-		{"MATCH (n) SET n.x = 1", true},
-		{"MATCH (n) REMOVE n.x", true},
-	}
-
-	for _, tt := range tests {
-		frag, err := p.Plan(tt.query, "db")
-		if err != nil {
-			t.Fatalf("unexpected error for %q: %v", tt.query, err)
-		}
-		exec := frag.(*FragmentExec)
-		if exec.IsWrite != tt.isWrite {
-			t.Errorf("query %q: expected IsWrite=%v, got %v", tt.query, tt.isWrite, exec.IsWrite)
-		}
-	}
-}
-
 func TestPlan_EmptyQuery(t *testing.T) {
 	p := NewFabricPlanner(NewCatalog())
 	_, err := p.Plan("", "db")
@@ -778,29 +745,6 @@ func TestExtractWithImports(t *testing.T) {
 			if got[i] != tt.want[i] {
 				t.Errorf("extractWithImports(%q)[%d] = %s, want %s", tt.body, i, got[i], tt.want[i])
 			}
-		}
-	}
-}
-
-func TestQueryIsWrite(t *testing.T) {
-	tests := []struct {
-		query string
-		want  bool
-	}{
-		{"MATCH (n) RETURN n", false},
-		{"CREATE (n:Test)", true},
-		{"MERGE (n:Test {id: 1})", true},
-		{"MATCH (n) DELETE n", true},
-		{"MATCH (n) DETACH DELETE n", true},
-		{"MATCH (n) SET n.x = 1 RETURN n", true},
-		{"MATCH (n) REMOVE n.x RETURN n", true},
-		{"RETURN 1", false},
-	}
-
-	for _, tt := range tests {
-		got := queryIsWrite(tt.query)
-		if got != tt.want {
-			t.Errorf("queryIsWrite(%q) = %v, want %v", tt.query, got, tt.want)
 		}
 	}
 }

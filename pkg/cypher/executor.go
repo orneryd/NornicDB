@@ -787,7 +787,20 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 	}
 	exec.queryStatistics = (&queryStatisticsRegistry{}).forDatabase(exec.currentDatabaseName())
 	ensureBuiltInProceduresRegistered()
-	_ = exec.loadPersistedProcedures()
+	// Building an executor reads the procedure catalog. On a composite
+	// statement's participant storage it reads the database itself: that
+	// read is not the statement's, so it begins no participant transaction.
+	// Only an executor of a database itself migrates its catalog; over a
+	// participant or a composite database the catalog is only read, so
+	// nothing is written outside a statement's transaction.
+	catalog, migrate := store, true
+	if participant, ok := store.(*transactionStorageWrapper); ok && participant.lazy != nil {
+		catalog, migrate = participant.GetInnerEngine(), false
+	}
+	if _, composite := store.(*storage.CompositeEngine); composite {
+		migrate = false
+	}
+	_ = exec.loadPersistedProceduresFrom(catalog, migrate)
 	return exec
 }
 
@@ -1635,11 +1648,66 @@ func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cy
 	})
 }
 
+// configureStatementTransaction applies the settings of a transaction opened
+// for one autocommit statement, without a user BEGIN: CREATE skips the
+// existence read of its generated IDs, and COMMIT skips the per-commit
+// engine.Sync(). The Bolt session's end-of-session Flush and the async
+// engine's ticker-driven flush coalesce durability for implicit writes;
+// forcing an Msync per UNWIND batch turned every batch into a 300µs syscall
+// for no user-visible benefit.
+func configureStatementTransaction(tx *storage.BadgerTransaction) error {
+	if err := tx.SetSkipCreateExistenceCheck(true); err != nil {
+		return err
+	}
+	return tx.SetImplicit(true)
+}
+
+// implicitTransaction is an implicit transaction as it began
+// (beginImplicitTransaction), with its WAL begin marker.
+type implicitTransaction struct {
+	tx          *storage.BadgerTransaction
+	wal         *storage.WAL
+	walSeqStart uint64
+	dbName      string
+}
+
+// abort rolls the transaction back, with its WAL abort marker.
+func (t *implicitTransaction) abort(reason string) {
+	_ = t.tx.Rollback()
+	if t.wal != nil && t.walSeqStart > 0 {
+		_, _ = t.wal.AppendTxAbort(t.dbName, t.tx.ID, reason)
+	}
+}
+
+// empty reports whether the transaction changed nothing: a write-shaped
+// statement can legitimately match no mutation targets, and committing an
+// empty Badger transaction still performs store-wide validation work, so it
+// rolls back instead.
+func (t *implicitTransaction) empty() bool {
+	return t.tx.OperationCount() == 0 && !t.tx.HasKnowledgePolicyChanges()
+}
+
 func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (result *ExecuteResult, retErr error) {
 	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
 	if inlineEmbeddingEnabled {
 		cypher = parsedCypher
 		upperQuery = upperASCII(cypher)
+	}
+
+	// Inside a composite statement a write runs on its database's
+	// participant storage, in the transaction that commits or rolls back
+	// with the whole statement; the composite database routes to its
+	// constituents' storage.
+	composite := compositeStatementFrom(ctx)
+	if composite != nil {
+		target, targetCtx, err := composite.executorFor(ctx, e)
+		if err != nil {
+			return nil, err
+		}
+		if participant, ok := target.storage.(*transactionStorageWrapper); ok {
+			return target.onTransactionStorage(targetCtx, participant, inlineEmbeddingEnabled, execute)
+		}
+		return execute(targetCtx, target)
 	}
 
 	// Try to get a transaction-capable engine and async wrapper (if present)
@@ -1660,7 +1728,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 			return nil, localizedError(localization.CypherCoreEmbeddingTransactionStorageRequired(), nil)
 		}
 		result, err := execute(ctx, e)
-		if err == nil {
+		if err == nil && composite == nil {
 			// Legacy engines apply writes directly; successful execution is
 			// their publication boundary, with no pending transaction.
 			e.publishDirectStatementCommit(ctx, cypher)
@@ -1668,63 +1736,11 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		return result, err
 	}
 
-	// Start implicit transaction
-	if engines.namespace != "" {
-		if primer, ok := txEngine.(interface{ EnsureNamespaceMVCC(string) error }); ok {
-			if err := primer.EnsureNamespaceMVCC(engines.namespace); err != nil {
-				return nil, localizedError(localization.CypherCoreImplicitTransactionPrimeFailed(err), err)
-			}
-		}
-	}
-	tx, err := beginTransactionSnapshot(txEngine)
+	started, err := e.beginImplicitTransaction(ctx, txEngine, engines.namespace)
 	if err != nil {
-		return nil, localizedError(localization.CypherCoreImplicitTransactionStartFailed(err), err)
-	}
-	if engines.namespace != "" {
-		if err := tx.SetNamespace(engines.namespace); err != nil {
-			_ = tx.Rollback()
-			return nil, localizedError(localization.CypherCoreImplicitTransactionPinFailed(err), err)
-		}
-	}
-	if err := applyTransactionMetadata(ctx, tx); err != nil {
-		_ = tx.Rollback()
 		return nil, err
 	}
-
-	// Defer constraint validation to commit for implicit transactions.
-	// This avoids duplicate per-operation checks and improves write throughput.
-	if err := tx.SetDeferredConstraintValidation(true); err != nil {
-		_ = tx.Rollback()
-		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
-	}
-	if err := tx.SetSkipCreateExistenceCheck(true); err != nil {
-		_ = tx.Rollback()
-		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
-	}
-	// Skip the per-commit engine.Sync(). The Bolt session's end-of-session
-	// Flush and the async engine's ticker-driven flush coalesce durability
-	// for implicit writes; forcing an Msync per UNWIND batch turned every
-	// batch into a 300µs syscall for no user-visible benefit.
-	if err := tx.SetImplicit(true); err != nil {
-		_ = tx.Rollback()
-		return nil, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
-	}
-
-	// Optional WAL transaction markers for receipts.
-	var wal *storage.WAL
-	var walSeqStart uint64
-	txID := tx.ID
-	var dbName string
-	if txID != "" {
-		wal, dbName = e.resolveWALAndDatabase()
-		if wal != nil {
-			walSeqStart, err = wal.AppendTxBegin(dbName, txID, nil)
-			if err != nil {
-				_ = tx.Rollback()
-				return nil, localizedError(localization.CypherCoreImplicitTransactionWALBeginFailed(err), err)
-			}
-		}
-	}
+	begun := &started
 
 	// Create a transactional wrapper that routes writes through the transaction
 	// CRITICAL: We pass the wrapper through context instead of modifying e.storage
@@ -1734,7 +1750,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		separator = ""
 	}
 	txWrapper := &transactionStorageWrapper{
-		tx:             tx,
+		tx:             started.tx,
 		underlying:     e.storage,
 		namespace:      engines.namespace,
 		separator:      separator,
@@ -1775,56 +1791,69 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// Handle result
 	if execErr != nil {
 		// Rollback on any error - prevents partial data corruption
-		tx.Rollback()
+		begun.abort(execErr.Error())
 		txExec.invalidateNodeLookupCache()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, execErr.Error())
-		}
 		return result, execErr
 	}
-
-	// A write-shaped query can legitimately match no mutation targets. Committing
-	// an empty Badger transaction still performs store-wide validation work, so
-	// roll it back after the match has completed instead.
-	if tx.OperationCount() == 0 && !tx.HasKnowledgePolicyChanges() {
-		_ = tx.Rollback()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, "no mutations")
-		}
+	if begun.empty() {
+		begun.abort("no mutations")
 		return result, nil
 	}
 
 	if inlineEmbeddingEnabled {
 		if err := txExec.applyInlineEmbeddingMutations(txCtx, txWrapper.snapshotMutatedNodeIDs()); err != nil {
-			tx.Rollback()
+			begun.abort(err.Error())
 			txExec.invalidateNodeLookupCache()
-			if wal != nil && walSeqStart > 0 {
-				_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
-			}
 			return nil, err
 		}
 	}
 
 	// A statement TERMINATE TRANSACTIONS ended doesn't commit (#718).
 	if running, ok := ctx.Value(ctxKeyRunningTransaction{}).(*runningTransaction); ok && running.terminated.Load() {
-		tx.Rollback()
+		begun.abort("terminated")
 		txExec.invalidateNodeLookupCache()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, "terminated")
-		}
 		return nil, transactionTerminatedError()
 	}
 
+	metadata, err := e.commitImplicitTransaction(ctx, begun, txWrapper, txExec, cypher)
+	if err != nil {
+		return nil, err
+	}
+	if len(metadata) > 0 && result != nil {
+		if result.Metadata == nil {
+			result.Metadata = make(map[string]interface{}, len(metadata))
+		}
+		for key, value := range metadata {
+			result.Metadata[key] = value
+		}
+	}
+	return result, nil
+}
+
+// commitImplicitTransaction commits the implicit transaction begun, which a
+// statement ran on txWrapper through txExec: a single-database statement's,
+// or an autocommit composite statement's participant's. One that
+// changed nothing rolls back. It returns the commit's receipt and
+// write-behind metadata. cypher is the statement, for a commit-time MERGE
+// conflict's retry marking, or "" for none.
+func (e *StorageExecutor) commitImplicitTransaction(ctx context.Context, begun *implicitTransaction, txWrapper *transactionStorageWrapper, txExec *StorageExecutor, cypher string) (map[string]interface{}, error) {
+	tx := begun.tx
+	if begun.empty() {
+		begun.abort("no mutations")
+		return nil, nil
+	}
 	// Commit successful transaction. The statement's context makes commit-time
 	// validation stop when the statement is terminated or its client goes away
 	// (#1115); the deferred handler in Execute reports Transaction.Terminated.
 	if err := e.commitStorageTransaction(ctx, tx); err != nil {
 		txExec.invalidateNodeLookupCache()
-		if wal != nil && walSeqStart > 0 {
-			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
+		if begun.wal != nil && begun.walSeqStart > 0 {
+			_, _ = begun.wal.AppendTxAbort(begun.dbName, tx.ID, err.Error())
 		}
-		if info := e.analyzer.Analyze(cypher); IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
-			err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
+		if cypher != "" {
+			if info := e.analyzer.Analyze(cypher); IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
+				err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
+			}
 		}
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.
 		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
@@ -1834,6 +1863,13 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		// same wire shape.
 		return nil, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(err), err)
 	}
+	if txWrapper.lazy != nil {
+		// A participant's: what applies once it commits
+		// (suppressions, schema follow-ups), as an explicit commit applies it.
+		for _, action := range txWrapper.schemaCommitActions {
+			action()
+		}
+	}
 	txExec.refreshSearchAfterCommit(txWrapper)
 
 	// Attach receipt metadata if WAL markers were recorded. Receipts are
@@ -1841,14 +1877,12 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// the same information (its commit markers are appended before the ACK
 	// per the buffer design). The eventual marker below is how the HTTP
 	// layer tells an acknowledged buffered commit from a durable one.
-	if wal != nil && walSeqStart > 0 {
+	var metadata map[string]interface{}
+	if begun.wal != nil && begun.walSeqStart > 0 {
 		opCount := tx.OperationCount()
-		if commitSeq, walErr := wal.AppendTxCommit(dbName, txID, opCount); walErr == nil {
-			if receipt, recErr := storage.NewReceipt(txID, walSeqStart, commitSeq, dbName, time.Now().UTC()); recErr == nil {
-				if result.Metadata == nil {
-					result.Metadata = make(map[string]interface{})
-				}
-				result.Metadata["receipt"] = receipt
+		if commitSeq, walErr := begun.wal.AppendTxCommit(begun.dbName, tx.ID, opCount); walErr == nil {
+			if receipt, recErr := storage.NewReceipt(tx.ID, begun.walSeqStart, commitSeq, begun.dbName, time.Now().UTC()); recErr == nil {
+				metadata = map[string]interface{}{"receipt": receipt}
 			}
 		}
 	}
@@ -1857,10 +1891,10 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// Every eligible write buffers when the engine has it enabled; this
 	// marker is what makes the server answer 202 Accepted instead of 200.
 	if tx.AcknowledgedBuffered() {
-		if result.Metadata == nil {
-			result.Metadata = make(map[string]interface{})
+		if metadata == nil {
+			metadata = make(map[string]interface{}, 1)
 		}
-		result.Metadata["eventual"] = true
+		metadata["eventual"] = true
 	}
 
 	// Promote the tx-scoped MERGE lookup cache into the parent so
@@ -1868,8 +1902,58 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// speedup. Tx isolation is preserved because each in-flight tx had
 	// its own clone; only post-commit entries graduate to the parent.
 	txExec.promoteNodeLookupCacheTo(e)
+	return metadata, nil
+}
 
-	return result, nil
+// beginImplicitTransaction begins an implicit transaction on txEngine, in
+// namespace, with its WAL begin marker.
+func (e *StorageExecutor) beginImplicitTransaction(ctx context.Context, txEngine TransactionCapableEngine, namespace string) (implicitTransaction, error) {
+	if namespace != "" {
+		if primer, ok := txEngine.(interface{ EnsureNamespaceMVCC(string) error }); ok {
+			if err := primer.EnsureNamespaceMVCC(namespace); err != nil {
+				return implicitTransaction{}, localizedError(localization.CypherCoreImplicitTransactionPrimeFailed(err), err)
+			}
+		}
+	}
+	tx, err := beginTransactionSnapshot(txEngine)
+	if err != nil {
+		return implicitTransaction{}, localizedError(localization.CypherCoreImplicitTransactionStartFailed(err), err)
+	}
+	if namespace != "" {
+		if err := tx.SetNamespace(namespace); err != nil {
+			_ = tx.Rollback()
+			return implicitTransaction{}, localizedError(localization.CypherCoreImplicitTransactionPinFailed(err), err)
+		}
+	}
+	if err := applyTransactionMetadata(ctx, tx); err != nil {
+		_ = tx.Rollback()
+		return implicitTransaction{}, err
+	}
+
+	// Defer constraint validation to commit for implicit transactions.
+	// This avoids duplicate per-operation checks and improves write throughput.
+	if err := tx.SetDeferredConstraintValidation(true); err != nil {
+		_ = tx.Rollback()
+		return implicitTransaction{}, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
+	}
+	if err := configureStatementTransaction(tx); err != nil {
+		_ = tx.Rollback()
+		return implicitTransaction{}, localizedError(localization.CypherCoreImplicitTransactionConfigureFailed(err), err)
+	}
+
+	// Optional WAL transaction markers for receipts.
+	started := implicitTransaction{tx: tx}
+	if tx.ID != "" {
+		started.wal, started.dbName = e.resolveWALAndDatabase()
+		if started.wal != nil {
+			started.walSeqStart, err = started.wal.AppendTxBegin(started.dbName, tx.ID, nil)
+			if err != nil {
+				_ = tx.Rollback()
+				return implicitTransaction{}, localizedError(localization.CypherCoreImplicitTransactionWALBeginFailed(err), err)
+			}
+		}
+	}
+	return started, nil
 }
 
 // ctxKeyTxStorage is the context key for transaction storage wrapper.

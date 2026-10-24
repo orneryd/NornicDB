@@ -23,17 +23,18 @@ func TestStripComments(t *testing.T) {
 }
 
 // TestFabricLocalShardExecutorsWithoutExplicitTransaction: outside an
-// explicit transaction a Fabric statement keeps its sub-transaction
-// executors itself; inside one they are the transaction's.
+// explicit transaction a Fabric statement keeps its participants itself;
+// inside one they are the transaction's.
 func TestFabricLocalShardExecutorsWithoutExplicitTransaction(t *testing.T) {
 	c := &cypherFabricExecutor{base: NewStorageExecutor(newTestMemoryEngine(t))}
-	own := c.localShardTxExecutors()
+	own := c.participants()
 	require.NotNil(t, own)
-	own["s"] = c.base
-	require.Same(t, c.base, c.localShardTxExecutors()["s"])
+	participant := &participantHandle{name: "s"}
+	own["s"] = participant
+	require.Same(t, participant, c.participants()["s"])
 
 	c.base.txContext = &TransactionContext{active: true}
-	shared := c.localShardTxExecutors()
+	shared := c.participants()
 	require.Empty(t, shared)
-	require.NotNil(t, c.base.txContext.fabricLocalTxExec)
+	require.NotNil(t, c.base.txContext.fabricParticipants)
 }

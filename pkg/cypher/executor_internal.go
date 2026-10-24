@@ -44,13 +44,24 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 	if StatementDatabase("", statement) == "system" {
 		var transaction any
 		if wrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
-			transaction = wrapper.tx
+			if tx := wrapper.transaction(); tx != nil {
+				transaction = tx
+			}
 		} else if e.txContext != nil && e.txContext.active {
 			transaction = e.txContext.tx
 		}
 		return nil, e.failTransaction(ctx, statementTypeError(statement, "Administration", "Data", transaction))
 	}
-	return e.executeInternal(ctx, statement, params)
+	if compositeStatementFrom(ctx) != nil && e.shouldUseFabricPlanner(statement) {
+		// A statement that names a composite graph runs as part of the
+		// composite statement it is nested in.
+		result, err = e.executeViaFabric(ctx, statement, params)
+		return result, e.failTransaction(ctx, err)
+	}
+	result, err = e.inCompositeStatement(ctx, statement, func(ctx context.Context, target *StorageExecutor) (*ExecuteResult, error) {
+		return target.executeInternal(ctx, statement, params)
+	})
+	return result, e.failTransaction(ctx, err)
 }
 
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {

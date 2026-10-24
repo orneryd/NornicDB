@@ -69,6 +69,13 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 	if e.txContext != nil && e.txContext.active && e.txContext.storageWrapper != nil {
 		// An entity the transaction deleted is gone by then; nothing to do.
 		e.txContext.storageWrapper.schemaCommitActions = append(e.txContext.storageWrapper.schemaCommitActions, func() { _ = run() })
+	} else if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok && wrapper.lazy != nil {
+		// On a composite statement's participant storage it is a write: it
+		// claims the participant and applies when its transaction commits.
+		if _, err := wrapper.writable(); err != nil {
+			return nil, err
+		}
+		wrapper.schemaCommitActions = append(wrapper.schemaCommitActions, func() { _ = run() })
 	} else if err := run(); err != nil {
 		return nil, err
 	}

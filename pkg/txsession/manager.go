@@ -162,7 +162,7 @@ func (m *Manager) ExecuteInSession(ctx context.Context, session *Session, query 
 		return nil, err
 	}
 
-	result, err := session.Executor.Execute(ctx, query, params)
+	result, err := m.executeLocked(ctx, session, query, params)
 	if err != nil {
 		terminalErr, notify := m.rememberTerminalErrorLocked(session, err)
 		session.mu.Unlock()
@@ -172,6 +172,22 @@ func (m *Manager) ExecuteInSession(ctx context.Context, session *Session, query 
 	session.Expires = m.nowFunc().Add(m.ttl)
 	session.mu.Unlock()
 	return result, nil
+}
+
+// executeLocked runs a statement in session, whose mu the caller holds. A
+// statement that panics releases mu before the panic goes on, so the
+// session's COMMIT or ROLLBACK can still run (the executor has failed the
+// transaction).
+func (m *Manager) executeLocked(ctx context.Context, session *Session, query string, params map[string]interface{}) (*cypher.ExecuteResult, error) {
+	returned := false
+	defer func() {
+		if !returned {
+			session.mu.Unlock()
+		}
+	}()
+	result, err := session.Executor.Execute(ctx, query, params)
+	returned = true
+	return result, err
 }
 
 func (m *Manager) CommitAndDelete(ctx context.Context, session *Session) (*cypher.ExecuteResult, error) {
@@ -186,7 +202,7 @@ func (m *Manager) CommitAndDelete(ctx context.Context, session *Session) (*cyphe
 		return nil, err
 	}
 
-	result, err := session.Executor.Execute(cypher.WithTransactionControl(ctx), "COMMIT", nil)
+	result, err := m.executeLocked(cypher.WithTransactionControl(ctx), session, "COMMIT", nil)
 	if err != nil {
 		terminalErr, notify := m.rememberTerminalErrorLocked(session, err)
 		session.mu.Unlock()
@@ -208,7 +224,7 @@ func (m *Manager) RollbackAndDelete(ctx context.Context, session *Session) error
 		return nil
 	}
 
-	_, err := session.Executor.Execute(cypher.WithTransactionControl(ctx), "ROLLBACK", nil)
+	_, err := m.executeLocked(cypher.WithTransactionControl(ctx), session, "ROLLBACK", nil)
 	session.mu.Unlock()
 	return err
 }
