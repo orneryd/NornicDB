@@ -2051,23 +2051,6 @@ func optionalRelationshipTypeMatches(filter, actual string) bool {
 	return false
 }
 
-func joinedValueKey(val interface{}) string {
-	switch v := val.(type) {
-	case *storage.Node:
-		if v == nil {
-			return "node:nil"
-		}
-		return "node:" + string(v.ID)
-	case *storage.Edge:
-		if v == nil {
-			return "edge:nil"
-		}
-		return "edge:" + string(v.ID)
-	default:
-		return fmt.Sprintf("%#v", val)
-	}
-}
-
 // ========================================
 // FOREACH Clause
 // ========================================

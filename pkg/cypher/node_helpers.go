@@ -39,7 +39,6 @@ package cypher
 
 import (
 	"context"
-	"strconv"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -423,51 +422,4 @@ func (e *StorageExecutor) extractLabels(pattern string) []string {
 	head, _ := splitNodePatternProperties(pattern)
 	_, labels, _ := parseNodeHead(head)
 	return labels
-}
-
-// applyArraySuffix applies an array suffix operation (like [..10] or [5]) to a collected list.
-// This handles slicing and indexing operations on aggregation results.
-//
-// # Parameters
-//   - collected: the list to apply the suffix to
-//   - suffix: the suffix string (e.g., "[..10]", "[5]", "[2..5]")
-//
-// # Returns
-//   - The sliced or indexed result
-func (e *StorageExecutor) applyArraySuffix(collected []interface{}, suffix string) interface{} {
-	suffix = strings.TrimSpace(suffix)
-	if suffix == "" || !strings.HasPrefix(suffix, "[") || !strings.HasSuffix(suffix, "]") {
-		return collected
-	}
-
-	// Extract the index/slice expression inside [ ]
-	indexExpr := suffix[1 : len(suffix)-1]
-
-	// Slice notation [..N], [N..M] or [N..] (cypherListSlice); the bounds
-	// are integer literals here.
-	if lowerExpr, upperExpr, isSlice := staticSliceBounds(indexExpr); isSlice {
-		lowerExpr, upperExpr = strings.TrimSpace(lowerExpr), strings.TrimSpace(upperExpr)
-		var lower, upper interface{}
-		if n, err := strconv.ParseInt(lowerExpr, 10, 64); err == nil {
-			lower = n
-		}
-		if n, err := strconv.ParseInt(upperExpr, 10, 64); err == nil {
-			upper = n
-		}
-		value, _ := cypherListSlice(collected, lower, upper, lower != nil, upper != nil)
-		return value
-	}
-
-	// Single index access [N]
-	if idx, err := strconv.ParseInt(strings.TrimSpace(indexExpr), 10, 64); err == nil {
-		if idx < 0 {
-			idx = int64(len(collected)) + idx
-		}
-		if idx >= 0 && idx < int64(len(collected)) {
-			return collected[idx]
-		}
-		return nil
-	}
-
-	return collected
 }
