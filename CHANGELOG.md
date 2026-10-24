@@ -203,6 +203,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   statuses and Bolt connection reuse after rejection (#1366). Preserve the
   managed system-database owner for routed administration commits and canonical
   byte accounting across propertyless staged/point/stream representations.
+- Reject unfinished comments consistently before HTTP, Bolt and native execution; preserve comment-aware CYPHER options, EXPLAIN schemas and PROFILE FINISH completion through re-entry.
+
 ### Added
 
 - Optional local code-intelligence Git hooks: block staged reuse/refactor findings, refresh the
