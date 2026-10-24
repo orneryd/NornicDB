@@ -3,13 +3,11 @@ package cypher
 import (
 	"encoding/binary"
 	"fmt"
-	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"math/big"
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -197,27 +195,11 @@ func appendNestedValueKey(key *strings.Builder, value interface{}, numericPolicy
 	key.WriteString(nested)
 }
 
-// nanKeys numbers NaN keys, so no two NaNs share one.
-var nanKeys atomic.Uint64
-
-// appendFloatEquivalenceKey writes a float's key: a whole number has the key
-// of the integer with its exact value (so 1.0 ≡ 1 and -0.0 ≡ 0), any other
-// float its shortest decimal form, and each NaN a key of its own.
+// appendFloatEquivalenceKey writes a float's key
+// (convert.AppendFloatEquivalenceKey).
 func appendFloatEquivalenceKey(key *strings.Builder, number float64) {
-	switch {
-	case math.IsNaN(number):
-		key.WriteString("FNaN#")
-		key.WriteString(strconv.FormatUint(nanKeys.Add(1), 10))
-	case math.IsInf(number, 0) || number != math.Trunc(number):
-		key.WriteByte('F')
-		key.WriteString(strconv.FormatFloat(number, 'g', -1, 64))
-	case number >= math.MinInt64 && number < math.MaxInt64:
-		key.WriteByte('I')
-		key.WriteString(strconv.FormatInt(int64(number), 10))
-	default:
-		key.WriteByte('I')
-		key.WriteString(new(big.Float).SetFloat64(number).Text('f', 0))
-	}
+	var buffer [32]byte
+	key.Write(convert.AppendFloatEquivalenceKey(buffer[:0], number))
 }
 
 // cypherValueSet stores values under each operation's explicit contract,

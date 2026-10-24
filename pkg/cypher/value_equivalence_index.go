@@ -85,7 +85,7 @@ func cypherNumberKey(value interface{}, number valueconvert.Number) interface{} 
 	}
 	floating, _ := number.Float()
 	if math.IsNaN(floating) {
-		return cypherNaNKey(nanKeys.Add(1))
+		return cypherNaNKey(valueconvert.NextNaNKey())
 	}
 	if floating == math.Trunc(floating) {
 		if floating >= -0x1p63 && floating < 0x1p63 {

@@ -1144,7 +1144,7 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 	temporal := ", d:date('2020-12-31'), du:duration('P1Y2M'), lt:localtime('10:00:05'), t:time('10:00:00+01:00'), ldt:localdatetime('2020-01-01T10:00:00'), dt:datetime('2020-01-01T10:00:00Z')"
 	wantTemporal := map[string]interface{}{"d": "2020-12-31", "du": "P1Y2M", "lt": "10:00:05", "t": "10:00+01:00", "ldt": "2020-01-01T10:00", "dt": "2020-01-01T10:00Z"}
 	response := makeRequest(t, server, http.MethodPost, "/db/nornic/tx/commit", map[string]any{
-		"statements": []map[string]any{{"statement": "CREATE (:RP {name:'x', v:1" + temporal + "})-[:LINK {weight:2" + temporal + "}]->(:Target {" + strings.TrimPrefix(temporal, ", ") + "})"}},
+		"statements": []map[string]any{{"statement": "CREATE (:RP {name:'x', v:1, fraction:1.5, exact:9007199254740993" + temporal + "})-[:LINK {weight:2" + temporal + "}]->(:Target {" + strings.TrimPrefix(temporal, ", ") + "})"}},
 	}, token)
 	var result TransactionResponse
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
@@ -1160,7 +1160,9 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 	require.NotEmpty(t, nodes[0].ID)
 	require.Equal(t, []string{"RP"}, nodes[0].Labels)
 	require.Equal(t, "x", nodes[0].Properties["name"])
-	require.Equal(t, float64(1), nodes[0].Properties["v"])
+	require.Equal(t, int64(1), nodes[0].Properties["v"])
+	require.Equal(t, float64(1.5), nodes[0].Properties["fraction"])
+	require.Equal(t, int64(9007199254740993), nodes[0].Properties["exact"])
 	for key, expected := range wantTemporal {
 		require.Equal(t, expected, nodes[0].Properties[key])
 	}
@@ -1171,7 +1173,7 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 	require.Equal(t, "LINK", edges[0].Type)
 	require.Equal(t, nodes[0].ID, edges[0].StartNode)
 	require.NotEmpty(t, edges[0].EndNode)
-	require.Equal(t, float64(2), edges[0].Properties["weight"])
+	require.Equal(t, int64(2), edges[0].Properties["weight"])
 	for key, expected := range wantTemporal {
 		require.Equal(t, expected, edges[0].Properties[key])
 	}

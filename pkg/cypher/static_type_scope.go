@@ -225,29 +225,33 @@ func carryStaticSubqueryImports(projected, input, imports typeScope, projection 
 // callSubqueryImports is the scope a CALL subquery's body starts from: CALL
 // (a, b) { … } imports a and b, CALL (*) { … } and an old-style CALL { … }
 // every outer variable (the latter's leading WITH picks them). ok is false
-// for a CALL without a body; scoped is set for CALL (…) { }.
-func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, bool) {
-	trimmed := strings.TrimSpace(callText)
-	open := strings.IndexByte(trimmed, '{')
-	call := indexASCIIFold(trimmed, "call")
-	if open < 0 || call < 0 || call > open {
-		return nil, false, false
+// for a CALL without a body; scoped is set for CALL (…) { }. A variable a
+// scope clause names that outer doesn't bind is Neo4j's compile-time
+// "Variable `x` not defined", reported here, where every statement is
+// checked before it plans or runs, on every route alike.
+func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, bool, error) {
+	scope := readCallSubqueryScope(callText)
+	if scope.invalid {
+		return nil, false, false, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
+	}
+	if scope.bodyOffset == 0 || scope.bodyOffset >= len(callText) || callText[scope.bodyOffset] != '{' {
+		return nil, false, false, nil
 	}
 	initial := make(typeScope)
-	scope := readCallSubqueryScope(callText)
-	imports, scoped := scope.names, scope.scoped
-	if scoped && imports != nil {
-		for _, name := range imports {
-			if operand, bound := outer[name]; bound {
-				initial[name] = operand
+	if scope.scoped && scope.names != nil {
+		for _, name := range scope.names {
+			operand, bound := outer[name]
+			if !bound {
+				return nil, false, false, createUndefinedVariableError(name)
 			}
+			initial[name] = operand
 		}
-		return initial, scoped, true
+		return initial, true, true, nil
 	}
 	for name, operand := range outer {
 		initial[name] = operand
 	}
-	return initial, scoped, true
+	return initial, scope.scoped, true, nil
 }
 
 // callSubqueryReturnTypes walks a CALL subquery's body, each UNION branch
@@ -260,9 +264,9 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 // doesn't end in RETURN, gives no types; a scoped body's walk error is the
 // statement's.
 func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
-	initial, scoped, ok := callSubqueryImports(callText, outer)
-	if !ok {
-		return nil, nil
+	initial, scoped, ok, err := callSubqueryImports(callText, outer)
+	if err != nil || !ok {
+		return nil, err
 	}
 	var returned typeScope
 	typedBranches := 0

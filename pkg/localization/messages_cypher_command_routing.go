@@ -59,6 +59,7 @@ const (
 	MessageCypherCommandRoutingTransactionSecondDatabaseWrite     MessageID = "cyphercommandrouting.transaction_second_database_write"
 	MessageCypherCommandRoutingTransactionSecondDatabaseAccess    MessageID = "cyphercommandrouting.transaction_second_database_access"
 	MessageCypherCommandRoutingGraphFunctionOnlyInUse             MessageID = "cyphercommandrouting.graph_function_only_in_use"
+	MessageCypherCommandRoutingFabricImportEntity                 MessageID = "cyphercommandrouting.fabric_import_entity"
 )
 
 func cypherCommandRoutingMessage(id MessageID, fallback string, data map[string]any) Message {
@@ -280,6 +281,13 @@ func CypherCommandRoutingTransactionSecondDatabaseWrite(target string, current s
 
 func CypherCommandRoutingTransactionSecondDatabaseAccess(target string, current string) Message {
 	return cypherCommandRoutingMessage(MessageCypherCommandRoutingTransactionSecondDatabaseAccess, "Accessing more than one database per transaction is not allowed. Attempted access to "+target+", currently using "+current, map[string]any{"Target": target, "Current": current})
+}
+
+// CypherCommandRoutingFabricImportEntity is Neo4j's 22N16 rejection of a node,
+// relationship or path (kind) imported into a subquery a USE clause runs on
+// another graph, worded as Neo4j's FabricException.importingValuesInRemoteSubqueries.
+func CypherCommandRoutingFabricImportEntity(kind string) Message {
+	return cypherCommandRoutingMessage(MessageCypherCommandRoutingFabricImportEntity, "Importing "+kind+" values in remote subqueries is currently not supported", map[string]any{"Kind": kind})
 }
 
 func CypherCommandRoutingGraphFunctionOnlyInUse(function string) Message {

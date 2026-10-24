@@ -54,7 +54,7 @@ func TestFabricRemoteEntityGraphFunctions(t *testing.T) {
 		{"elementId(node)", "4:remote:node"},
 		{"elementId(relationship)", "5:remote:rel"},
 		{"properties(node)", map[string]interface{}{"id": "local-node", "name": "Remote"}},
-		{"properties(relationship)", map[string]interface{}{"id": "local-rel", "weight": float64(2)}},
+		{"properties(relationship)", map[string]interface{}{"id": "local-rel", "weight": int64(2)}},
 		{"keys(node)", []interface{}{"id", "name"}},
 		{"keys(relationship)", []interface{}{"id", "weight"}},
 		{"id(node)", nil}, // HTTP has always preserved only elementId at top level.
@@ -169,7 +169,7 @@ func TestRemoteHTTPGraphValueParameterFunctions(t *testing.T) {
 		{"id($node)", nil}, {"id($relationship)", nil},
 		{"keys($node)", []interface{}{"id", "name"}}, {"keys($relationship)", []interface{}{"id", "weight"}},
 		{"properties($node)", map[string]interface{}{"id": "local-node", "name": "Remote"}},
-		{"properties($relationship)", map[string]interface{}{"id": "local-rel", "weight": float64(2)}},
+		{"properties($relationship)", map[string]interface{}{"id": "local-rel", "weight": int64(2)}},
 		{"startNode($relationship)", nil}, {"endNode($relationship)", nil},
 	} {
 		t.Run(tt.expression, func(t *testing.T) {
