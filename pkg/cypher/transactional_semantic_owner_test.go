@@ -19,7 +19,7 @@ func TestTransactionalSemanticOwnerCensus(t *testing.T) {
 	owners := map[string]int{"planPipelineCallChain": 0, "pipelineSyntaxEffects": 0,
 		"walkCypherSyntax": 0, "classifyTransactionalBatchExpression": 0,
 		"describeScalarExpression": 0, "scalarExpressionEvaluationError": 0,
-		"bindTransactionalCallChain": 0, "pipelineApplyCallSubqueryWithMetadata": 0}
+		"bindTransactionalCallChain": 0, "pipelineApplyCallSubqueryWithMetadata": 0, "executeTransactionBatch": 0}
 	effectContexts := map[string]bool{}
 	entries, err := os.ReadDir(".")
 	require.NoError(t, err)
@@ -39,18 +39,9 @@ func TestTransactionalSemanticOwnerCensus(t *testing.T) {
 				owners[fn.Name.Name]++
 			}
 			if fn.Name.Name == "pipelineSyntaxEffects" {
-				ast.Inspect(fn.Body, func(node ast.Node) bool {
-					if branch, ok := node.(*ast.CaseClause); ok {
-						for _, expression := range branch.List {
-							if pointer, ok := expression.(*ast.StarExpr); ok {
-								if context, ok := pointer.X.(*ast.SelectorExpr); ok {
-									effectContexts[context.Sel.Name] = true
-								}
-							}
-						}
-					}
-					return true
-				})
+				for name := range semanticEffectContexts(fn.Body) {
+					effectContexts[name] = true
+				}
 			}
 			if fn.Name.Name == "planPipelineCallChain" {
 				ast.Inspect(fn.Body, func(node ast.Node) bool {
@@ -130,4 +121,62 @@ func TestTransactionalSemanticOwnerCensus(t *testing.T) {
 		}
 	}
 	require.Equal(t, len(constructors), checked)
+}
+
+// Clause alternatives are part of the same census as expression alternatives.
+// Otherwise deleting CREATE's effect case leaves the old guard green.
+func TestTransactionalReviewClauseCensusMembership(t *testing.T) {
+	constructors := transactionalcalltest.SyntaxConstructors()
+	require.Contains(t, constructors, "IReadingStatementContext")
+	require.Contains(t, constructors, "IUpdatingStatementContext")
+	require.Equal(t, "effect", constructors["IUpdatingStatementContext"]["ICreateStContext"])
+}
+
+func semanticEffectContexts(body *ast.BlockStmt) map[string]bool {
+	contexts := map[string]bool{}
+	ast.Inspect(body, func(node ast.Node) bool {
+		if branch, ok := node.(*ast.CaseClause); ok {
+			for _, expression := range branch.List {
+				if pointer, ok := expression.(*ast.StarExpr); ok {
+					if context, ok := pointer.X.(*ast.SelectorExpr); ok {
+						contexts[context.Sel.Name] = true
+					}
+				}
+			}
+		}
+		return true
+	})
+	return contexts
+}
+
+func TestTransactionalReviewCensusDetectsMissingCreate(t *testing.T) {
+	file, err := parser.ParseFile(token.NewFileSet(), "pipeline_clause_effects.go", nil, 0)
+	require.NoError(t, err)
+	for _, declaration := range file.Decls {
+		fn, ok := declaration.(*ast.FuncDecl)
+		if !ok || fn.Name.Name != "pipelineSyntaxEffects" {
+			continue
+		}
+		require.True(t, semanticEffectContexts(fn.Body)["CreateStContext"])
+		ast.Inspect(fn.Body, func(node ast.Node) bool {
+			if branch, ok := node.(*ast.CaseClause); ok {
+				for i, expression := range branch.List {
+					pointer, ok := expression.(*ast.StarExpr)
+					if !ok {
+						continue
+					}
+					selector, ok := pointer.X.(*ast.SelectorExpr)
+					if ok && selector.Sel.Name == "CreateStContext" {
+						branch.List = append(branch.List[:i], branch.List[i+1:]...)
+						break
+					}
+				}
+			}
+			return true
+		})
+		require.False(t, semanticEffectContexts(fn.Body)["CreateStContext"])
+		require.Equal(t, "effect", transactionalcalltest.SyntaxConstructors()["IUpdatingStatementContext"]["ICreateStContext"], "the census must require the removed alternative")
+		return
+	}
+	t.Fatal("effect owner not found")
 }

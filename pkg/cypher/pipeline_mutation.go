@@ -422,7 +422,9 @@ type pipelineIndependentCreateBatchKey struct{}
 
 func (e *StorageExecutor) pipelineApplyCreateClauses(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) ([]pipelineRow, *ExecuteResult, bool, error) {
 	created := &ExecuteResult{Stats: &QueryStats{}}
-	if independent, _ := ctx.Value(pipelineIndependentCreateBatchKey{}).(bool); independent && len(rows) > 1 {
+	if independent, _ := ctx.Value(pipelineIndependentCreateBatchKey{}).(bool); len(rows) > 1 && (independent || pipelineWriteStretchConflicts(ctx, clauses, nil)) {
+		// Evaluate graph-dependent CREATE inputs for every row before any
+		// newly created entity becomes visible to those expressions.
 		return e.pipelineCreateSource(ctx, pipelineRowsSource(rows), clauses)
 	}
 	var out []pipelineRow

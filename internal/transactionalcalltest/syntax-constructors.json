@@ -30,5 +30,22 @@
   "INotExpressionContext": {
     "IComparisonExpressionContext": "children",
     "IExistsSubqueryContext": "effect"
+  },
+  "IReadingStatementContext": {
+    "IMatchStContext": "effect",
+    "IUnwindStContext": "effect",
+    "ILetStContext": "effect",
+    "IFilterStContext": "effect",
+    "IForStContext": "effect",
+    "IQueryCallStContext": "effect",
+    "ICallSubqueryContext": "effect"
+  },
+  "IUpdatingStatementContext": {
+    "ICreateStContext": "effect",
+    "IMergeStContext": "effect",
+    "IDeleteStContext": "effect",
+    "ISetStContext": "effect",
+    "IRemoveStContext": "effect",
+    "IForeachStContext": "effect"
   }
 }

@@ -673,10 +673,15 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	// The rows a MATCH, OPTIONAL MATCH or WITH builds count against the
 	// statement's memory limit (#1343).
 	memory := memoryScopeFromContext(ctx)
-	var callBatches map[int]*boundTransactionBatch
+	var callChain boundCallChain
 	callChainEnd := 0
 	for idx := 0; idx < len(clauses); idx++ {
 		clause := clauses[idx]
+		if (clause.kind == pipelineClauseWith || clause.kind == pipelineClauseReturn) && !callChain.pagination[idx] {
+			if err := e.validateRuntimePaginationClause(ctx, clause.text); err != nil {
+				return result, true, err
+			}
+		}
 		var callBatch *boundTransactionBatch
 		if clause.kind == pipelineClauseCallSubquery {
 			_, _, inTransactions, _ := e.parseCallSubquery(clause.text)
@@ -690,13 +695,13 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 					if err != nil {
 						return result, true, err
 					}
-					callBatches, err = e.bindTransactionalCallChain(ctx, plan)
+					callChain, err = e.bindTransactionalCallChain(ctx, plan)
 					if err != nil {
 						return result, true, err
 					}
 					callChainEnd = plan.end
 				}
-				callBatch = callBatches[idx]
+				callBatch = callChain.batches[idx]
 			}
 		}
 		if source != nil && clause.kind != pipelineClauseMatch && clause.kind != pipelineClauseWith &&
@@ -785,6 +790,11 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		case pipelineClauseCreate:
 			end := idx + 1
 			for end < len(clauses) && clauses[end].kind == pipelineClauseCreate {
+				// Publish every earlier CREATE row before a later CREATE
+				// reads those writes. Only independent clauses share a plan.
+				if pipelineWriteStretchConflicts(ctx, clauses[idx:end+1], nil) {
+					break
+				}
 				end++
 			}
 			var newRows []pipelineRow

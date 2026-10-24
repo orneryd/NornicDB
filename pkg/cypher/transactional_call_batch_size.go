@@ -80,7 +80,7 @@ func (e *StorageExecutor) validateTransactionalCalls(ctx context.Context, query 
 			reason = "transactional CALL ON ERROR and REPORT STATUS are not supported"
 		}
 		if reason != "" {
-			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidCallInTransactions", localization.CypherSubqueriesBatchContextInvalid(reason))
+			return transactionalCallContextError(reason)
 		}
 		if err := e.classifyTransactionalBatchExpression(ctx, spec, params); err != nil {
 			return err
@@ -175,16 +175,36 @@ func hasCallInTransactions(query string) bool {
 	return false
 }
 
-func (e *StorageExecutor) bindTransactionalCallChain(ctx context.Context, plan pipelineCallChainPlan) (map[int]*boundTransactionBatch, error) {
-	bound := make(map[int]*boundTransactionBatch, len(plan.calls))
-	// Operators open from the consumer back toward their input.
-	for index := len(plan.calls) - 1; index >= 0; index-- {
-		call := plan.calls[index]
-		batch, err := e.bindTransactionalCallBatch(ctx, call.spec, nil)
-		if err != nil {
-			return nil, err
+type boundCallChain struct {
+	batches    map[int]*boundTransactionBatch
+	pagination map[int]bool
+}
+
+func (e *StorageExecutor) bindTransactionalCallChain(ctx context.Context, plan pipelineCallChainPlan) (boundCallChain, error) {
+	bound := boundCallChain{batches: make(map[int]*boundTransactionBatch, len(plan.operators))}
+	// Open consumers before their inputs, including pagination in this chain.
+	for index := len(plan.operators) - 1; index >= 0; index-- {
+		operator := plan.operators[index]
+		for _, pagination := range operator.pagination {
+			if err := e.validateRuntimePaginationExpression(ctx, pagination); err != nil {
+				return boundCallChain{}, err
+			}
+			if bound.pagination == nil {
+				bound.pagination = make(map[int]bool)
+			}
+			bound.pagination[operator.index] = true
 		}
-		bound[call.index] = batch
+		if operator.spec != nil {
+			batch, err := e.bindTransactionalCallBatch(ctx, operator.spec, nil)
+			if err != nil {
+				return boundCallChain{}, err
+			}
+			bound.batches[operator.index] = batch
+		}
 	}
 	return bound, nil
+}
+
+func transactionalCallContextError(reason string) error {
+	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidCallInTransactions", localization.CypherSubqueriesBatchContextInvalid(reason))
 }

@@ -1035,6 +1035,14 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 				}
 			}
 		}
+		// These functions preserve their input element type (and reverse also
+		// preserves String). Erasing it lets an invalid composed batch size
+		// escape compilation and fail only after earlier batches commit.
+		if strings.EqualFold(function, "tail") || strings.EqualFold(function, "reverse") {
+			if args := splitTopLevelComma(arguments); len(args) == 1 {
+				return checker.check(args[0])
+			}
+		}
 		// List selectors preserve the element constraint supplied by their
 		// argument, including a bound parameter. CASE and coalesce join those
 		// constraints through their existing rules rather than selected values.

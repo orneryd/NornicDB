@@ -1615,9 +1615,6 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	// For write operations, use implicit transaction for atomicity
 	// This ensures partial writes are rolled back on error
 	if needsTransaction {
-		if hasCallInTransactions(cypher) {
-			return e.executeWithoutTransaction(ctx, cypher, upperQuery)
-		}
 		return e.executeWithImplicitTransaction(ctx, cypher, upperQuery)
 	}
 

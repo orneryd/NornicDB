@@ -18,6 +18,12 @@ import (
 //go:embed oracle.json
 var oracle []byte
 
+// reviewOracle was captured from a disposable Neo4j 5.26.30 instance for
+// the follow-up review regressions; the original oracle is unchanged.
+//
+//go:embed review_oracle.json
+var reviewOracle []byte
+
 //go:embed syntax-constructors.json
 var syntaxConstructors []byte
 
@@ -54,10 +60,14 @@ const Read = "MATCH (n:ReviewBatch) RETURN n.v ORDER BY n.v"
 
 func Check(t *testing.T, run func(*testing.T, Case) Outcome) {
 	t.Helper()
-	decoder := json.NewDecoder(bytes.NewReader(oracle))
-	decoder.UseNumber()
 	var cases []Case
-	require.NoError(t, decoder.Decode(&cases))
+	for _, data := range [][]byte{oracle, reviewOracle} {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
+		var captured []Case
+		require.NoError(t, decoder.Decode(&captured))
+		cases = append(cases, captured...)
+	}
 	for _, sample := range cases {
 		sample.Params, _ = normalize(sample.Params).(map[string]any)
 		if sample.Unsupported {

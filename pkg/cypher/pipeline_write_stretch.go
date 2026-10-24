@@ -14,7 +14,8 @@ import (
 // it writes: pipelineWriteStretchConflicts finds such a pair, and the stretch
 // then runs clause by clause, as Neo4j's planner puts an Eager barrier there
 // (#907). A MERGE or SET reading what its own earlier rows wrote is Neo4j's
-// behaviour too, so a clause never conflicts with itself.
+// behaviour too. CREATE evaluates graph-dependent inputs before publishing
+// that clause's new entities, so its own graph reads also need a barrier.
 
 // stretchTokens is what one clause of a write stretch reads or writes: node
 // labels, relationship types and property keys. anyNode / anyRelationship /
@@ -97,7 +98,7 @@ func pipelineWriteStretchConflicts(ctx context.Context, stretch, after []pipelin
 	}
 	for reader := range stretch {
 		for writer := range stretch {
-			if reader != writer && reads[reader].observes(&writes[writer]) {
+			if (reader != writer || stretch[reader].kind == pipelineClauseCreate) && reads[reader].observes(&writes[writer]) {
 				return true
 			}
 		}
@@ -126,7 +127,9 @@ func analyzeStretchClause(ctx context.Context, clause pipelineClause, reads, wri
 	reads.include(&effects.reads)
 	// Procedures consume their input inside a CALL chain, but an ordinary
 	// write stretch must preserve their opaque reads across earlier rows.
-	if effects.opaqueReads {
+	if effects.opaqueReads || effects.batch != nil {
+		// An independently committed batch cannot interleave with ordinary
+		// outer mutations row by row: all its input precedes the next clause.
 		reads.everything = true
 	}
 	writes.include(&effects.writes)

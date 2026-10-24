@@ -16,6 +16,7 @@ type pipelineClauseEffects struct {
 	chainWrites      stretchTokens
 	batch            *transactionBatchSpec
 	barrier, expands bool
+	materializes     bool
 	opaqueReads      bool
 	predicates       []string
 	skip, limit      string
@@ -121,6 +122,16 @@ func pipelineSyntaxEffects(ctx context.Context, text string, statement bool) (pi
 				}
 			case *cypherantlr.NodePatternContext:
 				recordPattern(textOf(n))
+				// A bare standalone node is created, unlike a variable-only
+				// endpoint of a relationship pattern that may already be bound.
+				if creating && n.NodeLabels() == nil && n.Properties() == nil {
+					if start, ok := n.GetParent().(*cypherantlr.PatternElemStartContext); ok {
+						if pattern, ok := start.GetParent().(*cypherantlr.PatternElemContext); ok && len(pattern.AllPatternElemPart()) == 0 {
+							effects.writes.anyNode = true
+							effects.chainWrites.anyNode = true
+						}
+					}
+				}
 			case *cypherantlr.RelationshipPatternContext:
 				recordPattern(textOf(n))
 				if n.RelationDetail() == nil {
@@ -205,6 +216,7 @@ func pipelineSyntaxEffects(ctx context.Context, text string, statement bool) (pi
 				}
 			case *cypherantlr.OrderStContext:
 				if depth == 0 {
+					effects.materializes = true
 					effects.barrier = true
 				}
 			case *cypherantlr.SkipStContext:
@@ -227,6 +239,7 @@ func pipelineSyntaxEffects(ctx context.Context, text string, statement bool) (pi
 				}
 			case *cypherantlr.CountAllContext:
 				if depth == 0 {
+					effects.materializes = true
 					effects.barrier = true
 				}
 			case *cypherantlr.FunctionInvocationContext:
@@ -239,6 +252,7 @@ func pipelineSyntaxEffects(ctx context.Context, text string, statement bool) (pi
 					}
 				}
 				if depth == 0 && pipelineExpressionContainsAggregate(textOf(n)) {
+					effects.materializes = true
 					effects.barrier = true
 				}
 			}

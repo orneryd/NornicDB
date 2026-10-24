@@ -81,39 +81,53 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 	if !strings.Contains(cypher, "$") || (!containsFold(cypher, "SKIP") && !containsFold(cypher, "LIMIT")) {
 		return nil
 	}
+	for _, pagination := range extractPaginationExpressions(cypher) {
+		if err := e.validateRuntimePaginationExpression(ctx, pagination); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRuntimePaginationClause checks only the projection operator opening
+// now. Nested subqueries and later clauses keep their own runtime boundary.
+func (e *StorageExecutor) validateRuntimePaginationClause(ctx context.Context, clause string) error {
+	if !strings.Contains(clause, "$") {
+		return nil
+	}
+	for _, keyword := range []string{"SKIP", "LIMIT"} {
+		if topLevelKeywordIndex(clause, keyword) >= 0 {
+			if err := e.validateRuntimePaginationExpression(ctx, paginationExpression{keyword: keyword, value: pipelinePaginationExpression(clause, keyword)}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (e *StorageExecutor) validateRuntimePaginationExpression(ctx context.Context, pagination paginationExpression) error {
+	if !strings.Contains(pagination.value, "$") {
+		return nil
+	}
 	params := getParamsFromContext(ctx)
 	if len(params) == 0 {
 		return nil
 	}
 	values := make(pipelineRow, len(params))
 	bindParameterRow(ctx, values)
-	for _, pagination := range extractPaginationExpressions(cypher) {
-		if !strings.Contains(pagination.value, "$") {
-			continue
-		}
-		value, evaluated, err := e.evaluateRowValue(pagination.value, values)
-		if err != nil {
-			return err
-		}
-		if !evaluated {
-			// Missing parameters retain the existing ParameterMissing path.
-			continue
-		}
-		integer, valid := cypherIntegerValue(value)
-		if !valid {
-			return newSemanticError(
-				"Neo.ClientError.Statement.ArgumentError",
-				"InvalidArgumentType",
-				fmt.Sprintf("%s requires an INTEGER, got %T", pagination.keyword, value),
-			)
-		}
-		if integer < 0 {
-			return newSemanticError(
-				"Neo.ClientError.Statement.ArgumentError",
-				"NegativeIntegerArgument",
-				pagination.keyword+" requires a non-negative INTEGER",
-			)
-		}
+	value, evaluated, err := e.evaluateRowValue(pagination.value, values)
+	if err != nil {
+		return err
+	}
+	if !evaluated {
+		return nil
+	} // Preserve the existing ParameterMissing path.
+	integer, valid := cypherIntegerValue(value)
+	if !valid {
+		return newSemanticError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentType", fmt.Sprintf("%s requires an INTEGER, got %T", pagination.keyword, value))
+	}
+	if integer < 0 {
+		return newSemanticError("Neo.ClientError.Statement.ArgumentError", "NegativeIntegerArgument", pagination.keyword+" requires a non-negative INTEGER")
 	}
 	return nil
 }

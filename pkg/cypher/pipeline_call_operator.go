@@ -282,7 +282,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		batch := rows[start:end]
 		var batchRows []pipelineRow
 		var batchStats *QueryStats
-		_, err := targetExec.executeWithImplicitTransactionCallback(ctx, clause, upperASCII(clause), func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
+		_, err := targetExec.executeTransactionBatch(ctx, clause, func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
 			var handled bool
 			var runErr error
 			batchRows, batchStats, handled, runErr = run(txExec, txCtx, batch)

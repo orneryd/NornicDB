@@ -187,8 +187,13 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
-	if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {
-		return err
+	// A transactional CALL commits independently before later runtime
+	// pagination opens. Static pagination admission still runs at compilation;
+	// its runtime values are checked by the owning pipeline operator.
+	if !hasCallInTransactions(cypher) {
+		if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {
+			return err
+		}
 	}
 	return validateListOperands(cypher, params)
 }
