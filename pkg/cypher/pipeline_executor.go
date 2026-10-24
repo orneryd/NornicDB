@@ -614,6 +614,13 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 	if pipelineClausesMayDelete(clauses) {
 		ctx = withDeletedEntities(ctx)
 	}
+	// A statement's MERGEs learn which of their nodes it writes once, from
+	// all its clauses (a row-ordered stretch below sees only part of them);
+	// a subquery or FOREACH body adds what its own clauses write.
+	if output == nil && (pipelineHasClauseKind(clauses, pipelineClauseMerge) ||
+		pipelineHasClauseKind(clauses, pipelineClauseCallSubquery) || pipelineHasClauseKind(clauses, pipelineClauseForeach)) {
+		ctx = withMergeNodeWrites(ctx, clauses)
+	}
 	independentCreate, _ := ctx.Value(pipelineIndependentCreateBatchKey{}).(bool)
 	if len(rows) > 1 && !independentCreate {
 		prefix, writes := 0, false

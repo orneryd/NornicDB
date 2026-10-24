@@ -676,7 +676,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 			if parseErr == nil {
 				_, alreadyBound := nodeContext[variable]
 				if variable == "" || !alreadyBound {
-					if err := prepareMergeKeys(ctx, e.getStorage(ctx), labels, properties); err != nil {
+					if err := prepareMergeKeys(ctx, e.getStorage(ctx), labels, properties, mergeNodeWritesFromContext(ctx).writes(variable)); err != nil {
 						return nil, nil, err
 					}
 					matches, scanned, findErr := e.findMergeNodesScanned(e.getStorage(ctx), labels, properties)

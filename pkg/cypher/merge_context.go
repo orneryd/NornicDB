@@ -294,7 +294,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		existingNode = candidate
 	}
 	if existingNode == nil && !nodeKnownAbsent {
-		if err := prepareMergeKeys(ctx, store, labels, matchProps); err != nil {
+		if err := prepareMergeKeys(ctx, store, labels, matchProps, mergeNodeWritesFromContext(ctx).writes(varName)); err != nil {
 			return nil, err
 		}
 		existingNode, err = e.findMergeNode(store, labels, matchProps)
