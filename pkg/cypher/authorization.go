@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 )
 
@@ -43,15 +44,15 @@ func (r PermissionRequirements) AdminGrantedBy(allowsBoosted func(procedure stri
 // a registered procedure invoked by that query, when present.
 func QueryPermissionRequirements(query string) PermissionRequirements {
 	query = classificationText(query)
-	keywords := queryKeywords(query)
 	requirements := PermissionRequirements{
 		Read:   true,
 		Schema: isSchemaPermissionQuery(query),
 		Admin:  isAdminPermissionQuery(query),
 	}
 	if !requirements.Schema && !requirements.Admin {
-		requirements.Write = keywords["CREATE"] || keywords["DELETE"] || keywords["SET"] ||
-			keywords["MERGE"] || keywords["REMOVE"]
+		_, body := parseExecutionMode(query)
+		contract, _ := readStatementExecutionContract(body)
+		requirements.Write = contract.writes
 	}
 
 	// Every procedure the query calls counts, not just the first: a later
@@ -91,37 +92,48 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 // string literals and comments is not a clause. Backticked name parts are
 // unquoted, as the executor resolves them.
 func registeredProceduresForCalls(query string) []ProcedureSpec {
-	ensureBuiltInProceduresRegistered()
-	opts := defaultKeywordScanOpts()
-	opts.SkipParens = false
-	opts.SkipBrackets = false
-	opts.SkipBraces = false
 	var procedures []ProcedureSpec
-	for from := 0; from < len(query); {
-		at := keywordIndexFrom(query, "CALL", from, opts)
-		if at < 0 {
-			break
+	visitRegisteredProcedureCalls(query, func(procedure ProcedureSpec, _ string) bool {
+		procedures = append(procedures, procedure)
+		return false
+	})
+	return procedures
+}
+
+// visitRegisteredProcedureCalls is the registry-backed CALL reader shared by
+// authorization and transaction admission. A true visit stops the scan without
+// materializing a list of complete procedure specifications.
+func visitRegisteredProcedureCalls(query string, visit func(ProcedureSpec, string) bool) bool {
+	structure, err := cypherantlr.ParseSyntax(context.Background(), query, cypherantlr.FragmentEntry, false)
+	if err != nil {
+		return false
+	}
+	return visitStructuredProcedureCalls(structure, visit)
+}
+
+// visitStructuredProcedureCalls visits only grammar-owned procedure invocation
+// nodes. Authorization and execution admission share this live registry reader.
+func visitStructuredProcedureCalls(structure cypherantlr.StatementSyntax, visit func(ProcedureSpec, string) bool) bool {
+	ensureBuiltInProceduresRegistered()
+	stopped := false
+	structure.Walk(func(node cypherantlr.SyntaxNode) func() {
+		if stopped || (node.Rule() != cypherantlr.CypherParserRULE_queryCallSt && node.Rule() != cypherantlr.CypherParserRULE_standaloneCall) {
+			return nil
 		}
-		from = at + len("CALL")
-		name, ok := procedureNameAt(query, from)
-		if !ok {
-			continue // CALL { ... } or CALL (vars) { ... }: its body is scanned on
-		}
+		name := node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
 		if procedure, found := globalProcedureRegistry.Get(name); found {
-			procedures = append(procedures, procedure.Spec)
-			continue
+			stopped = visit(procedure.Spec, node.Text())
+			return nil
 		}
-		// Execution resolves exact names. Preserve conservative authorization
-		// for an invalid case variant without making it executable: every
-		// matching contract counts, since case-distinct registrations can
-		// require different permissions. An exact match above remains decisive.
 		for _, procedure := range globalProcedureRegistry.List() {
-			if strings.EqualFold(name, procedure.Name) {
-				procedures = append(procedures, procedure)
+			if strings.EqualFold(name, procedure.Name) && visit(procedure, node.Text()) {
+				stopped = true
+				break
 			}
 		}
-	}
-	return procedures
+		return nil
+	})
+	return stopped
 }
 
 // procedureNameAt parses the dotted procedure name after a CALL keyword

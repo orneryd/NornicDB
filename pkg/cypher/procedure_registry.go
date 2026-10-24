@@ -76,6 +76,14 @@ type ProcedureSpec struct {
 	// ResultCache declares execution dependencies; an undeclared handler is
 	// opaque to the determinism owner and cannot supply cached results.
 	ResultCache ProcedureResultCache
+	// ExecutesStatements requests a native statement rollback owner. Its
+	// handler resolves arguments normally; actual inner writes promote a
+	// Fabric participant at the shared execution boundary.
+	ExecutesStatements bool
+	// OwnsTransactions owns autocommit batch boundaries. Native explicit
+	// transactions retain shipped folding; Fabric-managed scopes reject it
+	// before invocation because their rollback cannot undo committed batches.
+	OwnsTransactions bool
 }
 
 // writes reports whether a call of the procedure changes the database: its

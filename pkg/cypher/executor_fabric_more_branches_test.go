@@ -102,21 +102,22 @@ func TestFabricHelpers_MoreContextAndWrapperBranches(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestFabricHelpers_BindCallbacksBranches(t *testing.T) {
+func TestFabricHelpers_TransactionOwnerAndCallbacks(t *testing.T) {
 	c := &cypherFabricExecutor{}
-	require.NoError(t, c.bindCallbacksOnce(&fabric.SubTransaction{ShardName: "s"}, nil, nil))
+	require.Nil(t, c.fabricTransaction())
 
 	c.base = NewStorageExecutor(newTestMemoryEngine(t))
-	require.NoError(t, c.bindCallbacksOnce(&fabric.SubTransaction{ShardName: "s"}, nil, nil))
+	require.Nil(t, c.fabricTransaction())
 
 	c.base.txContext = &TransactionContext{active: true, tx: struct{}{}}
-	require.NoError(t, c.bindCallbacksOnce(&fabric.SubTransaction{ShardName: "s"}, nil, nil))
+	require.Nil(t, c.fabricTransaction())
 
 	tx := fabric.NewFabricTransaction("tx-bind")
 	_, err := tx.GetOrOpen("s1", false)
 	require.NoError(t, err)
 	c.base.txContext = &TransactionContext{active: true, tx: tx}
-	require.NoError(t, c.bindCallbacksOnce(&fabric.SubTransaction{ShardName: "s1"}, func(*fabric.SubTransaction) error { return nil }, func(*fabric.SubTransaction) error { return nil }))
-	err = c.bindCallbacksOnce(&fabric.SubTransaction{ShardName: "missing"}, nil, nil)
+	require.Same(t, tx, c.fabricTransaction())
+	require.NoError(t, c.fabricTransaction().BindParticipantCallbacks("s1", func(*fabric.SubTransaction) error { return nil }, func(*fabric.SubTransaction) error { return nil }))
+	err = c.fabricTransaction().BindParticipantCallbacks("missing", nil, nil)
 	require.Error(t, err)
 }

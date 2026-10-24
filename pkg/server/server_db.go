@@ -766,9 +766,11 @@ func (s *Server) writeRequestAdmissionError(w http.ResponseWriter, r *http.Reque
 		"Neo.TransientError.General.MemoryPoolOutOfMemoryError", message)
 }
 
-// TransactionRequest follows Neo4j HTTP API format exactly.
+// TransactionRequest follows Neo4j HTTP API format. TransactionMetadata is
+// NornicDB's HTTP equivalent of Bolt BEGIN's standard tx_metadata field.
 type TransactionRequest struct {
-	Statements []StatementRequest `json:"statements"`
+	Statements          []StatementRequest     `json:"statements"`
+	TransactionMetadata map[string]interface{} `json:"tx_metadata,omitempty"`
 }
 
 // StatementRequest is a single Cypher statement.
@@ -842,11 +844,12 @@ type TransactionInfo struct {
 
 // QueryResult is a single query result.
 type QueryResult struct {
-	Columns []string       `json:"columns"`
-	Data    []ResultRow    `json:"data"`
-	Stats   *QueryStats    `json:"stats,omitempty"`
-	Plan    map[string]any `json:"plan,omitempty"`    // EXPLAIN plan (Neo4j-shaped)
-	Profile map[string]any `json:"profile,omitempty"` // PROFILE plan with runtime counters
+	QueryType string         `json:"query_type,omitempty"`
+	Columns   []string       `json:"columns"`
+	Data      []ResultRow    `json:"data"`
+	Stats     *QueryStats    `json:"stats,omitempty"`
+	Plan      map[string]any `json:"plan,omitempty"`    // EXPLAIN plan (Neo4j-shaped)
+	Profile   map[string]any `json:"profile,omitempty"` // PROFILE plan with runtime counters
 }
 
 // ResultRow is a row of results with metadata.
@@ -1442,6 +1445,7 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 		}
 	}
 	if includeStats {
+		qr.QueryType, _ = cypher.ResolvedStatementQueryType(result.Metadata)
 		qr.Stats = queryStatsFromResult(result)
 	}
 	if result.Metadata != nil {
@@ -1821,6 +1825,7 @@ func (s *Server) handleOpenTransaction(w http.ResponseWriter, r *http.Request, d
 		return
 	}
 
+	r = r.WithContext(cypher.WithTransactionMetadata(r.Context(), req.TransactionMetadata))
 	txSession, openErr := s.openRequestTransaction(r, claims, dbName, func(message localization.Message) string { return s.localizedText(w, r, message) })
 	if openErr != nil {
 		status := http.StatusInternalServerError

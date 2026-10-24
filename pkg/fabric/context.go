@@ -56,3 +56,14 @@ func RecordBindingsFromContext(ctx context.Context) (map[string]interface{}, boo
 	v, ok := ctx.Value(recordBindingsContextKey{}).(map[string]interface{})
 	return v, ok && v != nil
 }
+
+type unresolvedRemoteModeKey struct{}
+
+func WithUnresolvedRemoteMode(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unresolvedRemoteModeKey{}, true)
+}
+
+func unresolvedRemoteMode(ctx context.Context) bool {
+	unresolved, _ := ctx.Value(unresolvedRemoteModeKey{}).(bool)
+	return unresolved
+}
