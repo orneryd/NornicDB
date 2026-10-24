@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -44,7 +45,7 @@ func databaseOptionValue(key string, value interface{}) (string, error) {
 		return upper, nil
 	}
 	return "", localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgument",
-		localization.CypherAdminDatabaseOptionValue(key, neo4jValueRepr(value), "'OFF', 'DIFF', 'FULL'"))
+		localization.CypherAdminDatabaseOptionValue(key, neo4jValueRepr(nil, value), "'OFF', 'DIFF', 'FULL'"))
 }
 
 // splitDatabaseOptions cuts a CREATE DATABASE statement at its OPTIONS
@@ -64,7 +65,11 @@ func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher strin
 		return "", nil, localizedError(localization.CypherAdminKeywordExpected("CREATE DATABASE", "OPTIONS { ... }"), nil)
 	}
 	options := make(map[string]string)
+	pass := bulk.NewCheckpoint(ctx)
 	for key, raw := range fields {
+		if err := pass.Observe(); err != nil {
+			return "", nil, err
+		}
 		value, err := databaseOptionValue(key, raw)
 		if err != nil {
 			return "", nil, err
@@ -112,7 +117,7 @@ func (e *StorageExecutor) alterDatabaseOption(ctx context.Context, cypher string
 	}
 	name := strings.TrimSpace(cypher[from : from+at])
 	ifExists := false
-	if fields := strings.Fields(name); len(fields) == 3 && strings.EqualFold(fields[1], "IF") && strings.EqualFold(fields[2], "EXISTS") {
+	if fields := strings.Fields(name); len(fields) == 3 && bulk.EqualFold(ctx, fields[1], "IF") && bulk.EqualFold(ctx, fields[2], "EXISTS") {
 		name, ifExists = fields[0], true
 	}
 	name, err = unquoteBacktickIdentifier(name)

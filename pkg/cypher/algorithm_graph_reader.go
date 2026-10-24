@@ -1,12 +1,17 @@
 package cypher
 
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+	"context"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
 
 // readAlgorithmGraph is the call contract and relationship reader shared by the
 // six whole-graph APOC extension algorithms. Existing (nodes, config) calls keep
 // their configuration; (nodes, types, config) adds the documented type filter.
 // Omitted/null types and ["*"] select all types; [] selects no relationships.
-func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, map[string]interface{}, error) {
+func (e *StorageExecutor) readAlgorithmGraph(ctx context.Context, procedure string, args []interface{}) (*StorageExecutor, []*storage.Node, map[string]interface{}, error) {
 	var config map[string]interface{}
 	var types map[string]struct{}
 	second := procedureArgument(args, 1)
@@ -22,7 +27,11 @@ func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{
 		}
 		types = make(map[string]struct{}, len(items))
 		all := false
+		pass := bulk.NewCheckpoint(ctx)
 		for _, item := range items {
+			if err := pass.Observe(); err != nil {
+				return nil, nil, nil, err
+			}
 			name, ok := item.(string)
 			if !ok {
 				return nil, nil, nil, procedureArgumentTypeError(procedure, "relationshipTypes", "LIST<STRING>", second)
@@ -43,7 +52,7 @@ func (e *StorageExecutor) readAlgorithmGraph(procedure string, args []interface{
 			return nil, nil, nil, procedureArgumentTypeError(procedure, "config", "MAP", args[2])
 		}
 	}
-	nodes, err := e.algorithmNodes(procedure, args)
+	nodes, err := e.algorithmNodes(ctx, procedure, args)
 	if err != nil {
 		return nil, nil, nil, err
 	}

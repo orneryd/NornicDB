@@ -1,9 +1,10 @@
 package cypher
 
 import (
-	"fmt"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string, values map[string]interface{}) (value interface{}, matched bool, resolved bool, err error) {
@@ -111,26 +112,30 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 	case "apoc.create.uuid":
 		return e.generateUUID(), true, true, nil
 	case "apoc.text.join":
-		values, ok := args()
-		if !ok || len(values) != 2 {
+		arguments, ok := args()
+		if !ok || len(arguments) != 2 {
 			return nil, true, false, nil
 		}
-		separator, separatorOK := values[1].(string)
+		separator, separatorOK := arguments[1].(string)
 		if !separatorOK {
 			return nil, true, false, nil
 		}
-		items, _ := cypherListValue(values[0])
+		items, _ := cypherListValue(arguments[0])
 		parts := make([]string, len(items))
+		pass := bulk.NewCheckpoint(rowStatementContextOrBackground(values))
 		for index, item := range items {
-			parts[index] = fmt.Sprint(item)
+			if err := pass.Observe(); err != nil {
+				return nil, true, false, err
+			}
+			parts[index] = formatValueText(valueWalk(rowStatementContextOrBackground(values)), item)
 		}
 		return strings.Join(parts, separator), true, true, nil
 	case "apoc.coll.flatten":
-		values, ok := args()
-		if !ok || len(values) == 0 || len(values) > 2 {
+		arguments, ok := args()
+		if !ok || len(arguments) == 0 || len(arguments) > 2 {
 			return nil, true, false, nil
 		}
-		return flattenList(values[0], len(values) == 2 && values[1] == true), true, true, nil
+		return flattenList(valueWalk(rowStatementContextOrBackground(values)), arguments[0], len(arguments) == 2 && arguments[1] == true), true, true, nil
 	case "apoc.coll.toset", "apoc.coll.sum", "apoc.coll.avg", "apoc.coll.min", "apoc.coll.max", "apoc.coll.reverse":
 		value, ok := one()
 		if !ok {
@@ -138,17 +143,17 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		}
 		switch name {
 		case "apoc.coll.toset":
-			return apocCollToSet(value), true, true, nil
+			return apocCollToSet(rowStatementContextOrBackground(values), value), true, true, nil
 		case "apoc.coll.sum":
-			return apocCollSum(value), true, true, nil
+			return apocCollSum(valueWalk(rowStatementContextOrBackground(values)), value), true, true, nil
 		case "apoc.coll.avg":
-			return apocCollAvg(value), true, true, nil
+			return apocCollAvg(valueWalk(rowStatementContextOrBackground(values)), value), true, true, nil
 		case "apoc.coll.min":
-			return apocCollMin(value), true, true, nil
+			return apocCollMin(valueWalk(rowStatementContextOrBackground(values)), value), true, true, nil
 		case "apoc.coll.reverse":
-			return apocCollReverse(value), true, true, nil
+			return apocCollReverse(valueWalk(rowStatementContextOrBackground(values)), value), true, true, nil
 		default:
-			return apocCollMax(value), true, true, nil
+			return apocCollMax(valueWalk(rowStatementContextOrBackground(values)), value), true, true, nil
 		}
 	case "apoc.convert.tojson":
 		value, ok := one()
@@ -168,12 +173,12 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		value, ok := one()
 		return apocValueTypeName(value), true, ok, nil
 	case "apoc.meta.istype":
-		values, ok := args()
-		if !ok || len(values) != 2 {
+		arguments, ok := args()
+		if !ok || len(arguments) != 2 {
 			return nil, true, false, nil
 		}
-		typeName, typeOK := values[1].(string)
-		return strings.EqualFold(apocValueTypeName(values[0]), typeName), true, typeOK, nil
+		typeName, typeOK := arguments[1].(string)
+		return bulk.EqualFold(rowStatementContextOrBackground(values), apocValueTypeName(arguments[0]), typeName), true, typeOK, nil
 	case "kalman.init", "kalman.adaptive.init":
 		var config map[string]interface{}
 		if strings.TrimSpace(argument) != "" {

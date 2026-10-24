@@ -5,11 +5,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -178,7 +178,7 @@ func (e *StorageExecutor) executeViaPreparedFabricWithTx(ctx context.Context, cy
 		}
 		stream.Columns = columns
 	}
-	if err := e.normalizeFabricRowWrapper(cypher, stream); err != nil {
+	if err := e.normalizeFabricRowWrapper(ctx, cypher, stream); err != nil {
 		return nil, err
 	}
 	s := statsAcc.snapshot()
@@ -211,9 +211,10 @@ func (e *StorageExecutor) fabricResultCacheKey(ctx context.Context, prepared *fa
 	if !ok {
 		return "", false
 	}
+	resultKey := statementResultCacheKey(ctx, cypher, params)
 	key := cacheKeyBuilder{}
 	var scratch [binary.MaxVarintLen64 + 1]byte
-	writeCacheKeyString(&key, &scratch, resultCacheEntryKey(cypher, params))
+	writeCacheKeyString(&key, &scratch, resultKey)
 	key.buf = binary.AppendUvarint(key.buf, e.statementCacheScope.Generation())
 	scopes := make([]*multidb.StatementCacheScope, 0, len(selections))
 	for _, selection := range selections {
@@ -294,7 +295,7 @@ func (e *StorageExecutor) fabricLocalSelections(ctx context.Context, prepared *f
 	if !collect(prepared.fragment) {
 		return nil, false
 	}
-	sort.Slice(selections, func(i, j int) bool {
+	_ = sortPopulation(ctx, selections, func(i, j int) bool {
 		if selections[i].name != selections[j].name {
 			return selections[i].name < selections[j].name
 		}
@@ -303,12 +304,12 @@ func (e *StorageExecutor) fabricLocalSelections(ctx context.Context, prepared *f
 	return selections, true
 }
 func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher string) (*fabricPreparedExec, error) {
-	catalog, err := e.buildFabricCatalog()
+	catalog, err := e.buildFabricCatalog(ctx)
 	if err != nil {
 		return nil, err
 	}
 	sessionDB := e.currentDatabaseName()
-	if dbFromCtx := GetUseDatabaseFromContext(ctx); strings.TrimSpace(dbFromCtx) != "" {
+	if dbFromCtx := GetUseDatabaseFromContext(ctx); bulk.TrimSpace(ctx, dbFromCtx) != "" {
 		sessionDB = dbFromCtx
 	}
 	fragment, err := e.planFabricQuery(catalog, cypher, sessionDB)
@@ -401,7 +402,7 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 	return fragment, nil
 }
 
-func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabric.ResultStream) error {
+func (e *StorageExecutor) normalizeFabricRowWrapper(ctx context.Context, cypher string, stream *fabric.ResultStream) error {
 	if stream == nil || len(stream.Columns) != 1 || stream.Columns[0] != "__fabric_row" || len(stream.Rows) == 0 {
 		return nil
 	}
@@ -413,28 +414,33 @@ func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabri
 		return nil
 	}
 	projectedRows := make([][]interface{}, 0, len(stream.Rows))
-	for _, row := range stream.Rows {
-		if len(row) == 0 {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(stream.Rows)) {
+		if batchErr != nil {
+			return batchErr
 		}
-		m, ok := normalizeFabricRowMap(row[0])
-		if !ok {
-			continue
-		}
-		out := make([]interface{}, len(inferred))
-		sourceID, _ := m["sourceId"]
-		for i, col := range inferred {
-			if v, ok := m[col]; ok {
-				out[i] = v
+		for _, row := range stream.Rows[batch.start:batch.end] {
+			if len(row) == 0 {
 				continue
 			}
-			if sourceID != nil {
-				if v, ok := lookupColumnBySourceIDInRows(m["rows"], sourceID, col); ok {
+			m, ok := normalizeFabricRowMap(row[0])
+			if !ok {
+				continue
+			}
+			out := make([]interface{}, len(inferred))
+			sourceID, _ := m["sourceId"]
+			for i, col := range inferred {
+				if v, ok := m[col]; ok {
 					out[i] = v
+					continue
+				}
+				if sourceID != nil {
+					if v, ok := lookupColumnBySourceIDInRows(m["rows"], sourceID, col); ok {
+						out[i] = v
+					}
 				}
 			}
+			projectedRows = append(projectedRows, out)
 		}
-		projectedRows = append(projectedRows, out)
 	}
 	if len(projectedRows) == 0 {
 		return nil
@@ -505,9 +511,14 @@ func (e *StorageExecutor) currentDatabaseName() string {
 	return "nornic"
 }
 
-func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
+func (e *StorageExecutor) buildFabricCatalog(ctx context.Context) (*fabric.Catalog, error) {
+	work := bulk.NewCheckpoint(ctx)
 	catalog := fabric.NewCatalog()
+	pass := bulk.NewCheckpoint(ctx)
 	for _, db := range e.dbManager.ListDatabases() {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		dbName := strings.TrimSpace(db.Name())
 		if dbName == "" {
 			continue
@@ -528,6 +539,9 @@ func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
 			return nil, localizedError(localization.CypherCommandRoutingFabricConstituentsFailed(dbName, err), err)
 		}
 		for _, raw := range constituents {
+			if err := work.Observe(); err != nil {
+				return nil, err
+			}
 			ref, ok := toConstituentRef(raw)
 			if !ok || strings.TrimSpace(ref.Alias) == "" {
 				continue
@@ -611,7 +625,9 @@ func (c *cypherFabricExecutor) ExecuteQuery(ctx context.Context, dbName string, 
 	return c.ExecuteQueryWithRecord(ctx, dbName, engine, query, params, nil)
 }
 
-func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, bool, error) {
+func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, query string, params, recordBindings map[string]interface{}) (columns []string, rows [][]interface{}, handled bool, err error) {
+	// A canceled statement's stop returns its error here (bulk.RecoverStop).
+	defer bulk.RecoverStop(&err)
 	clauses, supported := canExecuteAsPipeline(query)
 	if !supported || containsRelationshipPattern(query) {
 		return nil, nil, false, nil
@@ -631,11 +647,13 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 	}
 	executor.fabricRecordBindings = recordBindings
 	ctx = withExecutionDatabase(WithAuthToken(ctx, c.authToken), dbName)
-	columns, rows, err := c.executeFragmentQuery(ctx, executor, query, params)
+	columns, rows, err = c.executeFragmentQuery(ctx, executor, query, params)
 	return columns, rows, true, err
 }
 
-func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
+func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) (columns []string, rows [][]interface{}, err error) {
+	// A canceled statement's stop returns its error here (bulk.RecoverStop).
+	defer bulk.RecoverStop(&err)
 	ctx = WithAuthToken(ctx, c.authToken)
 	base := c.base
 	if !c.autoCommit {

@@ -192,7 +192,7 @@ func TestGDSProjectionReviewFixes(t *testing.T) {
 // doesn't catch first, a failing argument, and a Float node property.
 func TestGDSCatalogArgumentBranches(t *testing.T) {
 	exec, run := newGDSGraph(t)
-	_, err := exec.callGdsGraphList([]interface{}{int64(5)})
+	_, err := exec.callGdsGraphList(context.Background(), []interface{}{int64(5)})
 	require.ErrorContains(t, err, "graphName")
 	_, err = exec.callGdsGraphDrop(context.Background(), []interface{}{"g", "x"})
 	require.ErrorContains(t, err, "failIfMissing")
@@ -262,7 +262,7 @@ func TestGDSCatalogHelpers(t *testing.T) {
 	empty := &GraphProjection{Name: "e"}
 	info := gdsGraphInfo(empty)
 	require.Equal(t, 0.0, info["density"])
-	require.Equal(t, map[string]interface{}{"min": int64(0), "max": int64(0), "mean": 0.0, "p50": int64(0), "p75": int64(0), "p90": int64(0), "p95": int64(0), "p99": int64(0), "p999": int64(0)}, gdsDegreeDistribution(empty))
+	require.Equal(t, map[string]interface{}{"min": int64(0), "max": int64(0), "mean": 0.0, "p50": int64(0), "p75": int64(0), "p90": int64(0), "p95": int64(0), "p99": int64(0), "p999": int64(0)}, gdsDegreeDistribution(context.Background(), empty))
 
 	// A parallel relationship's values fold into the kept one's: a value the
 	// kept relationship lacked is taken, a missing one changes nothing.

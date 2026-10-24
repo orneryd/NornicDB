@@ -12,11 +12,12 @@ import (
 // may add Nodes/Rels fast paths without rebuilding the statement identity.
 func (e *StorageExecutor) registryFunctionContext(ctx context.Context, eval func(string) (interface{}, error)) cypherfn.Context {
 	return cypherfn.Context{
-		Storage:  e.storage,
-		Database: e.executionDatabaseName(ctx),
-		Eval:     eval,
-		Now:      time.Now,
-		Graphs:   e,
-		Cypher25: cypherVersionFromContext(ctx) == "25",
+		Statement: ctx,
+		Storage:   e.storage,
+		Database:  e.executionDatabaseName(ctx),
+		Eval:      eval,
+		Now:       time.Now,
+		Graphs:    e,
+		Cypher25:  cypherVersionFromContext(ctx) == "25",
 	}
 }

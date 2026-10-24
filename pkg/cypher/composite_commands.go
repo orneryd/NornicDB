@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 )
@@ -244,25 +245,41 @@ func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cy
 
 	// Skip "CREATE COMPOSITE DATABASE" and whitespace
 	startPos := createIdx + len("CREATE")
+	pass := bulk.NewCheckpoint(ctx)
 	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		startPos++
 	}
 	// Skip "COMPOSITE DATABASE"
 	if startPos+len("COMPOSITE DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE DATABASE")], "COMPOSITE DATABASE") {
 		startPos += len("COMPOSITE DATABASE")
+		pass2 := bulk.NewCheckpoint(ctx)
 		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+			if err := pass2.Observe(); err != nil {
+				return nil, err
+			}
 			startPos++
 		}
 	} else {
 		// Try with flexible whitespace
 		if startPos+len("COMPOSITE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE")], "COMPOSITE") {
 			startPos += len("COMPOSITE")
+			pass3 := bulk.NewCheckpoint(ctx)
 			for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+				if err := pass3.Observe(); err != nil {
+					return nil, err
+				}
 				startPos++
 			}
 			if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
 				startPos += len("DATABASE")
+				pass4 := bulk.NewCheckpoint(ctx)
 				for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+					if err := pass4.Observe(); err != nil {
+						return nil, err
+					}
 					startPos++
 				}
 			}
@@ -275,7 +292,11 @@ func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cy
 
 	// Extract composite database name (until newline or end)
 	dbNameEnd := startPos
+	pass5 := bulk.NewCheckpoint(ctx)
 	for dbNameEnd < len(cypher) && !isWhitespace(cypher[dbNameEnd]) && cypher[dbNameEnd] != '\n' {
+		if err := pass5.Observe(); err != nil {
+			return nil, err
+		}
 		dbNameEnd++
 	}
 
@@ -316,7 +337,11 @@ func (e *StorageExecutor) executeCreateCompositeDatabase(ctx context.Context, cy
 			return nil, localizedError(localization.CypherCompositeCreateTokenizeFailed(err), err)
 		}
 		idx := 0
+		pass := bulk.NewCheckpoint(ctx)
 		for idx < len(tokens) {
+			if err := pass.Observe(); err != nil {
+				return nil, err
+			}
 			ref, err := parseConstituentFromTokens(tokens, &idx)
 			if err != nil {
 				return nil, err
@@ -355,25 +380,41 @@ func (e *StorageExecutor) executeDropCompositeDatabase(ctx context.Context, cyph
 
 	// Skip "DROP COMPOSITE DATABASE" and whitespace
 	startPos := dropIdx + len("DROP")
+	pass := bulk.NewCheckpoint(ctx)
 	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		startPos++
 	}
 	// Skip "COMPOSITE DATABASE"
 	if startPos+len("COMPOSITE DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE DATABASE")], "COMPOSITE DATABASE") {
 		startPos += len("COMPOSITE DATABASE")
+		pass2 := bulk.NewCheckpoint(ctx)
 		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+			if err := pass2.Observe(); err != nil {
+				return nil, err
+			}
 			startPos++
 		}
 	} else {
 		// Try with flexible whitespace
 		if startPos+len("COMPOSITE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE")], "COMPOSITE") {
 			startPos += len("COMPOSITE")
+			pass3 := bulk.NewCheckpoint(ctx)
 			for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+				if err := pass3.Observe(); err != nil {
+					return nil, err
+				}
 				startPos++
 			}
 			if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
 				startPos += len("DATABASE")
+				pass4 := bulk.NewCheckpoint(ctx)
 				for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+					if err := pass4.Observe(); err != nil {
+						return nil, err
+					}
 					startPos++
 				}
 			}
@@ -416,7 +457,11 @@ func (e *StorageExecutor) executeShowCompositeDatabases(ctx context.Context, cyp
 	compositeDbs := e.dbManager.ListCompositeDatabases()
 
 	rows := make([][]interface{}, len(compositeDbs))
+	pass := bulk.NewCheckpoint(ctx)
 	for i, db := range compositeDbs {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		rows[i] = []interface{}{db.Name(), db.Type(), db.Status()}
 	}
 
@@ -488,7 +533,11 @@ func (e *StorageExecutor) executeShowConstituents(ctx context.Context, cypher st
 	}
 
 	rows := make([][]interface{}, len(constituents))
+	pass := bulk.NewCheckpoint(ctx)
 	for i, c := range constituents {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		// Handle ConstituentRef type
 		if ref, ok := c.(multidb.ConstituentRef); ok {
 			rows[i] = []interface{}{
@@ -555,12 +604,20 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 
 	// Check that "DATABASE" follows "COMPOSITE"
 	afterComposite := alterIdx + len("ALTER")
+	pass := bulk.NewCheckpoint(ctx)
 	for afterComposite < len(cypher) && isWhitespace(cypher[afterComposite]) {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		afterComposite++
 	}
 	if afterComposite+len("COMPOSITE") <= len(cypher) && strings.EqualFold(cypher[afterComposite:afterComposite+len("COMPOSITE")], "COMPOSITE") {
 		afterComposite += len("COMPOSITE")
+		pass2 := bulk.NewCheckpoint(ctx)
 		for afterComposite < len(cypher) && isWhitespace(cypher[afterComposite]) {
+			if err := pass2.Observe(); err != nil {
+				return nil, err
+			}
 			afterComposite++
 		}
 		if afterComposite+len("DATABASE") > len(cypher) || !strings.EqualFold(cypher[afterComposite:afterComposite+len("DATABASE")], "DATABASE") {
@@ -572,25 +629,41 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 
 	// Skip "ALTER COMPOSITE DATABASE" and whitespace
 	startPos := alterIdx + len("ALTER")
+	pass3 := bulk.NewCheckpoint(ctx)
 	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		if err := pass3.Observe(); err != nil {
+			return nil, err
+		}
 		startPos++
 	}
 	// Skip "COMPOSITE DATABASE"
 	if startPos+len("COMPOSITE DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE DATABASE")], "COMPOSITE DATABASE") {
 		startPos += len("COMPOSITE DATABASE")
+		pass4 := bulk.NewCheckpoint(ctx)
 		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+			if err := pass4.Observe(); err != nil {
+				return nil, err
+			}
 			startPos++
 		}
 	} else {
 		// Try with flexible whitespace
 		if startPos+len("COMPOSITE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("COMPOSITE")], "COMPOSITE") {
 			startPos += len("COMPOSITE")
+			pass5 := bulk.NewCheckpoint(ctx)
 			for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+				if err := pass5.Observe(); err != nil {
+					return nil, err
+				}
 				startPos++
 			}
 			if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
 				startPos += len("DATABASE")
+				pass6 := bulk.NewCheckpoint(ctx)
 				for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+					if err := pass6.Observe(); err != nil {
+						return nil, err
+					}
 					startPos++
 				}
 			}
@@ -603,7 +676,11 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 
 	// Extract composite database name (until newline or whitespace)
 	dbNameEnd := startPos
+	pass7 := bulk.NewCheckpoint(ctx)
 	for dbNameEnd < len(cypher) && !isWhitespace(cypher[dbNameEnd]) && cypher[dbNameEnd] != '\n' {
+		if err := pass7.Observe(); err != nil {
+			return nil, err
+		}
 		dbNameEnd++
 	}
 
@@ -621,7 +698,7 @@ func (e *StorageExecutor) executeAlterCompositeDatabase(ctx context.Context, cyp
 		if err != nil {
 			return nil, localizedError(localization.CypherCompositeAlterTokenizeFailed(err), err)
 		}
-		if len(tokens) < 2 || !strings.EqualFold(tokens[0], "ADD") || !strings.EqualFold(tokens[1], "ALIAS") {
+		if len(tokens) < 2 || !bulk.EqualFold(ctx, tokens[0], "ADD") || !bulk.EqualFold(ctx, tokens[1], "ALIAS") {
 			return nil, localizedError(localization.CypherCompositeAlterAddAliasExpected(), nil)
 		}
 		idx := 1

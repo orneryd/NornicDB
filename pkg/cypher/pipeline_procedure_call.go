@@ -141,22 +141,30 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			yielded = append([]string(nil), result.Columns...)
 		}
 		extended := make([]pipelineRow, 0, len(result.Rows))
-		for _, record := range result.Rows {
-			next := make(pipelineRow, len(row)+len(result.Columns))
-			for key, value := range row {
-				next[key] = value
+		for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+			if batchErr != nil {
+				return nil, nil, true, batchErr
 			}
-			for i, column := range result.Columns {
-				if i < len(record) {
-					next[column] = record[i]
+			for _, record := range result.Rows[batch.start:batch.end] {
+				next := make(pipelineRow, len(row)+len(result.Columns))
+				for key, value := range row {
+					next[key] = value
 				}
+				for i, column := range result.Columns {
+					if i < len(record) {
+						next[column] = record[i]
+					}
+				}
+				extended = append(extended, next)
 			}
-			extended = append(extended, next)
 		}
 		if where != "" {
 			extended = e.filterPipelineRows(ctx, extended, where)
 		}
-		out = append(out, extended...)
+		var appendErr error
+		if out, appendErr = appendPopulation(ctx, out, extended); appendErr != nil {
+			return nil, yielded, true, appendErr
+		}
 	}
 	return out, yielded, true, nil
 }

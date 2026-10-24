@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -17,7 +18,11 @@ import (
 // combinations (#940).
 func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []pipelineRow, parts []string, where string) ([]pipelineRow, bool, error) {
 	nodeVariables := make([]string, 0, len(parts))
+	pass := bulk.NewCheckpoint(ctx)
 	for _, part := range parts {
+		if err := pass.Observe(); err != nil {
+			return nil, true, err
+		}
 		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, "(") && !containsRelationshipPattern(part) {
 			if variable := nodePatternStructure(part).variable; variable != "" {
@@ -33,16 +38,25 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 	var hidden, paths []string
 	usedNames := strings.Join(parts, " ") + " " + where
 	newBinding := func() string {
+		pass2 := bulk.NewCheckpoint(ctx)
 		for index := 0; ; index++ {
+			pass2.Check()
 			name := fmt.Sprintf("__nornic_match_product_%d", index)
 			if referencesVariable(usedNames, name) {
 				continue
 			}
 			bound := false
-			for _, row := range rows {
-				if _, exists := row[name]; exists {
-					bound = true
-					break
+		population:
+			for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+				if batchErr != nil {
+					// The parts loop below returns the cancellation.
+					return name
+				}
+				for _, row := range rows[batch.start:batch.end] {
+					if _, exists := row[name]; exists {
+						bound = true
+						break population
+					}
 				}
 			}
 			if !bound {
@@ -78,23 +92,33 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 		rows = expanded
 		if len(paths) > 1 {
 			filtered := rows[:0]
-			for _, row := range rows {
-				if repeatableElements(ctx) || pipelineProductPathsUnique(row, paths) {
-					filtered = append(filtered, row)
+			for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+				if batchErr != nil {
+					return nil, true, batchErr
+				}
+				for _, row := range rows[batch.start:batch.end] {
+					if repeatableElements(ctx) || pipelineProductPathsUnique(row, paths) {
+						filtered = append(filtered, row)
+					}
 				}
 			}
 			rows = filtered
 		}
 	}
 	filtered := rows[:0]
-	for _, row := range rows {
-		if strings.TrimSpace(where) != "" && !e.evaluateRowPredicate(ctx, where, row) {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
-		for _, name := range hidden {
-			delete(row, name)
+		for _, row := range rows[batch.start:batch.end] {
+			if strings.TrimSpace(where) != "" && !e.evaluateRowPredicate(ctx, where, row) {
+				continue
+			}
+			for _, name := range hidden {
+				delete(row, name)
+			}
+			filtered = append(filtered, row)
 		}
-		filtered = append(filtered, row)
 	}
 	if failure := getExpressionFailure(ctx); failure != nil {
 		return nil, true, failure
@@ -112,7 +136,11 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 	}
 	templates := make([]*pipelineNodeMatchTemplate, len(parts))
 	variables := make(map[string]struct{}, len(parts))
+	pass := bulk.NewCheckpoint(ctx)
 	for index, part := range parts {
+		if err := pass.Observe(); err != nil {
+			return nil, true, err
+		}
 		template := e.pipelineNodeMatchTemplateFor("MATCH " + strings.TrimSpace(part))
 		if !template.usable || template.labelErr != nil {
 			return nil, false, nil
@@ -180,13 +208,24 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 					return nil, true, err
 				}
 				if own != "" && !whereApplied {
-					nodes = e.filterNodes(rowCtx, nodes, pattern.variable, own)
+					if nodes, err = e.filterNodes(rowCtx, nodes, pattern.variable, own); err != nil {
+						return nil, true, err
+					}
 				}
 			}
 			matches[index].variable, matches[index].nodes = pattern.variable, nodes
 		}
-		combinations, _ := e.buildCombinationsUsingWhereJoin(matches, where)
+		combinations, _, err := e.buildCombinationsUsingWhereJoin(ctx, matches, where)
+		if err != nil {
+			return nil, true, err
+		}
+		// A checkpoint, not a nested batch iterator: this pass runs once per
+		// input row.
+		joins := bulk.RowsCheckpoint(ctx, len(combinations))
 		for _, combination := range combinations {
+			if err := joins.Observe(); err != nil {
+				return nil, true, err
+			}
 			joined := make(pipelineRow, len(row)+len(combination))
 			for name, value := range row {
 				joined[name] = value
@@ -207,7 +246,9 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 
 func pipelineProductPathsUnique(row pipelineRow, variables []string) bool {
 	seen := make(map[storage.EdgeID]struct{})
+	pass := bulk.NewCheckpoint(rowStatementContextOrBackground(row))
 	for _, variable := range variables {
+		pass.Check()
 		value, ok := row[variable].(map[string]interface{})
 		if !ok {
 			return false
@@ -217,6 +258,7 @@ func pipelineProductPathsUnique(row pipelineRow, variables []string) bool {
 			return false
 		}
 		for _, relationship := range relationships {
+			pass.Check()
 			edge, ok := relationship.(*storage.Edge)
 			if !ok || edge == nil {
 				return false

@@ -1,8 +1,11 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -14,93 +17,99 @@ import (
 // pipeline (see validateNoResidualRelationships), which must complete
 // before any validation or mutation so a multi-row, multi-variable DELETE
 // (e.g. "DELETE a, r") can be judged as a whole statement.
-func collectDeleteMutationTargets(matchResult *ExecuteResult) (nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) {
+func collectDeleteMutationTargets(ctx context.Context, matchResult *ExecuteResult) (nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID, err error) {
 	seenNodes := make(map[string]struct{}, len(matchResult.Rows))
 	seenEdges := make(map[string]struct{}, len(matchResult.Rows))
 	nodeIDs = make([]storage.NodeID, 0, len(matchResult.Rows))
 	edgeIDs = make([]storage.EdgeID, 0, len(matchResult.Rows))
 
-	for _, row := range matchResult.Rows {
-		for _, val := range row {
-			collectDeleteTargetValue(val, seenNodes, seenEdges, &nodeIDs, &edgeIDs)
+	for batch, batchErr := range materializedBatches(ctx, len(matchResult.Rows)) {
+		if batchErr != nil {
+			return nil, nil, batchErr
 		}
-	}
-
-	return nodeIDs, edgeIDs
-}
-
-func collectDeleteTargetValue(value interface{}, seenNodes, seenEdges map[string]struct{}, nodeIDs *[]storage.NodeID, edgeIDs *[]storage.EdgeID) {
-	target := classifyDeleteTargetValue(value)
-	switch target.kind {
-	case deleteProjectionRelationship:
-		key := string(target.edgeID)
-		if _, seen := seenEdges[key]; !seen {
-			seenEdges[key] = struct{}{}
-			*edgeIDs = append(*edgeIDs, target.edgeID)
-		}
-		return
-	case deleteProjectionNode:
-		key := string(target.nodeID)
-		if _, seen := seenNodes[key]; !seen {
-			seenNodes[key] = struct{}{}
-			*nodeIDs = append(*nodeIDs, target.nodeID)
-		}
-		return
-	}
-
-	switch typed := value.(type) {
-	case PathResult:
-		for _, node := range typed.Nodes {
-			collectDeleteTargetValue(node, seenNodes, seenEdges, nodeIDs, edgeIDs)
-		}
-		for _, edge := range typed.Relationships {
-			collectDeleteTargetValue(edge, seenNodes, seenEdges, nodeIDs, edgeIDs)
-		}
-	case *PathResult:
-		if typed != nil {
-			collectDeleteTargetValue(*typed, seenNodes, seenEdges, nodeIDs, edgeIDs)
-		}
-	case []interface{}:
-		for _, item := range typed {
-			collectDeleteTargetValue(item, seenNodes, seenEdges, nodeIDs, edgeIDs)
-		}
-	case map[string]interface{}:
-		if path, ok := typed["_pathResult"]; ok {
-			collectDeleteTargetValue(path, seenNodes, seenEdges, nodeIDs, edgeIDs)
-			return
-		}
-		for _, item := range typed {
-			collectDeleteTargetValue(item, seenNodes, seenEdges, nodeIDs, edgeIDs)
-		}
-	}
-}
-
-func isDeleteTargetValue(value interface{}) bool {
-	// Marker keys in an ordinary Cypher map are user data, not authority to
-	// delete an entity. Only the evaluator's actual PathResult carrier is a
-	// map-shaped DELETE value; legacy projection classification stays private.
-	if object, isMap := value.(map[string]interface{}); isMap {
-		_, isPath := cypherPathResultOf(value, object, true)
-		return isPath
-	}
-	if value == nil || classifyDeleteTargetValue(value).kind != deleteProjectionUnknown {
-		return true
-	}
-	switch typed := value.(type) {
-	case PathResult:
-		return true
-	case *PathResult:
-		return typed != nil
-	case []interface{}:
-		for _, item := range typed {
-			if !isDeleteTargetValue(item) {
-				return false
+		for _, row := range matchResult.Rows[batch.start:batch.end] {
+			pass := bulk.NewCheckpoint(ctx)
+			for _, val := range row {
+				if err := pass.Observe(); err != nil {
+					return nil, nil, err
+				}
+				collectDeleteTargetValue(&pass, val, seenNodes, seenEdges, &nodeIDs, &edgeIDs)
 			}
 		}
-		return true
-	default:
-		return false
 	}
+
+	return nodeIDs, edgeIDs, nil
+}
+
+func collectDeleteTargetValue(walk *materializedRowCheckpoint, value interface{}, seenNodes, seenEdges map[string]struct{}, nodeIDs *[]storage.NodeID, edgeIDs *[]storage.EdgeID) {
+	var visit func(value interface{}) (descend, stop bool)
+	visit = func(value interface{}) (bool, bool) {
+		target := classifyDeleteTargetValue(value)
+		switch target.kind {
+		case deleteProjectionRelationship:
+			key := string(target.edgeID)
+			if _, seen := seenEdges[key]; !seen {
+				seenEdges[key] = struct{}{}
+				*edgeIDs = append(*edgeIDs, target.edgeID)
+			}
+			return false, false
+		case deleteProjectionNode:
+			key := string(target.nodeID)
+			if _, seen := seenNodes[key]; !seen {
+				seenNodes[key] = struct{}{}
+				*nodeIDs = append(*nodeIDs, target.nodeID)
+			}
+			return false, false
+		}
+		switch typed := value.(type) {
+		case PathResult:
+			// A path's entities are typed slices: each is a target.
+			for _, node := range observedItems(walk, typed.Nodes) {
+				visit(node)
+			}
+			for _, relationship := range observedItems(walk, typed.Relationships) {
+				visit(relationship)
+			}
+		case *PathResult:
+			if typed != nil {
+				return visit(*typed)
+			}
+		case []interface{}:
+			return true, false
+		case map[string]interface{}:
+			if path, ok := typed["_pathResult"]; ok {
+				cypherfn.VisitValue(walk, path, visit)
+				return false, false
+			}
+			return true, false
+		}
+		return false, false
+	}
+	cypherfn.VisitValue(walk, value, visit)
+}
+
+func isDeleteTargetValue(walk *materializedRowCheckpoint, value interface{}) bool {
+	return !cypherfn.VisitValue(walk, value, func(value interface{}) (descend, stop bool) {
+		// Marker keys in an ordinary Cypher map are user data, not authority to
+		// delete an entity. Only the evaluator's actual PathResult carrier is a
+		// map-shaped DELETE value; legacy projection classification stays private.
+		if object, isMap := value.(map[string]interface{}); isMap {
+			_, isPath := cypherPathResultOf(value, object, true)
+			return false, !isPath
+		}
+		if value == nil || classifyDeleteTargetValue(value).kind != deleteProjectionUnknown {
+			return false, false
+		}
+		switch typed := value.(type) {
+		case PathResult:
+			return false, false
+		case *PathResult:
+			return false, typed == nil
+		case []interface{}:
+			return true, false
+		}
+		return false, true
+	})
 }
 
 func hasTopLevelDeleteLabelQualifier(expression string) bool {
@@ -222,15 +231,23 @@ func pipelineUnwindAlias(clause string) string {
 // same statement is also deleting that edge (e.g.
 // "MATCH (a)-[r]->(b) DELETE a, r"); edgeIDs holds every edge this
 // statement is about to remove, so those are subtracted before the check.
-func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) error {
-	beingDeleted := deletingEdgeSet(edgeIDs)
-	for _, nodeID := range nodeIDs {
-		connected, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
-		if err != nil {
-			return err
+func validateNoResidualRelationships(ctx context.Context, store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) error {
+	beingDeleted := make(map[storage.EdgeID]struct{}, len(edgeIDs))
+	if err := addDeletingEdges(ctx, beingDeleted, edgeIDs); err != nil {
+		return err
+	}
+	for batch, batchErr := range materializedBatches(ctx, len(nodeIDs)) {
+		if batchErr != nil {
+			return batchErr
 		}
-		if connected {
-			return residualRelationshipDeleteError(nodeID)
+		for _, nodeID := range nodeIDs[batch.start:batch.end] {
+			connected, err := nodeHasResidualRelationships(ctx, store, nodeID, beingDeleted)
+			if err != nil {
+				return err
+			}
+			if connected {
+				return residualRelationshipDeleteError(nodeID)
+			}
 		}
 	}
 	return nil
@@ -241,42 +258,60 @@ func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.Nod
 // deletes them for now, and the transaction's commit fails unless a later
 // clause deletes those relationships, as in Neo4j
 // (storage.ConnectedNodeDeleter).
-func connectedDeleteTargets(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) (map[storage.NodeID]struct{}, error) {
-	beingDeleted := deletingEdgeSet(edgeIDs)
+func connectedDeleteTargets(ctx context.Context, store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) (map[storage.NodeID]struct{}, error) {
+	beingDeleted := make(map[storage.EdgeID]struct{}, len(edgeIDs))
+	if err := addDeletingEdges(ctx, beingDeleted, edgeIDs); err != nil {
+		return nil, err
+	}
 	var connected map[storage.NodeID]struct{}
-	for _, nodeID := range nodeIDs {
-		residual, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
-		if err != nil {
-			return nil, err
+	for batch, batchErr := range materializedBatches(ctx, len(nodeIDs)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		if residual {
-			if connected == nil {
-				connected = make(map[storage.NodeID]struct{})
+		for _, nodeID := range nodeIDs[batch.start:batch.end] {
+			residual, err := nodeHasResidualRelationships(ctx, store, nodeID, beingDeleted)
+			if err != nil {
+				return nil, err
 			}
-			connected[nodeID] = struct{}{}
+			if residual {
+				if connected == nil {
+					connected = make(map[storage.NodeID]struct{})
+				}
+				connected[nodeID] = struct{}{}
+			}
 		}
 	}
 	return connected, nil
 }
 
-func deletingEdgeSet(edgeIDs []storage.EdgeID) map[storage.EdgeID]struct{} {
-	beingDeleted := make(map[storage.EdgeID]struct{}, len(edgeIDs))
+// addDeletingEdges adds the relationships a DELETE removes to beingDeleted.
+// The caller makes the set: it stays in the caller's frame.
+func addDeletingEdges(ctx context.Context, beingDeleted map[storage.EdgeID]struct{}, edgeIDs []storage.EdgeID) error {
+	ids := bulk.RowsCheckpoint(ctx, len(edgeIDs))
 	for _, id := range edgeIDs {
+		if err := ids.Observe(); err != nil {
+			return err
+		}
 		beingDeleted[id] = struct{}{}
 	}
-	return beingDeleted
+	return nil
 }
 
 // nodeHasResidualRelationships reports whether a relationship other than
 // those beingDeleted connects nodeID (connectingRelationships).
-func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
+func nodeHasResidualRelationships(ctx context.Context, store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
 	connecting, err := connectingRelationships(store, nodeID)
 	if err != nil {
 		return false, err
 	}
-	for _, edge := range connecting {
-		if _, deleting := beingDeleted[edge.ID]; !deleting {
-			return true, nil
+	for batch, batchErr := range materializedBatches(ctx, len(connecting)) {
+		if batchErr != nil {
+			return false, batchErr
+		}
+		for _, edge := range connecting[batch.start:batch.end] {
+			if _, deleting := beingDeleted[edge.ID]; !deleting {
+				return true, nil
+			}
 		}
 	}
 	return false, nil
@@ -295,7 +330,7 @@ func connectingRelationships(store storage.Engine, nodeID storage.NodeID) ([]*st
 	if lister, ok := store.(storage.IncidentEdgeLister); ok {
 		return lister.IncidentEdges(nodeID)
 	}
-	return undirectedIncidentEdges(store, nodeID)
+	return undirectedIncidentEdges(nil, store, nodeID)
 }
 
 // residualRelationshipDeleteError builds the error returned when a

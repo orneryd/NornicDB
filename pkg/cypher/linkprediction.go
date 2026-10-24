@@ -318,7 +318,7 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.HybridPrediction) storage.NodeID { return p.TargetID })
 
 	// Format hybrid results
-	return e.formatHybridPredictionResults(predictions, config.SourceNode), nil
+	return e.formatHybridPredictionResults(ctx, predictions, config.SourceNode)
 }
 
 // callGdsLinkPredictionTopology runs a topology link prediction algorithm
@@ -338,7 +338,7 @@ func (e *StorageExecutor) callGdsLinkPredictionTopology(ctx context.Context, arg
 	scores := linkpredict.TopologyScores(algorithm, graph, degree, config.SourceNode)
 	predictions := linkpredict.RankedPredictions(scores, config.candidateLimit(), algorithm)
 	predictions = linkPredictionTargets(config, predictions, func(p linkpredict.Prediction) storage.NodeID { return p.TargetID })
-	return e.formatLinkPredictionResults(predictions, config.SourceNode), nil
+	return e.formatLinkPredictionResults(ctx, predictions, config.SourceNode)
 }
 
 // linkPredictionGraph is the graph a link prediction reads (#1192): the
@@ -398,7 +398,7 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 				return count
 			}
 			seen := make(map[storage.EdgeID]struct{})
-			for _, edge := range e.getNodeEdges(node) {
+			for edge := range e.nodeEdges(valueWalk(ctx), node) {
 				if config.RelationshipTypes == nil || containsString(config.RelationshipTypes, edge.Type) {
 					seen[edge.ID] = struct{}{}
 				}
@@ -575,42 +575,52 @@ func linkPredictionNodeID(value interface{}) (storage.NodeID, bool) {
 }
 
 // formatLinkPredictionResults formats topology predictions as Neo4j-compatible result
-func (e *StorageExecutor) formatLinkPredictionResults(predictions []linkpredict.Prediction, sourceNode storage.NodeID) *ExecuteResult {
+func (e *StorageExecutor) formatLinkPredictionResults(ctx context.Context, predictions []linkpredict.Prediction, sourceNode storage.NodeID) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"node1", "node2", "score"},
 		Rows:    make([][]interface{}, 0, len(predictions)),
 	}
 
-	for _, pred := range predictions {
-		row := []interface{}{
-			string(sourceNode),
-			string(pred.TargetID),
-			pred.Score,
+	for batch, batchErr := range materializedBatches(ctx, len(predictions)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		result.Rows = append(result.Rows, row)
+		for _, pred := range predictions[batch.start:batch.end] {
+			row := []interface{}{
+				string(sourceNode),
+				string(pred.TargetID),
+				pred.Score,
+			}
+			result.Rows = append(result.Rows, row)
+		}
 	}
 
-	return result
+	return result, nil
 }
 
 // formatHybridPredictionResults formats hybrid predictions with extended columns
-func (e *StorageExecutor) formatHybridPredictionResults(predictions []linkpredict.HybridPrediction, sourceNode storage.NodeID) *ExecuteResult {
+func (e *StorageExecutor) formatHybridPredictionResults(ctx context.Context, predictions []linkpredict.HybridPrediction, sourceNode storage.NodeID) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"node1", "node2", "score", "topology_score", "semantic_score", "reason"},
 		Rows:    make([][]interface{}, 0, len(predictions)),
 	}
 
-	for _, pred := range predictions {
-		row := []interface{}{
-			string(sourceNode),
-			string(pred.TargetID),
-			pred.Score,
-			pred.TopologyScore,
-			pred.SemanticScore,
-			pred.Reason,
+	for batch, batchErr := range materializedBatches(ctx, len(predictions)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		result.Rows = append(result.Rows, row)
+		for _, pred := range predictions[batch.start:batch.end] {
+			row := []interface{}{
+				string(sourceNode),
+				string(pred.TargetID),
+				pred.Score,
+				pred.TopologyScore,
+				pred.SemanticScore,
+				pred.Reason,
+			}
+			result.Rows = append(result.Rows, row)
+		}
 	}
 
-	return result
+	return result, nil
 }

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
@@ -53,11 +54,21 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 	return nil
 }
 
-func (e *StorageExecutor) validatePipelineProjectionSubscripts(rows []pipelineRow, clause, keyword string) error {
+func (e *StorageExecutor) validatePipelineProjectionSubscripts(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
 	for _, expression := range projectionExpressions(clause, keyword) {
-		for _, row := range rows {
-			if err := e.validateRowSubscriptTypes(expression, row); err != nil {
-				return err
+		// validateRowSubscriptTypes is a no-op without a trailing subscript.
+		// Reject that row-independent case once for the whole materialization.
+		if !strings.HasSuffix(strings.TrimSpace(expression), "]") {
+			continue
+		}
+		for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+			if batchErr != nil {
+				return batchErr
+			}
+			for _, row := range rows[batch.start:batch.end] {
+				if err := e.validateRowSubscriptTypes(expression, row); err != nil {
+					return err
+				}
 			}
 		}
 	}
@@ -344,7 +355,7 @@ func mapElementAccessByNonStringError(value interface{}) error {
 	)
 }
 
-func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clause, keyword string) error {
+func (e *StorageExecutor) validatePipelineSizeArguments(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
 	for _, expression := range projectionExpressions(clause, keyword) {
 		name, argument, functionCall := parseFunctionCallWS(expression)
 		if !functionCall || !strings.EqualFold(name, "size") {
@@ -363,17 +374,22 @@ func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clau
 		if containsAggregateFunc(argument) || needsRowStatementContext(argument) {
 			continue
 		}
-		for _, row := range rows {
-			value, ok, err := e.evaluateRowValue(argument, row)
-			if err != nil {
-				return err
+		for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+			if batchErr != nil {
+				return batchErr
 			}
-			if !ok || value == nil {
-				continue
-			}
-			if path, isMap := toStringAnyMap(value); isMap {
-				if _, isPath := path["_pathResult"]; isPath {
-					return sizeArgumentError(value)
+			for _, row := range rows[batch.start:batch.end] {
+				value, ok, err := e.evaluateRowValue(argument, row)
+				if err != nil {
+					return err
+				}
+				if !ok || value == nil {
+					continue
+				}
+				if path, isMap := toStringAnyMap(value); isMap {
+					if _, isPath := path["_pathResult"]; isPath {
+						return sizeArgumentError(value)
+					}
 				}
 			}
 		}

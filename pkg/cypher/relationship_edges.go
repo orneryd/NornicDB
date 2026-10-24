@@ -2,41 +2,84 @@ package cypher
 
 import (
 	"context"
+	"iter"
+
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+// adjacentEdges is the one reader of a node's relationships for a pass over
+// them: one storage read in direction ("outgoing", "incoming" or "both"; the
+// read is the storage boundary), then each relationship through the
+// cancellation owner's check (walk), outgoing first. Both directions yield a
+// self-relationship twice, as storage holds it; undirectedEdges yields it once.
+func adjacentEdges(walk *materializedRowCheckpoint, store storage.Engine, nodeID storage.NodeID, direction string) (iter.Seq[*storage.Edge], error) {
+	outgoing, incoming, err := incidentEdgeListsContext(walk.Context(), store, nodeID, direction)
+	if err != nil {
+		return nil, err
+	}
+	return func(yield func(*storage.Edge) bool) {
+		for _, edge := range observedItems(walk, outgoing) {
+			if !yield(edge) {
+				return
+			}
+		}
+		for _, edge := range observedItems(walk, incoming) {
+			if !yield(edge) {
+				return
+			}
+		}
+	}, nil
+}
+
+// undirectedEdges is adjacentEdges in both directions with each relationship
+// once: a self-relationship is one undirected relationship.
+func undirectedEdges(walk *materializedRowCheckpoint, store storage.Engine, nodeID storage.NodeID) (iter.Seq[*storage.Edge], error) {
+	outgoing, incoming, err := incidentEdgeListsContext(walk.Context(), store, nodeID, "both")
+	if err != nil {
+		return nil, err
+	}
+	return func(yield func(*storage.Edge) bool) {
+		for _, edge := range observedItems(walk, outgoing) {
+			if !yield(edge) {
+				return
+			}
+		}
+		for _, edge := range observedItems(walk, incoming) {
+			if edge != nil && edge.StartNode == nodeID && edge.EndNode == nodeID {
+				continue
+			}
+			if !yield(edge) {
+				return
+			}
+		}
+	}, nil
+}
 
 // undirectedIncidentEdges returns each incident relationship once. Storage
 // correctly exposes a self-relationship as both incoming and outgoing, but an
 // undirected Cypher expansion has only one orientation for that relationship.
-func undirectedIncidentEdges(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	outgoing, incoming, err := incidentEdgeLists(store, nodeID)
+func undirectedIncidentEdges(walk *materializedRowCheckpoint, store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	outgoing, incoming, err := incidentEdgeListsContext(walk.Context(), store, nodeID, "both")
 	if err != nil {
 		return nil, err
 	}
-	return combineIncidentEdges(context.Background(), nodeID, outgoing, incoming)
+	return combineIncidentEdges(walk, nodeID, outgoing, incoming), nil
 }
 
-func combineIncidentEdges(ctx context.Context, nodeID storage.NodeID, outgoing, incoming []*storage.Edge) ([]*storage.Edge, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
+// combineIncidentEdges is outgoing and incoming as one undirected list, a
+// self-relationship once, through the owner's check (walk).
+func combineIncidentEdges(walk *materializedRowCheckpoint, nodeID storage.NodeID, outgoing, incoming []*storage.Edge) []*storage.Edge {
 	edges := make([]*storage.Edge, 0, len(outgoing)+len(incoming))
-	for index, edge := range outgoing {
-		if index&bfsCancelCheckMask == 0 && ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
+	for _, edge := range observedItems(walk, outgoing) {
 		edges = append(edges, edge)
 	}
-	for index, edge := range incoming {
-		if index&bfsCancelCheckMask == 0 && ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
+	for _, edge := range observedItems(walk, incoming) {
 		if edge != nil && edge.StartNode == nodeID && edge.EndNode == nodeID {
 			continue
 		}
 		edges = append(edges, edge)
 	}
-	return edges, nil
+	return edges
 }
 
 // incidentEdgeLists returns a node's outgoing and incoming relationships

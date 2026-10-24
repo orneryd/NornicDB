@@ -1,14 +1,16 @@
 package cypher
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"hash/fnv"
 	"math"
-	"reflect"
 	"sort"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -106,7 +108,7 @@ func changeBounds(capture storage.ChangeCaptureEngine, database string) (earlies
 
 // callDbCdcCurrent is db.cdc.current(): the identifier just after the last
 // committed change, which db.cdc.query takes to return later changes.
-func (e *StorageExecutor) callDbCdcCurrent() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbCdcCurrent(ctx context.Context) (*ExecuteResult, error) {
 	capture, database, err := e.changeCapture()
 	if err != nil {
 		return nil, err
@@ -120,7 +122,7 @@ func (e *StorageExecutor) callDbCdcCurrent() (*ExecuteResult, error) {
 
 // callDbCdcEarliest is db.cdc.earliest(): the identifier just before the
 // earliest retained change.
-func (e *StorageExecutor) callDbCdcEarliest() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbCdcEarliest(ctx context.Context) (*ExecuteResult, error) {
 	capture, database, err := e.changeCapture()
 	if err != nil {
 		return nil, err
@@ -139,7 +141,8 @@ func (e *StorageExecutor) callDbCdcEarliest() (*ExecuteResult, error) {
 // last id as the next from). An identifier older than the earliest retained
 // change is Neo4j's InvalidIdentifier error, one past the last committed
 // change its FutureIdentifier error.
-func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbCdcQuery(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	work := bulk.NewCheckpoint(ctx)
 	capture, database, err := e.changeCapture()
 	if err != nil {
 		return nil, err
@@ -160,7 +163,7 @@ func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, er
 		return nil, err
 	}
 	if hasLimit && limit < 0 {
-		return nil, localizedError(localization.CypherSpecializedCallsTxlogArgumentType("limit", "a non-negative INTEGER", neo4jProvidedValue(args[2])), nil)
+		return nil, localizedError(localization.CypherSpecializedCallsTxlogArgumentType("limit", "a non-negative INTEGER", neo4jProvidedValue(valueWalk(ctx), args[2])), nil)
 	}
 	earliest, current, err := changeBounds(capture, database)
 	if err != nil {
@@ -189,13 +192,20 @@ func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, er
 	// Events are read a page at a time, so a large backlog isn't decoded at
 	// once, until the limit is reached or the events end.
 	const page = 1000
+	pass := bulk.NewCheckpoint(ctx)
 	for position := from; !hasLimit || int64(len(result.Rows)) < limit; {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		events, err := capture.ChangeEvents(database, position.commitSeq, position.seq, page)
 		if err != nil {
 			return nil, localizedStatusError("Neo.DatabaseError.ChangeDataCapture.ScanFailure", "ScanFailure",
 				localization.CypherSpecializedCallsCDCScanFailed(err))
 		}
 		for index := range events {
+			if err := work.Observe(); err != nil {
+				return nil, err
+			}
 			event := &events[index]
 			if !matchesAnyChangeSelector(selectors, database, event) {
 				continue
@@ -223,7 +233,7 @@ func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, er
 func changeMetadataValue(event *storage.ChangeEvent, databaseID string) map[string]interface{} {
 	txMetadata := map[string]interface{}{}
 	for key, value := range event.TxMetadata {
-		txMetadata[key] = cdcValue(value)
+		txMetadata[key] = cdcValue(nil, value)
 	}
 	return map[string]interface{}{
 		"executingUser": "", "authenticatedUser": "",
@@ -281,7 +291,7 @@ func keyMapsValue(maps []map[string]any) []interface{} {
 	for index, keys := range maps {
 		converted := make(map[string]interface{}, len(keys))
 		for name, key := range keys {
-			converted[name] = cdcValue(key)
+			converted[name] = cdcValue(nil, key)
 		}
 		value[index] = converted
 	}
@@ -294,7 +304,7 @@ func changeStateValue(state *storage.ChangeState, node bool) interface{} {
 	}
 	properties := make(map[string]interface{}, len(state.Properties))
 	for key, value := range state.Properties {
-		properties[key] = cdcValue(value)
+		properties[key] = cdcValue(nil, value)
 	}
 	value := map[string]interface{}{"properties": properties}
 	if node {
@@ -314,45 +324,42 @@ func nonNilStrings(values []string) []interface{} {
 // cdcValue is a stored property value as a Cypher value: the stored form
 // decodes integers into their smallest Go type and floats into float32 when
 // they fit; Cypher has INTEGER and FLOAT.
-func cdcValue(value interface{}) interface{} {
+func cdcValue(walk *materializedRowCheckpoint, value interface{}) interface{} {
+	normalized, _ := cypherfn.TransformValue(walk, value, cdcValueStep)
+	return normalized
+}
+
+// cdcValueStep is a change event value's Cypher number for one value; the
+// walker descends into lists and maps.
+func cdcValueStep(value interface{}) (interface{}, bool, bool) {
 	switch number := value.(type) {
 	case int8:
-		return int64(number)
+		return int64(number), true, false
 	case int16:
-		return int64(number)
+		return int64(number), true, false
 	case int32:
-		return int64(number)
+		return int64(number), true, false
 	case int:
-		return int64(number)
+		return int64(number), true, false
 	case uint8:
-		return int64(number)
+		return int64(number), true, false
 	case uint16:
-		return int64(number)
+		return int64(number), true, false
 	case uint32:
-		return int64(number)
+		return int64(number), true, false
 	case uint64:
 		if number <= math.MaxInt64 {
-			return int64(number)
+			return int64(number), true, false
 		}
-		return float64(number)
+		return float64(number), true, false
 	case uint:
-		return int64(number)
+		return int64(number), true, false
 	case float32:
-		return float64(number)
-	case []interface{}:
-		out := make([]interface{}, len(number))
-		for index, item := range number {
-			out[index] = cdcValue(item)
-		}
-		return out
-	case map[string]interface{}:
-		out := make(map[string]interface{}, len(number))
-		for key, item := range number {
-			out[key] = cdcValue(item)
-		}
-		return out
+		return float64(number), true, false
+	case []interface{}, map[string]interface{}:
+		return value, false, true
 	}
-	return value
+	return value, false, false
 }
 
 // changeSelector is one db.cdc.query selector: an entity ("e"), node ("n")
@@ -545,7 +552,7 @@ func (s *changeSelector) matches(database string, event *storage.ChangeEvent) bo
 		return false
 	}
 	for key, want := range s.txMetadata {
-		if got, ok := event.TxMetadata[key]; !ok || !reflect.DeepEqual(cdcValue(got), want) {
+		if got, ok := event.TxMetadata[key]; !ok || !cypherfn.IdenticalValues(nil, cdcValue(nil, got), want) {
 			return false
 		}
 	}
@@ -586,7 +593,7 @@ func changedAll(event *storage.ChangeEvent, keys []string) bool {
 	for _, key := range keys {
 		old, hadOld := before[key]
 		updated, hasNew := after[key]
-		if hadOld == hasNew && reflect.DeepEqual(old, updated) {
+		if hadOld == hasNew && cypherfn.IdenticalValues(nil, old, updated) {
 			return false
 		}
 	}
@@ -619,8 +626,10 @@ func keyMatches(event *storage.ChangeEvent, key map[string]interface{}) bool {
 
 // holdsValues reports whether properties hold every one of values.
 func holdsValues(properties map[string]any, values map[string]interface{}) bool {
+	pass := bulk.NewCheckpoint(rowStatementContextOrBackground(values))
 	for name, want := range values {
-		if got, ok := properties[name]; !ok || !reflect.DeepEqual(cdcValue(got), want) {
+		pass.Check()
+		if got, ok := properties[name]; !ok || !cypherfn.IdenticalValues(&pass, cdcValue(&pass, got), want) {
 			return false
 		}
 	}

@@ -30,6 +30,8 @@ import (
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 // unwindMultiMatchCreatePlan is the parsed form of the mutation body.
@@ -148,7 +150,11 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 		}
 	}
 	rows := make([]map[string]interface{}, 0, len(items))
+	pass2 := bulk.NewCheckpoint(ctx)
 	for _, item := range items {
+		if err := pass2.Observe(); err != nil {
+			return nil, true, err
+		}
 		row, ok := toStringAnyMap(item)
 		if !ok {
 			rows = nil
@@ -163,7 +169,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 				matches = append(matches, match)
 			}
 		}
-		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, matches)
+		prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, e.getStorage(ctx), rows, matches)
 		if err != nil {
 			return nil, true, err
 		}
@@ -217,7 +223,7 @@ func (e *StorageExecutor) evaluateUnwindBatchLookupExpr(match matchClauseSpec, r
 func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
 	if match.rowField != "" && bindingMap != nil {
 		if v, ok := bindingMap[match.rowField]; ok {
-			return normalizePropValue(v), true
+			return normalizePropValue(nil, v), true
 		}
 	}
 	expr := strings.TrimSpace(match.lookupExpr)
@@ -225,7 +231,7 @@ func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, binding
 		return nil, false
 	}
 	if value, ok := e.evaluateBatchLookupExprFast(expr, match.bindingVar, bindingValue, bindingMap); ok {
-		return normalizePropValue(value), true
+		return normalizePropValue(nil, value), true
 	}
 
 	values := make(map[string]interface{}, 1)
@@ -233,7 +239,7 @@ func (e *StorageExecutor) evaluateBatchLookupExpr(match matchClauseSpec, binding
 		values[match.bindingVar] = bindingValue
 	}
 	value, resolved, err := e.evaluateExpressionFromValuesResult(rowStatementContextOrBackground(values), expr, values)
-	return normalizePropValue(value), resolved && err == nil
+	return normalizePropValue(nil, value), resolved && err == nil
 }
 
 func (e *StorageExecutor) evaluateBatchLookupExprFast(expr, bindingVar string, bindingValue interface{}, bindingMap map[string]interface{}) (interface{}, bool) {
@@ -306,7 +312,7 @@ func evaluateBatchLookupOperand(expr, bindingVar string, bindingValue interface{
 func buildPropsFromSpec(row map[string]any, rowRefs map[string]string, literals map[string]any) map[string]any {
 	props := make(map[string]any, len(rowRefs)+len(literals))
 	put := func(name string, value any) {
-		if value = normalizePropValue(value); value != nil {
+		if value = normalizePropValue(valueWalk(rowStatementContextOrBackground(row)), value); value != nil {
 			props[name] = value
 		}
 	}
@@ -317,7 +323,9 @@ func buildPropsFromSpec(row map[string]any, rowRefs map[string]string, literals 
 			}
 		}
 	}
+	pass2 := bulk.NewCheckpoint(rowStatementContextOrBackground(row))
 	for k, v := range literals {
+		pass2.Check()
 		put(k, v)
 	}
 	return props

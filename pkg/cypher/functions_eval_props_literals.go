@@ -47,7 +47,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 			return nil
 		}
 		if val, ok := e.boundValue(ctx, varName); ok {
-			if property, supported := rowPropertyValue(e.queryVisibleValue(val), propName); supported {
+			if property, supported := rowPropertyValue(e.queryVisibleValue(valueWalk(ctx), val), propName); supported {
 				return property
 			}
 		}

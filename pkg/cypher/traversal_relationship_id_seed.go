@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -51,7 +52,9 @@ func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, 
 	}
 	// The traversal trusts its seeds: each must match the start node's own
 	// labels and properties, as a bound start node does.
+	pass := bulk.NewCheckpoint(ctx)
 	for _, id := range endpoints {
+		pass.Check()
 		if node, getErr := e.newRelationshipEndpointReader(store).readRetained(id, nil); getErr == nil && node != nil && e.matchesEndPattern(node, &match.StartNode) {
 			nodes = append(nodes, node)
 		}

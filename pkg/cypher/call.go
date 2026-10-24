@@ -30,6 +30,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
 	"github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -129,6 +130,11 @@ func tailStartsWithMatchClause(tail string) bool {
 }
 
 func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResult, tail string) (result *ExecuteResult, err error) {
+	defer func() {
+		if result != nil && err == nil {
+			err = ctx.Err()
+		}
+	}()
 	// Every tail route consumes the same seed once, including projections,
 	// empty row sets and write tails. Pass-through results already own its stats.
 	defer func() {
@@ -144,7 +150,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	}
 	if _, all, _, union := parseTopLevelUnionBranches(tail); union {
 		first := true
-		return e.executeUnionBranches(tail, all, func(branch string) (*ExecuteResult, error) {
+		return e.executeUnionBranches(ctx, tail, all, func(branch string) (*ExecuteResult, error) {
 			if first {
 				first = false
 				return e.executeCallTail(ctx, seed, branch)
@@ -152,7 +158,7 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 			return e.executeInternal(ctx, branch, nil)
 		})
 	}
-	if projected, ok, err := e.projectCallTailReturnAll(seed, tail); ok || err != nil {
+	if projected, ok, err := e.projectCallTailReturnAll(ctx, seed, tail); ok || err != nil {
 		return projected, err
 	}
 	// A tail that doesn't start with MATCH (WITH, UNWIND, RETURN, a chained
@@ -221,14 +227,21 @@ func (e *StorageExecutor) executeCallTail(ctx context.Context, seed *ExecuteResu
 	}
 
 	results := make([]callTailRowResult, len(seed.Rows))
-	for i, row := range seed.Rows {
-		res, err := e.executeCallTailSingleRow(ctx, seed.Columns, row, tail, usedCols, expectedCols)
-		results[i] = callTailRowResult{idx: i, res: res, err: err}
-		if err != nil {
-			break
+population:
+	for batch, batchErr := range materializedBatches(ctx, len(seed.Rows)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for offset, row := range seed.Rows[batch.start:batch.end] {
+			i := batch.start + offset
+			res, err := e.executeCallTailSingleRow(ctx, seed.Columns, row, tail, usedCols, expectedCols)
+			results[i] = callTailRowResult{idx: i, res: res, err: err}
+			if err != nil {
+				break population
+			}
 		}
 	}
-	return combineCallTailRowResults(results, expectedCols)
+	return combineCallTailRowResults(ctx, results, expectedCols)
 }
 
 // executeCallTailPipeline runs the clauses after CALL … YIELD as one pipeline
@@ -240,8 +253,13 @@ func (e *StorageExecutor) executeCallTailPipeline(ctx context.Context, seed *Exe
 		return nil, false, nil
 	}
 	rows := make([]pipelineRow, 0, len(seed.Rows))
-	for _, row := range seed.Rows {
-		rows = append(rows, callTailRow(ctx, seed, row))
+	for batch, batchErr := range materializedBatches(ctx, len(seed.Rows)) {
+		if batchErr != nil {
+			return nil, true, getExpressionFailure(ctx)
+		}
+		for _, row := range seed.Rows[batch.start:batch.end] {
+			rows = append(rows, callTailRow(ctx, seed, row))
+		}
 	}
 	scope := make(map[string]struct{}, len(seed.Columns))
 	for _, column := range seed.Columns {
@@ -269,8 +287,13 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 	}
 
 	rows := make([]pipelineRow, 0, len(seed.Rows))
-	for _, row := range seed.Rows {
-		rows = append(rows, callTailRow(ctx, seed, row))
+	for batch, batchErr := range materializedBatches(ctx, len(seed.Rows)) {
+		if batchErr != nil {
+			return nil, true, getExpressionFailure(ctx)
+		}
+		for _, row := range seed.Rows[batch.start:batch.end] {
+			rows = append(rows, callTailRow(ctx, seed, row))
+		}
 	}
 	projected, ok := e.pipelineApplyWith(ctx, rows, prefix)
 	if !ok {
@@ -286,22 +309,32 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 		return nil, false, nil
 	}
 	combined := &ExecuteResult{Columns: append([]string(nil), prefixColumns...)}
-	for _, bindings := range projected {
-		procedureResult, err := e.executeProcedureCall(ctx, callParts.callOnly, true)
-		if err != nil {
-			return nil, true, err
+	for batch, batchErr := range materializedBatches(ctx, len(projected)) {
+		if batchErr != nil {
+			return nil, true, getExpressionFailure(ctx)
 		}
-		combined.Stats = mergeQueryStats(combined.Stats, procedureResult.Stats)
-		if len(combined.Columns) == len(prefixColumns) {
-			combined.Columns = append(combined.Columns, procedureResult.Columns...)
-		}
-		for _, procedureRow := range procedureResult.Rows {
-			row := make([]interface{}, 0, len(prefixColumns)+len(procedureRow))
-			for _, column := range prefixColumns {
-				row = append(row, bindings[column])
+		for _, bindings := range projected[batch.start:batch.end] {
+			procedureResult, err := e.executeProcedureCall(ctx, callParts.callOnly, true)
+			if err != nil {
+				return nil, true, err
 			}
-			row = append(row, procedureRow...)
-			combined.Rows = append(combined.Rows, row)
+			combined.Stats = mergeQueryStats(combined.Stats, procedureResult.Stats)
+			if len(combined.Columns) == len(prefixColumns) {
+				combined.Columns = append(combined.Columns, procedureResult.Columns...)
+			}
+			for innerBatch, innerErr := range materializedBatches(ctx, len(procedureResult.Rows)) {
+				if innerErr != nil {
+					return nil, true, getExpressionFailure(ctx)
+				}
+				for _, procedureRow := range procedureResult.Rows[innerBatch.start:innerBatch.end] {
+					row := make([]interface{}, 0, len(prefixColumns)+len(procedureRow))
+					for _, column := range prefixColumns {
+						row = append(row, bindings[column])
+					}
+					row = append(row, procedureRow...)
+					combined.Rows = append(combined.Rows, row)
+				}
+			}
 		}
 	}
 
@@ -310,7 +343,7 @@ func (e *StorageExecutor) tryExecuteCallTailProcedurePipeline(
 }
 
 func splitChainedProcedureCall(source string) callSplit { return splitCallAndTail(source) }
-func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) projectCallTailReturnAll(ctx context.Context, seed *ExecuteResult, tail string) (*ExecuteResult, bool, error) {
 
 	node, valid := canonicalQueryClause(tail)
 	if !valid || node.Rule() != cypherantlr.CypherParserRULE_returnSt {
@@ -332,17 +365,22 @@ func (e *StorageExecutor) projectCallTailReturnAll(seed *ExecuteResult, tail str
 		positions[name] = index
 	}
 	result := &ExecuteResult{Columns: expanded.columns, Rows: make([][]interface{}, len(seed.Rows)), Stats: seed.Stats}
-	for index, row := range seed.Rows {
-		projected := make([]interface{}, len(columns))
-		for target, name := range columns {
-			projected[target] = row[positions[name]]
+	for batch, batchErr := range materializedBatches(ctx, len(seed.Rows)) {
+		if batchErr != nil {
+			return nil, true, getExpressionFailure(ctx)
 		}
-		result.Rows[index] = projected
+		for offset, row := range seed.Rows[batch.start:batch.end] {
+			projected := make([]interface{}, len(columns))
+			for target, name := range columns {
+				projected[target] = row[positions[name]]
+			}
+			result.Rows[batch.start+offset] = projected
+		}
 	}
 	if plan.modifiers == "" {
 		return result, true, nil
 	}
-	result, err := e.applyResultModifiers(context.Background(), result, plan.modifiers)
+	result, err := e.applyResultModifiers(ctx, result, plan.modifiers)
 	return result, true, err
 }
 
@@ -383,24 +421,39 @@ func (e *StorageExecutor) executeCallTailParallel(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			var stopped error
+			defer bulk.RecoverStop(&stopped)
 			for j := range jobs {
-				res, err := e.executeCallTailSingleRow(ctx, seed.Columns, j.row, tail, usedCols, expectedCols)
+				// A stop in a row's run is that row's error.
+				res, err := insideStopBoundary(func() (*ExecuteResult, error) {
+					return e.executeCallTailSingleRow(ctx, seed.Columns, j.row, tail, usedCols, expectedCols)
+				})
 				results <- callTailRowResult{idx: j.idx, res: res, err: err}
 			}
 		}()
 	}
-	for i, row := range seed.Rows {
-		jobs <- job{idx: i, row: row}
+	var canceled error
+	for batch, batchErr := range materializedBatches(ctx, len(seed.Rows)) {
+		if batchErr != nil {
+			canceled = batchErr
+			break
+		}
+		for offset, row := range seed.Rows[batch.start:batch.end] {
+			jobs <- job{idx: batch.start + offset, row: row}
+		}
 	}
 	close(jobs)
 	wg.Wait()
 	close(results)
+	if canceled != nil {
+		return nil, true, canceled
+	}
 
 	ordered := make([]callTailRowResult, len(seed.Rows))
 	for rr := range results {
 		ordered[rr.idx] = rr
 	}
-	combined, err := combineCallTailRowResults(ordered, expectedCols)
+	combined, err := combineCallTailRowResults(ctx, ordered, expectedCols)
 	return combined, true, err
 }
 
@@ -408,23 +461,31 @@ func (e *StorageExecutor) executeCallTailParallel(
 // order, for the sequential and the parallel per-row paths alike (#547): the
 // first failing row's error (in row order, so the parallel path reports the
 // same one), and the tail's columns when no row produced any.
-func combineCallTailRowResults(results []callTailRowResult, expectedCols []string) (*ExecuteResult, error) {
+func combineCallTailRowResults(ctx context.Context, results []callTailRowResult, expectedCols []string) (*ExecuteResult, error) {
 	var combined *ExecuteResult
-	for _, result := range results {
-		if result.err != nil {
-			return nil, result.err
+	for batch, batchErr := range materializedBatches(ctx, len(results)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		if result.res == nil {
-			continue
-		}
-		if combined == nil {
-			combined = &ExecuteResult{
-				Columns: append([]string{}, result.res.Columns...),
-				Rows:    make([][]interface{}, 0, len(result.res.Rows)),
+		for _, result := range results[batch.start:batch.end] {
+			if result.err != nil {
+				return nil, result.err
+			}
+			if result.res == nil {
+				continue
+			}
+			if combined == nil {
+				combined = &ExecuteResult{
+					Columns: append([]string{}, result.res.Columns...),
+					Rows:    make([][]interface{}, 0, len(result.res.Rows)),
+				}
+			}
+			combined.Stats = mergeQueryStats(combined.Stats, result.res.Stats)
+			var appendErr error
+			if combined.Rows, appendErr = appendPopulation(ctx, combined.Rows, result.res.Rows); appendErr != nil {
+				return nil, appendErr
 			}
 		}
-		combined.Stats = mergeQueryStats(combined.Stats, result.res.Stats)
-		combined.Rows = append(combined.Rows, result.res.Rows...)
 	}
 	if combined == nil {
 		return &ExecuteResult{Columns: append([]string{}, expectedCols...), Rows: [][]interface{}{}}, nil
@@ -565,8 +626,13 @@ func (e *StorageExecutor) tryExecuteCallTailProjectionFilter(
 		return nil, false, nil
 	}
 	rows := make([]pipelineRow, 0, len(seed.Rows))
-	for _, seedRow := range seed.Rows {
-		rows = append(rows, callTailRow(ctx, seed, seedRow))
+	for batch, batchErr := range materializedBatches(ctx, len(seed.Rows)) {
+		if batchErr != nil {
+			return nil, true, getExpressionFailure(ctx)
+		}
+		for _, seedRow := range seed.Rows[batch.start:batch.end] {
+			rows = append(rows, callTailRow(ctx, seed, seedRow))
+		}
 	}
 	result, ok := e.executeCallTailProjectionPlan(ctx, plan, rows, expectedCols)
 	if !ok {
@@ -627,44 +693,49 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 		}
 		return node, err
 	}
-	for _, seedRow := range seed.Rows {
-		values := callTailRow(ctx, seed, seedRow)
-		relationship, ok := values[plan.propertySource].(*storage.Edge)
-		if !ok || relationship == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(seed.Rows)) {
+		if batchErr != nil {
+			return nil, true, getExpressionFailure(ctx)
 		}
-		if plan.relType != "" && relationship.Type != plan.relType {
-			continue
+		for _, seedRow := range seed.Rows[batch.start:batch.end] {
+			values := callTailRow(ctx, seed, seedRow)
+			relationship, ok := values[plan.propertySource].(*storage.Edge)
+			if !ok || relationship == nil {
+				continue
+			}
+			if plan.relType != "" && relationship.Type != plan.relType {
+				continue
+			}
+			expected, _ := e.evaluateRowExpressionWithContext(ctx, plan.propertyExpr, values)
+			if expected == nil || !e.compareEqual(relationship.Properties[plan.propertyKey], expected) {
+				continue
+			}
+			startNode, err := getNode(relationship.StartNode)
+			if err != nil || startNode == nil {
+				continue
+			}
+			endNode, err := getNode(relationship.EndNode)
+			if err != nil || endNode == nil {
+				continue
+			}
+			if plan.startLabel != "" && !containsString(startNode.Labels, plan.startLabel) {
+				continue
+			}
+			if plan.endLabel != "" && !containsString(endNode.Labels, plan.endLabel) {
+				continue
+			}
+			matched := make(pipelineRow, util.SafePreallocSum(len(values), 3))
+			for key, value := range values {
+				matched[key] = value
+			}
+			matched[plan.startVar] = startNode
+			matched[plan.relVar] = relationship
+			matched[plan.endVar] = endNode
+			if plan.whereClause != "" && !e.evaluateRowPredicate(ctx, plan.whereClause, matched) {
+				continue
+			}
+			rows = append(rows, matched)
 		}
-		expected, _ := e.evaluateRowExpressionWithContext(ctx, plan.propertyExpr, values)
-		if expected == nil || !e.compareEqual(relationship.Properties[plan.propertyKey], expected) {
-			continue
-		}
-		startNode, err := getNode(relationship.StartNode)
-		if err != nil || startNode == nil {
-			continue
-		}
-		endNode, err := getNode(relationship.EndNode)
-		if err != nil || endNode == nil {
-			continue
-		}
-		if plan.startLabel != "" && !containsString(startNode.Labels, plan.startLabel) {
-			continue
-		}
-		if plan.endLabel != "" && !containsString(endNode.Labels, plan.endLabel) {
-			continue
-		}
-		matched := make(pipelineRow, util.SafePreallocSum(len(values), 3))
-		for key, value := range values {
-			matched[key] = value
-		}
-		matched[plan.startVar] = startNode
-		matched[plan.relVar] = relationship
-		matched[plan.endVar] = endNode
-		if plan.whereClause != "" && !e.evaluateRowPredicate(ctx, plan.whereClause, matched) {
-			continue
-		}
-		rows = append(rows, matched)
 	}
 	result, ok := e.executeCallTailProjectionPlan(ctx, plan.projection, rows, expectedCols)
 	if !ok {
@@ -1000,7 +1071,9 @@ func (e *StorageExecutor) planCallTailProjection(tail string) *callTailProjectio
 
 func cloneStringInterfaceMap(values map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(values))
+	pass := bulk.NewCheckpoint(rowStatementContextOrBackground(values))
 	for key, value := range values {
+		pass.Check()
 		out[key] = value
 	}
 	return out
@@ -1174,14 +1247,19 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 			newColumns = append(newColumns, item.column())
 		}
 		newRows := make([][]interface{}, 0, len(result.Rows))
-		for _, row := range result.Rows {
-			newRow := make([]interface{}, len(yield.items))
-			for i, item := range yield.items {
-				if idx, ok := colIndex[item.name]; ok && idx < len(row) {
-					newRow[i] = row[idx]
-				}
+		for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+			if batchErr != nil {
+				return nil, getExpressionFailure(ctx)
 			}
-			newRows = append(newRows, newRow)
+			for _, row := range result.Rows[batch.start:batch.end] {
+				newRow := make([]interface{}, len(yield.items))
+				for i, item := range yield.items {
+					if idx, ok := colIndex[item.name]; ok && idx < len(row) {
+						newRow[i] = row[idx]
+					}
+				}
+				newRows = append(newRows, newRow)
+			}
 		}
 		result.Columns = newColumns
 		result.Rows = newRows
@@ -1191,8 +1269,13 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 	}
 
 	rows := make([]pipelineRow, 0, len(result.Rows))
-	for _, row := range result.Rows {
-		rows = append(rows, callTailRow(ctx, result, row))
+	for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+		if batchErr != nil {
+			return nil, getExpressionFailure(ctx)
+		}
+		for _, row := range result.Rows[batch.start:batch.end] {
+			rows = append(rows, callTailRow(ctx, result, row))
+		}
 	}
 	rows = e.filterPipelineRows(ctx, rows, yield.where)
 	if yield.orderBy != "" || yield.skip != "" || yield.limit != "" {
@@ -1209,6 +1292,9 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 		}
 		ordered, ok := e.pipelineApplyWith(ctx, rows, with.String())
 		if !ok {
+			if failure := getExpressionFailure(ctx); failure != nil {
+				return nil, failure
+			}
 			// SKIP / LIMIT passed the compile-time checks (validateYieldModifiers),
 			// so only a parameter can make them invalid here.
 			return nil, localizedStatusError("Neo.ClientError.Statement.ArgumentError", "InvalidArgumentType",
@@ -1217,12 +1303,17 @@ func (e *StorageExecutor) applyYieldFilter(ctx context.Context, result *ExecuteR
 		rows = ordered
 	}
 	result.Rows = make([][]interface{}, 0, len(rows))
-	for _, row := range rows {
-		values := make([]interface{}, len(result.Columns))
-		for i, column := range result.Columns {
-			values[i] = row[column]
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, getExpressionFailure(ctx)
 		}
-		result.Rows = append(result.Rows, values)
+		for _, row := range rows[batch.start:batch.end] {
+			values := make([]interface{}, len(result.Columns))
+			for i, column := range result.Columns {
+				values[i] = row[column]
+			}
+			result.Rows = append(result.Rows, values)
+		}
 	}
 	return result, nil
 }
@@ -1281,7 +1372,9 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 			return nil, procedureRuntimeError(procName, err)
 		}
 		if proc.User {
-			result = runtimeProcedureResult(result)
+			if result, err = runtimeProcedureResult(ctx, result); err != nil {
+				return nil, err
+			}
 		}
 		if yield != nil {
 			result, err = e.applyYieldFilter(ctx, result, yield)
@@ -1310,14 +1403,18 @@ func (e *StorageExecutor) executeProcedureCall(ctx context.Context, cypher strin
 	return nil, unknownProcedureError(procName)
 }
 
-func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbLabels(ctx context.Context) (*ExecuteResult, error) {
 	nodes, err := e.storage.AllNodes()
 	if err != nil {
 		return nil, err
 	}
 
 	labelSet := make(map[string]bool)
+	pass := bulk.NewCheckpoint(ctx)
 	for _, node := range nodes {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		for _, label := range node.Labels {
 			labelSet[label] = true
 		}
@@ -1345,14 +1442,18 @@ func sortedStringSet(set map[string]bool) []string {
 	return members
 }
 
-func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbRelationshipTypes(ctx context.Context) (*ExecuteResult, error) {
 	edges, err := e.storage.AllEdges()
 	if err != nil {
 		return nil, err
 	}
 
 	typeSet := make(map[string]bool)
+	pass := bulk.NewCheckpoint(ctx)
 	for _, edge := range edges {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		typeSet[edge.Type] = true
 	}
 
@@ -1366,13 +1467,17 @@ func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbIndexes() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexes(ctx context.Context) (*ExecuteResult, error) {
 	// Get indexes from schema manager
 	schema := e.storage.GetSchema()
 	indexes := schema.GetIndexes()
 
 	rows := make([][]interface{}, 0, len(indexes))
+	pass := bulk.NewCheckpoint(ctx)
 	for _, idx := range indexes {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		idxMap := idx.(map[string]interface{})
 		name := idxMap["name"]
 		idxType := idxMap["type"]
@@ -1404,7 +1509,7 @@ func (e *StorageExecutor) callDbIndexes() (*ExecuteResult, error) {
 
 // callDbIndexStats returns statistics for all indexes.
 // Syntax: CALL db.index.stats() YIELD name, type, totalEntries, uniqueValues, selectivity
-func (e *StorageExecutor) callDbIndexStats() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexStats(ctx context.Context) (*ExecuteResult, error) {
 	schema := e.storage.GetSchema()
 	stats := schema.GetIndexStats()
 
@@ -1430,7 +1535,7 @@ func (e *StorageExecutor) callDbIndexStats() (*ExecuteResult, error) {
 // callDbConstraints returns all constraints in the database.
 // Syntax: CALL db.constraints() YIELD name, type, labelsOrTypes, properties
 // Returns constraints in Neo4j-compatible format.
-func (e *StorageExecutor) callDbConstraints() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbConstraints(ctx context.Context) (*ExecuteResult, error) {
 	schema := e.storage.GetSchema()
 	if schema == nil {
 		return &ExecuteResult{
@@ -1478,7 +1583,7 @@ func (e *StorageExecutor) callDbConstraints() (*ExecuteResult, error) {
 	}, nil
 }
 
-func (e *StorageExecutor) callDbmsComponents() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbmsComponents(ctx context.Context) (*ExecuteResult, error) {
 	// Wired to buildinfo so the reported version reflects the actual
 	// running binary. The previous hard-coded "1.0.0" caused
 	// CALL dbms.components() to under-report version on every release
@@ -1494,7 +1599,7 @@ func (e *StorageExecutor) callDbmsComponents() (*ExecuteResult, error) {
 
 // NornicDB-specific procedures
 
-func (e *StorageExecutor) callNornicDbVersion() (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbVersion(ctx context.Context) (*ExecuteResult, error) {
 	build := buildinfo.ShortCommit()
 	if build == "" {
 		build = "dev"
@@ -1507,7 +1612,7 @@ func (e *StorageExecutor) callNornicDbVersion() (*ExecuteResult, error) {
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbStats() (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbStats(ctx context.Context) (*ExecuteResult, error) {
 	nodeCount, _ := e.storage.NodeCount()
 	edgeCount, _ := e.storage.EdgeCount()
 
@@ -1545,7 +1650,7 @@ func (e *StorageExecutor) countRelTypes() int {
 	return len(typeSet)
 }
 
-func (e *StorageExecutor) callNornicDbDecayInfo() (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbDecayInfo(ctx context.Context) (*ExecuteResult, error) {
 	enabled := false
 	if be := unwrapBadgerEngine(e.storage); be != nil {
 		enabled = be.IsDecayEnabled()
@@ -1559,7 +1664,7 @@ func (e *StorageExecutor) callNornicDbDecayInfo() (*ExecuteResult, error) {
 	}, nil
 }
 
-func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo() (*ExecuteResult, error) {
+func (e *StorageExecutor) callNornicDbKnowledgePolicyInfo(ctx context.Context) (*ExecuteResult, error) {
 	enabled := false
 	if be := unwrapBadgerEngine(e.storage); be != nil {
 		enabled = be.IsDecayEnabled()
@@ -1601,17 +1706,24 @@ func (e *StorageExecutor) callDbSchemaVisualization() (*ExecuteResult, error) {
 	return e.callDbSchemaVisualizationWithContext(context.Background())
 }
 
-func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbSchemaNodeProperties(ctx context.Context) (*ExecuteResult, error) {
 	nodes, _ := e.storage.AllNodes()
 
 	// Collect properties per label
 	labelProps := make(map[string]map[string]bool)
+	pass := bulk.NewCheckpoint(ctx)
 	for _, node := range nodes {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		for _, label := range node.Labels {
 			if _, ok := labelProps[label]; !ok {
 				labelProps[label] = make(map[string]bool)
 			}
 			for prop := range node.Properties {
+				if err := pass.Observe(); err != nil {
+					return nil, err
+				}
 				labelProps[label][prop] = true
 			}
 		}
@@ -1631,16 +1743,23 @@ func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbSchemaRelProperties(ctx context.Context) (*ExecuteResult, error) {
 	edges, _ := e.storage.AllEdges()
 
 	// Collect properties per relationship type
 	typeProps := make(map[string]map[string]bool)
+	pass := bulk.NewCheckpoint(ctx)
 	for _, edge := range edges {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		if _, ok := typeProps[edge.Type]; !ok {
 			typeProps[edge.Type] = make(map[string]bool)
 		}
 		for prop := range edge.Properties {
+			if err := pass.Observe(); err != nil {
+				return nil, err
+			}
 			typeProps[edge.Type][prop] = true
 		}
 	}
@@ -1659,18 +1778,32 @@ func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbPropertyKeys(ctx context.Context) (*ExecuteResult, error) {
 	nodes, _ := e.storage.AllNodes()
 	edges, _ := e.storage.AllEdges()
 
 	propSet := make(map[string]bool)
+	pass := bulk.NewCheckpoint(ctx)
 	for _, node := range nodes {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		for prop := range node.Properties {
+			if err := pass.Observe(); err != nil {
+				return nil, err
+			}
 			propSet[prop] = true
 		}
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for _, edge := range edges {
+		if err := pass2.Observe(); err != nil {
+			return nil, err
+		}
 		for prop := range edge.Properties {
+			if err := pass2.Observe(); err != nil {
+				return nil, err
+			}
 			propSet[prop] = true
 		}
 	}
@@ -1686,7 +1819,7 @@ func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
 	return result, nil
 }
 
-func (e *StorageExecutor) callDbmsProcedures() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbmsProcedures(ctx context.Context) (*ExecuteResult, error) {
 	ensureBuiltInProceduresRegistered()
 	registered := ListRegisteredProcedures()
 	procedures := make([][]interface{}, 0, len(registered))
@@ -1700,7 +1833,7 @@ func (e *StorageExecutor) callDbmsProcedures() (*ExecuteResult, error) {
 	}, nil
 }
 
-func (e *StorageExecutor) callDbmsFunctions() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbmsFunctions(ctx context.Context) (*ExecuteResult, error) {
 	functions := [][]interface{}{
 		{"count", "Counts items", "Aggregating"},
 		{"sum", "Sums numeric values", "Aggregating"},

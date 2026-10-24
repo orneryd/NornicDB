@@ -2,44 +2,11 @@ package cypher
 
 import (
 	"context"
-	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
-
-func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable, orderExpr string) []*storage.Node {
-	if len(nodes) <= 1 {
-		return nodes
-	}
-
-	// Parse multiple ORDER BY columns: "n.value ASC, n.name DESC"
-	specs := e.parseNodeOrderSpecs(orderExpr, variable)
-	if len(specs) == 0 {
-		return nodes
-	}
-
-	sorted := make([]*storage.Node, len(nodes))
-	copy(sorted, nodes)
-
-	sort.Slice(sorted, func(i, j int) bool {
-		for _, spec := range specs {
-			val1, _ := sorted[i].Properties[spec.propName]
-			val2, _ := sorted[j].Properties[spec.propName]
-
-			cmp := e.compareOrderValues(val1, val2)
-			if cmp != 0 {
-				if spec.descending {
-					return cmp > 0
-				}
-				return cmp < 0
-			}
-		}
-		return false // All equal
-	})
-
-	return sorted
-}
 
 // parseNodeOrderSpecs parses "n.value ASC, n.name DESC" for node sorting
 func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) []nodeOrderSpec {
@@ -154,7 +121,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context
 		if !bound {
 			return nil, false, nil
 		}
-		visible := e.queryVisibleValue(receiver)
+		visible := e.queryVisibleValue(valueWalk(ctx), receiver)
 		value, supported := evaluateRowPropertyChain(visible, chain)
 		var err error
 		if !supported {
@@ -182,7 +149,9 @@ func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context
 func entityScopesFromValues(values map[string]interface{}) (map[string]*storage.Node, map[string]*storage.Edge) {
 	var nodes map[string]*storage.Node
 	var rels map[string]*storage.Edge
+	pass := bulk.NewCheckpoint(rowStatementContextOrBackground(values))
 	for name, val := range values {
+		pass.Check()
 		switch entity := val.(type) {
 		case *storage.Node:
 			if entity == nil {

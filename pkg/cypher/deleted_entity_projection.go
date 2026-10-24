@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -75,15 +76,21 @@ func (d *deletedEntities) empty() bool {
 // and endpoints (type(r) still answers). Paths and lists holding a deleted
 // entity are rebuilt with its view (#907). Reading a deleted entity's
 // property or labels is an error instead (validateDeletedEntityReads).
-func (e *StorageExecutor) replaceDeletedEntityViews(rows []pipelineRow, deleted *deletedEntities) {
+func (e *StorageExecutor) replaceDeletedEntityViews(ctx context.Context, rows []pipelineRow, deleted *deletedEntities) {
 	if deleted.empty() {
 		return
 	}
 	views := deletedEntityViews{executor: e, nodes: deleted.nodes, edges: deleted.edges}
-	for _, row := range rows {
-		for name, value := range row {
-			if replaced, changed := views.replace(value); changed {
-				row[name] = replaced
+	walk := valueWalk(ctx)
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			for name, value := range row {
+				if replaced, changed := views.replace(walk, value); changed {
+					row[name] = replaced
+				}
 			}
 		}
 	}
@@ -100,35 +107,32 @@ type deletedEntityViews struct {
 
 // replace returns value with its deleted entities replaced by their views,
 // and whether anything was replaced.
-func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
+func (v *deletedEntityViews) replace(walk *materializedRowCheckpoint, value interface{}) (interface{}, bool) {
+	return cypherfn.TransformValue(walk, value, func(value interface{}) (interface{}, bool, bool) {
+		return v.replaceEntity(walk, value)
+	})
+}
+
+// replaceEntity is the view of one deleted entity, or of a path holding one
+// (the value walker descends into lists).
+func (v *deletedEntityViews) replaceEntity(walk *materializedRowCheckpoint, value interface{}) (interface{}, bool, bool) {
 	switch typed := value.(type) {
 	case *storage.Node:
-		if typed == nil {
-			return value, false
-		}
-		if _, deleted := v.nodes[typed.ID]; deleted {
-			return v.node(typed), true
-		}
-	case *storage.Edge:
-		if typed == nil {
-			return value, false
-		}
-		if _, deleted := v.edges[typed.ID]; deleted {
-			return v.edge(typed), true
-		}
-	case []interface{}:
-		var replaced []interface{}
-		for index, item := range typed {
-			if view, changed := v.replace(item); changed {
-				if replaced == nil {
-					replaced = append([]interface{}(nil), typed...)
-				}
-				replaced[index] = view
+		if typed != nil {
+			if _, deleted := v.nodes[typed.ID]; deleted {
+				return v.node(typed), true, false
 			}
 		}
-		if replaced != nil {
-			return replaced, true
+		return value, false, false
+	case *storage.Edge:
+		if typed != nil {
+			if _, deleted := v.edges[typed.ID]; deleted {
+				return v.edge(typed), true, false
+			}
 		}
+		return value, false, false
+	case []interface{}:
+		return value, false, true
 	case map[string]interface{}:
 		var path PathResult
 		switch result := typed["_pathResult"].(type) {
@@ -136,33 +140,37 @@ func (v *deletedEntityViews) replace(value interface{}) (interface{}, bool) {
 			path = result
 		case *PathResult:
 			if result == nil {
-				return value, false
+				return value, false, false
 			}
 			path = *result
 		default:
-			return value, false
+			return value, false, false
 		}
 		changed := false
 		nodes := make([]*storage.Node, len(path.Nodes))
-		for index, node := range path.Nodes {
+		for index, node := range observedItems(walk, path.Nodes) {
 			nodes[index] = node
-			if view, replaced := v.replace(node); replaced {
-				nodes[index], changed = view.(*storage.Node), true
+			if node != nil {
+				if _, deleted := v.nodes[node.ID]; deleted {
+					nodes[index], changed = v.node(node), true
+				}
 			}
 		}
 		relationships := make([]*storage.Edge, len(path.Relationships))
-		for index, relationship := range path.Relationships {
+		for index, relationship := range observedItems(walk, path.Relationships) {
 			relationships[index] = relationship
-			if view, replaced := v.replace(relationship); replaced {
-				relationships[index], changed = view.(*storage.Edge), true
+			if relationship != nil {
+				if _, deleted := v.edges[relationship.ID]; deleted {
+					relationships[index], changed = v.edge(relationship), true
+				}
 			}
 		}
 		if changed {
 			path.Nodes, path.Relationships = nodes, relationships
-			return v.executor.pathToMap(path), true
+			return v.executor.pathToMap(path), true, false
 		}
 	}
-	return value, false
+	return value, false, false
 }
 
 func (v *deletedEntityViews) node(node *storage.Node) *storage.Node {
@@ -181,24 +189,29 @@ func (v *deletedEntityViews) edge(edge *storage.Edge) *storage.Edge {
 // properties of a deleted node, and n {.*}, are empty instead
 // (replaceDeletedEntityViews); n.p IS NULL is true and SET n.p = 1 writes
 // nothing, without an error (deletedEntityReadsIn, deletedEntityReadText).
-func validateDeletedEntityReads(rows []pipelineRow, clause string, deleted *deletedEntities) error {
+func validateDeletedEntityReads(ctx context.Context, rows []pipelineRow, clause string, deleted *deletedEntities) error {
 	if deleted.empty() {
 		return nil
 	}
 	reads := deletedEntityReadsIn(clause)
-	for _, row := range rows {
-		for _, read := range reads {
-			variable := read.variable
-			if _, bound := row[variable]; !bound {
-				// A list iteration variable (x IN xs) reads the list's items.
-				variable = iterationSourceVariable(clause, variable)
-			}
-			if deleted.bindsDeleted(row, variable, read.relationshipOnly) {
-				return newSemanticError(
-					"Neo.ClientError.Statement.EntityNotFound",
-					"DeletedEntityAccess",
-					"cannot access properties or labels of a deleted entity",
-				)
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return batchErr
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			for _, read := range reads {
+				variable := read.variable
+				if _, bound := row[variable]; !bound {
+					// A list iteration variable (x IN xs) reads the list's items.
+					variable = iterationSourceVariable(clause, variable)
+				}
+				if deleted.bindsDeleted(row, variable, read.relationshipOnly) {
+					return newSemanticError(
+						"Neo.ClientError.Statement.EntityNotFound",
+						"DeletedEntityAccess",
+						"cannot access properties or labels of a deleted entity",
+					)
+				}
 			}
 		}
 	}
@@ -267,35 +280,31 @@ func (d *deletedEntities) bindsDeleted(row pipelineRow, variable string, relatio
 	if variable == "" {
 		return false
 	}
-	return d.holdsDeleted(row[variable], relationshipOnly)
+	return d.holdsDeleted(valueWalk(rowStatementContextOrBackground(row)), row[variable], relationshipOnly)
 }
 
 // holdsDeleted reports whether value is a deleted node or relationship, or a
 // list holding one (bindsDeleted).
-func (d *deletedEntities) holdsDeleted(value interface{}, relationshipOnly bool) bool {
-	switch entity := value.(type) {
-	case []interface{}:
-		for _, item := range entity {
-			if d.holdsDeleted(item, relationshipOnly) {
-				return true
+func (d *deletedEntities) holdsDeleted(walk *materializedRowCheckpoint, value interface{}, relationshipOnly bool) bool {
+	return cypherfn.VisitValue(walk, value, func(value interface{}) (descend, stop bool) {
+		switch entity := value.(type) {
+		case []interface{}:
+			return true, false
+		case *storage.Node:
+			if relationshipOnly || entity == nil {
+				return false, false
 			}
+			_, found := d.nodes[entity.ID]
+			return false, found
+		case *storage.Edge:
+			if entity == nil {
+				return false, false
+			}
+			_, found := d.edges[entity.ID]
+			return false, found
 		}
-		return false
-	case *storage.Node:
-		if relationshipOnly || entity == nil {
-			return false
-		}
-		_, found := d.nodes[entity.ID]
-		return found
-	case *storage.Edge:
-		if entity == nil {
-			return false
-		}
-		_, found := d.edges[entity.ID]
-		return found
-	default:
-		return false
-	}
+		return false, false
+	})
 }
 
 // propertyNullTestFollows reports whether the property name starting at

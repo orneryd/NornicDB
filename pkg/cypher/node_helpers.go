@@ -42,6 +42,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -75,17 +77,6 @@ func (e *StorageExecutor) queryNodeReader(store storage.Engine) storage.QueryNod
 	return nil
 }
 
-// streamQueryNodes carries the query-node read contract to storage. Each
-// consumer keeps its own row admission and stopping state: a bounded
-// traversal already checks labels, visibility and its remaining limit.
-func streamQueryNodes(ctx context.Context, store storage.Engine, labels []string, visit func(*storage.Node) error) error {
-	opts := storage.StreamNodesOptions{QueryNodes: true, ApplyDecayFilter: true}
-	if len(labels) > 0 {
-		opts.Label = labels[0]
-	}
-	return store.StreamNodesWithOptions(ctx, opts, visit)
-}
-
 // readsQueryNodesWithoutVectors reports whether an auto-commit statement
 // running without a transaction reads its row nodes without vectors: one
 // that matches nodes and cannot write. A write needs a write clause or a
@@ -104,16 +95,24 @@ type materializedAccessRecorder interface {
 }
 
 // recordMaterializedResultAccess records an access (ON ACCESS policies) for
-// every node and relationship a result returns.
-func (e *StorageExecutor) recordMaterializedResultAccess(result *ExecuteResult) {
+// every node and relationship a result returns. The walk belongs to the
+// statement: it stops with ctx's error when the statement is canceled or
+// expires.
+func (e *StorageExecutor) recordMaterializedResultAccess(ctx context.Context, result *ExecuteResult) error {
 	if result == nil {
-		return
+		return nil
 	}
 	recorder, ok := e.storage.(materializedAccessRecorder)
 	if !ok || recorder == nil {
-		return
+		return nil
 	}
-	materializedRows(recorder, result.Rows)
+	// A boundary of its own: it runs in the statement's completion, after
+	// the statement's boundary has returned, so a stop in the walk ends here
+	// as the error the final decision sees.
+	_, err := insideStopBoundary(func() (bool, error) {
+		return materializedRowsWithCancellation(ctx, recorder, result.Rows)
+	})
+	return err
 }
 
 // resultHasMaterializedEntities reports whether result returns a node or a
@@ -129,23 +128,42 @@ func resultHasMaterializedEntities(result *ExecuteResult) bool {
 // there was any; with a nil recorder it only reports whether there is one,
 // stopping at the first.
 func materializedRows(recorder materializedAccessRecorder, rows [][]interface{}) bool {
-	found := false
-	for _, row := range rows {
-		if materializedValues(recorder, row) {
-			if recorder == nil {
-				return true
-			}
-			found = true
-		}
-	}
+	found, _ := materializedRowsWithCancellation(context.Background(), recorder, rows)
 	return found
 }
 
+// materializedRowsWithCancellation is materializedRows within a statement:
+// the rows, and every value nested in them (lists, maps, paths), observe ctx
+// once per rowCancellationInterval, so neither many rows nor one large value
+// outlives the statement's cancellation.
+func materializedRowsWithCancellation(ctx context.Context, recorder materializedAccessRecorder, rows [][]interface{}) (found bool, err error) {
+	checkpoint := bulk.NewCheckpoint(ctx)
+	defer func() {
+		if err != nil {
+			found = false
+		}
+	}()
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return false, batchErr
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			if materializedValues(recorder, row, &checkpoint) {
+				if recorder == nil {
+					return true, nil
+				}
+				found = true
+			}
+		}
+	}
+	return found, nil
+}
+
 // materializedValues is materializedRows for a list of values.
-func materializedValues(recorder materializedAccessRecorder, values []interface{}) bool {
+func materializedValues(recorder materializedAccessRecorder, values []interface{}, checkpoint *materializedRowCheckpoint) bool {
 	found := false
-	for _, value := range values {
-		if materializedValue(recorder, value) {
+	for _, value := range observedItems(checkpoint, values) {
+		if materializedValueWithCheckpoint(recorder, value, checkpoint) {
 			if recorder == nil {
 				return true
 			}
@@ -158,98 +176,93 @@ func materializedValues(recorder materializedAccessRecorder, values []interface{
 // materializedValue is materializedRows for one value, including the nodes
 // and relationships inside maps and lists.
 func materializedValue(recorder materializedAccessRecorder, value interface{}) bool {
+	return materializedValueWithCheckpoint(recorder, value, nil)
+}
+
+// materializedValueWithCheckpoint counts each visited value against
+// checkpoint (nil: none) and stops the walk (the owner's check), as the
+// DISTINCT key traversal does.
+func materializedValueWithCheckpoint(recorder materializedAccessRecorder, value interface{}, checkpoint *materializedRowCheckpoint) bool {
+	found := false
+	cypherfn.VisitValue(checkpoint, value, func(value interface{}) (descend, stop bool) {
+		hit, container := materializedEntity(recorder, value, checkpoint)
+		if hit {
+			found = true
+			if recorder == nil {
+				return false, true
+			}
+		}
+		return container, false
+	})
+	return found
+}
+
+// materializedEntity records one value the walk reaches: an entity (hit), a
+// path's entities (hit when one is), or a container the walk descends into.
+func materializedEntity(recorder materializedAccessRecorder, value interface{}, checkpoint *materializedRowCheckpoint) (hit, container bool) {
 	id := ""
 	switch v := value.(type) {
 	case *storage.Node:
 		if v == nil {
-			return false
+			return false, false
 		}
 		id = string(v.ID)
 	case *storage.Edge:
 		if v == nil {
-			return false
+			return false, false
 		}
 		id = string(v.ID)
 	case storage.RemotePathValue:
 		if _, _, valid := v.Parts(); !valid {
-			return false
+			return false, false
 		}
-		found := false
-		for _, entity := range v {
-			if materializedValue(recorder, entity) {
-				if recorder == nil {
-					return true
-				}
-				found = true
-			}
-		}
-		return found
+		return false, true
 	case storage.RemoteEntityValue:
 		if v == nil {
-			return false
+			return false, false
 		}
 		id, _ = v["elementId"].(string)
 		if id == "" {
-			return false
+			return false, false
 		}
 	case PathResult:
-		return materializedPathResult(recorder, &v)
+		return materializedPathResult(recorder, &v, checkpoint), false
 	case *PathResult:
-		return materializedPathResult(recorder, v)
+		return materializedPathResult(recorder, v, checkpoint), false
 	case map[string]interface{}:
 		if path, ok := cypherPathResultOf(v, v, true); ok {
-			return materializedPathResult(recorder, &path)
+			return materializedPathResult(recorder, &path, checkpoint), false
 		}
-		found := false
-		for _, nested := range v {
-			if materializedValue(recorder, nested) {
-				if recorder == nil {
-					return true
-				}
-				found = true
-			}
-		}
-		return found
-	case []interface{}:
-		return materializedValues(recorder, v)
-	case []map[string]interface{}:
-		found := false
-		for _, nested := range v {
-			if materializedValue(recorder, nested) {
-				if recorder == nil {
-					return true
-				}
-				found = true
-			}
-		}
-		return found
+		return false, true
+	case []interface{}, []map[string]interface{}:
+		return false, true
 	default:
-		return false
+		return false, false
 	}
 	if recorder != nil {
 		recorder.RecordMaterializedAccess(id)
 	}
-	return true
+	return true, false
 }
 
 // materializedPathResult visits the native entities carried by a local path.
 // The typed carrier is authoritative, so its public map fields are not walked
 // a second time.
-func materializedPathResult(recorder materializedAccessRecorder, path *PathResult) bool {
+func materializedPathResult(recorder materializedAccessRecorder, path *PathResult, checkpoint *materializedRowCheckpoint) bool {
 	if path == nil {
 		return false
 	}
 	found := false
-	for _, node := range path.Nodes {
-		if materializedValue(recorder, node) {
+	for _, node := range observedItems(checkpoint, path.Nodes) {
+		if materializedValueWithCheckpoint(recorder, node, checkpoint) {
 			if recorder == nil {
 				return true
 			}
 			found = true
 		}
 	}
-	for _, relationship := range path.Relationships {
-		if materializedValue(recorder, relationship) {
+	for _, relationship := range observedItems(checkpoint, path.Relationships) {
+		if materializedValueWithCheckpoint(recorder, relationship, checkpoint) {
 			if recorder == nil {
 				return true
 			}

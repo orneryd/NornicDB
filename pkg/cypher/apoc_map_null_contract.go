@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"reflect"
 	"runtime"
-	"sort"
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 func apocMapNullResult(name string, args []interface{}) (interface{}, bool, error) {
@@ -168,6 +169,9 @@ func apocMapConstructor(name string) cypherfn.Func {
 			return nil, err
 		}
 		out := map[string]interface{}{}
+		// The map and list arguments are the query's data: their passes
+		// observe the statement (clean's is a product of three).
+		work := bulk.NewCheckpoint(ctx.StatementContext())
 		readMap := func(value interface{}) (map[string]interface{}, error) {
 			if apocNullValue(value) {
 				return nil, nil
@@ -196,7 +200,12 @@ func apocMapConstructor(name string) cypherfn.Func {
 			if err != nil {
 				return out, nil // retain the native non-list shorthand
 			}
+			// One walk observes the statement over the pairs and their keys.
+			work := valueWalk(ctx.StatementContext())
 			for _, pair := range pairs {
+				if err := work.Observe(); err != nil {
+					return nil, err
+				}
 				items, ok := cypherListValue(pair)
 				if !ok {
 					// Neo4j's ANY-to-list argument coercion wraps a map as a
@@ -214,7 +223,7 @@ func apocMapConstructor(name string) cypherfn.Func {
 				if len(items) > 1 {
 					value = items[1]
 				}
-				out[apocObjectString(items[0])] = value
+				out[apocObjectString(work, items[0])] = value
 			}
 		case "apoc.map.fromlists":
 			keys, err := readList(values[0])
@@ -238,6 +247,9 @@ func apocMapConstructor(name string) cypherfn.Func {
 					return nil, err
 				}
 				for key, value := range m {
+					if err := work.Observe(); err != nil {
+						return nil, err
+					}
 					out[key] = value
 				}
 			}
@@ -275,12 +287,18 @@ func apocMapConstructor(name string) cypherfn.Func {
 				}
 				skip := false
 				for _, removed := range keys {
+					if err := work.Observe(); err != nil {
+						return nil, err
+					}
 					if removed == key {
 						skip = true
 						break
 					}
 				}
 				for _, removed := range items {
+					if err := work.Observe(); err != nil {
+						return nil, err
+					}
 					if apocSameValue(value, removed) || apocSameValue(fmt.Sprint(value), removed) {
 						skip = true
 						break
@@ -297,28 +315,23 @@ func apocMapConstructor(name string) cypherfn.Func {
 
 // APOC map keys use Java Object.toString, including Map's {key=value}
 // spelling. Keep nested map/list formatting at this value boundary.
-func apocObjectString(value interface{}) string {
-	if value == nil {
-		return "null"
-	}
-	if m, ok := apocMapValue(value); ok {
-		keys := make([]string, 0, len(m))
-		for key := range m {
-			keys = append(keys, key)
+func apocObjectString(work *materializedRowCheckpoint, value interface{}) string {
+	return valueText(work, value, apocObjectTextStyle)
+}
+
+// apocObjectTextStyle is Java's Object.toString: {key=value, ...} in key
+// order and [item, ...].
+var apocObjectTextStyle = &valueTextStyle{
+	mapping: apocMapValue, list: cypherListValue,
+	listOpen: "[", listClose: "]", listSeparator: ", ",
+	mapOpen: "{", mapClose: "}", mapSeparator: ", ", keySeparator: "=",
+	sorted: true,
+	leaf: func(_ *materializedRowCheckpoint, out *strings.Builder, value interface{}) bool {
+		if value == nil {
+			out.WriteString("null")
+			return true
 		}
-		sort.Strings(keys)
-		parts := make([]string, len(keys))
-		for i, key := range keys {
-			parts[i] = key + "=" + apocObjectString(m[key])
-		}
-		return "{" + strings.Join(parts, ", ") + "}"
-	}
-	if list, ok := cypherListValue(value); ok {
-		parts := make([]string, len(list))
-		for i, item := range list {
-			parts[i] = apocObjectString(item)
-		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	}
-	return fmt.Sprint(value)
+		out.WriteString(fmt.Sprint(value))
+		return true
+	},
 }

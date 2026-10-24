@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -24,7 +25,7 @@ func (e *StorageExecutor) prefixNodeIDIfNeeded(id storage.NodeID, idPrefix strin
 	return storage.NodeID(idPrefix + string(id))
 }
 
-func (e *StorageExecutor) getEdgesByTypeFast(edgeType string) ([]*storage.Edge, string, error) {
+func (e *StorageExecutor) getEdgesByTypeFast(ctx context.Context, edgeType string) ([]*storage.Edge, string, error) {
 	engine, idPrefix := e.storageFast()
 	edges, err := engine.GetEdgesByType(edgeType)
 	if err != nil {
@@ -35,12 +36,17 @@ func (e *StorageExecutor) getEdgesByTypeFast(edgeType string) ([]*storage.Edge, 
 	}
 
 	filtered := make([]*storage.Edge, 0, len(edges))
-	for _, edge := range edges {
-		if edge == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(edges)) {
+		if batchErr != nil {
+			return nil, "", batchErr
 		}
-		if strings.HasPrefix(string(edge.ID), idPrefix) {
-			filtered = append(filtered, edge)
+		for _, edge := range edges[batch.start:batch.end] {
+			if edge == nil {
+				continue
+			}
+			if strings.HasPrefix(string(edge.ID), idPrefix) {
+				filtered = append(filtered, edge)
+			}
 		}
 	}
 	return filtered, idPrefix, nil

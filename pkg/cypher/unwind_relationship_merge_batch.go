@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -62,7 +63,11 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		return nil, false, nil
 	}
 	rows := make([]map[string]interface{}, 0, len(items))
+	pass2 := bulk.NewCheckpoint(ctx)
 	for _, item := range items {
+		if err := pass2.Observe(); err != nil {
+			return nil, true, err
+		}
 		row, ok := toStringAnyMap(item)
 		if !ok || !relationshipBatchRowHasRequiredFields(row, plan) {
 			return nil, false, nil
@@ -73,7 +78,7 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		}
 		rows = append(rows, row)
 	}
-	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, plan.matches)
+	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, e.getStorage(ctx), rows, plan.matches)
 	if err != nil {
 		return nil, true, err
 	}
@@ -390,7 +395,7 @@ func relationshipBatchRowHasRequiredFields(row map[string]interface{}, plan unwi
 	return true
 }
 
-func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
+func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Context, store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
 	index := make(map[nodeBatchMatchKey]map[string]*storage.Node, len(matches))
 	schema := store.GetSchema()
 	unique := true
@@ -403,22 +408,36 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 		idx := make(map[string]*storage.Node, len(rows))
 		distinct := make(map[string]interface{}, len(rows))
 		for _, match := range group {
-			for _, row := range rows {
-				if value, ok := e.evaluateRelationshipBatchLookupExpr(match, row); ok {
-					distinct[propEqKeyBatch(value)] = value
+			for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+				if batchErr != nil {
+					return nil, false, batchErr
+				}
+				for _, row := range rows[batch.start:batch.end] {
+					if value, ok := e.evaluateRelationshipBatchLookupExpr(match, row); ok {
+						distinct[propEqKeyBatch(value)] = value
+					}
 				}
 			}
 		}
 		if schema != nil && schema.HasPropertyIndex(key.label, key.prop) {
 			unresolved := make(map[string]interface{})
+			lookups := bulk.RowsCheckpoint(ctx, len(distinct))
 			for valueKey, value := range distinct {
+				if err := lookups.Observe(); err != nil {
+					return nil, false, err
+				}
 				ids := propertyIndexLookup(store, schema, key.label, key.prop, value)
 				matched := 0
-				for _, id := range ids {
-					node, err := e.getQueryNode(store, id)
-					if err == nil && nodeBatchMatchesValue(node, key, value) {
-						matched++
-						idx[valueKey] = node
+				for innerBatch, innerErr := range materializedBatches(ctx, len(ids)) {
+					if innerErr != nil {
+						return nil, false, innerErr
+					}
+					for _, id := range ids[innerBatch.start:innerBatch.end] {
+						node, err := e.getQueryNode(store, id)
+						if err == nil && nodeBatchMatchesValue(node, key, value) {
+							matched++
+							idx[valueKey] = node
+						}
 					}
 				}
 				if matched != 1 {
@@ -427,7 +446,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 				}
 			}
 			if len(unresolved) > 0 {
-				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(store, key, unresolved)
+				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, unresolved)
 				if err != nil {
 					return nil, false, err
 				}
@@ -442,7 +461,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 			continue
 		}
 
-		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(store, key, distinct)
+		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, distinct)
 		if err != nil {
 			return nil, false, err
 		}
@@ -454,31 +473,36 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 	return index, unique, nil
 }
 
-func buildNodeBatchLabelMatchIndex(store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
+func buildNodeBatchLabelMatchIndex(ctx context.Context, store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
 	idx := make(map[string]*storage.Node, len(distinct))
 	nodes, err := store.GetNodesByLabel(key.label)
 	if err != nil {
 		return nil, false, localizedError(localization.CypherMergeGetNodesByLabelFailed(key.label, err), err)
 	}
 	unique := true
-	for _, node := range nodes {
-		if node == nil || node.Properties == nil {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+		if batchErr != nil {
+			return nil, false, batchErr
 		}
-		value, ok := node.Properties[key.prop]
-		if !ok {
-			continue
+		for _, node := range nodes[batch.start:batch.end] {
+			if node == nil || node.Properties == nil {
+				continue
+			}
+			value, ok := node.Properties[key.prop]
+			if !ok {
+				continue
+			}
+			valueKey := propEqKeyBatch(value)
+			wantedValue, wanted := distinct[valueKey]
+			if !wanted || !nodeBatchMatchesValue(node, key, wantedValue) {
+				continue
+			}
+			if _, exists := idx[valueKey]; exists {
+				unique = false
+				continue
+			}
+			idx[valueKey] = node
 		}
-		valueKey := propEqKeyBatch(value)
-		wantedValue, wanted := distinct[valueKey]
-		if !wanted || !nodeBatchMatchesValue(node, key, wantedValue) {
-			continue
-		}
-		if _, exists := idx[valueKey]; exists {
-			unique = false
-			continue
-		}
-		idx[valueKey] = node
 	}
 	return idx, unique, nil
 }
@@ -513,7 +537,9 @@ func (e *StorageExecutor) evaluateRelationshipBatchLookupExpr(match matchClauseS
 // falls back to the row-wise executor, which reports the error.
 func normalizeRelationshipBatchRowProperties(row map[string]interface{}, vectorSetters []relationshipVectorSetterSpec) (map[string]interface{}, bool) {
 	props := make(map[string]interface{}, util.SafePreallocSum(len(row), len(vectorSetters)))
+	pass := bulk.NewCheckpoint(rowStatementContextOrBackground(row))
 	for key, value := range row {
+		pass.Check()
 		stored, _, err := storablePropertyValue(value)
 		if err != nil {
 			return nil, false
@@ -542,10 +568,10 @@ func relationshipBatchMatchProperties(
 	props := make(map[string]interface{}, len(merge.keyProps))
 	for _, prop := range merge.keyProps {
 		if prop.literalSet {
-			props[prop.propName] = normalizePropValue(prop.literal)
+			props[prop.propName] = normalizePropValue(valueWalk(rowStatementContextOrBackground(row)), prop.literal)
 			continue
 		}
-		props[prop.propName] = normalizePropValue(row[prop.rowField])
+		props[prop.propName] = normalizePropValue(valueWalk(rowStatementContextOrBackground(row)), row[prop.rowField])
 	}
 	return props
 }
@@ -597,7 +623,11 @@ func lookupRelationshipBatchExistingEdge(
 	if err != nil {
 		return nil, localizedError(localization.CypherMergeGetEdgesBetweenFailed(string(startID), string(endID), err), err)
 	}
+	pass := bulk.NewCheckpoint(rowStatementContextOrBackground(row))
 	for _, edge := range edges {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		if edge == nil || edge.Type != merge.relType || edge.Properties == nil {
 			continue
 		}
@@ -628,7 +658,7 @@ func relationshipBatchEdgeKey(startID storage.NodeID, endID storage.NodeID, relT
 	for key, value := range mergeProps {
 		normalized[key] = normalizeRelationshipMergeIdentityValue(value)
 	}
-	return string(startID) + "\x00" + string(endID) + "\x00" + relType + "\x00" + unwindMergeKey("", normalized)
+	return string(startID) + "\x00" + string(endID) + "\x00" + relType + "\x00" + unwindMergeKey(nil, "", normalized)
 }
 
 func relationshipBatchEdgeKeyFromProperties(startID storage.NodeID, endID storage.NodeID, merge relationshipMergeSpec, edgeProps map[string]interface{}) (string, bool) {

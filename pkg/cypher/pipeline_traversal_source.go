@@ -62,7 +62,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 		completed := input(func(row pipelineRow) bool {
 			// Validate the common MATCH contract before choosing either a scan
 			// or its runtime seeded continuation, as the materializing dispatcher does.
-			if err := validateBoundPatternNodes([]pipelineRow{row}, pattern); err != nil {
+			if err := validateBoundPatternNodes(ctx, []pipelineRow{row}, pattern); err != nil {
 				recordExpressionFailure(ctx, err)
 				valid = false
 				return false
@@ -75,9 +75,15 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 					valid = false
 					return false
 				}
-				for _, selected := range rows {
-					if !yield(selected) {
+				for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+					if batchErr != nil {
+						valid = false
 						return false
+					}
+					for _, selected := range rows[batch.start:batch.end] {
+						if !yield(selected) {
+							return false
+						}
 					}
 				}
 				return true

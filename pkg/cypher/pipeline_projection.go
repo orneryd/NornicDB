@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -31,13 +32,18 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	if plan, ok := parsePipelineRowWith(clause); ok {
 		plan.imports = pipelineImports(ctx)
 		out := make([]pipelineRow, 0, len(rows))
-		for _, row := range rows {
-			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, nil, nil)
-			if !resolved {
+		for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+			if batchErr != nil {
 				return nil, false
 			}
-			if accepted {
-				out = append(out, projected)
+			for _, row := range rows[batch.start:batch.end] {
+				projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, nil, nil)
+				if !resolved {
+					return nil, false
+				}
+				if accepted {
+					out = append(out, projected)
+				}
 			}
 		}
 		return out, true
@@ -83,17 +89,22 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	body, withDistinct = cutDistinct(pipelineClauseBody(body, "WITH"))
 	if strings.TrimSpace(body) == "*" {
 		out := make([]pipelineRow, 0, len(rows))
-		for _, row := range rows {
-			projected := make(pipelineRow, len(row))
-			for name, value := range row {
-				projected[name] = value
+		for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+			if batchErr != nil {
+				return nil, false
 			}
-			out = append(out, projected)
+			for _, row := range rows[batch.start:batch.end] {
+				projected := make(pipelineRow, len(row))
+				for name, value := range row {
+					projected[name] = value
+				}
+				out = append(out, projected)
+			}
 		}
 		if withDistinct {
 			// WITH DISTINCT * keeps one row per distinct set of the
 			// variables in scope (#883).
-			out = deduplicatePipelineRows(memoryScopeFromContext(ctx), out, pipelineWildcardColumns(out))
+			out = deduplicatePipelineRows(ctx, out, pipelineWildcardColumns(ctx, out))
 		}
 		out = e.filterPipelineRows(ctx, out, postWithWhere)
 		if !e.orderPipelineRows(ctx, out, orderTerms) {
@@ -107,7 +118,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	}
 	if strings.TrimSpace(items[0]) == "*" {
 		// WITH *, items: the * is every variable in scope (#883).
-		items = starProjectionItems(pipelineWildcardColumns(rows), items[1:])
+		items = starProjectionItems(pipelineWildcardColumns(ctx, rows), items[1:])
 	}
 
 	type withProjection struct {
@@ -174,51 +185,56 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if needsOrderScopes {
 			orderScopes = make([]pipelineRow, 0, len(groups))
 		}
-		for _, group := range groups {
-			newRow := pipelineRow{}
-			var projectedExpressions pipelineRow
-			if needsOrderScopes {
-				projectedExpressions = make(pipelineRow, len(projections))
+		for batch, batchErr := range materializedBatches(ctx, len(groups)) {
+			if batchErr != nil {
+				return nil, false
 			}
-			for name, value := range group.first {
-				if strings.HasPrefix(name, "$") {
-					newRow[name] = value
-				}
-			}
-			for index, projection := range projections {
-				value, ok := group.value(ctx, e, index)
-				if !ok {
-					pipelineItemUnevaluable(ctx, projection.expr)
-					return nil, false
-				}
-				newRow[projection.alias] = value
+			for _, group := range groups[batch.start:batch.end] {
+				newRow := pipelineRow{}
+				var projectedExpressions pipelineRow
 				if needsOrderScopes {
-					projectedExpressions[projection.expr] = value
+					projectedExpressions = make(pipelineRow, len(projections))
 				}
-			}
-			carryPipelineRowImports(newRow, group.first, pipelineImports(ctx))
-			if !needsOrderScopes {
+				for name, value := range group.first {
+					if strings.HasPrefix(name, "$") {
+						newRow[name] = value
+					}
+				}
+				for index, projection := range projections {
+					value, ok := group.value(ctx, e, index)
+					if !ok {
+						pipelineItemUnevaluable(ctx, projection.expr)
+						return nil, false
+					}
+					newRow[projection.alias] = value
+					if needsOrderScopes {
+						projectedExpressions[projection.expr] = value
+					}
+				}
+				carryPipelineRowImports(newRow, group.first, pipelineImports(ctx))
+				if !needsOrderScopes {
+					out = append(out, newRow)
+					continue
+				}
+				orderScope := make(pipelineRow, len(group.first)+len(projectedExpressions)+len(newRow))
+				for name, value := range group.first {
+					orderScope[name] = value
+				}
+				for expression, value := range projectedExpressions {
+					orderScope[expression] = value
+				}
+				for name, value := range newRow {
+					orderScope[name] = value
+				}
+				if postWithWhere != "" && !e.evaluateWithWhereCondition(ctx, postWithWhere, orderScope) {
+					continue
+				}
 				out = append(out, newRow)
-				continue
+				orderScopes = append(orderScopes, orderScope)
 			}
-			orderScope := make(pipelineRow, len(group.first)+len(projectedExpressions)+len(newRow))
-			for name, value := range group.first {
-				orderScope[name] = value
-			}
-			for expression, value := range projectedExpressions {
-				orderScope[expression] = value
-			}
-			for name, value := range newRow {
-				orderScope[name] = value
-			}
-			if postWithWhere != "" && !e.evaluateWithWhereCondition(ctx, postWithWhere, orderScope) {
-				continue
-			}
-			out = append(out, newRow)
-			orderScopes = append(orderScopes, orderScope)
 		}
 		if withDistinct {
-			out, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), out, orderScopes, projectionAliases)
+			out, orderScopes = deduplicatePipelineRowsWithScopes(ctx, out, orderScopes, projectionAliases)
 		}
 		if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 			return nil, false
@@ -239,33 +255,38 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	for _, projection := range projections {
 		rowPlan.projections = append(rowPlan.projections, pipelineRowProjection{projection.expr, projection.alias})
 	}
-	for _, row := range rows {
-		var scope pipelineRow
-		if postWithWhere != "" || needsOrderScopes {
-			scope = make(pipelineRow, len(row)+len(projections))
-		}
-		newRow, accepted, ok := e.pipelineProjectWithRow(ctx, row, rowPlan, nil, scope)
-		if !ok {
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
 			return nil, false
 		}
-		if !accepted {
-			continue
-		}
-		out = append(out, newRow)
-		if needsOrderScopes {
-			// ORDER BY may name a projected expression by its text; its value
-			// is the projection's (orderedProjectionExpressions). A projected
-			// name keeps its own value.
-			for _, ordered := range orderedExpressions {
-				if _, projected := newRow[ordered.expression]; !projected {
-					scope[ordered.expression] = newRow[ordered.alias]
-				}
+		for _, row := range rows[batch.start:batch.end] {
+			var scope pipelineRow
+			if postWithWhere != "" || needsOrderScopes {
+				scope = make(pipelineRow, len(row)+len(projections))
 			}
-			orderScopes = append(orderScopes, scope)
+			newRow, accepted, ok := e.pipelineProjectWithRow(ctx, row, rowPlan, nil, scope)
+			if !ok {
+				return nil, false
+			}
+			if !accepted {
+				continue
+			}
+			out = append(out, newRow)
+			if needsOrderScopes {
+				// ORDER BY may name a projected expression by its text; its value
+				// is the projection's (orderedProjectionExpressions). A projected
+				// name keeps its own value.
+				for _, ordered := range orderedExpressions {
+					if _, projected := newRow[ordered.expression]; !projected {
+						scope[ordered.expression] = newRow[ordered.alias]
+					}
+				}
+				orderScopes = append(orderScopes, scope)
+			}
 		}
 	}
 	if withDistinct {
-		out, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), out, orderScopes, projectionAliases)
+		out, orderScopes = deduplicatePipelineRowsWithScopes(ctx, out, orderScopes, projectionAliases)
 	}
 	if !e.orderPipelineRowsWithScopes(ctx, out, orderScopes, orderTerms) {
 		return nil, false
@@ -290,10 +311,16 @@ func (e *StorageExecutor) filterPipelineWindow(ctx context.Context, rows, scopes
 	if limit >= 0 && start+limit < end {
 		end = start + limit
 	}
-	filtered := make([]pipelineRow, 0, end-start)
-	for index := start; index < end; index++ {
-		if e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(scopes[index])) {
-			filtered = append(filtered, rows[index])
+	filtered := make([]pipelineRow, 0, len(scopes[start:end]))
+	window := scopes[start:end]
+	for batch, batchErr := range materializedBatches(ctx, len(window)) {
+		if batchErr != nil {
+			return nil
+		}
+		for offset, scope := range window[batch.start:batch.end] {
+			if e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(scope)) {
+				filtered = append(filtered, rows[start+batch.start+offset])
+			}
 		}
 	}
 	return filtered
@@ -485,6 +512,10 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 	if len(terms) == 0 || len(rows) == 0 {
 		return true
 	}
+	if err := ctx.Err(); err != nil {
+		recordExpressionFailure(ctx, err)
+		return false
+	}
 	if len(rows) != len(scopes) {
 		return false
 	}
@@ -497,34 +528,51 @@ func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows,
 	if memoryScopeFromContext(ctx).grow(int64(len(rows))*(sliceHeaderBytes+int64(len(terms))*valueSlotBytes)) != nil {
 		return false
 	}
-	for index, row := range rows {
-		values := make([]interface{}, len(terms))
-		for termIndex, term := range terms {
-			// The projections' evaluator: subquery values (COUNT { … }) and
-			// recorded failures behave as in a RETURN item.
-			value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index])
-			if !ok {
-				return false
-			}
-			values[termIndex] = value
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			recordExpressionFailure(ctx, batchErr)
+			return false
 		}
-		ordered = append(ordered, orderValue{values: values, row: row})
+		for offset, row := range rows[batch.start:batch.end] {
+			index := batch.start + offset
+			values := make([]interface{}, len(terms))
+			for termIndex, term := range terms {
+				// The projections' evaluator: subquery values (COUNT { … }) and
+				// recorded failures behave as in a RETURN item.
+				value, ok := e.evaluateRowExpressionWithContext(ctx, term.column, scopes[index])
+				if !ok {
+					return false
+				}
+				values[termIndex] = value
+			}
+			ordered = append(ordered, orderValue{values: values, row: row})
+		}
 	}
-	sort.SliceStable(ordered, func(left, right int) bool {
+	if err := stableSortRows(ctx, ordered, func(left, right orderValue) int {
 		for index, term := range terms {
-			comparison := compareValuesForSort(ordered[left].values[index], ordered[right].values[index])
+			comparison := compareValuesForSort(left.values[index], right.values[index])
 			if comparison == 0 {
 				continue
 			}
 			if term.descending {
-				return comparison > 0
+				return -comparison
 			}
-			return comparison < 0
+			return comparison
 		}
+		return 0
+	}); err != nil {
+		recordExpressionFailure(ctx, err)
 		return false
-	})
-	for index := range rows {
-		rows[index] = ordered[index].row
+	}
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			recordExpressionFailure(ctx, batchErr)
+			return false
+		}
+		for offset := range rows[batch.start:batch.end] {
+			index := batch.start + offset
+			rows[index] = ordered[index].row
+		}
 	}
 	return true
 }
@@ -547,42 +595,57 @@ func (e *StorageExecutor) filterPipelineRows(ctx context.Context, rows []pipelin
 		return rows
 	}
 	filtered := rows[:0]
-	for _, row := range rows {
-		if e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(row)) {
-			filtered = append(filtered, row)
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			if e.evaluateWithWhereCondition(ctx, whereClause, map[string]interface{}(row)) {
+				filtered = append(filtered, row)
+			}
 		}
 	}
 	return filtered
 }
 
-func deduplicatePipelineRows(memory *memoryScope, rows []pipelineRow, columns []string) []pipelineRow {
-	unique, _ := deduplicatePipelineRowsWithScopes(memory, rows, rows, columns)
+func deduplicatePipelineRows(ctx context.Context, rows []pipelineRow, columns []string) []pipelineRow {
+	unique, _ := deduplicatePipelineRowsWithScopes(ctx, rows, rows, columns)
 	return unique
 }
 
 // deduplicatePipelineRowsWithScopes keeps the first row of each distinct
-// tuple of columns; each kept tuple counts against memory's limit, and going
-// over stops the deduplication (the statement fails with the limit's
-// error, #1343).
-func deduplicatePipelineRowsWithScopes(memory *memoryScope, rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
-	account := memoryAccount{scope: memory}
+// tuple of columns; each kept tuple counts against the statement's memory
+// limit, and going over stops the deduplication (the statement fails with
+// the limit's error, #1343).
+func deduplicatePipelineRowsWithScopes(ctx context.Context, rows, scopes []pipelineRow, columns []string) ([]pipelineRow, []pipelineRow) {
+	account := memoryAccount{scope: memoryScopeFromContext(ctx)}
 	defer account.close()
 	var seen cypherValueIndex
+	seen.observeCancellation(ctx)
 	unique := make([]pipelineRow, 0, len(rows))
 	uniqueScopes := make([]pipelineRow, 0, len(rows))
 	values := make([]interface{}, len(columns))
-	for rowIndex, row := range rows {
-		for i, column := range columns {
-			values[i] = row[column]
+population:
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, nil
 		}
-		if _, exists := seen.addTupleByContract(values, cypherEquivalenceContract); exists {
-			continue
+		for offset, row := range rows[batch.start:batch.end] {
+			rowIndex := batch.start + offset
+			pass := bulk.NewCheckpoint(ctx)
+			for i, column := range columns {
+				pass.Check()
+				values[i] = row[column]
+			}
+			if _, exists := seen.addTupleByContract(values, cypherEquivalenceContract); exists {
+				continue
+			}
+			if account.growTuple(values, mapEntryBytes) != nil {
+				break population
+			}
+			unique = append(unique, row)
+			uniqueScopes = append(uniqueScopes, scopes[rowIndex])
 		}
-		if account.growTuple(values, mapEntryBytes) != nil {
-			break
-		}
-		unique = append(unique, row)
-		uniqueScopes = append(uniqueScopes, scopes[rowIndex])
 	}
 	return unique, uniqueScopes
 }
@@ -703,16 +766,34 @@ func (e *StorageExecutor) evaluatePipelineAggregate(rows []pipelineRow, name, ex
 }
 
 func (e *StorageExecutor) evaluatePipelineAggregateWithContext(ctx context.Context, rows []pipelineRow, name, expr string, distinct bool) (interface{}, bool) {
+	if err := ctx.Err(); err != nil {
+		recordExpressionFailure(ctx, err)
+		return nil, false
+	}
 	if name == "percentilecont" || name == "percentiledisc" {
 		return e.evaluatePipelinePercentile(ctx, rows, name, expr, distinct)
 	}
 	state := pipelineAggregateState{name: name, expression: expr, distinct: distinct, memory: memoryAccount{scope: memoryScopeFromContext(ctx)}}
-	for _, row := range rows {
-		if !state.add(ctx, e, row) {
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, false
+		}
+		if !state.addMaterializedRows(ctx, e, rows, batch) {
 			return nil, false
 		}
 	}
 	return state.result(ctx, e)
+}
+
+// Keep the tight row scan separate from block-boundary cancellation polling.
+// Its only live loop state is the current block, as before cancellation support.
+func (s *pipelineAggregateState) addMaterializedRows(ctx context.Context, e *StorageExecutor, rows []pipelineRow, batch materializedBatch) bool {
+	for _, row := range rows[batch.start:batch.end] {
+		if !s.add(ctx, e, row) {
+			return false
+		}
+	}
+	return true
 }
 
 func pipelineAggregateNumber(value interface{}) (float64, int64, bool, bool) {
@@ -764,20 +845,25 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	}
 	modifiers, returnDistinct := plan.modifiers, plan.distinct
 	if plan.star && len(plan.starItems) > 0 {
-		return e.pipelineApplyReturnPlan(ctx, rows, plan.withStarExpanded(pipelineWildcardColumns(rows)), source, rowsValidated)
+		return e.pipelineApplyReturnPlan(ctx, rows, plan.withStarExpanded(pipelineWildcardColumns(ctx, rows)), source, rowsValidated)
 	}
 	if plan.star {
-		columns := pipelineWildcardColumns(rows)
+		columns := pipelineWildcardColumns(ctx, rows)
 		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows))}
-		for _, row := range rows {
-			projected := make([]interface{}, len(columns))
-			for index, column := range columns {
-				projected[index] = row[column]
+		for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+			if batchErr != nil {
+				return nil, false
 			}
-			result.Rows = append(result.Rows, projected)
+			for _, row := range rows[batch.start:batch.end] {
+				projected := make([]interface{}, len(columns))
+				for index, column := range columns {
+					projected[index] = row[column]
+				}
+				result.Rows = append(result.Rows, projected)
+			}
 		}
 		if returnDistinct {
-			result.Rows = deduplicatePipelineResultRows(result.Rows)
+			result.Rows = deduplicatePipelineResultRows(ctx, result.Rows)
 		}
 		result, err := e.applyResultModifiers(ctx, result, modifiers)
 		return result, err == nil
@@ -810,40 +896,45 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 			orderTerms = alignOrderTerms(orderTerms, expressions)
 		}
 		var projectedRows, orderScopes []pipelineRow
-		for _, group := range groups {
-			outRow := make([]interface{}, 0, len(projs))
-			for index, projection := range projs {
-				value, ok := group.value(ctx, e, index)
-				if !ok {
-					pipelineItemUnevaluable(ctx, projection.expr)
-					return nil, false
+		for batch, batchErr := range materializedBatches(ctx, len(groups)) {
+			if batchErr != nil {
+				return nil, false
+			}
+			for _, group := range groups[batch.start:batch.end] {
+				outRow := make([]interface{}, 0, len(projs))
+				for index, projection := range projs {
+					value, ok := group.value(ctx, e, index)
+					if !ok {
+						pipelineItemUnevaluable(ctx, projection.expr)
+						return nil, false
+					}
+					outRow = append(outRow, value)
 				}
-				outRow = append(outRow, value)
+				if len(orderTerms) == 0 {
+					result.Rows = append(result.Rows, outRow)
+					continue
+				}
+				projected := make(pipelineRow, len(projs))
+				scope := make(pipelineRow, len(group.first)+2*len(projs))
+				for name, value := range group.first {
+					scope[name] = value
+				}
+				for index, projection := range projs {
+					scope[projection.expr] = outRow[index]
+				}
+				for index, column := range result.Columns {
+					projected[column] = outRow[index]
+					scope[column] = outRow[index]
+				}
+				projectedRows = append(projectedRows, projected)
+				orderScopes = append(orderScopes, scope)
 			}
-			if len(orderTerms) == 0 {
-				result.Rows = append(result.Rows, outRow)
-				continue
-			}
-			projected := make(pipelineRow, len(projs))
-			scope := make(pipelineRow, len(group.first)+2*len(projs))
-			for name, value := range group.first {
-				scope[name] = value
-			}
-			for index, projection := range projs {
-				scope[projection.expr] = outRow[index]
-			}
-			for index, column := range result.Columns {
-				projected[column] = outRow[index]
-				scope[column] = outRow[index]
-			}
-			projectedRows = append(projectedRows, projected)
-			orderScopes = append(orderScopes, scope)
 		}
 		if len(orderTerms) > 0 {
 			return e.finishPipelineReturn(ctx, result, projectedRows, orderScopes, orderTerms, modifiers, returnDistinct)
 		}
 		if returnDistinct {
-			result.Rows = deduplicatePipelineResultRows(result.Rows)
+			result.Rows = deduplicatePipelineResultRows(ctx, result.Rows)
 		}
 		result, err := e.applyResultModifiers(ctx, result, modifiers)
 		return result, err == nil
@@ -878,31 +969,36 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	if needsOrderScopes {
 		orderScopes = make([]pipelineRow, 0, len(rows))
 	}
-	for _, row := range rows {
-		projected := make(pipelineRow, len(projs))
-		for _, p := range projs {
-			val, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
-			if !ok {
-				pipelineItemUnevaluable(ctx, p.expr)
-				return nil, false
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, false
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			projected := make(pipelineRow, len(projs))
+			for _, p := range projs {
+				val, ok := e.evaluateRowExpressionWithContext(ctx, p.expr, row)
+				if !ok {
+					pipelineItemUnevaluable(ctx, p.expr)
+					return nil, false
+				}
+				projected[p.alias] = val
 			}
-			projected[p.alias] = val
+			projectedRows = append(projectedRows, projected)
+			if !needsOrderScopes {
+				continue
+			}
+			scope := make(pipelineRow, len(row)+len(projected)+len(orderedExpressions))
+			for name, value := range row {
+				scope[name] = value
+			}
+			for _, ordered := range orderedExpressions {
+				scope[ordered.expression] = projected[ordered.alias]
+			}
+			for name, value := range projected {
+				scope[name] = value
+			}
+			orderScopes = append(orderScopes, scope)
 		}
-		projectedRows = append(projectedRows, projected)
-		if !needsOrderScopes {
-			continue
-		}
-		scope := make(pipelineRow, len(row)+len(projected)+len(orderedExpressions))
-		for name, value := range row {
-			scope[name] = value
-		}
-		for _, ordered := range orderedExpressions {
-			scope[ordered.expression] = projected[ordered.alias]
-		}
-		for name, value := range projected {
-			scope[name] = value
-		}
-		orderScopes = append(orderScopes, scope)
 	}
 	return e.finishPipelineReturn(ctx, result, projectedRows, orderScopes, orderTerms, modifiers, returnDistinct)
 }
@@ -912,7 +1008,7 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 // them to result in its column order.
 func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *ExecuteResult, projectedRows, orderScopes []pipelineRow, orderTerms []orderByTerm, modifiers string, returnDistinct bool) (*ExecuteResult, bool) {
 	if returnDistinct {
-		projectedRows, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), projectedRows, orderScopes, result.Columns)
+		projectedRows, orderScopes = deduplicatePipelineRowsWithScopes(ctx, projectedRows, orderScopes, result.Columns)
 	}
 	if !e.orderPipelineRowsWithScopes(ctx, projectedRows, orderScopes, orderTerms) {
 		return nil, false
@@ -927,12 +1023,17 @@ func (e *StorageExecutor) finishPipelineReturn(ctx context.Context, result *Exec
 	}
 	projectedRows = applyPipelineWindow(projectedRows, skip, limit)
 	result.Rows = make([][]interface{}, 0, len(projectedRows))
-	for _, projected := range projectedRows {
-		outRow := make([]interface{}, len(result.Columns))
-		for index, column := range result.Columns {
-			outRow[index] = projected[column]
+	for batch, batchErr := range materializedBatches(ctx, len(projectedRows)) {
+		if batchErr != nil {
+			return nil, false
 		}
-		result.Rows = append(result.Rows, outRow)
+		for _, projected := range projectedRows[batch.start:batch.end] {
+			outRow := make([]interface{}, len(result.Columns))
+			for index, column := range result.Columns {
+				outRow[index] = projected[column]
+			}
+			result.Rows = append(result.Rows, outRow)
+		}
 	}
 	return result, true
 }
@@ -962,15 +1063,21 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 		})
 		return sourceProjected, sourceCompleted
 	}
-	for _, row := range rows {
-		values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
-		if !evaluated {
+population:
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
 			return false, true
 		}
-		if emit == nil {
-			*out = append(*out, values)
-		} else if !emit(values) {
-			break
+		for _, row := range rows[batch.start:batch.end] {
+			values, evaluated := e.pipelineProjectReturnRow(ctx, projs, row)
+			if !evaluated {
+				return false, true
+			}
+			if emit == nil {
+				*out = append(*out, values)
+			} else if !emit(values) {
+				break population
+			}
 		}
 	}
 	return true, true
@@ -998,7 +1105,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 	// (validatePipelinePercentileArguments). The argument checks run on each
 	// row as it arrives, as WITH's do: a row that fails them fails the
 	// statement where the row is, as in Neo4j.
-	if err := e.validatePipelineProjectionValues(rows, clause.text, "RETURN"); err != nil {
+	if err := e.validatePipelineProjectionValues(ctx, rows, clause.text, "RETURN"); err != nil {
 		return nil, nil, true, err
 	}
 	var validationErr error
@@ -1006,7 +1113,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 		input := source
 		source = func(yield func(pipelineRow) bool) bool {
 			return input(func(row pipelineRow) bool {
-				if err := e.validatePipelineProjectionValues([]pipelineRow{row}, clause.text, "RETURN"); err != nil {
+				if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause.text, "RETURN"); err != nil {
 					validationErr = err
 					return false
 				}
@@ -1073,26 +1180,37 @@ func streamsReturn(ctx context.Context, clauses []pipelineClause, idx int) bool 
 		streamableReturnPlan(returnProjectionPlanFor(clauses[idx].text))
 }
 
-func deduplicatePipelineResultRows(rows [][]interface{}) [][]interface{} {
+func deduplicatePipelineResultRows(ctx context.Context, rows [][]interface{}) [][]interface{} {
 	var seen cypherValueIndex
+	seen.observeCancellation(ctx)
 	unique := make([][]interface{}, 0, len(rows))
-	for _, row := range rows {
-		if _, exists := seen.addTupleByContract(row, cypherEquivalenceContract); exists {
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil
 		}
-		unique = append(unique, row)
+		for _, row := range rows[batch.start:batch.end] {
+			if _, exists := seen.addTupleByContract(row, cypherEquivalenceContract); exists {
+				continue
+			}
+			unique = append(unique, row)
+		}
 	}
 	return unique
 }
 
-func pipelineWildcardColumns(rows []pipelineRow) []string {
+func pipelineWildcardColumns(ctx context.Context, rows []pipelineRow) []string {
 	seen := make(map[string]struct{})
-	for _, row := range rows {
-		for column := range row {
-			if strings.HasPrefix(column, "$") || isGeneratedVariable(column) {
-				continue
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			for column := range row {
+				if strings.HasPrefix(column, "$") || isGeneratedVariable(column) {
+					continue
+				}
+				seen[column] = struct{}{}
 			}
-			seen[column] = struct{}{}
 		}
 	}
 	columns := make([]string, 0, len(seen))

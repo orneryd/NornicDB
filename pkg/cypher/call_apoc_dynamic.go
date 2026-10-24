@@ -3,8 +3,9 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 // =============================================================================
@@ -18,7 +19,7 @@ import (
 // apoc.cypher.run(q, {})). procedure is the name it was called by
 // (apoc.cypher.run or its alias apoc.cypher.doitall).
 func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure string, args []interface{}) (*ExecuteResult, error) {
-	innerQuery, err := requiredProcedureString(procedure, args, 0, "statement")
+	innerQuery, err := requiredStatementText(procedure, args, 0, "statement")
 	if err != nil {
 		return nil, err
 	}
@@ -41,15 +42,20 @@ func (e *StorageExecutor) callApocCypherRun(ctx context.Context, procedure strin
 		Stats:   innerResult.Stats,
 	}
 
-	for _, row := range innerResult.Rows {
-		// Convert row to a map with column names as keys
-		valueMap := make(map[string]interface{})
-		for i, col := range innerResult.Columns {
-			if i < len(row) {
-				valueMap[col] = row[i]
-			}
+	for batch, batchErr := range materializedBatches(ctx, len(innerResult.Rows)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		result.Rows = append(result.Rows, []interface{}{valueMap})
+		for _, row := range innerResult.Rows[batch.start:batch.end] {
+			// Convert row to a map with column names as keys
+			valueMap := make(map[string]interface{})
+			for i, col := range innerResult.Columns {
+				if i < len(row) {
+					valueMap[col] = row[i]
+				}
+			}
+			result.Rows = append(result.Rows, []interface{}{valueMap})
+		}
 	}
 
 	return result, nil
@@ -84,7 +90,7 @@ func runManyStatistics(result *ExecuteResult, elapsed time.Duration) map[string]
 // The statements and parameters are the call's evaluated arguments.
 func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	const procedure = "apoc.cypher.runMany"
-	statements, err := requiredProcedureString(procedure, args, 0, "statements")
+	statements, err := requiredStatementText(procedure, args, 0, "statements")
 	if err != nil {
 		return nil, err
 	}
@@ -112,8 +118,12 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 	// As in APOC, each statement gives its rows, numbered from 0, then a
 	// row -1 with its statistics unless config says statistics: false
 	// (#1164).
+	pass := bulk.NewCheckpoint(ctx)
 	for _, query := range queries {
-		query = strings.TrimSpace(query)
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
+		query = bulk.TrimSpace(ctx, query)
 		if query == "" {
 			continue
 		}
@@ -128,17 +138,23 @@ func (e *StorageExecutor) callApocCypherRunMany(ctx context.Context, args []inte
 		}
 
 		// Add each row from the inner result
-		for i, row := range innerResult.Rows {
-			valueMap := make(map[string]interface{})
-			for j, col := range innerResult.Columns {
-				if j < len(row) {
-					valueMap[col] = row[j]
-				}
+		for batch, batchErr := range materializedBatches(ctx, len(innerResult.Rows)) {
+			if batchErr != nil {
+				return nil, batchErr
 			}
-			result.Rows = append(result.Rows, []interface{}{
-				int64(i),
-				valueMap,
-			})
+			for offset, row := range innerResult.Rows[batch.start:batch.end] {
+				i := batch.start + offset
+				valueMap := make(map[string]interface{})
+				for j, col := range innerResult.Columns {
+					if j < len(row) {
+						valueMap[col] = row[j]
+					}
+				}
+				result.Rows = append(result.Rows, []interface{}{
+					int64(i),
+					valueMap,
+				})
+			}
 		}
 		if statistics {
 			result.Rows = append(result.Rows, []interface{}{int64(-1), runManyStatistics(innerResult, time.Since(started))})

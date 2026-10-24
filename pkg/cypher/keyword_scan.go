@@ -6,6 +6,7 @@ package cypher
 // comments and bracket nesting tracked inline instead of by a lexer.
 
 import (
+	"context"
 	"hash/maphash"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 // cutDistinct reports whether text (a projection body, or an aggregate's
@@ -1879,7 +1881,10 @@ func (e *restoredQueryError) Unwrap() error { return e.cause }
 // text it sent. result is copied only when something differs, never
 // changed, so a cached result stays canonical. Row values are data and are
 // kept, except in a plan.
-func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult, error) {
+//
+// ctx is the statement's completion budget: the rows of a PROFILE result are
+// copied through the bulk owner under it.
+func (r *queryRewrite) restore(ctx context.Context, result *ExecuteResult, err error) (*ExecuteResult, error) {
 	if r == nil {
 		return result, err
 	}
@@ -1893,11 +1898,14 @@ func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult
 				columns[i] = original
 			}
 		}
-		metadata, metadataRestored := r.restoreValue(result.Metadata)
-		var rows interface{}
+		metadata, metadataRestored := restoreValueText(valueWalk(ctx), result.Metadata, r.valueRestore())
+		var rows [][]interface{}
 		rowsRestored := false
 		if len(result.Rows) > 0 && isExplainOrProfileText(r.canonical) {
-			rows, rowsRestored = r.restoreValue(result.Rows)
+			var rowsErr error
+			if rows, rowsRestored, rowsErr = r.restoreRows(ctx, result.Rows); rowsErr != nil {
+				return nil, rowsErr
+			}
 		}
 		if columns != nil || metadataRestored || rowsRestored {
 			restored := *result
@@ -1908,7 +1916,7 @@ func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult
 				restored.Metadata = metadata.(map[string]interface{})
 			}
 			if rowsRestored {
-				restored.Rows = rows.([][]interface{})
+				restored.Rows = rows
 			}
 			result = &restored
 		}
@@ -1921,70 +1929,47 @@ func (r *queryRewrite) restore(result *ExecuteResult, err error) (*ExecuteResult
 	return result, err
 }
 
+// restoreRows restores the statement text in a result's rows, copying the
+// rows once, through the bulk owner, when one changes.
+func (r *queryRewrite) restoreRows(ctx context.Context, rows [][]interface{}) ([][]interface{}, bool, error) {
+	var copied [][]interface{}
+	walk := valueWalk(ctx)
+	pass2 := bulk.NewCheckpoint(ctx)
+	for i, row := range rows {
+		if err := pass2.Observe(); err != nil {
+			return nil, false, err
+		}
+		restored, changed := restoreValueText(walk, row, r.valueRestore())
+		if !changed {
+			continue
+		}
+		if copied == nil {
+			var err error
+			if copied, err = clonePopulation(ctx, rows); err != nil {
+				return nil, false, err
+			}
+		}
+		copied[i] = restored.([]interface{})
+	}
+	return copied, copied != nil, nil
+}
+
+// valueRestore restores the statement text in a result value: a rewritten
+// keyword or name back to the client's text, else in a message.
+func (r *queryRewrite) valueRestore() valueTextRestore {
+	return valueTextRestore{text: func(text string) string {
+		if restored := r.originalText(text); restored != text {
+			return restored
+		}
+		return r.restoreMessage(text)
+	}}
+}
+
 // isExplainOrProfileText reports whether a canonical statement starts with
 // EXPLAIN or PROFILE.
 func isExplainOrProfileText(query string) bool {
 	query = strings.TrimLeft(query, " ")
 	return startsWithKeywordFold(query, "EXPLAIN") || startsWithKeywordFold(query, "PROFILE")
-}
-
-// restoreValue restores the statement text in the strings of value (a plan
-// or metadata), copying what it changes.
-func (r *queryRewrite) restoreValue(value interface{}) (interface{}, bool) {
-	switch typed := value.(type) {
-	case string:
-		restored := r.originalText(typed)
-		if restored == typed {
-			restored = r.restoreMessage(typed)
-		}
-		return restored, restored != typed
-	case map[string]interface{}:
-		var copied map[string]interface{}
-		for key, item := range typed {
-			if restored, changed := r.restoreValue(item); changed {
-				if copied == nil {
-					copied = make(map[string]interface{}, len(typed))
-					for k, v := range typed {
-						copied[k] = v
-					}
-				}
-				copied[key] = restored
-			}
-		}
-		if copied == nil {
-			return value, false
-		}
-		return copied, true
-	case []interface{}:
-		var copied []interface{}
-		for i, item := range typed {
-			if restored, changed := r.restoreValue(item); changed {
-				if copied == nil {
-					copied = append([]interface{}(nil), typed...)
-				}
-				copied[i] = restored
-			}
-		}
-		if copied == nil {
-			return value, false
-		}
-		return copied, true
-	case [][]interface{}:
-		var copied [][]interface{}
-		for i, row := range typed {
-			if restored, changed := r.restoreValue(row); changed {
-				if copied == nil {
-					copied = append([][]interface{}(nil), typed...)
-				}
-				copied[i] = restored.([]interface{})
-			}
-		}
-		if copied == nil {
-			return value, false
-		}
-		return copied, true
-	}
-	return value, false
 }
 
 // skipCypherQuotedText returns the end of the string literal or quoted name

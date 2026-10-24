@@ -65,7 +65,7 @@ func TestNeo4jValueReprBranches(t *testing.T) {
 		{[]int64{1, 2}, "LongArray[1, 2]"},
 		{map[string]interface{}{"a": 1}, "Map{a -> Long(1)}"},
 	} {
-		require.Equal(t, tc.want, neo4jValueRepr(tc.value), "%#v", tc.value)
+		require.Equal(t, tc.want, neo4jValueRepr(nil, tc.value), "%#v", tc.value)
 	}
 }
 

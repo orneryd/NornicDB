@@ -220,10 +220,10 @@ func TestShowListingHelpers(t *testing.T) {
 
 	// Rows are left as they are when a name is missing or not a string.
 	short := &ExecuteResult{Columns: []string{"x", "name"}, Rows: [][]interface{}{{"b", "b"}, {"a"}}}
-	sortShowRowsByName(short)
+	sortShowRowsByName(context.Background(), short)
 	require.Equal(t, [][]interface{}{{"b", "b"}, {"a"}}, short.Rows)
 	mixed := &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{{"b"}, {int64(1)}}}
-	sortShowRowsByName(mixed)
+	sortShowRowsByName(context.Background(), mixed)
 	require.Equal(t, [][]interface{}{{"b"}, {int64(1)}}, mixed.Rows)
 
 	arguments, returns := functionSignatureDescriptions("pi")

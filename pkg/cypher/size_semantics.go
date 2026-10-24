@@ -48,7 +48,7 @@ func sizeArgumentError(value interface{}) error {
 	// A CASE or other nullable expression may reveal a map/entity only now;
 	// every invalid value reaching this runtime owner is a TypeError.
 	return &classifiedCypherError{
-		cause:  localizedError(localization.CypherCoreFunctionArgumentInvalid("size", "a String or List", neo4jValueRepr(value)), nil),
+		cause:  localizedError(localization.CypherCoreFunctionArgumentInvalid("size", "a String or List", neo4jValueRepr(nil, value)), nil),
 		code:   "Neo.ClientError.Statement.TypeError",
 		detail: "InvalidArgumentType",
 	}
@@ -65,7 +65,7 @@ func typeMismatchFromFunctionError(err error) error {
 	var mismatch *cypherfn.TypeMismatchError
 	if errors.As(err, &mismatch) {
 		return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-			localization.CypherCoreFunctionArgumentInvalid(mismatch.Function, "a "+mismatch.Expected, neo4jValueRepr(mismatch.Value)))
+			localization.CypherCoreFunctionArgumentInvalid(mismatch.Function, "a "+mismatch.Expected, neo4jValueRepr(nil, mismatch.Value)))
 	}
 	return err
 }

@@ -65,6 +65,6 @@ func TestApocCollectionsCompareAnyValues(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{list("x"), int64(1)}, result.Rows[0])
 
-	require.Equal(t, list(list(int64(1)), list(int64(2)), list(int64(3))), apocCollSplit(list(int64(1), int64(0), int64(2), float64(0), int64(3)), int64(0)))
-	require.Equal(t, list(list(int64(1), nil, int64(2))), apocCollSplit(list(int64(1), nil, int64(2)), nil))
+	require.Equal(t, list(list(int64(1)), list(int64(2)), list(int64(3))), apocCollSplit(nil, list(int64(1), int64(0), int64(2), float64(0), int64(3)), int64(0)))
+	require.Equal(t, list(list(int64(1), nil, int64(2))), apocCollSplit(nil, list(int64(1), nil, int64(2)), nil))
 }

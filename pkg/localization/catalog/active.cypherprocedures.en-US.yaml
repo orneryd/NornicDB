@@ -40,6 +40,8 @@
   other: "invalid db.index.fulltext.drop syntax{{if .Parentheses}}: missing parentheses{{end}}"
 - id: cypherprocedures.argument_null
   other: "{{.Procedure}}: argument {{.Argument}} is null"
+- id: cypherprocedures.statement_too_long
+  other: "{{.Procedure}}: statement text of {{.Size}} bytes exceeds the limit of {{.Limit}} bytes"
 - id: cypherprocedures.argument_type
   other: "{{.Procedure}}: argument {{.Argument}} must be {{.Expected}}, not {{.Actual}}"
 - id: cypherprocedures.vector_drop_invalid_syntax

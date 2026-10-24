@@ -4,6 +4,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
 
@@ -738,7 +739,7 @@ func (n *rowPropertyChainNode) eval(e *StorageExecutor, values map[string]interf
 	if !bound {
 		return e.evaluateRowValueText(n.text, values)
 	}
-	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), n.chain)
+	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(valueWalk(rowStatementContextOrBackground(values)), base), n.chain)
 	if !ok {
 		return nil, false, rowPropertyChainTypeError(base, n.chain)
 	}
@@ -926,7 +927,7 @@ func (n *rowPropertyNode) eval(e *StorageExecutor, values map[string]interface{}
 	if !ok {
 		return e.rowValueFallback(n.text, values)
 	}
-	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), n.chain)
+	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(valueWalk(rowStatementContextOrBackground(values)), base), n.chain)
 	if !ok {
 		if err := rowPropertyChainTypeError(base, n.chain); err != nil {
 			return nil, false, err
@@ -1004,7 +1005,9 @@ func (n *rowMemoNode) eval(e *StorageExecutor, values map[string]interface{}, fr
 // keeps one), and the list's memo frame.
 func rowLoopScope(values map[string]interface{}, frames [][]rowValueMemo, loop *rowValueLoop) (map[string]interface{}, [][]rowValueMemo) {
 	scope := make(map[string]interface{}, len(values)+1)
+	pass := bulk.NewCheckpoint(rowStatementContextOrBackground(values))
 	for name, value := range values {
+		pass.Check()
 		scope[name] = value
 	}
 	if loop.slots > 0 {

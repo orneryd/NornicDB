@@ -333,9 +333,9 @@
     "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
   },
   {
-    "id": "clauses.go:*StorageExecutor.executeUnionBranches:addTupleByContract:1",
+    "id": "clauses.go:appendDistinctUnionRows:addTupleByContract:1",
     "file": "clauses.go",
-    "caller": "*StorageExecutor.executeUnionBranches",
+    "caller": "appendDistinctUnionRows",
     "callee": "addTupleByContract",
     "contract": "cypherEquivalenceContract",
     "line": 0,
@@ -862,6 +862,51 @@
     "contract": "cypherEquivalenceContract",
     "line": 0,
     "reason": "Native DISTINCT, aggregate grouping and distinct collection values use the canonical index with explicit Cypher equivalence."
+  },
+  {
+    "id": "row_cancellation_bench_test.go:BenchmarkMaterializedRowKeys:cypherValueKey:1",
+    "file": "row_cancellation_bench_test.go",
+    "caller": "BenchmarkMaterializedRowKeys",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Cancellation regression verifies that checkpoint traversal preserves the explicitly selected comparison contract."
+  },
+  {
+    "id": "row_cancellation_test.go:TestMaterializedKeyNumericPolicyBytes:cypherValueKeyWithNumericCheckpoint:1",
+    "file": "row_cancellation_test.go",
+    "caller": "TestMaterializedKeyNumericPolicyBytes",
+    "callee": "cypherValueKeyWithNumericCheckpoint",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Cancellation regression verifies that checkpoint traversal preserves the explicitly selected comparison contract."
+  },
+  {
+    "id": "row_cancellation_test.go:TestMaterializedKeyNumericPolicyBytes:cypherValueKeyWithNumericPolicy:1",
+    "file": "row_cancellation_test.go",
+    "caller": "TestMaterializedKeyNumericPolicyBytes",
+    "callee": "cypherValueKeyWithNumericPolicy",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Cancellation regression verifies that checkpoint traversal preserves the explicitly selected comparison contract."
+  },
+  {
+    "id": "row_cancellation_test.go:TestMaterializedKeyTraversalCheckpoint:cypherValueKey:1",
+    "file": "row_cancellation_test.go",
+    "caller": "TestMaterializedKeyTraversalCheckpoint",
+    "callee": "cypherValueKey",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Cancellation regression verifies that checkpoint traversal preserves the explicitly selected comparison contract."
+  },
+  {
+    "id": "row_cancellation_test.go:TestMaterializedKeyTraversalCheckpoint:cypherValueKeyWithCheckpoint:1",
+    "file": "row_cancellation_test.go",
+    "caller": "TestMaterializedKeyTraversalCheckpoint",
+    "callee": "cypherValueKeyWithCheckpoint",
+    "contract": "cypherEquivalenceContract",
+    "line": 0,
+    "reason": "Cancellation regression verifies that checkpoint traversal preserves the explicitly selected comparison contract."
   },
   {
     "id": "row_expression.go:compareCypherOrderedValues:compareTemporalOrdering:1",
@@ -1395,19 +1440,19 @@
     "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
   },
   {
-    "id": "value_equivalence.go:appendNestedValueKey:cypherValueKey:1",
+    "id": "value_equivalence.go:appendNestedValueKey:cypherValueKeyWithCheckpoint:1",
     "file": "value_equivalence.go",
     "caller": "appendNestedValueKey",
-    "callee": "cypherValueKey",
+    "callee": "cypherValueKeyWithCheckpoint",
     "contract": "contract",
     "line": 0,
     "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
   },
   {
-    "id": "value_equivalence.go:appendNestedValueKey:cypherValueKeyWithNumericPolicy:1",
+    "id": "value_equivalence.go:appendNestedValueKey:cypherValueKeyWithNumericCheckpoint:1",
     "file": "value_equivalence.go",
     "caller": "appendNestedValueKey",
-    "callee": "cypherValueKeyWithNumericPolicy",
+    "callee": "cypherValueKeyWithNumericCheckpoint",
     "contract": "contract",
     "line": 0,
     "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
@@ -1485,40 +1530,58 @@
     "reason": "Predicate or lookup equality: equal civil overlap datetimes must match, including nested values and MATCH/CREATE candidates."
   },
   {
-    "id": "value_equivalence.go:cypherValueKey:appendValueKey:1",
+    "id": "value_equivalence.go:cypherValueKey:cypherValueKeyWithCheckpoint:1",
     "file": "value_equivalence.go",
     "caller": "cypherValueKey",
+    "callee": "cypherValueKeyWithCheckpoint",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Cancellation checkpoint forwarding preserves the caller-selected comparison contract and canonical key bytes."
+  },
+  {
+    "id": "value_equivalence.go:cypherValueKeyWithCheckpoint:appendValueKey:1",
+    "file": "value_equivalence.go",
+    "caller": "cypherValueKeyWithCheckpoint",
     "callee": "appendValueKey",
     "contract": "contract",
     "line": 0,
     "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
   },
   {
-    "id": "value_equivalence.go:cypherValueKeyWithNumericPolicy:appendValueKey:1",
+    "id": "value_equivalence.go:cypherValueKeyWithNumericCheckpoint:appendValueKey:1",
     "file": "value_equivalence.go",
-    "caller": "cypherValueKeyWithNumericPolicy",
+    "caller": "cypherValueKeyWithNumericCheckpoint",
     "callee": "appendValueKey",
     "contract": "contract",
     "line": 0,
     "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
   },
   {
-    "id": "value_equivalence.go:cypherValueKeyWithNumericPolicy:cypherValueKey:1",
+    "id": "value_equivalence.go:cypherValueKeyWithNumericCheckpoint:cypherValueKeyWithCheckpoint:1",
     "file": "value_equivalence.go",
-    "caller": "cypherValueKeyWithNumericPolicy",
-    "callee": "cypherValueKey",
+    "caller": "cypherValueKeyWithNumericCheckpoint",
+    "callee": "cypherValueKeyWithCheckpoint",
     "contract": "contract",
     "line": 0,
     "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
   },
   {
-    "id": "value_equivalence.go:cypherValueKeyWithNumericPolicy:cypherValueKey:2",
+    "id": "value_equivalence.go:cypherValueKeyWithNumericCheckpoint:cypherValueKeyWithCheckpoint:2",
     "file": "value_equivalence.go",
-    "caller": "cypherValueKeyWithNumericPolicy",
-    "callee": "cypherValueKey",
+    "caller": "cypherValueKeyWithNumericCheckpoint",
+    "callee": "cypherValueKeyWithCheckpoint",
     "contract": "contract",
     "line": 0,
     "reason": "Propagate the caller contract through canonical normalization, recursive encoding, hashing, comparison or index lookup; no local default."
+  },
+  {
+    "id": "value_equivalence.go:cypherValueKeyWithNumericPolicy:cypherValueKeyWithNumericCheckpoint:1",
+    "file": "value_equivalence.go",
+    "caller": "cypherValueKeyWithNumericPolicy",
+    "callee": "cypherValueKeyWithNumericCheckpoint",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Cancellation checkpoint forwarding preserves the caller-selected comparison contract and canonical key bytes."
   },
   {
     "id": "value_equivalence_index.go:*cypherValueIndex.addByContract:addTupleValuesByContract:1",
@@ -1539,10 +1602,10 @@
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
   },
   {
-    "id": "value_equivalence_index.go:*cypherValueIndex.addByContract:cypherValueHash:1",
+    "id": "value_equivalence_index.go:*cypherValueIndex.addByContract:cypherValueHashWithCheckpoint:1",
     "file": "value_equivalence_index.go",
     "caller": "*cypherValueIndex.addByContract",
-    "callee": "cypherValueHash",
+    "callee": "cypherValueHashWithCheckpoint",
     "contract": "contract",
     "line": 0,
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
@@ -1566,19 +1629,19 @@
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
   },
   {
-    "id": "value_equivalence_index.go:*cypherValueIndex.addTupleByContract:cypherValueHash:1",
+    "id": "value_equivalence_index.go:*cypherValueIndex.addTupleByContract:cypherValueHashWithCheckpoint:1",
     "file": "value_equivalence_index.go",
     "caller": "*cypherValueIndex.addTupleByContract",
-    "callee": "cypherValueHash",
+    "callee": "cypherValueHashWithCheckpoint",
     "contract": "contract",
     "line": 0,
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
   },
   {
-    "id": "value_equivalence_index.go:*cypherValueIndex.addTupleValuesByContract:cypherValuesMatch:1",
+    "id": "value_equivalence_index.go:*cypherValueIndex.addTupleValuesByContract:cypherValuesMatchWithCheckpoint:1",
     "file": "value_equivalence_index.go",
     "caller": "*cypherValueIndex.addTupleValuesByContract",
-    "callee": "cypherValuesMatch",
+    "callee": "cypherValuesMatchWithCheckpoint",
     "contract": "contract",
     "line": 0,
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
@@ -1629,64 +1692,82 @@
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
   },
   {
-    "id": "value_equivalence_index.go:cypherValueHash:cypherComparableKey:1",
+    "id": "value_equivalence_index.go:cypherValueHash:cypherValueHashWithCheckpoint:1",
     "file": "value_equivalence_index.go",
     "caller": "cypherValueHash",
+    "callee": "cypherValueHashWithCheckpoint",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Cancellation checkpoint forwarding preserves the caller-selected comparison contract and canonical key bytes."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValueHashWithCheckpoint:cypherComparableKey:1",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValueHashWithCheckpoint",
     "callee": "cypherComparableKey",
     "contract": "contract",
     "line": 0,
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
   },
   {
-    "id": "value_equivalence_index.go:cypherValueHash:cypherValueHash:1",
+    "id": "value_equivalence_index.go:cypherValueHashWithCheckpoint:cypherValueHashWithCheckpoint:1",
     "file": "value_equivalence_index.go",
-    "caller": "cypherValueHash",
-    "callee": "cypherValueHash",
+    "caller": "cypherValueHashWithCheckpoint",
+    "callee": "cypherValueHashWithCheckpoint",
     "contract": "contract",
     "line": 0,
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
   },
   {
-    "id": "value_equivalence_index.go:cypherValueHash:cypherValueHash:2",
+    "id": "value_equivalence_index.go:cypherValueHashWithCheckpoint:cypherValueHashWithCheckpoint:2",
     "file": "value_equivalence_index.go",
-    "caller": "cypherValueHash",
-    "callee": "cypherValueHash",
+    "caller": "cypherValueHashWithCheckpoint",
+    "callee": "cypherValueHashWithCheckpoint",
     "contract": "contract",
     "line": 0,
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
   },
   {
-    "id": "value_equivalence_index.go:cypherValuesMatch:cypherComparableKey:1",
+    "id": "value_equivalence_index.go:cypherValuesMatch:cypherValuesMatchWithCheckpoint:1",
     "file": "value_equivalence_index.go",
     "caller": "cypherValuesMatch",
+    "callee": "cypherValuesMatchWithCheckpoint",
+    "contract": "contract",
+    "line": 0,
+    "reason": "Cancellation checkpoint forwarding preserves the caller-selected comparison contract and canonical key bytes."
+  },
+  {
+    "id": "value_equivalence_index.go:cypherValuesMatchWithCheckpoint:cypherComparableKey:1",
+    "file": "value_equivalence_index.go",
+    "caller": "cypherValuesMatchWithCheckpoint",
     "callee": "cypherComparableKey",
     "contract": "contract",
     "line": 0,
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
   },
   {
-    "id": "value_equivalence_index.go:cypherValuesMatch:cypherComparableKey:2",
+    "id": "value_equivalence_index.go:cypherValuesMatchWithCheckpoint:cypherComparableKey:2",
     "file": "value_equivalence_index.go",
-    "caller": "cypherValuesMatch",
+    "caller": "cypherValuesMatchWithCheckpoint",
     "callee": "cypherComparableKey",
     "contract": "contract",
     "line": 0,
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
   },
   {
-    "id": "value_equivalence_index.go:cypherValuesMatch:cypherValuesMatch:1",
+    "id": "value_equivalence_index.go:cypherValuesMatchWithCheckpoint:cypherValuesMatchWithCheckpoint:1",
     "file": "value_equivalence_index.go",
-    "caller": "cypherValuesMatch",
-    "callee": "cypherValuesMatch",
+    "caller": "cypherValuesMatchWithCheckpoint",
+    "callee": "cypherValuesMatchWithCheckpoint",
     "contract": "contract",
     "line": 0,
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."
   },
   {
-    "id": "value_equivalence_index.go:cypherValuesMatch:cypherValuesMatch:2",
+    "id": "value_equivalence_index.go:cypherValuesMatchWithCheckpoint:cypherValuesMatchWithCheckpoint:2",
     "file": "value_equivalence_index.go",
-    "caller": "cypherValuesMatch",
-    "callee": "cypherValuesMatch",
+    "caller": "cypherValuesMatchWithCheckpoint",
+    "callee": "cypherValuesMatchWithCheckpoint",
     "contract": "contract",
     "line": 0,
     "reason": "Canonical index propagates the caller-selected comparison contract unchanged through scalar keys, structural hashes and collision checks."

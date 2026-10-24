@@ -4,6 +4,7 @@ import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -326,7 +327,11 @@ func fnMapFromPairs(ctx cypherfn.Context, args []string) (interface{}, error) {
 	}
 	pairs, _ := toInterfaceSlice(values[0])
 	result := make(map[string]interface{}, len(pairs))
+	pass := bulk.NewCheckpoint(ctx.StatementContext())
 	for _, item := range pairs {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		pair, _ := toInterfaceSlice(item)
 		if len(pair) != 2 {
 			continue

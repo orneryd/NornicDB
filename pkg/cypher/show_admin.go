@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -10,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -145,7 +145,11 @@ func (e *StorageExecutor) executeShowDefaultDatabase(ctx context.Context, cypher
 		}
 	}
 	rows := make([][]interface{}, 0, 1)
+	pass := bulk.NewCheckpoint(ctx)
 	for _, row := range all.Rows {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		if defaultColumn < 0 || defaultColumn >= len(row) || row[defaultColumn] != true {
 			continue
 		}
@@ -178,10 +182,10 @@ func (e *StorageExecutor) executeShowUsers(ctx context.Context, cypher string) (
 			continue
 		}
 		roles := append(make([]string, 0, len(user.Roles)), user.Roles...)
-		sort.Strings(roles)
+		_ = sortStrings(ctx, roles)
 		rows = append(rows, []interface{}{user.Name, roles, user.PasswordChangeRequired, user.Suspended, nil})
 	}
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i][0].(string) < rows[j][0].(string) })
+	_ = sortPopulationStable(ctx, rows, func(i, j int) bool { return rows[i][0].(string) < rows[j][0].(string) })
 	return &ExecuteResult{Columns: append([]string(nil), showUsersColumns...), Rows: rows}, nil
 }
 
@@ -387,8 +391,16 @@ func (s runningStatement) done() bool {
 	}
 	terminated := s.tx.terminated.Load()
 	runningTransactions.mu.Unlock()
-	s.statement.cancel(context.Canceled)
 	return terminated
+}
+
+// release ends the statement's context. Execute calls it last, once the
+// statement's result is final: done retires the statement before its result
+// is restored and recorded, which must still run within its deadlines.
+func (s runningStatement) release() {
+	if s.tx != nil {
+		s.statement.cancel(context.Canceled)
+	}
 }
 
 // statementContext is a running statement's context: TERMINATE and the
@@ -410,6 +422,9 @@ type statementContext struct {
 	// no allocation of its own for it.
 	failure       expressionFailure
 	failureActive atomic.Bool
+	// canceled is set once err is: Err reads it without the lock. It packs
+	// beside failureActive, so the statement context is no larger for it.
+	canceled atomic.Bool
 
 	mu   sync.Mutex
 	done chan struct{} // made by Done
@@ -446,10 +461,10 @@ type statementContextKey struct{}
 // Err is the statement's cancellation, or the parent's (which then cancels
 // the statement, so Done is closed whenever Err is not nil).
 func (c *statementContext) Err() error {
-	c.mu.Lock()
-	err := c.err
-	c.mu.Unlock()
-	if err != nil {
+	if c.canceled.Load() {
+		c.mu.Lock()
+		err := c.err
+		c.mu.Unlock()
 		return err
 	}
 	if err := c.parent.Err(); err != nil {
@@ -476,17 +491,30 @@ func (c *statementContext) Done() <-chan struct{} {
 
 // cancel cancels the statement with err; the first cancellation wins.
 func (c *statementContext) cancel(err error) {
+	c.cancelWithCause(err, false)
+}
+
+// cancelForLimit is the memory tracker's cancel: a caller whose context was
+// already canceled owns the first cause even when the memory tracker reaches
+// this checkpoint a moment later. The statement's own end and TERMINATE do
+// not read the caller's context: the statement's result is final by then.
+func (c *statementContext) cancelForLimit(err error) {
+	c.cancelWithCause(err, true)
+}
+
+func (c *statementContext) cancelWithCause(err error, callerFirst bool) {
 	c.mu.Lock()
 	if c.err != nil {
 		c.mu.Unlock()
 		return
 	}
-	// A caller whose context was already canceled owns the first cause even
-	// when the memory tracker reaches this checkpoint a moment later.
-	if parentErr := c.parent.Err(); parentErr != nil {
-		err = parentErr
+	if callerFirst {
+		if parentErr := c.parent.Err(); parentErr != nil {
+			err = parentErr
+		}
 	}
 	c.err = err
+	c.canceled.Store(true)
 	if c.done != nil {
 		close(c.done)
 	}
@@ -609,13 +637,17 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 	items, isList := cypherListValue(value)
 	if !isList {
 		return nil, true, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-			localization.CypherAdminTransactionIDsType(neo4jValueRepr(value)))
+			localization.CypherAdminTransactionIDsType(neo4jValueRepr(valueWalk(ctx), value)))
 	}
 	if len(items) == 0 {
 		return nil, false, nil
 	}
 	ids := make([]interface{}, 0, len(items))
+	pass := bulk.NewCheckpoint(ctx)
 	for _, item := range items {
+		if err := pass.Observe(); err != nil {
+			return nil, true, err
+		}
 		if item == nil && cypher25 {
 			ids = append(ids, nil)
 			continue
@@ -623,7 +655,7 @@ func (e *StorageExecutor) transactionIDFilter(ctx context.Context, head, command
 		id, isString := item.(string)
 		if !isString {
 			return nil, true, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-				localization.CypherAdminTransactionIDType(neo4jValueRepr(item)))
+				localization.CypherAdminTransactionIDType(neo4jValueRepr(valueWalk(ctx), item)))
 		}
 		ids = append(ids, id)
 	}
@@ -648,14 +680,18 @@ func (e *StorageExecutor) executeShowTransactions(ctx context.Context, cypher st
 	}
 	cypher25 := cypherVersionFromContext(ctx) == "25"
 	wanted := make(map[string]struct{}, len(ids))
+	pass := bulk.NewCheckpoint(ctx)
 	for _, id := range ids {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		if text, isString := id.(string); isString {
 			wanted[text] = struct{}{}
 		}
 	}
 	now := time.Now()
 	transactions := runningTransactions.snapshot()
-	sort.Slice(transactions, func(i, j int) bool { return transactions[i].started.Before(transactions[j].started) })
+	_ = sortPopulation(ctx, transactions, func(i, j int) bool { return transactions[i].started.Before(transactions[j].started) })
 	rows := make([][]interface{}, 0, len(transactions))
 	for _, tx := range transactions {
 		id := tx.id()
@@ -752,7 +788,11 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidTransactionID",
 			localization.CypherAdminTerminateTransactionsIDRequired())
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for index, id := range ids {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		text, isString := id.(string)
 		if !isString {
 			continue // a Cypher 25 null id
@@ -764,7 +804,11 @@ func (e *StorageExecutor) executeTerminateTransactions(ctx context.Context, cyph
 		ids[index] = normalized
 	}
 	rows := make([][]interface{}, 0, len(ids))
+	pass2 := bulk.NewCheckpoint(ctx)
 	for _, id := range ids {
+		if err := pass2.Observe(); err != nil {
+			return nil, err
+		}
 		text, isString := id.(string)
 		if !isString {
 			rows = append(rows, []interface{}{nil, nil, "Transaction not found."})

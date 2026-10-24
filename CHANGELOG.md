@@ -313,6 +313,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   limits) or `TransactionTimedOutClientConfiguration` (a Bolt client `tx_timeout`) instead of
   `Neo.ClientError.Statement.SyntaxError` (#1339).
 
+- Stop materialized projections, ORDER BY, aggregation and DISTINCT key traversal
+  promptly when a query is canceled or its deadline expires, retaining stable
+  ordering and the existing value-validation rules. Functions and procedures
+  (list, map and text functions such as `coll.sort` and `text.locate`, APOC
+  collection, map and path functions, APOC and GDS graph algorithms, full-text
+  queries), value conversions and worker goroutines now stop too. A canceled
+  statement that ordered map keys no longer hangs. Statement text a procedure
+  runs (`apoc.cypher.run`, `apoc.periodic.*`) is limited to the HTTP request
+  size limit (10 MiB by default).
+
 ## [1.4.3] - 2026-10-15
 
 ### Fixed

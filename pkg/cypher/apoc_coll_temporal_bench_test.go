@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -20,7 +21,7 @@ func BenchmarkApocTemporalEquivalence(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				toSet(tc.values)
+				toSet(context.Background(), tc.values)
 			}
 		})
 	}

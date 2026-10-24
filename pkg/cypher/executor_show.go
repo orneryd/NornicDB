@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
@@ -123,7 +124,11 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 		}
 		indexes := schema.GetIndexes()
 		rows = make([][]interface{}, 0, len(indexes))
+		pass := bulk.NewCheckpoint(ctx)
 		for i, idx := range indexes {
+			if err := pass.Observe(); err != nil {
+				return nil, err
+			}
 			idxMap, ok := idx.(map[string]interface{})
 			if !ok {
 				continue
@@ -134,7 +139,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 			if idxType == "PROPERTY" || idxType == "COMPOSITE" {
 				idxType = "RANGE"
 			}
-			if indexTypeFilter != "" && !strings.EqualFold(idxType, indexTypeFilter) {
+			if indexTypeFilter != "" && !bulk.EqualFold(ctx, idxType, indexTypeFilter) {
 				continue
 			}
 
@@ -180,7 +185,7 @@ func (e *StorageExecutor) executeShowIndexes(ctx context.Context, cypher string)
 					config["vector.dimensions"] = int64(dimensions)
 				}
 				if similarity, ok := idxMap["similarityFunc"].(string); ok && similarity != "" {
-					config["vector.similarity_function"] = upperASCII(similarity)
+					config["vector.similarity_function"] = bulk.UpperASCII(ctx, similarity)
 				}
 			}
 
@@ -281,7 +286,7 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 		for index := range typed {
 			all = append(all, listed{name: typed[index].Name, typed: &typed[index]})
 		}
-		sort.SliceStable(all, func(i, j int) bool { return all[i].name < all[j].name })
+		_ = sortPopulationStable(ctx, all, func(i, j int) bool { return all[i].name < all[j].name })
 		for index, entry := range all {
 			if constraint := entry.typed; constraint != nil {
 				if kind.lists(storage.ConstraintPropertyType, constraint.EffectiveEntityType()) {
@@ -385,14 +390,14 @@ func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string
 	if err != nil {
 		return nil, err
 	}
-	sortShowRowsByName(result)
+	sortShowRowsByName(ctx, result)
 	return e.applyShowTail(ctx, cypher, result, showDefaultColumns(result))
 }
 
 // sortShowRowsByName orders a SHOW listing by its name column, as Neo4j lists
 // every SHOW command (indexes and constraints by name, not creation order).
 // A listing without a string name column keeps its order.
-func sortShowRowsByName(result *ExecuteResult) {
+func sortShowRowsByName(ctx context.Context, result *ExecuteResult) {
 	column := -1
 	for i, name := range result.Columns {
 		if name == "name" {
@@ -411,7 +416,9 @@ func sortShowRowsByName(result *ExecuteResult) {
 		return value, ok
 	}
 	sorted := true
+	pass := bulk.NewCheckpoint(ctx)
 	for i, row := range result.Rows {
+		pass.Check()
 		current, ok := name(row)
 		if !ok {
 			return
@@ -423,7 +430,7 @@ func sortShowRowsByName(result *ExecuteResult) {
 		}
 	}
 	if !sorted {
-		sort.SliceStable(result.Rows, func(i, j int) bool {
+		_ = sortPopulationStable(ctx, result.Rows, func(i, j int) bool {
 			left, _ := name(result.Rows[i])
 			right, _ := name(result.Rows[j])
 			return left < right
@@ -628,14 +635,20 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		}
 		if len(sources) > 0 {
 			projected.Rows = make([][]interface{}, len(result.Rows))
-			for r, row := range result.Rows {
-				extended := append(append(make([]interface{}, 0, len(row)+len(sources)), row...), make([]interface{}, len(sources))...)
-				for s, source := range sources {
-					if source < len(row) {
-						extended[len(row)+s] = row[source]
-					}
+			for batch, batchErr := range materializedBatches(ctx, len(result.Rows)) {
+				if batchErr != nil {
+					return nil, batchErr
 				}
-				projected.Rows[r] = extended
+				for offset, row := range result.Rows[batch.start:batch.end] {
+					r := batch.start + offset
+					extended := append(append(make([]interface{}, 0, len(row)+len(sources)), row...), make([]interface{}, len(sources))...)
+					for s, source := range sources {
+						if source < len(row) {
+							extended[len(row)+s] = row[source]
+						}
+					}
+					projected.Rows[r] = extended
+				}
 			}
 		}
 	}
@@ -822,7 +835,7 @@ var (
 // showFunctionRows returns SHOW FUNCTIONS' full rows, built once from the
 // listed entries of cypherFunctionCatalog. Callers copy the rows they hand
 // out.
-func showFunctionRows() [][]interface{} {
+func showFunctionRows(ctx context.Context) [][]interface{} {
 	showFunctionRowsOnce.Do(func() {
 		rows := make([][]interface{}, 0, len(cypherFunctionCatalog))
 		for _, function := range cypherFunctionCatalog {
@@ -852,7 +865,9 @@ func showFunctionRows() [][]interface{} {
 			rows = append(rows, []interface{}{function.name, function.category, function.description, function.signature, !function.userDefined, arguments, returns, function.aggregating, nil, nil, function.isDeprecated, deprecatedBy})
 		}
 		// Listed by name (sortShowRowsByName then finds them in order).
-		sort.SliceStable(rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
+		_ = sortPopulationStable(ctx, rows, func(i, j int) bool {
+			return formatValueText(valueWalk(ctx), rows[i][0]) < formatValueText(valueWalk(ctx), rows[j][0])
+		})
 		showFunctionRowsCache = rows
 	})
 	return showFunctionRowsCache
@@ -862,10 +877,14 @@ func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher strin
 	// The listing is static: its rows (with the argument and return
 	// descriptions parsed from each signature) are built once, and each call
 	// gets its own copy of them.
-	cached := showFunctionRows()
+	cached := showFunctionRows(ctx)
 	rows := make([][]interface{}, len(cached))
 	var cells []interface{}
+	pass := bulk.NewCheckpoint(ctx)
 	for i, row := range cached {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		if len(cells) < len(row) {
 			cells = make([]interface{}, len(row)*(len(cached)-i))
 		}
@@ -874,8 +893,10 @@ func (e *StorageExecutor) executeShowFunctions(ctx context.Context, cypher strin
 		cells = cells[len(row):]
 	}
 	if plugin := pluginFunctionRows(); len(plugin) > 0 {
-		rows = append(rows, plugin...)
-		sort.SliceStable(rows, func(i, j int) bool { return fmt.Sprint(rows[i][0]) < fmt.Sprint(rows[j][0]) })
+		rows, _ = appendPopulation(ctx, rows, plugin)
+		_ = sortPopulationStable(ctx, rows, func(i, j int) bool {
+			return formatValueText(valueWalk(ctx), rows[i][0]) < formatValueText(valueWalk(ctx), rows[j][0])
+		})
 	}
 	return withShowDefaultColumns(&ExecuteResult{
 		Columns: []string{"name", "category", "description", "signature", "isBuiltIn", "argumentDescription", "returnDescription", "aggregating", "rolesExecution", "rolesBoostedExecution", "isDeprecated", "deprecatedBy"},
@@ -987,7 +1008,7 @@ func (e *StorageExecutor) executeShowDatabase(ctx context.Context, cypher string
 
 	return withShowDefaultColumns(&ExecuteResult{
 		Columns: showDatabasesColumns,
-		Rows:    [][]interface{}{showDatabaseRow(e.dbManager, dbName, "standard", "online", true, showDatabaseCreatedAt(e.dbManager, dbName))},
+		Rows:    [][]interface{}{showDatabaseRow(ctx, e.dbManager, dbName, "standard", "online", true, showDatabaseCreatedAt(e.dbManager, dbName))},
 		Stats: &QueryStats{
 			NodesCreated:         int(nodeCount),
 			RelationshipsCreated: int(edgeCount),
@@ -1034,8 +1055,12 @@ func (e *StorageExecutor) executeShowDatabases(ctx context.Context, cypher strin
 	databases := e.dbManager.ListDatabases()
 	rows := make([][]interface{}, 0, len(databases))
 
+	pass := bulk.NewCheckpoint(ctx)
 	for _, db := range databases {
-		rows = append(rows, showDatabaseRow(e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault(), db.CreatedAt()))
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
+		rows = append(rows, showDatabaseRow(ctx, e.dbManager, db.Name(), db.Type(), db.Status(), db.IsDefault(), db.CreatedAt()))
 	}
 
 	return withShowDefaultColumns(&ExecuteResult{
@@ -1057,13 +1082,13 @@ var showDatabasesColumns = []string{"name", "type", "aliases", "access", "databa
 // store format, so store is null, as are
 // lastStopTime and lastCommittedTxn (Neo4j reports null for both on a
 // running standalone server).
-func showDatabaseRow(manager DatabaseManagerInterface, name, databaseType, status string, isDefault bool, createdAt time.Time) []interface{} {
+func showDatabaseRow(ctx context.Context, manager DatabaseManagerInterface, name, databaseType, status string, isDefault bool, createdAt time.Time) []interface{} {
 	aliases := []string{}
 	if manager != nil {
 		for alias := range manager.ListAliases(name) {
 			aliases = append(aliases, alias)
 		}
-		sort.Strings(aliases)
+		_ = sortStrings(ctx, aliases)
 	}
 	var databaseID, serverID interface{}
 	if provider, ok := manager.(DatabaseIdentityProvider); ok {
@@ -1164,13 +1189,21 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 
 	// Skip "CREATE" and whitespace to find "DATABASE"
 	startPos := createDbIdx + len("CREATE")
+	pass := bulk.NewCheckpoint(ctx)
 	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		startPos++
 	}
 	// Skip "DATABASE" and whitespace
-	if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
+	if startPos+len("DATABASE") <= len(cypher) && bulk.EqualFold(ctx, cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
 		startPos += len("DATABASE")
+		pass2 := bulk.NewCheckpoint(ctx)
 		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+			if err := pass2.Observe(); err != nil {
+				return nil, err
+			}
 			startPos++
 		}
 	}
@@ -1197,18 +1230,26 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 		// Found "IF NOT" - check if "EXISTS" follows
 		afterIfNot := startPos + ifNotIdx + len("IF")
 		// Skip whitespace after "IF"
+		pass3 := bulk.NewCheckpoint(ctx)
 		for afterIfNot < len(cypher) && isWhitespace(cypher[afterIfNot]) {
+			if err := pass3.Observe(); err != nil {
+				return nil, err
+			}
 			afterIfNot++
 		}
 		// Check for "NOT"
-		if afterIfNot+len("NOT") <= len(cypher) && strings.EqualFold(cypher[afterIfNot:afterIfNot+len("NOT")], "NOT") {
+		if afterIfNot+len("NOT") <= len(cypher) && bulk.EqualFold(ctx, cypher[afterIfNot:afterIfNot+len("NOT")], "NOT") {
 			afterNot := afterIfNot + len("NOT")
 			// Skip whitespace after "NOT"
+			pass4 := bulk.NewCheckpoint(ctx)
 			for afterNot < len(cypher) && isWhitespace(cypher[afterNot]) {
+				if err := pass4.Observe(); err != nil {
+					return nil, err
+				}
 				afterNot++
 			}
 			// Check for "EXISTS"
-			if afterNot+len("EXISTS") <= len(cypher) && strings.EqualFold(cypher[afterNot:afterNot+len("EXISTS")], "EXISTS") {
+			if afterNot+len("EXISTS") <= len(cypher) && bulk.EqualFold(ctx, cypher[afterNot:afterNot+len("EXISTS")], "EXISTS") {
 				// Found "IF NOT EXISTS" - database name ends before "IF"
 				ifNotExistsIdx = ifNotIdx
 			}
@@ -1224,7 +1265,7 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	}
 
 	// Extract database name (trim whitespace)
-	rawDBName := strings.TrimSpace(cypher[startPos:dbNameEnd])
+	rawDBName := bulk.TrimSpace(ctx, cypher[startPos:dbNameEnd])
 	dbName, err := unquoteBacktickIdentifier(rawDBName)
 	if err != nil {
 		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawDBName), err)
@@ -1234,7 +1275,7 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	}
 
 	// Validate database name (basic validation)
-	if strings.ContainsAny(dbName, " \t\n\r") {
+	if bulk.ContainsAny(ctx, dbName, " \t\n\r") {
 		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
 	}
 
@@ -1280,12 +1321,20 @@ func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cy
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
 	}
 	startPos := orReplace + len("OR REPLACE")
+	pass := bulk.NewCheckpoint(ctx)
 	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		startPos++
 	}
 	if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
 		startPos += len("DATABASE")
+		pass2 := bulk.NewCheckpoint(ctx)
 		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+			if err := pass2.Observe(); err != nil {
+				return nil, err
+			}
 			startPos++
 		}
 	} else {
@@ -1296,7 +1345,7 @@ func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cy
 	if err != nil {
 		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawDBName), err)
 	}
-	if dbName == "" || strings.ContainsAny(dbName, " \t\n\r") {
+	if dbName == "" || bulk.ContainsAny(ctx, dbName, " \t\n\r") {
 		return nil, localizedError(localization.CypherAdminDatabaseNameEmpty("CREATE DATABASE"), nil)
 	}
 
@@ -1360,17 +1409,29 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 
 	// Skip "DROP" and whitespace to find "DATABASE"
 	startPos := dropDbIdx + len("DROP")
+	pass := bulk.NewCheckpoint(ctx)
 	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		startPos++
 	}
 	// Skip "DATABASE" and whitespace
 	if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
 		startPos += len("DATABASE")
+		pass2 := bulk.NewCheckpoint(ctx)
 		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+			if err := pass2.Observe(); err != nil {
+				return nil, err
+			}
 			startPos++
 		}
 	}
+	pass3 := bulk.NewCheckpoint(ctx)
 	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		if err := pass3.Observe(); err != nil {
+			return nil, err
+		}
 		startPos++
 	}
 
@@ -1401,7 +1462,7 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 	}
 
 	// Validate database name (basic validation)
-	if strings.ContainsAny(dbName, " \t\n\r") {
+	if bulk.ContainsAny(ctx, dbName, " \t\n\r") {
 		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
 	}
 
@@ -1461,13 +1522,21 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 
 	// Skip "CREATE" and whitespace to find "ALIAS"
 	startPos := createAliasIdx + len("CREATE")
+	pass := bulk.NewCheckpoint(ctx)
 	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		startPos++
 	}
 	// Skip "ALIAS" and whitespace
 	if startPos+len("ALIAS") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("ALIAS")], "ALIAS") {
 		startPos += len("ALIAS")
+		pass2 := bulk.NewCheckpoint(ctx)
 		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+			if err := pass2.Observe(); err != nil {
+				return nil, err
+			}
 			startPos++
 		}
 	}
@@ -1502,13 +1571,21 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 
 	// Skip "FOR" and whitespace
 	dbStartPos := startPos + forIdx + len("FOR")
+	pass3 := bulk.NewCheckpoint(ctx)
 	for dbStartPos < len(cypher) && isWhitespace(cypher[dbStartPos]) {
+		if err := pass3.Observe(); err != nil {
+			return nil, err
+		}
 		dbStartPos++
 	}
 	// Skip "DATABASE" and whitespace
 	if dbStartPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[dbStartPos:dbStartPos+len("DATABASE")], "DATABASE") {
 		dbStartPos += len("DATABASE")
+		pass4 := bulk.NewCheckpoint(ctx)
 		for dbStartPos < len(cypher) && isWhitespace(cypher[dbStartPos]) {
+			if err := pass4.Observe(); err != nil {
+				return nil, err
+			}
 			dbStartPos++
 		}
 	}
@@ -1578,13 +1655,21 @@ func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (
 
 	// Skip "DROP" and whitespace to find "ALIAS"
 	startPos := dropAliasIdx + len("DROP")
+	pass := bulk.NewCheckpoint(ctx)
 	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		startPos++
 	}
 	// Skip "ALIAS" and whitespace
 	if startPos+len("ALIAS") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("ALIAS")], "ALIAS") {
 		startPos += len("ALIAS")
+		pass2 := bulk.NewCheckpoint(ctx)
 		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+			if err := pass2.Observe(); err != nil {
+				return nil, err
+			}
 			startPos++
 		}
 	}
@@ -1774,13 +1859,21 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 
 	// Skip "ALTER" and whitespace to find "DATABASE"
 	startPos := alterDbIdx + len("ALTER")
+	pass := bulk.NewCheckpoint(ctx)
 	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		startPos++
 	}
 	// Skip "DATABASE" and whitespace
 	if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
 		startPos += len("DATABASE")
+		pass2 := bulk.NewCheckpoint(ctx)
 		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+			if err := pass2.Observe(); err != nil {
+				return nil, err
+			}
 			startPos++
 		}
 	} else {
@@ -1805,12 +1898,20 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 
 	// Skip "SET LIMIT" and whitespace
 	limitStartPos := startPos + setLimitIdx + len("SET")
+	pass3 := bulk.NewCheckpoint(ctx)
 	for limitStartPos < len(cypher) && isWhitespace(cypher[limitStartPos]) {
+		if err := pass3.Observe(); err != nil {
+			return nil, err
+		}
 		limitStartPos++
 	}
 	if limitStartPos+len("LIMIT") <= len(cypher) && strings.EqualFold(cypher[limitStartPos:limitStartPos+len("LIMIT")], "LIMIT") {
 		limitStartPos += len("LIMIT")
+		pass4 := bulk.NewCheckpoint(ctx)
 		for limitStartPos < len(cypher) && isWhitespace(cypher[limitStartPos]) {
+			if err := pass4.Observe(); err != nil {
+				return nil, err
+			}
 			limitStartPos++
 		}
 	} else {

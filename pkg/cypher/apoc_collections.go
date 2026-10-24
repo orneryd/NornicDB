@@ -64,8 +64,10 @@
 package cypher
 
 import (
-	"fmt"
+	"context"
 	"math"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 // ========================================
@@ -80,7 +82,7 @@ import (
 //
 //	flattenList([[1, [2]], [3]], false)  // [1, [2], 3]
 //	flattenList([[1, [2]], [3]], true)   // [1, 2, 3]
-func flattenList(val interface{}, recursive bool) []interface{} {
+func flattenList(walk *materializedRowCheckpoint, val interface{}, recursive bool) []interface{} {
 	depth := int64(1)
 	if recursive {
 		depth = math.MaxInt64
@@ -89,7 +91,7 @@ func flattenList(val interface{}, recursive bool) []interface{} {
 		return []interface{}{}
 	}
 	if items, ok := cypherListValue(val); ok {
-		return collFlatten(make([]interface{}, 0, len(items)), items, depth)
+		return collFlatten(walk, make([]interface{}, 0, len(items)), items, depth)
 	}
 	return []interface{}{val}
 }
@@ -116,11 +118,13 @@ func flattenList(val interface{}, recursive bool) []interface{} {
 // APOC's set of AnyValues compares them (cypherValueSet): 1 and 1.0 are
 // one item, lists and maps compare element by element, a null is one item,
 // and every NaN is its own.
-func toSet(val interface{}) []interface{} {
+func toSet(ctx context.Context, val interface{}) []interface{} {
+	work := valueWalk(ctx)
 	items, _ := cypherListValue(val)
 	result := make([]interface{}, 0, len(items))
 	seen := cypherValueSet{encoded: make(map[string]int)}
 	for _, item := range items {
+		work.Check()
 		if !seen.addByContract(item, cypherEquivalenceContract) {
 			result = append(result, item)
 		}
@@ -130,11 +134,11 @@ func toSet(val interface{}) []interface{} {
 
 // apocCollToSet is apoc.coll.toSet(list): toSet, and null for null, as
 // APOC gives it.
-func apocCollToSet(val interface{}) interface{} {
+func apocCollToSet(ctx context.Context, val interface{}) interface{} {
 	if val == nil {
 		return nil
 	}
-	return toSet(val)
+	return toSet(ctx, val)
 }
 
 // ========================================
@@ -157,10 +161,10 @@ func apocCollToSet(val interface{}) interface{} {
 //
 //	apocCollSum([1, 2, 3, 4])  // 10.0
 //	apocCollSum([1.5, 2.5])   // 4.0
-func apocCollSum(val interface{}) float64 {
+func apocCollSum(walk *materializedRowCheckpoint, val interface{}) float64 {
 	var sum float64
 	if v, ok := cypherListValue(val); ok {
-		for _, item := range v {
+		for _, item := range observedItems(walk, v) {
 			if f, ok := toFloat64(item); ok {
 				sum += f
 			}
@@ -183,13 +187,13 @@ func apocCollSum(val interface{}) float64 {
 //
 //	apocCollAvg([1, 2, 3, 4])  // 2.5
 //	apocCollAvg([])           // nil
-func apocCollAvg(val interface{}) interface{} {
+func apocCollAvg(walk *materializedRowCheckpoint, val interface{}) interface{} {
 	if v, ok := cypherListValue(val); ok {
 		if len(v) == 0 {
 			return nil
 		}
 		var sum float64
-		for _, item := range v {
+		for _, item := range observedItems(walk, v) {
 			if f, ok := toFloat64(item); ok {
 				sum += f
 			}
@@ -213,14 +217,14 @@ func apocCollAvg(val interface{}) interface{} {
 //
 //	apocCollMin([3, 1, 4, 1, 5])  // 1
 //	apocCollMin([])              // nil
-func apocCollMin(val interface{}) interface{} {
+func apocCollMin(walk *materializedRowCheckpoint, val interface{}) interface{} {
 	if v, ok := cypherListValue(val); ok {
 		if len(v) == 0 {
 			return nil
 		}
 		min := v[0]
 		minFloat, _ := toFloat64(min)
-		for _, item := range v[1:] {
+		for _, item := range observedItems(walk, v[1:]) {
 			if f, ok := toFloat64(item); ok && f < minFloat {
 				min = item
 				minFloat = f
@@ -245,14 +249,14 @@ func apocCollMin(val interface{}) interface{} {
 //
 //	apocCollMax([3, 1, 4, 1, 5])  // 5
 //	apocCollMax([])              // nil
-func apocCollMax(val interface{}) interface{} {
+func apocCollMax(walk *materializedRowCheckpoint, val interface{}) interface{} {
 	if v, ok := cypherListValue(val); ok {
 		if len(v) == 0 {
 			return nil
 		}
 		max := v[0]
 		maxFloat, _ := toFloat64(max)
-		for _, item := range v[1:] {
+		for _, item := range observedItems(walk, v[1:]) {
 			if f, ok := toFloat64(item); ok && f > maxFloat {
 				max = item
 				maxFloat = f
@@ -282,11 +286,15 @@ func apocCollMax(val interface{}) interface{} {
 // # Example
 //
 //	apocCollSort([3, 1, 4, 1, 5])  // [1, 1, 3, 4, 5]
-func apocCollSort(val interface{}) []interface{} {
+func apocCollSort(ctx context.Context, val interface{}) []interface{} {
 	if v, ok := cypherListValue(val); ok {
 		// In Cypher's order, as coll.sort and ORDER BY sort (strings too;
-		// null last).
-		return sortedCypherValues(v)
+		// null last). A canceled statement's failure is recorded.
+		sorted, err := sortedCypherValues(ctx, v)
+		if err != nil {
+			return nil
+		}
+		return sorted
 	}
 	return nil
 }
@@ -305,19 +313,28 @@ func apocCollSort(val interface{}) []interface{} {
 // # Example
 //
 //	apocCollSortNodes(nodes, "age")  // Nodes sorted by age property
-func apocCollSortNodes(val interface{}, propName string) []interface{} {
-	return apocCollSortNodesByProperty(val, propName, getNodeProperty)
+func apocCollSortNodes(ctx context.Context, val interface{}, propName string) []interface{} {
+	return apocCollSortNodesByProperty(ctx, val, propName, getNodeProperty)
 }
 
 // The query route supplies its visible property reader while sorting the raw
 // entity bindings, so later mutations cannot persist a filtered property map.
-func apocCollSortNodesByProperty(val interface{}, propName string, property func(interface{}, string) interface{}) []interface{} {
+// The exchange sort's order (ties included) is the function's result, so it
+// stays, with its comparisons observing the statement: a canceled statement
+// stops it within a stride and records its failure.
+func apocCollSortNodesByProperty(ctx context.Context, val interface{}, propName string, property func(interface{}, string) interface{}) []interface{} {
 	if v, ok := cypherListValue(val); ok {
 		result := make([]interface{}, len(v))
-		copy(result, v)
+		if _, err := copyPopulation(ctx, result, v); err != nil {
+			return nil
+		}
+		comparisons := bulk.NewCheckpoint(ctx)
 		// Sort by property value
+		pass := bulk.NewCheckpoint(ctx)
 		for i := 0; i < len(result)-1; i++ {
+			pass.Check()
 			for j := i + 1; j < len(result); j++ {
+				comparisons.Check()
 				vi := property(result[i], propName)
 				vj := property(result[j], propName)
 				fj, _ := toFloat64(vj)
@@ -360,10 +377,10 @@ func getNodeProperty(node interface{}, propName string) interface{} {
 // # Example
 //
 //	apocCollReverse([1, 2, 3])  // [3, 2, 1]
-func apocCollReverse(val interface{}) []interface{} {
+func apocCollReverse(walk *materializedRowCheckpoint, val interface{}) []interface{} {
 	if v, ok := cypherListValue(val); ok {
 		result := make([]interface{}, len(v))
-		for i, item := range v {
+		for i, item := range observedItems(walk, v) {
 			result[len(v)-1-i] = item
 		}
 		return result
@@ -389,9 +406,9 @@ func apocCollReverse(val interface{}) []interface{} {
 // # Example
 //
 //	apocCollUnion([1, 2], [2, 3])  // [1, 2, 3]
-func apocCollUnion(list1, list2 interface{}) []interface{} {
-	combined := apocCollUnionAll(list1, list2)
-	return toSet(combined)
+func apocCollUnion(ctx context.Context, list1, list2 interface{}) []interface{} {
+	combined := apocCollUnionAll(valueWalk(ctx), list1, list2)
+	return toSet(ctx, combined)
 }
 
 // apocCollUnionAll returns union of two lists (including duplicates).
@@ -408,13 +425,18 @@ func apocCollUnion(list1, list2 interface{}) []interface{} {
 // # Example
 //
 //	apocCollUnionAll([1, 2], [2, 3])  // [1, 2, 2, 3]
-func apocCollUnionAll(list1, list2 interface{}) []interface{} {
-	var result []interface{}
-	if l1, ok := cypherListValue(list1); ok {
-		result = append(result, l1...)
+func apocCollUnionAll(walk *materializedRowCheckpoint, list1, list2 interface{}) []interface{} {
+	l1, _ := cypherListValue(list1)
+	l2, _ := cypherListValue(list2)
+	if len(l1)+len(l2) == 0 {
+		return nil
 	}
-	if l2, ok := cypherListValue(list2); ok {
-		result = append(result, l2...)
+	result := make([]interface{}, 0, len(l1)+len(l2))
+	for _, item := range observedItems(walk, l1) {
+		result = append(result, item)
+	}
+	for _, item := range observedItems(walk, l2) {
+		result = append(result, item)
 	}
 	return result
 }
@@ -436,7 +458,8 @@ func apocCollUnionAll(list1, list2 interface{}) []interface{} {
 //
 // Both lists are sets of AnyValues, as in APOC (cypherValueSet; toSet):
 // each common item once, in list1's order.
-func apocCollIntersection(list1, list2 interface{}) []interface{} {
+func apocCollIntersection(ctx context.Context, list1, list2 interface{}) []interface{} {
+	work := valueWalk(ctx)
 	var result []interface{}
 	l1, ok1 := cypherListValue(list1)
 	l2, ok2 := cypherListValue(list2)
@@ -445,9 +468,11 @@ func apocCollIntersection(list1, list2 interface{}) []interface{} {
 	}
 	in2, seen := cypherValueSet{encoded: make(map[string]int)}, cypherValueSet{encoded: make(map[string]int)}
 	for _, item := range l2 {
+		work.Check()
 		in2.addByContract(item, cypherEquivalenceContract)
 	}
 	for _, item := range l1 {
+		work.Check()
 		if in2.hasByContract(item, cypherEquivalenceContract) {
 			if !seen.addByContract(item, cypherEquivalenceContract) {
 				result = append(result, item)
@@ -474,7 +499,8 @@ func apocCollIntersection(list1, list2 interface{}) []interface{} {
 //
 // Both lists are sets of AnyValues, as in APOC (cypherValueSet; toSet):
 // each of list1's items that list2 doesn't hold, once, in list1's order.
-func apocCollSubtract(list1, list2 interface{}) []interface{} {
+func apocCollSubtract(ctx context.Context, list1, list2 interface{}) []interface{} {
+	work := valueWalk(ctx)
 	var result []interface{}
 	l1, ok1 := cypherListValue(list1)
 	l2, ok2 := cypherListValue(list2)
@@ -483,9 +509,11 @@ func apocCollSubtract(list1, list2 interface{}) []interface{} {
 	}
 	in2, seen := cypherValueSet{encoded: make(map[string]int)}, cypherValueSet{encoded: make(map[string]int)}
 	for _, item := range l2 {
+		work.Check()
 		in2.addByContract(item, cypherEquivalenceContract)
 	}
 	for _, item := range l1 {
+		work.Check()
 		if in2.hasByContract(item, cypherEquivalenceContract) {
 			continue
 		}
@@ -518,9 +546,9 @@ func apocCollSubtract(list1, list2 interface{}) []interface{} {
 //
 // Items compare by APOC's value equality (cypherValueEquals): a null is in
 // no list.
-func apocCollContains(listVal, value interface{}) bool {
+func apocCollContains(walk *materializedRowCheckpoint, listVal, value interface{}) bool {
 	list, _ := cypherListValue(listVal)
-	for _, item := range list {
+	for _, item := range observedItems(walk, list) {
 		if cypherValueEquals(item, value) {
 			return true
 		}
@@ -546,14 +574,16 @@ func apocCollContains(listVal, value interface{}) bool {
 //
 // Items compare by APOC's value equality (cypherValueEquals): a null is in
 // no list. As in APOC, an empty list1 contains nothing, not even [].
-func apocCollContainsAll(list1, list2 interface{}) bool {
+func apocCollContainsAll(ctx context.Context, list1, list2 interface{}) bool {
 	l1, ok1 := cypherListValue(list1)
 	l2, ok2 := cypherListValue(list2)
 	if !ok1 || !ok2 || len(l1) == 0 {
 		return false
 	}
-	in1 := apocValueSet(l1)
+	work := valueWalk(ctx)
+	in1 := apocValueSet(work, l1)
 	for _, item := range l2 {
+		work.Check()
 		if item == nil || !in1.hasByContract(item, cypherValueEqualityContract) {
 			return false
 		}
@@ -563,9 +593,10 @@ func apocCollContainsAll(list1, list2 interface{}) bool {
 
 // apocValueSet is a list's non-null items as a set, for lookups by APOC's
 // value equality (cypherValueEquals): a null finds nothing.
-func apocValueSet(list []interface{}) cypherValueSet {
+func apocValueSet(work *materializedRowCheckpoint, list []interface{}) cypherValueSet {
 	set := cypherValueSet{encoded: make(map[string]int)}
 	for _, item := range list {
+		work.Check()
 		if item != nil {
 			set.addByContract(item, cypherValueEqualityContract)
 		}
@@ -591,14 +622,16 @@ func apocValueSet(list []interface{}) cypherValueSet {
 //
 // A NornicDB function (APOC 5.26 has no containsAny); items compare as in
 // apoc.coll.containsAll (cypherValueEquals).
-func apocCollContainsAny(list1, list2 interface{}) bool {
+func apocCollContainsAny(ctx context.Context, list1, list2 interface{}) bool {
 	l1, ok1 := cypherListValue(list1)
 	l2, ok2 := cypherListValue(list2)
 	if !ok1 || !ok2 {
 		return false
 	}
-	in1 := apocValueSet(l1)
+	work := valueWalk(ctx)
+	in1 := apocValueSet(work, l1)
 	for _, item := range l2 {
+		work.Check()
 		if item != nil && in1.hasByContract(item, cypherValueEqualityContract) {
 			return true
 		}
@@ -624,9 +657,9 @@ func apocCollContainsAny(list1, list2 interface{}) bool {
 //
 // Items compare by APOC's value equality (cypherValueEquals): a null is
 // never found.
-func apocCollIndexOf(listVal, value interface{}) int64 {
+func apocCollIndexOf(walk *materializedRowCheckpoint, listVal, value interface{}) int64 {
 	list, _ := cypherListValue(listVal)
-	for i, item := range list {
+	for i, item := range observedItems(walk, list) {
 		if cypherValueEquals(item, value) {
 			return int64(i)
 		}
@@ -655,7 +688,7 @@ func apocCollIndexOf(listVal, value interface{}) int64 {
 //
 // Items compare by APOC's value equality (cypherValueEquals): a null
 // separates nothing.
-func apocCollSplit(listVal, value interface{}) []interface{} {
+func apocCollSplit(walk *materializedRowCheckpoint, listVal, value interface{}) []interface{} {
 	list, ok := cypherListValue(listVal)
 	if !ok {
 		return nil
@@ -664,7 +697,7 @@ func apocCollSplit(listVal, value interface{}) []interface{} {
 	var result []interface{}
 	var current []interface{}
 
-	for _, item := range list {
+	for _, item := range observedItems(walk, list) {
 		if cypherValueEquals(item, value) {
 			if len(current) > 0 {
 				result = append(result, current)
@@ -694,7 +727,7 @@ func apocCollSplit(listVal, value interface{}) []interface{} {
 // # Example
 //
 //	apocCollPartition([1, 2, 3, 4, 5], 2)  // [[1, 2], [3, 4], [5]]
-func apocCollPartition(listVal, sizeVal interface{}) []interface{} {
+func apocCollPartition(walk *materializedRowCheckpoint, listVal, sizeVal interface{}) []interface{} {
 	list, ok := cypherListValue(listVal)
 	if !ok {
 		return nil
@@ -706,6 +739,7 @@ func apocCollPartition(listVal, sizeVal interface{}) []interface{} {
 
 	var result []interface{}
 	for i := int64(0); i < int64(len(list)); i += size {
+		walk.Check()
 		end := i + size
 		if end > int64(len(list)) {
 			end = int64(len(list))
@@ -728,7 +762,7 @@ func apocCollPartition(listVal, sizeVal interface{}) []interface{} {
 // # Example
 //
 //	apocCollPairs([1, 2, 3])  // [[1, 2], [2, 3], [3, nil]]
-func apocCollPairs(val interface{}) []interface{} {
+func apocCollPairs(walk *materializedRowCheckpoint, val interface{}) []interface{} {
 	list, ok := cypherListValue(val)
 	if !ok {
 		return nil
@@ -736,6 +770,7 @@ func apocCollPairs(val interface{}) []interface{} {
 
 	var result []interface{}
 	for i := 0; i < len(list); i++ {
+		walk.Check()
 		var next interface{}
 		if i+1 < len(list) {
 			next = list[i+1]
@@ -759,7 +794,7 @@ func apocCollPairs(val interface{}) []interface{} {
 // # Example
 //
 //	apocCollZip([1, 2], ["a", "b"])  // [[1, "a"], [2, "b"]]
-func apocCollZip(list1, list2 interface{}) []interface{} {
+func apocCollZip(walk *materializedRowCheckpoint, list1, list2 interface{}) []interface{} {
 	l1, ok1 := cypherListValue(list1)
 	l2, ok2 := cypherListValue(list2)
 	if !ok1 || !ok2 {
@@ -774,6 +809,7 @@ func apocCollZip(list1, list2 interface{}) []interface{} {
 
 	result := make([]interface{}, length)
 	for i := 0; i < length; i++ {
+		walk.Check()
 		result[i] = []interface{}{l1[i], l2[i]}
 	}
 	return result
@@ -820,11 +856,13 @@ func apocSameValue(value, listed interface{}) bool {
 // # Example
 //
 //	apocCollFrequencies([3, 1, 3])  // [{item: 3, count: 2}, {item: 1, count: 1}]
-func apocCollFrequencies(val interface{}) []interface{} {
+func apocCollFrequencies(ctx context.Context, val interface{}) []interface{} {
+	work := valueWalk(ctx)
 	list, _ := cypherListValue(val)
 	result := make([]interface{}, 0, len(list))
 	positions := cypherValueSet{encoded: make(map[string]int, len(list))}
 	for _, item := range list {
+		work.Check()
 		if position, seen := positions.addPositionByContract(item, cypherEquivalenceContract); seen {
 			entry := result[position].(map[string]interface{})
 			entry["count"] = entry["count"].(int64) + 1
@@ -853,10 +891,10 @@ func apocCollFrequencies(val interface{}) []interface{} {
 //
 // Items compare by APOC's value equality (cypherValueEquals): a null is
 // counted nowhere.
-func apocCollOccurrences(listVal, value interface{}) int64 {
+func apocCollOccurrences(walk *materializedRowCheckpoint, listVal, value interface{}) int64 {
 	list, _ := cypherListValue(listVal)
 	var count int64
-	for _, item := range list {
+	for _, item := range observedItems(walk, list) {
 		if cypherValueEquals(item, value) {
 			count++
 		}
@@ -867,107 +905,3 @@ func apocCollOccurrences(listVal, value interface{}) int64 {
 // ========================================
 // Type and Map Functions
 // ========================================
-
-// mergeMaps merges two maps, with map2 values overriding map1.
-//
-// # Parameters
-//
-//   - map1: The base map
-//   - map2: The map to merge (overrides map1)
-//
-// # Returns
-//
-//   - A new map with merged values
-//
-// # Example
-//
-//	mergeMaps({a: 1, b: 2}, {b: 3, c: 4})  // {a: 1, b: 3, c: 4}
-func mergeMaps(map1, map2 interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-
-	// Copy map1
-	if m1, ok := map1.(map[string]interface{}); ok {
-		for k, v := range m1 {
-			result[k] = v
-		}
-	}
-
-	// Override with map2
-	if m2, ok := map2.(map[string]interface{}); ok {
-		for k, v := range m2 {
-			result[k] = v
-		}
-	}
-
-	return result
-}
-
-// fromPairs creates a map from a list of [key, value] pairs.
-//
-// # Parameters
-//
-//   - val: A list of [key, value] pairs
-//
-// # Returns
-//
-//   - A map constructed from the pairs
-//
-// # Example
-//
-//	fromPairs([["name", "Alice"], ["age", 30]])  // {name: "Alice", age: 30}
-func fromPairs(val interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-
-	list, ok := cypherListValue(val)
-	if !ok {
-		return result
-	}
-
-	for _, item := range list {
-		pair, ok := cypherListValue(item)
-		if !ok || len(pair) < 2 {
-			continue
-		}
-		key, ok := pair[0].(string)
-		if !ok {
-			key = fmt.Sprintf("%v", pair[0])
-		}
-		result[key] = pair[1]
-	}
-
-	return result
-}
-
-// fromLists creates a map from parallel lists of keys and values.
-//
-// # Parameters
-//
-//   - keys: List of keys (strings)
-//   - values: List of corresponding values
-//
-// # Returns
-//
-//   - A map where keys[i] maps to values[i]
-//
-// # Example
-//
-//	fromLists(["name", "age"], ["Alice", 30])  // {name: "Alice", age: 30}
-func fromLists(keys, values interface{}) map[string]interface{} {
-	result := make(map[string]interface{})
-
-	keyList, ok1 := cypherListValue(keys)
-	valList, ok2 := cypherListValue(values)
-	if !ok1 || !ok2 {
-		return result
-	}
-
-	for i := 0; i < len(keyList) && i < len(valList); i++ {
-		key, ok := keyList[i].(string)
-		if !ok {
-			key = fmt.Sprintf("%v", keyList[i])
-		}
-		result[key] = valList[i]
-	}
-
-	return result
-}

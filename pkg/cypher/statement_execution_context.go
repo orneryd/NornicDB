@@ -64,6 +64,16 @@ func publishStatementCommit(ctx context.Context) {
 	}
 }
 
+// statementCompletionBudget is the context completing a statement's result
+// observes: its deadlines until its writes are durably committed, then none,
+// since a late cancellation can't undo a committed statement.
+func statementCompletionBudget(final bool, deadlineCtx context.Context) context.Context {
+	if final {
+		return context.Background()
+	}
+	return deadlineCtx
+}
+
 // A direct execution has no pending transaction: its completed mutations are
 // already applied. Use the shared permission classifier, whose literal-aware
 // scan and procedure contracts distinguish writes from reads containing words

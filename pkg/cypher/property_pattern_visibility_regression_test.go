@@ -27,7 +27,7 @@ func TestDisabledPropertyViewDoesNotRediscoverEnginePerValue(t *testing.T) {
 	node := &storage.Node{Properties: map[string]interface{}{"body": "raw"}}
 	engine.discoveries.Store(0)
 	for i := 0; i < 1000; i++ {
-		require.Same(t, node, exec.queryVisibleValue(node))
+		require.Same(t, node, exec.queryVisibleValue(nil, node))
 	}
 	require.Zero(t, engine.discoveries.Load(), "disabled reads must not walk storage decorators per value")
 }

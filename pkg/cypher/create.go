@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -308,20 +309,32 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 		// leaves nothing behind on a route without a transaction.
 		if len(plan.nodes) > 0 {
 			ids := make([]storage.NodeID, len(plan.nodes))
+			pass := bulk.NewCheckpoint(ctx)
 			for i, node := range plan.nodes {
+				if err := pass.Observe(); err != nil {
+					return err
+				}
 				ids[i] = node.ID
 			}
 			_ = store.BulkDeleteNodes(ids)
 		}
 		return localizedError(localization.CypherMutationsCreateRelationshipFailed(edgeErr), edgeErr)
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for _, node := range plan.nodes {
+		if err := pass2.Observe(); err != nil {
+			return err
+		}
 		e.notifyNodeMutated(string(node.ID))
 		addOptimisticNodeID(result, node.ID)
 		countCreatedEntity(result.Stats, node.Labels, node.Properties)
 	}
 	result.Stats.NodesCreated += len(plan.nodes)
+	pass3 := bulk.NewCheckpoint(ctx)
 	for _, edge := range plan.edges {
+		if err := pass3.Observe(); err != nil {
+			return err
+		}
 		e.notifyEdgeMutated(string(edge.ID))
 		addOptimisticRelationshipID(result, edge.ID)
 		countCreatedEntity(result.Stats, nil, edge.Properties)
@@ -422,7 +435,11 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	if parameterProperties != nil {
 		nodePattern.properties = parameterProperties
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for key, value := range nodePattern.properties {
+		if err := pass.Observe(); err != nil {
+			return nodePatternInfo{}, err
+		}
 		if value == nil {
 			delete(nodePattern.properties, key)
 		}
@@ -444,7 +461,11 @@ func (e *StorageExecutor) prepareCreateNodePattern(ctx context.Context, pattern 
 	if err := validateCreatePropertyKeys(pattern, nodePattern.properties); err != nil {
 		return nodePatternInfo{}, err
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for key, val := range nodePattern.properties {
+		if err := pass2.Observe(); err != nil {
+			return nodePatternInfo{}, err
+		}
 		if _, ok := val.(invalidPropertyValue); ok {
 			return nodePatternInfo{}, localizedError(localization.CypherMutationsInvalidPropertyValue(key), nil)
 		}
@@ -1020,23 +1041,28 @@ func parseParamPathParts(source string) ([]string, bool) {
 }
 
 func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
+	ctx context.Context,
 	patternMatches []struct {
 		variable string
 		nodes    []*storage.Node
 	},
 	whereClause string,
-) ([]map[string]*storage.Node, bool) {
+) ([]map[string]*storage.Node, bool, error) {
 	if len(patternMatches) < 2 || strings.TrimSpace(whereClause) == "" {
-		return nil, false
+		return nil, false, nil
 	}
 	varOrder := make([]string, 0, len(patternMatches))
 	varToNodes := make(map[string][]*storage.Node, len(patternMatches))
+	pass := bulk.NewCheckpoint(ctx)
 	for _, pm := range patternMatches {
+		if err := pass.Observe(); err != nil {
+			return nil, true, err
+		}
 		if pm.variable == "" {
-			return nil, false
+			return nil, false, nil
 		}
 		if _, exists := varToNodes[pm.variable]; exists {
-			return nil, false
+			return nil, false, nil
 		}
 		varOrder = append(varOrder, pm.variable)
 		varToNodes[pm.variable] = pm.nodes
@@ -1067,7 +1093,7 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 		})
 	}
 	if len(eqConstraints) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	parent := make(map[string]string, len(varOrder))
@@ -1110,45 +1136,60 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 	}
 
 	indexCache := map[string]map[string][]*storage.Node{}
-	buildIndex := func(variable, prop string) map[string][]*storage.Node {
+	buildIndex := func(variable, prop string) (map[string][]*storage.Node, error) {
 		cacheKey := variable + "|" + prop
 		if idx, exists := indexCache[cacheKey]; exists {
-			return idx
+			return idx, nil
 		}
 		nodes := varToNodes[variable]
 		idx := make(map[string][]*storage.Node, len(nodes))
-		for _, n := range nodes {
-			if n == nil || n.Properties == nil {
-				continue
+		for batch, batchErr := range materializedBatches(ctx, len(nodes)) {
+			if batchErr != nil {
+				return nil, batchErr
 			}
-			v, ok := n.Properties[prop]
-			if !ok {
-				continue
+			for _, n := range nodes[batch.start:batch.end] {
+				if n == nil || n.Properties == nil {
+					continue
+				}
+				v, ok := n.Properties[prop]
+				if !ok {
+					continue
+				}
+				k := cypherValueKey(v, cypherValueEqualityContract)
+				idx[k] = append(idx[k], n)
 			}
-			k := cypherValueKey(v, cypherValueEqualityContract)
-			idx[k] = append(idx[k], n)
 		}
 		indexCache[cacheKey] = idx
-		return idx
+		return idx, nil
 	}
 
-	buildComponentRows := func(vars []string, constraints []cartesianEqConstraint) []map[string]*storage.Node {
+	buildComponentRows := func(vars []string, constraints []cartesianEqConstraint) ([]map[string]*storage.Node, error) {
 		if len(vars) == 0 {
-			return []map[string]*storage.Node{{}}
+			return []map[string]*storage.Node{{}}, nil
 		}
 		if len(vars) == 1 {
 			v := vars[0]
 			rows := make([]map[string]*storage.Node, 0, len(varToNodes[v]))
-			for _, n := range varToNodes[v] {
-				rows = append(rows, map[string]*storage.Node{v: n})
+			for batch, batchErr := range materializedBatches(ctx, len(varToNodes[v])) {
+				if batchErr != nil {
+					return nil, batchErr
+				}
+				for _, n := range varToNodes[v][batch.start:batch.end] {
+					rows = append(rows, map[string]*storage.Node{v: n})
+				}
 			}
-			return rows
+			return rows, nil
 		}
 
 		seed := vars[0]
 		rows := make([]map[string]*storage.Node, 0, len(varToNodes[seed]))
-		for _, n := range varToNodes[seed] {
-			rows = append(rows, map[string]*storage.Node{seed: n})
+		for batch, batchErr := range materializedBatches(ctx, len(varToNodes[seed])) {
+			if batchErr != nil {
+				return nil, batchErr
+			}
+			for _, n := range varToNodes[seed][batch.start:batch.end] {
+				rows = append(rows, map[string]*storage.Node{seed: n})
+			}
 		}
 		added := map[string]struct{}{seed: {}}
 
@@ -1185,38 +1226,52 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 					continue
 				}
 
-				idx := buildIndex(newVar, newProp)
+				idx, err := buildIndex(newVar, newProp)
+				if err != nil {
+					return nil, err
+				}
 				nextRows := make([]map[string]*storage.Node, 0, len(rows))
-				for _, row := range rows {
-					baseNode := row[baseVar]
-					if baseNode == nil || baseNode.Properties == nil {
-						continue
+				joins := bulk.NewCheckpoint(ctx)
+				for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+					if batchErr != nil {
+						return nil, batchErr
 					}
-					baseVal, ok := baseNode.Properties[baseProp]
-					if !ok {
-						continue
-					}
-					lookupKey := cypherValueKey(baseVal, cypherValueEqualityContract)
-					if lookupOffset != 0 {
-						// Shift the value exactly: integer offsets use integer
-						// arithmetic (no float64 rounding above 2^53, #692).
-						// Floats keep their float keys so float offset joins
-						// still find their index entries.
-						if key, ok := cartesianShiftValueKey(baseVal, lookupOffset, cypherValueEqualityContract); ok {
-							lookupKey = key
-						} else if baseNum, numeric := toFloat64(baseVal); numeric {
-							lookupKey = cypherValueKey(baseNum+float64(lookupOffset), cypherValueEqualityContract)
-						} else {
+					for _, row := range rows[batch.start:batch.end] {
+						baseNode := row[baseVar]
+						if baseNode == nil || baseNode.Properties == nil {
 							continue
 						}
-					}
-					for _, matchNode := range idx[lookupKey] {
-						joined := make(map[string]*storage.Node, util.SafePreallocSum(len(row), 1))
-						for k, v := range row {
-							joined[k] = v
+						baseVal, ok := baseNode.Properties[baseProp]
+						if !ok {
+							continue
 						}
-						joined[newVar] = matchNode
-						nextRows = append(nextRows, joined)
+						lookupKey := cypherValueKey(baseVal, cypherValueEqualityContract)
+						if lookupOffset != 0 {
+							// Shift the value exactly: integer offsets use integer
+							// arithmetic (no float64 rounding above 2^53, #692).
+							// Floats keep their float keys so float offset joins
+							// still find their index entries.
+							if key, ok := cartesianShiftValueKey(baseVal, lookupOffset, cypherValueEqualityContract); ok {
+								lookupKey = key
+							} else if baseNum, numeric := toFloat64(baseVal); numeric {
+								lookupKey = cypherValueKey(baseNum+float64(lookupOffset), cypherValueEqualityContract)
+							} else {
+								continue
+							}
+						}
+						// The joined rows are one pass: a nested batch iterator here would
+						// escape (it is inside a closure) and cost allocations per row.
+						for _, matchNode := range idx[lookupKey] {
+							if err := joins.Observe(); err != nil {
+								return nil, err
+							}
+							joined := make(map[string]*storage.Node, util.SafePreallocSum(len(row), 1))
+							for k, v := range row {
+								joined[k] = v
+							}
+							joined[newVar] = matchNode
+							nextRows = append(nextRows, joined)
+						}
 					}
 				}
 				rows = nextRows
@@ -1224,52 +1279,60 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 				progressed = true
 			}
 			if !progressed {
-				return nil
+				return nil, nil
 			}
 		}
 
 		filtered := make([]map[string]*storage.Node, 0, len(rows))
-		for _, row := range rows {
-			keep := true
-			for _, c := range constraints {
-				ln := row[c.leftVar]
-				rn := row[c.rightVar]
-				if ln == nil || rn == nil || ln.Properties == nil || rn.Properties == nil {
-					keep = false
-					break
-				}
-				lv, lok := ln.Properties[c.leftProp]
-				rv, rok := rn.Properties[c.rightProp]
-				if !lok || !rok {
-					keep = false
-					break
-				}
-				if c.offset == 0 {
-					if cypherValueKey(lv, cypherValueEqualityContract) != cypherValueKey(rv, cypherValueEqualityContract) {
+		for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+			if batchErr != nil {
+				return nil, batchErr
+			}
+			for _, row := range rows[batch.start:batch.end] {
+				keep := true
+				for _, c := range constraints {
+					ln := row[c.leftVar]
+					rn := row[c.rightVar]
+					if ln == nil || rn == nil || ln.Properties == nil || rn.Properties == nil {
 						keep = false
 						break
 					}
-					continue
+					lv, lok := ln.Properties[c.leftProp]
+					rv, rok := rn.Properties[c.rightProp]
+					if !lok || !rok {
+						keep = false
+						break
+					}
+					if c.offset == 0 {
+						if cypherValueKey(lv, cypherValueEqualityContract) != cypherValueKey(rv, cypherValueEqualityContract) {
+							keep = false
+							break
+						}
+						continue
+					}
+					// lv must equal rv + offset exactly (#692): integer values
+					// compare through integer arithmetic, others through float64.
+					if !cartesianOffsetValuesEqual(lv, rv, c.offset) {
+						keep = false
+						break
+					}
 				}
-				// lv must equal rv + offset exactly (#692): integer values
-				// compare through integer arithmetic, others through float64.
-				if !cartesianOffsetValuesEqual(lv, rv, c.offset) {
-					keep = false
-					break
+				if keep {
+					filtered = append(filtered, row)
 				}
-			}
-			if keep {
-				filtered = append(filtered, row)
 			}
 		}
-		return filtered
+		return filtered, nil
 	}
 
 	componentRows := make([][]map[string]*storage.Node, 0, len(componentOrder))
 	for _, root := range componentOrder {
-		rows := buildComponentRows(components[root], constraintsByRoot[root])
+		rows, err := buildComponentRows(components[root], constraintsByRoot[root])
+		if err != nil {
+			return nil, true, err
+		}
 		if rows == nil {
-			return nil, false
+			return nil, false, nil
 		}
 		componentRows = append(componentRows, rows)
 	}
@@ -1277,24 +1340,34 @@ func (e *StorageExecutor) buildCombinationsUsingWhereJoin(
 	out := []map[string]*storage.Node{{}}
 	for _, rows := range componentRows {
 		if len(rows) == 0 {
-			return []map[string]*storage.Node{}, true
+			return []map[string]*storage.Node{}, true, nil
 		}
 		next := make([]map[string]*storage.Node, 0, util.SafePreallocProduct(len(out), len(rows)))
-		for _, base := range out {
-			for _, row := range rows {
-				merged := make(map[string]*storage.Node, util.SafePreallocSum(len(base), len(row)))
-				for k, v := range base {
-					merged[k] = v
+		for batch, batchErr := range materializedBatches(ctx, len(out)) {
+			if batchErr != nil {
+				return nil, true, batchErr
+			}
+			for _, base := range out[batch.start:batch.end] {
+				for innerBatch, innerErr := range materializedBatches(ctx, len(rows)) {
+					if innerErr != nil {
+						return nil, true, innerErr
+					}
+					for _, row := range rows[innerBatch.start:innerBatch.end] {
+						merged := make(map[string]*storage.Node, util.SafePreallocSum(len(base), len(row)))
+						for k, v := range base {
+							merged[k] = v
+						}
+						for k, v := range row {
+							merged[k] = v
+						}
+						next = append(next, merged)
+					}
 				}
-				for k, v := range row {
-					merged[k] = v
-				}
-				next = append(next, merged)
 			}
 		}
 		out = next
 	}
-	return out, true
+	return out, true, nil
 }
 
 // tryResolveMatchNodesByIDFromWhere attempts to resolve all MATCH pattern
@@ -1396,7 +1469,9 @@ func (e *StorageExecutor) tryResolveMatchNodesByIDFromWhere(
 		if len(info.labels) > 0 && !nodeHasAnyLabel(node, info.labels) {
 			return nil, false
 		}
+		pass := bulk.NewCheckpoint(ctx)
 		for k, v := range info.properties {
+			pass.Check()
 			if node.Properties[k] != v {
 				return nil, false
 			}

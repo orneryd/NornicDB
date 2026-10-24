@@ -1,11 +1,12 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
-	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -55,7 +56,8 @@ func requireFulltextIndex(indexName string, declared bool) error {
 	return localizedError(localization.CypherSpecializedCallsFulltextIndexNotFound(indexName), nil)
 }
 
-func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryNodes(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	work := bulk.NewCheckpoint(ctx)
 	result := &ExecuteResult{
 		Columns: []string{"node", "score"},
 		Rows:    [][]interface{}{},
@@ -109,6 +111,9 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 			return nil, err
 		}
 		for _, node := range nodes {
+			if err := work.Observe(); err != nil {
+				return nil, err
+			}
 			if !matchesLabels(node, targetLabels) {
 				continue
 			}
@@ -137,6 +142,9 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 			return nil, err
 		}
 		for _, node := range nodes {
+			if err := work.Observe(); err != nil {
+				return nil, err
+			}
 			if !matchesLabels(node, targetLabels) {
 				continue
 			}
@@ -153,7 +161,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 	// queries like `group_id:"g" AND (term)` require this so the
 	// parenthesized default-field clause is intersected with the field-
 	// scoped clause rather than silently discarded (the pre-parser bug).
-	parsed, err := ParseFulltextQuery(query)
+	parsed, err := parseFulltextQueryObserved(&work, query)
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +184,9 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 	docFreq := make(map[string]int, len(parsed.PrimaryTerms()))
 	var totalDocLen int64
 	for _, node := range nodes {
+		if err := work.Observe(); err != nil {
+			return nil, err
+		}
 		if !matchesLabels(node, targetLabels) {
 			continue
 		}
@@ -197,7 +208,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 		avgDocLen = float64(totalDocLen) / float64(totalDocs)
 	}
 
-	ctx := &ftEvalCtx{
+	scoring := &ftEvalCtx{
 		DefaultFields: targetProperties,
 		avgDocLen:     avgDocLen,
 		totalDocs:     totalDocs,
@@ -210,7 +221,10 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 	}
 	scoredNodes := make([]scoredNode, 0, len(docs))
 	for _, d := range docs {
-		matched, score := parsed.Match(ctx, d.doc)
+		if err := work.Observe(); err != nil {
+			return nil, err
+		}
+		matched, score := parsed.Match(scoring, d.doc)
 		if !matched {
 			continue
 		}
@@ -223,14 +237,19 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 		scoredNodes = append(scoredNodes, scoredNode{node: d.node, score: score})
 	}
 
-	sort.Slice(scoredNodes, func(i, j int) bool {
+	if err := sortPopulation(ctx, scoredNodes, func(i, j int) bool {
 		if scoredNodes[i].score == scoredNodes[j].score {
 			return scoredNodes[i].node.ID < scoredNodes[j].node.ID
 		}
 		return scoredNodes[i].score > scoredNodes[j].score
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	for _, sn := range scoredNodes {
+		if err := work.Observe(); err != nil {
+			return nil, err
+		}
 		result.Rows = append(result.Rows, []interface{}{sn.node, sn.score})
 	}
 	applyFulltextOptions(result, opts)

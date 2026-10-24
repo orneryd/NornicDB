@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 )
 
@@ -517,7 +518,11 @@ func (e *StorageExecutor) authorizeSelectedDatabase(ctx context.Context, databas
 		manager = e.dbManager
 	}
 	databases, listErr := AccessDatabases(manager, database)
+	pass := bulk.NewCheckpoint(ctx)
 	for i, selected := range databases {
+		if err := pass.Observe(); err != nil {
+			return err
+		}
 		if selectionOnly || i < len(databases)-1 && listErr == nil {
 			if err := authorizeDatabase(ctx, selected, "access"); err != nil {
 				return err

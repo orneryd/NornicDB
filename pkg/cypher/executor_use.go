@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -105,13 +106,9 @@ func (e *StorageExecutor) cloneForStorage(store storage.Engine) *StorageExecutor
 	cloned.fabricPlanCache = e.fabricPlanCache
 	cloned.hotPathTraceState = e.hotPathTraceState
 
+	// Published shell-param buckets are never written: the clone shares them.
 	e.shellParamsMu.RLock()
-	if len(e.shellParams) > 0 {
-		cloned.shellParams = make(map[string]interface{}, len(e.shellParams))
-		for k, v := range e.shellParams {
-			cloned.shellParams[k] = v
-		}
-	}
+	cloned.shellParams = e.shellParams
 	e.shellParamsMu.RUnlock()
 	cloned.shellParamsByToken = cloneShellParamsByToken(e)
 
@@ -290,7 +287,11 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 		// database to a private copy for transport metadata and entity ids.
 		routed := *result
 		routed.Metadata = make(map[string]interface{}, len(result.Metadata)+1)
+		pass := bulk.NewCheckpoint(ctx)
 		for key, value := range result.Metadata {
+			if err := pass.Observe(); err != nil {
+				return nil, err
+			}
 			routed.Metadata[key] = value
 		}
 		routed.Metadata["db"] = GetUseDatabaseFromContext(ctx)
@@ -312,7 +313,7 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 	if err != nil {
 		return nil, ctx, err
 	}
-	if strings.EqualFold(resolvedDB, "system") {
+	if bulk.EqualFold(ctx, resolvedDB, "system") {
 		if err := systemDatabaseStatementError(query); err != nil {
 			return nil, ctx, err
 		}

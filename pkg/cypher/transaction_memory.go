@@ -284,7 +284,7 @@ func (t *transactionMemoryTracker) valueBytes(value interface{}) int64 {
 			return bytes
 		}
 	}
-	return estimateValueBytes(value)
+	return estimateValueBytes(nil, value)
 }
 
 type transactionMemoryFailure struct{ err error }
@@ -411,7 +411,7 @@ func (t *transactionMemoryTracker) fail(err error) error {
 	statement := t.statement
 	t.mu.Unlock()
 	if statement != nil {
-		statement.cancel(err)
+		statement.cancelForLimit(err)
 	}
 	return err
 }
@@ -609,7 +609,7 @@ func (a *memoryAccount) growValue(value interface{}) error {
 	case string:
 		return a.grow(valueSlotBytes + stringHeaderBytes + int64(len(v)))
 	}
-	return a.grow(estimateValueBytes(value))
+	return a.grow(estimateValueBytes(nil, value))
 }
 
 // growTuple spends extra bytes plus the estimated size of each of values: a

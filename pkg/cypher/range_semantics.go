@@ -1,19 +1,21 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"iter"
 	"strings"
 )
 
-func evaluateCypherRange(arguments []interface{}) ([]interface{}, error) {
+func evaluateCypherRange(walk *materializedRowCheckpoint, arguments []interface{}) ([]interface{}, error) {
 	sequence, err := newCypherRange(arguments)
 	if err != nil {
 		return nil, err
 	}
 	values := make([]interface{}, 0)
 	for value := range sequence.values() {
+		walk.Check()
 		values = append(values, value)
 	}
 	return values, nil
@@ -111,7 +113,7 @@ func (e *StorageExecutor) validateRangeCalls(expression string, row pipelineRow)
 	return nil
 }
 
-func (e *StorageExecutor) validatePipelineRangeArguments(rows []pipelineRow, clause, keyword string) error {
+func (e *StorageExecutor) validatePipelineRangeArguments(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
 	expressions := projectionExpressions(clause, keyword)
 	if len(expressions) == 0 {
 		return nil
@@ -120,9 +122,19 @@ func (e *StorageExecutor) validatePipelineRangeArguments(rows []pipelineRow, cla
 		rows = []pipelineRow{{}}
 	}
 	for _, expression := range expressions {
-		for _, row := range rows {
-			if err := e.validateRangeCalls(expression, row); err != nil {
-				return err
+		// The function reader cannot find a range call without its name.
+		// Avoid scanning unchanged text once for every materialized row.
+		if !containsFold(expression, "range") {
+			continue
+		}
+		for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+			if batchErr != nil {
+				return batchErr
+			}
+			for _, row := range rows[batch.start:batch.end] {
+				if err := e.validateRangeCalls(expression, row); err != nil {
+					return err
+				}
 			}
 		}
 	}

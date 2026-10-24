@@ -25,6 +25,7 @@ const (
 	MessageCypherProceduresFulltextDropInvalidSyntax             MessageID = "cypherprocedures.fulltext_drop_invalid_syntax"
 	MessageCypherProceduresArgumentNull                          MessageID = "cypherprocedures.argument_null"
 	MessageCypherProceduresArgumentType                          MessageID = "cypherprocedures.argument_type"
+	MessageCypherProceduresStatementTooLong                      MessageID = "cypherprocedures.statement_too_long"
 	MessageCypherProceduresVectorDropInvalidSyntax               MessageID = "cypherprocedures.vector_drop_invalid_syntax"
 	MessageCypherProceduresSetNodeVectorInvalidSyntax            MessageID = "cypherprocedures.set_node_vector_invalid_syntax"
 	MessageCypherProceduresSetNodeVectorParenthesesRequired      MessageID = "cypherprocedures.set_node_vector_parentheses_required"
@@ -286,6 +287,12 @@ func CypherProceduresArgumentCount(procedure string, expected, actual int) Messa
 // argument it needs.
 func CypherProceduresArgumentNull(procedure, argument string) Message {
 	return cypherProceduresMessage(MessageCypherProceduresArgumentNull, procedure+": argument "+argument+" is null", map[string]any{"Procedure": procedure, "Argument": argument})
+}
+
+// CypherProceduresStatementTooLong is statement text a procedure was given
+// to run that is longer than the limit on such text.
+func CypherProceduresStatementTooLong(procedure string, size, limit int64) Message {
+	return cypherProceduresMessage(MessageCypherProceduresStatementTooLong, fmt.Sprintf("%s: statement text of %d bytes exceeds the limit of %d bytes", procedure, size, limit), map[string]any{"Procedure": procedure, "Size": size, "Limit": limit})
 }
 
 // CypherProceduresArgumentType is a procedure argument value of another

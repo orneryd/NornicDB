@@ -224,16 +224,16 @@ func TestDeletedEntityViewsReplace(t *testing.T) {
 	for _, value := range []interface{}{nilNode, nilEdge, kept, []interface{}{kept, int64(1)},
 		map[string]interface{}{"a": gone}, map[string]interface{}{"_pathResult": nilPath},
 		map[string]interface{}{"_pathResult": PathResult{Nodes: []*storage.Node{kept}}}} {
-		replaced, changed := views.replace(value)
+		replaced, changed := views.replace(nil, value)
 		require.False(t, changed)
 		require.Equal(t, value, replaced)
 	}
-	view, changed := views.replace(edge)
+	view, changed := views.replace(nil, edge)
 	require.True(t, changed)
 	require.Equal(t, &storage.Edge{ID: "e", Type: "R", StartNode: "gone", EndNode: "kept"}, view)
 
 	path := &PathResult{Nodes: []*storage.Node{gone, kept}, Relationships: []*storage.Edge{edge}, Length: 1}
-	replaced, changed := views.replace(map[string]interface{}{"_pathResult": path})
+	replaced, changed := views.replace(nil, map[string]interface{}{"_pathResult": path})
 	require.True(t, changed)
 	parts := replaced.(map[string]interface{})["_pathResult"].(PathResult)
 	require.Equal(t, &storage.Node{ID: "gone"}, parts.Nodes[0])
@@ -255,11 +255,11 @@ func TestDeletedEntityEdgeCases(t *testing.T) {
 	var nilEdge *storage.Edge
 	deleted := &deletedEntities{}
 	deleted.add([]storage.NodeID{"n"}, map[storage.EdgeID]struct{}{"e": {}})
-	require.False(t, deleted.holdsDeleted(nilNode, false))
-	require.False(t, deleted.holdsDeleted(nilEdge, false))
-	require.False(t, deleted.holdsDeleted(&storage.Node{ID: "n"}, true))
-	require.True(t, deleted.holdsDeleted([]interface{}{int64(1), &storage.Edge{ID: "e"}}, true))
-	require.False(t, deleted.holdsDeleted([]interface{}{int64(1)}, false))
+	require.False(t, deleted.holdsDeleted(nil, nilNode, false))
+	require.False(t, deleted.holdsDeleted(nil, nilEdge, false))
+	require.False(t, deleted.holdsDeleted(nil, &storage.Node{ID: "n"}, true))
+	require.True(t, deleted.holdsDeleted(nil, []interface{}{int64(1), &storage.Edge{ID: "e"}}, true))
+	require.False(t, deleted.holdsDeleted(nil, []interface{}{int64(1)}, false))
 	require.Empty(t, iterationSourceVariable("RETURN x", "x"))
 
 	targets, detach, ok := deleteClauseTargets("REMOVE n.p")

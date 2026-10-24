@@ -3,6 +3,7 @@ package cypher
 import (
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -61,7 +62,7 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 		return nil, true, true, nil
 	}
 	temporal := isRuntimeTemporal(base) || isRuntimeDuration(base)
-	properties, hasProperties := rowProjectionProperties(e.queryVisibleValue(base))
+	properties, hasProperties := rowProjectionProperties(e.queryVisibleValue(valueWalk(rowStatementContextOrBackground(values)), base))
 	if !hasProperties && !temporal {
 		if _, isPath := cypherPathElements(base); isPath {
 			return nil, true, false, runtimeTypeError("Type mismatch: expected a map but was Path")
@@ -80,7 +81,11 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 				return nil, true, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 					localization.CypherCoreMapProjectionCoercion(formatCypherValueString(base)))
 			}
+			pass := bulk.NewCheckpoint(rowStatementContextOrBackground(values))
 			for name, value := range properties {
+				if err := pass.Observe(); err != nil {
+					return nil, false, false, err
+				}
 				result[name] = value
 			}
 		case strings.HasPrefix(item, "."):

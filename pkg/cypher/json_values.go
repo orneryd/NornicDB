@@ -55,30 +55,34 @@ func unescapeLineSeparators(encoded string) string {
 // number without '.', 'e' or 'E' that fits int64 is an INTEGER, any other a
 // FLOAT. Lists and maps are converted in place.
 func JSONNumbers(value interface{}) interface{} {
+	return jsonNumbers(nil, value)
+}
+
+// jsonNumbers is JSONNumbers over a statement's value: the walker observes
+// the statement (walk).
+func jsonNumbers(walk *materializedRowCheckpoint, value interface{}) interface{} {
+	normalized, _ := cypherfn.TransformValue(walk, value, jsonNumberStep)
+	return normalized
+}
+
+// jsonNumberStep is a JSON number as an INTEGER, a FLOAT or, past both, its
+// text; the walker descends into lists and maps.
+func jsonNumberStep(value interface{}) (interface{}, bool, bool) {
 	switch v := value.(type) {
 	case json.Number:
 		if !strings.ContainsAny(string(v), ".eE") {
 			if i, err := v.Int64(); err == nil {
-				return i
+				return i, true, false
 			}
 		}
 		if f, err := v.Float64(); err == nil {
-			return f
+			return f, true, false
 		}
-		return string(v)
-	case []interface{}:
-		for i, item := range v {
-			v[i] = JSONNumbers(item)
-		}
-		return v
-	case map[string]interface{}:
-		for key, item := range v {
-			v[key] = JSONNumbers(item)
-		}
-		return v
-	default:
-		return value
+		return string(v), true, false
+	case []interface{}, map[string]interface{}:
+		return value, false, true
 	}
+	return value, false, false
 }
 
 // apocConvertFromJSON is apoc.convert.fromJsonMap / fromJsonList(text): the
@@ -113,7 +117,7 @@ func apocConvertFromJSON(wantMap bool, value interface{}) (interface{}, error) {
 	if decoded == nil {
 		return nil, nil
 	}
-	decoded = JSONNumbers(decoded)
+	decoded = jsonNumbers(nil, decoded)
 	if wantMap {
 		if result, ok := decoded.(map[string]interface{}); ok {
 			return result, nil

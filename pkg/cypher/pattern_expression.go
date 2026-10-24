@@ -5,6 +5,7 @@ import (
 	"maps"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -152,7 +153,9 @@ func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, 
 	for name, relationship := range rels {
 		seed.rels[name] = relationship
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for name, value := range values {
+		pass.Check()
 		switch value.(type) {
 		case *storage.Node, *storage.Edge:
 			continue
@@ -168,9 +171,14 @@ func (e *StorageExecutor) boundPatternRows(ctx context.Context, pattern string, 
 		return nil, false
 	}
 	matches := expanded[:0]
-	for _, row := range expanded {
-		if row.optionalMatched {
-			matches = append(matches, row)
+	for batch, batchErr := range materializedBatches(ctx, len(expanded)) {
+		if batchErr != nil {
+			return nil, false
+		}
+		for _, row := range expanded[batch.start:batch.end] {
+			if row.optionalMatched {
+				matches = append(matches, row)
+			}
 		}
 	}
 	return matches, true
@@ -196,7 +204,7 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 	// Static scopes cannot know a heterogeneous iterator's current element.
 	// Validate the actual correlated row before matching instead of treating a
 	// non-node binding as an absent match.
-	if err := validateBoundPatternNodes([]pipelineRow{outer}, pattern); err != nil {
+	if err := validateBoundPatternNodes(ctx, []pipelineRow{outer}, pattern); err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil
 	}
@@ -222,38 +230,45 @@ func (e *StorageExecutor) evaluatePatternComprehensionFromRow(ctx context.Contex
 	}
 	rows := e.evaluateBoundPatternRows(ctx, pattern, nodes, rels, outer)
 	values := make([]interface{}, 0, len(rows))
-	for _, row := range rows {
-		scope := make(pipelineRow, len(outer)+len(row.nodes)+len(row.rels)+len(row.values))
-		for variable, value := range outer {
-			scope[variable] = value
-		}
-		for variable, node := range row.nodes {
-			if node == nil {
-				scope[variable] = nil
-			} else {
-				scope[variable] = node
-			}
-		}
-		for variable, relationship := range row.rels {
-			if relationship == nil {
-				scope[variable] = nil
-			} else {
-				scope[variable] = relationship
-			}
-		}
-		for variable, value := range row.values {
-			scope[variable] = value
-		}
-		value, evaluated, err := e.evaluateRowValue(projection, scope)
-		if err != nil {
-			recordExpressionFailure(ctx, err)
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
 			return nil
 		}
-		if evaluated {
-			values = append(values, value)
-			continue
+		for _, row := range rows[batch.start:batch.end] {
+			scope := make(pipelineRow, len(outer)+len(row.nodes)+len(row.rels)+len(row.values))
+			for variable, value := range outer {
+				scope[variable] = value
+			}
+			for variable, node := range row.nodes {
+				if node == nil {
+					scope[variable] = nil
+				} else {
+					scope[variable] = node
+				}
+			}
+			for variable, relationship := range row.rels {
+				if relationship == nil {
+					scope[variable] = nil
+				} else {
+					scope[variable] = relationship
+				}
+			}
+			pass := bulk.NewCheckpoint(ctx)
+			for variable, value := range row.values {
+				pass.Check()
+				scope[variable] = value
+			}
+			value, evaluated, err := e.evaluateRowValue(projection, scope)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil
+			}
+			if evaluated {
+				values = append(values, value)
+				continue
+			}
+			values = append(values, e.evaluateExpressionWithContext(ctx, projection, row.nodes, row.rels))
 		}
-		values = append(values, e.evaluateExpressionWithContext(ctx, projection, row.nodes, row.rels))
 	}
 	return values
 }
@@ -267,7 +282,7 @@ func (e *StorageExecutor) evaluateBoundRowValue(expr string, values pipelineRow)
 	}
 	if variable, chain, ok := rowPropertyChainShape(expr); ok {
 		if base, bound := values[variable]; bound {
-			if value, resolved := evaluateRowPropertyChain(e.queryVisibleValue(base), chain); resolved {
+			if value, resolved := evaluateRowPropertyChain(e.queryVisibleValue(valueWalk(rowStatementContextOrBackground(values)), base), chain); resolved {
 				return cypherfn.RuntimeValue(value), true
 			}
 		}
@@ -355,10 +370,14 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		}
 		extended[name] = value
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for name, value := range valueBindingsFromContext(ctx) {
+		pass.Check()
 		bind(name, value)
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for name, value := range parameterRowValues(ctx) {
+		pass2.Check()
 		bind(name, value)
 	}
 	if extended != nil {

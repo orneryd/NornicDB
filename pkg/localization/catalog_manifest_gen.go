@@ -935,6 +935,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "cypherprocedures.set_relationship_vector_arguments_required", Constructor: "CypherProceduresSetRelationshipVectorArguments", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.set_relationship_vector_invalid_syntax", Constructor: "CypherProceduresSetRelationshipVectorInvalidSyntax", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.set_relationship_vector_parentheses_required", Constructor: "CypherProceduresSetRelationshipVectorParentheses", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "cypherprocedures.statement_too_long", Constructor: "CypherProceduresStatementTooLong", Fields: []string{"Limit", "Procedure", "Size"}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.string_query_embedder_required", Constructor: "CypherProceduresStringQueryEmbedderRequired", Fields: []string{}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.unsupported_parameters", Constructor: "CypherProceduresUnsupportedParameters", Fields: []string{"Parameters"}, PluralForms: []string{"other"}},
 	{ID: "cypherprocedures.update_catalog_failed", Constructor: "CypherProceduresUpdateCatalogFailed", Fields: []string{"Cause"}, PluralForms: []string{"other"}},

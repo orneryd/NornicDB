@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -2003,20 +2002,6 @@ func TestCypherUtilityConstructorsAndProcedureDDLBranches(t *testing.T) {
 	assert.False(t, found)
 	_, _, found = pcSmall.Get("RETURN 2")
 	assert.True(t, found)
-
-	// Worker pool constructor/default + execution branches.
-	pool := NewWorkerPool(0)
-	require.NotNil(t, pool)
-	require.Greater(t, pool.numWorkers, 0)
-	pool.Start()
-	var jobsRun atomic.Int32
-	for i := 0; i < 5; i++ {
-		pool.Submit(func() { jobsRun.Add(1) })
-	}
-	pool.Wait()
-	assert.Equal(t, int32(5), jobsRun.Load())
-	pool.Stop()
-	pool.Stop() // idempotent stop
 
 	// Flush on non-async engine is a no-op nil.
 	require.NoError(t, exec.Flush())

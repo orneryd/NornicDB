@@ -109,7 +109,7 @@ func TestDistinctTupleBoundaries(t *testing.T) {
 	// Joining value keys with a separator loses the tuple boundaries when a
 	// string contains that separator and the following value's type prefix.
 	rows := [][]interface{}{{"a\x1fSb", "c"}, {"a", "b\x1fSc"}, {"a\x1fSb", "c"}}
-	require.Len(t, deduplicatePipelineResultRows(rows), 2)
+	require.Len(t, deduplicatePipelineResultRows(context.Background(), rows), 2)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "distinct_values"))
 	for _, query := range []string{
 		"WITH $values AS values CALL (values) { UNWIND values AS each WITH DISTINCT each AS thing RETURN count(*) AS things } RETURN things",
@@ -139,8 +139,8 @@ func TestDistinctTupleBoundaries(t *testing.T) {
 		{"eff_view": map[string]interface{}{"active": true}, "thing": int64(1)},
 		{"eff_view": map[string]interface{}{"active": false}, "thing": int64(1)},
 	}
-	require.Len(t, deduplicatePipelineRows(nil, projected, []string{"eff_view", "thing"}), 2, "a projected import belongs in the key")
-	require.Len(t, deduplicatePipelineRows(nil, projected, []string{"thing"}), 1)
+	require.Len(t, deduplicatePipelineRows(context.Background(), projected, []string{"eff_view", "thing"}), 2, "a projected import belongs in the key")
+	require.Len(t, deduplicatePipelineRows(context.Background(), projected, []string{"thing"}), 1)
 }
 
 func BenchmarkScopedCallDistinct(b *testing.B) {

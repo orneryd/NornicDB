@@ -75,7 +75,7 @@ func TestKnowledgePolicyUsesScopedAccessMetadata(t *testing.T) {
 							}
 						}
 						for _, entity := range []string{id, "edge:1"} {
-							result, err := exec.callNornicDbKnowledgePolicyResolve([]interface{}{entity})
+							result, err := exec.callNornicDbKnowledgePolicyResolve(context.Background(), []interface{}{entity})
 							require.NoError(t, err)
 							require.InDelta(t, 1.0, result.Rows[0][12], 0.01)
 							require.Equal(t, false, result.Rows[0][14])

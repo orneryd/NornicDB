@@ -1,6 +1,9 @@
 package cypher
 
-import "github.com/orneryd/nornicdb/pkg/storage"
+import (
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
+	"github.com/orneryd/nornicdb/pkg/storage"
+)
 
 // pathSearchBack is a step of the walk search from the end: from the
 // product key (node) along edge by move.
@@ -179,8 +182,10 @@ func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direc
 			s.meet(w, p)
 		}
 	}
+	pass := bulk.NewCheckpoint(s.ctx)
 	for w.shortest < 0 && len(w.frontier) > 0 && len(w.back) > 0 && s.ctx.Err() == nil &&
 		(s.maxLength < 0 || w.forwardRadius+w.backwardRadius < s.maxLength) {
+		pass.Check()
 		if len(w.frontier) <= len(w.back) {
 			s.expandForward(w)
 		} else {
@@ -195,7 +200,9 @@ func (s *pathSearch) pair(source, target *storage.Node, count int, groups, direc
 			return rows
 		}
 	}
+	pass2 := bulk.NewCheckpoint(s.ctx)
 	for len(w.back) > 0 && s.ctx.Err() == nil && (s.maxLength < 0 || w.backwardRadius < s.maxLength) {
+		pass2.Check()
 		s.expandBackward(w)
 	}
 	s.distance = w.backward
@@ -239,12 +246,15 @@ func (s *pathSearch) shortestWalkPaths(w *pathSearchWalks, groups bool, bind fun
 			}
 			return
 		}
+		pass := bulk.NewCheckpoint(s.ctx)
 		for _, step := range w.succs[key] {
+			pass.Check()
 			if stop || !take(step.edge.ID) {
 				continue
 			}
 			next := path
-			next.steps = append(append([]pathSearchPathStep(nil), path.steps...), pathSearchPathStep{edge: step.edge, move: step.move, node: step.node})
+			steps, _ := appendPopulation(s.ctx, make([]pathSearchPathStep, 0, len(path.steps)+1), path.steps)
+			next.steps = append(steps, pathSearchPathStep{edge: step.edge, move: step.move, node: step.node})
 			back(step.key, next)
 			release(step.edge.ID)
 		}
@@ -273,7 +283,9 @@ func (s *pathSearch) shortestWalkPaths(w *pathSearchWalks, groups bool, bind fun
 			release(id)
 		}
 	}
+	pass2 := bulk.NewCheckpoint(s.ctx)
 	for p := range s.products {
+		pass2.Check()
 		distance, reached := w.forward[int32(p)]
 		if !reached || distance != position || stop {
 			continue

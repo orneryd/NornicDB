@@ -30,7 +30,7 @@ func cypherRegexMatch(text, pattern interface{}) (interface{}, error) {
 	}
 	patternString, patternOK := pattern.(string)
 	if !patternOK {
-		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", localization.CypherCoreRegexPatternTypeMismatch(neo4jValueRepr(pattern)))
+		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", localization.CypherCoreRegexPatternTypeMismatch(neo4jValueRepr(nil, pattern)))
 	}
 	re, err := GetCachedRegex(anchoredRegexPattern(patternString))
 	if err != nil {

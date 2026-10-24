@@ -94,7 +94,7 @@ func durationScaleError(op byte, left, right interface{}) error {
 		return nil
 	}
 	return localizedStatusError("Neo.ClientError.Statement.ArgumentError", "NumberOutOfRange",
-		localization.CypherCoreDurationArithmeticOverflow(duration.String(), string(op), neo4jValueRepr(operand)))
+		localization.CypherCoreDurationArithmeticOverflow(duration.String(), string(op), neo4jValueRepr(nil, operand)))
 }
 
 func asCypherDuration(value interface{}) (*CypherDuration, bool) {

@@ -166,11 +166,11 @@ func TestDesugarLabelExpressionsMapsTextBack(t *testing.T) {
 }
 
 func TestWithoutGeneratedColumns(t *testing.T) {
-	require.Nil(t, withoutGeneratedColumns(nil))
+	require.Nil(t, withoutGeneratedColumns(context.Background(), nil))
 	plain := &ExecuteResult{Columns: []string{"a"}, Rows: [][]interface{}{{1}}}
-	require.Same(t, plain, withoutGeneratedColumns(plain))
+	require.Same(t, plain, withoutGeneratedColumns(context.Background(), plain))
 	mixed := &ExecuteResult{Columns: []string{"__nornic_lx0", "m", "__nornic_lx1"}, Rows: [][]interface{}{{1, 2, 3}, {4}}}
-	trimmed := withoutGeneratedColumns(mixed)
+	trimmed := withoutGeneratedColumns(context.Background(), mixed)
 	require.Equal(t, []string{"m"}, trimmed.Columns)
 	require.Equal(t, [][]interface{}{{2}, {}}, trimmed.Rows)
 	require.Equal(t, []string{"__nornic_lx0", "m", "__nornic_lx1"}, mixed.Columns, "the result itself is kept")

@@ -122,7 +122,7 @@ func TestKnowledgePolicyExecutionAndFunctionErrorsHaveTypedIdentity(t *testing.T
 
 func TestKnowledgePolicyReturnedHumanTextUsesDescriptors(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	result, err := exec.callNornicDbKnowledgePolicyDeindexStatus()
+	result, err := exec.callNornicDbKnowledgePolicyDeindexStatus(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, localization.CypherKnowledgePolicyDeindexBadgerRequired().Fallback, result.Rows[0][2])
 

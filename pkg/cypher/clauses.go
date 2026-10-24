@@ -6,7 +6,7 @@ package cypher
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/binary"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -91,10 +93,18 @@ func (e *StorageExecutor) evaluateWithWhere(ctx context.Context, whereExpr strin
 	values := boundVars
 	if parameters := parameterRowValues(ctx); len(parameters) > 0 {
 		values = make(map[string]interface{}, len(boundVars)+len(parameters))
+		pass := bulk.NewCheckpoint(ctx)
 		for name, value := range boundVars {
+			if err := pass.Observe(); err != nil {
+				return false, err
+			}
 			values[name] = value
 		}
+		pass2 := bulk.NewCheckpoint(ctx)
 		for name, value := range parameters {
+			if err := pass2.Observe(); err != nil {
+				return false, err
+			}
 			values[name] = value
 		}
 	}
@@ -966,82 +976,28 @@ func parseUnwindMergeChainPattern(mutationPart string) unwindMergeChainPlan {
 	return plan
 }
 
-func canonicalUnwindMergeValue(v interface{}) interface{} {
-	switch val := v.(type) {
-	case map[string]interface{}:
-		keys := make([]string, 0, len(val))
-		for k := range val {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		out := make([]interface{}, 0, len(keys))
-		for _, k := range keys {
-			out = append(out, []interface{}{k, canonicalUnwindMergeValue(val[k])})
-		}
-		return map[string]interface{}{"type": "map", "entries": out}
-	case []interface{}:
-		out := make([]interface{}, len(val))
-		for i, item := range val {
-			out[i] = canonicalUnwindMergeValue(item)
-		}
-		return map[string]interface{}{"type": "list", "items": out}
-	case string:
-		return map[string]interface{}{"type": "string", "value": val}
-	case bool:
-		return map[string]interface{}{"type": "bool", "value": val}
-	case int:
-		return map[string]interface{}{"type": "int", "value": strconv.FormatInt(int64(val), 10)}
-	case int8:
-		return map[string]interface{}{"type": "int8", "value": strconv.FormatInt(int64(val), 10)}
-	case int16:
-		return map[string]interface{}{"type": "int16", "value": strconv.FormatInt(int64(val), 10)}
-	case int32:
-		return map[string]interface{}{"type": "int32", "value": strconv.FormatInt(int64(val), 10)}
-	case int64:
-		return map[string]interface{}{"type": "int64", "value": strconv.FormatInt(val, 10)}
-	case uint:
-		return map[string]interface{}{"type": "uint", "value": strconv.FormatUint(uint64(val), 10)}
-	case uint8:
-		return map[string]interface{}{"type": "uint8", "value": strconv.FormatUint(uint64(val), 10)}
-	case uint16:
-		return map[string]interface{}{"type": "uint16", "value": strconv.FormatUint(uint64(val), 10)}
-	case uint32:
-		return map[string]interface{}{"type": "uint32", "value": strconv.FormatUint(uint64(val), 10)}
-	case uint64:
-		return map[string]interface{}{"type": "uint64", "value": strconv.FormatUint(val, 10)}
-	case float32:
-		return map[string]interface{}{"type": "float32", "value": strconv.FormatFloat(float64(val), 'g', -1, 32)}
-	case float64:
-		return map[string]interface{}{"type": "float64", "value": strconv.FormatFloat(val, 'g', -1, 64)}
-	case nil:
-		return map[string]interface{}{"type": "nil"}
-	default:
-		rv := reflect.ValueOf(v)
-		if rv.IsValid() && rv.Kind() == reflect.Slice {
-			out := make([]interface{}, rv.Len())
-			for i := 0; i < rv.Len(); i++ {
-				out[i] = canonicalUnwindMergeValue(rv.Index(i).Interface())
-			}
-			return map[string]interface{}{"type": rv.Type().String(), "items": out}
-		}
-		return map[string]interface{}{"type": fmt.Sprintf("%T", v), "value": fmt.Sprintf("%#v", v)}
-	}
+// unwindMergeKey is the MERGE lookup key of label and props: the label, then
+// the props in name order, each value type-tagged by the one value key owner
+// (writeCacheKeyParams), which observes the statement (walk) over the values.
+func unwindMergeKey(walk *materializedRowCheckpoint, label string, props map[string]interface{}) string {
+	return string(appendMergeKey(walk, nil, label, props))
 }
 
-func unwindMergeKey(label string, props map[string]interface{}) string {
-	propNames := mergePropertyNamesSorted(props)
-	entries := make([]interface{}, 0, len(propNames))
-	for _, prop := range propNames {
-		entries = append(entries, []interface{}{prop, canonicalUnwindMergeValue(props[prop])})
-	}
-	encoded, err := json.Marshal(map[string]interface{}{
-		"label":   label,
-		"entries": entries,
-	})
-	if err != nil {
-		return fmt.Sprintf("%s|%v", label, propNames)
-	}
-	return string(encoded)
+// appendMergeKey appends unwindMergeKey's key to buf.
+func appendMergeKey(walk *materializedRowCheckpoint, buf []byte, label string, props map[string]interface{}) []byte {
+	builder := cacheKeyBuilder{buf: buf}
+	var scratch [binary.MaxVarintLen64 + 1]byte
+	writeCacheKeyString(&builder, &scratch, label)
+	writeCacheKeyParams(walk, &builder, &scratch, props)
+	return builder.buf
+}
+
+// mergeValueKey is one value's type-tagged key (writeCacheKeyValue).
+func mergeValueKey(walk *materializedRowCheckpoint, value interface{}) string {
+	builder := cacheKeyBuilder{}
+	var scratch [binary.MaxVarintLen64 + 1]byte
+	writeCacheKeyValue(walk, &builder, &scratch, value)
+	return string(builder.buf)
 }
 
 // requireUnwindMergeChainParameters reports a SET value in the batch plan that
@@ -1080,7 +1036,7 @@ func requireUnwindMergeChainParameters(ctx context.Context, plan unwindMergeChai
 // reports whether the node changed (a null removes the key).
 func setNodePropertyIfChanged(node *storage.Node, prop string, value interface{}) bool {
 	cur, exists := node.Properties[prop]
-	if value == nil && !exists || value != nil && exists && reflect.DeepEqual(cur, value) {
+	if value == nil && !exists || value != nil && exists && cypherfn.IdenticalValues(nil, cur, value) {
 		return false
 	}
 	setNodeProperty(node, prop, value)
@@ -1091,7 +1047,7 @@ func setNodePropertyIfChanged(node *storage.Node, prop string, value interface{}
 // relationship.
 func setRelationshipPropertyIfChanged(edge *storage.Edge, prop string, value interface{}) bool {
 	cur, exists := edge.Properties[prop]
-	if value == nil && !exists || value != nil && exists && reflect.DeepEqual(cur, value) {
+	if value == nil && !exists || value != nil && exists && cypherfn.IdenticalValues(nil, cur, value) {
 		return false
 	}
 	setRelationshipProperty(edge, prop, value)
@@ -1752,12 +1708,12 @@ func normalizeMultiMatchWhereClauses(query string) string {
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
 func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool) (*ExecuteResult, error) {
-	return e.executeUnionBranches(cypher, unionAll, func(query string) (*ExecuteResult, error) {
+	return e.executeUnionBranches(ctx, cypher, unionAll, func(query string) (*ExecuteResult, error) {
 		return e.executeInternal(ctx, query, nil)
 	})
 }
 
-func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeUnionBranches(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
 	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
 	if !ok || len(queries) < 2 {
 		// A failed product is diagnostic framing only: no branch executes.
@@ -1815,7 +1771,9 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 			// The same names in another order: the branch's rows are
 			// reordered into the first branch's columns, as in Neo4j 5.26.
 			if order != nil {
-				result.Rows = reorderUnionRows(result.Rows, order)
+				if result.Rows, err = reorderUnionRows(ctx, result.Rows, order); err != nil {
+					return nil, err
+				}
 			}
 		} else {
 			return nil, unionColumnsError(combinedResult.Columns, result.Columns)
@@ -1825,13 +1783,14 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 		// Add rows from this query
 		if unionAll {
 			// UNION ALL - include all rows
-			combinedResult.Rows = append(combinedResult.Rows, result.Rows...)
+			var appendErr error
+			if combinedResult.Rows, appendErr = appendPopulation(ctx, combinedResult.Rows, result.Rows); appendErr != nil {
+				return nil, appendErr
+			}
 		} else {
 			// UNION (distinct) - deduplicate rows
-			for _, row := range result.Rows {
-				if _, exists := seen.addTupleByContract(row, cypherEquivalenceContract); !exists {
-					combinedResult.Rows = append(combinedResult.Rows, row)
-				}
+			if err := appendDistinctUnionRows(ctx, &seen, combinedResult, result.Rows); err != nil {
+				return nil, err
 			}
 		}
 	}
@@ -1896,18 +1855,43 @@ func unionColumnOrder(columns, branch []string) (order []int, sameNames bool) {
 }
 
 // reorderUnionRows rewrites rows into the column order unionColumnOrder gave.
-func reorderUnionRows(rows [][]interface{}, order []int) [][]interface{} {
+func reorderUnionRows(ctx context.Context, rows [][]interface{}, order []int) ([][]interface{}, error) {
 	reordered := make([][]interface{}, len(rows))
-	for index, row := range rows {
-		values := make([]interface{}, len(order))
-		for column, position := range order {
-			if position < len(row) {
-				values[column] = row[position]
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, batchErr
+		}
+		for offset, row := range rows[batch.start:batch.end] {
+			index := batch.start + offset
+			values := make([]interface{}, len(order))
+			for column, position := range order {
+				if position < len(row) {
+					values[column] = row[position]
+				}
+			}
+			reordered[index] = values
+		}
+	}
+	return reordered, nil
+}
+
+// appendDistinctUnionRows appends the rows of one UNION branch that equal no
+// row before them. The index observes cancellation as DISTINCT's does
+// (the owner's check), so a large nested value stops as well as many rows;
+// a stop unwinds to the statement's boundary, which discards the rows.
+func appendDistinctUnionRows(ctx context.Context, seen *cypherValueIndex, combined *ExecuteResult, rows [][]interface{}) (err error) {
+	seen.observeCancellation(ctx)
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return batchErr
+		}
+		for _, row := range rows[batch.start:batch.end] {
+			if _, exists := seen.addTupleByContract(row, cypherEquivalenceContract); !exists {
+				combined.Rows = append(combined.Rows, row)
 			}
 		}
-		reordered[index] = values
 	}
-	return reordered
+	return nil
 }
 
 // ========================================
@@ -1951,7 +1935,9 @@ func (e *StorageExecutor) resolveReturnExprFromVarMap(
 	row := e.mergeBindingRow(ctx,
 		map[string]*storage.Node{targetVar: targetNode},
 		map[string]*storage.Edge{relVar: targetEdge})
+	pass := bulk.NewCheckpoint(ctx)
 	for name, value := range varMap {
+		pass.Check()
 		if name != targetVar && name != relVar {
 			row[name] = value
 		}

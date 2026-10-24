@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -161,7 +162,11 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	compiledConstraints := make([]storage.Constraint, 0)
 	compiledTypes := make([]storage.PropertyTypeConstraint, 0)
 
+	pass := bulk.NewCheckpoint(ctx)
 	for idx, rawEntry := range entriesRaw {
+		if err := pass.Observe(); err != nil {
+			return nil, true, err
+		}
 		entry, compiledConstraint, compiledType, err := e.parseConstraintContractEntry(rawEntry, variable, entityType, labelOrType, name, idx)
 		if err != nil {
 			return nil, true, err

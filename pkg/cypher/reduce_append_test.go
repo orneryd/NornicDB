@@ -214,7 +214,7 @@ func TestReduceAppendResultHandoff(t *testing.T) {
 	}
 	form := reduceForm{accumulator: "a", variable: "x", step: "a + x"}
 	var folding []interface{}
-	result, err := runReduceForm(form, base, []interface{}{int64(1), int64(2)},
+	result, err := runReduceForm(context.Background(), form, base, []interface{}{int64(1), int64(2)},
 		func(a, x interface{}) (interface{}, error) { return nil, nil }, nil,
 		&reduceAppender{plan: form.appendPlan(), term: func(_ int, a, x interface{}) (interface{}, error) {
 			folding = a.([]interface{})

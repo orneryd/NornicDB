@@ -7,6 +7,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher/antlr"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -65,7 +66,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 			}
 		}()
 	}
-	defer func() { e.projectQueryResultProperties(result) }()
+	defer func() { e.projectQueryResultProperties(ctx, result) }()
 	defer func() {
 		if recorded := getExpressionFailure(ctx); recorded != nil && err == nil {
 			result, err = nil, recorded
@@ -298,14 +299,22 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	// RETURN 1.0 / 0).
 	params := getParamsFromContext(ctx)
 	row := make(pipelineRow, len(e.fabricRecordBindings)+len(params))
+	pass := bulk.NewCheckpoint(ctx)
 	for name, value := range e.fabricRecordBindings {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		row[name] = value
 	}
 	bindParameterRow(ctx, row)
 	// Bound child contexts (§6.2): UNION/CALL branches may reference values
 	// that travel in the value scope; the innermost bindings shadow params.
 	if bindings := valueBindingsFromContext(ctx); bindings != nil {
+		pass2 := bulk.NewCheckpoint(ctx)
 		for name, value := range bindings {
+			if err := pass2.Observe(); err != nil {
+				return nil, err
+			}
 			row[name] = value
 		}
 	}

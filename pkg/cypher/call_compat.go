@@ -5,11 +5,11 @@ import (
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"slices"
-	"sort"
 	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/search/stemmer"
@@ -46,7 +46,7 @@ func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error
 }
 
 // callDbPing checks database connectivity - Neo4j db.ping()
-func (e *StorageExecutor) callDbPing() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbPing(ctx context.Context) (*ExecuteResult, error) {
 	return &ExecuteResult{
 		Columns: []string{"success"},
 		Rows:    [][]interface{}{{true}},
@@ -54,7 +54,7 @@ func (e *StorageExecutor) callDbPing() (*ExecuteResult, error) {
 }
 
 // callDbmsInfo returns DBMS information - Neo4j dbms.info()
-func (e *StorageExecutor) callDbmsInfo() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbmsInfo(ctx context.Context) (*ExecuteResult, error) {
 	name := "system"
 	if manager, ok := e.dbManager.(interface{ SystemDatabaseName() string }); ok {
 		name = manager.SystemDatabaseName()
@@ -96,7 +96,11 @@ func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, argum
 		return nil, err
 	}
 	rows := make([][]interface{}, 0, len(settings.Rows)+3)
+	pass := bulk.NewCheckpoint(ctx)
 	for _, setting := range settings.Rows {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		validValues, _ := setting[7].([]string)
 		rows = append(rows, []interface{}{setting[0], setting[4], setting[1], setting[2], setting[3], setting[5], setting[6], strings.Join(validValues, ", ")})
 	}
@@ -106,13 +110,19 @@ func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, argum
 		[]interface{}{"nornicdb.bolt.enabled", "Bolt protocol enabled", nil, false, nil, nil, nil, "true, false"},
 		[]interface{}{"nornicdb.http.enabled", "HTTP API enabled", nil, false, nil, nil, nil, "true, false"},
 	)
-	sort.Slice(rows, func(first, second int) bool { return rows[first][0].(string) < rows[second][0].(string) })
+	if err := sortPopulation(ctx, rows, func(first, second int) bool { return rows[first][0].(string) < rows[second][0].(string) }); err != nil {
+		return nil, err
+	}
 	result := &ExecuteResult{
 		Columns: []string{"name", "description", "value", "dynamic", "defaultValue", "startupValue", "explicitlySet", "validValues"},
 		Rows:    [][]interface{}{},
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for _, row := range rows {
-		if strings.Contains(row[0].(string), searchString) {
+		if err := pass2.Observe(); err != nil {
+			return nil, err
+		}
+		if bulk.Contains(ctx, row[0].(string), searchString) {
 			result.Rows = append(result.Rows, row)
 		}
 	}
@@ -120,7 +130,7 @@ func (e *StorageExecutor) callDbmsListConfigArguments(ctx context.Context, argum
 }
 
 // callDbmsClientConfig lists client-visible configuration - Neo4j dbms.clientConfig()
-func (e *StorageExecutor) callDbmsClientConfig() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbmsClientConfig(ctx context.Context) (*ExecuteResult, error) {
 	return &ExecuteResult{
 		Columns: []string{"name", "description", "value", "dynamic", "defaultValue", "startupValue", "explicitlySet", "validValues"},
 		Rows: [][]interface{}{
@@ -159,12 +169,14 @@ func (e *StorageExecutor) callDbmsListConnectionsWithContext(ctx context.Context
 		}
 		result.Rows = append(result.Rows, []interface{}{connection.ConnectionID, connection.ConnectTime, connection.Connector, connection.Username, connection.UserAgent, connection.ServerAddress, connection.ClientAddress})
 	}
-	sort.Slice(result.Rows, func(first, second int) bool { return result.Rows[first][0].(string) < result.Rows[second][0].(string) })
+	if err := sortPopulation(ctx, result.Rows, func(first, second int) bool { return result.Rows[first][0].(string) < result.Rows[second][0].(string) }); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
 // callDbIndexFulltextListAvailableAnalyzers lists fulltext analyzers - Neo4j db.index.fulltext.listAvailableAnalyzers()
-func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers(ctx context.Context) (*ExecuteResult, error) {
 	rows := [][]interface{}{{"none", "Language-neutral Unicode analyzer", []string{}, "exact", "", "", false, []string{}}}
 	for _, registration := range stemmer.Available() {
 		digest := registration.Digest
@@ -202,7 +214,8 @@ func (e *StorageExecutor) callDbIndexFulltextListAvailableAnalyzers() (*ExecuteR
 //     tokenized BM25-like matching used by queryNodes.
 //
 // Returns one row per matching edge with columns [relationship, score].
-func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
+	work := bulk.NewCheckpoint(ctx)
 	result := &ExecuteResult{
 		Columns: []string{"relationship", "score"},
 		Rows:    [][]interface{}{},
@@ -246,7 +259,12 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 			return result, nil
 		}
 		seen := 0
-		err := storage.StreamEdgesWithFallback(context.Background(), e.storage, 1024, func(edge *storage.Edge) error {
+		scan := newStorageScan(ctx)
+		defer scan.close()
+		err := streamEdgesWithFallback(scan, e.storage, 1024, func(edge *storage.Edge) error {
+			if err := scan.observe(); err != nil {
+				return err
+			}
 			if !matchesRelationshipTypes(edge, targetTypes) {
 				return nil
 			}
@@ -275,17 +293,18 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 		return result, nil
 	}
 
-	edges, err := e.storage.AllEdges()
-	if err != nil {
-		return nil, err
-	}
-
-	parsed, err := ParseFulltextQuery(query)
+	// The query is read first: an empty or malformed one needs no storage
+	// read, and reading it observes the statement.
+	parsed, err := parseFulltextQueryObserved(&work, query)
 	if err != nil {
 		return nil, err
 	}
 	if parsed.IsEmpty() {
 		return result, nil
+	}
+	edges, err := e.storage.AllEdges()
+	if err != nil {
+		return nil, err
 	}
 
 	type edgeDoc struct {
@@ -296,6 +315,9 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 	docFreq := make(map[string]int, len(parsed.PrimaryTerms()))
 	var totalDocLen int64
 	for _, edge := range edges {
+		if err := work.Observe(); err != nil {
+			return nil, err
+		}
 		if !matchesRelationshipTypes(edge, targetTypes) {
 			continue
 		}
@@ -317,7 +339,7 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 		avgDocLen = float64(totalDocLen) / float64(totalDocs)
 	}
 
-	ctx := &ftEvalCtx{
+	scoring := &ftEvalCtx{
 		DefaultFields: targetProperties,
 		avgDocLen:     avgDocLen,
 		totalDocs:     totalDocs,
@@ -330,7 +352,10 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 	}
 	scored := make([]scoredEdge, 0, len(docs))
 	for _, d := range docs {
-		matched, score := parsed.Match(ctx, d.doc)
+		if err := work.Observe(); err != nil {
+			return nil, err
+		}
+		matched, score := parsed.Match(scoring, d.doc)
 		if !matched {
 			continue
 		}
@@ -340,14 +365,19 @@ func (e *StorageExecutor) callDbIndexFulltextQueryRelationships(args []interface
 		scored = append(scored, scoredEdge{edge: d.edge, score: score})
 	}
 
-	sort.Slice(scored, func(i, j int) bool {
+	if err := sortPopulation(ctx, scored, func(i, j int) bool {
 		if scored[i].score == scored[j].score {
 			return scored[i].edge.ID < scored[j].edge.ID
 		}
 		return scored[i].score > scored[j].score
-	})
+	}); err != nil {
+		return nil, err
+	}
 	result.Rows = make([][]interface{}, 0, len(scored))
 	for _, s := range scored {
+		if err := work.Observe(); err != nil {
+			return nil, err
+		}
 		result.Rows = append(result.Rows, []interface{}{e.procedureRelationship(s.edge), s.score})
 	}
 	applyFulltextOptions(result, opts)
@@ -562,7 +592,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 			// Parameters were provided, so if we have no input, it might be a substituted invalid type
 			// Check which parameters have unsupported types to provide a better error message
 			var unsupportedParams []string
+			pass := bulk.NewCheckpoint(ctx)
 			for paramName, paramValue := range params {
+				if err := pass.Observe(); err != nil {
+					return nil, err
+				}
 				// Check if this parameter has an unsupported type for vector queries
 				_, list := valueconvert.ReadList(paramValue)
 				_, text := paramValue.(string)
@@ -642,7 +676,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 	}
 	var scoredEdges []scoredEdge
 
+	pass2 := bulk.NewCheckpoint(ctx)
 	for _, edge := range edges {
+		if err := pass2.Observe(); err != nil {
+			return nil, err
+		}
 		// Check relationship type filter if index specifies one
 		if targetRelType != "" && edge.Type != targetRelType {
 			continue
@@ -675,9 +713,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 	}
 
 	// Sort by score descending
-	sort.Slice(scoredEdges, func(i, j int) bool {
+	if err := sortPopulation(ctx, scoredEdges, func(i, j int) bool {
 		return scoredEdges[i].score > scoredEdges[j].score
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	// Limit to k results
 	if k > 0 && len(scoredEdges) > k {
@@ -685,7 +725,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 	}
 
 	// Convert to result rows
+	pass3 := bulk.NewCheckpoint(ctx)
 	for _, se := range scoredEdges {
+		if err := pass3.Observe(); err != nil {
+			return nil, err
+		}
 		result.Rows = append(result.Rows, []interface{}{
 			e.procedureRelationship(se.edge),
 			se.score,
@@ -740,7 +784,7 @@ func (e *StorageExecutor) callDbIndexVectorCreateIndex(ctx context.Context, args
 			return nil, err
 		}
 	}
-	similarity = strings.ToLower(similarity)
+	similarity = bulk.ToLower(ctx, similarity)
 	if dimension <= 0 || (similarity != "cosine" && similarity != "euclidean" && similarity != "dot") {
 		return nil, newSemanticError("Neo.ClientError.Procedure.ProcedureCallFailed", "InvalidArgument", "vector index creation requires a positive dimension and a supported similarity function")
 	}
@@ -847,7 +891,7 @@ func (e *StorageExecutor) callDbIndexFulltextCreateRelationshipIndex(ctx context
 
 // callDbIndexFulltextDrop drops a fulltext index - Neo4j db.index.fulltext.drop()
 // Syntax: CALL db.index.fulltext.drop(indexName)
-func (e *StorageExecutor) callDbIndexFulltextDrop(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextDrop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	indexName, err := requiredProcedureString("db.index.fulltext.drop", args, 0, "indexName")
 	if err != nil {
 		return nil, err
@@ -867,7 +911,7 @@ func (e *StorageExecutor) callDbIndexFulltextDrop(args []interface{}) (*ExecuteR
 
 // callDbIndexVectorDrop drops a vector index - Neo4j db.index.vector.drop()
 // Syntax: CALL db.index.vector.drop(indexName)
-func (e *StorageExecutor) callDbIndexVectorDrop(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexVectorDrop(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	indexName, err := requiredProcedureString("db.index.vector.drop", args, 0, "indexName")
 	if err != nil {
 		return nil, err
@@ -939,7 +983,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		}
 	}
 	propertyKey, validKey := arguments[1].(string)
-	if expression, raw := arguments[2].(string); raw && strings.HasPrefix(strings.TrimSpace(expression), "[") {
+	if expression, raw := arguments[2].(string); raw && strings.HasPrefix(bulk.TrimSpace(ctx, expression), "[") {
 		arguments[2] = e.evaluateExpressionWithContext(ctx, expression, nil, nil)
 	}
 	vector, validVector := toFloat64Slice(arguments[2])

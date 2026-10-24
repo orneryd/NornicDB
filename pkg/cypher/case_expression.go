@@ -12,10 +12,10 @@ package cypher
 import (
 	"context"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
-	"reflect"
 	"strings"
 	"unicode"
 
+	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -868,7 +868,7 @@ func compareValues(a, b interface{}) bool {
 		return equal
 	}
 
-	return reflect.DeepEqual(a, b)
+	return cypherfn.IdenticalValues(nil, a, b)
 }
 
 func strictNumericValue(value interface{}) (float64, bool) {

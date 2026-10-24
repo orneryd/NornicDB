@@ -353,7 +353,7 @@ func TestMergeAndMutationHelpers_Branches(t *testing.T) {
 	err = store.CreateEdge(&storage.Edge{ID: "edge-1", Type: "REL", StartNode: "na", EndNode: "nb"})
 	require.NoError(t, err)
 	matchResult := &ExecuteResult{Rows: [][]interface{}{{map[string]interface{}{"_edgeId": "edge-1"}}}}
-	exec.normalizeSetMatchRowsToEdges(matchResult, store)
+	require.NoError(t, exec.normalizeSetMatchRowsToEdges(context.Background(), matchResult, store))
 	_, converted := matchResult.Rows[0][0].(*storage.Edge)
 	require.True(t, converted)
 }

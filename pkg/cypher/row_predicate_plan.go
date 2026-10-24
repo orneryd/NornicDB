@@ -184,7 +184,7 @@ func (o *rowOperand) resolveScope(scope compiledRowScope) (interface{}, bool) {
 			return nil, false
 		}
 		if scope.executor != nil {
-			base = scope.executor.queryVisibleValue(base)
+			base = scope.executor.queryVisibleValue(nil, base)
 		}
 		if o.directProperty {
 			return rowPropertyValue(base, o.chain)

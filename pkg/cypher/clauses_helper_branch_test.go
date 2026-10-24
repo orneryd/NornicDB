@@ -6,53 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCanonicalUnwindMergeValue_CoversTypeBranches(t *testing.T) {
-	cases := []struct {
-		name string
-		in   interface{}
-		typ  string
-	}{
-		{name: "string", in: "x", typ: "string"},
-		{name: "bool", in: true, typ: "bool"},
-		{name: "int", in: int(1), typ: "int"},
-		{name: "int8", in: int8(1), typ: "int8"},
-		{name: "int16", in: int16(1), typ: "int16"},
-		{name: "int32", in: int32(1), typ: "int32"},
-		{name: "int64", in: int64(1), typ: "int64"},
-		{name: "uint", in: uint(1), typ: "uint"},
-		{name: "uint8", in: uint8(1), typ: "uint8"},
-		{name: "uint16", in: uint16(1), typ: "uint16"},
-		{name: "uint32", in: uint32(1), typ: "uint32"},
-		{name: "uint64", in: uint64(1), typ: "uint64"},
-		{name: "float32", in: float32(1.25), typ: "float32"},
-		{name: "float64", in: 1.25, typ: "float64"},
-		{name: "nil", in: nil, typ: "nil"},
-		{name: "typed slice fallback", in: []int{1, 2}, typ: "[]int"},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			out, ok := canonicalUnwindMergeValue(tc.in).(map[string]interface{})
-			require.True(t, ok)
-			require.Equal(t, tc.typ, out["type"])
-		})
-	}
-
-	mapOut, ok := canonicalUnwindMergeValue(map[string]interface{}{"b": 2, "a": 1}).(map[string]interface{})
-	require.True(t, ok)
-	require.Equal(t, "map", mapOut["type"])
-	entries, ok := mapOut["entries"].([]interface{})
-	require.True(t, ok)
-	require.Len(t, entries, 2)
-	firstKV, ok := entries[0].([]interface{})
-	require.True(t, ok)
-	require.Equal(t, "a", firstKV[0])
-
-	listOut, ok := canonicalUnwindMergeValue([]interface{}{1, "x"}).(map[string]interface{})
-	require.True(t, ok)
-	require.Equal(t, "list", listOut["type"])
-}
-
 func TestClauseHelpers_ParseAndRewrite(t *testing.T) {
 	require.True(t, isSimplePropertyReference("n.prop"))
 	require.True(t, isSimplePropertyReference("a.b.c"))

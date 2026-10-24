@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -16,73 +15,65 @@ import (
 // in path order, each relationship pointing the way it is stored:
 // (:A)-[:T]->(:B), (:B)<-[:T]-(:A). ok is false for a value of no Cypher
 // type and for null.
-func cypher25ValueText(value interface{}) (string, bool) {
+func cypher25ValueText(work *materializedRowCheckpoint, value interface{}) (string, bool) {
 	var out strings.Builder
-	if value == nil || !writeCypher25ValueText(&out, value) {
+	if value == nil || !writeCypher25ValueText(work, &out, value) {
 		return "", false
 	}
 	return out.String(), true
 }
 
-func writeCypher25ValueText(out *strings.Builder, value interface{}) bool {
-	switch cypherValueKindOf(value) {
-	case valueKindNull:
-		out.WriteString("null")
-	case valueKindList:
-		out.WriteByte('[')
-		for index, item := range toAnySlice(value) {
-			if index > 0 {
-				out.WriteString(", ")
-			}
-			if !writeCypher25ValueText(out, item) {
-				return false
-			}
-		}
-		out.WriteByte(']')
-	case valueKindMap:
+func writeCypher25ValueText(work *materializedRowCheckpoint, out *strings.Builder, value interface{}) bool {
+	return writeValueText(work, out, value, cypher25ValueTextStyle)
+}
+
+// cypher25ValueTextStyle is a value as Cypher 25 writes it in text: Cypher
+// literals, a map's keys in order as names.
+var cypher25ValueTextStyle = &valueTextStyle{
+	mapping: func(value interface{}) (map[string]interface{}, bool) {
 		entries, isMap := value.(map[string]interface{})
-		if !isMap {
+		return entries, isMap && cypherValueKindOf(value) == valueKindMap
+	},
+	list: func(value interface{}) ([]interface{}, bool) {
+		if cypherValueKindOf(value) != valueKindList {
+			return nil, false
+		}
+		return toAnySlice(value), true
+	},
+	listOpen: "[", listClose: "]", listSeparator: ", ",
+	mapOpen: "{", mapClose: "}", mapSeparator: ", ", keySeparator: ": ",
+	sorted: true,
+	key:    func(out *strings.Builder, key string) { out.WriteString(cypher25NameText(key)) },
+	leaf: func(_ *materializedRowCheckpoint, out *strings.Builder, value interface{}) bool {
+		switch cypherValueKindOf(value) {
+		case valueKindNull:
+			out.WriteString("null")
+		case valueKindMap:
+			// A map of another Go type has no Cypher 25 text.
 			return false
-		}
-		keys := make([]string, 0, len(entries))
-		for key := range entries {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		out.WriteByte('{')
-		for index, key := range keys {
-			if index > 0 {
-				out.WriteString(", ")
-			}
-			out.WriteString(cypher25NameText(key))
-			out.WriteString(": ")
-			if !writeCypher25ValueText(out, entries[key]) {
+		case valueKindNode:
+			node, isNode := value.(*storage.Node)
+			if !isNode || node == nil {
 				return false
 			}
+			writeCypher25NodeText(out, node)
+		case valueKindRelationship:
+			edge, isEdge := value.(*storage.Edge)
+			if !isEdge || edge == nil {
+				return false
+			}
+			out.WriteString("[:" + cypher25NameText(edge.Type) + "]")
+		case valueKindPath:
+			return writeCypher25PathText(out, value)
+		default:
+			text, isText := convertToStringOrNull(value).(string)
+			if !isText {
+				return false
+			}
+			out.WriteString(text)
 		}
-		out.WriteByte('}')
-	case valueKindNode:
-		node, isNode := value.(*storage.Node)
-		if !isNode || node == nil {
-			return false
-		}
-		writeCypher25NodeText(out, node)
-	case valueKindRelationship:
-		edge, isEdge := value.(*storage.Edge)
-		if !isEdge || edge == nil {
-			return false
-		}
-		out.WriteString("[:" + cypher25NameText(edge.Type) + "]")
-	case valueKindPath:
-		return writeCypher25PathText(out, value)
-	default:
-		text, isText := convertToStringOrNull(value).(string)
-		if !isText {
-			return false
-		}
-		out.WriteString(text)
-	}
-	return true
+		return true
+	},
 }
 
 func writeCypher25NodeText(out *strings.Builder, node *storage.Node) {
@@ -144,12 +135,12 @@ func writeCypher25PathText(out *strings.Builder, value interface{}) bool {
 // graph entities have text too (cypher25ValueText) and a null element is
 // 'null' (toString(null) is null before it gets here); in Cypher 5 they are
 // null (convertToStringOrNull).
-func convertToStringInVersion(value interface{}, cypher25 bool) interface{} {
+func convertToStringInVersion(work *materializedRowCheckpoint, value interface{}, cypher25 bool) interface{} {
 	if !cypher25 {
 		return convertToStringOrNull(value)
 	}
 	var out strings.Builder
-	if !writeCypher25ValueText(&out, value) {
+	if !writeCypher25ValueText(work, &out, value) {
 		return nil
 	}
 	return out.String()

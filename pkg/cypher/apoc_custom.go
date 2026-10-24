@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -166,7 +167,7 @@ func (e *StorageExecutor) callApocCustomInstall(ctx context.Context, procedure s
 	if !ok {
 		return nil, localizedError(localization.CypherProceduresCustomSignatureInvalid(signatureText), nil)
 	}
-	if strings.TrimSpace(statement) == "" {
+	if bulk.TrimSpace(ctx, statement) == "" {
 		return nil, localizedError(localization.CypherProceduresBodyRequired(), nil)
 	}
 	minArgs := 0
@@ -176,8 +177,8 @@ func (e *StorageExecutor) callApocCustomInstall(ctx context.Context, procedure s
 	err = e.installPersistedProcedure(ctx, persistedProcedureRecord{
 		Name:        apocCustomPrefix + signature.name,
 		ArgNames:    signature.args,
-		Mode:        upperASCII(strings.TrimSpace(mode)),
-		Body:        strings.TrimSpace(statement),
+		Mode:        bulk.UpperASCII(ctx, bulk.TrimSpace(ctx, mode)),
+		Body:        bulk.TrimSpace(ctx, statement),
 		Signature:   signature.text(),
 		Description: description,
 		MinArgs:     minArgs,
@@ -207,7 +208,7 @@ func (e *StorageExecutor) callApocCustomDrop(ctx context.Context, args []interfa
 	if _, err := customStringArgument(procedure, args, 1, "databaseName", "neo4j"); err != nil {
 		return nil, err
 	}
-	if err := e.dropPersistedProcedure(ctx, apocCustomPrefix+strings.TrimPrefix(strings.TrimSpace(name), apocCustomPrefix)); err != nil {
+	if err := e.dropPersistedProcedure(ctx, apocCustomPrefix+strings.TrimPrefix(bulk.TrimSpace(ctx, name), apocCustomPrefix)); err != nil {
 		return nil, err
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
@@ -221,7 +222,11 @@ func (e *StorageExecutor) callApocCustomList(ctx context.Context) (*ExecuteResul
 	if err != nil {
 		return nil, localizedError(localization.CypherProceduresCatalogReadFailed(err), err)
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for _, node := range nodes {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		encoded, _ := node.Properties["record"].(string)
 		payload, err := base64.StdEncoding.DecodeString(encoded)
 		if err != nil {

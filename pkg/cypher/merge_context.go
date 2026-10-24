@@ -8,6 +8,7 @@ import (
 
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -32,13 +33,13 @@ import (
 // attempt to short-circuit when the residual filter is empty; the caller's
 // uniform `nodeMatchesProps` step keeps the post-condition trivially
 // correct even when the index narrows partially.
-func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool) {
+func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.Context, nodeInfo nodePatternInfo, store storage.Engine) ([]*storage.Node, bool, error) {
 	if len(nodeInfo.properties) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	schema := store.GetSchema()
 	if schema == nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Collect per-property candidate ID sets, one per inline equality that an
@@ -89,14 +90,23 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 			ids := compositeIndexLookup(store, idx, values, covered == len(idx.Properties))
 			usedAnyIndex = true
 			set := make(map[storage.NodeID]struct{}, len(ids))
-			for _, id := range ids {
-				set[id] = struct{}{}
+			for batch, batchErr := range materializedBatches(ctx, len(ids)) {
+				if batchErr != nil {
+					return nil, true, batchErr
+				}
+				for _, id := range ids[batch.start:batch.end] {
+					set[id] = struct{}{}
+				}
 			}
 			idSets = append(idSets, set)
 		}
 	}
 
+	pass := bulk.NewCheckpoint(ctx)
 	for prop, val := range nodeInfo.properties {
+		if err := pass.Observe(); err != nil {
+			return nil, true, err
+		}
 		var ids []storage.NodeID
 		probed := false
 		if len(nodeInfo.labels) > 0 {
@@ -121,14 +131,19 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		}
 		usedAnyIndex = true
 		set := make(map[storage.NodeID]struct{}, len(ids))
-		for _, id := range ids {
-			set[id] = struct{}{}
+		for batch, batchErr := range materializedBatches(ctx, len(ids)) {
+			if batchErr != nil {
+				return nil, true, batchErr
+			}
+			for _, id := range ids[batch.start:batch.end] {
+				set[id] = struct{}{}
+			}
 		}
 		idSets = append(idSets, set)
 	}
 
 	if !usedAnyIndex || len(idSets) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 
 	// Intersect across all indexed-prop sets.
@@ -139,7 +154,11 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		}
 	}
 	out := make([]*storage.Node, 0, len(idSets[smallest]))
+	candidates := bulk.RowsCheckpoint(ctx, len(idSets[smallest]))
 	for id := range idSets[smallest] {
+		if err := candidates.Observe(); err != nil {
+			return nil, true, err
+		}
 		hit := true
 		for i, s := range idSets {
 			if i == smallest {
@@ -159,7 +178,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(nodeInfo nod
 		}
 		out = append(out, n)
 	}
-	return out, true
+	return out, true, nil
 }
 
 // propertyIndexMissIsAuthoritative reports whether a property index lookup
@@ -262,7 +281,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 		if err := prepareMergeKeys(ctx, store, labels, matchProps, mergeNodeWritesFromContext(ctx).writes(varName)); err != nil {
 			return nil, err
 		}
-		existingNode, err = e.findMergeNode(store, labels, matchProps)
+		existingNode, err = e.findMergeNode(ctx, store, labels, matchProps)
 		if err != nil {
 			return nil, err
 		}
@@ -286,7 +305,7 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 				return nil, localizedError(localization.CypherMergeCreateNodeFailed(err), err)
 			}
 			// A concurrent MERGE created it first: this MERGE matched it.
-			recoveredNode, findErr := e.findMergeNode(store, labels, matchProps)
+			recoveredNode, findErr := e.findMergeNode(ctx, store, labels, matchProps)
 			if findErr != nil {
 				return nil, findErr
 			}
@@ -382,12 +401,12 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 	// fields. Scan the bounded endpoint pair so same-type relationships with
 	// different property identities remain distinct.
 	if existingEdge == nil {
-		existingEdge, err = findRelationshipForMerge(store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
+		existingEdge, err = findRelationshipForMerge(ctx, store, mergeStartNode.ID, mergeEndNode.ID, parsedPattern.relType, parsedPattern.properties)
 		if err != nil {
 			return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
 		}
 		if existingEdge == nil && parsedPattern.direction == mergeRelationshipUndirected {
-			existingEdge, err = findRelationshipForMerge(store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
+			existingEdge, err = findRelationshipForMerge(ctx, store, mergeEndNode.ID, mergeStartNode.ID, parsedPattern.relType, parsedPattern.properties)
 			if err != nil {
 				return nil, localizedError(localization.CypherMergeFindRelationshipFailed(err), err)
 			}
@@ -406,7 +425,7 @@ func (e *StorageExecutor) executeMergeRelationshipWithContext(ctx context.Contex
 			EndNode:    mergeEndNode.ID,
 			Properties: parsedPattern.properties,
 		}
-		createdEdge, created, createErr := createRelationshipForMerge(e, store, edge, parsedPattern.properties)
+		createdEdge, created, createErr := createRelationshipForMerge(ctx, e, store, edge, parsedPattern.properties)
 		if createErr != nil {
 			return nil, localizedError(localization.CypherMergeCreateRelationshipFailed(createErr), createErr)
 		}
@@ -480,7 +499,11 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 					return writes.count, err
 				}
 				writes.mapEntries(edge.Properties, props, false)
+				pass := bulk.NewCheckpoint(ctx)
 				for k, v := range props {
+					if err := pass.Observe(); err != nil {
+						return 0, err
+					}
 					setRelationshipProperty(edge, k, v)
 				}
 			case operator == "=":
@@ -578,7 +601,11 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 			if err != nil {
 				return err
 			}
+			pass := bulk.NewCheckpoint(ctx)
 			for _, label := range labels {
+				if err := pass.Observe(); err != nil {
+					return err
+				}
 				if !containsString(node.Labels, label) {
 					node.Labels = append(node.Labels, label)
 				}
@@ -721,26 +748,32 @@ func setPropertyMapValue(value interface{}, operator string) (map[string]interfa
 		return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 			localization.CypherMutationsSetSourceNotMap(operator, typeName))
 	}
-	var stored map[string]interface{}
+	// One pass finds the rewritten values, then the map is copied once
+	// with them: linear in the map.
+	var rewrites map[string]interface{}
 	for key, v := range props {
 		storedValue, rewritten, err := storablePropertyValue(v)
 		if err != nil {
 			return nil, err
 		}
-		if rewritten && stored == nil {
-			stored = make(map[string]interface{}, len(props))
-			for k, original := range props {
-				stored[k] = original
+		if rewritten {
+			if rewrites == nil {
+				rewrites = make(map[string]interface{})
 			}
-		}
-		if stored != nil {
-			stored[key] = storedValue
+			rewrites[key] = storedValue
 		}
 	}
-	if stored != nil {
-		return stored, nil
+	if rewrites == nil {
+		return props, nil
 	}
-	return props, nil
+	stored := make(map[string]interface{}, len(props))
+	for key, original := range props {
+		stored[key] = original
+	}
+	for key, storedValue := range rewrites {
+		stored[key] = storedValue
+	}
+	return stored, nil
 }
 
 // evaluateSetExpressionWithContext evaluates a SET (or MERGE ON CREATE / ON
@@ -770,10 +803,14 @@ func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, 
 func (e *StorageExecutor) mergeBindingRow(ctx context.Context, nodes map[string]*storage.Node, rels map[string]*storage.Edge) pipelineRow {
 	bindings := valueBindingsFromContext(ctx)
 	row := make(pipelineRow, len(e.fabricRecordBindings)+len(bindings)+len(nodes)+len(rels))
+	pass := bulk.NewCheckpoint(ctx)
 	for name, value := range e.fabricRecordBindings {
+		pass.Check()
 		row[name] = value
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for name, value := range bindings {
+		pass2.Check()
 		row[name] = value
 	}
 	// An unbound variable (an OPTIONAL MATCH without a match) is null.
@@ -821,6 +858,11 @@ func (e *StorageExecutor) projectMergeReturnPlan(ctx context.Context, rows []pip
 	}
 	if handled {
 		return result, nil
+	}
+	// A projection its cancellation stopped failed for that reason, also
+	// where no failure slot recorded it (a transaction script's own rows).
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	err := newSemanticError(
 		"Neo.ClientError.Statement.SyntaxError",

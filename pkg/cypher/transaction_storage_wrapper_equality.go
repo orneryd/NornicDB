@@ -16,5 +16,6 @@ func (w *transactionStorageWrapper) LookupNodesByEquality(label string, properti
 	if err != nil || !complete || w.namespace == "" {
 		return nodes, complete, err
 	}
-	return w.toUserNamespacedNodes(nodes), true, nil
+	out, err := w.toUserNamespacedNodes(nodes)
+	return out, true, err
 }

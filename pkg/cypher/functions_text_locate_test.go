@@ -133,11 +133,13 @@ func TestTextLocateLongText(t *testing.T) {
 	builder.WriteString("The quoted passage is here.\n")
 	text := builder.String()
 	length := len([]rune(text))
-	start, end, found := locateQuote(text, "quoted passage", textLocateOptions{tolerance: textLocateTolerance, from: length - 100, to: -1})
+	start, end, found, err := locateQuote(nil, text, "quoted passage", textLocateOptions{tolerance: textLocateTolerance, from: length - 100, to: -1})
+	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "quoted passage", string([]rune(text)[start:end]))
 	lines := strings.Count(text, "\n")
-	_, _, found = locateQuote(text, "quoted passage", textLocateOptions{hasLine: true, line: lines, tolerance: textLocateTolerance, from: 0, to: -1})
+	_, _, found, err = locateQuote(nil, text, "quoted passage", textLocateOptions{hasLine: true, line: lines, tolerance: textLocateTolerance, from: 0, to: -1})
+	require.NoError(t, err)
 	require.True(t, found)
 }
 
@@ -154,4 +156,14 @@ func lineOf(text string, value interface{}) int {
 		}
 	}
 	return line
+}
+
+// A quote whose pattern exceeds the regular expression engine's limits is an
+// argument out of range, not a panic (a data-sized quote).
+func TestTextLocateQuoteBeyondPatternLimits(t *testing.T) {
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "locate_limits"))
+	quote := strings.Repeat("ab cab ", 200_000)
+	_, err := exec.Execute(context.Background(), "RETURN text.locate('ab cab', $quote) AS span", map[string]interface{}{"quote": quote})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "text.locate")
 }

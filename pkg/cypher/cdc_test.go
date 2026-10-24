@@ -438,11 +438,11 @@ func TestChangeDataCaptureSelectorFields(t *testing.T) {
 // and maps too.
 func TestCDCValue(t *testing.T) {
 	for _, value := range []interface{}{int8(1), int16(1), int32(1), int(1), uint8(1), uint16(1), uint32(1), uint64(1), uint(1)} {
-		require.Equal(t, int64(1), cdcValue(value))
+		require.Equal(t, int64(1), cdcValue(nil, value))
 	}
-	require.Equal(t, float64(1<<63), cdcValue(uint64(1<<63)))
-	require.Equal(t, float64(0.5), cdcValue(float32(0.5)))
-	require.Equal(t, []interface{}{int64(1)}, cdcValue([]interface{}{int8(1)}))
-	require.Equal(t, map[string]interface{}{"k": int64(1)}, cdcValue(map[string]interface{}{"k": uint8(1)}))
-	require.Equal(t, "s", cdcValue("s"))
+	require.Equal(t, float64(1<<63), cdcValue(nil, uint64(1<<63)))
+	require.Equal(t, float64(0.5), cdcValue(nil, float32(0.5)))
+	require.Equal(t, []interface{}{int64(1)}, cdcValue(nil, []interface{}{int8(1)}))
+	require.Equal(t, map[string]interface{}{"k": int64(1)}, cdcValue(nil, map[string]interface{}{"k": uint8(1)}))
+	require.Equal(t, "s", cdcValue(nil, "s"))
 }

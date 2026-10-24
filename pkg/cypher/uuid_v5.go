@@ -3,6 +3,7 @@ package cypher
 import (
 	"crypto/sha1"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
 
@@ -36,7 +37,7 @@ func fnUUIDv5(ctx cypherfn.Context, args []string) (interface{}, error) {
 	}
 	digest := sha1.New()
 	_, _ = digest.Write(namespace.bits[:])
-	_, _ = digest.Write([]byte(name))
+	_, _ = digest.Write(bulk.Bytes(ctx.StatementContext(), name))
 	var u CypherUUID
 	copy(u.bits[:], digest.Sum(nil))
 	u.bits[6] = u.bits[6]&0x0f | 0x50 // version 5

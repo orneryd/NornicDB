@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -21,7 +22,11 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	}
 	labels := make(map[string]bool)
 	nodesByID := make(map[storage.NodeID]*storage.Node, len(nodes))
+	pass := bulk.NewCheckpoint(ctx)
 	for _, node := range nodes {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		nodesByID[node.ID] = node
 		for _, label := range node.Labels {
 			labels[label] = true
@@ -30,7 +35,7 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	virtualNodes := make([]*storage.Node, 0, len(labels))
 	virtualByLabel := make(map[string]*storage.Node, len(labels))
 	for _, label := range sortedStringSet(labels) {
-		indexes, constraints := schemaVisualizationLabelMetadata(store.GetSchema(), label)
+		indexes, constraints := schemaVisualizationLabelMetadata(ctx, store.GetSchema(), label)
 		node := &storage.Node{
 			ID:         storage.NodeID("-" + strconv.Itoa(len(virtualNodes)+1)),
 			Labels:     []string{label},
@@ -42,7 +47,11 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	startLabels := make(map[string]map[string]bool)
 	endLabels := make(map[string]map[string]bool)
 	types := make(map[string]bool)
+	pass2 := bulk.NewCheckpoint(ctx)
 	for _, edge := range edges {
+		if err := pass2.Observe(); err != nil {
+			return nil, err
+		}
 		types[edge.Type] = true
 		if startLabels[edge.Type] == nil {
 			startLabels[edge.Type] = make(map[string]bool)
@@ -79,7 +88,7 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	}, nil
 }
 
-func schemaVisualizationLabelMetadata(schema *storage.SchemaManager, label string) ([]string, []string) {
+func schemaVisualizationLabelMetadata(ctx context.Context, schema *storage.SchemaManager, label string) ([]string, []string) {
 	indexes := []string{}
 	constraints := []string{}
 	ownedIndexes := make(map[string]bool)
@@ -92,7 +101,9 @@ func schemaVisualizationLabelMetadata(schema *storage.SchemaManager, label strin
 		}
 		ownedIndexes[constraint.OwnedIndex] = true
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for _, raw := range schema.GetIndexes() {
+		pass.Check()
 		index, ok := raw.(map[string]interface{})
 		if !ok || index["entityType"] == string(storage.ConstraintEntityRelationship) {
 			continue
@@ -113,7 +124,7 @@ func schemaVisualizationLabelMetadata(schema *storage.SchemaManager, label strin
 			indexes = append(indexes, strings.Join(properties, ","))
 		}
 	}
-	slices.Sort(indexes)
-	slices.Sort(constraints)
+	_ = sortStrings(ctx, indexes)
+	_ = sortStrings(ctx, constraints)
 	return indexes, constraints
 }

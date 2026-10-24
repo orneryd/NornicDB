@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -241,11 +242,11 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	// Syntax rewriting moves maps that read this path's variables into
 	// predicates/assignments. Materialize independent identity maps now; the
 	// dependent assignments use the checked SET owner after the path binds.
-	identityPattern := strings.TrimSpace(match[len("MATCH"):])
+	identityPattern := bulk.TrimSpace(ctx, match[len("MATCH"):])
 	identityTail := ""
 	if where := topLevelKeywordIndex(identityPattern, "WHERE"); where >= 0 {
 		identityTail = identityPattern[where:]
-		identityPattern = strings.TrimSpace(identityPattern[:where])
+		identityPattern = bulk.TrimSpace(ctx, identityPattern[:where])
 	}
 	ctx, identityPattern, err = e.preparePatternRow(ctx, identityPattern, row)
 	if err != nil {
@@ -305,7 +306,7 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 	// itself can't read an element it creates.
 	createPattern, assignments := identityPattern, ""
 	if where := topLevelKeywordIndex(match, "WHERE"); where >= 0 {
-		createPattern = strings.TrimSpace(match[len("MATCH"):where])
+		createPattern = bulk.TrimSpace(ctx, match[len("MATCH"):where])
 		assignments = strings.Join(splitTopLevelAndConjuncts(match[where+len("WHERE"):]), ", ")
 	}
 	// One row: the create reports not-ok only with an error.

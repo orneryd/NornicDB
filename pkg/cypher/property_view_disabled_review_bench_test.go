@@ -19,6 +19,6 @@ func BenchmarkQueryPropertyViewDisabled(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		propertyViewDisabledBenchmarkSink = exec.queryVisibleValue(node)
+		propertyViewDisabledBenchmarkSink = exec.queryVisibleValue(nil, node)
 	}
 }

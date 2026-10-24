@@ -3,6 +3,8 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/pkg/storage"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 // The search between two bound ends of a uniform pattern (#1212): one
@@ -112,8 +114,10 @@ func (s *pathSearch) uniformPair(source, target *storage.Node, groups bool, bind
 	forward := s.newWalkSide(source.ID, a.uniform.direction, groups)
 	backward := s.newWalkSide(target.ID, reverseDirection(a.uniform.direction), groups)
 	shortest, meets := -1, []storage.NodeID(nil)
+	pass := bulk.NewCheckpoint(s.ctx)
 	for shortest < 0 && len(forward.frontier) > 0 && len(backward.frontier) > 0 && s.ctx.Err() == nil &&
 		(s.maxLength < 0 || forward.radius+backward.radius < s.maxLength) {
+		pass.Check()
 		if len(forward.frontier) <= len(backward.frontier) {
 			shortest, meets = s.walkLevel(forward, backward, groups)
 		} else {
@@ -131,7 +135,9 @@ func (s *pathSearch) uniformPair(source, target *storage.Node, groups bool, bind
 		return nil, false
 	}
 	var walks [][]*storage.Edge
+	pass2 := bulk.NewCheckpoint(s.ctx)
 	for _, meet := range meets {
+		pass2.Check()
 		for _, before := range s.walkHops(forward, meet, groups) {
 			for _, after := range s.walkHops(backward, meet, groups) {
 				if s.ctx.Err() != nil {
@@ -141,9 +147,11 @@ func (s *pathSearch) uniformPair(source, target *storage.Node, groups bool, bind
 				// the walk's relationships in order.
 				walk := make([]*storage.Edge, 0, shortest)
 				for index := len(before) - 1; index >= 0; index-- {
+					pass2.Check()
 					walk = append(walk, before[index].edge)
 				}
 				for _, hop := range after {
+					pass2.Check()
 					walk = append(walk, hop.edge)
 				}
 				walks = append(walks, walk)
@@ -228,7 +236,9 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 		return -1, nil
 	}
 	var meets []storage.NodeID
+	pass := bulk.NewCheckpoint(s.ctx)
 	for _, node := range next {
+		pass.Check()
 		if met, both := other.reached[node]; both && reached+met.depth == shortest {
 			meets = append(meets, node)
 		}
@@ -277,10 +287,12 @@ func (s *pathSearch) walkHops(side *pathSearchWalkSide, node storage.NodeID, gro
 	}
 	hops := []pathSearchWalkHop{known.hop}
 	if groups {
-		hops = append(hops, side.more[node]...)
+		hops, _ = appendPopulation(s.ctx, hops, side.more[node])
 	}
 	var walks [][]pathSearchWalkHop
+	pass := bulk.NewCheckpoint(s.ctx)
 	for _, hop := range hops {
+		pass.Check()
 		for _, rest := range s.walkHops(side, hop.from, groups) {
 			if s.ctx.Err() != nil {
 				return nil
@@ -309,7 +321,9 @@ func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.
 			if s.ctx.Err() != nil {
 				return nil, true
 			}
+			pass := bulk.NewCheckpoint(s.ctx)
 			for _, id := range [2]storage.NodeID{edge.StartNode, edge.EndNode} {
+				pass.Check()
 				if _, known := nodes[id]; !known {
 					nodes[id] = nil
 					ids = append(ids, id)
@@ -322,7 +336,9 @@ func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.
 		if err != nil {
 			return nil, false
 		}
+		pass2 := bulk.NewCheckpoint(s.ctx)
 		for _, id := range ids {
+			pass2.Check()
 			if nodes[id] = loaded[id]; nodes[id] == nil {
 				return nil, false
 			}

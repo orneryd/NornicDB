@@ -40,9 +40,11 @@ var valueContractConstructors = map[string]int{
 	"collectPropValues": 3, "filterNodesByAllowedPropSet": 4,
 	"cartesianShiftValueKey": 3, "shiftCartesianIntKeySet": 3,
 	"cypherValueKey": 2, "cypherValueKeyWithNumericPolicy": 3,
-	"appendValueKey": 4, "appendNestedValueKey": 4,
+	"appendValueKey": 5, "appendNestedValueKey": 5,
+	"cypherValueKeyWithCheckpoint": 3, "cypherValueKeyWithNumericCheckpoint": 4,
 	"cypherComparableKey": 2, "cypherValueHash": 2,
 	"cypherValuesMatch": 3, "compareTemporalByContract": 3,
+	"cypherValueHashWithCheckpoint": 3, "cypherValuesMatchWithCheckpoint": 4,
 	"addByContract": 2, "findByContract": 2, "addTupleByContract": 2,
 	"addTupleValuesByContract": 3, "addPositionByContract": 2, "hasByContract": 2,
 }
@@ -269,6 +271,8 @@ func TestValueContractInventory(t *testing.T) {
 func TestValueContractInventoryRejectsImplicitCalls(t *testing.T) {
 	for _, source := range []string{
 		"package cypher; func consumer(v any) { cypherValueKey(v) }",
+		"package cypher; func consumer(v any) { cypherValueKeyWithCheckpoint(v,nil) }",
+		"package cypher; func consumer(v any, contract cypherComparisonContract) { cypherValueKeyWithCheckpoint(v,contract,nil) }",
 		"package cypher; func consumer(v any) { cypherValueKey(v,0) }",
 		"package cypher; func consumer(v any) { cypherEquivalenceKey(v) }",
 		"package cypher; func consumer(v any) { var contract cypherComparisonContract; cypherValueKey(v,contract) }",

@@ -1,7 +1,10 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 // ========================================
@@ -10,7 +13,7 @@ import (
 
 // callDbAwaitIndexes waits for all indexes to come online - Neo4j db.awaitIndexes()
 // Syntax: CALL db.awaitIndexes(timeOutSeconds)
-func (e *StorageExecutor) callDbAwaitIndexes() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbAwaitIndexes(ctx context.Context) (*ExecuteResult, error) {
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 }
 
@@ -19,7 +22,7 @@ func (e *StorageExecutor) callDbAwaitIndexes() (*ExecuteResult, error) {
 // order: a null timeout fails the call (ProcedureCallFailed) before the
 // index is looked up, and a null name is looked up as 'null'
 // (IndexNotFound), as Neo4j 5.26.30 does.
-func (e *StorageExecutor) callNamedIndexManagement(procedure string, arguments []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callNamedIndexManagement(ctx context.Context, procedure string, arguments []interface{}) (*ExecuteResult, error) {
 	if len(arguments) == 0 {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidNumberOfArguments", "an index name is required")
 	}
@@ -33,7 +36,11 @@ func (e *StorageExecutor) callNamedIndexManagement(procedure string, arguments [
 	if !valid {
 		return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "the index name must be a STRING")
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for _, entry := range e.storage.GetSchema().GetIndexes() {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		if index, ok := entry.(map[string]interface{}); ok && index["name"] == name {
 			return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 		}
@@ -58,7 +65,7 @@ func (e *StorageExecutor) callNamedIndexManagement(procedure string, arguments [
 //   - After bulk data imports
 //   - When schema changes affect query plans
 //   - Debugging cache-related issues
-func (e *StorageExecutor) callDbClearQueryCaches() (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbClearQueryCaches(ctx context.Context) (*ExecuteResult, error) {
 	e.ClearQueryCaches()
 
 	return &ExecuteResult{

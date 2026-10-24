@@ -18,7 +18,8 @@ func TestSelectTopKNodesByOrder_MultiKey(t *testing.T) {
 		{ID: "n5", Properties: map[string]interface{}{"a": int64(1), "b": "a", "c": int64(9)}},
 	}
 
-	topK, ok := exec.selectTopKNodesByOrder(nodes, "n", "n.a DESC, n.b ASC, n.c DESC", 3)
+	topK, ok, err := exec.selectTopKNodesByOrder(context.Background(), nodes, "n", "n.a DESC, n.b ASC, n.c DESC", 3)
+	require.NoError(t, err)
 	require.True(t, ok)
 	require.Len(t, topK, 3)
 	require.Equal(t, "n2", string(topK[0].ID))

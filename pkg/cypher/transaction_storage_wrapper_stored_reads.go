@@ -31,7 +31,7 @@ func (w *transactionStorageWrapper) GetStoredOutgoingEdges(id storage.NodeID) ([
 	if err != nil || w.namespace == "" {
 		return edges, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdges(edges)
 }
 
 func (w *transactionStorageWrapper) GetStoredIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
@@ -39,7 +39,7 @@ func (w *transactionStorageWrapper) GetStoredIncomingEdges(id storage.NodeID) ([
 	if err != nil || w.namespace == "" {
 		return edges, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdges(edges)
 }
 
 func (w *transactionStorageWrapper) GetStoredNodesByLabel(label string) ([]*storage.Node, error) {
@@ -47,7 +47,7 @@ func (w *transactionStorageWrapper) GetStoredNodesByLabel(label string) ([]*stor
 	if err != nil || w.namespace == "" {
 		return nodes, err
 	}
-	return w.toUserNamespacedNodes(nodes), nil
+	return w.toUserNamespacedNodes(nodes)
 }
 
 func (w *transactionStorageWrapper) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {

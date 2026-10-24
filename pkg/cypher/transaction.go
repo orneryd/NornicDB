@@ -563,6 +563,7 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	txExec := e.cloneWithStorage(txWrapper)
 
 	// Execute the query - getStorage() will automatically use the transaction wrapper
+	defer txWrapper.runningStatement(ctx)()
 	result, err := txExec.executeQueryAgainstStorage(txCtx, cypher, upperQuery)
 	if err != nil {
 		return result, err

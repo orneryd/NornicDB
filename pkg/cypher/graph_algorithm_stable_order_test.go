@@ -112,7 +112,7 @@ func TestGraphAlgorithmsGiveTheSameRowsEveryCall(t *testing.T) {
 
 func TestAlgorithmRowsListANodeOnce(t *testing.T) {
 	a, b := &storage.Node{ID: "a"}, &storage.Node{ID: "b"}
-	rows := algorithmRows([]*storage.Node{b, a, b, {ID: "c"}}, map[storage.NodeID]int{"a": 1, "b": 2})
+	rows := algorithmRows(context.Background(), []*storage.Node{b, a, b, {ID: "c"}}, map[storage.NodeID]int{"a": 1, "b": 2})
 	require.Equal(t, [][]interface{}{{b, 2}, {a, 1}}, rows)
 }
 

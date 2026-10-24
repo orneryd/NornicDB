@@ -78,7 +78,8 @@ func TestReleasePropertySuppressionQueryMaterialization(t *testing.T) {
 				if tc.name == "entity" {
 					raw, err := be.GetNode("testns:doc")
 					require.NoError(t, err)
-					projected := exec.projectVisiblePipelineNodeRead([]*storage.Node{raw}, []returnItem{{expr: "d", alias: "d"}, {expr: "d.body", alias: "body"}}, "d")
+					projected, err := exec.projectVisiblePipelineNodeRead(context.Background(), []*storage.Node{raw}, []returnItem{{expr: "d", alias: "d"}, {expr: "d.body", alias: "body"}}, "d")
+					require.NoError(t, err)
 					require.NotContains(t, projected.Rows[0][0].(*storage.Node).Properties, "body")
 					require.Nil(t, projected.Rows[0][1])
 					require.Equal(t, "hidden", raw.Properties["body"])
@@ -175,15 +176,16 @@ func assertVisibleQueryEntities(t *testing.T, value interface{}) {
 func TestReleasePropertyProjectionMissingValues(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, value := range []interface{}{(*storage.Node)(nil), (*storage.Edge)(nil), (*PathResult)(nil), []interface{}(nil), []*storage.Node(nil), []*storage.Edge(nil), map[string]interface{}(nil)} {
-		require.Equal(t, value, exec.projectVisibleQueryValue(value))
+		require.Equal(t, value, exec.projectVisibleQueryValue(nil, value))
 		require.Nil(t, exec.queryEntityProperties(value))
 	}
 	edge := &storage.Edge{ID: "r", Properties: map[string]interface{}{"visible": true}}
-	got := exec.projectVisibleQueryValue([]*storage.Edge{edge}).([]*storage.Edge)
+	got := exec.projectVisibleQueryValue(nil, []*storage.Edge{edge}).([]*storage.Edge)
 	require.Equal(t, edge, got[0])
 	require.NotSame(t, edge, got[0])
 	require.Nil(t, exec.queryEntityProperties(42))
 	node := &storage.Node{ID: "n", Properties: map[string]interface{}{"visible": true}}
-	result := exec.projectVisiblePipelineNodeRead([]*storage.Node{node}, []returnItem{{expr: "n", alias: "n"}}, "n")
+	result, err := exec.projectVisiblePipelineNodeRead(context.Background(), []*storage.Node{node}, []returnItem{{expr: "n", alias: "n"}}, "n")
+	require.NoError(t, err)
 	require.Same(t, node, result.Rows[0][0])
 }

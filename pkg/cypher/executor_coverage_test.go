@@ -2293,10 +2293,10 @@ func TestLowLevelHelpers_AdditionalCoverage(t *testing.T) {
 	assert.Equal(t, "'(a) and )'", extractFuncInner("toString('(a) and )')"))
 
 	// apocCollMin
-	assert.Nil(t, apocCollMin([]interface{}{}))
-	assert.Equal(t, int64(1), apocCollMin([]interface{}{int64(3), int64(1), int64(2)}))
-	assert.Equal(t, int64(5), apocCollMin([]interface{}{int64(5), "x", int64(9)})) // non-numeric ignored
-	assert.Nil(t, apocCollMin("not-list"))
+	assert.Nil(t, apocCollMin(nil, []interface{}{}))
+	assert.Equal(t, int64(1), apocCollMin(nil, []interface{}{int64(3), int64(1), int64(2)}))
+	assert.Equal(t, int64(5), apocCollMin(nil, []interface{}{int64(5), "x", int64(9)})) // non-numeric ignored
+	assert.Nil(t, apocCollMin(nil, "not-list"))
 
 	// createPatternsInScope: the shared CREATE core
 	nodes := map[string]*storage.Node{}

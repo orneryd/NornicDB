@@ -5,6 +5,8 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 type observedIncidentEngine struct {
@@ -58,7 +60,10 @@ func TestIncidentReaderCancellationWork(t *testing.T) {
 	}
 	for budget := 1; budget <= 20; budget++ {
 		canceled := newCheckpointContext(budget, nil)
-		combined, err := combineIncidentEdges(canceled, "a", edges, edges)
+		walk := bulk.NewCheckpoint(canceled)
+		combined, err := insideStopBoundary(func() ([]*storage.Edge, error) {
+			return combineIncidentEdges(&walk, "a", edges, edges), nil
+		})
 		if canceled.Context.Err() != nil {
 			require.ErrorIs(t, err, context.Canceled)
 			require.Nil(t, combined)

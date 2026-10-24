@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -177,7 +178,9 @@ func (predicate *bindingFilterPredicate) matches(row binding, params map[string]
 	for name, node := range row {
 		predicate.values[name] = node
 	}
+	pass := bulk.NewCheckpoint(predicate.ctx)
 	for name, value := range predicate.parameters {
+		pass.Check()
 		predicate.values[name] = value
 	}
 	accepted := predicate.executor.evaluateMatchRowPredicate(predicate.ctx, predicate.clause, predicate.values)
@@ -924,7 +927,7 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 			if node == nil {
 				return nil, false
 			}
-			return getBindingNodeValue(e.queryVisibleValue(node).(*storage.Node), property)
+			return getBindingNodeValue(e.queryVisibleValue(nil, node).(*storage.Node), property)
 		}, true
 	}
 	if isValidIdentifier(clause) {

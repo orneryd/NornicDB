@@ -1,9 +1,11 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 	"sync/atomic"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -179,7 +181,11 @@ type reduceAppender struct {
 // bound for the operands and the predicate is that list capped at its
 // length, so nothing else appends into it, and the result is a copy of its
 // own length (reduceAppendPlan).
-func runReduceForm(form reduceForm, accumulator interface{}, items []interface{},
+//
+// The fold walks the query's list: it observes ctx once per stride of items
+// (and of the step's operands), and its accumulator copies go through the
+// bulk owner.
+func runReduceForm(ctx context.Context, form reduceForm, accumulator interface{}, items []interface{},
 	step func(accumulator, item interface{}) (interface{}, error),
 	predicate func(accumulator, item interface{}) (interface{}, error),
 	appender *reduceAppender) (interface{}, error) {
@@ -188,21 +194,33 @@ func runReduceForm(form reduceForm, accumulator interface{}, items []interface{}
 	if appender != nil {
 		operands = make([]interface{}, len(appender.plan.terms))
 	}
+	work := bulk.NewCheckpoint(ctx)
 	for _, item := range items {
+		if err := work.Observe(); err != nil {
+			return nil, err
+		}
 		var err error
 		if list, isList := accumulator.([]interface{}); isList && appender != nil {
 			// Every operand is evaluated, as the sum evaluates them, before
 			// they are appended.
 			for index := range operands {
+				if err := work.Observe(); err != nil {
+					return nil, err
+				}
 				if operands[index], err = appender.term(index, accumulator, item); err != nil {
 					return nil, err
 				}
 			}
 			if owned == nil || len(list) != len(owned) || (len(list) > 0 && &list[0] != &owned[0]) {
-				owned = append(make([]interface{}, 0, 2*len(list)+8), list...)
+				if owned, err = appendPopulation(ctx, make([]interface{}, 0, 2*len(list)+8), list); err != nil {
+					return nil, err
+				}
 			}
 			accumulator = nil
 			for _, operand := range operands {
+				if err := work.Observe(); err != nil {
+					return nil, err
+				}
 				if operand == nil {
 					owned = nil
 					break
@@ -238,7 +256,7 @@ func runReduceForm(form reduceForm, accumulator interface{}, items []interface{}
 				return nil, operandMismatch(operand, "Boolean")
 			}
 			return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-				localization.CypherCorePredicateNotBoolean(neo4jValueRepr(holds)))
+				localization.CypherCorePredicateNotBoolean(neo4jValueRepr(valueWalk(ctx), holds)))
 		}
 	}
 	if form.all {
@@ -249,7 +267,7 @@ func runReduceForm(form reduceForm, accumulator interface{}, items []interface{}
 	// live behind it.
 	if list, isList := accumulator.([]interface{}); isList && owned != nil && len(list) == len(owned) &&
 		(len(list) == 0 || &list[0] == &owned[0]) && cap(owned) > len(owned) {
-		return append(make([]interface{}, 0, len(owned)), owned...), nil
+		return appendPopulation(ctx, make([]interface{}, 0, len(owned)), owned)
 	}
 	return accumulator, nil
 }

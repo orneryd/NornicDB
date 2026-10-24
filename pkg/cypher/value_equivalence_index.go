@@ -2,10 +2,12 @@ package cypher
 
 import (
 	"bytes"
+	"context"
 	"hash/maphash"
 	"math"
 
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -111,6 +113,13 @@ func mixCypherHash(hash, value uint64) uint64 {
 // only selects a bucket; cypherValuesMatch checks collisions under the same
 // explicitly selected contract, including nested temporal values.
 func cypherValueHash(value interface{}, contract cypherComparisonContract) uint64 {
+	return cypherValueHashWithCheckpoint(value, nil, contract)
+}
+
+// cypherValueHashWithCheckpoint is cypherValueHash counting each nested list
+// item and map field against checkpoint (nil: none); a cancellation stops
+// the walk with the owner's check, as the DISTINCT key traversal does.
+func cypherValueHashWithCheckpoint(value interface{}, checkpoint *materializedRowCheckpoint, contract cypherComparisonContract) uint64 {
 	if key, scalar := cypherComparableKey(value, contract); scalar {
 		return maphash.Comparable(cypherTupleHashSeed, key)
 	}
@@ -120,14 +129,16 @@ func cypherValueHash(value interface{}, contract cypherComparisonContract) uint6
 	if list, ok := cypherListValue(value); ok {
 		hash := mixCypherHash('L', uint64(len(list)))
 		for _, item := range list {
-			hash = mixCypherHash(hash, cypherValueHash(item, contract))
+			checkpoint.Check()
+			hash = mixCypherHash(hash, cypherValueHashWithCheckpoint(item, checkpoint, contract))
 		}
 		return hash
 	}
 	fields, _ := toStringAnyMap(value)
 	hash := mixCypherHash('M', uint64(len(fields)))
 	for name, item := range fields {
-		hash += mixCypherHash(maphash.String(cypherTupleHashSeed, name), cypherValueHash(item, contract))
+		checkpoint.Check()
+		hash += mixCypherHash(maphash.String(cypherTupleHashSeed, name), cypherValueHashWithCheckpoint(item, checkpoint, contract))
 	}
 	return hash
 }
@@ -135,6 +146,12 @@ func cypherValueHash(value interface{}, contract cypherComparisonContract) uint6
 // cypherValuesMatch compares structural values under the caller's contract:
 // null equals null, numbers compare exactly, and each NaN remains separate.
 func cypherValuesMatch(left, right interface{}, contract cypherComparisonContract) bool {
+	return cypherValuesMatchWithCheckpoint(left, right, nil, contract)
+}
+
+// cypherValuesMatchWithCheckpoint is cypherValuesMatch observing checkpoint
+// (nil: none) as cypherValueHashWithCheckpoint does.
+func cypherValuesMatchWithCheckpoint(left, right interface{}, checkpoint *materializedRowCheckpoint, contract cypherComparisonContract) bool {
 	leftKey, leftScalar := cypherComparableKey(left, contract)
 	rightKey, rightScalar := cypherComparableKey(right, contract)
 	if leftScalar || rightScalar {
@@ -152,7 +169,8 @@ func cypherValuesMatch(left, right interface{}, contract cypherComparisonContrac
 			return false
 		}
 		for i, item := range leftList {
-			if !cypherValuesMatch(item, rightList[i], contract) {
+			checkpoint.Check()
+			if !cypherValuesMatchWithCheckpoint(item, rightList[i], checkpoint, contract) {
 				return false
 			}
 		}
@@ -164,8 +182,9 @@ func cypherValuesMatch(left, right interface{}, contract cypherComparisonContrac
 		return false
 	}
 	for name, item := range leftMap {
+		checkpoint.Check()
 		other, exists := rightMap[name]
-		if !exists || !cypherValuesMatch(item, other, contract) {
+		if !exists || !cypherValuesMatchWithCheckpoint(item, other, checkpoint, contract) {
 			return false
 		}
 	}
@@ -186,12 +205,32 @@ type cypherValueIndex struct {
 	count  int
 
 	emptyOrdinal int // Position plus one; zero means the empty tuple is unseen.
+
+	// checkpoint observes the statement while the index hashes or compares
+	// the items and fields of a nested list or map (observeCancellation arms
+	// it; unarmed, the index observes nothing). A cancellation stops the walk
+	// with the owner's stop, which a boundary recovers, so one
+	// large value stops as well as many rows.
+	checkpoint materializedRowCheckpoint
+}
+
+// observeCancellation arms the index's checkpoint with the statement.
+func (index *cypherValueIndex) observeCancellation(ctx context.Context) {
+	index.checkpoint = bulk.NewCheckpoint(ctx)
+}
+
+// walkCheckpoint is the armed checkpoint, or nil.
+func (index *cypherValueIndex) walkCheckpoint() *materializedRowCheckpoint {
+	if index.checkpoint == (bulk.Checkpoint{}) {
+		return nil
+	}
+	return &index.checkpoint
 }
 
 func (index *cypherValueIndex) addByContract(value interface{}, contract cypherComparisonContract) (position int, existed bool) {
 	key, scalar := cypherComparableKey(value, contract)
 	if !scalar {
-		return index.addTupleValuesByContract(cypherValueHash(value, contract), []interface{}{value}, contract)
+		return index.addTupleValuesByContract(cypherValueHashWithCheckpoint(value, index.walkCheckpoint(), contract), []interface{}{value}, contract)
 	}
 	return index.addComparable(key)
 }
@@ -226,7 +265,7 @@ func (index *cypherValueIndex) addTupleByContract(values []interface{}, contract
 	}
 	hash := uint64(len(values))
 	for _, value := range values {
-		hash = mixCypherHash(hash, cypherValueHash(value, contract))
+		hash = mixCypherHash(hash, cypherValueHashWithCheckpoint(value, index.walkCheckpoint(), contract))
 	}
 	return index.addTupleValuesByContract(hash, values, contract)
 }
@@ -238,7 +277,7 @@ func (index *cypherValueIndex) addTupleValuesByContract(hash uint64, values []in
 		}
 		equal := true
 		for i, value := range values {
-			if !cypherValuesMatch(value, candidate.values[i], contract) {
+			if !cypherValuesMatchWithCheckpoint(value, candidate.values[i], index.walkCheckpoint(), contract) {
 				equal = false
 				break
 			}

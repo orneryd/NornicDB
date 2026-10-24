@@ -55,7 +55,7 @@ func TestTransactionOverlayCommittedMergeCostIsLocal(t *testing.T) {
 	wrapper := &transactionStorageWrapper{tx: tx, underlying: store, namespace: "test", separator: ":", mutatedNodeIDs: make(map[string]struct{})}
 	reader := exec.cloneWithStorage(wrapper)
 	read := func() {
-		nodes, _, err := reader.findMergeNodesScanned(wrapper, []string{"Probe"}, map[string]interface{}{"id": "42"})
+		nodes, _, err := reader.findMergeNodesScanned(context.Background(), wrapper, []string{"Probe"}, map[string]interface{}{"id": "42"})
 		if err != nil || len(nodes) != 1 || nodes[0].Properties["id"] != "42" {
 			t.Fatalf("committed MERGE candidates: nodes=%v, err=%v", nodes, err)
 		}
@@ -206,11 +206,11 @@ func TestTransactionOverlayTemporalEqualityIsNotPruned(t *testing.T) {
 	props := map[string]interface{}{"at": value}
 	require.True(t, nodePropertiesMatch(candidates[0], props), "baseline Cypher equality accepts the stored value")
 	reader := exec.cloneWithStorage(wrapper)
-	nodes, _, err := reader.findMergeNodesScanned(wrapper, []string{"TemporalOverlay"}, props)
+	nodes, _, err := reader.findMergeNodesScanned(context.Background(), wrapper, []string{"TemporalOverlay"}, props)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1, "candidate keys cannot discard a Cypher-equal temporal value")
 	props["id"] = int64(1)
-	nodes, _, err = reader.findMergeNodesScanned(wrapper, []string{"TemporalOverlay"}, props)
+	nodes, _, err = reader.findMergeNodesScanned(context.Background(), wrapper, []string{"TemporalOverlay"}, props)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1, "scalar pruning leaves temporal equality to Cypher")
 }

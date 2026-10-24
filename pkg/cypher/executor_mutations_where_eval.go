@@ -4,11 +4,12 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node, variable, whereClause string) []*storage.Node {
-	return parallelFilterNodes(nodes, e.compileNodeWhereFilter(ctx, variable, whereClause))
+func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node, variable, whereClause string) ([]*storage.Node, error) {
+	return parallelFilterNodes(ctx, nodes, e.compileNodeWhereFilter(ctx, variable, whereClause))
 }
 
 func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, whereClause string) (func(*storage.Node) bool, bool) {
@@ -18,10 +19,14 @@ func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, 
 	}
 	parameters := getParamsFromContext(ctx)
 	values := make(map[string]interface{}, len(e.fabricRecordBindings)+len(valueBindingsFromContext(ctx)))
+	pass := bulk.NewCheckpoint(ctx)
 	for name, value := range e.fabricRecordBindings {
+		pass.Check()
 		values[name] = value
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for name, value := range valueBindingsFromContext(ctx) {
+		pass2.Check()
 		values[name] = value
 	}
 	return func(node *storage.Node) bool {
@@ -46,12 +51,16 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 		return true
 	}
 	values := pipelineNodeRow(ctx, variable, node)
+	pass := bulk.NewCheckpoint(ctx)
 	for name, value := range e.fabricRecordBindings {
+		pass.Check()
 		if name != variable {
 			values[name] = value
 		}
 	}
+	pass2 := bulk.NewCheckpoint(ctx)
 	for name, value := range valueBindingsFromContext(ctx) {
+		pass2.Check()
 		if name != variable {
 			values[name] = value
 		}
@@ -67,10 +76,14 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 func (e *StorageExecutor) compileRelationshipWhereFilter(ctx context.Context, whereClause string) func(*storage.Edge, *storage.Node, *storage.Node) bool {
 	return func(edge *storage.Edge, start, end *storage.Node) bool {
 		values := pipelineNodeRow(ctx, "node", nil)
+		pass := bulk.NewCheckpoint(ctx)
 		for name, value := range e.fabricRecordBindings {
+			pass.Check()
 			values[name] = value
 		}
+		pass2 := bulk.NewCheckpoint(ctx)
 		for name, value := range valueBindingsFromContext(ctx) {
+			pass2.Check()
 			values[name] = value
 		}
 		values["node"] = nil

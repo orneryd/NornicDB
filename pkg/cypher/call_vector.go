@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/search"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -96,7 +97,7 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 			queryVector, issue = list.Numbers32()
 			if issue != nil {
 				if issue.OutOfRange {
-					return nil, localizedError(localization.CypherCoreFunctionArgumentInvalid("vector query", "representable numeric coordinates", fmt.Sprint(issue.Value)), nil)
+					return nil, localizedError(localization.CypherCoreFunctionArgumentInvalid("vector query", "representable numeric coordinates", formatValueText(valueWalk(ctx), issue.Value)), nil)
 				}
 				return nil, localizedError(localization.CypherSpecializedCallsParameterNonNumeric(input.paramName, fmt.Sprintf("%T", issue.Value)), nil)
 			}
@@ -108,7 +109,11 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 			// Parameters were provided, so if we have no input, it might be a substituted invalid type
 			// Check which parameters have unsupported types to provide a better error message
 			var unsupportedParams []string
+			pass := bulk.NewCheckpoint(ctx)
 			for paramName, paramValue := range params {
+				if err := pass.Observe(); err != nil {
+					return nil, err
+				}
 				// Check if this parameter has an unsupported type for vector queries
 				_, list := valueconvert.ReadList(paramValue)
 				_, text := paramValue.(string)
@@ -157,7 +162,12 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 		managed := svc != nil && svc.EmbeddingCount() > 0
 		if !managed {
 			stop := errors.New("managed vector found")
-			err := e.storage.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{WithEmbeddings: true, Projection: []string{}}, func(node *storage.Node) error {
+			scan := newStorageScan(ctx)
+			defer scan.close()
+			err := streamNodesWithOptions(scan, e.storage, storage.StreamNodesOptions{WithEmbeddings: true, Projection: []string{}}, func(node *storage.Node) error {
+				if err := scan.observe(); err != nil {
+					return err
+				}
 				for _, vector := range node.NamedEmbeddings {
 					if len(vector) > 0 {
 						return stop
@@ -207,8 +217,13 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 		if !ok {
 			return nil, localizedError(localization.CypherSpecializedCallsVectorQueryFailed(), nil)
 		}
-		for _, hit := range nodeScores {
-			result.Rows = append(result.Rows, []interface{}{hit.node, hit.score})
+		for batch, batchErr := range materializedBatches(ctx, len(nodeScores)) {
+			if batchErr != nil {
+				return nil, batchErr
+			}
+			for _, hit := range nodeScores[batch.start:batch.end] {
+				result.Rows = append(result.Rows, []interface{}{hit.node, hit.score})
+			}
 		}
 		return result, nil
 	}
@@ -232,25 +247,30 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 	}
 
 	seenOrphans := make(map[string]bool)
-	for _, hit := range hits {
-		node, err := e.storage.GetNode(storage.NodeID(hit.ID))
-		if err != nil || node == nil {
-			if err != nil && errors.Is(err, storage.ErrNotFound) && svc != nil {
-				if !seenOrphans[hit.ID] {
-					e.logEvent(slog.LevelWarn, localization.CypherOrphanedEmbeddingDetectedEvent(hit.ID))
-					// Unless the node was stored again after this read.
-					if removeErr := svc.RefreshNode(storage.NodeID(hit.ID)); removeErr != nil {
-						e.logEvent(slog.LevelError, localization.CypherOrphanedEmbeddingRemovalFailedEvent(hit.ID, removeErr))
-					}
-					seenOrphans[hit.ID] = true
-				}
-			}
-			continue
+	for batch, batchErr := range materializedBatches(ctx, len(hits)) {
+		if batchErr != nil {
+			return nil, batchErr
 		}
-		result.Rows = append(result.Rows, []interface{}{
-			node,
-			hit.Score,
-		})
+		for _, hit := range hits[batch.start:batch.end] {
+			node, err := e.storage.GetNode(storage.NodeID(hit.ID))
+			if err != nil || node == nil {
+				if err != nil && errors.Is(err, storage.ErrNotFound) && svc != nil {
+					if !seenOrphans[hit.ID] {
+						e.logEvent(slog.LevelWarn, localization.CypherOrphanedEmbeddingDetectedEvent(hit.ID))
+						// Unless the node was stored again after this read.
+						if removeErr := svc.RefreshNode(storage.NodeID(hit.ID)); removeErr != nil {
+							e.logEvent(slog.LevelError, localization.CypherOrphanedEmbeddingRemovalFailedEvent(hit.ID, removeErr))
+						}
+						seenOrphans[hit.ID] = true
+					}
+				}
+				continue
+			}
+			result.Rows = append(result.Rows, []interface{}{
+				node,
+				hit.Score,
+			})
+		}
 	}
 
 	return result, nil
@@ -273,7 +293,7 @@ func (e *StorageExecutor) callDbIndexVectorEmbed(ctx context.Context, args []int
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(text) == "" {
+	if bulk.TrimSpace(ctx, text) == "" {
 		return nil, localizedError(localization.CypherSpecializedCallsVectorEmbedTextRequired(), nil)
 	}
 

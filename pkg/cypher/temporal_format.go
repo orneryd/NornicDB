@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -37,7 +38,11 @@ func fnFormat(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if len(values) > 2 {
 		return nil, functionParameterCountError("format", true)
 	}
+	pass := bulk.NewCheckpoint(ctx.StatementContext())
 	for _, value := range values {
+		if err := pass.Observe(); err != nil {
+			return nil, err
+		}
 		if value == nil {
 			return nil, nil
 		}
@@ -312,30 +317,33 @@ func formatPrintf(template string, values []interface{}) (interface{}, error) {
 // formatPrintfArgument is value as verb prints it, or the error for a value
 // verb can't print.
 // formatPrintfCollection is display text for format(), never query source.
-func formatPrintfCollection(value interface{}) string {
-	switch typed := value.(type) {
-	case string:
-		return quoteCypherStringLiteral(typed)
-	case nil:
-		return "null"
-	case []interface{}:
-		parts := make([]string, len(typed))
-		for index, item := range typed {
-			parts[index] = formatPrintfCollection(item)
+func formatPrintfCollection(work *materializedRowCheckpoint, value interface{}) string {
+	return valueText(work, value, printfCollectionTextStyle)
+}
+
+// printfCollectionTextStyle is a collection as printf writes it: Cypher
+// literals, a map's keys in map order and quoted unless simple names.
+var printfCollectionTextStyle = &valueTextStyle{
+	mapping: stringMap, list: anyList,
+	listOpen: "[", listClose: "]", listSeparator: ", ",
+	mapOpen: "{", mapClose: "}", mapSeparator: ", ", keySeparator: ": ",
+	key: func(out *strings.Builder, key string) {
+		if !isSimpleCypherName(key) {
+			key = quoteCypherStringLiteral(key)
 		}
-		return "[" + strings.Join(parts, ", ") + "]"
-	case map[string]interface{}:
-		parts := make([]string, 0, len(typed))
-		for key, item := range typed {
-			if !isSimpleCypherName(key) {
-				key = quoteCypherStringLiteral(key)
-			}
-			parts = append(parts, key+": "+formatPrintfCollection(item))
+		out.WriteString(key)
+	},
+	leaf: func(_ *materializedRowCheckpoint, out *strings.Builder, value interface{}) bool {
+		switch typed := value.(type) {
+		case string:
+			out.WriteString(quoteCypherStringLiteral(typed))
+		case nil:
+			out.WriteString("null")
+		default:
+			out.WriteString(fmt.Sprint(value))
 		}
-		return "{" + strings.Join(parts, ", ") + "}"
-	default:
-		return fmt.Sprint(value)
-	}
+		return true
+	},
 }
 
 func formatPrintfArgument(spec string, verb byte, value interface{}) (interface{}, error) {
@@ -345,7 +353,7 @@ func formatPrintfArgument(spec string, verb byte, value interface{}) (interface{
 		case string:
 			return typed, nil
 		case []interface{}, map[string]interface{}:
-			return formatPrintfCollection(typed), nil
+			return formatPrintfCollection(nil, typed), nil
 		}
 		return formatCypherValueString(value), nil
 	case 'd', 'b', 'o', 'c', 'U', 'x', 'X':
@@ -367,7 +375,7 @@ func formatPrintfArgument(spec string, verb byte, value interface{}) (interface{
 		return nil, formatTemplateVerbInvalid(spec)
 	}
 	return nil, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
-		localization.CypherCoreFormatTemplateValueType(spec, neo4jValueRepr(value)))
+		localization.CypherCoreFormatTemplateValueType(spec, neo4jValueRepr(nil, value)))
 }
 
 func formatTemplateVerbInvalid(spec string) error {

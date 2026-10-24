@@ -34,6 +34,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 )
 
@@ -74,7 +75,9 @@ func (e *StorageExecutor) evaluateTraversalRowExpression(ctx context.Context, ex
 			values[variable] = relationship
 		}
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for variable, value := range row.values {
+		pass.Check()
 		values[variable] = value
 	}
 	if value, ok := e.evaluateRowExpressionWithContext(ctx, expr, values); ok {

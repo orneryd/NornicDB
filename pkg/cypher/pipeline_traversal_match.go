@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -67,80 +68,94 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
-	for _, row := range rows {
-		rowCtx, materializedPattern, prepareErr := e.preparePatternRow(withValueBindings(ctx, row), pattern, row)
-		if prepareErr != nil {
-			return nil, true, prepareErr
+	for batch, batchErr := range materializedBatches(ctx, len(rows)) {
+		if batchErr != nil {
+			return nil, true, batchErr
 		}
-		materializedWhere := whereClause
-		physicalWhere, residualWhere := pipelineTraversalPredicates(materializedWhere, row, variables)
-		rowHint := hint
-		if physicalWhere != materializedWhere || pipelinePatternJoinsOuterBinding(row, variables) {
-			rowHint = pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1}
-		}
-		var result *ExecuteResult
-		var handled bool
-		var err error
-		if rowHint.limit > 0 && rowHint.orderExpr != "" {
-			result, handled, err = e.tryExecuteTraversalSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit, traversalStartSeed)
-			if err == nil && !handled {
-				result, handled, err = e.tryExecuteTraversalSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit, traversalEndSeed)
+		for _, row := range rows[batch.start:batch.end] {
+			rowCtx, materializedPattern, prepareErr := e.preparePatternRow(withValueBindings(ctx, row), pattern, row)
+			if prepareErr != nil {
+				return nil, true, prepareErr
 			}
-		}
-		if err != nil {
-			return nil, true, err
-		}
-		if !handled {
-			startSeedNodes, endSeedNodes, seedRejected := e.pipelineTraversalSeedNodes(rowCtx, materializedPattern, row)
-			if seedRejected {
-				// The bound node fails the pattern's own labels or inline
-				// properties on that endpoint, so this row matches nothing.
-				continue
+			materializedWhere := whereClause
+			physicalWhere, residualWhere := pipelineTraversalPredicates(materializedWhere, row, variables)
+			rowHint := hint
+			if physicalWhere != materializedWhere || pipelinePatternJoinsOuterBinding(row, variables) {
+				rowHint = pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1}
 			}
-			if len(rows) == 1 && whereClause == "" && len(startSeedNodes) == 1 && len(endSeedNodes) == 1 && hint.earlyLimit >= 0 && e.boundTraversalLimitSafe(rowCtx, materializedPattern, row, variables) {
-				rowHint.earlyLimit = hint.earlyLimit
-				rowHint.readTail = hint.readTail
-			}
-			if startSeedNodes == nil && endSeedNodes == nil {
-				// A relationship pinned by id / elementId starts from its
-				// endpoints, not from every node.
-				if seeds, none, pinned := e.relationshipIDSeedNodes(rowCtx, materializedPattern, physicalWhere); pinned {
-					if none {
-						continue
-					}
-					startSeedNodes = seeds
+			var result *ExecuteResult
+			var handled bool
+			var err error
+			if rowHint.limit > 0 && rowHint.orderExpr != "" {
+				result, handled, err = e.tryExecuteTraversalSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit, traversalStartSeed)
+				if err == nil && !handled {
+					result, handled, err = e.tryExecuteTraversalSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit, traversalEndSeed)
 				}
 			}
-			result, err = e.executeMatchWithRelationshipsWithPathSeeded(rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.readTail, rowHint.earlyLimit)
 			if err != nil {
 				return nil, true, err
 			}
-		}
-		e.normalizeSetMatchRowsToNodes(result, store)
-		e.normalizeSetMatchRowsToEdges(result, store)
-		var rowWhere *preparedRowPredicate
-		if residualWhere != "" {
-			rowWhere = prepareRowPredicate(residualWhere)
-		}
-		for _, resultRow := range result.Rows {
-			joined := make(pipelineRow, util.SafePreallocSum(len(row), len(result.Columns)))
-			for name, value := range row {
-				joined[name] = value
-			}
-			compatible := true
-			for index, column := range result.Columns {
-				if column == anonymousBinding || index >= len(resultRow) {
+			if !handled {
+				startSeedNodes, endSeedNodes, seedRejected := e.pipelineTraversalSeedNodes(rowCtx, materializedPattern, row)
+				if seedRejected {
+					// The bound node fails the pattern's own labels or inline
+					// properties on that endpoint, so this row matches nothing.
 					continue
 				}
-				value := resultRow[index]
-				if existing, bound := joined[column]; bound && !pipelineBindingValuesEqual(existing, value) {
-					compatible = false
-					break
+				if len(rows) == 1 && whereClause == "" && len(startSeedNodes) == 1 && len(endSeedNodes) == 1 && hint.earlyLimit >= 0 && e.boundTraversalLimitSafe(rowCtx, materializedPattern, row, variables) {
+					rowHint.earlyLimit = hint.earlyLimit
+					rowHint.readTail = hint.readTail
 				}
-				joined[column] = value
+				if startSeedNodes == nil && endSeedNodes == nil {
+					// A relationship pinned by id / elementId starts from its
+					// endpoints, not from every node.
+					if seeds, none, pinned := e.relationshipIDSeedNodes(rowCtx, materializedPattern, physicalWhere); pinned {
+						if none {
+							continue
+						}
+						startSeedNodes = seeds
+					}
+				}
+				result, err = e.executeMatchWithRelationshipsWithPathSeeded(rowCtx, materializedPattern, physicalWhere, returnItems, startSeedNodes, endSeedNodes, pathVariable, rowHint.readTail, rowHint.earlyLimit)
+				if err != nil {
+					return nil, true, err
+				}
 			}
-			if compatible && (rowWhere == nil || rowWhere.holds(e, ctx, map[string]interface{}(joined))) {
-				out = append(out, joined)
+			if err := e.normalizeSetMatchRowsToNodes(ctx, result, store); err != nil {
+				return nil, true, err
+			}
+			if err := e.normalizeSetMatchRowsToEdges(ctx, result, store); err != nil {
+				return nil, true, err
+			}
+			var rowWhere *preparedRowPredicate
+			if residualWhere != "" {
+				rowWhere = prepareRowPredicate(residualWhere)
+			}
+			for innerBatch, innerErr := range materializedBatches(ctx, len(result.Rows)) {
+				if innerErr != nil {
+					return nil, true, innerErr
+				}
+				for _, resultRow := range result.Rows[innerBatch.start:innerBatch.end] {
+					joined := make(pipelineRow, util.SafePreallocSum(len(row), len(result.Columns)))
+					for name, value := range row {
+						joined[name] = value
+					}
+					compatible := true
+					for index, column := range result.Columns {
+						if column == anonymousBinding || index >= len(resultRow) {
+							continue
+						}
+						value := resultRow[index]
+						if existing, bound := joined[column]; bound && !pipelineBindingValuesEqual(existing, value) {
+							compatible = false
+							break
+						}
+						joined[column] = value
+					}
+					if compatible && (rowWhere == nil || rowWhere.holds(e, ctx, map[string]interface{}(joined))) {
+						out = append(out, joined)
+					}
+				}
 			}
 		}
 	}
@@ -254,7 +269,9 @@ func (e *StorageExecutor) boundTraversalLimitSafe(ctx context.Context, pattern s
 	if match == nil || match.IsChained {
 		return false
 	}
+	pass := bulk.NewCheckpoint(ctx)
 	for _, name := range variables {
+		pass.Check()
 		if _, bound := row[name]; bound && name != match.StartNode.variable && name != match.EndNode.variable {
 			return false
 		}

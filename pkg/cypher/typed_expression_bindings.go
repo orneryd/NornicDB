@@ -5,22 +5,27 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/bulk"
 )
 
 // withExpressionBinding scopes an evaluated value without rendering it as
 // Cypher text. Names avoid both client parameters and identifiers in the input.
 func withExpressionBinding(ctx context.Context, expression string, value interface{}) (context.Context, string) {
 	params := getParamsFromContext(ctx)
+	pass := bulk.NewCheckpoint(ctx)
 	for index := 0; ; index++ {
+		pass.Check()
 		name := fmt.Sprintf("__nornic_expression_%d", index)
 		if _, exists := params[name]; exists || strings.Contains(expression, name) {
 			continue
 		}
 		bound := make(map[string]interface{}, len(params)+1)
 		for key, original := range params {
+			pass.Check()
 			bound[key] = original
 		}
-		bound[name], _ = normalizeParameterValue(value)
+		bound[name], _ = normalizeParameterValue(valueWalk(ctx), value)
 		return withQueryParams(ctx, bound), "$" + name
 	}
 }

@@ -157,7 +157,7 @@ func (s *ResultStream) begin(columns []string) {
 func (s *ResultStream) emit(ctx context.Context, owner *StorageExecutor, row []interface{}) bool {
 	// Every stream producer crosses the same visibility/lifetime boundary as
 	// a materialized result, before rows enter any consumer-owned buffer.
-	row = owner.publishQueryRow(row)
+	row = owner.publishQueryRow(valueWalk(ctx), row)
 	if !s.started {
 		s.buffered = append(s.buffered, row)
 		if len(s.buffered) > s.threshold {

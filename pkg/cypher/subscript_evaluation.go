@@ -41,7 +41,7 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 		if !isString {
 			return nil, false, mapElementAccessByNonStringError(indexValue)
 		}
-		value, ok := rowPropertyValue(e.queryVisibleValue(base), key)
+		value, ok := rowPropertyValue(e.queryVisibleValue(nil, base), key)
 		return value, ok, nil
 	}
 	if key, isKey := indexValue.(string); isKey && (isRuntimeTemporal(base) || isRuntimeDuration(base)) {
@@ -73,16 +73,16 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 
 func listSubscriptIndexError(base, index interface{}) error {
 	if isRuntimeNumber(index) {
-		return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", localization.CypherCoreListIndexNonInteger(neo4jValueRepr(index)))
+		return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", localization.CypherCoreListIndexNonInteger(neo4jValueRepr(nil, index)))
 	}
 	// Indexing reads a list value, including the context literal reader's
 	// homogeneous Go slices; render its items as Neo4j's virtual List.
 	items, _ := cypherListValue(base)
 	parts := make([]string, len(items))
 	for i, item := range items {
-		parts[i] = neo4jValueRepr(item)
+		parts[i] = neo4jValueRepr(nil, item)
 	}
-	list, value := "List{"+strings.Join(parts, ", ")+"}", neo4jValueRepr(index)
+	list, value := "List{"+strings.Join(parts, ", ")+"}", neo4jValueRepr(nil, index)
 	message := localization.CypherCoreListIndexNonNumber(list, value)
 	if boolean, ok := index.(bool); ok {
 		message = localization.CypherCoreListIndexBoolean(list, value, boolean)

@@ -105,7 +105,7 @@ func rowReduceLoop(form reduceForm, accumulator, listValue interface{}, scope ma
 			return bind(func() (interface{}, bool, error) { return term(index) })(accumulator, item)
 		}}
 	}
-	result, err := runReduceForm(form, accumulator, coerceToUnwindItems(listValue), bind(step), bind(predicate), appender)
+	result, err := runReduceForm(rowStatementContextOrBackground(scope), form, accumulator, coerceToUnwindItems(listValue), bind(step), bind(predicate), appender)
 	if err == errRowArgumentUnresolved {
 		return nil, false, nil
 	}

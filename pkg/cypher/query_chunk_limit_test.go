@@ -87,11 +87,13 @@ func TestRetrieveContinuationReportsQueryChunksWithoutHits(t *testing.T) {
 
 // A continued db.retrieve page reports a long query's chunk counts.
 func TestSearchContinuationPageReportsQueryChunks(t *testing.T) {
-	page := executeSearchContinuationPage(&search.SearchContinuationPage{ExpiresAt: time.Now(), QueryChunksSearched: 3, QueryChunksTotal: 5})
+	page, err := executeSearchContinuationPage(context.Background(), &search.SearchContinuationPage{ExpiresAt: time.Now(), QueryChunksSearched: 3, QueryChunksTotal: 5})
+	require.NoError(t, err)
 	row := page.Rows[0][0].(map[string]interface{})
 	require.Equal(t, int64(3), row["query_chunks_searched"])
 	require.Equal(t, int64(5), row["query_chunks_total"])
-	page = executeSearchContinuationPage(&search.SearchContinuationPage{ExpiresAt: time.Now()})
+	page, err = executeSearchContinuationPage(context.Background(), &search.SearchContinuationPage{ExpiresAt: time.Now()})
+	require.NoError(t, err)
 	require.NotContains(t, page.Rows[0][0].(map[string]interface{}), "query_chunks_total")
 }
 

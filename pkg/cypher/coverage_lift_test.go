@@ -215,7 +215,7 @@ func TestCoverageLiftMergeCreateSubqueryAndOrderingHelpers(t *testing.T) {
 	assert.True(t, mergeCreateConflict(storage.ErrAlreadyExists))
 	assert.True(t, mergeCreateConflict(errors.New("node already exists")))
 	assert.False(t, mergeCreateConflict(errors.New("different failure")))
-	assert.Equal(t, mergeLookupCacheKey([]string{"A", "B"}, "id", 7), mergeLookupCacheKey([]string{"A", "B"}, "id", 7))
+	assert.Equal(t, mergeLookupCacheKey(nil, []string{"A", "B"}, "id", 7), mergeLookupCacheKey(nil, []string{"A", "B"}, "id", 7))
 
 	for _, tc := range []struct {
 		content string
@@ -351,10 +351,6 @@ func TestCoverageLiftOperatorsAndRelationshipVectorLimitZero(t *testing.T) {
 	assert.True(t, nodeBatchMatchesValue(&storage.Node{Labels: []string{"Person"}, Properties: map[string]interface{}{"id": "1"}}, nodeBatchMatchKey{label: "Person", prop: "id"}, "1"))
 	assert.False(t, nodeBatchMatchesValue(&storage.Node{Labels: []string{"Other"}, Properties: map[string]interface{}{"id": "1"}}, nodeBatchMatchKey{label: "Person", prop: "id"}, "1"))
 
-	assert.Equal(t, map[string]interface{}{"a": int64(1), "b": int64(2)}, mergeMaps(map[string]interface{}{"a": int64(0)}, map[string]interface{}{"a": int64(1), "b": int64(2)}))
-	assert.Equal(t, map[string]interface{}{"a": int64(1), "b": "two"}, fromPairs([]interface{}{[]interface{}{"a", int64(1)}, []interface{}{"b", "two"}}))
-	assert.Equal(t, map[string]interface{}{"a": int64(1), "b": int64(2)}, fromLists([]interface{}{"a", "b"}, []interface{}{int64(1), int64(2)}))
-	assert.Empty(t, fromLists([]interface{}{"a"}, "not a list"))
 	apocCtx := context.WithValue(context.Background(), paramsKey, map[string]interface{}{
 		"left":  map[string]interface{}{"a": int64(0)},
 		"right": map[string]interface{}{"a": int64(1), "b": int64(2)},

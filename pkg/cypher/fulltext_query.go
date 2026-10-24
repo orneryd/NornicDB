@@ -88,6 +88,13 @@ type ftToken struct {
 // escapes) is best-effort: whatever text was seen is emitted as a term or
 // phrase and the caller/parser will reject structurally-broken input.
 func ftTokenize(input string) []ftToken {
+	tokens, _ := ftTokenizeObserved(nil, input)
+	return tokens
+}
+
+// ftTokenizeObserved is ftTokenize within a statement: walk observes it
+// (nil observes none) at each step over the input.
+func ftTokenizeObserved(walk *materializedRowCheckpoint, input string) ([]ftToken, error) {
 	tokens := make([]ftToken, 0, 16)
 	i := 0
 	precedingSpace := true
@@ -114,6 +121,9 @@ func ftTokenize(input string) []ftToken {
 	}
 
 	for i < len(input) {
+		if err := walk.Observe(); err != nil {
+			return nil, err
+		}
 		r := input[i]
 		if unicode.IsSpace(rune(r)) {
 			precedingSpace = true
@@ -192,6 +202,9 @@ func ftTokenize(input string) []ftToken {
 			var b strings.Builder
 			i++
 			for i < len(input) {
+				if err := walk.Observe(); err != nil {
+					return nil, err
+				}
 				c := input[i]
 				if c == '\\' && i+1 < len(input) {
 					b.WriteByte(input[i+1])
@@ -222,6 +235,9 @@ func ftTokenize(input string) []ftToken {
 				i++
 				closed := false
 				for i < len(input) {
+					if err := walk.Observe(); err != nil {
+						return nil, err
+					}
 					c := input[i]
 					if c == '\\' && i+1 < len(input) {
 						// Preserve the escape so the compiled regex is faithful.
@@ -248,6 +264,9 @@ func ftTokenize(input string) []ftToken {
 		// Bare term: consume run of term chars, decoding `\X` escapes.
 		var b strings.Builder
 		for i < len(input) {
+			if err := walk.Observe(); err != nil {
+				return nil, err
+			}
 			c := input[i]
 			if c == '\\' && i+1 < len(input) {
 				b.WriteByte(input[i+1])
@@ -281,7 +300,7 @@ func ftTokenize(input string) []ftToken {
 	}
 
 	emit(tkEOF, "")
-	return tokens
+	return tokens, nil
 }
 
 // canStartRegex reports whether a `/` at the current tokenizer position
@@ -602,13 +621,26 @@ type FulltextQuery struct {
 // structurally malformed queries. It never panics; the tokenizer accepts any
 // input and the parser rejects only unbalanced groups or dangling operators.
 func ParseFulltextQuery(input string) (*FulltextQuery, error) {
+	return parseFulltextQueryObserved(nil, input)
+}
+
+// parseFulltextQueryObserved is ParseFulltextQuery within a statement: walk
+// observes it (nil observes none) at each step of the reading, and a
+// canceled statement's reading ends with the statement's error.
+func parseFulltextQueryObserved(walk *materializedRowCheckpoint, input string) (*FulltextQuery, error) {
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return &FulltextQuery{}, nil
 	}
-	tokens := ftTokenize(input)
-	p := &ftParser{tokens: tokens}
+	tokens, err := ftTokenizeObserved(walk, input)
+	if err != nil {
+		return nil, err
+	}
+	p := &ftParser{tokens: tokens, walk: walk}
 	node, err := p.parseOr()
+	if p.err != nil {
+		return nil, p.err
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -628,23 +660,41 @@ func ParseFulltextQuery(input string) (*FulltextQuery, error) {
 		}
 	}
 	q := &FulltextQuery{root: node}
-	q.primaryTerms = collectPrimaryTerms(node)
+	if q.primaryTerms, err = collectPrimaryTermsObserved(walk, node); err != nil {
+		return nil, err
+	}
 	return q, nil
 }
 
 type ftParser struct {
 	tokens []ftToken
 	pos    int
+	// walk observes the statement at each token the parser takes; once it
+	// fails, err holds the statement's error and the parser reads the end
+	// of the input, so every rule returns at once.
+	walk *materializedRowCheckpoint
+	err  error
 }
 
-func (p *ftParser) peek() ftToken { return p.tokens[p.pos] }
+func (p *ftParser) peek() ftToken {
+	if p.err != nil {
+		return ftToken{kind: tkEOF}
+	}
+	return p.tokens[p.pos]
+}
 func (p *ftParser) peekAt(off int) ftToken {
-	if p.pos+off >= len(p.tokens) {
+	if p.err != nil || p.pos+off >= len(p.tokens) {
 		return ftToken{kind: tkEOF}
 	}
 	return p.tokens[p.pos+off]
 }
 func (p *ftParser) advance() ftToken {
+	if p.err == nil {
+		p.err = p.walk.Observe()
+	}
+	if p.err != nil {
+		return ftToken{kind: tkEOF}
+	}
 	t := p.tokens[p.pos]
 	if t.kind != tkEOF {
 		p.pos++
@@ -1146,10 +1196,24 @@ func (q *FulltextQuery) Match(ctx *ftEvalCtx, doc *ftDoc) (bool, float64) {
 }
 
 func collectPrimaryTerms(n ftNode) []string {
+	terms, _ := collectPrimaryTermsObserved(nil, n)
+	return terms
+}
+
+// collectPrimaryTermsObserved is collectPrimaryTerms within a statement:
+// walk observes it at each node of the query.
+func collectPrimaryTermsObserved(walk *materializedRowCheckpoint, n ftNode) ([]string, error) {
 	seen := map[string]struct{}{}
 	var out []string
-	var walk func(x ftNode)
-	walk = func(x ftNode) {
+	var err error
+	var visit func(x ftNode)
+	visit = func(x ftNode) {
+		if err == nil {
+			err = walk.Observe()
+		}
+		if err != nil {
+			return
+		}
 		switch v := x.(type) {
 		case *ftLeafNode:
 			t := v.pattern.primaryTerm()
@@ -1163,16 +1227,19 @@ func collectPrimaryTerms(n ftNode) []string {
 			out = append(out, t)
 		case *ftBooleanNode:
 			for _, c := range v.clauses {
-				walk(c.node)
+				visit(c.node)
 			}
 		case *ftBoostNode:
-			walk(v.inner)
+			visit(v.inner)
 		case *occurMarker:
-			walk(v.inner)
+			visit(v.inner)
 		}
 	}
-	walk(n)
-	return out
+	visit(n)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // ---------------------------------------------------------------------------

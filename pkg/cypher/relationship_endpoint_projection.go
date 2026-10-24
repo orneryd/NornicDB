@@ -142,7 +142,7 @@ func (n *rowEndpointPropertyNode) eval(e *StorageExecutor, values map[string]int
 		}
 	}
 	node := e.readRelationshipEndpoint(id, []string{n.property})
-	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(node), n.property)
+	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(valueWalk(rowStatementContextOrBackground(values)), node), n.property)
 	if ok && cache != nil {
 		cache.keep(key, value)
 	}

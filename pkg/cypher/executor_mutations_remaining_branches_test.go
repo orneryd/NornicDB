@@ -97,7 +97,7 @@ func TestPolicyHelpers_AdditionalBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// No policy constraints in schema: label change validation should be a no-op.
-	require.NoError(t, validatePolicyOnLabelChange(store, node, []string{"OldUser"}))
+	require.NoError(t, validatePolicyOnLabelChange(context.Background(), store, node, []string{"OldUser"}))
 }
 
 func TestExecuteSet_MergeAssignmentErrorAndFallbackBranches(t *testing.T) {
@@ -165,7 +165,7 @@ func TestValidatePolicyOnLabelChange_OutgoingAndIncomingViolations(t *testing.T)
 		}, false)
 		require.NoError(t, err)
 
-		err = validatePolicyOnLabelChange(store, src, []string{"User"})
+		err = validatePolicyOnLabelChange(context.Background(), store, src, []string{"User"})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "DISALLOWED")
 	})
@@ -192,7 +192,7 @@ func TestValidatePolicyOnLabelChange_OutgoingAndIncomingViolations(t *testing.T)
 		}, false)
 		require.NoError(t, err)
 
-		err = validatePolicyOnLabelChange(store, dst, []string{"User"})
+		err = validatePolicyOnLabelChange(context.Background(), store, dst, []string{"User"})
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "DISALLOWED")
 	})
