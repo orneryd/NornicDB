@@ -1944,7 +1944,8 @@ func (e *StorageExecutor) parseCreateConstraintRelationshipKeyOrCompositeUniqueD
 		return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property references"), nil)
 	}
 	seen := make(map[string]bool, len(props))
-	for _, reference := range strings.Split(propertyExpr, ",") {
+	// An empty reference ((n.a, n.b,)) is malformed, as with strings.Split.
+	for _, reference := range splitTopLevelCommaKeepEmpty(propertyExpr) {
 		qualifier, property, valid := parseConstraintQualifiedProperty(reference)
 		if !valid || normalizeIdentifierToken(qualifier) != variable || seen[property] {
 			return parsedRelationshipKeyOrCompositeUniqueDDL{}, localizedError(localization.CypherSchemaUnsupportedPredicate("constraint property references"), nil)

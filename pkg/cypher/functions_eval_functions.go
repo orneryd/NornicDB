@@ -24,26 +24,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// Parenthesized Expressions - strip outer parens
 	// ========================================
-	if strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
-		// Check if these parentheses wrap the entire expression
-		depth := 0
-		allWrapped := true
-		for i, ch := range expr {
-			if ch == '(' {
-				depth++
-			} else if ch == ')' {
-				depth--
-			}
-			// If depth reaches 0 before the last character, parens don't wrap the whole thing
-			if depth == 0 && i < len(expr)-1 {
-				allWrapped = false
-				break
-			}
-		}
-		if allWrapped && depth == 0 {
-			// Strip outer parentheses and re-evaluate
-			return e.evaluateExpressionWithContextFull(ctx, expr[1:len(expr)-1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		}
+	if inner, enclosed := parenthesizedFunctionExpression(expr); enclosed {
+		return e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// ========================================
@@ -69,8 +51,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// A plugin function overrides a built-in of the same name, so plugins
 	// are asked first, as the row evaluator does (#1163).
-	if _, _, call := parseFunctionCallWS(expr); call && strings.Contains(expr, ".") {
-		if result, handled := e.tryCallPluginFunction(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); handled {
+	name, args, call := parseFunctionCallArguments(expr)
+	if call && strings.Contains(name, ".") {
+		if result, handled := e.tryCallPluginFunction(ctx, name, args, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); handled {
 			return result
 		}
 	}
@@ -78,8 +61,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// Registered Function Dispatch (Phase B: pkg/cypher/fn)
 	// ========================================
-	if name, inner, ok := parseFunctionCallWS(expr); ok {
-		args := e.splitFunctionArgs(inner)
+	if call {
 		fnCtx := e.registryFunctionContext(ctx, func(argExpr string) (interface{}, error) {
 			return e.checkedPropertyExpression(ctx, argExpr, e.entityRowWithPaths(ctx, nodes, rels, paths))
 		})

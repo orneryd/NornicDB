@@ -175,22 +175,14 @@ func subqueryExpressionKeywordBeforeBrace(query string, start, end, braceIndex i
 	if !queryBodyContainerKeyword(query[start:end]) {
 		return false
 	}
-	precedingToken := start - 1
-	for precedingToken >= 0 && isCypherWhitespace(query[precedingToken]) {
-		precedingToken--
-	}
+	_, _, precedingEnd := lexicalPreviousToken(query, start)
+	precedingToken := precedingEnd - 1
 	if precedingToken >= 0 {
 		if isCypherBacktickByte(query[precedingToken]) {
-			// Backtick-quoted identifier (`count` {bad}), never the keyword.
 			return false
 		}
-		switch query[precedingToken] {
-		case ':':
-			// Label/type name (`:Count {bad}`), unless the colon separates
-			// a map key from its value ({k: COUNT { … }}).
-			if !colonIsMapKeySeparator(query, precedingToken) {
-				return false
-			}
+		if query[precedingToken] == ':' && !colonIsMapKeySeparator(query, precedingToken) {
+			return false
 		}
 	}
 	return subqueryBraceBodyStartsLikeClause(query, braceIndex)
@@ -201,20 +193,7 @@ func subqueryExpressionKeywordBeforeBrace(query string, start, end, braceIndex i
 // or closing brace; a clause requires a following body. Standalone ordering and
 // pagination also open valid expression subqueries and must reach normalization.
 func subqueryBraceBodyStartsLikeClause(query string, braceIndex int) bool {
-	index := braceIndex + 1
-	for index < len(query) {
-		if isCypherWhitespace(query[index]) {
-			index++
-			continue
-		}
-		if query[index] == '/' {
-			if end := queryCommentEnd(query, index); end > index {
-				index = end
-				continue
-			}
-		}
-		break
-	}
+	index := queryGapEnd(query, braceIndex+1)
 	if index >= len(query) {
 		return false
 	}

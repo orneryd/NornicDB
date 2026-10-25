@@ -89,7 +89,7 @@ func (e *StorageExecutor) evaluateContextExpressionResult(ctx context.Context, e
 
 func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) (result interface{}) {
 	defer func() { result = cypherfn.RuntimeValue(result) }()
-	expr = strings.TrimSpace(expr)
+	expr = trimQueryTrivia(expr)
 	if expr == "" {
 		return nil
 	}
@@ -217,25 +217,26 @@ func (e *StorageExecutor) evaluateExpressionWithCASESubstituted(ctx context.Cont
 }
 
 func splitPostfixPropertyAccess(expr string) (string, string, bool) {
+	if !strings.ContainsRune(expr, '.') {
+		return "", "", false
+	}
+	syntax := readFunctionSyntax(expr)
 	lastDot := -1
-	for offset := 0; offset < len(expr); {
-		dot := findTopLevelOperator(expr[offset:], ".", false, true)
-		if dot < 0 {
-			break
+	for _, at := range syntax.rootPunctuation {
+		if expr[at] == '.' {
+			lastDot = at
 		}
-		lastDot = offset + dot
-		offset = lastDot + 1
 	}
 	if lastDot <= 0 || lastDot == len(expr)-1 {
 		return "", "", false
 	}
-	property := strings.TrimSpace(expr[lastDot+1:])
+	property := syntax.render(syntaxSpan{lastDot + 1, len(expr)})
 	if isBacktickQuotedName(property) {
 		property = normalizePropertyKey(property)
 	} else if !isValidIdentifier(property) {
 		return "", "", false
 	}
-	base := strings.TrimSpace(expr[:lastDot])
+	base := syntax.render(syntaxSpan{0, lastDot})
 	// Property access binds tighter than any operator: in 'x' + o.missing the
 	// access is o.missing, not ('x' + o).missing. A base with a top-level
 	// operator is not a postfix access.

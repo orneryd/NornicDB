@@ -14,22 +14,29 @@ import (
 // (checked), so an argument the signature check types is not typed again by
 // the operator check, nor its nested scopes.
 func (checker staticOperatorChecker) checkScoped(text string) (staticOperand, error) {
+	if checker.view.facts == nil {
+		checker.view = expressionView(text)
+	} else {
+		checker.view = checker.view.within(text)
+	}
 	if checker.checked == nil {
 		checker.checked = make(map[string]staticCheckResult)
 	}
 	// The signature check types without parameter values (operandOf).
-	typer := staticOperatorChecker{scope: checker.scope, checked: checker.checked}
+	typer := staticOperatorChecker{scope: checker.scope, checked: checker.checked, view: checker.view}
 	if checker.params != nil {
 		typer.checked = make(map[string]staticCheckResult)
 	}
-	if err := validateStaticFunctionVariablesTyped(text, func() staticTypeScope { return checker.scope }, typer.argumentType); err != nil {
+	if err := validateStaticFunctionVariablesTyped(text, func() staticTypeScope { return checker.scope }, typer.argumentType, checker.view); err != nil {
 		return staticOperand{}, err
 	}
 	return checker.check(text)
 }
 
 // argumentType is staticExpressionType through the checker's results.
-func (checker staticOperatorChecker) argumentType(scope staticTypeScope, expression string) string {
+func (checker staticOperatorChecker) argumentType(scope staticTypeScope, view expressionLexicalView) string {
+	expression := view.text()
+	checker.view = view
 	if len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
 		return propertyAccessExpressionType(expression, scope.values, scope.params)
 	}
@@ -52,7 +59,7 @@ func (checker staticOperatorChecker) checkListComprehension(variable, list, pred
 	}
 	types := typeScopeOf(checker.scope)
 	types[variable] = source.elementOperand()
-	nested := staticOperatorChecker{scope: types.static(checker.scope.cypher25), params: checker.params}
+	nested := staticOperatorChecker{scope: types.static(checker.scope.cypher25), params: checker.params, view: checker.view}
 	nested.scope.complete = checker.scope.complete
 	nested.scope.params = checker.scope.params
 	var element staticOperand
@@ -155,7 +162,7 @@ func (checker staticOperatorChecker) checkReduceTypes(form reduceForm) (staticOp
 	types := typeScopeOf(checker.scope)
 	types[form.variable] = source.elementOperand()
 	types[form.accumulator] = reduceAccumulatorOperand(initial)
-	nested := staticOperatorChecker{scope: types.static(checker.scope.cypher25), params: checker.params}
+	nested := staticOperatorChecker{scope: types.static(checker.scope.cypher25), params: checker.params, view: checker.view}
 	nested.scope.complete = checker.scope.complete
 	nested.scope.params = checker.scope.params
 	var step staticOperand

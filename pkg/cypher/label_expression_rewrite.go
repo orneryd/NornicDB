@@ -51,6 +51,9 @@ type labelExpressionRewriter struct {
 	generated int
 	// The property phase reuses this element walk without label rewriting.
 	visitElement func(open, close int, relationship bool) error
+	// calls retain one lexical structure throughout this rewrite, including
+	// statements larger than the shared cache's retention bound.
+	calls *functionSyntax
 	// params are the statement's parameters: a dynamic label or type whose
 	// value is a literal or a parameter is resolved to names here
 	// (resolveConstant).
@@ -75,6 +78,13 @@ type labelExpressionRewriter struct {
 	cypher25 bool
 }
 
+func (r *labelExpressionRewriter) callSyntax() *functionSyntax {
+	if r.calls == nil {
+		r.calls = readFunctionSyntax(r.query)
+	}
+	return r.calls
+}
+
 // labelPatternMode is how a pattern's label expressions are read.
 type labelPatternMode uint8
 
@@ -95,6 +105,7 @@ func (m labelPatternMode) clause() string {
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when nothing changes.
 func desugarLabelExpressions(query string, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
+	// The quick checks read the tokens they need; only a rewrite keeps facts.
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
 		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) &&
@@ -139,21 +150,18 @@ func applyLabelRewriteEdits(query string, edits []labelRewriteEdit, verbatimColu
 // (#1181): a colon after a closing parenthesis and any whitespace, not the
 // type cast ::.
 func mayTestExpressionLabels(query string) bool {
-	for i := strings.IndexByte(query, ')'); i >= 0; {
-		j := i + 1
-		for j < len(query) && isASCIISpace(query[j]) {
-			j++
-		}
-		if j < len(query) && query[j] == ':' && (j+1 >= len(query) || query[j+1] != ':') {
-			return true
-		}
-		next := strings.IndexByte(query[i+1:], ')')
-		if next < 0 {
-			return false
-		}
-		i += 1 + next
+	if strings.IndexByte(query, ':') < 0 {
+		return false
 	}
-	return false
+	found := false
+	lexicalGroupWalk(query, 0, func(_ lexicalTokenKind, start, _, _, opened int) bool {
+		if opened >= 0 && query[opened] == '(' {
+			j := queryGapEnd(query, start+1)
+			found = j < len(query) && query[j] == ':' && (j+1 >= len(query) || query[j+1] != ':')
+		}
+		return !found
+	})
+	return found
 }
 
 // mayUsePatternPredicate reports whether query may hold a pattern element's
@@ -195,12 +203,26 @@ func mayReadPatternInPropertyMap(query string) bool {
 }
 
 func mayUsePatternPredicate(query string) bool {
-	var openers []int
+	// An expression call's argument group is recorded as ^open, read from
+	// the call cursor when the parenthesis opens.
+	calls := newCallCursor(query)
+	var openerBuffer [16]int
+	openers := openerBuffer[:0]
 	for i := 0; i < len(query); i++ {
+		if query[i] == '/' {
+			if next := queryCommentEnd(query, i); next > i {
+				i = next - 1
+				continue
+			}
+		}
 		switch c := query[i]; cypherLexicalByte(c) {
 		case cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
 		case '(', '[', '{':
+			if call, called := calls.callOpenedAt(i); called && call.expressionCall() {
+				openers = append(openers, ^i)
+				continue
+			}
 			openers = append(openers, i)
 		case ')', ']', '}':
 			if len(openers) > 0 {
@@ -211,7 +233,7 @@ func mayUsePatternPredicate(query string) bool {
 				continue
 			}
 			open := openers[len(openers)-1]
-			if query[open] == '{' || query[open] == '(' && open > 0 && isIdentByte(query[open-1]) {
+			if open < 0 || query[open] == '{' {
 				continue
 			}
 			if topLevelKeywordIndex(query[open+1:i], "IN") >= 0 {
@@ -432,10 +454,17 @@ var labelClauseKeywords = map[string]bool{
 // clauses splits query[start:end] into its top-level clauses.
 func (r *labelExpressionRewriter) clauses(start, end int) []labelClause {
 	q := r.query
+	syntax := r.callSyntax()
 	var out []labelClause
 	depth := 0
 	for i := start; i < end; i++ {
 		c := q[i]
+		if c == '/' {
+			if next := syntax.commentEndAt(i); next > i {
+				i = next - 1
+				continue
+			}
+		}
 		switch {
 		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(q, i, c) - 1
@@ -1210,8 +1239,15 @@ func (r *labelExpressionRewriter) foreach(start, end int) error {
 // rejects a colon test that mixes colons with label expression symbols.
 func (r *labelExpressionRewriter) expression(start, end int) error {
 	q := r.query
+	syntax := r.callSyntax()
 	for i := start; i < end; i++ {
 		c := q[i]
+		if c == '/' {
+			if next := syntax.commentEndAt(i); next > i {
+				i = next - 1
+				continue
+			}
+		}
 		// A pattern predicate or comprehension can't quantify a relationship;
 		// Neo4j allows it only in MATCH and subqueries.
 		if _, quantified := relationshipQuantifierAt(q, i, end); quantified && arrowEndsAt(q, start, i) {
@@ -1221,16 +1257,22 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 		case isCypherQuoteByte(c):
 			i = skipCypherQuotedText(q, i, c) - 1
 		case c == '{':
-			close := findMatchingDelimiter(q[:end], i, '{', '}')
-			if close < 0 {
+			group, matched := syntax.groupAt(i)
+			if !matched || group.close < 0 || group.close >= end {
 				return nil
 			}
+			close := group.close
 			if r.opensSubquery(i) {
 				if err := r.subquery(i+1, close); err != nil {
 					return err
 				}
-			} else if err := r.expression(i+1, close); err != nil {
-				return err
+			} else {
+				for _, entry := range syntax.arguments[group.argumentStart:group.argumentEnd] {
+					value := syntax.mapEntryValue(entry)
+					if err := r.expression(value.start, value.end); err != nil {
+						return err
+					}
+				}
 			}
 			i = close
 		case c == '[':
@@ -1259,12 +1301,6 @@ func (r *labelExpressionRewriter) expression(start, end int) error {
 			j := i
 			for j < end && isIdentByte(q[j]) {
 				j++
-			}
-			if err := shortestPathExpressionError(q, i, j, end); err != nil {
-				return err
-			}
-			if err := r.vectorCall(i, j, end); err != nil {
-				return err
 			}
 			if err := r.labelTest(i, j, end); err != nil {
 				return err
@@ -1522,35 +1558,36 @@ func (r *labelExpressionRewriter) whereWithPredicates(start, end int, predicates
 // call whose inside is an expression. It returns where scanning resumes.
 func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, error) {
 	q := r.query
-	close := findMatchingDelimiter(q[:end], open, '(', ')')
-	if close < 0 {
+	syntax := r.callSyntax()
+	group, matched := syntax.groupAt(open)
+	if !matched || group.close < 0 || group.close >= end {
 		return end, nil
 	}
-	call := open > start && isIdentByte(q[open-1])
-	if !call {
+	close := group.close
+	call, called := syntax.callBeforeParen(open)
+	called = called && call.start >= start && call.expressionCall()
+	if !called {
 		if chainEnd, ok := relationshipChainEnd(r.query, open, end); ok {
 			return chainEnd, r.patternPredicate(open, chainEnd, -1, -1)
 		}
-		if next, handled, err := r.expressionLabelTest(open, open, close, end); handled {
+		if next, handled, err := r.expressionLabelTest(start, open, open, close, end); handled {
 			return next, err
 		}
 	} else {
-		subject := open - 1
-		for subject > start && (isIdentByte(q[subject-1]) || q[subject-1] == '.') {
-			subject--
+		if err := shortestPathExpressionErrorFromSyntax(syntax, call.start, call.nameEnd, end); err != nil {
+			return 0, err
 		}
-		if next, handled, err := r.expressionLabelTest(subject, open, close, end); handled {
+		if err := r.vectorCall(call, end); err != nil {
+			return 0, err
+		}
+		if next, handled, err := r.expressionLabelTest(start, call.start, open, close, end); handled {
 			return next, err
 		}
 		// exists((n)-->(m)): the argument as the predicate.
-		nameStart := open - 1
-		for nameStart > start && isIdentByte(q[nameStart-1]) {
-			nameStart--
-		}
 		inner := skipASCIISpaces(q, open+1, close)
-		if strings.EqualFold(q[nameStart:open], "exists") {
+		if strings.EqualFold(call.name, "exists") {
 			if chainEnd, ok := relationshipChainEnd(r.query, inner, close); ok && skipASCIISpaces(q, chainEnd, close) == close {
-				return close + 1, r.patternPredicate(inner, chainEnd, nameStart, close)
+				return close + 1, r.patternPredicate(inner, chainEnd, call.start, close)
 			}
 		}
 	}
@@ -1565,17 +1602,19 @@ func (r *labelExpressionRewriter) parenthesised(start, open, end int) (int, erro
 // follows, or when the parenthesis is a dynamic label's ($(e), $any(e),
 // $all(e)) or stands in a label chain (n:$(e):B); an expression that itself
 // holds a rewrite is left as it was.
-func (r *labelExpressionRewriter) expressionLabelTest(subjectStart, open, close, end int) (int, bool, error) {
+func (r *labelExpressionRewriter) expressionLabelTest(expressionStart, subjectStart, open, close, end int) (int, bool, error) {
 	q := r.query
-	if strings.HasPrefix(q[subjectStart:open], "$") || (subjectStart > 0 && (q[subjectStart-1] == '$' || q[subjectStart-1] == ':')) {
+	// A map value's opening colon lies outside this expression. Only a colon
+	// inside the expression can make this group part of a label chain.
+	if strings.HasPrefix(q[subjectStart:open], "$") || (subjectStart > expressionStart && (q[subjectStart-1] == '$' || q[subjectStart-1] == ':')) {
 		return 0, false, nil
 	}
 	after := close + 1
 	chainStart := -1
-	if colon := skipASCIISpaces(q, after, end); colon < end && q[colon] == ':' && (colon+1 >= end || q[colon+1] != ':') {
-		chainStart = skipASCIISpaces(q, colon+1, end)
-	} else if is := skipASCIISpaces(q, after, end); is > after && matchKeywordAt(q[:end], is, "IS") && isLabelIsKeyword(q[:end], is+2) {
-		label := skipASCIISpaces(q, is+2, end)
+	if colon := queryGapEnd(q, after); colon < end && q[colon] == ':' && (colon+1 >= end || q[colon+1] != ':') {
+		chainStart = queryGapEnd(q, colon+1)
+	} else if is := queryGapEnd(q, after); is > after && is < end && matchKeywordAt(q[:end], is, "IS") && isLabelIsKeyword(q[:end], is+2) {
+		label := queryGapEnd(q, is+2)
 		if matchKeywordAt(q[:end], label, "NOT") || matchKeywordAt(q[:end], label, "LABELED") {
 			return 0, false, nil
 		}

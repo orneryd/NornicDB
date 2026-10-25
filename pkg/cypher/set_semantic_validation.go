@@ -313,6 +313,9 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 // all / any / none / single).
 // It is the one reference scanner for the static SET and CREATE checks.
 func expressionFreeVariables(expression string) []string {
+	// The cursor reads the unmasked text: both maskers blank in place and
+	// the walk below never asks at a masked offset.
+	calls := newCallCursor(expression)
 	expression = maskTypePredicateTypes(maskPathFunctionCalls(expression))
 	// Both maskers blank in place: offsets are the expression's.
 	locals := newLocalReader(expression)
@@ -416,9 +419,9 @@ func expressionFreeVariables(expression string) []string {
 				}
 			}
 		}
-		if functionEnd, call := qualifiedFunctionNameEnd(expression, next); call {
+		if call, called := calls.callAt(index); called {
 			delimiters = append(delimiters, '(')
-			index = functionEnd + 1
+			index = call.open + 1
 			continue
 		}
 		// A subquery expression (EXISTS / COUNT / COLLECT { … }) binds its own
@@ -479,8 +482,9 @@ func expressionFreeVariables(expression string) []string {
 // pattern comprehensions, reduce / all / any / none / single / filter). It
 // is the names-only view of the one declaration reader, for the caches and
 // pre-filters in front of localVariableShadowsAt.
-func expressionLocalBindings(expression string) map[string]struct{} {
+func expressionLocalBindings(expression string, views ...expressionLexicalView) map[string]struct{} {
 	locals := make(map[string]struct{})
+	calls := newCallCursor(expression, views...)
 	for index := 0; index < len(expression); index++ {
 		switch c := expression[index]; cypherLexicalByte(c) {
 		case cypherQuoteClass:
@@ -490,7 +494,7 @@ func expressionLocalBindings(expression string) map[string]struct{} {
 				index = end - 1
 			}
 		case '[', '(':
-			if binding, ok := localBindingAt(expression, index); ok {
+			if binding, ok := localBindingAtWith(expression, index, &calls); ok {
 				for declared := 0; declared < binding.count; declared++ {
 					locals[binding.names[declared]] = struct{}{}
 				}

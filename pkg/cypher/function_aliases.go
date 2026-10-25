@@ -41,39 +41,17 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 		out     strings.Builder
 		last    int
 	)
-	for index := 0; index < len(query); {
-		c := query[index]
-		switch {
-		case isCypherQuoteByte(c):
-			index = skipCypherQuotedText(query, index, c)
-			continue
-		case c == '/':
-			if end := queryCommentEnd(query, index); end >= 0 {
-				index = end
-				continue
-			}
+	lexicalCallSpans(query, func(call functionCallSpan) bool {
+		if call.procedure {
+			return true
 		}
-		if !isIdentByte(c) || isDigitByte(c) || index > 0 && (isIdentByte(query[index-1]) || query[index-1] == '.' || query[index-1] == '$') {
-			index++
-			continue
-		}
-		end := index + 1
-		for end < len(query) && isIdentByte(query[end]) {
-			end++
-		}
-		next := skipSpaces(query, end)
-		if next >= len(query) || query[next] != '(' {
-			index = end
-			continue
-		}
-		name := strings.ToLower(query[index:end])
-		start, stop, replacement := index, end, cypherFunctionAliases[name]
+		name := call.normalized
+		start, stop, replacement := call.start, call.nameEnd, cypherFunctionAliases[name]
 		if name == "property_exists" {
-			start, stop, replacement = propertyExistsKeyName(query, next)
+			start, stop, replacement = propertyExistsKeyName(query, call.open)
 		}
 		if replacement == "" {
-			index = end
-			continue
+			return true
 		}
 		if rewrite == nil {
 			rewrite = &queryRewrite{original: query}
@@ -84,8 +62,8 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 		out.WriteString(replacement)
 		rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: start, origEnd: stop, canonStart: canonStart, canonEnd: out.Len()})
 		last = stop
-		index = stop
-	}
+		return true
+	})
 	if rewrite == nil {
 		return query, nil
 	}
@@ -98,14 +76,17 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 // whose parentheses open at open: its span and the key as a string literal,
 // or an empty replacement when the call doesn't have that form.
 func propertyExistsKeyName(query string, open int) (start, end int, literal string) {
-	_, after, ok := scanIdentifierToken(query, skipSpaces(query, open+1))
-	comma := skipSpaces(query, after)
-	if !ok || comma >= len(query) || query[comma] != ',' {
+	call, ok := functionCallBeforeParen(query, open)
+	if !ok || call.close(query) < 0 {
 		return 0, 0, ""
 	}
-	start = skipSpaces(query, comma+1)
-	key, end, ok := scanIdentifierToken(query, start)
-	if closing := skipSpaces(query, end); !ok || closing >= len(query) || query[closing] != ')' {
+	spans := call.syntax.argumentSpans(call.group)
+	if len(spans) != 2 || simpleSemanticIdentifier(call.syntax.render(spans[0])) == "" {
+		return 0, 0, ""
+	}
+	start = queryGapEnd(query, spans[1].start)
+	key, end, ok := callableIdentifierToken(query, start)
+	if !ok || queryGapEnd(query, end) != spans[1].end {
 		return 0, 0, ""
 	}
 	return start, end, "'" + strings.ReplaceAll(strings.ReplaceAll(key, `\`, `\\`), `'`, `\'`) + "'"

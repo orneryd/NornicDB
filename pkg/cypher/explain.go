@@ -441,10 +441,10 @@ func (e *StorageExecutor) annotateIndexDiagnostics(args map[string]interface{}, 
 
 	// Check WHERE clause for predicate shapes that prevent index use.
 	upper := upperASCII(query)
-	if strings.Contains(upper, "COALESCE(") {
+	if containsFunctionCallNamed(upper, "COALESCE") {
 		args["indexRejectionRisk"] = "function_wrapping (coalesce)"
 	}
-	if strings.Contains(upper, "TOLOWER(") || strings.Contains(upper, "TOUPPER(") {
+	if containsFunctionCallNamed(upper, "TOLOWER") || containsFunctionCallNamed(upper, "TOUPPER") {
 		args["indexRejectionRisk"] = "function_wrapping (toLower/toUpper)"
 	}
 }

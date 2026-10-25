@@ -211,39 +211,30 @@ func rowStatementContext(values map[string]interface{}) context.Context {
 // scores at the statement's time (#866). A row expression with one carries
 // the statement context (rowStatementContextKey).
 func containsStatementClockCall(expression string) bool {
-	for index := 0; index < len(expression); index++ {
-		if expression[index] != '(' {
-			continue
-		}
-		end := index
-		for end > 0 && isASCIISpace(expression[end-1]) {
-			end--
-		}
-		start := end
-		for start > 0 && (isIdentByte(expression[start-1]) || expression[start-1] == '.') {
-			start--
-		}
-		name := expression[start:end]
-		if dot := strings.IndexByte(name, '.'); dot >= 0 {
-			name = name[:dot]
-		}
-		if name == "" {
-			continue
-		}
-		switch name[0] | 0x20 {
-		case 'd':
-			if equalFoldASCII(name, "date") || equalFoldASCII(name, "datetime") || equalFoldASCII(name, "decay") || equalFoldASCII(name, "decayscore") {
-				return true
-			}
-		case 'l':
-			if equalFoldASCII(name, "localdatetime") || equalFoldASCII(name, "localtime") {
-				return true
-			}
-		case 't':
-			if equalFoldASCII(name, "time") {
-				return true
-			}
-		}
+	found := false
+	lexicalFunctionCallSpans(expression, func(call functionCallSpan) bool {
+		found = statementClockCallName(call.name)
+		return !found
+	})
+	return found
+}
+
+// statementClockCallName reports whether a call's name, or its namespace,
+// names a temporal constructor or a decay function.
+func statementClockCallName(name string) bool {
+	if dot := strings.IndexByte(name, '.'); dot >= 0 {
+		name = name[:dot]
+	}
+	if name == "" {
+		return false
+	}
+	switch name[0] | 0x20 {
+	case 'd':
+		return equalFoldASCII(name, "date") || equalFoldASCII(name, "datetime") || equalFoldASCII(name, "decay") || equalFoldASCII(name, "decayscore")
+	case 'l':
+		return equalFoldASCII(name, "localdatetime") || equalFoldASCII(name, "localtime")
+	case 't':
+		return equalFoldASCII(name, "time")
 	}
 	return false
 }
@@ -389,7 +380,9 @@ func (e *StorageExecutor) evaluateTemporalConstructor(ctx context.Context, evalu
 	switch kind {
 	case "date", "localtime", "time", "localdatetime", "datetime", "duration":
 		argument = strings.TrimSpace(argument)
-		if _, patterned := temporalPatternTypeNames[kind]; patterned && !clockFunction && strings.IndexByte(argument, ',') >= 0 {
+		// Count the parts in a local buffer: a single argument allocates nothing.
+		var partBuffer [3]string
+		if _, patterned := temporalPatternTypeNames[kind]; patterned && !clockFunction && len(appendTopLevelComma(partBuffer[:0], argument)) > 1 {
 			if arguments := e.splitFunctionArgs(argument); len(arguments) == 2 {
 				value, err := constructTemporalWithPattern(kind, ctxEval(strings.TrimSpace(arguments[0])), ctxEval(strings.TrimSpace(arguments[1])))
 				return value, true, err

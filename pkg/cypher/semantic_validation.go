@@ -416,6 +416,14 @@ func containsIllegalProjectedPatternExpression(expression string) bool {
 	expression = maskPathFunctionCalls(expression)
 	segmentStart := 0
 	for index := 0; index < len(expression); index++ {
+		if end := queryCommentEnd(expression, index); end >= 0 {
+			index = end - 1
+			continue
+		}
+		if c := expression[index]; isCypherQuoteByte(c) {
+			index = skipCypherQuotedText(expression, index, c) - 1
+			continue
+		}
 		if expression[index] != '[' || (index > 0 && expression[index-1] == '-') {
 			continue
 		}
@@ -448,35 +456,24 @@ func maskPathFunctionCalls(expression string) string {
 		return expression
 	}
 	masked := []byte(expression)
-	for _, name := range []string{"shortestpath", "allshortestpaths"} {
-		searchStart := 0
-		for searchStart < len(expression) {
-			idx := indexASCIIFold(expression[searchStart:], name)
-			if idx < 0 {
-				break
-			}
-			idx += searchStart
-			if !functionNameStartsAt(expression, idx) {
-				searchStart = idx + 1
-				continue
-			}
-			openParen := skipSpaces(expression, idx+len(name))
-			if openParen >= len(expression) || expression[openParen] != '(' {
-				searchStart = idx + 1
-				continue
-			}
-			closeParen := findMatchingParen(expression, openParen)
-			if closeParen < 0 {
-				break
-			}
-			for position := idx; position <= closeParen; position++ {
-				if masked[position] != '\n' && masked[position] != '\r' {
-					masked[position] = ' '
-				}
-			}
-			searchStart = closeParen + 1
+	// Calls inside a masked call's arguments are part of it.
+	resume := 0
+	lexicalFunctionCallSpans(expression, func(call functionCallSpan) bool {
+		if call.start < resume || !strings.EqualFold(call.name, "shortestPath") && !strings.EqualFold(call.name, "allShortestPaths") {
+			return true
 		}
-	}
+		close := call.close(expression)
+		if close < 0 {
+			return false
+		}
+		for position := call.start; position <= close; position++ {
+			if masked[position] != '\n' && masked[position] != '\r' {
+				masked[position] = ' '
+			}
+		}
+		resume = close + 1
+		return true
+	})
 	return string(masked)
 }
 

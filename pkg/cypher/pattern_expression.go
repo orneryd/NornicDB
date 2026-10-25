@@ -14,9 +14,12 @@ import (
 // projection. A pattern comprehension starts with a node pattern, or a path
 // variable and = before one; a list comprehension [x IN list WHERE … | …]
 // starts with its variable, so an IN in the WHERE doesn't make one (#1109).
-func splitPatternComprehension(expr string) (string, string, bool) {
+func splitPatternComprehension(expr string, views ...expressionLexicalView) (string, string, bool) {
 	expr = strings.TrimSpace(expr)
-	if len(expr) < 3 || !isListLiteral(expr) {
+	if len(expr) < 3 || expr[0] != '[' {
+		return "", "", false
+	}
+	if _, enclosed := borrowedExpressionView(expr, views).enclosed('[', ']'); !enclosed {
 		return "", "", false
 	}
 

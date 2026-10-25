@@ -26,23 +26,11 @@ import (
 // doesn't close it, or what precedes the brace isn't a variable (a map
 // literal, a subquery such as COUNT { … }).
 func rowMapProjectionSplit(expression string) (variable, items string, ok bool) {
-	trimmed := strings.TrimSpace(expression)
-	if !strings.HasSuffix(trimmed, "}") {
+	variable, items, ok = lexicalProjectionGroup(strings.TrimSpace(expression))
+	if !ok || !isValidIdentifier(variable) && !isBacktickQuotedName(variable) {
 		return "", "", false
 	}
-	open := strings.IndexByte(trimmed, '{')
-	if open <= 0 || findMatchingDelimiter(trimmed, open, '{', '}') != len(trimmed)-1 {
-		return "", "", false
-	}
-	variable = strings.TrimSpace(trimmed[:open])
-	if !isValidIdentifier(variable) && !isBacktickQuotedName(variable) {
-		return "", "", false
-	}
-	if precedingSubqueryExpressionKeyword(trimmed, open) {
-		return "", "", false
-	}
-
-	return variable, strings.TrimSpace(trimmed[open+1 : len(trimmed)-1]), true
+	return variable, items, true
 }
 
 func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map[string]interface{}) (interface{}, bool, bool, error) {

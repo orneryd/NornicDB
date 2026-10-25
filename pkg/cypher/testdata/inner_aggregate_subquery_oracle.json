@@ -1,0 +1,216 @@
+[
+  {
+    "id": "count_plain",
+    "expression": "COUNT { RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN COUNT { RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        1
+      ],
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "id": "count_block",
+    "expression": "COUNT /*gap*/ { RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN COUNT /*gap*/ { RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        1
+      ],
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "id": "count_line",
+    "expression": "COUNT //gap\n { RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN COUNT //gap\n { RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        1
+      ],
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "id": "count_repeated",
+    "expression": "COUNT/* first */ /* second */{ RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN COUNT/* first */ /* second */{ RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        1
+      ],
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "id": "exists_plain",
+    "expression": "EXISTS { RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN EXISTS { RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        true
+      ],
+      [
+        true
+      ]
+    ]
+  },
+  {
+    "id": "exists_block",
+    "expression": "EXISTS /*gap*/ { RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN EXISTS /*gap*/ { RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        true
+      ],
+      [
+        true
+      ]
+    ]
+  },
+  {
+    "id": "exists_line",
+    "expression": "EXISTS //gap\n { RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN EXISTS //gap\n { RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        true
+      ],
+      [
+        true
+      ]
+    ]
+  },
+  {
+    "id": "exists_repeated",
+    "expression": "EXISTS/* first */ /* second */{ RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN EXISTS/* first */ /* second */{ RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        true
+      ],
+      [
+        true
+      ]
+    ]
+  },
+  {
+    "id": "collect_plain",
+    "expression": "COLLECT { RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN COLLECT { RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        [
+          1
+        ]
+      ],
+      [
+        [
+          1
+        ]
+      ]
+    ]
+  },
+  {
+    "id": "collect_block",
+    "expression": "COLLECT /*gap*/ { RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN COLLECT /*gap*/ { RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        [
+          1
+        ]
+      ],
+      [
+        [
+          1
+        ]
+      ]
+    ]
+  },
+  {
+    "id": "collect_line",
+    "expression": "COLLECT //gap\n { RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN COLLECT //gap\n { RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        [
+          1
+        ]
+      ],
+      [
+        [
+          1
+        ]
+      ]
+    ]
+  },
+  {
+    "id": "collect_repeated",
+    "expression": "COLLECT/* first */ /* second */{ RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN COLLECT/* first */ /* second */{ RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        [
+          1
+        ]
+      ],
+      [
+        [
+          1
+        ]
+      ]
+    ]
+  },
+  {
+    "id": "count_empty_outer",
+    "expression": "COUNT /*gap*/ { RETURN count(*) AS c }",
+    "query": "UNWIND [] AS n RETURN COUNT /*gap*/ { RETURN count(*) AS c } AS v",
+    "rows": []
+  },
+  {
+    "id": "outer_count",
+    "expression": "count(*)",
+    "query": "UNWIND range(1,2) AS n RETURN count(*) AS v",
+    "rows": [
+      [
+        2
+      ]
+    ]
+  },
+  {
+    "id": "count_comment_quoted_text",
+    "expression": "COUNT /* ' // */ { RETURN count(*) AS c }",
+    "query": "UNWIND range(1,2) AS n RETURN COUNT /* ' // */ { RETURN count(*) AS c } AS v",
+    "rows": [
+      [
+        1
+      ],
+      [
+        1
+      ]
+    ]
+  },
+  {
+    "id": "quoted_literal",
+    "expression": "'COUNT /*gap*/ { RETURN count(*) AS c }'",
+    "query": "UNWIND range(1,2) AS n RETURN 'COUNT /*gap*/ { RETURN count(*) AS c }' AS v",
+    "rows": [
+      [
+        "COUNT /*gap*/ { RETURN count(*) AS c }"
+      ],
+      [
+        "COUNT /*gap*/ { RETURN count(*) AS c }"
+      ]
+    ]
+  }
+]

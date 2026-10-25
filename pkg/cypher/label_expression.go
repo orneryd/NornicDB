@@ -630,8 +630,12 @@ const labelWildcardMode = "wildcard"
 
 // cypherStringLiteral quotes text as a Cypher string literal.
 func cypherStringLiteral(text string) string {
-	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(text) + "'"
+	return "'" + cypherStringLiteralEscaper.Replace(text) + "'"
 }
+
+// cypherStringLiteralEscaper is built once: a Replacer is safe for
+// concurrent use, and building one allocates its byte table each time.
+var cypherStringLiteralEscaper = strings.NewReplacer(`\`, `\\`, `'`, `\'`)
 
 // resolveDynamic replaces the expression's dynamic terms with the names their
 // values give (resolve; dynamicLabelNames): $(e) and $all(e) by the

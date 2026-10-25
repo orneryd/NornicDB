@@ -162,6 +162,15 @@ func isSpacedKeywordOperator(op string) bool {
 	return false
 }
 
+// infixKeywordAt is the one decision, for the static checks and the
+// evaluators, whether the word of an infix keyword (AND, OR, XOR) at s[i] is
+// that operator: a word after a dot is a property key or name component
+// (x . and, custom . or(…)), and a word where an operand is expected is a
+// variable (or > 1 AND or < 3).
+func infixKeywordAt(s string, i int) bool {
+	return functionNameStartsAt(s, i) && !caseOperandExpectedBefore(s, i)
+}
+
 func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) int {
 	if len(op) == 0 || len(expr) < len(op) {
 		return -1
@@ -211,9 +220,7 @@ func findTopLevelOperator(expr, op string, caseInsensitive, trackBrackets bool) 
 						continue
 					}
 				}
-				if keyword && caseOperandExpectedBefore(expr, i+1) {
-					// A word of the operator's name where an operand is
-					// expected is a variable (or > 1 AND or < 3).
+				if keyword && !infixKeywordAt(expr, i+1) {
 					continue
 				}
 				return i

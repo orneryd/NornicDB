@@ -2170,30 +2170,30 @@ func graphReadingExpression(cypher string) string {
 			if open < len(cypher) && cypher[open] == '{' {
 				return keyword
 			}
-			// EXISTS((n)-->(m)): a pattern between the parentheses.
-			if keyword == "EXISTS" && open < len(cypher) && cypher[open] == '(' {
-				if close := findMatchingDelimiter(cypher, open, '(', ')'); close > open {
-					inner := strings.TrimSpace(cypher[open+1 : close])
-					if strings.ContainsAny(inner, "-><") || strings.HasPrefix(inner, "(") {
-						return graphReadingPattern
-					}
-				}
-			}
 			from = end
 		}
 	}
-	for _, keyword := range []string{"shortestPath", "allShortestPaths"} {
-		for from := 0; from < len(cypher); {
-			at := keywordIndexFrom(cypher, keyword, from, opts)
-			if at < 0 {
-				break
+	// Only a procedure is called without parentheses.
+	pathCall := false
+	if mayHaveFunctionCall(cypher) {
+		lexicalCallSpans(cypher, func(call functionCallSpan) bool {
+			if call.procedure {
+				return true
 			}
-			open := queryGapEnd(cypher, at+len(keyword))
-			if open < len(cypher) && cypher[open] == '(' {
-				return graphReadingPattern
+			switch call.normalized {
+			case "shortestpath", "allshortestpaths":
+				pathCall = true
+			case "exists":
+				if close := call.close(cypher); close > call.open {
+					inner := call.syntax.render(syntaxSpan{call.open + 1, close})
+					pathCall = strings.ContainsAny(inner, "-><") || strings.HasPrefix(inner, "(")
+				}
 			}
-			from = at + len(keyword)
-		}
+			return !pathCall
+		})
+	}
+	if pathCall {
+		return graphReadingPattern
 	}
 	if comprehension, _ := classifyPatternComprehensions(cypher); comprehension {
 		return graphReadingPatternComprehension
@@ -2240,15 +2240,8 @@ func statementReadsGraphText(cypher string) bool {
 			return true
 		}
 	}
-	for from := 0; from < len(cypher); {
-		at := keywordIndexFrom(cypher, "CALL", from, opts)
-		if at < 0 {
-			break
-		}
-		from = at + len("CALL")
-		if _, procedure := procedureNameAt(cypher, queryGapEnd(cypher, from)); procedure {
-			return true
-		}
+	if _, procedure := firstProcedureCall(cypher); procedure {
+		return true
 	}
 	return expressionReadsGraphText(cypher)
 }

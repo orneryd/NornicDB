@@ -9,31 +9,17 @@ import (
 // operators to statically non-numeric list elements. This is a compile-time
 // Cypher type error rather than a null-producing runtime expression.
 func validateStaticQuantifierTypes(cypher string) error {
-	options := defaultKeywordScanOpts()
-	options.SkipParens = false
-	options.SkipBrackets = false
-	options.SkipBraces = false
-	for _, name := range []string{"all", "any", "none", "single"} {
-		for from := 0; from < len(cypher); {
-			index := keywordIndexFrom(cypher, name, from, options)
-			if index < 0 {
-				break
-			}
-			from = index + len(name)
-			open := queryGapEnd(cypher, index+len(name))
-			if open >= len(cypher) || cypher[open] != '(' {
-				continue
-			}
-			close := findMatchingParen(cypher, open)
-			if close < 0 {
-				continue
-			}
-			if err := validateStaticQuantifierCall(cypher[open+1 : close]); err != nil {
-				return err
-			}
+	var failure error
+	lexicalFunctionCallSpans(cypher, func(call functionCallSpan) bool {
+		if !isQuantifierFunction(call.normalized) {
+			return true
 		}
-	}
-	return nil
+		if close := call.close(cypher); close >= 0 {
+			failure = validateStaticQuantifierCall(call.syntax.source(syntaxSpan{call.open + 1, close}))
+		}
+		return failure == nil
+	})
+	return failure
 }
 
 func validateStaticQuantifierCall(inner string) error {

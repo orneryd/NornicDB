@@ -194,7 +194,9 @@ func isBackslashEscaped(s string, idx int) bool {
 //   - 123 → int64
 //   - 1.23 → float64
 //   - [1, 2, 3] → []interface{}
+
 //   - {key: value} → map[string]interface{}
+
 //   - function() → evaluated result
 //
 // # Parameters
@@ -257,6 +259,7 @@ type invalidPropertyValue struct {
 // # Example
 //
 //	parseArrayValue("[1, 2, 3]")      // []interface{}{int64(1), int64(2), int64(3)}
+//
 //	parseArrayValue("['a', 'b']")    // []interface{}{"a", "b"}
 //	parseArrayValue("[[1], [2]]")    // []interface{}{[]interface{}{1}, []interface{}{2}}
 func (e *StorageExecutor) parseArrayValue(ctx context.Context, arrayStr string) ([]interface{}, error) {
@@ -320,41 +323,8 @@ func (e *StorageExecutor) splitArrayElements(inner string) []string {
 //	looksLikeFunctionCall("'not a function'")    // false
 //	looksLikeFunctionCall("x + y")               // false
 func looksLikeFunctionCall(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-
-	// Must end with )
-	if !strings.HasSuffix(s, ")") {
-		return false
-	}
-
-	// Find the opening parenthesis
-	parenIdx := strings.Index(s, "(")
-	if parenIdx <= 0 {
-		return false
-	}
-
-	// The part before ( must be a valid identifier (possibly with dots for namespacing)
-	name := s[:parenIdx]
-
-	// Allow dots for namespaced functions like apoc.coll.sum
-	for i, c := range name {
-		if i == 0 {
-			// First char must be letter or underscore
-			if !isIdentStartRune(c) {
-				return false
-			}
-		} else {
-			// Subsequent chars can be alphanumeric, underscore, or dot
-			if !(isIdentRune(c) || c == '.') {
-				return false
-			}
-		}
-	}
-
-	return true
+	_, _, ok := parseFunctionCallWS(s)
+	return ok
 }
 
 // nodePatternStructure reads syntax only; it does not materialize property values.

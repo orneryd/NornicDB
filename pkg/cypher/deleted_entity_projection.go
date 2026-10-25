@@ -216,41 +216,58 @@ type deletedEntityRead struct {
 // deletedEntityReadsIn returns the variables expression reads a property, the
 // labels, the keys or properties() of, outside string literals: v.p,
 // labels(v), keys(v), properties(v).
+//
+// One call walk reads the text once: the calls it classifies, and the words,
+// runs of identifier bytes that neither continue a name nor follow a dot.
+// Unicode trivia bytes are identifier bytes to the word rule, so a word can
+// start in the trivia between two tokens and take in the tokens it runs over.
 func deletedEntityReadsIn(expression string) []deletedEntityRead {
 	var reads []deletedEntityRead
-	for index := 0; index < len(expression); {
-		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
-			index = end
-			continue
+	wordEnd := 0
+	readWord := func(start int) {
+		if start < wordEnd || !isIdentByte(expression[start]) || start > 0 && (isIdentByte(expression[start-1]) || expression[start-1] == '.') {
+			return
 		}
-		switch character := expression[index]; {
-		case !isIdentByte(character) || (index > 0 && (isIdentByte(expression[index-1]) || expression[index-1] == '.')):
-			index++
-			continue
+		wordEnd = start + 1
+		for wordEnd < len(expression) && isIdentByte(expression[wordEnd]) {
+			wordEnd++
 		}
-		start := index
-		for index < len(expression) && isIdentByte(expression[index]) {
-			index++
-		}
-		word := expression[start:index]
-		next := skipSpaceIndex(expression, index)
-		switch {
-		case next < len(expression) && expression[next] == '.' && next+1 < len(expression) && expression[next+1] != '.':
-			if !propertyNullTestFollows(expression, next+1) {
-				reads = append(reads, deletedEntityRead{variable: word})
-			}
-		case next < len(expression) && expression[next] == '(' && (strings.EqualFold(word, "labels") || strings.EqualFold(word, "keys") || strings.EqualFold(word, "properties")):
-			argumentStart := skipSpaceIndex(expression, next+1)
-			argumentEnd := argumentStart
-			for argumentEnd < len(expression) && isIdentByte(expression[argumentEnd]) {
-				argumentEnd++
-			}
-			if close := skipSpaceIndex(expression, argumentEnd); argumentEnd > argumentStart && close < len(expression) && expression[close] == ')' {
-				reads = append(reads, deletedEntityRead{variable: expression[argumentStart:argumentEnd], relationshipOnly: !strings.EqualFold(word, "labels")})
-			}
+		next := queryGapEnd(expression, wordEnd)
+		if next < len(expression) && expression[next] == '.' && next+1 < len(expression) && expression[next+1] != '.' && !propertyNullTestFollows(expression, next+1) {
+			reads = append(reads, deletedEntityRead{variable: expression[start:wordEnd]})
 		}
 	}
-	return reads
+	walk := newCallWalk(expression)
+	for gap := 0; ; {
+		kind, start, end := walk.next()
+		for at := gap; at < start; at++ {
+			if expression[at] >= 0x80 {
+				readWord(at)
+			}
+		}
+		gap = end
+		switch {
+		case kind == lexicalEnd:
+			return reads
+		case kind == lexicalComment || kind == lexicalQuoted || start < wordEnd:
+			continue
+		case kind == lexicalPunctuation && isCypherBacktickByte(expression[start]):
+			// An unclosed quoted name runs to the end of the text.
+			return reads
+		}
+		if walk.found && walk.call.expressionCall() {
+			switch name := walk.call.normalized; name {
+			case "labels", "keys", "properties":
+				if variable := singleNameArgument(expression, walk.call); variable != "" {
+					reads = append(reads, deletedEntityRead{variable: variable, relationshipOnly: name != "labels"})
+				}
+			}
+		}
+		// A quoted name is no word.
+		if kind == lexicalPunctuation || !isCypherBacktickByte(expression[start]) {
+			readWord(start)
+		}
+	}
 }
 
 func skipSpaceIndex(text string, index int) int {

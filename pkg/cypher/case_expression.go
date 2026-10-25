@@ -315,10 +315,7 @@ func caseOperandExpectedBefore(s string, i int) bool {
 }
 
 func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
-	j := i - 1
-	for j >= 0 && isASCIISpace(s[j]) {
-		j--
-	}
+	j := queryGapStart(s, i) - 1
 	if j < 0 {
 		return true
 	}
@@ -346,7 +343,7 @@ func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
 	for start > 0 && isIdentByte(s[start-1]) {
 		start--
 	}
-	if start > 0 && (s[start-1] == '.' || s[start-1] == '$' || s[start-1] == ':') {
+	if !functionNameStartsAt(s, start) || start > 0 && (s[start-1] == '$' || s[start-1] == ':') {
 		return false // a property, parameter or label completes an operand
 	}
 	switch word := lowerASCII(s[start : j+1]); word {
@@ -420,10 +417,7 @@ func caseTypeParameterCloses(s string, j int) bool {
 
 // casePreviousWordIn reports whether the word before s[i] is one of words.
 func casePreviousWordIn(s string, i int, words ...string) bool {
-	j := i - 1
-	for j >= 0 && isASCIISpace(s[j]) {
-		j--
-	}
+	j := queryGapStart(s, i) - 1
 	end := j + 1
 	for j >= 0 && isIdentByte(s[j]) {
 		j--
@@ -512,10 +506,7 @@ func caseNestedLacksEnd(s string, i int, balancePrefix bool) bool {
 }
 
 func casePreviousWordIsCase(s string, i int) bool {
-	j := i - 1
-	for j >= 0 && isASCIISpace(s[j]) {
-		j--
-	}
+	j := queryGapStart(s, i) - 1
 	return j >= 3 && matchKeywordAt(s, j-3, "CASE")
 }
 
@@ -628,6 +619,7 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 	stack := make([]int, 0, 2)
 	var delimiters []bool // open ( [ {: true when it opens a scope
 	scopes := 0
+	calls := newCallCursor(expr)
 	for i := 0; i < len(expr); i++ {
 		if end, quoted := skipCypherLexicalToken(expr, i); quoted {
 			i = end - 1
@@ -636,7 +628,7 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 		ch := expr[i]
 		switch ch {
 		case '(', '[', '{':
-			scope := caseVariableScopeOpensAt(expr, i)
+			scope := caseVariableScopeOpensAt(expr, i, &calls)
 			delimiters = append(delimiters, scope)
 			if scope {
 				scopes++
@@ -676,9 +668,9 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 // [x IN …], [p = (a)-->(b) | …], reduce / allReduce / all / any / none /
 // single / filter), an unnamed pattern comprehension [(a)-->(b) | …], or
 // the { … } of an EXISTS, COUNT, COLLECT or CALL subquery.
-func caseVariableScopeOpensAt(expr string, open int) bool {
+func caseVariableScopeOpensAt(expr string, open int, calls *callCursor) bool {
 	if expr[open] != '{' {
-		if _, ok := localBindingAt(expr, open); ok {
+		if _, ok := localBindingAtWith(expr, open, calls); ok {
 			return true
 		}
 	}

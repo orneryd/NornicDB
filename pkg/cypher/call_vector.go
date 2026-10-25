@@ -344,33 +344,25 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 	indexName = "default"
 	input = &vectorQueryInput{}
 
-	// Find the procedure call (supports both queryNodes and queryRelationships)
-	upper := upperASCII(cypher)
-	callIdx := strings.Index(upper, "DB.INDEX.VECTOR.QUERYNODES")
-	if callIdx == -1 {
-		callIdx = strings.Index(upper, "DB.INDEX.VECTOR.QUERYRELATIONSHIPS")
+	var call functionCallSpan
+	found := false
+	for _, candidate := range readFunctionSyntax(cypher).calls {
+		if strings.EqualFold(candidate.name, "db.index.vector.queryNodes") || strings.EqualFold(candidate.name, "db.index.vector.queryRelationships") {
+			call = candidate
+			found = true
+			break
+		}
 	}
-	if callIdx == -1 {
+	if !found {
 		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorProcedureNotFound(), nil)
 	}
-
-	// Find the opening parenthesis
-	rest := cypher[callIdx:]
-	parenIdx := strings.Index(rest, "(")
-	if parenIdx == -1 {
+	if call.open < 0 {
 		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorParametersMissing(), nil)
 	}
-
-	endIdx := findMatchingDelimiter(rest, parenIdx, '(', ')')
-	if endIdx < 0 {
+	if call.close(cypher) < 0 {
 		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorUnmatchedParenthesis(), nil)
 	}
-
-	params := rest[parenIdx+1 : endIdx]
-
-	// Split parameters (careful with nested brackets)
-	parts := splitTopLevelComma(params)
-
+	parts := call.arguments(nil)
 	if len(parts) >= 1 {
 		// First param is index name (quoted string)
 		indexName = strings.Trim(strings.TrimSpace(parts[0]), "'\"")
@@ -420,7 +412,7 @@ func parseInlineVector(s string) []float32 {
 	}
 	s = s[1 : len(s)-1]
 
-	parts := strings.Split(s, ",")
+	parts := splitTopLevelComma(s)
 	result := make([]float32, 0, len(parts))
 
 	for _, p := range parts {

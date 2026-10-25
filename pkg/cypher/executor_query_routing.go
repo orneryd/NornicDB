@@ -637,6 +637,10 @@ func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
 func hasAdjacentOperands(cypher string) bool {
 	operandEnded := false
 	for index := 0; index < len(cypher); {
+		if end := queryGapEnd(cypher, index); end > index {
+			index = end
+			continue
+		}
 		c := cypher[index]
 		switch {
 		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
@@ -736,7 +740,7 @@ var literalLeadingKeywords = map[string]struct{}{
 // another operand. A word followed by '(' (a function call) or ':' (a map key
 // or label) is never such a variable.
 func bareWordBeforeLiteral(cypher string, start, end int) bool {
-	next := skipSpaces(cypher, end)
+	next := queryGapEnd(cypher, end)
 	if next == end || next >= len(cypher) {
 		return false
 	}
@@ -841,6 +845,7 @@ var validSyntaxStarts = [...]string{
 }
 
 func hasValidStartKeyword(cypher string) bool {
+	cypher = cypher[lexicalLeadingTriviaEnd(cypher):]
 	for _, start := range validSyntaxStarts {
 		if startsWithKeywordFold(cypher, start) {
 			return true

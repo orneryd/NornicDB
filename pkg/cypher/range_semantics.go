@@ -131,42 +131,5 @@ func (e *StorageExecutor) validatePipelineRangeArguments(ctx context.Context, ro
 }
 
 func namedFunctionArguments(expression, function string) []string {
-	lower := lowerASCII(expression)
-	function = lowerASCII(function)
-	arguments := make([]string, 0)
-	for index := 0; index < len(lower); {
-		if isCypherQuoteByte(lower[index]) {
-			index = skipCypherQuotedText(expression, index, expression[index])
-			continue
-		}
-		if lower[index] == '/' {
-			if end := queryCommentEnd(expression, index); end >= 0 {
-				index = end
-				continue
-			}
-		}
-		if !strings.HasPrefix(lower[index:], function) || !functionNameStartsAt(expression, index) {
-			index++
-			continue
-		}
-		open := index + len(function)
-		if open < len(lower) && isIdentByte(lower[open]) {
-			index++
-			continue
-		}
-		for open < len(lower) && isWhitespace(lower[open]) {
-			open++
-		}
-		if open >= len(lower) || lower[open] != '(' {
-			index++
-			continue
-		}
-		close := findMatchingDelimiter(expression, open, '(', ')')
-		if close < 0 {
-			return arguments
-		}
-		arguments = append(arguments, expression[open+1:close])
-		index = close + 1
-	}
-	return arguments
+	return lexicalNamedArguments(expression, function)
 }

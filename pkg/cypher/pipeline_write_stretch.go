@@ -275,7 +275,7 @@ func addStretchRemoveWrites(list string, writes *stretchTokens) {
 func addStretchPropertyReads(text string, tokens *stretchTokens) {
 	lower := lowerASCII(text)
 	if strings.Contains(text, ".*") || strings.Contains(text, "{.") || strings.Contains(text, "{ .") ||
-		strings.Contains(lower, "properties(") || strings.Contains(lower, "keys(") {
+		containsFunctionCallNamed(lower, "properties") || containsFunctionCallNamed(lower, "keys") {
 		tokens.anyKey = true
 	}
 	for index := 0; index < len(text); index++ {

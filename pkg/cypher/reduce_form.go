@@ -26,9 +26,9 @@ func isReduceFormFunction(name string) bool {
 // parseReduceForm reads the arguments of a reduce or allReduce call; ok is
 // false when they don't have the function's form (allReduce takes a
 // predicate, reduce doesn't).
-func parseReduceForm(function, arguments string) (reduceForm, bool) {
+func parseReduceForm(function, arguments string, views ...expressionLexicalView) (reduceForm, bool) {
 	form := reduceForm{all: lowerASCII(function) == "allreduce"}
-	parts := splitTopLevelComma(arguments)
+	parts := borrowedExpressionView(arguments, views).splitComma(arguments)
 	if want := map[bool]int{false: 2, true: 3}[form.all]; len(parts) != want {
 		return form, false
 	}
@@ -52,7 +52,7 @@ func parseReduceForm(function, arguments string) (reduceForm, bool) {
 		return form, false
 	}
 	rest = rest[len("IN"):]
-	pipe := rowTopLevelPipeIndex(rest)
+	pipe := rowTopLevelPipeIndex(rest, borrowedExpressionView(arguments, views))
 	if pipe < 0 {
 		return form, false
 	}

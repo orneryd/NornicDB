@@ -58,23 +58,24 @@ func matchFuncStart(expr, funcName string) bool {
 }
 
 func hasFuncStart(expr, funcName string) bool {
-	expr = strings.TrimSpace(expr)
+	_, ok := leadingFunctionCall(expr, funcName)
+	return ok
+}
+
+// leadingFunctionCall is the call that opens expr when it is named
+// funcName, with only ASCII spacing before its parenthesis: the one reader
+// of the whitespace-tolerant matchers. As in release, comparing the leading
+// bytes with the name settles most questions before any token is read.
+func leadingFunctionCall(expr, funcName string) (functionCallSpan, bool) {
 	funcName = strings.TrimSpace(funcName)
-	if expr == "" || funcName == "" {
-		return false
+	if !lexicalLeadingNameMayBe(expr, funcName) {
+		return functionCallSpan{}, false
 	}
-	if len(expr) < len(funcName)+1 {
-		return false
+	call, ok := lexicalCallAt(expr, lexicalLeadingTriviaEnd(expr))
+	if !ok || !call.asciiNameSpacing(expr) || !strings.EqualFold(call.name, funcName) {
+		return functionCallSpan{}, false
 	}
-	if !strings.EqualFold(expr[:len(funcName)], funcName) {
-		return false
-	}
-	// Ensure next token is optional whitespace then '('
-	i := len(funcName)
-	for i < len(expr) && isSpaceByte(expr[i]) {
-		i++
-	}
-	return i < len(expr) && expr[i] == '('
+	return call, true
 }
 
 // matchFuncStartAndSuffix checks if expr starts with funcName( and ends with ).
@@ -88,7 +89,7 @@ func hasFuncStart(expr, funcName string) bool {
 //   - matchFuncStartAndSuffix("COUNT (n)", "count")   → true
 //   - matchFuncStartAndSuffix("count(n) + 1", "count") → false (doesn't end with ))
 func matchFuncStartAndSuffix(expr, funcName string) bool {
-	return matchFuncStart(expr, funcName) && strings.HasSuffix(expr, ")")
+	return isFunctionCallWS(expr, funcName)
 }
 
 // extractFuncArgs extracts the arguments string from a function call expression.
@@ -100,16 +101,8 @@ func matchFuncStartAndSuffix(expr, funcName string) bool {
 //   - extractFuncArgs("COUNT (n, m)", "count")       → "n, m"
 //   - extractFuncArgs("substring('hello', 0)", "substring") → "'hello', 0"
 func extractFuncArgs(expr, funcName string) string {
-	if !matchFuncStart(expr, funcName) {
-		return ""
-	}
-	// Find the opening paren position
-	idx := strings.IndexByte(expr, '(')
-	if idx == -1 || !strings.HasSuffix(expr, ")") {
-		return ""
-	}
-	// Return content between ( and )
-	return strings.TrimSpace(expr[idx+1 : len(expr)-1])
+	args, _ := extractFuncArgsLen(expr, funcName)
+	return args
 }
 
 // extractFuncArgsLen returns the arguments and the position of the opening paren.
@@ -118,14 +111,15 @@ func extractFuncArgs(expr, funcName string) string {
 // Returns: (argsString, openParenIndex)
 // If not matched, returns ("", -1)
 func extractFuncArgsLen(expr, funcName string) (string, int) {
-	if !matchFuncStart(expr, funcName) {
+	call, ok := leadingFunctionCall(expr, funcName)
+	if !ok {
 		return "", -1
 	}
-	idx := strings.IndexByte(expr, '(')
-	if idx == -1 || !strings.HasSuffix(expr, ")") {
+	close := call.close(expr)
+	if close < 0 || queryGapEnd(expr, close+1) != len(expr) {
 		return "", -1
 	}
-	return strings.TrimSpace(expr[idx+1 : len(expr)-1]), idx
+	return call.syntax.render(syntaxSpan{call.open + 1, close}), call.open
 }
 
 // isFunctionCallWS is a whitespace-tolerant version of isFunctionCall.
@@ -138,12 +132,12 @@ func extractFuncArgsLen(expr, funcName string) (string, int) {
 //   - isFunctionCallWS("count (n) + 1", "count")      → false (not standalone)
 //   - isFunctionCallWS("toLower(count (n))", "count") → false (nested)
 func isFunctionCallWS(expr, funcName string) bool {
-	if !matchFuncStart(expr, funcName) {
+	call, ok := leadingFunctionCall(expr, funcName)
+	if !ok {
 		return false
 	}
-	// The call's closing parenthesis ends the expression.
-	open := strings.IndexByte(expr, '(')
-	return findMatchingParen(expr, open) == len(expr)-1
+	close := call.close(expr)
+	return close >= 0 && queryGapEnd(expr, close+1) == len(expr)
 }
 
 // extractFuncArgsWithSuffix extracts function arguments and any suffix after the function call.
@@ -159,17 +153,16 @@ func isFunctionCallWS(expr, funcName string) bool {
 //   - extractFuncArgsWithSuffix("collect({a: 1})[..10]", "collect") → ("{a: 1}", "[..10]", true)
 //   - extractFuncArgsWithSuffix("sum(n.val) + 1", "sum")       → ("n.val", " + 1", true)
 func extractFuncArgsWithSuffix(expr, funcName string) (args string, suffix string, ok bool) {
-	if !matchFuncStart(expr, funcName) {
+	call, ok := leadingFunctionCall(expr, funcName)
+	if !ok {
 		return "", "", false
 	}
-	open := strings.IndexByte(expr, '(')
-	close := findMatchingParen(expr, open)
+	close := call.close(expr)
 	if close < 0 {
 		return "", "", false
 	}
-	return strings.TrimSpace(expr[open+1 : close]), expr[close+1:], true
+	return call.syntax.render(syntaxSpan{call.open + 1, close}), expr[close+1:], true
 }
-
 func isSpaceByte(b byte) bool {
 	switch b {
 	case ' ', '\t', '\n', '\r':
