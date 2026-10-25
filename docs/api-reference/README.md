@@ -60,6 +60,38 @@ columns, err := executor.ResultColumns(ctx, "RETURN 1 AS value",
     resultmetadata.KnownScope(nil), false)
 ```
 
+### Embedded Go stored values (v1.4.4 migration)
+
+Stored entity properties use their persisted representation when returned to Go
+callers, including immediately after a write. Integer properties fitting a signed
+64-bit integer are `int64`; larger `uint64` values retain their unsigned type.
+For example, replace `node.Properties["age"].(int)` with
+`node.Properties["age"].(int64)`. Homogeneous property lists can be typed slices,
+such as `[]int64`, rather than `[]any`. Caller-owned input maps retain their values.
+
+Hidden records still occupy their storage IDs. Recreating a stored node ID fails
+with `storage.ErrAlreadyExists`. Retrying the identical hidden relationship is a
+no-op that preserves its stored body; reusing its ID for another relationship is
+rejected. Deleting a node also removes its hidden relationships. An update to a
+node already deleted in the same transaction leaves it deleted.
+
+The Badger cache helper now takes an optional type on the existing API:
+replace `engine.InvalidateEdgeTypeCacheForType(typeName)` with
+`engine.InvalidateEdgeTypeCache(typeName)`. Calling
+`engine.InvalidateEdgeTypeCache()` still invalidates every type; an explicitly
+empty type remains a no-op. HTTP and Bolt contracts are unchanged.
+
+### Embedded Go role metadata (v1.4.4 migration)
+
+`auth.ReadRoleCatalog(roles, entitlements)` is the role metadata snapshot owner.
+Replace `roles.AllRoles()` with `auth.ReadRoleCatalog(roles, nil).RoleNames`, and
+replace `entitlements.All()` with
+`auth.ReadRoleCatalog(nil, entitlements).EntitlementOverrides`. Supply both stores
+to obtain both views. Each supplied store is read under its own read lock; returned
+slices and maps are independent. Overrides contain stored IDs; continue using
+`auth.PermissionsForRole` for effective permissions. HTTP response shapes and
+permissions remain unchanged.
+
 ## Common Questions
 
 - "What endpoint should I call?" → [openapi.md](openapi.md)

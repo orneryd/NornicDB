@@ -127,7 +127,7 @@ func TestRoleEntitlementsStore_SetLoadAndPermissions(t *testing.T) {
 		t.Fatalf("store should return copy, got %#v", got2)
 	}
 
-	all := store.All()
+	all := ReadRoleCatalog(nil, store).EntitlementOverrides
 	if !reflect.DeepEqual(all["admin"], []string{"read", "write"}) {
 		t.Fatalf("unexpected all entitlements map: %#v", all)
 	}

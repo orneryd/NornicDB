@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/convert"
 )
 
 const (
@@ -222,7 +224,7 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 	if err != nil {
 		t.Fatalf("GetNodesByLabel Function: %v", err)
 	}
-	if len(nodes) != 1 || nodes[0].ID != nodeID || nodes[0].Properties["uid"] != uid || nodes[0].Properties["revision"] != loser.revision {
+	if len(nodes) != 1 || nodes[0].ID != nodeID || nodes[0].Properties["uid"] != uid || storedRevision(nodes[0]) != int64(loser.revision) {
 		t.Fatalf("same-UID final nodes = %#v, want one node %s at retry revision %d", nodes, nodeID, loser.revision)
 	}
 	cachedID, found, constrained := schema.LookupUniqueConstraintValue("Function", "uid", uid)
@@ -327,6 +329,12 @@ func badgerUniqueFunctionNode(writer, key, revision int) *Node {
 	}
 }
 
+// storedRevision is node's revision as storage holds it, in any integer width.
+func storedRevision(node *Node) int64 {
+	revision, _ := convert.ToInt64(node.Properties["revision"])
+	return revision
+}
+
 func assertBadgerUniqueFunctionExactness(t *testing.T, engine *BadgerEngine, schema *SchemaManager, revision int) {
 	t.Helper()
 	nodes, err := engine.GetNodesByLabel("Function")
@@ -347,7 +355,7 @@ func assertBadgerUniqueFunctionExactness(t *testing.T, engine *BadgerEngine, sch
 			t.Fatalf("duplicate Function uid %q on %s and %s", uid, previous, node.ID)
 		}
 		seenUIDs[uid] = node.ID
-		if node.Properties["revision"] != revision {
+		if storedRevision(node) != int64(revision) {
 			t.Fatalf("node %s revision = %#v, want %d", node.ID, node.Properties["revision"], revision)
 		}
 		cachedID, found, constrained := schema.LookupUniqueConstraintValue("Function", "uid", uid)

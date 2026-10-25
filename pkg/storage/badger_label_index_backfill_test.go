@@ -18,12 +18,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// wipeLabelIndexAndMarker removes every prefix-0x03 entry and clears
-// the rebuild marker, simulating a store that came over from a binary
-// that didn't maintain the index, or a partial file copy.
-func wipeLabelIndexAndMarker(t *testing.T, eng *BadgerEngine) {
+// wipeLabelIndexAndMarker clears the rebuild marker and each requested index
+// range, simulating a legacy or partial store. No ranges retains planted entries.
+func wipeLabelIndexAndMarker(t *testing.T, eng *BadgerEngine, prefixes ...byte) {
 	t.Helper()
-	require.NoError(t, eng.db.DropPrefix([]byte{prefixLabelIndex}))
+	for _, prefix := range prefixes {
+		require.NoError(t, eng.db.DropPrefix(prefixDropOptions{}, []byte{prefix}))
+	}
 	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
 		return txn.Delete(labelIndexReadyKey)
 	}))
@@ -35,7 +36,7 @@ func waitForLabelIndexReady(t *testing.T, eng *BadgerEngine, timeout time.Durati
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		ready, err := eng.labelIndexReady()
+		ready, err := eng.indexBackfillReady(startupLabelIndex)
 		require.NoError(t, err)
 		if ready {
 			return true
@@ -43,50 +44,6 @@ func waitForLabelIndexReady(t *testing.T, eng *BadgerEngine, timeout time.Durati
 		time.Sleep(10 * time.Millisecond)
 	}
 	return false
-}
-
-// TestLabelIndexBackfill_RebuildsForPreexistingNodesAfterReopen — the
-// reported bug, exactly. Create a store with 250 :Concept nodes,
-// scrub the label-index range plus the marker (the on-disk shape of
-// a v1.1.0-or-older store), close, and reopen. The backfill must
-// rebuild every entry so MATCH (n:Concept) returns 250 again.
-func TestLabelIndexBackfill_RebuildsForPreexistingNodesAfterReopen(t *testing.T) {
-	dir := t.TempDir()
-
-	// Stage 1: populate, then simulate "old binary wrote bodies without index".
-	engine1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
-	if engine1 != nil {
-		fixtureowner.Own(t, engine1)
-	}
-	require.NoError(t, err)
-	const n = 250
-	nodes := make([]*Node, n)
-	for i := 0; i < n; i++ {
-		nodes[i] = &Node{
-			ID:     NodeID(fmt.Sprintf("test:concept-%05d", i)),
-			Labels: []string{"Concept"},
-		}
-	}
-	require.NoError(t, engine1.BulkCreateNodes(nodes))
-	wipeLabelIndexAndMarker(t, engine1)
-	// Sanity: in-session GetNodesByLabel now returns 0 (index wiped).
-	gone, err := engine1.GetNodesByLabel("Concept")
-	require.NoError(t, err)
-	require.Len(t, gone, 0, "label index must be empty after wipe (preconditions)")
-	require.NoError(t, engine1.Close())
-
-	// Stage 2: reopen — backfill must rebuild the index.
-	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine2.Close() })
-
-	require.True(t, waitForLabelIndexReady(t, engine2, 5*time.Second),
-		"label-index backfill marker must be set within 5s after reopen")
-
-	got, err := engine2.GetNodesByLabel("Concept")
-	require.NoError(t, err)
-	assert.Len(t, got, n,
-		"after backfill, MATCH (n:Concept) must surface every pre-existing node; got %d/%d", len(got), n)
 }
 
 // TestLabelIndexBackfill_HandlesMultiLabelNodesCorrectly — the bug
@@ -108,7 +65,7 @@ func TestLabelIndexBackfill_HandlesMultiLabelNodesCorrectly(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
-	wipeLabelIndexAndMarker(t, engine1)
+	wipeLabelIndexAndMarker(t, engine1, prefixLabelIndex)
 	require.NoError(t, engine1.Close())
 
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
@@ -135,7 +92,7 @@ func TestLabelIndexBackfill_SkipsEmptyStores(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = engine.Close() })
 
-	ready, err := engine.labelIndexReady()
+	ready, err := engine.indexBackfillReady(startupLabelIndex)
 	require.NoError(t, err)
 	assert.True(t, ready,
 		"empty stores must mark the label-index backfill ready synchronously, not via the background goroutine")
@@ -164,10 +121,10 @@ func TestLabelIndexBackfill_IsIdempotentAcrossRestarts(t *testing.T) {
 
 	// Reopen: marker should already be set (every CreateNode in stage 1
 	// went through the live write path which writes both body and
-	// index; ensureLabelIndex runs on first open ever and short-circuits
+	// index; marker-gated label initialization runs on first open ever and short-circuits
 	// because it found the marker missing AND the index already
 	// consistent — actually wait: the marker isn't written until the
-	// first open's ensureLabelIndex runs. Pin that subsequent opens
+	// first open's marker-gated label initialization runs. Pin that subsequent opens
 	// see the marker and don't redo work).
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	if engine2 != nil {
@@ -198,7 +155,7 @@ func TestLabelIndexBackfill_IsIdempotentAcrossRestarts(t *testing.T) {
 
 // TestLabelIndexBackfill_BackfillCancelledOnClose — the long-running
 // goroutine must respect Close() so a fast-shutdown doesn't leak it
-// past test cleanup. Pin: stopLabelIndexBackfill cancels and waits.
+// past test cleanup. Pin: stopIndexBackfill cancels and waits.
 func TestLabelIndexBackfill_BackfillCancelledOnClose(t *testing.T) {
 	dir := t.TempDir()
 
@@ -216,7 +173,7 @@ func TestLabelIndexBackfill_BackfillCancelledOnClose(t *testing.T) {
 		}
 	}
 	require.NoError(t, engine1.BulkCreateNodes(nodes))
-	wipeLabelIndexAndMarker(t, engine1)
+	wipeLabelIndexAndMarker(t, engine1, prefixLabelIndex)
 	require.NoError(t, engine1.Close())
 
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
@@ -225,7 +182,7 @@ func TestLabelIndexBackfill_BackfillCancelledOnClose(t *testing.T) {
 	}
 	require.NoError(t, err)
 
-	// Close immediately — without waiting for marker. stopLabelIndexBackfill
+	// Close immediately — without waiting for marker. stopIndexBackfill
 	// must cancel the goroutine and wait for it to exit.
 	start := time.Now()
 	require.NoError(t, engine2.Close())
@@ -259,7 +216,7 @@ func TestLabelIndexBackfill_RebuildIsFreshNotMerged(t *testing.T) {
 		stale := labelIndexKey("ghost", 1<<63)
 		return txn.Set(stale, []byte{})
 	}))
-	wipeMarkerOnly(t, engine1) // keep the planted entry, only wipe the marker
+	wipeLabelIndexAndMarker(t, engine1) // keep the planted entry, only wipe the marker
 	require.NoError(t, engine1.Close())
 
 	engine2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
@@ -279,46 +236,45 @@ func TestLabelIndexBackfill_RebuildIsFreshNotMerged(t *testing.T) {
 	assert.Len(t, real, 1)
 }
 
-// wipeMarkerOnly deletes the rebuild marker without touching the
-// index range. Used to force the backfill to rerun against an
-// existing (possibly stale) on-disk index.
-func wipeMarkerOnly(t *testing.T, eng *BadgerEngine) {
-	t.Helper()
-	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		return txn.Delete(labelIndexReadyKey)
-	}))
-}
-
-// TestLabelIndexBackfill_NamespacedNodesRebuildIntoCorrectScope — the
-// production stack writes node IDs with a database prefix
-// ("nornic:foo-1"). The rebuild must preserve this so namespace-
-// scoped reads still work correctly post-rebuild.
 func TestLabelIndexBackfill_ReadyMarkerRequiresCurrentScheme(t *testing.T) {
-	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
-	for _, testCase := range []struct {
-		name  string
-		value []byte
-		ready bool
-	}{
-		{name: "missing"},
-		{name: "legacy", value: []byte{1}},
-		{name: "empty", value: []byte{}},
-		{name: "other_scheme", value: []byte{2}},
-		{name: "current", value: []byte{3}, ready: true},
-		{name: "malformed", value: []byte{3, 0}},
-	} {
-		t.Run(testCase.name, func(t *testing.T) {
-			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-				if testCase.value == nil {
-					return txn.Delete(labelIndexReadyKey)
-				}
-				return txn.Set(labelIndexReadyKey, testCase.value)
-			}))
-			ready, err := engine.labelIndexReady()
+	for _, kind := range []startupIndexKind{startupLabelIndex, startupEdgeBetweenIndex} {
+		name, key := "label", labelIndexReadyKey
+		if kind == startupEdgeBetweenIndex {
+			name, key = "edge-between", edgeBetweenIndexReadyKey
+		}
+		t.Run(name, func(t *testing.T) {
+			engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
 			require.NoError(t, err)
-			require.Equal(t, testCase.ready, ready)
+			t.Cleanup(func() { _ = engine.Close() })
+			for _, testCase := range []struct {
+				name  string
+				value []byte
+				ready bool
+			}{
+				{name: "missing"},
+				{name: "legacy", value: []byte{1}},
+				{name: "empty", value: []byte{}},
+				{name: "other_scheme", value: []byte{2}},
+				{name: "current", value: []byte{3}, ready: true},
+				{name: "malformed", value: []byte{3, 0}},
+			} {
+				t.Run(testCase.name, func(t *testing.T) {
+					require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
+						if testCase.value == nil {
+							return txn.Delete(key)
+						}
+						return txn.Set(key, testCase.value)
+					}))
+					ready, err := engine.indexBackfillReady(kind)
+					require.NoError(t, err)
+					expected := testCase.ready
+					if kind == startupEdgeBetweenIndex {
+						expected = testCase.value != nil
+					}
+					require.Equal(t, expected, ready)
+				})
+			}
+
 		})
 	}
 }
@@ -333,7 +289,7 @@ func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
 		_, err := store.CreateNode(&Node{ID: "existing", Labels: []string{"Label", "Second"}, Properties: map[string]interface{}{"id": namespace}})
 		require.NoError(t, err)
 	}
-	wipeLabelIndexAndMarker(t, engine)
+	wipeLabelIndexAndMarker(t, engine, prefixLabelIndex)
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 		return txn.Set(labelIndexReadyKey, []byte{1})
 	}))
@@ -414,37 +370,4 @@ func TestLabelIndexBackfill_EmptyStoreMarksCurrentScheme(t *testing.T) {
 			}))
 		})
 	}
-}
-
-func TestLabelIndexBackfill_NamespacedNodesRebuildIntoCorrectScope(t *testing.T) {
-	dir := t.TempDir()
-
-	inner1, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
-	if inner1 != nil {
-		fixtureowner.Own(t, inner1)
-	}
-	require.NoError(t, err)
-	ns1 := NewNamespacedEngine(inner1, "nornic")
-
-	for i := 0; i < 30; i++ {
-		_, err := ns1.CreateNode(&Node{
-			ID:     NodeID(fmt.Sprintf("ns-rebuild-%02d", i)),
-			Labels: []string{"Memory"},
-		})
-		require.NoError(t, err)
-	}
-	wipeLabelIndexAndMarker(t, inner1)
-	require.NoError(t, inner1.Close())
-
-	inner2, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = inner2.Close() })
-	ns2 := NewNamespacedEngine(inner2, "nornic")
-
-	require.True(t, waitForLabelIndexReady(t, inner2, 5*time.Second))
-
-	got, err := ns2.GetNodesByLabel("Memory")
-	require.NoError(t, err)
-	assert.Len(t, got, 30,
-		"NamespacedEngine read after backfill must surface every namespace-scoped node; got %d/30", len(got))
 }

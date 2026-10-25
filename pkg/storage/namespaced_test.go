@@ -1534,10 +1534,10 @@ func TestNamespacedEngine_MVCCIndexedVisibilityPropagatesProviderErrors(t *testi
 
 func TestNamespacedEngine_UserConversionHelpers(t *testing.T) {
 	memory := NewNamespacedEngine(newTestMemoryEngine(t), "tenant_a")
-	assert.Nil(t, memory.toUserNode(nil))
+	assert.Nil(t, memory.toUserNode(nil, nodeUserView{}))
 	assert.Nil(t, memory.toUserEdge(nil))
 
-	shallowNode := memory.toUserNode(&Node{ID: "tenant_a:n1", Labels: []string{"Doc"}, Properties: map[string]any{"name": "one"}})
+	shallowNode := memory.toUserNode(&Node{ID: "tenant_a:n1", Labels: []string{"Doc"}, Properties: map[string]any{"name": "one"}}, nodeUserView{})
 	require.NotNil(t, shallowNode)
 	assert.Equal(t, NodeID("n1"), shallowNode.ID)
 
@@ -1565,7 +1565,7 @@ func TestNamespacedEngine_UserConversionHelpers(t *testing.T) {
 	assert.Equal(t, NodeID("n3"), deep.StartNode)
 	assert.Equal(t, NodeID("n4"), deep.EndNode)
 
-	deepNode := NewNamespacedEngine(inner, "tenant_a").toUserNode(&Node{ID: "tenant_a:n2", Labels: []string{"Doc"}})
+	deepNode := NewNamespacedEngine(inner, "tenant_a").toUserNode(&Node{ID: "tenant_a:n2", Labels: []string{"Doc"}}, nodeUserView{})
 	require.NotNil(t, deepNode)
 	assert.Equal(t, NodeID("n2"), deepNode.ID)
 }
@@ -1580,12 +1580,12 @@ func TestNamespacedEngine_UnprefixFallback(t *testing.T) {
 	assert.Equal(t, EdgeID("mydb:e1"), ns.prefixEdgeID("mydb:e1"))
 
 	// IDs that don't match the namespace should be returned as-is
-	assert.Equal(t, NodeID("otherdb:n1"), ns.unprefixNodeID("otherdb:n1"))
-	assert.Equal(t, EdgeID("otherdb:e1"), ns.unprefixEdgeID("otherdb:e1"))
+	assert.Equal(t, NodeID("otherdb:n1"), ns.toUserNode(&Node{ID: "otherdb:n1"}, nodeUserView{}).ID)
+	assert.Equal(t, EdgeID("otherdb:e1"), ns.toUserEdge(&Edge{ID: "otherdb:e1"}).ID)
 
 	// IDs that match should be stripped
-	assert.Equal(t, NodeID("n1"), ns.unprefixNodeID("mydb:n1"))
-	assert.Equal(t, EdgeID("e1"), ns.unprefixEdgeID("mydb:e1"))
+	assert.Equal(t, NodeID("n1"), ns.toUserNode(&Node{ID: "mydb:n1"}, nodeUserView{}).ID)
+	assert.Equal(t, EdgeID("e1"), ns.toUserEdge(&Edge{ID: "mydb:e1"}).ID)
 }
 
 func TestNamespacedEngine_GetEdgeBetween_NotFound(t *testing.T) {

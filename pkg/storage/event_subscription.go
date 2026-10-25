@@ -2,7 +2,6 @@ package storage
 
 import (
 	"errors"
-	"strings"
 )
 
 // ErrEventSubscriptionUnsupported reports an engine that cannot deliver the
@@ -68,58 +67,28 @@ func (t *TracedEngine) SubscribeEvents(handlers EventHandlers) error {
 // one inside it, with the prefix stripped; one elsewhere, not at all.
 func (n *NamespacedEngine) SubscribeEvents(handlers EventHandlers) error {
 	var translated EventHandlers
-	if h := handlers.NodeCreated; h != nil {
-		translated.NodeCreated = func(node *Node) {
-			if node != nil && n.hasNodePrefix(node.ID) {
-				h(n.toUserNode(node))
-			}
-		}
+	views := []*NamespacedEngine{n}
+	if handler := handlers.NodeCreated; handler != nil {
+		translated.NodeCreated = scopeStorageEvent(handler, views)
 	}
-	if h := handlers.NodeUpdated; h != nil {
-		translated.NodeUpdated = func(node *Node) {
-			if node != nil && n.hasNodePrefix(node.ID) {
-				h(n.toUserNode(node))
-			}
-		}
+	if handler := handlers.NodeUpdated; handler != nil {
+		translated.NodeUpdated = scopeStorageEvent(handler, views)
 	}
-	if h := handlers.NodeDeleted; h != nil {
-		translated.NodeDeleted = func(id NodeID) {
-			if n.hasNodePrefix(id) {
-				h(n.unprefixNodeID(id))
-			}
-		}
+	if handler := handlers.NodeDeleted; handler != nil {
+		translated.NodeDeleted = scopeStorageEvent(handler, views)
 	}
-	if h := handlers.EdgeCreated; h != nil {
-		translated.EdgeCreated = func(edge *Edge) {
-			if edge != nil && n.hasEdgePrefix(edge.ID) {
-				h(n.toUserEdge(edge))
-			}
-		}
+	if handler := handlers.EdgeCreated; handler != nil {
+		translated.EdgeCreated = scopeStorageEvent(handler, views)
 	}
-	if h := handlers.EdgeUpdated; h != nil {
-		translated.EdgeUpdated = func(edge *Edge) {
-			if edge != nil && n.hasEdgePrefix(edge.ID) {
-				h(n.toUserEdge(edge))
-			}
-		}
+	if handler := handlers.EdgeUpdated; handler != nil {
+		translated.EdgeUpdated = scopeStorageEvent(handler, views)
 	}
-	if h := handlers.EdgeDeleted; h != nil {
-		translated.EdgeDeleted = func(id EdgeID) {
-			if n.hasEdgePrefix(id) {
-				h(n.unprefixEdgeID(id))
-			}
-		}
+	if handler := handlers.EdgeDeleted; handler != nil {
+		translated.EdgeDeleted = scopeStorageEvent(handler, views)
 	}
-	if h := handlers.NamespaceReset; h != nil {
-		namespace := n.Namespace() + ":"
-		translated.NamespaceReset = func(prefix string) {
-			switch {
-			case strings.HasPrefix(namespace, prefix):
-				h("")
-			case strings.HasPrefix(prefix, namespace):
-				h(strings.TrimPrefix(prefix, namespace))
-			}
-		}
+	if handler := handlers.NamespaceReset; handler != nil {
+		translated.NamespaceReset = scopeStorageEvent(handler, views)
 	}
+
 	return SubscribeEvents(n.inner, translated)
 }

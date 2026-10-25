@@ -1116,21 +1116,7 @@ func (w *WALEngine) PropertyKeyKnownInNamespace(namespace, name string) bool {
 }
 
 func (w *WALEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
-	if stats, ok := w.engine.(NamespaceLabelStatsProvider); ok {
-		return stats.NodeCountByLabelInNamespace(namespace, label)
-	}
-	nodes, err := w.engine.GetNodesByLabel(label)
-	if err != nil {
-		return 0, err
-	}
-	prefix := namespace + ":"
-	var count int64
-	for _, node := range nodes {
-		if strings.HasPrefix(string(node.ID), prefix) {
-			count++
-		}
-	}
-	return count, nil
+	return namespaceLabelCount(w.engine, namespace, label)
 }
 
 // EdgeCount delegates to underlying engine.

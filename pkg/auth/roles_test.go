@@ -4,12 +4,13 @@ import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"context"
+	"slices"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func TestRoleStore_AllRoles_Create_Delete(t *testing.T) {
+func TestRoleCatalog_Create_DeleteSnapshots(t *testing.T) {
 	ctx := context.Background()
 	eng := storage.NewNamespacedEngine(runtimeFixtureOwner.Own(t, runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "system")
 	defer eng.Close()
@@ -18,7 +19,7 @@ func TestRoleStore_AllRoles_Create_Delete(t *testing.T) {
 	if err := store.Load(ctx); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	all := store.AllRoles()
+	all := ReadRoleCatalog(store, nil).RoleNames
 	if len(all) != 3 {
 		t.Errorf("expected 3 built-in roles, got %v", all)
 	}
@@ -29,7 +30,7 @@ func TestRoleStore_AllRoles_Create_Delete(t *testing.T) {
 	if err := store.CreateRole(ctx, "admin"); err != ErrRoleExists {
 		t.Errorf("CreateRole admin should fail with ErrRoleExists, got %v", err)
 	}
-	all2 := store.AllRoles()
+	all2 := ReadRoleCatalog(store, nil).RoleNames
 	if len(all2) != 4 {
 		t.Errorf("expected 4 roles after create, got %v", all2)
 	}
@@ -40,9 +41,26 @@ func TestRoleStore_AllRoles_Create_Delete(t *testing.T) {
 	if err := store.DeleteRole(ctx, "analyst"); err != nil {
 		t.Fatalf("DeleteRole analyst: %v", err)
 	}
-	all3 := store.AllRoles()
+	all3 := ReadRoleCatalog(store, nil).RoleNames
 	if len(all3) != 3 {
 		t.Errorf("expected 3 roles after delete, got %v", all3)
+	}
+	if !slices.Equal(all2, append(append([]string(nil), builtinRoleNames...), "analyst")) {
+		t.Fatalf("previous snapshot changed after deletion: %v", all2)
+	}
+	for _, role := range []string{"zeta", "alpha"} {
+		if err := store.CreateRole(ctx, role); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot := ReadRoleCatalog(store, nil).RoleNames
+	want := append(append([]string(nil), builtinRoleNames...), "alpha", "zeta")
+	if !slices.Equal(snapshot, want) {
+		t.Fatalf("role snapshot: got %v, want %v", snapshot, want)
+	}
+	snapshot[len(builtinRoleNames)] = "caller mutation"
+	if fresh := ReadRoleCatalog(store, nil).RoleNames; !slices.Equal(fresh, want) {
+		t.Fatalf("caller changed role state: %v", fresh)
 	}
 }
 
@@ -134,5 +152,28 @@ func TestRoleStore_ErrorAndLoadPaths(t *testing.T) {
 	}
 	if !store.Exists("  ADMIN  ") {
 		t.Fatalf("Exists should recognize normalized built-in roles")
+	}
+}
+
+func TestReadRoleCatalogKeepsConfiguredViewsIndependent(t *testing.T) {
+	roles := &RoleStore{roles: map[string]struct{}{"analyst": {}}}
+	grants := &RoleEntitlementsStore{entitlements: map[string][]string{"analyst": {"read", "write"}}}
+	snapshot := ReadRoleCatalog(roles, grants)
+	wantNames := append(append([]string(nil), builtinRoleNames...), "analyst")
+	if !slices.Equal(snapshot.RoleNames, wantNames) || !slices.Equal(snapshot.EntitlementOverrides["analyst"], []string{"read", "write"}) {
+		t.Fatalf("combined catalog does not retain both views: %+v", snapshot)
+	}
+	snapshot.RoleNames[len(builtinRoleNames)] = "changed"
+	snapshot.EntitlementOverrides["analyst"][0] = "changed"
+	snapshot.EntitlementOverrides["extra"] = []string{"admin"}
+	fresh := ReadRoleCatalog(roles, grants)
+	if !slices.Equal(fresh.RoleNames, wantNames) || !slices.Equal(fresh.EntitlementOverrides["analyst"], []string{"read", "write"}) || len(fresh.EntitlementOverrides) != 1 {
+		t.Fatalf("caller changed catalog source: %+v", fresh)
+	}
+	if omitted := ReadRoleCatalog(nil, grants); omitted.RoleNames != nil || len(omitted.EntitlementOverrides) != 1 {
+		t.Fatalf("omitted role source: %+v", omitted)
+	}
+	if omitted := ReadRoleCatalog(roles, nil); omitted.EntitlementOverrides != nil || !slices.Equal(omitted.RoleNames, wantNames) {
+		t.Fatalf("omitted entitlement source: %+v", omitted)
 	}
 }

@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve hidden stored node and relationship identity, quota usage and cascades.
+  Order buffered, direct and maintenance writes together so flushes and restarts
+  retain acknowledged graph changes, counts and indexes. Go storage reads normalize
+  integers to `int64`; identical hidden relationship retries preserve the stored record.
+
 - Preserve public parser RETURN items, aliases and DISTINCT through the shared AST
   owner, and keep quoted clause keywords inside their expressions.
 

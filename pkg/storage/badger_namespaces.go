@@ -7,7 +7,7 @@ import "strings"
 //
 // Namespaces are returned without the trailing ':' (e.g., "nornic", "db2").
 func (b *BadgerEngine) ListNamespaces() []string {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return nil
 	}
 

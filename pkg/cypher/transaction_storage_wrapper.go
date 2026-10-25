@@ -238,28 +238,13 @@ func (w *transactionStorageWrapper) clearMutatedNodeIDs(processed map[string]str
 
 // Write operations - go through transaction for atomicity
 func (w *transactionStorageWrapper) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	if node == nil {
-		return "", storage.ErrInvalidData
-	}
-	if err := w.GetSchema().RegisterTokens(node.Labels, nil); err != nil {
-		return "", err
-	}
-	if w.namespace == "" {
-		id, err := w.tx.CreateNode(node)
-		if err == nil {
-			w.markMutatedNodeID(id)
-		}
-		return id, err
-	}
-	namespaced := storage.CopyNode(node)
-	namespaced.ID = w.prefixNodeID(node.ID)
-	actualID, err := w.tx.CreateNode(namespaced)
-	if err != nil {
-		return "", err
-	}
-	userID := w.unprefixNodeID(actualID)
-	w.markMutatedNodeID(userID)
-	return userID, nil
+	return w.createNodes([]*storage.Node{node}, false)
+}
+
+// CreateMintedNode is CreateNode for a node whose ID the executor minted
+// (generateID); see storage.BadgerTransaction.CreateMintedNode.
+func (w *transactionStorageWrapper) CreateMintedNode(node *storage.Node) (storage.NodeID, error) {
+	return w.createNodes([]*storage.Node{node}, true)
 }
 
 func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
@@ -309,20 +294,23 @@ func (w *transactionStorageWrapper) IncidentEdges(nodeID storage.NodeID) ([]*sto
 }
 
 func (w *transactionStorageWrapper) CreateEdge(edge *storage.Edge) error {
-	if edge == nil {
-		return storage.ErrInvalidData
+	return w.createEdges([]*storage.Edge{edge}, false)
+}
+
+// CreateMintedEdge is CreateEdge for a relationship whose ID the executor
+// minted (generateID).
+func (w *transactionStorageWrapper) CreateMintedEdge(edge *storage.Edge) error {
+	return w.createEdges([]*storage.Edge{edge}, true)
+}
+
+// EdgeCreateWasNoOp exposes the transaction's read-only hidden-ID candidate
+// disposition in user-ID space. It does not unwrap or route a mutation around
+// any engine layer; the Badger commit remains the sole identity owner.
+func (w *transactionStorageWrapper) EdgeCreateWasNoOp(id storage.EdgeID) bool {
+	if w == nil || w.tx == nil {
+		return false
 	}
-	if err := w.GetSchema().RegisterTokens(nil, []string{edge.Type}); err != nil {
-		return err
-	}
-	if w.namespace == "" {
-		return w.tx.CreateEdge(edge)
-	}
-	namespaced := storage.CopyEdge(edge)
-	namespaced.ID = w.prefixEdgeID(edge.ID)
-	namespaced.StartNode = w.prefixNodeID(edge.StartNode)
-	namespaced.EndNode = w.prefixNodeID(edge.EndNode)
-	return w.tx.CreateEdge(namespaced)
+	return w.tx.EdgeCreateWasNoOp(w.prefixEdgeID(id))
 }
 
 func (w *transactionStorageWrapper) DeleteEdge(id storage.EdgeID) error {
@@ -775,20 +763,64 @@ func (w *transactionStorageWrapper) GetSchema() *storage.SchemaManager {
 	return w.underlying.GetSchema()
 }
 
-// BulkCreateNodes creates the nodes one by one through CreateNode, so a bulk
-// create inside a transaction is namespaced and recorded as mutated exactly
-// like a single create.
+// BulkCreateNodes shares node admission, namespace conversion and mutation
+// tracking with single creates.
 func (w *transactionStorageWrapper) BulkCreateNodes(nodes []*storage.Node) error {
-	for _, node := range nodes {
-		if _, err := w.CreateNode(node); err != nil {
-			return err
-		}
+	_, err := w.createNodes(nodes, false)
+	return err
+}
+
+// BulkCreateMintedNodes is BulkCreateNodes for nodes whose IDs the executor
+// minted (CreateMintedNode).
+func (w *transactionStorageWrapper) BulkCreateMintedNodes(nodes []*storage.Node) error {
+	_, err := w.createNodes(nodes, true)
+	return err
+}
+
+func (w *transactionStorageWrapper) createNodes(nodes []*storage.Node, minted bool) (storage.NodeID, error) {
+	var logicalID storage.NodeID
+	create := w.tx.CreateNode
+	if minted {
+		create = w.tx.CreateMintedNode
 	}
-	return nil
+	for _, node := range nodes {
+		if node == nil {
+			return "", storage.ErrInvalidData
+		}
+		if err := w.GetSchema().RegisterTokens(node.Labels, nil); err != nil {
+			return "", err
+		}
+		body := node
+		if w.namespace != "" {
+			body = storage.CopyNode(node)
+			body.ID = w.prefixNodeID(node.ID)
+		}
+		id, err := create(body)
+		if err != nil {
+			return "", err
+		}
+		logicalID = w.unprefixNodeID(id)
+		w.markMutatedNodeID(logicalID)
+	}
+	return logicalID, nil
 }
 
 func (w *transactionStorageWrapper) BulkCreateEdges(edges []*storage.Edge) error {
-	var relationshipTypes []string
+	return w.createEdges(edges, false)
+}
+
+// BulkCreateMintedEdges is BulkCreateEdges for relationships whose IDs the
+// executor minted (CreateMintedEdge).
+func (w *transactionStorageWrapper) BulkCreateMintedEdges(edges []*storage.Edge) error {
+	return w.createEdges(edges, true)
+}
+
+func (w *transactionStorageWrapper) createEdges(edges []*storage.Edge, minted bool) error {
+	var singleType [1]string
+	relationshipTypes := singleType[:0]
+	if len(edges) > 1 {
+		relationshipTypes = make([]string, 0, len(edges))
+	}
 	for _, edge := range edges {
 		if edge == nil {
 			return storage.ErrInvalidData
@@ -798,21 +830,32 @@ func (w *transactionStorageWrapper) BulkCreateEdges(edges []*storage.Edge) error
 	if err := w.GetSchema().RegisterTokens(nil, relationshipTypes); err != nil {
 		return err
 	}
-	if w.namespace == "" {
-		return w.tx.BulkCreateEdges(edges)
-	}
-	namespaced := make([]*storage.Edge, len(edges))
-	for i, edge := range edges {
-		if edge == nil {
-			// The transaction rejects it, as CreateEdge does.
-			namespaced[i] = nil
-			continue
+	var singleEdge [1]*storage.Edge
+	namespaced := edges
+	if w.namespace != "" {
+		if len(edges) == 1 {
+			namespaced = singleEdge[:]
+		} else {
+			namespaced = make([]*storage.Edge, len(edges))
 		}
-		cp := storage.CopyEdge(edge)
-		cp.ID = w.prefixEdgeID(edge.ID)
-		cp.StartNode = w.prefixNodeID(edge.StartNode)
-		cp.EndNode = w.prefixNodeID(edge.EndNode)
-		namespaced[i] = cp
+	}
+	if w.namespace != "" {
+		for i, edge := range edges {
+			cp := storage.CopyEdge(edge)
+			cp.ID = w.prefixEdgeID(edge.ID)
+			cp.StartNode = w.prefixNodeID(edge.StartNode)
+			cp.EndNode = w.prefixNodeID(edge.EndNode)
+			namespaced[i] = cp
+		}
+	}
+	if len(namespaced) == 1 {
+		if minted {
+			return w.tx.CreateMintedEdge(namespaced[0])
+		}
+		return w.tx.CreateEdge(namespaced[0])
+	}
+	if minted {
+		return w.tx.BulkCreateMintedEdges(namespaced)
 	}
 	return w.tx.BulkCreateEdges(namespaced)
 }

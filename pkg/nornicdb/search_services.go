@@ -3,9 +3,9 @@ package nornicdb
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/collection"
 	"log"
 	"path/filepath"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -796,14 +796,14 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 				}
 				// A refresh whose read fails is retried (searchRefreshRetry),
 				// not taken for a deletion.
-				for _, id := range sortedKeys(nodes) {
+				for _, id := range collection.SortedKeys(nodes) {
 					err := entry.svc.RefreshNodeWithMutation(nodes[id])
 					db.logSearchRefreshError("node", id, entry, err)
 					if err == nil {
 						db.finishSearchRefresh(entry, search.RefreshRetry{Node: nodes[id]})
 					}
 				}
-				for _, id := range sortedKeys(edges) {
+				for _, id := range collection.SortedKeys(edges) {
 					err := entry.svc.RefreshEdgeWithMutation(edges[id])
 					db.logSearchRefreshError("relationship", id, entry, err)
 					if err == nil {
@@ -820,15 +820,6 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 		}
 	})
 	entry.pendingFlushMu.Unlock()
-}
-
-func sortedKeys[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for key := range m {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 func (db *DB) logSearchRefreshError(kind, id string, entry *dbSearchService, err error) {

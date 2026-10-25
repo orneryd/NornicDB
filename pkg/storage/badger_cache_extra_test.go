@@ -113,7 +113,7 @@ func TestBadgerCache_NoopBranches_Extra(t *testing.T) {
 
 	// nil / empty guards
 	b.cacheStoreNode(nil)
-	b.cacheDeleteNode("")
+	b.cacheDeleteNode("", nodeCacheAllForms)
 	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "", NodeID("x"))
 	b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "L", "")
 	b.labelCacheInvalidateForNodeLabels(nil, NodeID("x"))
@@ -132,12 +132,12 @@ func TestBadgerCache_AdjacencyInvalidateAll_Extra(t *testing.T) {
 	b.adjCacheMu.Lock()
 	b.outgoingAdjCache[NodeID(prefixTestID("a"))] = []EdgeID{EdgeID(prefixTestID("e"))}
 	b.adjCacheMu.Unlock()
-	b.adjCacheInvalidateAll()
+	b.adjCacheInvalidate()
 	assert.Empty(t, b.outgoingAdjCache)
 	assert.Empty(t, b.incomingAdjCache)
 
 	// An empty cache is kept, not re-allocated.
 	before := reflect.ValueOf(b.outgoingAdjCache).Pointer()
-	b.adjCacheInvalidateAll()
+	b.adjCacheInvalidate()
 	assert.Equal(t, before, reflect.ValueOf(b.outgoingAdjCache).Pointer())
 }

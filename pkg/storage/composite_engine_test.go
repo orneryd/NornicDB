@@ -753,77 +753,42 @@ func TestCompositeEngine_ReadOnlyConstituent(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestCompositeEngine_GetNodeFromMultipleConstituents(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create nodes in each constituent
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
-	node2 := &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}}
-	engine1.CreateNode(node1)
-	engine2.CreateNode(node2)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
+func TestCompositeEngine_NodeAccess(t *testing.T) {
+	for _, mode := range []string{"get from multiple constituents", "update"} {
+		t.Run(mode, func(t *testing.T) {
+			engine1 := newTestMemoryEngine(t)
+			engine2 := newTestMemoryEngine(t)
+			node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
+			_, err := engine1.CreateNode(node1)
+			require.NoError(t, err)
+			var node2 *Node
+			if mode == "get from multiple constituents" {
+				node2 = &Node{ID: NodeID(prefixTestID("node2")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Bob"}}
+				_, err := engine2.CreateNode(node2)
+				require.NoError(t, err)
+			}
+			composite := NewCompositeEngine(
+				map[string]Engine{"db1": engine1, "db2": engine2},
+				map[string]string{"db1": "db1", "db2": "db2"},
+				map[string]string{"db1": "read_write", "db2": "read_write"})
+			if mode == "update" {
+				node1.Properties["age"] = 30
+				require.NoError(t, composite.UpdateNode(node1))
+			}
+			retrieved, err := composite.GetNode(node1.ID)
+			require.NoError(t, err)
+			if mode == "update" {
+				assert.EqualValues(t, 30, retrieved.Properties["age"])
+				return
+			}
+			assert.Equal(t, node1.ID, retrieved.ID)
+			assert.Equal(t, "Alice", retrieved.Properties["name"])
+			retrieved, err = composite.GetNode(node2.ID)
+			require.NoError(t, err)
+			assert.Equal(t, node2.ID, retrieved.ID)
+			assert.Equal(t, "Bob", retrieved.Properties["name"])
+		})
 	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Get nodes from both constituents
-	retrieved1, err := composite.GetNode(node1.ID)
-	require.NoError(t, err)
-	assert.Equal(t, node1.ID, retrieved1.ID)
-	assert.Equal(t, "Alice", retrieved1.Properties["name"])
-
-	retrieved2, err := composite.GetNode(node2.ID)
-	require.NoError(t, err)
-	assert.Equal(t, node2.ID, retrieved2.ID)
-	assert.Equal(t, "Bob", retrieved2.Properties["name"])
-}
-
-func TestCompositeEngine_UpdateNode(t *testing.T) {
-	// Create constituent engines
-	engine1 := newTestMemoryEngine(t)
-	engine2 := newTestMemoryEngine(t)
-
-	// Create node in first constituent
-	node1 := &Node{ID: NodeID(prefixTestID("node1")), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
-	engine1.CreateNode(node1)
-
-	// Create composite engine
-	constituents := map[string]Engine{
-		"db1": engine1,
-		"db2": engine2,
-	}
-	constituentNames := map[string]string{
-		"db1": "db1",
-		"db2": "db2",
-	}
-	accessModes := map[string]string{
-		"db1": "read_write",
-		"db2": "read_write",
-	}
-	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
-
-	// Update node
-	node1.Properties["age"] = 30
-	err := composite.UpdateNode(node1)
-	require.NoError(t, err)
-
-	// Verify update
-	retrieved, err := composite.GetNode(node1.ID)
-	require.NoError(t, err)
-	assert.Equal(t, 30, retrieved.Properties["age"])
 }
 
 func TestCompositeEngine_DeleteNode(t *testing.T) {

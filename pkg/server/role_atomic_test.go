@@ -18,6 +18,7 @@ type roleDeleteFailureEngine struct {
 	storage.Engine
 	deletes  int
 	failRole bool
+	failure  error
 }
 
 func (e *roleDeleteFailureEngine) GetInnerEngine() storage.Engine { return e.Engine }
@@ -215,20 +216,27 @@ func (e *roleDeleteFailureEngine) DeleteNode(id storage.NodeID) error {
 		}
 	}
 	if e.failRole && id == "role:ops" {
+		if e.failure != nil {
+			return e.failure
+		}
 		return errors.New("injected role deletion failure")
 	}
 	return e.Engine.DeleteNode(id)
 }
 
 func TestDeleteRoleFailureChangesNothingOverHTTP(t *testing.T) {
-	for _, failRole := range []bool{false, true} {
-		t.Run(map[bool]string{false: "second grant", true: "role node"}[failRole], func(t *testing.T) {
+	for _, scenario := range []struct {
+		name     string
+		failRole bool
+		failure  error
+	}{{"second grant", false, nil}, {"role node", true, nil}, {"role-exists backend error", true, auth.ErrRoleExists}} {
+		t.Run(scenario.name, func(t *testing.T) {
 			ctx := context.Background()
 			server, users := setupTestServer(t)
 			admin := getAuthToken(t, users, "admin")
 			system, err := server.dbManager.GetStorage("system")
 			require.NoError(t, err)
-			fault := &roleDeleteFailureEngine{Engine: system, failRole: failRole}
+			fault := &roleDeleteFailureEngine{Engine: system, failRole: scenario.failRole, failure: scenario.failure}
 			server.roleStore = auth.NewRoleStore(fault)
 			require.NoError(t, server.roleStore.CreateRole(ctx, "ops"))
 			grants := auth.NewProcedurePrivilegeStore(system)
@@ -306,4 +314,45 @@ func TestAdministrationRequestRoutesToSystemAndRollsBackOnRejection(t *testing.T
 			}
 		})
 	}
+}
+
+func TestRoleCatalogHTTPMetadataViews(t *testing.T) {
+	server, users := setupTestServer(t)
+	admin := getAuthToken(t, users, "admin")
+	system, err := server.dbManager.GetStorage("system")
+	require.NoError(t, err)
+	server.roleStore = auth.NewRoleStore(system)
+	server.roleEntitlementsStore = auth.NewRoleEntitlementsStore(system)
+	for _, role := range []string{"zeta", "alpha"} {
+		require.NoError(t, server.roleStore.CreateRole(context.Background(), role))
+	}
+	require.NoError(t, server.roleEntitlementsStore.Set(context.Background(), "alpha", []string{"read"}))
+
+	response := makeRequest(t, server, http.MethodGet, "/auth/roles", nil, "Bearer "+admin)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var names []string
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &names))
+	require.Equal(t, []string{"admin", "editor", "viewer", "alpha", "zeta"}, names)
+
+	response = makeRequest(t, server, http.MethodGet, "/auth/role-entitlements", nil, "Bearer "+admin)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var entries []struct {
+		Role         string   `json:"role"`
+		Entitlements []string `json:"entitlements"`
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &entries))
+	byRole := make(map[string][]string, len(entries))
+	returnedNames := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		returnedNames = append(returnedNames, entry.Role)
+		_, duplicate := byRole[entry.Role]
+		require.False(t, duplicate)
+		byRole[entry.Role] = entry.Entitlements
+	}
+	require.Len(t, byRole, len(names))
+	require.Equal(t, names, returnedNames)
+	require.Equal(t, []string{"read"}, byRole["alpha"])
+	require.Nil(t, byRole["zeta"])
+	require.Contains(t, byRole["admin"], "admin")
+	require.Contains(t, byRole["viewer"], "read")
 }

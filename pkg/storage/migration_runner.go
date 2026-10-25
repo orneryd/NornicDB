@@ -68,6 +68,16 @@ func (e *ErrStorageUpgradeRequired) Error() string {
 // Sets engine.storageVersion to the post-migration version so the
 // encode path can deterministically pick codecs from it.
 func (b *BadgerEngine) RunOnStartMigrations(allowUpgrade bool) error {
+	// The migrations rewrite stored state wholesale: a maintenance write
+	// (beginMaintenanceWrite). Opened by NewBadgerEngineWithOptions, the engine
+	// has no write-behind buffer yet and nothing else holds it; called on an
+	// engine that serves, it also applies every acknowledged commit first and
+	// keeps every write out.
+	lifecycle, err := b.beginMaintenanceWrite(nil)
+	if err != nil {
+		return err
+	}
+	defer lifecycle.finish()
 	currentVersion, err := b.readSchemaVersion()
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)

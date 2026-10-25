@@ -124,6 +124,8 @@
   other: "el nodo inicial {{.NodeID}} no existe"
 - id: storage.transaction.end_node_missing
   other: "el nodo final {{.NodeID}} no existe"
+- id: storage.transaction.hidden_edge_identity_conflict
+  other: "la relación oculta almacenada {{.EdgeID}} tiene una imagen final diferente"
 - id: storage.transaction.constraint_violation
   other: "infracción de restricción: {{.Cause}}"
 - id: storage.transaction.commit_namespace_missing

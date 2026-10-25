@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -114,47 +115,31 @@ func TestEncryptionPersistsSalt(t *testing.T) {
 
 func TestEncryptionOfPHIFields(t *testing.T) {
 	config := testEncryptionConfig("test-secure-password-12345!")
-
 	db, err := Open(t.TempDir(), config)
 	require.NoError(t, err)
 	defer db.Close()
-
 	ctx := context.Background()
-
-	// Test various PHI fields that should be encrypted
-	phiData := map[string]interface{}{
-		"name":                   "John Doe",            // Not PHI - should NOT be encrypted
-		"ssn":                    "123-45-6789",         // PHI
-		"social_security_number": "987-65-4321",         // PHI
-		"email":                  "john@example.com",    // PII
-		"phone":                  "555-123-4567",        // PII
-		"dob":                    "1990-01-15",          // PHI
-		"diagnosis":              "Type 2 Diabetes",     // PHI
-		"credit_card":            "4111-1111-1111-1111", // PCI
-		"api_key":                "sk-secret-key-123",   // Sensitive
-		"regular_field":          "not sensitive",       // Not sensitive
-		"count":                  42,                    // Non-string - not encrypted
+	cases := testfixture.EncryptionPropertyCases()
+	phiData := make(map[string]interface{})
+	for _, property := range cases {
+		if property.RoundTrip {
+			phiData[property.Name] = property.Value
+		}
 	}
-
 	node, err := db.CreateNode(ctx, []string{"Patient"}, phiData)
 	require.NoError(t, err)
-
-	// Retrieve and verify decryption
 	retrieved, err := db.GetNode(ctx, node.ID)
 	require.NoError(t, err)
-
-	// All string fields should be readable after decryption
-	assert.Equal(t, "John Doe", retrieved.Properties["name"])
-	assert.Equal(t, "123-45-6789", retrieved.Properties["ssn"])
-	assert.Equal(t, "987-65-4321", retrieved.Properties["social_security_number"])
-	assert.Equal(t, "john@example.com", retrieved.Properties["email"])
-	assert.Equal(t, "555-123-4567", retrieved.Properties["phone"])
-	assert.Equal(t, "1990-01-15", retrieved.Properties["dob"])
-	assert.Equal(t, "Type 2 Diabetes", retrieved.Properties["diagnosis"])
-	assert.Equal(t, "4111-1111-1111-1111", retrieved.Properties["credit_card"])
-	assert.Equal(t, "sk-secret-key-123", retrieved.Properties["api_key"])
-	assert.Equal(t, "not sensitive", retrieved.Properties["regular_field"])
-	assert.Equal(t, 42, retrieved.Properties["count"])
+	for _, property := range cases {
+		if !property.RoundTrip {
+			continue
+		}
+		if property.Name == "count" {
+			assert.EqualValues(t, property.Value, retrieved.Properties[property.Name])
+		} else {
+			assert.Equal(t, property.Value, retrieved.Properties[property.Name])
+		}
+	}
 }
 
 func TestEncryptionDataAtRest(t *testing.T) {
@@ -236,7 +221,7 @@ func TestEncryptionDoesNotBreakNonSensitiveFields(t *testing.T) {
 
 	assert.Equal(t, "My Document", retrieved.Properties["title"])
 	assert.Equal(t, "A test document", retrieved.Properties["description"])
-	assert.Equal(t, 100, retrieved.Properties["count"])
+	assert.EqualValues(t, 100, retrieved.Properties["count"])
 	assert.Equal(t, 4.5, retrieved.Properties["rating"])
 	assert.Equal(t, true, retrieved.Properties["active"])
 }

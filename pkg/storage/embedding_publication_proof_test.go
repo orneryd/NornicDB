@@ -192,7 +192,7 @@ func TestEmbeddingPublicationProofMaintenanceBoundary(t *testing.T) {
 			require.True(t, proof.matches(b, node.ID, node.embeddingRevision))
 			switch operation {
 			case "drop_prefix":
-				require.NoError(t, b.db.DropPrefix(nodeKey(node.ID)))
+				require.NoError(t, b.db.DropPrefix(prefixDropOptions{}, nodeKey(node.ID)))
 			case "drop_all":
 				require.NoError(t, b.db.DropAll())
 			case "load_older_versions":

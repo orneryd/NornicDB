@@ -8,9 +8,10 @@ import (
 	"github.com/dgraph-io/badger/v4"
 )
 
-func (b *BadgerEngine) ensureOpen() error {
+// ensureOpen rejects a closed engine; write admission also rejects Close in progress.
+func (b *BadgerEngine) ensureOpen(writing bool) error {
 	b.mu.RLock()
-	closed := b.closed
+	closed := b.closed || (writing && b.closing)
 	b.mu.RUnlock()
 	if closed {
 		return ErrStorageClosed
@@ -18,28 +19,75 @@ func (b *BadgerEngine) ensureOpen() error {
 	return nil
 }
 
-// beginWrite marks a durable write in flight so Close waits for it before
-// releasing engine state. It returns the release func the caller must defer,
+// beginBarrierWrite marks a durable write in flight so Close waits for it before
+// releasing engine state. It returns a stack lease the caller must release,
 // or ErrStorageClosed when the engine has already closed (the caller must
 // not touch Badger in that case). The closed check runs under the barrier so
 // a Close that has completed is always observed and a Close that has not
 // started yet cannot slip in between the check and the write.
-func (b *BadgerEngine) beginWrite() (func(), error) {
-	b.writeBarrier.RLock()
-	if err := b.ensureOpen(); err != nil {
-		b.writeBarrier.RUnlock()
-		return nil, err
+func (b *BadgerEngine) beginBarrierWrite(exclusive bool, publication bool) (writeBarrierLease, error) {
+	lease := writeBarrierLease{engine: b, exclusive: exclusive}
+	if exclusive {
+		b.writeBarrier.Lock()
+	} else {
+		b.writeBarrier.RLock()
 	}
-	return b.writeBarrier.RUnlock, nil
+	if err := b.ensureOpen(true); err != nil {
+		lease.release()
+		return writeBarrierLease{}, err
+	}
+	if publication {
+		lease.held = b.holdPublication()
+	}
+	return lease, nil
 }
 
-func (b *BadgerEngine) beginSchemaWrite() (func(), error) {
-	b.writeBarrier.Lock()
-	if err := b.ensureOpen(); err != nil {
-		b.writeBarrier.Unlock()
-		return nil, err
+// writeBarrierLease retains admission on the writer's stack. A function value
+// is needed only when a transaction stores its release for publication.
+type writeBarrierLease struct {
+	engine    *BadgerEngine
+	exclusive bool
+	held      *commitNotification
+}
+
+func (lease writeBarrierLease) release() {
+	if lease.exclusive {
+		lease.engine.writeBarrier.Unlock()
+	} else {
+		lease.engine.writeBarrier.RUnlock()
 	}
-	return b.writeBarrier.Unlock, nil
+}
+
+// releaseCallback returns the mutex's existing bound method when a transaction
+// must keep admission through publication. Capturing the whole lease would
+// retain its unused notification state in every transaction's callback.
+func (lease writeBarrierLease) releaseCallback() func() {
+	if lease.exclusive {
+		return lease.engine.writeBarrier.Unlock
+	}
+	return lease.engine.writeBarrier.RUnlock
+}
+
+// orderedWrite is a write ordered after the write-behind buffer
+// (orderAfterBufferedCommits), from its write barrier to its publication
+// point (beginOrderedWrite), kept on the writer's stack.
+type orderedWrite struct {
+	b    *BadgerEngine
+	held *commitNotification
+}
+
+// beginOrderedWrite acquires shared admission for a write ordered after the write-behind
+// buffer. finish, deferred before every other lock the write takes, delivers
+// the notifications of the write, and of the commits its drain replays, after
+// the write released every other lock (holdPublication).
+func (b *BadgerEngine) beginOrderedWrite() (orderedWrite, error) {
+	lease, err := b.beginBarrierWrite(false, true)
+	return orderedWrite{b: lease.engine, held: lease.held}, err
+}
+
+func (w orderedWrite) finish() {
+	w.b.writeBarrier.RUnlock()
+	w.b.completeCommitNotification(w.held)
 }
 
 func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
@@ -67,28 +115,21 @@ func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 // commit writer as a transaction. fn reads and writes in one Badger
 // transaction and cannot be repeated, so its writes must fit one Badger
 // batch (badger.ErrTxnTooBig otherwise); writes of any size go through
-// withUpdateUnits.
-func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error) error {
+// commitEngineWrite repeatable units. Optional entities acquire their write-behind order first;
+// their notifications are delivered only after that order is released.
+func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error, entities ...writtenEntities) error {
+	if len(entities) > 0 && b.writeBehind != nil {
+		var order orderHold
+		if _, err := b.orderAfterBufferedCommits(&order, entities[0]); err != nil {
+			return err
+		}
+		defer b.drainCommitNotifications()
+		defer order.release()
+	}
 	return b.commitEngineWrite(func(cw *commitWriter) error { return cw.writeOnce(fn) })
 }
 
-// withUpdateUnits commits units as one atomic engine write of any size. Each
-// unit is a repeatable group of blind writes: when one does not fit the open
-// Badger batch, the commit becomes a large commit and the unit is repeated in
-// the next batch, and nothing is visible until every unit is written (#703).
-func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error) error {
-	return b.commitEngineWrite(func(cw *commitWriter) error {
-		for _, unit := range units {
-			if err := cw.write(unit); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
-
-// commitEngineWrite is the one commit of the engine's own writes (withUpdate,
-// withUpdateUnits): write fills the commit writer, which then commits. A
+// commitEngineWrite is the one commit of the engine's own writes (withUpdate callbacks or repeatable units): write fills the commit writer, which then commits. A
 // failure rolls back any batches a large commit already wrote.
 //
 // Property-key tokens are made durable before the entity bytes that
@@ -96,7 +137,7 @@ func (b *BadgerEngine) withUpdateUnits(units []func(txn *badger.Txn) error) erro
 // matching Neo4j's token-before-entity invariant), and the numeric-ID
 // counter high-water marks are persisted after the commit, in a separate
 // transaction, so concurrent writers never conflict on the shared keys.
-func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) error {
+func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, units ...[]func(*badger.Txn) error) error {
 	db, err := b.beginHelperTxn()
 	if err != nil {
 		return err
@@ -119,8 +160,18 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error) err
 			}
 			return err
 		}
-		if err := write(cw); err != nil {
-			return fail(err)
+		var writeErr error
+		if len(units) > 0 {
+			for _, unit := range units[0] {
+				if writeErr = cw.write(unit); writeErr != nil {
+					break
+				}
+			}
+		} else {
+			writeErr = write(cw)
+		}
+		if writeErr != nil {
+			return fail(writeErr)
 		}
 		nodeMax, edgeMax = b.idDict.flushTxnCounters(cw.txn)
 		committing := cw.txn
