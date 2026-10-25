@@ -145,7 +145,7 @@ func TestRebuildLabelAndEdgeBetweenIndexSkipsAndWriteErrors(t *testing.T) {
 		_, err := engine.CreateNode(&Node{ID: "test:a"})
 		require.NoError(t, err)
 		writeRawEdge(t, engine, &Edge{ID: "test:huge", StartNode: "test:a", EndNode: "test:a", Type: oversizedName})
-		_, err = engine.rebuildEdgeBetweenIndex(context.Background())
+		_, err = engine.rebuildRelationshipIndexes(context.Background(), rebuildEdgeBetweenOnly)
 		require.ErrorContains(t, err, "edge-between index")
 	})
 }
@@ -250,12 +250,14 @@ func TestRebuildCaseSensitiveIndexesErrors(t *testing.T) {
 	t.Run("label index", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		writeRawValue(t, engine, nodeKey("test:bad"), []byte{0xFF, 0x00})
-		require.ErrorContains(t, engine.rebuildCaseSensitiveIndexes(), "rebuild label index")
+		_, err := engine.rebuildRelationshipIndexes(context.Background(), rebuildCaseSensitiveUpgrade)
+		require.ErrorContains(t, err, "rebuild label index")
 	})
 	t.Run("edge-type index", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		writeRawValue(t, engine, edgeKey("test:bad"), []byte{0xFF, 0x00})
-		require.ErrorContains(t, engine.rebuildCaseSensitiveIndexes(), "rebuild edge-type index")
+		_, err := engine.rebuildRelationshipIndexes(context.Background(), rebuildCaseSensitiveUpgrade)
+		require.ErrorContains(t, err, "rebuild edge-type index")
 	})
 	t.Run("edge-between index", func(t *testing.T) {
 		engine, _ := createTestBadgerEngineOnDisk(t)
@@ -264,12 +266,14 @@ func TestRebuildCaseSensitiveIndexesErrors(t *testing.T) {
 		// A type-index key (type + 10 bytes) fits Badger's 65,000-byte key
 		// limit; an edge-between key (type + 26 bytes) doesn't.
 		writeRawEdge(t, engine, &Edge{ID: "test:long", StartNode: "test:a", EndNode: "test:a", Type: strings.Repeat("T", 64_985)})
-		require.ErrorContains(t, engine.rebuildCaseSensitiveIndexes(), "rebuild edge-between index")
+		_, err = engine.rebuildRelationshipIndexes(context.Background(), rebuildCaseSensitiveUpgrade)
+		require.ErrorContains(t, err, "rebuild edge-between index")
 	})
 	t.Run("catalogs", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)
 		writeRawValue(t, engine, indexEntryCatalogKey("test:garbage"), []byte{0xC1})
-		require.ErrorContains(t, engine.rebuildCaseSensitiveIndexes(), "rewrite index entry catalogs")
+		_, err := engine.rebuildRelationshipIndexes(context.Background(), rebuildCaseSensitiveUpgrade)
+		require.ErrorContains(t, err, "rewrite index entry catalogs")
 	})
 	t.Run("deindexed tombstone move", func(t *testing.T) {
 		engine := createTestBadgerEngine(t)

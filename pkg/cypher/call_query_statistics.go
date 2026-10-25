@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/collection"
 	"runtime"
 	"strings"
 	"sync"
@@ -275,9 +276,9 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 			properties[key] = true
 		}
 	}
-	orderedLabels := store.GetSchema().OrderTokens(sortedStringSet(labels), false)
-	orderedRelationships := store.GetSchema().OrderTokens(sortedStringSet(relationships), true)
-	tokens := map[string]interface{}{"labels": orderedLabels, "relationshipTypes": orderedRelationships, "propertyKeys": sortedStringSet(properties)}
+	orderedLabels := store.GetSchema().OrderTokens(collection.SortedKeys(labels), false)
+	orderedRelationships := store.GetSchema().OrderTokens(collection.SortedKeys(relationships), true)
+	tokens := map[string]interface{}{"labels": orderedLabels, "relationshipTypes": orderedRelationships, "propertyKeys": collection.SortedKeys(properties)}
 	result := &ExecuteResult{Columns: legacyProcedureColumns("db.stats.retrieveAllAnTheStats"), Rows: [][]interface{}{}}
 	if section == "GRAPH COUNTS" || section == "ALL" {
 		nodeRows := []interface{}{map[string]interface{}{"count": int64(len(nodes))}}

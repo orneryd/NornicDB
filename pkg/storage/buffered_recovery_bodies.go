@@ -64,9 +64,9 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		if len(data) == 0 {
 			continue
 		}
-		node, err := b.decodeNode(namespaceForNodeID(id), data)
+		node, err := b.decodeWrittenNode(id, data)
 		if err != nil {
-			return fmt.Errorf("recover final node %s: %w", id, err)
+			return err
 		}
 		readFinal := embeddingRecordReader{txn: txn, commit: commit}
 		if err := restoreBufferedNodeVectors(node, id, readFinal); err != nil {
@@ -82,15 +82,10 @@ func (b *BadgerEngine) restoreBufferedOperationBodies(txn *badger.Txn, commit *b
 		if len(data) == 0 {
 			continue
 		}
-		edge, _, _, err := b.decodeEdgeCompactV2(commit.namespace, data)
+		edge, err := b.decodeWrittenEdge(data, projected)
 		if err != nil {
-			return fmt.Errorf("recover final edge %s: %w", id, err)
+			return err
 		}
-		// Endpoint dictionary writes may belong to this same unflushed commit.
-		// Their string IDs in the JSON operation are already exact.
-		edge.ID = id
-		edge.StartNode = projected.StartNode
-		edge.EndNode = projected.EndNode
 		states.finalEdges[id] = edge
 	}
 	// Committed/final bodies describe MVCC endpoints. Cache/index publication

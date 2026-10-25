@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strconv"
 	"time"
@@ -1917,9 +1918,23 @@ func anyToValue(v any) *qpb.Value {
 			fields[k] = anyToValue(v)
 		}
 		return &qpb.Value{Kind: &qpb.Value_StructValue{StructValue: &qpb.Struct{Fields: fields}}}
-	default:
-		return &qpb.Value{Kind: &qpb.Value_NullValue{NullValue: qpb.NullValue_NULL_VALUE}}
 	}
+	// Storage returns a homogeneous list as a typed slice and a number in the
+	// width its codec keeps.
+	rv := reflect.ValueOf(v)
+	switch {
+	case rv.CanInt():
+		return &qpb.Value{Kind: &qpb.Value_IntegerValue{IntegerValue: rv.Int()}}
+	case rv.CanUint():
+		return &qpb.Value{Kind: &qpb.Value_IntegerValue{IntegerValue: int64(rv.Uint())}}
+	case rv.Kind() == reflect.Slice:
+		values := make([]*qpb.Value, 0, rv.Len())
+		for i := 0; i < rv.Len(); i++ {
+			values = append(values, anyToValue(rv.Index(i).Interface()))
+		}
+		return &qpb.Value{Kind: &qpb.Value_ListValue{ListValue: &qpb.ListValue{Values: values}}}
+	}
+	return &qpb.Value{Kind: &qpb.Value_NullValue{NullValue: qpb.NullValue_NULL_VALUE}}
 }
 
 func matchesFilter(node *storage.Node, filter *qpb.Filter) bool {
@@ -2039,17 +2054,8 @@ func matchesRange(v any, r *qpb.Range) bool {
 		return true
 	}
 
-	var f float64
-	switch n := v.(type) {
-	case int:
-		f = float64(n)
-	case int64:
-		f = float64(n)
-	case float64:
-		f = n
-	case float32:
-		f = float64(n)
-	default:
+	f, ok := storedNumber(v)
+	if !ok {
 		return false
 	}
 

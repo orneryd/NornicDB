@@ -50,42 +50,21 @@ const (
 	labelIndexRebuildLogEvery  = 100_000
 )
 
-// ensureLabelIndex schedules the label-index startup backfill once.
-//
-// Empty stores mark the backfill complete immediately. Non-empty
-// stores rebuild in the background; until the rebuild marker key is
-// written, MATCH (n:Label) reads still hit the on-disk index — they
-// just see a partial view that will be made whole on next read once
-// the rebuild advances past those entries. This matches the same
-// "non-blocking, opportunistic self-heal" stance as
-// ensureEdgeBetweenIndex.
-func (b *BadgerEngine) ensureLabelIndex() error {
-	ready, err := b.labelIndexReady()
-	if err != nil {
-		return err
+// indexBackfillReady reads the selected family marker. Labels require the exact
+// current scheme byte; relationship backfill retains key-presence semantics.
+func (b *BadgerEngine) indexBackfillReady(kind startupIndexKind) (bool, error) {
+	key := labelIndexReadyKey
+	if kind == startupEdgeBetweenIndex {
+		key = edgeBetweenIndexReadyKey
 	}
-	if ready {
-		return nil
-	}
-
-	hasNodes, err := b.hasAnyStoredNodes()
-	if err != nil {
-		return err
-	}
-	if !hasNodes {
-		return b.markLabelIndexReady()
-	}
-
-	b.startLabelIndexBackfill()
-	return nil
-}
-
-// labelIndexReady reports whether the compatibility backfill completed.
-func (b *BadgerEngine) labelIndexReady() (bool, error) {
 	var ready bool
 	err := b.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(labelIndexReadyKey)
+		item, err := txn.Get(key)
 		if err == nil {
+			if kind == startupEdgeBetweenIndex {
+				ready = true
+				return nil
+			}
 			return item.Value(func(value []byte) error {
 				ready = len(value) == 1 && value[0] == labelIndexSchemeVersion
 				return nil
@@ -99,74 +78,128 @@ func (b *BadgerEngine) labelIndexReady() (bool, error) {
 	return ready, err
 }
 
-// hasAnyStoredNodes detects whether a startup rebuild has work to do.
-func (b *BadgerEngine) hasAnyStoredNodes() (bool, error) {
-	var hasNodes bool
-	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
-		defer it.Close()
-		it.Rewind()
-		hasNodes = it.ValidForPrefix([]byte{prefixNode})
-		return nil
-	})
-	return hasNodes, err
-}
-
-// markLabelIndexReady records that no compatibility rebuild remains.
-func (b *BadgerEngine) markLabelIndexReady() error {
+// markIndexBackfillReady records the selected family's established marker image.
+func (b *BadgerEngine) markIndexBackfillReady(kind startupIndexKind) error {
+	key, version := labelIndexReadyKey, byte(labelIndexSchemeVersion)
+	if kind == startupEdgeBetweenIndex {
+		key, version = edgeBetweenIndexReadyKey, 1
+	}
 	return b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Set(labelIndexReadyKey, []byte{labelIndexSchemeVersion})
+		return txn.Set(key, []byte{version})
 	})
 }
 
-// startLabelIndexBackfill launches one cancellable background rebuild.
-func (b *BadgerEngine) startLabelIndexBackfill() {
-	b.labelIndexBackfillMu.Lock()
-	if b.labelIndexBackfillDone != nil {
-		b.labelIndexBackfillMu.Unlock()
-		return
+type startupIndexKind uint8
+
+const (
+	startupLabelIndex startupIndexKind = iota
+	startupEdgeBetweenIndex
+)
+
+// indexBackfillStartMode distinguishes marker-gated initialization from an
+// explicitly requested rebuild. Both use one lifecycle registration protocol.
+type indexBackfillStartMode uint8
+
+const (
+	initializeIndexBackfill indexBackfillStartMode = iota
+	forceIndexBackfill
+)
+
+// startIndexBackfill owns each index family's cancellable startup lifecycle.
+// The selected family keeps its independent state, rebuild and diagnostic fields.
+func (b *BadgerEngine) startIndexBackfill(kind startupIndexKind, mode indexBackfillStartMode) error {
+	if mode == initializeIndexBackfill {
+		ready, err := b.indexBackfillReady(kind)
+		if err != nil {
+			return err
+		}
+		if ready {
+			return nil
+		}
+		prefix := []byte{prefixNode}
+		if kind == startupEdgeBetweenIndex {
+			prefix[0] = prefixEdge
+		}
+		var hasStored bool
+		if err := b.db.View(func(txn *badger.Txn) error {
+			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+			defer it.Close()
+			it.Rewind()
+			hasStored = it.ValidForPrefix(prefix)
+			return nil
+		}); err != nil {
+			return err
+		}
+		if !hasStored {
+			return b.markIndexBackfillReady(kind)
+		}
+	}
+
+	mu := &b.labelIndexBackfillMu
+	cancelSlot, doneSlot := &b.labelIndexBackfillCancel, &b.labelIndexBackfillDone
+	indexName, message, entity := "label", "label index backfill", "nodes"
+	rebuild := b.rebuildLabelIndex
+	if kind == startupEdgeBetweenIndex {
+		mu = &b.edgeBetweenIndexBackfillMu
+		cancelSlot, doneSlot = &b.edgeBetweenIndexBackfillCancel, &b.edgeBetweenIndexBackfillDone
+		indexName, message, entity = "edge_between", "edge-between index backfill", "edges"
+		rebuild = func(ctx context.Context) (int, error) {
+			return b.rebuildRelationshipIndexes(ctx, rebuildEdgeBetweenOnly)
+		}
+	}
+	mu.Lock()
+	if *doneSlot != nil {
+		mu.Unlock()
+		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	b.labelIndexBackfillCancel = cancel
-	b.labelIndexBackfillDone = done
-	b.labelIndexBackfillMu.Unlock()
+	*cancelSlot = cancel
+	*doneSlot = done
+	mu.Unlock()
 
 	go func() {
 		defer close(done)
 		start := time.Now()
-		idxLog := b.log.With("subsystem", "index_rebuild", "index", "label")
-		idxLog.Info("label index backfill started")
-		processed, err := b.rebuildLabelIndex(ctx)
+		idxLog := b.log.With("subsystem", "index_rebuild", "index", indexName)
+		idxLog.Info(message + " started")
+		processed, err := rebuild(ctx)
 		switch {
 		case err == nil:
-			idxLog.Info("label index backfill completed",
-				"nodes", processed,
+			idxLog.Info(message+" completed",
+				entity, processed,
 				"duration_ms", time.Since(start).Milliseconds(),
 			)
 		case errors.Is(err, context.Canceled), errors.Is(err, ErrStorageClosed):
-			idxLog.Info("label index backfill canceled",
-				"nodes", processed,
+			idxLog.Info(message+" canceled",
+				entity, processed,
 				"duration_ms", time.Since(start).Milliseconds(),
 			)
 		default:
-			idxLog.Error("label index backfill failed",
-				"nodes", processed,
+			idxLog.Error(message+" failed",
+				entity, processed,
 				"duration_ms", time.Since(start).Milliseconds(),
 				slog.Any("error", err),
 			)
 		}
 	}()
+	return nil
 }
 
-// stopLabelIndexBackfill cancels and waits for a running rebuild.
-func (b *BadgerEngine) stopLabelIndexBackfill() {
-	b.labelIndexBackfillMu.Lock()
-	cancel := b.labelIndexBackfillCancel
-	done := b.labelIndexBackfillDone
-	b.labelIndexBackfillCancel = nil
-	b.labelIndexBackfillDone = nil
-	b.labelIndexBackfillMu.Unlock()
+// stopIndexBackfill detaches, cancels and waits for the selected startup rebuild.
+func (b *BadgerEngine) stopIndexBackfill(kind startupIndexKind) {
+	mu := &b.labelIndexBackfillMu
+	cancelSlot, doneSlot := &b.labelIndexBackfillCancel, &b.labelIndexBackfillDone
+	if kind == startupEdgeBetweenIndex {
+		mu = &b.edgeBetweenIndexBackfillMu
+		cancelSlot, doneSlot = &b.edgeBetweenIndexBackfillCancel, &b.edgeBetweenIndexBackfillDone
+	}
+	mu.Lock()
+	cancel := *cancelSlot
+	done := *doneSlot
+	*cancelSlot = nil
+	*doneSlot = nil
+	mu.Unlock()
 
 	if cancel != nil {
 		cancel()
@@ -188,7 +221,7 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
-	if err := b.dropDerivedPrefixes(prefixLabelIndex); err != nil {
+	if err := b.db.DropPrefix(prefixDropOptions{engine: b}, []byte{prefixLabelIndex}); err != nil {
 		return 0, fmt.Errorf("clear label index before rebuild: %w", err)
 	}
 	scan := storedRecordScan{
@@ -232,5 +265,5 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 	if err := ctx.Err(); err != nil {
 		return processed, err
 	}
-	return processed, b.markLabelIndexReady()
+	return processed, b.markIndexBackfillReady(startupLabelIndex)
 }

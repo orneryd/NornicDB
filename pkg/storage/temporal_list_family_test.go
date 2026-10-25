@@ -279,7 +279,7 @@ func TestTemporalListFamilyTemporalListEnforcement(t *testing.T) {
 					interval, ok := spec.interval(probe)
 					require.True(t, ok)
 					scanErr := inner.withView(func(txn *badger.Txn) error {
-						return inner.legacyScanForTemporalOverlapInTxn(txn, "test", c, key, interval.start, interval.end, interval.hasEnd, "test:second")
+						return inner.scanForTemporalOverlapInTxn(txn, "test", c, key, interval.start, interval.end, interval.hasEnd, "test:second", temporalOverlapFullLabel)
 					})
 					t.Logf("TLF_SCAN list explicit err=%v", scanErr)
 					tlfOutcome(t, scanErr, true)
@@ -533,7 +533,7 @@ func TestTemporalListFamilyTemporalMixedEnforcement(t *testing.T) {
 						interval, ok := spec.interval(pair[1])
 						require.True(t, ok)
 						scanErr := inner.withView(func(txn *badger.Txn) error {
-							return inner.legacyScanForTemporalOverlapInTxn(txn, "test", c, key, interval.start, interval.end, interval.hasEnd, "test:second")
+							return inner.scanForTemporalOverlapInTxn(txn, "test", c, key, interval.start, interval.end, interval.hasEnd, "test:second", temporalOverlapFullLabel)
 						})
 						violation := shape == "mixed" || shape == "same"
 						t.Logf("TLF_SCAN mixed explicit shape=%s err=%v", shape, scanErr)

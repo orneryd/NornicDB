@@ -5,6 +5,7 @@ import (
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -14,14 +15,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
-
-// goroutineID returns the calling goroutine's ID, from its stack header
-// ("goroutine 42 [running]:").
-func goroutineID() string {
-	buf := make([]byte, 64)
-	buf = buf[:runtime.Stack(buf, false)]
-	return strings.Fields(string(buf))[1]
-}
 
 // lockWaitCaller reports whether goroutine id is parked acquiring a sync
 // lock, and if so, the first frame outside the runtime and sync packages:
@@ -81,7 +74,7 @@ func requireWaitsFor(t *testing.T, name string, owner sync.Locker, at string, op
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		ids <- goroutineID()
+		ids <- strconv.FormatUint(fixtureowner.CurrentGoroutineID(), 10)
 		op()
 	}()
 	id := <-ids

@@ -3,6 +3,7 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -31,35 +32,14 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	ordered, barrierErr := b.beginOrderedWrite()
 	if barrierErr != nil {
 		return "", barrierErr
 	}
-	defer release()
-	if node == nil {
-		return "", ErrInvalidData
-	}
-	if node.ID == "" {
-		return "", ErrInvalidID
-	}
-	// Enforce namespace prefix at storage layer - all node IDs must be prefixed
-	if !strings.Contains(string(node.ID), ":") {
-		return "", localizedError(localization.StorageClientNodeIDNamespaceUnprefixed(string(node.ID)), nil)
-	}
-
-	if err := b.ensureOpen(); err != nil {
+	defer ordered.finish()
+	dbName, err := b.admitCreatedNode(node, nil)
+	if err != nil {
 		return "", err
-	}
-	if node.CreatedAt.IsZero() {
-		node.CreatedAt = time.Now()
-	}
-	if node.UpdatedAt.IsZero() {
-		node.UpdatedAt = node.CreatedAt
-	}
-
-	dbName, _, ok := ParseDatabasePrefix(string(node.ID))
-	if !ok {
-		return "", localizedError(localization.StorageClientNodeIDNamespaceRequired(string(node.ID)), nil)
 	}
 	schema := b.GetSchemaForNamespace(dbName)
 
@@ -71,7 +51,19 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	var image *Node
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{nodes: []NodeID{node.ID}})
+		if orderErr != nil {
+			releaseUniqueLocks()
+			return "", orderErr
+		}
+		defer order.release()
+	}
+	err = b.withUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
 			return err
@@ -87,25 +79,16 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		if err := b.validateNodeConstraintsInTxn(txn, node, schema, dbName, node.ID); err != nil {
 			return err
 		}
-		data, embeddingsSeparate, err := b.encodeNodeInTxn(txn, dbName, node)
+		data, embeddingsSeparate, err := b.writeCreatedNode(txn, txn, key, node)
 		if err != nil {
-			return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
+			return err
 		}
-		if err := txn.Set(key, data); err != nil {
-			return localizedError(localization.StorageClientNodeWriteFailed(err), err)
+		if image, err = b.writtenNodeImage(data, node); err != nil {
+			return err
 		}
 		if embeddingsSeparate {
 			persistSeparateEmbeddings = true
 			embeddingsToPersist = node.ChunkEmbeddings
-		}
-		for _, label := range node.Labels {
-			lblKey, err := b.labelIndexKeyString(txn, label, node.ID)
-			if err != nil {
-				return localizedError(localization.StorageClientNodeLabelIndexKeyBuildFailed(err), err)
-			}
-			if err := txn.Set(lblKey, []byte{}); err != nil {
-				return localizedError(localization.StorageClientNodeLabelIndexWriteFailed(err), err)
-			}
 		}
 		if err := b.adjustNodeLabelCountsInTxn(txn, dbName, nil, node.Labels); err != nil {
 			return err
@@ -134,9 +117,9 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 
 	// On successful create, register unique constraint values
-	for _, label := range node.Labels {
-		for propName, propValue := range node.Properties {
-			schema.RegisterUniqueValue(label, propName, propValue, node.ID)
+	for _, label := range image.Labels {
+		for propName, propValue := range image.Properties {
+			schema.RegisterUniqueValue(label, propName, propValue, image.ID)
 		}
 	}
 	releaseUniqueLocks()
@@ -146,12 +129,72 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		}
 	}
 
-	b.cacheOnNodeCreated(node)
+	b.cacheOnNodeCreated(image)
 
 	// Notify listeners (e.g., search service) to index the new node
-	b.notifyNodeCreated(node)
+	b.notifyNodeCreated(image)
 
 	return node.ID, nil
+}
+
+// admitCreatedNode owns the shared node-create input/namespace admission.
+// The transactional caller holds tx.mu and already checked write admission;
+// its snapshot pin and its later timestamp position remain transactional.
+func (b *BadgerEngine) admitCreatedNode(node *Node, tx *BadgerTransaction) (string, error) {
+	if node == nil {
+		if tx != nil {
+			return "", ErrInvalidID
+		}
+		return "", ErrInvalidData
+	}
+	if node.ID == "" {
+		return "", ErrInvalidID
+	}
+	if tx == nil {
+		if !strings.Contains(string(node.ID), ":") {
+			return "", localizedError(localization.StorageClientNodeIDNamespaceUnprefixed(string(node.ID)), nil)
+		}
+		if err := b.ensureOpen(false); err != nil {
+			return "", err
+		}
+		initializeCreationTimes(&node.CreatedAt, &node.UpdatedAt)
+	} else {
+		if err := tx.pinNamespaceFromIDLocked(string(node.ID)); err != nil {
+			return "", err
+		}
+		return tx.namespace, nil
+	}
+	namespace, _, ok := ParseDatabasePrefix(string(node.ID))
+	if !ok {
+		return "", localizedError(localization.StorageClientNodeIDNamespaceRequired(string(node.ID)), nil)
+	}
+	return namespace, nil
+}
+
+// writeCreatedNode owns the encoded body and label writes of a node create.
+// Direct writes and transaction staging supply their existing KV owner; their
+// admission, counts, sidecar persistence and publication remain in that owner.
+func (b *BadgerEngine) writeCreatedNode(codec *badger.Txn, target kvWriter, key []byte, node *Node) ([]byte, bool, error) {
+	data, separate, err := b.encodeNodeInTxn(codec, namespaceForNodeID(node.ID), node)
+	if err != nil {
+		return nil, false, localizedError(localization.StorageClientNodeEncodeFailed(err), err)
+	}
+	if err := target.Set(key, data); err != nil {
+		return nil, false, localizedError(localization.StorageClientNodeWriteFailed(err), err)
+	}
+	for _, label := range node.Labels {
+		key, err := b.labelIndexKeyString(target, label, node.ID)
+		if err != nil {
+			if _, staged := target.(*stagedKV); staged {
+				return nil, false, fmt.Errorf("label index: %w", err)
+			}
+			return nil, false, localizedError(localization.StorageClientNodeLabelIndexKeyBuildFailed(err), err)
+		}
+		if err := target.Set(key, []byte{}); err != nil {
+			return nil, false, localizedError(localization.StorageClientNodeLabelIndexWriteFailed(err), err)
+		}
+	}
+	return data, separate, nil
 }
 
 type nodeReadCacheMode uint8
@@ -160,19 +203,20 @@ const (
 	nodeReadCacheFull nodeReadCacheMode = iota
 	nodeReadCacheQuery
 	nodeReadCacheSnapshot
+	nodeReadCacheProjection // full-cache reads, never publish a partial decoded body
 )
 
 // getNodeByID is the shared cached node read: cache hit (copy via hitCopy),
 // miss decode via decode, per-read visibility and optional cache store. GetNode and
 // GetNodeWithoutEmbeddings differ only in the decode function, the cache-hit
 // copy shape and whether the decoded node is cached.
-func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheFill func(gen uint64, node *Node), cacheMode nodeReadCacheMode) (*Node, error) {
+func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn *badger.Txn, item *badger.Item) (*Node, error), hitCopy func(*Node) *Node, cacheMode nodeReadCacheMode) (*Node, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurGet)
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return nil, err
 	}
 
@@ -181,7 +225,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 	cached := func(w *WriteBehindBuffer) (bool, error) {
 		node = nil
 		if w != nil {
-			state := w.entityStateLocked(bufferedNodeEntity, string(id))
+			state := w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: v})
 			if state.found {
 				if state.deleted {
 					return true, ErrNotFound
@@ -245,8 +289,8 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 	} else {
 		atomic.AddInt64(&b.cacheHits, 1)
 	}
-	if loaded && cacheFill != nil {
-		cacheFill(gen, node)
+	if loaded && cacheMode != nodeReadCacheProjection {
+		b.cacheFillNode(gen, node, cacheMode)
 	}
 	return node, nil
 }
@@ -276,7 +320,7 @@ func (b *BadgerEngine) getNodeSnapshotForRead(id NodeID, force bool, v readVisib
 	}
 	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readNodeItemInTxn(txn, item, id, b.loadNodeEmbeddings)
-	}, copyNode, b.cacheFillNode, mode)
+	}, copyNode, mode)
 }
 
 // GetQueryNode implements QueryNodeReader with GetNode's reads (the
@@ -295,7 +339,6 @@ func (b *BadgerEngine) getQueryNode(id NodeID, v readVisibility) (*Node, error) 
 			return b.readQueryNodeItemInTxn(txn, item, id)
 		},
 		copyNodeForCaller,
-		b.cacheFillQueryNode,
 		nodeReadCacheQuery,
 	)
 }
@@ -305,12 +348,14 @@ func (b *BadgerEngine) getQueryNode(id NodeID, v readVisibility) (*Node, error) 
 // key exists, without reading or decoding the record. It doesn't answer while
 // decay filtering can hide a node at read time, or when the lookup fails.
 func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
-	if id == "" || b.visibilityFiltered() || b.ensureOpen() != nil {
+	if id == "" || b.visibilityFiltered() || b.ensureOpen(false) != nil {
 		return false, false
 	}
 	if b.writeBehind != nil {
 		var state bufferedEntityState
-		err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
+		err := b.withReadView(func(w *WriteBehindBuffer) {
+			state = w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})
+		}, func(txn *badger.Txn) error {
 			if state.found {
 				if state.deleted {
 					return ErrNotFound
@@ -361,7 +406,7 @@ func (b *BadgerEngine) getNodeProjected(id NodeID, properties []string, v readVi
 	include := propertyProjectionSet(properties)
 	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readProjectedNodeItemInTxn(txn, item, id, properties, include)
-	}, func(node *Node) *Node { return copyNodeProjectedWithoutEmbeddings(node, properties) }, nil, nodeReadCacheFull)
+	}, func(node *Node) *Node { return copyNodeProjectedWithoutEmbeddings(node, properties) }, nodeReadCacheProjection)
 }
 
 // GetNodeWithoutEmbeddings retrieves a node without following separately
@@ -371,7 +416,7 @@ func (b *BadgerEngine) getNodeProjected(id NodeID, properties []string, v readVi
 func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 	return b.getNodeByID(id, visibleRead, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
 		return b.readNodeItemInTxn(txn, item, id, nil)
-	}, copyNodeWithoutEmbeddings, nil, nodeReadCacheFull)
+	}, copyNodeWithoutEmbeddings, nodeReadCacheProjection)
 }
 
 // UpdateNode updates an existing node or creates it if it doesn't exist (upsert).
@@ -385,11 +430,11 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	ordered, barrierErr := b.beginOrderedWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer release()
+	defer ordered.finish()
 	if node == nil {
 		return ErrInvalidData
 	}
@@ -401,7 +446,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		return localizedError(localization.StorageClientNodeIDNamespaceUnprefixed(string(node.ID)), nil)
 	}
 
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 
@@ -425,6 +470,18 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
+	var written []byte
+	var image *Node
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{nodes: []NodeID{node.ID}})
+		if orderErr != nil {
+			return orderErr
+		}
+		defer order.release()
+	}
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
@@ -445,6 +502,10 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 				return localizedError(localization.StorageClientNodeEncodeFailed(err), err)
 			}
 			if err := txn.Set(key, data); err != nil {
+				return err
+			}
+			written = data
+			if image, err = b.writtenNodeImage(written, node); err != nil {
 				return err
 			}
 
@@ -536,6 +597,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		if err := txn.Set(key, data); err != nil {
 			return err
 		}
+		written = data
 
 		// If embeddings are stored separately, write them after commit in bounded txns.
 		if embeddingsSeparate {
@@ -597,9 +659,16 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		// rebind. Without this, a node previously suppressed under one binding
 		// stays suppressed forever after rotating to an unbound label.
 		if !labelsEqual(node.Labels, existingNode.Labels) {
-			if err := b.rescoreSuppressionAfterLabelChangeInTxn(txn, dbName, node); err != nil {
+			rewritten, err := b.rescoreSuppressionAfterLabelChangeInTxn(txn, dbName, node)
+			if err != nil {
 				return err
 			}
+			if rewritten != nil {
+				written = rewritten
+			}
+		}
+		if image, err = b.writtenNodeImage(written, node); err != nil {
+			return err
 		}
 		// Primary key now holds the new head body; archive of old body
 		// into mvccNodeVersionKey(oldHead.Version) happened above.
@@ -613,15 +682,15 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	if err == nil {
 		if wasInsert {
 			// Register unique constraint values
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
+			for _, label := range image.Labels {
+				for propName, propValue := range image.Properties {
+					schema.RegisterUniqueValue(label, propName, propValue, image.ID)
 				}
 			}
 
-			b.cacheOnNodeCreated(node)
+			b.cacheOnNodeCreated(image)
 			// Notify listeners about the new node
-			b.notifyNodeCreated(node)
+			b.notifyNodeCreated(image)
 		} else {
 			if existingNode != nil {
 				for _, label := range existingNode.Labels {
@@ -630,15 +699,15 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 					}
 				}
 			}
-			for _, label := range node.Labels {
-				for propName, propValue := range node.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
+			for _, label := range image.Labels {
+				for propName, propValue := range image.Properties {
+					schema.RegisterUniqueValue(label, propName, propValue, image.ID)
 				}
 			}
 
-			b.cacheOnNodeUpdatedWithOldNode(node, existingNode)
+			b.cacheOnNodeUpdatedWithOldNode(image, existingNode)
 			// Notify listeners to re-index the updated node
-			b.notifyNodeUpdated(node)
+			b.notifyNodeUpdated(image)
 		}
 	}
 
@@ -648,7 +717,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 // replaceSeparateEmbeddingChunks replaces a node's separately stored
 // embedding chunks with embeddings as one atomic commit of any size: the old
 // chunks' deletions come first, then the new chunks, each key its own unit
-// (withUpdateUnits). Readers see the old chunks or the new ones, never a mix
+// (commitEngineWrite repeatable units). Readers see the old chunks or the new ones, never a mix
 // (#703).
 func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings [][]float32) error {
 	return b.commitEngineWrite(func(cw *commitWriter) error {
@@ -665,16 +734,16 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	release, barrierErr := b.beginWrite()
+	ordered, barrierErr := b.beginOrderedWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer release()
+	defer ordered.finish()
 	if id == "" {
 		return ErrInvalidID
 	}
 
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 
@@ -684,6 +753,15 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	var deletedEdges []*Edge
 	var deletedNode *Node
 
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		if err := b.orderCovering(&order, writtenEntities{deletedNodes: []NodeID{id}}, b.cascadeEndpoints(id)); err != nil {
+			return err
+		}
+		defer order.release()
+	}
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now())
 		if allocErr != nil {

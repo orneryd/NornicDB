@@ -3,6 +3,7 @@ package encryption
 
 import (
 	"bytes"
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 	"time"
 )
@@ -590,37 +591,32 @@ func TestSecureWipe(t *testing.T) {
 }
 
 func TestFieldEncryptionConfig(t *testing.T) {
-	config := &FieldEncryptionConfig{
-		EncryptFields: []string{"api_key", "secret"},
-		PHIFields:     []string{"ssn", "email"},
+	config := &FieldEncryptionConfig{}
+	cases := testfixture.EncryptionPropertyCases()
+	for _, property := range cases {
+		switch property.Class {
+		case "explicit":
+			config.EncryptFields = append(config.EncryptFields, property.Name)
+		case "PHI":
+			config.PHIFields = append(config.PHIFields, property.Name)
+		}
 	}
-
-	t.Run("encrypt fields", func(t *testing.T) {
-		if !config.ShouldEncryptField("api_key") {
-			t.Error("api_key should be encrypted")
-		}
-		if !config.ShouldEncryptField("secret") {
-			t.Error("secret should be encrypted")
-		}
-	})
-
-	t.Run("PHI fields", func(t *testing.T) {
-		if !config.ShouldEncryptField("ssn") {
-			t.Error("ssn should be encrypted")
-		}
-		if !config.ShouldEncryptField("email") {
-			t.Error("email should be encrypted")
-		}
-	})
-
-	t.Run("non-encrypted fields", func(t *testing.T) {
-		if config.ShouldEncryptField("name") {
-			t.Error("name should not be encrypted")
-		}
-		if config.ShouldEncryptField("created_at") {
-			t.Error("created_at should not be encrypted")
-		}
-	})
+	for _, group := range []struct {
+		name, class string
+		encrypted   bool
+	}{
+		{name: "encrypt fields", class: "explicit", encrypted: true},
+		{name: "PHI fields", class: "PHI", encrypted: true},
+		{name: "non-encrypted fields", class: "plain"},
+	} {
+		t.Run(group.name, func(t *testing.T) {
+			for _, property := range cases {
+				if property.Class == group.class && config.ShouldEncryptField(property.Name) != group.encrypted {
+					t.Errorf("%s encrypted classification: got %v, want %v", property.Name, !group.encrypted, group.encrypted)
+				}
+			}
+		})
+	}
 }
 
 func TestDefaultPHIFields(t *testing.T) {

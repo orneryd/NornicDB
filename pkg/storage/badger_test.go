@@ -975,7 +975,7 @@ func TestBadgerEngine_EdgeBetweenIndexBackfill(t *testing.T) {
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n2.ID, "KNOWS", edge.ID, false)
 	requireEdgeBetweenIndexEntry(t, engine, n1.ID, n3.ID, "STALE", staleEdgeID, true)
 	requireEdgeBetweenHeadEntry(t, engine, n1.ID, n2.ID, "KNOWS", edge.ID, false)
-	require.NoError(t, engine.ensureEdgeBetweenIndex())
+	require.NoError(t, engine.startIndexBackfill(startupEdgeBetweenIndex, initializeIndexBackfill))
 	require.Eventually(t, func() bool {
 		return edgeBetweenIndexReady(t, engine) &&
 			hasEdgeBetweenHeadEntry(t, engine, n1.ID, n2.ID, "KNOWS", edge.ID)

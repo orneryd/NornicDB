@@ -1898,7 +1898,7 @@ func TestAuthMeAndRoleByIDBranches(t *testing.T) {
 	server.roleStore = nil
 	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/test", strings.NewReader(`{"name":"x"}`))
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
 	// Restore stores by rebuilding server.
@@ -1910,32 +1910,32 @@ func TestAuthMeAndRoleByIDBranches(t *testing.T) {
 	// PATCH invalid JSON.
 	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/r1", strings.NewReader("{"))
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// PATCH empty new name.
 	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/r1", strings.NewReader(`{"name":" "}`))
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// PATCH rename to existing role.
 	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/r1", strings.NewReader(`{"name":"r2"}`))
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusConflict, rec.Code)
 
 	// PATCH role not found.
 	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/missing", strings.NewReader(`{"name":"new_name"}`))
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// DELETE detaches the role while retaining the user.
 	_, _ = authn.CreateUser("role_user", "password123", []auth.Role{"r1"})
 	req = httptest.NewRequest(http.MethodDelete, "/auth/roles/r1", nil)
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
 	roleUser, err := authn.GetUser("role_user")
 	assert.NoError(t, err)
@@ -1945,7 +1945,7 @@ func TestAuthMeAndRoleByIDBranches(t *testing.T) {
 	// DELETE builtin role branch.
 	req = httptest.NewRequest(http.MethodDelete, "/auth/roles/admin", nil)
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.True(t, server.roleStore.Exists("admin"))
 }
@@ -3099,41 +3099,41 @@ func TestAuthResolverAndRoleByIDAdditionalBranches(t *testing.T) {
 		_ = server.roleStore.Load(context.Background())
 	}
 
-	// role by id: empty role delegates to handleRoles.
+	// role by id: empty role selects collection behavior.
 	req := httptest.NewRequest(http.MethodGet, "/auth/roles/", nil)
 	rec := httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code)
 
 	// role by id: invalid JSON patch.
 	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/missing", strings.NewReader("{"))
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// role by id: empty new name.
 	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/missing", strings.NewReader(`{"name":"   "}`))
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// role by id: rename not found.
 	req = httptest.NewRequest(http.MethodPatch, "/auth/roles/missing", strings.NewReader(`{"name":"renamed"}`))
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// role by id: delete builtin hits role store builtin branch (no auth user conflict check).
 	server.auth = nil
 	req = httptest.NewRequest(http.MethodDelete, "/auth/roles/admin", nil)
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 
 	// role by id: method not allowed.
 	req = httptest.NewRequest(http.MethodGet, "/auth/roles/admin", nil)
 	rec = httptest.NewRecorder()
-	server.handleRoleByID(rec, req)
+	server.handleRoles(rec, req)
 	assert.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 }
 

@@ -2,6 +2,7 @@ package inference
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/lockeffect"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -464,18 +465,11 @@ func lockCall(stmt ast.Stmt, lockExpr string) (string, bool) {
 	if call == nil || len(call.Args) != 0 {
 		return "", false
 	}
-	switch types.ExprString(call.Fun) {
-	case lockExpr + ".Lock", lockExpr + ".RLock":
-		if !deferred {
-			return "lock", strings.HasSuffix(types.ExprString(call.Fun), ".Lock")
-		}
-	case lockExpr + ".Unlock", lockExpr + ".RUnlock":
-		if deferred {
-			return "defer", false
-		}
-		return "unlock", false
+	method, matched := strings.CutPrefix(types.ExprString(call.Fun), lockExpr+".")
+	if !matched {
+		return "", false
 	}
-	return "", false
+	return lockeffect.Classify(method, deferred)
 }
 
 // lockSpans finds where lockExpr is held in body.

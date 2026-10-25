@@ -159,6 +159,35 @@ func TestCreateRelationshipForMergePropertyRaceReturnsWinner(t *testing.T) {
 	require.Same(t, existing, got)
 }
 
+func TestCreateRelationshipForMergeHiddenIdentityConflictIsPermanent(t *testing.T) {
+	matchProps := map[string]interface{}{"scope_id": "scope-a"}
+	attempts := 0
+	store := &relationshipMergeCreateEngine{
+		createEdge: func(edge *storage.Edge) error {
+			attempts++
+			return &storage.HiddenEdgeIdentityConflictError{EdgeID: edge.ID}
+		},
+		getEdge: func(storage.EdgeID) (*storage.Edge, error) {
+			return nil, storage.ErrNotFound
+		},
+		getEdgeBetween: unexpectedRelationshipMergePointLookup(t),
+		getEdgesBetween: func(storage.NodeID, storage.NodeID) ([]*storage.Edge, error) {
+			return nil, nil
+		},
+	}
+
+	got, created, err := createRelationshipForMerge(
+		&StorageExecutor{}, store, relationshipMergeTestEdge("candidate", matchProps), matchProps,
+	)
+	require.Nil(t, got)
+	require.False(t, created)
+	require.Equal(t, 1, attempts, "a permanent hidden-ID conflict is never retried")
+	var conflict *storage.HiddenEdgeIdentityConflictError
+	require.ErrorAs(t, err, &conflict)
+	require.ErrorIs(t, err, storage.ErrAlreadyExists)
+	require.Equal(t, "Neo.ClientError.Schema.ConstraintValidationFailed", conflict.BoltErrorCode())
+}
+
 func TestCreateRelationshipForMergePropertyPropagatesLookupErrors(t *testing.T) {
 	matchProps := map[string]interface{}{"scope_id": "scope-a"}
 	wantErr := errors.New("lookup failed")
