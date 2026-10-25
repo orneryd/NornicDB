@@ -13,9 +13,9 @@ import (
 // subquery's MATCH WHERE: 200 nodes, 600 relationships, a 50-key map, the
 // result cache off (#1227). The map_variable form is the cost to match.
 
-func newMapPropertySubscriptBenchExecutor(b *testing.B) (*StorageExecutor, map[string]interface{}) {
+func benchmarkMapPropertySubscript(b *testing.B, variableTail, propertyTail string) {
 	b.Helper()
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(b), "map_property_bench"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "map_property_bench"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	if _, err := exec.Execute(ctx, "UNWIND range(1, 200) AS i CREATE (:N {id: 'n' + i, g: i % 10})", nil); err != nil {
 		b.Fatal(err)
@@ -33,11 +33,7 @@ func newMapPropertySubscriptBenchExecutor(b *testing.B) (*StorageExecutor, map[s
 	for i := 1; i <= 50; i++ {
 		keys = append(keys, fmt.Sprintf("r%d_1", i))
 	}
-	return exec, map[string]interface{}{"keys": keys}
-}
-
-func benchmarkMapPropertySubscript(b *testing.B, variableTail, propertyTail string) {
-	exec, params := newMapPropertySubscriptBenchExecutor(b)
+	params := map[string]interface{}{"keys": keys}
 	forms := map[string]string{
 		"map_variable": "WITH apoc.map.fromPairs([x IN $keys | [x, true]]) AS h MATCH (s:N) WHERE s.g = 1 " + variableTail,
 		"map_property": "WITH {h: apoc.map.fromPairs([x IN $keys | [x, true]])} AS v MATCH (s:N) WHERE s.g = 1 " + propertyTail,

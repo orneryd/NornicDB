@@ -52,17 +52,17 @@ func TestValidateToken_InjectionAttacks(t *testing.T) {
 func TestValidateURL_Valid(t *testing.T) {
 	tests := []struct {
 		url    string
-		isDev  bool
-		allowH bool
+		policy URLPolicy
 	}{
-		{"https://oauth.example.com/userinfo", false, false},
-		{"https://oauth.example.com:8443/api", false, false},
-		{"http://localhost:8888/api", true, true},
-		{"https://8.8.8.8/api", false, false},
+		{"https://oauth.example.com/userinfo", URLPolicy{}},
+		{"https://oauth.example.com:8443/api", URLPolicy{}},
+		{"http://localhost:8888/api", URLPolicy{AllowHTTP: true, HostPolicy: URLDevelopmentHost}},
+		{"https://8.8.8.8/api", URLPolicy{}},
+		{"https://user:synthetic%40secret@example.com/api?api_key=synthetic", URLPolicy{}},
 	}
 
 	for _, tt := range tests {
-		if err := ValidateURL(tt.url, tt.isDev, tt.allowH); err != nil {
+		if err := ValidateURL(tt.url, tt.policy); err != nil {
 			t.Errorf("ValidateURL(%q) expected valid, got: %v", tt.url, err)
 		}
 	}
@@ -78,7 +78,7 @@ func TestValidateURL_SSRF_PrivateIPs(t *testing.T) {
 	}
 
 	for _, url := range privateIPs {
-		if err := ValidateURL(url, false, false); err == nil {
+		if err := ValidateURL(url, URLPolicy{}); err == nil {
 			t.Errorf("ValidateURL(%q) expected SSRF block, got nil", url)
 		}
 	}
@@ -94,7 +94,7 @@ func TestValidateURL_ProtocolSmuggling(t *testing.T) {
 
 	for name, url := range protocols {
 		t.Run(name, func(t *testing.T) {
-			if err := ValidateURL(url, false, false); err != ErrURLInvalidProtocol {
+			if err := ValidateURL(url, URLPolicy{}); err != ErrURLInvalidProtocol {
 				t.Errorf("ValidateURL() expected protocol error for %s, got: %v", name, err)
 			}
 		})
@@ -105,12 +105,12 @@ func TestValidateURL_HTTPInProduction(t *testing.T) {
 	httpURL := "http://oauth.example.com/api"
 
 	// Should fail without allowHTTP
-	if err := ValidateURL(httpURL, false, false); err != ErrURLHTTPNotAllowed {
+	if err := ValidateURL(httpURL, URLPolicy{}); err != ErrURLHTTPNotAllowed {
 		t.Errorf("Expected HTTP block in production, got: %v", err)
 	}
 
 	// Should succeed with allowHTTP
-	if err := ValidateURL(httpURL, false, true); err != nil {
+	if err := ValidateURL(httpURL, URLPolicy{AllowHTTP: true}); err != nil {
 		t.Errorf("Expected HTTP allowed with flag, got: %v", err)
 	}
 }
@@ -123,7 +123,7 @@ func TestValidateURL_CloudMetadata(t *testing.T) {
 	}
 
 	for _, url := range attacks {
-		if err := ValidateURL(url, false, false); err == nil {
+		if err := ValidateURL(url, URLPolicy{}); err == nil {
 			t.Errorf("ValidateURL() failed to block metadata service: %s", url)
 		}
 	}
@@ -231,6 +231,6 @@ func BenchmarkValidateURL(b *testing.B) {
 	url := "https://oauth.example.com/userinfo"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = ValidateURL(url, false, false)
+		_ = ValidateURL(url, URLPolicy{})
 	}
 }

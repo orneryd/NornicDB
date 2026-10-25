@@ -449,7 +449,7 @@ func TestLocalScopeAndPatternStructureReaders(t *testing.T) {
 		ProcedureSpec{Name: "custom.lexical_call_args", Mode: ProcedureModeRead, MinArgs: 2, MaxArgs: 2,
 			Params:  []ProcedureParam{{Name: "inside", Type: "ANY"}, {Name: "outside", Type: "ANY"}},
 			Returns: []ProcedureColumn{{Name: "inside", Type: "ANY"}, {Name: "outside", Type: "ANY"}}},
-		func(_ context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
+		func(readerCtx context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
 			return &ExecuteResult{Columns: []string{"inside", "outside"}, Rows: [][]interface{}{args}}, nil
 		}))
 	t.Cleanup(ClearUserProcedures)

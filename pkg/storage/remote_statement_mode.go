@@ -53,11 +53,7 @@ func remoteBoltQueryMode(summary neo4j.ResultSummary) int32 {
 	return remoteModeUnknown
 }
 
-func (tx *boltCypherTx) ResolvedWriteMode() (bool, bool) {
-	mode := tx.resolvedMode.Load()
-	return mode == remoteModeWrite, mode != remoteModeUnknown
-}
-func (tx *httpCypherTx) ResolvedWriteMode() (bool, bool) {
+func (tx *remoteCypherTx) ResolvedWriteMode() (bool, bool) {
 	mode := tx.resolvedMode.Load()
 	return mode == remoteModeWrite, mode != remoteModeUnknown
 }

@@ -197,8 +197,8 @@ func splitTopLevelOrTerms(expr string) []string {
 // The shared node-binding reader reads them from the pattern's structure, so a
 // dynamic label's $any(...), a property map, an element WHERE, a call such as
 // shortestPath(...) and a parenthesized or quantified path are not nodes.
-func (e *StorageExecutor) extractVariableNamesFromPattern(pattern string) []string {
-	return canonicalPatternVariables(pattern)
+func (e *StorageExecutor) extractVariableNamesFromPattern(ctx context.Context, pattern string) []string {
+	return canonicalPatternVariables(ctx, pattern)
 }
 
 // mergeNodeAbsentKey marks a context whose caller has just scanned the
@@ -802,7 +802,7 @@ func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelin
 
 func (e *StorageExecutor) projectMergeReturnSource(ctx context.Context, rows []pipelineRow, returnClause string, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
 	returnClause = strings.TrimSpace(returnClause)
-	return e.projectMergeReturnPlan(ctx, rows, returnClause, returnProjectionPlanFor(returnClause), source, preparedGroups...)
+	return e.projectMergeReturnPlan(ctx, rows, returnClause, returnProjectionPlanFor(ctx, returnClause), source, preparedGroups...)
 }
 
 func (e *StorageExecutor) projectMergeReturnPlan(ctx context.Context, rows []pipelineRow, returnClause string, plan *returnProjectionPlan, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {

@@ -1,13 +1,15 @@
 package cypher
 
 import (
+	"context"
 	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-// validateAggregatingProjectionScopes is Neo4j's rule for a WITH or RETURN
+// validateProjectionSemantics checks WITH projection aliases first, then
+// Neo4j's rule for a WITH or RETURN
 // with DISTINCT or an aggregation (#907): its WHERE and ORDER BY see only
 // what the projection carries. A variable there must be one of the
 // projection's names, or sit inside an expression the projection projects
@@ -15,10 +17,57 @@ import (
 // count(*)). Anything else read from before the clause (ORDER BY x after
 // RETURN x + 1 AS y, count(*); ORDER BY sum(x) after RETURN count(*)) is a
 // SyntaxError. A projection with * carries every variable.
-func validateAggregatingProjectionScopes(cypher string) error {
-	clauses, ok := splitPipelineClauses(cypher)
+func validateProjectionSemantics(ctx context.Context, cypher string) error {
+	clauses, ok := splitPipelineClauses(ctx, cypher)
 	if !ok {
-		return nil
+		return ctx.Err()
+	}
+	// Preserve statement admission order: every WITH alias/aggregation check
+	// precedes projection-tail scope checks, even on an earlier RETURN.
+	for _, clause := range clauses {
+		if clause.kind != pipelineClauseWith {
+			continue
+		}
+		body := projectionSemanticBody(clause.text, "WITH")
+		if err := validateReturnAggregationSemantics(ctx, body); err != nil {
+			return err
+		}
+		seen := make(map[string]struct{})
+		for _, raw := range splitTopLevelComma(body) {
+			item := strings.TrimSpace(raw)
+			if item == "" || item == "{}" {
+				continue
+			}
+			expression, alias := parseProjectionExprAlias(ctx, item)
+			if err := validateExpressionOperandCompleteness(expression); err != nil {
+				return err
+			}
+			explicitAlias := projectionAliasIndex(ctx, item) > 0
+			// true, false and null are literals, not variables, even when a
+			// variable of that name was declared (isLiteralKeyword).
+			if !explicitAlias && expression != "*" && (simpleSemanticIdentifier(expression) == "" || isLiteralKeyword(expression)) {
+				if containsMalformedCreateClauseToken(expression) {
+					continue
+				}
+				return newSemanticError(
+					"Neo.ClientError.Statement.SyntaxError",
+					"NoExpressionAlias",
+					"expressions in WITH must be explicitly aliased",
+				)
+			}
+			name := normalizeProjectionColumnName(alias)
+			if name == "*" {
+				continue
+			}
+			if _, duplicate := seen[name]; duplicate {
+				return newSemanticError(
+					"Neo.ClientError.Statement.SyntaxError",
+					"ColumnNameConflict",
+					"multiple WITH items project the same column name: "+name,
+				)
+			}
+			seen[name] = struct{}{}
+		}
 	}
 	for _, clause := range clauses {
 		keyword := ""
@@ -30,7 +79,7 @@ func validateAggregatingProjectionScopes(cypher string) error {
 		default:
 			continue
 		}
-		if err := aggregatingProjectionScopeError(strings.TrimSpace(clause.text), keyword); err != nil {
+		if err := aggregatingProjectionScopeError(ctx, strings.TrimSpace(clause.text), keyword); err != nil {
 			return err
 		}
 	}
@@ -38,8 +87,8 @@ func validateAggregatingProjectionScopes(cypher string) error {
 }
 
 // aggregatingProjectionScopeError checks one WITH or RETURN clause
-// (validateAggregatingProjectionScopes).
-func aggregatingProjectionScopeError(clause, keyword string) error {
+// (validateProjectionSemantics).
+func aggregatingProjectionScopeError(ctx context.Context, clause, keyword string) error {
 	body, tail := projectionSemanticBodyAndTail(clause, keyword)
 	_, distinct := cutDistinct(clause[len(keyword):])
 	tail = strings.TrimSpace(tail)
@@ -52,7 +101,7 @@ func aggregatingProjectionScopeError(clause, keyword string) error {
 	expressions := make([]string, 0, len(items))
 	aggregates := false
 	for _, item := range items {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(item))
+		expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
 		expression = strings.TrimSpace(expression)
 		if expression == "*" {
 			return nil

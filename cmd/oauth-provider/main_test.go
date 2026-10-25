@@ -452,32 +452,27 @@ func TestOAuthProvider_Userinfo_InvalidToken(t *testing.T) {
 }
 
 func TestOAuthProvider_Discovery(t *testing.T) {
-	provider := newTestOAuthProvider(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil)
-	w := httptest.NewRecorder()
-
-	provider.handleDiscovery(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Errorf("handleDiscovery() status = %d, want %d", w.Code, http.StatusOK)
-	}
-
-	var discovery map[string]interface{}
-	if err := json.NewDecoder(w.Body).Decode(&discovery); err != nil {
-		t.Fatalf("Failed to decode discovery: %v", err)
-	}
-
-	if discovery["issuer"] != "http://localhost:8888" {
-		t.Errorf("Discovery.issuer = %v, want http://localhost:8888", discovery["issuer"])
-	}
-
-	if discovery["authorization_endpoint"] != "http://localhost:8888/oauth2/v1/authorize" {
-		t.Errorf("Discovery.authorization_endpoint = %v, want http://localhost:8888/oauth2/v1/authorize", discovery["authorization_endpoint"])
-	}
-
-	if discovery["token_endpoint"] != "http://localhost:8888/oauth2/v1/token" {
-		t.Errorf("Discovery.token_endpoint = %v, want http://localhost:8888/oauth2/v1/token", discovery["token_endpoint"])
+	for _, issuer := range []string{"http://localhost:8888", "https://idp.example/realm%2Fpublic"} {
+		t.Run(issuer, func(t *testing.T) {
+			provider, err := NewOAuthProvider("test-client", "test-secret", issuer, testRedirectURI)
+			if err != nil {
+				t.Fatal("public issuer rejected")
+			}
+			w := httptest.NewRecorder()
+			provider.handleDiscovery(w, httptest.NewRequest(http.MethodGet, "/.well-known/oauth-authorization-server", nil))
+			if w.Code != http.StatusOK {
+				t.Errorf("handleDiscovery() status = %d, want %d", w.Code, http.StatusOK)
+			}
+			var discovery map[string]interface{}
+			if err := json.NewDecoder(w.Body).Decode(&discovery); err != nil {
+				t.Fatalf("Failed to decode discovery: %v", err)
+			}
+			for field, suffix := range map[string]string{"issuer": "", "authorization_endpoint": "/oauth2/v1/authorize", "token_endpoint": "/oauth2/v1/token", "userinfo_endpoint": "/oauth2/v1/userinfo"} {
+				if discovery[field] != issuer+suffix {
+					t.Errorf("Discovery.%s = %v, want %s", field, discovery[field], issuer+suffix)
+				}
+			}
+		})
 	}
 }
 

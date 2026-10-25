@@ -26,6 +26,12 @@ WORKLOADS = {
 METRICS = ("ns/op", "B/op", "allocs/op")
 BENCHMARK_ALIASES = {
     "BenchmarkFilterBindingsByWhere_GenericFallback": "BenchmarkFilterBindingsByWhere_SharedExpressionPlan",
+    "BenchmarkExecute_ScalarParameter/Internal": "BenchmarkExecuteInternal_ScalarParameter",
+    "BenchmarkExecute_ScalarParameter/Public": "BenchmarkExecute_ScalarParameter",
+}
+# Keep result keys stable while both scalar workloads share one Go entrypoint.
+BENCHMARK_ENTRYPOINTS = {
+    "BenchmarkExecuteInternal_ScalarParameter": "BenchmarkExecute_ScalarParameter",
 }
 
 
@@ -140,7 +146,9 @@ def run_benchmarks(checkout, flavor, artifacts, parser, operations, samples):
     environment = dict(os.environ, NORNICDB_PARSER=parser)
     for package, names in WORKLOADS.items():
         stem = artifacts / f"{flavor}-{package}"
-        selected = names + tuple(old for old, current in BENCHMARK_ALIASES.items() if current in names)
+        selected = tuple(dict.fromkeys(BENCHMARK_ENTRYPOINTS.get(name, name) for name in names))
+        selected += tuple(old for old, current in BENCHMARK_ALIASES.items()
+                          if current in names and "/" not in old)
         command = [
             "go", "-C", str(checkout), "test", "-json", "-tags=noui,nolocalllm",
             f"./pkg/{package}", "-run=^$", "-bench=^(" + "|".join(selected) + ")$",
@@ -170,7 +178,10 @@ class AllocationRatchetTests(unittest.TestCase):
             target.parent.mkdir(parents=True)
             install_public_execute_fixture(checkout)
             self.assertIn("exec.Execute(ctx, query, params)", target.read_text())
-            self.assertIn("NewStorageExecutorWithQueryCachePolicy(store, 0, 0)", target.read_text())
+            self.assertIn('b.Setenv("NORNICDB_QUERY_CACHE_ENABLED", "false")', target.read_text())
+            self.assertIn("exec = NewStorageExecutor(store)", target.read_text())
+            self.assertIn("exec.QueryCachePolicy()", target.read_text())
+            self.assertNotIn("QueryCachePolicy{", target.read_text())
             install_public_execute_fixture(checkout)
             target.write_text("unrelated fixture")
             with self.assertRaises(ValueError):
@@ -215,6 +226,23 @@ class AllocationRatchetTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_samples("\n".join([output, second, completion]), [current], 100, 2)
 
+    def test_shared_scalar_workloads_keep_distinct_complete_results(self):
+        events = []
+        for source, bytes_per_operation in [("Internal", 8), ("Public", 16)]:
+            events.append(json.dumps({"Action": "output", "Package": "sample", "Output":
+                f"BenchmarkExecute_ScalarParameter/{source}-1 100 4 ns/op {bytes_per_operation} B/op 2 allocs/op\n"}))
+        completion = json.dumps({"Action": "pass", "Package": "sample"})
+        names = ["BenchmarkExecuteInternal_ScalarParameter", "BenchmarkExecute_ScalarParameter"]
+        records = parse_samples("\n".join([*events, completion]), names, 100, 1)
+        self.assertEqual(records[names[0]]["B/op"], 8)
+        self.assertEqual(records[names[1]]["B/op"], 16)
+        with self.assertRaises(ValueError):
+            parse_samples("\n".join([events[0], completion]), names, 100, 1)
+        duplicate = json.dumps({"Action": "output", "Package": "sample", "Output":
+            "BenchmarkExecuteInternal_ScalarParameter-1 100 4 ns/op 8 B/op 2 allocs/op\n"})
+        with self.assertRaises(ValueError):
+            parse_samples("\n".join([*events, duplicate, completion]), names, 100, 1)
+
     def test_failed_or_truncated_package_cannot_supply_samples(self):
         output = json.dumps({"Action": "output", "Package": "sample", "Output":
             "BenchmarkSample-1 100 4 ns/op 8 B/op 2 allocs/op\n"})
@@ -231,8 +259,15 @@ class AllocationRatchetTests(unittest.TestCase):
         def complete(command, **kwargs):
             package = next(package for package in WORKLOADS if f"./pkg/{package}" in command)
             profiled = any(argument.startswith("-cpuprofile=") for argument in command)
+            emitted = {"BenchmarkExecuteInternal_ScalarParameter": "BenchmarkExecute_ScalarParameter/Internal",
+                       "BenchmarkExecute_ScalarParameter": "BenchmarkExecute_ScalarParameter/Public"}
+            if package == "cypher":
+                selection = next(argument for argument in command if argument.startswith("-bench="))
+                self.assertNotIn("BenchmarkExecuteInternal_ScalarParameter", selection)
+                self.assertNotIn("/Internal", selection)
+                self.assertNotIn("/Public", selection)
             output = "".join(json.dumps({"Action": "output", "Output":
-                f"{name}-1 1000 4 ns/op {999 if profiled else 8} B/op 2 allocs/op\n"}) + "\n"
+                f"{emitted.get(name, name)}-1 1000 4 ns/op {999 if profiled else 8} B/op 2 allocs/op\n"}) + "\n"
                 for name in WORKLOADS[package])
             output += json.dumps({"Action": "pass", "Package": package}) + "\n"
             return subprocess.CompletedProcess(command, 0, output, "")

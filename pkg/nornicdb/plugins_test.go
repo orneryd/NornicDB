@@ -480,9 +480,9 @@ func TestPluginLoadAndProcedureExtractionHelpers(t *testing.T) {
 				return &cypher.ExecuteResult{}, nil
 			},
 		})
-		procedure, found := cypher.RegisteredProcedureForCall("CALL " + schemaName + "()")
-		require.True(t, found)
-		require.Equal(t, cypher.ProcedureModeSchema, procedure.Mode)
+		procedures := cypher.RegisteredProceduresForCalls(t.Context(), "CALL "+schemaName+"()")
+		require.Len(t, procedures, 1)
+		require.Equal(t, cypher.ProcedureModeSchema, procedures[0].Mode)
 	})
 
 	t.Run("loadHeimdallPlugin reflection and validation branches", func(t *testing.T) {

@@ -96,7 +96,7 @@ func (e *StorageExecutor) tryFastPathMatchVectorCosine(ctx context.Context, cyph
 	}
 
 	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : orderIdx])
-	returnItems := e.parseReturnItems(returnPart)
+	returnItems := e.parseReturnItems(ctx, returnPart)
 	if len(returnItems) == 0 {
 		return nil, false
 	}
@@ -304,7 +304,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	_ = withProjectionEnd
 	withProjection := strings.TrimSpace(withProjectionRaw)
 	withProjection, _ = cutDistinct(withProjection)
-	withItems := e.parseReturnItems(withProjection)
+	withItems := e.parseReturnItems(ctx, withProjection)
 	if len(withItems) < 2 {
 		return nil, false
 	}
@@ -342,7 +342,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 		returnEndIdx = len(trimmed)
 	}
 	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : returnEndIdx])
-	returnItems := e.parseReturnItems(returnPart)
+	returnItems := e.parseReturnItems(ctx, returnPart)
 	if len(returnItems) == 0 {
 		return nil, false
 	}
@@ -556,7 +556,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 	}
 
 	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : orderIdx])
-	returnItems := e.parseReturnItems(returnPart)
+	returnItems := e.parseReturnItems(ctx, returnPart)
 	if len(returnItems) == 0 {
 		return nil, false
 	}
@@ -692,7 +692,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 	}
 
 	withProjection, _ := cutDistinct(withProjectionRaw)
-	withItems := e.parseReturnItems(withProjection)
+	withItems := e.parseReturnItems(ctx, withProjection)
 	if len(withItems) < 2 || !withProjectionContainsVariable(withItems, pattern.relVar) {
 		return nil, false
 	}
@@ -714,7 +714,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 	}
 
 	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : orderIdx])
-	returnItems := e.parseReturnItems(returnPart)
+	returnItems := e.parseReturnItems(ctx, returnPart)
 	if len(returnItems) == 0 {
 		return nil, false
 	}
@@ -838,22 +838,6 @@ type vectorEdgeScore struct {
 	edgeID storage.EdgeID
 	edge   *storage.Edge
 	score  float64
-}
-
-func (e *StorageExecutor) tryFastPathAnyMatchVectorCosine(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
-	if result, handled := e.tryFastPathMatchVectorCosine(ctx, cypher, upperQuery); handled {
-		return result, true
-	}
-	if result, handled := e.tryFastPathMatchWithVectorCosineProjection(ctx, cypher, upperQuery); handled {
-		return result, true
-	}
-	if result, handled := e.tryFastPathMatchRelationshipVectorCosine(ctx, cypher, upperQuery); handled {
-		return result, true
-	}
-	if result, handled := e.tryFastPathMatchWithRelationshipVectorCosineProjection(ctx, cypher, upperQuery); handled {
-		return result, true
-	}
-	return nil, false
 }
 
 func (e *StorageExecutor) fetchCosineNodeScores(ctx context.Context, indexName string, limit int, queryExpr string, orderDesc bool, projectedProps []string) ([]vectorNodeScore, bool) {

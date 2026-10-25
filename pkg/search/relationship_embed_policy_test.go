@@ -23,15 +23,18 @@ func TestRelationshipVectorsFollowTheEmbedPolicy(t *testing.T) {
 		})
 	}
 	first := &countingEmbed{}
-	waitRelationshipVectors(t, persisted("include=search_text", first), 2)
+	firstService := persisted("include=search_text", first)
+	waitRelationshipVectors(t, firstService, 2, relationshipSnapshotPublished)
 	require.EqualValues(t, 2, first.calls.Load())
 
 	same := &countingEmbed{}
-	waitRelationshipVectors(t, persisted("include=search_text", same), 2)
+	sameService := persisted("include=search_text", same)
+	waitRelationshipVectors(t, sameService, 2, relationshipSnapshotPublished)
 	require.EqualValues(t, 0, same.calls.Load(), "the saved vectors are reused")
 
 	changed := &countingEmbed{}
-	waitRelationshipVectors(t, persisted("include=text", changed), 2)
+	changedService := persisted("include=text", changed)
+	waitRelationshipVectors(t, changedService, 2, relationshipSnapshotPublished)
 	require.EqualValues(t, 2, changed.calls.Load(), "a new policy embeds again")
 
 	var nilService *Service

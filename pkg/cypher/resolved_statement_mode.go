@@ -45,7 +45,7 @@ func resolvedStatementModeResult(result *ExecuteResult, write bool) *ExecuteResu
 // summary. Conditional procedures share an observation with evaluated nested
 // execution; fixed procedure contracts need no extra context allocation.
 func (e *StorageExecutor) observeResolvedStatementMode(ctx context.Context, statement string) (context.Context, func(*ExecuteResult) *ExecuteResult, error) {
-	contract, err := readStatementExecutionContract(statement)
+	contract, err := readStatementExecutionContract(ctx, statement)
 	if err != nil {
 		return ctx, nil, err
 	}

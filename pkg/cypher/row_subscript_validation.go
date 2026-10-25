@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
@@ -46,17 +47,6 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 				return err
 			}
 			if _, err := (staticOperatorChecker{scope: local, params: scope.params}).checkPostfix(receiver, text[index+1:end], true); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (e *StorageExecutor) validatePipelineProjectionSubscripts(rows []pipelineRow, clause, keyword string) error {
-	for _, expression := range projectionExpressions(clause, keyword) {
-		for _, row := range rows {
-			if err := e.validateRowSubscriptTypes(expression, row); err != nil {
 				return err
 			}
 		}
@@ -344,8 +334,8 @@ func mapElementAccessByNonStringError(value interface{}) error {
 	)
 }
 
-func (e *StorageExecutor) validatePipelineSizeArguments(rows []pipelineRow, clause, keyword string) error {
-	for _, expression := range projectionExpressions(clause, keyword) {
+func (e *StorageExecutor) validatePipelineSizeArguments(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
+	for _, expression := range projectionExpressions(ctx, clause, keyword) {
 		name, argument, functionCall := parseFunctionCallWS(expression)
 		if !functionCall || !strings.EqualFold(name, "size") {
 			continue

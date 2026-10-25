@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -123,7 +124,7 @@ func TestWALPropertyEpochCorruptNativeIdentityRejectsOpenAndRestore(t *testing.T
 	backup := filepath.Join(t.TempDir(), "invalid-identity.backup")
 	require.NoError(t, source.Backup(backup))
 	require.NoError(t, source.Close())
-	opened, err := NewBadgerEngine(dir)
+	opened, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))
 	require.ErrorContains(t, err, "property dictionary identity")
 	require.Nil(t, opened)
 	dest := reviewBindingEngine(t, t.TempDir())

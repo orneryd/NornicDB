@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"slices"
@@ -11,44 +12,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
-
-// migrateProcedureCatalogIdentity moves an older lowercase key to the exact
-// name stored in its validated payload. A newer exact-name record wins over
-// a leftover legacy copy; create-before-delete keeps failures retryable.
-func (e *StorageExecutor) migrateProcedureCatalogIdentity(store storage.Engine, node *storage.Node, record persistedProcedureRecord) (bool, error) {
-	canonical := procedureCatalogNodeID(record.Name)
-	if node.ID == canonical || node.ID != storage.NodeID(procedureCatalogPrefix+lowerASCII(strings.TrimSpace(record.Name))) {
-		return false, nil
-	}
-	existing, err := store.GetNode(canonical)
-	if err != nil && !errors.Is(err, storage.ErrNotFound) {
-		return false, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
-	}
-	superseded := existing != nil
-	if superseded {
-		destination, err := decodeProcedureCatalogRecord(existing)
-		if err != nil {
-			return false, err
-		}
-		if destination.Name != record.Name || !slices.Contains(existing.Labels, procedureCatalogLabel) {
-			return false, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(existing.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
-		}
-		if _, _, _, err := e.compilePersistedProcedure(destination); err != nil {
-			return false, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(existing.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
-		}
-	}
-	if !superseded {
-		migrated := *node
-		migrated.ID = canonical
-		if _, err := store.CreateNode(&migrated); err != nil {
-			return false, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
-		}
-	}
-	if err := store.DeleteNode(node.ID); err != nil {
-		return false, localizedError(localization.CypherProceduresDropFailed(record.Name, err), err)
-	}
-	return superseded, nil
-}
 
 // decodeProcedureCatalogRecord is shared by loading and mutation-time identity
 // resolution; the serialized payload, rather than its historical key, names the procedure.
@@ -76,54 +39,90 @@ func decodeProcedureCatalogRecord(node *storage.Node) (persistedProcedureRecord,
 	return record, nil
 }
 
-// resolveProcedureCatalogIdentity normalizes the exact key and its old lowercase
-// slot before any install/drop mutation. A legacy payload in the requested slot
-// may belong to a different exact name: preserve it before reusing that slot.
-func (e *StorageExecutor) resolveProcedureCatalogIdentity(store storage.Engine, name string) (*storage.Node, error) {
+// resolveProcedureCatalogIdentity owns exact-name resolution and catalog key
+// normalization for both mutation-time lookup and a record already being loaded.
+// Existing exact records win; create-before-delete keeps failed moves retryable.
+func (e *StorageExecutor) resolveProcedureCatalogIdentity(ctx context.Context, store storage.Engine, name string, supplied ...*storage.Node) (*storage.Node, bool, error) {
 	canonical := procedureCatalogNodeID(name)
-	legacy := procedureCatalogNodeID(lowerASCII(strings.TrimSpace(name)))
-	keys := []storage.NodeID{canonical}
-	if legacy != canonical {
-		keys = append(keys, legacy)
+	nodes := supplied
+	if len(supplied) == 0 {
+		legacy := procedureCatalogNodeID(lowerASCII(strings.TrimSpace(name)))
+		keys := []storage.NodeID{canonical}
+		if legacy != canonical {
+			keys = append(keys, legacy)
+		}
+		for _, key := range keys {
+			node, err := store.GetNode(key)
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return nil, false, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
+			}
+			if node != nil {
+				nodes = append(nodes, node)
+			}
+		}
 	}
-	for _, key := range keys {
-		node, err := store.GetNode(key)
-		if errors.Is(err, storage.ErrNotFound) {
-			continue
-		}
-		if err != nil {
-			return nil, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
-		}
-		if node == nil {
-			continue
-		}
+	superseded := false
+	for _, node := range nodes {
 		record, err := decodeProcedureCatalogRecord(node)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
-		if _, _, _, err := e.compilePersistedProcedure(record); err != nil {
-			return nil, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(node.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
+		if _, _, _, err := e.compilePersistedProcedure(ctx, record); err != nil {
+			return nil, false, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(node.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
 		}
-		if _, err := e.migrateProcedureCatalogIdentity(store, node, record); err != nil {
-			return nil, err
+		destinationID := procedureCatalogNodeID(record.Name)
+		if node.ID == destinationID || node.ID != storage.NodeID(procedureCatalogPrefix+lowerASCII(strings.TrimSpace(record.Name))) {
+			continue
 		}
+		existing, err := store.GetNode(destinationID)
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, false, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
+		}
+		superseded = existing != nil
+		if superseded {
+			destination, err := decodeProcedureCatalogRecord(existing)
+			if err != nil {
+				return nil, false, err
+			}
+			if destination.Name != record.Name || !slices.Contains(existing.Labels, procedureCatalogLabel) {
+				return nil, false, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(existing.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
+			}
+			if _, _, _, err := e.compilePersistedProcedure(ctx, destination); err != nil {
+				return nil, false, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(existing.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
+			}
+		} else {
+			migrated := *node
+			migrated.ID = destinationID
+			if _, err := store.CreateNode(&migrated); err != nil {
+				return nil, false, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
+			}
+		}
+		if err := store.DeleteNode(node.ID); err != nil {
+			return nil, false, localizedError(localization.CypherProceduresDropFailed(record.Name, err), err)
+		}
+	}
+	if len(supplied) != 0 {
+		return nil, superseded, nil
 	}
 	node, err := store.GetNode(canonical)
 	if errors.Is(err, storage.ErrNotFound) {
-		return nil, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return nil, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
+		return nil, false, localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
 	}
 	if node == nil {
-		return nil, nil
+		return nil, false, nil
 	}
 	record, err := decodeProcedureCatalogRecord(node)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if record.Name != name {
-		return nil, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(node.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
+		return nil, false, localizedError(localization.CypherProceduresCatalogRecordInvalid(string(node.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
 	}
-	return node, nil
+	return node, superseded, nil
 }

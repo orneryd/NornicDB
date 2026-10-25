@@ -202,7 +202,7 @@ func TestExecutionDeterminismFabricEmbeddedDeadline(t *testing.T) {
 	}))
 	store, err := manager.GetStorage(manager.DefaultDatabaseName())
 	require.NoError(t, err)
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 64, time.Hour)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 64, TTL: time.Hour})
 	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	ctx := WithPermissionChecker(context.Background(), func(string) bool { return true })
 	const query = "USE determinism_composite CALL { USE determinism_composite.local CALL apoc.cypher.run($statement,{}) YIELD value RETURN value.fresh AS fresh } RETURN fresh"

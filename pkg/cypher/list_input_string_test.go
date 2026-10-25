@@ -12,7 +12,7 @@ import (
 
 func TestListInputStringConsumers(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "string_lists")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, input := range listinputs.Inputs() {
 		if input.Literal != "['c','a','c']" {
 			continue

@@ -61,7 +61,7 @@ func newPoisonedQueryScanGraph(t *testing.T) *largeEmbeddingGraph {
 	require.NoError(t, err)
 	g.engine = engine
 	g.store = storage.NewNamespacedEngine(engine, "test")
-	g.exec = NewStorageExecutorWithQueryCachePolicy(g.store, 0, 0)
+	g.exec = NewStorageExecutor(g.store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	manager, err = multidb.NewDatabaseManager(engine, nil)
 	require.NoError(t, err)
 	g.exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
@@ -116,7 +116,7 @@ func TestQueryNodeScansLeaveEmbeddingsInStorage(t *testing.T) {
 	}
 	// Engine wrappers may forward mandatory methods while hiding optional
 	// streaming interfaces. Their query-node capability must still be honored.
-	g.exec = NewStorageExecutorWithQueryCachePolicy(&queryNodeReadSpy{Engine: g.store}, 0, 0)
+	g.exec = NewStorageExecutor(&queryNodeReadSpy{Engine: g.store}, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, tc := range []struct {
 		query string
 		rows  int
@@ -134,7 +134,7 @@ func TestQueryNodeScansLeaveEmbeddingsInStorage(t *testing.T) {
 	// the query scan's metadata-only hydration decision.
 	inner := &projectedQueryNodeWrapper{queryNodeReadSpy: &queryNodeReadSpy{Engine: g.engine}}
 	wrapped := storage.NewNamespacedEngine(inner, "test")
-	exec := NewStorageExecutorWithQueryCachePolicy(wrapped, 0, 0)
+	exec := NewStorageExecutor(wrapped, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	result, err := exec.Execute(context.Background(), "MATCH (n:Doc) RETURN n LIMIT 2", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 2)

@@ -1708,7 +1708,7 @@ func TestPropertyAccessInMatch(t *testing.T) {
 
 	// First, test parseReturnItems directly
 	returnClause := "n.order_id as order_id, n.amount as amount"
-	returnItems := exec.parseReturnItems(returnClause)
+	returnItems := exec.parseReturnItems(t.Context(), returnClause)
 	t.Logf("parseReturnItems returned %d items for %q", len(returnItems), returnClause)
 	for i, item := range returnItems {
 		t.Logf("  Item %d: expr=%q, alias=%q", i, item.expr, item.alias)
@@ -1778,29 +1778,22 @@ func TestPropertyAccessInMatch(t *testing.T) {
 }
 
 func TestParseReturnItems_OrderByAfterAliasWithOrderPrefix(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	defer store.Close()
-	exec := NewStorageExecutor(store)
-
-	items := exec.parseReturnItems("person_id, person_name, order_ids, order_count ORDER BY person_id")
-	require.Len(t, items, 4)
-	assert.Equal(t, "person_id", items[0].expr)
-	assert.Equal(t, "person_name", items[1].expr)
-	assert.Equal(t, "order_ids", items[2].expr)
-	assert.Equal(t, "order_count", items[3].expr)
-}
-
-func TestParseReturnItems_OrderByOnNewline(t *testing.T) {
-	baseStore := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(baseStore, "test")
-	defer store.Close()
-	exec := NewStorageExecutor(store)
-
-	items := exec.parseReturnItems("textKey128, texts\nORDER BY textKey128")
-	require.Len(t, items, 2)
-	assert.Equal(t, "textKey128", items[0].expr)
-	assert.Equal(t, "texts", items[1].expr)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
+	for _, tc := range []struct {
+		clause      string
+		expressions []string
+	}{
+		{"person_id, person_name, order_ids, order_count ORDER BY person_id", []string{"person_id", "person_name", "order_ids", "order_count"}},
+		{"textKey128, texts\nORDER BY textKey128", []string{"textKey128", "texts"}},
+	} {
+		t.Run(tc.clause, func(t *testing.T) {
+			items := exec.parseReturnItems(t.Context(), tc.clause)
+			require.Len(t, items, len(tc.expressions))
+			for i, expression := range tc.expressions {
+				assert.Equal(t, expression, items[i].expr)
+			}
+		})
+	}
 }
 
 func TestProcessCallSubqueryReturn_OrderByOnNewline(t *testing.T) {
@@ -1819,7 +1812,7 @@ func TestProcessCallSubqueryReturn_OrderByOnNewline(t *testing.T) {
 
 	ctx := context.Background()
 
-	out, err := exec.processCallSubqueryReturn(ctx, inner, "RETURN textKey128, texts\nORDER BY textKey128")
+	out, err := exec.executeCallTail(ctx, inner, "RETURN textKey128, texts\nORDER BY textKey128")
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Len(t, out.Columns, 2)

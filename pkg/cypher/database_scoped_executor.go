@@ -57,7 +57,7 @@ func NewDatabaseScopedExecutor(options DatabaseScopedExecutorOptions) (*StorageE
 
 	var executor *StorageExecutor
 	if options.QueryCachePolicy {
-		executor = NewStorageExecutorWithQueryCachePolicy(engine, options.QueryCacheMaxEntries, options.QueryCacheTTL)
+		executor = NewStorageExecutor(engine, QueryCachePolicy{MaxEntries: options.QueryCacheMaxEntries, TTL: options.QueryCacheTTL})
 	} else {
 		executor = NewStorageExecutor(engine)
 	}

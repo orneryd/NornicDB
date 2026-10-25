@@ -17,7 +17,7 @@ type pipelineCallMetadata struct {
 }
 
 func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Context, rows []pipelineRow, clause string, metadata *pipelineCallMetadata) ([]pipelineRow, *QueryStats, bool, error) {
-	body, afterCall, inTransactions, batchExpression := e.parseCallSubquery(clause)
+	body, afterCall, inTransactions, batchExpression := e.parseCallSubquery(ctx, clause)
 	if err := validateCallSubqueryBody(body); err != nil {
 		return nil, nil, true, err
 	}
@@ -29,21 +29,23 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		if metadata != nil {
 			batch = metadata.batch
 		}
-		var err error
-		batch, err = e.bindTransactionalCallBatch(ctx, batchExpression, batch)
+		size, err := e.resolveCallBatchSize(ctx, batchExpression, batch)
 		if err != nil {
 			return nil, nil, true, err
+		}
+		if batch == nil {
+			batch = &boundTransactionBatch{size: size}
 		}
 	}
 	// An unscoped body imports through its branches' leading WITHs
 	// (unscopedCallImports, #907).
-	callScope := readCallSubqueryScope(clause)
+	callScope := readCallSubqueryScope(ctx, clause)
 	scopedImports, scoped := callScope.names, callScope.scoped
 	if metadata != nil {
 		declared := scopedImports
 		if declared == nil && !scoped {
 			var importErr error
-			declared, _, importErr = unscopedCallImports(body, func(name string) bool {
+			declared, _, importErr = unscopedCallImports(ctx, body, func(name string) bool {
 				_, exists := metadata.scope[name]
 				return exists
 			}, true)
@@ -76,7 +78,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 
 	if len(rows) == 0 {
 		if metadata != nil {
-			columns, err := e.ResultColumns(clause, resultmetadata.KnownScope(pipelineScopeColumns(metadata.scope)), cypherVersionFromContext(ctx) == "25")
+			columns, err := e.ResultColumns(ctx, clause, resultmetadata.KnownScope(pipelineScopeColumns(metadata.scope)), cypherVersionFromContext(ctx) == "25")
 			if err != nil {
 				return nil, nil, true, err
 			}
@@ -91,7 +93,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	hasLegacyImports := false
 	if !scoped {
 		var importErr error
-		_, hasLegacyImports, importErr = unscopedCallImports(body, func(name string) bool {
+		_, hasLegacyImports, importErr = unscopedCallImports(ctx, body, func(name string) bool {
 			_, exists := rows[0][name]
 			return exists && !strings.HasPrefix(name, "$")
 		}, false)
@@ -115,7 +117,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 	}
 	write := callSubqueryQueryIsWrite(body)
 	independentRead := len(scopedImports) == 0 && !hasLegacyImports && len(imports) == 0 && !write
-	_, unionAll, _, isUnion := parseTopLevelUnionBranches(body)
+	_, unionAll, _, isUnion := parseTopLevelUnionBranches(ctx, body)
 
 	// A branch of an unscoped body that declares an outer variable's name
 	// itself (MATCH (n)-->(m)) gets a new variable, as in Cypher, not the
@@ -130,18 +132,18 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 		}
 		branchLocals = map[string][]string{}
 		branches := []string{body}
-		if unionBranches, _, _, union := parseTopLevelUnionBranches(body); union {
+		if unionBranches, _, _, union := parseTopLevelUnionBranches(ctx, body); union {
 			branches = unionBranches
 		}
 		for _, branch := range branches {
-			if locals := unscopedBranchLocals(branch, outerNames); len(locals) > 0 {
+			if locals := unscopedBranchLocals(ctx, branch, outerNames); len(locals) > 0 {
 				branchLocals[strings.TrimSpace(branch)] = locals
 			}
 		}
 	}
 
 	run := func(runExec *StorageExecutor, runCtx context.Context, outerRows []pipelineRow) ([]pipelineRow, *QueryStats, bool, error) {
-		clauses, ok := pipelineClausesFor(body)
+		clauses, ok := pipelineClausesFor(runCtx, body)
 		if !ok && !isUnion {
 			return nil, nil, false, nil
 		}
@@ -175,7 +177,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 				branchClauses := clauses
 				if isUnion {
 					var planned bool
-					branchClauses, planned = pipelineClausesFor(query)
+					branchClauses, planned = pipelineClausesFor(runCtx, query)
 					if !planned {
 						return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "CALL branch could not be planned as a clause pipeline")
 					}
@@ -227,7 +229,7 @@ func (e *StorageExecutor) pipelineApplyCallSubqueryWithMetadata(ctx context.Cont
 			var inner *ExecuteResult
 			var execErr error
 			if isUnion {
-				inner, execErr = runExec.executeUnionBranches(body, unionAll, runBranch)
+				inner, execErr = runExec.executeUnion(runCtx, body, unionAll, runBranch)
 			} else {
 				inner, execErr = runBranch(body)
 			}

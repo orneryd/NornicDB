@@ -113,15 +113,15 @@ func TestExecuteCallTailSingleRow_NodeAndScalarBindings(t *testing.T) {
 
 func TestSplitCallAndTail_AndExpectedReturnColumns(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "headers"))
-	split := splitCallAndTail("MATCH (n) RETURN n")
+	split := splitCallAndTail(t.Context(), "MATCH (n) RETURN n")
 	require.Equal(t, "MATCH (n) RETURN n", split.callOnly)
 	require.Empty(t, split.tail)
 
-	split = splitCallAndTail("CALL db.labels() YIELD label CREATE (:Seen {name:label})")
+	split = splitCallAndTail(t.Context(), "CALL db.labels() YIELD label CREATE (:Seen {name:label})")
 	require.Equal(t, "CALL db.labels() YIELD label", split.callOnly)
 	require.Equal(t, "CREATE (:Seen {name:label})", split.tail)
 
-	split = splitCallAndTail("CALL db.labels() YIELD label ORDER BY label")
+	split = splitCallAndTail(t.Context(), "CALL db.labels() YIELD label ORDER BY label")
 	require.Equal(t, "CALL db.labels() YIELD label ORDER BY label", split.callOnly)
 	require.Empty(t, split.tail)
 

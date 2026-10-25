@@ -140,7 +140,7 @@ func (e *Executor) Execute(ctx, query, params) {
 ```go
 // ✅ SAFE: LLM only reads AST, doesn't generate queries
 func AnalyzeQueryComplexity(query string) (*Analysis, error) {
-    info := analyzer.Analyze(query)
+    info := analyzer.Analyze(ctx, query)
     ast := info.GetAST()
     
     // LLM analyzes structure
@@ -161,7 +161,7 @@ func AnalyzeQueryComplexity(query string) (*Analysis, error) {
 ```go
 // ⚠️ REQUIRES VALIDATION: LLM generates corrected query
 func CorrectQuery(originalQuery string, error error) (string, error) {
-    info := analyzer.Analyze(originalQuery)
+    info := analyzer.Analyze(ctx, originalQuery)
     ast := info.GetAST()
     
     // LLM suggests correction
@@ -178,7 +178,7 @@ func CorrectQuery(originalQuery string, error error) (string, error) {
 
 func validateQuerySafety(query string) error {
     // 1. Parse with our parser (not LLM's interpretation)
-    info := analyzer.Analyze(query)
+    info := analyzer.Analyze(ctx, query)
     
     // 2. Check for dangerous patterns
     if info.HasDelete && !userHasDeletePermission {
@@ -210,7 +210,7 @@ func SafeNLToQuery(naturalLanguage string, constraints QueryConstraints) (*Resul
     query := llm.GenerateCypher(naturalLanguage)
     
     // 1. Parse and analyze
-    info := analyzer.Analyze(query)
+    info := analyzer.Analyze(ctx, query)
     
     // 2. Enforce constraints
     if !constraints.AllowWrites && info.IsWriteQuery {
@@ -253,7 +253,7 @@ type PluginQueryConstraints struct {
 
 func ExecutePluginQuery(plugin Plugin, query string, constraints PluginQueryConstraints) (*Result, error) {
     // 1. Validate plugin has permission for this query type
-    info := analyzer.Analyze(query)
+    info := analyzer.Analyze(ctx, query)
     
     if constraints.ReadOnly && info.IsWriteQuery {
         return nil, errors.New("plugin attempted write in read-only mode")

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 	"github.com/vmihailenco/msgpack/v5"
@@ -20,7 +21,7 @@ func TestBufferedWALBindingsAcrossStores(t *testing.T) {
 	for _, startup := range []bool{false, true} {
 		t.Run(fmt.Sprintf("startup=%v", startup), func(t *testing.T) {
 			open := func(dir string) *BadgerEngine {
-				b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}})
+				b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
 				require.NoError(t, err)
 				return b
 			}
@@ -145,7 +146,7 @@ func TestBufferedWALLegacyBindings(t *testing.T) {
 	for _, startup := range []bool{false, true} {
 		for _, bound := range []bool{false, true} {
 			t.Run(fmt.Sprintf("startup=%v/bound=%v", startup, bound), func(t *testing.T) {
-				source, err := NewBadgerEngineInMemory()
+				source, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = source.Close() })
 				_, err = source.CreateNode(&Node{ID: "binding:a", Properties: map[string]any{"alpha": int64(17)}})
@@ -170,7 +171,7 @@ func TestBufferedWALLegacyBindings(t *testing.T) {
 				wal, err := NewWAL(t.TempDir(), DefaultWALConfig())
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = wal.Close() })
-				destination, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour})
+				destination, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = destination.Close() })
 				_, err = destination.CreateNode(&Node{ID: "binding:sentinel", Properties: map[string]any{"beta": "keep"}})
@@ -214,7 +215,7 @@ func TestRemapPropertyTokensPreservesValueBytes(t *testing.T) {
 }
 
 func TestBufferedWALNativeBackupBindings(t *testing.T) {
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	_, err = b.CreateNode(&Node{ID: "binding:a", Properties: map[string]any{"alpha": int64(1)}})
@@ -223,7 +224,7 @@ func TestBufferedWALNativeBackupBindings(t *testing.T) {
 	require.NoError(t, err)
 	backup := filepath.Join(t.TempDir(), "native.backup")
 	require.NoError(t, b.Backup(backup))
-	fresh, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
+	fresh, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = fresh.Close() })
 	_, err = fresh.CreateNode(&Node{ID: "binding:old", Properties: map[string]any{"beta": "different dictionary"}})
@@ -258,7 +259,7 @@ func TestBufferedWALBindingValidation(t *testing.T) {
 	body := []byte{nodeFormatTokenizedV1, 3, 1, 1, 0}
 	_, err := bufferedWALPropertyBindings(map[string][]byte{string(nodeKey("test:a")): body}, newPropertyKeyDictionary())
 	require.ErrorContains(t, err, "no source name")
-	b, err := NewBadgerEngineInMemory()
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	_, err = b.importBufferedWALRecord(&WALBufferedCommitData{PropKeys: []WALPropKeyEntry{{Namespace: "test", Name: "a", ID: 1}, {Namespace: "test", Name: "b", ID: 1}}}, walForeignImport)

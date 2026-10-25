@@ -27,7 +27,7 @@ func testCartesianTemporalContractCases(t *testing.T) {
 	for _, tc := range temporalContractCases(t) {
 		t.Run(tc.Name, func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal-join")
-			exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			ctx := context.Background()
 			values, err := exec.Execute(ctx, "RETURN "+tc.A+" AS a,"+tc.B+" AS b", nil)
 			require.NoError(t, err)

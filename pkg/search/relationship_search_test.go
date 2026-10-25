@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -74,9 +75,42 @@ func startRelationshipService(t *testing.T, engine storage.Engine, embed Relatio
 	return svc
 }
 
-func waitRelationshipVectors(t *testing.T, svc *Service, want int) {
+// waitRelationshipVectors waits for the expected vector population and any
+// additional publication boundary required by the caller.
+func waitRelationshipVectors(t *testing.T, svc *Service, want int, published ...func(*Service) bool) {
 	t.Helper()
-	require.Eventually(t, func() bool { return svc.RelationshipEmbeddingCount() == want }, 5*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		if svc.RelationshipEmbeddingCount() != want {
+			return false
+		}
+		for _, boundary := range published {
+			if !boundary(svc) {
+				return false
+			}
+		}
+		return true
+	}, 5*time.Second, 10*time.Millisecond)
+}
+
+// relationshipSnapshotPublished checks the complete durable image, independently
+// of vector visibility. Both boundaries must hold before read/reopen assertions.
+func relationshipSnapshotPublished(svc *Service) bool {
+	saved := svc.loadRelationshipVectors()
+	rs := svc.relationshipSearch()
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+	count := 0
+	for id, entry := range rs.entries {
+		if len(entry.Vectors) == 0 {
+			continue
+		}
+		count++
+		stored := saved[id]
+		if stored == nil || stored.Source != entry.Source || !reflect.DeepEqual(stored.Vectors, entry.Vectors) || !reflect.DeepEqual(stored.Spans, entry.Spans) {
+			return false
+		}
+	}
+	return len(saved) == count
 }
 
 // Relationship search finds a relationship by a word in its properties, and
@@ -200,7 +234,7 @@ func TestRelationshipSearchPersistsVectors(t *testing.T) {
 	}
 	first := &countingEmbed{}
 	svc := startRelationshipService(t, engine, first.embed, persisted)
-	waitRelationshipVectors(t, svc, 2)
+	waitRelationshipVectors(t, svc, 2, relationshipSnapshotPublished)
 	require.NoError(t, svc.Close())
 
 	edge, err := engine.GetEdge("r2")
@@ -209,7 +243,7 @@ func TestRelationshipSearchPersistsVectors(t *testing.T) {
 	require.NoError(t, engine.UpdateEdge(edge))
 	second := &countingEmbed{}
 	svc = startRelationshipService(t, engine, second.embed, persisted)
-	waitRelationshipVectors(t, svc, 2)
+	waitRelationshipVectors(t, svc, 2, relationshipSnapshotPublished)
 	require.Equal(t, int64(1), second.calls.Load(), "only the changed relationship is embedded")
 	response, err := svc.SearchRelationships(ctx, "span", wordVector("span"), &SearchOptions{Limit: 1, Relationships: true})
 	require.NoError(t, err)

@@ -14,7 +14,7 @@ func BenchmarkBoundAnchorMultiHopTraversal(b *testing.B) {
 	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
 	store := storage.NewNamespacedEngine(base, "bound-anchor-multihop-bench")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 
 	for index := 0; index < 100; index++ {

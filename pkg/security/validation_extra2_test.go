@@ -75,13 +75,13 @@ func TestIsPrivateIP_IPv6_Public(t *testing.T) {
 
 func TestValidateURL_IPv6_Loopback_Dev(t *testing.T) {
 	// ::1 is IPv6 loopback — allowed in dev mode
-	err := ValidateURL("http://[::1]:8080/api", true, false)
+	err := ValidateURL("http://[::1]:8080/api", URLPolicy{AllowHTTP: true, HostPolicy: URLDevelopmentHost})
 	assert.NoError(t, err)
 }
 
 func TestValidateURL_IPv6_PrivateULA(t *testing.T) {
 	// fc00::1 is IPv6 ULA private
-	err := ValidateURL("https://[fc00::1]/api", false, false)
+	err := ValidateURL("https://[fc00::1]/api", URLPolicy{})
 	assert.ErrorIs(t, err, ErrURLPrivateIP)
 }
 
@@ -92,6 +92,6 @@ func TestValidateURL_IPv6_PrivateULA(t *testing.T) {
 func TestValidateRequest_NoSecurityMiddleware(t *testing.T) {
 	// Calling ValidateURL directly to hit remaining ValidateRequest branches via public path
 	// Just ensure no panic
-	err := ValidateURL("https://example.com/valid", false, false)
+	err := ValidateURL("https://example.com/valid", URLPolicy{})
 	assert.NoError(t, err)
 }

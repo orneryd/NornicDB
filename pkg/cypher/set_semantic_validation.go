@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"math/bits"
 	"reflect"
@@ -14,19 +15,19 @@ import (
 // validateSetSemanticScopes validates SET expressions against the clause
 // horizon before execution. This is deliberately independent of row count:
 // an undefined variable is a compile-time error even when MATCH yields no rows.
-func (e *StorageExecutor) validateSetSemanticScopes(cypher string, imports ...string) error {
+func (e *StorageExecutor) validateSetSemanticScopes(ctx context.Context, cypher string, imports ...string) error {
 	if !containsKeywordOutsideStrings(cypher, "SET") && !containsKeywordOutsideStrings(cypher, "REMOVE") &&
 		!containsKeywordOutsideStrings(cypher, "DELETE") && !containsKeywordOutsideStrings(cypher, "FOREACH") {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(cypher)
+	clauses, ok := splitPipelineClauses(ctx, cypher)
 	if !ok {
 		return nil
 	}
-	return e.validateMutationClauseScopes(clauses, newSemanticBindingScope(), imports...)
+	return e.validateMutationClauseScopes(ctx, clauses, newSemanticBindingScope(), imports...)
 }
 
-func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause, scope *semanticBindingScope, imports ...string) error {
+func (e *StorageExecutor) validateMutationClauseScopes(ctx context.Context, clauses []pipelineClause, scope *semanticBindingScope, imports ...string) error {
 	for _, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseMerge, pipelineClauseCreate:
@@ -38,12 +39,12 @@ func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause,
 			}
 			// Path variables (p = (…)), with the pipeline's own binder.
 			patternBindings := make(map[string]struct{})
-			addPipelinePatternBindings(e, patternBindings, clause.text, pipelineClauseKeyword(clause.kind))
+			addPipelinePatternBindings(ctx, e, patternBindings, clause.text, pipelineClauseKeyword(clause.kind))
 			for name := range patternBindings {
 				scope.bind(name)
 			}
 		case pipelineClauseWith:
-			scope = projectedBindingScope(scope, clause.text)
+			scope = projectedBindingScope(ctx, scope, clause.text)
 			for _, name := range imports {
 				scope.bind(name)
 			}
@@ -60,16 +61,16 @@ func (e *StorageExecutor) validateMutationClauseScopes(clauses []pipelineClause,
 				return err
 			}
 		case pipelineClauseForeach:
-			variable, _, updates, err := parsePipelineForeach(clause.text)
-			if err != nil {
-				return err
+			body := queryBodyFromSyntax(clause.syntax)
+			if body.status != queryBodyRead || body.foreach == nil {
+				return invalidForeachError()
 			}
 			child := newSemanticBindingScope()
 			for name := range scope.names {
 				child.bind(name)
 			}
-			child.bind(variable)
-			if err := e.validateMutationClauseScopes(updates, child); err != nil {
+			child.bind(body.foreach.variable)
+			if err := e.validateMutationClauseScopes(ctx, body.foreach.updates, child); err != nil {
 				return err
 			}
 		case pipelineClauseRemove:

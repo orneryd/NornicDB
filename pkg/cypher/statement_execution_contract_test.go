@@ -81,13 +81,13 @@ func TestStatementExecutionClauseContracts(t *testing.T) {
 		"MATCH (n) DETACH DELETE n", "MATCH (n) REMOVE n.v", "FOREACH (x IN [1] | CREATE (:Contract))",
 		"CALL { CREATE (:Contract) RETURN 1 AS x } RETURN x", "CALL gds.graph.drop('contract')",
 	} {
-		contract, err := readStatementExecutionContract(body)
+		contract, err := readStatementExecutionContract(t.Context(), body)
 		require.NoError(t, err, body)
 		require.True(t, contract.writes, body)
 		require.True(t, contract.transaction, body)
 	}
 	for _, body := range []string{"EXPLAIN CREATE (:Contract)", "RETURN {CREATE:1} AS x", "RETURN 'SET' AS x"} {
-		contract, err := readStatementExecutionContract(body)
+		contract, err := readStatementExecutionContract(t.Context(), body)
 		require.NoError(t, err, body)
 		require.False(t, contract.writes, body)
 	}

@@ -30,7 +30,7 @@ func TestListInputUnsignedBoundaries(t *testing.T) {
 	}
 	withPluginFunctions(t, handlers)
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "unsigned_inputs")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	read := func(t *testing.T, query string, params map[string]interface{}) interface{} {
 		t.Helper()
 		result, err := exec.Execute(context.Background(), query, params)

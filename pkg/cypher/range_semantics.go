@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"iter"
@@ -111,8 +112,8 @@ func (e *StorageExecutor) validateRangeCalls(expression string, row pipelineRow)
 	return nil
 }
 
-func (e *StorageExecutor) validatePipelineRangeArguments(rows []pipelineRow, clause, keyword string) error {
-	expressions := projectionExpressions(clause, keyword)
+func (e *StorageExecutor) validatePipelineRangeArguments(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
+	expressions := projectionExpressions(ctx, clause, keyword)
 	if len(expressions) == 0 {
 		return nil
 	}

@@ -51,7 +51,7 @@ func TestKnowledgePolicyUsesScopedAccessMetadata(t *testing.T) {
 							storedID := database + ":" + entity
 							require.NoError(t, base.PutAccessMeta(storedID, &knowledgepolicy.AccessMetaEntry{TargetID: storedID, TargetScope: scope, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 3, LastAccessedAt: now.UnixNano()}}))
 						}
-						exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+						exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 						ctx := context.Background()
 						for _, explicit := range []bool{false, true} {
 							if explicit {
