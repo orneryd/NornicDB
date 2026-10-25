@@ -66,23 +66,14 @@ func (e *errReadCloser) Read(_ []byte) (int, error) { return 0, fmt.Errorf("read
 func (e *errReadCloser) Close() error               { return nil }
 
 type fakeRemoteTransport struct {
-	queryFn            func(context.Context, string, map[string]interface{}) ([][]interface{}, error)
-	queryWithColumnsFn func(context.Context, string, map[string]interface{}) ([]string, [][]interface{}, error)
-	queryBatchFn       func(context.Context, []remoteStatement) error
-	beginCypherTxFn    func(context.Context) (RemoteCypherTx, error)
-	closeFn            func() error
+	queryFn      func(context.Context, string, map[string]interface{}) ([]string, [][]interface{}, error)
+	queryBatchFn func(context.Context, []remoteStatement) error
+	closeFn      func() error
 }
 
-func (f *fakeRemoteTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error) {
+func (f *fakeRemoteTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
 	if f.queryFn != nil {
 		return f.queryFn(ctx, statement, params)
-	}
-	return nil, nil
-}
-
-func (f *fakeRemoteTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	if f.queryWithColumnsFn != nil {
-		return f.queryWithColumnsFn(ctx, statement, params)
 	}
 	return nil, nil, nil
 }
@@ -92,13 +83,6 @@ func (f *fakeRemoteTransport) queryBatch(ctx context.Context, statements []remot
 		return f.queryBatchFn(ctx, statements)
 	}
 	return nil
-}
-
-func (f *fakeRemoteTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
-	if f.beginCypherTxFn != nil {
-		return f.beginCypherTxFn(ctx)
-	}
-	return nil, nil
 }
 
 func (f *fakeRemoteTransport) close() error {
@@ -144,9 +128,9 @@ func TestRemoteStreamNodesWithOptionsCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		calls := 0
-		engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(context.Context, string, map[string]interface{}) ([][]interface{}, error) {
+		engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(context.Context, string, map[string]interface{}) ([]string, [][]interface{}, error) {
 			calls++
-			return nil, nil
+			return nil, nil, nil
 		}}}
 		err := engine.StreamNodesWithOptions(ctx, StreamNodesOptions{}, func(*Node) error { return nil })
 		if err != context.Canceled || calls != 0 {
@@ -158,13 +142,13 @@ func TestRemoteStreamNodesWithOptionsCancellation(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		calls := 0
-		engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(queryCtx context.Context, statement string, _ map[string]interface{}) ([][]interface{}, error) {
+		engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(queryCtx context.Context, statement string, _ map[string]interface{}) ([]string, [][]interface{}, error) {
 			calls++
 			if statement != "MATCH (n) RETURN reveal(n)" {
 				t.Fatalf("query = %q", statement)
 			}
 			cancel()
-			return nil, queryCtx.Err()
+			return nil, nil, queryCtx.Err()
 		}}}
 		err := engine.StreamNodesWithOptions(ctx, StreamNodesOptions{}, func(*Node) error { return nil })
 		if err != context.Canceled || calls != 1 {
@@ -185,12 +169,12 @@ func TestRemoteStreamNodesWithOptionsDecayFilterMode(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			calls := 0
-			engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(_ context.Context, statement string, _ map[string]interface{}) ([][]interface{}, error) {
+			engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(_ context.Context, statement string, _ map[string]interface{}) ([]string, [][]interface{}, error) {
 				calls++
 				if statement != tt.wantStatement {
 					t.Fatalf("query = %q, want %q", statement, tt.wantStatement)
 				}
-				return [][]interface{}{{map[string]interface{}{
+				return nil, [][]interface{}{{map[string]interface{}{
 					"id": "db:1", "properties": map[string]interface{}{"keep": "visible"},
 				}}}, nil
 			}}}
@@ -211,12 +195,12 @@ func TestRemoteStreamNodesWithOptionsDecayFilterMode(t *testing.T) {
 
 func TestRemoteStreamNodesWithOptionsProjectionAndStop(t *testing.T) {
 	remoteCalls := 0
-	engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(_ context.Context, statement string, _ map[string]interface{}) ([][]interface{}, error) {
+	engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(_ context.Context, statement string, _ map[string]interface{}) ([]string, [][]interface{}, error) {
 		remoteCalls++
 		if statement != "MATCH (n) RETURN reveal(n)" {
 			t.Fatalf("query = %q", statement)
 		}
-		return [][]interface{}{
+		return nil, [][]interface{}{
 			{map[string]interface{}{"id": "other:1", "properties": map[string]interface{}{"keep": "skip"}}},
 			{map[string]interface{}{"id": "db:1", "properties": map[string]interface{}{"keep": "first", "drop": "private"}}},
 			{map[string]interface{}{"id": "db:2", "properties": map[string]interface{}{"keep": "second"}}},
@@ -364,17 +348,17 @@ func TestRemoteEngineConfigAndCommitURL(t *testing.T) {
 	if ht.client == nil {
 		t.Fatalf("expected default client")
 	}
-	if got := ht.commitURL(); got != "http://host/db/db/tx/commit" {
+	if got, err := ht.commitURL(); err != nil || got != "http://host/db/db/tx/commit" {
 		t.Fatalf("unexpected commit URL: %s", got)
 	}
 
 	e2, _ := NewRemoteEngine(RemoteEngineConfig{URI: "http://host/db/neo4j", Database: "x"})
-	if got := e2.transport.(*httpTransport).commitURL(); got != "http://host/db/neo4j/tx/commit" {
+	if got, err := e2.transport.(*httpTransport).commitURL(); err != nil || got != "http://host/db/neo4j/tx/commit" {
 		t.Fatalf("unexpected commit URL: %s", got)
 	}
 
 	e3, _ := NewRemoteEngine(RemoteEngineConfig{URI: "http://host/db/neo4j/tx/commit", Database: "x"})
-	if got := e3.transport.(*httpTransport).commitURL(); got != "http://host/db/neo4j/tx/commit" {
+	if got, err := e3.transport.(*httpTransport).commitURL(); err != nil || got != "http://host/db/neo4j/tx/commit" {
 		t.Fatalf("unexpected commit URL: %s", got)
 	}
 }
@@ -394,7 +378,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 		schema: NewSchemaManager(),
 	}
 	ctx := context.Background()
-	if _, err := badEngine.transport.query(ctx, "RETURN 1", map[string]interface{}{"bad": func() {}}); err == nil {
+	if _, _, err := badEngine.transport.query(ctx, "RETURN 1", map[string]interface{}{"bad": func() {}}); err == nil {
 		t.Fatalf("expected marshal error")
 	}
 
@@ -407,7 +391,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 		},
 		schema: NewSchemaManager(),
 	}
-	if _, err := badURLEngine.transport.query(ctx, "RETURN 1", nil); err == nil {
+	if _, _, err := badURLEngine.transport.query(ctx, "RETURN 1", nil); err == nil {
 		t.Fatalf("expected bad URL error")
 	}
 
@@ -415,7 +399,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 	eDoErr := makeEngineWithTransport(t, "http://host", func(_ *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("network down")
 	})
-	if _, err := eDoErr.transport.query(ctx, "RETURN 1", nil); err == nil {
+	if _, _, err := eDoErr.transport.query(ctx, "RETURN 1", nil); err == nil {
 		t.Fatalf("expected network error")
 	}
 
@@ -427,7 +411,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	if _, err := eReadErr.transport.query(ctx, "RETURN 1", nil); err == nil {
+	if _, _, err := eReadErr.transport.query(ctx, "RETURN 1", nil); err == nil {
 		t.Fatalf("expected read body error")
 	}
 
@@ -439,7 +423,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	if _, err := eDecodeErr.transport.query(ctx, "RETURN 1", nil); err == nil {
+	if _, _, err := eDecodeErr.transport.query(ctx, "RETURN 1", nil); err == nil {
 		t.Fatalf("expected decode error")
 	}
 
@@ -453,7 +437,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header: make(http.Header),
 		}, nil
 	})
-	if _, err := eCypherErr.transport.query(ctx, "RETURN 1", nil); err == nil || !strings.Contains(err.Error(), "bad statement") {
+	if _, _, err := eCypherErr.transport.query(ctx, "RETURN 1", nil); err == nil || !strings.Contains(err.Error(), "bad statement") {
 		t.Fatalf("expected cypher error, got: %v", err)
 	}
 
@@ -468,7 +452,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 			Header:     make(http.Header),
 		}, nil
 	})
-	rows, err := eOK.transport.query(ctx, "RETURN 1", nil)
+	_, rows, err := eOK.transport.query(ctx, "RETURN 1", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -506,7 +490,7 @@ func TestRemoteEngineQueryBranches(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error creating basic auth remote engine: %v", err)
 	}
-	if _, err := eBasic.transport.query(ctx, "RETURN 1", nil); err != nil {
+	if _, _, err := eBasic.transport.query(ctx, "RETURN 1", nil); err != nil {
 		t.Fatalf("unexpected error from basic auth query: %v", err)
 	}
 }
@@ -1297,6 +1281,13 @@ func TestRemoteEngineQueryCypherAndHTTPClosedBranches(t *testing.T) {
 	engine := makeEngineWithTransport(t, "http://remote.example", func(req *http.Request) (*http.Response, error) {
 		switch {
 		case req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/db/remote_db/tx/commit"):
+			var request remoteTxRequest
+			if err := json.NewDecoder(req.Body).Decode(&request); err != nil {
+				t.Fatalf("decode public query request: %v", err)
+			}
+			if len(request.Statements) != 1 || !request.Statements[0].IncludeStats || !reflect.DeepEqual(request.Statements[0].ResultDataContents, []string{"row", "graph", "rest"}) {
+				t.Fatalf("public query must retain stats and typed entity metadata: %#v", request.Statements)
+			}
 			return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(
 				`{"results":[{"columns":["n"],"data":[{"row":[42]}]}],"errors":[]}`,
 			))}, nil
@@ -1318,6 +1309,11 @@ func TestRemoteEngineQueryCypherAndHTTPClosedBranches(t *testing.T) {
 	}
 	if len(cols) != 1 || cols[0] != "n" || len(rows) != 1 || rows[0][0].(int64) != 42 {
 		t.Fatalf("unexpected query result cols=%v rows=%v", cols, rows)
+	}
+
+	count, err := engine.NodeCount()
+	if err != nil || count != 42 {
+		t.Fatalf("CRUD consumer of the column-bearing result failed: count=%d err=%v", count, err)
 	}
 
 	tx, err := engine.BeginCypherTx(nilCtx)
@@ -1451,17 +1447,17 @@ func TestRemoteEngineBatchGetNodes_BranchCoverage(t *testing.T) {
 	t.Run("skip not found entries and keep valid node", func(t *testing.T) {
 		eng := &RemoteEngine{
 			transport: &fakeRemoteTransport{
-				queryFn: func(_ context.Context, _ string, params map[string]interface{}) ([][]interface{}, error) {
+				queryFn: func(_ context.Context, _ string, params map[string]interface{}) ([]string, [][]interface{}, error) {
 					id := params["id"].(string)
 					switch id {
 					case "n1":
-						return nil, ErrNotFound
+						return nil, nil, ErrNotFound
 					case "n2":
-						return [][]interface{}{
+						return nil, [][]interface{}{
 							{map[string]interface{}{"id": "n2", "labels": []interface{}{"Person"}, "properties": map[string]interface{}{"id": "n2"}}},
 						}, nil
 					default:
-						return nil, nil
+						return nil, nil, nil
 					}
 				},
 			},
@@ -1483,8 +1479,8 @@ func TestRemoteEngineBatchGetNodes_BranchCoverage(t *testing.T) {
 	t.Run("propagate non-notfound query error", func(t *testing.T) {
 		eng := &RemoteEngine{
 			transport: &fakeRemoteTransport{
-				queryFn: func(_ context.Context, _ string, _ map[string]interface{}) ([][]interface{}, error) {
-					return nil, fmt.Errorf("query exploded")
+				queryFn: func(_ context.Context, _ string, _ map[string]interface{}) ([]string, [][]interface{}, error) {
+					return nil, nil, fmt.Errorf("query exploded")
 				},
 			},
 			schema: NewSchemaManager(),

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 )
 
@@ -54,7 +55,7 @@ func TestWALPublicDowngradeFixture(t *testing.T) {
 		t.Log("unsupported WAL version 4 (max supported: 3); WAL unchanged")
 		return
 	}
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "store"), WriteBehind: true, WriteBehindInterval: time.Hour})
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "store"), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	check(err)
 	// Test-only staging control shared by base/head: an acknowledged crash
 	// write must remain pending instead of racing the adaptive flush timer.
@@ -147,7 +148,7 @@ func walDowngradeSynchronousRestore(t *testing.T, dir, mode string, cfg *WALConf
 			t.Fatal(err)
 		}
 	}
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "store"), WriteBehind: false})
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "store"), WriteBehind: false}))
 	check(err)
 	t.Cleanup(func() { _ = b.Close() })
 	w, err := NewWAL(filepath.Join(dir, "wal"), cfg)
@@ -155,7 +156,7 @@ func walDowngradeSynchronousRestore(t *testing.T, dir, mode string, cfg *WALConf
 	t.Cleanup(func() { _ = w.Close() })
 	journal := NewWALEngine(b, w)
 	if strings.HasPrefix(mode, "write-") {
-		source, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "source"), WriteBehind: false})
+		source, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "source"), WriteBehind: false}))
 		check(err)
 		t.Cleanup(func() { _ = source.Close() })
 		_, err = source.CreateNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(2), "beta": "sync"}})
@@ -193,7 +194,7 @@ func walDowngradeForeignSource(t *testing.T, destination *BadgerEngine, logDir s
 			t.Fatal(err)
 		}
 	}
-	source, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(filepath.Dir(logDir), "source"), WriteBehind: true, WriteBehindInterval: time.Hour})
+	source, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(filepath.Dir(logDir), "source"), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	check(err)
 	source.writeBehind.SetDelayBounds(time.Hour, time.Hour)
 	_, err = source.CreateNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(0)}})

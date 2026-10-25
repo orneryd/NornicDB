@@ -65,7 +65,7 @@ func TestTraversalEndpointRetentionDoesNotScaleWithUnrelatedProperties(t *testin
 				require.NoError(t, err)
 				require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("link-%03d", i)), StartNode: "root", EndNode: id, Type: "LINK"}))
 			}
-			exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			warm, err := exec.Execute(context.Background(), tc.query, nil)
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{tc.want}}, warm.Rows)
@@ -129,7 +129,7 @@ func TestTraversalEndpointRetentionPreservesRequestedValues(t *testing.T) {
 		ChunkEmbeddings: [][]float32{{1, 0}}, EmbedMeta: map[string]interface{}{"has_embedding": true}})
 	require.NoError(t, err)
 	require.NoError(t, store.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK"}))
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, length := range []string{"", "*1..2"} {
 		result, err := exec.Execute(context.Background(), "MATCH (:Seed)-[:LINK"+length+"]->(e:Endpoint) RETURN e.rank, e.nested.k, e.has_embedding, labels(e)", nil)
 		require.NoError(t, err)

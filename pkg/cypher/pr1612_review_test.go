@@ -15,7 +15,7 @@ func TestPR1612ReviewFraming(t *testing.T) {
 	for _, normalize := range []bool{false, true} {
 		t.Run(fmt.Sprintf("normalize=%v", normalize), func(t *testing.T) {
 			config.SetCypherQueryNormalizationEnabled(normalize)
-			e := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+			e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			_, err := e.Execute(context.Background(), "CREATE (:R1612)", nil)
 			require.NoError(t, err)
 			for _, q := range []string{"CYPHER runtime=slotted/* gap */ RETURN 1 AS x", "CYPHER runtime=slotted /* gap */ RETURN 1 AS x", "CYPHER/* header */5 runtime/* key */=/* value */slotted/* tail */ RETURN 1 AS x"} {

@@ -15,11 +15,12 @@ import (
 // * or a plain variable reference (WITH x, `y z`). Comments are whitespace
 // here, so query normalization doesn't change what a subquery imports. A
 // scope clause item that is not a variable is an error (callScopeClauseVariables).
-func callSubqueryImportedVariables(scope string, scoped bool, body string) ([]string, error) {
+func callSubqueryImportedVariables(ctx context.Context, scope string, scoped bool, body string) ([]string, error) {
 	if scoped {
-		return callScopeClauseVariables(scope)
+		return callScopeClauseVariables(ctx, scope)
 	}
-	return importingWithVariables(body), nil
+	names := importingWithVariables(ctx, body)
+	return names, ctx.Err()
 }
 
 // callScopeClauseVariables is the list of a CALL scope clause, the text
@@ -29,9 +30,12 @@ func callSubqueryImportedVariables(scope string, scoped bool, body string) ([]st
 // the one statement validation reports too. A word such as null or true is
 // a variable's name here, as in Neo4j, and is an error only where no such
 // variable is defined.
-func callScopeClauseVariables(list string) ([]string, error) {
+func callScopeClauseVariables(ctx context.Context, list string) ([]string, error) {
 	const prefix = "CALL ("
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), prefix+list+") { RETURN 0 }", cypherantlr.CallEntry, false)
+	syntax, err := cypherantlr.ParseSyntax(ctx, prefix+list+") { RETURN 0 }", cypherantlr.CallEntry, cypherVersionFromContext(ctx) == "25")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err != nil {
 		return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", localization.CypherResultMetadataImportVariablesRequired())
 	}
@@ -42,8 +46,8 @@ func callScopeClauseVariables(list string) ([]string, error) {
 	return scope.names, nil
 }
 
-func importingWithVariables(source string) []string {
-	body := readQueryBody(source, 0, len(source))
+func importingWithVariables(ctx context.Context, source string) []string {
+	body := readQueryBody(ctx, source, 0, len(source))
 	if len(body.branches) == 0 {
 		return nil
 	}

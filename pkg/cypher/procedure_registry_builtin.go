@@ -272,7 +272,7 @@ func ensureBuiltInProceduresRegistered() {
 			MaxArgs:            1,
 		},
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callTxSetMetadataArguments(ctx, args)
+				return e.callTxSetMetadata(ctx, args)
 			})
 
 		registerBuiltInProcedure("nornicdb.version", "nornicdb.version() :: (version :: STRING, build :: STRING, edition :: STRING)", localization.CypherProcedureMetadata("nornicdb.version"), ProcedureModeRead, 0, 0, false,

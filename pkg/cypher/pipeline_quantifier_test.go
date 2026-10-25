@@ -148,7 +148,7 @@ func TestPipelineQuantifierAcrossRepeatedHorizons(t *testing.T) {
 		WITH none(x IN list WHERE false) AS result, count(*) AS cnt
 		RETURN result
 	`
-	clauses, parsed := canExecuteAsPipeline(query)
+	clauses, parsed := canExecuteAsPipeline(t.Context(), query)
 	require.True(t, parsed)
 	rows := []pipelineRow{{}}
 	for index, clause := range clauses {

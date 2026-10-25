@@ -387,9 +387,9 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 		ctx = withValueBindings(ctx, values)
 	}
 	// A UNION body: each branch runs for the row, and the shared UNION
-	// combiner (executeUnionBranches) joins them, as for a top-level UNION.
-	if _, unionAll, _, union := parseTopLevelUnionBranches(query); union {
-		return e.executeUnionBranches(query, unionAll, func(branch string) (*ExecuteResult, error) {
+	// combiner (executeUnion) joins them, as for a top-level UNION.
+	if _, unionAll, _, union := parseTopLevelUnionBranches(ctx, query); union {
+		return e.executeUnion(ctx, query, unionAll, func(branch string) (*ExecuteResult, error) {
 			return e.runCorrelatedSubquery(ctx, branch, values)
 		})
 	}
@@ -464,7 +464,7 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 // can't resolve, and under a temporal viewport. Execution failures are
 // recorded and handled: callers must not retry a failed read as a new plan.
 func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
-	shape := clauseAnalysisFor(ctx, clauseAnalysisBoundNode, body, parseBoundNodeShape)
+	shape := clauseAnalysisFor(ctx, clauseAnalysisBoundNode, body, func(text string) boundNodeShape { return parseBoundNodeShape(ctx, text) })
 	if !shape.ok {
 		return 0, false
 	}
@@ -552,12 +552,12 @@ type boundNodeShape struct {
 	ok       bool
 }
 
-func parseBoundNodeShape(body string) boundNodeShape {
+func parseBoundNodeShape(ctx context.Context, body string) boundNodeShape {
 	pattern := strings.TrimSpace(body)
 	if hasPrefixFold(pattern, "MATCH ") {
 		pattern = strings.TrimSpace(pattern[len("MATCH"):])
 	}
-	if clauses, ok := splitPipelineClauses("MATCH " + pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	if clauses, ok := splitPipelineClauses(ctx, "MATCH "+pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
 		return boundNodeShape{}
 	}
 	where := ""
@@ -617,7 +617,7 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 	}
 	// One MATCH clause, its WHERE included: a RETURN or any other clause is
 	// the kernel's or the pipeline's.
-	if clauses, ok := splitPipelineClauses("MATCH " + pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	if clauses, ok := splitPipelineClauses(ctx, "MATCH "+pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
 		return 0, false
 	}
 	where := ""

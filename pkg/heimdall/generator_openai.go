@@ -7,16 +7,23 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 const defaultOpenAIBaseURL = "https://api.openai.com"
 const defaultVLLMBaseURL = "http://localhost:8000"
+const defaultLiteLLMBaseURL = "http://localhost:4000"
+const defaultOrcaBaseURL = "https://api.orcarouter.ai"
+const defaultOrcaModel = "orcarouter/auto"
 const defaultOpenAIModel = "gpt-4o-mini"
 const openAIChatPath = "/v1/chat/completions"
 
@@ -46,61 +53,29 @@ func looksLikeLocalModel(s string) bool {
 // openAIGenerator implements Generator by calling OpenAI (or compatible) chat API.
 // Supports both non-streaming (Generate) and streaming (GenerateStream) via stream: true and SSE.
 type openAIGenerator struct {
-	baseURL string
-	apiKey  string
-	model   string
-	client  *http.Client
+	chatCompletionGenerator
+	baseURL     string
+	apiKey      string
+	modelPrefix string
+	model       string
+	client      *http.Client
 }
 
 // openAIChatRequest is the request body for OpenAI chat completions.
 type openAIChatRequest struct {
-	Model       string          `json:"model"`
-	Messages    []openAIMsgWire `json:"messages"`
-	Tools       []openAITool    `json:"tools,omitempty"`
-	Stream      bool            `json:"stream,omitempty"`
-	MaxTokens   int             `json:"max_tokens,omitempty"`
-	Temperature float32         `json:"temperature,omitempty"`
-}
-
-type openAIMsg struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
-// openAIMsgWire is the wire format for messages (can include tool_calls and tool_call_id).
-type openAIMsgWire struct {
-	Role       string               `json:"role"`
-	Content    string               `json:"content"`
-	ToolCalls  []openAIToolCallWire `json:"tool_calls,omitempty"`
-	ToolCallID string               `json:"tool_call_id,omitempty"`
-}
-
-type openAIToolCallWire struct {
-	Id       string `json:"id"`
-	Type     string `json:"type"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
-	} `json:"function"`
-}
-
-type openAITool struct {
-	Type     string `json:"type"`
-	Function struct {
-		Name        string          `json:"name"`
-		Description string          `json:"description"`
-		Parameters  json.RawMessage `json:"parameters"`
-	} `json:"function"`
+	Model       string        `json:"model"`
+	Messages    []chatMessage `json:"messages"`
+	Tools       []chatTool    `json:"tools,omitempty"`
+	Stream      bool          `json:"stream,omitempty"`
+	MaxTokens   int           `json:"max_tokens,omitempty"`
+	Temperature float32       `json:"temperature,omitempty"`
 }
 
 // openAIChatResponse is the non-streaming response.
 type openAIChatResponse struct {
 	Choices []struct {
-		Message struct {
-			Content   string               `json:"content"`
-			ToolCalls []openAIToolCallWire `json:"tool_calls,omitempty"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
+		Message      chatMessage `json:"message"`
+		FinishReason string      `json:"finish_reason"`
 	} `json:"choices"`
 }
 
@@ -115,70 +90,139 @@ type openAIChatChunk struct {
 }
 
 func init() {
-	RegisterHeimdallProvider("openai", newOpenAIGenerator)
-	RegisterHeimdallProvider("vllm", newVLLMGenerator)
+	for _, provider := range []string{"openai", "vllm", "litellm", "orca"} {
+		RegisterHeimdallProvider(provider, newOpenAIGenerator)
+	}
 }
 
-// newVLLMGenerator creates a Generator that uses a vLLM server's OpenAI-compatible API.
-// vLLM serves the same /v1/chat/completions endpoint, so this reuses openAIGenerator
-// with vLLM-friendly defaults: no API key required, base URL defaults to localhost:8000,
-// and the configured model name is used as-is (no looksLikeLocalModel filtering).
-func newVLLMGenerator(cfg Config) (Generator, error) {
-	baseURL := cfg.APIURL
-	if baseURL == "" {
-		baseURL = defaultVLLMBaseURL
-	}
-	baseURL = strings.TrimSuffix(baseURL, "/")
-	model := strings.TrimSpace(cfg.Model)
-	if model == "" {
-		return nil, fmt.Errorf("vllm provider requires NORNICDB_HEIMDALL_MODEL (the model served by vLLM)")
-	}
-	apiKey := cfg.APIKey
-	if apiKey == "" {
-		apiKey = "EMPTY" // vLLM accepts any key when auth is disabled
-	}
-	return &openAIGenerator{
-		baseURL: baseURL,
-		apiKey:  apiKey,
-		model:   model,
-		client: &http.Client{
-			Timeout: 120 * time.Second,
-		},
-	}, nil
-}
-
-// newOpenAIGenerator creates a Generator that uses the OpenAI chat completions API.
+// newOpenAIGenerator owns construction for OpenAI-compatible providers. Provider
+// policy is selected here before the shared HTTP client and completion owner are
+// initialized. Empty Provider retains the direct OpenAI constructor contract.
 func newOpenAIGenerator(cfg Config) (Generator, error) {
-	baseURL := cfg.APIURL
-	if baseURL == "" {
-		baseURL = defaultOpenAIBaseURL
+	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
+	baseURL, apiKey, model := cfg.APIURL, cfg.APIKey, strings.TrimSpace(cfg.Model)
+	modelPrefix := "openai"
+	if provider == "orca" {
+		// Orca historically validates credentials before processing its URL and
+		// only strips a terminal /v1; it does not normalize the configured URL.
+		if strings.TrimSpace(apiKey) == "" {
+			return nil, fmt.Errorf("orca provider requires NORNICDB_HEIMDALL_API_KEY")
+		}
+		baseURL = strings.TrimSpace(baseURL)
+		if baseURL == "" {
+			baseURL = defaultOrcaBaseURL
+		}
+		if parsed, err := url.Parse(baseURL); err == nil {
+			parsed.Path = strings.TrimSuffix(strings.TrimSuffix(parsed.Path, "/"), "/v1")
+			parsed.RawPath = strings.TrimSuffix(strings.TrimSuffix(parsed.RawPath, "/"), "/v1")
+			baseURL = parsed.String()
+		}
+		if looksLikeLocalModel(model) {
+			model = defaultOrcaModel
+		}
+		modelPrefix = "orca"
+	} else {
+		defaultURL := defaultOpenAIBaseURL
+		switch provider {
+		case "vllm":
+			defaultURL = defaultVLLMBaseURL
+		case "litellm":
+			defaultURL, modelPrefix = defaultLiteLLMBaseURL, "litellm"
+		default:
+			provider = "openai"
+		}
+		if baseURL == "" {
+			baseURL = defaultURL
+		}
+		configuredURL := strings.TrimSpace(baseURL)
+		var err error
+		baseURL, err = observability.NormalizeRequestBaseURL(configuredURL)
+		if err != nil {
+			return nil, fmt.Errorf("%s provider URL: %w", provider, observability.RedactClientError(err, configuredURL, cfg.APIKey))
+		}
+		if provider == "openai" {
+			if looksLikeLocalModel(model) {
+				model = defaultOpenAIModel
+			}
+			if apiKey == "" {
+				return nil, fmt.Errorf("openai provider requires NORNICDB_HEIMDALL_API_KEY")
+			}
+		} else {
+			if model == "" {
+				if provider == "vllm" {
+					return nil, fmt.Errorf("vllm provider requires NORNICDB_HEIMDALL_MODEL (the model served by vLLM)")
+				}
+				return nil, fmt.Errorf("litellm provider requires NORNICDB_HEIMDALL_MODEL (a model/alias served by your LiteLLM proxy)")
+			}
+			if apiKey == "" {
+				apiKey = "EMPTY"
+			}
+		}
 	}
-	baseURL = strings.TrimSuffix(baseURL, "/")
-	model := strings.TrimSpace(cfg.Model)
-	if looksLikeLocalModel(model) {
-		model = defaultOpenAIModel
+	g := &openAIGenerator{
+		baseURL: baseURL, apiKey: apiKey, model: model, modelPrefix: modelPrefix,
+		client: &http.Client{Timeout: 120 * time.Second},
 	}
-	if cfg.APIKey == "" {
-		return nil, fmt.Errorf("openai provider requires NORNICDB_HEIMDALL_API_KEY")
+	g.chatCompletionGenerator = chatCompletionGenerator{
+		complete:         g.completeChat,
+		credentials:      func() (string, string) { return g.baseURL, g.apiKey },
+		toolContextLimit: openAIMaxInputTokens,
+		toolContent:      truncateForOpenAI,
 	}
-	return &openAIGenerator{
-		baseURL: baseURL,
-		apiKey:  cfg.APIKey,
-		model:   model,
-		client: &http.Client{
-			Timeout: 120 * time.Second,
-		},
-	}, nil
+	return g, nil
 }
 
-// Generate implements Generator.
-func (g *openAIGenerator) Generate(ctx context.Context, prompt string, params GenerateParams) (string, error) {
+// chatStatusError retains the safe response facts required by provider policy.
+type chatStatusError struct {
+	provider string
+	status   int
+	body     string
+}
+
+func (e *chatStatusError) Error() string {
+	return fmt.Sprintf("%s returned %d: %s", e.provider, e.status, e.body)
+}
+
+// requestProviderChat is the common JSON chat transport owner. Wire request
+// types, streaming decoders and provider-specific response policy stay at callers.
+// A successful response transfers body ownership; every rejected response closes here.
+func requestProviderChat(ctx context.Context, client *http.Client, provider, baseURL, route, apiKey string, payload any) (_ *http.Response, err error) {
+	defer func() { err = observability.RedactError(err, observability.ClientCredentials(baseURL, apiKey)...) }()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("%s request: %w", provider, err)
+	}
+	endpoint, err := observability.ComposeRequestURL(baseURL, route, observability.AppendRequestRoute)
+	if err != nil {
+		return nil, fmt.Errorf("%s request: %w", provider, err)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("%s request: %w", provider, err)
+	}
+	request.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		request.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("%s request: %w", provider, err)
+	}
+	if response.StatusCode != http.StatusOK {
+		defer response.Body.Close()
+		body, _ := io.ReadAll(response.Body)
+		return nil, &chatStatusError{provider: provider, status: response.StatusCode, body: observability.RedactText(string(body), observability.ClientCredentials(baseURL, apiKey)...)}
+	}
+	return response, nil
+}
+
+// requestChat owns request serialization, authentication and response admission for all generation modes.
+func (g *openAIGenerator) requestChat(ctx context.Context, messages []chatMessage, tools []chatTool, params GenerateParams, stream bool) (*http.Response, error) {
 	reqBody := openAIChatRequest{
-		Model: g.model,
-		Messages: []openAIMsgWire{
-			{Role: "user", Content: prompt},
-		},
-		Stream:      false,
+		Model:       g.model,
+		Messages:    messages,
+		Tools:       tools,
+		Stream:      stream,
 		MaxTokens:   params.MaxTokens,
 		Temperature: params.Temperature,
 	}
@@ -186,38 +230,30 @@ func (g *openAIGenerator) Generate(ctx context.Context, prompt string, params Ge
 		reqBody.MaxTokens = 1024
 	}
 
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", fmt.Errorf("openai request: %w", err)
+	resp, err := requestProviderChat(ctx, g.client, "openai", g.baseURL, openAIChatPath, g.apiKey, reqBody)
+	var rejected *chatStatusError
+	if tools != nil && errors.As(err, &rejected) && rejected.status == http.StatusBadRequest && strings.Contains(rejected.body, "context_length_exceeded") {
+		return nil, fmt.Errorf("conversation is too long for the model (context limit exceeded). Please start a new chat or ask a shorter question")
 	}
+	return resp, err
+}
 
-	url := g.baseURL + openAIChatPath
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+// completeChat decodes the shared non-streaming response for plain and tool rounds.
+func (g *openAIGenerator) completeChat(ctx context.Context, messages []chatMessage, tools []chatTool, params GenerateParams) (chatMessage, error) {
+	resp, err := g.requestChat(ctx, messages, tools, params, false)
 	if err != nil {
-		return "", fmt.Errorf("openai request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+g.apiKey)
-
-	resp, err := g.client.Do(httpReq)
-	if err != nil {
-		return "", fmt.Errorf("openai request: %w", err)
+		return chatMessage{}, err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("openai returned %d: %s", resp.StatusCode, string(bodyBytes))
-	}
-
 	var chatResp openAIChatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&chatResp); err != nil {
-		return "", fmt.Errorf("openai decode: %w", err)
+		return chatMessage{}, fmt.Errorf("openai decode: %w", observability.RedactError(err, observability.ClientCredentials(g.baseURL, g.apiKey)...))
 	}
 	if len(chatResp.Choices) == 0 {
-		return "", fmt.Errorf("openai: no choices in response")
+		return chatMessage{}, fmt.Errorf("openai: no choices in response")
 	}
-	return chatResp.Choices[0].Message.Content, nil
+	return chatResp.Choices[0].Message, nil
 }
 
 // truncateContentToTokenEstimate truncates content so estimated tokens <= maxTokens.
@@ -309,132 +345,16 @@ func truncateForOpenAI(content string) string {
 	return content[:max] + suffix
 }
 
-// GenerateWithTools implements GeneratorWithTools (agentic loop, one round).
-// Trims messages to stay within model context (128K) and returns a friendly error if context is exceeded.
-func (g *openAIGenerator) GenerateWithTools(ctx context.Context, messages []ToolRoundMessage, tools []MCPTool, params GenerateParams) (content string, toolCalls []ParsedToolCall, err error) {
-	messages = trimMessagesForContext(messages, openAIMaxInputTokens)
-	wire := make([]openAIMsgWire, 0, len(messages))
-	for _, m := range messages {
-		msg := openAIMsgWire{Role: m.Role, Content: truncateForOpenAI(m.Content), ToolCallID: m.ToolCallID}
-		if len(m.ToolCalls) > 0 {
-			msg.ToolCalls = make([]openAIToolCallWire, len(m.ToolCalls))
-			for i, tc := range m.ToolCalls {
-				msg.ToolCalls[i] = openAIToolCallWire{
-					Id:   tc.Id,
-					Type: "function",
-					Function: struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					}{Name: tc.Name, Arguments: tc.Arguments},
-				}
-			}
-		}
-		wire = append(wire, msg)
-	}
-	openAITools := make([]openAITool, len(tools))
-	for i, t := range tools {
-		openAITools[i] = openAITool{
-			Type: "function",
-			Function: struct {
-				Name        string          `json:"name"`
-				Description string          `json:"description"`
-				Parameters  json.RawMessage `json:"parameters"`
-			}{Name: t.Name, Description: t.Description, Parameters: t.InputSchema},
-		}
-	}
-	maxTok := params.MaxTokens
-	if maxTok == 0 {
-		maxTok = 1024
-	}
-	reqBody := openAIChatRequest{
-		Model:       g.model,
-		Messages:    wire,
-		Tools:       openAITools,
-		Stream:      false,
-		MaxTokens:   maxTok,
-		Temperature: params.Temperature,
-	}
-	body, err := json.Marshal(reqBody)
-	if err != nil {
-		return "", nil, fmt.Errorf("openai request: %w", err)
-	}
-	url := g.baseURL + openAIChatPath
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return "", nil, fmt.Errorf("openai request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+g.apiKey)
-	resp, err := g.client.Do(httpReq)
-	if err != nil {
-		return "", nil, fmt.Errorf("openai request: %w", err)
-	}
-	defer resp.Body.Close()
-	bodyBytes, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		bodyStr := string(bodyBytes)
-		if resp.StatusCode == http.StatusBadRequest && strings.Contains(bodyStr, "context_length_exceeded") {
-			return "", nil, fmt.Errorf("conversation is too long for the model (context limit exceeded). Please start a new chat or ask a shorter question")
-		}
-		return "", nil, fmt.Errorf("openai returned %d: %s", resp.StatusCode, bodyStr)
-	}
-	var chatResp openAIChatResponse
-	if err := json.Unmarshal(bodyBytes, &chatResp); err != nil {
-		return "", nil, fmt.Errorf("openai decode: %w", err)
-	}
-	if len(chatResp.Choices) == 0 {
-		return "", nil, fmt.Errorf("openai: no choices in response")
-	}
-	msg := chatResp.Choices[0].Message
-	content = msg.Content
-	for _, tc := range msg.ToolCalls {
-		toolCalls = append(toolCalls, ParsedToolCall{
-			Id:        tc.Id,
-			Name:      tc.Function.Name,
-			Arguments: tc.Function.Arguments,
-		})
-	}
-	return content, toolCalls, nil
-}
-
 // GenerateStream implements Generator.
-func (g *openAIGenerator) GenerateStream(ctx context.Context, prompt string, params GenerateParams, callback func(token string) error) error {
-	reqBody := openAIChatRequest{
-		Model: g.model,
-		Messages: []openAIMsgWire{
-			{Role: "user", Content: prompt},
-		},
-		Stream:      true,
-		MaxTokens:   params.MaxTokens,
-		Temperature: params.Temperature,
-	}
-	if reqBody.MaxTokens == 0 {
-		reqBody.MaxTokens = 1024
-	}
-
-	body, err := json.Marshal(reqBody)
+func (g *openAIGenerator) GenerateStream(ctx context.Context, prompt string, params GenerateParams, callback func(token string) error) (err error) {
+	defer func() {
+		err = observability.RedactClientError(err, g.baseURL, g.apiKey)
+	}()
+	resp, err := g.requestChat(ctx, []chatMessage{{Role: "user", Content: prompt}}, nil, params, true)
 	if err != nil {
-		return fmt.Errorf("openai request: %w", err)
-	}
-
-	url := g.baseURL + openAIChatPath
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("openai request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+g.apiKey)
-
-	resp, err := g.client.Do(httpReq)
-	if err != nil {
-		return fmt.Errorf("openai request: %w", err)
+		return err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		bodyBytes, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("openai returned %d: %s", resp.StatusCode, string(bodyBytes))
-	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
@@ -469,5 +389,9 @@ func (g *openAIGenerator) Close() error {
 
 // ModelPath implements Generator (returns display name for logging).
 func (g *openAIGenerator) ModelPath() string {
-	return "openai:" + g.model
+	prefix := g.modelPrefix
+	if prefix == "" {
+		prefix = "openai"
+	}
+	return prefix + ":" + g.model
 }

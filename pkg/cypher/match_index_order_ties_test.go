@@ -17,7 +17,7 @@ func TestIndexedOrderExactIntegers(t *testing.T) {
 			for _, smaller := range []int64{2, 9007199254740992} {
 				t.Run(fmt.Sprintf("tx=%t/index=%t/smaller=%d", transaction, indexed, smaller), func(t *testing.T) {
 					store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "exact-order")
-					exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+					exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 					ctx := context.Background()
 					larger := smaller + 1
 					for _, entry := range []struct {
@@ -85,7 +85,7 @@ func TestIndexedOrderMixedNumericExact(t *testing.T) {
 	for _, transaction := range []bool{false, true} {
 		t.Run(fmt.Sprintf("tx=%t", transaction), func(t *testing.T) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "mixed-order")
-			exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			ctx := context.Background()
 			for _, entry := range []struct {
 				id    storage.NodeID
@@ -127,7 +127,7 @@ func TestIndexedOrderMixedNumericExact(t *testing.T) {
 func indexedOrderFixture(tb testing.TB, count int) *StorageExecutor {
 	tb.Helper()
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(tb), "order-ties")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for i := 0; i < count; i++ {
 		_, err := store.CreateNode(&storage.Node{
 			ID: storage.NodeID(fmt.Sprintf("node-%06d", i)), Labels: []string{"OrderedItem"},
@@ -209,18 +209,6 @@ func TestIndexedOrderPatternPropertiesAndCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
-func TestIndexedOrderEmptyIndexPreservesGeneralRead(t *testing.T) {
-	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "null-order")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
-	_, err := exec.Execute(context.Background(), "CREATE INDEX empty_title FOR (n:NullTitle) ON (n.title)", nil)
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{ID: "without-title", Labels: []string{"NullTitle"}, Properties: map[string]interface{}{"payload": "retained"}})
-	require.NoError(t, err)
-	result, err := exec.Execute(context.Background(), "MATCH (n:NullTitle) RETURN n.payload ORDER BY n.title ASC LIMIT 3", nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{"retained"}}, result.Rows)
-}
-
 func TestIndexedOrderHeapWorstFirst(t *testing.T) {
 	h := &indexedOrderHeap{compare: func(a, b *storage.Node) int { return int(a.Properties["rank"].(int64) - b.Properties["rank"].(int64)) }}
 	for _, rank := range []int64{2, 1, 3} {
@@ -233,41 +221,62 @@ func TestIndexedOrderHeapWorstFirst(t *testing.T) {
 }
 
 func TestIndexedOrderPartialIndexPreservesNullRows(t *testing.T) {
-	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "partial-index")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	run := func(namespace string, check func(*testing.T, *storage.NamespacedEngine, *StorageExecutor)) {
+		t.Run(namespace, func(t *testing.T) {
+			store := storage.NewNamespacedEngine(newTestMemoryEngine(t), namespace)
+			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
+			check(t, store, exec)
+		})
+	}
 	ctx := context.Background()
-	for i := 0; i < 250; i++ {
-		_, err := store.CreateNode(&storage.Node{
-			ID: storage.NodeID(fmt.Sprintf("node-%03d", i)), Labels: []string{"OptionalTitle"},
-			Properties: map[string]interface{}{"title": "same", "rank": int64(i), "active": i == 0},
-		})
+	run("partial-index", func(t *testing.T, store *storage.NamespacedEngine, exec *StorageExecutor) {
+
+		for i := 0; i < 250; i++ {
+			_, err := store.CreateNode(&storage.Node{
+				ID: storage.NodeID(fmt.Sprintf("node-%03d", i)), Labels: []string{"OptionalTitle"},
+				Properties: map[string]interface{}{"title": "same", "rank": int64(i), "active": i == 0},
+			})
+			require.NoError(t, err)
+		}
+		for i := 0; i < 2; i++ {
+			_, err := store.CreateNode(&storage.Node{
+				ID: storage.NodeID(fmt.Sprintf("missing-%d", i)), Labels: []string{"OptionalTitle"},
+				Properties: map[string]interface{}{"rank": int64(500 + i), "active": true},
+			})
+			require.NoError(t, err)
+		}
+		_, err := exec.Execute(ctx, "CREATE INDEX optional_title FOR (n:OptionalTitle) ON (n.title)", nil)
 		require.NoError(t, err)
-	}
-	for i := 0; i < 2; i++ {
-		_, err := store.CreateNode(&storage.Node{
-			ID: storage.NodeID(fmt.Sprintf("missing-%d", i)), Labels: []string{"OptionalTitle"},
-			Properties: map[string]interface{}{"rank": int64(500 + i), "active": true},
-		})
+		for _, tc := range []struct {
+			page string
+			want [][]interface{}
+		}{
+			{"LIMIT 5", [][]interface{}{{int64(0)}, {int64(500)}, {int64(501)}}},
+			{"SKIP 1 LIMIT 2", [][]interface{}{{int64(500)}, {int64(501)}}},
+		} {
+			result, err := exec.Execute(ctx, "MATCH (n:OptionalTitle) WHERE n.active = true RETURN n.rank ORDER BY n.title ASC,n.rank ASC "+tc.page, nil)
+			require.NoError(t, err)
+			require.Equal(t, tc.want, result.Rows, tc.page)
+		}
+
+	})
+	run("null-order", func(t *testing.T, store *storage.NamespacedEngine, exec *StorageExecutor) {
+
+		_, err := exec.Execute(context.Background(), "CREATE INDEX empty_title FOR (n:NullTitle) ON (n.title)", nil)
 		require.NoError(t, err)
-	}
-	_, err := exec.Execute(ctx, "CREATE INDEX optional_title FOR (n:OptionalTitle) ON (n.title)", nil)
-	require.NoError(t, err)
-	for _, tc := range []struct {
-		page string
-		want [][]interface{}
-	}{
-		{"LIMIT 5", [][]interface{}{{int64(0)}, {int64(500)}, {int64(501)}}},
-		{"SKIP 1 LIMIT 2", [][]interface{}{{int64(500)}, {int64(501)}}},
-	} {
-		result, err := exec.Execute(ctx, "MATCH (n:OptionalTitle) WHERE n.active = true RETURN n.rank ORDER BY n.title ASC,n.rank ASC "+tc.page, nil)
+		_, err = store.CreateNode(&storage.Node{ID: "without-title", Labels: []string{"NullTitle"}, Properties: map[string]interface{}{"payload": "retained"}})
 		require.NoError(t, err)
-		require.Equal(t, tc.want, result.Rows, tc.page)
-	}
+		result, err := exec.Execute(context.Background(), "MATCH (n:NullTitle) RETURN n.payload ORDER BY n.title ASC LIMIT 3", nil)
+		require.NoError(t, err)
+		require.Equal(t, [][]interface{}{{"retained"}}, result.Rows)
+
+	})
+
 }
 
 func TestIndexedOrderDescendingPreservesNullRows(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "descending-null-order")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	for _, node := range []*storage.Node{
 		{ID: "missing", Labels: []string{"OptionalTitle"}, Properties: map[string]interface{}{"rank": int64(1), "active": true}},
@@ -315,7 +324,7 @@ func TestIndexedOrderTraversalTiedLimit(t *testing.T) {
 
 func TestIndexedOrderTraversalRejectsOtherVariableSortKeys(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "cross-variable-order")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	for _, node := range []*storage.Node{
 		{ID: "original-a", Labels: []string{"Original"}, Properties: map[string]interface{}{"textKey": "a"}},

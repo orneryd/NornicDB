@@ -140,13 +140,15 @@ func TestCallSubqueryHelpers_CorrelationAndTopLevelSplits(t *testing.T) {
 }
 
 func TestCallSubqueryHelpers_ModifiersJoinAndLookupKeys(t *testing.T) {
-	branches, unionAll, ok := splitTopLevelUnionBranches("RETURN 'UNION' AS v UNION ALL RETURN 2 AS v")
+	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(t.Context(), "RETURN 'UNION' AS v UNION ALL RETURN 2 AS v")
 	require.True(t, ok)
+	require.False(t, mixed)
 	require.True(t, unionAll)
 	require.Equal(t, []string{"RETURN 'UNION' AS v", "RETURN 2 AS v"}, branches)
 
-	branches, unionAll, ok = splitTopLevelUnionBranches("RETURN 1 AS v UNION RETURN 2 AS v")
+	branches, unionAll, mixed, ok = parseTopLevelUnionBranches(t.Context(), "RETURN 1 AS v UNION RETURN 2 AS v")
 	require.True(t, ok)
+	require.False(t, mixed)
 	require.False(t, unionAll)
 	require.Equal(t, 2, len(branches))
 

@@ -64,25 +64,9 @@ func (w *mergeNodeWrites) addSetItems(items []string, renamed bool, except map[s
 }
 
 // withMergeNodeWrites returns ctx carrying what clauses write
-// (mergeNodeWritesOf), merged with what the enclosing statement writes, so a
+// merged with what the enclosing statement writes, so a
 // MERGE in a subquery or FOREACH body sees the writes around it too.
 func withMergeNodeWrites(ctx context.Context, clauses []pipelineClause) context.Context {
-	writes := mergeNodeWritesOf(clauses)
-	if outer := mergeNodeWritesFromContext(ctx); outer != nil {
-		writes.all = writes.all || outer.all
-		for variable := range outer.variables {
-			writes.add(variable, false)
-		}
-	}
-	return context.WithValue(ctx, mergeNodeWritesKey{}, writes)
-}
-
-func mergeNodeWritesFromContext(ctx context.Context) *mergeNodeWrites {
-	writes, _ := ctx.Value(mergeNodeWritesKey{}).(*mergeNodeWrites)
-	return writes
-}
-
-func mergeNodeWritesOf(clauses []pipelineClause) *mergeNodeWrites {
 	writes := &mergeNodeWrites{}
 	renamed := false
 	for _, clause := range clauses {
@@ -124,10 +108,21 @@ func mergeNodeWritesOf(clauses []pipelineClause) *mergeNodeWrites {
 		case pipelineClauseForeach, pipelineClauseCallSubquery:
 			writes.all = true
 		case pipelineClauseCall:
-			if procedure, found := globalProcedureRegistry.Get(extractProcedureName(clause.text)); !found || procedure.Spec.writes() {
+			if procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause.text)); !found || procedure.Spec.writes() {
 				writes.all = true
 			}
 		}
 	}
+	if outer := mergeNodeWritesFromContext(ctx); outer != nil {
+		writes.all = writes.all || outer.all
+		for variable := range outer.variables {
+			writes.add(variable, false)
+		}
+	}
+	return context.WithValue(ctx, mergeNodeWritesKey{}, writes)
+}
+
+func mergeNodeWritesFromContext(ctx context.Context) *mergeNodeWrites {
+	writes, _ := ctx.Value(mergeNodeWritesKey{}).(*mergeNodeWrites)
 	return writes
 }

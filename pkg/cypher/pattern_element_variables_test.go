@@ -34,7 +34,7 @@ func TestExtractVariableNamesFromPatternElements(t *testing.T) {
 		{"(a WHERE a.id = 1)-[r:R]->(b)", []string{"a", "b"}},
 		{"(`my node`:L)", []string{"`my node`"}},
 	} {
-		require.Equal(t, tc.want, exec.extractVariableNamesFromPattern(tc.pattern), tc.pattern)
+		require.Equal(t, tc.want, exec.extractVariableNamesFromPattern(t.Context(), tc.pattern), tc.pattern)
 	}
 }
 

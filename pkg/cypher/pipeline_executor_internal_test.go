@@ -11,48 +11,52 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCanExecuteAsPipeline_SimpleSeederShape(t *testing.T) {
-	q := `
+// TestCanExecuteAsPipeline_QueryShapes is the shared recognition contract for
+// seeder, CALL-tail, CREATE-window and standalone MERGE statement shapes.
+func TestCanExecuteAsPipeline_QueryShapes(t *testing.T) {
+	seederKinds := []pipelineClauseKind{pipelineClauseMatch, pipelineClauseCreate, pipelineClauseCreate, pipelineClauseWith, pipelineClauseUnwind, pipelineClauseMatch, pipelineClauseCreate}
+	for _, tc := range []struct {
+		name       string
+		query      string
+		prefix     []pipelineClauseKind
+		exactCount int
+	}{
+		{name: "seeder with relationship properties", query: `
 		MATCH (c:Customer {customerID: 1})
 		CREATE (o:Order {orderID: 9001})
 		CREATE (c)-[:PURCHASED]->(o)
 		WITH o, {}
 		UNWIND [{productID: 1, quantity: 3}] AS prodRef
 		MATCH (p:Product {productID: prodRef.productID})
-		CREATE (o)-[:ORDERS {quantity: prodRef.quantity}]->(p)`
-
-	clauses, ok := canExecuteAsPipeline(q)
-	require.True(t, ok, "pipeline splitter must accept composite MATCH+CREATE+WITH+UNWIND+MATCH+CREATE")
-	t.Logf("got %d clauses", len(clauses))
-	for i, c := range clauses {
-		head := strings.SplitN(strings.TrimSpace(c.text), "\n", 2)[0]
-		if len(head) > 80 {
-			head = head[:80] + "..."
-		}
-		t.Logf("  [%d] kind=%d text=%q", i, c.kind, head)
-	}
-
-	require.GreaterOrEqual(t, len(clauses), 7, "expected at least 7 clauses")
-	require.Equal(t, pipelineClauseMatch, clauses[0].kind)
-	require.Equal(t, pipelineClauseCreate, clauses[1].kind)
-	require.Equal(t, pipelineClauseCreate, clauses[2].kind)
-	require.Equal(t, pipelineClauseWith, clauses[3].kind)
-	require.Equal(t, pipelineClauseUnwind, clauses[4].kind)
-	require.Equal(t, pipelineClauseMatch, clauses[5].kind)
-	require.Equal(t, pipelineClauseCreate, clauses[6].kind)
-}
-
-func TestCanExecuteAsPipeline_StandaloneMerge(t *testing.T) {
-	for _, query := range []string{
-		"MERGE (n:Standalone {id:$id})",
-		"MERGE (n:Standalone {id:$id}) ON CREATE SET n.created=true ON MATCH SET n.seen=true",
-		"MERGE (a:Standalone {id:1})-[:R]->(b:Standalone {id:2})",
+		CREATE (o)-[:ORDERS {quantity: prodRef.quantity}]->(p)`, prefix: seederKinds},
+		{name: "seeder", query: `MATCH (c:Customer {customerID: 1}) CREATE (o:Order {orderID: 9001}) CREATE (c)-[:PURCHASED]->(o) WITH o, {} UNWIND [{productID: 1}] AS prodRef MATCH (p:Product {productID: prodRef.productID}) CREATE (o)-[:ORDERS]->(p)`},
+		{name: "comma MATCH then CREATE", query: `MATCH (o:OriginalText {id:'o1'}), (t:TranslatedText {id:'t1'}) CREATE (o)-[:TRANSLATES_TO]->(t)`},
+		{name: "standalone CREATE RETURN", query: `CREATE (node:Item {num: 1}) RETURN node`},
+		{name: "CREATE RETURN window", query: `CREATE (node:Item {num: 1}) RETURN node LIMIT 0`},
+		{name: "CALL tail binding", query: `MATCH (node) WHERE id(node) = $seed_id_node WITH node CREATE (m:TailProbe {name: node.originalText}) RETURN m.name AS probeName`},
+		{name: "CALL tail scalar projection", query: `MATCH (node) WHERE id(node) = $seed_id_node WITH node, $seed_score AS score CREATE (m:TailProbe {name: node.originalText, score: score}) RETURN m.name AS probeName`},
+		{name: "standalone node MERGE", query: "MERGE (n:Standalone {id:$id})", prefix: []pipelineClauseKind{pipelineClauseMerge}, exactCount: 1},
+		{name: "standalone MERGE actions", query: "MERGE (n:Standalone {id:$id}) ON CREATE SET n.created=true ON MATCH SET n.seen=true", prefix: []pipelineClauseKind{pipelineClauseMerge}, exactCount: 1},
+		{name: "standalone relationship MERGE", query: "MERGE (a:Standalone {id:1})-[:R]->(b:Standalone {id:2})", prefix: []pipelineClauseKind{pipelineClauseMerge}, exactCount: 1},
 	} {
-		t.Run(query, func(t *testing.T) {
-			clauses, ok := canExecuteAsPipeline(query)
-			require.True(t, ok)
-			require.Len(t, clauses, 1)
-			require.Equal(t, pipelineClauseMerge, clauses[0].kind)
+		t.Run(tc.name, func(t *testing.T) {
+			clauses, ok := canExecuteAsPipeline(t.Context(), tc.query)
+			require.True(t, ok, "pipeline splitter must accept %s", tc.query)
+			if tc.exactCount > 0 {
+				require.Len(t, clauses, tc.exactCount)
+			}
+			require.GreaterOrEqual(t, len(clauses), len(tc.prefix))
+			for i, want := range tc.prefix {
+				require.Equal(t, want, clauses[i].kind, "clause %d", i)
+			}
+			t.Logf("got %d clauses", len(clauses))
+			for i, clause := range clauses {
+				head := strings.SplitN(strings.TrimSpace(clause.text), "\n", 2)[0]
+				if len(head) > 80 {
+					head = head[:80] + "..."
+				}
+				t.Logf("  [%d] kind=%d text=%q", i, clause.kind, head)
+			}
 		})
 	}
 }
@@ -113,7 +117,7 @@ func TestPipelineSimpleNodeReadPlan_HandlesBoundedLabelStream(t *testing.T) {
 	}
 	exec := NewStorageExecutor(store)
 	query := "MATCH (n:Person) RETURN n.name LIMIT 3"
-	clauses, ok := canExecuteAsPipeline(query)
+	clauses, ok := canExecuteAsPipeline(t.Context(), query)
 	require.True(t, ok)
 
 	result, handled, err := exec.tryExecutePipelineSimpleNodeReadPlan(context.Background(), clauses, nil)

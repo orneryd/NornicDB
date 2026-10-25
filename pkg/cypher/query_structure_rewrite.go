@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -30,26 +31,27 @@ import (
 const whenBranchVariable = generatedVariablePrefix + "when"
 
 type structureRewriter struct {
+	ctx     context.Context
 	query   string
 	edits   []labelRewriteEdit
 	columns statementColumner
 }
 
 // statementColumner names a statement's result columns
-// (StorageExecutor.StatementResultColumns). An interface, not a method value, so
+// (StorageExecutor.StatementResultColumnsContext). An interface, not a method value, so
 // Execute passes the executor to desugarQueryStructure without allocating.
 type statementColumner interface {
-	StatementResultColumns(query string) ([]string, error)
+	StatementResultColumnsContext(ctx context.Context, query string) ([]string, error)
 }
 
 // desugarQueryStructure returns query with NEXT, WHEN and braced query parts
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when it has none. columns names a query's result columns.
-func desugarQueryStructure(query string, columns statementColumner) (string, *queryRewrite, error) {
+func desugarQueryStructure(ctx context.Context, query string, columns statementColumner) (string, *queryRewrite, error) {
 	if !mayUseQueryStructure(query) {
 		return query, nil, nil
 	}
-	r := &structureRewriter{query: query, columns: columns}
+	r := &structureRewriter{ctx: ctx, query: query, columns: columns}
 	if err := r.region(0, len(query), false); err != nil {
 		return query, nil, err
 	}
@@ -254,7 +256,7 @@ func (r *structureRewriter) unionParts(start, end int, distinct bool) error {
 				return err
 			}
 			if wrap {
-				columns, err := r.columns.StatementResultColumns(r.rewrittenRegionText(open+1, close, firstEdit))
+				columns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(open+1, close, firstEdit))
 				if err != nil {
 					return err
 				}
@@ -331,7 +333,7 @@ func (r *structureRewriter) conditional(start, end int) error {
 		if err := r.region(branch.bodyStart, branch.bodyEnd, false); err != nil {
 			return err
 		}
-		bodyColumns, err := r.columns.StatementResultColumns(r.rewrittenRegionText(branch.bodyStart, branch.bodyEnd, firstEdit))
+		bodyColumns, err := r.columns.StatementResultColumnsContext(r.ctx, r.rewrittenRegionText(branch.bodyStart, branch.bodyEnd, firstEdit))
 		if err != nil {
 			return err
 		}

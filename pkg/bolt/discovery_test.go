@@ -1,8 +1,10 @@
 package bolt
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -23,105 +25,135 @@ func fullyConfiguredOAuth() *auth.OAuthConfig {
 	}
 }
 
-// TestBuildDiscoveryBody_Empty (D-Empty) — nil cfg or unconfigured cfg
-// returns (nil, nil).
-func TestBuildDiscoveryBody_Empty(t *testing.T) {
-	body, err := buildDiscoveryBody(nil)
+// readDiscoveryHTTPBody checks framing with the standard HTTP parser before
+// payload assertions consume bytes from the public discovery response.
+func readDiscoveryHTTPBody(t *testing.T, wire []byte) []byte {
+	t.Helper()
+	response, err := http.ReadResponse(bufio.NewReader(bytes.NewReader(wire)), nil)
+	if err != nil {
+		t.Fatalf("discovery response is not valid HTTP: %v", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	if err != nil {
+		t.Fatalf("reading discovery HTTP body failed: %v", err)
+	}
+	if response.StatusCode != http.StatusOK || response.ContentLength != int64(len(body)) {
+		t.Fatalf("invalid discovery HTTP framing: status=%d length=%d body=%d", response.StatusCode, response.ContentLength, len(body))
+	}
+	return body
+}
+
+// TestBuildDiscoveryResponse_Empty (D-Empty) — nil cfg or unconfigured cfg
+// returns a successful HTTP response with an empty body.
+func TestBuildDiscoveryResponse_Empty(t *testing.T) {
+	body, err := buildDiscoveryResponse(nil, time.Time{})
 	if err != nil {
 		t.Fatalf("nil cfg: unexpected error: %v", err)
 	}
-	if body != nil {
-		t.Fatalf("nil cfg: expected nil body, got %q", string(body))
+	body = readDiscoveryHTTPBody(t, body)
+	if len(body) != 0 {
+		t.Fatalf("nil cfg: expected empty body, got %q", string(body))
 	}
 
 	empty := &auth.OAuthConfig{}
 	if empty.IsConfigured() {
 		t.Fatalf("test premise broken: empty OAuthConfig should not be IsConfigured()")
 	}
-	body, err = buildDiscoveryBody(empty)
+	body, err = buildDiscoveryResponse(empty, time.Time{})
 	if err != nil {
 		t.Fatalf("empty cfg: unexpected error: %v", err)
 	}
-	if body != nil {
-		t.Fatalf("empty cfg: expected nil body, got %q", string(body))
+	body = readDiscoveryHTTPBody(t, body)
+	if len(body) != 0 {
+		t.Fatalf("empty cfg: expected empty body, got %q", string(body))
 	}
 }
 
-// TestBuildDiscoveryBody_OAuth (D-OAuth) — fully configured cfg returns
+// TestBuildDiscoveryResponse_OAuth (D-OAuth) — fully configured cfg returns
 // non-nil bytes; provider fields match the spec exactly.
-func TestBuildDiscoveryBody_OAuth(t *testing.T) {
-	cfg := fullyConfiguredOAuth()
-	raw, err := buildDiscoveryBody(cfg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if raw == nil {
-		t.Fatal("expected non-nil body for configured OAuth")
-	}
+func TestBuildDiscoveryResponse_OAuth(t *testing.T) {
+	for _, variant := range []struct{ name, issuer, callback string }{
+		{"ordinary", "https://idp.example.com", "https://nornic.example.com/auth/oauth/callback"},
+		{"escaped_public_route", "https://idp.example/realm%2Fpublic", "https://app.example/callback?state=public&code=route&key=public"},
+	} {
+		t.Run(variant.name, func(t *testing.T) {
+			cfg := fullyConfiguredOAuth()
+			cfg.Issuer, cfg.CallbackURL = variant.issuer, variant.callback
+			raw, err := buildDiscoveryResponse(cfg, time.Time{})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			raw = readDiscoveryHTTPBody(t, raw)
+			if len(raw) == 0 {
+				t.Fatal("expected non-nil body for configured OAuth")
+			}
 
-	var got discoveryBody
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("body is not valid JSON: %v", err)
-	}
+			var got discoveryBody
+			if err := json.Unmarshal(raw, &got); err != nil {
+				t.Fatalf("body is not valid JSON: %v", err)
+			}
 
-	if got.DefaultProvider != "nornic-oauth" {
-		t.Errorf("DefaultProvider = %q, want %q", got.DefaultProvider, "nornic-oauth")
-	}
-	if len(got.Providers) != 1 {
-		t.Fatalf("len(Providers) = %d, want 1", len(got.Providers))
-	}
+			if got.DefaultProvider != "nornic-oauth" {
+				t.Errorf("DefaultProvider = %q, want %q", got.DefaultProvider, "nornic-oauth")
+			}
+			if len(got.Providers) != 1 {
+				t.Fatalf("len(Providers) = %d, want 1", len(got.Providers))
+			}
 
-	p := got.Providers[0]
-	if p.ID != "nornic-oauth" {
-		t.Errorf("ID = %q, want %q", p.ID, "nornic-oauth")
-	}
-	if p.Name != "OAuth" {
-		t.Errorf("Name = %q, want %q", p.Name, "OAuth")
-	}
-	if p.AuthProvider != "oauth" {
-		t.Errorf("AuthProvider = %q, want %q", p.AuthProvider, "oauth")
-	}
-	if p.AuthEndpoint != "https://idp.example.com/oauth2/v1/authorize" {
-		t.Errorf("AuthEndpoint = %q", p.AuthEndpoint)
-	}
-	if p.TokenEndpoint != "https://idp.example.com/oauth2/v1/token" {
-		t.Errorf("TokenEndpoint = %q", p.TokenEndpoint)
-	}
-	if p.AuthFlow != "pkce" {
-		t.Errorf("AuthFlow = %q, want %q", p.AuthFlow, "pkce")
-	}
-	if p.ClientID != cfg.ClientID {
-		t.Errorf("ClientID = %q, want %q", p.ClientID, cfg.ClientID)
-	}
-	if p.RedirectURI != cfg.CallbackURL {
-		t.Errorf("RedirectURI = %q, want %q", p.RedirectURI, cfg.CallbackURL)
-	}
-	wantScopes := []string{"openid", "profile", "email"}
-	if len(p.Scopes) != len(wantScopes) {
-		t.Fatalf("Scopes len = %d, want %d", len(p.Scopes), len(wantScopes))
-	}
-	for i, s := range wantScopes {
-		if p.Scopes[i] != s {
-			t.Errorf("Scopes[%d] = %q, want %q", i, p.Scopes[i], s)
-		}
-	}
-	if p.Audience != "nornic" {
-		t.Errorf("Audience = %q, want %q", p.Audience, "nornic")
-	}
-	if p.WellKnownDiscoveryURI != "https://idp.example.com/.well-known/openid-configuration" {
-		t.Errorf("WellKnownDiscoveryURI = %q", p.WellKnownDiscoveryURI)
-	}
-	if p.TokenTypePrincipal != "id_token" {
-		t.Errorf("TokenTypePrincipal = %q, want %q", p.TokenTypePrincipal, "id_token")
-	}
-	if p.TokenTypeAuthentication != "id_token" {
-		t.Errorf("TokenTypeAuthentication = %q, want %q", p.TokenTypeAuthentication, "id_token")
+			p := got.Providers[0]
+			if p.ID != "nornic-oauth" {
+				t.Errorf("ID = %q, want %q", p.ID, "nornic-oauth")
+			}
+			if p.Name != "OAuth" {
+				t.Errorf("Name = %q, want %q", p.Name, "OAuth")
+			}
+			if p.AuthProvider != "oauth" {
+				t.Errorf("AuthProvider = %q, want %q", p.AuthProvider, "oauth")
+			}
+			if p.AuthEndpoint != cfg.Issuer+"/oauth2/v1/authorize" {
+				t.Errorf("AuthEndpoint = %q", p.AuthEndpoint)
+			}
+			if p.TokenEndpoint != cfg.Issuer+"/oauth2/v1/token" {
+				t.Errorf("TokenEndpoint = %q", p.TokenEndpoint)
+			}
+			if p.AuthFlow != "pkce" {
+				t.Errorf("AuthFlow = %q, want %q", p.AuthFlow, "pkce")
+			}
+			if p.ClientID != cfg.ClientID {
+				t.Errorf("ClientID = %q, want %q", p.ClientID, cfg.ClientID)
+			}
+			if p.RedirectURI != cfg.CallbackURL {
+				t.Errorf("RedirectURI = %q, want %q", p.RedirectURI, cfg.CallbackURL)
+			}
+			wantScopes := []string{"openid", "profile", "email"}
+			if len(p.Scopes) != len(wantScopes) {
+				t.Fatalf("Scopes len = %d, want %d", len(p.Scopes), len(wantScopes))
+			}
+			for i, s := range wantScopes {
+				if p.Scopes[i] != s {
+					t.Errorf("Scopes[%d] = %q, want %q", i, p.Scopes[i], s)
+				}
+			}
+			if p.Audience != "nornic" {
+				t.Errorf("Audience = %q, want %q", p.Audience, "nornic")
+			}
+			if p.WellKnownDiscoveryURI != cfg.Issuer+"/.well-known/openid-configuration" {
+				t.Errorf("WellKnownDiscoveryURI = %q", p.WellKnownDiscoveryURI)
+			}
+			if p.TokenTypePrincipal != "id_token" {
+				t.Errorf("TokenTypePrincipal = %q, want %q", p.TokenTypePrincipal, "id_token")
+			}
+			if p.TokenTypeAuthentication != "id_token" {
+				t.Errorf("TokenTypeAuthentication = %q, want %q", p.TokenTypeAuthentication, "id_token")
+			}
+		})
 	}
 }
 
-// TestBuildDiscoveryBody_OAuthPartial (D-OAuthPartial) — missing
-// ClientSecret/CallbackURL → IsConfigured() false → (nil, nil).
-func TestBuildDiscoveryBody_OAuthPartial(t *testing.T) {
+// TestBuildDiscoveryResponse_OAuthPartial (D-OAuthPartial) — missing
+// ClientSecret/CallbackURL → IsConfigured() false → empty HTTP body.
+func TestBuildDiscoveryResponse_OAuthPartial(t *testing.T) {
 	cfg := &auth.OAuthConfig{
 		Provider: "oauth",
 		Issuer:   "https://idp.example.com",
@@ -132,18 +164,19 @@ func TestBuildDiscoveryBody_OAuthPartial(t *testing.T) {
 		t.Fatalf("partial cfg should not report IsConfigured()")
 	}
 
-	body, err := buildDiscoveryBody(cfg)
+	body, err := buildDiscoveryResponse(cfg, time.Time{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if body != nil {
-		t.Fatalf("expected nil body for partial cfg, got %q", string(body))
+	body = readDiscoveryHTTPBody(t, body)
+	if len(body) != 0 {
+		t.Fatalf("expected empty body for partial cfg, got %q", string(body))
 	}
 }
 
-// TestBuildDiscoveryBody_MalformedIssuer (D-MalformedIssuer) — Issuer is
+// TestBuildDiscoveryResponse_MalformedIssuer (D-MalformedIssuer) — Issuer is
 // not a syntactically valid URL → error.
-func TestBuildDiscoveryBody_MalformedIssuer(t *testing.T) {
+func TestBuildDiscoveryResponse_MalformedIssuer(t *testing.T) {
 	cfg := fullyConfiguredOAuth()
 	cfg.Issuer = "::not a url"
 
@@ -151,7 +184,7 @@ func TestBuildDiscoveryBody_MalformedIssuer(t *testing.T) {
 		t.Fatalf("test premise broken: cfg should still be IsConfigured() despite malformed Issuer")
 	}
 
-	body, err := buildDiscoveryBody(cfg)
+	body, err := buildDiscoveryResponse(cfg, time.Time{})
 	if err == nil {
 		t.Fatalf("expected error for malformed Issuer, got body=%q", string(body))
 	}
@@ -160,18 +193,19 @@ func TestBuildDiscoveryBody_MalformedIssuer(t *testing.T) {
 	}
 }
 
-// TestBuildDiscoveryBody_NoSecretLeak (D-NoSecretLeak) — ClientSecret must
+// TestBuildDiscoveryResponse_NoSecretLeak (D-NoSecretLeak) — ClientSecret must
 // never appear in the marshalled body, and the JSON must not contain a
 // "client_secret" field.
-func TestBuildDiscoveryBody_NoSecretLeak(t *testing.T) {
+func TestBuildDiscoveryResponse_NoSecretLeak(t *testing.T) {
 	cfg := fullyConfiguredOAuth()
 	cfg.ClientSecret = "TOPSECRET-DO-NOT-LEAK"
 
-	body, err := buildDiscoveryBody(cfg)
+	body, err := buildDiscoveryResponse(cfg, time.Time{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if body == nil {
+	body = readDiscoveryHTTPBody(t, body)
+	if len(body) == 0 {
 		t.Fatal("expected non-nil body for configured OAuth")
 	}
 

@@ -165,6 +165,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"io"
 	"log"
 	"log/slog"
@@ -1053,6 +1054,11 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	}
 	if db == nil {
 		return nil, fmt.Errorf("database required")
+	}
+	if oauth := auth.GetOAuthConfig(); oauth != nil && oauth.Issuer != "" {
+		if err := security.ValidateURL(oauth.Issuer, security.URLPolicy{SchemePolicy: security.URLAbsoluteScheme, MaxLength: -1, HostPolicy: security.URLAnyHost, RejectCredentials: true}); err != nil {
+			return nil, fmt.Errorf("invalid OAuth issuer: %w", err)
+		}
 	}
 	trustedProxyPrefixes, err := parseTrustedProxyPrefixes(config.TrustedProxies)
 	if err != nil {

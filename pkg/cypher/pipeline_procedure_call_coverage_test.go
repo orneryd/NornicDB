@@ -86,16 +86,16 @@ func TestPipelineApplyProcedureCallEdges(t *testing.T) {
 }
 
 func TestExplicitProcedureArgumentTexts_EmptyAndNested(t *testing.T) {
-	arguments := explicitProcedureArgumentTexts("CALL db.labels")
+	arguments := explicitProcedureArgumentTexts(t.Context(), "CALL db.labels")
 	require.Nil(t, arguments)
 
-	arguments = explicitProcedureArgumentTexts("CALL cov.echo(1")
+	arguments = explicitProcedureArgumentTexts(t.Context(), "CALL cov.echo(1")
 	require.Nil(t, arguments)
 
-	arguments = explicitProcedureArgumentTexts("CALL cov.echo()")
+	arguments = explicitProcedureArgumentTexts(t.Context(), "CALL cov.echo()")
 	require.NotNil(t, arguments)
 	require.Empty(t, arguments)
-	arguments = explicitProcedureArgumentTexts("CALL cov.echo(1, [2, 3])")
+	arguments = explicitProcedureArgumentTexts(t.Context(), "CALL cov.echo(1, [2, 3])")
 	require.Equal(t, []string{"1", "[2, 3]"}, arguments)
 }
 
@@ -114,14 +114,14 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
 	malformed := "CALL cov.echo(1) YIELD echoed ORDER BY echoed WHERE echoed = 1"
-	require.Nil(t, parseYieldClause(malformed))
+	require.Nil(t, parseYieldClause(t.Context(), malformed))
 	_, err = exec.Execute(ctx, malformed, nil)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 	// The modifier validator also rejects an explicitly constructed invalid
 	// modifier order; the canonical parser never admits that sequence.
 	yield := &yieldClause{items: []yieldItem{{name: "echoed"}}, orderBy: "echoed", where: "echoed = 1", misplacedWhere: true}
-	err = exec.validateYieldModifiers(yield, true)
+	err = exec.validateYieldModifiers(context.Background(), yield, true)
 	require.Error(t, err)
 	require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError")
 
@@ -129,8 +129,8 @@ func TestProcedureCallValidationErrors(t *testing.T) {
 		"CALL cov.echo(1) YIELD echoed SKIP -1",
 		"CALL cov.echo(1) YIELD echoed LIMIT -1",
 	} {
-		yield := parseYieldClause(call)
+		yield := parseYieldClause(t.Context(), call)
 		require.NotNil(t, yield, call)
-		require.Error(t, exec.validateYieldModifiers(yield, true), call)
+		require.Error(t, exec.validateYieldModifiers(context.Background(), yield, true), call)
 	}
 }

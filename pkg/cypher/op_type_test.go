@@ -88,7 +88,7 @@ func TestOpType_AllClauseShapes(t *testing.T) {
 		t.Run(tcase.name, func(t *testing.T) {
 			var info *QueryInfo
 			if tcase.query != "" && tcase.want != "parse_error" {
-				info = a.Analyze(tcase.query)
+				info = a.Analyze(t.Context(), tcase.query)
 			}
 			got := classifyOpType(info, tcase.isFabric, tcase.isAdmin)
 			assert.Equal(t, tcase.want, got,
@@ -141,7 +141,7 @@ func TestClassifyOpType_AllReturnsAreClosedEnum(t *testing.T) {
 	for _, q := range queries {
 		for _, isAdmin := range []bool{false, true} {
 			for _, isFabric := range []bool{false, true} {
-				info := a.Analyze(q)
+				info := a.Analyze(t.Context(), q)
 				got := classifyOpType(info, isFabric, isAdmin)
 				_, ok := closedEnum[got]
 				assert.True(t, ok,
@@ -158,17 +158,17 @@ func TestClassifyOpType_AllReturnsAreClosedEnum(t *testing.T) {
 // invariant for future maintainers.
 func TestClassifyOpType_AdminPrecedence(t *testing.T) {
 	a := NewQueryAnalyzer(8)
-	info := a.Analyze("MATCH (n) RETURN n") // would normally classify "read"
+	info := a.Analyze(t.Context(), "MATCH (n) RETURN n") // would normally classify "read"
 	assert.Equal(t, "admin", classifyOpType(info, true, true),
 		"admin wins over fabric")
 	assert.Equal(t, "admin", classifyOpType(info, false, true),
 		"admin wins over read")
 
-	infoWrite := a.Analyze("CREATE (n)")
+	infoWrite := a.Analyze(t.Context(), "CREATE (n)")
 	assert.Equal(t, "fabric", classifyOpType(infoWrite, true, false),
 		"fabric wins over write when isAdmin=false")
 
-	infoSchema := a.Analyze("CREATE INDEX i FOR (n:U) ON (n.id)")
+	infoSchema := a.Analyze(t.Context(), "CREATE INDEX i FOR (n:U) ON (n.id)")
 	assert.Equal(t, "fabric", classifyOpType(infoSchema, true, false),
 		"fabric wins over schema when isAdmin=false")
 	assert.Equal(t, "schema", classifyOpType(infoSchema, false, false),

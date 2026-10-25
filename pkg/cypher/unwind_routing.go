@@ -165,7 +165,7 @@ func (e *StorageExecutor) executeUnwindBatchOperator(ctx context.Context, plan t
 }
 
 func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variable string, items []interface{}, query string) (*ExecuteResult, bool, error) {
-	clauses, ok, _ := parsePipelineClauses(query)
+	clauses, ok, _ := parsePipelineClauses(ctx, query)
 	if !ok {
 		return nil, false, nil
 	}
@@ -224,7 +224,7 @@ func (e *StorageExecutor) executeSetBasedUnwindCreateOperator(ctx context.Contex
 	if returnIndex < 0 {
 		return nil, false, nil
 	}
-	if _, ok := parseUnwindBatchCountReturn(strings.TrimSpace(query[returnIndex:])); !ok {
+	if _, ok := parseUnwindBatchCountReturn(ctx, strings.TrimSpace(query[returnIndex:])); !ok {
 		return nil, false, nil
 	}
 	rewritten, ok := rewriteUnwindCorrelationToIn(query, plan.variable, "__unwind_items")

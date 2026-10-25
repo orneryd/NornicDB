@@ -37,6 +37,72 @@ func TestParseUnwindSimpleAssignments_Branches(t *testing.T) {
 	require.False(t, ok)
 	_, ok = parseUnwindSimpleSetAssignments("n +=", "n")
 	require.False(t, ok)
+
+	_, ok = parseUnwindSimpleMergeMatchAssignments("id row.id")
+	require.False(t, ok)
+
+	setAssign, ok := parseUnwindSimpleSetAssignments("n.k = row.k, n += row.props", "n")
+	require.True(t, ok)
+	require.Len(t, setAssign, 2)
+	require.Equal(t, "k", setAssign[0].prop)
+	require.True(t, setAssign[1].mergeMap)
+
+	_, ok = parseUnwindSimpleSetAssignments("m.k = row.k", "n")
+	require.False(t, ok)
+	_, ok = parseUnwindSimpleSetAssignments("n +=", "n")
+	require.False(t, ok)
+
+	varName, labels, matchAssign, anyLabel, ok := parseUnwindNodePatternClauseInternal("MATCH (n:LabelA|LabelB {id: row.id})", "MATCH", true)
+	require.True(t, ok)
+	require.Equal(t, "n", varName)
+	require.Equal(t, []string{"LabelA", "LabelB"}, labels)
+	require.True(t, anyLabel)
+	require.Len(t, matchAssign, 1)
+
+	_, _, _, _, ok = parseUnwindNodePatternClauseInternal("MATCH (n:LabelA|LabelB {id: row.id})", "MATCH", false)
+	require.False(t, ok)
+
+	withPlan, ok := parseUnwindWithClause(t.Context(), "WITH n, row.score AS score")
+	require.True(t, ok)
+	require.Len(t, withPlan.assignments, 1)
+	require.Equal(t, "score", withPlan.assignments[0].alias)
+	require.Equal(t, "row.score", withPlan.assignments[0].expr)
+
+	_, ok = parseUnwindWithClause(t.Context(), "WITH n, row.score")
+	require.False(t, ok)
+
+	wherePlan, ok := parseUnwindWhereClause("WHERE score > 0")
+	require.True(t, ok)
+	require.Equal(t, "score > 0", wherePlan.clause)
+	_, ok = parseUnwindWhereClause("WHERE   ")
+	require.False(t, ok)
+
+	clauses, ok := splitUnwindMergeChainClauses("MERGE (n:Node {id: row.id}) SET n.k = row.k")
+	require.True(t, ok)
+	require.Len(t, clauses, 2)
+	_, ok = splitUnwindMergeChainClauses("BAD (n)")
+	require.False(t, ok)
+
+	rel, ok := parseUnwindMergeRelationshipClause("MERGE (a)-[r:REL]->(b)")
+	require.True(t, ok)
+	require.Equal(t, "a", rel.fromVar)
+	require.Equal(t, "b", rel.toVar)
+	require.Equal(t, "r", rel.relVar)
+	require.Equal(t, "REL", rel.relType)
+
+	_, ok = parseUnwindMergeRelationshipClause("MERGE (a)-[:REL]->(b)-[:X]->(c)")
+	require.False(t, ok)
+
+	stages, ok := splitUnwindCompoundMutationStages(
+		"MERGE (a:Node {id: row.id}) WITH $rows AS rows UNWIND rows AS row MERGE (b:Node {id: row.id})",
+		"rows",
+		"row",
+	)
+	require.True(t, ok)
+	require.Len(t, stages, 2)
+
+	_, ok = splitUnwindCompoundMutationStages("MERGE (a:Node {id: row.id})", "rows", "")
+	require.False(t, ok)
 }
 
 func TestParseUnwindMergeRelationshipClause_Branches(t *testing.T) {
@@ -75,9 +141,11 @@ func TestParseUnwindMergeRelationshipClause_Branches(t *testing.T) {
 func TestGh713CountCompilersUseSharedProjectionPlans(t *testing.T) {
 	for _, compiler := range []struct {
 		name  string
-		parse func(string) (string, bool)
+		parse func(context.Context, string) (string, bool)
 	}{
-		{"merge count", func(clause string) (string, bool) { return parseSimpleCountReturn(clause, "n") }},
+		{"merge count", func(ctx context.Context, clause string) (string, bool) {
+			return parseSimpleCountReturn(ctx, clause, "n")
+		}},
 		{"unwind count", parseUnwindBatchCountReturn},
 	} {
 		t.Run(compiler.name, func(t *testing.T) {
@@ -86,9 +154,9 @@ func TestGh713CountCompilersUseSharedProjectionPlans(t *testing.T) {
 				"RETURN count(n) AS `a``b`", "RETURN count(n)",
 			} {
 				t.Run(clause, func(t *testing.T) {
-					alias, ok := compiler.parse(clause)
+					alias, ok := compiler.parse(t.Context(), clause)
 					require.True(t, ok)
-					require.Equal(t, returnProjectionPlanFor(clause).columns[0], alias)
+					require.Equal(t, returnProjectionPlanFor(t.Context(), clause).columns[0], alias)
 				})
 			}
 			for _, clause := range []string{
@@ -101,7 +169,7 @@ func TestGh713CountCompilersUseSharedProjectionPlans(t *testing.T) {
 				"RETURN count(n.value) AS total",
 			} {
 				t.Run("decline "+clause, func(t *testing.T) {
-					_, ok := compiler.parse(clause)
+					_, ok := compiler.parse(t.Context(), clause)
 					require.False(t, ok)
 				})
 			}
@@ -115,10 +183,10 @@ func TestGh713WithCompilerUsesSharedProjectionPlan(t *testing.T) {
 		"WITH `n`, row.k AS `k`",
 	} {
 		t.Run(clause, func(t *testing.T) {
-			compiled, ok := parseUnwindWithClause(clause)
+			compiled, ok := parseUnwindWithClause(t.Context(), clause)
 			require.True(t, ok)
 			require.Len(t, compiled.assignments, 1)
-			shared := returnProjectionPlanFor("RETURN" + clause[len("WITH"):])
+			shared := returnProjectionPlanFor(t.Context(), "RETURN"+clause[len("WITH"):])
 			require.Equal(t, shared.projections[1].expr, compiled.assignments[0].expr)
 			require.Equal(t, shared.columns[1], compiled.assignments[0].alias)
 		})
@@ -131,7 +199,7 @@ func TestGh713WithCompilerUsesSharedProjectionPlan(t *testing.T) {
 		"WITH *", "WITH n AS", "WITH row.k", "WITH",
 	} {
 		t.Run("decline "+clause, func(t *testing.T) {
-			_, ok := parseUnwindWithClause(clause)
+			_, ok := parseUnwindWithClause(t.Context(), clause)
 			require.False(t, ok)
 		})
 	}
@@ -280,7 +348,7 @@ func TestGh713CountReturnWindowsPreserveWrites(t *testing.T) {
 				}
 				result, err := exec.Execute(ctx, "UNWIND $rows AS row MERGE (n:Counted {id: row.id}) SET n.value = row.value RETURN "+test.projection, params)
 				require.NoError(t, err)
-				require.Equal(t, returnProjectionPlanFor("RETURN "+test.projection).columns, result.Columns)
+				require.Equal(t, returnProjectionPlanFor(t.Context(), "RETURN "+test.projection).columns, result.Columns)
 				require.Len(t, result.Rows, len(test.rows))
 				if len(test.rows) > 0 {
 					require.Equal(t, test.rows, result.Rows)
@@ -298,33 +366,33 @@ func TestGh713CountReturnWindowsPreserveWrites(t *testing.T) {
 }
 
 func TestParseSimpleCountAndBatchReturn_Branches(t *testing.T) {
-	alias, ok := parseSimpleCountReturn("RETURN count(n) AS cnt", "n")
+	alias, ok := parseSimpleCountReturn(t.Context(), "RETURN count(n) AS cnt", "n")
 	require.True(t, ok)
 	require.Equal(t, "cnt", alias)
 
-	alias, ok = parseSimpleCountReturn("RETURN count(n) AS", "n")
+	alias, ok = parseSimpleCountReturn(t.Context(), "RETURN count(n) AS", "n")
 	require.False(t, ok)
 	require.Empty(t, alias)
 
-	_, ok = parseSimpleCountReturn("RETURN count(m) AS cnt", "n")
+	_, ok = parseSimpleCountReturn(t.Context(), "RETURN count(m) AS cnt", "n")
 	require.False(t, ok)
-	_, ok = parseSimpleCountReturn("count(n) AS cnt", "n")
+	_, ok = parseSimpleCountReturn(t.Context(), "count(n) AS cnt", "n")
 	require.False(t, ok)
 
-	alias, ok = parseUnwindBatchCountReturn("RETURN count(*) AS total")
+	alias, ok = parseUnwindBatchCountReturn(t.Context(), "RETURN count(*) AS total")
 	require.True(t, ok)
 	require.Equal(t, "total", alias)
 
-	alias, ok = parseUnwindBatchCountReturn("RETURN COUNT(id) AS total")
+	alias, ok = parseUnwindBatchCountReturn(t.Context(), "RETURN COUNT(id) AS total")
 	require.True(t, ok)
 	require.Equal(t, "total", alias)
 
-	_, ok = parseUnwindBatchCountReturn("RETURN count(a.b) AS total")
+	_, ok = parseUnwindBatchCountReturn(t.Context(), "RETURN count(a.b) AS total")
 	require.False(t, ok)
-	alias, ok = parseUnwindBatchCountReturn("RETURN count(*)")
+	alias, ok = parseUnwindBatchCountReturn(t.Context(), "RETURN count(*)")
 	require.True(t, ok)
 	require.Equal(t, "count(*)", alias)
-	_, ok = parseUnwindBatchCountReturn("MATCH (n) RETURN n")
+	_, ok = parseUnwindBatchCountReturn(t.Context(), "MATCH (n) RETURN n")
 	require.False(t, ok)
 }
 

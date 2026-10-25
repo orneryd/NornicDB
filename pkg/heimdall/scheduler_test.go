@@ -347,6 +347,134 @@ func TestManager_Generate(t *testing.T) {
 	assert.Equal(t, int64(1), mockGen.GetGenerateCount())
 }
 
+func TestManagerGenerateRedactsCredentialURLBeforeModelAndOutput(t *testing.T) {
+	const rawEndpoint = "https://synthetic-user:synthetic-pass@example.invalid/path?api_key=synthetic-key"
+	var receivedPrompt string
+	mockGen := NewMockGenerator("/test/model.gguf")
+	mockGen.generateFunc = func(_ context.Context, prompt string, _ GenerateParams) (string, error) {
+		receivedPrompt = prompt
+		return rawEndpoint, nil
+	}
+	manager := newTestManager(mockGen)
+
+	response, err := manager.Generate(context.Background(), "Check this endpoint: "+rawEndpoint, DefaultGenerateParams())
+	if err != nil {
+		t.Fatal("generation unexpectedly failed")
+	}
+	assertNoSyntheticCredential(t, receivedPrompt)
+	assertNoSyntheticCredential(t, response)
+	if !strings.Contains(receivedPrompt, "example.invalid") {
+		t.Fatal("redaction unexpectedly removed the endpoint context")
+	}
+}
+
+func TestManagerGenerateRedactsCredentialURLFromErrors(t *testing.T) {
+	const rawEndpoint = "https://synthetic-user:synthetic-pass@example.invalid/path?api_key=synthetic-key"
+	mockGen := NewMockGenerator("/test/model.gguf")
+	mockGen.generateFunc = func(_ context.Context, _ string, _ GenerateParams) (string, error) {
+		return "", errors.New(rawEndpoint)
+	}
+	manager := newTestManager(mockGen)
+
+	_, err := manager.Generate(context.Background(), "Check this endpoint: "+rawEndpoint, DefaultGenerateParams())
+	if err == nil {
+		t.Fatal("expected the generator error")
+	}
+	assertNoSyntheticCredential(t, err.Error())
+}
+
+func TestManagerGenerateStreamRedactsCredentialURLAcrossChunks(t *testing.T) {
+	const rawEndpoint = "https://synthetic-user:synthetic-pass@example.invalid/path?api_key=synthetic-key"
+	var receivedPrompt string
+	mockGen := NewMockGenerator("/test/model.gguf")
+	mockGen.streamFunc = func(_ context.Context, prompt string, _ GenerateParams, callback func(string) error) error {
+		receivedPrompt = prompt
+		middle := len(rawEndpoint) / 2
+		if err := callback(rawEndpoint[:middle]); err != nil {
+			return err
+		}
+		return callback(rawEndpoint[middle:])
+	}
+	manager := newTestManager(mockGen)
+
+	var response strings.Builder
+	callbackCount := 0
+	err := manager.GenerateStream(context.Background(), "Check this endpoint: "+rawEndpoint, DefaultGenerateParams(), func(token string) error {
+		callbackCount++
+		response.WriteString(token)
+		return nil
+	})
+	if err != nil {
+		t.Fatal("stream generation unexpectedly failed")
+	}
+	assertNoSyntheticCredential(t, receivedPrompt)
+	assertNoSyntheticCredential(t, response.String())
+	if callbackCount != 1 {
+		t.Fatal("credential-bearing output was not redacted as a complete response")
+	}
+}
+
+type captureToolsGenerator struct {
+	*MockGenerator
+	messages []ToolRoundMessage
+	tools    []MCPTool
+	content  string
+	calls    []ParsedToolCall
+}
+
+func (g *captureToolsGenerator) GenerateWithTools(_ context.Context, messages []ToolRoundMessage, tools []MCPTool, _ GenerateParams) (string, []ParsedToolCall, error) {
+	g.messages = messages
+	g.tools = tools
+	return g.content, append([]ParsedToolCall(nil), g.calls...), nil
+}
+
+func TestManagerGenerateWithToolsRedactsCredentialURLs(t *testing.T) {
+	const rawEndpoint = "https://synthetic-user:synthetic-pass@example.invalid/path?api_key=synthetic-key"
+	toolGenerator := &captureToolsGenerator{
+		MockGenerator: NewMockGenerator("/test/model.gguf"),
+		content:       rawEndpoint,
+		calls:         []ParsedToolCall{{Id: "id", Name: "lookup", Arguments: `{"url":"` + rawEndpoint + `"}`}},
+	}
+	messages := []ToolRoundMessage{{
+		Role:    "user",
+		Content: "Check this endpoint: " + rawEndpoint,
+		ToolCalls: []ParsedToolCall{{
+			Id:        "id",
+			Name:      "lookup",
+			Arguments: `{"url":"` + rawEndpoint + `"}`,
+		}},
+	}}
+	tools := []MCPTool{{
+		Name:        "lookup",
+		Description: "Use endpoint " + rawEndpoint,
+		InputSchema: json.RawMessage(`{"examples":["` + rawEndpoint + `"]}`),
+	}}
+	manager := newTestManager(toolGenerator)
+
+	content, calls, err := manager.GenerateWithTools(context.Background(), messages, tools, DefaultGenerateParams())
+	if err != nil {
+		t.Fatal("tool generation unexpectedly failed")
+	}
+	assertNoSyntheticCredential(t, toolGenerator.messages[0].Content)
+	assertNoSyntheticCredential(t, toolGenerator.messages[0].ToolCalls[0].Arguments)
+	assertNoSyntheticCredential(t, toolGenerator.tools[0].Description)
+	assertNoSyntheticCredential(t, string(toolGenerator.tools[0].InputSchema))
+	assertNoSyntheticCredential(t, content)
+	assertNoSyntheticCredential(t, calls[0].Arguments)
+	if !strings.Contains(messages[0].Content, "synthetic-pass") {
+		t.Fatal("input was mutated instead of copied for redaction")
+	}
+}
+
+func assertNoSyntheticCredential(t *testing.T, value string) {
+	t.Helper()
+	for _, marker := range []string{"synthetic-user", "synthetic-pass", "synthetic-key"} {
+		if strings.Contains(value, marker) {
+			t.Fatal("credential material escaped the generation redaction boundary")
+		}
+	}
+}
+
 func TestManager_Generate_RequestCounting(t *testing.T) {
 	mockGen := NewMockGenerator("/test/model.gguf")
 	manager := newTestManager(mockGen)

@@ -58,11 +58,6 @@ func TestParserDirectClauseHelpers(t *testing.T) {
 	require.NotNil(t, createClause)
 	assert.Equal(t, 1, pos)
 
-	returnClause, pos := parser.parseReturn([]string{"RETURN", "n"}, 0)
-	require.NotNil(t, returnClause)
-	assert.NotNil(t, returnClause.Items)
-	assert.Equal(t, 1, pos)
-
 	whereClause, pos := parser.parseWhere([]string{"WHERE", "n", ".", "name"}, 0)
 	require.NotNil(t, whereClause)
 	assert.Equal(t, 1, pos)

@@ -102,7 +102,7 @@ func TestBoundNodeLookupShape(t *testing.T) {
 		{"OPTIONAL MATCH (s:S {id: o.ref})", false},
 		{"MATCH (s:S {id: o.ref}) WITH s WHERE s.n > 1", false},
 	} {
-		require.Equal(t, test.ok, parseBoundNodeShape(test.body).ok, test.body)
+		require.Equal(t, test.ok, parseBoundNodeShape(t.Context(), test.body).ok, test.body)
 	}
 	exec := boundNodeLookupGraph(t)
 	o, err := exec.storage.GetNode("o0")

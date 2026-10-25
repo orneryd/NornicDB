@@ -40,24 +40,24 @@ func TestCallSubqueryImports(t *testing.T) {
 		{"scope_quoted", "`a``b`, `odd name`", true, "RETURN 1", []string{"a`b", "odd name"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := callSubqueryImportedVariables(tt.scope, tt.scoped, tt.body)
+			got, err := callSubqueryImportedVariables(t.Context(), tt.scope, tt.scoped, tt.body)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)
 		})
 	}
 	// A scope clause item that is not a variable is a syntax error.
 	for _, scope := range []string{"1", "x + 1", "x, 1", "x, *", "x AS y", "$p"} {
-		_, err := callSubqueryImportedVariables(scope, true, "RETURN 1")
+		_, err := callSubqueryImportedVariables(t.Context(), scope, true, "RETURN 1")
 		require.ErrorContains(t, err, "CALL imports must contain only variable names", scope)
 	}
 	// Single-database execution reads scope clauses with the same reader.
-	declared, err := parseCallSubqueryImportVariables("CALL (`a``b` /* c */, x) { RETURN 1 }")
+	declared, err := parseCallSubqueryImportVariables(t.Context(), "CALL (`a``b` /* c */, x) { RETURN 1 }")
 	require.NoError(t, err)
 	require.Equal(t, []string{"a`b", "x"}, declared)
-	declared, err = parseCallSubqueryImportVariables("CALL (/* all */ *) { RETURN 1 }")
+	declared, err = parseCallSubqueryImportVariables(t.Context(), "CALL (/* all */ *) { RETURN 1 }")
 	require.NoError(t, err)
 	require.Nil(t, declared)
-	_, err = parseCallSubqueryImportVariables("CALL (1) { RETURN 1 }")
+	_, err = parseCallSubqueryImportVariables(t.Context(), "CALL (1) { RETURN 1 }")
 	require.ErrorContains(t, err, "CALL imports must contain only variable names")
-	require.True(t, callSubqueryHasScopeClause("CALL /* scope */ (x) { RETURN x }"))
+	require.True(t, callSubqueryHasScopeClause(t.Context(), "CALL /* scope */ (x) { RETURN x }"))
 }

@@ -28,18 +28,16 @@ func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipeline
 }
 
 func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
-	if plan, ok := parsePipelineRowWith(clause); ok {
-		plan.imports = pipelineImports(ctx)
+	if plan, ok := parsePipelineRowWith(ctx, clause); ok {
+		plan.retainRows, plan.skipValidation = true, true
 		out := make([]pipelineRow, 0, len(rows))
-		for _, row := range rows {
-			projected, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, nil, nil)
-			if !resolved {
-				return nil, false
-			}
-			if accepted {
-				out = append(out, projected)
-			}
+		if !e.pipelineWithRowSource(ctx, pipelineRowsSource(rows), plan)(func(projected pipelineRow) bool {
+			out = append(out, projected)
+			return true
+		}) {
+			return nil, false
 		}
+
 		return out, true
 	}
 	// The clause is scanned with its keyword, which tells a keyword-named
@@ -107,7 +105,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	}
 	if strings.TrimSpace(items[0]) == "*" {
 		// WITH *, items: the * is every variable in scope (#883).
-		items = starProjectionItems(pipelineWildcardColumns(rows), items[1:])
+		items = starProjectionItems(ctx, pipelineWildcardColumns(rows), items[1:])
 	}
 
 	type withProjection struct {
@@ -126,7 +124,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if item == "" || item == "{}" {
 			continue
 		}
-		expr, alias := parseProjectionExprAlias(item)
+		expr, alias := parseProjectionExprAlias(ctx, item)
 		if expr == "" {
 			return nil, false
 		}
@@ -239,23 +237,11 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	for _, projection := range projections {
 		rowPlan.projections = append(rowPlan.projections, pipelineRowProjection{projection.expr, projection.alias})
 	}
-	for _, row := range rows {
-		var scope pipelineRow
-		if postWithWhere != "" || needsOrderScopes {
-			scope = make(pipelineRow, len(row)+len(projections))
-		}
-		newRow, accepted, ok := e.pipelineProjectWithRow(ctx, row, rowPlan, nil, scope)
-		if !ok {
-			return nil, false
-		}
-		if !accepted {
-			continue
-		}
-		out = append(out, newRow)
-		if needsOrderScopes {
-			// ORDER BY may name a projected expression by its text; its value
-			// is the projection's (orderedProjectionExpressions). A projected
-			// name keeps its own value.
+	rowPlan.retainRows, rowPlan.skipValidation = true, true
+	if needsOrderScopes {
+		rowPlan.observeScope = func(newRow, scope pipelineRow) {
+			// ORDER BY expression names refer to their projected values while
+			// explicit projected names retain their own values.
 			for _, ordered := range orderedExpressions {
 				if _, projected := newRow[ordered.expression]; !projected {
 					scope[ordered.expression] = newRow[ordered.alias]
@@ -264,6 +250,13 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 			orderScopes = append(orderScopes, scope)
 		}
 	}
+	if !e.pipelineWithRowSource(ctx, pipelineRowsSource(rows), rowPlan)(func(newRow pipelineRow) bool {
+		out = append(out, newRow)
+		return true
+	}) {
+		return nil, false
+	}
+
 	if withDistinct {
 		out, orderScopes = deduplicatePipelineRowsWithScopes(memoryScopeFromContext(ctx), out, orderScopes, projectionAliases)
 	}
@@ -748,7 +741,7 @@ func (e *StorageExecutor) pipelineApplyReturn(ctx context.Context, rows []pipeli
 }
 
 func (e *StorageExecutor) pipelineApplyReturnSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
-	return e.pipelineApplyReturnPlan(ctx, rows, returnProjectionPlanFor(clause), source, rowsValidated, preparedGroups...)
+	return e.pipelineApplyReturnPlan(ctx, rows, returnProjectionPlanFor(ctx, clause), source, rowsValidated, preparedGroups...)
 }
 
 func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pipelineRow, plan *returnProjectionPlan, source pipelineRowSource, rowsValidated bool, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, bool) {
@@ -977,7 +970,7 @@ func (e *StorageExecutor) pipelineProjectPlainReturn(ctx context.Context, projs 
 }
 
 // pipelineStreamReturn runs the statement's RETURN into stream (#939), for
-// a RETURN streamsReturn takes: its rows go to the stream as they are
+// an admitted RETURN: its rows go to the stream as they are
 // projected. A RETURN that ends before the stream started returns its
 // rows, as usual (nil after streaming). Its errors and declines are the
 // usual RETURN's until the stream started (a decline is handled false and
@@ -989,16 +982,16 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 	if idx < len(originalClauses) {
 		original = originalClauses[idx]
 	}
-	plan, planErr := executionReturnProjection(ctx, original)
-	if planErr != nil {
-		return nil, nil, true, planErr
+	plan := returnProjectionPlanFor(ctx, original.text, original)
+	if plan == nil {
+		return nil, nil, true, unresolvedStatementError()
 	}
 	// The statement only reads, so no row holds an entity it deleted
 	// (validateDeletedEntityReads), and the RETURN doesn't aggregate
 	// (validatePipelinePercentileArguments). The argument checks run on each
 	// row as it arrives, as WITH's do: a row that fails them fails the
 	// statement where the row is, as in Neo4j.
-	if err := e.validatePipelineProjectionValues(rows, clause.text, "RETURN"); err != nil {
+	if err := e.validatePipelineProjectionValues(ctx, rows, clause.text, "RETURN"); err != nil {
 		return nil, nil, true, err
 	}
 	var validationErr error
@@ -1006,7 +999,7 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 		input := source
 		source = func(yield func(pipelineRow) bool) bool {
 			return input(func(row pipelineRow) bool {
-				if err := e.validatePipelineProjectionValues([]pipelineRow{row}, clause.text, "RETURN"); err != nil {
+				if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause.text, "RETURN"); err != nil {
 					validationErr = err
 					return false
 				}
@@ -1063,14 +1056,6 @@ func (e *StorageExecutor) pipelineStreamReturn(ctx context.Context, stream *Resu
 // aggregation or *.
 func streamableReturnPlan(plan *returnProjectionPlan) bool {
 	return plan.valid && !plan.star && !plan.hasAggregate && !plan.distinct && plan.modifiers == ""
-}
-
-// streamsReturn reports whether clauses[idx] is a RETURN the statement's
-// result stream takes (pipelineStreamReturn), so its input may stay a row
-// source.
-func streamsReturn(ctx context.Context, clauses []pipelineClause, idx int) bool {
-	return clauses[idx].kind == pipelineClauseReturn && boundResultStream(ctx, &clauses[idx]) != nil &&
-		streamableReturnPlan(returnProjectionPlanFor(clauses[idx].text))
 }
 
 func deduplicatePipelineResultRows(rows [][]interface{}) [][]interface{} {

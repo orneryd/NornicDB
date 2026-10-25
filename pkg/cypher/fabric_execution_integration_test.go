@@ -561,7 +561,7 @@ func TestNormalizeFabricRowWrapper_MapInterfaceKeys(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, exec.normalizeFabricRowWrapper(query, stream))
+	require.NoError(t, exec.normalizeFabricRowWrapper(t.Context(), query, stream))
 	require.Equal(t, []string{"sourceId", "textKey", "originalText", "language", "translatedText"}, stream.Columns)
 	require.Len(t, stream.Rows, 1)
 	require.Equal(t, []interface{}{"s1", "k1", "o1", "es", "t1"}, stream.Rows[0])

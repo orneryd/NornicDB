@@ -9,7 +9,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-func (e *StorageExecutor) validateStatementFraming(cypher string) error {
+func (e *StorageExecutor) validateStatementFraming(ctx context.Context, cypher string) error {
 	multiple, unclosed := inspectOutsideStrings(cypher, ";")
 	if unclosed >= 0 {
 		return unclosedCommentError(cypher, unclosed, ModeNormal)
@@ -30,13 +30,13 @@ func (e *StorageExecutor) validateStatementFraming(cypher string) error {
 	if findKeywordIndex(cypher, "UNION") < 0 || findKeywordIndex(cypher, "FINISH") < 0 {
 		return nil
 	}
-	if branches, _, _, ok := parseTopLevelUnionBranches(cypher); ok && len(branches) > 1 {
+	if branches, _, _, ok := parseTopLevelUnionBranches(ctx, cypher); ok && len(branches) > 1 {
 		hasFinish, hasColumns := false, false
 		for _, branch := range branches {
 			_, finishes := stripTrailingFinish(branch)
 			if finishes {
 				hasFinish = true
-			} else if e.statementProducesColumns(branch) {
+			} else if e.statementProducesColumns(ctx, branch) {
 				hasColumns = true
 			}
 		}
@@ -344,7 +344,7 @@ func topLevelUnionCut(s string) int {
 
 // stripUnionBranchFinishes strips a trailing FINISH from each UNION branch of
 // the statement. If no branch ends in FINISH the text is unchanged.
-func stripUnionBranchFinishes(cypher string) (string, bool) {
+func stripUnionBranchFinishes(ctx context.Context, cypher string) (string, bool) {
 	cut := topLevelUnionCut(cypher)
 	if cut < 0 {
 		return stripTrailingFinish(cypher)
@@ -362,13 +362,13 @@ func stripUnionBranchFinishes(cypher string) (string, bool) {
 		unionWord += " ALL"
 		tail = strings.TrimSpace(tail[len("ALL"):])
 	}
-	right, rightStripped := stripUnionBranchFinishes(tail)
+	right, rightStripped := stripUnionBranchFinishes(ctx, tail)
 	left, leftStripped := stripTrailingFinish(before)
 	if !leftStripped && !rightStripped {
 		return cypher, false
 	}
 	if leftStripped && rightStripped && left == "" && right == "" {
-		if _, _, mixed, _ := parseTopLevelUnionBranches(cypher); !mixed {
+		if _, _, mixed, _ := parseTopLevelUnionBranches(ctx, cypher); !mixed {
 			return "", true
 		}
 		return cypher, false

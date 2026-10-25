@@ -53,7 +53,7 @@ func TestApocCollectionsTemporalParameters(t *testing.T) {
 							defer rowValueProgramsDisabled.Store(false)
 							// One public query covers every equality/set consumer found
 							// by codeintel and the source inventory, including split.
-							exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal-apoc"), 0, 0)
+							exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal-apoc"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 							result, err := exec.Execute(context.Background(), `RETURN
 								$a = $b AS equal,
 								apoc.coll.contains([$a], $b) AS contained,

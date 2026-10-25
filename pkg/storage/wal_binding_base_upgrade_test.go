@@ -1,14 +1,12 @@
 package storage
 
 import (
-	"archive/zip"
-	"io"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -21,25 +19,9 @@ func TestWALBindingGenuinePreIdentityUpgrade(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	for _, fixture := range []string{"release", "develop"} {
 		t.Run(fixture, func(t *testing.T) {
-			archive, err := zip.OpenReader(filepath.Join("testdata", "wal-pre-identity", fixture+".zip"))
-			require.NoError(t, err)
-			defer archive.Close()
-			root := t.TempDir()
-			for _, file := range archive.File {
-				require.True(t, filepath.IsLocal(file.Name))
-				path := filepath.Join(root, filepath.FromSlash(file.Name))
-				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
-				input, err := file.Open()
-				require.NoError(t, err)
-				output, err := os.Create(path)
-				require.NoError(t, err)
-				_, err = io.Copy(output, input)
-				require.NoError(t, err)
-				require.NoError(t, output.Close())
-				require.NoError(t, input.Close())
-			}
+			root := fixtureowner.ExtractZip(t, filepath.Join("testdata", "wal-pre-identity", fixture+".zip"), "")
 			dataDir, walDir := filepath.Join(root, "data"), filepath.Join(root, "wal")
-			old, err := badger.Open(badger.DefaultOptions(dataDir).WithReadOnly(true).WithLogger(nil))
+			old, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dataDir).WithReadOnly(true).WithLogger(nil)))
 			require.NoError(t, err)
 			require.NoError(t, old.View(func(tx *badger.Txn) error {
 				_, err := tx.Get(walPropertyIdentityKey)

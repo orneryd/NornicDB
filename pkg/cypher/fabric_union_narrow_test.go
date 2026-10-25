@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,33 +24,6 @@ type unionNarrowObservation struct {
 	Error   string          `json:"error,omitempty"`
 	Code    string          `json:"code,omitempty"`
 	Detail  string          `json:"detail,omitempty"`
-}
-
-func unionNarrowExecutor(t testing.TB) *StorageExecutor {
-	t.Helper()
-	config := multidb.DefaultConfig()
-	config.RemoteEngineFactory = func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {
-		return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: authToken, User: ref.User, Password: ref.Password})
-	}
-	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), config)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, mgr.Close()) })
-	for _, db := range []string{"one", "two"} {
-		require.NoError(t, mgr.CreateDatabase(db))
-		store, err := mgr.GetStorage(db)
-		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{ID: storage.NodeID(db), Labels: []string{"P"}})
-		require.NoError(t, err)
-	}
-	require.NoError(t, mgr.CreateCompositeDatabase("comp", []multidb.ConstituentRef{
-		{Alias: "one", DatabaseName: "one", Type: "local", AccessMode: "read_write"},
-		{Alias: "two", DatabaseName: "two", Type: "local", AccessMode: "read_write"},
-	}))
-	store, err := mgr.GetStorage(mgr.DefaultDatabaseName())
-	require.NoError(t, err)
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
-	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
-	return exec
 }
 
 func unionNarrowObserve(exec *StorageExecutor, name, family, query string) unionNarrowObservation {
@@ -93,7 +65,7 @@ func TestUnionNarrowPriorFindings(t *testing.T) {
 	for _, control := range current {
 		byName[control.Name] = control
 	}
-	exec := unionNarrowExecutor(t)
+	exec := newFabricCallRowsExecutor(t, true)
 	for _, want := range baseline {
 		if want.Family == "original" || want.Family == "r1-columns" {
 			continue
@@ -136,7 +108,7 @@ func TestUnionNarrowPriorFindings(t *testing.T) {
 func TestUnionNarrowRequired(t *testing.T) {
 	for _, route := range []string{"composite", "remote"} {
 		t.Run(route, func(t *testing.T) {
-			exec := unionNarrowExecutor(t)
+			exec := newFabricCallRowsExecutor(t, true)
 			leftGraph, rightGraph := "comp.one", "comp.two"
 			if route == "remote" {
 				server := unionNarrowRemote(t)
@@ -200,7 +172,7 @@ func BenchmarkUnionNarrowNoUnion(b *testing.B) {
 	} {
 		b.Run(item.name, func(b *testing.B) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "bench")
-			exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			_, err := exec.Execute(context.Background(), item.query, nil)
 			require.NoError(b, err)
 			b.ReportAllocs()

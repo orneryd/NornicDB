@@ -91,15 +91,15 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 	if prepared == nil {
 		return nil, localizedError(localization.CypherCommandRoutingFabricNotPrepared(), nil)
 	}
-	contract, err := readStatementExecutionContract(cypher)
+	contract, err := readStatementExecutionContract(ctx, cypher)
 	if err != nil {
 		return nil, err
 	}
-	fragment, err := e.fabricProcedureWritePlan(prepared.fragment)
+	fragment, err := e.fabricProcedureWritePlan(ctx, prepared.fragment)
 	if err != nil {
 		return nil, err
 	}
-	if hasCallInTransactions(cypher) {
+	if hasCallInTransactions(ctx, cypher) {
 		return nil, transactionalCallContextError("transactional CALL on composite targets is not supported")
 	}
 	catalog := prepared.catalog
@@ -149,7 +149,7 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 	fabricExecutor.SetConcurrentExecution(autoCommit && !contract.dynamic)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
 	fabricExecutor.SetRemoteModeUncertainty(func(query string) bool {
-		contract, err := readStatementExecutionContract(query)
+		contract, err := readStatementExecutionContract(ctx, query)
 		return err != nil || contract.calls
 	})
 	fabricExecutor.SetGraphAuthorizer(func(ctx context.Context, database, query string) error {
@@ -186,13 +186,13 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 		return nil, useErr
 	}
 	if len(stream.Columns) == 0 && !isSchemaCommandStatement(command) {
-		columns, err := e.ResultColumns(cypher, e.resultIncomingScope(), cypherVersionFromContext(ctx) == "25")
+		columns, err := e.ResultColumns(ctx, cypher, e.resultIncomingScope(), cypherVersionFromContext(ctx) == "25")
 		if err != nil {
 			return nil, err
 		}
 		stream.Columns = columns
 	}
-	if err := e.normalizeFabricRowWrapper(cypher, stream); err != nil {
+	if err := e.normalizeFabricRowWrapper(ctx, cypher, stream); err != nil {
 		return nil, err
 	}
 	s := statsAcc.snapshot()
@@ -227,7 +227,7 @@ func (e *StorageExecutor) fabricResultCacheKey(ctx context.Context, prepared *fa
 	}
 	key := cacheKeyBuilder{}
 	var scratch [binary.MaxVarintLen64 + 1]byte
-	writeCacheKeyString(&key, &scratch, resultCacheEntryKey(cypher, params))
+	writeCacheKeyString(&key, &scratch, resultCacheEntryKey(ctx, cypher, params))
 	key.buf = binary.AppendUvarint(key.buf, e.statementCacheScope.Generation())
 	scopes := make([]*multidb.StatementCacheScope, 0, len(selections))
 	for _, selection := range selections {
@@ -325,7 +325,7 @@ func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher str
 	if dbFromCtx := GetUseDatabaseFromContext(ctx); strings.TrimSpace(dbFromCtx) != "" {
 		sessionDB = dbFromCtx
 	}
-	fragment, err := e.planFabricQuery(catalog, cypher, sessionDB)
+	fragment, err := e.planFabricQuery(ctx, catalog, cypher, sessionDB)
 	if err != nil {
 		return nil, fabricGraphReferenceError(err)
 	}
@@ -378,7 +378,7 @@ func fabricFragmentHasRemoteTarget(catalog *fabric.Catalog, f fabric.Fragment) b
 }
 
 // fabricUnionContract gives the UNION branches Fabric combines the semantics
-// executeUnionBranches gives a UNION on one graph.
+// executeUnion gives a UNION on one graph.
 var fabricUnionContract = fabric.UnionContract{
 	ColumnOrder:  unionColumnOrder,
 	ColumnsError: unionColumnsError,
@@ -400,10 +400,12 @@ var fabricUnionContract = fabric.UnionContract{
 // variable scopes are checked, as Neo4j checks a composite statement's, before
 // any part of it plans or runs. A statement the planner can't read is checked
 // as it is, and planning reports the error.
-func fabricSingleGraphStatement(cypher string) string {
+func fabricSingleGraphStatement(ctx context.Context, cypher string) string {
 	planner := fabric.NewFabricPlanner(nil)
 	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
-	planner.SetCallImportReader(callSubqueryImportedVariables)
+	planner.SetCallImportReader(func(scope string, scoped bool, body string) ([]string, error) {
+		return callSubqueryImportedVariables(ctx, scope, scoped, body)
+	})
 	statement, err := planner.SingleGraphStatement(cypher)
 	if err != nil {
 		return cypher
@@ -411,7 +413,7 @@ func fabricSingleGraphStatement(cypher string) string {
 	return statement
 }
 
-func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
+func (e *StorageExecutor) planFabricQuery(ctx context.Context, catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
 	if e.fabricPlanCache != nil {
 		if cached, found := e.fabricPlanCache.Get(cypher, sessionDB); found && cached != nil {
 			return cached, nil
@@ -421,9 +423,14 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 	planner := fabric.NewFabricPlanner(catalog)
 	// A name spelled UNION, OPTIONAL or RETURN is read as ordinary statements read it.
 	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
-	planner.SetCallImportReader(callSubqueryImportedVariables)
+	planner.SetCallImportReader(func(scope string, scoped bool, body string) ([]string, error) {
+		return callSubqueryImportedVariables(ctx, scope, scoped, body)
+	})
 	fragment, err := planner.Plan(cypher, sessionDB)
 	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if e.fabricPlanCache != nil {
@@ -436,14 +443,14 @@ func (e *StorageExecutor) planFabricQuery(catalog *fabric.Catalog, cypher, sessi
 // admission, just as the native transaction route does. Cached structural plans
 // stay immutable and do not retain an obsolete procedure mode after registration.
 // The existing Fabric participant owner then handles writes and their rollback.
-func (e *StorageExecutor) fabricProcedureWritePlan(fragment fabric.Fragment) (fabric.Fragment, error) {
+func (e *StorageExecutor) fabricProcedureWritePlan(ctx context.Context, fragment fabric.Fragment) (fabric.Fragment, error) {
 	switch current := fragment.(type) {
 	case *fabric.FragmentExec:
-		input, err := e.fabricProcedureWritePlan(current.Input)
+		input, err := e.fabricProcedureWritePlan(ctx, current.Input)
 		if err != nil {
 			return nil, err
 		}
-		contract, err := readStatementExecutionContract(current.Query)
+		contract, err := readStatementExecutionContract(ctx, current.Query)
 		if err != nil {
 			return nil, err
 		}
@@ -458,11 +465,11 @@ func (e *StorageExecutor) fabricProcedureWritePlan(fragment fabric.Fragment) (fa
 		copy.Input, copy.IsWrite = input, write
 		return &copy, nil
 	case *fabric.FragmentApply:
-		input, err := e.fabricProcedureWritePlan(current.Input)
+		input, err := e.fabricProcedureWritePlan(ctx, current.Input)
 		if err != nil {
 			return nil, err
 		}
-		inner, err := e.fabricProcedureWritePlan(current.Inner)
+		inner, err := e.fabricProcedureWritePlan(ctx, current.Inner)
 		if err != nil {
 			return nil, err
 		}
@@ -473,11 +480,11 @@ func (e *StorageExecutor) fabricProcedureWritePlan(fragment fabric.Fragment) (fa
 		copy.Input, copy.Inner = input, inner
 		return &copy, nil
 	case *fabric.FragmentUnion:
-		left, err := e.fabricProcedureWritePlan(current.LHS)
+		left, err := e.fabricProcedureWritePlan(ctx, current.LHS)
 		if err != nil {
 			return nil, err
 		}
-		right, err := e.fabricProcedureWritePlan(current.RHS)
+		right, err := e.fabricProcedureWritePlan(ctx, current.RHS)
 		if err != nil {
 			return nil, err
 		}
@@ -488,7 +495,7 @@ func (e *StorageExecutor) fabricProcedureWritePlan(fragment fabric.Fragment) (fa
 		copy.LHS, copy.RHS = left, right
 		return &copy, nil
 	case *fabric.FragmentLeaf:
-		input, err := e.fabricProcedureWritePlan(current.Input)
+		input, err := e.fabricProcedureWritePlan(ctx, current.Input)
 		if err != nil {
 			return nil, err
 		}
@@ -503,11 +510,11 @@ func (e *StorageExecutor) fabricProcedureWritePlan(fragment fabric.Fragment) (fa
 	}
 }
 
-func (e *StorageExecutor) normalizeFabricRowWrapper(cypher string, stream *fabric.ResultStream) error {
+func (e *StorageExecutor) normalizeFabricRowWrapper(ctx context.Context, cypher string, stream *fabric.ResultStream) error {
 	if stream == nil || !stream.RowWrapper || len(stream.Columns) != 1 || len(stream.Rows) == 0 {
 		return nil
 	}
-	inferred, err := e.ResultColumns(cypher, e.resultIncomingScope(), cypherGrammarVersion(cypher) == "25")
+	inferred, err := e.ResultColumns(ctx, cypher, e.resultIncomingScope(), cypherGrammarVersion(cypher) == "25")
 	if err != nil {
 		return err
 	}
@@ -716,7 +723,7 @@ func (c *cypherFabricExecutor) ExecuteQuery(ctx context.Context, dbName string, 
 }
 
 func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, bool, error) {
-	clauses, supported := canExecuteAsPipeline(query)
+	clauses, supported := canExecuteAsPipeline(ctx, query)
 	if !supported || containsRelationshipPattern(query) {
 		return nil, nil, false, nil
 	}
@@ -797,7 +804,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	defer func() { exec.graphIdentityScope = previousIdentityScope }()
 	// Local fragments bypass implicit execution's decision. Classify this
 	// fragment itself: writes and procedures must retain full node reads.
-	exec.readOnlyQueryNodes = exec.readsQueryNodesWithoutVectors(exec.analyzer.Analyze(query))
+	exec.readOnlyQueryNodes = exec.readsQueryNodesWithoutVectors(exec.analyzer.Analyze(ctx, query))
 	result, err := exec.executeInternal(ctx, query, params)
 	if err != nil {
 		return nil, nil, err
@@ -980,8 +987,8 @@ func (e *cypherFabricExecutor) CachedResultColumns(ctx context.Context, query st
 	return e.base.CachedResultColumns(ctx, query, incoming)
 }
 
-func (e *cypherFabricExecutor) ResultProjection(query string, incoming []string) resultmetadata.Projection {
-	return e.base.ResultProjection(query, incoming)
+func (e *cypherFabricExecutor) ResultProjection(ctx context.Context, query string, incoming []string) resultmetadata.Projection {
+	return e.base.ResultProjection(ctx, query, incoming)
 }
 
 func (c *cypherFabricExecutor) fabricTransaction() *fabric.FabricTransaction {

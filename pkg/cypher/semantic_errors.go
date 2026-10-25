@@ -90,3 +90,9 @@ func syntaxAdmissionError(source string, cause error) error {
 	message = strings.ReplaceAll(message, "extraneous input ", "Invalid input ")
 	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", message)
 }
+
+// invalidForeachError classifies malformed updates and invalid runtime list
+// operands, returning a fresh mutable SemanticError for each rejected statement.
+func invalidForeachError() error {
+	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidForeach", "invalid or unsupported FOREACH update")
+}

@@ -9,10 +9,10 @@ import (
 
 // ResultColumns is the strict ordered-header view of the execution program.
 // Unknown facts are an error, never an empty successful header.
-func (e *StorageExecutor) ResultColumns(query string, incoming resultmetadata.Scope, cypher25 bool) ([]string, error) {
+func (e *StorageExecutor) ResultColumns(ctx context.Context, query string, incoming resultmetadata.Scope, cypher25 bool) ([]string, error) {
 	var columns []string
 	var failure error
-	program := e.statementProjectionProgram(query, incoming, cypher25)
+	program := e.statementProjectionProgram(ctx, query, incoming, cypher25, nil)
 	if !program.complete {
 		if program.err != nil {
 			return nil, program.err
@@ -55,7 +55,7 @@ func (e *StorageExecutor) StatementColumns(query string) []string {
 // StatementResultColumns is the strict public header view with this executor's
 // incoming record scope. Rewriters and transaction adapters preserve its error.
 func (e *StorageExecutor) StatementResultColumns(query string) ([]string, error) {
-	return e.ResultColumns(query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25")
+	return e.ResultColumns(context.Background(), query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25")
 }
 
 // StatementResultColumnsContext is the public execution view, using the same
@@ -64,7 +64,7 @@ func (e *StorageExecutor) StatementResultColumnsContext(ctx context.Context, que
 	var columns []string
 	var failure error
 	cypher25 := cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25"
-	e.StatementFactsWith(query, e.resultIncomingScope(), cypher25, e.participantSchemaForStatement(ctx, query)).Visit(func(statement resultmetadata.Statement) {
+	e.statementProjectionProgram(ctx, query, e.resultIncomingScope(), cypher25, e.participantSchemaForStatement(ctx, query)).facts.Visit(func(statement resultmetadata.Statement) {
 		statement.Columns.Visit(func(known []string) { columns = known }, func() { failure = unresolvedStatementError() })
 	}, func() { failure = unresolvedStatementError() }, func(reason resultmetadata.Unresolved) { failure = reason.Err })
 	return columns, failure
@@ -100,12 +100,12 @@ func (e *StorageExecutor) CachedResultColumns(ctx context.Context, query string,
 
 // statementProducesColumns is framing's presence-only view of the canonical
 // clause readers. Ordinary UNION execution does not compile a scope program.
-func (e *StorageExecutor) statementProducesColumns(query string) bool {
-	start, end, _, ok := queryStatementWindow(query)
-	return ok && queryBodyProducesColumns(query, readQueryBody(query, start, end))
+func (e *StorageExecutor) statementProducesColumns(ctx context.Context, query string) bool {
+	start, end, _, ok := queryStatementWindow(ctx, query)
+	return ok && queryBodyProducesColumns(ctx, query, readQueryBody(ctx, query, start, end), false)
 }
 
-func queryBodyProducesColumns(source string, body queryBody) bool {
+func queryBodyProducesColumns(ctx context.Context, source string, body queryBody, directReturnsOnly bool) bool {
 	for _, branch := range body.branches {
 		if branch.declined || branch.finished || len(branch.clauses) == 0 {
 			continue
@@ -115,14 +115,20 @@ func queryBodyProducesColumns(source string, body queryBody) bool {
 		case pipelineClauseReturn:
 			return true
 		case pipelineClauseCall:
+			if directReturnsOnly {
+				continue
+			}
 			produced := false
-			projectedProcedureNames(last.text).Visit(func(names []string) { produced = len(names) > 0 }, func() { produced = false })
+			projectedProcedureNames(ctx, last.text).Visit(func(names []string) { produced = len(names) > 0 }, func() { produced = false })
 			if produced {
 				return true
 			}
 		case pipelineClauseCallSubquery:
-			start, end, ok := callClauseBody(last)
-			if ok && queryBodyProducesColumns(source, readQueryBody(source, start, end)) {
+			if directReturnsOnly {
+				continue
+			}
+			start, end, ok := callClauseBody(ctx, last)
+			if ok && queryBodyProducesColumns(ctx, source, readQueryBody(ctx, source, start, end), false) {
 				return true
 			}
 		}
@@ -132,9 +138,9 @@ func queryBodyProducesColumns(source string, body queryBody) bool {
 
 // ResultProjection is the execution descriptor from the owner program. It
 // never expands a compound wildcard from the statement's entry scope.
-func (e *StorageExecutor) ResultProjection(query string, incoming []string) resultmetadata.Projection {
+func (e *StorageExecutor) ResultProjection(ctx context.Context, query string, incoming []string) resultmetadata.Projection {
 	var projection resultmetadata.Projection
-	e.StatementFacts(query, resultmetadata.KnownScope(incoming), cypherGrammarVersion(query) == "25").Visit(func(statement resultmetadata.Statement) {
+	e.statementProjectionProgram(ctx, query, resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25", nil).facts.Visit(func(statement resultmetadata.Statement) {
 		if len(statement.Branches) != 0 || len(statement.Clauses) == 0 {
 			return
 		}

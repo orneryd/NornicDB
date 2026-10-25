@@ -146,7 +146,7 @@ const (
 )
 
 // hasSubqueryPattern checks if the query contains a subquery pattern (keyword + optional whitespace + brace)
-func hasSubqueryPattern(query string, pattern string) bool {
+func hasSubqueryPattern(ctx context.Context, query string, pattern string) bool {
 	switch pattern {
 	case existsSubqueryRe:
 		return hasKeywordFollowedByBrace(query, "EXISTS")
@@ -155,22 +155,22 @@ func hasSubqueryPattern(query string, pattern string) bool {
 	case countSubqueryRe:
 		return hasKeywordFollowedByBrace(query, "COUNT")
 	case callSubqueryRe:
-		return hasCallSubqueryPattern(query)
+		return hasCallSubqueryPattern(ctx, query)
 	case collectSubqueryRe:
 		return hasKeywordFollowedByBrace(query, "COLLECT")
 	}
 	return false
 }
 
-func hasCallSubqueryPattern(query string) bool {
-	return firstTopLevelCallSubquery(query) >= 0
+func hasCallSubqueryPattern(ctx context.Context, query string) bool {
+	return firstTopLevelCallSubquery(ctx, query) >= 0
 }
 
 // firstTopLevelCallSubquery returns the offset of the first CALL { } or
 // CALL (vars) { } clause of query itself: outside strings, quoted names and
 // brackets, so a CALL inside an EXISTS / COUNT / COLLECT subquery or another
 // CALL body is not the statement's (#652). -1 when there is none.
-func firstTopLevelCallSubquery(query string) int {
+func firstTopLevelCallSubquery(ctx context.Context, query string) int {
 	depth := 0
 	for i := 0; i < len(query); i++ {
 		switch cypherLexicalByte(query[i]) {
@@ -183,7 +183,7 @@ func firstTopLevelCallSubquery(query string) int {
 				depth--
 			}
 		case 'C', 'c':
-			if depth == 0 && callSubqueryAt(query, i) {
+			if depth == 0 && callSubqueryAt(ctx, query, i) {
 				return i
 			}
 		}
@@ -193,13 +193,13 @@ func firstTopLevelCallSubquery(query string) int {
 
 // callSubqueryAt reports whether a CALL { } or scoped CALL (vars) { }
 // subquery clause starts at offset i of query.
-func callSubqueryAt(query string, i int) bool {
+func callSubqueryAt(ctx context.Context, query string, i int) bool {
 	if !matchKeywordAt(query, i, "CALL") {
 		return false
 	}
 	// Classification consumes the same CALL frame as scope and execution.
 	// In particular, comments before or after imports are query trivia.
-	body := i + readCallSubqueryScope(query[i:]).bodyOffset
+	body := i + readCallSubqueryScope(ctx, query[i:]).bodyOffset
 	return body < len(query) && query[body] == '{'
 }
 
@@ -702,9 +702,19 @@ type InferenceManager interface {
 	Chat(ctx context.Context, req heimdall.ChatRequest) (*heimdall.ChatResponse, error)
 }
 
+// QueryCachePolicy configures an executor's database-scoped result cache.
+// Zero MaxEntries disables caching; non-positive TTL uses the process default.
+// For example, NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 100, TTL: time.Minute}).
+type QueryCachePolicy struct {
+	MaxEntries int
+	TTL        time.Duration
+}
+
 // NewStorageExecutor creates a new Cypher executor with the given storage backend.
 //
 // The executor is initialized with a parser and connected to the storage engine.
+// An optional QueryCachePolicy overrides its environment-derived cache capacity
+// and lifetime; when several policies are supplied, the last one takes precedence.
 // It's ready to execute Cypher queries immediately after creation.
 //
 // Parameters:
@@ -721,29 +731,16 @@ type InferenceManager interface {
 //
 //	// Executor is ready for queries
 //	result, err := executor.Execute(ctx, "MATCH (n) RETURN count(n)", nil)
-func NewStorageExecutor(store storage.Engine) *StorageExecutor {
+func NewStorageExecutor(store storage.Engine, cachePolicy ...QueryCachePolicy) *StorageExecutor {
 	runtimeCfg := config.LoadFromEnv()
 	maxEntries := runtimeCfg.Memory.QueryCacheSize
 	if !runtimeCfg.Memory.QueryCacheEnabled {
 		maxEntries = 0
 	}
-	return newStorageExecutor(store, runtimeCfg, maxEntries, runtimeCfg.Memory.QueryCacheTTL)
-}
-
-// NewStorageExecutorWithQueryCachePolicy creates an executor whose query-result
-// cache capacity and lifetime are scoped to the executor's database. Zero max
-// entries disables caching. A non-positive TTL uses the process default.
-func NewStorageExecutorWithQueryCachePolicy(store storage.Engine, maxEntries int, queryCacheTTL time.Duration) *StorageExecutor {
-	runtimeCfg := config.LoadFromEnv()
-	return newStorageExecutor(store, runtimeCfg, maxEntries, queryCacheTTL)
-}
-
-// QueryCachePolicy returns the database-scoped query-result cache capacity and lifetime.
-func (e *StorageExecutor) QueryCachePolicy() (maxEntries int, ttl time.Duration) {
-	return e.queryCacheMaxEntries, e.queryCacheTTL
-}
-
-func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntries int, queryCacheTTL time.Duration) *StorageExecutor {
+	queryCacheTTL := runtimeCfg.Memory.QueryCacheTTL
+	for _, policy := range cachePolicy {
+		maxEntries, queryCacheTTL = policy.MaxEntries, policy.TTL
+	}
 	if queryCacheTTL <= 0 {
 		queryCacheTTL = runtimeCfg.Memory.QueryCacheTTL
 	}
@@ -789,8 +786,13 @@ func newStorageExecutor(store storage.Engine, runtimeCfg *config.Config, maxEntr
 	}
 	exec.queryStatistics = (&queryStatisticsRegistry{}).forDatabase(exec.currentDatabaseName())
 	ensureBuiltInProceduresRegistered()
-	_ = exec.loadPersistedProcedures()
+	_ = exec.loadPersistedProcedures(context.Background())
 	return exec
+}
+
+// QueryCachePolicy returns the database-scoped query-result cache capacity and lifetime.
+func (e *StorageExecutor) QueryCachePolicy() (maxEntries int, ttl time.Duration) {
+	return e.queryCacheMaxEntries, e.queryCacheTTL
 }
 
 // SetLocalizationRenderer sets the immutable renderer used for procedure metadata.
@@ -1612,8 +1614,8 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 		return statementExec.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 	// Check if this is a write operation using cached analysis
-	info := e.analyzer.Analyze(cypher)
-	needsTransaction, err := statementNeedsTransaction(cypher)
+	info := e.analyzer.Analyze(ctx, cypher)
+	needsTransaction, err := statementNeedsTransaction(ctx, cypher)
 	if err != nil {
 		return nil, err
 	}
@@ -1642,8 +1644,8 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 
 // statementNeedsTransaction keeps write clauses and registered WRITE procedures
 // under the same statement rollback owner. tx.setMetaData also needs a transaction.
-func statementNeedsTransaction(cypher string) (bool, error) {
-	contract, err := readStatementExecutionContract(cypher)
+func statementNeedsTransaction(ctx context.Context, cypher string) (bool, error) {
+	contract, err := readStatementExecutionContract(ctx, cypher)
 	return contract.transaction, err
 }
 
@@ -1850,7 +1852,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendTxAbort(dbName, txID, err.Error())
 		}
-		if info := e.analyzer.Analyze(cypher); IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
+		if info := e.analyzer.Analyze(ctx, cypher); IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
 			err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 		}
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.

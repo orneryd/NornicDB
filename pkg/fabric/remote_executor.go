@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -148,12 +149,12 @@ func (r *RemoteFragmentExecutor) RollbackParticipants(ctx context.Context) error
 func (r *RemoteFragmentExecutor) Execute(ctx context.Context, loc *LocationRemote, query string, params map[string]interface{}, authToken string) (*ResultStream, error) {
 	engine, err := r.getOrCreateEngine(loc, authToken)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to remote '%s' at %s: %w", loc.DBName, loc.URI, err)
+		return nil, fmt.Errorf("failed to connect to remote '%s' at %s: %w", loc.DBName, observability.RedactURL(loc.URI), err)
 	}
 
 	columns, rows, err := r.executeRemoteQuery(ctx, engine, query, params)
 	if err != nil {
-		return nil, fmt.Errorf("remote execution on '%s' (%s) failed: %w", loc.DBName, loc.URI, err)
+		return nil, fmt.Errorf("remote execution on '%s' (%s) failed: %w", loc.DBName, observability.RedactURL(loc.URI), err)
 	}
 
 	return &ResultStream{
@@ -182,13 +183,13 @@ func (r *RemoteFragmentExecutor) Close() error {
 	var lastErr error
 	for key, handle := range r.txHandles {
 		if err := handle.end(context.Background(), false); err != nil {
-			lastErr = fmt.Errorf("failed to rollback remote tx handle '%s': %w", key, err)
+			lastErr = fmt.Errorf("failed to rollback remote tx handle '%s': %w", observability.RedactText(key), err)
 		}
 		delete(r.txHandles, key)
 	}
 	for key, engine := range r.engineCache {
 		if err := engine.Close(); err != nil {
-			lastErr = fmt.Errorf("failed to close remote engine '%s': %w", key, err)
+			lastErr = fmt.Errorf("failed to close remote engine '%s': %w", observability.RedactText(key), err)
 		}
 		delete(r.engineCache, key)
 	}

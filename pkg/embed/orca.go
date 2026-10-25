@@ -1,6 +1,7 @@
 package embed
 
 import (
+	"net/url"
 	"strings"
 	"time"
 )
@@ -57,6 +58,12 @@ func resolveOrcaConfig(config *Config) *Config {
 }
 
 func openAICompatibleAPIRoot(apiURL string) string {
-	apiURL = strings.TrimRight(strings.TrimSpace(apiURL), "/")
-	return strings.TrimSuffix(apiURL, "/v1")
+	apiURL = strings.TrimSpace(apiURL)
+	parsed, err := url.Parse(apiURL)
+	if err != nil {
+		return apiURL
+	}
+	parsed.Path = strings.TrimSuffix(strings.TrimSuffix(parsed.Path, "/"), "/v1")
+	parsed.RawPath = strings.TrimSuffix(strings.TrimSuffix(parsed.RawPath, "/"), "/v1")
+	return parsed.String()
 }

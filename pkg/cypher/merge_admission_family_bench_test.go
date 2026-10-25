@@ -26,7 +26,7 @@ func BenchmarkMergeAdmissionFamily(b *testing.B) {
 		}{{"match", 42}, {"create", 43}} {
 			b.Run(shape.name+"/"+mode.name, func(b *testing.B) {
 				store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "test")
-				exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+				exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				ctx := context.Background()
 				run := func(query string, params map[string]interface{}) {
 					if _, err := exec.Execute(ctx, query, params); err != nil {
