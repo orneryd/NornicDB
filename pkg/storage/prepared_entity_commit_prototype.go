@@ -22,7 +22,7 @@ type PreparedEntityCommit struct {
 	markRecoveryPending  func()
 	hooksMu              sync.Mutex
 	appliedHooks         []func()
-	retainAuthority      func() (func(), error)
+	retainAuthority      func(context.Context) (func(), error)
 	engine               *BadgerEngine
 	terminal             CommitOutcome
 	afterPublication     func()
@@ -37,29 +37,57 @@ type PreparedEntityCommit struct {
 func (p *PreparedEntityCommit) Namespace() string { return p.namespace }
 func (p *PreparedEntityCommit) LogicalID() string { return p.logicalID }
 func (p *PreparedEntityCommit) Operations() []Operation {
-	ops := append([]Operation(nil), p.operations...)
-	for i := range ops {
+	ops, _ := p.OperationsWithContext(context.Background())
+	return ops
+}
+
+// OperationsWithContext snapshots command images during pre-acceptance work.
+func (p *PreparedEntityCommit) OperationsWithContext(ctx context.Context) ([]Operation, error) {
+	ops := make([]Operation, len(p.operations))
+	for i := range p.operations {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		ops[i] = p.operations[i]
 		ops[i].snapshotForNotification()
 	}
-	return ops
+	return ops, ctx.Err()
 }
 
 // CountDelta projects namespace-scoped physical counts without copying images.
 // The prepared pairs remain private and immutable throughout admission.
 func (p *PreparedEntityCommit) CountDelta() (nodes, edges int64) {
-	return StoredEntityCountDelta(p.namespace, p.changes)
+	nodes, edges, _ = p.CountDeltaWithContext(context.Background())
+	return nodes, edges
+}
+
+// CountDeltaWithContext folds the same private stored images during admission.
+func (p *PreparedEntityCommit) CountDeltaWithContext(ctx context.Context) (nodes, edges int64, err error) {
+	return StoredEntityCountDeltaWithContext(ctx, p.namespace, p.changes)
 }
 func (p *PreparedEntityCommit) Changes() []StoredEntityChange {
-	changes := append([]StoredEntityChange(nil), p.changes...)
-	for i := range changes {
+	changes, _ := p.ChangesWithContext(context.Background())
+	return changes
+}
+
+// ChangesWithContext copies an admission population without exposing a partial
+// snapshot on cancellation. Accepted publication uses the same compatibility body.
+func (p *PreparedEntityCommit) ChangesWithContext(ctx context.Context) ([]StoredEntityChange, error) {
+	changes := make([]StoredEntityChange, len(p.changes))
+	for i := range p.changes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		changes[i] = p.changes[i]
 		v := &changes[i]
 		v.BeforeNode = CopyNode(v.BeforeNode)
 		v.AfterNode = CopyNode(v.AfterNode)
 		v.BeforeEdge = CopyEdge(v.BeforeEdge)
 		v.AfterEdge = CopyEdge(v.AfterEdge)
 	}
-	return changes
+	return changes, ctx.Err()
 }
+
 func (p *PreparedEntityCommit) startCommit(afterPublication func()) error {
 	selected := false
 	p.once.Do(func() {
@@ -135,40 +163,18 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, logicalID 
 			if err != nil {
 				return err
 			}
-			operations := append([]Operation(nil), tx.operations...)
-			for i := range operations {
-				operations[i].snapshotForNotification()
+			operations, err := prepareEntityOperationsWithContext(ctx, tx.operations)
+			if err != nil {
+				return err
 			}
-			nodes, edges := tx.pendingEntityAuthorityKeysLocked()
+			nodes, edges, err := tx.pendingEntityAuthorityKeysLocked(ctx)
+			if err != nil {
+				return err
+			}
 			schema, owner := tx.engine.GetSchemaForNamespace(tx.namespace), tx.ID
 			prepared = &PreparedEntityCommit{engine: tx.engine, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
-			prepared.retainAuthority = func() (func(), error) {
-				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges))
-				if err != nil {
-					return nil, err
-				}
-				var nodeImages []*Node
-				var edgeImages []*Edge
-				for _, op := range operations {
-					if op.Node != nil {
-						nodeImages = append(nodeImages, op.Node)
-					}
-					if op.OldNode != nil {
-						nodeImages = append(nodeImages, op.OldNode)
-					}
-					if op.Edge != nil {
-						edgeImages = append(edgeImages, op.Edge)
-					}
-					if op.OldEdge != nil {
-						edgeImages = append(edgeImages, op.OldEdge)
-					}
-				}
-				releaseValues, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, schema.appendConstraintValueKeys(nil, nodeImages, edgeImages))
-				if err != nil {
-					releaseEntities()
-					return nil, err
-				}
-				return func() { releaseValues(); releaseEntities() }, nil
+			prepared.retainAuthority = func(retainCtx context.Context) (func(), error) {
+				return retainPreparedAuthorityWithContext(retainCtx, schema, owner, nodes, edges, operations)
 			}
 			prepared.markRecoveryPending = func() { schema.markCommitOwnerRecoveryPending(owner) }
 			tx.commitReleaseAcceptedAuthority = func() { drainReleaseCallbacks(&prepared.hooksMu, &prepared.appliedHooks) }
@@ -214,10 +220,16 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, logicalID 
 // recovery-pending commands retain it after an inner native rollback.
 // The returned release is only for definite pre-record/log discard.
 func (p *PreparedEntityCommit) RetainAcceptedAuthority() (func(), error) {
+	return p.RetainAcceptedAuthorityWithContext(context.Background())
+}
+
+// RetainAcceptedAuthorityWithContext prepares an accepted owner's reentrant
+// holds before journal admission. Definite rejection leaves no new hold.
+func (p *PreparedEntityCommit) RetainAcceptedAuthorityWithContext(ctx context.Context) (func(), error) {
 	if p.retainAuthority == nil {
 		return func() {}, nil
 	}
-	release, err := p.retainAuthority()
+	release, err := p.retainAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -227,6 +239,53 @@ func (p *PreparedEntityCommit) RetainAcceptedAuthority() (func(), error) {
 	p.appliedHooks = append(p.appliedHooks, releaseOnce)
 	p.hooksMu.Unlock()
 	return releaseOnce, nil
+}
+
+// retainPreparedAuthorityWithContext is the single projection/acquisition body
+// shared by cancellable admission and context-free accepted recovery holders.
+func retainPreparedAuthorityWithContext(ctx context.Context, schema *SchemaManager, owner string, nodes []NodeID, edges []EdgeID, operations []Operation) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	keys, err := entityCommitKeysWithContext(ctx, nodes, edges)
+	if err != nil {
+		return nil, err
+	}
+	releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(ctx, owner, keys)
+	if err != nil {
+		return nil, err
+	}
+	var nodeImages []*Node
+	var edgeImages []*Edge
+	for _, op := range operations {
+		if err := ctx.Err(); err != nil {
+			releaseEntities()
+			return nil, err
+		}
+		if op.Node != nil {
+			nodeImages = append(nodeImages, op.Node)
+		}
+		if op.OldNode != nil {
+			nodeImages = append(nodeImages, op.OldNode)
+		}
+		if op.Edge != nil {
+			edgeImages = append(edgeImages, op.Edge)
+		}
+		if op.OldEdge != nil {
+			edgeImages = append(edgeImages, op.OldEdge)
+		}
+	}
+	valueKeys, err := schema.appendConstraintValueKeysWithContext(ctx, nil, nodeImages, edgeImages)
+	if err != nil {
+		releaseEntities()
+		return nil, err
+	}
+	releaseValues, err := schema.acquireUniqueConstraintCommitLocks(ctx, owner, valueKeys)
+	if err != nil {
+		releaseEntities()
+		return nil, err
+	}
+	return func() { releaseValues(); releaseEntities() }, nil
 }
 
 // MarkRecoveryPending preserves accepted authority while making ordinary
@@ -259,3 +318,23 @@ func drainReleaseCallbacks[C []func() | map[uniqueConstraintLockKey]func()](mu *
 }
 
 func (p *PreparedEntityCommit) Mode() EntityCommitMode { return p.mode }
+
+// prepareEntityOperationsWithContext freezes notification images before a
+// prepared handle is returned. Accepted completion retains those owned images.
+func prepareEntityOperationsWithContext(ctx context.Context, source []Operation) ([]Operation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if source == nil {
+		return nil, nil
+	}
+	out := make([]Operation, 0, len(source))
+	for _, operation := range source {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		operation.snapshotForNotification()
+		out = append(out, operation)
+	}
+	return out, nil
+}

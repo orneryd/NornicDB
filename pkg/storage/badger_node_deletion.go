@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"github.com/dgraph-io/badger/v4"
@@ -21,7 +22,7 @@ func (r nodeDeletionResult) operation(id NodeID) Operation {
 // executeNodeDeletion owns record cleanup and cascade traversal for both native
 // and staged writes. The existing target selects only snapshot, history and
 // bookkeeping phases; no transaction is constructed for a native write.
-func (b *BadgerEngine) executeNodeDeletion(w kvWriter, id NodeID, old *Node) (r nodeDeletionResult, err error) {
+func (b *BadgerEngine) executeNodeDeletion(ctx context.Context, w kvWriter, id NodeID, old *Node) (r nodeDeletionResult, err error) {
 	stagedTarget, isStaged := w.(*stagedKV)
 	tx := (*BadgerTransaction)(stagedTarget)
 	raw := kvWriterTxn(w)
@@ -67,7 +68,7 @@ func (b *BadgerEngine) executeNodeDeletion(w kvWriter, id NodeID, old *Node) (r 
 	}
 	var incident []*Edge
 	if isStaged {
-		incident, err = tx.incidentEdgesLocked(id)
+		incident, err = tx.incidentEdgesLocked(ctx, id)
 	} else {
 		incident, err = b.nodeDeletionEdges(raw, id)
 	}
@@ -76,6 +77,9 @@ func (b *BadgerEngine) executeNodeDeletion(w kvWriter, id NodeID, old *Node) (r 
 	}
 	r.edges = incident[:0]
 	for _, edge := range incident {
+		if err = ctx.Err(); err != nil {
+			return r, err
+		}
 		if isStaged {
 			err = tx.bufferRemoveEdgeBookkeepingBuffered(edge, id, r.node.Labels)
 		} else {

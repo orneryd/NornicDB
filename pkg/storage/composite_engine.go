@@ -139,6 +139,11 @@ func (c *CompositeEngine) SetPropertyDefault(propertyName string, constituent st
 // getConstituentsForRead returns all constituents that can be read from.
 // Returns empty slice if no readable constituents are available.
 func (c *CompositeEngine) getConstituentsForRead() []string {
+	aliases, _ := c.getConstituentsForReadWithContext(context.Background())
+	return aliases
+}
+
+func (c *CompositeEngine) getConstituentsForReadWithContext(ctx context.Context) ([]string, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
@@ -151,12 +156,18 @@ func (c *CompositeEngine) getConstituentsForRead() []string {
 	}
 	seen := make(map[readSource]struct{})
 	for alias, mode := range c.accessModes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if mode == "read" || mode == "read_write" {
 			// Check if constituent engine exists and is accessible
 			if engine, exists := c.constituents[alias]; exists && engine != nil {
 				database := DatabaseOf(engine)
 				source := engine
 				for {
+					if err := ctx.Err(); err != nil {
+						return nil, err
+					}
 					wrapper, ok := source.(EngineUnwrapper)
 					if !ok {
 						break
@@ -180,7 +191,7 @@ func (c *CompositeEngine) getConstituentsForRead() []string {
 			}
 		}
 	}
-	return result
+	return result, ctx.Err()
 }
 
 // getConstituentsForWrite returns all constituents that can be written to.
@@ -322,6 +333,11 @@ func hashValue(v interface{}) int {
 
 // CreateNode creates a node. Routes to the appropriate constituent based on routing rules.
 func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
+	return c.CreateNodeWithContext(context.Background(), node)
+}
+
+// CreateNodeWithContext carries the caller through mutation validation.
+func (c *CompositeEngine) CreateNodeWithContext(ctx context.Context, node *Node) (NodeID, error) {
 	writeConstituents := c.getConstituentsForWrite()
 	if len(writeConstituents) == 0 {
 		return "", localizedError(localization.StorageCompositeNoWritableConstituents(), nil)
@@ -340,7 +356,7 @@ func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
 
 	// Create node and track which constituent it was created in
 	// This allows CreateEdge to find nodes created in the same statement
-	nodeID, err := engine.CreateNode(node)
+	nodeID, err := CreateNodeWithContext(ctx, engine, node)
 	if err != nil {
 		return "", err
 	}
@@ -415,6 +431,11 @@ func (c *CompositeEngine) GetNode(id NodeID) (*Node, error) {
 
 // UpdateNode updates a node. Routes to the constituent that contains it.
 func (c *CompositeEngine) UpdateNode(node *Node) error {
+	return c.UpdateNodeWithContext(context.Background(), node)
+}
+
+// UpdateNodeWithContext carries the caller through mutation validation.
+func (c *CompositeEngine) UpdateNodeWithContext(ctx context.Context, node *Node) error {
 	identity := string(node.ID)
 	if node.Database != "" {
 		identity = node.ElementID("")
@@ -437,7 +458,7 @@ func (c *CompositeEngine) UpdateNode(node *Node) error {
 			if err != nil {
 				return err
 			}
-			return writer.UpdateNode(node)
+			return UpdateNodeWithContext(ctx, writer, node)
 		}
 		if err != ErrNotFound {
 			return err
@@ -738,7 +759,15 @@ func (c *CompositeEngine) DeleteEdge(id EdgeID) error {
 // Each readable source is selected once; equal local IDs across databases remain distinct.
 // Returns empty slice if no readable constituents are available.
 func (c *CompositeEngine) GetNodesByLabel(label string) ([]*Node, error) {
-	readConstituents := c.getConstituentsForRead()
+	return c.GetNodesByLabelWithContext(context.Background(), label)
+}
+
+// GetNodesByLabelWithContext carries the caller through this read and its materialization.
+func (c *CompositeEngine) GetNodesByLabelWithContext(ctx context.Context, label string) ([]*Node, error) {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if len(readConstituents) == 0 {
 		// No readable constituents available (empty composite or all offline)
 		return []*Node{}, nil
@@ -753,12 +782,15 @@ func (c *CompositeEngine) GetNodesByLabel(label string) ([]*Node, error) {
 			continue
 		}
 
-		nodes, err := engine.GetNodesByLabel(label)
+		nodes, err := GetNodesByLabelWithContext(ctx, engine, label)
 		if err != nil {
 			return nil, err
 		}
 
 		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			allNodes = append(allNodes, c.sourceNode(alias, engine, node))
 		}
 	}
@@ -768,6 +800,11 @@ func (c *CompositeEngine) GetNodesByLabel(label string) ([]*Node, error) {
 
 // StreamNodesByLabelProjected streams deduplicated projected nodes from readable constituents.
 func (c *CompositeEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
+	return c.StreamNodesByLabelProjectedWithContext(context.Background(), label, properties, visit)
+}
+
+// StreamNodesByLabelProjectedWithContext carries the caller through this read and its materialization.
+func (c *CompositeEngine) StreamNodesByLabelProjectedWithContext(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
 	if visit == nil {
 		return ErrInvalidData
 	}
@@ -777,7 +814,15 @@ func (c *CompositeEngine) StreamNodesByLabelProjected(label string, properties [
 		engine Engine
 	}
 	readers := make([]sourceReader, 0)
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return err
+	}
+	for _, alias := range readConstituents {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			return err
@@ -789,7 +834,11 @@ func (c *CompositeEngine) StreamNodesByLabelProjected(label string, properties [
 		readers = append(readers, sourceReader{reader: reader, alias: alias, engine: engine})
 	}
 	for _, source := range readers {
-		err := source.reader.StreamNodesByLabelProjected(label, properties, func(node *Node) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		err := StreamNodesByLabelProjectedWithContext(ctx, source.reader, label, properties, func(node *Node) error {
 			if node == nil {
 				return nil
 			}
@@ -804,7 +853,15 @@ func (c *CompositeEngine) StreamNodesByLabelProjected(label string, properties [
 
 // GetFirstNodeByLabel returns the first node with the given label from any constituent.
 func (c *CompositeEngine) GetFirstNodeByLabel(label string) (*Node, error) {
-	readConstituents := c.getConstituentsForRead()
+	return c.GetFirstNodeByLabelWithContext(context.Background(), label)
+}
+
+// GetFirstNodeByLabelWithContext carries the caller through this read and its materialization.
+func (c *CompositeEngine) GetFirstNodeByLabelWithContext(ctx context.Context, label string) (*Node, error) {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
@@ -812,7 +869,7 @@ func (c *CompositeEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 			continue
 		}
 
-		node, err := engine.GetFirstNodeByLabel(label)
+		node, err := GetFirstNodeByLabelWithContext(ctx, engine, label)
 		if err == nil && node != nil {
 			// Found a node - return it
 			return c.sourceNode(alias, engine, node), nil
@@ -967,7 +1024,15 @@ func (c *CompositeEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 // AllNodes returns all nodes from all constituents.
 // Each readable source is selected once; equal local IDs across databases remain distinct.
 func (c *CompositeEngine) AllNodes() ([]*Node, error) {
-	readConstituents := c.getConstituentsForRead()
+	return c.AllNodesWithContext(context.Background())
+}
+
+// AllNodesWithContext carries the caller through full materialization.
+func (c *CompositeEngine) AllNodesWithContext(ctx context.Context) ([]*Node, error) {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	var allNodes []*Node
 
 	for _, alias := range readConstituents {
@@ -976,12 +1041,15 @@ func (c *CompositeEngine) AllNodes() ([]*Node, error) {
 			continue
 		}
 
-		nodes, err := engine.AllNodes()
+		nodes, err := AllNodesWithContext(ctx, engine)
 		if err != nil {
 			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 
 		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			allNodes = append(allNodes, c.sourceNode(alias, engine, node))
 		}
 	}
@@ -1256,6 +1324,11 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 
 // BulkCreateNodes creates nodes in bulk. Routes nodes to appropriate constituents based on routing rules.
 func (c *CompositeEngine) BulkCreateNodes(nodes []*Node) error {
+	return c.BulkCreateNodesWithContext(context.Background(), nodes)
+}
+
+// BulkCreateNodesWithContext carries the caller through mutation validation.
+func (c *CompositeEngine) BulkCreateNodesWithContext(ctx context.Context, nodes []*Node) error {
 	writeConstituents := c.getConstituentsForWrite()
 	if len(writeConstituents) == 0 {
 		return localizedError(localization.StorageCompositeNoWritableConstituents(), nil)
@@ -1277,7 +1350,7 @@ func (c *CompositeEngine) BulkCreateNodes(nodes []*Node) error {
 		if err != nil {
 			return localizedError(localization.StorageCompositeConstituentLookupFailed(constituent, err), err)
 		}
-		if err := engine.BulkCreateNodes(groupNodes); err != nil {
+		if err := BulkCreateNodesWithContext(ctx, engine, groupNodes); err != nil {
 			return localizedError(localization.StorageCompositeNodeBulkCreateFailed(constituent, err), err)
 		}
 		for _, node := range groupNodes {
@@ -1399,8 +1472,21 @@ func (c *CompositeEngine) BulkDeleteEdges(ids []EdgeID) error {
 
 // BatchGetNodes retrieves multiple nodes from all constituents.
 func (c *CompositeEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
+	return c.BatchGetNodesWithContext(context.Background(), ids)
+}
+
+// BatchGetNodesWithContext uses constituent batch owners and observes the
+// request/result identity mapping before returning a composite population.
+func (c *CompositeEngine) BatchGetNodesWithContext(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
 	result := make(map[NodeID]*Node)
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, alias := range readConstituents {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
@@ -1409,6 +1495,9 @@ func (c *CompositeEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) 
 		requests := make([]NodeID, 0, len(ids))
 		originals := make(map[NodeID][]NodeID, len(ids))
 		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			kind, source, local, qualified := ParseElementID(string(id))
 			if qualified {
 				if kind != "4" || source != database {
@@ -1426,12 +1515,18 @@ func (c *CompositeEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) 
 		if len(requests) == 0 {
 			continue
 		}
-		nodes, err := engine.BatchGetNodes(requests)
+		nodes, err := BatchGetNodesWithContext(ctx, engine, requests)
 		if err != nil {
 			return nil, localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 		}
 		for id, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			for _, original := range originals[id] {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				result[original] = c.sourceNode(alias, engine, node)
 			}
 		}
@@ -1578,9 +1673,16 @@ func (c *CompositeEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edg
 
 // StreamNodes streams nodes from all constituents.
 func (c *CompositeEngine) StreamNodes(ctx context.Context, fn func(node *Node) error) error {
-	readConstituents := c.getConstituentsForRead()
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return err
+	}
 
 	for _, alias := range readConstituents {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
@@ -1592,12 +1694,16 @@ func (c *CompositeEngine) StreamNodes(ctx context.Context, fn func(node *Node) e
 			}
 		} else {
 			// Fallback to AllNodes
-			nodes, err := engine.AllNodes()
+			nodes, err := AllNodesWithContext(ctx, engine)
 			if err != nil {
 				return localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 			}
 
 			for _, node := range nodes {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+
 				if err := fn(c.sourceNode(alias, engine, node)); err != nil {
 					return err
 				}
@@ -1610,7 +1716,10 @@ func (c *CompositeEngine) StreamNodes(ctx context.Context, fn func(node *Node) e
 
 // StreamEdges streams edges from all constituents.
 func (c *CompositeEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
-	readConstituents := c.getConstituentsForRead()
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return err
+	}
 
 	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
@@ -1642,7 +1751,10 @@ func (c *CompositeEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) e
 
 // StreamNodeChunks streams nodes in chunks from all constituents.
 func (c *CompositeEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
-	readConstituents := c.getConstituentsForRead()
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return err
+	}
 
 	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
@@ -1651,12 +1763,18 @@ func (c *CompositeEngine) StreamNodeChunks(ctx context.Context, chunkSize int, f
 		}
 
 		if streamer, ok := engine.(StreamingEngine); ok {
-			if err := streamer.StreamNodeChunks(ctx, chunkSize, func(nodes []*Node) error { return fn(nodesFromDatabase(nodes, c.constituentDatabase(alias, engine))) }); err != nil {
+			if err := streamer.StreamNodeChunks(ctx, chunkSize, func(nodes []*Node) error {
+				projected, err := nodesFromDatabaseWithContext(ctx, nodes, c.constituentDatabase(alias, engine))
+				if err != nil {
+					return err
+				}
+				return fn(projected)
+			}); err != nil {
 				return localizedError(localization.StorageCompositeConstituentStreamFailed(alias, err), err)
 			}
 		} else {
 			// Fallback
-			nodes, err := engine.AllNodes()
+			nodes, err := AllNodesWithContext(ctx, engine)
 			if err != nil {
 				return localizedError(localization.StorageCompositeConstituentQueryFailed(alias, err), err)
 			}
@@ -1666,7 +1784,11 @@ func (c *CompositeEngine) StreamNodeChunks(ctx context.Context, chunkSize int, f
 				if end > len(nodes) {
 					end = len(nodes)
 				}
-				if err := fn(nodesFromDatabase(nodes[i:end], c.constituentDatabase(alias, engine))); err != nil {
+				projected, err := nodesFromDatabaseWithContext(ctx, nodes[i:end], c.constituentDatabase(alias, engine))
+				if err != nil {
+					return err
+				}
+				if err := fn(projected); err != nil {
 					return err
 				}
 			}

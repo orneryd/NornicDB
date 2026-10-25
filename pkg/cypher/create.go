@@ -293,7 +293,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	case 0:
 	case 1:
 		node := plan.nodes[0]
-		actualID, err := createMintedNode(store, node)
+		actualID, err := createMintedNode(ctx, store, node)
 		if err != nil {
 			return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
@@ -301,7 +301,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 			node.ID = actualID
 		}
 	default:
-		if err := bulkCreateMintedNodes(store, plan.nodes); err != nil {
+		if err := bulkCreateMintedNodes(ctx, store, plan.nodes); err != nil {
 			return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
 	}
@@ -309,9 +309,9 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	switch len(plan.edges) {
 	case 0:
 	case 1:
-		edgeErr = createMintedEdge(store, plan.edges[0])
+		edgeErr = createMintedEdge(ctx, store, plan.edges[0])
 	default:
-		edgeErr = bulkCreateMintedEdges(store, plan.edges)
+		edgeErr = bulkCreateMintedEdges(ctx, store, plan.edges)
 	}
 	if edgeErr != nil {
 		// The clause's nodes are already written; remove them so the clause

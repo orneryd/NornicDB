@@ -22,9 +22,9 @@ var dispositionOwners = map[string]string{
 // state by design, each with the reason; every row names a function that
 // exists and still decides.
 var decisionOwners = map[string]string{
-	"pkg/storage.BadgerEngine.evaluateSuppressionInTxn": "the decay-suppression owner: evaluates the stored entity and rewrites its body and relationship adjacency when suppression changes",
-	"pkg/storage.BadgerEngine.forgetManualSuppression":  "the manual-suppression owner: a deleted entity's on-demand suppression ends only when it has one",
-	"pkg/storage.MarkNewTemporalConstraintsForEngine$1": "decides, under its maintenance write, whether the label has stored nodes; hidden ones count, as they keep their history",
+	"pkg/storage.BadgerEngine.evaluateSuppressionInTxn":            "the decay-suppression owner: evaluates the stored entity and rewrites its body and relationship adjacency when suppression changes",
+	"pkg/storage.BadgerEngine.forgetManualSuppression":             "the manual-suppression owner: a deleted entity's on-demand suppression ends only when it has one",
+	"pkg/storage.MarkNewTemporalConstraintsForEngineWithContext$1": "decides, under its maintenance write, whether the label has stored nodes; hidden ones count, as they keep their history",
 }
 
 // decisionOwnerOnPath is the decision owner the path from a decision to its

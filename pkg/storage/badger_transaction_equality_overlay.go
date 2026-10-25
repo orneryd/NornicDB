@@ -1,6 +1,8 @@
 package storage
 
-import "sort"
+import (
+	"context"
+)
 
 // TransactionEqualityLookup exposes complete candidates from a transaction's
 // pinned label population. False asks the caller to use its normal scan (for
@@ -8,6 +10,12 @@ import "sort"
 // Callers still apply their language's complete property/label predicate.
 type TransactionEqualityLookup interface {
 	LookupNodesByEquality(label string, properties map[string]interface{}) ([]*Node, bool, error)
+}
+
+// ContextTransactionEqualityLookup carries a statement through equality
+// candidate capture, pending-index preparation and result materialization.
+type ContextTransactionEqualityLookup interface {
+	LookupNodesByEqualityWithContext(context.Context, string, map[string]interface{}) ([]*Node, bool, error)
 }
 
 type snapshotEqualityPopulation struct {
@@ -19,6 +27,15 @@ type snapshotEqualityPopulation struct {
 // equality-key index. Only matching candidates escape as copies. Transaction
 // writes shadow committed IDs and join through the live pending-node index.
 func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[string]interface{}) ([]*Node, bool, error) {
+	return tx.LookupNodesByEqualityWithContext(context.Background(), label, properties)
+}
+
+// LookupNodesByEqualityWithContext is the statement lifetime version of the
+// compatibility lookup. Canceled preparation never publishes a partial index.
+func (tx *BadgerTransaction) LookupNodesByEqualityWithContext(ctx context.Context, label string, properties map[string]interface{}) ([]*Node, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	tx.mu.Lock()
 	defer tx.mu.Unlock()
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
@@ -51,6 +68,9 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 		cacheable := true
 		keyable := false
 		for _, value := range properties {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			if _, ok := transactionEqualityKey(value); ok {
 				keyable = true
 				break
@@ -75,7 +95,7 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 			}
 			return true
 		}
-		err := tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterRead(tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, nil, "", visibleRead, func(node *Node) error {
+		err := tx.engine.streamNodesByLabelFromPhysicalSnapshotAfterReadWithContext(ctx, tx.labelScanScopeLocked(), label, tx.withSnapshotViewLocked, nil, "", visibleRead, func(node *Node) error {
 			if cacheable {
 				bytes, ok := snapshotLabelPrefixNodeBytes(node)
 				if !ok || len(population.nodes) >= maxSnapshotNodeLabelCacheNodes || bytes > maxSnapshotLabelPrefixBytes-retainedBytes || tx.nodeHasEmbeddingSidecar(tx.snapshotTx, node.ID) {
@@ -97,9 +117,13 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 		if tx.snapshotEquality == nil {
 			tx.snapshotEquality = make(map[snapshotLabelCacheKey]*snapshotEqualityPopulation)
 		}
-		tx.snapshotEquality[key] = population
+		// Publish only after population preparation completes.
 		if !cacheable {
+			tx.snapshotEquality[key] = population
 			for id, node := range tx.pendingNodes {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				if _, deleted := tx.deletedNodes[id]; !deleted && matches(node) {
 					first = append(first, copyNode(node))
 				}
@@ -108,17 +132,31 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 		}
 		population.index = newPendingNodeIndex()
 		for _, node := range population.nodes {
-			population.index.add(node)
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
+			if err := population.index.addWithContext(ctx, node); err != nil {
+				return nil, false, err
+			}
 		}
 	}
+	tx.snapshotEquality[key] = population
 	names := make([]string, 0, len(properties))
 	for name := range properties {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		names = append(names, name)
 	}
-	sort.Strings(names)
+	if err := sortIndexCandidatesWithContext(ctx, names, func(a, b string) bool { return a < b }); err != nil {
+		return nil, false, err
+	}
 	var committed, pending []NodeID
 	found := false
 	for _, property := range names {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		value, ok := transactionEqualityKey(properties[property])
 		if !ok {
 			continue
@@ -126,9 +164,14 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 		if _, tracked := population.index.tracked[label][property]; !tracked && len(population.index.tracked[label]) >= maxSnapshotProjectedLabelStreams {
 			continue
 		}
-		population.index.track(label, property, func(id NodeID) *Node { return population.nodes[id] })
+		if err := population.index.trackWithContext(ctx, label, property, func(id NodeID) *Node { return population.nodes[id] }); err != nil {
+			return nil, false, err
+		}
 		ids := population.index.byValue[pendingValueKey{label: label, property: property, value: value}]
-		staged := tx.pendingValueMatchesLocked(label, property, value)
+		staged, err := tx.pendingValueMatchesLockedWithContext(ctx, label, property, value)
+		if err != nil {
+			return nil, false, err
+		}
 		if !found || len(ids)+len(staged) < len(committed)+len(pending) {
 			committed, pending, found = ids, staged, true
 		}
@@ -138,12 +181,18 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 	}
 	result := make([]*Node, 0, len(committed)+len(pending))
 	for _, id := range committed {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		if tx.committedNodeSupersededLocked(id) {
 			continue
 		}
 		result = append(result, copyNode(population.nodes[id]))
 	}
 	for _, id := range pending {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		if _, deleted := tx.deletedNodes[id]; !deleted {
 			result = append(result, copyNode(tx.pendingNodes[id]))
 		}

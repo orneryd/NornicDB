@@ -18,6 +18,15 @@ var visibilityPrimitives = map[string]bool{
 	"pkg/storage.BadgerEngine.manuallySuppressed":  true,
 }
 
+// These are the context-taking adapters of the stored label-read contract.
+// Their callback/error result depends on stored membership, including hidden
+// nodes. Pin complete module function identities, never a spelling prefix: a
+// lookalike on another receiver or in another package grants no policy fact.
+var storedReadAdapters = map[string]bool{
+	"pkg/storage.StreamStoredLabelNodesWithContext":       true,
+	"pkg/storage.GetStoredNodesByLabelInScopeWithContext": true,
+}
+
 // Decision is a branch on hidden state (or on a read that sees hidden
 // entities) that decides whether ordered state is written: a hidden-ID
 // disposition, a suppression change, an accounting choice.
@@ -114,7 +123,7 @@ func (d *decider) source(c *ssa.CallCommon) bool {
 		return false
 	}
 	name := d.a.p.funcName(callee)
-	if visibilityPrimitives[name] || d.tainted[callee] {
+	if visibilityPrimitives[name] || storedReadAdapters[name] || d.tainted[callee] {
 		return true
 	}
 	if recv := callee.Signature.Recv(); recv != nil && d.stored[callee.Name()] && d.reader != nil {

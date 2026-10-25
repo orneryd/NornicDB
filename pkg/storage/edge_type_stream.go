@@ -147,15 +147,16 @@ func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edge
 	// shadow committed rows for their IDs and are visited after the scan.
 	// An empty edgeType streams every edge, so it uses the whole-buffer
 	// edge overlay.
+	var captureErr error
 	var overlay []*Edge
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
 		if edgeType != "" {
-			pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType, prefix: scope})
-			overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
+			pendingEdges, readErr := b.readBufferedEntitiesWithContext(ctx, w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType, prefix: scope})
+			overlay, touched, captureErr = pendingEdges.edges, pendingEdges.edgesTouched, readErr
 		} else {
-			pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedEdges, prefix: scope})
-			overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
+			pendingEdges, readErr := b.readBufferedEntitiesWithContext(ctx, w, v, bufferedEntityRead{kind: bufferedEdges, prefix: scope})
+			overlay, touched, captureErr = pendingEdges.edges, pendingEdges.edgesTouched, readErr
 		}
 	}
 
@@ -170,6 +171,9 @@ func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edge
 		return visit(edge)
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr
+		}
 		if edgeType == "" {
 			return b.streamAllEdgesInScopeTxn(ctx, txn, scope, emit)
 		}
@@ -202,11 +206,14 @@ func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edge
 			}
 		}
 		return nil
-	}, readViewOptions{scope: scope, scopeKind: readPrefixScope})
+	}, readViewOptions{ctx: ctx, scope: scope, scopeKind: readPrefixScope})
 	if err != nil {
 		return err
 	}
 	for _, e := range overlay {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !edgeIDInScope(e.ID, scope) {
 			continue
 		}
@@ -370,7 +377,11 @@ func (c *CompositeEngine) StreamEdgesByType(ctx context.Context, edgeType string
 	if visit == nil {
 		return ErrInvalidData
 	}
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return err
+	}
+	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue

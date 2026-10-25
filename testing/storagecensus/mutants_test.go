@@ -282,7 +282,7 @@ func (b *BadgerEngine) CensusMutantHelper() error { return b.withUpdate(b.census
 
 	{
 		name: "visible prior sized for quota", file: "pkg/multidb/storage_transaction.go",
-		edits: [][2]string{{"if trackBytes {\n\t\tchanges = prepared.Changes()", "if trackBytes {\n\t\tchanges = prepared.Changes()\nfor i := range changes { if changes[i].BeforeNode != nil { changes[i].BeforeNode, _ = t.Engine.GetNode(changes[i].BeforeNode.ID) } }"}},
+		edits: [][2]string{{"if trackBytes {\n\t\tchanges, err = prepared.ChangesWithContext(ctx)", "if trackBytes {\n\t\tchanges, err = prepared.ChangesWithContext(ctx)\nfor i := range changes { if changes[i].BeforeNode != nil { changes[i].BeforeNode, _ = t.Engine.GetNode(changes[i].BeforeNode.ID) } }"}},
 		want:  []string{"visible read in quota accounting: pkg/multidb.sizeTrackingEngine.admitPrepared"},
 	},
 	{

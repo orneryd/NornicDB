@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -692,9 +693,9 @@ type commitOracle struct {
 	failed    error
 	// readsHeld turns new reads away while Restore replaces the store
 	// (holdReads); changed is broadcast when the last open read ends.
-	readsHeld bool
-
-	stage publicationStage
+	readsHeld     bool
+	readerWaiters uint32
+	stage         publicationStage
 }
 
 func newCommitOracle(maxVersion uint64) *commitOracle {
@@ -742,10 +743,53 @@ func (o *commitOracle) endRead(ts uint64) {
 	} else {
 		o.readers[ts] = n - 1
 	}
-	if o.readsHeld && len(o.readers) == 0 {
+	if (o.readsHeld && len(o.readers) == 0) || o.readerWaiters > 0 {
 		o.changed.Broadcast()
 	}
 	o.mu.Unlock()
+}
+
+// waitForReadersBefore waits until no registered snapshot can still observe a
+// generation older than beforeTs. Managed snapshots pin Badger MVCC versions;
+// a subsequent rebuild may retire that generation only after this condition.
+func (o *commitOracle) waitForReadersBefore(ctx context.Context, beforeTs uint64) error {
+	if beforeTs == 0 {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	o.mu.Lock()
+	o.readerWaiters++
+	defer func() {
+		o.readerWaiters--
+		o.mu.Unlock()
+	}()
+	stop := context.AfterFunc(ctx, func() {
+		o.mu.Lock()
+		o.changed.Broadcast()
+		o.mu.Unlock()
+	})
+	defer stop()
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if o.failed != nil {
+			return o.failed
+		}
+		pinned := false
+		for readTs := range o.readers {
+			if readTs < beforeTs {
+				pinned = true
+				break
+			}
+		}
+		if !pinned {
+			return nil
+		}
+		o.changed.Wait()
+	}
 }
 
 // holdReads turns new reads away (beginRead returns ErrStorageRestoring) and

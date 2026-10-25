@@ -3,6 +3,7 @@ package storage
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
+	"context"
 	"fmt"
 	"sort"
 	"testing"
@@ -95,4 +96,43 @@ func TestMergePendingPropertyMatches(t *testing.T) {
 	// A value no index can hold (a list) matches nothing, and still drops
 	// the committed entries the transaction superseded.
 	require.Equal(t, []string{"db:unseen"}, lookup(tx, []NodeID{"db:unseen", "db:gone"}, "P", "k", []interface{}{"a"}))
+}
+
+func TestMergePendingCompositeMatches(t *testing.T) {
+	engine := createTestBadgerEngine(t)
+	for _, id := range []NodeID{"db:kept", "db:moved", "db:gone"} {
+		_, err := engine.CreateNode(&Node{ID: id, Labels: []string{"P"}, Properties: map[string]interface{}{"k": int64(1), "l": int64(2)}})
+		require.NoError(t, err)
+	}
+	tx, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tx.Rollback()) })
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "db:moved", Labels: []string{"P"}, Properties: map[string]interface{}{"k": int64(9), "l": int64(2)}}, ClientNodeEdits))
+	require.NoError(t, tx.DeleteGraphNode("db:gone", CascadeEdges))
+	for _, node := range []*Node{
+		{ID: "db:new", Labels: []string{"P"}, Properties: map[string]interface{}{"k": int64(1), "l": int64(2)}},
+		{ID: "db:prefix", Labels: []string{"P"}, Properties: map[string]interface{}{"k": int64(1), "l": int64(3)}},
+		{ID: "db:other", Labels: []string{"Q"}, Properties: map[string]interface{}{"k": int64(1), "l": int64(2)}},
+	} {
+		_, err := tx.CreateNode(node)
+		require.NoError(t, err)
+	}
+	for _, tc := range []struct {
+		values []interface{}
+		want   []NodeID
+	}{
+		{[]interface{}{float64(1), int64(2)}, []NodeID{"db:kept", "db:new"}},
+		{[]interface{}{float64(1)}, []NodeID{"db:kept", "db:new", "db:prefix"}},
+	} {
+		committed := func() []NodeID { return []NodeID{"db:kept", "db:moved", "db:gone"} }
+		ids, err := tx.MergePendingCompositeMatchesWithContext(context.Background(), committed(), "P", []string{"k", "l"}, tc.values)
+		require.NoError(t, err)
+		require.ElementsMatch(t, tc.want, ids)
+		require.ElementsMatch(t, tc.want, tx.MergePendingCompositeMatches(committed(), "P", []string{"k", "l"}, tc.values))
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		ids, err = tx.MergePendingCompositeMatchesWithContext(ctx, committed(), "P", []string{"k", "l"}, tc.values)
+		require.ErrorIs(t, err, context.Canceled)
+		require.Nil(t, ids)
+	}
 }

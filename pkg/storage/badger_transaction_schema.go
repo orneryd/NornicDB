@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 )
@@ -48,6 +49,15 @@ func (tx *BadgerTransaction) ensureDataWriteAllowedLocked() error {
 // schema change, then call StageSchemaChanges before Commit. Rollback discards
 // the captured state; unchanged committed indexes keep their live caches.
 func (tx *BadgerTransaction) StageSchemaChanges() error {
+	return tx.StageSchemaChangesWithContext(context.Background())
+}
+
+// StageSchemaChangesWithContext captures the same isolated schema and runtime
+// indexes as StageSchemaChanges, observing cancellation before installing it.
+func (tx *BadgerTransaction) StageSchemaChangesWithContext(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	tx.mu.Lock()
 	view := tx.knowledgeSchema
 	tx.mu.Unlock()
@@ -73,10 +83,17 @@ func (tx *BadgerTransaction) StageSchemaChanges() error {
 		return err
 	}
 	for key, constraint := range snapshot.uniqueConstraints {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if staged := view.uniqueConstraints[key]; staged != nil && staged.Name == constraint.Name {
 			staged.mu.RLock()
 			constraint.values = make(map[interface{}]NodeID, len(staged.values))
 			for value, nodeID := range staged.values {
+				if err := ctx.Err(); err != nil {
+					staged.mu.RUnlock()
+					return err
+				}
 				constraint.values[value] = nodeID
 			}
 			constraint.valuesCacheComplete = staged.valuesCacheComplete
@@ -84,37 +101,77 @@ func (tx *BadgerTransaction) StageSchemaChanges() error {
 		}
 	}
 	for name, index := range snapshot.compositeIndexes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if staged := view.compositeIndexes[name]; staged != nil && reflect.DeepEqual(index.Properties, staged.Properties) {
 			staged.mu.RLock()
-			index.values = cloneSchemaIndexValues(staged.values)
+			var err error
+			index.values, err = cloneSchemaIndexValues(ctx, staged.values)
+			if err != nil {
+				staged.mu.RUnlock()
+				return err
+			}
 			index.keysDirty = true
 			index.unfilled.Store(staged.unfilled.Load())
-			index.fullIndex = cloneSchemaIndexValues(staged.fullIndex)
-			index.prefixIndex = cloneSchemaIndexValues(staged.prefixIndex)
+			index.fullIndex, err = cloneSchemaIndexValues(ctx, staged.fullIndex)
+			if err != nil {
+				staged.mu.RUnlock()
+				return err
+			}
+			index.prefixIndex, err = cloneSchemaIndexValues(ctx, staged.prefixIndex)
+			if err != nil {
+				staged.mu.RUnlock()
+				return err
+			}
 			staged.mu.RUnlock()
 		}
 	}
 	for name, index := range snapshot.rangeIndexes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if staged := view.rangeIndexes[name]; staged != nil && sameRangeIndexDefinition(index, staged) {
 			staged.mu.RLock()
-			index.entries = append([]rangeEntry(nil), staged.entries...)
+			index.entries = make([]rangeEntry, len(staged.entries))
+			for i, entry := range staged.entries {
+				if err := ctx.Err(); err != nil {
+					staged.mu.RUnlock()
+					return err
+				}
+				index.entries[i] = entry
+			}
 			index.nodeValue = make(map[NodeID]float64, len(staged.nodeValue))
 			for nodeID, value := range staged.nodeValue {
+				if err := ctx.Err(); err != nil {
+					staged.mu.RUnlock()
+					return err
+				}
 				index.nodeValue[nodeID] = value
 			}
 			staged.mu.RUnlock()
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	tx.schemaRuntime = snapshot
 	return nil
 }
 
-func cloneSchemaIndexValues[Key comparable](values map[Key][]NodeID) map[Key][]NodeID {
+func cloneSchemaIndexValues[Key comparable](ctx context.Context, values map[Key][]NodeID) (map[Key][]NodeID, error) {
 	cloned := make(map[Key][]NodeID, len(values))
 	for key, nodeIDs := range values {
-		cloned[key] = append([]NodeID(nil), nodeIDs...)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		ids, err := copyIndexNodeIDsWithContext(ctx, nodeIDs)
+		if err != nil {
+			return nil, err
+		}
+		cloned[key] = ids
 	}
-	return cloned
+	return cloned, ctx.Err()
 }
 
 func (sm *SchemaManager) installTransactionSchemaLocked(snapshot *SchemaManager) {

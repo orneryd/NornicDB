@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/stretchr/testify/require"
@@ -91,7 +92,7 @@ func TestNodeDeletionKernelSelfLoopAndStagedCatalog(t *testing.T) {
 				_, e = accessMetaInTxn(tx.staged(), string(id), accessMetaWrite, &knowledgepolicy.AccessMetaEntry{TargetID: string(id), TargetScope: knowledgepolicy.ScopeNode, HasAccessState: true, LastMutatedAt: 456, HasIndexKeys: true, IndexKeys: [][]byte{{1, 2}}, Deindexed: true})
 				require.NoError(t, e)
 				tx.mu.Lock()
-				result, err = b.executeNodeDeletion(tx.staged(), id, &Node{ID: id, Labels: []string{"L"}})
+				result, err = b.executeNodeDeletion(context.Background(), tx.staged(), id, &Node{ID: id, Labels: []string{"L"}})
 				tx.mu.Unlock()
 				require.NoError(t, err)
 				meta, e := accessMetaInTxn(tx.staged(), string(id), accessMetaRead, nil)
@@ -106,7 +107,10 @@ func TestNodeDeletionKernelSelfLoopAndStagedCatalog(t *testing.T) {
 				_, e = b.GetEdge("test:loop")
 				require.NoError(t, e)
 			} else {
-				require.NoError(t, b.withUpdate(func(raw *badger.Txn) error { result, err = b.executeNodeDeletion(raw, id, nil); return err }))
+				require.NoError(t, b.withUpdate(func(raw *badger.Txn) error {
+					result, err = b.executeNodeDeletion(context.Background(), raw, id, nil)
+					return err
+				}))
 			}
 			require.Equal(t, []EdgeID{"test:loop"}, result.ids)
 			require.Len(t, result.edges, 1)

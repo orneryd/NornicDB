@@ -192,9 +192,14 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		if retErr == nil && running.tx != nil && !running.autoCommit && e.txContext != nil && e.txContext.active {
 			if tracker := running.tx.memory.Load(); tracker != nil {
 				if storageTx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
-					if err := tracker.settleStaged(storageTx.StagedMemoryBytes()); err != nil {
+					bytes, err := storageTx.StagedMemoryBytesWithContext(ctx)
+					if err == nil {
+						err = tracker.settleStaged(bytes)
+					}
+					if err != nil {
 						result, retErr = nil, err
 					}
+					statementErr = ctx.Err()
 				}
 			}
 		}

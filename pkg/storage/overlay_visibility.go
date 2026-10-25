@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // The write-behind overlay serves acknowledged bodies until the flush lands
 // them, so every read that merges it with storage must leave out what the
 // visibility layer hides from that read, exactly as its storage path does.
@@ -15,18 +17,21 @@ package storage
 // visibleBufferedEntities compacts either fresh overlay slice through the same
 // visibility owner. Hidden bodies still mask their stored predecessor through
 // the caller's untouched touched/suppressed sets.
-func visibleBufferedEntities[E *Node | *Edge](b *BadgerEngine, v readVisibility, entities []E) []E {
+func visibleBufferedEntitiesWithContext[E *Node | *Edge](ctx context.Context, b *BadgerEngine, v readVisibility, entities []E) ([]E, error) {
 	if v == storedRead || len(entities) == 0 || !b.visibilityFiltered() {
-		return entities
+		return entities, ctx.Err()
 	}
 	now := DecayScoringTime()
 	visible := entities[:0]
 	for _, entity := range entities {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !b.filterEntityByDecay(v, entity, now) {
 			visible = append(visible, entity)
 		}
 	}
-	return visible
+	return visible, nil
 }
 
 // bufferedReadVisibility is a read's stack-only policy. Omission means a
@@ -71,48 +76,73 @@ type bufferedEntityResult struct {
 // readBufferedEntities is the sole indexed-overlay capture/filter owner. The
 // caller holds w's read lock; touched IDs and deletion masks remain unfiltered
 // so hidden buffered bodies cannot reveal their older committed predecessors.
-func (b *BadgerEngine) readBufferedEntities(w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) (result bufferedEntityResult) {
+func (b *BadgerEngine) readBufferedEntities(w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) bufferedEntityResult {
+	result, _ := b.readBufferedEntitiesWithContext(context.Background(), w, v, request)
+	return result
+}
+
+// readBufferedEntitiesWithContext captures the selected overlay index and applies
+// the shared visibility predicate before returning. The caller holds w's read
+// lock. Cancellation never yields partial candidates or changes deletion masks.
+func (b *BadgerEngine) readBufferedEntitiesWithContext(ctx context.Context, w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) (result bufferedEntityResult, err error) {
 	switch request.kind {
 	case bufferedNodes:
-		result.nodes, result.nodesTouched = w.allNodesOverlayLocked(request.prefix)
+		result.nodes, result.nodesTouched, err = w.allNodesOverlayLockedWithContext(ctx, request.prefix)
 	case bufferedLabel:
-		result.nodes, result.nodesTouched = w.labelOverlayLocked(request.label, request.prefix)
+		result.nodes, result.nodesTouched, err = w.labelOverlayLockedWithContext(ctx, request.label, request.prefix)
 	case bufferedKey:
-		result.nodes = w.keyCandidatesLocked(request.label, request.property, request.valueKey)
+		result.nodes, err = w.keyCandidatesLockedWithContext(ctx, request.label, request.property, request.valueKey)
 	case bufferedEdges:
-		result.edges, result.edgesTouched = w.allEdgesOverlayLocked(request.prefix)
+		result.edges, result.edgesTouched, err = w.allEdgesOverlayLockedWithContext(ctx, request.prefix)
 	case bufferedType:
-		result.edges, result.edgesTouched = w.typeOverlayLocked(request.edgeType, request.prefix)
+		result.edges, result.edgesTouched, err = w.typeOverlayLockedWithContext(ctx, request.edgeType, request.prefix)
 	case bufferedAdjacency:
-		result.edges, result.suppressed, result.sourceDeleted = w.edgeAdjacencyOverlayLocked(request.source, request.outgoing)
+		result.edges, result.suppressed, result.sourceDeleted, err = w.edgeAdjacencyOverlayLockedWithContext(ctx, request.source, request.outgoing)
 	case bufferedLiveAdjacency:
-		result.edges = w.liveAdjacencyLocked(request.source, request.outgoing)
+		result.edges, err = w.liveAdjacencyLockedWithContext(ctx, request.source, request.outgoing)
 	case bufferedBetween:
-		result.edges, result.suppressed, result.sourceDeleted, result.targetDeleted = w.edgesBetweenOverlayLocked(request.source, request.target)
+		result.edges, result.suppressed, result.sourceDeleted, result.targetDeleted, err = w.edgesBetweenOverlayLockedWithContext(ctx, request.source, request.target)
+	}
+	if err != nil {
+		return bufferedEntityResult{}, err
 	}
 	if request.kind <= bufferedKey {
-		result.nodes = visibleBufferedEntities(b, v, result.nodes)
+		result.nodes, err = visibleBufferedEntitiesWithContext(ctx, b, v, result.nodes)
 	} else {
-		result.edges = visibleBufferedEntities(b, v, result.edges)
+		result.edges, err = visibleBufferedEntitiesWithContext(ctx, b, v, result.edges)
 	}
-	return result
+	if err != nil {
+		return bufferedEntityResult{}, err
+	}
+	return result, nil
 }
 
 // commitsSince visits the operations of each commit the buffer acknowledged
 // after since and has not applied yet, newest first within a generation,
 // until visit returns false.
-func (w *WriteBehindBuffer) commitsSince(since MVCCVersion, visit func(MVCCVersion, []Operation) bool) {
+func (w *WriteBehindBuffer) commitsSince(ctx context.Context, since MVCCVersion, visit func(MVCCVersion, []Operation) (bool, error)) error {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	for _, buf := range append([]*CommitBuffer{w.active}, w.draining...) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		for i := len(buf.commits) - 1; i >= 0; i-- {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			c := &buf.commits[i]
 			if c.version.Compare(since) <= 0 {
 				break
 			}
-			if !visit(c.version, c.ops) {
-				return
+			more, err := visit(c.version, c.ops)
+			if err != nil {
+				return err
+			}
+			if !more {
+				return nil
 			}
 		}
 	}
+	return nil
 }

@@ -398,14 +398,24 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 		return nil, false, nil
 	}
 
-	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf)
+	labels, anyOf := e.seekCandidateLabels(ctx, schema, nodePattern.labels, property, anyOf)
 	if len(labels) == 0 {
 		return nil, false, nil
 	}
 
 	idSet := make(map[storage.NodeID]struct{})
 	for _, label := range labels {
-		for _, id := range propertyIndexLookup(e.storage, schema, label, property, value) {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, property, value)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, id := range candidates {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			idSet[id] = struct{}{}
 		}
 	}
@@ -417,10 +427,16 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
 	for id := range idSet {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		ids = append(ids, string(id))
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
 		if err != nil || node == nil {
 			continue
@@ -448,17 +464,17 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 //
 // where $param is a list value from params. This path is used heavily by Fabric
 // batched correlated APPLY lookups.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
-	return e.tryCollectNodesFromPropertyIndexInAnyOf(nodePattern, whereClause, params, nil)
+	return e.tryCollectNodesFromPropertyIndexInAnyOf(ctx, nodePattern, whereClause, params, nil)
 }
 
 // tryCollectNodesFromPropertyIndexInAnyOf is tryCollectNodesFromPropertyIndexIn
 // for a node that must carry one of anyOf (see seekCandidateLabels).
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
@@ -473,15 +489,28 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
 	if schema == nil {
 		return nil, false, nil
 	}
-	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf)
+	labels, anyOf := e.seekCandidateLabels(ctx, schema, nodePattern.labels, property, anyOf)
 	if len(labels) == 0 {
 		return nil, false, nil
 	}
 
 	idSet := make(map[storage.NodeID]struct{}, 256)
 	for _, label := range labels {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		for _, value := range listValues {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, property, value) {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
+			candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, property, value)
+			if err != nil {
+				return nil, false, err
+			}
+			for _, id := range candidates {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				idSet[id] = struct{}{}
 			}
 		}
@@ -493,10 +522,16 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
 	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
 	for id := range idSet {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		ids = append(ids, string(id))
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
 		if err != nil || node == nil {
 			continue
@@ -539,15 +574,28 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 	if schema == nil {
 		return nil, false, nil
 	}
-	labels, anyOf := e.seekCandidateLabels(schema, nodePattern.labels, property, anyOf)
+	labels, anyOf := e.seekCandidateLabels(ctx, schema, nodePattern.labels, property, anyOf)
 	if len(labels) == 0 {
 		return nil, false, nil
 	}
 
 	idSet := make(map[storage.NodeID]struct{}, 256)
 	for _, label := range labels {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		for _, value := range listValues {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, property, value) {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
+			candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, property, value)
+			if err != nil {
+				return nil, false, err
+			}
+			for _, id := range candidates {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				idSet[id] = struct{}{}
 			}
 		}
@@ -559,10 +607,16 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
 	for id := range idSet {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		ids = append(ids, string(id))
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
 		if err != nil || node == nil {
 			continue
@@ -603,7 +657,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 	}
 
 	// 1) Simple clause (param or literal list).
-	if nodes, used, err := e.tryCollectNodesFromPropertyIndexIn(nodePattern, clause, params); used || err != nil {
+	if nodes, used, err := e.tryCollectNodesFromPropertyIndexIn(ctx, nodePattern, clause, params); used || err != nil {
 		return nodes, used, err
 	}
 	if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, nodePattern, clause); used || err != nil {
@@ -622,7 +676,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 			if term == "" {
 				continue
 			}
-			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInAnyOf(nodePattern, term, params, anyOf); used || err != nil {
+			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInAnyOf(ctx, nodePattern, term, params, anyOf); used || err != nil {
 				return nodes, used, err
 			}
 			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteralAnyOf(ctx, nodePattern, term, anyOf); used || err != nil {
@@ -692,7 +746,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 //
 // This is important for cleanup/read paths that pass large key lists and would
 // otherwise full-scan labels.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 	params map[string]interface{},
@@ -721,6 +775,9 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 	merged := make([]interface{}, 0, util.SafePreallocSum(len(lvals), len(rvals)))
 	seenVals := make(map[string]struct{}, util.SafePreallocSum(len(lvals), len(rvals)))
 	for _, v := range append(lvals, rvals...) {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		if v == nil {
 			continue
 		}
@@ -737,23 +794,49 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 		return nil, false, nil
 	}
 
-	leftLabels := e.indexCandidateLabels(schema, nodePattern.labels, lprop)
-	rightLabels := e.indexCandidateLabels(schema, nodePattern.labels, rprop)
+	leftLabels := e.indexCandidateLabels(ctx, schema, nodePattern.labels, lprop)
+	rightLabels := e.indexCandidateLabels(ctx, schema, nodePattern.labels, rprop)
 	if len(leftLabels) == 0 || len(rightLabels) == 0 {
 		return nil, false, nil
 	}
 
 	idSet := make(map[storage.NodeID]struct{}, 256)
 	for _, label := range leftLabels {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		for _, v := range merged {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, lprop, v) {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
+			candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, lprop, v)
+			if err != nil {
+				return nil, false, err
+			}
+			for _, id := range candidates {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				idSet[id] = struct{}{}
 			}
 		}
 	}
 	for _, label := range rightLabels {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		for _, v := range merged {
-			for _, id := range propertyIndexLookup(e.storage, schema, label, rprop, v) {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
+			candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, rprop, v)
+			if err != nil {
+				return nil, false, err
+			}
+			for _, id := range candidates {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				idSet[id] = struct{}{}
 			}
 		}
@@ -765,10 +848,16 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
 	for id := range idSet {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		ids = append(ids, string(id))
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
 		if err != nil || node == nil {
 			continue
@@ -822,20 +911,40 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 		return nil, false, nil
 	}
 
-	leftLabels := e.indexCandidateLabels(schema, nodePattern.labels, lprop)
-	rightLabels := e.indexCandidateLabels(schema, nodePattern.labels, rprop)
+	leftLabels := e.indexCandidateLabels(ctx, schema, nodePattern.labels, lprop)
+	rightLabels := e.indexCandidateLabels(ctx, schema, nodePattern.labels, rprop)
 	if len(leftLabels) == 0 && len(rightLabels) == 0 {
 		return nil, false, nil
 	}
 
 	idSet := make(map[storage.NodeID]struct{}, 64)
 	for _, label := range leftLabels {
-		for _, id := range propertyIndexLookup(e.storage, schema, label, lprop, lval) {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, lprop, lval)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, id := range candidates {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			idSet[id] = struct{}{}
 		}
 	}
 	for _, label := range rightLabels {
-		for _, id := range propertyIndexLookup(e.storage, schema, label, rprop, rval) {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, rprop, rval)
+		if err != nil {
+			return nil, false, err
+		}
+		for _, id := range candidates {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			idSet[id] = struct{}{}
 		}
 	}
@@ -846,10 +955,16 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 	nodes := make([]*storage.Node, 0, len(idSet))
 	ids := make([]string, 0, len(idSet))
 	for id := range idSet {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		ids = append(ids, string(id))
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
 		if err != nil || node == nil {
 			continue
@@ -1026,7 +1141,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		return nil, false, nil
 	}
 
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, spec.propName)
+	labels := e.indexCandidateLabels(ctx, schema, nodePattern.labels, spec.propName)
 	if len(labels) != 1 {
 		return nil, false, nil
 	}
@@ -1080,7 +1195,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 		return nil, false, nil
 	}
 
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, whereProp)
+	labels := e.indexCandidateLabels(ctx, schema, nodePattern.labels, whereProp)
 	if len(labels) != 1 {
 		// Keep semantics simple/deterministic for now; multi-label merge ordering can be added later.
 		return nil, false, nil
@@ -1094,7 +1209,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 //	MATCH (n:Label) WHERE n.prop IS NOT NULL
 //
 // from schema index entries, avoiding label scans.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(ctx context.Context,
 	nodePattern nodePatternInfo,
 	whereClause string,
 ) ([]*storage.Node, bool, error) {
@@ -1110,13 +1225,12 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
 	if schema == nil {
 		return nil, false, nil
 	}
-	nodes, used := e.collectNodesFromIndexedProperty(schema, nodePattern, property, func(label string) ([]storage.NodeID, bool) {
-		return schema.PropertyIndexAllNonNil(label, property, false), true
+	return e.collectNodesFromIndexedProperty(ctx, schema, nodePattern, property, func(label string) ([]storage.NodeID, bool, error) {
+		return schema.PropertyIndexAllNonNilWithContext(ctx, label, property, false)
 	})
-	return nodes, used, nil
 }
 
-func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, queryLabels []string, property string) []string {
+func (e *StorageExecutor) indexCandidateLabels(ctx context.Context, schema *storage.SchemaManager, queryLabels []string, property string) []string {
 	if len(queryLabels) > 0 {
 		out := make([]string, 0, len(queryLabels))
 		for _, label := range queryLabels {
@@ -1167,7 +1281,7 @@ func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, qu
 		out = append(out, label)
 	}
 	sort.Strings(out)
-	if !labellessPropertyIndexUsable(e.storage, out...) {
+	if !labellessPropertyIndexUsable(ctx, e.storage, out...) {
 		return nil
 	}
 	return out
@@ -1184,7 +1298,7 @@ func (e *StorageExecutor) indexCandidateLabels(schema *storage.SchemaManager, qu
 // entries lists it, and Neo4j plans the same predicate as one index seek per
 // label. When one of them has no index, the indexes can miss a match and the
 // label-less route decides (labellessPropertyIndexUsable).
-func (e *StorageExecutor) seekCandidateLabels(schema *storage.SchemaManager, patternLabels []string, property string, anyOf []string) ([]string, []string) {
+func (e *StorageExecutor) seekCandidateLabels(ctx context.Context, schema *storage.SchemaManager, patternLabels []string, property string, anyOf []string) ([]string, []string) {
 	if len(patternLabels) == 0 && len(anyOf) > 0 {
 		indexed := true
 		for _, label := range anyOf {
@@ -1197,7 +1311,7 @@ func (e *StorageExecutor) seekCandidateLabels(schema *storage.SchemaManager, pat
 			return anyOf, anyOf
 		}
 	}
-	return e.indexCandidateLabels(schema, patternLabels, property), nil
+	return e.indexCandidateLabels(ctx, schema, patternLabels, property), nil
 }
 
 // seekCandidateHasLabels reports whether a node an index listed still carries
@@ -1788,24 +1902,33 @@ found:
 // for every label of the pattern that indexes property, de-duplicates the
 // IDs in lookup order, and loads the nodes that carry all pattern labels.
 // used is false when no candidate label indexes property.
-func (e *StorageExecutor) collectNodesFromIndexedProperty(
+func (e *StorageExecutor) collectNodesFromIndexedProperty(ctx context.Context,
 	schema *storage.SchemaManager,
 	nodePattern nodePatternInfo,
 	property string,
-	lookup func(label string) ([]storage.NodeID, bool),
-) (nodes []*storage.Node, used bool) {
-	labels := e.indexCandidateLabels(schema, nodePattern.labels, property)
+	lookup func(label string) ([]storage.NodeID, bool, error),
+) (nodes []*storage.Node, used bool, err error) {
+	labels := e.indexCandidateLabels(ctx, schema, nodePattern.labels, property)
 	if len(labels) == 0 {
-		return nil, false
+		return nil, false, nil
 	}
 	idSet := make(map[storage.NodeID]struct{})
 	ordered := make([]storage.NodeID, 0)
 	for _, label := range labels {
-		ids, ok := lookup(label)
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		ids, ok, err := lookup(label)
+		if err != nil {
+			return nil, false, err
+		}
 		if !ok {
-			return nil, false
+			return nil, false, nil
 		}
 		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			if _, exists := idSet[id]; exists {
 				continue
 			}
@@ -1815,13 +1938,16 @@ func (e *StorageExecutor) collectNodesFromIndexedProperty(
 	}
 	nodes = make([]*storage.Node, 0, len(ordered))
 	for _, id := range ordered {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		// An ID the index still lists for a node that is gone or lost a
 		// pattern label is skipped.
 		if node, err := e.getQueryNode(e.storage, id); err == nil && node != nil && mergeNodeHasLabels(node, nodePattern.labels) {
 			nodes = append(nodes, node)
 		}
 	}
-	return nodes, true
+	return nodes, true, ctx.Err()
 }
 
 // tryCollectNodesFromPropertyIndexRange seeds a MATCH from a property index
@@ -1829,7 +1955,7 @@ func (e *StorageExecutor) collectNodesFromIndexedProperty(
 // number or string literal or parameter (p.age > 30, 18 <= p.age < 65,
 // p.name >= $from AND p.name < $to). Only the bounds narrow the seed; the
 // caller still evaluates the whole WHERE on every candidate (#820).
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(ctx context.Context, nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
 	if len(nodePattern.labels) == 0 {
 		return nil, false, nil
 	}
@@ -1841,10 +1967,9 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(nodePattern node
 	if schema == nil {
 		return nil, false, nil
 	}
-	nodes, used := e.collectNodesFromIndexedProperty(schema, nodePattern, property, func(label string) ([]storage.NodeID, bool) {
-		return schema.PropertyIndexRange(label, property, bounds)
+	return e.collectNodesFromIndexedProperty(ctx, schema, nodePattern, property, func(label string) ([]storage.NodeID, bool, error) {
+		return schema.PropertyIndexRangeWithContext(ctx, label, property, bounds)
 	})
-	return nodes, used, nil
 }
 
 // parseIndexedRangeBounds finds, among the top-level AND conjuncts of a
@@ -1980,7 +2105,7 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 		inList  bool
 	}{
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
+			return e.tryCollectNodesFromPropertyIndexInOrParam(ctx, nodePattern, whereClause, params)
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
 			return e.tryCollectNodesFromPropertyIndexOrEquality(ctx, nodePattern, whereClause, params)
@@ -1993,7 +2118,10 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
 			// Inline pattern properties ({id: $id}) on an indexed property.
-			nodes, used := e.lookupPatternCandidatesUsingPropertyIndex(nodePattern, e.getStorage(ctx))
+			nodes, used, lookupErr := e.lookupPatternCandidatesUsingPropertyIndex(ctx, nodePattern, e.getStorage(ctx))
+			if lookupErr != nil {
+				return nil, false, lookupErr
+			}
 			if used {
 				e.markMergeSchemaLookupUsed()
 			}
@@ -2009,10 +2137,10 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 			return labelled, true, nil
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexRange(nodePattern, whereClause, params)
+			return e.tryCollectNodesFromPropertyIndexRange(ctx, nodePattern, whereClause, params)
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexNotNull(nodePattern, whereClause)
+			return e.tryCollectNodesFromPropertyIndexNotNull(ctx, nodePattern, whereClause)
 		}},
 	}
 	for _, plan := range indexedPlans {

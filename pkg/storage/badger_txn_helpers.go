@@ -102,9 +102,15 @@ func (b *BadgerEngine) withView(fn func(txn *badger.Txn) error) error {
 }
 
 func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
+	return b.beginHelperTxnWithAdmission(false)
+}
+
+// beginHelperTxnWithAdmission pins engine state until txnWG.Done. Backfill
+// starts request write admission so Close cannot admit work after its stop.
+func (b *BadgerEngine) beginHelperTxnWithAdmission(writing bool) (*managedBadgerDB, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	if b.closed {
+	if b.closed || (writing && b.closing) {
 		return nil, ErrStorageClosed
 	}
 	b.txnWG.Add(1)

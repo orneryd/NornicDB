@@ -1,6 +1,9 @@
 package storage
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // Ordered post-commit publication (F-PUBLISH).
 //
@@ -301,7 +304,17 @@ func appendEdgePublicationKeys(keys []any, schema *SchemaManager, id EdgeID, old
 // every node and edge they write, edges a node delete removed, and the unique
 // values they free and take.
 func appendOperationPublicationKeys(keys []any, schema *SchemaManager, ops []Operation) []any {
+	// Physical publication completes with its owner lifetime. Before acceptance,
+	// prepared commands call the same projection with their caller context.
+	out, _ := appendOperationPublicationKeysWithContext(context.Background(), keys, schema, ops)
+	return out
+}
+
+func appendOperationPublicationKeysWithContext(ctx context.Context, keys []any, schema *SchemaManager, ops []Operation) ([]any, error) {
 	for _, op := range ops {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil {
@@ -310,6 +323,9 @@ func appendOperationPublicationKeys(keys []any, schema *SchemaManager, ops []Ope
 		case OpDeleteNode:
 			keys = appendNodePublicationKeys(keys, schema, op.NodeID, op.OldNode, nil)
 			for _, edgeID := range op.DeletedEdgeIDs {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				keys = append(keys, edgeID)
 			}
 		case OpCreateEdge, OpUpdateEdge:
@@ -320,7 +336,7 @@ func appendOperationPublicationKeys(keys []any, schema *SchemaManager, ops []Ope
 			keys = appendEdgePublicationKeys(keys, schema, op.EdgeID, op.OldEdge, nil)
 		}
 	}
-	return keys
+	return keys, nil
 }
 
 var (

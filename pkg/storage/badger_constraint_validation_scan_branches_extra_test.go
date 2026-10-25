@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -20,32 +21,32 @@ func TestBadgerConstraintValidation_NodeScanBranchCoverage(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-		err := engine.scanForUniqueViolationInTxn(txn, "test", "User", "email", "a@x", "")
+		err := engine.scanForUniqueViolationInTxn(context.Background(), txn, "test", "User", "email", "a@x", "")
 		require.Error(t, err)
 
-		err = engine.scanForUniqueViolationInTxn(txn, "test", "User", "email", "a@x", "test:u1")
+		err = engine.scanForUniqueViolationInTxn(context.Background(), txn, "test", "User", "email", "a@x", "test:u1")
 		require.NoError(t, err)
 
-		err = engine.scanForUniqueViolationInTxn(txn, "other", "User", "email", "a@x", "")
+		err = engine.scanForUniqueViolationInTxn(context.Background(), txn, "other", "User", "email", "a@x", "")
 		require.NoError(t, err)
 
-		err = engine.scanForNodeKeyViolationInTxn(txn, "test", "User", []string{"tenant", "uid"}, []any{"t1", "1"}, "")
+		err = engine.scanForNodeKeyViolationInTxn(context.Background(), txn, "test", "User", []string{"tenant", "uid"}, []any{"t1", "1"}, "")
 		require.Error(t, err)
 
-		err = engine.scanForNodeKeyViolationInTxn(txn, "test", "User", []string{"tenant", "uid"}, []any{"t1", "1"}, "test:u1")
+		err = engine.scanForNodeKeyViolationInTxn(context.Background(), txn, "test", "User", []string{"tenant", "uid"}, []any{"t1", "1"}, "test:u1")
 		require.NoError(t, err)
 
-		err = engine.scanForTemporalOverlapInTxn(txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "", temporalOverlapFullLabel)
+		err = engine.scanForTemporalOverlapInTxn(context.Background(), txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "", temporalOverlapFullLabel)
 		require.Error(t, err)
 
-		err = engine.scanForTemporalOverlapInTxn(txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "test:u1", temporalOverlapFullLabel)
+		err = engine.scanForTemporalOverlapInTxn(context.Background(), txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "test:u1", temporalOverlapFullLabel)
 		require.NoError(t, err)
 
-		err = engine.scanForTemporalOverlapInTxn(txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-bad", now, now.Add(time.Hour), true, "", temporalOverlapFullLabel)
+		err = engine.scanForTemporalOverlapInTxn(context.Background(), txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-bad", now, now.Add(time.Hour), true, "", temporalOverlapFullLabel)
 		require.Error(t, err)
 
 		// scanForTemporalOverlapInTxn should select complete label coverage when no temporal history index entries exist.
-		err = engine.scanForTemporalOverlapInTxn(txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "")
+		err = engine.scanForTemporalOverlapInTxn(context.Background(), txn, "test", Constraint{Type: ConstraintTemporal, Label: "User", Properties: []string{"k", "from", "to"}}, "bucket-1", now.Add(30*time.Minute), now.Add(90*time.Minute), true, "")
 		require.Error(t, err)
 		return nil
 	}))

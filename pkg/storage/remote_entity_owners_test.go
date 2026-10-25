@@ -193,3 +193,45 @@ func TestRemotePublicBatchGetNodesSharesDeadline(t *testing.T) {
 	}
 	require.ErrorIs(t, shared.Err(), context.Canceled, "the shared batch context is released when the public call returns")
 }
+
+func TestRemoteLabelContextKeepsCallerAndLegacyDeadlines(t *testing.T) {
+	for _, operation := range []struct {
+		name       string
+		legacy     func(*RemoteEngine) error
+		contextual func(*RemoteEngine, context.Context) error
+	}{
+		{"label", func(e *RemoteEngine) error { _, err := e.GetNodesByLabel("Target"); return err }, func(e *RemoteEngine, ctx context.Context) error {
+			_, err := e.GetNodesByLabelWithContext(ctx, "Target")
+			return err
+		}},
+		{"first", func(e *RemoteEngine) error { _, err := e.GetFirstNodeByLabel("Target"); return err }, func(e *RemoteEngine, ctx context.Context) error {
+			_, err := e.GetFirstNodeByLabelWithContext(ctx, "Target")
+			return err
+		}},
+		{"all", func(e *RemoteEngine) error { _, err := e.AllNodes(); return err }, func(e *RemoteEngine, ctx context.Context) error { _, err := e.AllNodesWithContext(ctx); return err }},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			var want context.Context
+			engine := &RemoteEngine{transport: &fakeRemoteTransport{queryFn: func(ctx context.Context, _ string, _ map[string]interface{}) ([]string, [][]interface{}, error) {
+				deadline, bounded := ctx.Deadline()
+				require.True(t, bounded, "legacy Engine reads must retain their default timeout")
+				if want != nil {
+					wantDeadline, _ := want.Deadline()
+					require.Equal(t, wantDeadline, deadline)
+					require.Equal(t, "caller", ctx.Value("label-test"))
+				}
+				if err := ctx.Err(); err != nil {
+					return nil, nil, err
+				}
+				return nil, [][]interface{}{{map[string]interface{}{"id": "n1", "labels": []interface{}{"Target"}, "properties": map[string]interface{}{"name": "value"}}}}, nil
+			}}}
+			require.NoError(t, operation.legacy(engine))
+			caller, cancel := context.WithTimeout(context.WithValue(context.Background(), "label-test", "caller"), time.Hour)
+			defer cancel()
+			want = caller
+			require.NoError(t, operation.contextual(engine, caller))
+			cancel()
+			require.ErrorIs(t, operation.contextual(engine, caller), context.Canceled)
+		})
+	}
+}

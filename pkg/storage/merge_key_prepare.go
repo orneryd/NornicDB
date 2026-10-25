@@ -79,7 +79,11 @@ func (tx *BadgerTransaction) prepareMergeNode(ctx context.Context, labels []stri
 	schema := engine.GetSchemaForNamespace(namespace)
 	tx.mu.Unlock()
 
-	for _, key := range schema.uniqueMergeKeys(labels, props) {
+	keys, err := schema.uniqueMergeKeysWithContext(ctx, labels, props)
+	if err != nil {
+		return err
+	}
+	for _, key := range keys {
 		if err := tx.prepareMergeAdmissionKey(ctx, schema, namespace, key, props, write); err != nil {
 			return err
 		}
@@ -96,7 +100,10 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 		// No peer can commit a key this transaction already holds.
 		return nil
 	}
-	nodeID, found, complete := tx.mergeAdmissionHolder(schema, namespace, key, props)
+	nodeID, found, complete, err := tx.mergeAdmissionHolderWithContext(ctx, schema, namespace, key, props)
+	if err != nil {
+		return err
+	}
 	if found && !write {
 		return tx.catchUpToNode(nodeID)
 	}
@@ -118,7 +125,11 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 	}
 	tx.mergeKeyReleases[key.lock] = release
 	tx.mu.Unlock()
-	if nodeID, found, _ := tx.mergeAdmissionHolder(schema, namespace, key, props); found {
+	nodeID, found, _, lookupErr := tx.mergeAdmissionHolderWithContext(ctx, schema, namespace, key, props)
+	if lookupErr != nil {
+		return lookupErr
+	}
+	if found {
 		if write {
 			if err := tx.settleBufferedNode(nodeID); err != nil {
 				return err
@@ -168,21 +179,28 @@ func (tx *BadgerTransaction) settleBufferedNode(nodeID NodeID) error {
 // snapshot. Scalar admission retains its existing cache contract; composite
 // admission takes the candidate of the constraint's complete equality index
 // that commit validation would reject the tuple for (committedKeyHolder).
-func (tx *BadgerTransaction) mergeAdmissionHolder(schema *SchemaManager, namespace string, key mergeAdmissionKey, props map[string]interface{}) (NodeID, bool, bool) {
+func (tx *BadgerTransaction) mergeAdmissionHolderWithContext(ctx context.Context, schema *SchemaManager, namespace string, key mergeAdmissionKey, props map[string]interface{}) (NodeID, bool, bool, error) {
 	label, properties := key.lock.label, key.properties
 	if len(properties) == 1 {
-		nodeID, found, _, complete := schema.LookupUniqueConstraintValueForPlanning(label, properties[0], props[properties[0]])
-		return nodeID, found, complete
+		id, found, _, complete, err := schema.LookupUniqueConstraintValueForPlanningWithContext(ctx, label, properties[0], props[properties[0]])
+		return id, found, complete, err
 	}
 	idx := schema.filledKeyIndex(label, properties)
 	if idx == nil {
-		return "", false, false
+		return "", false, false, ctx.Err()
 	}
 	hash, _ := key.lock.value.(string)
-	for _, id := range idx.lookupFullHash(hash) {
+	ids, err := idx.lookupFullHashWithContext(ctx, hash)
+	if err != nil {
+		return "", false, true, err
+	}
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return "", false, true, err
+		}
 		if tx.engine.committedKeyHolder(id, namespace, label, properties, props) != nil {
-			return id, true, true
+			return id, true, true, nil
 		}
 	}
-	return "", false, true
+	return "", false, true, ctx.Err()
 }

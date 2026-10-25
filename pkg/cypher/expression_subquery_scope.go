@@ -1,8 +1,9 @@
 package cypher
 
-import "context"
-
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // expressionSubqueryClauseBindingError protects an expression subquery's
 // outer variables from declarations in its clauses. Passing a variable

@@ -21,7 +21,7 @@ import (
 // 2. Network aggregation: Communities are aggregated into super-nodes
 // These phases repeat until no further improvement is possible.
 func (e *StorageExecutor) callApocAlgoLouvain(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	graph, nodes, config, err := e.readAlgorithmGraph("apoc.algo.louvain", args)
+	graph, nodes, config, err := e.readAlgorithmGraph(ctx, "apoc.algo.louvain", args)
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +97,7 @@ func (e *StorageExecutor) computeLouvain(nodes []*storage.Node, weightProp strin
 // Label propagation is a simpler community detection algorithm where each node
 // adopts the label that most of its neighbors have.
 func (e *StorageExecutor) callApocAlgoLabelPropagation(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.labelPropagation", args)
+	graph, nodes, _, err := e.readAlgorithmGraph(ctx, "apoc.algo.labelPropagation", args)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +180,7 @@ func (e *StorageExecutor) computeLabelPropagation(nodes []*storage.Node) map[sto
 // callApocAlgoWCC implements Weakly Connected Components detection.
 // Syntax: CALL apoc.algo.wcc(['Label']) YIELD node, componentId
 func (e *StorageExecutor) callApocAlgoWCC(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
-	graph, nodes, _, err := e.readAlgorithmGraph("apoc.algo.wcc", args)
+	graph, nodes, _, err := e.readAlgorithmGraph(ctx, "apoc.algo.wcc", args)
 	if err != nil {
 		return nil, err
 	}

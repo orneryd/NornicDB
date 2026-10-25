@@ -242,6 +242,8 @@ func (b *BadgerEngine) Close() error {
 	// this goroutine holds while it waits for them to stop.
 	b.stopIndexBackfill(startupEdgeBetweenIndex)
 	b.stopIndexBackfill(startupLabelIndex)
+	maintenancePause(pauseCloseIndexBackfillsStopped)
+	b.labelIndex.retired.stop()
 	b.stopDeleteCleanup()
 	b.stopChangeRetention()
 	b.stopCountDeltaFoldWorker()
@@ -772,6 +774,7 @@ type StreamNodesOptions struct {
 // them, honoring prefix scoping, property projection, embedding and decay
 // options. Full scans use value prefetching; prefix scans use key-only seeks.
 func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(node *Node) error) error {
+	var captureErr error
 	if fn == nil {
 		return ErrInvalidData
 	}
@@ -788,7 +791,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 			}
 			return fn(node)
 		}
-		err := b.streamNodesByLabelProjectedInScope(opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
+		err := b.streamNodesByLabelProjectedInScopeWithContext(ctx, opts.Prefix, opts.Label, nil, opts.readVisibility(), visit, true)
 		if err == ErrIterationStopped {
 			return nil
 		}
@@ -803,8 +806,8 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		v = visibleRead
 	}
 	capture := func(w *WriteBehindBuffer) {
-		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
-		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+		captured, readErr := b.readBufferedEntitiesWithContext(ctx, w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
+		overlay, touched, captureErr = captured.nodes, captured.nodesTouched, readErr
 	}
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
@@ -826,8 +829,11 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		return err
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
+		if captureErr != nil {
+			return captureErr
+		}
 		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, emit)
-	}, readViewOptions{scope: opts.Prefix, scopeKind: readPrefixScope})
+	}, readViewOptions{ctx: ctx, scope: opts.Prefix, scopeKind: readPrefixScope})
 	if err != nil {
 		return err
 	}
@@ -835,6 +841,9 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		return nil
 	}
 	for _, node := range overlay {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !inScope(node.ID) {
 			continue
 		}

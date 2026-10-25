@@ -140,7 +140,10 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return err
 	}
-	physicalOps := tx.physicalOperationsLocked()
+	physicalOps, operationErr := tx.physicalOperationsLocked(tx.validationContextLocked())
+	if operationErr != nil {
+		return tx.abortCommitLocked(operationErr)
+	}
 	if len(physicalOps) == 0 && len(tx.pendingWrites) == 0 && len(tx.pendingDeletes) == 0 {
 		tx.releaseSnapshotReaderLocked()
 		tx.closeLocked(TxStatusCommitted, true, nil)

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -70,11 +71,14 @@ func (tx *BadgerTransaction) materializeDeferredEdgeLocked(identifier EdgeID) er
 	return nil
 }
 
-func (tx *BadgerTransaction) materializeDeferredEdgesLocked() error {
+func (tx *BadgerTransaction) materializeDeferredEdgesLocked(ctx context.Context) error {
 	if len(tx.deferredEdgeWrites) == 0 {
 		return nil
 	}
 	for _, operation := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if operation.Type != OpCreateEdge {
 			continue
 		}
@@ -85,19 +89,22 @@ func (tx *BadgerTransaction) materializeDeferredEdgesLocked() error {
 	return nil
 }
 
-func (tx *BadgerTransaction) physicalOperationsLocked() []Operation {
+func (tx *BadgerTransaction) physicalOperationsLocked(ctx context.Context) ([]Operation, error) {
 	if len(tx.cancelledEdgeWrites) == 0 {
-		return tx.operations
+		return tx.operations, ctx.Err()
 	}
 	operations := make([]Operation, 0, len(tx.operations))
 	for _, operation := range tx.operations {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if _, cancelled := tx.cancelledEdgeWrites[operation.EdgeID]; cancelled &&
 			(operation.Type == OpCreateEdge || operation.Type == OpDeleteEdge) {
 			continue
 		}
 		operations = append(operations, operation)
 	}
-	return operations
+	return operations, nil
 }
 
 // Set stages key = value. Like Badger's Txn.Set, it keeps value without

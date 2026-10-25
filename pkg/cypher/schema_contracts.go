@@ -142,7 +142,7 @@ func (e *StorageExecutor) executeCreateConstraintContract(ctx context.Context, c
 	return e.createConstraintContractForTarget(ctx, cypher, parsed.name, parsed.entityType, parsed.variable, parsed.labelOrType, parsed.body, ifNotExists)
 }
 
-func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context, definition, name string, entityType storage.ConstraintEntityType, variable, labelOrType, body string, ifNotExists bool) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context, definition, name string, entityType storage.ConstraintEntityType, variable, labelOrType, body string, ifNotExists bool) (result *ExecuteResult, handled bool, resultErr error) {
 	entriesRaw, err := splitConstraintContractEntries(body)
 	if err != nil {
 		return nil, true, err
@@ -176,16 +176,16 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	}
 
 	for _, constraint := range compiledConstraints {
-		if err := storage.ValidateConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+		if err := storage.ValidateConstraintOnCreationForEngineWithContext(ctx, e.storage, constraint); err != nil {
 			return nil, true, err
 		}
 	}
 	for _, constraint := range compiledTypes {
-		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngine(e.storage, constraint); err != nil {
+		if err := storage.ValidatePropertyTypeConstraintOnCreationForEngineWithContext(ctx, e.storage, constraint); err != nil {
 			return nil, true, err
 		}
 	}
-	if err := storage.ValidateConstraintContractOnCreationForEngine(e.storage, contract); err != nil {
+	if err := storage.ValidateConstraintContractOnCreationForEngineWithContext(ctx, e.storage, contract); err != nil {
 		return nil, true, err
 	}
 	schema := e.storage.GetSchema()
@@ -200,12 +200,21 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 			newTemporal = append(newTemporal, constraint)
 		}
 	}
+	registered := schema.HasConstraintNamed(contract.Name)
 	if err := schema.AddConstraintContractBundle(contract, compiledConstraints, compiledTypes, ifNotExists); err != nil {
 		return nil, true, err
 	}
+	// Registration precedes owned-index and value-cache preparation. A new
+	// bundle cannot survive failed preparation with partially filled indexes.
+	// DropConstraint is the schema owner's complete bundle removal operation.
+	defer func() {
+		if resultErr != nil && !registered {
+			_ = schema.DropConstraint(contract.Name)
+		}
+	}()
 	// See addSchemaConstraint: new temporal entries are authoritative on an
 	// empty label (#1126).
-	if err := storage.MarkNewTemporalConstraintsForEngine(e.storage, schema, newTemporal); err != nil {
+	if err := storage.MarkNewTemporalConstraintsForEngineWithContext(ctx, e.storage, schema, newTemporal); err != nil {
 		return nil, true, err
 	}
 	// Fill the equality indexes the contract's UNIQUE / NODE KEY entries own,
@@ -213,8 +222,12 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	// owned index is filled, validation and seeks fall back to scanning the
 	// label.
 	for _, name := range newNames {
-		if index, owned := schema.ConstraintPropertyIndex(name); owned {
-			if err := e.backfillCompositeIndex(index.Name, index.Label, index.Properties); err != nil {
+		index, owned, selectionErr := schema.ConstraintPropertyIndexWithContext(ctx, name)
+		if selectionErr != nil {
+			return nil, true, selectionErr
+		}
+		if owned {
+			if err := e.backfillCompositeIndex(ctx, index.Name, index.Label, index.Properties); err != nil {
 				return nil, true, err
 			}
 		}
@@ -222,7 +235,7 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	// Like a standalone UNIQUE constraint, a contract's IS UNIQUE entries need
 	// their value cache built and marked complete; without it every write to
 	// the label falls back to scanning all of its nodes (#1120).
-	if err := storage.RefreshUniqueConstraintValuesForConstraintsForEngine(e.storage, schema, compiledConstraints); err != nil {
+	if err := storage.RefreshUniqueConstraintValuesForConstraintsForEngineWithContext(ctx, e.storage, schema, compiledConstraints); err != nil {
 		return nil, true, err
 	}
 

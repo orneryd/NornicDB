@@ -107,10 +107,13 @@ func (b *BadgerEngine) readStoredEdgeImage(reader embeddingRecordReader, state b
 
 // captureStoredEntityChanges reads each typed touched entity once. Both views
 // belong to this commit, never the latest mutable storage after publication.
-func (b *BadgerEngine) captureStoredEntityChanges(keys []any, before, after storedEntityView) ([]StoredEntityChange, error) {
+func (b *BadgerEngine) captureStoredEntityChanges(ctx context.Context, keys []any, before, after storedEntityView) ([]StoredEntityChange, error) {
 	seen := make(map[any]struct{}, len(keys))
 	changes := make([]StoredEntityChange, 0, len(keys))
 	for _, key := range keys {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		switch key.(type) {
 		case NodeID, EdgeID:
 		default:
@@ -158,8 +161,16 @@ func (b *BadgerEngine) captureStoredEntityChanges(keys []any, before, after stor
 // physical writer. Staged maps overlay only the final view; acknowledged writes
 // overlay the original committed view. Commit holds tx.mu and entity ownership.
 func (tx *BadgerTransaction) capturePreparedEntityChangesLocked() ([]StoredEntityChange, error) {
-	keys := appendOperationPublicationKeys(nil, nil, tx.physicalOperationsLocked())
-	return tx.engine.captureStoredEntityChanges(keys,
+	ctx := tx.validationContextLocked()
+	operations, err := tx.physicalOperationsLocked(ctx)
+	if err != nil {
+		return nil, err
+	}
+	keys, err := appendOperationPublicationKeysWithContext(ctx, nil, nil, operations)
+	if err != nil {
+		return nil, err
+	}
+	return tx.engine.captureStoredEntityChanges(ctx, keys,
 		storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx}, acknowledged: tx.engine.writeBehind, boundaries: tx.engine.storedEntityObservers.Load()},
 		storedEntityView{read: embeddingRecordReader{txn: tx.badgerTx, stagedWrites: tx.pendingWrites, stagedDeletes: tx.pendingDeletes}})
 }
@@ -228,11 +239,23 @@ func (entry StoredEntitySnapshotEntry) Read() (StoredEntityChange, error) {
 // ForEach streams typed stored identities through the same scan fault boundary.
 // Call entry.Read only when a complete stored image is needed.
 func (s StoredEntitySnapshot) ForEach(visit func(StoredEntitySnapshotEntry) error) error {
+	return s.ForEachWithContext(context.Background(), visit)
+}
+
+// ForEachWithContext observes the caller while preparing a cold managed ledger.
+// It uses the same pinned identities, body reader and installed fault boundary.
+func (s StoredEntitySnapshot) ForEachWithContext(ctx context.Context, visit func(StoredEntitySnapshotEntry) error) error {
 	for _, kind := range []byte{prefixNode, prefixEdge} {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		prefix := append([]byte{kind}, []byte(s.namespace+":")...)
 		it := s.txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		scan := func() error {
 			for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				id := string(it.Item().Key()[1:])
 				entityKind := StoredEntityNodeKind
 				if kind == prefixEdge {
@@ -260,7 +283,7 @@ func (s StoredEntitySnapshot) ForEach(visit func(StoredEntitySnapshotEntry) erro
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
 // InitializeStoredEntityObserver owns one exclusive stored snapshot/install cut.
@@ -340,7 +363,7 @@ func (cw *commitWriter) prepareStoredEntityPublication() error {
 	}
 	prior := cw.db.newTxnAt(readTs, false)
 	defer prior.Discard()
-	changes, err := cw.engine.captureStoredEntityChanges(keys, storedEntityView{read: embeddingRecordReader{txn: prior}, boundaries: registry}, storedEntityView{read: embeddingRecordReader{txn: cw.txn}})
+	changes, err := cw.engine.captureStoredEntityChanges(context.Background(), keys, storedEntityView{read: embeddingRecordReader{txn: prior}, boundaries: registry}, storedEntityView{read: embeddingRecordReader{txn: cw.txn}})
 	if err != nil {
 		return err
 	}
@@ -562,7 +585,7 @@ func (b *BadgerEngine) prepareDeletedEntityPublication(nodes, edges map[uint64]s
 	var changes []StoredEntityChange
 	err := b.db.View(func(txn *badger.Txn) error {
 		var err error
-		changes, err = b.captureStoredEntityChanges(keys, storedEntityView{read: embeddingRecordReader{txn: txn}, boundaries: registry}, storedEntityView{absent: true})
+		changes, err = b.captureStoredEntityChanges(context.Background(), keys, storedEntityView{read: embeddingRecordReader{txn: txn}, boundaries: registry}, storedEntityView{absent: true})
 		return err
 	})
 	if err != nil {

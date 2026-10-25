@@ -77,7 +77,7 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 	}
 	var visitErr error
 	visited := false
-	found := schema.VisitPropertyIndexGroupsInRange(label, specs[0].propName, specs[0].descending, bounds, func(ids []storage.NodeID) bool {
+	found, preparationErr := schema.VisitPropertyIndexGroupsInRangeWithContext(ctx, label, specs[0].propName, specs[0].descending, bounds, func(ids []storage.NodeID) bool {
 		visited = true
 		remaining := limit - len(nodes)
 		groupTop := &indexedOrderHeap{
@@ -115,6 +115,9 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 		}
 		return true
 	})
+	if preparationErr != nil {
+		return nil, false, preparationErr
+	}
 	if visitErr != nil {
 		return nil, false, visitErr
 	}

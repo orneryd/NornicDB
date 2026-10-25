@@ -127,7 +127,7 @@ func (t *sizeTrackingEngine) admitPrepared(ctx context.Context, tx *storage.Badg
 	info.sizeMu.RUnlock()
 	trackBytes = trackBytes || (limits != nil && limits.Storage.MaxBytes > 0)
 	// Snapshot installation precedes native preparation and manager admission.
-	if err := t.runtime.initializeStorageUsage(trackBytes, owner.boundary); err != nil {
+	if err := t.runtime.initializeStorageUsageWithContext(ctx, trackBytes, owner.boundary); err != nil {
 		return nil, nil, err
 	}
 	prepared, err = tx.PrepareEntityCommit(ctx, tx.ID)
@@ -137,10 +137,13 @@ func (t *sizeTrackingEngine) admitPrepared(ctx context.Context, tx *storage.Badg
 	var changes []storage.StoredEntityChange
 	var delta storageUsage
 	if trackBytes {
-		changes = prepared.Changes()
-		delta, err = storageChangesUsage(t.dbName, changes, true)
+		changes, err = prepared.ChangesWithContext(ctx)
+		if err != nil {
+			return prepared, nil, err
+		}
+		delta, err = storageChangesUsageWithContext(ctx, t.dbName, changes, true)
 	} else {
-		delta.nodes, delta.edges = prepared.CountDelta()
+		delta.nodes, delta.edges, err = prepared.CountDeltaWithContext(ctx)
 	}
 	if err != nil {
 		return prepared, nil, err
@@ -161,8 +164,11 @@ func (t *sizeTrackingEngine) admitPrepared(ctx context.Context, tx *storage.Badg
 		return prepared, nil, storage.ErrConflict
 	}
 	if bytesReady && !trackBytes {
-		changes = prepared.Changes()
-		delta, err = storageChangesUsage(t.dbName, changes, true)
+		changes, err = prepared.ChangesWithContext(ctx)
+		if err != nil {
+			return prepared, nil, err
+		}
+		delta, err = storageChangesUsageWithContext(ctx, t.dbName, changes, true)
 		if err != nil {
 			return prepared, nil, err
 		}

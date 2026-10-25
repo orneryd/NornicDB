@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -129,7 +130,7 @@ func TestBadgerTransaction_ValidatePolicyOnNodeLabelChange_UsesPendingEdges(t *t
 	tx.pendingEdges["test:pe-out"] = &Edge{ID: "test:pe-out", StartNode: "test:n1", EndNode: "test:n2", Type: "REL"}
 	tx.pendingEdges["test:pe-in"] = &Edge{ID: "test:pe-in", StartNode: "test:n2", EndNode: "test:n1", Type: "REL"}
 
-	err = tx.validatePolicyOnNodeLabelChange(
+	err = tx.validatePolicyOnNodeLabelChange(context.Background(),
 		&Node{ID: "test:n1", Labels: []string{"A", "C"}},
 		&Node{ID: "test:n1", Labels: []string{"A"}},
 	)

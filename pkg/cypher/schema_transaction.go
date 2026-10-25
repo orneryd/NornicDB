@@ -50,7 +50,7 @@ func (e *StorageExecutor) mutateSchema(ctx context.Context, mutation func(*stora
 		return err
 	}
 	if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
-		return wrapper.tx.StageSchemaChanges()
+		return wrapper.tx.StageSchemaChangesWithContext(ctx)
 	}
 	return nil
 }

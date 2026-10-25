@@ -17,7 +17,7 @@ func TestFailedCypherMutationPreservesVersionTime(t *testing.T) {
 	store := &updateErrorEngine{nodeErr: want, edgeErr: want}
 	node := &storage.Node{CreatedAt: old, UpdatedAt: old}
 	edge := &storage.Edge{CreatedAt: old, UpdatedAt: old}
-	require.ErrorIs(t, updateMutatedNode(store, node), want)
+	require.ErrorIs(t, updateMutatedNode(context.Background(), store, node), want)
 	require.Equal(t, old, node.UpdatedAt)
 	require.Equal(t, old, node.CreatedAt)
 	require.ErrorIs(t, updateMutatedEdge(store, edge), want)

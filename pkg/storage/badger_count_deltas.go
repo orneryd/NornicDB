@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -90,12 +91,19 @@ func decodeCountDelta(val []byte) (int64, error) {
 // sumCountDeltasInTxn sums the persisted deltas of one namespace/name pair
 // visible in txn.
 func sumCountDeltasInTxn(txn *badger.Txn, kind byte, namespace, name string) (int64, int, error) {
+	return sumCountDeltasInTxnWithContext(context.Background(), txn, kind, namespace, name)
+}
+
+func sumCountDeltasInTxnWithContext(ctx context.Context, txn *badger.Txn, kind byte, namespace, name string) (int64, int, error) {
 	prefix := countDeltaPrefixFor(kind, namespace, name)
 	var total int64
 	var seen int
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 	for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+		if err := ctx.Err(); err != nil {
+			return 0, seen, err
+		}
 		seen++
 		if err := it.Item().Value(func(val []byte) error {
 			delta, decodeErr := decodeCountDelta(val)
@@ -114,12 +122,19 @@ func sumCountDeltasInTxn(txn *badger.Txn, kind byte, namespace, name string) (in
 // sumCountDeltasByNameInTxn sums the persisted deltas of one kind for one
 // name (a label or an edge type) across all namespaces visible in txn.
 func sumCountDeltasByNameInTxn(txn *badger.Txn, kind byte, name string) (int64, error) {
+	return sumCountDeltasByNameInTxnWithContext(context.Background(), txn, kind, name)
+}
+
+func sumCountDeltasByNameInTxnWithContext(ctx context.Context, txn *badger.Txn, kind byte, name string) (int64, error) {
 	var total int64
 	prefix := countDeltaAllPrefix(kind)
 	needle := []byte(name)
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 	for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+		if err := ctx.Err(); err != nil {
+			return 0, err
+		}
 		key := it.Item().KeyCopy(nil)
 		sep := bytesIndexByte(key[2:], 0)
 		if sep < 0 {

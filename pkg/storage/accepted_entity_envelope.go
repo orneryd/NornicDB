@@ -98,16 +98,25 @@ func decodeEntityChange(kind EntityCommandKind, data []byte, legacyAllowed bool)
 	return op, nil
 }
 func ApplyEntityChange(target entityWriter, op Operation, updateNode func(*Node) error, deleteNode func(NodeID) error) error {
+	return ApplyEntityChangeWithContext(context.Background(), target, op, updateNode, deleteNode)
+}
+
+// ApplyEntityChangeWithContext shares the canonical command switch with callers
+// which prepare a native transaction before accepted publication.
+func ApplyEntityChangeWithContext(ctx context.Context, target entityWriter, op Operation, updateNode func(*Node) error, deleteNode func(NodeID) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	switch op.Type {
 	case OpCreateNode:
-		_, err := target.CreateNode(op.Node)
+		_, err := CreateNodeWithContext(ctx, target, op.Node)
 		return err
 	case OpUpdateNode:
 		return updateNode(op.Node)
 	case OpDeleteNode:
 		return deleteNode(op.NodeID)
 	case OpCreateEdge:
-		return target.CreateEdge(op.Edge)
+		return CreateEdgeWithContext(ctx, target, op.Edge)
 	case OpUpdateEdge:
 		return target.UpdateEdge(op.Edge)
 	case OpDeleteEdge:
@@ -120,7 +129,16 @@ func ApplyEntityChange(target entityWriter, op Operation, updateNode func(*Node)
 // This new command format has one strict version; only the existing leaf
 // payload decoder retains historical direct-command compatibility.
 func DecodeEntityTransaction(data []byte) (EntityTransactionEnvelope, []Operation, error) {
+	return DecodeEntityTransactionWithContext(context.Background(), data)
+}
+
+// DecodeEntityTransactionWithContext shares strict semantic command decoding
+// with caller-owned admission. Recovery's compatibility entrance uses the same body.
+func DecodeEntityTransactionWithContext(ctx context.Context, data []byte) (EntityTransactionEnvelope, []Operation, error) {
 	var envelope EntityTransactionEnvelope
+	if err := ctx.Err(); err != nil {
+		return envelope, nil, err
+	}
 	if err := decodeCommandPayload(data, &envelope, false); err != nil {
 		return envelope, nil, err
 	}
@@ -139,6 +157,9 @@ func DecodeEntityTransaction(data []byte) (EntityTransactionEnvelope, []Operatio
 		return ok && ns == envelope.Namespace
 	}
 	for i, change := range envelope.Changes {
+		if err := ctx.Err(); err != nil {
+			return envelope, nil, err
+		}
 		op, err := decodeEntityChange(change.Type, change.Data, false)
 		if err != nil {
 			return envelope, nil, err
@@ -182,7 +203,7 @@ func DecodeEntityTransaction(data []byte) (EntityTransactionEnvelope, []Operatio
 		}
 		ops[i] = op
 	}
-	return envelope, ops, nil
+	return envelope, ops, ctx.Err()
 }
 
 // EntityImagePolicy selects the interpretation of one transaction node update.
@@ -195,14 +216,25 @@ const (
 	StoredNodeImages
 )
 
+var errEntityTransactionUnavailable = errors.New("entity transaction needs a native transactional engine")
+
 // BeginEntityTransaction obtains one native frame through the actual wrapper
 // chain and binds its durability mode before exposing it to a caller.
 func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransaction, error) {
+	return BeginEntityTransactionWithContext(context.Background(), engine, mode)
+}
+
+// BeginEntityTransactionWithContext observes wrapper-to-frame preparation in
+// the same native transaction selector; it does not unwrap past an actual owner.
+func BeginEntityTransactionWithContext(ctx context.Context, engine Engine, mode EntityCommitMode) (*BadgerTransaction, error) {
 	if !mode.valid() {
 		return nil, ErrInvalidData
 	}
 	visited := map[Engine]bool{}
 	for engine != nil && !visited[engine] {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		visited[engine] = true
 		if starter, ok := engine.(interface {
 			BeginTransaction() (*BadgerTransaction, error)
@@ -222,7 +254,7 @@ func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransa
 		}
 		engine = wrapper.GetInnerEngine()
 	}
-	return nil, errors.New("entity transaction needs a native transactional engine")
+	return nil, errEntityTransactionUnavailable
 }
 
 // ApplyAcceptedEntityTransaction waits for the full accepted apply, including
@@ -236,14 +268,23 @@ func ApplyAcceptedEntityTransaction(engine Engine, data []byte) error {
 }
 
 func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, data []byte, settle func(CommitOutcome)) (*CommitReceipt, error) {
-	envelope, ops, err := DecodeEntityTransaction(data)
+	envelope, ops, err := DecodeEntityTransactionWithContext(ctx, data)
 	if err != nil {
 		return nil, err
 	}
 	return submitDecodedEntityTransaction(ctx, engine, envelope, ops, settle)
 }
 func submitDecodedEntityTransaction(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, settle func(CommitOutcome)) (*CommitReceipt, error) {
-	tx, err := BeginEntityTransaction(engine, envelope.Mode)
+	return submitDecodedEntityTransactionWithPolicy(ctx, engine, envelope, ops, settle, StoredNodeImages)
+}
+
+// The same native staging/preparation/submission owner also accepts client edits
+// from context-taking WAL commands; replay retains complete stored images.
+func submitDecodedEntityTransactionWithPolicy(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, settle func(CommitOutcome), policy EntityImagePolicy) (*CommitReceipt, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	tx, err := BeginEntityTransactionWithContext(ctx, engine, envelope.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +312,15 @@ func submitDecodedEntityTransaction(ctx context.Context, engine Engine, envelope
 		return route.Submitter.SubmitEntityCommit(ctx, prepared, settle)
 	}
 	for _, op := range ops {
-		if err = ApplyEntityChange(tx, op, func(node *Node) error { return tx.UpdateGraphNode(node, StoredNodeImages) }, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err = ApplyEntityChangeWithContext(ctx, tx, op, func(node *Node) error {
+			if policy == ClientNodeEdits {
+				return ApplyNodeUpdateWithContext(ctx, tx, node)
+			}
+			return tx.UpdateGraphNodeWithContext(ctx, node, policy)
+		}, func(id NodeID) error { return tx.DeleteGraphNodeWithContext(ctx, id, CascadeEdges) }); err != nil {
 			return nil, err
 		}
 	}
@@ -353,6 +402,12 @@ func EncodeEntityTransactionChange(op Operation) (EntityTransactionChange, error
 // EncodeEntityTransaction creates the strict semantic record shared by WAL
 // and peer application. Existing direct-command codecs remain unchanged.
 func EncodeEntityTransaction(namespace, logicalID string, ops []Operation, modes ...EntityCommitMode) ([]byte, error) {
+	return EncodeEntityTransactionWithContext(context.Background(), namespace, logicalID, ops, modes...)
+}
+
+// EncodeEntityTransactionWithContext observes command image projection before
+// journaling. The semantic grammar and leaf codecs remain shared.
+func EncodeEntityTransactionWithContext(ctx context.Context, namespace, logicalID string, ops []Operation, modes ...EntityCommitMode) ([]byte, error) {
 	envelope := EntityTransactionEnvelope{Version: EntityTransactionVersion, Namespace: namespace, LogicalTxID: logicalID}
 	if len(modes) > 1 {
 		return nil, ErrInvalidData
@@ -364,6 +419,9 @@ func EncodeEntityTransaction(namespace, logicalID string, ops []Operation, modes
 		envelope.Mode = modes[0]
 	}
 	for _, op := range ops {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		change, err := EncodeEntityTransactionChange(op)
 		if err != nil {
 			return nil, err
@@ -374,5 +432,5 @@ func EncodeEntityTransaction(namespace, logicalID string, ops []Operation, modes
 	if err := gob.NewEncoder(&data).Encode(envelope); err != nil {
 		return nil, err
 	}
-	return data.Bytes(), nil
+	return data.Bytes(), ctx.Err()
 }

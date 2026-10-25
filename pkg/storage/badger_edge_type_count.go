@@ -3,6 +3,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
@@ -1004,13 +1005,16 @@ func (tx *BadgerTransaction) nodeLabelsTxVisibleLocked(id NodeID) ([]string, err
 // adjacency direction of a node as the transaction sees storage
 // (incidentEdgesLocked): the positional counters count every stored
 // relationship, hidden ones too. The caller must hold tx.mu.
-func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(nodeID NodeID, outgoing bool) (map[string]int64, error) {
-	edges, err := tx.incidentEdgesLocked(nodeID)
+func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(ctx context.Context, nodeID NodeID, outgoing bool) (map[string]int64, error) {
+	edges, err := tx.incidentEdgesLocked(ctx, nodeID)
 	if err != nil {
 		return nil, err
 	}
 	types := make(map[string]int64)
 	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if outgoing && edge.StartNode != nodeID || !outgoing && edge.EndNode != nodeID {
 			continue
 		}
@@ -1024,33 +1028,51 @@ func (tx *BadgerTransaction) incidentEdgeTypesTxLocked(nodeID NodeID, outgoing b
 // bufferNodeLabelChangeEdgeTypeDeltasLocked buffers the positional
 // (label, type) deltas a node's relabel implies across its tx-visible
 // incident edges. The caller must hold tx.mu.
-func (tx *BadgerTransaction) bufferNodeLabelChangeEdgeTypeDeltasLocked(nodeID NodeID, added, removed []string) error {
+func (tx *BadgerTransaction) bufferNodeLabelChangeEdgeTypeDeltasLocked(ctx context.Context, nodeID NodeID, added, removed []string) error {
 	addedUnique := uniqueLabels(added)
 	removedUnique := uniqueLabels(removed)
 	if len(addedUnique) == 0 && len(removedUnique) == 0 {
 		return nil
 	}
-	outTypes, err := tx.incidentEdgeTypesTxLocked(nodeID, true)
+	outTypes, err := tx.incidentEdgeTypesTxLocked(ctx, nodeID, true)
 	if err != nil {
 		return err
 	}
-	inTypes, err := tx.incidentEdgeTypesTxLocked(nodeID, false)
+	inTypes, err := tx.incidentEdgeTypesTxLocked(ctx, nodeID, false)
 	if err != nil {
 		return err
 	}
 	for edgeType, multiplicity := range outTypes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		for _, label := range addedUnique {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeStartLabelCount, tx.namespace, label, edgeType, multiplicity)
 		}
 		for _, label := range removedUnique {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeStartLabelCount, tx.namespace, label, edgeType, -multiplicity)
 		}
 	}
 	for edgeType, multiplicity := range inTypes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		for _, label := range addedUnique {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeEndLabelCount, tx.namespace, label, edgeType, multiplicity)
 		}
 		for _, label := range removedUnique {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			tx.bufferAdjustEdgeTypeLabelCount(prefixMVCCMetaEdgeTypeEndLabelCount, tx.namespace, label, edgeType, -multiplicity)
 		}
 	}

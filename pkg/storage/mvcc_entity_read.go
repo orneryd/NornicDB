@@ -5,6 +5,10 @@ import "github.com/dgraph-io/badger/v4"
 // mvccEntityRead selects hydration and graph visibility at one logical version.
 // Edge bodies have no embedding hydration; vectors is used only by node loads.
 type mvccEntityRead struct {
+	// nodeNum pins an index candidate to its physical snapshot identity.
+	nodeNum    uint64
+	projected  bool
+	properties []string
 	vectors    bool
 	visibility readVisibility
 }

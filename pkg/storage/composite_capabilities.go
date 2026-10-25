@@ -23,7 +23,14 @@ func (c *CompositeEngine) StreamNodesWithOptions(ctx context.Context, opts Strea
 		return ErrInvalidData
 	}
 	stopped := false
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return err
+	}
+	for _, alias := range readConstituents {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
@@ -278,27 +285,48 @@ func (c *CompositeEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 // --- MVCC indexed visibility: merge across all readable constituents.
 
 func (c *CompositeEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
+	return c.GetNodesByLabelVisibleAtWithContext(context.Background(), label, version)
+}
+
+// GetNodesByLabelVisibleAtWithContext carries the caller through this read and its materialization.
+func (c *CompositeEngine) GetNodesByLabelVisibleAtWithContext(ctx context.Context, label string, version MVCCVersion) ([]*Node, error) {
 	var merged []*Node
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, alias := range readConstituents {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
 		}
 		if provider, ok := engine.(MVCCIndexedVisibilityEngine); ok {
-			nodes, err := provider.GetNodesByLabelVisibleAt(label, version)
+			nodes, err := GetNodesByLabelVisibleAtWithContext(ctx, provider, label, version)
 			if err != nil {
 				return nil, err
 			}
 			for _, node := range nodes {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+
 				merged = append(merged, c.sourceNode(alias, engine, node))
 			}
 			continue
 		}
-		nodes, err := engine.GetNodesByLabel(label)
+		nodes, err := GetNodesByLabelWithContext(ctx, engine, label)
 		if err != nil {
 			return nil, err
 		}
 		for _, node := range nodes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+
 			merged = append(merged, c.sourceNode(alias, engine, node))
 		}
 	}
@@ -437,17 +465,29 @@ func (c *CompositeEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, versio
 // --- Label ID iteration merges constituents with deduplication.
 
 func (c *CompositeEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) bool) error {
+	return c.ForEachNodeIDByLabelWithContext(context.Background(), label, visit)
+}
+
+// ForEachNodeIDByLabelWithContext carries the caller through this read and its materialization.
+func (c *CompositeEngine) ForEachNodeIDByLabelWithContext(ctx context.Context, label string, visit func(NodeID) bool) error {
 	if visit == nil {
 		return nil
 	}
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return err
+	}
+	for _, alias := range readConstituents {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
 		}
 		stop := false
 		if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
-			err = lookup.ForEachNodeIDByLabel(label, func(id NodeID) bool {
+			err = ForEachNodeIDByLabelWithContext(ctx, lookup, label, func(id NodeID) bool {
 				if !visit(c.constituentNodeElementID(alias, engine, id)) {
 					stop = true
 					return false
@@ -455,11 +495,14 @@ func (c *CompositeEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) 
 				return true
 			})
 		} else {
-			nodes, listErr := engine.GetNodesByLabel(label)
+			nodes, listErr := GetNodesByLabelWithContext(ctx, engine, label)
 			if listErr != nil {
 				return listErr
 			}
 			for _, node := range nodes {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				if node == nil {
 					continue
 				}
@@ -566,7 +609,11 @@ func (c *CompositeEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 // constituents.
 func (c *CompositeEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit func(nodeID NodeID, meta map[string]any) error) (int, error) {
 	total := 0
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
@@ -660,7 +707,11 @@ func (c *CompositeEngine) GraphMutationVersion() (uint64, bool) {
 
 func (c *CompositeEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool, error) {
 	consumed := false
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
@@ -677,7 +728,11 @@ func (c *CompositeEngine) ConsumeCleanShutdownMarker(ctx context.Context) (bool,
 }
 
 func (c *CompositeEngine) MarkCleanShutdown(ctx context.Context) error {
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return err
+	}
+	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
@@ -693,7 +748,11 @@ func (c *CompositeEngine) MarkCleanShutdown(ctx context.Context) error {
 
 func (c *CompositeEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {
 	var total int64
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
@@ -710,7 +769,11 @@ func (c *CompositeEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneO
 }
 
 func (c *CompositeEngine) RebuildMVCCHeads(ctx context.Context) error {
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return err
+	}
+	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
@@ -726,7 +789,11 @@ func (c *CompositeEngine) RebuildMVCCHeads(ctx context.Context) error {
 
 func (c *CompositeEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPruneOptions) (int64, error) {
 	var total int64
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
@@ -743,7 +810,11 @@ func (c *CompositeEngine) PruneTemporalHistory(ctx context.Context, opts Tempora
 }
 
 func (c *CompositeEngine) RebuildTemporalIndexes(ctx context.Context) error {
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return err
+	}
+	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue
@@ -796,7 +867,11 @@ func (c *CompositeEngine) LifecycleStatus() map[string]interface{} {
 }
 
 func (c *CompositeEngine) TriggerPruneNow(ctx context.Context) error {
-	for _, alias := range c.getConstituentsForRead() {
+	readConstituents, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return err
+	}
+	for _, alias := range readConstituents {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
 			continue

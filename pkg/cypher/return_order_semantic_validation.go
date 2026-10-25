@@ -1,8 +1,9 @@
 package cypher
 
-import "context"
-
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 func validateReturnOrderBySemanticScope(ctx context.Context, clause string) error {
 	return validateReturnOrderBySemanticScopeIn(ctx, clause, nil)

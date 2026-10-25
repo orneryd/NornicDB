@@ -1,0 +1,591 @@
+package storage
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"fmt"
+
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/internal/workcensus"
+	"github.com/stretchr/testify/require"
+	"github.com/vmihailenco/msgpack/v5"
+)
+
+// Build an actual V2 body, including legacy inline embedding payloads. The
+// primary key and labels stay fixed while each excluded payload grows.
+func labelMetadataBody(t *testing.T, b *BadgerEngine, size int, trap bool) []byte {
+	t.Helper()
+	var body []byte
+	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error {
+		props, err := b.encodeTokenizedProperties(txn, "test", map[string]any{"payload": strings.Repeat("p", size)})
+		if err != nil {
+			return err
+		}
+		vector := make([]float32, size/4)
+		envelope := map[string]any{
+			"ID": "test:metadata", "Labels": []string{"Target"}, "VisibilitySuppressed": true,
+			"EmbedMeta":       map[string]any{"payload": strings.Repeat("e", size)},
+			"NamedEmbeddings": map[string][]float32{"default": vector},
+			"ChunkEmbeddings": [][]float32{vector},
+		}
+		if trap {
+			// Unknown extension: full decoding must fail; excluded values must never
+			// reach its decoder. The tokenized properties have the same control.
+			envelope["EmbedMeta"] = map[string]any{"trap": msgpack.RawMessage{0xd4, 99, 0}}
+			props = []byte{1, 1, 0xc1}
+		}
+		metadata, err := encodeValue(envelope)
+		if err != nil {
+			return err
+		}
+		body = appendLabelMetadataUvarint([]byte{nodeFormatTokenizedV1}, uint64(len(props)))
+		body = append(body, props...)
+		body = append(body, metadata...)
+		return txn.Set(nodeKey("test:metadata"), body)
+	}))
+	return body
+}
+
+func labelMetadataAllocatedBytes(t *testing.T, read func() error) uint64 {
+	t.Helper()
+	require.NoError(t, read())
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	const rounds = 12
+	for i := 0; i < rounds; i++ {
+		require.NoError(t, read())
+	}
+	runtime.ReadMemStats(&after)
+	return (after.TotalAlloc - before.TotalAlloc) / rounds
+}
+
+func TestLabelMetadataPayloadIndependence(t *testing.T) {
+	b, err := NewBadgerEngine(t.TempDir())
+	require.NoError(t, err)
+	defer b.Close()
+	_, err = b.writeLabelIndexBuildingMarker(b.labelIndex.markerGeneration.Load() + 1)
+	require.NoError(t, err)
+	var baseline map[string]uint64
+	for _, size := range []int{0, 4096, 512 * 1024} {
+		body := labelMetadataBody(t, b, size, false)
+		costs := map[string]uint64{}
+		require.NoError(t, b.withView(func(txn *badger.Txn) error {
+			reads := map[string]func() error{
+				"decoder": func() error {
+					metadata, err := decodeNodeMetadata(body)
+					if err == nil && !labelsContain(metadata.Labels, "Target") {
+						return fmt.Errorf("missing decoder label")
+					}
+					return err
+				},
+				// Badger's physical body acquisition can allocate its raw value buffers;
+				// compare real label reads against the same acquisition without decoding.
+				"raw_body": func() error {
+					item, err := txn.Get(nodeKey("test:metadata"))
+					if err != nil {
+						return err
+					}
+					return item.Value(func([]byte) error { return nil })
+				},
+				"point": func() error {
+					found, err := b.nodeHasLabelInTxn(txn, "test:metadata", "Target")
+					if err == nil && !found {
+						return fmt.Errorf("missing point label")
+					}
+					return err
+				},
+				"candidates": func() error {
+					r := b.newLabelIndexReader(context.Background(), txn, "test:", "Target", "", storedRead, false)
+					defer r.Close()
+					if !r.Next() || r.NodeID() != "test:metadata" {
+						return fmt.Errorf("missing candidate: %v", r.Err())
+					}
+					if r.Next() {
+						return fmt.Errorf("extra candidate")
+					}
+					return r.Err()
+				},
+				"count_metadata": func() error {
+					labels, err := decodeStoredNodeLabels(body)
+					if err == nil && !labelsContain(labels, "Target") {
+						return fmt.Errorf("missing count label")
+					}
+					return err
+				},
+				// Planted full-materialization alternative must violate the property.
+				"full_negative_control": func() error { _, err := b.decodeNode("test", body); return err },
+			}
+			for name, read := range reads {
+				costs[name] = labelMetadataAllocatedBytes(t, read)
+			}
+			return nil
+		}))
+		t.Logf("payload=%d bytes, allocated bytes/read=%v", size, costs)
+		if size == 0 {
+			baseline = costs
+			continue
+		}
+		for _, name := range []string{"decoder", "count_metadata"} {
+			require.LessOrEqual(t, costs[name], baseline[name]+32*1024, "%s copied excluded payload of size %d", name, size)
+		}
+		for _, name := range []string{"point", "candidates"} {
+			require.LessOrEqual(t, costs[name], costs["raw_body"]+baseline[name]+32*1024, "%s allocated payload beyond physical body acquisition, size %d", name, size)
+		}
+		if size == 512*1024 {
+			require.Greater(t, costs["full_negative_control"], baseline["full_negative_control"]+512*1024, "negative control must detect full decoding")
+		}
+	}
+}
+
+func TestLabelMetadataSkipsExcludedValues(t *testing.T) {
+	b, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	defer b.Close()
+	_, err = b.writeLabelIndexBuildingMarker(b.labelIndex.markerGeneration.Load() + 1)
+	require.NoError(t, err)
+	body := labelMetadataBody(t, b, 4096, true)
+	_, err = b.decodeNode("test", body)
+	require.Error(t, err, "negative control: a full decoder must try the excluded value")
+	require.NoError(t, b.withView(func(txn *badger.Txn) error {
+		found, err := b.nodeHasLabelInTxn(txn, "test:metadata", "Target")
+		require.NoError(t, err)
+		require.True(t, found)
+		r := b.newLabelIndexReader(context.Background(), txn, "test:", "Target", "", storedRead, false)
+		defer r.Close()
+		require.True(t, r.Next(), "stored discovery must include suppressed nodes without decoding excluded values: %v", r.Err())
+		require.Equal(t, NodeID("test:metadata"), r.NodeID())
+		return r.Err()
+	}))
+}
+
+// Keep the fixture's framing independent of the production decoder.
+func appendLabelMetadataUvarint(dst []byte, value uint64) []byte {
+	var scratch [binary.MaxVarintLen64]byte
+	n := binary.PutUvarint(scratch[:], value)
+	return append(dst, scratch[:n]...)
+}
+
+func TestNodeEnvelopeModes(t *testing.T) {
+	b, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	defer b.Close()
+	body := labelMetadataBody(t, b, 64, false)
+	metadata, err := decodeNodeMetadata(body)
+	require.NoError(t, err)
+	require.Equal(t, NodeID("test:metadata"), metadata.ID)
+	require.Equal(t, []string{"Target"}, metadata.Labels)
+	require.True(t, metadata.VisibilitySuppressed)
+	for name, read := range map[string]func([]byte) error{
+		"metadata": func(data []byte) error { _, err := decodeNodeMetadata(data); return err },
+		"selected": func(data []byte) error {
+			node, err := b.decodeNodeProjected("test", data, map[string]struct{}{"payload": {}})
+			if err == nil {
+				require.Equal(t, strings.Repeat("p", 64), node.Properties["payload"])
+			}
+			return err
+		},
+		"full": func(data []byte) error {
+			node, err := b.decodeNode("test", data)
+			if err == nil {
+				require.Len(t, node.NamedEmbeddings["default"], 16)
+				require.Len(t, node.ChunkEmbeddings, 1)
+				require.Equal(t, strings.Repeat("e", 64), node.EmbedMeta["payload"])
+			}
+			return err
+		},
+		"scan": func(data []byte) error {
+			d := newProjectedNodeDecoder(b, StreamNodesOptions{Projection: []string{"payload"}})
+			_, err := d.decode(nodeKey("test:metadata"), data)
+			return err
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, read(body))
+			for _, data := range [][]byte{nil, {0}, {nodeFormatTokenizedV1, 0xff}, {nodeFormatTokenizedV1, 10, 0}, {nodeFormatTokenizedV1, 0}} {
+				require.Error(t, read(data))
+			}
+		})
+	}
+	// Required metadata must be owned once the Badger value callback returns.
+	clear(body)
+	require.Equal(t, NodeID("test:metadata"), metadata.ID)
+	require.Equal(t, []string{"Target"}, metadata.Labels)
+}
+
+func TestLabelCursorContextReachesPublicScan(t *testing.T) {
+	for _, ready := range []bool{true, false} {
+		t.Run(fmt.Sprintf("ready=%t", ready), func(t *testing.T) {
+			b := createTestBadgerEngine(t)
+			_, err := b.CreateNode(&Node{ID: "test:a", Labels: []string{"Target"}})
+			require.NoError(t, err)
+			if !ready {
+				_, err = b.writeLabelIndexBuildingMarker(b.labelIndex.markerGeneration.Load() + 1)
+				require.NoError(t, err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			hook := func() { cancel() }
+			b.labelIndex.afterAdmission.Store(&hook)
+			defer b.labelIndex.afterAdmission.Store(nil)
+			seen := 0
+			err = b.StreamNodesWithOptions(ctx, StreamNodesOptions{Prefix: "test:", Label: "Target", QueryNodes: true}, func(*Node) error { seen++; return nil })
+			require.ErrorIs(t, err, context.Canceled)
+			require.Zero(t, seen)
+		})
+	}
+}
+
+func TestLabelCursorContextStopsScopedCollection(t *testing.T) {
+	b := createTestBadgerEngine(t)
+	// The first foreign entry makes the ready reader switch to its snapshot's
+	// scoped dictionary. Cancellation at that boundary must stop collection.
+	for _, id := range []NodeID{"foreign:a", "test:a", "test:b"} {
+		_, err := b.CreateNode(&Node{ID: id, Labels: []string{"Target"}})
+		require.NoError(t, err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	hook := func() { cancel() }
+	b.labelIndex.beforeReverseLookup.Store(&hook)
+	defer b.labelIndex.beforeReverseLookup.Store(nil)
+	require.NoError(t, b.withView(func(txn *badger.Txn) error {
+		r := b.newLabelIndexReader(ctx, txn, "test:", "Target", "", storedRead, false)
+		defer r.Close()
+		require.False(t, r.Next())
+		require.ErrorIs(t, r.Err(), context.Canceled)
+		ready, ok := r.(*nodeIndexReader)
+		require.True(t, ok)
+		require.Empty(t, ready.candidates, "no dictionary candidate may be allocated after cancellation")
+		return nil
+	}))
+}
+
+func TestLabelMetadataSkipsEmbeddingDecoder(t *testing.T) {
+	b, err := NewBadgerEngineInMemory()
+	require.NoError(t, err)
+	defer b.Close()
+	_, err = b.writeLabelIndexBuildingMarker(b.labelIndex.markerGeneration.Load() + 1)
+	require.NoError(t, err)
+	metadata, err := encodeValue(map[string]any{"ID": "test:metadata", "Labels": []string{"Target"}, "EmbedMeta": map[string]any{"trap": msgpack.RawMessage{0xd4, 99, 0}}})
+	require.NoError(t, err)
+	// Valid empty tokenized properties; only the embedding metadata is a trap.
+	body := append([]byte{nodeFormatTokenizedV1, 1, 0}, metadata...)
+	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error { return txn.Set(nodeKey("test:metadata"), body) }))
+	_, err = b.decodeNode("test", body)
+	require.Error(t, err, "negative control must invoke the excluded embedding decoder")
+	require.NoError(t, b.withView(func(txn *badger.Txn) error {
+		found, err := b.nodeHasLabelInTxn(txn, "test:metadata", "Target")
+		require.NoError(t, err)
+		require.True(t, found)
+		r := b.newLabelIndexReader(context.Background(), txn, "test:", "Target", "", storedRead, false)
+		defer r.Close()
+		require.True(t, r.Next(), "%v", r.Err())
+		return r.Err()
+	}))
+	labels, err := decodeStoredNodeLabels(body)
+	require.NoError(t, err)
+	require.Equal(t, []string{"Target"}, labels)
+	// The label rebuild is also a metadata consumer, never a full-body reader.
+	_, err = b.rebuildLabelIndex(context.Background())
+	require.NoError(t, err)
+}
+
+func TestNodeMetadataExclusionGrammar(t *testing.T) {
+	// All serializer value kinds can occur in excluded properties/embedding
+	// metadata. Their encoded bytes must be skipped without calling a decoder.
+	for name, value := range map[string]any{
+		"nil": nil, "bool": true, "negative": int64(-500), "unsigned": uint64(1) << 40,
+		"float32": float32(1.25), "float64": 1.25, "string": strings.Repeat("s", 70000),
+		"binary": make([]byte, 70000), "array": make([]any, 20), "nested": map[string]any{"v": []any{int16(-7), uint16(500), uint32(1 << 20)}},
+		"extension": msgpack.RawMessage{0xd4, 99, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := msgpack.Marshal(value)
+			require.NoError(t, err)
+			reader := bytes.NewReader(append(append([]byte{}, raw...), 0xc0))
+			require.NoError(t, skipStoredMsgpackValue(reader))
+			require.Equal(t, 1, reader.Len(), "skip exactly one value")
+			if len(raw) > 1 {
+				require.Error(t, skipStoredMsgpackValue(bytes.NewReader(raw[:len(raw)-1])))
+			}
+		})
+	}
+	for _, raw := range [][]byte{{0xc1}, {0xdb, 0, 0}, {0xdd, 0xff, 0xff, 0xff, 0xff}, {0xdf, 0xff, 0xff, 0xff, 0xff}, {0xd8, 0}} {
+		require.Error(t, skipStoredMsgpackValue(bytes.NewReader(raw)))
+	}
+}
+
+// Cancel from the actual cursor's context polls, after it has begun collecting
+// candidates, without a timer or a scheduling race.
+type labelCursorCancelContext struct {
+	context.Context
+	remaining int
+	cancel    context.CancelFunc
+}
+
+func (c *labelCursorCancelContext) Err() error {
+	if c.remaining > 0 {
+		c.remaining--
+		if c.remaining == 0 {
+			c.cancel()
+		}
+	}
+	return c.Context.Err()
+}
+
+func TestLabelCursorContextDuringScopedCollection(t *testing.T) {
+	b := createTestBadgerEngine(t)
+	for i := 0; i < 8; i++ {
+		_, err := b.CreateNode(&Node{ID: NodeID(fmt.Sprintf("test:%d", i)), Labels: []string{"Target"}})
+		require.NoError(t, err)
+	}
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &labelCursorCancelContext{Context: parent, cancel: cancel}
+	require.NoError(t, b.withView(func(txn *badger.Txn) error {
+		cursor := b.newLabelIndexReader(ctx, txn, "test:", "Target", "", storedRead, false)
+		defer cursor.Close()
+		r, ok := cursor.(*nodeIndexReader)
+		require.True(t, ok)
+		ctx.remaining = 3
+		r.useScopedCandidates()
+		require.ErrorIs(t, r.Err(), context.Canceled)
+		require.Len(t, r.candidates, 1, "collection must stop between dictionary entries")
+		require.False(t, r.Next())
+		return nil
+	}))
+}
+
+// Exercise cancellation within work that used to run before the visitor.
+type labelOwnerCancelContext struct {
+	context.Context
+	owner   string
+	cancel  context.CancelFunc
+	reached bool
+}
+
+func (c *labelOwnerCancelContext) Err() error {
+	var pcs [64]uintptr
+	n := runtime.Callers(1, pcs[:])
+	frames := runtime.CallersFrames(pcs[:n])
+	for {
+		f, more := frames.Next()
+		if strings.Contains(f.Function, c.owner) {
+			c.reached = true
+			c.cancel()
+			break
+		}
+		if !more {
+			break
+		}
+	}
+	return c.Context.Err()
+}
+func TestLabelContextOnePassTail(t *testing.T) {
+	for _, physical := range []bool{false, true} {
+		t.Run(fmt.Sprint(physical), func(t *testing.T) {
+			b := createTestBadgerEngine(t)
+			nodes := make([]*Node, labelScanPointLookups+8)
+			for i := range nodes {
+				nodes[i] = &Node{ID: NodeID(fmt.Sprintf("test:%06d", i)), Labels: []string{"Target"}}
+			}
+			require.NoError(t, b.BulkCreateNodes(nodes))
+			b.nodeCacheMu.Lock()
+			b.nodeCache = map[NodeID]*Node{}
+			b.nodeCacheMu.Unlock()
+			parent, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			ctx := &labelOwnerCancelContext{Context: parent, owner: "readNodeRecordsInOnePass", cancel: cancel}
+			seen := 0
+			opts := StreamNodesOptions{Label: "Target", Prefix: "test:", QueryNodes: true}
+			var err error
+			if physical {
+				tx, e := b.BeginTransaction()
+				require.NoError(t, e)
+				defer tx.Rollback()
+				err = tx.StreamNodesWithOptions(ctx, opts, func(*Node) error { seen++; return nil })
+			} else {
+				err = b.StreamNodesWithOptions(ctx, opts, func(*Node) error { seen++; return nil })
+			}
+			require.True(t, ctx.reached, "must enter one-pass tail")
+			require.ErrorIs(t, err, context.Canceled)
+			require.Equal(t, labelScanPointLookups, seen)
+		})
+	}
+}
+func TestLabelContextLogicalScopedPreparation(t *testing.T) {
+	b := createTestBadgerEngine(t)
+	for _, id := range []NodeID{"foreign:a", "test:a", "test:b"} {
+		_, err := b.CreateNode(&Node{ID: id})
+		require.NoError(t, err)
+	}
+	tx, err := b.BeginTransaction()
+	require.NoError(t, err)
+	defer tx.Rollback()
+	require.NoError(t, tx.SetNamespace("test"))
+	tx.mu.Lock()
+	if tx.snapshotTx != nil {
+		tx.snapshotTx.Discard()
+		tx.snapshotTx = nil
+	}
+	tx.mu.Unlock()
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &labelOwnerCancelContext{Context: parent, owner: "useScopedCandidates", cancel: cancel}
+	seen := 0
+	err = tx.StreamNodesWithOptions(ctx, StreamNodesOptions{QueryNodes: true, Prefix: "test:"}, func(*Node) error { seen++; return nil })
+	require.True(t, ctx.reached)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, seen)
+}
+
+// The constructor population is extracted from every production storage file,
+// including closures. New call sites require an explicit inventory decision.
+func TestLabelContextCreationPopulation(t *testing.T) {
+	expected := map[string]int{
+		"GetFirstNodeByLabelInScopeWithContext": 1, "ForEachNodeIDByLabelInScopeWithContext": 1,
+		"getNodesByLabelInScopeWithContext": 1, "streamNodesByLabelProjectedInScopeWithContext": 1,
+		"streamNodesByLabelAtSnapshotWithViewContext": 1, "streamNodesByLabelFromPhysicalSnapshotAfterReadWithContext": 1,
+		"scanForUniqueViolationInTxn": 1, "scanForNodeKeyViolationInTxn": 1, "scanForTemporalOverlapInTxn": 1,
+		"countLabelIndexEntriesInNamespaceWithContext": 1, "countStoredLabelNodes": 1,
+		"newLabelIndexReader": 1, "iterateNodesVisibleAtInScopeInTxn": 1,
+	}
+	inv, err := workcensus.Extract(workcensus.Config{Dir: "../..", Patterns: []string{"./pkg/storage"}, BuildFlags: []string{"-tags=noui,nolocalllm"}, Packages: []string{"github.com/orneryd/nornicdb/pkg/storage"}, Selectors: []workcensus.Selector{{Kind: "constructor", Node: "call", Reachability: "all", Names: []string{"newLabelIndexReader", "newNodeIndexReader"}, Packages: []string{"github.com/orneryd/nornicdb/pkg/storage"}}}})
+	require.NoError(t, err)
+	actual := map[string]int{}
+	for _, m := range inv.Members {
+		owner := strings.Split(m.Owner, "$")[0]
+		owner = owner[strings.LastIndex(owner, ".")+1:]
+		actual[owner]++
+		require.NotEmpty(t, m.Args, m.ID)
+		if len(m.Args) > 0 {
+			require.Equal(t, "ctx", m.Args[0], m.ID)
+		}
+	}
+	require.Equal(t, expected, actual)
+}
+
+func TestNodeEnvelopeWALRebinding(t *testing.T) {
+	source := createTestBadgerEngine(t)
+	_, err := source.CreateNode(&Node{ID: "test:wal", Properties: map[string]any{"alpha": int64(7)}})
+	require.NoError(t, err)
+	var body []byte
+	require.NoError(t, source.withView(func(txn *badger.Txn) error {
+		item, err := txn.Get(nodeKey("test:wal"))
+		if err == nil {
+			body, err = item.ValueCopy(nil)
+		}
+		return err
+	}))
+	envelope, err := SplitNodeEnvelope(body)
+	require.NoError(t, err)
+	// This deliberately non-minimal integer encoding must survive foreign token
+	// remapping exactly. The metadata is another excluded byte population.
+	properties := []byte{1, 1, 0xd1, 0, 7}
+	body = append(append([]byte{nodeFormatTokenizedV1, byte(len(properties))}, properties...), envelope.metadata...)
+	bindings, err := bufferedWALPropertyBindings(map[string][]byte{string(nodeKey("test:wal")): body}, source.propKeyDict)
+	require.NoError(t, err)
+	for _, legacy := range []bool{false, true} {
+		t.Run(fmt.Sprint(legacy), func(t *testing.T) {
+			destination := createTestBadgerEngine(t)
+			_, err := destination.CreateNode(&Node{ID: "test:sentinel", Properties: map[string]any{"beta": "keep"}})
+			require.NoError(t, err)
+			data := &WALBufferedCommitData{Namespace: "test", TxID: "envelope", Writes: map[string][]byte{string(nodeKey("test:wal")): body}}
+			if legacy {
+				data.namedPropertiesAuthoritative = true
+				data.Ops = []Operation{{Type: OpCreateNode, Node: &Node{ID: "test:wal", Properties: map[string]any{"alpha": int64(7)}}}}
+			} else {
+				data.PropertyBindings = bindings
+			}
+			commit, err := destination.importBufferedWALRecord(data, walForeignImport)
+			require.NoError(t, err)
+			got, err := SplitNodeEnvelope(commit.writes[string(nodeKey("test:wal"))])
+			require.NoError(t, err)
+			require.Equal(t, envelope.metadata, got.metadata, "WAL rebinding must preserve all excluded metadata bytes")
+			count, n, err := readUvarint(got.properties)
+			require.NoError(t, err)
+			require.Equal(t, uint64(1), count)
+			token, k, err := readUvarint(got.properties[n:])
+			require.NoError(t, err)
+			require.NotEqual(t, uint64(1), token, "destination dictionary must force rebinding")
+			if !legacy {
+				require.Equal(t, properties[2:], got.properties[n+k:], "excluded property value bytes must not be re-encoded")
+			}
+			require.Equal(t, properties, body[2:2+len(properties)], "source body remains immutable")
+		})
+	}
+	for _, data := range [][]byte{nil, {0}, {nodeFormatTokenizedV1, 0xff}, {nodeFormatTokenizedV1, 10, 0}} {
+		_, splitErr := SplitNodeEnvelope(data)
+		require.Error(t, splitErr)
+		_, err := rewriteWALPropertyPayloads(map[string][]byte{string(nodeKey("test:wal")): data}, func(_, _ string, p []byte) ([]byte, error) {
+			t.Fatal("transform must not see an invalid envelope")
+			return p, nil
+		})
+		require.EqualError(t, err, splitErr.Error())
+	}
+}
+
+// Check the statement side as well as the constructor side. A new statement
+// call into a context-free adapter must fail even if every constructor still
+// has the same spelling and count.
+
+func TestLabelContextOnePassStopsBeforeNextCallback(t *testing.T) {
+	b := createTestBadgerEngine(t)
+	for _, id := range []NodeID{"test:a", "test:b"} {
+		_, err := b.CreateNode(&Node{ID: id})
+		require.NoError(t, err)
+	}
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	seen := 0
+	require.NoError(t, b.withView(func(txn *badger.Txn) error {
+		err := readNodeRecordsInOnePass(parent, txn, "test:", []NodeID{"test:a", "test:b"}, func(NodeID, *badger.Item) error { seen++; cancel(); return nil })
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, 1, seen)
+		return nil
+	}))
+}
+
+func TestLabelContextCountRepair(t *testing.T) {
+	b := createTestBadgerEngine(t)
+	_, err := b.CreateNode(&Node{ID: "test:a", Labels: []string{"Target"}})
+	require.NoError(t, err)
+	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error { return txn.Set(labelCountKey("test", "Target"), []byte{1}) }))
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &labelOwnerCancelContext{Context: parent, owner: "newLabelIndexReader", cancel: cancel}
+	_, err = b.NodeCountByLabelInNamespaceWithContext(ctx, "test", "Target")
+	require.True(t, ctx.reached)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestLabelContextBufferedPreparation(t *testing.T) {
+	b := newWriteBehindTestEngine(t, time.Hour)
+	bufferedCreate(t, b, &Node{ID: "test:a", Labels: []string{"Target"}})
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &labelOwnerCancelContext{Context: parent, owner: "visitEntityOverlayLocked", cancel: cancel}
+	seen := 0
+	err := b.StreamNodesWithOptions(ctx, StreamNodesOptions{Label: "Target", QueryNodes: true}, func(*Node) error { seen++; return nil })
+	require.True(t, ctx.reached)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, seen)
+}
+
+func TestLabelContextNamespaceMaterialization(t *testing.T) {
+	b := createTestBadgerEngine(t)
+	_, err := b.CreateNode(&Node{ID: "test:a", Labels: []string{"Target"}})
+	require.NoError(t, err)
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := &labelOwnerCancelContext{Context: parent, owner: "materializedValuesWithContext", cancel: cancel}
+	_, err = NewNamespacedEngine(b, "test").GetNodesByLabelWithContext(ctx, "Target")
+	require.True(t, ctx.reached)
+	require.ErrorIs(t, err, context.Canceled)
+}

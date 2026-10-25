@@ -192,9 +192,9 @@ func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Cont
 	var nodes []*storage.Node
 	var err error
 	if len(sourcePattern.labels) > 0 {
-		nodes, err = store.GetNodesByLabel(sourcePattern.labels[0])
+		nodes, err = storage.GetNodesByLabelWithContext(ctx, store, sourcePattern.labels[0])
 	} else {
-		nodes, err = store.AllNodes()
+		nodes, err = storage.AllNodesWithContext(ctx, store)
 	}
 	if err != nil {
 		return nil, err

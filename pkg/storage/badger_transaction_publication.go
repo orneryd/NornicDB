@@ -140,14 +140,23 @@ func (tx *BadgerTransaction) commitContextWithPreparation(ctx context.Context, a
 		schemaForValues := tx.engine.GetSchemaForNamespace(tx.namespace)
 		nodes := make([]*Node, 0, len(tx.pendingNodes))
 		for _, node := range tx.pendingNodes {
+			if err := tx.commitCancelledLocked(); err != nil {
+				return tx.abortCommitLocked(err)
+			}
 			nodes = append(nodes, node)
 		}
 		edges := make([]*Edge, 0, len(tx.pendingEdges))
 		for _, edge := range tx.pendingEdges {
+			if err := tx.commitCancelledLocked(); err != nil {
+				return tx.abortCommitLocked(err)
+			}
 			edges = append(edges, edge)
 		}
-		valueKeys := schemaForValues.appendConstraintValueKeys(nil, nodes, edges)
-		releaseCommitLocks, err = schemaForValues.acquireUniqueConstraintCommitLocks(context.Background(), tx.ID, valueKeys)
+		valueKeys, prepErr := schemaForValues.appendConstraintValueKeysWithContext(tx.validationContextLocked(), nil, nodes, edges)
+		if prepErr != nil {
+			return tx.abortCommitLocked(prepErr)
+		}
+		releaseCommitLocks, err = schemaForValues.acquireUniqueConstraintCommitLocks(tx.validationContextLocked(), tx.ID, valueKeys)
 		if err != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return err
@@ -166,7 +175,7 @@ func (tx *BadgerTransaction) commitContextWithPreparation(ctx context.Context, a
 		return fmt.Errorf("buffering temporal index writes: %w", err)
 	}
 
-	if err := tx.materializeDeferredEdgesLocked(); err != nil {
+	if err := tx.materializeDeferredEdgesLocked(tx.validationContextLocked()); err != nil {
 		return tx.abortCommitLocked(err)
 	}
 
@@ -180,7 +189,7 @@ func (tx *BadgerTransaction) commitContextWithPreparation(ctx context.Context, a
 	}
 	// MVCC history, change events, the entity caches and the callbacks all
 	// take each entity's final body as storage returns it.
-	if err := tx.engine.storeWrittenBodies(tx.pendingWrites, tx.operations); err != nil {
+	if err := tx.engine.storeWrittenBodies(tx.validationContextLocked(), tx.pendingWrites, tx.operations); err != nil {
 		return tx.abortCommitLocked(err)
 	}
 
@@ -236,7 +245,10 @@ func (tx *BadgerTransaction) commitContextWithPreparation(ctx context.Context, a
 		}
 	}
 
-	physicalOperations := tx.physicalOperationsLocked()
+	physicalOperations, operationErr := tx.physicalOperationsLocked(tx.validationContextLocked())
+	if operationErr != nil {
+		return tx.abortCommitLocked(operationErr)
+	}
 	hasWrites := len(physicalOperations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0
 	var version MVCCVersion
 	if hasWrites {

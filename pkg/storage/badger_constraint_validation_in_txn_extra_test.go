@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -23,31 +24,31 @@ func TestBadgerConstraintValidation_NodeBranchesInTxn(t *testing.T) {
 
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 		// nil guards
-		require.NoError(t, engine.validateNodeConstraintsInTxn(txn, nil, schema, "test", ""))
-		require.NoError(t, engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:nil", Labels: []string{"User"}}, nil, "test", ""))
+		require.NoError(t, engine.validateNodeConstraintsInTxn(context.Background(), txn, nil, schema, "test", ""))
+		require.NoError(t, engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{ID: "test:nil", Labels: []string{"User"}}, nil, "test", ""))
 
 		// UNIQUE violation via scan/cache path
-		err := engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:u2", Labels: []string{"User"}, Properties: map[string]any{"email": "a@x", "tenant": "t", "uid": "2", "name": "B", "k": "k2", "from": time.Now().UTC(), "state": "active", "age": int64(11)}}, schema, "test", "")
+		err := engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{ID: "test:u2", Labels: []string{"User"}, Properties: map[string]any{"email": "a@x", "tenant": "t", "uid": "2", "name": "B", "k": "k2", "from": time.Now().UTC(), "state": "active", "age": int64(11)}}, schema, "test", "")
 		require.Error(t, err)
 
 		// NODE KEY null property
-		err = engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:u3", Labels: []string{"User"}, Properties: map[string]any{"email": "c@x", "tenant": "t", "name": "C", "k": "k3", "from": time.Now().UTC(), "state": "active", "age": int64(12)}}, schema, "test", "")
+		err = engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{ID: "test:u3", Labels: []string{"User"}, Properties: map[string]any{"email": "c@x", "tenant": "t", "name": "C", "k": "k3", "from": time.Now().UTC(), "state": "active", "age": int64(12)}}, schema, "test", "")
 		require.Error(t, err)
 
 		// EXISTS missing (nil properties)
-		err = engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:u4", Labels: []string{"User"}, Properties: nil}, schema, "test", "")
+		err = engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{ID: "test:u4", Labels: []string{"User"}, Properties: nil}, schema, "test", "")
 		require.Error(t, err)
 
 		// TEMPORAL invalid start type
-		err = engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:u5", Labels: []string{"User"}, Properties: map[string]any{"email": "e@x", "tenant": "t", "uid": "5", "name": "E", "k": "k5", "from": "bad", "to": nil, "state": "active", "age": int64(13)}}, schema, "test", "")
+		err = engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{ID: "test:u5", Labels: []string{"User"}, Properties: map[string]any{"email": "e@x", "tenant": "t", "uid": "5", "name": "E", "k": "k5", "from": "bad", "to": nil, "state": "active", "age": int64(13)}}, schema, "test", "")
 		require.Error(t, err)
 
 		// DOMAIN violation
-		err = engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:u6", Labels: []string{"User"}, Properties: map[string]any{"email": "f@x", "tenant": "t", "uid": "6", "name": "F", "k": "k6", "from": time.Now().UTC(), "to": nil, "state": "blocked", "age": int64(14)}}, schema, "test", "")
+		err = engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{ID: "test:u6", Labels: []string{"User"}, Properties: map[string]any{"email": "f@x", "tenant": "t", "uid": "6", "name": "F", "k": "k6", "from": time.Now().UTC(), "to": nil, "state": "blocked", "age": int64(14)}}, schema, "test", "")
 		require.Error(t, err)
 
 		// PROPERTY TYPE violation
-		err = engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:u7", Labels: []string{"User"}, Properties: map[string]any{"email": "g@x", "tenant": "t", "uid": "7", "name": "G", "k": "k7", "from": time.Now().UTC(), "to": nil, "state": "active", "age": "bad"}}, schema, "test", "")
+		err = engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{ID: "test:u7", Labels: []string{"User"}, Properties: map[string]any{"email": "g@x", "tenant": "t", "uid": "7", "name": "G", "k": "k7", "from": time.Now().UTC(), "to": nil, "state": "active", "age": "bad"}}, schema, "test", "")
 		require.Error(t, err)
 		return nil
 	}))

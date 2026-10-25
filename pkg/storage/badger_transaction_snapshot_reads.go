@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -300,13 +301,17 @@ func snapshotEdgeBytes(edge *Edge) (int, bool) {
 }
 
 func (tx *BadgerTransaction) getAllCommittedNodesLocked() ([]*Node, error) {
+	return tx.getAllCommittedNodesLockedWithContext(context.Background())
+}
+
+func (tx *BadgerTransaction) getAllCommittedNodesLockedWithContext(ctx context.Context) ([]*Node, error) {
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		return tx.engine.AllNodes()
+		return tx.engine.AllNodesWithContext(ctx)
 	}
-	return tx.engine.getNodesByLabelVisibleAtWithView("", "", tx.readTS, tx.withSnapshotViewLocked)
+	return tx.engine.getNodesByLabelVisibleAtWithViewWithContext(ctx, "", "", tx.readTS, tx.withSnapshotViewLocked)
 }
 
 // EdgeDirection selects which adjacency side an adjacency read resolves. It is

@@ -81,6 +81,7 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	b.stopIndexBackfill(startupEdgeBetweenIndex)
 	b.stopIndexBackfill(startupLabelIndex)
 	defer func() { restoreErr = errors.Join(restoreErr, b.restartIndexBackfills()) }()
+	maintenancePause(pauseIndexBackfillRecovery)
 
 	lifecycle, err := b.beginLifecycleWrite("")
 	if err != nil {
@@ -109,6 +110,9 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	}
 	defer db.oracle.releaseReads()
 
+	// The replacement store has a different label-index generation even when
+	// its published timestamp is above the old marker's version.
+	b.labelIndexStoreReplaced()
 	if err := db.DropAll(); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
@@ -164,15 +168,12 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 }
 
 // restartIndexBackfills starts the index backfills the store needs, as open
-// does. It holds the write barrier so Close, which stops the backfills before
-// taking it, can't run in between; a closed engine has nothing to backfill.
+// does. The shared owner rejects shutdown and pins each admitted start. Keep
+// the barrier through both starts so no store replacement runs between them.
 func (b *BadgerEngine) restartIndexBackfills() error {
 	b.writeBarrier.RLock()
 	defer b.writeBarrier.RUnlock()
-	if b.ensureOpen(false) != nil {
-		return nil
-	}
-	return errors.Join(b.startIndexBackfill(startupEdgeBetweenIndex, initializeIndexBackfill), b.startIndexBackfill(startupLabelIndex, initializeIndexBackfill))
+	return errors.Join(b.resumeIndexBackfill(startupEdgeBetweenIndex), b.resumeIndexBackfill(startupLabelIndex))
 }
 
 func backupEngine(engine Engine, path string) error {
@@ -233,6 +234,13 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		return 0, 0, localizedError(localization.StorageClientDeletePrefixRequired(), nil)
 	}
 
+	if err := b.ensureOpen(true); err != nil {
+		return 0, 0, err
+	}
+	// The reset stops the label backfill before the write barrier, as
+	// Restore does. Its finish republishes the index or schedules the rebuild
+	// the store needs; it runs on every path, inside the barrier once held.
+	labelReset := b.beginLabelIndexReset()
 	// Runs after the locks below are released: the reset's consumers may write.
 	var reset *commitNotification
 	defer func() { b.awaitCommitNotification(reset) }()
@@ -241,9 +249,10 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	// prefix fails its commit (beginLifecycleWrite).
 	lifecycle, err := b.beginLifecycleWrite(prefix)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, labelReset.finish(err)
 	}
 	defer lifecycle.finish()
+	defer func() { err = labelReset.finish(err) }()
 	if conflict := b.pendingPrefixConflict(prefix); conflict != nil {
 		namespace, whole := wholeNamespaceFromPrefix(prefix)
 		if !whole || b.pendingNamespaceDrop(namespace) == nil {
@@ -253,11 +262,11 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
 
-	nodesDeleted, edgesDeleted, reset, err = b.deleteByPrefixHeld(prefix, &lifecycle, false)
+	nodesDeleted, edgesDeleted, reset, err = b.deleteByPrefixHeld(prefix, &lifecycle, false, labelReset)
 	return nodesDeleted, edgesDeleted, err
 }
 
-func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWrite, recovery bool) (nodesDeleted int64, edgesDeleted int64, reset *commitNotification, err error) {
+func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWrite, recovery bool, labelReset *labelIndexReset) (nodesDeleted int64, edgesDeleted int64, reset *commitNotification, err error) {
 	prefixBytes := []byte(prefix)
 	namespace, wholeNamespace := wholeNamespaceFromPrefix(prefix)
 
@@ -373,6 +382,9 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 		dropPrefixes = append(dropPrefixes, countDeltaNamespacePrefix(countDeltaKindLabel, namespace))
 		dropPrefixes = append(dropPrefixes, countDeltaNamespacePrefix(countDeltaKindEdgeType, namespace))
 	}
+	if err := labelReset.markBuilding(); err != nil {
+		return 0, 0, nil, err
+	}
 	// Bulk deletion bypasses per-node marker writes. Invalidate even on a
 	// partial drop failure so future claims rebuild from the durable index.
 	defer b.InvalidatePendingEmbeddingsIndex()
@@ -476,19 +488,8 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 	// Node and edge dict entries are sharded: collect the victim IDs shard
 	// by shard, then remove each pair with the sharded helpers (the drop is
 	// exclusive, so the passes race with nothing).
-	var nodeVictims []NodeID
-	for i := range b.idDict.nodes {
-		sh := &b.idDict.nodes[i]
-		sh.mu.RLock()
-		for id := range sh.forward {
-			if strings.HasPrefix(string(id), prefix) {
-				nodeVictims = append(nodeVictims, id)
-			}
-		}
-		sh.mu.RUnlock()
-	}
-	for _, id := range nodeVictims {
-		b.idDict.nodePairRemoveByID(id)
+	if err := labelReset.retireNodeDictionaryEntries(prefix); err != nil {
+		return 0, 0, nil, err
 	}
 	var edgeVictims []EdgeID
 	for i := range b.idDict.edges {

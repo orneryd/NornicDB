@@ -36,7 +36,10 @@ func (b *BadgerEngine) CheckIDDictionary() (*IDDictionaryReport, error) {
 	report := &IDDictionaryReport{}
 	var unlabelled []NodeID
 	err := b.db.View(func(txn *badger.Txn) error {
-		labelled := numIDsInKeys(txn, prefixLabelIndex)
+		labelled, err := b.labelNumIDsForDictionaryCheck(txn)
+		if err != nil {
+			return err
+		}
 		linked := numIDsInKeys(txn, prefixOutgoingIndex)
 		for _, prefix := range []byte{prefixNode, prefixEdge} {
 			opts := badgerPrefixIteratorOptions([]byte{prefix})
@@ -70,6 +73,54 @@ func (b *BadgerEngine) CheckIDDictionary() (*IDDictionaryReport, error) {
 		}
 	}
 	return report, nil
+}
+
+// labelNumIDsForDictionaryCheck reads the completed label index when ready.
+// During its startup rebuild, it derives the logical membership set from all
+// stored node bodies so a partial physical index is not reported as dictionary
+// corruption.
+func (b *BadgerEngine) labelNumIDsForDictionaryCheck(txn *badger.Txn) (map[uint64]bool, error) {
+	ready, err := b.labelIndexReadyInTxn(txn)
+	if err != nil {
+		return nil, err
+	}
+	if ready {
+		return numIDsInKeys(txn, prefixLabelIndex), nil
+	}
+
+	labelled := make(map[uint64]bool)
+	prefix := []byte{prefixNode}
+	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+	defer it.Close()
+	for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
+		key := it.Item().Key()
+		if len(key) <= len(prefix) {
+			continue
+		}
+		id := NodeID(key[len(prefix):])
+		num, ok, err := b.labelIndexNodeNumInTxn(txn, id)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			continue
+		}
+		var hasLabels bool
+		if err := it.Item().Value(func(value []byte) error {
+			node, err := decodeNodeMetadata(value)
+			if err != nil {
+				return err
+			}
+			hasLabels = len(node.Labels) > 0
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		if hasLabels {
+			labelled[num] = true
+		}
+	}
+	return labelled, nil
 }
 
 // numIDsInKeys collects the numeric IDs ending the keys under prefix: node
@@ -177,6 +228,10 @@ func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
 // lostNodeNumID finds a lost node's numeric ID: the one unresolved, unclaimed
 // ID in the label index of every one of its labels.
 func (b *BadgerEngine) lostNodeNumID(id NodeID, claimed map[uint64]bool) (uint64, bool, error) {
+	ready, err := b.labelIndexReady()
+	if err != nil || !ready {
+		return 0, false, err
+	}
 	node, err := b.GetStoredNode(id)
 	if err != nil || len(node.Labels) == 0 {
 		return 0, false, nil

@@ -1,6 +1,9 @@
 package storage
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // Entity IDs are independently allocated: a node and an edge may have the
 // same string ID. The legacy AppendDelete API deliberately hides both kinds;
@@ -56,19 +59,25 @@ func (b *CommitBuffer) clearEntityDeletion(kind bufferedEntityKind, id string) {
 	}
 }
 
-func (b *CommitBuffer) deletedEntityIDs(kind bufferedEntityKind, visit func(string)) {
+func (b *CommitBuffer) deletedEntityIDs(kind bufferedEntityKind, visit func(string) bool) {
 	if kind == bufferedNodeEntity {
 		for id := range b.deletedNodeIDs {
-			visit(string(id))
+			if !visit(string(id)) {
+				return
+			}
 		}
 	} else {
 		for id := range b.deletedEdgeIDs {
-			visit(string(id))
+			if !visit(string(id)) {
+				return
+			}
 		}
 	}
 	for id, mask := range b.deletes {
 		if mask&kind != 0 {
-			visit(id)
+			if !visit(id) {
+				return
+			}
 		}
 	}
 }
@@ -102,30 +111,43 @@ func (w *WriteBehindBuffer) entityStateLocked(kind bufferedEntityKind, id string
 // visitEntityOverlayLocked resolves each candidate only once. Enumeration
 // remains label/type/adjacency scoped; pure deletions participate even when
 // their generation has no body or corresponding index entry.
-func (w *WriteBehindBuffer) visitEntityOverlayLocked(kind bufferedEntityKind, candidates func(*CommitBuffer, func(string)), visit func(string, bufferedEntityState), prefixes ...string) {
+func (w *WriteBehindBuffer) visitEntityOverlayLocked(ctx context.Context, kind bufferedEntityKind, candidates func(*CommitBuffer, func(string) bool), visit func(string, bufferedEntityState), prefixes ...string) error {
 	if w == nil {
-		return
+		return ctx.Err()
 	}
 	seen := make(map[string]struct{})
-	emit := func(id string) {
+	emit := func(id string) bool {
+		if ctx.Err() != nil {
+			return false
+		}
 		if len(prefixes) > 0 && !strings.HasPrefix(id, prefixes[0]) {
-			return
+			return true
 		}
 		if _, found := seen[id]; found {
-			return
+			return true
 		}
 		seen[id] = struct{}{}
 		state := w.entityStateLocked(kind, id)
+		if err := ctx.Err(); err != nil {
+			return false
+		}
 		if state.found {
 			visit(id, state)
 		}
+		return true
 	}
 	collect := func(buf *CommitBuffer) {
 		candidates(buf, emit)
-		buf.deletedEntityIDs(kind, emit)
+		if ctx.Err() == nil {
+			buf.deletedEntityIDs(kind, emit)
+		}
 	}
 	collect(w.active)
 	for i := len(w.draining) - 1; i >= 0; i-- {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		collect(w.draining[i])
 	}
+	return ctx.Err()
 }

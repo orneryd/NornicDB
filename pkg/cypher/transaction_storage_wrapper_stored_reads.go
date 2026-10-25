@@ -43,15 +43,25 @@ func (w *transactionStorageWrapper) GetStoredIncomingEdges(id storage.NodeID) ([
 }
 
 func (w *transactionStorageWrapper) GetStoredNodesByLabel(label string) ([]*storage.Node, error) {
-	nodes, err := w.tx.GetStoredNodesByLabel(label)
+	return w.GetStoredNodesByLabelWithContext(context.Background(), label)
+}
+
+// GetStoredNodesByLabelWithContext carries the caller through validation and label materialization.
+func (w *transactionStorageWrapper) GetStoredNodesByLabelWithContext(ctx context.Context, label string) ([]*storage.Node, error) {
+	nodes, err := w.tx.GetStoredNodesByLabelWithContext(ctx, label)
 	if err != nil || w.namespace == "" {
 		return nodes, err
 	}
-	return w.toUserNamespacedNodes(nodes), nil
+	return w.toUserNamespacedNodesWithContext(ctx, nodes)
 }
 
 func (w *transactionStorageWrapper) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
-	return w.streamNodesByLabelProjected(label, properties, true, visit)
+	return w.StreamStoredNodesByLabelProjectedWithContext(context.Background(), label, properties, visit)
+}
+
+// StreamStoredNodesByLabelProjectedWithContext carries the caller through validation and label materialization.
+func (w *transactionStorageWrapper) StreamStoredNodesByLabelProjectedWithContext(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
+	return w.streamNodesByLabelProjectedWithContext(ctx, label, properties, true, visit)
 }
 
 func (w *transactionStorageWrapper) StreamStoredEdgesByType(ctx context.Context, edgeType string, visit func(*storage.Edge) error) error {

@@ -125,6 +125,13 @@ type ChangeCaptureEngine interface {
 	SetChangeRetention(retention time.Duration)
 }
 
+// ContextualChangeCaptureEngine keeps page preparation within the reader's
+// lifetime. ChangeCaptureEngine remains the compatibility entrance for callers
+// without a context.
+type ContextualChangeCaptureEngine interface {
+	ChangeEventsWithContext(context.Context, string, uint64, uint32, int) ([]ChangeEvent, error)
+}
+
 // changeCapture is an engine's capture state.
 type changeCapture struct {
 	modes sync.Map // namespace -> ChangeCaptureMode
@@ -244,6 +251,14 @@ func (b *BadgerEngine) ChangeBounds(namespace string) (earliest, last uint64, er
 // ChangeEvents returns up to limit of a database's events after
 // (commitSeq, seq), in commit order; limit <= 0 is no limit.
 func (b *BadgerEngine) ChangeEvents(namespace string, commitSeq uint64, seq uint32, limit int) ([]ChangeEvent, error) {
+	return b.ChangeEventsWithContext(context.Background(), namespace, commitSeq, seq, limit)
+}
+
+// ChangeEventsWithContext observes the page scan before yielding any event.
+func (b *BadgerEngine) ChangeEventsWithContext(ctx context.Context, namespace string, commitSeq uint64, seq uint32, limit int) ([]ChangeEvent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := b.pendingNamespaceConflict(namespace); err != nil {
 		return nil, err
 	}
@@ -257,6 +272,9 @@ func (b *BadgerEngine) ChangeEvents(namespace string, commitSeq uint64, seq uint
 		it := txn.NewIterator(opts)
 		defer it.Close()
 		for it.Seek(after); it.ValidForPrefix(prefix); it.Next() {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if bytes.Equal(it.Item().Key(), after) {
 				continue
 			}

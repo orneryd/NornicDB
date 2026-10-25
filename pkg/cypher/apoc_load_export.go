@@ -882,7 +882,7 @@ func (e *StorageExecutor) callApocImportJson(ctx context.Context, args []interfa
 					}
 
 					if node.ID != "" {
-						if _, err := store.CreateNode(node); err == nil {
+						if _, err := storage.CreateNodeWithContext(ctx, store, node); err == nil {
 							nodesImported++
 						}
 					}

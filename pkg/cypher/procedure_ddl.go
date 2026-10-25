@@ -137,7 +137,7 @@ func (e *StorageExecutor) installPersistedProcedure(ctx context.Context, record 
 	if existing != nil {
 		existing.Labels = ensureLabel(existing.Labels, procedureCatalogLabel)
 		existing.Properties = props
-		if err := store.UpdateNode(existing); err != nil {
+		if err := storage.UpdateNodeWithContext(ctx, store, existing); err != nil {
 			return localizedError(localization.CypherProceduresUpdateCatalogFailed(err), err)
 		}
 	} else {
@@ -146,7 +146,7 @@ func (e *StorageExecutor) installPersistedProcedure(ctx context.Context, record 
 			Labels:     []string{procedureCatalogLabel},
 			Properties: props,
 		}
-		if _, err := store.CreateNode(node); err != nil {
+		if _, err := storage.CreateNodeWithContext(ctx, store, node); err != nil {
 			return localizedError(localization.CypherProceduresPersistCatalogFailed(err), err)
 		}
 	}
@@ -311,7 +311,7 @@ func ensureLabel(labels []string, label string) []string {
 }
 
 func (e *StorageExecutor) loadPersistedProcedures(ctx context.Context) error {
-	nodes, err := e.storage.GetNodesByLabel(procedureCatalogLabel)
+	nodes, err := storage.GetNodesByLabelWithContext(ctx, e.storage, procedureCatalogLabel)
 	if err != nil {
 		return localizedError(localization.CypherProceduresCatalogReadFailed(err), nerrors.ErrProcedureCatalogReadFailed)
 	}

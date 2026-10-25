@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 type adjacencyRead uint8
 
 const (
@@ -13,6 +15,15 @@ const (
 // Only an actual namespace view qualifies IDs. Optional providers are bound on
 // its immediate decorator; native physical readers are never found by unwrap.
 func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version *MVCCVersion, visibility readVisibility) (out, in []*Edge, err error) {
+	return readAdjacencyWithContext(context.Background(), engine, kind, start, end, version, visibility)
+}
+
+// readAdjacencyWithContext keeps preparation in the same captured directional
+// reader while carrying the caller through cache, overlay and record selection.
+func readAdjacencyWithContext(ctx context.Context, engine Engine, kind adjacencyRead, start, end NodeID, version *MVCCVersion, visibility readVisibility) (out, in []*Edge, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	var namespace *NamespacedEngine
 	if n, ok := engine.(*NamespacedEngine); ok {
 		namespace = n
@@ -36,12 +47,18 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 	// The dispatcher is the sole owner of ordering and partial-result policy.
 	consume := func(read func(bool) ([]*Edge, error)) error {
 		if wantOut {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			out, err = read(true)
 			if err != nil {
 				return err
 			}
 		}
 		if wantIn {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			in, err = read(false)
 		}
 		return err
@@ -66,7 +83,7 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 	} else {
 		native, isNative := engine.(*BadgerEngine)
 		if isNative && kind != adjacencyBetween {
-			reader, captureErr := native.captureAdjacencyReader(start, wantOut, wantIn, visibility)
+			reader, captureErr := native.captureAdjacencyReader(ctx, start, wantOut, wantIn, visibility)
 			if captureErr != nil {
 				err = captureErr
 			} else {
@@ -108,6 +125,9 @@ func readAdjacency(engine Engine, kind adjacencyRead, start, end NodeID, version
 		// Physical reader leases have ended before copying namespace projections.
 		out = namespace.toUserEdgesInNamespace(out, false, pinned)
 		in = namespace.toUserEdgesInNamespace(in, false, pinned)
+	}
+	if err == nil {
+		err = ctx.Err()
 	}
 	return out, in, err
 }

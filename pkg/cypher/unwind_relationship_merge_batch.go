@@ -73,7 +73,7 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 		}
 		rows = append(rows, row)
 	}
-	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(e.getStorage(ctx), rows, plan.matches)
+	prefetched, unique, err := e.buildRelationshipBatchNodeMatchIndex(ctx, e.getStorage(ctx), rows, plan.matches)
 	if err != nil {
 		return nil, true, err
 	}
@@ -390,20 +390,32 @@ func relationshipBatchRowHasRequiredFields(row map[string]interface{}, plan unwi
 	return true
 }
 
-func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
+func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Context, store storage.Engine, rows []map[string]interface{}, matches []matchClauseSpec) (map[nodeBatchMatchKey]map[string]*storage.Node, bool, error) {
 	index := make(map[nodeBatchMatchKey]map[string]*storage.Node, len(matches))
 	schema := store.GetSchema()
 	unique := true
 	matchGroups := make(map[nodeBatchMatchKey][]matchClauseSpec, len(matches))
 	for _, match := range matches {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		key := nodeBatchMatchKey{label: match.label, prop: match.propName}
 		matchGroups[key] = append(matchGroups[key], match)
 	}
 	for key, group := range matchGroups {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		idx := make(map[string]*storage.Node, len(rows))
 		distinct := make(map[string]interface{}, len(rows))
 		for _, match := range group {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			for _, row := range rows {
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
 				if value, ok := e.evaluateRelationshipBatchLookupExpr(match, row); ok {
 					distinct[propEqKeyBatch(value)] = value
 				}
@@ -412,9 +424,18 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 		if schema != nil && schema.HasPropertyIndex(key.label, key.prop) {
 			unresolved := make(map[string]interface{})
 			for valueKey, value := range distinct {
-				ids := propertyIndexLookup(store, schema, key.label, key.prop, value)
+				if err := ctx.Err(); err != nil {
+					return nil, false, err
+				}
+				ids, lookupErr := propertyIndexLookup(ctx, store, schema, key.label, key.prop, value)
+				if lookupErr != nil {
+					return nil, false, lookupErr
+				}
 				matched := 0
 				for _, id := range ids {
+					if err := ctx.Err(); err != nil {
+						return nil, false, err
+					}
 					node, err := e.getQueryNode(store, id)
 					if err == nil && nodeBatchMatchesValue(node, key, value) {
 						matched++
@@ -427,7 +448,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 				}
 			}
 			if len(unresolved) > 0 {
-				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(store, key, unresolved)
+				scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, unresolved)
 				if err != nil {
 					return nil, false, err
 				}
@@ -435,6 +456,9 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 					unique = false
 				}
 				for valueKey, node := range scanned {
+					if err := ctx.Err(); err != nil {
+						return nil, false, err
+					}
 					idx[valueKey] = node
 				}
 			}
@@ -442,7 +466,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 			continue
 		}
 
-		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(store, key, distinct)
+		scanned, scanUnique, err := buildNodeBatchLabelMatchIndex(ctx, store, key, distinct)
 		if err != nil {
 			return nil, false, err
 		}
@@ -454,9 +478,9 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(store storage.Eng
 	return index, unique, nil
 }
 
-func buildNodeBatchLabelMatchIndex(store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
+func buildNodeBatchLabelMatchIndex(ctx context.Context, store storage.Engine, key nodeBatchMatchKey, distinct map[string]interface{}) (map[string]*storage.Node, bool, error) {
 	idx := make(map[string]*storage.Node, len(distinct))
-	nodes, err := store.GetNodesByLabel(key.label)
+	nodes, err := storage.GetNodesByLabelWithContext(ctx, store, key.label)
 	if err != nil {
 		return nil, false, localizedError(localization.CypherMergeGetNodesByLabelFailed(key.label, err), err)
 	}

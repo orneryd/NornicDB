@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -54,7 +55,7 @@ func TestBadgerEngine_DeleteNodeInTxn_NotFoundStillCleansEmbeddingChunks(t *test
 						return err
 					}
 				}
-				_, err := engine.executeNodeDeletion(txn, id, nil)
+				_, err := engine.executeNodeDeletion(context.Background(), txn, id, nil)
 				if tc.commitCleanup {
 					require.ErrorIs(t, err, ErrNotFound)
 					return nil
@@ -88,7 +89,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 		}))
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, err := engine.executeNodeDeletion(readTxn, "test:embed-node", nil)
+		_, err := engine.executeNodeDeletion(context.Background(), readTxn, "test:embed-node", nil)
 		require.ErrorContains(t, err, "failed to delete embedding chunk")
 	})
 
@@ -98,7 +99,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 			return txn.Set(nodeKey("test:corrupt-node"), []byte("bad-node"))
 		}))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-			_, err := engine.executeNodeDeletion(txn, "test:corrupt-node", nil)
+			_, err := engine.executeNodeDeletion(context.Background(), txn, "test:corrupt-node", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -110,7 +111,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, err = engine.executeNodeDeletion(readTxn, "test:archive-node", nil)
+		_, err = engine.executeNodeDeletion(context.Background(), readTxn, "test:archive-node", nil)
 		require.Error(t, err)
 	})
 
@@ -124,7 +125,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 			return txn.Set(mvccNodeHeadKey(nodeNum), []byte("bad-head"))
 		}))
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			_, err := engine.executeNodeDeletion(txn, "test:bad-head-node", nil)
+			_, err := engine.executeNodeDeletion(context.Background(), txn, "test:bad-head-node", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -141,7 +142,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 		}))
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, err = engine.executeNodeDeletion(readTxn, "test:label-delete-node", nil)
+		_, err = engine.executeNodeDeletion(context.Background(), readTxn, "test:label-delete-node", nil)
 		require.Error(t, err)
 	})
 
@@ -156,7 +157,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 		}))
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, err = engine.executeNodeDeletion(readTxn, "test:primary-delete-node", nil)
+		_, err = engine.executeNodeDeletion(context.Background(), readTxn, "test:primary-delete-node", nil)
 		require.Error(t, err)
 	})
 
@@ -171,7 +172,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 			return txn.Set(edgeKey("test:out-edge"), []byte("bad-edge"))
 		}))
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			_, err := engine.executeNodeDeletion(txn, "test:out-mid", nil)
+			_, err := engine.executeNodeDeletion(context.Background(), txn, "test:out-mid", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -188,7 +189,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 			return txn.Set(edgeKey("test:in-edge"), []byte("bad-edge"))
 		}))
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			_, err := engine.executeNodeDeletion(txn, "test:in-mid", nil)
+			_, err := engine.executeNodeDeletion(context.Background(), txn, "test:in-mid", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -237,7 +238,7 @@ func TestBadgerEngine_DeleteEdgeFamily_AdjacencyLoadErrors(t *testing.T) {
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 			prefix := engine.outgoingIndexPrefixString("test:dp-a")
 			require.NotNil(t, prefix)
-			_, err := engine.executeNodeDeletion(txn, "test:dp-a", nil)
+			_, err := engine.executeNodeDeletion(context.Background(), txn, "test:dp-a", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -264,7 +265,7 @@ func TestBadgerEngine_UpdateEdgeAndDeletePrefixHelpers_Branches(t *testing.T) {
 		if err := txn.Set(append(append([]byte{}, prefix...), []byte("bad")...), []byte{}); err != nil {
 			return err
 		}
-		result, delErr := engine.executeNodeDeletion(txn, "test:a", nil)
+		result, delErr := engine.executeNodeDeletion(context.Background(), txn, "test:a", nil)
 		deleted, ids := int64(len(result.ids)), result.ids
 		if delErr != nil {
 			return delErr
@@ -288,7 +289,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ReturnsDeletedEdgeBodiesForAdjacencyTombst
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:center-right", StartNode: "test:center", EndNode: "test:right", Type: "REL"}))
 
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		result, err := engine.executeNodeDeletion(txn, "test:center", nil)
+		result, err := engine.executeNodeDeletion(context.Background(), txn, "test:center", nil)
 		deletedCount, deletedIDs, deletedEdges, deletedNode := int64(len(result.ids)), result.ids, result.edges, result.node
 		require.NoError(t, err)
 		require.Equal(t, int64(2), deletedCount)
@@ -344,7 +345,7 @@ func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 		}))
 
 		err = engine.withView(func(txn *badger.Txn) error {
-			return engine.iterateNodesVisibleAtInScopeInTxn(txn, "", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999}, func(*Node) error {
+			return engine.iterateNodesVisibleAtInScopeInTxn(context.Background(), txn, "", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999}, func(*Node) error {
 				return nil
 			})
 		})
@@ -364,7 +365,7 @@ func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 
 		wantErr := errors.New("stop-yield")
 		err = engine.withView(func(txn *badger.Txn) error {
-			return engine.iterateNodesVisibleAtInScopeInTxn(txn, "", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999}, func(*Node) error {
+			return engine.iterateNodesVisibleAtInScopeInTxn(context.Background(), txn, "", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999}, func(*Node) error {
 				return wantErr
 			})
 		})

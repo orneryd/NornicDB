@@ -1,8 +1,11 @@
 package storage
 
+import "context"
+
 // nativeAdjacencyReader is one owned physical read cut. Returning the frame
 // by value keeps directional state out of escaping higher-order callbacks.
 type nativeAdjacencyReader struct {
+	ctx                 context.Context
 	engine              *BadgerEngine
 	nodeID              NodeID
 	visibility          readVisibility
@@ -21,37 +24,56 @@ type adjacencyDirection struct {
 
 // captureAdjacencyReader selects both native directions at one cache/overlay
 // boundary. A nil view means the captured cache result is already complete.
-func (b *BadgerEngine) captureAdjacencyReader(nodeID NodeID, wantOut, wantIn bool, v readVisibility) (reader nativeAdjacencyReader, err error) {
+func (b *BadgerEngine) captureAdjacencyReader(ctx context.Context, nodeID NodeID, wantOut, wantIn bool, v readVisibility) (reader nativeAdjacencyReader, err error) {
+	if err := ctx.Err(); err != nil {
+		return reader, err
+	}
+	reader.ctx = ctx
 	if nodeID == "" {
 		return reader, ErrInvalidID
 	}
 	reader.engine, reader.nodeID, reader.visibility = b, nodeID, v
 	reader.adjGen, reader.edgeGen = b.adjCacheGen.current(), b.edgeCacheGen.current()
+	var captureErr error
 	reader.view, err = b.captureReadView(func(w *WriteBehindBuffer) {
 		if wantOut {
 			reader.out.ids, reader.out.hit = b.adjCacheLoadOutgoing(nodeID)
 			if w != nil {
-				pendingAdjacency := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: true})
-				reader.out.live, reader.out.suppressed, reader.out.deleted = pendingAdjacency.edges, pendingAdjacency.suppressed, pendingAdjacency.sourceDeleted
+				pending, readErr := b.readBufferedEntitiesWithContext(ctx, w, v, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: true})
+				reader.out.live, reader.out.suppressed, reader.out.deleted, captureErr = pending.edges, pending.suppressed, pending.sourceDeleted, readErr
 			}
 		}
 		if wantIn {
+			if captureErr != nil {
+				return
+			}
 			reader.in.ids, reader.in.hit = b.adjCacheLoadIncoming(nodeID)
 			if w != nil {
-				pendingAdjacency := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: false})
-				reader.in.live, reader.in.suppressed, reader.in.deleted = pendingAdjacency.edges, pendingAdjacency.suppressed, pendingAdjacency.sourceDeleted
+				pending, readErr := b.readBufferedEntitiesWithContext(ctx, w, v, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: false})
+				reader.in.live, reader.in.suppressed, reader.in.deleted, captureErr = pending.edges, pending.suppressed, pending.sourceDeleted, readErr
 			}
 		}
-	}, readViewOptions{scope: namespaceForNodeID(nodeID), cached: func(w *WriteBehindBuffer) (bool, error) {
+	}, readViewOptions{ctx: ctx, scope: namespaceForNodeID(nodeID), cached: func(w *WriteBehindBuffer) (bool, error) {
 		var complete bool
-		reader.cachedOut, reader.cachedIn, complete = b.cachedAdjacency(w, nodeID, wantOut, wantIn, v)
-		return complete, nil
+		var err error
+		reader.cachedOut, reader.cachedIn, complete, err = b.cachedAdjacency(ctx, w, nodeID, wantOut, wantIn, v)
+		return complete, err
 	}})
+	if err == nil && captureErr != nil {
+		if reader.view != nil {
+			reader.view.Close()
+			reader.view = nil
+		}
+		err = captureErr
+	}
 	return reader, err
 }
 
 // read hydrates one captured direction; it never selects a later view or cache.
 func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
+	if err := r.ctx.Err(); err != nil {
+		return nil, err
+	}
 	if r.view == nil {
 		if outgoing {
 			return r.cachedOut, nil
@@ -75,7 +97,7 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
 			}
 			if prefix != nil {
 				var err error
-				edges, d.ids, err = b.collectEdgesByIndexPrefix(txn, prefix, DecayScoringTime(), edgeGen, v)
+				edges, d.ids, err = b.collectEdgesByIndexPrefix(r.ctx, txn, prefix, DecayScoringTime(), edgeGen, v)
 				if err != nil {
 					return err
 				}
@@ -89,6 +111,9 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
 		// Read cached IDs from this transaction, never a later body cache.
 		if edges == nil {
 			for _, id := range d.ids {
+				if err := r.ctx.Err(); err != nil {
+					return err
+				}
 				if _, hidden := d.suppressed[id]; hidden {
 					continue
 				}
@@ -103,6 +128,9 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
 		} else if len(d.suppressed) != 0 {
 			visible := edges[:0]
 			for _, edge := range edges {
+				if err := r.ctx.Err(); err != nil {
+					return err
+				}
 				if _, hidden := d.suppressed[edge.ID]; !hidden {
 					visible = append(visible, edge)
 				}
@@ -111,12 +139,18 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
 		}
 		attached := edges[:0]
 		for _, edge := range edges {
+			if err := r.ctx.Err(); err != nil {
+				return err
+			}
 			if attachedAt(edge, nodeID, outgoing) {
 				attached = append(attached, edge)
 			}
 		}
 		edges = attached
 		for _, edge := range d.live {
+			if err := r.ctx.Err(); err != nil {
+				return err
+			}
 			edges = append(edges, copyEdge(edge))
 		}
 		return nil
@@ -140,7 +174,7 @@ func attachedAt(edge *Edge, nodeID NodeID, outgoing bool) bool {
 
 // cachedAdjacency resolves a traversal as one captured operation. The edge cache
 // is locked once for both directions; only pending adjacency entries are copied.
-func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool, v readVisibility) ([]*Edge, []*Edge, bool) {
+func (b *BadgerEngine) cachedAdjacency(ctx context.Context, w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool, v readVisibility) ([]*Edge, []*Edge, bool, error) {
 	var outIDs, inIDs []EdgeID
 	var outHit, inHit = !wantOut, !wantIn
 	if wantOut {
@@ -150,68 +184,82 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 		inIDs, inHit = b.adjCacheLoadIncoming(id)
 	}
 	if !outHit || !inHit {
-		return nil, nil, false
+		return nil, nil, false, nil
 	}
 	if w != nil && w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead}).deleted {
-		return nil, nil, true
+		return nil, nil, true, nil
 	}
 	b.edgeCacheMu.RLock()
 	defer b.edgeCacheMu.RUnlock()
 	now := DecayScoringTime()
-	read := func(ids []EdgeID, outgoing bool) ([]*Edge, bool) {
+	read := func(ids []EdgeID, outgoing bool) ([]*Edge, bool, error) {
 		var live []*Edge
 		if w != nil {
-			live = b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedLiveAdjacency, source: id, outgoing: outgoing}).edges
+			pending, err := b.readBufferedEntitiesWithContext(ctx, w, v, bufferedEntityRead{kind: bufferedLiveAdjacency, source: id, outgoing: outgoing})
+			live = pending.edges
+			if err != nil {
+				return nil, false, err
+			}
 		}
 		if len(ids) == 0 && len(live) == 0 {
-			return nil, true
+			return nil, true, nil
 		}
 		result := make([]*Edge, 0, len(ids)+len(live))
 		for _, edgeID := range ids {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			if w != nil && w.entityStateLocked(bufferedEdgeEntity, string(edgeID), bufferedReadVisibility{engine: b, visibility: storedRead}).found {
 				continue
 			}
 			edge := b.edgeCache[edgeID]
 			if edge == nil {
-				return nil, false
+				return nil, false, nil
 			}
 			if attachedAt(edge, id, outgoing) && !b.filterEntityByDecay(v, edge, now) {
 				result = append(result, edge)
 			}
 		}
 		for _, edge := range live {
+			if err := ctx.Err(); err != nil {
+				return nil, false, err
+			}
 			result = append(result, copyEdge(edge))
 		}
-		return result, true
+		return result, true, nil
 	}
 	var out, in []*Edge
 	var ok bool
+	var err error
 	if wantOut {
-		out, ok = read(outIDs, true)
-		if !ok {
-			return nil, nil, false
+		out, ok, err = read(outIDs, true)
+		if err != nil || !ok {
+			return nil, nil, false, err
 		}
 	}
 	if wantIn {
-		in, ok = read(inIDs, false)
-		if !ok {
-			return nil, nil, false
+		in, ok, err = read(inIDs, false)
+		if err != nil || !ok {
+			return nil, nil, false, err
 		}
 	}
-	return out, in, true
+	return out, in, true, nil
 }
 
 // liveAdjacencyLocked enumerates the overlapping adjacency index, not the
 // buffer's global tombstones. Cached committed IDs resolve tombstones directly.
-func (w *WriteBehindBuffer) liveAdjacencyLocked(id NodeID, outgoing bool) []*Edge {
+func (w *WriteBehindBuffer) liveAdjacencyLockedWithContext(ctx context.Context, id NodeID, outgoing bool) ([]*Edge, error) {
 	var result []*Edge
 	var seen map[EdgeID]bool
-	visit := func(buf *CommitBuffer) {
+	visit := func(buf *CommitBuffer) error {
 		ids := buf.incomingByNode[id]
 		if outgoing {
 			ids = buf.outgoingByNode[id]
 		}
 		for _, edgeID := range ids {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if seen[edgeID] {
 				continue
 			}
@@ -228,10 +276,18 @@ func (w *WriteBehindBuffer) liveAdjacencyLocked(id NodeID, outgoing bool) []*Edg
 				result = append(result, edge)
 			}
 		}
+		return nil
 	}
-	visit(w.active)
+	if err := visit(w.active); err != nil {
+		return nil, err
+	}
 	for i := len(w.draining) - 1; i >= 0; i-- {
-		visit(w.draining[i])
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := visit(w.draining[i]); err != nil {
+			return nil, err
+		}
 	}
-	return result
+	return result, ctx.Err()
 }

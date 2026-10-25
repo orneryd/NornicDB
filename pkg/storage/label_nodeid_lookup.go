@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // LabelNodeIDLookupEngine is an optional interface for engines that can return
 // node IDs for a label without decoding full nodes.
 //
@@ -43,35 +45,22 @@ func FirstNodeIDByLabel(engine Engine, label string) (NodeID, error) {
 // NodeIDsByLabel returns up to limit node IDs that have the label.
 // If limit <= 0, all matches are returned (may be expensive).
 func NodeIDsByLabel(engine Engine, label string, limit int) ([]NodeID, error) {
+	return NodeIDsByLabelWithContext(context.Background(), engine, label, limit)
+}
+
+// NodeIDsByLabelWithContext carries statement cancellation through the shared
+// label-ID dispatch, including legacy node materialization and ID collection.
+func NodeIDsByLabelWithContext(ctx context.Context, engine Engine, label string, limit int) ([]NodeID, error) {
 	if engine == nil {
 		return nil, ErrInvalidData
 	}
-
-	if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
-		ids := make([]NodeID, 0, 64)
-		err := lookup.ForEachNodeIDByLabel(label, func(id NodeID) bool {
-			ids = append(ids, id)
-			if limit > 0 && len(ids) >= limit {
-				return false
-			}
-			return true
-		})
-		return ids, err
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-
-	nodes, err := engine.GetNodesByLabel(label)
+	ids := make([]NodeID, 0, 64)
+	err := forEachNodeIDByLabelInScopeWithContext(ctx, engine, "", label, func(id NodeID) bool { ids = append(ids, id); return limit <= 0 || len(ids) < limit })
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]NodeID, 0, len(nodes))
-	for _, node := range nodes {
-		if node == nil {
-			continue
-		}
-		ids = append(ids, node.ID)
-		if limit > 0 && len(ids) >= limit {
-			break
-		}
-	}
-	return ids, nil
+	return ids, ctx.Err()
 }

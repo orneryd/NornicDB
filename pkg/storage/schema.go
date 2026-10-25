@@ -11,6 +11,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"reflect"
 	"slices"
@@ -507,17 +508,26 @@ func (sm *SchemaManager) MarkPropertyIndexesFilled() {
 // ConstraintPropertyIndex returns the equality index constraint name owns
 // (#875), if it has one.
 func (sm *SchemaManager) ConstraintPropertyIndex(name string) (*PropertyIndex, bool) {
+	idx, owned, _ := sm.ConstraintPropertyIndexWithContext(context.Background(), name)
+	return idx, owned
+}
+
+// ConstraintPropertyIndexWithContext observes owned-index candidate selection.
+func (sm *SchemaManager) ConstraintPropertyIndexWithContext(ctx context.Context, name string) (*PropertyIndex, bool, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	if _, exists := sm.constraints[name]; !exists {
-		return nil, false
+		return nil, false, ctx.Err()
 	}
 	for _, idx := range sm.compositeIndexes {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		if idx.OwningConstraint == name {
-			return idx, true
+			return idx, true, nil
 		}
 	}
-	return nil, false
+	return nil, false, ctx.Err()
 }
 
 // SetPersister sets an optional persistence hook for schema changes.
@@ -949,16 +959,25 @@ func (sm *SchemaManager) GetCompositeIndexesForLabel(label string) []*CompositeI
 // through GetCompositeIndexesForLabel, so a DDL-created index mid-backfill is
 // populated but never trusted for reads (#875).
 func (sm *SchemaManager) SeekableCompositeIndexesForLabel(label string) []*CompositeIndex {
+	indexes, _ := sm.SeekableCompositeIndexesForLabelWithContext(context.Background(), label)
+	return indexes
+}
+
+// SeekableCompositeIndexesForLabelWithContext observes schema candidate filtering.
+func (sm *SchemaManager) SeekableCompositeIndexesForLabelWithContext(ctx context.Context, label string) ([]*CompositeIndex, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
 	var indexes []*CompositeIndex
 	for _, idx := range sm.compositeIndexes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if idx != nil && idx.Label == label && !idx.unfilled.Load() {
 			indexes = append(indexes, idx)
 		}
 	}
-	return indexes
+	return indexes, ctx.Err()
 }
 
 // BackfillCompositeIndex fills a newly created composite index from the
@@ -967,6 +986,15 @@ func (sm *SchemaManager) SeekableCompositeIndexesForLabel(label string) []*Compo
 // they are flushed, and lookups see them through the pending view until then
 // (#719). On success the index is marked filled so seeks can use it.
 func (sm *SchemaManager) BackfillCompositeIndex(name string, entries map[NodeID]map[string]interface{}) error {
+	return sm.BackfillCompositeIndexWithContext(context.Background(), name, entries)
+}
+
+// BackfillCompositeIndexWithContext observes the caller during entry preparation.
+// An interrupted index stays unfilled; its creating DDL removes it on failure.
+func (sm *SchemaManager) BackfillCompositeIndexWithContext(ctx context.Context, name string, entries map[NodeID]map[string]interface{}) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	view, source := sm.beginPendingRead()
 	defer endPendingRead(source)
 
@@ -977,12 +1005,18 @@ func (sm *SchemaManager) BackfillCompositeIndex(name string, entries map[NodeID]
 		return localizedError(localization.StorageSchemaIndexNotFound(name), nil)
 	}
 	for nodeID, props := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !view.keep(nodeID) {
 			continue
 		}
 		if err := idx.IndexNode(nodeID, props); err != nil {
 			return err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	idx.unfilled.Store(false)
 	return nil
@@ -1122,84 +1156,70 @@ func (idx *CompositeIndex) RemoveNode(nodeID NodeID, properties map[string]inter
 // LookupFull finds nodes matching all property values exactly.
 // All properties in the composite index must be specified.
 func (idx *CompositeIndex) LookupFull(values ...interface{}) []NodeID {
+	ids, _ := idx.LookupFullWithContext(context.Background(), values...)
+	return ids
+}
+
+// LookupFullWithContext copies the exact committed candidates with cancellation.
+func (idx *CompositeIndex) LookupFullWithContext(ctx context.Context, values ...interface{}) ([]NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(values) != len(idx.Properties) {
-		return nil // Must specify all properties for full lookup
+		return nil, nil
 	}
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
 	if len(idx.Properties) == 1 {
-		valueKey, ok := indexValueKey(values[0])
+		key, ok := indexValueKey(values[0])
 		if !ok {
-			return nil
+			return nil, nil
 		}
-		idx.mu.RLock()
-		defer idx.mu.RUnlock()
-		nodes := idx.values[valueKey]
-		result := make([]NodeID, len(nodes))
-		copy(result, nodes)
-		return result
+		return copyIndexNodeIDsWithContext(ctx, idx.values[key])
 	}
 	canonical, ok := compositeLookupKeyValues(values)
 	if !ok {
-		return nil // a value no index entry can hold: no match
+		return nil, nil
 	}
-	return idx.lookupFullHash(NewCompositeKey(canonical...).Hash)
+	return copyIndexNodeIDsWithContext(ctx, idx.fullIndex[NewCompositeKey(canonical...).Hash])
 }
 
-// lookupFullHash returns a copy of the nodes an arity >= 2 index files under
-// a full composite key hash, for callers that already hold the hash.
+// lookupFullHash is the compatibility hash entrance for committed index users.
 func (idx *CompositeIndex) lookupFullHash(hash string) []NodeID {
-	idx.mu.RLock()
-	defer idx.mu.RUnlock()
-	if nodes, exists := idx.fullIndex[hash]; exists {
-		// Return a copy to avoid race conditions
-		result := make([]NodeID, len(nodes))
-		copy(result, nodes)
-		return result
-	}
-	return nil
+	ids, _ := idx.lookupFullHashWithContext(context.Background(), hash)
+	return ids
 }
 
-// LookupPrefix finds nodes matching a prefix of property values.
-// Specify 1 to N-1 property values (where N is total properties in index).
-// Returns all nodes that match the prefix. For an arity-1 index a one-value
-// lookup is a full match.
-//
-// Example: For index on (country, city, zipcode)
-//   - LookupPrefix("US") returns all nodes in the US
-//   - LookupPrefix("US", "NYC") returns all nodes in NYC, US
+func (idx *CompositeIndex) lookupFullHashWithContext(ctx context.Context, hash string) ([]NodeID, error) {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	return copyIndexNodeIDsWithContext(ctx, idx.fullIndex[hash])
+}
+
+// LookupPrefix returns committed IDs matching the supplied leading values.
 func (idx *CompositeIndex) LookupPrefix(values ...interface{}) []NodeID {
-	if len(values) == 0 || len(values) > len(idx.Properties) {
-		return nil
+	ids, _ := idx.LookupPrefixWithContext(context.Background(), values...)
+	return ids
+}
+
+// LookupPrefixWithContext shares full/prefix key semantics and observable copying.
+func (idx *CompositeIndex) LookupPrefixWithContext(ctx context.Context, values ...interface{}) ([]NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	if len(idx.Properties) == 1 {
-		return idx.LookupFull(values...)
+	if len(values) == 0 || len(values) > len(idx.Properties) {
+		return nil, nil
+	}
+	if len(values) == len(idx.Properties) {
+		return idx.LookupFullWithContext(ctx, values...)
 	}
 	canonical, ok := compositeLookupKeyValues(values)
 	if !ok {
-		return nil // a value no index entry can hold: no match
+		return nil, nil
 	}
-
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
-
-	// Check if this is a full match (not a prefix)
-	if len(canonical) == len(idx.Properties) {
-		key := NewCompositeKey(canonical...)
-		if nodes, exists := idx.fullIndex[key.Hash]; exists {
-			result := make([]NodeID, len(nodes))
-			copy(result, nodes)
-			return result
-		}
-		return nil
-	}
-
-	// Prefix lookup
-	key := NewCompositeKey(canonical...)
-	if nodes, exists := idx.prefixIndex[key.Hash]; exists {
-		result := make([]NodeID, len(nodes))
-		copy(result, nodes)
-		return result
-	}
-	return nil
+	return copyIndexNodeIDsWithContext(ctx, idx.prefixIndex[NewCompositeKey(canonical...).Hash])
 }
 
 // LookupWithFilter finds nodes using a prefix and applies a filter function.
@@ -1575,6 +1595,12 @@ func (sm *SchemaManager) GetConstraints() []UniqueConstraint {
 // entity breaks several constraints. Returns constraints from the constraints
 // map, preserving their original types.
 func (sm *SchemaManager) GetConstraintsForLabels(labels []string) []Constraint {
+	result, _ := sm.GetConstraintsForLabelsWithContext(context.Background(), labels)
+	return result
+}
+
+// GetConstraintsForLabelsWithContext observes candidate collection before validation.
+func (sm *SchemaManager) GetConstraintsForLabelsWithContext(ctx context.Context, labels []string) ([]Constraint, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
@@ -1582,16 +1608,24 @@ func (sm *SchemaManager) GetConstraintsForLabels(labels []string) []Constraint {
 
 	// Get constraints from the constraints map (preserves original type)
 	for _, c := range sm.constraints {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		for _, label := range labels {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if c.Label == label {
 				result = append(result, c)
 				break
 			}
 		}
 	}
-	slices.SortFunc(result, func(a, b Constraint) int { return strings.Compare(a.Name, b.Name) })
+	if err := sortIndexCandidatesWithContext(ctx, result, func(a, b Constraint) bool { return a.Name < b.Name }); err != nil {
+		return nil, err
+	}
 
-	return result
+	return result, ctx.Err()
 }
 
 // GetAllConstraints returns all constraints in the schema, regardless of label.
@@ -1780,12 +1814,24 @@ func (sm *SchemaManager) DropIndex(name string) error {
 
 // GetPropertyTypeConstraintsForLabels returns type constraints for the given labels.
 func (sm *SchemaManager) GetPropertyTypeConstraintsForLabels(labels []string) []PropertyTypeConstraint {
+	result, _ := sm.GetPropertyTypeConstraintsForLabelsWithContext(context.Background(), labels)
+	return result
+}
+
+// GetPropertyTypeConstraintsForLabelsWithContext observes candidate collection before validation.
+func (sm *SchemaManager) GetPropertyTypeConstraintsForLabelsWithContext(ctx context.Context, labels []string) ([]PropertyTypeConstraint, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
 	result := make([]PropertyTypeConstraint, 0)
 	for _, c := range sm.propertyTypeConstraints {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		for _, label := range labels {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if c.Label == label {
 				result = append(result, c)
 				break
@@ -1793,7 +1839,7 @@ func (sm *SchemaManager) GetPropertyTypeConstraintsForLabels(labels []string) []
 		}
 	}
 
-	return result
+	return result, ctx.Err()
 }
 
 // GetAllPropertyTypeConstraints returns all property type constraints.
@@ -2091,157 +2137,208 @@ func (sm *SchemaManager) hasAnyCompositeIndexForLabelLocked(label string) bool {
 // the value indexed or it doesn't) and the executor still applies the rest
 // of the pattern's filter on the returned candidates.
 func (sm *SchemaManager) PropertyIndexLookupAnyLabel(property string, value interface{}) []NodeID {
-	valueKey, ok := indexValueKey(value)
+	ids, _ := sm.PropertyIndexLookupAnyLabelWithContext(context.Background(), property, value)
+	return ids
+}
+
+// PropertyIndexLookupAnyLabelWithContext observes both index and candidate populations.
+func (sm *SchemaManager) PropertyIndexLookupAnyLabelWithContext(ctx context.Context, property string, value interface{}) ([]NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	key, ok := indexValueKey(value)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	sm.mu.RLock()
 	indexes := make([]*PropertyIndex, 0, 2)
 	for _, idx := range sm.compositeIndexes {
+		if err := ctx.Err(); err != nil {
+			sm.mu.RUnlock()
+			return nil, err
+		}
 		if idx == nil || len(idx.Properties) != 1 || idx.Properties[0] != property {
 			continue
 		}
 		if idx.unfilled.Load() {
-			// A label whose index isn't filled can't be answered from the
-			// indexes; the caller's scan finds its nodes (#875).
 			sm.mu.RUnlock()
-			return nil
+			return nil, nil
 		}
 		indexes = append(indexes, idx)
 	}
 	sm.mu.RUnlock()
-
 	view, source := sm.beginPendingRead()
 	defer endPendingRead(source)
 	var ids []NodeID
 	for _, idx := range indexes {
-		ids = idx.lookupLocked(view, ids, property, valueKey)
+		var err error
+		ids, err = idx.lookupLockedWithContext(ctx, view, ids, property, key)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return ids
+	return ids, ctx.Err()
 }
 
-// lookupLocked appends the index's node IDs for valueKey to out, merged with
-// the pending view. It takes idx.mu.
-func (idx *PropertyIndex) lookupLocked(view pendingWriteView, out []NodeID, property string, valueKey interface{}) []NodeID {
+func (idx *PropertyIndex) lookupLockedWithContext(ctx context.Context, view pendingWriteView, out []NodeID, property string, valueKey interface{}) ([]NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	pending := view.valueMatchSet(idx.Label, property, valueKey)
 	idx.mu.RLock()
 	stored := idx.values[valueKey]
 	if len(stored)+len(pending) == 0 {
 		idx.mu.RUnlock()
-		return out
+		return out, nil
 	}
 	if out == nil {
 		out = make([]NodeID, 0, len(stored)+len(pending))
 	}
 	for _, id := range stored {
+		if err := ctx.Err(); err != nil {
+			idx.mu.RUnlock()
+			return nil, err
+		}
 		if view.keep(id) {
 			out = append(out, id)
 		}
 	}
 	idx.mu.RUnlock()
-	return view.appendInNamespace(out, pending)
+	return view.appendInNamespaceWithContext(ctx, out, pending)
 }
 
-// PropertyIndexLookup looks up node IDs by property value using an index,
-// merged with an attached AsyncEngine's pending writes (#719).
-// Returns nil if no index exists for the label/property.
+// PropertyIndexLookup returns merged committed/buffered equality candidates.
 func (sm *SchemaManager) PropertyIndexLookup(label, property string, value interface{}) []NodeID {
+	ids, _ := sm.PropertyIndexLookupWithContext(context.Background(), label, property, value)
+	return ids
+}
+
+// PropertyIndexLookupWithContext observes preparation before a candidate escapes.
+func (sm *SchemaManager) PropertyIndexLookupWithContext(ctx context.Context, label, property string, value interface{}) ([]NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	sm.mu.RLock()
 	idx, exists := sm.seekablePropertyIndexLocked(label, property)
 	sm.mu.RUnlock()
-
 	if !exists {
-		return nil
+		return nil, nil
 	}
 	valueKey, ok := indexValueKey(value)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	view, source := sm.beginPendingRead()
 	defer endPendingRead(source)
-	return idx.lookupLocked(view, nil, property, valueKey)
+	return idx.lookupLockedWithContext(ctx, view, nil, property, valueKey)
 }
 
 // PropertyIndexTopK returns up to limit node IDs from a property index ordered by
 // indexed property value, merged with the pending writes. Nil keys are skipped.
 func (sm *SchemaManager) PropertyIndexTopK(label, property string, limit int, descending bool) []NodeID {
+	ids, _, _ := sm.PropertyIndexTopKWithContext(context.Background(), label, property, limit, descending)
+	return ids
+}
+
+// PropertyIndexTopKWithContext prepares the requested ordered window.
+func (sm *SchemaManager) PropertyIndexTopKWithContext(ctx context.Context, label, property string, limit int, descending bool) ([]NodeID, bool, error) {
 	if limit <= 0 {
-		return nil
+		return nil, false, ctx.Err()
 	}
-	ids, _ := sm.orderedPropertyIndexIDs(label, property, descending, limit, PropertyIndexBounds{})
-	return ids
+	return sm.orderedPropertyIndexIDsWithContext(ctx, label, property, descending, limit, PropertyIndexBounds{})
 }
 
-// PropertyIndexAllNonNil returns all node IDs from the property index in key order,
-// excluding nil keys, merged with the pending writes.
+// PropertyIndexAllNonNil is the compatibility entrance for an unbounded window.
 func (sm *SchemaManager) PropertyIndexAllNonNil(label, property string, descending bool) []NodeID {
-	ids, _ := sm.orderedPropertyIndexIDs(label, property, descending, -1, PropertyIndexBounds{})
+	ids, _, _ := sm.PropertyIndexAllNonNilWithContext(context.Background(), label, property, descending)
 	return ids
 }
 
-// orderedPropertyIndexIDs is the one ordered scan of a property index
-// (orderedIDsLocked), merged with the pending writes; limit < 0 lists all,
-// and keep, when set, selects the index values listed. exists is false when
-// the label and property have no index.
-func (sm *SchemaManager) orderedPropertyIndexIDs(label, property string, descending bool, limit int, bounds PropertyIndexBounds) (ids []NodeID, exists bool) {
+// PropertyIndexAllNonNilWithContext observes key/candidate preparation and sorting.
+func (sm *SchemaManager) PropertyIndexAllNonNilWithContext(ctx context.Context, label, property string, descending bool) ([]NodeID, bool, error) {
+	return sm.orderedPropertyIndexIDsWithContext(ctx, label, property, descending, -1, PropertyIndexBounds{})
+}
+
+func (sm *SchemaManager) orderedPropertyIndexIDsWithContext(ctx context.Context, label, property string, descending bool, limit int, bounds PropertyIndexBounds) ([]NodeID, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
 	sm.mu.RLock()
 	idx, exists := sm.seekablePropertyIndexLocked(label, property)
 	sm.mu.RUnlock()
 	if !exists {
-		return nil, false
+		return nil, false, nil
 	}
 	view, source := sm.beginPendingRead()
 	defer endPendingRead(source)
-	idx.rLockWithFreshKeys()
+	if err := idx.rLockWithFreshKeysWithContext(ctx); err != nil {
+		return nil, true, err
+	}
 	defer idx.mu.RUnlock()
-	return idx.orderedIDsLocked(view, property, descending, limit, bounds), true
+	ids, err := idx.orderedIDsLockedWithContext(ctx, view, property, descending, limit, bounds)
+	return ids, true, err
 }
 
-// rLockWithFreshKeys takes idx.mu for reading with the sorted-key cache
-// current, so a reader never rebuilds it: several readers hold the read lock
-// at once, and two rebuilding together raced on the cache (#942). A stale
-// cache is rebuilt under the write lock first; writers need that lock too,
-// so the cache stays current while the read lock is held.
-func (idx *PropertyIndex) rLockWithFreshKeys() {
+// rLockWithFreshKeysWithContext returns with the read lock held only on success.
+func (idx *PropertyIndex) rLockWithFreshKeysWithContext(ctx context.Context) error {
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		idx.mu.RLock()
 		if !idx.keysDirty && idx.sortedNonNilKeys != nil {
-			return
+			return nil
 		}
 		idx.mu.RUnlock()
 		idx.mu.Lock()
-		idx.sortedKeysViewLocked()
+		_, _, err := idx.sortedKeysViewLockedWithContext(ctx)
 		idx.mu.Unlock()
+		if err != nil {
+			return err
+		}
 	}
 }
 
-// sortedKeysViewLocked returns the cached non-nil index keys in ascending
-// order and their kinds, rebuilding them after a write. The slice is shared
-// and must not be modified; a rebuild replaces it rather than changing it.
-// Caller must hold idx.mu for writing, or for reading through
-// rLockWithFreshKeys, which leaves nothing to rebuild.
+// sortedKeysViewLocked is used by the already-admitted binary range view.
 func (idx *PropertyIndex) sortedKeysViewLocked() ([]interface{}, propertyIndexKeyKinds) {
+	keys, kinds, _ := idx.sortedKeysViewLockedWithContext(context.Background())
+	return keys, kinds
+}
+
+// First-use cache construction stays private until every pass succeeds.
+func (idx *PropertyIndex) sortedKeysViewLockedWithContext(ctx context.Context) ([]interface{}, propertyIndexKeyKinds, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, propertyIndexKeyKinds{}, err
+	}
 	if idx.keysDirty || idx.sortedNonNilKeys == nil {
 		keys := make([]interface{}, 0, len(idx.values))
 		for k, ids := range idx.values {
+			if err := ctx.Err(); err != nil {
+				return nil, propertyIndexKeyKinds{}, err
+			}
 			if k == nil || len(ids) == 0 {
 				continue
 			}
-			// Lists and maps are filed for equality only; ordered scans
-			// read scalar keys (#844).
 			if _, composite := k.(compositeIndexKey); composite {
 				continue
 			}
 			keys = append(keys, k)
 		}
-		sort.Slice(keys, func(i, j int) bool {
-			return compareSchemaIndexValues(keys[i], keys[j]) < 0
-		})
-		idx.sortedNonNilKeys = keys
-		idx.sortedKeyKinds = newPropertyIndexKeyKinds(keys)
-		idx.keysDirty = false
+		if err := sortIndexCandidatesWithContext(ctx, keys, func(a, b interface{}) bool { return compareSchemaIndexValues(a, b) < 0 }); err != nil {
+			return nil, propertyIndexKeyKinds{}, err
+		}
+		kinds := propertyIndexKeyKinds{strings: true, numbers: true, hasKeys: len(keys) > 0}
+		for _, key := range keys {
+			if err := ctx.Err(); err != nil {
+				return nil, propertyIndexKeyKinds{}, err
+			}
+			isString, isNumber := indexValueKinds(key)
+			kinds.strings = kinds.strings && isString
+			kinds.numbers = kinds.numbers && isNumber
+		}
+		idx.sortedNonNilKeys, idx.sortedKeyKinds, idx.keysDirty = keys, kinds, false
 	}
-	return idx.sortedNonNilKeys, idx.sortedKeyKinds
+	return idx.sortedNonNilKeys, idx.sortedKeyKinds, nil
 }
 
 func compareSchemaIndexValues(a, b interface{}) int {

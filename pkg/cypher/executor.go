@@ -1972,7 +1972,7 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 		}
 		embeddingutil.ApplyManagedEmbedding(node, embeddings, model, dimensions, time.Now())
 		embeddingutil.RecordChunkSpans(node, source, chunks)
-		if err := store.UpdateNode(node); err != nil {
+		if err := storage.UpdateNodeWithContext(ctx, store, node); err != nil {
 			return err
 		}
 	}

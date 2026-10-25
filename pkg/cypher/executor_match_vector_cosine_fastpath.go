@@ -486,7 +486,7 @@ func (e *StorageExecutor) fetchCosineNodeScoresProjectedLabel(ctx context.Contex
 	}
 	candidates := vectorNodeScoreHeap{orderDesc: orderDesc}
 	heap.Init(&candidates)
-	err := reader.StreamNodesByLabelProjected(label, projectedProps, func(node *storage.Node) error {
+	err := storage.StreamNodesByLabelProjectedWithContext(ctx, reader, label, projectedProps, func(node *storage.Node) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -1053,9 +1053,9 @@ func (e *StorageExecutor) fetchCosineNodeScoresExact(ctx context.Context, label 
 	var nodes []*storage.Node
 	var err error
 	if label == "" {
-		nodes, err = e.storage.AllNodes()
+		nodes, err = storage.AllNodesWithContext(ctx, e.storage)
 	} else {
-		nodes, err = e.storage.GetNodesByLabel(label)
+		nodes, err = storage.GetNodesByLabelWithContext(ctx, e.storage, label)
 	}
 	if err != nil {
 		return nil, false
@@ -1092,9 +1092,9 @@ func (e *StorageExecutor) fetchCosineNodeScoresExactFiltered(ctx context.Context
 	var nodes []*storage.Node
 	var err error
 	if label == "" {
-		nodes, err = e.storage.AllNodes()
+		nodes, err = storage.AllNodesWithContext(ctx, e.storage)
 	} else {
-		nodes, err = e.storage.GetNodesByLabel(label)
+		nodes, err = storage.GetNodesByLabelWithContext(ctx, e.storage, label)
 	}
 	if err != nil {
 		return nil, false

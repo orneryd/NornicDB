@@ -51,7 +51,7 @@ func TestTemporalViewportDisabledKeepsNodes(t *testing.T) {
 	checker := &temporalViewportProbeEngine{visibleIDs: map[string]bool{"nornic:visible": true}}
 	nodes := []*storage.Node{{ID: "nornic:visible"}, {ID: "nornic:hidden"}}
 
-	filtered, err := filterNodesByTemporalViewport(nodes, viewport, checker)
+	filtered, err := filterNodesByTemporalViewport(context.Background(), nodes, viewport, checker)
 	require.NoError(t, err)
 	assert.Len(t, filtered, 2)
 	assert.Equal(t, 0, checker.calls)

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/convert"
@@ -21,10 +22,16 @@ type PropertyIndexBounds struct {
 // the label and property have no index or a bound is neither a number nor a
 // string; the caller must then not rely on the index.
 func (sm *SchemaManager) PropertyIndexRange(label, property string, bounds PropertyIndexBounds) (ids []NodeID, ok bool) {
+	ids, ok, _ = sm.PropertyIndexRangeWithContext(context.Background(), label, property, bounds)
+	return ids, ok
+}
+
+// PropertyIndexRangeWithContext retains cancellation through ordered preparation.
+func (sm *SchemaManager) PropertyIndexRangeWithContext(ctx context.Context, label, property string, bounds PropertyIndexBounds) ([]NodeID, bool, error) {
 	if (bounds.HasLower && !indexRangeBoundType(bounds.Lower)) || (bounds.HasUpper && !indexRangeBoundType(bounds.Upper)) {
-		return nil, false
+		return nil, false, ctx.Err()
 	}
-	return sm.orderedPropertyIndexIDs(label, property, false, -1, bounds)
+	return sm.orderedPropertyIndexIDsWithContext(ctx, label, property, false, -1, bounds)
 }
 
 // bounded reports whether bounds limits anything.

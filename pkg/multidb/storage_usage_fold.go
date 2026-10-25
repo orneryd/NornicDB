@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -9,8 +10,17 @@ import (
 // storageChangesUsage folds the same immutable stored images for admission
 // and publication. Stored priors are never re-imaged as staged writer input.
 func storageChangesUsage(namespace string, changes []storage.StoredEntityChange, trackBytes bool) (storageUsage, error) {
+	return storageChangesUsageWithContext(context.Background(), namespace, changes, trackBytes)
+}
+
+// storageChangesUsageWithContext shares the accounting formula during admission.
+func storageChangesUsageWithContext(ctx context.Context, namespace string, changes []storage.StoredEntityChange, trackBytes bool) (storageUsage, error) {
 	var usage storageUsage
-	usage.nodes, usage.edges = storage.StoredEntityCountDelta(namespace, changes)
+	var err error
+	usage.nodes, usage.edges, err = storage.StoredEntityCountDeltaWithContext(ctx, namespace, changes)
+	if err != nil {
+		return storageUsage{}, err
+	}
 	if !trackBytes {
 		return usage, nil
 	}
@@ -28,6 +38,9 @@ func storageChangesUsage(namespace string, changes []storage.StoredEntityChange,
 		return calculateEdgeSize(&image)
 	}
 	for _, change := range changes {
+		if err := ctx.Err(); err != nil {
+			return storageUsage{}, err
+		}
 		if change.BeforeNode != nil || change.AfterNode != nil {
 			bytes, err := storedPairBytes(change.BeforeNode, change.AfterNode, nodeSize)
 			if err != nil {

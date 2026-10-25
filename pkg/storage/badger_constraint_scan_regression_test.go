@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -16,13 +17,13 @@ func TestBadgerConstraintScansRecordErrors(t *testing.T) {
 		scan   func(*BadgerEngine, *badger.Txn) error
 	}{
 		{"unique", true, func(b *BadgerEngine, txn *badger.Txn) error {
-			return b.scanForUniqueViolationInTxn(txn, "test", "Account", "key", "new", "")
+			return b.scanForUniqueViolationInTxn(context.Background(), txn, "test", "Account", "key", "new", "")
 		}},
 		{"node_key", true, func(b *BadgerEngine, txn *badger.Txn) error {
-			return b.scanForNodeKeyViolationInTxn(txn, "test", "Account", []string{"key"}, []interface{}{"new"}, "")
+			return b.scanForNodeKeyViolationInTxn(context.Background(), txn, "test", "Account", []string{"key"}, []interface{}{"new"}, "")
 		}},
 		{"full_label_temporal", true, func(b *BadgerEngine, txn *badger.Txn) error {
-			return b.scanForTemporalOverlapInTxn(txn, "test", Constraint{Type: ConstraintTemporal, Label: "Account", Properties: []string{"key", "from", "to"}}, "new", start, start.Add(time.Hour), true, "", temporalOverlapFullLabel)
+			return b.scanForTemporalOverlapInTxn(context.Background(), txn, "test", Constraint{Type: ConstraintTemporal, Label: "Account", Properties: []string{"key", "from", "to"}}, "new", start, start.Add(time.Hour), true, "", temporalOverlapFullLabel)
 		}},
 		{"edge_unique", false, func(b *BadgerEngine, txn *badger.Txn) error {
 			return b.checkEdgeUniquenessInTxn(txn, &Edge{Type: "REL", Properties: map[string]interface{}{"key": "new"}},
