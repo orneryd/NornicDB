@@ -4270,7 +4270,7 @@ func TestServerAuthAndAuxHandlers_AdditionalBranches(t *testing.T) {
 
 		req = httptest.NewRequest(http.MethodDelete, "/auth/roles/analyst", nil)
 		rec = httptest.NewRecorder()
-		server.handleRoleByID(rec, req)
+		server.handleRoles(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 		reader, err := server.auth.GetUser("reader")
 		require.NoError(t, err)
@@ -4281,7 +4281,7 @@ func TestServerAuthAndAuxHandlers_AdditionalBranches(t *testing.T) {
 		_ = server.auth.UpdateRoles("reader", []auth.Role{auth.RoleViewer})
 		req = httptest.NewRequest(http.MethodDelete, "/auth/roles/analyst", nil)
 		rec = httptest.NewRecorder()
-		server.handleRoleByID(rec, req)
+		server.handleRoles(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 	})
 
@@ -4666,7 +4666,7 @@ func TestAuthHandlers_BranchExpansion(t *testing.T) {
 
 		req = httptest.NewRequest(http.MethodPatch, "/auth/roles/role_src", strings.NewReader(`{"name":"role_dst"}`))
 		rec = httptest.NewRecorder()
-		server.handleRoleByID(rec, req)
+		server.handleRoles(rec, req)
 		require.Equal(t, http.StatusOK, rec.Code)
 
 		// role_src and role_dst are the roles src and dst (one role-name
@@ -4683,7 +4683,7 @@ func TestAuthHandlers_BranchExpansion(t *testing.T) {
 
 		req = httptest.NewRequest(http.MethodGet, "/auth/roles/role_dst", nil)
 		rec = httptest.NewRecorder()
-		server.handleRoleByID(rec, req)
+		server.handleRoles(rec, req)
 		require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
 	})
 

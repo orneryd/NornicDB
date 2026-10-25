@@ -34,6 +34,7 @@ func TestSnapshotOverlayQueryNodeVisibility(t *testing.T) {
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = tx.Rollback() })
 				read := b.GetQueryNode
+				readStored := b.GetStoredNode
 				switch source {
 				case "engine-overlay", "engine-retired":
 					require.NoError(t, tx.SetImplicit(true))
@@ -50,18 +51,24 @@ func TestSnapshotOverlayQueryNodeVisibility(t *testing.T) {
 				case "transaction-pending":
 					require.NoError(t, tx.UpdateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "after"}}))
 					read = tx.GetQueryNode
+					readStored = tx.GetStoredNode
 				case "transaction-connected":
 					require.NoError(t, tx.DeleteConnectedNode(id))
 					read = tx.GetQueryNode
+					readStored = tx.GetStoredNode
 				case "transaction-scan":
 					nodes, err := tx.AllNodes()
 					require.NoError(t, err)
 					require.Len(t, nodes, 1)
 					read = tx.GetQueryNode
+					readStored = tx.GetStoredNode
 				}
 				require.NoError(t, b.SetNodeManuallySuppressed(id, true))
 				for _, reveal := range []bool{false, true, false} {
 					b.SetRevealAll(reveal)
+					stored, storedErr := readStored(id)
+					require.NoError(t, storedErr, "integrity reads retain the physical body regardless of reveal")
+					require.Equal(t, id, stored.ID)
 					node, err := read(id)
 					if reveal {
 						require.NoError(t, err)

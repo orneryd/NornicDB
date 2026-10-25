@@ -19,6 +19,10 @@ import (
 // Uses BadgerDB's streaming backup which creates a consistent snapshot.
 // The backup file is a self-contained, portable copy of the database.
 func (b *BadgerEngine) Backup(path string) error {
+	// Every write acknowledged before the backup is in it.
+	if err := b.FlushWriteBehind(); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -73,35 +77,24 @@ var restoreReadDrainTimeout = 30 * time.Second
 // floors and sequence, schemas, caches, counts) is rebuilt from the restored
 // store before reads resume. The backfills then start again if the restored
 // store needs them.
-func (b *BadgerEngine) Restore(path string) error {
-	b.stopEdgeBetweenIndexBackfill()
-	b.stopLabelIndexBackfill()
-	restoreErr := b.restoreOffline(path)
-	return errors.Join(restoreErr, b.restartIndexBackfills())
-}
+func (b *BadgerEngine) Restore(path string) (restoreErr error) {
+	b.stopIndexBackfill(startupEdgeBetweenIndex)
+	b.stopIndexBackfill(startupLabelIndex)
+	defer func() { restoreErr = errors.Join(restoreErr, b.restartIndexBackfills()) }()
 
-// restartIndexBackfills starts the index backfills the store needs, as open
-// does. It holds the write barrier so Close, which stops the backfills before
-// taking it, can't run in between; a closed engine has nothing to backfill.
-func (b *BadgerEngine) restartIndexBackfills() error {
-	b.writeBarrier.RLock()
-	defer b.writeBarrier.RUnlock()
-	if b.ensureOpen() != nil {
-		return nil
+	lifecycle, err := b.beginLifecycleWrite("")
+	if err != nil {
+		if errors.Is(err, ErrStorageClosed) {
+			return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
+		}
+		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
-	return errors.Join(b.ensureEdgeBetweenIndex(), b.ensureLabelIndex())
-}
-
-// restoreOffline is Restore's work with writes and reads held off.
-func (b *BadgerEngine) restoreOffline(path string) error {
-	b.writeBarrier.Lock()
-	defer b.writeBarrier.Unlock()
+	defer lifecycle.finish()
 
 	b.mu.RLock()
-	closed := b.closed
 	db := b.db
 	b.mu.RUnlock()
-	if closed || db == nil {
+	if db == nil {
 		return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
 	}
 
@@ -121,6 +114,12 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 	}
 	b.InvalidatePendingEmbeddingsIndex()
 	if err := db.Load(bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
+	// The restored derived-count deltas are folded, as open folds them:
+	// the engine that took the backup numbered them, and a new delta
+	// reusing one's suffix would overwrite it.
+	if err := b.foldRestoredCountDeltas(db); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	loader := heldViewer{db: db}
@@ -157,6 +156,19 @@ func (b *BadgerEngine) restoreOffline(path string) error {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	return nil
+
+}
+
+// restartIndexBackfills starts the index backfills the store needs, as open
+// does. It holds the write barrier so Close, which stops the backfills before
+// taking it, can't run in between; a closed engine has nothing to backfill.
+func (b *BadgerEngine) restartIndexBackfills() error {
+	b.writeBarrier.RLock()
+	defer b.writeBarrier.RUnlock()
+	if b.ensureOpen(false) != nil {
+		return nil
+	}
+	return errors.Join(b.startIndexBackfill(startupEdgeBetweenIndex, initializeIndexBackfill), b.startIndexBackfill(startupLabelIndex, initializeIndexBackfill))
 }
 
 func backupEngine(engine Engine, path string) error {
@@ -174,8 +186,7 @@ func restoreEngine(engine Engine, path string) error {
 }
 
 func (b *BadgerEngine) invalidateCachesAfterRestore() {
-	b.nodeCacheMu.Lock()
-	b.nodeCacheGen.advance()
+	b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
 	b.nodeCache = make(map[NodeID]*Node, b.nodeCacheMaxEntries)
 	b.queryNodeCache = nil
 	b.nodeCacheMu.Unlock()
@@ -186,19 +197,16 @@ func (b *BadgerEngine) invalidateCachesAfterRestore() {
 	b.nodeBodyCacheBytes = 0
 	b.nodeBodyCacheMu.Unlock()
 
-	b.edgeTypeCacheMu.Lock()
-	b.edgeTypeCacheGen.advance()
+	b.edgeTypeCacheGen.lockInvalidation(&b.edgeTypeCacheMu)
 	b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
 	b.edgeTypeCacheMu.Unlock()
 
-	b.edgeCacheMu.Lock()
-	b.edgeCacheGen.advance()
+	b.edgeCacheGen.lockInvalidation(&b.edgeCacheMu)
 	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
 	b.edgeCacheVersions = nil
 	b.edgeCacheMu.Unlock()
 
-	b.adjCacheMu.Lock()
-	b.adjCacheGen.advance()
+	b.adjCacheGen.lockInvalidation(&b.adjCacheMu)
 	b.outgoingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
 	b.incomingAdjCache = make(map[NodeID][]EdgeID, b.adjCacheMaxNodes)
 	b.adjCacheMu.Unlock()
@@ -221,12 +229,17 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		return 0, 0, localizedError(localization.StorageClientDeletePrefixRequired(), nil)
 	}
 
-	if err := b.ensureOpen(); err != nil {
-		return 0, 0, err
-	}
-	// Runs after the lock below is released: the reset's consumers may write.
+	// Runs after the locks below are released: the reset's consumers may write.
 	var reset *commitNotification
 	defer func() { b.awaitCommitNotification(reset) }()
+	// Every write acknowledged before the delete is applied first, no write
+	// runs during it, and a transaction open across it that writes under the
+	// prefix fails its commit (beginLifecycleWrite).
+	lifecycle, err := b.beginLifecycleWrite(prefix)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer lifecycle.finish()
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
 
@@ -312,6 +325,8 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 		append([]byte{prefixEdgeBetweenHead}, prefixBytes...),
 		append([]byte{prefixPendingEmbed}, prefixBytes...),
 		append([]byte{prefixEmbedding}, prefixBytes...),
+		manualSuppressionKey(manualSuppressionNode, prefix),
+		manualSuppressionKey(manualSuppressionEdge, prefix),
 	}
 	if wholeNamespace {
 		dropPrefixes = append(dropPrefixes, labelCountNamespacePrefix(namespace))
@@ -324,9 +339,10 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	// Bulk deletion bypasses per-node marker writes. Invalidate even on a
 	// partial drop failure so future claims rebuild from the durable index.
 	defer b.InvalidatePendingEmbeddingsIndex()
-	if err := b.db.DropPrefix(dropPrefixes...); err != nil {
+	if err := b.db.DropPrefix(prefixDropOptions{}, dropPrefixes...); err != nil {
 		return 0, 0, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
+	b.dropManualSuppressions(prefix)
 	if err := b.deleteNamespaceKeyFamilies(prefixBytes, namespace, wholeNamespace, nodeNums, edgeNums); err != nil {
 		return 0, 0, err
 	}
@@ -459,8 +475,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	}
 
 	// Clear/adjust caches and cached counters.
-	b.nodeCacheMu.Lock()
-	b.nodeCacheGen.advance()
+	b.nodeCacheGen.lockInvalidation(&b.nodeCacheMu)
 	for id := range b.nodeCache {
 		if strings.HasPrefix(string(id), prefix) {
 			delete(b.nodeCache, id)
@@ -473,8 +488,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	}
 	b.nodeCacheMu.Unlock()
 
-	b.edgeTypeCacheMu.Lock()
-	b.edgeTypeCacheGen.advance()
+	b.edgeTypeCacheGen.lockInvalidation(&b.edgeTypeCacheMu)
 	b.edgeTypeCache = make(map[string][]*Edge, b.edgeTypeCacheMaxTypes)
 	b.edgeTypeCacheMu.Unlock()
 

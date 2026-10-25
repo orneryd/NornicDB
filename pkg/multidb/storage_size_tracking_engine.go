@@ -2,6 +2,7 @@ package multidb
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -334,8 +335,21 @@ func (t *sizeTrackingEngine) GetEdgeCurrentHead(id storage.EdgeID) (storage.MVCC
 func (t *sizeTrackingEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
-	if err := t.checkWrite("create_node", node, nil); err != nil {
-		return "", err
+	if t.checker != nil {
+		if err := t.checker.CheckWriteRate(); err != nil {
+			return "", err
+		}
+		if err := t.checker.CheckStorageLimits("create_node", node, nil); err != nil {
+			// Stored IDs remain occupied even when visibility hides the node.
+			// At capacity, defer an existing physical ID to storage so callers
+			// keep the v1.4.3 ErrAlreadyExists result instead of a quota error.
+			if !errors.Is(err, ErrStorageLimitExceeded) || node == nil {
+				return "", err
+			}
+			if _, storedErr := storage.GetStoredNode(t.Engine, node.ID); storedErr != nil {
+				return "", err
+			}
+		}
 	}
 	initialized, err := t.manager.storageSizeInitialized(t.dbName)
 	if err != nil {
@@ -437,33 +451,7 @@ func (t *sizeTrackingEngine) DeleteNode(id storage.NodeID) error {
 }
 
 func (t *sizeTrackingEngine) CreateEdge(edge *storage.Edge) error {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.checkWrite("create_edge", nil, edge); err != nil {
-		return err
-	}
-	initialized, err := t.manager.storageSizeInitialized(t.dbName)
-	if err != nil {
-		return err
-	}
-	if !initialized {
-		return t.Engine.CreateEdge(edge)
-	}
-	if err := t.Engine.CreateEdge(edge); err != nil {
-		return err
-	}
-	created, getErr := storage.GetStoredEdge(t.Engine, edge.ID)
-	if getErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	size, sizeErr := calculateEdgeSize(created)
-	if sizeErr != nil {
-		t.manager.markStorageSizeDirty(t.dbName)
-		return nil
-	}
-	t.manager.applyStorageSizeDelta(t.dbName, 0, size)
-	return nil
+	return t.BulkCreateEdges([]*storage.Edge{edge})
 }
 
 func (t *sizeTrackingEngine) UpdateEdge(edge *storage.Edge) error {
@@ -558,20 +546,79 @@ func (t *sizeTrackingEngine) BulkCreateNodes(nodes []*storage.Node) error {
 	return nil
 }
 
-// BulkCreateEdges is all-or-nothing like BulkCreateNodes: each relationship
-// goes through CreateEdge, and a rejected one removes the relationships this
-// batch already created.
+// BulkCreateEdges owns single and batch relationship admission and size
+// publication. A rejected item compensates only earlier physical creates,
+// retaining identical-hidden-ID no-ops and their existing stored bodies.
 func (t *sizeTrackingEngine) BulkCreateEdges(edges []*storage.Edge) error {
-	created := make([]storage.EdgeID, 0, len(edges))
+	// A single create has no earlier item to compensate and retains its allocation boundary.
+	var created []storage.EdgeID
+	if len(edges) > 1 {
+		created = make([]storage.EdgeID, 0, len(edges))
+	}
+	create := func(edge *storage.Edge) (bool, error) {
+		t.writeMu.Lock()
+		defer t.writeMu.Unlock()
+		if t.checker != nil {
+			if err := t.checker.CheckWriteRate(); err != nil {
+				return false, err
+			}
+			if err := t.checker.CheckStorageLimits("create_edge", nil, edge); err != nil {
+				// A physical-ID conflict cannot consume additional quota. Let the
+				// storage commit owner decide whether it is the one allowed no-op or
+				// ErrAlreadyExists. This fallback runs only when quota would reject,
+				// so fresh creates below quota retain their lookup-free path.
+				if !errors.Is(err, ErrStorageLimitExceeded) || edge == nil {
+					return false, err
+				}
+				if _, storedErr := storage.GetStoredEdge(t.Engine, edge.ID); storedErr != nil {
+					return false, err
+				}
+			}
+		}
+		beforeCount, beforeCountErr := t.Engine.EdgeCount()
+		initialized, err := t.manager.storageSizeInitialized(t.dbName)
+		if err != nil {
+			return false, err
+		}
+		if !initialized {
+			if err := t.Engine.CreateEdge(edge); err != nil {
+				return false, err
+			}
+			afterCount, afterCountErr := t.Engine.EdgeCount()
+			return !(beforeCountErr == nil && afterCountErr == nil && beforeCount == afterCount), nil
+		}
+		if err := t.Engine.CreateEdge(edge); err != nil {
+			return false, err
+		}
+		afterCount, afterCountErr := t.Engine.EdgeCount()
+		if beforeCountErr == nil && afterCountErr == nil && beforeCount == afterCount {
+			return false, nil
+		}
+		created, getErr := storage.GetStoredEdge(t.Engine, edge.ID)
+		if getErr != nil {
+			t.manager.markStorageSizeDirty(t.dbName)
+			return true, nil
+		}
+		size, sizeErr := calculateEdgeSize(created)
+		if sizeErr != nil {
+			t.manager.markStorageSizeDirty(t.dbName)
+			return true, nil
+		}
+		t.manager.applyStorageSizeDelta(t.dbName, 0, size)
+		return true, nil
+	}
 	for _, e := range edges {
-		if err := t.CreateEdge(e); err != nil {
+		wasCreated, err := create(e)
+		if err != nil {
 			if len(created) > 0 {
 				_ = t.Engine.BulkDeleteEdges(created)
 				t.manager.markStorageSizeDirty(t.dbName)
 			}
 			return err
 		}
-		created = append(created, e.ID)
+		if wasCreated && len(edges) > 1 {
+			created = append(created, e.ID)
+		}
 	}
 	return nil
 }

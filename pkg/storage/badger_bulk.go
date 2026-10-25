@@ -4,7 +4,6 @@ package storage
 import (
 	"fmt"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -17,43 +16,14 @@ import (
 // ErrAlreadyExists and nothing is written. Nodes of one call share a
 // namespace.
 func (b *BadgerEngine) BulkCreateNodes(nodes []*Node) error {
-	if len(nodes) > 0 && nodes[0] != nil {
-		if handled, err := b.inCaptureTransaction(string(nodes[0].ID), func(tx *BadgerTransaction) error {
-			for _, node := range nodes {
-				if _, err := tx.CreateNode(node); err != nil {
-					return err
-				}
-			}
-			return nil
-		}); handled {
-			return err
-		}
-	}
-	if err := b.ensureOpen(); err != nil {
-		return err
-	}
-	if len(nodes) == 0 {
-		return nil
-	}
-	for _, node := range nodes {
-		if node == nil {
-			return ErrInvalidData
-		}
-		if node.ID == "" {
-			return ErrInvalidID
-		}
-	}
-	if err := b.validateBulkNodeConstraints(nodes); err != nil {
-		return err
-	}
-	return b.inBulkTransaction(namespaceForNodeID(nodes[0].ID), func(tx *BadgerTransaction) error {
+	return createBulkEntities(b, nodes, func(node *Node) string { return string(node.ID) }, func() error { return b.validateBulkNodeConstraints(nodes) }, func(tx *BadgerTransaction) error {
 		for _, node := range nodes {
 			if _, err := tx.CreateNode(node); err != nil {
 				return err
 			}
 		}
 		return nil
-	})
+	}, nil)
 }
 
 // inBulkTransaction runs a bulk operation on namespace as one transaction,
@@ -171,35 +141,51 @@ func (b *BadgerEngine) validateBulkNodeConstraints(nodes []*Node) error {
 // any size (#703). An existing edge ID fails the call with ErrAlreadyExists,
 // a missing endpoint with ErrNotFound; nothing is written.
 func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
-	if len(edges) > 0 && edges[0] != nil {
-		if handled, err := b.inCaptureTransaction(string(edges[0].ID), func(tx *BadgerTransaction) error {
-			for _, edge := range edges {
-				if err := tx.CreateEdge(edge); err != nil {
-					return err
-				}
+	return createBulkEntities(b, edges, func(edge *Edge) string { return string(edge.ID) }, nil, func(tx *BadgerTransaction) error { return tx.BulkCreateEdges(edges) }, func(tx *BadgerTransaction) error {
+		for _, edge := range edges {
+			if err := tx.CreateEdge(edge); err != nil {
+				return err
 			}
-			return nil
-		}); handled {
+		}
+		return nil
+	})
+}
+
+// createBulkEntities owns capture routing, validation admission and the atomic
+// transaction boundary; each entity kind supplies only its constraints/writes.
+func createBulkEntities[T any](b *BadgerEngine, entities []*T, id func(*T) string, validate func() error, apply func(*BadgerTransaction) error, capture func(*BadgerTransaction) error) error {
+	var firstID string
+	if len(entities) > 0 && entities[0] != nil {
+		firstID = id(entities[0])
+		captureWrite := capture
+		if captureWrite == nil {
+			captureWrite = apply
+		}
+		if handled, err := b.inCaptureTransaction(firstID, captureWrite); handled {
 			return err
 		}
 	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
-	if len(edges) == 0 {
+	if len(entities) == 0 {
 		return nil
 	}
-	for _, edge := range edges {
-		if edge == nil {
+	for _, entity := range entities {
+		if entity == nil {
 			return ErrInvalidData
 		}
-		if edge.ID == "" {
+		if id(entity) == "" {
 			return ErrInvalidID
 		}
 	}
-	return b.inBulkTransaction(namespaceForEdgeID(edges[0].ID), func(tx *BadgerTransaction) error {
-		return tx.BulkCreateEdges(edges)
-	})
+	if validate != nil {
+		if err := validate(); err != nil {
+			return err
+		}
+	}
+	namespace, _, _ := ParseDatabasePrefix(firstID)
+	return b.inBulkTransaction(namespace, apply)
 }
 
 // ============================================================================
@@ -208,56 +194,14 @@ func (b *BadgerEngine) BulkCreateEdges(edges []*Edge) error {
 
 // GetInDegree returns the number of incoming edges to a node.
 func (b *BadgerEngine) GetInDegree(nodeID NodeID) int {
-	if nodeID == "" {
-		return 0
-	}
-	if b.ensureOpen() != nil {
-		return 0
-	}
-
-	prefix := b.incomingIndexPrefixString(nodeID)
-	if prefix == nil {
-		return 0
-	}
-	count := 0
-	_ = b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			count++
-		}
-		return nil
-	})
-
-	return count
+	count, _ := b.countByPrefix("", 0, nil, adjacencyCountRequest{nodeID: nodeID, incoming: true})
+	return int(count)
 }
 
 // GetOutDegree returns the number of outgoing edges from a node.
 func (b *BadgerEngine) GetOutDegree(nodeID NodeID) int {
-	if nodeID == "" {
-		return 0
-	}
-	if b.ensureOpen() != nil {
-		return 0
-	}
-
-	prefix := b.outgoingIndexPrefixString(nodeID)
-	if prefix == nil {
-		return 0
-	}
-	count := 0
-	_ = b.withView(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			count++
-		}
-		return nil
-	})
-
-	return count
+	count, _ := b.countByPrefix("", 0, nil, adjacencyCountRequest{nodeID: nodeID, incoming: false})
+	return int(count)
 }
 
 // ============================================================================

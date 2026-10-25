@@ -161,7 +161,7 @@ func TestProcedureCatalogMutationValidatesPayloadBeforeReuse(t *testing.T) {
 		valid   bool
 	}{
 		{"raw bytes", bytesFor(valid), true},
-		{"unsupported payload", 17, false},
+		{"unsupported payload", int64(17), false},
 		{"invalid msgpack", base64.StdEncoding.EncodeToString([]byte{0xc1}), false},
 		{"invalid definition", base64.StdEncoding.EncodeToString(bytesFor(persistedProcedureRecord{Name: "custom.Report", Mode: "INVALID", Body: "RETURN 1"})), false},
 		{"unrelated key payload", base64.StdEncoding.EncodeToString(bytesFor(persistedProcedureRecord{Name: "custom.Other", Mode: "READ", Body: "RETURN 1 AS v", Signature: "custom.Other() :: (v :: INTEGER)"})), false},

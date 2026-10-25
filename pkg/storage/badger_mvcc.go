@@ -1036,7 +1036,7 @@ func (b *BadgerEngine) AppendNodeVersion(node *Node, version MVCCVersion) error 
 			return err
 		}
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
-	})
+	}, writtenEntities{nodes: []NodeID{node.ID}})
 }
 
 func (b *BadgerEngine) AppendNodeTombstone(id NodeID, version MVCCVersion) error {
@@ -1045,7 +1045,7 @@ func (b *BadgerEngine) AppendNodeTombstone(id NodeID, version MVCCVersion) error
 			return err
 		}
 		return b.writeNodeMVCCHeadInTxn(txn, id, version, true)
-	})
+	}, writtenEntities{nodes: []NodeID{id}})
 }
 
 func (b *BadgerEngine) AppendEdgeVersion(edge *Edge, version MVCCVersion) error {
@@ -1057,7 +1057,7 @@ func (b *BadgerEngine) AppendEdgeVersion(edge *Edge, version MVCCVersion) error 
 			return err
 		}
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	})
+	}, writtenEntities{edges: []EdgeID{edge.ID}})
 }
 
 func (b *BadgerEngine) AppendEdgeTombstone(id EdgeID, version MVCCVersion) error {
@@ -1066,19 +1066,19 @@ func (b *BadgerEngine) AppendEdgeTombstone(id EdgeID, version MVCCVersion) error
 			return err
 		}
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, true)
-	})
+	}, writtenEntities{edges: []EdgeID{id}})
 }
 
 func (b *BadgerEngine) UpdateNodeCurrentHead(id NodeID, version MVCCVersion, tombstoned bool) error {
 	return b.withUpdate(func(txn *badger.Txn) error {
 		return b.writeNodeMVCCHeadInTxn(txn, id, version, tombstoned)
-	})
+	}, writtenEntities{nodes: []NodeID{id}})
 }
 
 func (b *BadgerEngine) UpdateEdgeCurrentHead(id EdgeID, version MVCCVersion, tombstoned bool) error {
 	return b.withUpdate(func(txn *badger.Txn) error {
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, tombstoned)
-	})
+	}, writtenEntities{edges: []EdgeID{id}})
 }
 
 func (b *BadgerEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
@@ -1532,10 +1532,19 @@ func nextScanStart(key []byte) []byte {
 	return append(append([]byte(nil), key...), 0x00)
 }
 
+// RebuildMVCCHeads rebuilds every MVCC head from the stored versions and
+// bodies. It replaces the heads wholesale, so it runs as a maintenance write
+// (beginMaintenanceWrite): no write runs across it, and every write-behind
+// commit acknowledged before it is applied first.
 func (b *BadgerEngine) RebuildMVCCHeads(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	lifecycle, err := b.beginMaintenanceWrite(nil)
+	if err != nil {
+		return err
+	}
+	defer lifecycle.finish()
 	if err := b.clearBadgerPrefix(ctx, prefixMVCCNodeHead); err != nil {
 		return err
 	}
@@ -2082,11 +2091,15 @@ func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOpti
 				backoff := 50 * time.Microsecond
 				for {
 					var keyDeleted int64
+					// Ordered after the entity's acknowledged write-behind commits:
+					// one not yet applied is drained first, so the prune reads the
+					// entity's latest head (a tombstone it would reclaim may have
+					// been written over), and none lands over it afterwards.
 					err = b.withUpdate(func(update *badger.Txn) error {
 						var pruneErr error
 						keyDeleted, pruneErr = b.pruneMVCCKeyspaceInTxn(ctx, update, previous, effectiveOpts, false)
 						return pruneErr
-					})
+					}, b.mvccLogicalEntities(previous))
 					if !errors.Is(err, badger.ErrConflict) {
 						deleted += keyDeleted
 						break

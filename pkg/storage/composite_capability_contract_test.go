@@ -184,6 +184,11 @@ func TestCompositeEvents_SharedEngineTranslatesEveryNamespace(t *testing.T) {
 	require.NoError(t, err)
 	require.ElementsMatch(t, []NodeID{"shared-a", "shared-b"}, created)
 
+	var updated []NodeID
+	composite.OnNodeUpdated(func(node *Node) { updated = append(updated, node.ID) })
+	require.NoError(t, nsA.UpdateNode(&Node{ID: "shared-a", Labels: []string{"Doc"}, Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, nsB.UpdateNode(&Node{ID: "shared-b", Labels: []string{"Other"}, Properties: map[string]any{"v": int64(3)}}))
+	require.ElementsMatch(t, []NodeID{"shared-a", "shared-b"}, updated)
 	var deleted []NodeID
 	composite.OnNodeDeleted(func(nodeID NodeID) { deleted = append(deleted, nodeID) })
 	require.NoError(t, nsB.DeleteNode("shared-b"))
@@ -197,4 +202,23 @@ func TestCompositeEvents_SharedEngineTranslatesEveryNamespace(t *testing.T) {
 	composite.OnEdgeCreated(func(edge *Edge) { createdEdges = append(createdEdges, edge.ID) })
 	require.NoError(t, nsB.CreateEdge(&Edge{ID: "shared-e", StartNode: "shared-b2", EndNode: "shared-b3", Type: "R"}))
 	require.Equal(t, []EdgeID{"shared-e"}, createdEdges)
+	var updatedEdges []EdgeID
+	composite.OnEdgeUpdated(func(edge *Edge) { updatedEdges = append(updatedEdges, edge.ID) })
+	require.NoError(t, nsB.UpdateEdge(&Edge{ID: "shared-e", StartNode: "shared-b2", EndNode: "shared-b3", Type: "R", Properties: map[string]any{"v": int64(4)}}))
+	require.Equal(t, []EdgeID{"shared-e"}, updatedEdges)
+	var deletedEdges []EdgeID
+	composite.OnEdgeDeleted(func(edgeID EdgeID) { deletedEdges = append(deletedEdges, edgeID) })
+	require.NoError(t, nsB.DeleteEdge("shared-e"))
+	require.Equal(t, []EdgeID{"shared-e"}, deletedEdges, "one shared constituent subscription, projected once")
+
+	outside := NewNamespacedEngine(nsA.GetInnerEngine(), "outside")
+	for _, id := range []NodeID{"x", "y"} {
+		_, err := outside.CreateNode(&Node{ID: id})
+		require.NoError(t, err)
+	}
+	require.NoError(t, outside.CreateEdge(&Edge{ID: "outside-e", StartNode: "x", EndNode: "y", Type: "R"}))
+	require.NoError(t, outside.DeleteEdge("outside-e"))
+	require.NoError(t, outside.DeleteNode("x"))
+	require.Equal(t, []NodeID{"shared-b"}, deleted, "an unregistered namespace cannot leak node deletions")
+	require.Equal(t, []EdgeID{"shared-e"}, deletedEdges, "an unregistered namespace cannot leak relationship deletions")
 }

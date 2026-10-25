@@ -73,20 +73,28 @@ func (b *CommitBuffer) deletedEntityIDs(kind bufferedEntityKind, visit func(stri
 
 // entityStateLocked resolves the first relevant state, newest generation
 // first. All point, boolean and overlay readers use this same decision.
-func (w *WriteBehindBuffer) entityStateLocked(kind bufferedEntityKind, id string) bufferedEntityState {
+func (w *WriteBehindBuffer) entityStateLocked(kind bufferedEntityKind, id string, read ...bufferedReadVisibility) bufferedEntityState {
 	if w == nil {
 		return bufferedEntityState{}
 	}
-	if state := w.active.entityState(kind, id); state.found {
-		return state
-	}
-	for i := len(w.draining) - 1; i >= 0; i-- {
-		buf := w.draining[i]
-		if state := buf.entityState(kind, id); state.found {
-			return state
+	state := w.active.entityState(kind, id)
+	if !state.found {
+		for i := len(w.draining) - 1; i >= 0; i-- {
+			state = w.draining[i].entityState(kind, id)
+			if state.found {
+				break
+			}
 		}
 	}
-	return bufferedEntityState{}
+	if !state.found || state.deleted || len(read) == 0 || read[0].visibility == storedRead || !read[0].engine.visibilityFiltered() {
+		return state
+	}
+	policy := read[0]
+	now := DecayScoringTime()
+	if (state.node != nil && policy.engine.hidesNode(policy.visibility, state.node, now)) || (state.edge != nil && policy.engine.hidesEdge(policy.visibility, state.edge, now)) {
+		return bufferedEntityState{found: true, deleted: true}
+	}
+	return state
 }
 
 // visitEntityOverlayLocked resolves each candidate only once. Enumeration

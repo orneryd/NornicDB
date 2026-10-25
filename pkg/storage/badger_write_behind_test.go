@@ -15,6 +15,9 @@ import (
 type writeBehindTestOptions struct {
 	dataDir string
 	wal     bool
+	// Existing callers keep the background write-behind worker by default.
+	synchronous bool
+	manualDrain bool
 }
 
 func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...writeBehindTestOptions) *BadgerEngine {
@@ -31,13 +34,17 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 	}
 	engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             opts.dataDir,
-		WriteBehind:         true,
+		WriteBehind:         !opts.synchronous,
 		WriteBehindInterval: interval,
 	}))
 	if engine != nil {
 		fixtureowner.OwnChecked(t, engine)
 	}
 	require.NoError(t, err)
+	if opts.manualDrain && engine.writeBehind != nil {
+		engine.writeBehind.SetDelayBounds(interval, interval)
+		engine.writeBehind.Close()
+	}
 	if opts.wal {
 		walCfg := DefaultWALConfig()
 		walCfg.Dir = filepath.Join(opts.dataDir, "wal")

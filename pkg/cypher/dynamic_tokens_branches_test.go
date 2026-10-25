@@ -214,9 +214,9 @@ func TestDynamicTokenBranches(t *testing.T) {
 	require.NoError(t, validateRemoveClauseScope(scope2, "REMOVE n:$('A'), n['k'], n.p"))
 
 	requireCode(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A) ON CREATE SET n[1] = 1"}, scope), "Neo.ClientError.Statement.SyntaxError")
-	_, _, err = exec.pipelineApplyRowDynamicMerge(cancelled, []pipelineRow{{"l": "L"}}, "MERGE (n:$(l) {k: 1})", "(n:$(l) {k: 1})")
+	_, _, err = exec.pipelineApplyMerge(cancelled, []pipelineRow{{"l": "L"}}, "MERGE (n:$(l) {k: 1})")
 	require.ErrorIs(t, err, context.Canceled)
-	_, _, err = exec.pipelineApplyRowDynamicMerge(ctx, []pipelineRow{{"l": int64(1)}}, "MERGE (n:$(l) {k: 1})", "(n:$(l) {k: 1})")
+	_, _, err = exec.pipelineApplyMerge(ctx, []pipelineRow{{"l": int64(1)}}, "MERGE (n:$(l) {k: 1})")
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
 
 	// Removing an absent property is a no-op even when the store rejects writes.

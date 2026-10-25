@@ -8,7 +8,7 @@ import (
 )
 
 // commitWriter writes one atomic commit of any size. The engine's own writes
-// (withUpdate, withUpdateUnits) and a transaction's commit
+// (withUpdate, commitEngineWrite repeatable units) and a transaction's commit
 // (BadgerTransaction.Commit) all go through it.
 //
 // Writes go in units through the embedded batchWriter. While they fit, they

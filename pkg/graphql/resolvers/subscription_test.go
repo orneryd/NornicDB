@@ -410,7 +410,8 @@ func TestSubscription_NodeUpdated_Integration(t *testing.T) {
 	case event := <-ch:
 		assert.Equal(t, "n1", event.ID)
 		props := map[string]interface{}(event.Properties)
-		assert.Equal(t, 30, props["age"])
+		assert.Equal(t, int64(30), props["age"])
+		assert.Equal(t, 30, node.Properties["age"], "event normalization must not modify the caller input")
 	case <-time.After(2 * time.Second):
 		t.Fatal("Subscription did not receive node updated event")
 	}

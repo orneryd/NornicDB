@@ -141,6 +141,6 @@ func (b *BadgerEngine) compactDeletedEntries() error {
 		return err
 	}
 	return recoverBadgerClosedPanic(func() error {
-		return b.db.DropPrefix(deleteCleanupMarkerKey)
+		return b.db.DropPrefix(prefixDropOptions{}, deleteCleanupMarkerKey)
 	})
 }

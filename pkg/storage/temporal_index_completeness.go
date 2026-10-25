@@ -113,25 +113,57 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 	if engine == nil || schema == nil {
 		return nil
 	}
+	badgerEngine, _ := UnwrapEngine(engine).(*BadgerEngine)
 	for _, c := range constraints {
 		if c.Type != ConstraintTemporal || c.EntityType == ConstraintEntityRelationship {
 			continue
 		}
-		empty, err := labelHasNoNodes(engine, c.Label)
-		if err != nil {
-			return err
-		}
-		if !empty {
-			badgerEngine, ok := UnwrapEngine(engine).(*BadgerEngine)
-			if !ok {
-				schema.markTemporalIndexCreated(c, false)
-				continue
-			}
-			if err := badgerEngine.backfillTemporalIndexForLabel(engine, c.Label); err != nil {
+		if badgerEngine == nil {
+			empty, err := labelHasNoNodes(engine, c.Label)
+			if err != nil {
 				return err
 			}
+			schema.markTemporalIndexCreated(c, empty)
+			continue
 		}
-		schema.markTemporalIndexCreated(c, true)
+		if err := func() error {
+
+			lifecycle, err := badgerEngine.beginMaintenanceWrite(engineScope(engine))
+			if err != nil {
+				return err
+			}
+			defer lifecycle.finish()
+			empty, err := labelHasNoNodes(engine, c.Label)
+			if err != nil {
+				return err
+			}
+			if !empty {
+				if err := badgerEngine.backfillTemporalIndexForLabel(engine, c.Label); err != nil {
+					return err
+				}
+			}
+			schema.markTemporalIndexCreated(c, true)
+			return nil
+
+		}(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// engineScope is the database a scoped wrapper of the engine serves, or nil
+// (the whole store) for an unscoped engine.
+func engineScope(engine Engine) []string {
+	for current := engine; current != nil; {
+		if scoped, ok := current.(interface{ Namespace() string }); ok {
+			return []string{scoped.Namespace()}
+		}
+		wrapper, ok := current.(EngineUnwrapper)
+		if !ok {
+			return nil
+		}
+		current = wrapper.GetInnerEngine()
 	}
 	return nil
 }
@@ -199,31 +231,11 @@ func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namesp
 	if !ok {
 		return nil, false, nil
 	}
-	prefix := temporalHistoryPrefix(target.desc)
 	var overlay []*Node
 	var touched map[NodeID]bool
-	err = b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = w.labelOverlayLocked(c.Label) }, func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			if ctx != nil {
-				if err := ctx.Err(); err != nil {
-					return err
-				}
-			}
-			id := extractNodeIDFromTemporalHistoryKey(it.Item().KeyCopy(nil), len(prefix))
-			if id == "" || touched[id] {
-				continue
-			}
-			stored, err := b.loadNodeForTemporalTxn(txn, id, false)
-			if err != nil {
-				return err
-			}
-			if stored != nil {
-				nodes = append(nodes, stored)
-			}
-		}
-		return nil
+	err = b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = b.bufferedLabelNodes(w, storedRead, c.Label) }, func(txn *badger.Txn) error {
+		_, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{ctx: ctx, touched: touched, latest: func(node *Node) (bool, error) { nodes = append(nodes, node); return true, nil }})
+		return err
 	})
 	for _, n := range overlay {
 		if namespace == "" || nodeIDInScope(n.ID, namespace+":") {

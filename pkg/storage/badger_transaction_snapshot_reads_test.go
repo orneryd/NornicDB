@@ -78,7 +78,7 @@ func TestTransactionIndexedLookupsReturnMatchingCandidateDecodeErrors(t *testing
 		}
 		return txn.Set(edgeKey(edgeID), []byte{0xff})
 	}))
-	engine.cacheDeleteNodeBody(nodeID)
+	engine.cacheDeleteNode(nodeID, nodeCacheBodyOnly)
 	engine.cacheDeleteEdge(edgeID)
 
 	reader, err := engine.BeginTransaction()

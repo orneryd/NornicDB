@@ -136,6 +136,21 @@ func (b *BadgerEngine) bufferedFlushMarkerExists(txID string) (bool, error) {
 // run every validation phase (constraints, snapshot isolation, connected
 // deletes) and holds the engine write barrier.
 func (tx *BadgerTransaction) commitBufferedLocked() error {
+	// The commit is acknowledged under its entities' write-order stripes, so
+	// a write of the same entities that commits to Badger itself
+	// (orderAfterBufferedCommits) falls wholly before or after it. They are
+	// taken first, as such a write takes them before any commit lock.
+	// A node it deletes is held exclusively, so no commit writing a
+	// relationship of that node is acknowledged alongside it.
+	var stripes, deletions orderStripeSet
+	stripes.operations(tx.operations)
+	deletions.deletions(tx.operations)
+	tx.engine.writeBehind.order.lockMixed(&stripes, &deletions)
+	defer tx.engine.writeBehind.order.unlockMixed(&stripes, &deletions)
+	if err := tx.revalidateEndpointsLocked(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
 	physicalOps := tx.physicalOperationsLocked()
 	if len(physicalOps) == 0 && len(tx.pendingWrites) == 0 && len(tx.pendingDeletes) == 0 {
 		tx.releaseSnapshotReaderLocked()
@@ -199,6 +214,14 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 	c.labelDeltas = tx.pendingLabelCountDeltas
 	c.edgeTypeDeltas = tx.pendingEdgeTypeCountDeltas
 	c.edgeTypeLabelDeltas = tx.pendingEdgeTypeLabelCountDeltas
+	// The overlay serves these bodies to every reader until the flush lands
+	// them, so they enter it as the image storage returns (as the synchronous
+	// commit publishes them).
+	if err := tx.engine.storeWrittenBodies(c.writes, c.ops); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
+
 	forecast := estimateBufferedCommitBytes(&c)
 	if forecast > maxBufferedWALPayloadBytes {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -294,6 +317,7 @@ func (b *BadgerEngine) replayWriteBehind(buf *CommitBuffer) error {
 // durable exactly when the data is — recovery at open skips any commit whose
 // marker exists.
 func (b *BadgerEngine) applyBufferedCommits(commits []bufferedCommit) error {
+	defer b.drainCommitNotifications()
 	return b.applyBufferedCommitsWithCountPublication(commits, nil)
 }
 
@@ -514,6 +538,11 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	// written node (cacheStoreNode) and invalidates per deleted node, the
 	// same protection the sync tail uses; clearing the whole cache here
 	// would only destroy warm entries and re-decode work for readers.
+	// The replay only queues its notifications: whoever retired the
+	// generation delivers them once it holds no lock (drainOne,
+	// applyBufferedCommits), so a listener that writes back never waits on a
+	// writer that waits for this replay.
+	held := b.holdPublication()
 	schemas := make(map[string]*SchemaManager, 1)
 	for _, c := range commits {
 		schema := schemas[c.namespace]
@@ -523,6 +552,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 		}
 		b.publishCommitOperations(c.namespace, schema, c.ops, c.recovered)
 	}
+	b.readyCommitNotification(held)
 	return nil
 }
 
@@ -654,12 +684,48 @@ func (b *BadgerEngine) applyWriteBehindCountDeltasLocked(label map[namespaceLabe
 }
 
 // FlushWriteBehind drains every buffered generation synchronously. It is a
-// no-op when write-behind is disabled.
+// no-op when write-behind is disabled. It holds the write barrier shared
+// while it drains, so Close does not release Badger under it (Close's own
+// final drain is admitted), and delivers the drained commits' notifications
+// once it released it, so no listener runs while a barrier waiter waits for
+// it.
 func (b *BadgerEngine) FlushWriteBehind() error {
 	if b.writeBehind == nil {
 		return nil
 	}
-	return b.writeBehind.Flush()
+	b.writeBarrier.RLock()
+	b.mu.RLock()
+	closed := b.closed
+	b.mu.RUnlock()
+	if closed {
+		b.writeBarrier.RUnlock()
+		if b.writeBehind.PendingOps() > 0 {
+			return ErrStorageClosed
+		}
+		return nil
+	}
+	gens := b.writeBehind.rotate(true)
+	// Every commit acknowledged before the flush is captured; the barrier
+	// goes before they are applied. The background worker applies a
+	// generation it claimed holding no barrier and then delivers its
+	// notifications: a flush waiting for it under the barrier would hold it
+	// across that generation's listeners.
+	b.writeBarrier.RUnlock()
+	err := b.writeBehind.flush(false, false)
+	b.drainCommitNotifications()
+	if err != nil {
+		return err
+	}
+	// A generation the background worker claimed is applied when flush
+	// returns, but the worker may still be delivering its notifications:
+	// wait for them, holding no lock, so every listener of a write
+	// acknowledged before the flush has run when it returns. A listener
+	// that flushes cannot wait on its own generation: it left the queue
+	// before its notifications were delivered.
+	for _, g := range gens {
+		<-g.Settled()
+	}
+	return nil
 }
 
 // writeBehindEnabled reports whether the buffer is active.

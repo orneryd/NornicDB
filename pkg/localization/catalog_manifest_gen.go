@@ -1972,6 +1972,7 @@ var CatalogManifest = [...]CatalogManifestEntry{
 	{ID: "storage.transaction.end_node_missing", Constructor: "StorageTransactionEndNodeMissing", Fields: []string{"NodeID"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.endpoint_deleted", Constructor: "StorageTransactionEndpointDeleted", Fields: []string{"NodeID"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.engine_closed", Constructor: "StorageTransactionEngineClosed", Fields: []string{}, PluralForms: []string{"other"}},
+	{ID: "storage.transaction.hidden_edge_identity_conflict", Constructor: "StorageTransactionHiddenEdgeIdentityConflict", Fields: []string{"EdgeID"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.id_namespace_required", Constructor: "StorageTransactionIDNamespaceRequired", Fields: []string{"ID"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.large_commit_unrecoverable", Constructor: "StorageTransactionLargeCommitUnrecoverable", Fields: []string{"Cause"}, PluralForms: []string{"other"}},
 	{ID: "storage.transaction.metadata_too_large", Constructor: "StorageTransactionMetadataTooLarge", Fields: []string{"Actual", "Maximum"}, PluralForms: []string{"other"}},

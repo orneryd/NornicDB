@@ -272,7 +272,12 @@ RETURN f.file_tags as file_tags, f.tags as tags
 		require.NotNil(t, node)
 		_, storedAsString := node.Properties["file_tags"].(string)
 		assert.False(t, storedAsString, "file_tags must not be stored as literal expression text")
-		storedFileTags, ok := node.Properties["file_tags"].([]interface{})
+		// Storage returns a list of strings as the typed slice its codec keeps.
+		var storedFileTags []interface{}
+		strs, ok := node.Properties["file_tags"].([]string)
+		for _, tag := range strs {
+			storedFileTags = append(storedFileTags, tag)
+		}
 		assert.True(t, ok, "stored file_tags should be list, got %T (%v)", node.Properties["file_tags"], node.Properties["file_tags"])
 		if ok {
 			assert.ElementsMatch(t, []interface{}{"existing", "hello"}, storedFileTags)

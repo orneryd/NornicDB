@@ -171,9 +171,13 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
-	db     *managedBadgerDB
-	mu     sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
-	closed bool
+	db      *managedBadgerDB
+	mu      sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
+	closed  bool
+	closing bool // write admission is closed before the final buffered drain
+	// prefixDrops records prefix deletes for the transactions open across
+	// them (prefixDroppedSince).
+	prefixDrops prefixDrops
 	// pendingCandidates accelerates the durable pending-embedding index. Adds
 	// are published by the common commit writer only after a successful commit.
 	pendingCandidates           pendingEmbeddingCandidates
@@ -409,6 +413,14 @@ type BadgerEngine struct {
 	manualSuppressionMu    sync.RWMutex
 	manualSuppressed       map[string]struct{}
 	manualSuppressionCount atomic.Int64
+
+	// suppressionEnds are the stored suppressions of deleted entities still
+	// to delete (endSuppressions, suppressionEnding while it runs), under
+	// manualSuppressionMu. suppressionWriteMu orders every write of a stored
+	// suppression.
+	suppressionEnds    map[string]struct{}
+	suppressionEnding  bool
+	suppressionWriteMu sync.Mutex
 
 	// labelCountWriteMu orders folds/rebuilds of the derived label counts
 	// against each other and keeps backup's count snapshot exclusive. Commit
@@ -1191,7 +1203,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	// Edge-between index backfill runs only after migrations have
 	// settled the body format. Failure here is non-fatal at open
 	// time — the index self-heals from the outgoing index on read.
-	if err := engine.ensureEdgeBetweenIndex(); err != nil {
+	if err := engine.startIndexBackfill(startupEdgeBetweenIndex, initializeIndexBackfill); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize edge-between index: %w", err)
 	}
@@ -1202,9 +1214,9 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	// so the walk runs at most once per store. Same non-fatal stance as
 	// the edge-between backfill — MATCH (n:Label) on an unrebuilt store
 	// reads the partial on-disk index until the goroutine finishes.
-	if err := engine.ensureLabelIndex(); err != nil {
-		engine.stopEdgeBetweenIndexBackfill()
-		engine.stopLabelIndexBackfill()
+	if err := engine.startIndexBackfill(startupLabelIndex, initializeIndexBackfill); err != nil {
+		engine.stopIndexBackfill(startupEdgeBetweenIndex)
+		engine.stopIndexBackfill(startupLabelIndex)
 		db.Close()
 		return nil, fmt.Errorf("failed to initialize label index: %w", err)
 	}
@@ -1220,6 +1232,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 			interval = 50 * time.Millisecond
 		}
 		engine.writeBehind = NewWriteBehindBuffer(interval, opts.WriteBehindMaxOps, engine.replayWriteBehind)
+		engine.writeBehind.setDispatch(engine.drainCommitNotifications)
 		engine.writeBehind.SetWarn(func(msg string) {
 			engine.log.Warn(msg, "subsystem", "storage")
 		})

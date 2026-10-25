@@ -147,7 +147,7 @@ func (b *BadgerEngine) persistSidecarBeforeManifest(node *Node) error {
 	if !strings.Contains(string(node.ID), ":") {
 		return localizedError(localization.StorageClientNodeIDNamespaceUnprefixed(string(node.ID)), nil)
 	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 
@@ -234,7 +234,7 @@ func (b *BadgerEngine) persistSidecarBeforeManifest(node *Node) error {
 	// The full-node cache may hold a copy without the new embedding state;
 	// drop it so the next read re-hydrates from the sidecar. Body cache and
 	// counts are untouched: the node record did not change.
-	b.cacheDeleteNode(node.ID)
+	b.cacheDeleteNode(node.ID, nodeCacheAllForms)
 	// Search indexes and listeners still need the updated node (mutation
 	// notification to the embedding queue keeps its own loop guard).
 	b.notifyNodeUpdated(node)

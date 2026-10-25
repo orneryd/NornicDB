@@ -160,7 +160,7 @@ func (s *Server) registerAuthRoutes(mux *http.ServeMux) {
 		{"/auth/users", auth.PermUserManage, s.handleUsers},
 		{"/auth/users/", auth.PermUserManage, s.handleUserByID},
 		{"/auth/roles", auth.PermAdmin, s.handleRoles},
-		{"/auth/roles/", auth.PermAdmin, s.handleRoleByID},
+		{"/auth/roles/", auth.PermAdmin, s.handleRoles},
 		{"/auth/access/databases", auth.PermAdmin, s.handleAccessDatabases},
 		{"/auth/access/privileges", auth.PermAdmin, s.handleAccessPrivileges},
 		{"/auth/entitlements", auth.PermRead, s.handleEntitlements},

@@ -132,6 +132,12 @@ type CommitBuffer struct {
 	// generation that reached the applied state retires its nodes from the
 	// index exactly once, whichever drain path reaches it first.
 	retired atomic.Bool
+
+	// settled is closed once the generation is applied and its
+	// notifications are delivered, or handed to the caller that drained it
+	// without dispatching (Settled).
+	settled    chan struct{}
+	settleOnce sync.Once
 }
 
 type labelSeenKey struct {
@@ -146,6 +152,7 @@ type typeSeenKey struct {
 
 func newCommitBuffer() *CommitBuffer {
 	return &CommitBuffer{
+		settled:        make(chan struct{}),
 		nodes:          make(map[NodeID]*Node),
 		edges:          make(map[EdgeID]*Edge),
 		deletes:        make(map[string]bufferedEntityKind),
@@ -230,6 +237,12 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 					b.edgesByType[op.Edge.Type] = append(b.edgesByType[op.Edge.Type], op.Edge.ID)
 				}
 				b.indexEdgeAdjacency(op.Edge)
+				if op.OldEdge != nil && op.OldEdge.ID == op.Edge.ID {
+					// Moving a relationship must shadow its durable adjacency
+					// at the endpoints it left, just as deleting it does: a
+					// read or a node delete's cascade there must not meet it.
+					b.indexEdgeAdjacency(op.OldEdge)
+				}
 				if op.Type == OpCreateEdge && !op.ReplacesExisting {
 					b.edgeCreateCount++
 				}
@@ -267,6 +280,20 @@ func (b *CommitBuffer) releaseDrain() {
 
 func (b *CommitBuffer) markApplied() {
 	b.applied.Store(true)
+}
+
+// Settled is closed once the generation is applied and its notifications
+// are delivered (or, for a drain that does not dispatch, handed to the
+// caller that drained it): a waiter that needs the generation's listeners
+// to have run before it continues waits on it, not on IsApplied.
+func (b *CommitBuffer) Settled() <-chan struct{} {
+	return b.settled
+}
+
+func (b *CommitBuffer) settle() {
+	if b.settled != nil {
+		b.settleOnce.Do(func() { close(b.settled) })
+	}
 }
 
 func (b *CommitBuffer) addNode(n *Node) {
@@ -356,7 +383,10 @@ func (b *CommitBuffer) getEdge(id EdgeID) (*Edge, bool, bool) {
 // generations. Apply is injected so the replay destination (Badger) stays a
 // detail of the caller.
 type WriteBehindBuffer struct {
-	mu           sync.RWMutex
+	mu sync.RWMutex
+	// order orders the writes that commit to Badger themselves after the
+	// commits acknowledged before them (orderAfterBufferedCommits).
+	order        writeOrder
 	readScopes   sync.Map
 	readEpoch    atomic.Uint64
 	readTracking bool
@@ -367,6 +397,10 @@ type WriteBehindBuffer struct {
 	interval time.Duration
 	maxOps   int
 	apply    func(*CommitBuffer) error
+	// dispatch delivers the notifications a replay queued. A drain calls
+	// it once it released its claim on the generation, unless its caller
+	// holds write-order stripes and delivers them itself.
+	dispatch func()
 
 	// Adaptive sizing: draining a generation is deterministic — a drain of
 	// size S at throughput R takes S/R — so the size threshold that rotates
@@ -604,17 +638,19 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 
 // rotate moves the active generation into draining and installs a fresh one.
 // It is O(1); writers immediately continue on the new generation.
-func (w *WriteBehindBuffer) rotate() {
+func (w *WriteBehindBuffer) rotate(capture ...bool) []*CommitBuffer {
 	w.mu.Lock()
-	if w.opCount == 0 {
-		w.mu.Unlock()
-		return
+	defer w.mu.Unlock()
+	if w.opCount != 0 {
+		w.active.ops = w.opCount
+		w.draining = append(w.draining, w.active)
+		w.active = newCommitBuffer()
+		w.opCount = 0
 	}
-	w.active.ops = w.opCount
-	w.draining = append(w.draining, w.active)
-	w.active = newCommitBuffer()
-	w.opCount = 0
-	w.mu.Unlock()
+	if len(capture) > 0 && capture[0] {
+		return append([]*CommitBuffer(nil), w.draining...)
+	}
+	return nil
 }
 
 // targetSizeLocked returns the current size threshold. Caller holds w.mu.
@@ -657,11 +693,11 @@ func (w *WriteBehindBuffer) run() {
 			return
 		case <-timer.C:
 			w.rotate()
-			w.drainOne()
+			w.drainOne(true, nil)
 			reset()
 		case <-w.flushCh:
 			w.rotate()
-			w.drainOne()
+			w.drainOne(true, nil)
 			if !timer.Stop() {
 				select {
 				case <-timer.C:
@@ -673,11 +709,15 @@ func (w *WriteBehindBuffer) run() {
 	}
 }
 
-// drainOne replays the oldest draining generation, if any.
-func (w *WriteBehindBuffer) drainOne() {
+// drainOne replays the oldest draining generation, if any, and none once
+// until (when set) is retired. dispatch delivers the notifications the
+// replay queued once the generation is retired and the claim released, so a
+// listener that writes back never waits on a writer that waits for this
+// generation.
+func (w *WriteBehindBuffer) drainOne(dispatch bool, until *CommitBuffer) {
 	w.mu.RLock()
 	buf := (*CommitBuffer)(nil)
-	if len(w.draining) > 0 {
+	if len(w.draining) > 0 && (until == nil || slices.Contains(w.draining, until)) {
 		buf = w.draining[0]
 	}
 	w.mu.RUnlock()
@@ -686,11 +726,35 @@ func (w *WriteBehindBuffer) drainOne() {
 	}
 	if buf.IsApplied() {
 		w.removeDrained(buf)
+		// Applied with no drain holding its claim (outside the drain loop,
+		// its claim released): no drain will deliver or settle it, and a
+		// flush delivers what it queued before it waits on it. A drain still
+		// holding the claim settles it once its notifications are delivered.
+		if !buf.draining.Load() {
+			buf.settle()
+		}
 		return
 	}
 	if !buf.claimDrain() {
 		return // another flusher (or Flush) is applying it
 	}
+	settled := false
+	defer func() {
+		if dispatch {
+			w.mu.RLock()
+			deliver := w.dispatch
+			w.mu.RUnlock()
+			if deliver != nil {
+				deliver()
+			}
+		}
+		// The generation settles after the notifications it queued are
+		// delivered; a drain that does not dispatch hands them to its
+		// caller, which holds them until its own publication point.
+		if settled {
+			buf.settle()
+		}
+	}()
 	if w.apply != nil {
 		start := time.Now()
 		err := w.apply(buf)
@@ -733,6 +797,7 @@ func (w *WriteBehindBuffer) drainOne() {
 	w.setLastErr(nil) // this generation applied; a prior failure is resolved
 	buf.markApplied()
 	w.removeDrained(buf)
+	settled = true
 }
 
 func (w *WriteBehindBuffer) setLastErr(err error) {
@@ -899,19 +964,41 @@ func (w *WriteBehindBuffer) nodeSupersededLocked(id NodeID) bool {
 }
 
 // Flush rotates the active generation and drains every generation
-// synchronously. It retries failed applies; if no generation makes progress
-// for ~2s it returns the last apply error.
+// synchronously, delivering their notifications. It retries failed applies
+// and waits for a generation another drain is applying; if no generation
+// makes progress for ~2s after an apply failed, it returns that error.
 func (w *WriteBehindBuffer) Flush() error {
+	return w.flush(true, false)
+}
+
+// flush is Flush. dispatch false leaves the notifications of the commits it
+// replays to the caller; frontier true returns once the generations rotated
+// before it started are retired, without chasing later ones: the write order
+// (orderAfterBufferedCommits) holds the stripes of the caller's entities, so
+// no commit of theirs enters a later generation.
+func (w *WriteBehindBuffer) flush(dispatch, frontier bool) error {
 	w.rotate()
 	w.signal()
+	var last *CommitBuffer
+	if frontier {
+		w.mu.RLock()
+		if n := len(w.draining); n > 0 {
+			last = w.draining[n-1]
+		}
+		w.mu.RUnlock()
+		if last == nil {
+			return nil
+		}
+	}
 	lastPending := -1
 	stalls := 0
 	for {
-		w.drainOne()
+		w.drainOne(dispatch, last)
 		w.mu.RLock()
 		pending := len(w.draining)
+		done := pending == 0 || (last != nil && !slices.Contains(w.draining, last))
 		w.mu.RUnlock()
-		if pending == 0 {
+		if done {
 			return nil
 		}
 		if pending == lastPending {
@@ -921,7 +1008,12 @@ func (w *WriteBehindBuffer) Flush() error {
 		}
 		lastPending = pending
 		if stalls > 2000 {
-			return w.LastErr()
+			if err := w.LastErr(); err != nil {
+				return err
+			}
+			// Another drain may still be applying a claimed generation:
+			// without an apply error, its absence is not completion.
+			stalls = 0
 		}
 		time.Sleep(time.Millisecond)
 	}
@@ -1504,4 +1596,12 @@ func (w *WriteBehindBuffer) sizingWarningLocked() string {
 			w.maxDelay, w.drainDur)
 	}
 	return ""
+}
+
+// setDispatch installs the engine callback before the empty buffer is published.
+// Timer drains may already run, so both installation and reads use mu.
+func (w *WriteBehindBuffer) setDispatch(dispatch func()) {
+	w.mu.Lock()
+	w.dispatch = dispatch
+	w.mu.Unlock()
 }

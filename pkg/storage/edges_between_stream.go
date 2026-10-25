@@ -3,6 +3,7 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -62,7 +63,7 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 	var suppressed map[EdgeID]struct{}
 	var sourceDeleted, targetDeleted bool
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-		live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(startID, endID)
+		live, suppressed, sourceDeleted, targetDeleted = b.bufferedEdgesBetween(w, visibleRead, startID, endID)
 	})
 	if err != nil {
 		return nil, err
@@ -107,7 +108,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 	if match == nil {
 		return nil, ErrInvalidData
 	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return nil, err
 	}
 	startNum, startOK := b.idDict.lookupNodeNumID(startID)
@@ -270,7 +271,7 @@ func (n *NamespacedEngine) MatchEdgesBetween(startID, endID NodeID, edgeType str
 			return false
 		}
 		candidate = *edge
-		candidate.ID = n.unprefixEdgeID(edge.ID)
+		candidate.ID = EdgeID(strings.TrimPrefix(string(edge.ID), n.scope))
 		candidate.StartNode, candidate.EndNode = startID, endID
 		return match(&candidate)
 	})

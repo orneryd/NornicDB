@@ -34,51 +34,45 @@ func (e *inlineEmbeddingTestEmbedder) Model() string   { return e.model }
 func (e *inlineEmbeddingTestEmbedder) Dimensions() int { return e.dims }
 func (e *inlineEmbeddingTestEmbedder) Backend() string { return "cpu" } // Plan 04-05 D-06
 
-func TestWithEmbedding_CreateMutation(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(store)
-	exec.SetEmbedder(&inlineEmbeddingTestEmbedder{model: "test-inline", dims: 3})
-
-	ctx := context.Background()
-	res, err := exec.Execute(ctx, "CREATE (n:Doc {id:'d1', content:'hello world'}) WITH EMBEDDING RETURN count(n) AS c", nil)
-	require.NoError(t, err)
-	require.Len(t, res.Rows, 1)
-
-	nodes, err := store.GetNodesByLabel("Doc")
-	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	require.NotEmpty(t, nodes[0].ChunkEmbeddings)
-	require.NotNil(t, nodes[0].EmbedMeta)
-	require.Equal(t, true, nodes[0].EmbedMeta["has_embedding"])
-	require.Equal(t, "test-inline", nodes[0].EmbedMeta["embedding_model"])
-	require.Equal(t, 3, nodes[0].EmbedMeta["embedding_dimensions"])
-	// Where each chunk lies in the node's string properties (#1060).
-	spans, ok := embeddingutil.StoredChunkSpans(nodes[0].EmbedMeta)
-	require.True(t, ok)
-	require.NotEmpty(t, spans)
-	for _, span := range spans {
-		require.Contains(t, []string{"content", "id"}, span.Property)
-	}
-}
-
-func TestWithEmbedding_MultiCreateMutation(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	store := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(store)
-	exec.SetEmbedder(&inlineEmbeddingTestEmbedder{model: "test-inline", dims: 3})
-
-	ctx := context.Background()
-	_, err := exec.Execute(ctx, "CREATE (a:Doc {id:'a1', content:'alpha text'}), (b:Doc {id:'b1', content:'beta text'}) WITH EMBEDDING RETURN count(*) AS created", nil)
-	require.NoError(t, err)
-
-	nodes, err := store.GetNodesByLabel("Doc")
-	require.NoError(t, err)
-	require.Len(t, nodes, 2)
-	for _, n := range nodes {
-		require.NotEmpty(t, n.ChunkEmbeddings)
-		require.NotNil(t, n.EmbedMeta)
-		require.Equal(t, true, n.EmbedMeta["has_embedding"])
+func TestWithEmbedding_CreateMutations(t *testing.T) {
+	for _, tc := range []struct {
+		name, statement string
+		count           int
+		detailed        bool
+	}{
+		{name: "single", statement: "CREATE (n:Doc {id:'d1', content:'hello world'}) WITH EMBEDDING RETURN count(n) AS c", count: 1, detailed: true},
+		{name: "multiple", statement: "CREATE (a:Doc {id:'a1', content:'alpha text'}), (b:Doc {id:'b1', content:'beta text'}) WITH EMBEDDING RETURN count(*) AS created", count: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := newTestMemoryEngine(t)
+			store := storage.NewNamespacedEngine(base, "test")
+			exec := NewStorageExecutor(store)
+			exec.SetEmbedder(&inlineEmbeddingTestEmbedder{model: "test-inline", dims: 3})
+			res, err := exec.Execute(context.Background(), tc.statement, nil)
+			require.NoError(t, err)
+			if tc.detailed {
+				require.Len(t, res.Rows, 1)
+			}
+			nodes, err := store.GetNodesByLabel("Doc")
+			require.NoError(t, err)
+			require.Len(t, nodes, tc.count)
+			for _, node := range nodes {
+				require.NotEmpty(t, node.ChunkEmbeddings)
+				require.NotNil(t, node.EmbedMeta)
+				require.Equal(t, true, node.EmbedMeta["has_embedding"])
+				if !tc.detailed {
+					continue
+				}
+				require.Equal(t, "test-inline", node.EmbedMeta["embedding_model"])
+				require.EqualValues(t, 3, node.EmbedMeta["embedding_dimensions"])
+				spans, ok := embeddingutil.StoredChunkSpans(node.EmbedMeta)
+				require.True(t, ok)
+				require.NotEmpty(t, spans)
+				for _, span := range spans {
+					require.Contains(t, []string{"content", "id"}, span.Property)
+				}
+			}
+		})
 	}
 }
 

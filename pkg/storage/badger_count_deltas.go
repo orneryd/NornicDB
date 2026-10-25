@@ -294,7 +294,21 @@ func (b *BadgerEngine) foldCountDeltasOn(view func(func(*badger.Txn) error) erro
 // transaction fold for reads past the fold threshold, where a single pair
 // may hold hundreds of thousands of deltas.
 func (b *BadgerEngine) foldCountDeltasChunked(kind byte, baseKey func(string, string) []byte, namespace, name string) error {
-	return b.foldCountDeltasOn(b.withView, b.withUpdate, kind, baseKey, namespace, name)
+	return b.foldCountDeltasOn(b.withView, func(fn func(*badger.Txn) error) error { return b.withUpdate(fn) }, kind, baseKey, namespace, name)
+}
+
+// foldRestoredCountDeltas folds every derived-count delta a restore loaded,
+// past the restore's read hold.
+func (b *BadgerEngine) foldRestoredCountDeltas(db *managedBadgerDB) error {
+	b.labelCountWriteMu.Lock()
+	err := b.foldCountDeltasOn(db.viewHeld, db.updateHeld, countDeltaKindLabel, labelCountKey, "", "")
+	b.labelCountWriteMu.Unlock()
+	if err != nil {
+		return err
+	}
+	b.edgeTypeCountWriteMu.Lock()
+	defer b.edgeTypeCountWriteMu.Unlock()
+	return b.foldCountDeltasOn(db.viewHeld, db.updateHeld, countDeltaKindEdgeType, edgeTypeCountKey, "", "")
 }
 
 // readDerivedCountInTxn reads one persisted base count (0 when absent).

@@ -371,143 +371,83 @@ func temporalOverlapViolation(c Constraint, spec temporalKeySpec, existing *Node
 	return nil
 }
 
-// legacyScanForTemporalOverlapInTxn scans every node of c.Label in namespace
-// for an interval overlapping [start, end) under the same grouping key. It is
-// the fallback when no temporal history index entries exist for the key.
-func (b *BadgerEngine) legacyScanForTemporalOverlapInTxn(txn *badger.Txn, namespace string, c Constraint, keyValue interface{}, start time.Time, end time.Time, hasEnd bool, excludeNodeID NodeID) error {
-	runTemporalConstraintScanHook()
+// temporalOverlapScan selects coverage, never a different equality or interval
+// contract. Explicit label coverage also supplies the complete-scan test oracle.
+type temporalOverlapScan uint8
+
+const (
+	temporalOverlapIndexed temporalOverlapScan = iota
+	temporalOverlapFullLabel
+)
+
+// scanForTemporalOverlapInTxn selects complete coverage for this key: indexed
+// neighbours only when disjoint scalar histories permit them, complete indexed
+// histories for canonical list keys, and the canonical label reader when an
+// index cannot establish completeness. Every route shares body decoding and
+// the same interval/equality violation owner.
+func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace string, c Constraint, keyValue interface{}, start, end time.Time, hasEnd bool, excludeNodeID NodeID, mode ...temporalOverlapScan) error {
 	spec, ok := splitTemporalKeySpec(c.Properties)
 	if !ok {
 		return nil
+	}
+	constraint := Constraint{Type: ConstraintTemporal, Label: c.Label, Properties: c.Properties}
+	target := temporalRefreshTarget{constraint: constraint, desc: makeTemporalDescriptor(namespace, constraint, keyValue), keyValue: keyValue}
+	prefix := temporalHistoryPrefix(target.desc)
+	fullLabel := len(mode) > 0 && mode[0] == temporalOverlapFullLabel
+	list := spec.listBearing(keyValue)
+	if !fullLabel {
+		if list {
+			fullLabel = b.writeBehindEnabled() || !b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint)
+		} else {
+			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+			it.Rewind()
+			hasHistory := it.Valid()
+			it.Close()
+			if !hasHistory {
+				if !b.writeBehindEnabled() && b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
+					return nil
+				}
+				fullLabel = true
+			}
+		}
 	}
 	interval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
-	label := c.Label
-	prefix := labelIndexPrefix(label)
-	iter := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	defer iter.Close()
-
-	labelLen := len(label)
-	nsPrefix := namespace + ":"
-	for iter.Seek(prefix); iter.ValidForPrefix(prefix); iter.Next() {
-		key := iter.Item().KeyCopy(nil)
-		nodeNum, ok := extractNodeNumIDFromLabelIndex(key, labelLen)
-		if !ok {
-			continue
-		}
-		nodeID, ok := b.idDict.lookupNodeIDByNum(nodeNum)
-		if !ok || nodeID == "" || nodeID == excludeNodeID {
-			continue
-		}
-		if !strings.HasPrefix(string(nodeID), nsPrefix) {
-			continue
-		}
-
-		item, err := txn.Get(nodeKey(nodeID))
-		if err != nil {
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				continue
-			}
-			return err
-		}
-
-		var nodeBytes []byte
-		if err := item.Value(func(val []byte) error {
-			nodeBytes = append([]byte{}, val...)
-			return nil
-		}); err != nil {
-			return err
-		}
-
-		existingNode, err := b.decodeNode(namespace, nodeBytes)
-		if err != nil {
-			return err
-		}
-		if err := temporalOverlapViolation(c, spec, existingNode, keyValue, interval); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// scanForTemporalOverlapInTxn checks the interval [start, end) for keyValue
-// against the temporal history index (its two neighbours by start time), or
-// falls back to a label scan when the key has no indexed history yet.
-func (b *BadgerEngine) scanForTemporalOverlapInTxn(txn *badger.Txn, namespace string, c Constraint, keyValue interface{}, start time.Time, end time.Time, hasEnd bool, excludeNodeID NodeID) error {
-	spec, ok := splitTemporalKeySpec(c.Properties)
-	if !ok {
-		return nil
-	}
-	constraint := Constraint{
-		Type:       ConstraintTemporal,
-		Label:      c.Label,
-		Properties: c.Properties,
-	}
-	target := temporalRefreshTarget{
-		constraint: constraint,
-		desc:       makeTemporalDescriptor(namespace, constraint, keyValue),
-		keyValue:   keyValue,
-	}
-	prefix := temporalHistoryPrefix(target.desc)
-	if spec.listBearing(keyValue) {
-		if b.writeBehindEnabled() || !b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
-			return b.legacyScanForTemporalOverlapInTxn(txn, namespace, constraint, keyValue, start, end, hasEnd, excludeNodeID)
-		}
-		// Canonical list keys may merge valid old-format histories that overlap.
-		// Completeness does not establish the disjointness needed by neighbours.
-		interval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
+	if fullLabel {
+		runTemporalConstraintScanHook()
+		it := b.newNodeIndexReader(txn, namespace+":", labelIndexPrefix(c.Label), "")
 		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			id := extractNodeIDFromTemporalHistoryKey(it.Item().Key(), len(prefix))
-			if id == "" || id == excludeNodeID {
+		for it.Next() {
+			id := it.NodeID()
+			if id == excludeNodeID {
 				continue
 			}
-			holder, err := b.loadNodeForTemporalTxn(txn, id, false)
+			node, err := b.loadNodeForTemporalTxn(txn, id, false)
 			if err != nil {
 				return err
 			}
-			if err := temporalOverlapViolation(constraint, spec, holder, keyValue, interval); err != nil {
+			if err := temporalOverlapViolation(constraint, spec, node, keyValue, interval); err != nil {
 				return err
 			}
 		}
-		return nil
+		return it.Err()
 	}
-	hasIndexedEntries := false
-	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	for it.Rewind(); it.Valid(); it.Next() {
-		hasIndexedEntries = true
-		break
+	if list {
+		historyConstraint := constraint
+		_, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{excludeNodeID: excludeNodeID, latest: func(node *Node) (bool, error) {
+			err := temporalOverlapViolation(historyConstraint, spec, node, keyValue, interval)
+			return err == nil, err
+		}})
+		return err
 	}
-	it.Close()
-	if !hasIndexedEntries {
-		// With a complete index, a key without history has no stored node to
-		// overlap; only an incomplete one needs the label scan (#1126).
-		// Under write-behind a buffered node has no entries yet, so only a
-		// synchronous engine may skip the scan.
-		if !b.writeBehindEnabled() && b.temporalIndexAuthoritative(b.GetSchemaForNamespace(namespace), constraint) {
-			return nil
-		}
-		return b.legacyScanForTemporalOverlapInTxn(txn, namespace, constraint, keyValue, start, end, hasEnd, excludeNodeID)
-	}
-
-	prevNode, nextNode, err := b.temporalAdjacentNodesInTxn(txn, target, start, excludeNodeID)
+	previous, next, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: start, excludeNodeID: excludeNodeID, adjacent: true})
 	if err != nil {
 		return err
 	}
-	interval := temporalInterval{start: start, end: end, hasEnd: hasEnd}
-	for _, neighbour := range []*Node{prevNode, nextNode} {
-		if neighbour == nil {
-			continue
-		}
-		if _, _, _, _, ok := temporalNodeState(neighbour, constraint); !ok {
-			continue
-		}
-		if err := temporalOverlapViolation(constraint, spec, neighbour, keyValue, interval); err != nil {
+	for _, node := range []*Node{previous, next} {
+		if err := temporalOverlapViolation(constraint, spec, node, keyValue, interval); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 

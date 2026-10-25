@@ -9,6 +9,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// runPublicationTransaction stages through the same transaction owner for
+// synchronous writes and the asynchronous commits used to observe listener
+// publication. Staging completes before the asynchronous commit starts.
+func runPublicationTransaction(engine interface {
+	BeginTransaction() (*BadgerTransaction, error)
+}, implicit bool, write func(*BadgerTransaction) error, result chan<- error) error {
+	tx, err := engine.BeginTransaction()
+	if err != nil {
+		return err
+	}
+	if implicit {
+		if err := tx.SetImplicit(true); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	if err := write(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if result != nil {
+		go func() { result <- tx.Commit() }()
+		return nil
+	}
+	return tx.Commit()
+}
+
 func TestBadgerTransaction_PublicationBeforeReentrantListener(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
@@ -52,23 +79,21 @@ func TestBadgerTransaction_ListenerOrderAndSnapshotUnderReentry(t *testing.T) {
 		observed = append(observed, node.Properties["value"].(string))
 		mu.Unlock()
 	})
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "review:ordered", Properties: map[string]any{"value": "first"}})
-	require.NoError(t, err)
 	done := make(chan error, 1)
-	go func() { done <- tx.Commit() }()
+	require.NoError(t, runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error {
+		_, err := tx.CreateNode(&Node{ID: "review:ordered", Properties: map[string]any{"value": "first"}})
+		return err
+	}, done))
 	select {
 	case <-entered:
 	case <-time.After(time.Second):
 		close(release)
 		t.Fatal("listener did not start")
 	}
-	update, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, update.UpdateNode(&Node{ID: "review:ordered", Properties: map[string]any{"value": "second"}}))
 	updated := make(chan error, 1)
-	go func() { updated <- update.Commit() }()
+	require.NoError(t, runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error {
+		return tx.UpdateNode(&Node{ID: "review:ordered", Properties: map[string]any{"value": "second"}})
+	}, updated))
 	select {
 	case err := <-updated:
 		require.NoError(t, err)

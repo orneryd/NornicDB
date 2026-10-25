@@ -1,5 +1,7 @@
 package storage
 
+import "sync"
+
 // A commit reserves its notification position while publishing, then becomes
 // ready after storage locks and the database's quota/accounting lease release.
 // A reentrant write enqueues behind its caller instead of waiting for itself.
@@ -9,8 +11,11 @@ type commitNotification struct {
 	reset *string
 	// consumed, when set, is closed once the notification was dispatched.
 	consumed chan struct{}
-	ready    bool
-	next     *commitNotification
+	// pooled marks a publication hold, returned to publicationHolds once it
+	// was dispatched; its holder no longer refers to it after completing it.
+	pooled bool
+	ready  bool
+	next   *commitNotification
 }
 
 // A direct event keeps its one-operation backing store with the queue entry.
@@ -72,6 +77,32 @@ func (b *BadgerEngine) queueCommitOperations(ops []Operation, direct *Operation)
 		n = &commitNotification{}
 	}
 	n.ops = ops
+	n = b.queueCommitNotification(n)
+	if direct != nil {
+		b.completeCommitNotification(n)
+	}
+	return n
+}
+
+// holdPublication reserves a place in the notification order that delivers
+// nothing; the notifications queued behind it are delivered once it is
+// completed. A write ordered after the write-behind buffer holds one from its
+// write barrier until it released every lock it took, and a replay holds one
+// while it publishes the commits it applied, so no listener runs on a
+// goroutine that holds a write-order stripe or the commit gate, or that such
+// a goroutine waits for. Without write-behind there is nothing to hold.
+func (b *BadgerEngine) holdPublication() *commitNotification {
+	if b.writeBehind == nil {
+		return nil
+	}
+	n := publicationHolds.Get().(*commitNotification)
+	n.pooled = true
+	return b.queueCommitNotification(n)
+}
+
+var publicationHolds = sync.Pool{New: func() any { return new(commitNotification) }}
+
+func (b *BadgerEngine) queueCommitNotification(n *commitNotification) *commitNotification {
 	b.notificationMu.Lock()
 	b.notifyWG.Add(1)
 	if b.notificationTail == nil {
@@ -81,9 +112,6 @@ func (b *BadgerEngine) queueCommitOperations(ops []Operation, direct *Operation)
 	}
 	b.notificationTail = n
 	b.notificationMu.Unlock()
-	if direct != nil {
-		b.completeCommitNotification(n)
-	}
 	return n
 }
 
@@ -125,11 +153,25 @@ func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool) {
 }
 
 func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
+	if b.readyCommitNotification(n) {
+		b.drainCommitNotifications()
+	}
+}
+
+func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
 	if n == nil {
-		return
+		return false
 	}
 	b.notificationMu.Lock()
 	n.ready = true
+	b.notificationMu.Unlock()
+	return true
+}
+
+// drainCommitNotifications delivers the ready notifications at the head of
+// the order, unless another goroutine is delivering them already.
+func (b *BadgerEngine) drainCommitNotifications() {
+	b.notificationMu.Lock()
 	if b.notificationDraining {
 		b.notificationMu.Unlock()
 		return
@@ -137,7 +179,7 @@ func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
 	b.notificationDraining = true
 	var firstPanic any
 	for {
-		n = b.notificationHead
+		n := b.notificationHead
 		if n == nil || !n.ready {
 			b.notificationDraining = false
 			b.notificationMu.Unlock()
@@ -161,34 +203,35 @@ func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
 					firstPanic = p
 				}
 			}()
+			deliveringToListeners()
 			if n.reset != nil {
 				b.dispatchNamespaceReset(*n.reset)
 			} else {
-				b.dispatchCommitOperations(n.ops)
+				for _, op := range n.ops {
+					switch op.Type {
+					case OpCreateNode:
+						b.dispatchNodeCreated(op.Node)
+					case OpUpdateNode:
+						b.dispatchNodeUpdatedOutcome(op.Node, op.embeddingOutcome)
+					case OpDeleteNode:
+						for _, id := range op.DeletedEdgeIDs {
+							b.dispatchEdgeDeleted(id)
+						}
+						b.dispatchNodeDeleted(op.NodeID)
+					case OpCreateEdge:
+						b.dispatchEdgeCreated(op.Edge)
+					case OpUpdateEdge:
+						b.dispatchEdgeUpdated(op.Edge)
+					case OpDeleteEdge:
+						b.dispatchEdgeDeleted(op.EdgeID)
+					}
+				}
 			}
 		}()
-		b.notificationMu.Lock()
-	}
-}
-
-func (b *BadgerEngine) dispatchCommitOperations(ops []Operation) {
-	for _, op := range ops {
-		switch op.Type {
-		case OpCreateNode:
-			b.dispatchNodeCreated(op.Node)
-		case OpUpdateNode:
-			b.dispatchNodeUpdatedOutcome(op.Node, op.embeddingOutcome)
-		case OpDeleteNode:
-			for _, id := range op.DeletedEdgeIDs {
-				b.dispatchEdgeDeleted(id)
-			}
-			b.dispatchNodeDeleted(op.NodeID)
-		case OpCreateEdge:
-			b.dispatchEdgeCreated(op.Edge)
-		case OpUpdateEdge:
-			b.dispatchEdgeUpdated(op.Edge)
-		case OpDeleteEdge:
-			b.dispatchEdgeDeleted(op.EdgeID)
+		if n.pooled {
+			*n = commitNotification{}
+			publicationHolds.Put(n)
 		}
+		b.notificationMu.Lock()
 	}
 }

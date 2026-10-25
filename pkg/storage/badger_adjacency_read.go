@@ -21,13 +21,13 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v read
 		if wantOut {
 			out.ids, out.hit = b.adjCacheLoadOutgoing(nodeID)
 			if w != nil {
-				out.live, out.suppressed, out.deleted = w.edgeAdjacencyOverlayLocked(nodeID, true)
+				out.live, out.suppressed, out.deleted = b.bufferedAdjacency(w, v, nodeID, true)
 			}
 		}
 		if wantIn {
 			in.ids, in.hit = b.adjCacheLoadIncoming(nodeID)
 			if w != nil {
-				in.live, in.suppressed, in.deleted = w.edgeAdjacencyOverlayLocked(nodeID, false)
+				in.live, in.suppressed, in.deleted = b.bufferedAdjacency(w, v, nodeID, false)
 			}
 		}
 	}
@@ -85,10 +85,15 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v read
 				}
 				edges = visible
 			}
-			for _, edge := range d.live {
-				if !b.hidesEdge(v, edge, DecayScoringTime()) {
-					edges = append(edges, copyEdge(edge))
+			attached := edges[:0]
+			for _, edge := range edges {
+				if attachedAt(edge, nodeID, outgoing) {
+					attached = append(attached, edge)
 				}
+			}
+			edges = attached
+			for _, edge := range d.live {
+				edges = append(edges, copyEdge(edge))
 			}
 			return edges, nil
 		}
@@ -107,6 +112,17 @@ func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v read
 	return outgoing, incoming, err
 }
 
+// attachedAt reports whether edge has nodeID at the end an adjacency read in
+// that direction lists. An index or cache entry left at an endpoint the
+// relationship moved away from (a buffered or applied update) is not
+// adjacency: a node delete's cascade or a traversal there must not meet it.
+func attachedAt(edge *Edge, nodeID NodeID, outgoing bool) bool {
+	if outgoing {
+		return edge.StartNode == nodeID
+	}
+	return edge.EndNode == nodeID
+}
+
 // cachedAdjacency resolves a traversal as one captured operation. The edge cache
 // is locked once for both directions; only pending adjacency entries are copied.
 func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut, wantIn bool, v readVisibility) ([]*Edge, []*Edge, bool) {
@@ -121,7 +137,7 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 	if !outHit || !inHit {
 		return nil, nil, false
 	}
-	if w != nil && w.entityStateLocked(bufferedNodeEntity, string(id)).deleted {
+	if w != nil && w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead}).deleted {
 		return nil, nil, true
 	}
 	b.edgeCacheMu.RLock()
@@ -130,28 +146,26 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 	read := func(ids []EdgeID, outgoing bool) ([]*Edge, bool) {
 		var live []*Edge
 		if w != nil {
-			live = w.liveAdjacencyLocked(id, outgoing)
+			live = b.bufferedLiveAdjacency(w, v, id, outgoing)
 		}
 		if len(ids) == 0 && len(live) == 0 {
 			return nil, true
 		}
 		result := make([]*Edge, 0, len(ids)+len(live))
 		for _, edgeID := range ids {
-			if w != nil && w.entityStateLocked(bufferedEdgeEntity, string(edgeID)).found {
+			if w != nil && w.entityStateLocked(bufferedEdgeEntity, string(edgeID), bufferedReadVisibility{engine: b, visibility: storedRead}).found {
 				continue
 			}
 			edge := b.edgeCache[edgeID]
 			if edge == nil {
 				return nil, false
 			}
-			if !b.hidesEdge(v, edge, now) {
+			if attachedAt(edge, id, outgoing) && !b.hidesEdge(v, edge, now) {
 				result = append(result, edge)
 			}
 		}
 		for _, edge := range live {
-			if !b.hidesEdge(v, edge, now) {
-				result = append(result, copyEdge(edge))
-			}
+			result = append(result, copyEdge(edge))
 		}
 		return result, true
 	}

@@ -13,7 +13,7 @@ import (
 //   - schema load errors fail fast (instead of silently disabling constraints)
 //   - NamespacedEngine.GetSchema() can be error-free while still returning the correct schema
 func (b *BadgerEngine) loadPersistedSchemas() error {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 

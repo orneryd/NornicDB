@@ -23,6 +23,8 @@ type hiddenDeleteOutcome struct {
 	rows                 [][]interface{}
 	nodesDeleted         int
 	relationshipsDeleted int
+	relationshipsCreated int
+	propertiesSet        int
 	code                 string
 }
 
@@ -88,6 +90,7 @@ func openHiddenDeleteServer(t *testing.T, dir string, writeBehind bool, route st
 			}
 			if stats := response.Results[0].Stats; stats != nil {
 				outcome.nodesDeleted, outcome.relationshipsDeleted = stats.NodesDeleted, stats.RelationshipsDeleted
+				outcome.relationshipsCreated, outcome.propertiesSet = stats.RelationshipsCreated, stats.PropertiesSet
 			}
 			return outcome
 		}
@@ -116,6 +119,8 @@ func openHiddenDeleteServer(t *testing.T, dir string, writeBehind bool, route st
 				if summary, err = result.Consume(ctx); err == nil {
 					outcome.nodesDeleted = summary.Counters().NodesDeleted()
 					outcome.relationshipsDeleted = summary.Counters().RelationshipsDeleted()
+					outcome.relationshipsCreated = summary.Counters().RelationshipsCreated()
+					outcome.propertiesSet = summary.Counters().PropertiesSet()
 				}
 			}
 			if err != nil {
@@ -221,7 +226,7 @@ func TestDeleteNodeWithHiddenRelationships(t *testing.T) {
 }
 
 // Re-ingestion may MERGE the same physical identity while it is suppressed.
-// That remains a successful, suppressed overwrite, with one stored relationship.
+// That remains a successful, side-effect-free no-op with one stored relationship.
 func TestSuppressedRelationshipReMergeKeepsCounts(t *testing.T) {
 	for _, writeBehind := range []bool{false, true} {
 		for _, route := range []string{"bolt", "http"} {

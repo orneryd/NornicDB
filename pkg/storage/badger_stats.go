@@ -80,7 +80,7 @@ func (b *BadgerEngine) initializeCounts() error {
 func (b *BadgerEngine) NodeCount() (int64, error) {
 	b.totalCountWriteMu.RLock()
 	defer b.totalCountWriteMu.RUnlock()
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
 
@@ -94,27 +94,58 @@ func (b *BadgerEngine) NodeCount() (int64, error) {
 	return count, nil
 }
 
+// adjacencyCountRequest binds direction and ID without constructing an index
+// key before lifecycle admission. It is used only by the public degree adapters.
+type adjacencyCountRequest struct {
+	nodeID   NodeID
+	incoming bool
+}
+
 // countByPrefix counts records whose ID key starts with the given ID prefix.
 // NodeCountByPrefix and EdgeCountByPrefix are thin wrappers over this kernel;
-// the two differ only in the key-type byte and the namespace count cache
+// the two differ only in the key-type byte and the namespace count cache.
+// An explicitly supplied adjacency request admits and counts the raw index;
+// it neither consults namespace caches nor changes
+// the degree API convention of returning the count while discarding view errors
 // (HARD_CONVERGENCE.md item 5: node/edge twin consolidation).
-func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[string]int64) (int64, error) {
-	if err := b.ensureOpen(); err != nil {
-		return 0, err
-	}
+func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[string]int64, adjacency ...adjacencyCountRequest) (int64, error) {
+	if len(adjacency) == 0 {
+		if err := b.ensureOpen(false); err != nil {
+			return 0, err
+		}
 
-	b.namespaceCountsMu.RLock()
-	if count, ok := cache[prefix]; ok {
+		b.namespaceCountsMu.RLock()
+		if count, ok := cache[prefix]; ok {
+			b.namespaceCountsMu.RUnlock()
+			return count, nil
+		}
 		b.namespaceCountsMu.RUnlock()
-		return count, nil
 	}
-	b.namespaceCountsMu.RUnlock()
-
+	var keyPrefix []byte
+	if len(adjacency) != 0 {
+		request := adjacency[0]
+		if request.nodeID == "" {
+			return 0, nil
+		}
+		if err := b.ensureOpen(false); err != nil {
+			return 0, err
+		}
+		if request.incoming {
+			keyPrefix = b.incomingIndexPrefixString(request.nodeID)
+		} else {
+			keyPrefix = b.outgoingIndexPrefixString(request.nodeID)
+		}
+		if keyPrefix == nil {
+			return 0, nil
+		}
+	}
 	var count int64
 	err := b.withView(func(txn *badger.Txn) error {
-		keyPrefix := make([]byte, 0, 1+len(prefix))
-		keyPrefix = append(keyPrefix, keyType)
-		keyPrefix = append(keyPrefix, []byte(prefix)...)
+		if len(adjacency) == 0 {
+			keyPrefix = make([]byte, 0, 1+len(prefix))
+			keyPrefix = append(keyPrefix, keyType)
+			keyPrefix = append(keyPrefix, []byte(prefix)...)
+		}
 
 		it := txn.NewIterator(badgerPrefixIteratorOptions(keyPrefix))
 		defer it.Close()
@@ -123,6 +154,9 @@ func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[stri
 		}
 		return nil
 	})
+	if len(adjacency) != 0 {
+		return count, err
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -135,21 +169,7 @@ func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[stri
 // This is an optional fast-path used by NamespacedEngine to provide accurate
 // per-database counts without decoding values.
 func (b *BadgerEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	b.totalCountWriteMu.RLock()
-	defer b.totalCountWriteMu.RUnlock()
-	if err := b.ensureOpen(); err != nil {
-		return 0, err
-	}
-	count, err := b.countByPrefix(prefix, prefixNode, b.namespaceNodeCounts)
-	if err != nil {
-		return 0, err
-	}
-	// Namespace counts advance at flush, not at ACK: fold in the buffered
-	// delta (PR #1043 read-overlay parity).
-	if b.writeBehind != nil {
-		count += b.writeBehind.NodeCountDeltaForPrefix(prefix)
-	}
-	return count, nil
+	return b.entityCountByPrefix(prefix, prefixNode)
 }
 
 // EdgeCount returns the total number of valid, decodable edges.
@@ -157,7 +177,7 @@ func (b *BadgerEngine) NodeCountByPrefix(prefix string) (int64, error) {
 func (b *BadgerEngine) EdgeCount() (int64, error) {
 	b.totalCountWriteMu.RLock()
 	defer b.totalCountWriteMu.RUnlock()
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
 
@@ -174,21 +194,7 @@ func (b *BadgerEngine) EdgeCount() (int64, error) {
 // EdgeCountByPrefix counts edges whose EdgeID begins with the provided prefix.
 // The prefix refers to the EdgeID string prefix (e.g., database namespace "nornic:").
 func (b *BadgerEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	b.totalCountWriteMu.RLock()
-	defer b.totalCountWriteMu.RUnlock()
-	if err := b.ensureOpen(); err != nil {
-		return 0, err
-	}
-	count, err := b.countByPrefix(prefix, prefixEdge, b.namespaceEdgeCounts)
-	if err != nil {
-		return 0, err
-	}
-	// Namespace counts advance at flush, not at ACK: fold in the buffered
-	// delta (PR #1043 read-overlay parity).
-	if b.writeBehind != nil {
-		count += b.writeBehind.EdgeCountDeltaForPrefix(prefix)
-	}
-	return count, nil
+	return b.entityCountByPrefix(prefix, prefixEdge)
 }
 
 // GetSchema returns the schema manager.
@@ -202,11 +208,24 @@ func (b *BadgerEngine) GetSchema() *SchemaManager {
 func (b *BadgerEngine) Close() error {
 	b.closeMu.Lock()
 	defer b.closeMu.Unlock()
+	// Reject new writers first, then wait for every admitted one to finish,
+	// so the final drain below meets every acknowledged commit: a listener
+	// it delivers that writes again observes ErrStorageClosed instead of
+	// being acknowledged into a generation nothing drains.
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return nil
+	}
+	b.closing = true
+	b.mu.Unlock()
+	b.writeBarrier.Lock()
+	b.writeBarrier.Unlock()
 	// Stop the background backfills before taking the write barrier: they
 	// write through withUpdate and must not be left waiting on a barrier
 	// this goroutine holds while it waits for them to stop.
-	b.stopEdgeBetweenIndexBackfill()
-	b.stopLabelIndexBackfill()
+	b.stopIndexBackfill(startupEdgeBetweenIndex)
+	b.stopIndexBackfill(startupLabelIndex)
 	b.stopDeleteCleanup()
 	b.stopChangeRetention()
 	b.stopCountDeltaFoldWorker()
@@ -219,6 +238,9 @@ func (b *BadgerEngine) Close() error {
 		}
 		b.writeBehind.Close()
 	}
+	// The suppressions the deletes so far ended are deleted before the store
+	// closes (forgetManualSuppression).
+	b.endSuppressions()
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
 	// be parked behind a barrier this goroutine is about to hold. The call
@@ -259,6 +281,9 @@ func (b *BadgerEngine) Close() error {
 	// new notifications can start: BulkDeleteNodes adds them under mu only
 	// when the engine is not closed.
 	b.txnWG.Wait()
+	// Deliver what is ready but undelivered (a replay queues its events for
+	// whoever retired it) before waiting for every reserved notification.
+	b.drainCommitNotifications()
 	b.notifyWG.Wait()
 
 	// Fold any derived-count deltas the last commits left behind so a clean
@@ -315,7 +340,7 @@ func (b *BadgerEngine) releaseClosedStateLocked() {
 // Sync forces a sync of all data to disk.
 // This is useful for ensuring durability before a crash.
 func (b *BadgerEngine) Sync() error {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 	return b.db.Sync()
@@ -324,7 +349,7 @@ func (b *BadgerEngine) Sync() error {
 // RunGC runs garbage collection on the BadgerDB value log.
 // Should be called periodically for long-running applications.
 func (b *BadgerEngine) RunGC() error {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 	return b.db.RunValueLogGC(0.5)
@@ -332,7 +357,7 @@ func (b *BadgerEngine) RunGC() error {
 
 // Size returns the approximate size of the database in bytes.
 func (b *BadgerEngine) Size() (lsm, vlog int64) {
-	if b.ensureOpen() != nil {
+	if b.ensureOpen(false) != nil {
 		return 0, 0
 	}
 
@@ -349,7 +374,7 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 // Badger batch commits batch by batch, so it always makes progress. Claim
 // serialization remains with the worker.
 func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
-	if b.ensureOpen() != nil {
+	if b.ensureOpen(false) != nil {
 		return nil
 	}
 	p := &b.pendingCandidates
@@ -727,7 +752,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	if fn == nil {
 		return ErrInvalidData
 	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 	if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings && opts.Label != "" {
@@ -750,13 +775,16 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	// committed rows for their IDs and are visited after the scan.
 	var overlay []*Node
 	var touched map[NodeID]bool
+	v := storedRead
+	if opts.ApplyDecayFilter {
+		v = visibleRead
+	}
 	capture := func(w *WriteBehindBuffer) {
-		overlay, touched = w.allNodesOverlayLocked()
+		overlay, touched = b.bufferedAllNodes(w, v)
 	}
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
 	}
-	nowNanos := DecayScoringTime()
 	// streamNodesWithOptionsInTxn already applies the projection, decay and
 	// strip filters; this wrapper only shadows rows the overlay replaces.
 	stopped := false
@@ -784,9 +812,6 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	}
 	for _, node := range overlay {
 		if !inScope(node.ID) {
-			continue
-		}
-		if opts.ApplyDecayFilter && b.filterNodeByDecay(node, nowNanos) {
 			continue
 		}
 		projected := opts.copyResidentNode(node)
@@ -927,7 +952,7 @@ func (b *BadgerEngine) StreamNodesByPrefixWithoutEmbeddings(ctx context.Context,
 // StreamEdges implements StreamingEngine.StreamEdges for memory-efficient iteration.
 // Iterates through all edges one at a time without loading all into memory.
 func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 	// Write-behind overlay: acknowledged-but-unflushed edges shadow
@@ -935,7 +960,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	var overlay []*Edge
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
-		overlay, touched = w.allEdgesOverlayLocked()
+		overlay, touched = b.bufferedAllEdges(w, visibleRead)
 	}
 	nowNanos := DecayScoringTime()
 	stopped := false
@@ -999,9 +1024,6 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		return nil
 	}
 	for _, edge := range overlay {
-		if b.filterEdgeByDecay(edge, nowNanos) {
-			continue
-		}
 		if err := fn(copyEdge(edge)); err != nil {
 			if err == ErrIterationStopped {
 				return nil
@@ -1061,7 +1083,7 @@ func (b *BadgerEngine) ClearAllEmbeddings() (int, error) {
 //
 // If idPrefix is empty, clears embeddings for all nodes.
 func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error) {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
 
@@ -1140,4 +1162,30 @@ func (b *BadgerEngine) ClearAllEmbeddingsForPrefix(idPrefix string) (int, error)
 	}
 
 	return cleared, nil
+}
+
+// entityCountByPrefix keeps namespace-cache and committed-buffer visibility in
+// one owner; total-count synchronization precedes lifecycle admission as before.
+func (b *BadgerEngine) entityCountByPrefix(prefix string, keyType byte) (int64, error) {
+	b.totalCountWriteMu.RLock()
+	defer b.totalCountWriteMu.RUnlock()
+	if err := b.ensureOpen(false); err != nil {
+		return 0, err
+	}
+	cache := b.namespaceNodeCounts
+	if keyType == prefixEdge {
+		cache = b.namespaceEdgeCounts
+	}
+	count, err := b.countByPrefix(prefix, keyType, cache)
+	if err != nil {
+		return 0, err
+	}
+	if b.writeBehind != nil {
+		if keyType == prefixEdge {
+			count += b.writeBehind.EdgeCountDeltaForPrefix(prefix)
+		} else {
+			count += b.writeBehind.NodeCountDeltaForPrefix(prefix)
+		}
+	}
+	return count, nil
 }

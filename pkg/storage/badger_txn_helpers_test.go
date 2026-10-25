@@ -20,7 +20,7 @@ func TestBadgerHelperTransactionsDrainOnFailure(t *testing.T) {
 			t.Cleanup(func() { _ = engine.Close() })
 			helper := engine.withView
 			if name == "update" {
-				helper = engine.withUpdate
+				helper = func(fn func(*badger.Txn) error) error { return engine.withUpdate(fn) }
 			}
 			sentinel := errors.New("callback failed")
 			require.ErrorIs(t, helper(func(*badger.Txn) error { return sentinel }), sentinel)

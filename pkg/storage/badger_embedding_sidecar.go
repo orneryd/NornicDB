@@ -109,7 +109,7 @@ func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node) error {
 	if !strings.Contains(string(node.ID), ":") {
 		return localizedError(localization.StorageClientNodeIDNamespaceUnprefixed(string(node.ID)), nil)
 	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 
@@ -129,6 +129,18 @@ func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node) error {
 		}
 	}
 
+	if b.writeBehind != nil {
+		// Ordered after the acknowledged commits of the node
+		// (orderAfterBufferedCommits): it checks the embedding against the
+		// newest body, and no replay of an older one lands over it. The
+		// commits its drain replays are delivered once the order is released.
+		defer b.completeCommitNotification(b.holdPublication())
+		var order orderHold
+		if _, err := b.orderAfterBufferedCommits(&order, writtenEntities{nodes: []NodeID{node.ID}}); err != nil {
+			return err
+		}
+		defer order.release()
+	}
 	// One atomic engine write (#703): check the stored node, then delete the
 	// previous chunk vectors and metadata record, write the new chunk
 	// vectors, write or delete the metadata record at its reserved chunk
@@ -170,7 +182,7 @@ func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node) error {
 	// The full-node cache may hold a copy without the new embedding state;
 	// drop it so the next read re-hydrates from the sidecar. Body cache and
 	// counts are untouched: the node record did not change.
-	b.cacheDeleteNode(node.ID)
+	b.cacheDeleteNode(node.ID, nodeCacheAllForms)
 	// Search indexes and listeners still need the updated node (mutation
 	// notification to the embedding queue keeps its own loop guard).
 	// Publication belongs to commitEmbeddingOutcome.
@@ -295,12 +307,14 @@ func (b *BadgerEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 	if id == "" {
 		return nil, ErrInvalidID
 	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return nil, err
 	}
 	var state bufferedEntityState
 	var meta map[string]any
-	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedNodeEntity, string(id)) }, func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) {
+		state = w.entityStateLocked(bufferedNodeEntity, string(id), bufferedReadVisibility{engine: b, visibility: storedRead})
+	}, func(txn *badger.Txn) error {
 		if state.found {
 			if state.deleted {
 				return ErrNotFound
@@ -384,7 +398,7 @@ func validateEmbeddingSidecarMeta(meta map[string]any, node *Node) (map[string]a
 // each node whose reserved-chunk-index metadata record marks a permanent
 // embedding failure, without decoding any node body.
 func (b *BadgerEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit func(nodeID NodeID, meta map[string]any) error) (int, error) {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
 	count := 0

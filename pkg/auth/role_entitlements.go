@@ -160,18 +160,6 @@ func (r *RoleEntitlementsStore) SetMappings(ctx context.Context, mappings map[st
 	return nil
 }
 
-// All returns role→entitlement IDs for all roles that have a stored override.
-// For full role→entitlements (including built-in defaults) the server merges with RolePermissions.
-func (r *RoleEntitlementsStore) All() map[string][]string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make(map[string][]string, len(r.entitlements))
-	for k, v := range r.entitlements {
-		out[k] = append([]string(nil), v...)
-	}
-	return out
-}
-
 // PermissionsForRole returns the effective entitlement IDs (permission strings) for a single role.
 // If store is nil or has no override for role, built-in roles use RolePermissions; user-defined return nil.
 func PermissionsForRole(role string, store *RoleEntitlementsStore) []string {

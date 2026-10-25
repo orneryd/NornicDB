@@ -2,6 +2,7 @@ package localization
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/collection"
 	"io/fs"
 	"regexp"
 	"sort"
@@ -126,7 +127,7 @@ func catalogLanguageFromPath(path string) string {
 func validateEntrySchema(source, translated catalogEntry) error {
 	sourceForms := entryForms(source)
 	translatedForms := entryForms(translated)
-	if strings.Join(sortedKeys(sourceForms), "\x00") != strings.Join(sortedKeys(translatedForms), "\x00") {
+	if strings.Join(collection.SortedKeys(sourceForms), "\x00") != strings.Join(collection.SortedKeys(translatedForms), "\x00") {
 		return fmt.Errorf("different plural forms")
 	}
 	for form, sourceText := range sourceForms {
@@ -158,13 +159,4 @@ func templateFields(value string) []string {
 	}
 	sort.Strings(fields)
 	return fields
-}
-
-func sortedKeys[V any](values map[string]V) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
 }
