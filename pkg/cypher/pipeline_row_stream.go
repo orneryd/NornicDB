@@ -16,6 +16,11 @@ type pipelineRowWith struct {
 
 	// Bound on the plan copy for one invocation, never in the plan cache.
 	imports pipelineRow
+	// Bound only on the invocation copy: eager consumers retain rows/scopes;
+	// streaming consumers borrow one map until their yield returns.
+	retainRows     bool
+	skipValidation bool
+	observeScope   func(projected, scope pipelineRow)
 }
 
 // withImports binds one invocation's CALL imports to a copy of plan; the
@@ -32,16 +37,16 @@ type pipelineRowWithParse struct {
 
 var pipelineRowWithPlans = newBoundedCache[string, pipelineRowWithParse](4096, boundedCacheStringShardIndex)
 
-func parsePipelineRowWith(clause string) (pipelineRowWith, bool) {
+func parsePipelineRowWith(ctx context.Context, clause string) (pipelineRowWith, bool) {
 	if parsed, cached := pipelineRowWithPlans.get(clause); cached {
 		return parsed.plan, parsed.supported
 	}
-	plan, supported := compilePipelineRowWith(clause)
+	plan, supported := compilePipelineRowWith(ctx, clause)
 	pipelineRowWithPlans.put(clause, pipelineRowWithParse{plan: plan, supported: supported})
 	return plan, supported
 }
 
-func compilePipelineRowWith(clause string) (pipelineRowWith, bool) {
+func compilePipelineRowWith(ctx context.Context, clause string) (pipelineRowWith, bool) {
 	// The clause is scanned with its keyword, which tells a keyword-named
 	// first item from a clause (WITH with WHERE with = 3, #894).
 	body := strings.TrimSpace(clause)
@@ -70,7 +75,7 @@ func compilePipelineRowWith(clause string) (pipelineRowWith, bool) {
 		if item == "" || item == "{}" {
 			continue
 		}
-		expression, alias := parseProjectionExprAlias(item)
+		expression, alias := parseProjectionExprAlias(ctx, item)
 		if expression == "" || pipelineExpressionContainsAggregate(expression) {
 			return pipelineRowWith{}, false
 		}
@@ -80,49 +85,6 @@ func compilePipelineRowWith(clause string) (pipelineRowWith, bool) {
 		return pipelineRowWith{}, false
 	}
 	return plan, true
-}
-
-func (e *StorageExecutor) pipelineProjectWithRow(ctx context.Context, row pipelineRow, plan pipelineRowWith, projected, scope pipelineRow) (pipelineRow, bool, bool) {
-	if projected == nil {
-		projected = pipelineRow{}
-	} else {
-		clear(projected)
-	}
-	for name, value := range row {
-		if plan.star || strings.HasPrefix(name, "$") {
-			projected[name] = value
-		}
-	}
-	for _, projection := range plan.projections {
-		value, found := row[projection.expression]
-		if !found {
-			value, found = e.evaluateRowExpressionWithContext(ctx, projection.expression, row)
-		}
-		if !found {
-			pipelineItemUnevaluable(ctx, projection.expression)
-			return nil, false, false
-		}
-		projected[projection.alias] = value
-	}
-	carryPipelineRowImports(projected, row, plan.imports)
-	if plan.where == "" && scope == nil {
-		return projected, true, true
-	}
-	if scope == nil {
-		scope = pipelineRow{}
-	} else {
-		clear(scope)
-	}
-	for name, value := range row {
-		scope[name] = value
-	}
-	for name, value := range projected {
-		scope[name] = value
-	}
-	if plan.where == "" {
-		return projected, true, true
-	}
-	return projected, e.evaluateWithWhereCondition(ctx, plan.where, scope), getExpressionFailure(ctx) == nil
 }
 
 func pipelineUnwindUsesRange(clause string) bool {
@@ -171,23 +133,25 @@ func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression s
 	}, true
 }
 
-func (e *StorageExecutor) validatePipelineWithRows(rows []pipelineRow, clause string) error {
-	if err := e.validatePipelinePercentileArguments(rows, clause, "WITH"); err != nil {
+func (e *StorageExecutor) validatePipelineWithRows(ctx context.Context, rows []pipelineRow, clause string) error {
+	if err := e.validatePipelinePercentileArguments(ctx, rows, clause, "WITH"); err != nil {
 		return err
 	}
-	return e.validatePipelineProjectionValues(rows, clause, "WITH")
+	return e.validatePipelineProjectionValues(ctx, rows, clause, "WITH")
 }
 
-func (e *StorageExecutor) validatePipelineProjectionValues(rows []pipelineRow, clause, keyword string) error {
-	for _, validate := range []func([]pipelineRow, string, string) error{
-		e.validatePipelineRangeArguments,
-		e.validatePipelineProjectionSubscripts, e.validatePipelineSizeArguments,
-	} {
-		if err := validate(rows, clause, keyword); err != nil {
-			return err
+func (e *StorageExecutor) validatePipelineProjectionValues(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
+	if err := e.validatePipelineRangeArguments(ctx, rows, clause, keyword); err != nil {
+		return err
+	}
+	for _, expression := range projectionExpressions(ctx, clause, keyword) {
+		for _, row := range rows {
+			if err := e.validateRowSubscriptTypes(expression, row); err != nil {
+				return err
+			}
 		}
 	}
-	return nil
+	return e.validatePipelineSizeArguments(ctx, rows, clause, keyword)
 }
 
 func (e *StorageExecutor) pipelineApplyUnwindPrefix(ctx context.Context, rows []pipelineRow, clauses []pipelineClause) ([]pipelineRow, int, bool) {
@@ -533,34 +497,89 @@ func (e *StorageExecutor) pipelineStreamedNodeMatchSource(ctx context.Context, i
 
 func (e *StorageExecutor) pipelineWithRowSource(ctx context.Context, input pipelineRowSource, plan pipelineRowWith) pipelineRowSource {
 	return func(yield func(pipelineRow) bool) bool {
-		// Bind the imports per run, inside the closure: the outer function
-		// stays small enough to inline, so its closures need not escape.
 		plan := plan.withImports(pipelineImports(ctx))
-		projected := pipelineRow{}
-		var scope pipelineRow
-		if plan.where != "" {
-			scope = pipelineRow{}
+		observeScope := plan.observeScope
+		needsScope := plan.where != "" || observeScope != nil
+		validateRows := !plan.skipValidation && strings.ContainsAny(plan.clause, "([")
+		var projected, scope pipelineRow
+		if !plan.retainRows {
+			projected = pipelineRow{}
+			if needsScope {
+				scope = pipelineRow{}
+			}
 		}
 		valid := true
 		completed := input(func(row pipelineRow) bool {
+			// Borrow the run's buffers by value. Retained rows allocate their
+			// own maps below; reassigning these callback-local variables must
+			// not force two mutable map-handle cells onto the heap per run.
+			projected, scope := projected, scope
 			if err := ctx.Err(); err != nil {
 				recordExpressionFailure(ctx, err)
 				valid = false
 				return false
 			}
-			if strings.ContainsAny(plan.clause, "([") {
-				if err := e.validatePipelineWithRows([]pipelineRow{row}, plan.clause); err != nil {
+			if validateRows {
+				if err := e.validatePipelineWithRows(ctx, []pipelineRow{row}, plan.clause); err != nil {
 					recordExpressionFailure(ctx, err)
 					valid = false
 					return false
 				}
 			}
-			current, accepted, resolved := e.pipelineProjectWithRow(ctx, row, plan, projected, scope)
-			if !resolved {
-				valid = false
-				return false
+			if projected == nil {
+				projected = pipelineRow{}
+			} else {
+				clear(projected)
 			}
-			return !accepted || yield(current)
+			for name, value := range row {
+				if plan.star || strings.HasPrefix(name, "$") {
+					projected[name] = value
+				}
+			}
+			for _, projection := range plan.projections {
+				value, found := row[projection.expression]
+				if !found {
+					value, found = e.evaluateRowExpressionWithContext(ctx, projection.expression, row)
+				}
+				if !found {
+					pipelineItemUnevaluable(ctx, projection.expression)
+					valid = false
+					return false
+				}
+				projected[projection.alias] = value
+			}
+			carryPipelineRowImports(projected, row, plan.imports)
+			if needsScope {
+				if scope == nil {
+					if observeScope != nil {
+						scope = make(pipelineRow, len(row)+len(plan.projections))
+					} else {
+						scope = pipelineRow{}
+					}
+				} else {
+					clear(scope)
+				}
+				for name, value := range row {
+					scope[name] = value
+				}
+				for name, value := range projected {
+					scope[name] = value
+				}
+				if plan.where != "" {
+					accepted := e.evaluateWithWhereCondition(ctx, plan.where, scope)
+					if getExpressionFailure(ctx) != nil {
+						valid = false
+						return false
+					}
+					if !accepted {
+						return true
+					}
+				}
+				if observeScope != nil {
+					observeScope(projected, scope)
+				}
+			}
+			return yield(projected)
 		})
 		return completed && valid
 	}
@@ -576,7 +595,7 @@ func (e *StorageExecutor) pipelineWithWindowSource(ctx context.Context, input pi
 	if end == len(clause) || topLevelKeywordIndex(clause, "WHERE") >= 0 {
 		return nil, false
 	}
-	plan, ok := parsePipelineRowWith(clause[:end])
+	plan, ok := parsePipelineRowWith(ctx, clause[:end])
 	if !ok {
 		return nil, false
 	}
@@ -620,7 +639,7 @@ func (e *StorageExecutor) pipelineUnwindSource(ctx context.Context, rows []pipel
 		if clause.kind != pipelineClauseWith {
 			break
 		}
-		plan, local := parsePipelineRowWith(clause.text)
+		plan, local := parsePipelineRowWith(ctx, clause.text)
 		if !local {
 			break
 		}
@@ -669,36 +688,37 @@ var projectionExpressionCache = newBoundedCache[string, []string](4096, boundedC
 // Results are cached by clause text: the streaming aggregation validates
 // every row on its own, and parsing the clause per row and per validator
 // doubled nested-aggregation time (#823). The returned slice is shared.
-func projectionExpressions(clause, keyword string) []string {
+func projectionExpressions(ctx context.Context, clause, keyword string) []string {
 	key := keyword + "\x00" + clause
 	if cached, ok := projectionExpressionCache.get(key); ok {
 		return cached
 	}
-	expressions := parseProjectionExpressions(clause, keyword)
-	projectionExpressionCache.put(key, expressions)
-	return expressions
-}
-
-func parseProjectionExpressions(clause, keyword string) []string {
-	if strings.EqualFold(keyword, "UNWIND") {
-		if expression, _, ok := parsePipelineIteration(clause); ok {
-			return []string{expression}
+	var expressions []string
+parse:
+	for {
+		if strings.EqualFold(keyword, "UNWIND") {
+			if expression, _, ok := parsePipelineIteration(clause); ok {
+				expressions = []string{expression}
+				break parse
+			}
+			break parse
 		}
-		return nil
+		body := strings.TrimSpace(clause)
+		if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {
+			break parse
+		}
+		body, _ = projectionSemanticBodyAndTail(body, keyword)
+		if body == "" || body == "*" {
+			break parse
+		}
+		items := splitTopLevelComma(body)
+		expressions = make([]string, 0, len(items))
+		for _, item := range items {
+			expression, _ := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
+			expressions = append(expressions, expression)
+		}
+		break
 	}
-	body := strings.TrimSpace(clause)
-	if len(body) < len(keyword) || !strings.EqualFold(body[:len(keyword)], keyword) {
-		return nil
-	}
-	body, _ = projectionSemanticBodyAndTail(body, keyword)
-	if body == "" || body == "*" {
-		return nil
-	}
-	items := splitTopLevelComma(body)
-	expressions := make([]string, 0, len(items))
-	for _, item := range items {
-		expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
-		expressions = append(expressions, expression)
-	}
+	projectionExpressionCache.put(key, expressions)
 	return expressions
 }

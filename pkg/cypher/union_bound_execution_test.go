@@ -19,19 +19,19 @@ func TestUnion_BoundContextResolvesBranchValues(t *testing.T) {
 		"flag": true,
 	})
 
-	res, err := exec.executeUnion(ctx, "RETURN x AS v UNION RETURN 2 AS v", false)
+	res, err := exec.executeUnion(ctx, "RETURN x AS v UNION RETURN 2 AS v", false, nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"v"}, res.Columns)
 	require.Equal(t, [][]interface{}{{int64(7)}, {int64(2)}}, res.Rows)
 
 	// Compound expressions over bound values resolve through the row
 	// evaluator with the seeded scope.
-	res, err = exec.executeUnion(ctx, "RETURN x + 1 AS v UNION RETURN 0 AS v", false)
+	res, err = exec.executeUnion(ctx, "RETURN x + 1 AS v UNION RETURN 0 AS v", false, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(8)}, {int64(0)}}, res.Rows)
 
 	// Property access on a bound map.
-	res, err = exec.executeUnion(ctx, "RETURN row.name AS v UNION RETURN 'z' AS v", false)
+	res, err = exec.executeUnion(ctx, "RETURN row.name AS v UNION RETURN 'z' AS v", false, nil)
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{"ann"}, {"z"}}, res.Rows)
 

@@ -18,8 +18,8 @@ type callSubqueryScopeClause struct {
 // list means all outer variables, and a non-nil empty list means CALL ().
 // text and bodyOffset let validation use the same parsed clause. Legacy
 // importing-WITH and implicit imports are resolved by their existing owners.
-func readCallSubqueryScope(source string) callSubqueryScopeClause {
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.FragmentEntry, false)
+func readCallSubqueryScope(ctx context.Context, source string) callSubqueryScopeClause {
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
 	if !syntax.Valid() {
 		return callSubqueryScopeClause{invalid: err != nil}
 	}

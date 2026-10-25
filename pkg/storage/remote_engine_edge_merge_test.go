@@ -11,10 +11,10 @@ func TestRemoteEngineCreateEdgeMergesByID(t *testing.T) {
 	var params map[string]interface{}
 	engine := &RemoteEngine{
 		transport: &fakeRemoteTransport{
-			queryFn: func(_ context.Context, gotStatement string, gotParams map[string]interface{}) ([][]interface{}, error) {
+			queryFn: func(_ context.Context, gotStatement string, gotParams map[string]interface{}) ([]string, [][]interface{}, error) {
 				statement = gotStatement
 				params = gotParams
-				return [][]interface{}{{map[string]interface{}{"id": "merge-id"}}}, nil
+				return nil, [][]interface{}{{map[string]interface{}{"id": "merge-id"}}}, nil
 			},
 		},
 	}

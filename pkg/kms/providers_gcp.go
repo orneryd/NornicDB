@@ -10,6 +10,7 @@ import (
 	kmsapi "cloud.google.com/go/kms/apiv1"
 	kmspb "cloud.google.com/go/kms/apiv1/kmspb"
 	"github.com/googleapis/gax-go/v2"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"google.golang.org/api/option"
 )
 
@@ -67,7 +68,7 @@ func (p *GCPProvider) GenerateDataKey(ctx context.Context, opts KeyGenOpts) (*Da
 		Plaintext: plain,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEncryptFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrEncryptFailed, observability.RedactError(err, string(plain)))
 	}
 	now := time.Now().UTC()
 	exp := time.Time{}
@@ -110,7 +111,7 @@ func (p *GCPProvider) RotateDataKey(ctx context.Context, encryptedKey []byte, op
 		Plaintext: plain,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrEncryptFailed, err)
+		return nil, fmt.Errorf("%w: %v", ErrEncryptFailed, observability.RedactError(err, string(plain)))
 	}
 	now := time.Now().UTC()
 	exp := time.Time{}

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
@@ -58,7 +59,7 @@ func (cache *semanticValidationCache) add(query string) {
 // contract before routing. Keeping this validation ahead of every physical
 // executor prevents optimized and general MERGE paths from accepting different
 // syntax or producing effects before a semantic failure.
-func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bool) error {
+func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cypher string, cypher25 bool) error {
 	if findKeywordIndexInContext(cypher, "MERGE") < 0 {
 		return nil
 	}
@@ -81,7 +82,7 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bo
 	if cached {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(cypher)
+	clauses, ok := splitPipelineClauses(ctx, cypher)
 	if !ok {
 		return nil
 	}
@@ -94,7 +95,7 @@ func (e *StorageExecutor) validateMergeSemanticScopes(cypher string, cypher25 bo
 		case pipelineClauseCreate:
 			addMergePatternBindings(scope, clause.text)
 		case pipelineClauseWith:
-			scope = projectedBindingScope(scope, clause.text)
+			scope = projectedBindingScope(ctx, scope, clause.text)
 		case pipelineClauseLet:
 			if err := bindPipelineLet(scope, clause.text); err != nil {
 				return err

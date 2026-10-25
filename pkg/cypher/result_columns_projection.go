@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 	"sync"
 
@@ -52,15 +53,37 @@ var returnProjectionPlans = struct {
 
 const returnProjectionPlanLimit = 4096
 
-func returnProjectionPlanFor(clause string) *returnProjectionPlan {
+func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pipelineClause) *returnProjectionPlan {
+	if len(retained) != 0 {
+		origin := retained[0]
+		program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram)
+		if !ok || program == nil || !origin.syntax.Valid() || program.syntax.Source() != origin.syntax.Source() {
+			return nil
+		}
+		plan := program.projections[origin.syntax.ID()]
+		if plan == nil || !plan.valid {
+			return nil
+		}
+		return plan
+	}
+	if ctx.Err() != nil {
+		return &returnProjectionPlan{}
+	}
 	returnProjectionPlans.RLock()
 	plan, cached := returnProjectionPlans.plans[clause]
 	returnProjectionPlans.RUnlock()
 	if cached {
 		return plan
 	}
-	plan = parseReturnProjectionPlan(clause)
+	plan = parseReturnProjectionPlan(ctx, clause)
+	if ctx.Err() != nil {
+		return &returnProjectionPlan{}
+	}
 	returnProjectionPlans.Lock()
+	if ctx.Err() != nil {
+		returnProjectionPlans.Unlock()
+		return &returnProjectionPlan{}
+	}
 	if len(returnProjectionPlans.plans) >= returnProjectionPlanLimit {
 		returnProjectionPlans.plans = make(map[string]*returnProjectionPlan)
 	}
@@ -69,8 +92,8 @@ func returnProjectionPlanFor(clause string) *returnProjectionPlan {
 	return plan
 }
 
-func parseReturnProjectionPlan(clause string) *returnProjectionPlan {
-	node, ok := canonicalQueryClause(clause)
+func parseReturnProjectionPlan(ctx context.Context, clause string) *returnProjectionPlan {
+	node, ok := canonicalQueryClause(ctx, clause)
 	if !ok {
 		return &returnProjectionPlan{}
 	}
@@ -107,10 +130,10 @@ func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProj
 // `RETURN *, items` (#883), as Neo4j orders the columns: each of columns, in
 // the given (name) order, as a variable item, except a column one of items
 // names (`RETURN *, a + 1 AS a` has the one column a), then items.
-func starProjectionItems(columns, items []string) []string {
+func starProjectionItems(ctx context.Context, columns, items []string) []string {
 	named := make(map[string]bool, len(items))
 	for _, item := range items {
-		_, alias := parseProjectionExprAlias(item)
+		_, alias := parseProjectionExprAlias(ctx, item)
 		named[alias] = true
 	}
 	out := make([]string, 0, len(columns)+len(items))
@@ -143,21 +166,12 @@ func (plan *returnProjectionPlan) addProjection(expr, alias string) {
 	plan.columns = append(plan.columns, alias)
 }
 
-func returnProjectionPlanFromItems(items []returnItem) *returnProjectionPlan {
-	plan := &returnProjectionPlan{}
-	for _, item := range items {
-		plan.addProjection(item.expr, item.column())
-	}
-	plan.valid = len(plan.projections) > 0
-	return plan
-}
-
 // pipelineReturnSourceColumns is a legacy semantic/source-spelling adapter of
 // execution's projection plan, not another RETURN parser. The semantic walk
 // still uses nil for bare star and a star marker for mixed projections; the
 // execution header path expands wildcards through the complete statement owner.
-func pipelineReturnSourceColumns(clause string) []string {
-	plan := returnProjectionPlanFor(clause)
+func pipelineReturnSourceColumns(ctx context.Context, clause string) []string {
+	plan := returnProjectionPlanFor(ctx, clause)
 	if !plan.valid {
 		return nil
 	}
@@ -169,8 +183,8 @@ func pipelineReturnSourceColumns(clause string) []string {
 	}
 	return append([]string{}, plan.columns...)
 }
-func parseProjectionExprAlias(item string) (string, string) {
-	node, ok := canonicalQueryClause("RETURN " + item)
+func parseProjectionExprAlias(ctx context.Context, item string) (string, string) {
+	node, ok := canonicalQueryClause(ctx, "RETURN "+item)
 	if !ok {
 		return "", ""
 	}
@@ -186,9 +200,9 @@ func parseProjectionExprAlias(item string) (string, string) {
 }
 
 // projectionAliasIndex is a source-spelling adapter of the retained AS token.
-func projectionAliasIndex(item string) int {
+func projectionAliasIndex(ctx context.Context, item string) int {
 	const prefix = "RETURN "
-	node, ok := canonicalQueryClause(prefix + item)
+	node, ok := canonicalQueryClause(ctx, prefix+item)
 	if !ok {
 		return -1
 	}
@@ -218,8 +232,8 @@ func (e *StorageExecutor) buildColumnsFromReturnItems(items []returnItem) []stri
 }
 
 // parseYieldClause is execution's compatibility adapter of the canonical node.
-func parseYieldClause(source string) *yieldClause {
-	clause, ok := canonicalQueryClause(source)
+func parseYieldClause(ctx context.Context, source string) *yieldClause {
+	clause, ok := canonicalQueryClause(ctx, source)
 	if !ok {
 		return nil
 	}
@@ -227,9 +241,9 @@ func parseYieldClause(source string) *yieldClause {
 }
 
 // callTailWithProjectionColumns consumes execution's WITH projection plan.
-func callTailWithProjectionColumns(withClause string) ([]string, bool) {
+func callTailWithProjectionColumns(ctx context.Context, withClause string) ([]string, bool) {
 	projection, _ := splitWithProjection(withClause)
-	plan := returnProjectionPlanFor("RETURN " + pipelineClauseBody(projection, "WITH"))
+	plan := returnProjectionPlanFor(ctx, "RETURN "+pipelineClauseBody(projection, "WITH"))
 	if !plan.valid || plan.star {
 		return nil, false
 	}
@@ -260,9 +274,9 @@ func projectionPlanScope(plan *returnProjectionPlan, previous map[string]struct{
 	return next
 }
 
-func pipelineProjectionScope(previous map[string]struct{}, clause string, imports pipelineRow) map[string]struct{} {
+func pipelineProjectionScope(ctx context.Context, previous map[string]struct{}, clause string, imports pipelineRow) map[string]struct{} {
 	projection, _ := splitWithProjection(clause)
-	plan := returnProjectionPlanFor("RETURN " + pipelineClauseBody(projection, "WITH"))
+	plan := returnProjectionPlanFor(ctx, "RETURN "+pipelineClauseBody(projection, "WITH"))
 	next := projectionPlanScope(plan, previous)
 	if next == nil {
 		return nil

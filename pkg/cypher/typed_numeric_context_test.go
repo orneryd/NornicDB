@@ -17,7 +17,7 @@ import (
 func TestTypedNumericEngineContextRepros(t *testing.T) {
 	withPluginFunctions(t, nil)
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "numeric_engine_context")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	t.Cleanup(func() { rowValueProgramsDisabled.Store(false) })
 	for _, disabled := range []bool{false, true} {
 		rowValueProgramsDisabled.Store(disabled)
@@ -65,7 +65,7 @@ const typedNumericIntegralFloatContextIndex = true
 func TestTypedNumericContextSubscriptPolicies(t *testing.T) {
 	withPluginFunctions(t, nil)
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "numeric_context_policy")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	t.Cleanup(func() { rowValueProgramsDisabled.Store(false) })
 	for _, disabled := range []bool{false, true} {
 		rowValueProgramsDisabled.Store(disabled)

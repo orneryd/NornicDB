@@ -93,9 +93,9 @@ func TestProcedureParameterAcceptsStaticType(t *testing.T) {
 
 func TestProjectUnwoundValues(t *testing.T) {
 	unwound := map[string]struct{}{"v": {}, "u": {}}
-	require.Nil(t, projectUnwoundValues(nil, "WITH v AS w"))
-	require.Equal(t, map[string]struct{}{"w": {}}, projectUnwoundValues(unwound, "WITH v AS w, 1 AS x"))
-	require.Equal(t, map[string]struct{}{"v": {}}, projectUnwoundValues(unwound, "WITH v"))
-	require.Equal(t, unwound, projectUnwoundValues(unwound, "WITH *"))
-	require.Nil(t, projectUnwoundValues(unwound, "WITH 1.5 AS v"))
+	require.Nil(t, projectUnwoundValues(t.Context(), nil, "WITH v AS w"))
+	require.Equal(t, map[string]struct{}{"w": {}}, projectUnwoundValues(t.Context(), unwound, "WITH v AS w, 1 AS x"))
+	require.Equal(t, map[string]struct{}{"v": {}}, projectUnwoundValues(t.Context(), unwound, "WITH v"))
+	require.Equal(t, unwound, projectUnwoundValues(t.Context(), unwound, "WITH *"))
+	require.Nil(t, projectUnwoundValues(t.Context(), unwound, "WITH 1.5 AS v"))
 }

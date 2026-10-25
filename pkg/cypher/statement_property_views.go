@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"reflect"
 	"slices"
 	"sync"
@@ -34,12 +35,12 @@ type edgePropertyViewBody struct {
 	properties map[string]interface{}
 }
 
-func (e *StorageExecutor) withStatementPropertyViews(query string) *StorageExecutor {
+func (e *StorageExecutor) withStatementPropertyViews(ctx context.Context, query string) *StorageExecutor {
 	if e.statementPropertyViews != nil || !e.queryPropertyDecayEnabled() {
 		return nil
 	}
-	requirements := QueryPermissionRequirements(query)
-	if requirements.Write || requirements.Schema || requirements.Admin || !isCacheableReadQuery(query) {
+	requirements := QueryPermissionRequirements(ctx, query)
+	if requirements.Write || requirements.Schema || requirements.Admin || !deterministicExecution(ctx, query, 0) {
 		return nil
 	}
 	scoped := e.cloneWithStorage(e.storage)

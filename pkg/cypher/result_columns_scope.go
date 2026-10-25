@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"slices"
 	"strconv"
@@ -82,13 +83,19 @@ func projectionKey(query string, incoming, retained resultmetadata.Names, cypher
 	retainedKey, retainedKnown := namesKey(retained)
 	return projectionFactsKey{query: query, incoming: inputKey, retained: retainedKey, incomingKnown: inputKnown, retainedKnown: retainedKnown, cypher25: cypher25}
 }
-func (e *StorageExecutor) projectionFactsFor(query string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
+func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
+	if err := ctx.Err(); err != nil {
+		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
+	}
 	key := projectionKey(query, incoming, retained, cypher25)
 	generation := globalProcedureRegistry.generation.Load()
 	if facts, found := projectionFactsCache.get(key); found && facts.generation == generation {
 		return facts
 	}
-	facts := e.compileStatementProgram(query, incoming, retained, cypher25)
+	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25)
+	if err := ctx.Err(); err != nil {
+		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
+	}
 	immutable := *facts
 	immutable.generation = generation
 	if immutable.statement != nil && immutable.err == nil {
@@ -106,8 +113,8 @@ func (e *StorageExecutor) projectionFactsFor(query string, incoming, retained re
 	return facts
 }
 
-func (e *StorageExecutor) projectedStatementScope(query string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
-	return e.projectionFactsFor(query, incoming, retained, cypher25)
+func (e *StorageExecutor) projectedStatementScope(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
+	return e.projectionFactsFor(ctx, query, incoming, retained, cypher25)
 }
 
 func projectedNameMap(names resultmetadata.Names) map[string]struct{} {
@@ -148,8 +155,8 @@ func mergeProjectedNames(incoming, retained resultmetadata.Names) resultmetadata
 	return addProjectedNames(incoming, retained)
 }
 
-func projectedProcedureNames(source string) resultmetadata.Names {
-	clause, ok := canonicalQueryClause(source)
+func projectedProcedureNames(ctx context.Context, source string) resultmetadata.Names {
+	clause, ok := canonicalQueryClause(ctx, source)
 	if !ok {
 		return resultmetadata.Unknown()
 	}

@@ -110,6 +110,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"splitCommaTopLevelLocal": true, "splitArgsRespectingArrays": true,
 	}
 	quoteMechanismAllowlist := map[string]string{
+		"pkg/cypher/executor_spans.go:redactSpanErrorText":           "Finds quoted Cypher fragments inside free-form trace errors, then delegates escape handling and literal masking to the canonical Cypher readers.",
 		"pkg/adminimport/importer.go:withDefaults":                   "sets a CSV quote option; does not read Cypher source",
 		"pkg/adminimport/importer.go:openCSVSource":                  "validates a CSV quote option before encoding/csv parsing; does not read Cypher source",
 		"pkg/adminimport/neo4j_csv.go:ExportNeo4jCSV":                "sets and validates the CSV output quote option; does not read Cypher source",
@@ -121,6 +122,7 @@ func TestPropertyScannerFamilyUsesCanonicalReaders(t *testing.T) {
 		"testing/cypher/tck/value.go:parseString":                    "decodes TCK expected-result table strings, not executable Cypher text",
 		"testing/cypher/tck/value.go:parseKey":                       "parses TCK expected-result map keys, not executable Cypher text",
 		"internal/cyphertext/scan.go:IsQuote":                        "canonical Cypher quote classification owner",
+		"internal/cyphertext/scan.go:TrimQuoteWrapper":               "canonical matched text-wrapper owner; delegates delimiter classification to IsQuote while preserving internal URL apostrophes",
 		"internal/cyphertext/scan.go:IsStringQuote":                  "canonical Cypher string-quote classification owner",
 		"internal/cyphertext/scan.go:IsSingleQuote":                  "canonical Cypher single-string delimiter classification owner",
 		"internal/cyphertext/scan.go:IsDoubleQuote":                  "canonical Cypher double-string delimiter classification owner",

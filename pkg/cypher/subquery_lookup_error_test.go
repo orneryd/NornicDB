@@ -58,7 +58,7 @@ func TestSubqueryLookupErrorsFailStatement(t *testing.T) {
 					require.NoError(t, err)
 					failure := errors.New("injected subquery storage lookup failure")
 					store := &subqueryLookupFailureEngine{Engine: base, operation: shape.operation, failure: failure}
-					e := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+					e := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 					expression := kind + " { " + shape.body + " }"
 					query := shape.prefix + " RETURN " + expression + " AS value"
 					if position == "WHERE" {

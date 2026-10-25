@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +15,7 @@ import (
 // so property-token allocation is deterministic rather than map-order dependent.
 func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
-	source, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour})
+	source, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir(), WriteBehind: true, WriteBehindInterval: time.Hour}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = source.Close() })
 	initial := []*Node{
@@ -71,7 +72,7 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 			snapshotPath := filepath.Join(t.TempDir(), "snapshot.bin")
 			require.NoError(t, SaveSnapshot(&Snapshot{Timestamp: time.Now(), Nodes: []*Node{first, initial[2], last}, Edges: []*Edge{initialEdge}, Version: "1.0"}, snapshotPath))
 			dir := t.TempDir()
-			fresh, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+			fresh, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = fresh.Close() })
 			result, _, err := RecoverIntoEngine(fresh, walDir, snapshotPath)
@@ -82,7 +83,7 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 			require.Equal(t, final.Properties, got.Properties, "physical WAL must retain property names after semantic snapshot restoration")
 			// Reopen to exercise persisted bodies rather than the replay cache.
 			require.NoError(t, fresh.Close())
-			fresh, err = NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+			fresh, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 			require.NoError(t, err)
 			got, err = fresh.GetNode("binding:a")
 			require.NoError(t, err)

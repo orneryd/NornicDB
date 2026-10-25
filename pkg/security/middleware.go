@@ -104,10 +104,14 @@ func (m *SecurityMiddleware) ValidateRequest(next http.Handler) http.Handler {
 		}
 
 		// Validate URL parameters
+		urlPolicy := URLPolicy{AllowHTTP: m.isDevelopment || m.allowHTTP}
+		if m.isDevelopment {
+			urlPolicy.HostPolicy = URLDevelopmentHost
+		}
 		urlParams := []string{"callback", "redirect", "redirect_uri", "url", "webhook"}
 		for _, param := range urlParams {
 			if urlValue := query.Get(param); urlValue != "" {
-				if err := ValidateURL(urlValue, m.isDevelopment, m.allowHTTP); err != nil {
+				if err := ValidateURL(urlValue, urlPolicy); err != nil {
 					m.writeError(w, r, localization.InvalidURLParameter(param, err), http.StatusBadRequest)
 					return
 				}

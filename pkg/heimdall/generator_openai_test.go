@@ -1,11 +1,16 @@
 package heimdall
 
 import (
+	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEstimateToolRoundMessagesTokens(t *testing.T) {
@@ -112,4 +117,20 @@ func TestTruncateForOpenAI(t *testing.T) {
 	assert.LessOrEqual(t, len(out), openAIMaxContentPerMessage)
 	assert.True(t, utf8.ValidString(out))
 	assert.Contains(t, out, "[Content truncated for API limit;")
+}
+
+func TestOpenAIContextErrorRemainsToolRoundSpecific(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":{"code":"context_length_exceeded"}}`)
+	}))
+	defer server.Close()
+	generator, err := newOpenAIGenerator(Config{APIURL: server.URL, APIKey: "synthetic-key", Model: "test"})
+	require.NoError(t, err)
+	_, err = generator.Generate(context.Background(), "probe", GenerateParams{})
+	require.ErrorContains(t, err, "openai returned 400")
+	err = generator.GenerateStream(context.Background(), "probe", GenerateParams{}, func(string) error { return nil })
+	require.ErrorContains(t, err, "openai returned 400")
+	_, _, err = generator.(GeneratorWithTools).GenerateWithTools(context.Background(), []ToolRoundMessage{{Role: "user", Content: "probe"}}, nil, GenerateParams{})
+	require.ErrorContains(t, err, "Please start a new chat")
 }

@@ -38,7 +38,7 @@ func TestListInputPluginRepresentations(t *testing.T) {
 		}
 	}
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "plugin_lists")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	read := func(t *testing.T, query string, params map[string]interface{}) interface{} {
 		t.Helper()
 		result, err := exec.Execute(context.Background(), query, params)

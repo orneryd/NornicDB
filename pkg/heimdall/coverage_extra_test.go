@@ -323,11 +323,9 @@ func buildCoverageHeimdallPlugin(t *testing.T, source string) string {
 	wd, err := os.Getwd()
 	require.NoError(t, err)
 	repoRoot := filepath.Clean(filepath.Join(wd, "../.."))
-	pluginDir, err := os.MkdirTemp(repoRoot, "heimdall-plugin-*")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = os.RemoveAll(pluginDir)
-	})
+	// Other packages run Go package/export discovery concurrently. Generated
+	// plugin sources must stay outside this module's ./... package population.
+	pluginDir := t.TempDir()
 
 	srcPath := filepath.Join(pluginDir, "main.go")
 	soPath := filepath.Join(pluginDir, "plugin.so")
@@ -673,10 +671,10 @@ func TestHeimdallCoverage_QueryExecutorAndLoggerHelpers(t *testing.T) {
 }
 
 func TestHeimdallCoverage_VLLMGeneratorBranches(t *testing.T) {
-	_, err := newVLLMGenerator(Config{})
+	_, err := newOpenAIGenerator(Config{Provider: "vllm"})
 	require.ErrorContains(t, err, "vllm provider requires")
 
-	gen, err := newVLLMGenerator(Config{Model: "mistral"})
+	gen, err := newOpenAIGenerator(Config{Provider: "vllm", Model: "mistral"})
 	require.NoError(t, err)
 	oag := gen.(*openAIGenerator)
 	assert.Equal(t, defaultVLLMBaseURL, oag.baseURL)
@@ -684,7 +682,7 @@ func TestHeimdallCoverage_VLLMGeneratorBranches(t *testing.T) {
 	assert.Equal(t, "mistral", oag.model)
 	assert.Equal(t, "openai:mistral", gen.ModelPath())
 
-	gen, err = newVLLMGenerator(Config{Model: "mixtral", APIURL: "http://vllm.local:9000/", APIKey: "sk-test"})
+	gen, err = newOpenAIGenerator(Config{Provider: "vllm", Model: "mixtral", APIURL: "http://vllm.local:9000/", APIKey: "sk-test"})
 	require.NoError(t, err)
 	oag = gen.(*openAIGenerator)
 	assert.Equal(t, "http://vllm.local:9000", oag.baseURL)

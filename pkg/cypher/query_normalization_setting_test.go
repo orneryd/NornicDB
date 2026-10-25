@@ -28,25 +28,25 @@ func TestQueryNormalizationSettingKeepsClassification(t *testing.T) {
 		"MATCH (n)\nRETURN rand() AS r",
 	} {
 		canonical, _ := canonicalizeQueryText(statement)
-		want := QueryPermissionRequirements(canonical)
+		want := QueryPermissionRequirements(t.Context(), canonical)
 		wantWrite := looksLikeWriteQuery(canonical)
 		wantCacheable := isCacheableReadQuery(canonical)
-		wantInfo := *analyzer.Analyze(canonical)
+		wantInfo := *analyzer.Analyze(t.Context(), canonical)
 		for _, enabled := range []bool{true, false} {
 			restore := config.WithCypherQueryNormalizationDisabled()
 			config.SetCypherQueryNormalizationEnabled(enabled)
 			analyzer.ClearCache()
-			require.Equal(t, want, QueryPermissionRequirements(statement), "%q enabled=%v", statement, enabled)
+			require.Equal(t, want, QueryPermissionRequirements(t.Context(), statement), "%q enabled=%v", statement, enabled)
 			require.Equal(t, wantWrite, looksLikeWriteQuery(statement), "%q enabled=%v", statement, enabled)
 			require.Equal(t, wantCacheable, isCacheableReadQuery(statement), "%q enabled=%v", statement, enabled)
-			info := analyzer.Analyze(statement)
+			info := analyzer.Analyze(t.Context(), statement)
 			require.Equal(t, wantInfo.IsWriteQuery, info.IsWriteQuery, "%q enabled=%v", statement, enabled)
 			require.Equal(t, wantInfo.IsReadOnly, info.IsReadOnly, "%q enabled=%v", statement, enabled)
 			restore()
 		}
 	}
-	require.True(t, QueryPermissionRequirements("/* c */ CREATE (n:X)").Write)
-	require.False(t, QueryPermissionRequirements("MATCH (n) // delete later\nRETURN n").Write)
+	require.True(t, QueryPermissionRequirements(t.Context(), "/* c */ CREATE (n:X)").Write)
+	require.False(t, QueryPermissionRequirements(t.Context(), "MATCH (n) // delete later\nRETURN n").Write)
 	require.True(t, looksLikeWriteQuery("MATCH (n)\n\tSET\tn.x = 1"))
 
 	canonical := "MATCH (n:Person {name: $name}) WHERE n.age > 30 RETURN n.name AS name"

@@ -96,15 +96,15 @@ func TestExecuteChainedMatchWithAggregations_Branches(t *testing.T) {
 }
 
 func TestProjectionAndCountHelpers_Branches(t *testing.T) {
-	expr, alias := parseProjectionExprAlias(" n.name AS nn ")
+	expr, alias := parseProjectionExprAlias(t.Context(), " n.name AS nn ")
 	require.Equal(t, "n.name", expr)
 	require.Equal(t, "nn", alias)
 
-	expr, alias = parseProjectionExprAlias("n")
+	expr, alias = parseProjectionExprAlias(t.Context(), "n")
 	require.Equal(t, "n", expr)
 	require.Equal(t, "n", alias)
 
-	expr, alias = parseProjectionExprAlias(" ")
+	expr, alias = parseProjectionExprAlias(t.Context(), " ")
 	require.Empty(t, expr)
 	require.Empty(t, alias)
 

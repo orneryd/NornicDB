@@ -51,5 +51,5 @@ type Projection struct {
 // ProjectionProvider supplies the canonical single-clause projection reader.
 // This compiles projection syntax, never a statement scope or semantic walk.
 type ProjectionProvider interface {
-	ResultProjection(string, []string) Projection
+	ResultProjection(context.Context, string, []string) Projection
 }

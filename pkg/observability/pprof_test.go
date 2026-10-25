@@ -5,8 +5,7 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
-	"strings"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -97,35 +96,15 @@ func TestPprofListener_NameAndBindError(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestPprofListener_NotImportedFromDefaultMux — verifies that pkg/observability
-// does NOT use `import _ "net/http/pprof"` (the side-effect form). We need
-// `net/http/pprof` for its handler symbols (pprof.Index, etc.), but we must
-// import it for its symbols, not for its init() side-effect.
-//
-// The runtime DefaultServeMux state is necessarily polluted by net/http/pprof's
-// init() once the package is in the binary at all — that's a property of Go's
-// stdlib, not of our wiring. The contract we actually care about is that our
-// :9091 listener uses a CUSTOM mux, which is asserted by
-// TestPprofListener_HandlersRegistered (the listener's mux serves the
-// handlers) and by source-level grep for `_ "net/http/pprof"` in the verify
-// gate. This test asserts the source-level property directly.
+// Importing observability and constructing its private profiler must never
+// register debug handlers on a different server's default mux.
 func TestPprofListener_NotImportedFromDefaultMux(t *testing.T) {
-	src, err := os.ReadFile("pprof.go")
+	l, err := NewPprofListener(PprofConfig{Enabled: true, Listen: "127.0.0.1:0"})
 	require.NoError(t, err)
-	// Strip line comments so commentary mentioning the forbidden form does not
-	// false-positive.
-	var stripped strings.Builder
-	for _, line := range strings.Split(string(src), "\n") {
-		if i := strings.Index(line, "//"); i >= 0 {
-			line = line[:i]
-		}
-		stripped.WriteString(line)
-		stripped.WriteByte('\n')
+	t.Cleanup(func() { _ = l.ln.Close() })
+	for _, path := range []string{"/debug/pprof/", "/debug/pprof/cmdline", "/debug/pprof/heap"} {
+		recorder := httptest.NewRecorder()
+		http.DefaultServeMux.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusNotFound, recorder.Code, "default mux unexpectedly serves profiling")
 	}
-	code := stripped.String()
-	require.NotContains(t, code, `_ "net/http/pprof"`,
-		"pkg/observability/pprof.go must NOT use the side-effect `import _ \"net/http/pprof\"` form")
-	// Sanity: it MUST import the package by name (we use pprof.Index etc.).
-	require.Contains(t, code, `"net/http/pprof"`,
-		"pkg/observability/pprof.go is expected to import net/http/pprof for pprof.Index/etc.")
 }

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -44,7 +45,7 @@ func TestWALPropertyAuthorityRejectsCorruptIdentity(t *testing.T) {
 		return tx.Set(walPropertyIdentityKey, []byte("invalid-identity"))
 	}))
 	require.NoError(t, b.Close())
-	_, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	_, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.ErrorContains(t, err, "invalid property dictionary identity")
 }
 

@@ -21,7 +21,7 @@ func TestStatementGraphFreeWrites(t *testing.T) {
 	} {
 		t.Run(query, func(t *testing.T) {
 			exec, _ := nestedUseRouterExecutor(t, "nornic")
-			requirements := QueryPermissionRequirements(query)
+			requirements := QueryPermissionRequirements(t.Context(), query)
 			_, unrestricted := exec.Execute(context.Background(), query, nil)
 			ctx := WithDatabasePermissionResolver(context.Background(), "nornic", func(_, permission string) bool { return permission == "write" })
 			result, restricted := exec.Execute(ctx, query, nil)
@@ -37,8 +37,8 @@ func TestStatementParameterizedCustomProcedureCache(t *testing.T) {
 	t.Cleanup(ClearUserProcedures)
 	ctx := context.Background()
 	base := newTestMemoryEngine(t)
-	caller := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(base, "vault"), 100, time.Minute)
-	installer := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(base, "nornic"), 100, time.Minute)
+	caller := NewStorageExecutor(storage.NewNamespacedEngine(base, "vault"), QueryCachePolicy{MaxEntries: 100, TTL: time.Minute})
+	installer := NewStorageExecutor(storage.NewNamespacedEngine(base, "nornic"), QueryCachePolicy{MaxEntries: 100, TTL: time.Minute})
 	install := func(body string) {
 		_, err := installer.Execute(ctx, "CALL apoc.custom.installProcedure('r2cache() :: (c :: INTEGER)', '"+body+"', 'nornic', 'read')", nil)
 		require.NoError(t, err)

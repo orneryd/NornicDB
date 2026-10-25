@@ -30,7 +30,7 @@ func TestResultHeaderFramingPresence(t *testing.T) {
 			key := projectionKey(query, resultmetadata.Known(nil), resultmetadata.Known(nil), false)
 			_, cached := projectionFactsCache.get(key)
 			require.False(t, cached)
-			require.Equal(t, tc.want, executor.statementProducesColumns(query))
+			require.Equal(t, tc.want, executor.statementProducesColumns(t.Context(), query))
 			_, cached = projectionFactsCache.get(key)
 			require.False(t, cached, "presence-only framing must not compile the scope program")
 			columns, err := executor.StatementResultColumns(query)

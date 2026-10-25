@@ -96,9 +96,9 @@ func TestSizeRejectsPathsAndPatternPredicates(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "size_argument_types"))
 	rows := []pipelineRow{{"p": map[string]interface{}{"_pathResult": PathResult{}}}}
 
-	err := exec.validatePipelineSizeArguments(rows, "RETURN size(p)", "RETURN")
+	err := exec.validatePipelineSizeArguments(t.Context(), rows, "RETURN size(p)", "RETURN")
 	require.Error(t, err)
-	err = exec.validatePipelineSizeArguments(nil, "RETURN size((a)-->(b))", "RETURN")
+	err = exec.validatePipelineSizeArguments(t.Context(), nil, "RETURN size((a)-->(b))", "RETURN")
 	require.Error(t, err)
 }
 
@@ -108,7 +108,7 @@ func TestStaticSizeRejectsPathBindingsAcrossProjectionHorizons(t *testing.T) {
 		"MATCH p = (a)-->(b) WITH p AS route RETURN size(route)",
 	} {
 		exec, _ := newUnitExecutor(t)
-		err := exec.validateMatchSemanticScopes(query, false)
+		err := exec.validateMatchSemanticScopes(t.Context(), query, false)
 		require.Error(t, err)
 		var semanticError *SemanticError
 		require.ErrorAs(t, err, &semanticError)

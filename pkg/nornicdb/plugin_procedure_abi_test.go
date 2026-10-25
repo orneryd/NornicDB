@@ -56,60 +56,61 @@ func TestPluginInvalidProcedureFailsWholeLoad(t *testing.T) {
 	t.Cleanup(cypher.ClearUserProcedures)
 	_, err := loadFunctionPlugin(invalidProcedureFixture{}, "fixture.so")
 	require.Error(t, err)
-	_, found := cypher.RegisteredProcedureForCall("CALL invalid_proc_fixture.good()")
-	require.False(t, found)
+	require.Empty(t, cypher.RegisteredProceduresForCalls(t.Context(), "CALL invalid_proc_fixture.good()"))
 }
 
 func TestPluginProcedureDeclarationChecks(t *testing.T) {
-	cypher.ClearUserProcedures()
-	t.Cleanup(cypher.ClearUserProcedures)
-	raw := func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
-		return &cypher.ExecuteResult{}, nil
-	}
-	for _, mode := range []string{"", "READ", "WRITE", "SCHEMA", "ADMIN", "DBMS"} {
-		d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.mode", Mode: mode, Handler: raw})
-		require.NoError(t, err)
-		require.NotNil(t, d.handler)
-	}
-	for _, proc := range []PluginProcedure{
-		{Name: "bad", Handler: raw, Mode: "TYPO"}, {Name: "bad", Handler: cypher.ProcedureHandler(nil)},
-		{Name: "bad", Handler: (func(context.Context, string, []interface{}) (*cypher.ExecuteResult, error))(nil)},
-		{Name: "bad", Handler: 3}, {Name: "", Handler: raw}, {Name: "bad", Handler: raw, MinArgs: 2, MaxArgs: 1},
-	} {
-		require.Error(t, registerProcedureWithCypher(proc))
-	}
-	require.Error(t, registerPluginProcedures([]PluginProcedure{{Name: "atomic.good", Handler: raw}, {Name: "atomic.bad", Handler: 3}}))
-	_, found := cypher.RegisteredProcedureForCall("CALL atomic.good()")
-	require.False(t, found)
-}
+	t.Run("declaration validation and atomic load", func(t *testing.T) {
+		cypher.ClearUserProcedures()
+		t.Cleanup(cypher.ClearUserProcedures)
+		raw := func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+			return &cypher.ExecuteResult{}, nil
+		}
+		for _, mode := range []string{"", "READ", "WRITE", "SCHEMA", "ADMIN", "DBMS"} {
+			d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.mode", Mode: mode, Handler: raw})
+			require.NoError(t, err)
+			require.NotNil(t, d.handler)
+		}
+		for _, proc := range []PluginProcedure{
+			{Name: "bad", Handler: raw, Mode: "TYPO"}, {Name: "bad", Handler: cypher.ProcedureHandler(nil)},
+			{Name: "bad", Handler: (func(context.Context, string, []interface{}) (*cypher.ExecuteResult, error))(nil)},
+			{Name: "bad", Handler: 3}, {Name: "", Handler: raw}, {Name: "bad", Handler: raw, MinArgs: 2, MaxArgs: 1},
+		} {
+			require.Error(t, registerProcedureWithCypher(proc))
+		}
+		require.Error(t, registerPluginProcedures([]PluginProcedure{{Name: "atomic.good", Handler: raw}, {Name: "atomic.bad", Handler: 3}}))
+		require.Empty(t, cypher.RegisteredProceduresForCalls(t.Context(), "CALL atomic.good()"))
 
-func TestPluginProcedureInvocationChecks(t *testing.T) {
-	sentinel := errors.New("fixture error")
-	for _, tc := range []struct {
-		handler cypher.ProcedureHandler
-		want    string
-	}{
-		{func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
-			panic("fixture")
-		}, "panicked"},
-		{func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
-			return nil, nil
-		}, "nil result"},
-		{func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
-			return nil, sentinel
-		}, "fixture error"},
-	} {
-		d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.invoke", Handler: tc.handler})
+	})
+	t.Run("invocation failures and cancellation", func(t *testing.T) {
+		sentinel := errors.New("fixture error")
+		for _, tc := range []struct {
+			handler cypher.ProcedureHandler
+			want    string
+		}{
+			{func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+				panic("fixture")
+			}, "panicked"},
+			{func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+				return nil, nil
+			}, "nil result"},
+			{func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+				return nil, sentinel
+			}, "fixture error"},
+		} {
+			d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.invoke", Handler: tc.handler})
+			require.NoError(t, err)
+			_, err = d.handler(context.Background(), nil, "", nil)
+			require.ErrorContains(t, err, tc.want)
+		}
+		d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.cancel", Handler: cypher.ProcedureHandler(func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
+			panic("not invoked")
+		})})
 		require.NoError(t, err)
-		_, err = d.handler(context.Background(), nil, "", nil)
-		require.ErrorContains(t, err, tc.want)
-	}
-	d, err := pluginProcedureForCypher(PluginProcedure{Name: "checked.cancel", Handler: cypher.ProcedureHandler(func(context.Context, *cypher.StorageExecutor, string, []interface{}) (*cypher.ExecuteResult, error) {
-		panic("not invoked")
-	})})
-	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err = d.handler(ctx, nil, "", nil)
-	require.ErrorIs(t, err, context.Canceled)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err = d.handler(ctx, nil, "", nil)
+		require.ErrorIs(t, err, context.Canceled)
+
+	})
 }

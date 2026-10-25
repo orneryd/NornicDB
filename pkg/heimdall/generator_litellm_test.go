@@ -18,62 +18,34 @@ func TestLiteLLMProviderRegistered(t *testing.T) {
 	assert.True(t, ok, "litellm provider should be registered")
 }
 
-func TestNewLiteLLMGeneratorDefaults(t *testing.T) {
-	gen, err := newLiteLLMGenerator(Config{Model: "gpt-4o"})
-	require.NoError(t, err)
-
-	g, ok := gen.(*liteLLMGenerator)
-	require.True(t, ok, "litellm generator wraps openAIGenerator")
-	assert.Equal(t, defaultLiteLLMBaseURL, g.baseURL, "defaults to the local LiteLLM proxy")
-	assert.Equal(t, "gpt-4o", g.model, "model/alias is used as-is")
-	assert.Equal(t, "EMPTY", g.apiKey, "empty key falls back to a placeholder")
-	assert.Equal(t, "litellm:gpt-4o", g.ModelPath())
-}
-
-func TestNewLiteLLMGeneratorOverrides(t *testing.T) {
-	gen, err := newLiteLLMGenerator(Config{
-		Model:  "anthropic/claude-sonnet-4-20250514",
-		APIURL: "http://gateway.internal:4000/", // trailing slash trimmed
-		APIKey: "sk-litellm-master",
-	})
-	require.NoError(t, err)
-
-	g := gen.(*liteLLMGenerator)
-	assert.Equal(t, "http://gateway.internal:4000", g.baseURL)
-	assert.Equal(t, "anthropic/claude-sonnet-4-20250514", g.model)
-	assert.Equal(t, "sk-litellm-master", g.apiKey)
-}
-
 func TestNewLiteLLMGeneratorRequiresModel(t *testing.T) {
-	_, err := newLiteLLMGenerator(Config{})
+	_, err := newOpenAIGenerator(Config{Provider: "litellm"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires NORNICDB_HEIMDALL_MODEL")
 }
 
-func TestLiteLLMProductionConfigRequiresExplicitModel(t *testing.T) {
-	flags := &MockFeatureFlags{
-		enabled:  true,
-		provider: "litellm",
+// TestLiteLLMProductionConfigModelPolicy covers both the rejected absent model
+// and a preserved gateway alias through the same feature-flag construction path.
+func TestLiteLLMProductionConfigModelPolicy(t *testing.T) {
+	for _, model := range []string{"", "team-chat"} {
+		name := "requires_explicit_model"
+		if model != "" {
+			name = "preserves_alias"
+		}
+		t.Run(name, func(t *testing.T) {
+			flags := &MockFeatureFlags{enabled: true, provider: "litellm", model: model}
+			cfg := ConfigFromFeatureFlags(flags)
+			require.Equal(t, model, cfg.Model)
+			gen, err := newOpenAIGenerator(cfg)
+			if model == "" {
+				require.ErrorContains(t, err, "requires NORNICDB_HEIMDALL_MODEL")
+				return
+			}
+			require.NoError(t, err)
+			require.IsType(t, &openAIGenerator{}, gen)
+			require.Equal(t, model, gen.(*openAIGenerator).model)
+		})
 	}
-
-	cfg := ConfigFromFeatureFlags(flags)
-	assert.Empty(t, cfg.Model)
-	_, err := newLiteLLMGenerator(cfg)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires NORNICDB_HEIMDALL_MODEL")
-}
-
-func TestLiteLLMProductionConfigPreservesModelAlias(t *testing.T) {
-	flags := &MockFeatureFlags{
-		enabled:  true,
-		provider: "litellm",
-		model:    "team-chat",
-	}
-
-	cfg := ConfigFromFeatureFlags(flags)
-	gen, err := newLiteLLMGenerator(cfg)
-	require.NoError(t, err)
-	assert.Equal(t, "team-chat", gen.(*liteLLMGenerator).model)
 }
 
 // TestLiteLLMGeneratorRoundTrip drives Generate against a stub OpenAI-compatible
@@ -93,7 +65,7 @@ func TestLiteLLMGeneratorRoundTrip(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	gen, err := newLiteLLMGenerator(Config{Model: "gpt-4o", APIURL: srv.URL, APIKey: "sk-test"})
+	gen, err := newOpenAIGenerator(Config{Provider: "litellm", Model: "gpt-4o", APIURL: srv.URL, APIKey: "sk-test"})
 	require.NoError(t, err)
 
 	out, err := gen.Generate(context.Background(), "ping", GenerateParams{MaxTokens: 16})

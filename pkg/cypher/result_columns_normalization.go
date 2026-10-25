@@ -14,14 +14,14 @@ var statementPresentationRewrites = newBoundedCache[string, *queryRewrite](4096,
 // before execution, even if a deferred display rewrite restores the final keys.
 // The shared CST supplies these spans; normalization remains the existing edit
 // owner, and no second scope or result-header analysis runs here.
-func canonicalizeStatementText(source string) (string, *queryRewrite) {
+func canonicalizeStatementText(ctx context.Context, source string) (string, *queryRewrite) {
 	canonical, rewrite := canonicalizeQueryText(source)
-	return preserveStatementPresentation(source, canonical, rewrite)
+	return preserveStatementPresentation(ctx, source, canonical, rewrite)
 }
 
 // preserveStatementPresentation composes lexical normalization with the
 // grammar-owned source spans that are public expression column names.
-func preserveStatementPresentation(source, canonical string, rewrite *queryRewrite) (string, *queryRewrite) {
+func preserveStatementPresentation(ctx context.Context, source, canonical string, rewrite *queryRewrite) (string, *queryRewrite) {
 	if rewrite == nil {
 		return canonical, nil
 	}
@@ -31,7 +31,10 @@ func preserveStatementPresentation(source, canonical string, rewrite *queryRewri
 		}
 		return prior.canonical, prior
 	}
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.StatementEntry, false)
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25")
+	if ctx.Err() != nil {
+		return source, nil
+	}
 	if err != nil {
 		// Normalization does not admit a statement. Its existing command or
 		// syntax owner still receives this text and determines its outcome.
@@ -60,16 +63,25 @@ func preserveStatementPresentation(source, canonical string, rewrite *queryRewri
 		last = edit.origEnd
 	}
 	if !removed {
+		if ctx.Err() != nil {
+			return source, nil
+		}
 		statementPresentationRewrites.put(source, rewrite)
 		return canonical, rewrite
 	}
 	output.WriteString(source[last:])
 	canonical = output.String()
 	if canonical == source {
+		if ctx.Err() != nil {
+			return source, nil
+		}
 		statementPresentationRewrites.put(source, nil)
 		return source, nil
 	}
 	rewrite = &queryRewrite{original: source, canonical: canonical, edits: kept, verbatimColumns: rewrite.verbatimColumns, commentsAdmitted: rewrite.commentsAdmitted}
+	if ctx.Err() != nil {
+		return source, nil
+	}
 	statementPresentationRewrites.put(source, rewrite)
 	return canonical, rewrite
 }
