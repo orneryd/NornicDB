@@ -115,24 +115,22 @@ func armResultStream(ctx context.Context, stream *ResultStream, statement string
 	return context.WithValue(ctx, armedResultStreamKey{}, stream)
 }
 
-// bindResultStream binds the armed stream to the clause list the pipeline
+// bind binds the armed stream to the clause list the pipeline
 // runs for the statement itself, when cypher is the armed statement's text
 // and nothing has bound it yet. Subqueries and UNION branches run other
 // texts, so they never bind it.
-func bindResultStream(ctx context.Context, cypher string, clauses []pipelineClause) {
-	stream, _ := ctx.Value(armedResultStreamKey{}).(*ResultStream)
+func (stream *ResultStream) bind(cypher string, clauses []pipelineClause) {
 	if stream == nil || stream.frame != nil || stream.statement != cypher || len(clauses) == 0 {
 		return
 	}
 	stream.frame = &clauses[len(clauses)-1]
 }
 
-// boundResultStream returns the armed stream when clause is the last clause
+// forClause returns the armed stream when clause is the last clause
 // of the clause list it is bound to: the statement's own RETURN, not one of
 // a subquery the statement runs.
-func boundResultStream(ctx context.Context, clause *pipelineClause) *ResultStream {
-	stream, _ := ctx.Value(armedResultStreamKey{}).(*ResultStream)
-	if stream == nil || stream.frame == nil || stream.frame != clause {
+func (stream *ResultStream) forClause(ctx context.Context, clause *pipelineClause) *ResultStream {
+	if stream == nil || stream.frame == nil || stream.frame != clause || clause.kind != pipelineClauseReturn || !streamableReturnPlan(returnProjectionPlanFor(ctx, clause.text)) {
 		return nil
 	}
 	return stream
@@ -141,8 +139,7 @@ func boundResultStream(ctx context.Context, clause *pipelineClause) *ResultStrea
 // streamsScan reports whether the MATCH at clauses[index] belongs to the
 // statement the stream is bound to, so its scan may feed rows as they are
 // read: the statement only reads, and only reads what it streams.
-func streamsScan(ctx context.Context, clauses []pipelineClause) bool {
-	stream, _ := ctx.Value(armedResultStreamKey{}).(*ResultStream)
+func (stream *ResultStream) streamsScan(clauses []pipelineClause) bool {
 	return stream != nil && stream.frame != nil && len(clauses) > 0 && stream.frame == &clauses[len(clauses)-1]
 }
 

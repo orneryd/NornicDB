@@ -40,7 +40,7 @@ func TestMonster728ProductAggregateAllocations(t *testing.T) {
 			"MATCH (a:Doc) WITH a MATCH (b:Doc) WITH a.id AS x, b RETURN count(*) AS c",
 		} {
 			t.Run(fmt.Sprint(explicit)+query, func(t *testing.T) {
-				exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "product"), 0, 0)
+				exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "product"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				ctx := context.Background()
 				_, err := exec.Execute(ctx, "UNWIND range(0, 255) AS i CREATE (:Doc {id: i})", nil)
 				require.NoError(t, err)

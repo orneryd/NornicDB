@@ -40,7 +40,7 @@ func TestRule73SelectionForms(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			root := NewStorageExecutorWithQueryCachePolicy(engine, 0, 0)
+			root := NewStorageExecutor(engine, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			if err := root.UseDatabaseStatementCaches(manager, rootName); err != nil {
 				t.Fatal(err)
 			}
@@ -149,7 +149,7 @@ func TestRule73ReferenceCycles64(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			root := NewStorageExecutorWithQueryCachePolicy(engine, 0, 0)
+			root := NewStorageExecutor(engine, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			if err := root.UseDatabaseStatementCaches(manager, "nornic"); err != nil {
 				t.Fatal(err)
 			}

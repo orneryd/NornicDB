@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"reflect"
 	"strings"
 )
@@ -25,25 +26,25 @@ var propertyAccessStaticTypes = map[string]bool{
 // does this. It parses the statement only when a parameter that a property
 // access would reject is accessed ($m.a) or projected ($m AS m), so
 // parameterized statements on hot paths cost one scan.
-func validateStaticPropertyAccessParameters(cypher string, params map[string]interface{}) error {
+func validateStaticPropertyAccessParameters(ctx context.Context, cypher string, params map[string]interface{}) error {
 	if len(params) == 0 || !strings.ContainsAny(cypher, ".{[") || !parameterMayRejectPropertyAccess(cypher, params) {
 		return nil
 	}
-	return validatePropertyAccessTypes(cypher, params)
+	return validatePropertyAccessTypes(ctx, cypher, params)
 }
 
 // validatePropertyAccessTypes walks the clauses, tracking the static types of
 // the variables WITH and UNWIND bind, and checks every property access.
-func validatePropertyAccessTypes(cypher string, params map[string]interface{}) error {
-	return validatePropertyAccessClauses(cypher, nil, params)
+func validatePropertyAccessTypes(ctx context.Context, cypher string, params map[string]interface{}) error {
+	return validatePropertyAccessClauses(ctx, cypher, nil, params)
 }
 
 // validatePropertyAccessClauses is validatePropertyAccessTypes for a
 // statement or a subquery body that sees the outer variables' types. The
 // outer map is never modified. Declaration validity belongs to the shared
 // semantic scope walk; this visitor only tracks property receiver types.
-func validatePropertyAccessClauses(cypher string, outer map[string]string, params map[string]interface{}) error {
-	clauses, ok := splitPipelineClauses(cypher)
+func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map[string]string, params map[string]interface{}) error {
+	clauses, ok := splitPipelineClauses(ctx, cypher)
 	if !ok {
 		return nil
 	}
@@ -61,14 +62,14 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 				next[name] = typeName
 			}
 			for _, projection := range projections {
-				if err := checkExpressionPropertyAccesses(projection.expression, types, params); err != nil {
+				if err := checkExpressionPropertyAccesses(ctx, projection.expression, types, params); err != nil {
 					return err
 				}
 				next[projection.alias] = propertyAccessExpressionType(projection.expression, types, params)
 			}
 			types = next
 		case pipelineClauseFilter:
-			if err := checkExpressionPropertyAccesses(pipelineFilterExpression(text), types, params); err != nil {
+			if err := checkExpressionPropertyAccesses(ctx, pipelineFilterExpression(text), types, params); err != nil {
 				return err
 			}
 		case pipelineClauseWith, pipelineClauseReturn:
@@ -77,14 +78,14 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 				keyword = "RETURN"
 			}
 			body, tail := projectionSemanticBodyAndTail(text, keyword)
-			if err := checkExpressionPropertyAccesses(body, types, params); err != nil {
+			if err := checkExpressionPropertyAccesses(ctx, body, types, params); err != nil {
 				return err
 			}
 			next := types
 			if clause.kind == pipelineClauseWith {
 				next = map[string]string{}
 				for _, raw := range splitTopLevelComma(body) {
-					expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
+					expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
 					if expression == "*" {
 						for variable, typeName := range types {
 							next[variable] = typeName
@@ -112,7 +113,7 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 				for variable, typeName := range next {
 					visible[variable] = typeName
 				}
-				if err := checkExpressionPropertyAccesses(tail, visible, params); err != nil {
+				if err := checkExpressionPropertyAccesses(ctx, tail, visible, params); err != nil {
 					return err
 				}
 			}
@@ -122,7 +123,7 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 			if !ok {
 				continue
 			}
-			if err := checkExpressionPropertyAccesses(expression, types, params); err != nil {
+			if err := checkExpressionPropertyAccesses(ctx, expression, types, params); err != nil {
 				return err
 			}
 			variable := normalizeProjectionColumnName(alias)
@@ -141,7 +142,7 @@ func validatePropertyAccessClauses(cypher string, outer map[string]string, param
 				types = next
 			}
 		default:
-			if err := checkPropertyAccesses(text, types, params); err != nil {
+			if err := checkPropertyAccesses(ctx, text, types, params); err != nil {
 				return err
 			}
 			if clause.kind == pipelineClauseSet {
@@ -238,26 +239,26 @@ func rejectsPropertyAccess(typeName string) bool {
 // with its own variables shadowing the scope; a pattern comprehension and a
 // subquery body (EXISTS / COUNT / COLLECT / CALL { … }) see the outer
 // variables' types.
-func checkPropertyAccesses(text string, types map[string]string, params map[string]interface{}) error {
-	return scanPropertyAccesses(text, types, params, false)
+func checkPropertyAccesses(ctx context.Context, text string, types map[string]string, params map[string]interface{}) error {
+	return scanPropertyAccesses(ctx, text, types, params, false)
 }
 
 // checkExpressionPropertyAccesses is checkPropertyAccesses for text that
 // holds only expressions (projection items, WHERE, ORDER BY, an UNWIND list),
 // where name { … } is a map projection: Neo4j's "Type mismatch: expected
 // Map, Node or Relationship but was Integer" for a base without properties.
-func checkExpressionPropertyAccesses(text string, types map[string]string, params map[string]interface{}) error {
+func checkExpressionPropertyAccesses(ctx context.Context, text string, types map[string]string, params map[string]interface{}) error {
 	if params != nil {
 		if err := validateStaticPropertySubscripts(text, staticTypeScope{values: types, params: params}); err != nil {
 			return err
 		}
 	}
-	return scanPropertyAccesses(text, types, params, true)
+	return scanPropertyAccesses(ctx, text, types, params, true)
 }
 
 // scanPropertyAccesses checks the property accesses (and, in expression
 // text, the map projections) of text; see checkPropertyAccesses.
-func scanPropertyAccesses(text string, types map[string]string, params map[string]interface{}, expressions bool) error {
+func scanPropertyAccesses(ctx context.Context, text string, types map[string]string, params map[string]interface{}, expressions bool) error {
 	braces := newSubqueryBraceScanner(text, 0)
 	if strings.IndexByte(text, '.') < 0 && strings.IndexByte(text, '{') < 0 {
 		return nil
@@ -298,10 +299,10 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 				// paths; outer variables keep their types inside, but for
 				// the names bound around it.
 				inside := local().withoutTypes(types, index)
-				if err := checkPropertyAccesses(pattern, inside, params); err != nil {
+				if err := checkPropertyAccesses(ctx, pattern, inside, params); err != nil {
 					return err
 				}
-				if err := checkExpressionPropertyAccesses(projection, inside, params); err != nil {
+				if err := checkExpressionPropertyAccesses(ctx, projection, inside, params); err != nil {
 					return err
 				}
 				index = end
@@ -313,7 +314,7 @@ func scanPropertyAccesses(text string, types map[string]string, params map[strin
 					return nil
 				}
 				// A subquery body sees the outer variables.
-				if err := validatePropertyAccessClauses(text[index+1:end], local().withoutTypes(types, index), params); err != nil {
+				if err := validatePropertyAccessClauses(ctx, text[index+1:end], local().withoutTypes(types, index), params); err != nil {
 					return err
 				}
 				index = end

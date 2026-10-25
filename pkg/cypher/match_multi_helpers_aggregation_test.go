@@ -11,11 +11,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const gh713UnwindReturnPrefix = "MATCH (n:UnwindReturn) WITH n, n.items AS items UNWIND items AS item "
+
+func newGh713UnwindReturnExecutor(t testing.TB, namespace string, count int, node func(int) *storage.Node) (*StorageExecutor, *storage.NamespacedEngine) {
+	t.Helper()
+	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), namespace)
+	for index := 0; index < count; index++ {
+		_, err := store.CreateNode(node(index))
+		require.NoError(t, err)
+	}
+	return NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0}), store
+}
+
 func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
-	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "match-with-unwind-return")
-	_, err := store.CreateNode(&storage.Node{ID: "items", Labels: []string{"UnwindReturn"}, Properties: map[string]interface{}{"items": []interface{}{int64(3), int64(1), int64(2)}}})
-	require.NoError(t, err)
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec, store := newGh713UnwindReturnExecutor(t, "match-with-unwind-return", 1, func(int) *storage.Node {
+		return &storage.Node{ID: "items", Labels: []string{"UnwindReturn"}, Properties: map[string]interface{}{"items": []interface{}{int64(3), int64(1), int64(2)}}}
+	})
 	params := map[string]interface{}{"skip": int64(1), "limit": int64(1)}
 	for _, test := range []struct {
 		clause, code string
@@ -41,7 +52,7 @@ func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
 		{"RETURN collect(item) AS values", "", []string{"values"}, [][]interface{}{{[]interface{}{int64(3), int64(1), int64(2)}}}},
 	} {
 		t.Run(test.clause, func(t *testing.T) {
-			query := "MATCH (n:UnwindReturn) WITH n, n.items AS items UNWIND items AS item " + test.clause
+			query := gh713UnwindReturnPrefix + test.clause
 			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), params))
 			result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 			public, publicErr := exec.Execute(context.Background(), query, params)
@@ -110,12 +121,9 @@ func TestGh713MatchWithUnwindSharedReturn(t *testing.T) {
 }
 
 func BenchmarkGh713MatchWithUnwindReturn(b *testing.B) {
-	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "match-with-unwind-return-bench")
-	for index := 0; index < 32; index++ {
-		_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(fmt.Sprintf("items-%d", index)), Labels: []string{"UnwindReturn"}, Properties: map[string]interface{}{"items": []string{"one", "two", "three", "four"}}})
-		require.NoError(b, err)
-	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec, _ := newGh713UnwindReturnExecutor(b, "match-with-unwind-return-bench", 32, func(index int) *storage.Node {
+		return &storage.Node{ID: storage.NodeID(fmt.Sprintf("items-%d", index)), Labels: []string{"UnwindReturn"}, Properties: map[string]interface{}{"items": []string{"one", "two", "three", "four"}}}
+	})
 	for _, test := range []struct {
 		name, clause string
 		rows         int
@@ -125,7 +133,7 @@ func BenchmarkGh713MatchWithUnwindReturn(b *testing.B) {
 	} {
 		b.Run(test.name, func(b *testing.B) {
 			ctx := withExpressionFailureSlot(context.Background())
-			query := "MATCH (n:UnwindReturn) WITH n, n.items AS items UNWIND items AS item " + test.clause
+			query := gh713UnwindReturnPrefix + test.clause
 			apply := func() {
 				result, err := exec.Execute(ctx, query, getParamsFromContext(ctx))
 				if err != nil || len(result.Rows) != test.rows {
@@ -189,7 +197,7 @@ func BenchmarkGh713MultiMatchAggregation(b *testing.B) {
 			require.NoError(b, err)
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, test := range []struct {
 		name, clause string
 		rows         int
@@ -235,7 +243,7 @@ func TestGh713MultiMatchAggregateSharedReturn(t *testing.T) {
 		_, err := store.CreateNode(node)
 		require.NoError(t, err)
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	params := map[string]interface{}{"skip": int64(1), "limit": int64(1)}
 	for _, test := range []struct {
 		clause, code string
@@ -282,7 +290,7 @@ func TestGh713MultiMatchBorrowedReturn(t *testing.T) {
 	for index := 1; index <= 2; index++ {
 		require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("edge-%d", index)), StartNode: storage.NodeID(fmt.Sprintf("Left-%d", index)), EndNode: storage.NodeID(fmt.Sprintf("Right-%d", index)), Type: "BORROWED"}))
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	params := map[string]interface{}{"skip": int64(1), "limit": int64(2)}
 	for _, test := range []struct {
 		query, code string
@@ -347,7 +355,7 @@ func BenchmarkGh713MultiMatchProjection(b *testing.B) {
 			require.NoError(b, err)
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := withExpressionFailureSlot(context.Background())
 	query := "MATCH (a:ProjectionLeft) MATCH (b:ProjectionRight) RETURN a.value + b.value AS total"
 	apply := func() {

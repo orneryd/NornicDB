@@ -124,7 +124,7 @@ func (s *Session) handleRun(data []byte) error {
 	// Resolve registered procedure modes in addition to preserving the existing
 	// Cypher classification. Procedure arguments can hide a mutation from the
 	// outer query text, so keyword matching alone is not an authorization boundary.
-	requirements := cypher.QueryPermissionRequirements(query)
+	requirements := cypher.QueryPermissionRequirements(parentCtx, query)
 	isWrite := requirements.Write
 
 	// Log query if enabled
@@ -142,7 +142,7 @@ func (s *Session) handleRun(data []byte) error {
 		// `params` map is auto-redacted by the Plan 02-01 redactingHandler
 		// chain via DefaultRedactKeys.
 		s.server.logEvent(context.Background(), slog.LevelDebug,
-			localization.BoltQueryEvent(user, remoteAddr, truncateQuery(query, 200), params))
+			localization.BoltQueryEvent(user, remoteAddr, truncateQuery(cypher.RedactLiterals(query), 200), params))
 	}
 
 	// Resolve effective database name (Neo4j-compatible precedence):
@@ -529,7 +529,7 @@ func (s *Session) recordExplicitTransactionWrite(query string, params map[string
 	if !isWrite {
 		return
 	}
-	info := boltTxWriteAnalyzer.Analyze(query)
+	info := boltTxWriteAnalyzer.Analyze(context.Background(), query)
 	if info != nil && info.HasMerge {
 		s.txHasMerge = true
 		s.txMergeStatements = append(s.txMergeStatements, cypher.CommitStatement{Query: query, Params: params})

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -110,7 +111,8 @@ func TestPendingConstraintIndex_TemporalOverlapInTransaction(t *testing.T) {
 // Validating each node of a large transaction must not visit every other
 // pending node: an n-node transaction was O(n^2), once while it wrote and
 // again at commit. With the pending index the work per node is constant, so
-// 8x the nodes costs about 8x the time (quadratic would be 64x).
+// 8x the nodes costs about 8x the time (quadratic would be 64x). Paired
+// interleaved samples distinguish sustained growth from one scheduler/GC pause.
 func TestPendingConstraintIndex_LargeTransactionScalesLinearly(t *testing.T) {
 	if testing.Short() {
 		t.Skip("timing test")
@@ -127,12 +129,57 @@ func TestPendingConstraintIndex_LargeTransactionScalesLinearly(t *testing.T) {
 			_, err := tx.CreateNode(pendingNode(fmt.Sprintf("s-%d", i), "Item", map[string]interface{}{"k": int64(i)}))
 			require.NoError(t, err)
 		}
+		indexed := tx.pendingIndex != nil
 		require.NoError(t, tx.Commit())
-		return time.Since(start)
+		elapsed := time.Since(start)
+		require.True(t, indexed, "the public transaction path must activate the pending constraint index")
+		for _, i := range []int{0, n - 1} {
+			node, err := engine.GetNode(NodeID(prefixTestID(fmt.Sprintf("s-%d", i))))
+			require.NoError(t, err)
+			require.Equal(t, int64(i), node.Properties["k"])
+		}
+		return elapsed
 	}
 	run(500) // warm up
-	small, large := run(2000), run(16000)
-	ratio := float64(large) / float64(small)
-	t.Logf("2000 nodes: %v, 16000 nodes: %v, ratio %.1f (linear ~8, quadratic ~64)", small, large, ratio)
+	var samples [3][2]time.Duration
+	for i := range samples {
+		samples[i] = [2]time.Duration{run(2000), run(16000)}
+		t.Logf("sample %d: 2000 nodes: %v, 16000 nodes: %v, ratio %.1f", i+1, samples[i][0], samples[i][1], float64(samples[i][1])/float64(samples[i][0]))
+	}
+	ratio := pendingConstraintMedianScaleRatio(samples)
+	t.Logf("median paired ratio %.1f (linear ~8, quadratic ~64)", ratio)
 	require.Less(t, ratio, 24.0, "a large transaction's constraint validation grows faster than linearly")
+}
+
+// The median keeps a single delayed sample from deciding the complexity gate.
+// Each ratio pairs nearby workloads, rather than mixing independently selected
+// small and large timings from different machine conditions.
+func pendingConstraintMedianScaleRatio(samples [3][2]time.Duration) float64 {
+	var ratios [3]float64
+	for i, sample := range samples {
+		ratios[i] = float64(sample[1]) / float64(sample[0])
+	}
+	sort.Float64s(ratios[:])
+	return ratios[1]
+}
+
+func TestPendingConstraintIndex_ScaleSamplingRejectsSustainedQuadraticGrowth(t *testing.T) {
+	linearWithPause := [3][2]time.Duration{
+		{25 * time.Millisecond, 2 * time.Second},
+		{25 * time.Millisecond, 200 * time.Millisecond},
+		{25 * time.Millisecond, 225 * time.Millisecond},
+	}
+	// Preserve the old oracle's exact failure: an isolated pause makes its
+	// single pair fail even though both remaining pairs have linear growth.
+	naiveRatio := float64(linearWithPause[0][1]) / float64(linearWithPause[0][0])
+	require.GreaterOrEqual(t, naiveRatio, 24.0)
+	require.Equal(t, 9.0, pendingConstraintMedianScaleRatio(linearWithPause))
+	require.Less(t, pendingConstraintMedianScaleRatio(linearWithPause), 24.0)
+	quadratic := [3][2]time.Duration{
+		{25 * time.Millisecond, 1600 * time.Millisecond},
+		{30 * time.Millisecond, 1920 * time.Millisecond},
+		{20 * time.Millisecond, 1280 * time.Millisecond},
+	}
+	require.Equal(t, 64.0, pendingConstraintMedianScaleRatio(quadratic))
+	require.GreaterOrEqual(t, pendingConstraintMedianScaleRatio(quadratic), 24.0)
 }

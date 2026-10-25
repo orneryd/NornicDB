@@ -277,14 +277,19 @@ func TestGh648_SharedReturnBoundary(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 	inner := &ExecuteResult{Columns: []string{"value", "missing"}, Rows: [][]interface{}{{int64(1)}}, Stats: &QueryStats{}}
-	unchanged, err := exec.processCallSubqueryReturn(ctx, inner, "")
+	unchanged, err := exec.executeCallTail(ctx, inner, "")
 	require.NoError(t, err)
 	require.Same(t, inner, unchanged)
-	projected, err := exec.processCallSubqueryReturn(ctx, inner, "RETURN value, missing")
+	projected, err := exec.executeCallTail(ctx, inner, "RETURN value, missing")
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{int64(1), nil}}, projected.Rows)
 	require.Same(t, inner.Stats, projected.Stats)
-	_, err = exec.processCallSubqueryReturn(ctx, inner, "RETURN range(1, 2, 0)")
+	star, err := exec.executeCallTail(ctx, inner, "RETURN *")
+	require.NoError(t, err)
+	require.Equal(t, []string{"missing", "value"}, star.Columns)
+	require.Equal(t, [][]interface{}{{nil, int64(1)}}, star.Rows)
+	require.Same(t, inner.Stats, star.Stats)
+	_, err = exec.executeCallTail(ctx, inner, "RETURN range(1, 2, 0)")
 	require.Error(t, err)
 }
 
@@ -431,7 +436,7 @@ func TestPR771TransactionalCallChainedRows(t *testing.T) {
 	exec := newGh648Executor(t)
 	ctx := context.Background()
 	query := "CALL { UNWIND [1,2,3] AS i RETURN i } CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS RETURN i ORDER BY i"
-	clauses, split := splitPipelineClausesAllowingProcedureCalls(query)
+	clauses, split := splitPipelineClausesAllowingProcedureCalls(t.Context(), query)
 	t.Logf("clauses: split=%v values=%+v", split, clauses)
 	callRows, callStats, callHandled, callErr := newGh648Executor(t).pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, "CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS", nil)
 	t.Logf("call probe: rows=%+v stats=%+v handled=%v err=%v", callRows, callStats, callHandled, callErr)
@@ -648,9 +653,9 @@ func TestBranchDeclaresVariable(t *testing.T) {
 		{"SET n.p = 1", "n", false},
 		{"MATCH (m) RETURN `n`", "n", false},
 	} {
-		require.Equal(t, testCase.declares, branchDeclaresVariable(testCase.branch, testCase.variable), testCase.branch)
+		require.Equal(t, testCase.declares, branchDeclaresVariable(t.Context(), testCase.branch, testCase.variable), testCase.branch)
 	}
-	require.Equal(t, []string{"n"}, unscopedBranchLocals("MATCH (n)-->(m) RETURN m, k", []string{"n", "k"}))
+	require.Equal(t, []string{"n"}, unscopedBranchLocals(t.Context(), "MATCH (n)-->(m) RETURN m, k", []string{"n", "k"}))
 	require.Equal(t, byte(0), previousNonSpace("  ", 2))
 	require.Equal(t, byte(0), nextNonSpace("a  ", 1))
 }

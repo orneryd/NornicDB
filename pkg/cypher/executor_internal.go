@@ -48,7 +48,7 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 		} else if e.txContext != nil && e.txContext.active {
 			transaction = e.txContext.tx
 		}
-		return nil, e.failTransaction(ctx, statementTypeError(statement, "Administration", "Data", transaction))
+		return nil, e.failTransaction(ctx, statementTypeError(ctx, statement, "Administration", "Data", transaction))
 	}
 	return e.executeInternal(ctx, statement, params)
 }
@@ -63,7 +63,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	cypher = normalizeCypherSyntaxConfusables(cypher)
 	if config.IsCypherQueryNormalizationEnabled() {
 		var err error
-		cypher, _, err = normalizeQueryText(cypher)
+		cypher, _, err = normalizeQueryText(ctx, cypher)
 		if err != nil {
 			return nil, err
 		}
@@ -76,11 +76,11 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	cypher, _ = desugarStandaloneOrderClauses(cypher)
 	cypher = strings.TrimSpace(cypher)
 	cypher = trimTrailingStatementDelimiters(cypher)
-	if err := e.validateStatementFraming(cypher); err != nil {
+	if err := e.validateStatementFraming(ctx, cypher); err != nil {
 		return nil, err
 	}
 	finishTerminated := false
-	if stripped, ok := stripUnionBranchFinishes(cypher); ok {
+	if stripped, ok := stripUnionBranchFinishes(ctx, cypher); ok {
 		cypher = strings.TrimSpace(stripped)
 		finishTerminated = true
 		ctx = withFinishedStatement(ctx, cypher)
@@ -106,7 +106,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		}
 		return e.executeOnDatabase(ctx, use.Name, remaining, params, true)
 	}
-	if err := e.admitTransactionStatement(cypher); err != nil {
+	if err := e.admitTransactionStatement(ctx, cypher); err != nil {
 		return nil, err
 	}
 	routed, err := e.routeAdministrationStatement(ctx, cypher)
@@ -120,7 +120,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 	e.statementAdmitted(ctx)
-	if err := e.systemDatabaseWriteError(cypher); err != nil {
+	if err := e.systemDatabaseWriteError(ctx, cypher); err != nil {
 		return nil, err
 	}
 
@@ -142,7 +142,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := e.validateTransactionalCalls(ctx, cypher, nil); err != nil {
 		return nil, err
 	}
-	if err := e.validateDuplicateReturnColumnName(cypher, quotedVariableNamesFor(ctx, cypher)); err != nil {
+	if err := e.validateDuplicateReturnColumnName(ctx, cypher, quotedVariableNamesFor(ctx, cypher)); err != nil {
 		return nil, err
 	}
 	if err := e.statementParametersError(ctx, cypher, params); err != nil {
@@ -185,10 +185,18 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 	if err := e.validateTransactionalCalls(ctx, cypher, params); err != nil {
 		return err
 	}
-	if err := e.validateStaticOperatorParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
-		return err
+	// Only parse parameterized arithmetic when an operand's actual type can
+	// be rejected; ordinary numeric hot paths keep their single cheap scan.
+	if len(params) > 0 && parameterMayMismatchOperator(cypher, params) {
+		if clauses, ok := splitPipelineClauses(ctx, cypher); ok {
+			for _, clause := range clauses {
+				if err := e.validateStaticOperatorTypes(ctx, clause, staticTypeScope{cypher25: cypherVersionFromContext(ctx) == "25"}, nil, params); err != nil {
+					return err
+				}
+			}
+		}
 	}
-	if err := validateStaticPropertyAccessParameters(cypher, params); err != nil {
+	if err := validateStaticPropertyAccessParameters(ctx, cypher, params); err != nil {
 		return err
 	}
 	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
@@ -197,8 +205,8 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 	// A transactional CALL commits independently before later runtime
 	// pagination opens. Static pagination admission still runs at compilation;
 	// its runtime values are checked by the owning pipeline operator.
-	if !hasCallInTransactions(cypher) {
-		if err := e.validateRuntimePaginationExpressions(ctx, cypher); err != nil {
+	if !hasCallInTransactions(ctx, cypher) {
+		if err := e.validateRuntimePaginationExpressions(ctx, extractPaginationExpressions(ctx, cypher)...); err != nil {
 			return err
 		}
 	}

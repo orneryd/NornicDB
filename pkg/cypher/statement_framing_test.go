@@ -491,9 +491,9 @@ func TestFinishTerminatorReturnsNoRows(t *testing.T) {
 	require.Empty(t, res.Rows)
 	// Only a CALL with a scope clause reads its body's leading WITH as a
 	// projection; an unscoped one still checks it as an import list.
-	require.True(t, callSubqueryHasScopeClause("CALL () { WITH 1 AS x }"))
-	require.False(t, callSubqueryHasScopeClause("CALL { WITH 1 AS x }"))
-	require.False(t, callSubqueryHasScopeClause("MATCH (n) CALL () { RETURN 1 }"))
+	require.True(t, callSubqueryHasScopeClause(t.Context(), "CALL () { WITH 1 AS x }"))
+	require.False(t, callSubqueryHasScopeClause(t.Context(), "CALL { WITH 1 AS x }"))
+	require.False(t, callSubqueryHasScopeClause(t.Context(), "MATCH (n) CALL () { RETURN 1 }"))
 	_, err = exec.Execute(ctx, "UNWIND [1] AS i CALL { WITH i } RETURN 1 AS one", nil)
 	require.Error(t, err)
 	_, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, "CALL { WITH i }", nil)

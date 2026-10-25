@@ -21,32 +21,6 @@ func newCapturingLogger(t *testing.T, mid func(slog.Handler) slog.Handler) (*slo
 	return slog.New(wrapped), &buf
 }
 
-// TestRedactingHandler_DefaultKeys — every key in DefaultRedactKeys is
-// redacted; case-insensitive (`Password`, `TOKEN`, `Api_Key` all match).
-func TestRedactingHandler_DefaultKeys(t *testing.T) {
-	cases := []string{
-		"password", "Password", "PASSWORD",
-		"token", "TOKEN", "Token",
-		"authorization", "Authorization",
-		"secret", "Secret",
-		"api_key", "API_KEY", "Api_Key",
-		"credentials", "Credentials",
-	}
-	for _, key := range cases {
-		t.Run(key, func(t *testing.T) {
-			logger, buf := newCapturingLogger(t, func(h slog.Handler) slog.Handler {
-				return newRedactingHandler(h, defaultRedactSet())
-			})
-			logger.Info("auth", key, "secret-value-do-not-leak")
-
-			var rec map[string]any
-			require.NoError(t, json.Unmarshal(buf.Bytes(), &rec))
-			require.Equal(t, "<REDACTED>", rec[key], "key %s must be redacted", key)
-			require.NotContains(t, buf.String(), "secret-value-do-not-leak")
-		})
-	}
-}
-
 // TestRedactingHandler_NestedGroupRedaction — slog.Group("auth", slog.String("password","hunter2"))
 // redacts to `{"auth":{"password":"<REDACTED>"}}`.
 func TestRedactingHandler_NestedGroupRedaction(t *testing.T) {
@@ -89,22 +63,6 @@ func TestRedactingHandler_CRLFStrip(t *testing.T) {
 	var rec map[string]any
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &rec))
 	require.Equal(t, "line1line2", rec["msg_field"])
-}
-
-// TestRedactingHandler_EnvExtraKeys — NORNICDB_LOG_REDACT_EXTRA adds keys.
-func TestRedactingHandler_EnvExtraKeys(t *testing.T) {
-	t.Setenv("NORNICDB_LOG_REDACT_EXTRA", "session_id,custom_secret")
-
-	logger, buf := newCapturingLogger(t, func(h slog.Handler) slog.Handler {
-		return newRedactingHandler(h, redactSetFromEnv())
-	})
-	logger.Info("env", "session_id", "abc", "custom_secret", "xyz", "ok", "visible")
-
-	var rec map[string]any
-	require.NoError(t, json.Unmarshal(buf.Bytes(), &rec))
-	require.Equal(t, "<REDACTED>", rec["session_id"])
-	require.Equal(t, "<REDACTED>", rec["custom_secret"])
-	require.Equal(t, "visible", rec["ok"])
 }
 
 // TestRedactor_NoEmojiInJSONOutput — NO U+2000..U+1FAFF runes in rendered

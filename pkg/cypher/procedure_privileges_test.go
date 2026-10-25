@@ -72,10 +72,10 @@ func TestProcedurePrivilegeStatements(t *testing.T) {
 // authorized by a boosted grant for that procedure; an administration command
 // or another admin procedure still needs administrator rights.
 func TestAuthorizeQueryWithBoostedProcedureGrant(t *testing.T) {
-	require.Equal(t, []string{"db.cdc.query"}, QueryPermissionRequirements("CALL db.cdc.query()").BoostedProcedures)
-	require.Empty(t, QueryPermissionRequirements("SHOW USERS").BoostedProcedures)
-	require.True(t, QueryPermissionRequirements("GRANT EXECUTE BOOSTED PROCEDURE x ON DBMS TO r").Admin)
-	require.True(t, QueryPermissionRequirements("SHOW PRIVILEGES").Admin)
+	require.Equal(t, []string{"db.cdc.query"}, QueryPermissionRequirements(t.Context(), "CALL db.cdc.query()").BoostedProcedures)
+	require.Empty(t, QueryPermissionRequirements(t.Context(), "SHOW USERS").BoostedProcedures)
+	require.True(t, QueryPermissionRequirements(t.Context(), "GRANT EXECUTE BOOSTED PROCEDURE x ON DBMS TO r").Admin)
+	require.True(t, QueryPermissionRequirements(t.Context(), "SHOW PRIVILEGES").Admin)
 
 	nonAdmin := WithPermissionChecker(context.Background(), func(permission string) bool { return permission == "read" })
 	granted := WithProcedureGrantChecker(nonAdmin, func(procedure string) bool { return auth.ProcedureGlobMatches("db.cdc.*", procedure) })

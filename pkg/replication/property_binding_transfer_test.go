@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"testing"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestReplicationPropertyBindingsUseNames(t *testing.T) {
 	open := func() (*storage.BadgerEngine, *StorageAdapter) {
-		b, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir()})
+		b, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir()}))
 		require.NoError(t, err)
 		a, err := NewStorageAdapterWithWAL(b, t.TempDir())
 		require.NoError(t, err)

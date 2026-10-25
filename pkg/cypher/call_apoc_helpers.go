@@ -44,8 +44,8 @@ func (e *StorageExecutor) splitBySemicolon(s string) []string {
 
 // extractProcedureName uses the same component reader as authorization,
 // retaining exact case while accepting quoted names and spaced separators.
-func extractProcedureName(source string) string {
-	syntax, _ := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.FragmentEntry, false)
+func extractProcedureName(ctx context.Context, source string) string {
+	syntax, _ := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
 	if !syntax.Valid() {
 		return ""
 	}

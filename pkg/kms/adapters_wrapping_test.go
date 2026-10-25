@@ -12,6 +12,7 @@ import (
 )
 
 type fakeWrapper struct {
+	configErr    error
 	wrapperType  wrapping.WrapperType
 	keyID        string
 	encryptBlob  *wrapping.BlobInfo
@@ -29,7 +30,7 @@ func (f *fakeWrapper) KeyId(context.Context) (string, error) {
 }
 
 func (f *fakeWrapper) SetConfig(context.Context, ...wrapping.Option) (*wrapping.WrapperConfig, error) {
-	return &wrapping.WrapperConfig{}, nil
+	return &wrapping.WrapperConfig{}, f.configErr
 }
 
 func (f *fakeWrapper) Encrypt(context.Context, []byte, ...wrapping.Option) (*wrapping.BlobInfo, error) {
@@ -137,4 +138,22 @@ func TestWrappingAdapter_ErrorPaths(t *testing.T) {
 		require.True(t, rot.ExpiresAt.IsZero())
 		require.Equal(t, []byte("plaintext"), rot.Plaintext)
 	})
+}
+
+func TestConfigureWrappingProviderPolicy(t *testing.T) {
+	const credential = "kms-config-test-credential"
+	config := map[string]string{"region": "test-region", "endpoint": ""}
+	adapter, err := configureWrappingProvider[AWSProvider](context.Background(), &fakeWrapper{encryptErr: errors.New(credential)}, config, true, credential)
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"region": "test-region", "disallow_env_vars": "true"}, config)
+	_, err = adapter.GenerateDataKey(context.Background(), KeyGenOpts{})
+	require.ErrorIs(t, err, ErrEncryptFailed)
+	require.NotContains(t, err.Error(), credential)
+
+	config = map[string]string{"region": "test-region"}
+	adapter, err = configureWrappingProvider[AWSProvider](context.Background(), &fakeWrapper{configErr: errors.New(credential)}, config, false, credential)
+	require.Nil(t, adapter)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), credential)
+	require.NotContains(t, config, "disallow_env_vars")
 }

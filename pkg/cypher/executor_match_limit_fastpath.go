@@ -44,7 +44,7 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 	}
 
 	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : limitIdx])
-	columnName, ok := parseSimpleReturnVariable(returnPart, varName)
+	columnName, ok := parseSimpleReturnVariable(ctx, returnPart, varName)
 	if !ok {
 		return nil, false
 	}
@@ -102,8 +102,8 @@ func parseSimpleMatchSingleNodePattern(pattern string) (string, []string, bool) 
 	return varName, labels, true
 }
 
-func parseSimpleReturnVariable(returnPart string, varName string) (string, bool) {
-	plan := returnProjectionPlanFor("RETURN " + strings.TrimSpace(returnPart))
+func parseSimpleReturnVariable(ctx context.Context, returnPart string, varName string) (string, bool) {
+	plan := returnProjectionPlanFor(ctx, "RETURN "+strings.TrimSpace(returnPart))
 	if !plan.valid || plan.star || plan.distinct || plan.hasAggregate || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -91,9 +92,9 @@ func walPublicTmpfs(b *testing.B) string {
 }
 
 func walPublicOpen(b *testing.B, path string) *storage.BadgerEngine {
-	store, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+	store, err := fixtureowner.OwnResult[*storage.BadgerEngine](b, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 		DataDir: path, WriteBehind: true, WriteBehindInterval: time.Hour, WriteBehindMaxOps: 2 * walPublicBatch,
-	})
+	}))
 	walPublicCheck(b, err)
 	return store
 }

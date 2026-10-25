@@ -17,8 +17,8 @@ func TestReplacedCustomProcedureIsNotServedFromTheCache(t *testing.T) {
 	t.Cleanup(ClearUserProcedures)
 	ctx := context.Background()
 	base := newTestMemoryEngine(t)
-	caller := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(base, "vault"), 100, time.Minute)
-	installer := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(base, "nornic"), 100, time.Minute)
+	caller := NewStorageExecutor(storage.NewNamespacedEngine(base, "vault"), QueryCachePolicy{MaxEntries: 100, TTL: time.Minute})
+	installer := NewStorageExecutor(storage.NewNamespacedEngine(base, "nornic"), QueryCachePolicy{MaxEntries: 100, TTL: time.Minute})
 	install := func(body string) {
 		t.Helper()
 		_, err := installer.Execute(ctx, "CALL apoc.custom.installProcedure('report() :: (c :: INTEGER)', '"+body+"', 'nornic', 'read')", nil)

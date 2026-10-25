@@ -17,13 +17,13 @@ func TestQueryStructureRewriteEdges(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "structure_edges"))
 	columns := exec
 
-	rewritten, rewrite, err := desugarQueryStructure("RETURN 1 AS x /* NEXT */ NEXT RETURN x + 1 AS y", columns)
+	rewritten, rewrite, err := desugarQueryStructure(context.Background(), "RETURN 1 AS x /* NEXT */ NEXT RETURN x + 1 AS y", columns)
 	require.NoError(t, err)
 	require.NotNil(t, rewrite)
 	require.Contains(t, rewritten, "/* NEXT */")
 	require.Equal(t, 1, countSubstring(rewritten, "CALL (*)"), "the commented NEXT isn't one")
 
-	_, rewrite, err = desugarQueryStructure("WITH {next: 1} AS n RETURN n. next AS v", columns)
+	_, rewrite, err = desugarQueryStructure(context.Background(), "WITH {next: 1} AS n RETURN n. next AS v", columns)
 	require.NoError(t, err)
 	require.Nil(t, rewrite, "a property key named next isn't NEXT")
 
@@ -34,7 +34,7 @@ func TestQueryStructureRewriteEdges(t *testing.T) {
 		"WHEN true THEN { WHEN true THEN RETURN 1 AS x ELSE RETURN 1 AS y } ELSE RETURN 1 AS x",
 		"WHEN true THEN RETURN COUNT { WHEN true THEN RETURN 1 AS x ELSE RETURN 2 AS y } AS c ELSE RETURN 1 AS c",
 	} {
-		_, _, err := desugarQueryStructure(query, columns)
+		_, _, err := desugarQueryStructure(context.Background(), query, columns)
 		require.Error(t, err, query)
 		requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	}
@@ -47,7 +47,7 @@ func TestQueryStructureRewriteEdges(t *testing.T) {
 		"WHEN true",
 		"WHEN true THEN RETURN 1 AS x ELSE RETURN 2 AS x WHEN false THEN RETURN 3 AS x",
 	} {
-		rewritten, _, err := desugarQueryStructure(query, columns)
+		rewritten, _, err := desugarQueryStructure(context.Background(), query, columns)
 		require.NoError(t, err, query)
 		require.NotContains(t, rewritten, whenBranchVariable, query)
 	}

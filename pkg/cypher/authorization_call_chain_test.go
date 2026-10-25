@@ -14,22 +14,28 @@ import (
 // a backticked or differently-cased name needs the admin permission.
 func TestQueryPermissionRequirementsClassifiesEveryCall(t *testing.T) {
 	for name, testCase := range map[string]struct {
-		query string
-		admin bool
+		query      string
+		admin      bool
+		procedures []string
 	}{
-		"chained after a read procedure": {query: "CALL db.cdc.earliest() YIELD id CALL db.cdc.query(id, [], 5) YIELD id AS change RETURN count(*) AS n", admin: true},
-		"single admin procedure":         {query: "CALL db.cdc.query()", admin: true},
-		"backticked name parts":          {query: "CALL db.cdc.earliest() YIELD id CALL `db`.`cdc`.`query`(id) YIELD id AS c RETURN c", admin: true},
-		"backticked whole name":          {query: "CALL db.cdc.earliest() YIELD id CALL `db.cdc.query`(id) YIELD id AS c RETURN c", admin: true},
-		"inside a CALL subquery":         {query: "MATCH (n) CALL { CALL db.cdc.query() YIELD id RETURN id } RETURN id", admin: true},
-		"inside a scoped subquery":       {query: "WITH 1 AS x CALL (x) { CALL db.cdc.query() YIELD id RETURN id } RETURN id", admin: true},
-		"other case":                     {query: "call db.cdc.earliest() yield id call DB.CDC.QUERY(id) yield id as c return c", admin: true},
-		"read-only chain":                {query: "CALL db.cdc.earliest() YIELD id RETURN id", admin: false},
+		"chained after a read procedure": {query: "CALL db.cdc.earliest() YIELD id CALL db.cdc.query(id, [], 5) YIELD id AS change RETURN count(*) AS n", admin: true, procedures: []string{"db.cdc.earliest", "db.cdc.query"}},
+		"single admin procedure":         {query: "CALL db.cdc.query()", admin: true, procedures: []string{"db.cdc.query"}},
+		"backticked name parts":          {query: "CALL db.cdc.earliest() YIELD id CALL `db`.`cdc`.`query`(id) YIELD id AS c RETURN c", admin: true, procedures: []string{"db.cdc.earliest", "db.cdc.query"}},
+		"backticked whole name":          {query: "CALL db.cdc.earliest() YIELD id CALL `db.cdc.query`(id) YIELD id AS c RETURN c", admin: true, procedures: []string{"db.cdc.earliest", "db.cdc.query"}},
+		"inside a CALL subquery":         {query: "MATCH (n) CALL { CALL db.cdc.query() YIELD id RETURN id } RETURN id", admin: true, procedures: []string{"db.cdc.query"}},
+		"inside a scoped subquery":       {query: "WITH 1 AS x CALL (x) { CALL db.cdc.query() YIELD id RETURN id } RETURN id", admin: true, procedures: []string{"db.cdc.query"}},
+		"other case":                     {query: "call db.cdc.earliest() yield id call DB.CDC.QUERY(id) yield id as c return c", admin: true, procedures: []string{"db.cdc.earliest", "db.cdc.query"}},
+		"read-only chain":                {query: "CALL db.cdc.earliest() YIELD id RETURN id", admin: false, procedures: []string{"db.cdc.earliest"}},
 		"in a string literal":            {query: "RETURN 'CALL db.cdc.query()' AS s", admin: false},
 		"in a comment":                   {query: "// CALL db.cdc.query()\nRETURN 1", admin: false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, testCase.admin, QueryPermissionRequirements(testCase.query).Admin)
+			require.Equal(t, testCase.admin, QueryPermissionRequirements(t.Context(), testCase.query).Admin)
+			var names []string
+			for _, procedure := range RegisteredProceduresForCalls(t.Context(), testCase.query) {
+				names = append(names, procedure.Name)
+			}
+			require.Equal(t, testCase.procedures, names)
 		})
 	}
 }
@@ -70,9 +76,9 @@ func TestProcedureCaseAuthorizationPreservesExactContracts(t *testing.T) {
 			delete(globalProcedureRegistry.user, name)
 		}
 	})
-	require.False(t, QueryPermissionRequirements("CALL caseAuthorization.Read()").Admin)
-	require.True(t, QueryPermissionRequirements("CALL caseAuthorization.read()").Admin)
-	unknownCase := QueryPermissionRequirements("CALL CASEAUTHORIZATION.READ()")
+	require.False(t, QueryPermissionRequirements(t.Context(), "CALL caseAuthorization.Read()").Admin)
+	require.True(t, QueryPermissionRequirements(t.Context(), "CALL caseAuthorization.read()").Admin)
+	unknownCase := QueryPermissionRequirements(t.Context(), "CALL CASEAUTHORIZATION.READ()")
 	require.True(t, unknownCase.Admin)
 	require.Equal(t, []string{"caseAuthorization.read"}, unknownCase.BoostedProcedures)
 	_, found := globalProcedureRegistry.Get("CASEAUTHORIZATION.READ")

@@ -61,7 +61,7 @@ func BenchmarkMapTextConsumers(b *testing.B) {
 // the full public path with statement caches disabled and does not assert the
 // result so both sides remain measurable.
 func BenchmarkSelectedPathPropertyMapPlanning(b *testing.B) {
-	e := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(b), "selected_map_bench"), 0, 0)
+	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "selected_map_bench"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	_, err := e.Execute(ctx, "CREATE (:R6Bench {id:1})-[:R6Bench {`first,last`:1}]->(:R6Bench {id:2})", nil)
 	if err != nil {

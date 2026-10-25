@@ -25,7 +25,7 @@ func BenchmarkCommaMatch(b *testing.B) {
 		{"WithForm", "MATCH (a) WHERE id(a) = $a WITH a MATCH (b) WHERE id(b) = $b RETURN a.k, b.k"},
 	}
 	for _, nodes := range []int{16, 128, 256} {
-		exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"), 0, 0)
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 		ctx := context.Background()
 		create := fmt.Sprintf("UNWIND range(1, %d) AS i CREATE (:P {k: i, s: CASE i WHEN 1 THEN 'first' WHEN %d THEN 'last' ELSE 'middle' END})", nodes, nodes)
 		if _, err := exec.Execute(ctx, create, nil); err != nil {

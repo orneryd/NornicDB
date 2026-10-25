@@ -824,15 +824,15 @@ func (e *StorageExecutor) smartSplitReturnItems(returnPart string) []string {
 	return splitTopLevelComma(returnPart)
 }
 
-func (e *StorageExecutor) parseReturnItems(returnPart string) []returnItem {
+func (e *StorageExecutor) parseReturnItems(ctx context.Context, returnPart string) []returnItem {
 	if strings.TrimSpace(returnPart) == "" {
 		returnPart = "*"
 	}
-	plan := returnProjectionPlanFor("RETURN " + returnPart)
+	plan := returnProjectionPlanFor(ctx, "RETURN "+returnPart)
 	if plan.star {
 		items := []returnItem{{expr: "*", alias: "*"}}
 		for _, item := range plan.starItems {
-			expr, alias := parseProjectionExprAlias(item)
+			expr, alias := parseProjectionExprAlias(ctx, item)
 			items = append(items, returnItem{expr: expr, alias: alias})
 		}
 		return items

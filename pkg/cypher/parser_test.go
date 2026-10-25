@@ -3,6 +3,8 @@ package cypher
 
 import (
 	"context"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -105,23 +107,49 @@ func TestParseCreate(t *testing.T) {
 }
 
 func TestParseReturn(t *testing.T) {
-	parser := NewParser()
-
-	query, err := parser.Parse("MATCH (n) RETURN n")
-	if err != nil {
-		t.Fatalf("Parse() error = %v", err)
-	}
-
-	hasReturn := false
-	for _, clause := range query.Clauses {
-		if _, ok := clause.(*ReturnClause); ok {
-			hasReturn = true
-			break
-		}
-	}
-
-	if !hasReturn {
-		t.Error("expected RETURN clause")
+	for _, tc := range []struct {
+		query   string
+		aliases []string
+		raw     []string
+	}{
+		{"MATCH (n) RETURN n", []string{""}, []string{"n"}},
+		{"MATCH (n) RETURN n.name AS name, $Label AS token", []string{"name", "token"}, []string{"n.name", "$Label"}},
+		{"RETURN 'RETURN, AS' AS text, [1, 2] AS values", []string{"text", "values"}, []string{"'RETURN, AS'", "[1, 2]"}},
+		{"RETURN DISTINCT count(*) AS total, {value: 1} AS object", []string{"total", "object"}, []string{"count(*)", "{value: 1}"}},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			query, err := NewParser().Parse(tc.query)
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			var projection *ReturnClause
+			for _, clause := range query.Clauses {
+				if ret, ok := clause.(*ReturnClause); ok {
+					projection = ret
+					break
+				}
+			}
+			if projection == nil {
+				t.Fatal("expected RETURN clause")
+			}
+			if projection.Distinct != strings.Contains(tc.query, "RETURN DISTINCT") {
+				t.Errorf("DISTINCT = %t for %q", projection.Distinct, tc.query)
+			}
+			if len(projection.Items) != len(tc.aliases) {
+				t.Fatalf("RETURN items = %d, want %d", len(projection.Items), len(tc.aliases))
+			}
+			for i, item := range projection.Items {
+				if item.Alias != tc.aliases[i] {
+					t.Errorf("item %d alias = %q, want %q", i, item.Alias, tc.aliases[i])
+				}
+				// Check the complete canonical expression product without depending
+				// on a second expression parser or a lossy rejoined token string.
+				want := NewASTBuilder().parseExpression(tc.raw[i])
+				if !reflect.DeepEqual(item.Expression, want) {
+					t.Errorf("item %d expression = %#v, want %#v", i, item.Expression, want)
+				}
+			}
+		})
 	}
 }
 

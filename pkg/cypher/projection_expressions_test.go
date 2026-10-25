@@ -23,7 +23,7 @@ func TestProjectionExpressions(t *testing.T) {
 		{"WITH n", "RETURN", nil},
 		{"RET", "RETURN", nil},
 	} {
-		require.Equal(t, tc.want, projectionExpressions(tc.clause, tc.keyword), "%s / %s", tc.keyword, tc.clause)
+		require.Equal(t, tc.want, projectionExpressions(t.Context(), tc.clause, tc.keyword), "%s / %s", tc.keyword, tc.clause)
 	}
 }
 
@@ -39,7 +39,7 @@ func TestCallPipelineRowsFromNilResult(t *testing.T) {
 // Repeated statements skip validation they already passed (#823), and an
 // invalid statement is rejected every time it is sent.
 func TestRepeatedStatementValidation(t *testing.T) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	for i := 0; i < 3; i++ {
 		result, err := exec.Execute(ctx, "UNWIND [1, 2] AS x RETURN x * 2 AS y", nil)
@@ -60,7 +60,7 @@ func TestRepeatedStatementValidation(t *testing.T) {
 // Every read binds parameters as the same row values: a typed list inside a
 // map parameter compares the same in a row read and a fused count (#823).
 func TestNestedTypedListParameterBindsAlike(t *testing.T) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:Item {v: 'a'}), (:Item {v: 'b'}), (:Item {v: 'c'})", nil)
 	require.NoError(t, err)

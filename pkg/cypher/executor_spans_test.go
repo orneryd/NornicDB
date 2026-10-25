@@ -145,6 +145,7 @@ func TestTracedEngine_EmitsStorageSpans(t *testing.T) {
 func TestExecuteSpanConcurrentOptions(t *testing.T) {
 	exporter, teardown := spanSetup(t)
 	defer teardown()
+	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	_, unrelated := otel.Tracer("background").Start(context.Background(), "unrelated")
 	unrelated.End()
 	const workers = 32
@@ -156,7 +157,7 @@ func TestExecuteSpanConcurrentOptions(t *testing.T) {
 			defer workersDone.Done()
 			parentContext, parent := otel.Tracer("test").Start(context.Background(), "parent")
 			traceIDs[worker] = parent.SpanContext().TraceID().String()
-			executeContext, execute := startExecuteSpan(parentContext, "read", "RETURN 1")
+			executeContext, execute := executor.startExecuteSpan(parentContext, "read", "RETURN 1")
 			planContext, plan := startPlanSpan(executeContext)
 			_, operator := startOperatorSpan(planContext, &PlanOperator{OperatorType: "RETURN"})
 			assert.Equal(t, parent.SpanContext().TraceID(), execute.SpanContext().TraceID())
@@ -189,7 +190,7 @@ func TestExecuteSpanConcurrentOptions(t *testing.T) {
 	for _, span := range spans {
 		assert.Equal(t, "internal", span.SpanKind.String())
 		if span.Name == "nornicdb.cypher.execute" {
-			assert.Equal(t, "RETURN 1", spanAttrs(span)["cypher.query"])
+			assert.Equal(t, "RETURN <REDACTED>", spanAttrs(span)["cypher.query"])
 			assert.Equal(t, "read", spanAttrs(span)["cypher.op_type"])
 		}
 		if span.Name == "nornicdb.cypher.exec.RETURN" {

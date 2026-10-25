@@ -15,7 +15,7 @@ func BenchmarkQueryMemorySelectivePlans(b *testing.B) {
 			{"types", "MATCH ()-[r:QUERIES_TABLE|ALTERNATIVE]->() RETURN type(r)"},
 		} {
 			b.Run(fmt.Sprintf("%s_%d_decoys", tc.name, decoys), func(b *testing.B) {
-				exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"), 0, 0)
+				exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				seedSinkProbeGraph(b, exec, decoys)
 				b.ReportAllocs()
 				b.ResetTimer()

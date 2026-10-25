@@ -243,9 +243,7 @@ func parkReconcile(t *testing.T, svc *Service, target int) chan struct{} {
 	}()
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
-		buf := make([]byte, 1<<20)
-		stacks := string(buf[:runtime.Stack(buf, true)])
-		for _, g := range strings.Split(stacks, "\n\n") {
+		for _, g := range allGoroutineStacks() {
 			if strings.Contains(g, "reconcileClusterPopulation") && strings.Contains(g, "(*RWMutex).Lock") && !strings.Contains(g, "admitClusterVectorsLocked") {
 				return done
 			}

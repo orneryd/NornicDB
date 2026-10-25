@@ -104,7 +104,12 @@ func validateCallSubqueryBody(body string) error {
 // before that CALL can mutate, including when its input is empty. A runtime
 // error in a later CALL preserves an earlier CALL's independent commits, as
 // Neo4j does. Static errors instead reject the complete statement above.
-func (e *StorageExecutor) resolveCallBatchSize(ctx context.Context, spec *transactionBatchSpec) (int, error) {
+// A previously bound operator reuses its size without evaluating again; literal
+// admission only validates the scalar and does not allocate an operator binding.
+func (e *StorageExecutor) resolveCallBatchSize(ctx context.Context, spec *transactionBatchSpec, bound *boundTransactionBatch) (int, error) {
+	if bound != nil {
+		return bound.size, nil
+	}
 	shape, err := describeScalarExpression(ctx, spec.Expression)
 	if err != nil {
 		return 0, err
@@ -134,20 +139,6 @@ func (e *StorageExecutor) resolveCallBatchSize(ctx context.Context, spec *transa
 	return int(integer), nil
 }
 
-// bindTransactionalCallBatch is also used by direct operator callers. A
-// pipeline passes its binding back here, so a size is evaluated once when
-// that operator opens, regardless of how many rows consume it.
-func (e *StorageExecutor) bindTransactionalCallBatch(ctx context.Context, spec *transactionBatchSpec, bound *boundTransactionBatch) (*boundTransactionBatch, error) {
-	if bound != nil {
-		return bound, nil
-	}
-	size, err := e.resolveCallBatchSize(ctx, spec)
-	if err != nil {
-		return nil, err
-	}
-	return &boundTransactionBatch{size: size}, nil
-}
-
 // validateTransactionalCallInput owns the context rule that depends on the
 // admitted CALL's actual input. An empty input does not open a transaction.
 func (e *StorageExecutor) validateTransactionalCallInput(count int) error {
@@ -165,8 +156,8 @@ func (e *StorageExecutor) validateTransactionalCallInput(count int) error {
 		"CALL { ... } IN TRANSACTIONS is not allowed inside an explicit transaction")
 }
 
-func hasCallInTransactions(query string) bool {
-	calls, _ := readTransactionalStatement(context.Background(), query)
+func hasCallInTransactions(ctx context.Context, query string) bool {
+	calls, _ := readTransactionalStatement(ctx, query)
 	for _, call := range calls {
 		if call.Batch != nil {
 			return true
@@ -186,7 +177,7 @@ func (e *StorageExecutor) bindTransactionalCallChain(ctx context.Context, plan p
 	for index := len(plan.operators) - 1; index >= 0; index-- {
 		operator := plan.operators[index]
 		for _, pagination := range operator.pagination {
-			if err := e.validateRuntimePaginationExpression(ctx, pagination); err != nil {
+			if err := e.validateRuntimePaginationExpressions(ctx, pagination); err != nil {
 				return boundCallChain{}, err
 			}
 			if bound.pagination == nil {
@@ -195,11 +186,11 @@ func (e *StorageExecutor) bindTransactionalCallChain(ctx context.Context, plan p
 			bound.pagination[operator.index] = true
 		}
 		if operator.spec != nil {
-			batch, err := e.bindTransactionalCallBatch(ctx, operator.spec, nil)
+			size, err := e.resolveCallBatchSize(ctx, operator.spec, nil)
 			if err != nil {
 				return boundCallChain{}, err
 			}
-			bound.batches[operator.index] = batch
+			bound.batches[operator.index] = &boundTransactionBatch{size: size}
 		}
 	}
 	return bound, nil

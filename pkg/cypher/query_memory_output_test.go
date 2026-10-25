@@ -45,7 +45,7 @@ func queryMemoryOutputFixture(t *testing.T) (*StorageExecutor, *storage.BadgerEn
 	for i := 0; i < 2; i++ {
 		require.NoError(t, be.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("review:r%d", i)), StartNode: "review:a", EndNode: "review:b", Type: "LINK", Properties: map[string]interface{}{"secret": "edge-hidden", "weight": int64(7)}, CreatedAt: old, UpdatedAt: old}))
 	}
-	return NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(be, "review"), 0, 0), be
+	return NewStorageExecutor(storage.NewNamespacedEngine(be, "review"), QueryCachePolicy{MaxEntries: 0, TTL: 0}), be
 }
 func queryMemoryOutputCheck(t *testing.T, value interface{}) {
 	t.Helper()
@@ -180,7 +180,7 @@ func TestQueryMemoryOutputScoredStreamRetention(t *testing.T) {
 			for i := 0; i < 16384; i++ {
 				require.NoError(t, be.CreateEdge(&storage.Edge{ID: storage.EdgeID(fmt.Sprintf("review:r%06d", i)), StartNode: "review:a", EndNode: "review:b", Type: "LINK", Properties: map[string]interface{}{"secret": strings.Repeat(fmt.Sprintf("%08d", i), 512)}}))
 			}
-			exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(be, "review"), 0, 0)
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(be, "review"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			runtime.GC()
 			var before, after runtime.MemStats
 			runtime.ReadMemStats(&before)

@@ -570,7 +570,7 @@ func (sc *SmartQueryCache) observeEviction(reason string) {
 
 // Get retrieves a cached result (same as QueryCache).
 func (sc *SmartQueryCache) Get(cypher string, params map[string]interface{}) (*ExecuteResult, bool) {
-	return sc.get(resultCacheEntryKey(cypher, params))
+	return sc.get(resultCacheEntryKey(context.Background(), cypher, params))
 }
 
 func (sc *SmartQueryCache) get(key string) (*ExecuteResult, bool) {
@@ -627,7 +627,7 @@ func (sc *SmartQueryCache) getWithTraceForEmbedding(key string, generation uint6
 
 // PutWithLabels stores a result with associated labels for smart invalidation.
 func (sc *SmartQueryCache) PutWithLabels(cypher string, params map[string]interface{}, result *ExecuteResult, ttl time.Duration, labels []string) {
-	sc.putWithLabels(resultCacheEntryKey(cypher, params), result, ttl, labels)
+	sc.putWithLabels(resultCacheEntryKey(context.Background(), cypher, params), result, ttl, labels)
 }
 
 func (sc *SmartQueryCache) putWithLabels(key string, result *ExecuteResult, ttl time.Duration, labels []string) {
@@ -884,9 +884,12 @@ func extractLabelsFromQuery(cypher string) []string {
 // text and the same parameter values (#729). Normalizing the text keeps
 // trivia outside expression-derived column names and a trailing semicolon
 // from defeating a hit. Column-name spelling remains part of the key.
-func resultCacheEntryKey(cypher string, params map[string]interface{}) string {
+func resultCacheEntryKey(ctx context.Context, cypher string, params map[string]interface{}) string {
 	source := trimTrailingStatementDelimiters(cypher)
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.StatementEntry, false)
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25")
+	if ctx.Err() != nil {
+		return ""
+	}
 	var protected []statementPresentationSpan
 	if err == nil {
 		protected = statementExpressionNameSpans(syntax)

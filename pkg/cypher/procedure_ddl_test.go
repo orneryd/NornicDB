@@ -127,7 +127,7 @@ func TestLoadPersistedProcedures_BranchCoverage(t *testing.T) {
 		require.NoError(t, err)
 
 		ClearUserProcedures()
-		require.NoError(t, exec.loadPersistedProcedures())
+		require.NoError(t, exec.loadPersistedProcedures(t.Context()))
 
 		res, err := exec.Execute(ctx, "CALL nornic.loadedProc()", nil)
 		require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestLoadPersistedProcedures_BranchCoverage(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = exec.loadPersistedProcedures()
+		err = exec.loadPersistedProcedures(t.Context())
 		require.Error(t, err)
 		require.True(t, errors.Is(err, nerrors.ErrProcedureCatalogRecordDecodeFailed))
 	})
@@ -176,7 +176,7 @@ func TestLoadPersistedProcedures_BranchCoverage(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		err = exec.loadPersistedProcedures()
+		err = exec.loadPersistedProcedures(t.Context())
 		require.Error(t, err)
 		require.True(t, errors.Is(err, nerrors.ErrProcedureCatalogRecordInvalid))
 	})

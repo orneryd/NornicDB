@@ -883,19 +883,20 @@ func containsRemoveClauseAnywhere(cypher string) bool {
 	return keywordIndexFrom(cypher, "REMOVE", 0, opts) >= 0
 }
 
-func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipelineRow, clause string) (*QueryStats, error) {
-	invalid := func() error {
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidForeach", "invalid or unsupported FOREACH update")
-	}
-	variable, listExpr, updates, err := parsePipelineForeach(clause)
-	if err != nil {
+func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipelineRow, clause pipelineClause) (*QueryStats, error) {
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	body := queryBodyFromSyntax(clause.syntax)
+	if body.status != queryBodyRead || body.foreach == nil {
+		return nil, invalidForeachError()
+	}
+	update := body.foreach
 	stats := &QueryStats{}
 	for _, row := range rows {
-		items, ok := e.evaluateListForPipelineWithContext(ctx, listExpr, row)
+		items, ok := e.evaluateListForPipelineWithContext(ctx, update.listExpression, row)
 		if !ok {
-			return nil, invalid()
+			return nil, invalidForeachError()
 		}
 		for _, item := range items {
 			// The loop is a mutation boundary: a cancellation between items
@@ -907,17 +908,17 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 			for name, value := range row {
 				child[name] = value
 			}
-			child[variable] = item
+			child[update.variable] = item
 			scope := make(map[string]struct{}, len(child))
 			for name := range child {
 				scope[name] = struct{}{}
 			}
-			result, handled, err := e.runPipelineClauseRows(ctx, []pipelineRow{child}, scope, updates, updates, nil)
+			result, handled, err := e.runPipelineClauseRows(ctx, []pipelineRow{child}, scope, update.updates, update.updates, nil)
 			if err != nil {
 				return nil, err
 			}
 			if !handled {
-				return nil, invalid()
+				return nil, invalidForeachError()
 			}
 			addQueryStats(stats, result.Stats)
 		}

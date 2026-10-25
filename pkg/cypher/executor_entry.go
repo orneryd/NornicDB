@@ -155,7 +155,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// TRC-15: top-level cypher execute span. Started before timing so the
 	// span duration matches the metric observation window exactly. The span
 	// is ended in the same defer that emits the slow-query log.
-	ctx, execSpan := startExecuteSpan(ctx, "", cypher)
+	ctx, execSpan := e.startExecuteSpan(ctx, "", cypher)
 
 	// TRC-17: propagate span context to the storage layer so storage spans
 	// nest as children of the cypher execute span.
@@ -259,7 +259,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	canonical, rewrite := cypher, (*queryRewrite)(nil)
 	if config.IsCypherQueryNormalizationEnabled() {
 		var err error
-		canonical, rewrite, err = normalizeQueryText(cypher)
+		canonical, rewrite, err = normalizeQueryText(ctx, cypher)
 		if err != nil {
 			return nil, err
 		}
@@ -292,7 +292,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 	if config.IsANTLRParser() {
 		body, _ := stripCypherPreamble(cypher)
-		if cypherGrammarVersion(cypher) != "25" && usesSharedGrammarClauses(body) {
+		if cypherGrammarVersion(cypher) != "25" && usesSharedGrammarClauses(ctx, body) {
 			return nil, sharedClauseSyntaxError("LET, FILTER and FOR require CYPHER 25 with the ANTLR parser")
 		}
 	}
@@ -334,7 +334,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// CALL subqueries and UNIONs it stands for, once, here; columns and
 	// errors are mapped back (#907).
 	if !rewriteFree(rewriteFreeQueryStructure, false, cypher) {
-		if composed, structureRewrite, err := desugarQueryStructure(cypher, e); err != nil {
+		if composed, structureRewrite, err := desugarQueryStructure(ctx, cypher, e); err != nil {
 			return nil, err
 		} else if structureRewrite != nil {
 			cypher = composed
@@ -344,11 +344,11 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			markRewriteFree(rewriteFreeQueryStructure, false, cypher)
 		}
 	}
-	if err := e.validateStatementFraming(cypher); err != nil {
+	if err := e.validateStatementFraming(ctx, cypher); err != nil {
 		return nil, err
 	}
 	finishTerminated := false
-	if stripped, ok := stripUnionBranchFinishes(cypher); ok {
+	if stripped, ok := stripUnionBranchFinishes(ctx, cypher); ok {
 		cypher = strings.TrimSpace(stripped)
 		finishTerminated = true
 		ctx = withFinishedStatement(ctx, cypher)
@@ -407,7 +407,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 				return nil, err
 			}
 		}
-		if err := e.admitTransactionStatement(cypher); err != nil {
+		if err := e.admitTransactionStatement(ctx, cypher); err != nil {
 			return nil, err
 		}
 		routed, err := e.routeAdministrationStatement(ctx, cypher)
@@ -442,12 +442,14 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	rowsRewritten := false
 	// Backtick-quoted variables become plain identifiers here, once, for
 	// every route; the result's columns and errors are mapped back (#734).
-	if canonical, names := canonicalizeQuotedVariables(cypher); names != nil {
+	if canonical, names := canonicalizeQuotedVariables(ctx, cypher); names != nil {
 		cypher = canonical
 		params = names.parameterValues(params)
 		ctx = withQuotedVariableNames(ctx, names)
 		rowsRewritten = true
-		defer func() { result, retErr = names.restore(result, retErr, e.parseReturnItems) }()
+		defer func() {
+			result, retErr = names.restore(result, retErr, func(text string) []returnItem { return e.parseReturnItems(ctx, text) })
+		}()
 	}
 
 	// ORDER BY, SKIP / OFFSET and LIMIT as clauses of their own become the
@@ -470,7 +472,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			if err := e.validateSyntax(ctx, modeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
 				return nil, err
 			}
-			if err := e.validateSemanticScopes(ctx, fabricSingleGraphStatement(modeQuery)); err != nil {
+			if err := e.validateSemanticScopes(ctx, fabricSingleGraphStatement(ctx, modeQuery)); err != nil {
 				return nil, err
 			}
 			if err := e.statementParametersError(ctx, cypher, params); err != nil {
@@ -481,7 +483,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			}
 			return e.executeProfile(ctx, modeQuery)
 		}
-		info := e.analyzer.Analyze(cypher)
+		info := e.analyzer.Analyze(ctx, cypher)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		// Plan 04-03 Site 3 (fabric branch): isFabric=true → op_type="fabric"
 		// per RISK-1 corrected classifier. Observation pre-execute so the
 		// counter reflects intent regardless of execution outcome (errors
@@ -495,7 +500,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		// or runs any part: a CALL scope clause naming a variable the query
 		// doesn't define is rejected here. A missing parameter is reported
 		// after both, so these syntax errors come first.
-		if err := e.validateSemanticScopes(ctx, fabricSingleGraphStatement(cypher)); err != nil {
+		if err := e.validateSemanticScopes(ctx, fabricSingleGraphStatement(ctx, cypher)); err != nil {
 			return nil, err
 		}
 		preparedFabric, err := e.prepareFabricExecution(ctx, cypher)
@@ -593,7 +598,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		return nil, err
 	}
 	e.statementAdmitted(ctx)
-	if err := e.systemDatabaseWriteError(cypher); err != nil {
+	if err := e.systemDatabaseWriteError(ctx, cypher); err != nil {
 		return nil, err
 	}
 
@@ -811,7 +816,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Analyze query - uses cached analysis if available
 	// This extracts query metadata (HasMatch, IsReadOnly, Labels, etc.) once
 	// and caches it for repeated queries, avoiding redundant string parsing
-	info := e.analyzer.Analyze(cypher)
+	info := e.analyzer.Analyze(ctx, cypher)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ctx, finishMode, modeErr := e.observeResolvedStatementMode(ctx, cypher)
 	if modeErr != nil {
 		return nil, modeErr
@@ -856,7 +864,10 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// (#907); a Cypher 5 key pays for no version text.
 	resultCacheKey := ""
 	if e.canUseResultCache(ctx, info, cypher) {
-		resultCacheKey = resultCacheEntryKey(cypher, params)
+		resultCacheKey = resultCacheEntryKey(ctx, cypher, params)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if version := cypherVersionFromContext(ctx); version != "5" {
 			resultCacheKey += ":cypher:" + version
 		}

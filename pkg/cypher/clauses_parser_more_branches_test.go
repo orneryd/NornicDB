@@ -37,12 +37,12 @@ func TestParseUnwindNodePatternClauseInternal_MoreBranches(t *testing.T) {
 }
 
 func TestUnwindClauseParsers_MoreBranches(t *testing.T) {
-	_, ok := parseUnwindWithClause("WITH")
+	_, ok := parseUnwindWithClause(t.Context(), "WITH")
 	require.False(t, ok)
-	_, ok = parseUnwindWithClause("WITH n AS")
+	_, ok = parseUnwindWithClause(t.Context(), "WITH n AS")
 	require.False(t, ok)
 
-	withPlan, ok := parseUnwindWithClause("WITH n, row.k AS k, score AS s")
+	withPlan, ok := parseUnwindWithClause(t.Context(), "WITH n, row.k AS k, score AS s")
 	require.True(t, ok)
 	require.Len(t, withPlan.assignments, 2)
 	require.Equal(t, "k", withPlan.assignments[0].alias)
@@ -55,12 +55,12 @@ func TestUnwindClauseParsers_MoreBranches(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "n.k = row.k", wherePlan.clause)
 
-	alias, ok := parseUnwindBatchCountReturn("RETURN count(*) AS total")
+	alias, ok := parseUnwindBatchCountReturn(t.Context(), "RETURN count(*) AS total")
 	require.True(t, ok)
 	require.Equal(t, "total", alias)
-	_, ok = parseUnwindBatchCountReturn("RETURN sum(x) AS total")
+	_, ok = parseUnwindBatchCountReturn(t.Context(), "RETURN sum(x) AS total")
 	require.False(t, ok)
-	alias, ok = parseUnwindBatchCountReturn("RETURN count(*)")
+	alias, ok = parseUnwindBatchCountReturn(t.Context(), "RETURN count(*)")
 	require.True(t, ok)
 	require.Equal(t, "count(*)", alias)
 
@@ -105,10 +105,10 @@ func TestExecuteUnion_ErrorAndInferenceBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "clauses_union_more_cov"))
 	ctx := context.Background()
 
-	_, err := exec.executeUnion(ctx, "RETURN 1 AS x UNION RETURN 2 AS x", true)
+	_, err := exec.executeUnion(ctx, "RETURN 1 AS x UNION RETURN 2 AS x", true, nil)
 	require.Error(t, err)
 
-	_, err = exec.executeUnion(ctx, "RETURN 1 AS x UNION ALL RETURN 2 AS x", false)
+	_, err = exec.executeUnion(ctx, "RETURN 1 AS x UNION ALL RETURN 2 AS x", false, nil)
 	require.Error(t, err)
 
 	// First branch returns 0 rows (and may not preserve column metadata in some paths),
@@ -116,7 +116,7 @@ func TestExecuteUnion_ErrorAndInferenceBranches(t *testing.T) {
 	res, err := exec.executeUnion(ctx,
 		"MATCH (n:Missing) RETURN n.name AS name UNION ALL RETURN 'fallback' AS name",
 		true,
-	)
+		nil)
 	require.NoError(t, err)
 	require.Equal(t, []string{"name"}, res.Columns)
 	require.Len(t, res.Rows, 1)

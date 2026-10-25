@@ -20,16 +20,22 @@ func queryBodyContainerKeyword(word string) bool {
 	return false
 }
 
-func forEachQueryBody(source string, containers []string, visit func(string, int, int) error) error {
+func forEachQueryBody(ctx context.Context, source string, containers []string, visit func(string, int, int) error) error {
 	if isNornicExtensionStatement(source) || isSchemaCommandStatement(source) {
 		return nil
 	}
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.FragmentEntry, false)
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err != nil {
 		return syntaxAdmissionError(source, err)
 	}
 	var failure error
 	syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
+		if failure == nil {
+			failure = ctx.Err()
+		}
 		if failure != nil {
 			return nil
 		}
@@ -58,6 +64,9 @@ func forEachQueryBody(source string, containers []string, visit func(string, int
 		}
 		return nil
 	})
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	return failure
 }
 
@@ -72,6 +81,15 @@ const (
 type queryBody struct {
 	branches []queryBodyBranch
 	status   queryBodyStatus
+	foreach  *queryBodyForeach
+}
+
+// queryBodyForeach retains the loop header and its update clauses from the
+// statement's grammar product. Both admission and execution consume this view.
+type queryBodyForeach struct {
+	variable       string
+	listExpression string
+	updates        []pipelineClause
 }
 
 type queryBodyBranch struct {
@@ -98,9 +116,12 @@ func declinedQueryBody(start, end int) queryBody {
 
 // readQueryBody is the compatibility entry for a source window. Statement
 // compilation retains its product and calls queryBodyFromSyntax directly.
-func readQueryBody(source string, start, end int) queryBody {
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.FragmentEntry, false)
-	if err != nil {
+func readQueryBody(ctx context.Context, source string, start, end int) queryBody {
+	if ctx.Err() != nil {
+		return declinedQueryBody(start, end)
+	}
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	if err != nil || ctx.Err() != nil {
 		return declinedQueryBody(start, end)
 	}
 	node, ok := syntax.Window(start, end, cypherantlr.CypherParserRULE_query, cypherantlr.CypherParserRULE_regularQuery, cypherantlr.CypherParserRULE_subqueryBody, cypherantlr.CypherParserRULE_singleQuery, cypherantlr.CypherParserRULE_matchSt)
@@ -183,6 +204,34 @@ func queryBodyFromSyntax(node cypherantlr.SyntaxNode) queryBody {
 		if len(body.branches) == 0 {
 			body.branches = []queryBodyBranch{branch}
 		}
+	case cypherantlr.CypherParserRULE_foreachSt:
+		variable := node.ChildRule(cypherantlr.CypherParserRULE_symbol)
+		expression := node.ChildRule(cypherantlr.CypherParserRULE_expression)
+		if !variable.Valid() || !expression.Valid() {
+			start, end := node.Span()
+			return declinedQueryBody(start, end)
+		}
+		branch := newQueryBodyBranch(node)
+		for i := 0; i < node.ChildCount(); i++ {
+			child := node.Child(i)
+			if child.Rule() == cypherantlr.CypherParserRULE_updatingStatement {
+				appendQuerySyntax(&branch, child)
+			}
+		}
+		if len(branch.clauses) == 0 {
+			return declinedQueryBody(branch.start, branch.end)
+		}
+		body.foreach = &queryBodyForeach{
+			variable:       symbolicNameValue(variable.Text()),
+			listExpression: expression.Text(),
+			updates:        make([]pipelineClause, 0, len(branch.clauses)),
+		}
+		for _, source := range branch.clauses {
+			clause := source.pipelineClause
+			clause.syntax = source.syntax
+			body.foreach.updates = append(body.foreach.updates, clause)
+		}
+		body.branches = []queryBodyBranch{branch}
 	case cypherantlr.CypherParserRULE_singleQuery:
 		branch := newQueryBodyBranch(node)
 		appendQuerySyntax(&branch, node)
@@ -358,8 +407,8 @@ func statementSyntaxQuery(syntax cypherantlr.StatementSyntax) cypherantlr.Syntax
 	return root.ChildRule(cypherantlr.CypherParserRULE_query)
 }
 
-func queryStatementWindow(source string) (start, end int, mode ExecutionMode, ok bool) {
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.StatementEntry, false)
+func queryStatementWindow(ctx context.Context, source string) (start, end int, mode ExecutionMode, ok bool) {
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return -1, -1, ModeNormal, false
 	}
@@ -390,8 +439,8 @@ func queryStatementWindow(source string) (start, end int, mode ExecutionMode, ok
 	return start, end, mode, start >= 0
 }
 
-func callSubqueryBraces(source string) (open, end int, ok bool) {
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.FragmentEntry, false)
+func callSubqueryBraces(ctx context.Context, source string) (open, end int, ok bool) {
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return -1, -1, false
 	}
@@ -412,7 +461,7 @@ func querySyntaxBraces(node cypherantlr.SyntaxNode) (open, end int, ok bool) {
 	return open, end, true
 }
 
-func callClauseBody(clause queryBodyClause) (start, end int, ok bool) {
+func callClauseBody(ctx context.Context, clause queryBodyClause) (start, end int, ok bool) {
 	if clause.kind != pipelineClauseCallSubquery {
 		return -1, -1, false
 	}
@@ -420,6 +469,6 @@ func callClauseBody(clause queryBodyClause) (start, end int, ok bool) {
 		open, close, found := querySyntaxBraces(clause.syntax)
 		return open + 1, close, found
 	}
-	open, close, found := callSubqueryBraces(clause.text)
+	open, close, found := callSubqueryBraces(ctx, clause.text)
 	return clause.start + open + 1, clause.start + close, found
 }

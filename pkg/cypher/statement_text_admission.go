@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
@@ -81,7 +82,10 @@ func executionModeStatement(mode ExecutionMode, query string) (string, error) {
 
 // normalizeQueryText admits comments in the existing canonicalization scan.
 // Canonical ordinary statements use exactly the same quick exit as classification.
-func normalizeQueryText(query string) (string, *queryRewrite, error) {
+func normalizeQueryText(ctx context.Context, query string) (string, *queryRewrite, error) {
+	if err := ctx.Err(); err != nil {
+		return query, nil, err
+	}
 	if !queryMayNeedCanonicalRewrite(query) {
 		return query, nil, nil
 	}
@@ -90,7 +94,10 @@ func normalizeQueryText(query string) (string, *queryRewrite, error) {
 		err = emptyStatementError()
 	}
 	if err == nil {
-		canonical, rewrite = preserveStatementPresentation(query, canonical, rewrite)
+		canonical, rewrite = preserveStatementPresentation(ctx, query, canonical, rewrite)
+	}
+	if err := ctx.Err(); err != nil {
+		return query, nil, err
 	}
 	return canonical, rewrite, err
 }

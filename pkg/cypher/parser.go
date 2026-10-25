@@ -66,10 +66,11 @@ func (c *CreateClause) clauseMarker() { _ = c }
 
 // ReturnClause represents a RETURN clause.
 type ReturnClause struct {
-	Items   []ReturnItem
-	OrderBy []OrderItem
-	Skip    *int
-	Limit   *int
+	Distinct bool
+	Items    []ReturnItem
+	OrderBy  []OrderItem
+	Skip     *int
+	Limit    *int
 }
 
 func (c *ReturnClause) clauseMarker() { _ = c }
@@ -210,6 +211,10 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 		return nil, localizedError(localization.CypherCoreEmptyQuery(), nil)
 	}
 
+	// RETURN projections use the same source-preserving owner as ASTBuilder;
+	// the token loop below remains responsible for the lightweight Query shape.
+	var returns []*ASTReturn
+	returnIndex := 0
 	// Simple top-down parser
 	pos := 0
 	for pos < len(tokens) {
@@ -239,9 +244,24 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 			query.Type = QueryCreate
 
 		case "RETURN":
-			clause, newPos := p.parseReturn(tokens, pos)
-			query.Clauses = append(query.Clauses, clause)
-			pos = newPos
+			if returns == nil {
+				builder := NewASTBuilder()
+				for _, source := range builder.splitIntoClauses(cypher) {
+					if source.clauseType == ASTClauseReturn {
+						returns = append(returns, builder.parseReturn(context.Background(), source.text))
+					}
+				}
+			}
+			if returnIndex < len(returns) {
+				projection := returns[returnIndex]
+				clause := &ReturnClause{Distinct: projection.Distinct, Items: make([]ReturnItem, 0, len(projection.Items))}
+				for _, item := range projection.Items {
+					clause.Items = append(clause.Items, ReturnItem{Expression: item.Expression, Alias: item.Alias})
+				}
+				query.Clauses = append(query.Clauses, clause)
+				returnIndex++
+			}
+			pos++
 
 		case "WHERE":
 			clause, newPos := p.parseWhere(tokens, pos)
@@ -285,15 +305,6 @@ func (p *Parser) parseMatch(tokens []string, pos int) (*MatchClause, int) {
 func (p *Parser) parseCreate(tokens []string, pos int) (*CreateClause, int) {
 	pos++
 	clause := &CreateClause{}
-	return clause, pos
-}
-
-// parseReturn parses a RETURN clause.
-func (p *Parser) parseReturn(tokens []string, pos int) (*ReturnClause, int) {
-	pos++
-	clause := &ReturnClause{
-		Items: make([]ReturnItem, 0),
-	}
 	return clause, pos
 }
 

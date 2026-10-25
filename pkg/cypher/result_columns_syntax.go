@@ -9,8 +9,8 @@ import (
 
 // canonicalQueryClause adapts standalone execution helpers to the same grammar
 // product. The bound compiler supplies the retained clause node directly.
-func canonicalQueryClause(source string) (cypherantlr.SyntaxNode, bool) {
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.FragmentEntry, false)
+func canonicalQueryClause(ctx context.Context, source string) (cypherantlr.SyntaxNode, bool) {
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return cypherantlr.SyntaxNode{}, false
 	}

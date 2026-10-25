@@ -36,14 +36,17 @@ if err := security.ValidateToken(token); err != nil {
 
 ### 2. URL Validation (`ValidateURL`)
 
-Validates URLs to prevent SSRF attacks:
+Validates URLs to prevent SSRF attacks. The policy is passed explicitly:
 
 ```go
-// Production mode (strict)
-err := security.ValidateURL(callbackURL, false, false)
+// Production policy (strict, secure default = zero value)
+err := security.ValidateURL(callbackURL, security.URLPolicy{})
 
-// Development mode (allows localhost)
-err := security.ValidateURL(localURL, true, true)
+// Development policy (allows loopback hosts and HTTP for local workflows)
+err := security.ValidateURL(localURL, security.URLPolicy{
+    AllowHTTP:  true,
+    HostPolicy: security.URLDevelopmentHost,
+})
 ```
 
 **Protects against:**
@@ -55,6 +58,31 @@ err := security.ValidateURL(localURL, true, true)
 - HTTP downgrade attacks (requires HTTPS in production)
 
 **Test Coverage:** 15+ SSRF attack scenarios including AWS/Azure/GCP metadata services
+
+#### Go helper migration
+
+`ValidateURL(url, isDevelopment, allowHTTP)` now takes `ValidateURL(url, policy)`.
+The zero value `URLPolicy{}` preserves production defaults: HTTPS, localhost and
+private literal-IP restrictions, and the 2048-byte `MaxURLLength` bound.
+
+| Previous call | Replacement |
+| --- | --- |
+| `security.ValidateURL(u, false, false)` | `security.ValidateURL(u, security.URLPolicy{})` |
+| `security.ValidateURL(u, false, true)` | `security.ValidateURL(u, security.URLPolicy{AllowHTTP: true})` |
+| `security.ValidateURL(u, true, false)` | `security.ValidateURL(u, security.URLPolicy{AllowHTTP: true, HostPolicy: security.URLDevelopmentHost})` |
+| `security.ValidateURL(u, true, true)` | `security.ValidateURL(u, security.URLPolicy{AllowHTTP: true, HostPolicy: security.URLDevelopmentHost})` |
+
+Policy fields select these contracts:
+
+- `HostPolicy`: `URLProductionHost` is the default; `URLDevelopmentHost` allows
+  loopback but rejects other private literal IPs; `URLResolvedLoopback` requires
+  every DNS answer to be loopback; `URLAnyHost` explicitly permits any host.
+- `MaxLength`: zero uses `MaxURLLength`, positive values set a limit, and negative
+  values explicitly disable it. Eval uses `-1` to preserve its long-URL behavior.
+- `SchemePolicy` defaults to `URLHTTPScheme`. OAuth issuer consumers explicitly select `URLAbsoluteScheme` to retain their absolute-URL contract.
+- `RejectCredentials` rejects userinfo and credential-bearing query/fragment values; OAuth issuer callers select this policy with `URLAnyHost` and `MaxLength: -1`.
+- `AllowHTTP` permits HTTP; `RejectUserinfo` rejects URL userinfo when selected.
+  Unset `RejectUserinfo` preserves the previous userinfo allowance.
 
 ### 3. Header Validation (`ValidateHeaderValue`)
 
@@ -238,8 +266,8 @@ func setupAPIServer() {
 func handleWebhook(w http.ResponseWriter, r *http.Request) {
     webhookURL := r.URL.Query().Get("callback")
 
-    // Validate before making outbound request
-    if err := security.ValidateURL(webhookURL, false, false); err != nil {
+    // Validate before making outbound request (zero value = production policy)
+    if err := security.ValidateURL(webhookURL, security.URLPolicy{}); err != nil {
         http.Error(w, "Invalid webhook URL", http.StatusBadRequest)
         return
     }

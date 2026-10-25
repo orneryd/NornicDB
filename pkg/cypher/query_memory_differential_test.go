@@ -85,7 +85,7 @@ func TestQueryMemoryTraversalDifferential(t *testing.T) {
 					}))
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = base.Close() })
-					exec = NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(base, "test"), 0, 0)
+					exec = NewStorageExecutor(storage.NewNamespacedEngine(base, "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 					_, err = exec.Execute(ctx, "CREATE (:Fact {id:'a'})-[:REL {marker:'visible'}]->(:Fact {id:'b'})", nil)
 					require.NoError(t, err)
 					_, err = exec.Execute(ctx, "MATCH (a:Fact {id:'a'}), (b:Fact {id:'b'}) CREATE (a)-[:REL {marker:'visible'}]->(b)", nil)

@@ -20,7 +20,7 @@ import (
 func BenchmarkCheckedNumericInputs(b *testing.B) {
 	previous := PluginFunctionLookup
 	handlers := map[string]interface{}{
-		"apoc.convert.toInteger": apocconvert.ToInteger, "apoc.coll.sumLongs": apoccoll.SumLongs,
+		"apoc.convert.toIntList": apocconvert.ToIntList, "apoc.convert.toInteger": apocconvert.ToInteger, "apoc.coll.sumLongs": apoccoll.SumLongs,
 		"apoc.math.percentile": apocmath.Percentile, "apoc.stats.histogram": apocstats.Histogram, "apoc.number.format": apocnumber.Format,
 		"zz.numeric.int32": func(value int32) int64 { return int64(value) },
 	}
@@ -50,7 +50,7 @@ func BenchmarkCheckedNumericInputs(b *testing.B) {
 	} {
 		b.Run(input.Name, func(b *testing.B) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "checked_numeric_bench")
-			exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			query := "RETURN " + input.Expression + " AS v"
 			params := map[string]interface{}{"xs": input.Value}
 			result, err := exec.Execute(context.Background(), query, params)
@@ -69,6 +69,32 @@ func BenchmarkCheckedNumericInputs(b *testing.B) {
 			}
 		})
 	}
+	b.Run("unsigned", func(b *testing.B) {
+		for _, input := range []struct {
+			name  string
+			value uint64
+		}{{"bound", math.MaxInt64}, {"overflow", math.MaxUint64}} {
+			for _, function := range []string{"apoc.convert.toInteger", "apoc.convert.toIntList", "apoc.coll.sumLongs"} {
+				b.Run(input.name+"/"+function, func(b *testing.B) {
+					store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "unsigned_bench")
+					exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
+					argument := "$xs"
+					if function == "apoc.convert.toInteger" {
+						argument = "$value"
+					}
+					query := "RETURN " + function + "(" + argument + ") AS v"
+					params := map[string]interface{}{"value": input.value, "xs": []uint64{input.value}}
+					b.ReportAllocs()
+					b.ResetTimer()
+					for i := 0; i < b.N; i++ {
+						if _, err := exec.Execute(context.Background(), query, params); err != nil {
+							b.Fatal(err)
+						}
+					}
+				})
+			}
+		}
+	})
 }
 
 func BenchmarkCheckedNumericResults(b *testing.B) {
@@ -80,7 +106,7 @@ func BenchmarkCheckedNumericResults(b *testing.B) {
 	} {
 		b.Run(input.Name, func(b *testing.B) {
 			store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "numeric_decode_bench")
-			exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			params := map[string]interface{}{"xs": input.Value}
 			result, err := TypedExecute[[]int32](context.Background(), exec, "RETURN $xs AS v", params)
 			if err != nil {

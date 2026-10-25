@@ -28,7 +28,7 @@ func typedNumericExecutor(t *testing.T) (*StorageExecutor, storage.Engine) {
 	withPluginFunctions(t, handlers)
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "numeric_family")
 	t.Cleanup(func() { rowValueProgramsDisabled.Store(false) })
-	return NewStorageExecutorWithQueryCachePolicy(store, 0, 0), store
+	return NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0}), store
 }
 
 func typedNumericRead(t *testing.T, exec *StorageExecutor, query string, params map[string]interface{}) interface{} {

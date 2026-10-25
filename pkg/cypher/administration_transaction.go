@@ -36,7 +36,7 @@ func StatementDatabase(database, query string) string {
 	return database
 }
 
-func (e *StorageExecutor) admitTransactionStatement(query string) error {
+func (e *StorageExecutor) admitTransactionStatement(ctx context.Context, query string) error {
 	tx := e.txContext
 	if tx == nil || !tx.active {
 		return nil
@@ -49,7 +49,7 @@ func (e *StorageExecutor) admitTransactionStatement(query string) error {
 		kind = "Administration"
 	}
 	if tx.statementKind != "" && tx.statementKind != kind {
-		return statementTypeError(query, kind, tx.statementKind, tx.tx)
+		return statementTypeError(ctx, query, kind, tx.statementKind, tx.tx)
 	}
 	tx.statementKind = kind
 	return nil
@@ -61,9 +61,9 @@ func (e *StorageExecutor) admitTransactionStatement(query string) error {
 // it holds writes, makes a data transaction's type "Write query". The
 // message uses Neo4j's statement type names: "Read query", "Write query",
 // "Schema modification", "Administration command".
-func statementTypeError(query, kind, previousKind string, transaction any) error {
+func statementTypeError(ctx context.Context, query, kind, previousKind string, transaction any) error {
 	requested := "Read query"
-	permissions := QueryPermissionRequirements(query)
+	permissions := QueryPermissionRequirements(ctx, query)
 	if permissions.Write {
 		requested = "Write query"
 	}

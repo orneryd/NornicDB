@@ -138,7 +138,7 @@ func TestGh713SharedAggregateAdapterBoundaries(t *testing.T) {
 	t.Run("unaliased aggregate", func(t *testing.T) {
 		executor, ctx := newUnitExecutor(t)
 		items := []returnItem{{expr: "count(*)", alias: "count(*)"}}
-		plan := returnProjectionPlanFromItems(items)
+		plan := returnProjectionPlanFor(ctx, "RETURN count(*)")
 		require.True(t, plan.valid)
 		require.Equal(t, []string{"count(*)"}, plan.columns)
 		rows, err := executor.aggregateTraversalOptionalRows(ctx, []traversalOptRow{{values: map[string]interface{}{}}}, items)
@@ -817,7 +817,7 @@ func TestGh713TraversalAggregatePlannerParity(t *testing.T) {
 				rows = append(rows, row)
 				bindings = append(bindings, pipelineRowFromTraversalOptionalRow(row))
 			}
-			items := executor.parseReturnItems(test.expr + " AS value")
+			items := executor.parseReturnItems(t.Context(), test.expr+" AS value")
 			shared, err := executor.projectMergeReturn(ctx, bindings, "RETURN "+test.expr+" AS value")
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{test.want}}, shared.Rows)

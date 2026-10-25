@@ -71,8 +71,8 @@ func addSyntaxPatternBindings(scope map[string]struct{}, clause cypherantlr.Synt
 	syntaxPatternDefinitions(clause, func(_ int, symbol cypherantlr.SyntaxNode) { scope[syntaxSymbolName(symbol)] = struct{}{} })
 }
 
-func canonicalPatternVariables(source string) []string {
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.PatternEntry, false)
+func canonicalPatternVariables(ctx context.Context, source string) []string {
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.PatternEntry, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil
 	}

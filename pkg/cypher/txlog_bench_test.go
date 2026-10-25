@@ -25,7 +25,7 @@ func BenchmarkTxlogEntries(b *testing.B) {
 		b.Fatal(err)
 	}
 	defer wal.Close()
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(storage.NewWALEngine(badger, wal), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(storage.NewWALEngine(badger, wal), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for i := 0; i < 10000; i++ {
 		database := "test"
 		if i%2 == 1 {

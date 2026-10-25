@@ -39,7 +39,7 @@ class HookTests(unittest.TestCase):
         self.git("init", "-b", "main")
         (self.root / "scripts").mkdir()
         (self.root / ".githooks").mkdir()
-        for name in ["graphify_local.py", "pr_duplicates.py", "code_intelligence.py", "code-intelligence-hook.sh", "install-git-hooks.sh", "install_code_intelligence_global.py", "code-intelligence-global-hook.sh", "requirements-code-intelligence.txt"]:
+        for name in ["graphify_local.py", "pr_duplicates.py", "code_intelligence.py", "duplicate_check_cache.py", "code-intelligence-hook.sh", "install-git-hooks.sh", "install_code_intelligence_global.py", "code-intelligence-global-hook.sh", "requirements-code-intelligence.txt"]:
             shutil.copy2(SCRIPTS / name, self.root / "scripts" / name)
         for name in ["pre-commit", "post-merge", "post-rewrite", "reference-transaction"]:
             shutil.copy2(SCRIPTS.parent / ".githooks" / name, self.root / ".githooks" / name)
@@ -91,6 +91,8 @@ class HookTests(unittest.TestCase):
                     columns, rows = [], []
                     if "r.last_commit AS commit" in query:
                         columns, rows = ["commit", "main_spec", "max_embed_chars"], [[fixture.stored_commit, "none", 0]]
+                    elif "CodeRepository {name: $repo}" in query and "properties(n) AS baseline" in query:
+                        columns, rows = ["baseline"], [[{"last_commit": fixture.stored_commit}]] if fixture.stored_commit else []
                     elif "SHOW DATABASES" in query:
                         columns, rows = ["name"], [["system"], ["nornicdbcode"]]
                     elif "MERGE (r:CodeRepository" in query:
@@ -148,6 +150,23 @@ nodes=[{{"id":"candidate","label":"calculate_total()","file_type":"code","source
     def stage(self, body=BODY):
         (self.root / "candidate.py").write_text(body)
         self.git("add", "candidate.py")
+
+    def test_unchanged_success_is_cached_and_graph_change_invalidates(self):
+        self.stage()
+        command = [sys.executable, str(self.root / "scripts/code_intelligence.py"), "check-staged", "--repo-root", str(self.root)]
+        first = subprocess.run(command, env=self.env, capture_output=True, text=True)
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        count = len(self.searches)
+        second = subprocess.run(command, env=self.env, capture_output=True, text=True)
+        self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertIn("cached successful result", second.stdout)
+        self.assertEqual(len(self.searches), count)
+        self.stored_commit = "f" * 40
+        self.hits = 1
+        changed = subprocess.run(command, env=self.env, capture_output=True, text=True)
+        self.assertNotEqual(changed.returncode, 0)
+        self.assertGreater(len(self.searches), count)
+        self.assertIn("Commit blocked", changed.stdout + changed.stderr)
 
     def test_blocks_one_reuse_and_multiple_refactor_matches(self):
         for hits in [1, 2]:

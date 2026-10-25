@@ -52,6 +52,7 @@ func TestRelationshipChunkMatchesCarryTheirSpans(t *testing.T) {
 	require.Equal(t, "", byID["r2"][0].Property)
 
 	// Saved and loaded with the vectors.
+	waitRelationshipVectors(t, svc, 2, relationshipSnapshotPublished)
 	_, err = os.Stat(path + relationshipVectorsFileSuffix)
 	require.NoError(t, err)
 	loaded := svc.loadRelationshipVectors()

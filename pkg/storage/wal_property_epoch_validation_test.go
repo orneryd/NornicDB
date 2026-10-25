@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -141,7 +142,7 @@ func TestWALPropertyEpochSalvageCannotBorrowAcrossDamage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	require.Nil(t, entries[0].PropertyEpoch)
-	dest, err := NewBadgerEngineInMemory()
+	dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = dest.Close() })
 	require.ErrorContains(t, ReplayWALEntry(dest, entries[0]), "missing property name binding")
@@ -226,7 +227,7 @@ func TestWALPropertyEpochPlanSurvivesPartialDrainPersistence(t *testing.T) {
 	require.NoError(t, err)
 	data, err := decodeBufferedWALRecord(entries[0])
 	require.NoError(t, err)
-	dest, err := NewBadgerEngineInMemory()
+	dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = dest.Close() })
 	prepared, err := dest.importBufferedWALRecord(&data, walForeignImport)

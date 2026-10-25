@@ -2,6 +2,7 @@
 package cypher
 
 import (
+	"github.com/stretchr/testify/require"
 	"sync"
 	"testing"
 	"time"
@@ -688,6 +689,11 @@ func TestNormalizeQuery(t *testing.T) {
 		input    string
 		expected string
 	}{
+		{"RETURN   'a  b'  AS  s", "RETURN 'a  b' AS s"},
+		{"RETURN \"a \n b\" AS s", "RETURN \"a \n b\" AS s"},
+		{"RETURN 1 AS `my  col`", "RETURN 1 AS `my  col`"},
+		{"RETURN 'it\\'s  x'   AS s", "RETURN 'it\\'s  x' AS s"},
+		{"MATCH (n)\n\tWHERE n.x = 'a\tb' ", "MATCH (n) WHERE n.x = 'a\tb'"},
 		{"MATCH (n) RETURN n", "MATCH (n) RETURN n"},
 		{"MATCH  (n)  RETURN  n", "MATCH (n) RETURN n"},
 		{"MATCH\n(n)\nRETURN\nn", "MATCH (n) RETURN n"},
@@ -703,6 +709,11 @@ func TestNormalizeQuery(t *testing.T) {
 			}
 		})
 	}
+
+	require.NotEqual(t, resultCacheEntryKey(t.Context(), "RETURN 1 IS  NULL", nil), resultCacheEntryKey(t.Context(), "RETURN 1 IS\tNULL", nil))
+	require.NotEqual(t, resultCacheEntryKey(t.Context(), "RETURN 1 /* column */ + 2", nil), resultCacheEntryKey(t.Context(), "RETURN 1 + 2", nil))
+	require.NotEqual(t, resultCacheEntryKey(t.Context(), "RETURN 'a  b' AS s", nil), resultCacheEntryKey(t.Context(), "RETURN 'a b' AS s", nil))
+	require.Equal(t, resultCacheEntryKey(t.Context(), "RETURN  'a b'  AS s", nil), resultCacheEntryKey(t.Context(), "RETURN 'a b' AS s", nil))
 }
 
 // =============================================================================

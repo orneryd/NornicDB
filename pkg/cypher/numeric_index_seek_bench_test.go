@@ -16,7 +16,7 @@ func BenchmarkNumericPropertyIndexSeek(b *testing.B) {
 		base int64
 	}{{"small", 0}, {"beyond_2p53", 1 << 53}} {
 		store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "test")
-		exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+		exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 		ctx := context.Background()
 		if _, err := exec.Execute(ctx, "CREATE RANGE INDEX bench_numeric FOR (n:BenchNumeric) ON (n.v)", nil); err != nil {
 			b.Fatal(err)

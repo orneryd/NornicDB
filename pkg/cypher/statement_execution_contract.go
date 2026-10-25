@@ -13,7 +13,7 @@ type statementExecutionContract struct {
 	writes, transaction, calls, dynamic bool
 }
 
-func readStatementExecutionContract(query string) (statementExecutionContract, error) {
+func readStatementExecutionContract(ctx context.Context, query string) (statementExecutionContract, error) {
 	mode, body := parseExecutionMode(query)
 	if mode == ModeExplain {
 		return statementExecutionContract{}, nil
@@ -28,21 +28,22 @@ func readStatementExecutionContract(query string) (statementExecutionContract, e
 		writes := startsWithKeywordFold(body, "CREATE")
 		return statementExecutionContract{writes: writes, transaction: writes}, nil
 	}
-	structure, err := cypherantlr.ParseSyntax(context.Background(), body, cypherantlr.FragmentEntry, false)
+	structure, err := cypherantlr.ParseSyntax(ctx, body, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	if err := ctx.Err(); err != nil {
+		return statementExecutionContract{}, err
+	}
 	if err != nil {
 		return statementExecutionContract{}, syntaxAdmissionError(body, err)
 	}
 	contract := statementExecutionContract{}
-	structure.Walk(func(node cypherantlr.SyntaxNode) func() {
+	visitStatementProcedureSyntax(structure, func(node cypherantlr.SyntaxNode) {
 		switch node.Rule() {
 		case cypherantlr.CypherParserRULE_updatingStatement:
 			contract.writes, contract.transaction = true, true
 		case cypherantlr.CypherParserRULE_queryCallSt, cypherantlr.CypherParserRULE_standaloneCall:
 			contract.calls = true
 		}
-		return nil
-	})
-	visitStructuredProcedureCalls(structure, func(spec ProcedureSpec, _ string) bool {
+	}, func(spec ProcedureSpec, _ string) bool {
 		// SCHEMA procedures keep their existing schema-transaction owner;
 		// this contract admits registered data WRITE procedures.
 		fixedWrite := spec.Mode == ProcedureModeWrite

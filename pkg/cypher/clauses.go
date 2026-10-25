@@ -467,7 +467,7 @@ func unwindMergeLabelsKey(labels []string) string {
 	return strings.Join(sorted, ":")
 }
 
-func parseUnwindWithClause(clause string) (unwindMergeChainWithPlan, bool) {
+func parseUnwindWithClause(ctx context.Context, clause string) (unwindMergeChainWithPlan, bool) {
 	trimmed := strings.TrimSpace(clause)
 	if !startsWithKeywordFold(trimmed, "WITH") {
 		return unwindMergeChainWithPlan{}, false
@@ -476,7 +476,7 @@ func parseUnwindWithClause(clause string) (unwindMergeChainWithPlan, bool) {
 	if body == "" {
 		return unwindMergeChainWithPlan{}, false
 	}
-	projectionPlan := returnProjectionPlanFor("RETURN " + body)
+	projectionPlan := returnProjectionPlanFor(ctx, "RETURN "+body)
 	if !projectionPlan.valid || projectionPlan.star || projectionPlan.distinct || projectionPlan.hasAggregate || projectionPlan.modifiers != "" {
 		return unwindMergeChainWithPlan{}, false
 	}
@@ -506,7 +506,10 @@ func parseUnwindWhereClause(clause string) (unwindMergeChainWherePlan, bool) {
 	return unwindMergeChainWherePlan{clause: body}, true
 }
 
-func (e *StorageExecutor) cachedUnwindMergeChainPlan(mutationPart string) unwindMergeChainPlan {
+func (e *StorageExecutor) cachedUnwindMergeChainPlan(ctx context.Context, mutationPart string) unwindMergeChainPlan {
+	if ctx.Err() != nil {
+		return unwindMergeChainPlan{}
+	}
 	key := strings.TrimSpace(mutationPart)
 	cache := e.unwindMergeChainPlanCache
 	if cache == nil {
@@ -520,8 +523,15 @@ func (e *StorageExecutor) cachedUnwindMergeChainPlan(mutationPart string) unwind
 	}
 	cache.mu.RUnlock()
 
-	plan := parseUnwindMergeChainPattern(key)
+	plan := parseUnwindMergeChainPattern(ctx, key)
+	if ctx.Err() != nil {
+		return unwindMergeChainPlan{}
+	}
 	cache.mu.Lock()
+	if ctx.Err() != nil {
+		cache.mu.Unlock()
+		return unwindMergeChainPlan{}
+	}
 	cache.plans[key] = plan
 	cache.mu.Unlock()
 	return plan
@@ -535,7 +545,7 @@ func isComparableInterfaceValue(v interface{}) bool {
 	return t.Comparable()
 }
 
-func parseSimpleCountReturn(returnPart, mergeVar string) (alias string, ok bool) {
+func parseSimpleCountReturn(ctx context.Context, returnPart, mergeVar string) (alias string, ok bool) {
 	r := strings.TrimSpace(returnPart)
 	if r == "" {
 		return "", true
@@ -543,7 +553,7 @@ func parseSimpleCountReturn(returnPart, mergeVar string) (alias string, ok bool)
 	if !startsWithKeywordFold(r, "RETURN") {
 		return "", false
 	}
-	plan := returnProjectionPlanFor(r)
+	plan := returnProjectionPlanFor(ctx, r)
 	if !plan.valid || plan.star || plan.distinct || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}
@@ -554,7 +564,7 @@ func parseSimpleCountReturn(returnPart, mergeVar string) (alias string, ok bool)
 	return plan.columns[0], true
 }
 
-func parseUnwindBatchCountReturn(returnPart string) (alias string, ok bool) {
+func parseUnwindBatchCountReturn(ctx context.Context, returnPart string) (alias string, ok bool) {
 	r := strings.TrimSpace(returnPart)
 	if r == "" {
 		return "", true
@@ -562,7 +572,7 @@ func parseUnwindBatchCountReturn(returnPart string) (alias string, ok bool) {
 	if !startsWithKeywordFold(r, "RETURN") {
 		return "", false
 	}
-	plan := returnProjectionPlanFor(r)
+	plan := returnProjectionPlanFor(ctx, r)
 	if !plan.valid || plan.star || plan.distinct || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}
@@ -823,7 +833,7 @@ func (e *StorageExecutor) executeUnwindCompoundMutationBatch(ctx context.Context
 	return result, true, nil
 }
 
-func parseUnwindMergeChainPattern(mutationPart string) unwindMergeChainPlan {
+func parseUnwindMergeChainPattern(ctx context.Context, mutationPart string) unwindMergeChainPlan {
 	plan := unwindMergeChainPlan{supported: false}
 	mutation := strings.TrimSpace(mutationPart)
 	if !startsWithKeywordFold(mutation, "MERGE") && !startsWithKeywordFold(mutation, "MATCH") && !startsWithKeywordFold(mutation, "OPTIONAL MATCH") {
@@ -868,7 +878,7 @@ func parseUnwindMergeChainPattern(mutationPart string) unwindMergeChainPlan {
 				boundVars[lookupPlan.varName] = struct{}{}
 				continue
 			}
-			if withPlan, ok := parseUnwindWithClause(clause); ok {
+			if withPlan, ok := parseUnwindWithClause(ctx, clause); ok {
 				for _, assignment := range withPlan.assignments {
 					boundVars[assignment.alias] = struct{}{}
 				}
@@ -1099,11 +1109,11 @@ func setRelationshipPropertyIfChanged(edge *storage.Edge, prop string, value int
 }
 
 func (e *StorageExecutor) executeUnwindMergeChainBatch(ctx context.Context, unwindVar string, items []interface{}, mutationPart, returnPart string) (*ExecuteResult, bool, error) {
-	plan := e.cachedUnwindMergeChainPlan(mutationPart)
+	plan := e.cachedUnwindMergeChainPlan(ctx, mutationPart)
 	if !plan.supported {
 		return nil, false, nil
 	}
-	if _, supported := parseUnwindBatchCountReturn(returnPart); !supported {
+	if _, supported := parseUnwindBatchCountReturn(ctx, returnPart); !supported {
 		return nil, false, nil
 	}
 	if err := requireUnwindMergeChainParameters(ctx, plan); err != nil {
@@ -1123,7 +1133,7 @@ func (e *StorageExecutor) executeUnwindFixedChainLinkBatch(ctx context.Context, 
 	}
 	mutationPart := strings.TrimSpace(restQuery[:returnIdx])
 	returnPart := strings.TrimSpace(restQuery[returnIdx:])
-	_, ok := parseSimpleCountReturn(returnPart, "o")
+	_, ok := parseSimpleCountReturn(ctx, returnPart, "o")
 	if !ok {
 		return nil, false, nil
 	}
@@ -1751,22 +1761,19 @@ func normalizeMultiMatchWhereClauses(query string) string {
 // executeUnion handles UNION / UNION ALL
 // Supports both single UNION (query1 UNION query2) and chained UNIONs (query1 UNION query2 UNION query3 ...)
 // Handles UNION with flexible whitespace (spaces, newlines, tabs)
-func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool) (*ExecuteResult, error) {
-	return e.executeUnionBranches(cypher, unionAll, func(query string) (*ExecuteResult, error) {
-		return e.executeInternal(ctx, query, nil)
-	})
-}
-
-func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
-	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(cypher)
+func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, unionAll bool, runBranch func(string) (*ExecuteResult, error)) (*ExecuteResult, error) {
+	queries, splitAll, mixed, ok := parseTopLevelUnionBranches(ctx, cypher)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !ok || len(queries) < 2 {
 		// A failed product is diagnostic framing only: no branch executes.
-		if syntax, parseErr := cypherantlr.ParseSyntax(context.Background(), cypher, cypherantlr.StatementEntry, false); parseErr != nil && syntax.Valid() {
+		if syntax, parseErr := cypherantlr.ParseSyntax(ctx, cypher, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25"); parseErr != nil && syntax.Valid() {
 			body := queryBodyFromSyntax(statementSyntaxQuery(syntax))
 			if len(body.branches) > 1 {
 				for index, branch := range body.branches {
 					text := cypher[branch.start:branch.end]
-					if _, err := cypherantlr.ParseSyntax(context.Background(), text, cypherantlr.StatementEntry, false); err != nil {
+					if _, err := cypherantlr.ParseSyntax(ctx, text, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25"); err != nil {
 						return nil, localizedError(localization.CypherResidualUnionBranchFailed(index+1, truncateQuery(text, 50), err), err)
 					}
 				}
@@ -1789,7 +1796,13 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 	var seen cypherValueIndex // Shared equivalence for UNION and DISTINCT.
 
 	for i, query := range queries {
-		result, err := runBranch(query)
+		var result *ExecuteResult
+		var err error
+		if runBranch == nil {
+			result, err = e.executeInternal(ctx, query, nil)
+		} else {
+			result, err = runBranch(query)
+		}
 		if err != nil {
 			return nil, localizedError(localization.CypherResidualUnionBranchFailed(i+1, truncateQuery(query, 50), err), err)
 		}
@@ -1797,7 +1810,7 @@ func (e *StorageExecutor) executeUnionBranches(cypher string, unionAll bool, run
 		// even though the query has an explicit RETURN/YIELD projection. For UNION semantics we
 		// must validate/provide branch column shapes deterministically.
 		if len(result.Columns) == 0 {
-			columns, err := e.ResultColumns(query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25")
+			columns, err := e.ResultColumns(ctx, query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25")
 			if err != nil {
 				return nil, err
 			}

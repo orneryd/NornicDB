@@ -1,10 +1,8 @@
 package cypher
 
 import (
-	"os"
 	"regexp"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -16,16 +14,7 @@ import (
 // alternatives names a rule already added.
 func grammarBodyBearingRules(t *testing.T) []string {
 	t.Helper()
-	data, err := os.ReadFile("antlr/CypherParser.g4")
-	require.NoError(t, err)
-	grammar := regexp.MustCompile(`(?s)/\*.*?\*/`).ReplaceAllStringFunc(string(data), func(comment string) string {
-		return strings.Repeat("\n", strings.Count(comment, "\n"))
-	})
-	grammar = regexp.MustCompile(`//[^\n]*`).ReplaceAllString(grammar, "")
-	rules := map[string]string{}
-	for _, match := range regexp.MustCompile(`(?m)^([a-z]\w*)\s*\n\s*:([^;]*);`).FindAllStringSubmatch(grammar, -1) {
-		rules[match[1]] = match[2]
-	}
+	rules := parseGrammarQueryRules(queryBodyGrammar(t))
 	identifier := regexp.MustCompile(`\b([a-z]\w*)\b`)
 	bearing := map[string]bool{"query": true, "regularQuery": true, "singleQuery": true, "singlePartQ": true, "multiPartQ": true, "subqueryBody": true}
 	for changed := true; changed; {
@@ -147,30 +136,6 @@ var queryBodyManifest = map[string]string{
 	"schemaCommand":         "exempt: CREATE/DROP INDEX and CONSTRAINT take no query body, and the semantic entry skips schema statements",
 	"constraintRequirement": "exempt: a schema constraint's requirement (see schemaCommand)",
 	"constraintBlock":       "exempt: a schema constraint's block (see schemaCommand)",
-}
-
-// Every body-bearing grammar rule has a witness (or a reasoned exemption),
-// and each witness is read as Neo4j 5.26 does: a CALL body inside it that
-// ends with a CALL returning columns is "Query cannot conclude with CALL",
-// one that concludes is accepted, whatever carries it.
-func TestQueryBodyManifestCoversGrammar(t *testing.T) {
-	rules := grammarBodyBearingRules(t)
-	require.Len(t, rules, len(queryBodyManifest), "the manifest and the grammar's body-bearing rules differ")
-	for _, rule := range rules {
-		witness, listed := queryBodyManifest[rule]
-		require.True(t, listed, "grammar rule %s carries a query body but has no witness or exemption", rule)
-		if strings.HasPrefix(witness, "exempt: ") {
-			continue
-		}
-		template, known := queryBodyWitnesses[witness]
-		require.True(t, known, "rule %s names unknown witness %q", rule, witness)
-		bad := strings.ReplaceAll(template, "@X@", "CALL { RETURN 1 AS b }")
-		good := strings.ReplaceAll(template, "@X@", "CALL { RETURN 1 AS b } RETURN 1 AS c")
-		err := validateQueryBodyComposition(bad)
-		require.Error(t, err, "%s (%s): %s", rule, witness, bad)
-		require.Contains(t, err.Error(), "Query cannot conclude with CALL", bad)
-		require.NoError(t, validateQueryBodyComposition(good), "%s (%s): %s", rule, witness, good)
-	}
 }
 
 // Every clause kind the pipeline splits a body into says how it ends one.

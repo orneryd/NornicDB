@@ -18,7 +18,7 @@ import (
 // lists, the accumulator appended to itself or nested in itself, CASE and
 // nested reduce operands, allReduce, and steps that have no plan.
 func TestReduceAppendPlanMatchesWholeStep(t *testing.T) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:N {id: 1, tags: ['a', 'b']}), (:N {id: 2, tags: ['c']})", nil)
 	require.NoError(t, err)
@@ -140,7 +140,7 @@ func TestReduceAppendPlanShapes(t *testing.T) {
 // own length, so its next owner counts the allocation it holds. On the row
 // evaluator, its compiled programs and the context evaluator.
 func TestReduceAppendFoldSharesNothing(t *testing.T) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	_, err := exec.Execute(ctx, "CREATE (:N {id: 1, tags: ['a', 'b', 'c']})", nil)
 	require.NoError(t, err)

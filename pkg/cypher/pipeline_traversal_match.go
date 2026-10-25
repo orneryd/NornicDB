@@ -275,7 +275,7 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 				end = index
 			}
 		}
-		if _, local := parsePipelineRowWith(clause[:end]); !local {
+		if _, local := parsePipelineRowWith(ctx, clause[:end]); !local {
 			return hint
 		}
 		limit, hasLimit := e.parseIntModifier(ctx, clause, "LIMIT")
@@ -300,7 +300,7 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 	if _, distinct := cutDistinct(body); distinct {
 		return hint
 	}
-	for _, item := range e.parseReturnItems(body) {
+	for _, item := range e.parseReturnItems(ctx, body) {
 		if pipelineExpressionContainsAggregate(item.expr) {
 			return hint
 		}

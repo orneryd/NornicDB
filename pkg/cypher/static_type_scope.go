@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"maps"
 	"strings"
 )
@@ -97,18 +98,18 @@ func (types typeScope) adoptKinds(kinds matchSemanticScope) {
 
 // projectTypeScope is the typeScope a WITH clause projects from types: each
 // item's operand by its alias, every variable for WITH *.
-func projectTypeScope(types typeScope, cypher25 bool, clause string) typeScope {
-	return projectTypeScopeIn(types, types.static(cypher25), clause)
+func projectTypeScope(ctx context.Context, types typeScope, cypher25 bool, clause string) typeScope {
+	return projectTypeScopeIn(ctx, types, types.static(cypher25), clause)
 }
 
 // projectTypeScopeIn is projectTypeScope for a caller that holds types'
 // static view (input) already.
-func projectTypeScopeIn(types typeScope, input staticTypeScope, clause string) typeScope {
+func projectTypeScopeIn(ctx context.Context, types typeScope, input staticTypeScope, clause string) typeScope {
 	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
 	input.complete = false
 	projected := make(typeScope)
 	for _, raw := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
+		expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
 		if expression == "*" {
 			for name, operand := range types {
 				projected[name] = operand
@@ -184,42 +185,24 @@ func listElementOperand(types typeScope, input staticTypeScope, list string) sta
 
 // projectMatchSemanticScope is the binding-kind view of the variables a WITH
 // clause projects (projectTypeScope).
-func projectMatchSemanticScope(input matchSemanticScope, clause string) matchSemanticScope {
+func projectMatchSemanticScope(ctx context.Context, input matchSemanticScope, clause string) matchSemanticScope {
 	scope := staticTypeScope{kinds: input}
-	return projectTypeScopeIn(typeScopeOf(scope), scope, clause).kinds()
+	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, clause).kinds()
 }
 
 // projectStaticValueTypes is the value-type view of the variables a WITH
 // clause projects (projectTypeScope).
-func projectStaticValueTypes(scope staticTypeScope, clause string) map[string]string {
-	return projectTypeScopeIn(typeScopeOf(scope), scope, clause).static(scope.cypher25).values
+func projectStaticValueTypes(ctx context.Context, scope staticTypeScope, clause string) map[string]string {
+	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, clause).static(scope.cypher25).values
 }
 
 // projectStaticValueMembers is, in a Cypher 25 statement, the member-type
 // view of the variables a WITH clause projects (projectTypeScope).
-func projectStaticValueMembers(scope staticTypeScope, clause string) map[string]map[string]staticOperand {
+func projectStaticValueMembers(ctx context.Context, scope staticTypeScope, clause string) map[string]map[string]staticOperand {
 	if !scope.cypher25 {
 		return nil
 	}
-	return projectTypeScopeIn(typeScopeOf(scope), scope, clause).static(true).members
-}
-
-// carryStaticSubqueryImports models both possible global-aggregate rows. A
-// nonempty group carries current operands; an empty group's missing input
-// falls back to original imports. Both scopes use the runtime retention owner.
-// Keep the type facts shared by both rows and defer only disagreements until
-// execution. No cardinality guess is needed for parameterized UNWIND, filters
-// or data-dependent MATCH.
-func carryStaticSubqueryImports(projected, input, imports typeScope, projection string) {
-	var empty typeScope
-	if len(imports) > 0 && pipelineProjectionHasOnlyAggregates(returnProjectionPlanFor("RETURN "+projection).projections) {
-		empty = maps.Clone(projected)
-		carrySubqueryImports(empty, nil, imports)
-	}
-	carrySubqueryImports(projected, input, imports)
-	for name, operand := range empty {
-		projected[name] = joinedOperand(projected[name], operand)
-	}
+	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, clause).static(true).members
 }
 
 // callSubqueryImports is the scope a CALL subquery's body starts from: CALL
@@ -229,8 +212,8 @@ func carryStaticSubqueryImports(projected, input, imports typeScope, projection 
 // scope clause names that outer doesn't bind is Neo4j's compile-time
 // "Variable `x` not defined", reported here, where every statement is
 // checked before it plans or runs, on every route alike.
-func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, bool, error) {
-	scope := readCallSubqueryScope(callText)
+func callSubqueryImports(ctx context.Context, callText string, outer typeScope) (typeScope, bool, bool, error) {
+	scope := readCallSubqueryScope(ctx, callText)
 	if scope.invalid {
 		return nil, false, false, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
 	}
@@ -263,15 +246,15 @@ func callSubqueryImports(callText string, outer typeScope) (typeScope, bool, boo
 // declare them again (subqueryScope). A body whose walk stops early, or that
 // doesn't end in RETURN, gives no types; a scoped body's walk error is the
 // statement's.
-func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
-	initial, scoped, ok, err := callSubqueryImports(callText, outer)
+func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
+	initial, scoped, ok, err := callSubqueryImports(ctx, callText, outer)
 	if err != nil || !ok {
 		return nil, err
 	}
 	var returned typeScope
 	typedBranches := 0
 	for _, branch := range branches {
-		clauses, ok := splitPipelineClausesAllowingProcedureCalls(branch)
+		clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, branch)
 		if !ok || len(clauses) == 0 {
 			continue
 		}
@@ -283,19 +266,19 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 			// listed names (including *), so those names follow ordinary WITH
 			// scope instead. A branch's own declarations never become imports.
 			retained = maps.Clone(initial)
-			_, importing, _ = branchLeadingWithImport(branch, func(name string) bool { _, exists := initial[name]; return exists }, false)
+			_, importing, _ = branchLeadingWithImport(ctx, branch, func(name string) bool { _, exists := initial[name]; return exists }, false)
 			if importing {
-				for name := range projectTypeScope(initial, cypher25, clauses[0].text) {
+				for name := range projectTypeScope(ctx, initial, cypher25, clauses[0].text) {
 					delete(retained, name)
 				}
 			}
 			for name := range retained {
-				if branchDeclaresVariable(branch, name) {
+				if branchDeclaresVariable(ctx, branch, name) {
 					delete(retained, name)
 				}
 			}
 		}
-		final, complete, err := e.semanticScopeWalk(clauses, maps.Clone(initial), cypher25, subqueryScope{visible: retained})
+		final, complete, err := e.semanticScopeWalk(ctx, clauses, maps.Clone(initial), cypher25, subqueryScope{visible: retained})
 		if err != nil {
 			if !scoped {
 				if detail, classified := err.(interface{ BoltErrorDetail() string }); importing && classified && detail.BoltErrorDetail() == "UndefinedVariable" {
@@ -313,7 +296,7 @@ func (e *StorageExecutor) callSubqueryReturnTypes(callText string, branches []st
 			return nil, nil
 		}
 		returnClause := strings.TrimSpace(last.text)
-		branchTypes := projectTypeScope(final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
+		branchTypes := projectTypeScope(ctx, final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
 		if typedBranches == 0 {
 			returned = branchTypes
 		} else {

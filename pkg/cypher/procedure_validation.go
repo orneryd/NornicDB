@@ -39,7 +39,7 @@ func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec
 		if err := validateProcedureArgCount(spec, args); err != nil {
 			return nil, err
 		}
-		return validateAndCoerceProcedureArguments(spec, args, explicitProcedureArgumentTexts(callCypher))
+		return validateAndCoerceProcedureArguments(spec, args, explicitProcedureArgumentTexts(ctx, callCypher))
 	}
 
 	params := getParamsFromContext(ctx)
@@ -67,7 +67,7 @@ func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec
 func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec, callCypher string) ([]interface{}, error) {
 	ctx = withExpressionFailureSlot(ctx)
 	bindings := valueBindingsFromContext(ctx)
-	texts := explicitProcedureArgumentTexts(callCypher)
+	texts := explicitProcedureArgumentTexts(ctx, callCypher)
 	if texts == nil {
 		return extractProcedureInvocationArguments(ctx, spec, callCypher)
 	}
@@ -96,11 +96,11 @@ func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.C
 	return validateAndCoerceProcedureArguments(spec, args, texts)
 }
 
-func validateProcedureArgumentPassingMode(spec ProcedureSpec, callCypher string, hasTail bool) error {
+func validateProcedureArgumentPassingMode(ctx context.Context, spec ProcedureSpec, callCypher string, hasTail bool) error {
 	if len(spec.Params) == 0 || strings.Contains(callCypher, "(") {
 		return nil
 	}
-	if parseYieldClause(callCypher) == nil && !hasTail {
+	if parseYieldClause(ctx, callCypher) == nil && !hasTail {
 		return nil
 	}
 	return newSemanticError(
@@ -115,7 +115,7 @@ func validateProcedureArgumentPassingMode(spec ProcedureSpec, callCypher string,
 // after the YIELD) can't have any of them, a WHERE must come before
 // ORDER BY / SKIP / LIMIT, and SKIP / LIMIT follow the same rules as in a
 // WITH or RETURN.
-func (e *StorageExecutor) validateYieldModifiers(yield *yieldClause, hasTail bool) error {
+func (e *StorageExecutor) validateYieldModifiers(ctx context.Context, yield *yieldClause, hasTail bool) error {
 	if yield == nil || !yield.hasModifiers() {
 		return nil
 	}
@@ -128,12 +128,12 @@ func (e *StorageExecutor) validateYieldModifiers(yield *yieldClause, hasTail boo
 			localization.CypherCoreYieldWhereMisplaced())
 	}
 	if yield.skip != "" {
-		if err := e.validateStaticPaginationExpression("SKIP", yield.skip); err != nil {
+		if err := e.validateStaticPaginationExpressions(ctx, paginationExpression{"SKIP", yield.skip}); err != nil {
 			return err
 		}
 	}
 	if yield.limit != "" {
-		if err := e.validateStaticPaginationExpression("LIMIT", yield.limit); err != nil {
+		if err := e.validateStaticPaginationExpressions(ctx, paginationExpression{"LIMIT", yield.limit}); err != nil {
 			return err
 		}
 	}
@@ -168,8 +168,8 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 	return nil
 }
 
-func explicitProcedureArgumentTexts(source string) []string {
-	clause, ok := canonicalQueryClause(source)
+func explicitProcedureArgumentTexts(ctx context.Context, source string) []string {
+	clause, ok := canonicalQueryClause(ctx, source)
 	if !ok {
 		return nil
 	}
@@ -226,12 +226,12 @@ func validateAndCoerceProcedureArguments(spec ProcedureSpec, args []interface{},
 // itself checks (coerceProcedureArgument) are checked here: a NODE, MAP or
 // LIST parameter also takes NornicDB's other forms (a node id, a label, a
 // request's short form).
-func staticProcedureArgumentTypeError(clause string, scope staticTypeScope, unwound map[string]struct{}) error {
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(clause))
+func staticProcedureArgumentTypeError(ctx context.Context, clause string, scope staticTypeScope, unwound map[string]struct{}) error {
+	procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause))
 	if !found {
 		return nil
 	}
-	texts := explicitProcedureArgumentTexts(clause)
+	texts := explicitProcedureArgumentTexts(ctx, clause)
 	if len(texts) == 0 {
 		return nil
 	}
@@ -263,7 +263,7 @@ func staticProcedureArgumentTypeError(clause string, scope staticTypeScope, unwo
 // projectUnwoundValues returns which of the variables a WITH clause binds
 // carry a type that came from UNWIND: an alias of such a variable, or the
 // variable itself under WITH *.
-func projectUnwoundValues(unwound map[string]struct{}, clause string) map[string]struct{} {
+func projectUnwoundValues(ctx context.Context, unwound map[string]struct{}, clause string) map[string]struct{} {
 	if len(unwound) == 0 {
 		return nil
 	}
@@ -276,7 +276,7 @@ func projectUnwoundValues(unwound map[string]struct{}, clause string) map[string
 		projected[name] = struct{}{}
 	}
 	for _, raw := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
+		expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
 		if expression == "*" {
 			for name := range unwound {
 				keep(name)

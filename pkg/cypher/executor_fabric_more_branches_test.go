@@ -77,21 +77,21 @@ func TestFabricHelpers_MoreContextAndWrapperBranches(t *testing.T) {
 	exec.fabricRecordBindings = map[string]interface{}{"name": nil, "x": nil}
 	// normalizeFabricRowWrapper branches including sourceId fallback lookup
 	stream := &fabric.ResultStream{Columns: []string{"__fabric_row"}, RowWrapper: true, Rows: [][]interface{}{{map[string]interface{}{"sourceId": "s1", "rows": []interface{}{map[string]interface{}{"sourceId": "s1", "name": "neo"}}}}}}
-	require.NoError(t, exec.normalizeFabricRowWrapper("MATCH (n) RETURN name", stream))
+	require.NoError(t, exec.normalizeFabricRowWrapper(t.Context(), "MATCH (n) RETURN name", stream))
 	require.Equal(t, []string{"name"}, stream.Columns)
 	require.Equal(t, [][]interface{}{{"neo"}}, stream.Rows)
 
 	stream = &fabric.ResultStream{Columns: []string{"not_wrapper"}, Rows: [][]interface{}{{"x"}}}
-	require.NoError(t, exec.normalizeFabricRowWrapper("RETURN x", stream))
+	require.NoError(t, exec.normalizeFabricRowWrapper(t.Context(), "RETURN x", stream))
 	require.Equal(t, []string{"not_wrapper"}, stream.Columns)
 
 	stream = &fabric.ResultStream{Columns: []string{"__fabric_row"}, RowWrapper: true, Rows: [][]interface{}{{123}}}
-	require.NoError(t, exec.normalizeFabricRowWrapper("RETURN x", stream))
+	require.NoError(t, exec.normalizeFabricRowWrapper(t.Context(), "RETURN x", stream))
 	require.Equal(t, []string{"__fabric_row"}, stream.Columns)
 
 	// A query column named like the wrapper is the query's own.
 	stream = &fabric.ResultStream{Columns: []string{"__fabric_row"}, Rows: [][]interface{}{{map[string]interface{}{"name": "neo"}}}}
-	exec.normalizeFabricRowWrapper("RETURN name", stream)
+	exec.normalizeFabricRowWrapper(t.Context(), "RETURN name", stream)
 	require.Equal(t, []string{"__fabric_row"}, stream.Columns)
 
 	// lookupColumnBySourceIDInRows []map branch and missing keys

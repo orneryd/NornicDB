@@ -99,7 +99,7 @@ func TestCommaMatchByIDIndependentOfNodeCount(t *testing.T) {
 	} {
 		allocations := func(nodes int) float64 {
 			// No result cache: every run below executes the query.
-			exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			ctx := context.Background()
 			_, err := exec.Execute(ctx, fmt.Sprintf("UNWIND range(1, %d) AS i CREATE (:P {k: i})", nodes), nil)
 			require.NoError(t, err)

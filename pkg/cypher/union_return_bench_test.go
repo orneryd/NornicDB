@@ -32,16 +32,3 @@ func BenchmarkExecuteReturn_BoundValues(b *testing.B) {
 		}
 	}
 }
-
-func BenchmarkExecuteInternal_ScalarParameter(b *testing.B) {
-	exec, _ := newTestExecutor(b)
-	ctx := context.Background()
-	params := map[string]interface{}{"value": int64(7)}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if _, err := exec.executeInternal(ctx, "RETURN $value AS value", params); err != nil {
-			b.Fatal(err)
-		}
-	}
-}

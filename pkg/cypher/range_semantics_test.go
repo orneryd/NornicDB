@@ -72,7 +72,7 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 				require.NoError(t, cypherantlr.Validate(test.query))
 				runtime.ReadMemStats(&parserAfter)
 				t.Logf("grammar setup allocated %d bytes outside row-retention measurement", parserAfter.TotalAlloc-parserBefore.TotalAlloc)
-				executor := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "stream_aggregate"), 0, 0)
+				executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "stream_aggregate"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				if explicit {
 					_, err := executor.handleBegin()
 					require.NoError(t, err)
@@ -128,7 +128,7 @@ func TestUnwindStreamingAggregateSemantics(t *testing.T) {
 			{"UNWIND range(1, 2) AS x RETURN percentileCont(x, x)", [][]interface{}{{int64(2)}}},
 		} {
 			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, test.query), func(t *testing.T) {
-				executor := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "aggregate_semantics"), 0, 0)
+				executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "aggregate_semantics"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				var result *ExecuteResult
 				var err error
 				if explicit {
@@ -154,7 +154,7 @@ func TestUnwindStreamingAggregateArgumentErrors(t *testing.T) {
 	} {
 		for _, clause := range []string{"RETURN " + projection, "WITH " + projection + " AS result RETURN result"} {
 			t.Run(clause, func(t *testing.T) {
-				executor := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 0, 0)
+				executor := NewStorageExecutor(newTestMemoryEngine(t), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				result, err := executor.Execute(context.Background(), "UNWIND range(1, 2) AS x "+clause, nil)
 				require.Error(t, err)
 				require.Nil(t, result)
@@ -294,7 +294,7 @@ func TestPipelineUnwindIteratorStopsAndErrors(t *testing.T) {
 		"UNWIND range(1, 2) AS x WITH range(x, 2, 0) AS xs RETURN xs",
 	} {
 		ctx := withExpressionFailureSlot(context.Background())
-		clauses, parsed := canExecuteAsPipeline(query)
+		clauses, parsed := canExecuteAsPipeline(t.Context(), query)
 		require.True(t, parsed)
 		_, _, resolved := executor.pipelineApplyUnwindPrefix(ctx, []pipelineRow{{}}, clauses)
 		require.False(t, resolved)
@@ -302,7 +302,7 @@ func TestPipelineUnwindIteratorStopsAndErrors(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(withExpressionFailureSlot(context.Background()))
 	cancel()
-	clauses, parsed := canExecuteAsPipeline("UNWIND range(1, 2) AS x RETURN x")
+	clauses, parsed := canExecuteAsPipeline(t.Context(), "UNWIND range(1, 2) AS x RETURN x")
 	require.True(t, parsed)
 	_, _, resolved := executor.pipelineApplyUnwindPrefix(ctx, []pipelineRow{{}}, clauses)
 	require.False(t, resolved)
@@ -310,60 +310,63 @@ func TestPipelineUnwindIteratorStopsAndErrors(t *testing.T) {
 }
 
 func TestUnwindRangeReportedWorkload(t *testing.T) {
-	if os.Getenv("NORNICDB_RUN_LARGE_UNWIND_RANGE") != "1" {
-		t.Skip("large issue #772 workload")
-	}
-	for _, end := range []int64{3000000, 30000000, 300000000} {
-		t.Run(fmt.Sprint(end), func(t *testing.T) {
-			executor := NewStorageExecutor(newTestMemoryEngine(t))
-			query := fmt.Sprintf("UNWIND range(1, %d) AS x WITH x WHERE x < 0 RETURN count(*) AS c", end)
-			var before, after runtime.MemStats
-			runtime.ReadMemStats(&before)
-			started := time.Now()
-			result, err := executor.Execute(context.Background(), query, nil)
-			runtime.ReadMemStats(&after)
-			require.NoError(t, err)
-			require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
-			t.Logf("values=%d elapsed=%s total_alloc_bytes=%d heap_alloc_bytes=%d", end, time.Since(started), after.TotalAlloc-before.TotalAlloc, after.HeapAlloc)
-		})
-	}
-}
-
-func TestUnwindRangeReportedAggregateWorkload(t *testing.T) {
-	if os.Getenv("NORNICDB_RUN_LARGE_UNWIND_AGGREGATE") != "1" {
-		t.Skip("large issue #772 aggregate correctness workload")
-	}
-	for _, explicit := range []bool{false, true} {
-		for _, test := range []struct {
-			query string
-			want  int64
-		}{
-			{"UNWIND range(1, 30000000) AS x RETURN count(*) AS c", 30000000},
-			{"UNWIND range(1, 30000000) AS x RETURN sum(x) AS s", 450000015000000},
-			{"UNWIND range(1, 30000000) AS x WITH x RETURN count(*) AS c", 30000000},
-		} {
-			t.Run(fmt.Sprintf("explicit=%t/%s", explicit, test.query), func(t *testing.T) {
-				executor := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "large_aggregate"), 0, 0)
-				var result *ExecuteResult
-				var err error
-				if explicit {
-					_, err = executor.handleBegin()
-					require.NoError(t, err)
-					t.Cleanup(func() { _, _ = executor.handleRollback() })
-					result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
-				} else {
-					result, err = executor.Execute(context.Background(), test.query, nil)
-				}
+	t.Run("filtered range allocation workload", func(t *testing.T) {
+		if os.Getenv("NORNICDB_RUN_LARGE_UNWIND_RANGE") != "1" {
+			t.Skip("large issue #772 workload")
+		}
+		for _, end := range []int64{3000000, 30000000, 300000000} {
+			t.Run(fmt.Sprint(end), func(t *testing.T) {
+				executor := NewStorageExecutor(newTestMemoryEngine(t))
+				query := fmt.Sprintf("UNWIND range(1, %d) AS x WITH x WHERE x < 0 RETURN count(*) AS c", end)
+				var before, after runtime.MemStats
+				runtime.ReadMemStats(&before)
+				started := time.Now()
+				result, err := executor.Execute(context.Background(), query, nil)
+				runtime.ReadMemStats(&after)
 				require.NoError(t, err)
-				require.Equal(t, [][]interface{}{{test.want}}, result.Rows)
+				require.Equal(t, [][]interface{}{{int64(0)}}, result.Rows)
+				t.Logf("values=%d elapsed=%s total_alloc_bytes=%d heap_alloc_bytes=%d", end, time.Since(started), after.TotalAlloc-before.TotalAlloc, after.HeapAlloc)
 			})
 		}
-	}
+
+	})
+	t.Run("aggregate correctness implicit and explicit transactions", func(t *testing.T) {
+		if os.Getenv("NORNICDB_RUN_LARGE_UNWIND_AGGREGATE") != "1" {
+			t.Skip("large issue #772 aggregate correctness workload")
+		}
+		for _, explicit := range []bool{false, true} {
+			for _, test := range []struct {
+				query string
+				want  int64
+			}{
+				{"UNWIND range(1, 30000000) AS x RETURN count(*) AS c", 30000000},
+				{"UNWIND range(1, 30000000) AS x RETURN sum(x) AS s", 450000015000000},
+				{"UNWIND range(1, 30000000) AS x WITH x RETURN count(*) AS c", 30000000},
+			} {
+				t.Run(fmt.Sprintf("explicit=%t/%s", explicit, test.query), func(t *testing.T) {
+					executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "large_aggregate"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
+					var result *ExecuteResult
+					var err error
+					if explicit {
+						_, err = executor.handleBegin()
+						require.NoError(t, err)
+						t.Cleanup(func() { _, _ = executor.handleRollback() })
+						result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
+					} else {
+						result, err = executor.Execute(context.Background(), test.query, nil)
+					}
+					require.NoError(t, err)
+					require.Equal(t, [][]interface{}{{test.want}}, result.Rows)
+				})
+			}
+		}
+
+	})
 }
 
 func TestPipelineAggregateSourceFailureDoesNotReturnPartialGroups(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
-	projections := returnProjectionPlanFor("RETURN count(*) AS total").projections
+	projections := returnProjectionPlanFor(t.Context(), "RETURN count(*) AS total").projections
 	for _, canceled := range []bool{false, true} {
 		t.Run(fmt.Sprintf("canceled=%t", canceled), func(t *testing.T) {
 			ctx, cancel := context.WithCancel(withExpressionFailureSlot(context.Background()))
@@ -409,7 +412,7 @@ RETURN n.embedding AS embedding`, map[string]interface{}{
 func BenchmarkUnwindRangeFilteredCount(b *testing.B) {
 	for _, end := range []int64{3000, 30000} {
 		b.Run(fmt.Sprint(end), func(b *testing.B) {
-			executor := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(b), 0, 0)
+			executor := NewStorageExecutor(newTestMemoryEngine(b), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			query := fmt.Sprintf("UNWIND range(1, %d) AS x WITH x WHERE x < 0 RETURN count(*) AS c", end)
 			b.ReportAllocs()
 			b.ResetTimer()

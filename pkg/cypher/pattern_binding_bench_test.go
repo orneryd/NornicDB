@@ -17,7 +17,7 @@ func BenchmarkPatternBindingDeclarations(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		for _, pattern := range patterns {
-			patternBindingBenchmarkNames = exec.extractVariableNamesFromPattern(pattern)
+			patternBindingBenchmarkNames = exec.extractVariableNamesFromPattern(b.Context(), pattern)
 		}
 	}
 }

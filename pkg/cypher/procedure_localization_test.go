@@ -57,12 +57,12 @@ func TestProcedureDDLErrorsHaveTypedIdentity(t *testing.T) {
 	})
 
 	t.Run("invalid mode", func(t *testing.T) {
-		_, _, _, err := exec.compilePersistedProcedure(persistedProcedureRecord{Mode: "UNKNOWN"})
+		_, _, _, err := exec.compilePersistedProcedure(t.Context(), persistedProcedureRecord{Mode: "UNKNOWN"})
 		requireCypherProceduresLocalizedError(t, err, localization.MessageCypherProceduresInvalidMode, "invalid procedure mode: UNKNOWN")
 	})
 
 	t.Run("handler argument count", func(t *testing.T) {
-		_, handler, _, err := exec.compilePersistedProcedure(persistedProcedureRecord{Name: "custom.echo", Mode: "READ", Body: "RETURN 1", ArgNames: []string{"value"}})
+		_, handler, _, err := exec.compilePersistedProcedure(t.Context(), persistedProcedureRecord{Name: "custom.echo", Mode: "READ", Body: "RETURN 1", ArgNames: []string{"value"}})
 		require.NoError(t, err)
 		_, err = handler(context.Background(), exec, "", nil)
 		localizedErr := requireCypherProceduresLocalizedError(t, err, localization.MessageCypherProceduresArgumentCount, "procedure custom.echo requires 1 arguments, got 0")

@@ -40,7 +40,7 @@ func (s *queryMemoryEdgeScanEngine) GetIncomingEdges(id storage.NodeID) ([]*stor
 // still turns a degree/ID lookup into graph-sized work and allocation.
 func TestQueryMemorySelectiveAccessSkipsDecoyEdges(t *testing.T) {
 	store := &queryMemoryEdgeScanEngine{NamespacedEngine: storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	seedSinkProbeGraph(t, exec, 4000)
 	ctx := context.Background()
 	seed, err := exec.Execute(ctx, "MATCH (a:Function {uid:'fn'})-[r]->(b) RETURN id(a), id(b), elementId(r)", nil)

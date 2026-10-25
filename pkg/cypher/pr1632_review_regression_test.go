@@ -45,7 +45,7 @@ func TestPR1632ReviewAdmission(t *testing.T) {
 
 func TestPR1632CommentedReturnStarFact(t *testing.T) {
 	for _, clause := range []string{"RETURN *", "RETURN DISTINCT /* c */ *", "RETURN /* c */ *", "RETURN DISTINCT * /* c */"} {
-		require.True(t, returnsStar(clause), clause)
+		require.True(t, returnsStar(t.Context(), clause), clause)
 	}
-	require.False(t, returnsStar("RETURN 2 * 3 AS product"))
+	require.False(t, returnsStar(t.Context(), "RETURN 2 * 3 AS product"))
 }

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -250,7 +251,7 @@ func TestWALPropertyEpochSealPlanRejectsChangedFile(t *testing.T) {
 func TestWALPropertyEpochOrdinarySynchronousCloseSkipsLog(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	dir := t.TempDir()
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "store")})
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "store")}))
 	require.NoError(t, err)
 	w, err := NewWAL(filepath.Join(dir, "wal"), DefaultWALConfig())
 	require.NoError(t, err)
@@ -264,44 +265,77 @@ func TestWALPropertyEpochOrdinarySynchronousCloseSkipsLog(t *testing.T) {
 	require.NoError(t, os.Remove(walSegmentsDir(w.Config().Dir)))
 }
 
-// The marker is durable before the first control, survives a crash, and is
-// removed only by the clean close that converts every file.
-func TestWALPropertyEpochUnsealedMarkerSurvivesCrash(t *testing.T) {
-	t.Cleanup(config.WithWALEnabled())
-	dir := t.TempDir()
-	logDir := filepath.Join(dir, "wal")
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "store")})
-	require.NoError(t, err)
-	w, err := NewWAL(logDir, DefaultWALConfig())
-	require.NoError(t, err)
-	b.SetBufferedCommitWAL(w)
-	require.NoError(t, w.invalidateCleanPropertyEpoch())
-	require.FileExists(t, walPropertyEpochUnsealedPath(logDir))
-	_, versions := walEpochRawBodies(t, walActivePath(logDir))
-	require.Contains(t, versions, walFormatVersionPropertyEpoch)
-	// Crash: neither the engine's clean close nor its conversion runs.
-	crashClose(t, b, w)
-	b, err = NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "store")})
-	require.NoError(t, err)
-	w, err = NewWAL(logDir, DefaultWALConfig())
-	require.NoError(t, err)
-	require.True(t, w.propertyEpochUnsealed, "a reopened log keeps the marker")
-	require.NoError(t, NewWALEngine(b, w).Close())
-	require.NoFileExists(t, walPropertyEpochUnsealedPath(logDir))
-	_, versions = walEpochRawBodies(t, walActivePath(logDir))
-	require.NotEmpty(t, versions)
-	for _, version := range versions {
-		require.Equal(t, walFormatVersionV3, version)
+// The marker is durable before the first control. Crash recovery preserves it,
+// and failed marker writes or removals cannot publish a clean epoch.
+func TestWALPropertyEpochUnsealedMarker(t *testing.T) {
+	for _, scenario := range []string{"survives crash", "marker I/O failures"} {
+		t.Run(scenario, func(t *testing.T) {
+			t.Cleanup(config.WithWALEnabled())
+			dir := t.TempDir()
+			logDir := filepath.Join(dir, "wal")
+			crash := scenario == "survives crash"
+			var b *BadgerEngine
+			if crash {
+				var err error
+				b, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "store")}))
+				require.NoError(t, err)
+			}
+			w, err := NewWAL(logDir, DefaultWALConfig())
+			require.NoError(t, err)
+			fixtureowner.Own(t, w)
+			marker := walPropertyEpochUnsealedPath(logDir)
+			if crash {
+				b.SetBufferedCommitWAL(w)
+			} else {
+				before, err := os.ReadFile(walActivePath(logDir))
+				require.NoError(t, err)
+				require.NoError(t, os.Mkdir(marker, 0700))
+				require.Error(t, w.invalidateCleanPropertyEpoch())
+				after, err := os.ReadFile(walActivePath(logDir))
+				require.NoError(t, err)
+				require.Equal(t, before, after, "no control may precede its marker")
+				require.NoError(t, os.Remove(marker))
+			}
+			require.NoError(t, w.invalidateCleanPropertyEpoch())
+			require.FileExists(t, marker)
+			if !crash {
+				require.NoError(t, os.Remove(marker))
+				require.NoError(t, os.MkdirAll(filepath.Join(marker, "busy"), 0700))
+				w.mu.Lock()
+				err = w.sealPropertyEpochsLocked()
+				w.mu.Unlock()
+				require.Error(t, err)
+				require.True(t, w.propertyEpochUnsealed, "a marker that was not removed stays pending")
+				return
+			}
+			_, versions := walEpochRawBodies(t, walActivePath(logDir))
+			require.Contains(t, versions, walFormatVersionPropertyEpoch)
+			// Crash: neither the engine's clean close nor its conversion runs.
+			crashClose(t, b, w)
+			b, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: filepath.Join(dir, "store")}))
+			require.NoError(t, err)
+			w, err = NewWAL(logDir, DefaultWALConfig())
+			require.NoError(t, err)
+			fixtureowner.Own(t, w)
+			require.True(t, w.propertyEpochUnsealed, "a reopened log keeps the marker")
+			require.NoError(t, NewWALEngine(b, w).Close())
+			require.NoFileExists(t, marker)
+			_, versions = walEpochRawBodies(t, walActivePath(logDir))
+			require.NotEmpty(t, versions)
+			for _, version := range versions {
+				require.Equal(t, walFormatVersionV3, version)
+			}
+			// Compaction of a sealed log finds nothing to convert.
+			w, err = NewWAL(logDir, DefaultWALConfig())
+			require.NoError(t, err)
+			fixtureowner.Own(t, w)
+			require.False(t, w.propertyEpochUnsealed)
+			require.NoError(t, writeWALManifest(logDir, &WALManifest{Segments: []WALSegment{{Path: "invalid.wal"}}}))
+			w.mu.Lock()
+			require.NoError(t, w.sealPropertyEpochsLocked())
+			w.mu.Unlock()
+		})
 	}
-	// Compaction of a sealed log finds nothing to convert.
-	w, err = NewWAL(logDir, DefaultWALConfig())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = w.Close() })
-	require.False(t, w.propertyEpochUnsealed)
-	require.NoError(t, writeWALManifest(logDir, &WALManifest{Segments: []WALSegment{{Path: "invalid.wal"}}}))
-	w.mu.Lock()
-	require.NoError(t, w.sealPropertyEpochsLocked())
-	w.mu.Unlock()
 }
 
 // Every v4 frame must pass the marker owner; a writer that skipped it would
@@ -346,39 +380,12 @@ func TestWALPropertyEpochFramesUseMarkerOwner(t *testing.T) {
 	require.ElementsMatch(t, []string{"writePropertyEpochFrameLocked", "writeWALPropertyEpoch"}, callers)
 }
 
-// A control is never written before its marker is durable, and a marker that
-// cannot be removed keeps conversion pending instead of reporting success.
-func TestWALPropertyEpochUnsealedMarkerFailures(t *testing.T) {
-	t.Cleanup(config.WithWALEnabled())
-	w, err := NewWAL(t.TempDir(), DefaultWALConfig())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = w.Close() })
-	marker := walPropertyEpochUnsealedPath(w.Config().Dir)
-	before, err := os.ReadFile(walActivePath(w.Config().Dir))
-	require.NoError(t, err)
-	require.NoError(t, os.Mkdir(marker, 0700))
-	require.Error(t, w.invalidateCleanPropertyEpoch())
-	after, err := os.ReadFile(walActivePath(w.Config().Dir))
-	require.NoError(t, err)
-	require.Equal(t, before, after, "no control may precede its marker")
-	require.NoError(t, os.Remove(marker))
-	require.NoError(t, w.invalidateCleanPropertyEpoch())
-	require.FileExists(t, marker)
-	require.NoError(t, os.Remove(marker))
-	require.NoError(t, os.MkdirAll(filepath.Join(marker, "busy"), 0700))
-	w.mu.Lock()
-	err = w.sealPropertyEpochsLocked()
-	w.mu.Unlock()
-	require.Error(t, err)
-	require.True(t, w.propertyEpochUnsealed, "a marker that was not removed stays pending")
-}
-
 // A foreign import still owes its clean proof even when this synchronous log
 // never received a control: close publishes it after the same checks.
 func TestWALPropertyEpochSynchronousForeignProofWithoutControl(t *testing.T) {
 	t.Cleanup(config.WithWALEnabled())
 	dir := t.TempDir()
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	require.NoError(t, markRecoveryPropertyForeign(b))
 	require.False(t, b.walPropertySource.clean)
@@ -386,7 +393,7 @@ func TestWALPropertyEpochSynchronousForeignProofWithoutControl(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, NewWALEngine(b, w).Close())
 	require.NoFileExists(t, walPropertyEpochUnsealedPath(w.Config().Dir))
-	b, err = NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+	b, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	require.True(t, b.walPropertySource.foreign)

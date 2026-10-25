@@ -251,8 +251,8 @@ func validateProcedureSpec(spec ProcedureSpec) error {
 	return nil
 }
 
-func procedureOutputTypes(clause string) map[string]string {
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(clause))
+func procedureOutputTypes(ctx context.Context, clause string) map[string]string {
+	procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause))
 	if !found {
 		return nil
 	}

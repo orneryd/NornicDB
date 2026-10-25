@@ -368,7 +368,7 @@ func TestDbStatsQueryCollectionLifecycle(t *testing.T) {
 	var querySeen bool
 	for _, row := range result.Rows {
 		data := row[1].(map[string]interface{})
-		querySeen = querySeen || data["query"] == "RETURN 530 AS value"
+		querySeen = querySeen || data["query"] == RedactLiterals("RETURN 530 AS value")
 	}
 	require.True(t, querySeen, "retrieval must contain an actually executed query")
 	_, err = exec.Execute(ctx, "CALL db.stats.clear('QUERIES')", nil)
@@ -525,7 +525,7 @@ func TestDbStatsSharedCollectorNamespaceIsolation(t *testing.T) {
 	result, err = consumer.Execute(ctx, "CALL db.stats.retrieve('QUERIES')", nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
-	require.Equal(t, "RETURN 530 AS sharedValue", result.Rows[0][1].(map[string]interface{})["query"])
+	require.Equal(t, RedactLiterals("RETURN 530 AS sharedValue"), result.Rows[0][1].(map[string]interface{})["query"])
 	result, err = other.Execute(ctx, "CALL db.stats.retrieve('QUERIES')", nil)
 	require.NoError(t, err)
 	require.Empty(t, result.Rows)

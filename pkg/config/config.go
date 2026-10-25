@@ -3352,7 +3352,7 @@ func LoadFromFile(configPath string) (*Config, error) {
 
 	var yamlCfg YAMLConfig
 	if err := yaml.Unmarshal(data, &yamlCfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+		return nil, fmt.Errorf("failed to parse config file: %w", configDisplayError(err, data, config))
 	}
 	// Decode presence separately so YAMLConfig keeps its public integer fields
 	// while explicit zero remains distinguishable from an omitted value.
@@ -3363,7 +3363,7 @@ func LoadFromFile(configPath string) (*Config, error) {
 		} `yaml:"embedding_worker"`
 	}
 	if err := yaml.Unmarshal(data, &explicit); err != nil {
-		return nil, fmt.Errorf("failed to parse embedding worker config: %w", err)
+		return nil, fmt.Errorf("failed to parse embedding worker config: %w", configDisplayError(err, data, config))
 	}
 
 	// === Server Settings ===

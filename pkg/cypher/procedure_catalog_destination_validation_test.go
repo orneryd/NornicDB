@@ -38,7 +38,7 @@ func TestProcedureCatalogRejectsUnrelatedMigrationDestination(t *testing.T) {
 			case "drop lowercase":
 				_, err = exec.Execute(context.Background(), "CALL apoc.custom.dropProcedure('report')", nil)
 			case "load":
-				err = exec.loadPersistedProcedures()
+				err = exec.loadPersistedProcedures(t.Context())
 			}
 			assert.Error(t, err, "an unrelated destination must never supersede a valid legacy definition")
 			after, err := store.GetNode(legacy)
@@ -84,13 +84,13 @@ func TestProcedureCatalogMigrationValidatesDestination(t *testing.T) {
 			}
 			before, err := store.GetNode(legacyID)
 			require.NoError(t, err)
-			superseded, err := exec.migrateProcedureCatalogIdentity(store, before, original)
+			_, superseded, err := exec.resolveProcedureCatalogIdentity(t.Context(), store, original.Name, before)
 			if kind == "newer exact" {
 				require.NoError(t, err)
 				require.True(t, superseded)
 				_, err = store.GetNode(legacyID)
 				require.ErrorIs(t, err, storage.ErrNotFound)
-				require.NoError(t, exec.loadPersistedProcedures())
+				require.NoError(t, exec.loadPersistedProcedures(t.Context()))
 				result, err := exec.Execute(context.Background(), "CALL custom.Report() YIELD v RETURN v", nil)
 				require.NoError(t, err)
 				require.Equal(t, [][]interface{}{{int64(9)}}, result.Rows)

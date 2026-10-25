@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // Compile-time interface assertion.
@@ -45,10 +47,8 @@ type RemoteEngineConfig struct {
 
 // remoteTransport abstracts Bolt vs HTTP execution of Cypher statements.
 type remoteTransport interface {
-	query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error)
-	queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error)
+	query(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error)
 	queryBatch(ctx context.Context, statements []remoteStatement) error
-	beginCypherTx(ctx context.Context) (RemoteCypherTx, error)
 	close() error
 }
 
@@ -78,7 +78,12 @@ type remoteStatement struct {
 }
 
 // NewRemoteEngine creates a remote engine. Transport is auto-detected from the URI scheme.
-func NewRemoteEngine(cfg RemoteEngineConfig) (*RemoteEngine, error) {
+func NewRemoteEngine(cfg RemoteEngineConfig) (engine *RemoteEngine, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, cfg.URI, remoteDisplayCredentials(cfg)...)
+		}
+	}()
 	uri := strings.TrimSpace(cfg.URI)
 	database := strings.TrimSpace(cfg.Database)
 	if uri == "" {
@@ -89,7 +94,6 @@ func NewRemoteEngine(cfg RemoteEngineConfig) (*RemoteEngine, error) {
 	}
 
 	var transport remoteTransport
-	var err error
 
 	lower := strings.ToLower(uri)
 	switch {
@@ -121,14 +125,24 @@ func NewRemoteEngine(cfg RemoteEngineConfig) (*RemoteEngine, error) {
 // ---------------------------------------------------------------------------
 
 type boltTransport struct {
-	driver   neo4j.DriverWithContext
-	database string
+	credentials []string
+	baseURL     string
+	driver      neo4j.DriverWithContext
+	database    string
 }
 
-type boltCypherTx struct {
+// remoteCypherTx owns the public transaction lifecycle for either wire transport.
+type remoteCypherTx struct {
 	resolvedMode atomic.Int32
+	credentials  []string
+	baseURL      string
 	session      neo4j.SessionWithContext
 	tx           neo4j.ExplicitTransaction
+	transport    *httpTransport
+	executeURL   string
+	commitURL    string
+	rollbackURL  string
+	closed       bool
 }
 
 func newBoltTransport(uri, database string, cfg RemoteEngineConfig) (*boltTransport, error) {
@@ -137,7 +151,7 @@ func newBoltTransport(uri, database string, cfg RemoteEngineConfig) (*boltTransp
 	if err != nil {
 		return nil, localizedError(localization.StorageRemoteBoltDriverCreateFailed(err), err)
 	}
-	return &boltTransport{driver: driver, database: database}, nil
+	return &boltTransport{driver: driver, database: database, baseURL: uri, credentials: remoteDisplayCredentials(cfg)}, nil
 }
 
 func buildNeo4jAuth(cfg RemoteEngineConfig) neo4j.AuthToken {
@@ -160,131 +174,25 @@ func buildNeo4jAuth(cfg RemoteEngineConfig) neo4j.AuthToken {
 	return neo4j.NoAuth()
 }
 
-func (b *boltTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error) {
+func (b *boltTransport) query(ctx context.Context, statement string, params map[string]interface{}) (_ []string, _ [][]interface{}, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, b.baseURL, b.credentials...)
+		}
+	}()
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
 		DatabaseName: b.database,
 		AccessMode:   accessModeForStatement(statement),
 	})
 	defer func() { _ = session.Close(ctx) }()
 
-	var rows [][]interface{}
-	_, err := executeManagedStatement(ctx, session, statement, params, func(_ []string, record *neo4j.Record) {
-		row := make([]interface{}, len(record.Values))
-		for i, v := range record.Values {
-			row[i] = normalizeBoltValue(v)
-		}
-		rows = append(rows, row)
-	})
-	if err != nil {
-		return nil, err
-	}
-	return rows, nil
+	return executeManagedStatement(ctx, session, statement, params)
 }
 
-func (b *boltTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
-		DatabaseName: b.database,
-		AccessMode:   accessModeForStatement(statement),
-	})
-	defer func() { _ = session.Close(ctx) }()
-
-	rows := make([][]interface{}, 0)
-	columns, err := executeManagedStatement(ctx, session, statement, params, func(_ []string, record *neo4j.Record) {
-		row := make([]interface{}, len(record.Values))
-		for i, v := range record.Values {
-			row[i] = normalizeBoltValue(v)
-		}
-		rows = append(rows, row)
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	return columns, rows, nil
-}
-
-func executeManagedStatement(
-	ctx context.Context,
-	session neo4j.SessionWithContext,
-	statement string,
-	params map[string]interface{},
-	onRecord func(columns []string, record *neo4j.Record),
-) ([]string, error) {
-	runInTx := func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		result, err := tx.Run(ctx, statement, remoteBoltParameters(params))
-		if err != nil {
-			return nil, err
-		}
-		columns, err := result.Keys()
-		if err != nil {
-			return nil, localizedError(localization.StorageRemoteResultKeysFailed(err), err)
-		}
-		for result.Next(ctx) {
-			onRecord(columns, result.Record())
-		}
-		if err := result.Err(); err != nil {
-			return nil, err
-		}
-		return columns, nil
-	}
-	mode := accessModeForStatement(statement)
-	if mode == neo4j.AccessModeWrite {
-		v, err := session.ExecuteWrite(ctx, runInTx)
-		if err != nil {
-			return nil, err
-		}
-		cols, _ := v.([]string)
-		return cols, nil
-	}
-	v, err := session.ExecuteRead(ctx, runInTx)
-	if err != nil {
-		return nil, err
-	}
-	cols, _ := v.([]string)
-	return cols, nil
-}
-
-func (b *boltTransport) queryBatch(ctx context.Context, statements []remoteStatement) error {
-	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
-		DatabaseName: b.database,
-		AccessMode:   neo4j.AccessModeWrite,
-	})
-	defer func() { _ = session.Close(ctx) }()
-
-	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
-		for _, stmt := range statements {
-			result, err := tx.Run(ctx, stmt.Statement, remoteBoltParameters(stmt.Parameters))
-			if err != nil {
-				return nil, err
-			}
-			// Consume to ensure statement completes.
-			if _, err := result.Consume(ctx); err != nil {
-				return nil, err
-			}
-		}
-		return nil, nil
-	})
-	return err
-}
-
-func (b *boltTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
-	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
-		DatabaseName: b.database,
-		AccessMode:   neo4j.AccessModeWrite,
-	})
-	tx, err := session.BeginTransaction(ctx, neo4j.WithTxMetadata(coordinatorTransactionMetadata(ctx)))
-	if err != nil {
-		_ = session.Close(ctx)
-		return nil, err
-	}
-	return &boltCypherTx{session: session, tx: tx}, nil
-}
-
-func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	t.resolvedMode.Store(0)
-	result, err := t.tx.Run(ctx, statement, remoteBoltParameters(params))
-	if err != nil {
-		return nil, nil, err
-	}
+// decodeRemoteBoltResult is the result-reading owner for both managed and
+// explicit transactions. Consumption remains with the transaction mechanism:
+// the driver completes managed work, while explicit queries read its summary.
+func decodeRemoteBoltResult(ctx context.Context, result neo4j.ResultWithContext) ([]string, [][]interface{}, error) {
 	columns, err := result.Keys()
 	if err != nil {
 		return nil, nil, localizedError(localization.StorageRemoteResultKeysFailed(err), err)
@@ -293,33 +201,79 @@ func (t *boltCypherTx) QueryCypher(ctx context.Context, statement string, params
 	for result.Next(ctx) {
 		record := result.Record()
 		row := make([]interface{}, len(record.Values))
-		for i, v := range record.Values {
-			row[i] = normalizeBoltValue(v)
+		for i, value := range record.Values {
+			row[i] = normalizeBoltValue(value)
 		}
 		rows = append(rows, row)
 	}
 	if err := result.Err(); err != nil {
 		return nil, nil, err
 	}
-	summary, err := result.Consume(ctx)
-	if err != nil {
-		return nil, nil, err
-	}
-	t.resolvedMode.Store(remoteBoltQueryMode(summary))
 	return columns, rows, nil
 }
 
-func (t *boltCypherTx) Commit(ctx context.Context) error {
-	defer func() { _ = t.session.Close(ctx) }()
-	return t.tx.Commit(ctx)
+func executeManagedStatement(ctx context.Context, session neo4j.SessionWithContext, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+	var columns []string
+	rows := make([][]interface{}, 0)
+	runInTx := func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		result, err := tx.Run(ctx, statement, remoteBoltParameters(params))
+		if err != nil {
+			return nil, err
+		}
+		cols, batch, err := decodeRemoteBoltResult(ctx, result)
+		if err != nil {
+			return nil, err
+		}
+		columns = cols
+		rows = append(rows, batch...)
+		return nil, nil
+	}
+	var err error
+	if accessModeForStatement(statement) == neo4j.AccessModeWrite {
+		_, err = session.ExecuteWrite(ctx, runInTx)
+	} else {
+		_, err = session.ExecuteRead(ctx, runInTx)
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return columns, rows, nil
 }
 
-func (t *boltCypherTx) Rollback(ctx context.Context) error {
-	defer func() { _ = t.session.Close(ctx) }()
-	return t.tx.Rollback(ctx)
+func (b *boltTransport) queryBatch(ctx context.Context, statements []remoteStatement) (err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, b.baseURL, b.credentials...)
+		}
+	}()
+	session := b.driver.NewSession(ctx, neo4j.SessionConfig{
+		DatabaseName: b.database,
+		AccessMode:   neo4j.AccessModeWrite,
+	})
+	defer func() { _ = session.Close(ctx) }()
+
+	_, err = session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (interface{}, error) {
+		for _, stmt := range statements {
+			result, err := tx.Run(ctx, stmt.Statement, remoteBoltParameters(stmt.Parameters))
+			if err != nil {
+				return nil, err
+			}
+			// Consume to ensure statement completes.
+			if _, err = result.Consume(ctx); err != nil {
+				return nil, err
+			}
+		}
+		return nil, nil
+	})
+	return err
 }
 
-func (b *boltTransport) close() error {
+func (b *boltTransport) close() (err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, b.baseURL, b.credentials...)
+		}
+	}()
 	return b.driver.Close(context.Background())
 }
 
@@ -444,15 +398,6 @@ type httpTransport struct {
 	client    *http.Client
 }
 
-type httpCypherTx struct {
-	resolvedMode atomic.Int32
-	transport    *httpTransport
-	executeURL   string
-	commitURL    string
-	rollbackURL  string
-	closed       bool
-}
-
 type remoteTxRequest struct {
 	Statements          []remoteStatement      `json:"statements"`
 	TransactionMetadata map[string]interface{} `json:"tx_metadata,omitempty"`
@@ -486,7 +431,7 @@ func newHTTPTransport(uri, database string, cfg RemoteEngineConfig) (*httpTransp
 		client = &http.Client{Timeout: RemoteRequestTimeout}
 	}
 	return &httpTransport{
-		baseURL:   strings.TrimRight(uri, "/"),
+		baseURL:   uri,
 		database:  database,
 		authToken: strings.TrimSpace(cfg.AuthToken),
 		user:      strings.TrimSpace(cfg.User),
@@ -495,31 +440,49 @@ func newHTTPTransport(uri, database string, cfg RemoteEngineConfig) (*httpTransp
 	}, nil
 }
 
-func (h *httpTransport) commitURL() string {
-	if strings.HasSuffix(h.baseURL, "/tx/commit") {
-		return h.baseURL
+func (h *httpTransport) commitURL() (string, error) {
+	base, err := url.Parse(h.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid remote HTTP base URL")
 	}
-	if strings.Contains(h.baseURL, "/db/") {
-		return h.baseURL + "/tx/commit"
+	path := base.EscapedPath()
+	route := "/db/" + url.PathEscape(h.database) + "/tx/commit"
+	if strings.HasSuffix(path, "/tx/commit") {
+		route = ""
+	} else if strings.Contains(path, "/db/") {
+		route = "/tx/commit"
 	}
-	return fmt.Sprintf("%s/db/%s/tx/commit", h.baseURL, h.database)
+	return observability.ComposeRequestURL(h.baseURL, route, observability.AppendRequestRoute)
 }
 
-func (h *httpTransport) txOpenURL() string {
-	if strings.HasSuffix(h.baseURL, "/tx/commit") {
-		return strings.TrimSuffix(h.baseURL, "/commit")
+func (h *httpTransport) txOpenURL() (string, error) {
+	base, err := url.Parse(h.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid remote HTTP base URL")
 	}
-	if strings.Contains(h.baseURL, "/db/") {
-		return h.baseURL + "/tx"
+	path := base.EscapedPath()
+	if strings.HasSuffix(path, "/tx/commit") {
+		return observability.ComposeRequestURL(h.baseURL, strings.TrimSuffix(path, "/commit"), observability.MergeRequestFollowup)
 	}
-	return fmt.Sprintf("%s/db/%s/tx", h.baseURL, h.database)
+	route := "/db/" + url.PathEscape(h.database) + "/tx"
+	if strings.Contains(path, "/db/") {
+		route = "/tx"
+	}
+	return observability.ComposeRequestURL(h.baseURL, route, observability.AppendRequestRoute)
 }
 
-func (h *httpTransport) doRequest(ctx context.Context, body remoteTxRequest) (*remoteTxResponse, error) {
-	return h.doRequestToURL(ctx, http.MethodPost, h.commitURL(), body)
-}
-
-func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targetURL string, body interface{}) (*remoteTxResponse, error) {
+func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targetURL string, body interface{}) (_ *remoteTxResponse, err error) {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, h.baseURL, h.displayCredentials()...)
+		}
+	}()
+	if targetURL == "" {
+		targetURL, err = h.commitURL()
+		if err != nil {
+			return nil, err
+		}
+	}
 	var reader io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
@@ -599,25 +562,8 @@ func (h *httpTransport) doRequestToURL(ctx context.Context, method string, targe
 	return &txResp, nil
 }
 
-func (h *httpTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([][]interface{}, error) {
-	txResp, err := h.doRequest(ctx, remoteTxRequest{
-		Statements: []remoteStatement{{Statement: statement, Parameters: params, IncludeStats: true, ResultDataContents: []string{"row", "graph", "rest"}}},
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(txResp.Results) == 0 {
-		return [][]interface{}{}, nil
-	}
-	rows := make([][]interface{}, 0, len(txResp.Results[0].Data))
-	for _, data := range txResp.Results[0].Data {
-		rows = append(rows, data.Row)
-	}
-	return rows, nil
-}
-
-func (h *httpTransport) queryWithColumns(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
-	txResp, err := h.doRequest(ctx, remoteTxRequest{
+func (h *httpTransport) query(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+	txResp, err := h.doRequestToURL(ctx, http.MethodPost, "", remoteTxRequest{
 		Statements: []remoteStatement{{Statement: statement, Parameters: params, IncludeStats: true, ResultDataContents: []string{"row", "graph", "rest"}}},
 	})
 	if err != nil {
@@ -635,19 +581,24 @@ func (h *httpTransport) queryWithColumns(ctx context.Context, statement string, 
 }
 
 func (h *httpTransport) queryBatch(ctx context.Context, statements []remoteStatement) error {
-	_, err := h.doRequest(ctx, remoteTxRequest{Statements: statements})
+	_, err := h.doRequestToURL(ctx, http.MethodPost, "", remoteTxRequest{Statements: statements})
 	return err
 }
 
-func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+// openTransaction exchanges HTTP's explicit-transaction handshake and returns its URLs.
+func (h *httpTransport) openTransaction(ctx context.Context) (_ string, _ string, err error) {
 	openBody := remoteTxRequest{Statements: []remoteStatement{}, TransactionMetadata: coordinatorTransactionMetadata(ctx)}
 	raw, err := json.Marshal(openBody)
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.txOpenURL(), bytes.NewReader(raw))
+	target, err := h.txOpenURL()
 	if err != nil {
-		return nil, err
+		return "", "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(raw))
+	if err != nil {
+		return "", "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if h.user != "" || h.password != "" {
@@ -657,12 +608,12 @@ func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 	}
 	resp, err := h.client.Do(req)
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
 	var openResp struct {
 		Commit string `json:"commit"`
@@ -672,29 +623,57 @@ func (h *httpTransport) beginCypherTx(ctx context.Context) (RemoteCypherTx, erro
 		} `json:"errors"`
 	}
 	if err := json.Unmarshal(body, &openResp); err != nil {
-		return nil, localizedError(localization.StorageRemoteTransactionOpenDecodeFailed(resp.StatusCode, err), err)
+		return "", "", localizedError(localization.StorageRemoteTransactionOpenDecodeFailed(resp.StatusCode, err), err)
 	}
 	if len(openResp.Errors) > 0 {
-		return nil, localizedError(localization.StorageRemoteError(openResp.Errors[0].Code, openResp.Errors[0].Message), nil)
+		return "", "", localizedError(localization.StorageRemoteError(openResp.Errors[0].Code, openResp.Errors[0].Message), nil)
 	}
 	if strings.TrimSpace(openResp.Commit) == "" {
-		return nil, localizedError(localization.StorageRemoteTransactionCommitURLMissing(), nil)
+		return "", "", localizedError(localization.StorageRemoteTransactionCommitURLMissing(), nil)
 	}
-	executeURL := strings.TrimSuffix(openResp.Commit, "/commit")
-	return &httpCypherTx{
-		transport:   h,
-		executeURL:  executeURL,
-		commitURL:   openResp.Commit,
-		rollbackURL: executeURL,
-	}, nil
+	commitURL, err := observability.ComposeRequestURL(h.baseURL, openResp.Commit, observability.MergeRequestFollowup)
+	if err != nil {
+		return "", "", err
+	}
+	commit, err := url.Parse(commitURL)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid composed remote transaction URL")
+	}
+	commit.Path = strings.TrimSuffix(commit.Path, "/commit")
+	commit.RawPath = strings.TrimSuffix(commit.RawPath, "/commit")
+	executeURL := commit.String()
+	return executeURL, commitURL, nil
 }
 
 func (h *httpTransport) close() error { return nil }
 
-func (t *httpCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+// QueryCypher executes through the selected wire mechanism while owning the
+// common result-mode and credential-safe error boundary.
+func (t *remoteCypherTx) QueryCypher(ctx context.Context, statement string, params map[string]interface{}) (_ []string, _ [][]interface{}, err error) {
 	t.resolvedMode.Store(0)
-	if t.closed {
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, t.baseURL, t.credentials...)
+		}
+	}()
+	if t.transport != nil && t.closed {
 		return nil, nil, localizedError(localization.StorageRemoteTransactionClosed(), nil)
+	}
+	if t.transport == nil {
+		result, err := t.tx.Run(ctx, statement, remoteBoltParameters(params))
+		if err != nil {
+			return nil, nil, err
+		}
+		columns, rows, err := decodeRemoteBoltResult(ctx, result)
+		if err != nil {
+			return nil, nil, err
+		}
+		summary, err := result.Consume(ctx)
+		if err != nil {
+			return nil, nil, err
+		}
+		t.resolvedMode.Store(remoteBoltQueryMode(summary))
+		return columns, rows, nil
 	}
 	txResp, err := t.transport.doRequestToURL(ctx, http.MethodPost, t.executeURL, remoteTxRequest{
 		Statements: []remoteStatement{{Statement: statement, Parameters: params, IncludeStats: true, ResultDataContents: []string{"row", "graph", "rest"}}},
@@ -714,28 +693,40 @@ func (t *httpCypherTx) QueryCypher(ctx context.Context, statement string, params
 	return result.Columns, rows, nil
 }
 
-func (t *httpCypherTx) Commit(ctx context.Context) error {
-	if t.closed {
-		return nil
+// Commit completes the selected transport and releases its connection owner.
+func (t *remoteCypherTx) Commit(ctx context.Context) error { return t.finish(ctx, true) }
+
+func (t *remoteCypherTx) Rollback(ctx context.Context) error { return t.finish(ctx, false) }
+
+func (t *remoteCypherTx) finish(ctx context.Context, commit bool) (err error) {
+	if t.transport != nil {
+		if t.closed {
+			return nil
+		}
+		t.closed = true
 	}
-	t.closed = true
-	_, err := t.transport.doRequestToURL(ctx, http.MethodPost, t.commitURL, remoteTxRequest{Statements: []remoteStatement{}})
-	return err
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, t.baseURL, t.credentials...)
+		}
+	}()
+	if t.transport != nil {
+		method, target, body := http.MethodDelete, t.rollbackURL, interface{}(nil)
+		if commit {
+			method, target, body = http.MethodPost, t.commitURL, remoteTxRequest{Statements: []remoteStatement{}}
+		}
+		_, err = t.transport.doRequestToURL(ctx, method, target, body)
+		return err
+	}
+	defer func() { _ = t.session.Close(ctx) }()
+	if commit {
+		return t.tx.Commit(ctx)
+	}
+	return t.tx.Rollback(ctx)
 }
 
-// OutlivesConnection reports that the server addresses this transaction by
-// its URL, not by a connection: closing a connection doesn't end it, only a
-// rollback, a commit or the server's transaction timeout does.
-func (t *httpCypherTx) OutlivesConnection() bool { return true }
-
-func (t *httpCypherTx) Rollback(ctx context.Context) error {
-	if t.closed {
-		return nil
-	}
-	t.closed = true
-	_, err := t.transport.doRequestToURL(ctx, http.MethodDelete, t.rollbackURL, nil)
-	return err
-}
+// OutlivesConnection reports whether the server addresses this transaction by URL.
+func (t *remoteCypherTx) OutlivesConnection() bool { return t.transport != nil }
 
 // ---------------------------------------------------------------------------
 // Helpers shared across transports
@@ -869,6 +860,66 @@ func defaultCtx() (context.Context, context.CancelFunc) {
 // Engine interface implementation
 // ---------------------------------------------------------------------------
 
+// readRemoteEntity admits one decoded entity through the public query owner.
+// A supplied context retains batch deadlines; nil uses the Engine default.
+func readRemoteEntity[T any](r *RemoteEngine, ctx context.Context, statement string, params map[string]interface{}, decode func(interface{}) (*T, error)) (*T, error) {
+	_, rows, err := r.QueryCypher(ctx, statement, params)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 || len(rows[0]) == 0 {
+		return nil, ErrNotFound
+	}
+	return decode(rows[0][0])
+}
+
+// readRemoteEntities owns row admission and decoding for node and edge lists.
+func readRemoteEntities[T any](r *RemoteEngine, ctx context.Context, statement string, params map[string]interface{}, decode func(interface{}) (*T, error)) ([]*T, error) {
+	_, rows, err := r.QueryCypher(ctx, statement, params)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*T, 0, len(rows))
+	for _, row := range rows {
+		if len(row) == 0 {
+			continue
+		}
+		entity, err := decode(row[0])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, entity)
+	}
+	return out, nil
+}
+
+// remoteCount admits the shared scalar result for counts, degrees and updates.
+func (r *RemoteEngine) remoteCount(ctx context.Context, statement string, params map[string]interface{}) (int64, error) {
+	_, rows, err := r.QueryCypher(ctx, statement, params)
+	if err != nil || len(rows) == 0 || len(rows[0]) == 0 {
+		return 0, err
+	}
+	return remoteToInt64(rows[0][0]), nil
+}
+
+// mutateRemoteEntity owns parameter binding and match admission for mutations.
+func (r *RemoteEngine) mutateRemoteEntity(statement, id string, props map[string]interface{}, requireMatch bool) error {
+	params := map[string]interface{}{"id": id}
+	if requireMatch {
+		params["props"] = props
+		matched, err := r.remoteCount(nil, statement, params)
+		if err != nil {
+			return err
+		}
+		if matched == 0 {
+			return ErrNotFound
+		}
+		return nil
+	}
+	_, _, err := r.QueryCypher(nil, statement, params)
+	return err
+}
+
 func (r *RemoteEngine) CreateNode(node *Node) (NodeID, error) {
 	props := map[string]interface{}{}
 	for k, v := range node.Properties {
@@ -882,7 +933,7 @@ func (r *RemoteEngine) CreateNode(node *Node) (NodeID, error) {
 	stmt := fmt.Sprintf("CREATE (n%s) SET n += $props RETURN n", labelsExpr(node.Labels))
 	ctx, cancel := defaultCtx()
 	defer cancel()
-	rows, err := r.transport.query(ctx, stmt, map[string]interface{}{"props": props})
+	_, rows, err := r.transport.query(ctx, stmt, map[string]interface{}{"props": props})
 	if err != nil {
 		return "", err
 	}
@@ -897,39 +948,15 @@ func (r *RemoteEngine) CreateNode(node *Node) (NodeID, error) {
 }
 
 func (r *RemoteEngine) GetNode(id NodeID) (*Node, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, "MATCH (n) WHERE n.id = $id RETURN n LIMIT 1", map[string]interface{}{"id": string(id)})
-	if err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, ErrNotFound
-	}
-	return valueToNode(rows[0][0])
+	return readRemoteEntity(r, nil, "MATCH (n) WHERE n.id = $id RETURN n LIMIT 1", map[string]interface{}{"id": string(id)}, valueToNode)
 }
 
 func (r *RemoteEngine) UpdateNode(node *Node) error {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, "MATCH (n) WHERE n.id = $id SET n += $props RETURN count(n)", map[string]interface{}{
-		"id":    string(node.ID),
-		"props": node.Properties,
-	})
-	if err != nil {
-		return err
-	}
-	if len(rows) == 0 || len(rows[0]) == 0 || remoteToInt64(rows[0][0]) == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return r.mutateRemoteEntity("MATCH (n) WHERE n.id = $id SET n += $props RETURN count(n)", string(node.ID), node.Properties, true)
 }
 
 func (r *RemoteEngine) DeleteNode(id NodeID) error {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	_, err := r.transport.query(ctx, "MATCH (n) WHERE n.id = $id DETACH DELETE n", map[string]interface{}{"id": string(id)})
-	return err
+	return r.mutateRemoteEntity("MATCH (n) WHERE n.id = $id DETACH DELETE n", string(id), nil, false)
 }
 
 func (r *RemoteEngine) CreateEdge(edge *Edge) error {
@@ -959,7 +986,7 @@ func (r *RemoteEngine) CreateEdge(edge *Edge) error {
 	}
 	ctx, cancel := defaultCtx()
 	defer cancel()
-	rows, err := r.transport.query(ctx, stmt, params)
+	_, rows, err := r.transport.query(ctx, stmt, params)
 	if err != nil {
 		return err
 	}
@@ -970,39 +997,15 @@ func (r *RemoteEngine) CreateEdge(edge *Edge) error {
 }
 
 func (r *RemoteEngine) GetEdge(id EdgeID) (*Edge, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, "MATCH ()-[r]->() WHERE r.id = $id RETURN r LIMIT 1", map[string]interface{}{"id": string(id)})
-	if err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, ErrNotFound
-	}
-	return valueToEdge(rows[0][0])
+	return readRemoteEntity(r, nil, "MATCH ()-[r]->() WHERE r.id = $id RETURN r LIMIT 1", map[string]interface{}{"id": string(id)}, valueToEdge)
 }
 
 func (r *RemoteEngine) UpdateEdge(edge *Edge) error {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, "MATCH ()-[r]->() WHERE r.id = $id SET r += $props RETURN count(r)", map[string]interface{}{
-		"id":    string(edge.ID),
-		"props": edge.Properties,
-	})
-	if err != nil {
-		return err
-	}
-	if len(rows) == 0 || len(rows[0]) == 0 || remoteToInt64(rows[0][0]) == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return r.mutateRemoteEntity("MATCH ()-[r]->() WHERE r.id = $id SET r += $props RETURN count(r)", string(edge.ID), edge.Properties, true)
 }
 
 func (r *RemoteEngine) DeleteEdge(id EdgeID) error {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	_, err := r.transport.query(ctx, "MATCH ()-[r]->() WHERE r.id = $id DELETE r", map[string]interface{}{"id": string(id)})
-	return err
+	return r.mutateRemoteEntity("MATCH ()-[r]->() WHERE r.id = $id DELETE r", string(id), nil, false)
 }
 
 func (r *RemoteEngine) GetNodesByLabel(label string) ([]*Node, error) {
@@ -1027,22 +1030,7 @@ func (r *RemoteEngine) getNodesByLabelWithReveal(ctx context.Context, label stri
 	if strings.TrimSpace(label) != "" {
 		stmt = fmt.Sprintf("MATCH (n:%s) RETURN %s", quoteIdent(label), returnExpr)
 	}
-	rows, err := r.transport.query(ctx, stmt, nil)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*Node, 0, len(rows))
-	for _, row := range rows {
-		if len(row) == 0 {
-			continue
-		}
-		n, err := valueToNode(row[0])
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, n)
-	}
-	return out, nil
+	return readRemoteEntities(r, ctx, stmt, nil, valueToNode)
 }
 
 func (r *RemoteEngine) GetFirstNodeByLabel(label string) (*Node, error) {
@@ -1050,120 +1038,43 @@ func (r *RemoteEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 	if strings.TrimSpace(label) != "" {
 		stmt = fmt.Sprintf("MATCH (n:%s) RETURN n LIMIT 1", quoteIdent(label))
 	}
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, stmt, nil)
-	if err != nil {
-		return nil, err
-	}
-	if len(rows) == 0 {
-		return nil, ErrNotFound
-	}
-	return valueToNode(rows[0][0])
+	return readRemoteEntity(r, nil, stmt, nil, valueToNode)
 }
 
 func (r *RemoteEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, "MATCH (n)-[r]->() WHERE n.id = $id RETURN r", map[string]interface{}{"id": string(nodeID)})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*Edge, 0, len(rows))
-	for _, row := range rows {
-		if len(row) == 0 {
-			continue
-		}
-		edge, err := valueToEdge(row[0])
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, edge)
-	}
-	return out, nil
+	return readRemoteEntities(r, nil, "MATCH (n)-[r]->() WHERE n.id = $id RETURN r", map[string]interface{}{"id": string(nodeID)}, valueToEdge)
 }
 
 func (r *RemoteEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, "MATCH ()-[r]->(n) WHERE n.id = $id RETURN r", map[string]interface{}{"id": string(nodeID)})
-	if err != nil {
-		return nil, err
+	return readRemoteEntities(r, nil, "MATCH ()-[r]->(n) WHERE n.id = $id RETURN r", map[string]interface{}{"id": string(nodeID)}, valueToEdge)
+}
+
+// readEdgesBetween owns endpoint binding and the two Engine lookup contracts.
+// A type selects the typed first-edge query; nil selects every connecting edge.
+func (r *RemoteEngine) readEdgesBetween(startID, endID NodeID, edgeType *string) ([]*Edge, error) {
+	relationship, limit := "r", ""
+	if edgeType != nil {
+		relationship += ":" + quoteIdent(*edgeType)
+		limit = " LIMIT 1"
 	}
-	out := make([]*Edge, 0, len(rows))
-	for _, row := range rows {
-		if len(row) == 0 {
-			continue
-		}
-		edge, err := valueToEdge(row[0])
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, edge)
-	}
-	return out, nil
+	statement := "MATCH (a)-[" + relationship + "]->(b) WHERE a.id = $start AND b.id = $end RETURN r" + limit
+	return readRemoteEntities(r, nil, statement, map[string]interface{}{"start": string(startID), "end": string(endID)}, valueToEdge)
 }
 
 func (r *RemoteEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, "MATCH (a)-[r]->(b) WHERE a.id = $start AND b.id = $end RETURN r", map[string]interface{}{
-		"start": string(startID),
-		"end":   string(endID),
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*Edge, 0, len(rows))
-	for _, row := range rows {
-		if len(row) == 0 {
-			continue
-		}
-		edge, err := valueToEdge(row[0])
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, edge)
-	}
-	return out, nil
+	return r.readEdgesBetween(startID, endID, nil)
 }
 
 func (r *RemoteEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx,
-		fmt.Sprintf("MATCH (a)-[r:%s]->(b) WHERE a.id = $start AND b.id = $end RETURN r LIMIT 1", quoteIdent(edgeType)),
-		map[string]interface{}{"start": string(startID), "end": string(endID)},
-	)
-	if err != nil || len(rows) == 0 || len(rows[0]) == 0 {
+	edges, _ := r.readEdgesBetween(startID, endID, &edgeType)
+	if len(edges) == 0 {
 		return nil
 	}
-	edge, err := valueToEdge(rows[0][0])
-	if err != nil {
-		return nil
-	}
-	return edge
+	return edges[0]
 }
 
 func (r *RemoteEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, fmt.Sprintf("MATCH ()-[r:%s]->() RETURN r", quoteIdent(edgeType)), nil)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*Edge, 0, len(rows))
-	for _, row := range rows {
-		if len(row) == 0 {
-			continue
-		}
-		edge, err := valueToEdge(row[0])
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, edge)
-	}
-	return out, nil
+	return readRemoteEntities(r, nil, fmt.Sprintf("MATCH ()-[r:%s]->() RETURN r", quoteIdent(edgeType)), nil, valueToEdge)
 }
 
 func (r *RemoteEngine) AllNodes() ([]*Node, error) { return r.GetNodesByLabel("") }
@@ -1210,24 +1121,7 @@ func (r *RemoteEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 }
 
 func (r *RemoteEngine) AllEdges() ([]*Edge, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, "MATCH ()-[r]->() RETURN r", nil)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]*Edge, 0, len(rows))
-	for _, row := range rows {
-		if len(row) == 0 {
-			continue
-		}
-		edge, err := valueToEdge(row[0])
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, edge)
-	}
-	return out, nil
+	return readRemoteEntities(r, nil, "MATCH ()-[r]->() RETURN r", nil, valueToEdge)
 }
 
 func (r *RemoteEngine) GetAllNodes() []*Node {
@@ -1239,23 +1133,13 @@ func (r *RemoteEngine) GetAllNodes() []*Node {
 }
 
 func (r *RemoteEngine) GetInDegree(nodeID NodeID) int {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, "MATCH ()-[r]->(n) WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)})
-	if err != nil || len(rows) == 0 || len(rows[0]) == 0 {
-		return 0
-	}
-	return int(remoteToInt64(rows[0][0]))
+	count, _ := r.remoteCount(nil, "MATCH ()-[r]->(n) WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)})
+	return int(count)
 }
 
 func (r *RemoteEngine) GetOutDegree(nodeID NodeID) int {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, "MATCH (n)-[r]->() WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)})
-	if err != nil || len(rows) == 0 || len(rows[0]) == 0 {
-		return 0
-	}
-	return int(remoteToInt64(rows[0][0]))
+	count, _ := r.remoteCount(nil, "MATCH (n)-[r]->() WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)})
+	return int(count)
 }
 
 func (r *RemoteEngine) GetSchema() *SchemaManager { return r.schema }
@@ -1379,17 +1263,10 @@ func (r *RemoteEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 	defer cancel()
 	out := make(map[NodeID]*Node, len(ids))
 	for _, id := range ids {
-		rows, err := r.transport.query(ctx, "MATCH (n) WHERE n.id = $id RETURN n LIMIT 1", map[string]interface{}{"id": string(id)})
-		if err != nil {
-			if err == ErrNotFound {
-				continue
-			}
-			return nil, err
-		}
-		if len(rows) == 0 {
+		node, err := readRemoteEntity(r, ctx, "MATCH (n) WHERE n.id = $id RETURN n LIMIT 1", map[string]interface{}{"id": string(id)}, valueToNode)
+		if err == ErrNotFound {
 			continue
 		}
-		node, err := valueToNode(rows[0][0])
 		if err != nil {
 			return nil, err
 		}
@@ -1401,23 +1278,11 @@ func (r *RemoteEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 func (r *RemoteEngine) Close() error { return r.transport.close() }
 
 func (r *RemoteEngine) NodeCount() (int64, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, "MATCH (n) RETURN count(n)", nil)
-	if err != nil || len(rows) == 0 || len(rows[0]) == 0 {
-		return 0, err
-	}
-	return remoteToInt64(rows[0][0]), nil
+	return r.remoteCount(nil, "MATCH (n) RETURN count(n)", nil)
 }
 
 func (r *RemoteEngine) EdgeCount() (int64, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
-	rows, err := r.transport.query(ctx, "MATCH ()-[r]->() RETURN count(r)", nil)
-	if err != nil || len(rows) == 0 || len(rows[0]) == 0 {
-		return 0, err
-	}
-	return remoteToInt64(rows[0][0]), nil
+	return r.remoteCount(nil, "MATCH ()-[r]->() RETURN count(r)", nil)
 }
 
 // EdgeCountByType answers the typed count from the remote instance's own
@@ -1443,8 +1308,6 @@ func (r *RemoteEngine) EdgeCountByEndLabel(label, edgeType string) (int64, error
 }
 
 func (r *RemoteEngine) remotePositionalCount(label, edgeType string, end bool) (int64, error) {
-	ctx, cancel := defaultCtx()
-	defer cancel()
 	quotedType := "`" + strings.ReplaceAll(edgeType, "`", "``") + "`"
 	statement := "MATCH ()-[r:" + quotedType + "]->() RETURN count(r)"
 	if label != "" {
@@ -1455,11 +1318,7 @@ func (r *RemoteEngine) remotePositionalCount(label, edgeType string, end bool) (
 			statement = "MATCH (s:" + quotedLabel + ")-[r:" + quotedType + "]->() RETURN count(r)"
 		}
 	}
-	rows, err := r.transport.query(ctx, statement, nil)
-	if err != nil || len(rows) == 0 || len(rows[0]) == 0 {
-		return 0, err
-	}
-	return remoteToInt64(rows[0][0]), nil
+	return r.remoteCount(nil, statement, nil)
 }
 
 func (r *RemoteEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
@@ -1479,15 +1338,44 @@ func (r *RemoteEngine) QueryCypher(ctx context.Context, statement string, params
 		ctx, cancel = defaultCtx()
 		defer cancel()
 	}
-	return r.transport.queryWithColumns(ctx, statement, params)
+	return r.transport.query(ctx, statement, params)
 }
 
 // BeginCypherTx opens an explicit remote transaction handle.
-func (r *RemoteEngine) BeginCypherTx(ctx context.Context) (RemoteCypherTx, error) {
+func (r *RemoteEngine) BeginCypherTx(ctx context.Context) (_ RemoteCypherTx, err error) {
 	if ctx == nil {
 		var cancel context.CancelFunc
 		ctx, cancel = defaultCtx()
 		defer cancel()
 	}
-	return r.transport.beginCypherTx(ctx)
+	t := &remoteCypherTx{}
+	switch wire := r.transport.(type) {
+	case *boltTransport:
+		t.baseURL, t.credentials = wire.baseURL, wire.credentials
+	case *httpTransport:
+		t.baseURL, t.credentials, t.transport = wire.baseURL, wire.displayCredentials(), wire
+	default:
+		return nil, fmt.Errorf("unsupported remote transaction transport")
+	}
+	defer func() {
+		if err != nil {
+			err = observability.RedactClientError(err, t.baseURL, t.credentials...)
+		}
+	}()
+	if t.transport != nil {
+		t.executeURL, t.commitURL, err = t.transport.openTransaction(ctx)
+		if err != nil {
+			return nil, err
+		}
+		t.rollbackURL = t.executeURL
+	} else {
+		wire := r.transport.(*boltTransport)
+		t.session = wire.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: wire.database, AccessMode: neo4j.AccessModeWrite})
+		t.tx, err = t.session.BeginTransaction(ctx, neo4j.WithTxMetadata(coordinatorTransactionMetadata(ctx)))
+		if err != nil {
+			_ = t.session.Close(ctx)
+			return nil, err
+		}
+	}
+	return t, nil
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -14,7 +15,7 @@ func bindingCostFixture(t testing.TB, count int) (*BadgerEngine, *WAL, *buffered
 	// Appends are silent no-ops while the process-wide switch is off, and
 	// earlier package tests may leave it off.
 	t.Cleanup(config.WithWALEnabled())
-	b, err := NewBadgerEngineInMemory()
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = b.Close() })
 	properties := make(map[string]any, count)

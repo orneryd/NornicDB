@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -170,7 +171,7 @@ func deleteExpressionRootIdentifier(expression string) string {
 	return name
 }
 
-func addPipelinePatternBindings(executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
+func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
 	pattern := strings.TrimSpace(clause)
 	if len(pattern) >= len(keyword) && strings.EqualFold(pattern[:len(keyword)], keyword) {
 		pattern = strings.TrimSpace(pattern[len(keyword):])
@@ -178,7 +179,7 @@ func addPipelinePatternBindings(executor *StorageExecutor, scope map[string]stru
 	if where := findKeywordIndexInContext(pattern, "WHERE"); where >= 0 {
 		pattern = strings.TrimSpace(pattern[:where])
 	}
-	for _, variable := range executor.extractVariableNamesFromPattern(pattern) {
+	for _, variable := range executor.extractVariableNamesFromPattern(ctx, pattern) {
 		if variable != "" {
 			scope[variable] = struct{}{}
 		}

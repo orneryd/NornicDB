@@ -120,7 +120,7 @@ func TestProjectionAliasIndexIsTopLevel(t *testing.T) {
 		"[x IN [1] | x] AS `my list`":                        {"[x IN [1] | x]", "my list"},
 		"n.alias":                                            {"n.alias", "n.alias"},
 	} {
-		expr, alias := parseProjectionExprAlias(item)
+		expr, alias := parseProjectionExprAlias(t.Context(), item)
 		require.Equal(t, want, [2]string{expr, alias}, item)
 	}
 }

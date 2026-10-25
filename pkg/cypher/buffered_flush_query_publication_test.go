@@ -17,7 +17,7 @@ func TestBufferedFlushPreservesQueryViewAndCacheRevision(t *testing.T) {
 	engine.SetDecayEnabled(false)
 	ns := storage.NewNamespacedEngine(engine, "nornic")
 	cached := NewStorageExecutor(ns)
-	uncached := NewStorageExecutorWithQueryCachePolicy(ns, 0, time.Minute)
+	uncached := NewStorageExecutor(ns, QueryCachePolicy{MaxEntries: 0, TTL: time.Minute})
 	ctx := context.Background()
 	const query = "MATCH (c:Category)<-[:PART_OF]-(p:Product) RETURN c.categoryName AS categoryName, count(p) AS productCount ORDER BY productCount DESC"
 	_, err = cached.Execute(ctx, "CREATE (c:Category {categoryName:'c'})<-[:PART_OF]-(p:Product {id:1})", nil)

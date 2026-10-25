@@ -36,7 +36,7 @@ func (e *StorageExecutor) bindPipelineProgram(ctx context.Context, clauses []pip
 			names = append(names, name)
 		}
 	}
-	program := e.projectedStatementScope(source, resultmetadata.Known(names), resultmetadata.Known(retained), cypherVersionFromContext(ctx) == "25")
+	program := e.projectedStatementScope(ctx, source, resultmetadata.Known(names), resultmetadata.Known(retained), cypherVersionFromContext(ctx) == "25")
 	if !program.complete {
 		if program.err != nil {
 			return ctx, program.err
@@ -46,17 +46,6 @@ func (e *StorageExecutor) bindPipelineProgram(ctx context.Context, clauses []pip
 	return withBoundStatementProgram(ctx, program.bound), nil
 }
 
-func executionReturnProjection(ctx context.Context, clause pipelineClause) (*returnProjectionPlan, error) {
-	program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram)
-	if !ok || program == nil || !clause.syntax.Valid() || program.syntax.Source() != clause.syntax.Source() {
-		return nil, unresolvedStatementError()
-	}
-	plan := program.projections[clause.syntax.ID()]
-	if plan == nil || !plan.valid {
-		return nil, unresolvedStatementError()
-	}
-	return plan, nil
-}
 func executionClauseEffects(ctx context.Context, clause pipelineClause) (pipelineClauseEffects, error) {
 	if clause.syntax.Valid() {
 		if program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram); ok && program != nil && program.syntax.Source() == clause.syntax.Source() {

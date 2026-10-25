@@ -60,7 +60,9 @@ func TestHybridSearchPicksUpEmbedderAfterStartup(t *testing.T) {
 			require.NoError(t, err)
 			svc, err := db.GetOrCreateSearchService("nornic", db.GetStorage())
 			require.NoError(t, err)
-			require.NoError(t, svc.BuildIndexes(ctx))
+			// Coordinate this explicit rebuild with the database's initial build.
+			require.NoError(t, db.BuildSearchIndexes(ctx))
+			require.True(t, svc.IsReady())
 			require.Nil(t, db.GetCypherExecutor().GetEmbedder())
 
 			manager, err := multidb.NewDatabaseManager(db.GetBaseStorageForManager(), nil)

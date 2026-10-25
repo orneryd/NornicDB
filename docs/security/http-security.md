@@ -179,7 +179,7 @@ If you add a custom endpoint or perform outbound HTTP requests using user-suppli
 import "github.com/orneryd/nornicdb/pkg/security"
 
 webhookURL := r.URL.Query().Get("webhook")
-if err := security.ValidateURL(webhookURL, false, false); err != nil {
+if err := security.ValidateURL(webhookURL, security.URLPolicy{}); err != nil {
 	return fmt.Errorf("invalid webhook URL: %w", err)
 }
 
@@ -198,6 +198,14 @@ This is useful when:
 - validating webhook targets,
 - accepting callback URLs from users,
 - processing externally supplied API credentials.
+
+### Go helper migration
+
+`ValidateURL(url, isDevelopment, allowHTTP)` now takes `ValidateURL(url, policy)`.
+Use `security.URLPolicy{}` for production defaults; use `AllowHTTP: true` with
+`HostPolicy: security.URLDevelopmentHost` for the former development mode.
+See the [URL policy reference](../../pkg/security/README.md#go-helper-migration)
+for all mode mappings and explicit policy limits.
 
 ## Tested Attack Coverage
 

@@ -990,18 +990,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 //
 // Uses the active explicit transaction or the statement's implicit transaction.
 // Metadata is stored with the transaction for logging, debugging, or audit trails.
-func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	if !strings.EqualFold(extractProcedureName(cypher), "tx.setMetaData") {
-		return nil, localizedError(localization.CypherProceduresMetadataInvalidSyntax(false), nil)
-	}
-	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "tx.setMetaData", MinArgs: 1, MaxArgs: 1}, cypher)
-	if err != nil {
-		return nil, err
-	}
-	return e.callTxSetMetadataArguments(ctx, arguments)
-}
-
-func (e *StorageExecutor) callTxSetMetadataArguments(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, arguments []interface{}) (*ExecuteResult, error) {
 	var tx *storage.BadgerTransaction
 	if e.txContext != nil && e.txContext.active {
 		var supported bool

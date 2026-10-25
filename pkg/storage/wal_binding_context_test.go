@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +31,7 @@ func TestWALBindingContextValidation(t *testing.T) {
 	_, err := decodeBufferedWALRecord(WALEntry{Operation: OpBufferedCommit, Data: []byte("invalid")})
 	require.ErrorContains(t, err, "failed to unmarshal")
 	require.NoError(t, beginRecoveryPropertyRestore(newTestMemoryEngine(t)))
-	b, err := NewBadgerEngineInMemory()
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	require.True(t, b.db.oracle.holdReads(time.Second))
 	require.Error(t, b.beginSemanticPropertyRestore())
@@ -119,7 +120,7 @@ func TestWALBindingContextMixedPrefixAndRestart(t *testing.T) {
 			dest := reviewBindingEngine(t, dir)
 			if snapshot {
 				require.NoError(t, dest.Close())
-				dest, err = NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir})
+				dest, err = fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir}))
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = dest.Close() })
 			}

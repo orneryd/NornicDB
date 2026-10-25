@@ -27,7 +27,7 @@ func BenchmarkFabricProcedureAdmission(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 			const statement = "MERGE (n:U5FabricBench {id:1}) SET n.value=$value RETURN n.value AS value"
 			if err := RegisterUserProcedure(ProcedureSpec{

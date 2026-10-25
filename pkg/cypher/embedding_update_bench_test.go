@@ -14,7 +14,7 @@ import (
 // only reads. Nodes carry managed embeddings. The result cache is off.
 func BenchmarkEmbeddedNodeUpdates(b *testing.B) {
 	engine := newTestMemoryEngine(b)
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(engine, "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(engine, "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	store := storage.NewNamespacedEngine(engine, "test")
 	for i := 0; i < 1000; i++ {

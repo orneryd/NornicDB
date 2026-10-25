@@ -2,6 +2,7 @@
 package cypher
 
 import (
+	"context"
 	stderrors "errors"
 	"strconv"
 	"strings"
@@ -116,7 +117,7 @@ func NewQueryAnalyzer(maxSize int) *QueryAnalyzer {
 }
 
 // Analyze extracts query information, using cache when available.
-func (a *QueryAnalyzer) Analyze(cypher string) *QueryInfo {
+func (a *QueryAnalyzer) Analyze(ctx context.Context, cypher string) *QueryInfo {
 	// Fast path: exact query text cache hit avoids normalization cost on hot loops.
 	a.cacheMu.RLock()
 	if info, ok := a.raw[cypher]; ok {
@@ -142,10 +143,13 @@ func (a *QueryAnalyzer) Analyze(cypher string) *QueryInfo {
 	// Analyze query
 	info := analyzeQuery(text)
 	info.NormalizedQuery = normalized
-	if info.IsReadOnly {
-		info.cachePolicy.Store(cachedExecutionPolicy(text))
+	if info.IsReadOnly && ctx.Err() == nil {
+		info.cachePolicy.Store(cachedExecutionPolicy(ctx, text))
 	}
 
+	if ctx.Err() != nil {
+		return info
+	}
 	// Cache result
 	a.cacheMu.Lock()
 	// Simple eviction if at capacity
@@ -351,7 +355,7 @@ func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
 	if info.HasCreate || info.HasDelete || info.HasDetachDelete || info.HasRemove ||
 		info.HasForeach || info.HasLoadCSV || info.HasCall || info.HasSchema ||
 		info.HasShow || info.HasUnion {
-		return mergeOnlyClauses(info.rawQuery)
+		return mergeOnlyClauses(context.Background(), info.rawQuery)
 	}
 	return true
 }
@@ -359,11 +363,11 @@ func IsRetrySafeMergeCommitQuery(info *QueryInfo) bool {
 // mergeOnlyClauses reports whether query is a single statement of MERGE
 // clauses combined only with MATCH, OPTIONAL MATCH, SET, WITH, UNWIND and
 // RETURN. A statement the clause splitter can't split, or a UNION, is not.
-func mergeOnlyClauses(query string) bool {
+func mergeOnlyClauses(ctx context.Context, query string) bool {
 	if topLevelUnionCut(query) >= 0 {
 		return false
 	}
-	clauses, ok := splitPipelineClauses(query)
+	clauses, ok := splitPipelineClauses(ctx, query)
 	if !ok {
 		return false
 	}
@@ -413,7 +417,7 @@ func MergeUniqueConflictIsRetrySafe(statements []CommitStatement, err error) boo
 		return false
 	}
 	for _, statement := range statements {
-		items, mergeKeys, ok := mergeStatementSetItems(statement.Query, violation.Label)
+		items, mergeKeys, ok := mergeStatementSetItems(context.Background(), statement.Query, violation.Label)
 		if !ok {
 			return false
 		}
@@ -443,8 +447,8 @@ type mergeSetItem struct {
 // and its MERGE clauses' ON CREATE SET / ON MATCH SET lists) and the property
 // expressions its MERGE patterns key on for label. ok is false when the
 // statement can't be split into clauses.
-func mergeStatementSetItems(statement, label string) (items []mergeSetItem, mergeKeys map[string][]string, ok bool) {
-	clauses, ok := splitPipelineClauses(statement)
+func mergeStatementSetItems(ctx context.Context, statement, label string) (items []mergeSetItem, mergeKeys map[string][]string, ok bool) {
+	clauses, ok := splitPipelineClauses(ctx, statement)
 	if !ok {
 		return nil, nil, false
 	}

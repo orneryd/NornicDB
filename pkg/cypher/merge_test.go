@@ -1029,7 +1029,7 @@ func TestExecuteMergeRelSegment_ErrorBranches(t *testing.T) {
 
 func pipelineClauseTextsForTest(t *testing.T, query string) []string {
 	t.Helper()
-	clauses, ok := splitPipelineClauses(strings.TrimSpace(query))
+	clauses, ok := splitPipelineClauses(t.Context(), strings.TrimSpace(query))
 	require.True(t, ok)
 	texts := make([]string, len(clauses))
 	for index, clause := range clauses {
@@ -1039,7 +1039,7 @@ func pipelineClauseTextsForTest(t *testing.T, query string) []string {
 }
 
 func TestMergeSharedClauseBoundariesAndLeadingNoiseRejection(t *testing.T) {
-	clauses, ok := splitPipelineClauses("   ")
+	clauses, ok := splitPipelineClauses(t.Context(), "   ")
 	require.False(t, ok)
 	require.Empty(t, clauses)
 	texts := pipelineClauseTextsForTest(t, "MATCH (n) OPTIONAL MATCH (m) FOREACH (x IN [1] | SET m.v = x) RETURN m")

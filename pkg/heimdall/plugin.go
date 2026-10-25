@@ -82,6 +82,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/util/eventchannel"
 )
 
@@ -902,7 +903,10 @@ func (m *SubsystemManager) StopAll() error {
 			lastErr = fmt.Errorf("failed to stop %s: %w", lp.Plugin.Name(), err)
 		}
 	}
-	return lastErr
+	m.mu.RLock()
+	cfg := m.ctx.Config
+	m.mu.RUnlock()
+	return observability.RedactError(lastErr, observability.ClientCredentials(cfg.APIURL, cfg.APIKey)...)
 }
 
 // ShutdownAll shuts down all registered subsystems.
@@ -944,7 +948,10 @@ func (m *SubsystemManager) ShutdownAll() error {
 			lastErr = fmt.Errorf("failed to shutdown %s: %w", lp.Plugin.Name(), err)
 		}
 	}
-	return lastErr
+	m.mu.RLock()
+	cfg := m.ctx.Config
+	m.mu.RUnlock()
+	return observability.RedactError(lastErr, observability.ClientCredentials(cfg.APIURL, cfg.APIKey)...)
 }
 
 // AllHealth returns health status of all subsystems.

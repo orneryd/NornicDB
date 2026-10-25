@@ -143,7 +143,7 @@ func temporalPointerCarrier(value interface{}) interface{} {
 func TestApocCollectionsTemporalSemantics(t *testing.T) {
 	for _, tc := range temporalContractCases(t) {
 		t.Run(tc.Name, func(t *testing.T) {
-			exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal-reference"), 0, 0)
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal-reference"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			raw, err := exec.Execute(context.Background(), "RETURN "+tc.A+" AS a,"+tc.B+" AS b", nil)
 			require.NoError(t, err)
 			require.Len(t, raw.Rows, 1)
@@ -213,7 +213,7 @@ func TestTemporalContractRawParameters(t *testing.T) {
 				}
 				for _, programs := range []bool{true, false} {
 					rowValueProgramsDisabled.Store(!programs)
-					exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal-raw"), 0, 0)
+					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "temporal-raw"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 					checkTemporalContract(t, exec, *oracle, "$a", "$b", map[string]interface{}{"a": wrap(probe.a), "b": wrap(probe.b)}, false)
 					rowValueProgramsDisabled.Store(false)
 				}

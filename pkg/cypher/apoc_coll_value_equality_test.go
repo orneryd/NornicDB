@@ -21,7 +21,7 @@ import (
 // Before, items were keyed by their Go type and printed text, so 1 and 1.0
 // were two items, and [1] and ['1'] one.
 func TestApocCollectionsCompareAnyValues(t *testing.T) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	list := func(items ...interface{}) []interface{} { return items }
 	for query, want := range map[string]interface{}{

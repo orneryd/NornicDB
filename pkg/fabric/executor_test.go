@@ -3061,173 +3061,117 @@ func TestExtractApplyCorrelationWhere_WithExtraTerms(t *testing.T) {
 	}
 }
 
-func TestTryExecuteApplyBatchedCollectLookup_NilInput(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	_, handled, _ := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, nil, nil, nil, "")
-	if handled {
-		t.Fatal("expected not handled for nil input")
+// TestTryExecuteApplyBatchedLookupRows_AllowsImportNotNullGuard covers the
+// row-lookup admission owner: an import IS NOT NULL guard is sanitized away and
+// the lookup stays batched.
+func TestTryExecuteApplyBatchedLookup_AdmissionGate(t *testing.T) {
+	cases := []struct {
+		name              string
+		collect, nilInner bool
+		columns           []string
+		rows              [][]interface{}
+		query             string
+	}{
+		{collect: true, name: "collect/nil input", nilInner: true, columns: nil, rows: nil, query: ""},
+		{collect: true, name: "collect/empty aggregate rows", columns: []string{"k"}, rows: [][]interface{}{}, query: ""},
+		{collect: true, name: "collect/non matching query", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "MATCH (n) RETURN n"},
+		{collect: true, name: "collect/write query", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k CREATE (n) RETURN collect(n) AS nodes"},
+		{collect: true, name: "collect/import col not in outer columns", columns: []string{"otherCol"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k RETURN collect(n) AS nodes"},
+		{collect: true, name: "collect/standalone import col in other where", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k AND k > 0 RETURN collect(n) AS nodes"},
+		{collect: true, name: "collect/no where clause", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) RETURN collect(n) AS nodes"},
+		{name: "rows/nil input", nilInner: true, columns: nil, rows: nil, query: ""},
+		{name: "rows/non matching query", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "MATCH (n) RETURN n"},
+		{name: "rows/query contains collect", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k RETURN collect(n) AS nodes"},
+		{name: "rows/write query", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k SET n.x = 1 RETURN n.x AS x"},
+		{name: "rows/import col not in outer columns", columns: []string{"other"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k RETURN n.name AS name"},
+		{name: "rows/empty return clause", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k RETURN "},
+		{name: "rows/no correlation", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.x = 'literal' RETURN n.y AS y"},
+		{name: "rows/non simple return items", columns: []string{"k"}, rows: [][]interface{}{{"v"}}, query: "WITH k MATCH (n) WHERE n.id = k RETURN count(n) AS cnt"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exec := NewFabricExecutor(NewCatalog(), nil, nil)
+			var input *ResultStream
+			if tc.columns != nil {
+				input = &ResultStream{Columns: tc.columns, Rows: tc.rows}
+			}
+			var inner *FragmentExec
+			if !tc.nilInner {
+				inner = &FragmentExec{Query: tc.query}
+			}
+			var result *ResultStream
+			var handled bool
+			var err error
+			if tc.collect {
+				result, handled, err = exec.tryExecuteApplyBatchedLookup(context.Background(), nil, tc.columns, nil, inner, nil, "", input)
+			} else {
+				result, handled, err = exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
+			}
+			if handled {
+				t.Fatalf("expected not handled, got result %#v", result)
+			}
+			if result != nil {
+				t.Fatalf("expected nil result for unhandled case, got %#v", result)
+			}
+			if err != nil {
+				t.Fatalf("expected no error for unhandled case, got %v", err)
+			}
+		})
 	}
 }
 
-func TestTryExecuteApplyBatchedCollectLookup_EmptyRows(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{}}
-	_, handled, _ := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, input, &FragmentExec{}, nil, "")
-	if handled {
-		t.Fatal("expected not handled for empty rows")
-	}
-}
-
-func TestTryExecuteApplyBatchedCollectLookup_NonMatchingQuery(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
-	inner := &FragmentExec{Query: "MATCH (n) RETURN n"} // No WITH or collect.
-	_, handled, _ := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled for non-matching query")
-	}
-}
-
-func TestTryExecuteApplyBatchedCollectLookup_WriteQuery(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
-	inner := &FragmentExec{Query: "WITH k CREATE (n) RETURN collect(n) AS nodes"}
-	_, handled, _ := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled for write query")
-	}
-}
-
-func TestTryExecuteApplyBatchedCollectLookup_ImportColNotInOuter(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"otherCol"}, Rows: [][]interface{}{{"v"}}}
-	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k RETURN collect(n) AS nodes"}
-	_, handled, _ := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled when import col not in outer")
-	}
-}
-
-func TestTryExecuteApplyBatchedCollectLookup_AllNilKeys(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-	mock := &mockCypherExecutor{results: map[string]*ResultStream{}}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-
-	input := &ResultStream{
-		Columns: []string{"textKey128"},
-		Rows:    [][]interface{}{{nil}, {nil}},
-	}
-	inner := &FragmentExec{
-		Query:     "WITH textKey128 MATCH (tt) WHERE tt.id = textKey128 RETURN collect(tt) AS texts",
-		GraphName: "db1",
-	}
-	result, handled, err := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, input, inner, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !handled {
-		t.Fatal("expected handled for all-nil keys")
-	}
-	// All nil keys → empty collect for each row.
-	if len(result.Rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(result.Rows))
-	}
-}
-
-func TestTryExecuteApplyBatchedLookupRows_NilInput(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, nil, nil, nil, "")
-	if handled {
-		t.Fatal("expected not handled for nil input")
-	}
-}
-
-func TestTryExecuteApplyBatchedLookupRows_NonMatchingQuery(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
-	inner := &FragmentExec{Query: "MATCH (n) RETURN n"} // No WITH.
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled for non-matching query")
-	}
-}
-
-func TestTryExecuteApplyBatchedLookupRows_ContainsCollect(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
-	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k RETURN collect(n) AS nodes"}
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled when query contains collect(")
-	}
-}
-
-func TestTryExecuteApplyBatchedLookupRows_WriteQuery(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
-	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k SET n.x = 1 RETURN n.x AS x"}
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled for write query")
-	}
-}
-
-func TestTryExecuteApplyBatchedLookupRows_ImportColNotInOuter(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"other"}, Rows: [][]interface{}{{"v"}}}
-	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k RETURN n.name AS name"}
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled when import col not in outer")
-	}
-}
-
-func TestTryExecuteApplyBatchedLookupRows_AllNilKeys(t *testing.T) {
-	catalog := NewCatalog()
-	catalog.Register("db1", &LocationLocal{DBName: "db1"})
-	mock := &mockCypherExecutor{results: map[string]*ResultStream{}}
-	exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
-
-	input := &ResultStream{
-		Columns: []string{"id"},
-		Rows:    [][]interface{}{{nil}, {nil}},
-	}
-	inner := &FragmentExec{
-		Query:     "WITH id MATCH (n) WHERE n.id = id RETURN n.name AS name",
-		GraphName: "db1",
-	}
-	result, handled, err := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !handled {
-		t.Fatal("expected handled for all-nil keys")
-	}
-	if len(result.Rows) != 0 {
-		t.Fatalf("expected 0 rows for all-nil keys, got %d", len(result.Rows))
-	}
-}
-
-func TestTryExecuteApplyBatchedLookupRows_BadRegexMatch(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
-	// Matches WITH ... but returnPart is empty.
-	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k RETURN "}
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled for empty return part")
-	}
-}
-
-func TestTryExecuteApplyBatchedCollectLookup_StandaloneImportInOtherWhere(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
-	// otherWhere contains standalone reference to import col.
-	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k AND k > 0 RETURN collect(n) AS nodes"}
-	_, handled, _ := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled when import col appears in otherWhere")
+func TestTryExecuteApplyBatchedLookup_AllNilKeys(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		collect     bool
+		columns     []string
+		query       string
+		wantColumns string
+		wantRows    int
+	}{
+		{"collect", true, []string{"textKey128"}, "WITH textKey128 MATCH (tt) WHERE tt.id = textKey128 RETURN collect(tt) AS texts", "textKey128,texts", 2},
+		{"rows", false, []string{"id"}, "WITH id MATCH (n) WHERE n.id = id RETURN n.name AS name", "id,name", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			catalog := NewCatalog()
+			catalog.Register("db1", &LocationLocal{DBName: "db1"})
+			mock := &mockCypherExecutor{results: map[string]*ResultStream{}, calls: map[string]int{}}
+			exec := NewFabricExecutor(catalog, newTestLocalExecutor(mock), nil)
+			input := &ResultStream{Columns: tc.columns, Rows: [][]interface{}{{nil}, {nil}}}
+			inner := &FragmentExec{Query: tc.query, GraphName: "db1"}
+			var result *ResultStream
+			var handled bool
+			var err error
+			if tc.collect {
+				result, handled, err = exec.tryExecuteApplyBatchedLookup(context.Background(), nil, input.Columns, nil, inner, nil, "", input)
+			} else {
+				result, handled, err = exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if !handled {
+				t.Fatal("expected handled for all-nil keys")
+			}
+			if len(result.Rows) != tc.wantRows {
+				t.Fatalf("expected %d rows, got %d", tc.wantRows, len(result.Rows))
+			}
+			if got := strings.Join(result.Columns, ","); got != tc.wantColumns {
+				t.Fatalf("expected columns %q, got %q", tc.wantColumns, got)
+			}
+			for i, row := range result.Rows {
+				if row[0] != nil {
+					t.Fatalf("row %d: expected nil outer key preserved, got %#v", i, row[0])
+				}
+				texts, ok := row[1].([]interface{})
+				if !ok || len(texts) != 0 {
+					t.Fatalf("row %d: expected empty collect list, got %#v", i, row[1])
+				}
+			}
+			if len(mock.calls) != 0 {
+				t.Fatalf("expected no inner query execution for all-nil keys, got calls %v", mock.calls)
+			}
+		})
 	}
 }
 
@@ -4228,28 +4172,6 @@ func TestExecuteApply_PerRowProjectionFastPath(t *testing.T) {
 	}
 }
 
-func TestTryExecuteApplyBatchedCollectLookup_RegexNoMatch(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
-	// WITH + RETURN collect but doesn't match the regex (missing WHERE).
-	inner := &FragmentExec{Query: "WITH k MATCH (n) RETURN collect(n) AS nodes"}
-	_, handled, _ := exec.tryExecuteApplyBatchedCollectLookup(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled for regex non-match")
-	}
-}
-
-func TestTryExecuteApplyBatchedLookupRows_NoCorrelation(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
-	// WHERE clause doesn't correlate to import col.
-	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.x = 'literal' RETURN n.y AS y"}
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled when no correlation found")
-	}
-}
-
 func TestParseApplyCorrelatedLookupSubquery_WithModifiersAndOptionalWhere(t *testing.T) {
 	spec, ok := parseApplyCorrelatedLookupSubquery(
 		"WITH sourceId USE translations.txr MATCH (tt:MongoDocument) WHERE tt.translationId = sourceId RETURN tt.language AS language, tt.translatedText AS translatedText ORDER BY tt.language DESC LIMIT 1",
@@ -4344,17 +4266,6 @@ func TestFabricExecutor_ApplyBatchedLookupRows_ModifiersPerOuterKey(t *testing.T
 	}
 	if result.Rows[1][0] != "id2" || result.Rows[1][1] != "fr" {
 		t.Fatalf("unexpected second row: %v", result.Rows[1])
-	}
-}
-
-func TestTryExecuteApplyBatchedLookupRows_NonSimpleReturnItems(t *testing.T) {
-	exec := NewFabricExecutor(NewCatalog(), nil, nil)
-	input := &ResultStream{Columns: []string{"k"}, Rows: [][]interface{}{{"v"}}}
-	// RETURN has function call (non-simple).
-	inner := &FragmentExec{Query: "WITH k MATCH (n) WHERE n.id = k RETURN count(n) AS cnt"}
-	_, handled, _ := exec.tryExecuteApplyBatchedLookupRows(context.Background(), nil, input, inner, nil, "")
-	if handled {
-		t.Fatal("expected not handled for non-simple return items")
 	}
 }
 

@@ -29,7 +29,7 @@ func (e *StorageExecutor) sharedForeachForTest(ctx context.Context, query string
 		row[name] = edge
 	}
 	bindParameterRow(ctx, row)
-	clauses, ok, _ := parsePipelineClauses(query)
+	clauses, ok, _ := parsePipelineClauses(ctx, query)
 	if !ok {
 		return e.Execute(withValueBindings(ctx, row), query, getParamsFromContext(ctx))
 	}
@@ -67,7 +67,7 @@ func (e *StorageExecutor) sharedPathComparisonForTest(left, right interface{}, o
 }
 
 func (e *StorageExecutor) sharedTrailingRowsHandledForTest(ctx context.Context, query string, input, output *ExecuteResult) (*ExecuteResult, bool, error) {
-	clauses, ok, _ := parsePipelineClauses(query)
+	clauses, ok, _ := parsePipelineClauses(ctx, query)
 	if !ok {
 		return nil, false, fmt.Errorf("invalid pipeline clauses: %s", query)
 	}
@@ -185,7 +185,7 @@ func (e *StorageExecutor) sharedSeededCallForTest(ctx context.Context, input *Ex
 func (e *StorageExecutor) sharedCorrelatedCallForTest(ctx context.Context, input *ExecuteResult, body string, imports []string) (*ExecuteResult, error) {
 	columns := append([]string(nil), input.Columns...)
 	call := "CALL (" + strings.Join(imports, ", ") + ") { " + body + " }"
-	outputs, err := e.ResultColumns(call, resultmetadata.KnownScope(input.Columns), cypherVersionFromContext(ctx) == "25")
+	outputs, err := e.ResultColumns(ctx, call, resultmetadata.KnownScope(input.Columns), cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
@@ -218,7 +218,7 @@ func (e *StorageExecutor) sharedScopedTransactionalCallForTest(ctx context.Conte
 }
 
 func (e *StorageExecutor) sharedCallTailForTest(ctx context.Context, input *ExecuteResult, tail string) (*ExecuteResult, error) {
-	if _, parsed, _ := parsePipelineClauses(tail); !parsed {
+	if _, parsed, _ := parsePipelineClauses(ctx, tail); !parsed {
 		tail = "RETURN * " + tail
 	}
 	return e.sharedTrailingRowsForTest(ctx, tail, input, input)
@@ -322,7 +322,7 @@ func (e *StorageExecutor) sharedPipelineRowsForTest(ctx context.Context, query s
 }
 
 func (e *StorageExecutor) sharedCreateBindingsForTest(ctx context.Context, query string) (*ExecuteResult, map[string]*storage.Node, map[string]*storage.Edge, error) {
-	clauses, ok, _ := parsePipelineClauses(query)
+	clauses, ok, _ := parsePipelineClauses(ctx, query)
 	if !ok || len(clauses) == 0 || clauses[0].kind != pipelineClauseCreate {
 		if pattern := strings.TrimSpace(strings.TrimPrefix(query, "CREATE")); patternHasRelationship(pattern) {
 			if err := validateCreateRelationshipShape(pattern); err != nil {
@@ -1133,9 +1133,9 @@ func TestSetRejectsEmptyCommaSegmentsBeforeWrites(t *testing.T) {
 func TestMergeValidationTracksBindingsAcrossClauseComposition(t *testing.T) {
 	exec, _ := newConvergenceExecutor(t)
 
-	require.NoError(t, exec.validateMergeSemanticScopes("MATCH (source), (target) MERGE (source)-[relationship:LINK]->(target)", false))
-	require.NoError(t, exec.validateMergeSemanticScopes("MERGE (node:Item {value: $value})", false))
-	require.NoError(t, exec.validateMergeSemanticScopes("RETURN 1", false))
+	require.NoError(t, exec.validateMergeSemanticScopes(t.Context(), "MATCH (source), (target) MERGE (source)-[relationship:LINK]->(target)", false))
+	require.NoError(t, exec.validateMergeSemanticScopes(t.Context(), "MERGE (node:Item {value: $value})", false))
+	require.NoError(t, exec.validateMergeSemanticScopes(t.Context(), "RETURN 1", false))
 
 	tests := []struct {
 		name  string
@@ -1150,7 +1150,7 @@ func TestMergeValidationTracksBindingsAcrossClauseComposition(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := exec.validateMergeSemanticScopes(test.query, false)
+			err := exec.validateMergeSemanticScopes(t.Context(), test.query, false)
 			require.Error(t, err)
 			var semanticError *SemanticError
 			require.ErrorAs(t, err, &semanticError)
@@ -1166,11 +1166,11 @@ func TestMergeActionsRejectUndefinedVariablesBeforeExecution(t *testing.T) {
 		"MERGE (node) ON CREATE SET missing.value = 1",
 		"MERGE (node) ON MATCH SET missing.value = 1",
 	} {
-		clauses, ok := splitPipelineClauses(query)
+		clauses, ok := splitPipelineClauses(t.Context(), query)
 		require.True(t, ok)
 		require.Len(t, clauses, 1)
 		require.Equal(t, query, clauses[0].text)
-		require.Error(t, exec.validateMergeSemanticScopes(query, false))
+		require.Error(t, exec.validateMergeSemanticScopes(t.Context(), query, false))
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err)
 		var semanticError *SemanticError

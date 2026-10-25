@@ -14,7 +14,7 @@ import (
 
 func TestListInputPublicRepresentations(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "list_inputs")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	t.Cleanup(func() { rowValueProgramsDisabled.Store(false) })
 	inputs := listinputs.Inputs()
@@ -89,7 +89,7 @@ func TestListInputPublicRepresentations(t *testing.T) {
 }
 
 func TestListInputReportedLoss(t *testing.T) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "repro"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "repro"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	params := map[string]interface{}{"xs": []string{"a", "b", "a"}}
 	for _, tc := range []struct {
 		query string

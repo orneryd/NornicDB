@@ -44,7 +44,7 @@ func TestTransactionMemoryYAMLOverrideActiveBeforeFirstProtocolExecutor(t *testi
 	require.NoError(t, err)
 	// This represents Bolt or another embedded client arriving before HTTP
 	// has built a cached executor for the database.
-	executor := cypher.NewStorageExecutorWithQueryCachePolicy(engine, 0, 0)
+	executor := cypher.NewStorageExecutor(engine, cypher.QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	_, err = executor.Execute(context.Background(), httpHeavyCollect, nil)
 	require.Error(t, err)
 	code, _ := nornicerrors.Neo4jStatus(err)

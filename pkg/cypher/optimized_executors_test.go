@@ -876,3 +876,34 @@ func TestParallelTraversalConsistency(t *testing.T) {
 		assert.Equal(t, results[0], results[i], "Parallel execution should be deterministic in count")
 	}
 }
+
+// TestOptimizedRelationshipDirectionContract pins the public dispatcher's actual
+// row values, rather than merely checking that a direction-specific path ran.
+func TestOptimizedRelationshipDirectionContract(t *testing.T) {
+	exec := setupSocialNetwork(t)
+	for _, tc := range []struct {
+		name, query string
+		want        [][]interface{}
+	}{
+		{"incoming", "MATCH (p:Person)<-[:FOLLOWS]-(follower:Person) RETURN p.name, count(follower) AS followers", [][]interface{}{{"User1", int64(3)}, {"User2", int64(2)}, {"User3", int64(1)}, {"User4", int64(1)}}},
+		{"outgoing", "MATCH (p:Person)-[:FOLLOWS]->(following:Person) RETURN p.name, count(following) AS following", [][]interface{}{{"User1", int64(2)}, {"User2", int64(1)}, {"User3", int64(1)}, {"User4", int64(1)}, {"User5", int64(2)}}},
+		{"incoming limit", "MATCH (p:Person)<-[:FOLLOWS]-(follower:Person) RETURN p.name, count(follower) AS followers ORDER BY followers DESC LIMIT 1", [][]interface{}{{"User1", int64(3)}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			info := DetectQueryPattern(ctx, tc.query)
+			result, handled := exec.ExecuteOptimized(ctx, tc.query, info)
+			require.True(t, handled)
+			require.NotNil(t, result)
+			require.NotNil(t, result.Stats)
+			require.ElementsMatch(t, tc.want, result.Rows)
+			require.Len(t, result.Columns, 2)
+			require.Equal(t, "p.name", result.Columns[0])
+			if tc.name == "outgoing" {
+				require.Equal(t, "following", result.Columns[1])
+			} else {
+				require.Equal(t, "followers", result.Columns[1])
+			}
+		})
+	}
+}

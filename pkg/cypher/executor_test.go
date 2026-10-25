@@ -26,36 +26,51 @@ func TestNewStorageExecutor(t *testing.T) {
 }
 
 func TestStorageExecutorQueryCacheTTLIsDatabaseScoped(t *testing.T) {
-	fast := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 25, 2*time.Second)
-	slow := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 2500, 30*time.Minute)
-	disabled := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 0, time.Minute)
+	cases := []struct {
+		name    string
+		policy  QueryCachePolicy
+		clone   bool
+		execute bool
+	}{
+		{"fast database and clone", QueryCachePolicy{MaxEntries: 25, TTL: 2 * time.Second}, true, false},
+		{"slow database and clone", QueryCachePolicy{MaxEntries: 2500, TTL: 30 * time.Minute}, true, false},
+		{"disabled database", QueryCachePolicy{MaxEntries: 0, TTL: time.Minute}, false, false},
+		{"public execution entry TTL", QueryCachePolicy{MaxEntries: 10, TTL: 37 * time.Second}, false, true},
+	}
+	// Keep all database policies alive before inspecting any of them.
+	executors := make([]*StorageExecutor, len(cases))
+	for i, tc := range cases {
+		executors[i] = NewStorageExecutor(newTestMemoryEngine(t), tc.policy)
+	}
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exec := executors[i]
+			if tc.policy.MaxEntries == 0 {
+				require.Nil(t, exec.cache)
+			} else {
+				maxEntries, ttl := exec.QueryCachePolicy()
+				require.Equal(t, tc.policy.MaxEntries, maxEntries)
+				require.Equal(t, tc.policy.TTL, ttl)
+			}
+			if tc.clone {
+				require.Equal(t, exec.queryCacheTTL, exec.cloneWithStorage(exec.storage).queryCacheTTL)
+			}
+			if tc.execute {
+				query := "MATCH (n) RETURN n"
+				_, err := exec.Execute(context.Background(), query, nil)
+				require.NoError(t, err)
+				version, supported := exec.storage.(storage.GraphMutationVersionProvider).GraphMutationVersion()
+				require.True(t, supported)
+				key := resultCacheEntryKey(t.Context(), query, nil) + ":graph:" + strconv.FormatUint(version, 10)
+				exec.cache.mu.RLock()
+				entry := exec.cache.cache[key]
+				exec.cache.mu.RUnlock()
+				require.NotNil(t, entry)
+				require.Equal(t, tc.policy.TTL, entry.ttl)
+			}
+		})
+	}
 
-	fastMaxEntries, fastTTL := fast.QueryCachePolicy()
-	slowMaxEntries, slowTTL := slow.QueryCachePolicy()
-	require.Equal(t, 25, fastMaxEntries)
-	require.Equal(t, 2*time.Second, fastTTL)
-	require.Equal(t, 2500, slowMaxEntries)
-	require.Equal(t, 30*time.Minute, slowTTL)
-	require.Nil(t, disabled.cache)
-	require.Equal(t, fast.queryCacheTTL, fast.cloneWithStorage(fast.storage).queryCacheTTL)
-	require.Equal(t, slow.queryCacheTTL, slow.cloneWithStorage(slow.storage).queryCacheTTL)
-}
-
-func TestStorageExecutorCachesResultsWithDatabaseTTL(t *testing.T) {
-	exec := NewStorageExecutorWithQueryCachePolicy(newTestMemoryEngine(t), 10, 37*time.Second)
-	query := "MATCH (n) RETURN n"
-
-	_, err := exec.Execute(context.Background(), query, nil)
-	require.NoError(t, err)
-
-	version, supported := exec.storage.(storage.GraphMutationVersionProvider).GraphMutationVersion()
-	require.True(t, supported)
-	key := resultCacheEntryKey(query, nil) + ":graph:" + strconv.FormatUint(version, 10)
-	exec.cache.mu.RLock()
-	entry := exec.cache.cache[key]
-	exec.cache.mu.RUnlock()
-	require.NotNil(t, entry)
-	require.Equal(t, 37*time.Second, entry.ttl)
 }
 
 func TestInvalidateCommittedWriteCaches(t *testing.T) {
@@ -874,7 +889,7 @@ func TestParseYieldClause(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseYieldClause(tt.cypher)
+			result := parseYieldClause(t.Context(), tt.cypher)
 			if tt.expected == nil {
 				assert.Nil(t, result)
 				return

@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"html/template"
 	"log"
 	"net/http"
@@ -30,6 +31,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // Configuration
@@ -79,6 +82,9 @@ type OAuthProvider struct {
 
 // NewOAuthProvider creates a new OAuth provider with default test users
 func NewOAuthProvider(clientID, clientSecret, issuer, redirectURI string) (*OAuthProvider, error) {
+	if err := security.ValidateURL(issuer, security.URLPolicy{SchemePolicy: security.URLAbsoluteScheme, MaxLength: -1, HostPolicy: security.URLAnyHost, RejectCredentials: true}); err != nil {
+		return nil, fmt.Errorf("invalid OAuth issuer: %w", err)
+	}
 	redirectURL, err := validateLocalRedirectURI(redirectURI)
 	if err != nil {
 		return nil, fmt.Errorf("invalid registered redirect URI: %w", err)
@@ -129,7 +135,7 @@ func generateRandomToken(length int) (string, error) {
 func validateLocalRedirectURI(rawURI string) (*url.URL, error) {
 	redirectURL, err := url.Parse(rawURI)
 	if err != nil {
-		return nil, fmt.Errorf("invalid redirect_uri: %w", err)
+		return nil, fmt.Errorf("invalid redirect_uri: %w", observability.RedactError(err, observability.ClientCredentials(rawURI)...))
 	}
 	if redirectURL.Scheme != "http" && redirectURL.Scheme != "https" {
 		return nil, fmt.Errorf("invalid redirect_uri scheme")
@@ -619,6 +625,7 @@ func main() {
 	clientSecret := flag.String("client-secret", defaultClientSecret, "OAuth client secret")
 	issuer := flag.String("issuer", defaultIssuer, "OAuth issuer URL")
 	redirectURI := flag.String("redirect-uri", defaultRedirectURI, "Exact registered OAuth callback URL")
+	flag.VisitAll(func(f *flag.Flag) { f.DefValue = observability.DisplayFlagDefault(f.Name, f.DefValue) })
 	flag.Parse()
 
 	provider, err := NewOAuthProvider(*clientID, *clientSecret, *issuer, *redirectURI)
@@ -630,12 +637,13 @@ func main() {
 	go provider.cleanupExpiredTokens()
 
 	// Register routes
-	http.HandleFunc("/oauth2/v1/authorize", provider.handleAuthorize)
-	http.HandleFunc("/oauth2/v1/authorize/consent", provider.handleConsent)
-	http.HandleFunc("/oauth2/v1/token", provider.handleToken)
-	http.HandleFunc("/oauth2/v1/userinfo", provider.handleUserinfo)
-	http.HandleFunc("/.well-known/oauth-authorization-server", provider.handleDiscovery)
-	http.HandleFunc("/health", provider.handleHealth)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/oauth2/v1/authorize", provider.handleAuthorize)
+	mux.HandleFunc("/oauth2/v1/authorize/consent", provider.handleConsent)
+	mux.HandleFunc("/oauth2/v1/token", provider.handleToken)
+	mux.HandleFunc("/oauth2/v1/userinfo", provider.handleUserinfo)
+	mux.HandleFunc("/.well-known/oauth-authorization-server", provider.handleDiscovery)
+	mux.HandleFunc("/health", provider.handleHealth)
 
 	addr := fmt.Sprintf(":%d", *port)
 
@@ -664,11 +672,11 @@ func main() {
 %s
 
 ✅ Ready to accept OAuth requests!
-`, addr, *clientID, "<REDACTED>", *issuer, strings.Join(userList, "\n"))
+`, addr, *clientID, observability.RedactedPlaceholder(), observability.RedactURL(*issuer), strings.Join(userList, "\n"))
 
 	fmt.Print(output)
 
-	if err := http.ListenAndServe(addr, nil); err != nil {
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }

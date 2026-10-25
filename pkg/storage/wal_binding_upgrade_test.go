@@ -7,13 +7,14 @@ import (
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
 func reviewBindingEngine(t *testing.T, dir string) *BadgerEngine {
 	t.Helper()
-	b, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}})
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
 	require.NoError(t, err)
 	// Keep crash fixtures pending even after an explicit flush adapts the delay.
 	b.writeBehind.SetDelayBounds(time.Hour, time.Hour)
@@ -26,101 +27,100 @@ func reviewBindingEngine(t *testing.T, dir string) *BadgerEngine {
 // exactly empty. The recovery destination is the ORIGINAL store, not a snapshot.
 func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 	for _, route := range []string{"startup", "snapshot"} {
-		t.Run(route, func(t *testing.T) { reviewLegacySameStoreUpgrade(t, route) })
+		t.Run(route, func(t *testing.T) {
+			t.Cleanup(config.WithWALEnabled())
+			dir := t.TempDir()
+			source := reviewBindingEngine(t, dir)
+			_, err := source.CreateNode(&Node{ID: "legacy:a", Properties: map[string]any{"value": int64(0)}})
+			require.NoError(t, err)
+			require.NoError(t, source.FlushWriteBehind())
+			// Flush can leave an empty rotation request queued. Start the crash phase
+			// with a fresh idle buffer, so that request cannot persist later updates.
+			source.writeBehind.Close()
+			source.writeBehind = NewWriteBehindBuffer(time.Hour, 1000000, source.replayWriteBehind)
+			capture, err := NewWAL(t.TempDir(), DefaultWALConfig())
+			require.NoError(t, err)
+			source.SetBufferedCommitWAL(capture)
+			for i := 1; i <= 20; i++ {
+				tx, err := source.BeginTransaction()
+				require.NoError(t, err)
+				require.NoError(t, tx.SetNamespace("legacy"))
+				require.NoError(t, tx.SetImplicit(true))
+				require.NoError(t, tx.UpdateNode(&Node{ID: "legacy:a", Properties: map[string]any{"value": int64(i)}}))
+				require.NoError(t, tx.Commit())
+				require.True(t, tx.AcknowledgedBuffered())
+			}
+			entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
+			require.NoError(t, err)
+			legacy, err := NewWAL(t.TempDir(), DefaultWALConfig())
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = legacy.Close() })
+			count := 0
+			for _, entry := range entries {
+				if entry.Operation != OpBufferedCommit {
+					continue
+				}
+				data, err := decodeBufferedWALRecord(entry)
+				require.NoError(t, err)
+				require.NotEmpty(t, data.TxID)
+				data.PropKeys, data.PropKeyCounters, data.PropertyBindings = nil, nil, nil
+				data.PropertyDictionaryID = ""
+				payload, err := json.Marshal(data)
+				require.NoError(t, err)
+				require.NoError(t, legacy.Append(OpBufferedCommit, json.RawMessage(payload)))
+				count++
+			}
+			require.Equal(t, 20, count)
+			require.NoError(t, legacy.Close()) // Flush the generic Append buffer before replay.
+			crashClose(t, source, capture)
+			if route == "snapshot" {
+				dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = dest.Close() })
+				path := filepath.Join(t.TempDir(), "snapshot.bin")
+				require.NoError(t, SaveSnapshot(&Snapshot{Nodes: []*Node{
+					{ID: "legacy:b", Properties: map[string]any{"other": "keep"}},
+					{ID: "separator:a"},
+					{ID: "legacy:a", Properties: map[string]any{"value": int64(0)}},
+				}}, path))
+				result, _, err := RecoverIntoEngine(dest, legacy.Config().Dir, path)
+				require.NoError(t, err)
+				require.Equal(t, 20, result.Failed)
+				require.Zero(t, result.Applied)
+				for _, failure := range result.Errors {
+					require.ErrorContains(t, failure.Error, "missing property name binding")
+				}
+				node, err := dest.GetNode("legacy:a")
+				require.NoError(t, err)
+				require.Equal(t, map[string]any{"value": int64(0)}, node.Properties)
+				assertPropertyDictionaryBijection(t, dest)
+				return
+			}
+			recovered := reviewBindingEngine(t, dir)
+			require.NotNil(t, recovered.writeBehind)
+			legacyEntries, err := ReadWALEntriesFromDir(legacy.Config().Dir)
+			require.NoError(t, err)
+			require.Len(t, legacyEntries, 20)
+			for _, entry := range legacyEntries {
+				data, err := decodeBufferedWALRecord(entry)
+				require.NoError(t, err)
+				require.NotEmpty(t, data.TxID)
+				marked, err := recovered.bufferedFlushMarkerExists(data.TxID)
+				require.NoError(t, err)
+				require.False(t, marked, "fixture update unexpectedly reached storage")
+			}
+			name, ok := recovered.propKeyDict.lookup("legacy", 1)
+			require.True(t, ok)
+			require.Equal(t, "value", name, "the original durable source dictionary survives the crash")
+			n, err := RecoverBufferedCommitsAtOpen(recovered, legacy)
+			t.Logf("legacy records=20, records missing per-record bindings=20, replayed=%d, error=%v", n, err)
+			require.NoError(t, err, "upgrade must retain recoverability when the original source dictionary is intact")
+			require.Equal(t, 20, n)
+			node, err := recovered.GetNode("legacy:a")
+			require.NoError(t, err)
+			require.Equal(t, int64(20), node.Properties["value"])
+		})
 	}
-}
-func reviewLegacySameStoreUpgrade(t *testing.T, route string) {
-	t.Cleanup(config.WithWALEnabled())
-	dir := t.TempDir()
-	source := reviewBindingEngine(t, dir)
-	_, err := source.CreateNode(&Node{ID: "legacy:a", Properties: map[string]any{"value": int64(0)}})
-	require.NoError(t, err)
-	require.NoError(t, source.FlushWriteBehind())
-	// Flush can leave an empty rotation request queued. Start the crash phase
-	// with a fresh idle buffer, so that request cannot persist later updates.
-	source.writeBehind.Close()
-	source.writeBehind = NewWriteBehindBuffer(time.Hour, 1000000, source.replayWriteBehind)
-	capture, err := NewWAL(t.TempDir(), DefaultWALConfig())
-	require.NoError(t, err)
-	source.SetBufferedCommitWAL(capture)
-	for i := 1; i <= 20; i++ {
-		tx, err := source.BeginTransaction()
-		require.NoError(t, err)
-		require.NoError(t, tx.SetNamespace("legacy"))
-		require.NoError(t, tx.SetImplicit(true))
-		require.NoError(t, tx.UpdateNode(&Node{ID: "legacy:a", Properties: map[string]any{"value": int64(i)}}))
-		require.NoError(t, tx.Commit())
-		require.True(t, tx.AcknowledgedBuffered())
-	}
-	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
-	require.NoError(t, err)
-	legacy, err := NewWAL(t.TempDir(), DefaultWALConfig())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = legacy.Close() })
-	count := 0
-	for _, entry := range entries {
-		if entry.Operation != OpBufferedCommit {
-			continue
-		}
-		data, err := decodeBufferedWALRecord(entry)
-		require.NoError(t, err)
-		require.NotEmpty(t, data.TxID)
-		data.PropKeys, data.PropKeyCounters, data.PropertyBindings = nil, nil, nil
-		data.PropertyDictionaryID = ""
-		payload, err := json.Marshal(data)
-		require.NoError(t, err)
-		require.NoError(t, legacy.Append(OpBufferedCommit, json.RawMessage(payload)))
-		count++
-	}
-	require.Equal(t, 20, count)
-	require.NoError(t, legacy.Close()) // Flush the generic Append buffer before replay.
-	crashClose(t, source, capture)
-	if route == "snapshot" {
-		dest, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = dest.Close() })
-		path := filepath.Join(t.TempDir(), "snapshot.bin")
-		require.NoError(t, SaveSnapshot(&Snapshot{Nodes: []*Node{
-			{ID: "legacy:b", Properties: map[string]any{"other": "keep"}},
-			{ID: "separator:a"},
-			{ID: "legacy:a", Properties: map[string]any{"value": int64(0)}},
-		}}, path))
-		result, _, err := RecoverIntoEngine(dest, legacy.Config().Dir, path)
-		require.NoError(t, err)
-		require.Equal(t, 20, result.Failed)
-		require.Zero(t, result.Applied)
-		for _, failure := range result.Errors {
-			require.ErrorContains(t, failure.Error, "missing property name binding")
-		}
-		node, err := dest.GetNode("legacy:a")
-		require.NoError(t, err)
-		require.Equal(t, map[string]any{"value": int64(0)}, node.Properties)
-		assertPropertyDictionaryBijection(t, dest)
-		return
-	}
-	recovered := reviewBindingEngine(t, dir)
-	require.NotNil(t, recovered.writeBehind)
-	legacyEntries, err := ReadWALEntriesFromDir(legacy.Config().Dir)
-	require.NoError(t, err)
-	require.Len(t, legacyEntries, 20)
-	for _, entry := range legacyEntries {
-		data, err := decodeBufferedWALRecord(entry)
-		require.NoError(t, err)
-		require.NotEmpty(t, data.TxID)
-		marked, err := recovered.bufferedFlushMarkerExists(data.TxID)
-		require.NoError(t, err)
-		require.False(t, marked, "fixture update unexpectedly reached storage")
-	}
-	name, ok := recovered.propKeyDict.lookup("legacy", 1)
-	require.True(t, ok)
-	require.Equal(t, "value", name, "the original durable source dictionary survives the crash")
-	n, err := RecoverBufferedCommitsAtOpen(recovered, legacy)
-	t.Logf("legacy records=20, records missing per-record bindings=20, replayed=%d, error=%v", n, err)
-	require.NoError(t, err, "upgrade must retain recoverability when the original source dictionary is intact")
-	require.Equal(t, 20, n)
-	node, err := recovered.GetNode("legacy:a")
-	require.NoError(t, err)
-	require.Equal(t, int64(20), node.Properties["value"])
 }
 
 // These synthetic typed records each provide a lossless named property image.

@@ -116,11 +116,11 @@ func (e *StorageExecutor) validatePercentileCalls(expression string, row pipelin
 	return nil
 }
 
-func (e *StorageExecutor) validatePipelinePercentileArguments(rows []pipelineRow, clause, keyword string) error {
+func (e *StorageExecutor) validatePipelinePercentileArguments(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
 	if len(rows) == 0 {
 		rows = []pipelineRow{{}}
 	}
-	for _, expression := range projectionExpressions(clause, keyword) {
+	for _, expression := range projectionExpressions(ctx, clause, keyword) {
 		if err := e.validatePercentileCalls(expression, rows[0]); err != nil {
 			return err
 		}

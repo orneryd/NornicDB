@@ -1,14 +1,11 @@
 package nornicdb
 
 import (
-	"archive/zip"
-	"io"
-	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -16,24 +13,7 @@ import (
 // Exercise the real constructor authority with a store and twenty pending
 // records written by the unchanged release base, before identities existed.
 func TestOpenGenuinePreIdentityWALUpgrade(t *testing.T) {
-	archive, err := zip.OpenReader(filepath.Join("..", "storage", "testdata", "wal-pre-identity", "release.zip"))
-	require.NoError(t, err)
-	defer archive.Close()
-	dir := t.TempDir()
-	for _, file := range archive.File {
-		require.True(t, filepath.IsLocal(file.Name))
-		name := strings.TrimPrefix(file.Name, "data/")
-		path := filepath.Join(dir, filepath.FromSlash(name))
-		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
-		input, err := file.Open()
-		require.NoError(t, err)
-		output, err := os.Create(path)
-		require.NoError(t, err)
-		_, err = io.Copy(output, input)
-		require.NoError(t, err)
-		require.NoError(t, output.Close())
-		require.NoError(t, input.Close())
-	}
+	dir := fixtureowner.ExtractZip(t, filepath.Join("..", "storage", "testdata", "wal-pre-identity", "release.zip"), "data/")
 	cfg := config.LoadDefaults()
 	cfg.Database.StrictDurability = false
 	cfg.Database.AsyncWritesEnabled = true

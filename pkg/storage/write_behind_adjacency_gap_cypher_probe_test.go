@@ -16,7 +16,7 @@ func TestWriteBehindAdjacencyGapPublicCypherProbe(t *testing.T) {
 	b, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), LowMemory: true, WriteBehind: true, WriteBehindInterval: time.Hour, WriteBehindMaxOps: 100000}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, b.FlushWriteBehind()); require.NoError(t, b.Close()) })
-	exec := cypher.NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(b, "probe"), 0, 0)
+	exec := cypher.NewStorageExecutor(storage.NewNamespacedEngine(b, "probe"), cypher.QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	run := func(query string) *cypher.ExecuteResult {
 		result, err := exec.Execute(ctx, query, nil)

@@ -28,6 +28,8 @@ asks for the latter.
 The head graph comes from ``graphify extract`` on the PR checkout (see ``pr-review/action.yml``).
 """
 import argparse
+from concurrent.futures import ThreadPoolExecutor
+from collections import deque
 import fnmatch
 import json
 from http.client import IncompleteRead
@@ -69,7 +71,11 @@ DEFAULTS = {
 
 
 # Generated or boilerplate trees whose functions look alike by construction (every migration has a `change`).
-DEFAULT_IGNORE = ("db/migrate/*", "*/migrations/*", "vendor/*", "*/node_modules/*", "node_modules/*", "*.min.js")
+DEFAULT_IGNORE = ("scripts/*", "db/migrate/*", "*/migrations/*", "vendor/*", "*/node_modules/*", "node_modules/*", "*.min.js",
+                  # ANTLR outputs only; handwritten adapters, tests and grammar stay covered.
+                  "pkg/cypher/antlr/cypher_lexer.go", "pkg/cypher/antlr/cypher_parser.go",
+                  "pkg/cypher/antlr/cypherparser_listener.go",
+                  "pkg/cypher/antlr/cypherparser_base_listener.go")
 
 
 def ignored(path, patterns):
@@ -624,6 +630,34 @@ class Report:
         return [f for f in self.findings if f.kind == "reuse"]
 
 
+def search_results(db, candidates, limit, workers, deadline, clock=time.monotonic):
+    """Bounded prefetch; preserve candidate order and propagate every search failure."""
+    if not 1 <= workers <= 8:
+        raise ValueError("search_workers must be between 1 and 8")
+    if workers == 1:
+        for candidate in candidates:
+            yield db.search(candidate.query, limit=limit)
+        return
+    iterator = iter(candidates)
+    pool = ThreadPoolExecutor(max_workers=workers)
+    pending = deque()
+    try:
+        for candidate in iterator:
+            pending.append(pool.submit(db.search, candidate.query, limit=limit))
+            if len(pending) == workers:
+                break
+        while pending:
+            hits = pending.popleft().result(timeout=max(.001, deadline-clock()))
+            yield hits
+            candidate = next(iterator, None)
+            if candidate is not None:
+                pending.append(pool.submit(db.search, candidate.query, limit=limit))
+    finally:
+        for future in pending:
+            future.cancel()
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
 def analyze(db, repo, graph_path, repo_root, diff, *, head_sha="", base_sha="", options=None, ignore=(),
             cross_repo=False, clock=time.monotonic):
     opts = {**DEFAULTS, **(options or {})}
@@ -650,26 +684,32 @@ def analyze(db, repo, graph_path, repo_root, diff, *, head_sha="", base_sha="", 
     retired = retired_ids(db, repo, diff, graph_path)
     calls = resolved_owner_calls(graph_path, candidates)
     started = clock()
-    for index, candidate in enumerate(candidates):
-        if clock() - started > opts["deadline_seconds"]:
-            skipped = len(candidates) - index
-            report.skipped_by_cap += skipped
-            report.warnings.append(f"The time limit of {opts['deadline_seconds']}s was reached; {skipped} added "
-                                   f"functions were not analyzed.")
-            break
-        hits = db.search(candidate.query, limit=opts["search_limit"])
-        report.analyzed += 1
-        finding, moved = evaluate(candidate, hits, repo=repo, retired=retired,
-                                  min_similarity=opts["min_similarity"], cross_repo=cross_repo,
-                                  max_matches=opts["max_matches"], min_tokens=opts["min_tokens"], ignore=ignore,
-                                  semantic=bool(opts["semantic"]), semantic_min_gap=opts["semantic_min_gap"],
-                                  semantic_min_lead=opts["semantic_min_lead"],
-                                  semantic_min_hits=opts["semantic_min_hits"], deadline=getattr(db, "deadline", None),
-                                  owner_calls=calls.get(candidate.id), existing_owner_calls=report.existing_owner_calls)
-        if moved:
-            report.moved += 1
-        if finding:
-            report.findings.append(finding)
+    searches = search_results(db, candidates, opts["search_limit"],
+                              int(opts.get("search_workers", 4)),
+                              started + opts["deadline_seconds"], clock)
+    try:
+        for index, candidate in enumerate(candidates):
+            if clock() - started > opts["deadline_seconds"]:
+                skipped = len(candidates) - index
+                report.skipped_by_cap += skipped
+                report.warnings.append(f"The time limit of {opts['deadline_seconds']}s was reached; {skipped} added "
+                                       f"functions were not analyzed.")
+                break
+            hits = next(searches)
+            report.analyzed += 1
+            finding, moved = evaluate(candidate, hits, repo=repo, retired=retired,
+                                      min_similarity=opts["min_similarity"], cross_repo=cross_repo,
+                                      max_matches=opts["max_matches"], min_tokens=opts["min_tokens"], ignore=ignore,
+                                      semantic=bool(opts["semantic"]), semantic_min_gap=opts["semantic_min_gap"],
+                                      semantic_min_lead=opts["semantic_min_lead"],
+                                      semantic_min_hits=opts["semantic_min_hits"], deadline=getattr(db, "deadline", None),
+                                      owner_calls=calls.get(candidate.id), existing_owner_calls=report.existing_owner_calls)
+            if moved:
+                report.moved += 1
+            if finding:
+                report.findings.append(finding)
+    finally:
+        searches.close()
     report.findings.sort(key=lambda f: (f.kind != "refactor", -len(f.matches), -f.matches[0].similarity["score"],
                                         f.candidate.source_file, f.candidate.line))
     return report

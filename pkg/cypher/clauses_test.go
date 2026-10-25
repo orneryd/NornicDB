@@ -2310,7 +2310,7 @@ func TestExecuteUnionDirect(t *testing.T) {
 
 	t.Run("union_all_combines_all", func(t *testing.T) {
 		// Using direct execution since the main Execute router might not route to executeUnion
-		result, err := e.executeUnion(ctx, "MATCH (n:Person) WHERE n.age = 25 RETURN n.name UNION ALL MATCH (n:Person) WHERE n.age = 30 RETURN n.name", true)
+		result, err := e.executeUnion(ctx, "MATCH (n:Person) WHERE n.age = 25 RETURN n.name UNION ALL MATCH (n:Person) WHERE n.age = 30 RETURN n.name", true, nil)
 		if err != nil {
 			t.Fatalf("executeUnion failed: %v", err)
 		}
@@ -2320,7 +2320,7 @@ func TestExecuteUnionDirect(t *testing.T) {
 	})
 
 	t.Run("union_distinct_removes_duplicates", func(t *testing.T) {
-		result, err := e.executeUnion(ctx, "MATCH (n:Person) RETURN n.age UNION MATCH (n:Person) RETURN n.age", false)
+		result, err := e.executeUnion(ctx, "MATCH (n:Person) RETURN n.age UNION MATCH (n:Person) RETURN n.age", false, nil)
 		if err != nil {
 			t.Fatalf("executeUnion failed: %v", err)
 		}
@@ -2331,14 +2331,14 @@ func TestExecuteUnionDirect(t *testing.T) {
 	})
 
 	t.Run("union_error_no_clause", func(t *testing.T) {
-		_, err := e.executeUnion(ctx, "MATCH (n) RETURN n", false)
+		_, err := e.executeUnion(ctx, "MATCH (n) RETURN n", false, nil)
 		if err == nil {
 			t.Error("Expected error for missing UNION clause")
 		}
 	})
 
 	t.Run("union_all_error_no_clause", func(t *testing.T) {
-		_, err := e.executeUnion(ctx, "MATCH (n) RETURN n", true)
+		_, err := e.executeUnion(ctx, "MATCH (n) RETURN n", true, nil)
 		if err == nil {
 			t.Error("Expected error for missing UNION ALL clause")
 		}
@@ -2347,7 +2347,7 @@ func TestExecuteUnionDirect(t *testing.T) {
 	t.Run("union_column_mismatch", func(t *testing.T) {
 		// This might or might not error depending on implementation
 		// Just ensure it doesn't panic
-		_, _ = e.executeUnion(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false)
+		_, _ = e.executeUnion(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false, nil)
 	})
 }
 
@@ -3193,7 +3193,7 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// DISTINCT UNION should dedupe.
-	res, err := e.executeUnion(ctx, "RETURN 1 AS x UNION RETURN 1 AS x UNION RETURN 2 AS x", false)
+	res, err := e.executeUnion(ctx, "RETURN 1 AS x UNION RETURN 1 AS x UNION RETURN 2 AS x", false, nil)
 	if err != nil {
 		t.Fatalf("distinct UNION failed: %v", err)
 	}
@@ -3202,7 +3202,7 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	}
 
 	// UNION ALL should keep duplicates.
-	res, err = e.executeUnion(ctx, "RETURN 1 AS x UNION ALL RETURN 1 AS x UNION ALL RETURN 2 AS x", true)
+	res, err = e.executeUnion(ctx, "RETURN 1 AS x UNION ALL RETURN 1 AS x UNION ALL RETURN 2 AS x", true, nil)
 	if err != nil {
 		t.Fatalf("UNION ALL failed: %v", err)
 	}
@@ -3211,7 +3211,7 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	}
 
 	// Mismatched column counts must error.
-	_, err = e.executeUnion(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false)
+	_, err = e.executeUnion(ctx, "RETURN 1 AS a UNION RETURN 1 AS a, 2 AS b", false, nil)
 	if err == nil {
 		t.Fatal("expected mismatched-column UNION error")
 	}
@@ -3220,13 +3220,13 @@ func TestExecuteUnion_AdditionalBranches(t *testing.T) {
 	}
 
 	// Missing UNION separator must error.
-	_, err = e.executeUnion(ctx, "RETURN 1 AS x", false)
+	_, err = e.executeUnion(ctx, "RETURN 1 AS x", false, nil)
 	if err == nil {
 		t.Fatal("expected UNION not found error")
 	}
 
 	// Error in a child query must be wrapped with query index.
-	_, err = e.executeUnion(ctx, "RETURN 1 AS x UNION MATCH (n", false)
+	_, err = e.executeUnion(ctx, "RETURN 1 AS x UNION MATCH (n", false, nil)
 	if err == nil {
 		t.Fatal("expected wrapped error from second UNION query")
 	}

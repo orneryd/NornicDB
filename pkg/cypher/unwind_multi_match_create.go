@@ -99,7 +99,7 @@ func (e *StorageExecutor) executeUnwindMultiMatchCreateBatch(
 	if returnIdx := findKeywordIndexInContext(trimmed, "RETURN"); returnIdx >= 0 {
 		mutationPart = strings.TrimSpace(trimmed[:returnIdx])
 		returnPart = strings.TrimSpace(trimmed[returnIdx:])
-		_, ok := parseUnwindBatchCountReturn(returnPart)
+		_, ok := parseUnwindBatchCountReturn(ctx, returnPart)
 		if !ok {
 			return nil, false, nil
 		}

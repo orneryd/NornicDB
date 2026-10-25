@@ -109,7 +109,7 @@ func (e *StorageExecutor) classifyTransactionalBatchExpression(ctx context.Conte
 		}
 	}
 	if spec.LiteralKind != "" {
-		_, err = e.resolveCallBatchSize(ctx, spec)
+		_, err = e.resolveCallBatchSize(ctx, spec, nil)
 	}
 	return err
 }

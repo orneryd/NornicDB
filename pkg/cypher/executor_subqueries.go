@@ -21,16 +21,16 @@ import (
 // isCallSubquery detects if a query is a CALL {} subquery vs CALL procedure()
 // CALL {} subqueries have "CALL" followed by optional whitespace and "{"
 // CALL procedures have "CALL procedure.name()"
-func isCallSubquery(cypher string) bool {
+func isCallSubquery(ctx context.Context, cypher string) bool {
 	// Use regex for flexible whitespace matching: CALL followed by optional whitespace and {
-	return hasSubqueryPattern(cypher, callSubqueryRe)
+	return hasSubqueryPattern(ctx, cypher, callSubqueryRe)
 }
 
 // startsWithCallSubquery reports whether cypher begins with a CALL { } or
 // CALL (vars) { } subquery clause (as opposed to a procedure CALL, or a
 // subquery later in the statement).
-func startsWithCallSubquery(cypher string) bool {
-	return callSubqueryAt(strings.TrimSpace(cypher), 0)
+func startsWithCallSubquery(ctx context.Context, cypher string) bool {
+	return callSubqueryAt(ctx, strings.TrimSpace(cypher), 0)
 }
 
 func appendCorrelatedBinding(result *ExecuteResult, name string, value interface{}) *ExecuteResult {
@@ -205,47 +205,6 @@ func isCallSubqueryPureReturn(innerBody string) bool {
 		findKeywordIndex(trimmed, "REMOVE") < 0 &&
 		findKeywordIndex(trimmed, "WITH") < 0 &&
 		findKeywordIndex(trimmed, "UNION") < 0
-}
-
-func (e *StorageExecutor) tryExecuteCorrelatedReturnProjection(ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string) (*ExecuteResult, bool, error) {
-	return e.tryExecuteCorrelatedReturnProjectionPreChecked(ctx, seedRow, seedCols, withVars, innerBody, false)
-}
-
-// tryExecuteCorrelatedReturnProjectionPreChecked is the same as tryExecuteCorrelatedReturnProjection
-// but accepts a precomputed isPureReturn flag to skip redundant keyword scanning.
-func (e *StorageExecutor) tryExecuteCorrelatedReturnProjectionPreChecked(ctx context.Context, seedRow []interface{}, seedCols []string, withVars []string, innerBody string, isPureReturn bool) (*ExecuteResult, bool, error) {
-	if !isPureReturn {
-		// Caller didn't precompute — do the check now.
-		if !isCallSubqueryPureReturn(innerBody) {
-			return nil, false, nil
-		}
-	}
-	trimmed := strings.TrimSpace(innerBody)
-
-	colIdx := make(map[string]int, len(seedCols))
-	for i, c := range seedCols {
-		colIdx[c] = i
-	}
-
-	row := make([]interface{}, 0, len(withVars))
-	cols := make([]string, 0, len(withVars))
-	for _, v := range withVars {
-		idx, ok := colIdx[v]
-		if !ok || idx < 0 || idx >= len(seedRow) {
-			return nil, true, localizedError(localization.CypherSubqueriesWithImportUnknownVariable(v), nil)
-		}
-		cols = append(cols, v)
-		row = append(row, seedRow[idx])
-	}
-	seedOnly := &ExecuteResult{
-		Columns: cols,
-		Rows:    [][]interface{}{row},
-	}
-	res, err := e.processCallSubqueryReturn(ctx, seedOnly, trimmed)
-	if err != nil {
-		return nil, true, err
-	}
-	return res, true, nil
 }
 
 // seedNodesFromOuterMatch executes the outer MATCH/WHERE segment through the normal
@@ -466,13 +425,13 @@ func (e *StorageExecutor) seedNodeFromIDString(id string) *storage.Node {
 
 // parseCallSubquery is the compatibility adapter for body/plan consumers. The
 // shared grammar owns the body boundary and the complete transactional spec.
-func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall string, inTransactions bool, batch *transactionBatchSpec) {
-	call, err := readCallClause(context.Background(), cypher)
+func (e *StorageExecutor) parseCallSubquery(ctx context.Context, cypher string) (body, afterCall string, inTransactions bool, batch *transactionBatchSpec) {
+	call, err := readCallClause(ctx, cypher)
 	if err != nil {
 		return "", "", false, nil
 	}
 	body = call.Body
-	if stripped, finishes := stripUnionBranchFinishes(body); finishes && strings.TrimSpace(stripped) != "" {
+	if stripped, finishes := stripUnionBranchFinishes(ctx, body); finishes && strings.TrimSpace(stripped) != "" {
 		body = stripped
 	}
 	return body, call.After, call.Batch != nil, call.Batch
@@ -483,14 +442,14 @@ func (e *StorageExecutor) parseCallSubquery(cypher string) (body, afterCall stri
 // { … }). Its body's leading WITH is then an ordinary projection, never an
 // import list (parseLeadingWithImports): CALL () { WITH 1 AS x FINISH } is a
 // unit subquery whose body is just that WITH (#907).
-func callSubqueryHasScopeClause(cypher string) bool {
-	return readCallSubqueryScope(cypher).scoped
+func callSubqueryHasScopeClause(ctx context.Context, cypher string) bool {
+	return readCallSubqueryScope(ctx, cypher).scoped
 }
 
 // parseCallSubqueryImportVariables is the legacy names-only view. Scope and
 // result-schema consumers use StatementFacts, which preserves syntax errors.
-func parseCallSubqueryImportVariables(cypher string) ([]string, error) {
-	scope := readCallSubqueryScope(cypher)
+func parseCallSubqueryImportVariables(ctx context.Context, cypher string) ([]string, error) {
+	scope := readCallSubqueryScope(ctx, cypher)
 	if scope.invalid {
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
 	}
@@ -500,8 +459,8 @@ func parseCallSubqueryImportVariables(cypher string) ([]string, error) {
 // prefixUnionBranches puts prefix before body, or before each branch of a
 // UNION / UNION ALL body: every branch of a CALL subquery imports the same
 // outer variables.
-func prefixUnionBranches(prefix, body string) string {
-	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(body)
+func prefixUnionBranches(ctx context.Context, prefix, body string) string {
+	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(ctx, body)
 	if !ok || mixed || len(branches) < 2 {
 		return prefix + " " + body
 	}
@@ -580,7 +539,7 @@ func (e *StorageExecutor) makeSubqueryReadOnly(subquery string) string {
 //
 // This ensures that batching limits the number of matched rows processed, not just
 // the number of returned rows.
-func (e *StorageExecutor) addLimitSkipToSubquery(subquery string, limit, skip int) string {
+func (e *StorageExecutor) addLimitSkipToSubquery(ctx context.Context, subquery string, limit, skip int) string {
 	// Check for MATCH ... SET/CREATE/DELETE/MERGE ... RETURN pattern
 	// For these, we want to add LIMIT/SKIP after MATCH to limit how many rows are processed
 	matchIdx := findKeywordIndex(subquery, "MATCH")
@@ -637,8 +596,8 @@ func (e *StorageExecutor) addLimitSkipToSubquery(subquery string, limit, skip in
 			afterOp := subquery[matchEnd:]
 
 			// Extract variable name from MATCH pattern (e.g., "MATCH (s:Source)" -> "s")
-			varNames := e.extractVariableNamesFromPattern(matchPatternStructure(matchPart[5:])) // Skip "MATCH"
-			varName := "n"                                                                      // Default fallback
+			varNames := e.extractVariableNamesFromPattern(ctx, matchPatternStructure(matchPart[5:])) // Skip "MATCH"
+			varName := "n"                                                                           // Default fallback
 			if len(varNames) > 0 {
 				varName = varNames[0]
 			}
@@ -775,8 +734,8 @@ func isLeadingWithFollower(word string) bool {
 // (callSubqueryHasScopeClause).
 //
 // names is filled only when collectNames.
-func unscopedCallImports(source string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
-	body := readQueryBody(source, 0, len(source))
+func unscopedCallImports(ctx context.Context, source string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
+	body := readQueryBody(ctx, source, 0, len(source))
 	for _, branch := range body.branches {
 		next, imports, failure := branchSyntaxImports(branch, outer, collectNames)
 		if failure != nil {
@@ -790,8 +749,8 @@ func unscopedCallImports(source string, outer func(string) bool, collectNames bo
 	return names, importing, nil
 }
 
-func branchLeadingWithImport(source string, outer func(string) bool, collectNames bool) ([]string, bool, error) {
-	body := readQueryBody(source, 0, len(source))
+func branchLeadingWithImport(ctx context.Context, source string, outer func(string) bool, collectNames bool) ([]string, bool, error) {
+	body := readQueryBody(ctx, source, 0, len(source))
 	if len(body.branches) == 0 {
 		return nil, false, nil
 	}
@@ -830,10 +789,10 @@ func branchSyntaxImports(branch queryBodyBranch, outer func(string) bool, collec
 // of an unscoped CALL body declares itself (branchDeclaresVariable): the
 // branch doesn't receive their outer values through NornicDB's implicit
 // import, so they are new variables there, as in Cypher (#907).
-func unscopedBranchLocals(branch string, names []string) []string {
+func unscopedBranchLocals(ctx context.Context, branch string, names []string) []string {
 	var locals []string
 	for _, name := range names {
-		if branchDeclaresVariable(branch, name) {
+		if branchDeclaresVariable(ctx, branch, name) {
 			locals = append(locals, name)
 		}
 	}
@@ -846,8 +805,8 @@ func unscopedBranchLocals(branch string, names []string) []string {
 // (or the pattern's path name), or the name UNWIND … AS or WITH … AS binds.
 // Cypher gives such a branch a new variable; NornicDB's implicit import of an
 // outer variable applies only to a name the branch reads first (#907).
-func branchDeclaresVariable(branch, variable string) bool {
-	clauses, ok := splitPipelineClauses(strings.TrimSpace(branch))
+func branchDeclaresVariable(ctx context.Context, branch, variable string) bool {
+	clauses, ok := splitPipelineClauses(ctx, strings.TrimSpace(branch))
 	if !ok {
 		return false
 	}
@@ -1138,18 +1097,11 @@ func evalWhereNullGuard(whereExpr string, vars map[string]interface{}) (pass boo
 	return isNull, true
 }
 
-// splitTopLevelUnionBranches splits a query by top-level UNION/UNION ALL separators.
-// Returns branches, unionAllMode, ok.
-func splitTopLevelUnionBranches(query string) ([]string, bool, bool) {
-	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(query)
-	return branches, unionAll, ok && !mixed
-}
-
 // parseTopLevelUnionBranches preserves whether a composition mixes UNION and
 // UNION ALL so callers can report the Cypher semantic error rather than
 // treating the statement as an unsplittable query.
-func parseTopLevelUnionBranches(query string) (branches []string, unionAllMode, mixed, ok bool) {
-	body := readQueryBody(query, 0, len(query))
+func parseTopLevelUnionBranches(ctx context.Context, query string) (branches []string, unionAllMode, mixed, ok bool) {
+	body := readQueryBody(ctx, query, 0, len(query))
 	if body.status == queryBodyDeclined || len(body.branches) < 2 {
 		return nil, false, false, false
 	}
@@ -1751,42 +1703,6 @@ func crossJoinCallResults(left, right *ExecuteResult) *ExecuteResult {
 	}
 
 	return &ExecuteResult{Columns: combinedCols, Rows: rows}
-}
-
-// processCallSubqueryReturn processes the RETURN clause after CALL {}
-func (e *StorageExecutor) processCallSubqueryReturn(ctx context.Context, innerResult *ExecuteResult, afterCall string) (*ExecuteResult, error) {
-	if findKeywordIndex(afterCall, "RETURN") == -1 {
-		return innerResult, nil
-	}
-	rows := make([]pipelineRow, 0, len(innerResult.Rows))
-	scope := make(map[string]struct{}, len(innerResult.Columns))
-	for _, column := range innerResult.Columns {
-		scope[column] = struct{}{}
-	}
-	for _, values := range innerResult.Rows {
-		row := make(pipelineRow, len(innerResult.Columns))
-		for index, column := range innerResult.Columns {
-			if index < len(values) {
-				row[column] = values[index]
-			} else {
-				row[column] = nil
-			}
-		}
-		rows = append(rows, row)
-	}
-	clauses, valid, _ := parsePipelineClauses(afterCall)
-	if !valid {
-		return nil, unresolvedStatementError()
-	}
-	result, handled, err := e.runPipelineClauseRows(ctx, rows, scope, clauses, clauses, nil)
-	if err != nil {
-		return nil, err
-	}
-	if !handled || result == nil {
-		return nil, localizedError(localization.CypherSubqueriesAfterCallClauseUnsupported("RETURN"), nil)
-	}
-	result.Stats = innerResult.Stats
-	return result, nil
 }
 
 // applyResultModifiers applies ORDER BY, LIMIT, SKIP to a result
