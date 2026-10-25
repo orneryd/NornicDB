@@ -640,7 +640,9 @@ func (r *run) open() bool {
 	return true
 }
 
-func (r *run) event(ev Event) {
+// claimEvent records a notification and reserves all listener work before settlement
+// can observe an idle harness. Claiming an arm and reserving its write are atomic.
+func (r *run) claimEvent(ev Event) []*arm {
 	v := ev.V
 	if ev.Deleted {
 		v = -1
@@ -659,17 +661,20 @@ func (r *run) event(ev Event) {
 			fire = append(fire, a)
 		}
 	}
+	r.listenerWrites += len(fire)
+	r.listening += len(fire)
 	r.cb.Unlock()
+	return fire
+}
+
+func (r *run) event(ev Event) {
+	fire := r.claimEvent(ev)
 	for _, a := range fire {
 		op := Op{Kind: UpdateNode, Node: ev.Key[2:]}
 		if ev.Key[0] == 'e' {
 			op = Op{Kind: UpdateEdge, Edge: ev.Key[2:], Start: ev.Start, End: ev.End}
 		}
 		v := r.next()
-		r.cb.Lock()
-		r.listenerWrites++
-		r.listening++
-		r.cb.Unlock()
 		outcome, err := r.d.Write(op, v, a.implicit)
 		r.cb.Lock()
 		r.trace = append(r.trace, fmt.Sprintf("  listener %s v=%d implicit=%v -> %s %v", op, v, a.implicit, outcome, err))
