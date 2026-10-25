@@ -30,7 +30,7 @@ func TestEmbeddingOutcomeSnapshotOwnership(t *testing.T) {
 			bound := mode != "unbound_listener"
 			published := make(chan *Node, 1)
 			if bound {
-				payload.SetEmbeddingAttempt(NewEmbeddingAttempt(1, 1, payload.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(node *Node) { published <- node }))
+				payload.SetEmbeddingAttempt(NewEmbeddingAttempt(CaptureVectorWorkOrigin(), 1, 1, payload.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(node *Node) { published <- node }))
 			}
 			resume, entered := make(chan struct{}), make(chan struct{})
 			var unblock sync.Once

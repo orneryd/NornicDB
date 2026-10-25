@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/orneryd/nornicdb/pkg/search"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // cypherRefreshScope is a statement's route to search for the node and
@@ -19,13 +20,17 @@ type cypherRefreshScope struct {
 // is not visible yet: the transaction keeps it until its commit
 // (refreshSearchAfterCommit), and drops it on rollback. A post-commit publish
 // refreshes with the captured service and never defers again.
-func (s cypherRefreshScope) PrepareSearchRefresh(_ context.Context, request search.RefreshRequest) (*search.Service, bool, error) {
+func (s cypherRefreshScope) PrepareSearchRefresh(ctx context.Context, request search.RefreshRequest) (*search.Service, bool, error) {
 	if request.PostCommit {
 		return request.PostCommitService, false, nil
 	}
 	if tx, ok := s.executor.storage.(*transactionStorageWrapper); ok {
 		if s.executor.searchResolver != nil || s.executor.search() != nil {
-			tx.deferSearchRefresh(request.Node, request.Edge)
+			origin, admitted := storage.VectorWorkOrigin(ctx)
+			if !admitted {
+				return nil, false, storage.ErrVectorWorkNotAdmitted
+			}
+			tx.deferSearchRefresh(request.Node, request.Edge, origin)
 		}
 		return nil, true, nil
 	}

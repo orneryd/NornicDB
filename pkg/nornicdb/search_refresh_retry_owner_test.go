@@ -65,8 +65,8 @@ func TestRefreshRetryOwnerPublicEntrances(t *testing.T) {
 				vector := make([]float32, db.config.Memory.EmbeddingDimensions)
 				vector[0] = 1
 				require.NoError(t, tenant.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "BEFORE", Properties: map[string]any{"vec": vector}}))
-				require.NoError(t, svc.RefreshNode("a"))
-				require.NoError(t, svc.RefreshEdge("r"))
+				require.NoError(t, svc.RefreshNode("a", storage.CaptureVectorWorkOrigin()))
+				require.NoError(t, svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin()))
 				settleQueuedRefreshes()
 
 				update := func() {
@@ -97,9 +97,9 @@ func TestRefreshRetryOwnerPublicEntrances(t *testing.T) {
 				if entrance == "drain" {
 					update()
 				} else if kind == "node" {
-					require.Error(t, svc.RefreshNode("a"))
+					require.Error(t, svc.RefreshNode("a", storage.CaptureVectorWorkOrigin()))
 				} else {
-					require.Error(t, svc.RefreshEdge("r"))
+					require.Error(t, svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin()))
 				}
 				require.Eventually(t, func() bool { return fault.failures.Load() > 0 }, 5*time.Second, 5*time.Millisecond)
 				time.Sleep(150 * time.Millisecond)
@@ -126,15 +126,15 @@ func TestRefreshRetryOwnerSupersededAndRetired(t *testing.T) {
 				vector := make([]float32, db.config.Memory.EmbeddingDimensions)
 				vector[0] = 1
 				require.NoError(t, tenant.CreateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "BEFORE", Properties: map[string]any{"vec": vector}}))
-				require.NoError(t, svc.RefreshNode("a"))
-				require.NoError(t, svc.RefreshEdge("r"))
+				require.NoError(t, svc.RefreshNode("a", storage.CaptureVectorWorkOrigin()))
+				require.NoError(t, svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin()))
 				settleQueuedRefreshes()
 				fault.armed.Store(true)
 				if kind == "node" {
-					require.Error(t, svc.RefreshNode("a"))
+					require.Error(t, svc.RefreshNode("a", storage.CaptureVectorWorkOrigin()))
 					require.NoError(t, tenant.UpdateNode(&storage.Node{ID: "a", Properties: map[string]any{"content": "newestownerword"}}))
 				} else {
-					require.Error(t, svc.RefreshEdge("r"))
+					require.Error(t, svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin()))
 					require.NoError(t, tenant.UpdateEdge(&storage.Edge{ID: "r", StartNode: "a", EndNode: "b", Type: "AFTER", Properties: map[string]any{"vec": vector}}))
 				}
 				fault.armed.Store(false)
@@ -144,9 +144,9 @@ func TestRefreshRetryOwnerSupersededAndRetired(t *testing.T) {
 					svc, err = db.EnsureSearchIndexes(context.Background(), "retrynewer", tenant, SearchIndexBuildWait)
 					require.NoError(t, err)
 				} else if kind == "node" {
-					require.NoError(t, svc.RefreshNode("a"))
+					require.NoError(t, svc.RefreshNode("a", storage.CaptureVectorWorkOrigin()))
 				} else {
-					require.NoError(t, svc.RefreshEdge("r"))
+					require.NoError(t, svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin()))
 				}
 				visible := func() bool {
 					if kind == "node" {

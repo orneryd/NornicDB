@@ -68,8 +68,8 @@ func (b *consumerObservationBarrier) GetNode(id storage.NodeID) (*storage.Node, 
 type consumerSuppressionBarrier struct{ *consumerObservationBarrier }
 
 // SetManualSuppression arms the barrier only when storage shows a node again.
-func (b consumerSuppressionBarrier) SetManualSuppression(kind storage.StoredEntityKind, id string, suppressed bool) error {
-	err := b.Engine.(storage.ManualSuppressionEngine).SetManualSuppression(kind, id, suppressed)
+func (b consumerSuppressionBarrier) SetManualSuppression(kind storage.StoredEntityKind, id string, suppressed bool, origins ...uint64) error {
+	err := b.Engine.(storage.ManualSuppressionEngine).SetManualSuppression(kind, id, suppressed, origins...)
 	if err == nil && kind == storage.StoredEntityNodeKind && !suppressed {
 		b.armed.Store(true)
 	}

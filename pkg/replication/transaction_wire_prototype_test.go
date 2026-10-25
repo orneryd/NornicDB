@@ -98,8 +98,10 @@ func TestPrototypeTransactionWireAtomicAndReceipt(t *testing.T) {
 	edge, err = b.GetStoredEdge("wire:new-edge")
 	require.NoError(t, err)
 	require.Equal(t, "final", edge.Properties["value"])
+	// ApplyCommand acknowledges physical publication before listener delivery.
+	// Observe every committed operation before measuring replay idempotence.
+	require.Eventually(t, func() bool { return events.Load() == int64(len(ops)) }, 5*time.Second, time.Millisecond)
 	beforeEvents := events.Load()
-	require.Positive(t, beforeEvents)
 	beforeVersion, ok := b.GraphMutationVersionInNamespace("wire")
 	require.True(t, ok)
 	nodes, err := b.NodeCount()

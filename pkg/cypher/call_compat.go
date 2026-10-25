@@ -952,7 +952,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 			if err := updateMutatedEdge(store, edge); err != nil {
 				return nil, localizedError(localization.CypherProceduresUpdateRelationshipFailed(err), err)
 			}
-			e.notifyEdgeMutated(string(edge.ID))
+			e.notifyEdgeMutated(ctx, string(edge.ID))
 		}
 		if entity, ok := arguments[0].(*storage.Edge); ok {
 			entity.Properties = edge.Properties
@@ -969,7 +969,7 @@ func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments [
 		if err := updateMutatedNode(store, node); err != nil {
 			return nil, localizedError(localization.CypherProceduresUpdateNodeFailed(err), err)
 		}
-		e.notifyNodeMutated(string(node.ID))
+		e.notifyNodeMutated(ctx, string(node.ID))
 	}
 	if entity, ok := arguments[0].(*storage.Node); ok {
 		entity.Properties = node.Properties

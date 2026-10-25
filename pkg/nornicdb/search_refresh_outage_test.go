@@ -43,7 +43,7 @@ func TestXhighTransientOutageDoesNotSpendAllRefreshRetriesImmediately(t *testing
 	require.NoError(t, err)
 	_, err = tenant.CreateNode(&storage.Node{ID: "a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "beforeoutage"}})
 	require.NoError(t, err)
-	require.NoError(t, svc.RefreshNode("a"))
+	require.NoError(t, svc.RefreshNode("a", storage.CaptureVectorWorkOrigin()))
 	settleQueuedRefreshes()
 	require.Equal(t, 1, consumerDBHits(t, svc, "beforeoutage"))
 	fault.armed.Store(true)

@@ -111,8 +111,10 @@ const (
 )
 
 // BeginEntityTransaction obtains one native frame through the actual wrapper
-// chain and binds its durability mode before exposing it to a caller.
-func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransaction, error) {
+// chain and binds its durability mode before exposing it to a caller. A
+// selected command may also transport its already-bound admission across that
+// opening. An empty transaction retains first-mutation admission by default.
+func BeginEntityTransaction(engine Engine, mode EntityCommitMode, origins ...uint64) (*BadgerTransaction, error) {
 	if !mode.valid() {
 		return nil, ErrInvalidData
 	}
@@ -128,6 +130,9 @@ func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransa
 			}
 			tx.mu.Lock()
 			tx.commitMode = mode
+			if len(origins) > 0 {
+				tx.bindVectorWorkOriginLocked(origins[0])
+			}
 			tx.mu.Unlock()
 			return tx, nil
 		}
@@ -143,11 +148,12 @@ func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransa
 // ApplyAcceptedEntityTransaction waits for the full accepted apply, including
 // notifications. State-machine drivers use Submit and its physical boundary.
 func ApplyAcceptedEntityTransaction(engine Engine, data []byte) error {
+	origin := CaptureVectorWorkOrigin()
 	envelope, operations, err := DecodeEntityTransaction(data)
 	if err != nil {
 		return err
 	}
-	receipt, err := SubmitAcceptedEntityTransaction(context.Background(), engine, envelope, operations, nil)
+	receipt, err := SubmitAcceptedEntityTransaction(WithVectorWorkOrigin(context.Background(), origin), engine, envelope, operations, nil)
 	if err != nil {
 		return err
 	}
@@ -158,7 +164,11 @@ func ApplyAcceptedEntityTransaction(engine Engine, data []byte) error {
 // returns the commit receipt. DecodeEntityTransaction validates the wire image
 // before callers publish it to replication or recovery logs.
 func SubmitAcceptedEntityTransaction(ctx context.Context, engine Engine, envelope EntityTransactionEnvelope, ops []Operation, settle func(CommitOutcome)) (*CommitReceipt, error) {
-	tx, err := BeginEntityTransaction(engine, envelope.Mode)
+	origin, admitted := VectorWorkOrigin(ctx)
+	if !admitted {
+		return nil, ErrVectorWorkNotAdmitted
+	}
+	tx, err := BeginEntityTransaction(engine, envelope.Mode, origin)
 	if err != nil {
 		return nil, err
 	}

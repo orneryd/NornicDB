@@ -437,7 +437,7 @@ func TestBadgerEngine_PendingEmbeddingsIndex(t *testing.T) {
 		}
 		_, err := engine.CreateNode(node)
 		require.NoError(t, err)
-		engine.AddToPendingEmbeddings(node.ID)
+		engine.AddToPendingEmbeddingsWithOrigin(node.ID, CaptureVectorWorkOrigin())
 		assert.Equal(t, 1, engine.PendingEmbeddingsCount())
 		found := engine.FindNodeNeedingEmbedding()
 		assert.Nil(t, found)
@@ -687,7 +687,7 @@ func TestPendingEmbeddingsRespectDatabaseLabelPolicy(t *testing.T) {
 	engine.SetEmbeddingLabelPolicy("a", []string{"Document"}, []string{"AuditLog", "Job"})
 	engine.RefreshPendingEmbeddingsIndex()
 	require.Equal(t, 2, engine.PendingEmbeddingsCount())
-	engine.AddToPendingEmbeddings("a:chunk")
+	engine.AddToPendingEmbeddingsWithOrigin("a:chunk", CaptureVectorWorkOrigin())
 	require.Equal(t, 2, engine.PendingEmbeddingsCount())
 	engine.SetEmbeddingLabelPolicy("", []string{"Document"}, []string{"Job"})
 	_, err := engine.CreateNode(&Node{ID: "new:job", Labels: []string{"Document", "Job"}, Properties: map[string]interface{}{"text": "value"}})

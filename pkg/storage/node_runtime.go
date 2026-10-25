@@ -28,6 +28,12 @@ type nodeRuntime struct {
 	embeddingRevision    EmbeddingBodyRevision
 	embeddingAttempt     *EmbeddingAttempt
 	embeddingPublication embeddingPublicationProof
+	// Vector-work admission: the write argument's (consumed before native body
+	// ownership) and the embedding identity's (carried by detached copies).
+	entityWorkOrigin     uint64
+	entityOriginBound    bool
+	embeddingWorkOrigin  uint64
+	embeddingOriginBound bool
 }
 
 // RuntimeMetadata returns this node's runtime metadata by value. An unset node

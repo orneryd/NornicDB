@@ -38,6 +38,7 @@ func RecoverBufferedCommitsAtOpen(engine Engine, wal *WAL) (int, error) {
 }
 
 func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthority) (int, error) {
+	origin := CaptureVectorWorkOrigin()
 	b, ok := engine.(*BadgerEngine)
 	if !ok || b == nil || wal == nil {
 		return 0, nil
@@ -104,7 +105,7 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 			// existing buffered replay does; it must not emit a fresh ACK or
 			// append another buffered record while visiting this WAL.
 			envelope.Mode = CommitModeDirect
-			accepted, err := SubmitAcceptedEntityTransaction(context.Background(), b, envelope, ops, nil)
+			accepted, err := SubmitAcceptedEntityTransaction(WithVectorWorkOrigin(context.Background(), origin), b, envelope, ops, nil)
 			if err != nil {
 				return err
 			}
@@ -140,6 +141,9 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		c, err := b.importBufferedWALRecord(&data, authority)
 		if err != nil {
 			return err
+		}
+		for i := range c.ops {
+			c.ops[i].bindVectorWorkOrigin(origin)
 		}
 		bytes := estimateBufferedCommitBytes(&c)
 		if len(pending) > 0 && bytes > bufferedRecoveryBatchBytes-pendingBytes {

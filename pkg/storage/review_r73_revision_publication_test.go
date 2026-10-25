@@ -35,7 +35,7 @@ func TestReviewR73OutcomePublicationCommitOrder(t *testing.T) {
 			var publication string
 			store.OnNodeUpdated(func(n *Node) { mu.Lock(); events = append(events, n.Properties["text"].(string)); mu.Unlock() })
 			store.OnNodeDeleted(func(NodeID) { mu.Lock(); events = append(events, "deleted"); mu.Unlock() })
-			payload.SetEmbeddingAttempt(NewEmbeddingAttempt(1, 1, payload.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(n *Node) {
+			payload.SetEmbeddingAttempt(NewEmbeddingAttempt(CaptureVectorWorkOrigin(), 1, 1, payload.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(n *Node) {
 				mu.Lock()
 				publication = n.Properties["text"].(string)
 				mu.Unlock()

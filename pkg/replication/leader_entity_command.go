@@ -13,6 +13,7 @@ type leaderEntityCommandPreparer interface {
 // PrepareEntityCommand normalizes client leaf/bulk input only at its leader.
 // Managed namespace admission comes from the existing stored-image registry.
 func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command) (*Command, func(storage.CommitOutcome), bool, error) {
+	ctx, origin := storage.AdmitVectorWork(commandVectorContext(ctx, cmd))
 	ops, handled, err := decodeEntityCommandOperations(cmd.Type, cmd.Data)
 	if !handled || err != nil {
 		return nil, nil, handled, err
@@ -31,7 +32,7 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 	}
 	prepared, settle, managed, err := storage.PrepareManagedEntityChanges(ctx, a.engine, namespace, ops, mode)
 	if !managed && err == nil {
-		tx, beginErr := storage.BeginEntityTransaction(a.engine, mode)
+		tx, beginErr := storage.BeginEntityTransaction(a.engine, mode, origin)
 		if beginErr != nil {
 			return nil, nil, true, beginErr
 		}
@@ -147,7 +148,7 @@ func routeLeaderEntityCommand(owner Storage, replicator Replicator, cmd *Command
 	if !ok {
 		return false, nil
 	}
-	ctx := context.Background()
+	ctx := commandVectorContext(context.Background(), cmd)
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)

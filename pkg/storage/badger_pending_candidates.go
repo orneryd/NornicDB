@@ -111,8 +111,28 @@ func (p *pendingEmbeddingCandidates) load(b *BadgerEngine) error {
 // need no journal: point validation discards a stale candidate once, without
 // another range scan. Keeping hints on out-of-order commit tails is safe for
 // the same reason (a later delete always wins in the durable index).
-func (b *BadgerEngine) setPendingEmbeddingInTxn(txn *badger.Txn, id NodeID) error {
-	return b.setKeyWithPendingHint(txn, pendingEmbedKey(id), []byte{})
+func (b *BadgerEngine) setPendingEmbeddingInTxn(txn *badger.Txn, id NodeID, origin uint64) error {
+	return b.setKeyWithPendingHint(txn, pendingEmbedKey(id), encodePendingEmbeddingOrigin(origin))
+}
+
+// recoverPendingEmbeddingInTxn records pending membership found by a scan or
+// recovery, without an admission: an existing marker is kept, otherwise the
+// marker records membership only and the claiming worker admits the work.
+func (b *BadgerEngine) recoverPendingEmbeddingInTxn(txn *badger.Txn, id NodeID) error {
+	if item, err := txn.Get(pendingEmbedKey(id)); err == nil {
+		// Recovery scans cannot relabel already-admitted work.
+		value, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+		return b.setKeyWithPendingHint(txn, pendingEmbedKey(id), value)
+	} else if err != badger.ErrKeyNotFound {
+		return err
+	}
+	// An absent legacy marker proves pending membership, not an admission.
+	// Keep that distinction so an in-flight owner can later requeue its exact
+	// identity without overwriting a newer explicit body admission.
+	return b.setKeyWithPendingHint(txn, pendingEmbedKey(id), nil)
 }
 
 // Both synchronous buffered keys and write-behind/replay keys pass here, so

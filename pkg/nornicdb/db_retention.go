@@ -52,6 +52,7 @@ func (db *DB) startRetentionSweep(ctx context.Context) {
 }
 
 func (db *DB) runRetentionSweep(ctx context.Context) {
+	ctx = storage.WithVectorWorkOrigin(ctx, storage.CaptureVectorWorkOrigin())
 	ctx = db.retentionContext(ctx)
 	rm := db.retentionManager
 	if rm == nil {

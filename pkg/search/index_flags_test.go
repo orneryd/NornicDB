@@ -148,7 +148,7 @@ func TestEnsureWarm(t *testing.T) {
 		svc := NewService(newTestMemoryEngine(t), 4, nil)
 
 		var triggers atomic.Int32
-		svc.SetLazyWarming(false, WarmFunc(func() {
+		svc.SetLazyWarming(false, WarmFunc(func(context.Context) {
 			triggers.Add(1)
 		}))
 
@@ -164,7 +164,7 @@ func TestEnsureWarm(t *testing.T) {
 		var triggers atomic.Int32
 		startBuild := make(chan struct{})
 		finishBuild := make(chan struct{})
-		svc.SetLazyWarming(true, WarmFunc(func() {
+		svc.SetLazyWarming(true, WarmFunc(func(context.Context) {
 			triggers.Add(1)
 			close(startBuild)
 			<-finishBuild
@@ -220,7 +220,7 @@ func TestEnsureWarm_CallerCtxCancel_BuildContinues(t *testing.T) {
 
 	buildStarted := make(chan struct{})
 	buildFinished := make(chan struct{})
-	svc.SetLazyWarming(true, WarmFunc(func() {
+	svc.SetLazyWarming(true, WarmFunc(func(context.Context) {
 		close(buildStarted)
 		<-buildFinished
 		svc.MarkReadyDisabled()

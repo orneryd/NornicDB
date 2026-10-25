@@ -453,6 +453,7 @@ func (ew *EmbedWorker) ParkedEmbeddingFailures(ctx context.Context, limit int) (
 // the selected nodes to the durable pending queue. An empty ID list retries
 // every parked node.
 func (ew *EmbedWorker) RetryParkedEmbeddingFailures(ctx context.Context, ids []storage.NodeID) (int, error) {
+	ctx, origin := storage.AdmitVectorWork(ctx)
 	if ew == nil || ew.storage == nil {
 		return 0, errors.New("embedding worker storage is unavailable")
 	}
@@ -490,10 +491,10 @@ func (ew *EmbedWorker) RetryParkedEmbeddingFailures(ctx context.Context, ids []s
 		embeddingutil.InvalidateManagedEmbeddings(node)
 		// Clearing the embedding state deletes the sidecar records (meta
 		// and chunk keys) so the node can be re-embedded cleanly.
-		if err := ew.commitNodeReset(node); err != nil {
+		if err := ew.commitNodeReset(node, origin); err != nil {
 			return retried, err
 		}
-		ew.addNodeToPendingEmbeddings(node.ID)
+		ew.addNodeToPendingEmbeddings(node.ID, origin)
 		retried++
 	}
 	remaining := len(failures) - retried
@@ -1345,7 +1346,7 @@ func (ew *EmbedWorker) markNodeEmbeddingFailed(nodeID storage.NodeID, embedErr e
 		fmt.Printf("⚠️  Failed to persist permanent embedding failure for node %s: %s; re-queuing\n", nodeID, compactWorkerError(updateErr, 300))
 		// The attempt owner keeps this DLQ entry retryable until the marker
 		// commits. Re-added MAIN markers cannot hide it from draining.
-		ew.addNodeToPendingEmbeddings(nodeID)
+		ew.addNodeToPendingEmbeddings(nodeID, node.EmbeddingAttempt().VectorWorkOrigin())
 		return
 	}
 
@@ -1434,7 +1435,7 @@ func (ew *EmbedWorker) releaseNodeClaim(nodeID storage.NodeID) {
 		// An update needs another attempt; a deletion must not recreate its
 		// pending marker when the invalidated claim finishes.
 		if node, err := ew.embeddingSnapshot(nodeID); !nodeGone(node, err) {
-			ew.addNodeToPendingEmbeddings(nodeID)
+			ew.addNodeToPendingEmbeddings(nodeID, attempt.selection.vectorWorkOrigin)
 		}
 	}
 	ew.claimMu.Unlock()
@@ -1523,10 +1524,11 @@ func (ew *EmbedWorker) markNodeEmbedded(nodeID storage.NodeID) {
 	}
 }
 
-// addNodeToPendingEmbeddings re-queues a node for embedding (e.g. after a failed attempt so another worker can retry).
-func (ew *EmbedWorker) addNodeToPendingEmbeddings(nodeID storage.NodeID) {
-	if adder, ok := ew.storage.(interface{ AddToPendingEmbeddings(storage.NodeID) }); ok {
-		adder.AddToPendingEmbeddings(nodeID)
+// addNodeToPendingEmbeddings re-queues admitted work for embedding (e.g. after
+// a failed attempt so another worker can retry). The origin is required.
+func (ew *EmbedWorker) addNodeToPendingEmbeddings(nodeID storage.NodeID, origin uint64) {
+	if adder, ok := ew.storage.(interface{ AddToPendingEmbeddingsWithOrigin(storage.NodeID, uint64) }); ok {
+		adder.AddToPendingEmbeddingsWithOrigin(nodeID, origin)
 	}
 }
 

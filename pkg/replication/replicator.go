@@ -76,7 +76,9 @@ type Replicator interface {
 
 // Command represents a write operation to be replicated.
 type Command struct {
-	accepted *acceptedEntityCommand
+	accepted          *acceptedEntityCommand
+	vectorWorkOrigin  uint64
+	vectorOriginBound bool
 	// Type identifies the operation type.
 	Type CommandType
 
@@ -348,6 +350,7 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 
 // Apply applies a command directly to storage.
 func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	cmd = admittedVectorCommand(cmd)
 	r.mu.RLock()
 	if err := checkApplyReadiness(r.closed, r.started); err != nil {
 		r.mu.RUnlock()

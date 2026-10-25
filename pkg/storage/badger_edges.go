@@ -18,19 +18,21 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) (err error) {
 	return b.createEdgeWithWriteContext(edge, nil)
 }
 
-func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityWriteContext) (err error) {
+func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityWriteContext, origins ...uint64) (err error) {
+	edge, origins = takeEdgeArgument(edge, origins)
 	if edge != nil {
 		if handled, err := b.inCaptureTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
 			return tx.CreateEdge(edge)
-		}); handled {
+		}, origins...); handled {
 			return err
 		}
 	}
+	rerouteOrigin := origins
 	// Register routing before direct admission so every direct lock and barrier
 	// releases before the transaction owner classifies a physical-ID conflict.
 	defer func() {
 		if errors.Is(err, ErrAlreadyExists) && edge != nil && edge.ID != "" {
-			err = b.inBulkTransaction(namespaceForEdgeID(edge.ID), func(tx *BadgerTransaction) error { return tx.CreateEdge(edge) })
+			err = b.inBulkTransaction(namespaceForEdgeID(edge.ID), func(tx *BadgerTransaction) error { return tx.CreateEdge(edge) }, rerouteOrigin...)
 		}
 	}()
 	start := time.Now()
@@ -41,11 +43,12 @@ func (b *BadgerEngine) createEdgeWithWriteContext(edge *Edge, inherited *entityW
 		entityID = string(edge.ID)
 		endpoints = []NodeID{edge.StartNode, edge.EndNode}
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, true, inherited, entityWritePlan{known: writtenEntities{nodes: endpoints}})
+	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, true, inherited, (entityWritePlan{known: writtenEntities{nodes: endpoints}}).withVectorWorkOrigin(origins))
 	if barrierErr != nil {
 		return barrierErr
 	}
-	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	rerouteOrigin = []uint64{write.vectorWorkOrigin}
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit, write.vectorWorkOrigin)
 	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
 	if edge == nil {
 		return ErrInvalidData
@@ -315,11 +318,12 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 // UpdateEdge updates an existing edge.
 func (b *BadgerEngine) UpdateEdge(edge *Edge) error { return b.updateEdgeWithWriteContext(edge, nil) }
 
-func (b *BadgerEngine) updateEdgeWithWriteContext(edge *Edge, inherited *entityWriteContext) error {
+func (b *BadgerEngine) updateEdgeWithWriteContext(edge *Edge, inherited *entityWriteContext, origins ...uint64) error {
+	edge, origins = takeEdgeArgument(edge, origins)
 	if edge != nil {
 		if handled, err := b.inCaptureTransaction(string(edge.ID), func(tx *BadgerTransaction) error {
 			return tx.UpdateEdge(edge)
-		}); handled {
+		}, origins...); handled {
 			return err
 		}
 	}
@@ -331,7 +335,7 @@ func (b *BadgerEngine) updateEdgeWithWriteContext(edge *Edge, inherited *entityW
 		entityID = string(edge.ID)
 		endpoints = []NodeID{edge.StartNode, edge.EndNode}
 	}
-	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, true, inherited, entityWritePlan{known: writtenEntities{nodes: endpoints}, read: func() (writtenEntities, error) {
+	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, true, inherited, (entityWritePlan{known: writtenEntities{nodes: endpoints}, read: func() (writtenEntities, error) {
 		stored, err := b.GetStoredEdge(EdgeID(entityID))
 		if err != nil && !errors.Is(err, ErrNotFound) {
 			return writtenEntities{}, err
@@ -340,11 +344,11 @@ func (b *BadgerEngine) updateEdgeWithWriteContext(edge *Edge, inherited *entityW
 			return writtenEntities{}, nil
 		}
 		return writtenEntities{nodes: []NodeID{stored.StartNode, stored.EndNode}}, nil
-	}})
+	}}).withVectorWorkOrigin(origins))
 	if barrierErr != nil {
 		return barrierErr
 	}
-	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit, write.vectorWorkOrigin)
 	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
 	if edge == nil {
 		return ErrInvalidData
@@ -586,18 +590,22 @@ func (b *BadgerEngine) updateEdgeWithWriteContext(edge *Edge, inherited *entityW
 
 // DeleteEdge removes an edge.
 func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
+	return b.deleteEdgeWithOrigin(id)
+}
+
+func (b *BadgerEngine) deleteEdgeWithOrigin(id EdgeID, origins ...uint64) error {
 	if handled, err := b.inCaptureTransaction(string(id), func(tx *BadgerTransaction) error {
 		return tx.DeleteEdge(id)
-	}); handled {
+	}, origins...); handled {
 		return err
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	write, releaseWrite, barrierErr := b.beginEntityWrite(string(id), true, nil, entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(string(id), true) }})
+	write, releaseWrite, barrierErr := b.beginEntityWrite(string(id), true, nil, (entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(string(id), true) }}).withVectorWorkOrigin(origins))
 	if barrierErr != nil {
 		return barrierErr
 	}
-	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit, write.vectorWorkOrigin)
 	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
 	if id == "" {
 		return ErrInvalidID
@@ -761,13 +769,21 @@ func (b *BadgerEngine) deleteEdgeInTxn(txn *badger.Txn, id EdgeID) error {
 // transaction of any size (#703). IDs that do not exist, or repeat within
 // the call, are skipped.
 func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
-	return deleteBulkEntities(b, ids, func(tx *BadgerTransaction, id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) })
+	return b.bulkDeleteNodesWithOrigin(ids)
+}
+
+func (b *BadgerEngine) bulkDeleteNodesWithOrigin(ids []NodeID, origins ...uint64) error {
+	return deleteBulkEntities(b, ids, func(tx *BadgerTransaction, id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }, origins...)
 }
 
 // BulkDeleteEdges deletes relationships as one transaction of any size
 // (#703). IDs that do not exist, or repeat within the call, are skipped.
 func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
-	return deleteBulkEntities(b, ids, (*BadgerTransaction).DeleteEdge)
+	return b.bulkDeleteEdgesWithOrigin(ids)
+}
+
+func (b *BadgerEngine) bulkDeleteEdgesWithOrigin(ids []EdgeID, origins ...uint64) error {
+	return deleteBulkEntities(b, ids, (*BadgerTransaction).DeleteEdge, origins...)
 }
 
 // ============================================================================

@@ -30,7 +30,6 @@ package nornicdb
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -43,6 +42,7 @@ import (
 
 	"github.com/google/uuid"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
@@ -905,7 +905,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 				if err != nil {
 					return err
 				}
-				data, err := json.Marshal(node)
+				data, err := valueconvert.PropertyJSON.Marshal(node)
 				if err != nil {
 					return err
 				}
@@ -1167,7 +1167,10 @@ func Open(dataDir string, config *Config) (*DB, error) {
 					return s
 				},
 				be,
-				func(entityID string) { be.AddToPendingEmbeddings(storage.NodeID(entityID)) },
+				// An unsuppressed node's re-embedding is admitted when it is re-enqueued.
+				func(entityID string) {
+					be.AddToPendingEmbeddingsWithOrigin(storage.NodeID(entityID), storage.CaptureVectorWorkOrigin())
+				},
 			)
 			db.accessFlusher.SetSuppressionRecheck(func(entityID string, meta knowledgepolicy.EntityMeta) {
 				becameSuppressed, err := be.EnqueueDeindexIfSuppressed(entityID, meta.Scope == knowledgepolicy.ScopeEdge)
@@ -1289,15 +1292,8 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// The downstream mutation path is debounced, so events are queued
 		// inline; only the ID is queued, the refresh reads the stored state.
 		err := storage.SubscribeEvents(namespaced.GetInnerEngine(), storage.EventHandlers{
-			NodeCreated: db.indexNodeFromEvent,
-			NodeUpdated: db.indexNodeFromEvent,
-			NodeDeleted: func(id storage.NodeID) { db.queueSearchRefreshEvent(searchNodeDelete, string(id)) },
-			// Relationship vectors are indexed whether or not relationship
-			// search (#1065) is on.
-			EdgeCreated:    db.indexRelationshipFromEvent,
-			EdgeUpdated:    db.indexRelationshipFromEvent,
-			EdgeDeleted:    func(id storage.EdgeID) { db.queueSearchRefreshEvent(searchRelationshipChange, string(id)) },
-			NamespaceReset: db.dropSearchForPrefix,
+			EntityCommitted: db.searchEntityCommitted,
+			NamespaceReset:  db.dropSearchForPrefix,
 		})
 		if err != nil {
 			db.mu.Lock()
@@ -1336,8 +1332,9 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	db.derivedIndexesHealthy = prepareDerivedIndexes(bootstrapCtx, db.baseStorage)
 	bootstrapCancel()
 
+	startupOrigin := storage.CaptureVectorWorkOrigin()
 	_ = db.startBackgroundTask(func() {
-		ctx, cancel := context.WithTimeout(db.buildCtx, 4*time.Hour)
+		ctx, cancel := context.WithTimeout(storage.WithVectorWorkOrigin(db.buildCtx, startupOrigin), 4*time.Hour)
 		defer cancel()
 
 		if db.lifecycleManager != nil {
@@ -1924,6 +1921,7 @@ func (db *DB) embedderForConfig(cfg *embed.Config) embed.Embedder {
 // ErrSearchIndexBuilding until it finished. Once the initial build is done,
 // each call rebuilds the indexes.
 func (db *DB) BuildSearchIndexes(ctx context.Context) error {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	closed := db.closed
 	db.mu.RUnlock()
@@ -2288,7 +2286,11 @@ func (db *DB) ResetEmbedWorker() error {
 // ClearAllEmbeddings removes embeddings from all nodes, allowing them to be regenerated.
 // This is useful for re-embedding with a new model or fixing corrupted embeddings.
 // It clears both the node embeddings in storage AND the search index.
-func (db *DB) ClearAllEmbeddings() (int, error) {
+func (db *DB) ClearAllEmbeddings(origins ...uint64) (int, error) {
+	origin := storage.CaptureVectorWorkOrigin()
+	if len(origins) > 0 {
+		origin = origins[0]
+	}
 	// First, clear the search service's vector index
 	// This ensures EmbeddingCount() returns 0 immediately
 	if svc, _ := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage); svc != nil {
@@ -2316,9 +2318,9 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 	// Now check if we have a BadgerEngine
 	if badgerStorage, ok := engine.(*storage.BadgerEngine); ok {
 		if idPrefix != "" {
-			return badgerStorage.ClearAllEmbeddingsForPrefix(idPrefix)
+			return badgerStorage.ClearAllEmbeddingsForPrefix(idPrefix, origin)
 		}
-		return badgerStorage.ClearAllEmbeddings()
+		return badgerStorage.ClearAllEmbeddings(origin)
 	}
 
 	return 0, localizedError(localization.NornicDBCoreClearEmbeddingsUnsupported(), nil)

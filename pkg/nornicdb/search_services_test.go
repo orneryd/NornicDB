@@ -153,8 +153,8 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 		require.Nil(t, nodes)
 		require.Nil(t, edges)
 
-		seedReservedSearchRefresh(entry, "a", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("a")})
-		newest := entry.svc.ReserveNodeMutation("a")
+		seedReservedSearchRefresh(entry, "a", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("a", storage.CaptureVectorWorkOrigin())})
+		newest := entry.svc.ReserveNodeMutation("a", storage.CaptureVectorWorkOrigin())
 		seedReservedSearchRefresh(entry, "a", search.RefreshRetry{Node: newest})
 		nodes, _ = entry.drainPending()
 		require.Equal(t, map[string]search.NodeMutation{"a": newest}, nodes)
@@ -210,7 +210,7 @@ func TestSearchServices_HelperBranches(t *testing.T) {
 
 		_, err := store.CreateNode(&storage.Node{ID: "debounced", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1, 2, 3}}})
 		require.NoError(t, err)
-		seedReservedSearchRefresh(entry, "debounced", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("debounced")})
+		seedReservedSearchRefresh(entry, "debounced", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("debounced", storage.CaptureVectorWorkOrigin())})
 		db.ensurePendingFlush(entry)
 
 		time.Sleep(5 * time.Millisecond)
@@ -241,12 +241,12 @@ func TestSearchServices_PerDatabaseIsolation_EventRouting(t *testing.T) {
 	// otherwise race with IndexNode() and make the expected counts nondeterministic.
 	defaultSvc, err := db.GetOrCreateSearchService(db.defaultDatabaseName(), db.storage)
 	require.NoError(t, err)
-	require.NoError(t, db.ensureSearchIndexesBuilt(buildCtx, db.defaultDatabaseName()))
+	require.NoError(t, db.ensureSearchIndexesBuilt(storage.WithVectorWorkOrigin(buildCtx, storage.CaptureVectorWorkOrigin()), db.defaultDatabaseName()))
 	require.Equal(t, 0, defaultSvc.EmbeddingCount())
 
 	db2Svc, err := db.GetOrCreateSearchService("db2", nil)
 	require.NoError(t, err)
-	require.NoError(t, db.ensureSearchIndexesBuilt(buildCtx, "db2"))
+	require.NoError(t, db.ensureSearchIndexesBuilt(storage.WithVectorWorkOrigin(buildCtx, storage.CaptureVectorWorkOrigin()), "db2"))
 	require.Equal(t, 0, db2Svc.EmbeddingCount())
 
 	// Create and index a node in the default database (nornic).
@@ -265,7 +265,7 @@ func TestSearchServices_PerDatabaseIsolation_EventRouting(t *testing.T) {
 		Labels:          alpha.Labels,
 		Properties:      alpha.Properties,
 		ChunkEmbeddings: alpha.ChunkEmbeddings,
-	})
+	}, storage.CaptureVectorWorkOrigin())
 
 	// Create and index a node in another database.
 	db2Storage := storage.NewNamespacedEngine(db.baseStorage, "db2")
@@ -284,7 +284,7 @@ func TestSearchServices_PerDatabaseIsolation_EventRouting(t *testing.T) {
 		Labels:          beta.Labels,
 		Properties:      beta.Properties,
 		ChunkEmbeddings: beta.ChunkEmbeddings,
-	})
+	}, storage.CaptureVectorWorkOrigin())
 
 	// Default DB service should only contain default DB embedding.
 	require.Eventually(t, func() bool {
@@ -604,7 +604,7 @@ func TestSearchServices_SkipsQdrantNamespaceNodes(t *testing.T) {
 		NamedEmbeddings: map[string][]float32{
 			"default": {1, 0, 0},
 		},
-	})
+	}, storage.CaptureVectorWorkOrigin())
 	after := svc.EmbeddingCount()
 	require.Equal(t, before, after)
 }
@@ -632,7 +632,7 @@ func TestSearchServices_EventRemovalAndCreationErrorBranches(t *testing.T) {
 		require.NoError(t, svc.IndexNode(node))
 		require.Equal(t, 1, svc.EmbeddingCount())
 
-		db.queueSearchRefreshEvent(searchNodeDelete, "n-local")
+		db.queueSearchRefreshEvent(searchNodeDelete, "n-local", storage.CaptureVectorWorkOrigin())
 		require.Eventually(t, func() bool {
 			return svc.EmbeddingCount() == 0
 		}, 2*time.Second, 10*time.Millisecond)
@@ -653,7 +653,7 @@ func TestSearchServices_EventRemovalAndCreationErrorBranches(t *testing.T) {
 			ID:              "unqualified",
 			Properties:      map[string]any{"content": "ignored"},
 			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
-		})
+		}, storage.CaptureVectorWorkOrigin())
 
 		require.Equal(t, before, svc.EmbeddingCount())
 	})
@@ -668,7 +668,7 @@ func TestSearchServices_EventRemovalAndCreationErrorBranches(t *testing.T) {
 			ID:              "tenant:n1",
 			Properties:      map[string]any{"content": "noop"},
 			ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
-		})
+		}, storage.CaptureVectorWorkOrigin())
 	})
 
 	t.Run("nil base storage returns deterministic error", func(t *testing.T) {
@@ -802,7 +802,7 @@ func TestSearchServices_RerankerStatusAndBuildStartHelpers(t *testing.T) {
 	// Ensure completion so this test does not leak in-flight builders.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	require.NoError(t, db.ensureSearchIndexesBuilt(ctx, "tenant_cov"))
+	require.NoError(t, db.ensureSearchIndexesBuilt(storage.WithVectorWorkOrigin(ctx, storage.CaptureVectorWorkOrigin()), "tenant_cov"))
 
 	ready := db.GetDatabaseSearchStatus("tenant_cov")
 	require.True(t, ready.Initialized)
@@ -822,7 +822,7 @@ func TestSearchServices_StartBuildDefaultAndClosedBranches(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	require.NoError(t, db.ensureSearchIndexesBuilt(ctx, db.defaultDatabaseName()))
+	require.NoError(t, db.ensureSearchIndexesBuilt(storage.WithVectorWorkOrigin(ctx, storage.CaptureVectorWorkOrigin()), db.defaultDatabaseName()))
 
 	// Closed DB should reject public getter.
 	require.NoError(t, db.Close())
@@ -885,7 +885,7 @@ func TestSearchServices_EnsureBuilt_ContextDonePath(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	err := db.ensureSearchIndexesBuilt(ctx, "tenant_timeout")
+	err := db.ensureSearchIndexesBuilt(storage.WithVectorWorkOrigin(ctx, storage.CaptureVectorWorkOrigin()), "tenant_timeout")
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
@@ -896,7 +896,7 @@ func TestSearchServices_EnsureBuiltAndStart_ErrorBranches(t *testing.T) {
 			searchServices: map[string]*dbSearchService{},
 		}
 
-		err := db.ensureSearchIndexesBuilt(context.Background(), "")
+		err := db.ensureSearchIndexesBuilt(storage.WithVectorWorkOrigin(context.Background(), storage.CaptureVectorWorkOrigin()), "")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "search service not initialized")
 	})
@@ -1100,8 +1100,8 @@ func TestSearchServices_EnsurePendingFlush_ReplaysQueuedOps(t *testing.T) {
 	// missing (tolerated) and one for a stored node (applied).
 	_, err := engine.CreateNode(&storage.Node{ID: "n1", Properties: map[string]any{"content": "flush"}, ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}}})
 	require.NoError(t, err)
-	seedReservedSearchRefresh(entry, "missing", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("missing")})
-	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("n1")})
+	seedReservedSearchRefresh(entry, "missing", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("missing", storage.CaptureVectorWorkOrigin())})
+	seedReservedSearchRefresh(entry, "n1", search.RefreshRetry{Node: entry.svc.ReserveNodeMutation("n1", storage.CaptureVectorWorkOrigin())})
 
 	db.ensurePendingFlush(entry)
 	close(entry.buildDone)
@@ -1133,7 +1133,7 @@ func TestSearchServices_LazyWriteEventDoesNotStartIndexBuild(t *testing.T) {
 		ChunkEmbeddings: [][]float32{{0.1, 0.2, 0.3}},
 	})
 	require.NoError(t, err)
-	db.indexNodeFromEvent(&storage.Node{ID: storage.NodeID(dbName + ":n1")})
+	db.indexNodeFromEvent(&storage.Node{ID: storage.NodeID(dbName + ":n1")}, storage.CaptureVectorWorkOrigin())
 
 	svc, err := db.GetOrCreateSearchService(dbName, nil)
 	require.NoError(t, err)
@@ -1163,7 +1163,7 @@ func TestSearchServices_LazyWriteEventDoesNotStartIndexBuild(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	require.NoError(t, db.ensureSearchIndexesBuilt(ctx, dbName))
+	require.NoError(t, db.ensureSearchIndexesBuilt(storage.WithVectorWorkOrigin(ctx, storage.CaptureVectorWorkOrigin()), dbName))
 	require.Eventually(t, func() bool {
 		return svc.EmbeddingCount() == 1
 	}, 5*time.Second, 10*time.Millisecond, "lazy build should replay queued write mutations after warmup")
@@ -1275,7 +1275,7 @@ func TestSearchServices_EventDuringBuild_IsDeterministicallyReplay(t *testing.T)
 					Labels:          []string{"Doc"},
 					Properties:      map[string]any{"content": "late"},
 					ChunkEmbeddings: [][]float32{{0.2, 0.3, 0.4}},
-				})
+				}, storage.CaptureVectorWorkOrigin())
 			},
 			check: func(t *testing.T, svc *search.Service) {
 				// Deferred event mutation must be replayed after build completion.
@@ -1291,7 +1291,7 @@ func TestSearchServices_EventDuringBuild_IsDeterministicallyReplay(t *testing.T)
 			mutate: func(t *testing.T, db *DB, tenantStorage storage.Engine) {
 				// Delete and queue its remove event while build is blocked.
 				require.NoError(t, tenantStorage.DeleteNode("gone"))
-				db.queueSearchRefreshEvent(searchNodeDelete, "tenant_remove_race:gone")
+				db.queueSearchRefreshEvent(searchNodeDelete, "tenant_remove_race:gone", storage.CaptureVectorWorkOrigin())
 			},
 			check: func(t *testing.T, svc *search.Service) {
 				// Deferred remove must be replayed after build completion.
@@ -1355,7 +1355,7 @@ func TestSearchServices_EventDuringBuild_IsDeterministicallyReplay(t *testing.T)
 			close(blocking.release)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			require.NoError(t, db.ensureSearchIndexesBuilt(ctx, tc.dbName))
+			require.NoError(t, db.ensureSearchIndexesBuilt(storage.WithVectorWorkOrigin(ctx, storage.CaptureVectorWorkOrigin()), tc.dbName))
 
 			tc.check(t, svc)
 		})

@@ -32,14 +32,14 @@ func TestRetiredRefreshReadsNothing(t *testing.T) {
 	_, err := store.CreateNode(&storage.Node{ID: "a", Properties: map[string]any{"content": "word"}})
 	require.NoError(t, err)
 
-	retired := svc.ReserveNodeMutation("a")
-	require.NoError(t, svc.RefreshNode("a"))
+	retired := svc.ReserveNodeMutation("a", storage.CaptureVectorWorkOrigin())
+	require.NoError(t, svc.RefreshNode("a", storage.CaptureVectorWorkOrigin()))
 	before := engine.reads.Load()
 	require.NoError(t, svc.RefreshNodeWithMutation(retired))
 	require.Equal(t, before, engine.reads.Load(), "a retired refresh read storage")
 
-	superseded := svc.ReserveNodeMutation("a")
-	pending := svc.ReserveNodeMutation("a")
+	superseded := svc.ReserveNodeMutation("a", storage.CaptureVectorWorkOrigin())
+	pending := svc.ReserveNodeMutation("a", storage.CaptureVectorWorkOrigin())
 	before = engine.reads.Load()
 	require.NoError(t, svc.RefreshNodeWithMutation(superseded))
 	require.Equal(t, before+1, engine.reads.Load(), "a refresh with a newer pending one must still read")

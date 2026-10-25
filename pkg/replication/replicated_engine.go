@@ -170,11 +170,17 @@ func (e *ReplicatedEngine) SubscribeEvents(handlers storage.EventHandlers) error
 	return storage.SubscribeEvents(e.Engine, handlers)
 }
 
-// applyEntityCommand keeps native direct/bulk wire kinds and their producer policy.
+// applyEntityCommand keeps native direct/bulk wire kinds and their producer
+// policy. It is the admission of a public replicated write: an admission the
+// arguments already carry is kept, otherwise the write is admitted here.
 func (e *ReplicatedEngine) applyEntityCommand(kind CommandType, value any) error {
+	origin, admitted := storage.VectorWorkOriginFromArguments(context.Background(), value)
+	if !admitted {
+		origin = storage.CaptureVectorWorkOrigin()
+	}
 	data, err := encodeEntityCommandPayload(kind, value)
 	if err != nil {
 		return err
 	}
-	return e.replicator.Apply(&Command{Type: kind, Data: data, Timestamp: time.Now()}, e.timeout)
+	return e.replicator.Apply(&Command{Type: kind, Data: data, Timestamp: time.Now(), vectorWorkOrigin: origin, vectorOriginBound: true}, e.timeout)
 }

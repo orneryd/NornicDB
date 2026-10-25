@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // Config
@@ -105,7 +107,7 @@ func clearNornicDB() error {
 		},
 	}
 
-	body, _ := json.Marshal(query)
+	body, _ := valueconvert.CypherInputJSON.Marshal(query)
 	req, _ := http.NewRequest("POST", nornicHTTPURL+"/db/nornicdb/tx/commit", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", basicAuth(nornicUser, nornicPass))
@@ -143,7 +145,7 @@ func fetchNodesFromNeo4j() ([]Neo4jNode, time.Duration, error) {
 		},
 	}
 
-	body, _ := json.Marshal(query)
+	body, _ := valueconvert.CypherInputJSON.Marshal(query)
 	req, _ := http.NewRequest("POST", neo4jHTTPURL+"/db/nornicdb/tx/commit", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", basicAuth(neo4jUser, neo4jPass))
@@ -170,7 +172,7 @@ func fetchNodesFromNeo4j() ([]Neo4jNode, time.Duration, error) {
 		} `json:"errors"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := valueconvert.PropertyJSON.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, 0, err
 	}
 
@@ -270,7 +272,7 @@ func insertNodesIntoNornic(nodes []Neo4jNode) (time.Duration, error) {
 			"statements": batch,
 		}
 
-		body, _ := json.Marshal(query)
+		body, _ := valueconvert.CypherInputJSON.Marshal(query)
 		req, _ := http.NewRequest("POST", nornicHTTPURL+"/db/nornicdb/tx/commit", bytes.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Authorization", basicAuth(nornicUser, nornicPass))
@@ -324,7 +326,7 @@ func verifyMigration(expectedCount int) {
 		},
 	}
 
-	body, _ := json.Marshal(query)
+	body, _ := valueconvert.CypherInputJSON.Marshal(query)
 	req, _ := http.NewRequest("POST", nornicHTTPURL+"/db/nornicdb/tx/commit", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", basicAuth(nornicUser, nornicPass))
@@ -343,7 +345,7 @@ func verifyMigration(expectedCount int) {
 			} `json:"data"`
 		} `json:"results"`
 	}
-	json.NewDecoder(resp.Body).Decode(&result)
+	valueconvert.PropertyJSON.NewDecoder(resp.Body).Decode(&result)
 
 	if len(result.Results) > 0 && len(result.Results[0].Data) > 0 {
 		count := result.Results[0].Data[0].Row[0]
@@ -390,7 +392,7 @@ func runQuery(baseURL, user, pass, query string) time.Duration {
 		},
 	}
 
-	body, _ := json.Marshal(q)
+	body, _ := valueconvert.CypherInputJSON.Marshal(q)
 	req, _ := http.NewRequest("POST", baseURL+"/db/nornicdb/tx/commit", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", basicAuth(user, pass))

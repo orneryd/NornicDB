@@ -1062,9 +1062,9 @@ func (n *NamespacedEngine) FindNodeNeedingEmbedding() *Node {
 		// Check if node needs embedding
 		if (len(node.ChunkEmbeddings) == 0 || len(node.ChunkEmbeddings[0]) == 0) && NodeNeedsEmbedding(node) {
 			// Found one! Add it to the pending index if not already there
-			if mgr, ok := n.inner.(interface{ AddToPendingEmbeddings(NodeID) }); ok {
+			if mgr, ok := n.inner.(interface{ RecoverPendingEmbedding(NodeID) }); ok {
 				prefixedID := n.PrefixNodeID(node.ID)
-				mgr.AddToPendingEmbeddings(prefixedID)
+				mgr.RecoverPendingEmbedding(prefixedID)
 			}
 			return node
 		}
@@ -1101,7 +1101,7 @@ func (n *NamespacedEngine) RefreshPendingEmbeddingsIndex() int {
 
 	// Get underlying engine's pending index manager
 	mgr, ok := n.inner.(interface {
-		AddToPendingEmbeddings(NodeID)
+		RecoverPendingEmbedding(NodeID)
 		MarkNodeEmbedded(NodeID)
 		GetNode(NodeID) (*Node, error)
 	})
@@ -1127,7 +1127,7 @@ func (n *NamespacedEngine) RefreshPendingEmbeddingsIndex() int {
 		if (len(node.ChunkEmbeddings) == 0 || len(node.ChunkEmbeddings[0]) == 0) && NodeNeedsEmbedding(node) {
 			// Add to pending index (with namespace prefix)
 			prefixedID := n.PrefixNodeID(node.ID)
-			mgr.AddToPendingEmbeddings(prefixedID)
+			mgr.RecoverPendingEmbedding(prefixedID)
 			added++
 		} else if len(node.ChunkEmbeddings) > 0 && len(node.ChunkEmbeddings[0]) > 0 {
 			// Node has embedding - remove from pending index if present
@@ -1159,12 +1159,25 @@ func (n *NamespacedEngine) RefreshPendingEmbeddingsIndex() int {
 // MarkNodeEmbedded marks a node as embedded (removes from pending index).
 // The node ID should be unprefixed (without namespace).
 func (n *NamespacedEngine) MarkNodeEmbedded(nodeID NodeID) {
-	n.updatePendingEmbedding(nodeID, false)
+	if provider, ok := n.inner.(interface{ MarkNodeEmbedded(NodeID) }); ok {
+		provider.MarkNodeEmbedded(n.PrefixNodeID(nodeID))
+	}
 }
 
-// AddToPendingEmbeddings adds a node back to the pending embeddings index (e.g. after a failed embed so it can be retried).
-func (n *NamespacedEngine) AddToPendingEmbeddings(nodeID NodeID) {
-	n.updatePendingEmbedding(nodeID, true)
+// RecoverPendingEmbedding records scanned pending membership without an
+// admission (BadgerEngine.RecoverPendingEmbedding).
+func (n *NamespacedEngine) RecoverPendingEmbedding(nodeID NodeID) {
+	if provider, ok := n.inner.(interface{ RecoverPendingEmbedding(NodeID) }); ok {
+		provider.RecoverPendingEmbedding(n.PrefixNodeID(nodeID))
+	}
+}
+
+// AddToPendingEmbeddingsWithOrigin returns admitted work to the pending index
+// (e.g. after a failed embed so it can be retried). The origin is required.
+func (n *NamespacedEngine) AddToPendingEmbeddingsWithOrigin(nodeID NodeID, origin uint64) {
+	if provider, ok := n.inner.(interface{ AddToPendingEmbeddingsWithOrigin(NodeID, uint64) }); ok {
+		provider.AddToPendingEmbeddingsWithOrigin(n.PrefixNodeID(nodeID), origin)
+	}
 }
 
 // RecordMaterializedAccess records a result-materialization access against the

@@ -267,7 +267,7 @@ func (e *StorageExecutor) generateUUID() string {
 // node whose labels changed is checked against the label policies first.
 // On an error the entity is restored and the error is wrapped by its caller
 // (wrap).
-func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
+func (e *StorageExecutor) persistSetEntities(ctx context.Context, store storage.Engine, states []setEntityState, stats *QueryStats, wrap func(state setEntityState, err error) error) error {
 	for index := range states {
 		state := &states[index]
 		if stats != nil {
@@ -295,7 +295,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 				restore()
 				return wrap(*state, err)
 			}
-			e.notifyNodeMutated(string(node.ID))
+			e.notifyNodeMutated(ctx, string(node.ID))
 			continue
 		}
 		relationship := state.relationship
@@ -306,7 +306,7 @@ func (e *StorageExecutor) persistSetEntities(store storage.Engine, states []setE
 			relationship.Properties = state.properties
 			return wrap(*state, err)
 		}
-		e.notifyEdgeMutated(string(relationship.ID))
+		e.notifyEdgeMutated(ctx, string(relationship.ID))
 	}
 	return nil
 }

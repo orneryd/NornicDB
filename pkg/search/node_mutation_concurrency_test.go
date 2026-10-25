@@ -13,7 +13,7 @@ import (
 // but should not stop an unrelated entity from reserving its own work.
 func TestIndependentSearchMutationReservationsCanProceed(t *testing.T) {
 	svc := &Service{}
-	first := svc.ReserveNodeMutation(storage.NodeID("entity-a"))
+	first := svc.ReserveNodeMutation(storage.NodeID("entity-a"), storage.CaptureVectorWorkOrigin())
 	entered, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	finish := func() { releaseOnce.Do(func() { close(release) }) }
@@ -28,11 +28,13 @@ func TestIndependentSearchMutationReservationsCanProceed(t *testing.T) {
 	}()
 	<-entered
 	otherDone := make(chan NodeMutation, 1)
-	go func() { otherDone <- svc.ReserveNodeMutation(storage.NodeID("entity-b")) }()
+	go func() {
+		otherDone <- svc.ReserveNodeMutation(storage.NodeID("entity-b"), storage.CaptureVectorWorkOrigin())
+	}()
 	sameStarted, sameDone := make(chan struct{}), make(chan NodeMutation, 1)
 	go func() {
 		close(sameStarted)
-		sameDone <- svc.ReserveNodeMutation(storage.NodeID("entity-a"))
+		sameDone <- svc.ReserveNodeMutation(storage.NodeID("entity-a"), storage.CaptureVectorWorkOrigin())
 	}()
 	<-sameStarted
 	var other NodeMutation

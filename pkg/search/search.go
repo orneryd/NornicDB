@@ -1379,7 +1379,9 @@ func (s *Service) RuntimeStrategyTransitionsEnabled() bool {
 // MUST be idempotent — EnsureWarm uses sync.Once to fire it at most once
 // per service lifetime, but the implementation is also free to be a no-op
 // for already-warmed services as a defensive guard.
-type WarmFunc func()
+// The callback must pass this context to its build entry. It carries the
+// origin selected before EnsureWarm dispatch; it has the owner lifetime.
+type WarmFunc func(context.Context)
 
 // SetLazyWarming marks this service as lazy-warmed and stores the WarmFunc
 // callback that EnsureWarm uses to request the actual build. Call from
@@ -1407,6 +1409,7 @@ func (s *Service) SetLazyWarming(lazy bool, fn WarmFunc) {
 //   - When warmingLazy=false (eager) or the service is already fully built,
 //     EnsureWarm returns immediately.
 func (s *Service) EnsureWarm(ctx context.Context) error {
+	ctx, origin := storage.AdmitVectorWork(ctx)
 	if !s.warmingLazy.Load() || s.ready.Load() {
 		return nil
 	}
@@ -1426,7 +1429,7 @@ func (s *Service) EnsureWarm(ctx context.Context) error {
 		go func() {
 			defer s.warmInFlight.Store(false)
 			defer s.closeWarmDone()
-			fn()
+			fn(storage.WithVectorWorkOrigin(context.Background(), origin))
 		}()
 	})
 	if ctx == nil {
@@ -2916,16 +2919,19 @@ func (s *Service) IndexNode(node *storage.Node) error {
 	// checkpoint restoration must not be overtaken by a live mutation; their
 	// snapshots may contain older node state. During a build the write is
 	// handed to the build (build_write_queue.go).
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node}); queued || err != nil {
+	// IndexNode is a payload sink entry (rebuilds, offline sinks): it admits
+	// the work it installs.
+	generation := storage.CaptureVectorWorkOrigin()
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node, propertyVectorGeneration: generation}); queued || err != nil {
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return s.indexNodeOwned(node, nil)
+	return s.indexNodeOwned(node, nil, generation)
 }
 
 // indexNodeOwned is IndexNode for a caller holding buildMu (read or write).
 // current, when set, is the temporal decision made at the call.
-func (s *Service) indexNodeOwned(node *storage.Node, current *bool) error {
+func (s *Service) indexNodeOwned(node *storage.Node, current *bool, generation uint64) error {
 	// Per-DB master switches: when both indexes are off, IndexNode is a full
 	// no-op — the database has no search and never will until a flag flip
 	// triggers ResetSearchService. When one is off, indexNodeLocked still
@@ -2947,9 +2953,9 @@ func (s *Service) indexNodeOwned(node *storage.Node, current *bool) error {
 	s.indexMu.Lock()
 	var err error
 	if current == nil {
-		err = s.indexNodeLocked(node, false)
+		err = s.indexNodeLocked(node, false, generation)
 	} else {
-		err = s.indexNodeAsLocked(node, false, *current, true)
+		err = s.indexNodeAsLocked(node, false, *current, true, generation)
 	}
 	s.indexMu.Unlock()
 	if err == nil && !s.buildInProgress.Load() {
@@ -3213,20 +3219,20 @@ func (s *Service) checkEmbeddingDimensions(node *storage.Node) error {
 // caller's write it is not rejected for an embedding whose dimensions differ
 // from the index's: the indexer logs and skips that vector and indexes the
 // rest of the node, so one bad stored embedding cannot fail the whole build.
-func (s *Service) indexStoredNodeLocked(node *storage.Node, skipFulltext bool) error {
+func (s *Service) indexStoredNodeLocked(node *storage.Node, skipFulltext bool, generation uint64) error {
 	shouldIndex, err := s.shouldIndexNode(node)
 	if err != nil {
 		return err
 	}
-	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex, false)
+	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex, false, generation)
 }
 
-func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
+func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool, generation uint64) error {
 	shouldIndex, err := s.shouldIndexNode(node)
 	if err != nil {
 		return err
 	}
-	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex, true)
+	return s.indexNodeAsLocked(node, skipFulltext, shouldIndex, true, generation)
 }
 
 // indexNodeAsLocked is indexNodeLocked with the temporal decision already
@@ -3234,7 +3240,9 @@ func (s *Service) indexNodeLocked(node *storage.Node, skipFulltext bool) error {
 // validate rejects a caller's write whose embeddings have other dimensions
 // (checkEmbeddingDimensions); the build's own stored nodes do not validate
 // (indexStoredNodeLocked).
-func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shouldIndex, validate bool) error {
+func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shouldIndex, validate bool, generation uint64) error {
+	sourceNode := node
+	node = s.selectNodePropertyVectorsLocked(node, generation)
 	var indexErr error
 	// Explicit embeddings are vectors, unlike ordinary numeric properties.
 	// Validate before removing the previous entries so a failed update cannot
@@ -3252,7 +3260,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 	defer s.rememberChunkSpansLocked(nodeIDStr, node)
 	var fulltext nodeFulltext
 	if !skipFulltext && s.bm25Enabled.Load() {
-		fulltext.text = s.extractSearchableText(node)
+		fulltext.text = s.extractSearchableText(sourceNode)
 		fulltext.index = s.bm25Enabled.Load()
 		if index := s.fulltext(); index != nil && nodeIDStr != "" && shouldIndex {
 			stored, ok := index.GetDocument(nodeIDStr)
@@ -3269,14 +3277,14 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 			}
 		}
 	}
-	capacityUsage, err := s.checkNodeIndexCapacityLocked(node, fulltext)
+	capacityUsage, err := s.checkNodeIndexCapacityLocked(node, fulltext, generation)
 	if err != nil {
 		return err
 	}
 	vectorOn := s.vectorEnabled.Load()
 	skipVectorMutation := false
 	if vectorOn && nodeIDStr != "" && !skipFulltext && shouldIndex {
-		skipVectorMutation = s.nodeVectorStateUnchangedLocked(node)
+		skipVectorMutation = s.nodeVectorStateUnchangedLocked(node, generation)
 	}
 	if nodeIDStr != "" && !skipFulltext {
 		// CRITICAL: IndexNode is called for both creates and updates.
@@ -3298,7 +3306,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 		labelsCopy := make([]string, len(node.Labels))
 		copy(labelsCopy, node.Labels)
 		s.nodeLabels[nodeIDStr] = labelsCopy
-		if nodeType, ok := node.Properties["type"].(string); ok {
+		if nodeType, ok := sourceNode.Properties["type"].(string); ok {
 			s.nodeTypes[nodeIDStr] = strings.ToLower(nodeType)
 		} else {
 			delete(s.nodeTypes, nodeIDStr)
@@ -3361,7 +3369,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 			s.hnswUpdateLive(item.key, item.vector)
 			s.admitClusterVectorLocked(item.key)
 			return true
-		})
+		}, generation)
 		if len(chunkIDs) > 0 {
 			s.nodeChunkVectors[nodeIDStr] = chunkIDs
 		}
@@ -3379,7 +3387,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 // nodeVectorStateUnchangedLocked reports whether re-indexing node would produce
 // exactly the vector IDs and normalized vectors already present in the active
 // vector store. Caller must hold s.indexMu.
-func (s *Service) nodeVectorStateUnchangedLocked(node *storage.Node) bool {
+func (s *Service) nodeVectorStateUnchangedLocked(node *storage.Node, generation uint64) bool {
 	if node == nil || node.ID == "" {
 		return false
 	}
@@ -3409,7 +3417,7 @@ func (s *Service) nodeVectorStateUnchangedLocked(node *storage.Node) bool {
 			expectedChunks = append(expectedChunks, item.key)
 		}
 		return true
-	})
+	}, generation)
 	if !complete {
 		return false
 	}
@@ -3592,14 +3600,14 @@ func (s *Service) applyReservedNodeIndex(node *storage.Node, mutation NodeMutati
 	}
 	if queued, err := s.readLockOrQueue(deferredIndexWrite{node: node, valid: func() bool {
 		return claimReservedIndexMutation(applyMutation)
-	}}); queued || err != nil {
+	}, propertyVectorGeneration: applyMutation.origin}); queued || err != nil {
 		if err != nil {
 			applyMutation.discard()
 		}
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return applyReservedIndexMutation(applyMutation, func() error { return s.indexNodeOwned(node, nil) })
+	return applyReservedIndexMutation(applyMutation, func() error { return s.indexNodeOwned(node, nil, applyMutation.origin) })
 }
 
 // applyReservedNodeRemoval is applyReservedNodeIndex for a removal: during a
@@ -3645,6 +3653,7 @@ func (s *Service) removeNodeOwned(nodeID storage.NodeID) {
 // Live writers use RefreshEdge; this payload form is for rebuilds and offline
 // sinks, like IndexNode.
 func (s *Service) IndexEdge(edge *storage.Edge) error {
+	origin := storage.CaptureVectorWorkOrigin()
 	if s == nil || edge == nil {
 		return nil
 	}
@@ -3655,11 +3664,11 @@ func (s *Service) IndexEdge(edge *storage.Edge) error {
 	// Like node writes: the explicit build's relationship stream applies a
 	// snapshot of stored edges, so during a build a live edge write is handed
 	// to the build, which applies it after the stream's copy.
-	if queued, err := s.readLockOrQueue(deferredIndexWrite{edge: edge}); queued || err != nil {
+	if queued, err := s.readLockOrQueue(deferredIndexWrite{edge: edge, propertyVectorGeneration: origin}); queued || err != nil {
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return s.indexEdgeOwned(edge)
+	return s.indexEdgeOwned(edge, origin)
 }
 
 // applyReservedEdgeIndex applies a reserved relationship write. The
@@ -3672,14 +3681,14 @@ func (s *Service) applyReservedEdgeIndex(edge *storage.Edge, mutation EdgeMutati
 	applyMutation := mutation.mutation
 	if queued, err := s.readLockOrQueue(deferredIndexWrite{edge: edge, valid: func() bool {
 		return claimReservedIndexMutation(applyMutation)
-	}}); queued || err != nil {
+	}, propertyVectorGeneration: applyMutation.origin}); queued || err != nil {
 		if err != nil {
 			applyMutation.discard()
 		}
 		return err
 	}
 	defer s.buildMu.RUnlock()
-	return applyReservedIndexMutation(applyMutation, func() error { return s.indexEdgeOwned(edge) })
+	return applyReservedIndexMutation(applyMutation, func() error { return s.indexEdgeOwned(edge, applyMutation.origin) })
 }
 
 // applyReservedEdgeRemoval is applyReservedEdgeIndex for a removal.
@@ -3702,7 +3711,7 @@ func (s *Service) applyReservedEdgeRemoval(mutation EdgeMutation) error {
 }
 
 // indexEdgeOwned is IndexEdge for a caller holding buildMu.
-func (s *Service) indexEdgeOwned(edge *storage.Edge) error {
+func (s *Service) indexEdgeOwned(edge *storage.Edge, generation uint64) error {
 	if !s.vectorEnabled.Load() {
 		return nil
 	}
@@ -3715,7 +3724,7 @@ func (s *Service) indexEdgeOwned(edge *storage.Edge) error {
 	s.maybeAutoSetVectorDimensions(firstEdgeVectorDimensions(edge))
 
 	s.indexMu.Lock()
-	err := s.indexEdgeLocked(edge)
+	err := s.indexEdgeLocked(edge, generation)
 	s.indexMu.Unlock()
 	if err == nil && !s.buildInProgress.Load() {
 		s.scheduleStrategyTransitionCheck()
@@ -3725,7 +3734,7 @@ func (s *Service) indexEdgeOwned(edge *storage.Edge) error {
 
 // indexEdgeLocked indexes vector-shaped relationship properties.
 // Caller must hold s.indexMu.
-func (s *Service) indexEdgeLocked(edge *storage.Edge) error {
+func (s *Service) indexEdgeLocked(edge *storage.Edge, generation uint64) error {
 	defer s.indexChanged()
 	if edge == nil || !s.vectorEnabled.Load() {
 		return nil
@@ -3749,7 +3758,7 @@ func (s *Service) indexEdgeLocked(edge *storage.Edge) error {
 	}
 
 	indexed := make(map[string][]float32, 2)
-	for key, value := range edge.Properties {
+	for key, value := range s.selectPropertyVectors("RELATIONSHIP", []string{edge.Type}, edge.Properties, s.edgePropVector[edgeIDStr], generation) {
 		vec, ok := vectorFromPropertyValue(value, dim)
 		if !ok {
 			continue
@@ -3889,7 +3898,7 @@ func (s *Service) RemovePropertyVectorIndex(propertyKey string) {
 }
 
 // removePropertyVectorIndexOwned is RemovePropertyVectorIndex's removal.
-func (s *Service) removePropertyVectorIndexOwned(propertyKey string) {
+func (s *Service) removePropertyVectorIndexOwned(propertyKey string, descriptors ...indexRemoval) {
 	defer s.indexChanged()
 	if !s.buildInProgress.Load() {
 		defer s.schedulePersist()
@@ -3899,24 +3908,26 @@ func (s *Service) removePropertyVectorIndexOwned(propertyKey string) {
 	}
 	s.indexMu.Lock()
 	defer s.indexMu.Unlock()
+	if len(descriptors) > 0 {
+		for id, properties := range s.edgePropVector {
+			if s.vectorDescriptorApplies(descriptors[0], "RELATIONSHIP", []string{s.edgeTypes[id]}) {
+				delete(properties, propertyKey)
+				if len(properties) == 0 {
+					delete(s.edgePropVector, id)
+					delete(s.edgeTypes, id)
+				}
+			}
+		}
+	}
 	for nodeID, props := range s.nodePropVector {
-		propID, ok := props[propertyKey]
+		if len(descriptors) > 0 && !s.vectorDescriptorApplies(descriptors[0], "NODE", s.nodeLabels[nodeID]) {
+			continue
+		}
+		_, ok := props[propertyKey]
 		if !ok {
 			continue
 		}
-		before := s.beginClusterNodeChangeLocked(nodeID)
-		s.removeVectorLocked(propID)
-		if s.servingGPUIndex() != nil {
-			_ = s.servingGPUIndex().Remove(propID)
-		}
-		s.hnswRemoveLive(propID)
-		s.retireClusterVectorLocked(propID)
-		delete(props, propertyKey)
-		if len(props) == 0 {
-			delete(s.nodePropVector, nodeID)
-		}
-		s.publishNodeMembersLocked(nodeID)
-		s.endClusterNodeChangeLocked(nodeID, before)
+		s.removeNodePropertyVectorLocked(nodeID, propertyKey)
 	}
 }
 
@@ -3953,7 +3964,7 @@ func (s *Service) buildNodeIterator(snapshot storage.ReadSnapshotView) NodeItera
 // none). Writes handed over meanwhile wait in the queue: they are applied
 // after the baseline (completeBuildPopulation), so none is overtaken by this
 // stream's copy.
-func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, snapshot storage.ReadSnapshotView) error {
+func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, snapshot storage.ReadSnapshotView, generation uint64) error {
 	if s == nil || !s.vectorEnabled.Load() {
 		return nil
 	}
@@ -3963,7 +3974,7 @@ func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, snapshot s
 		}
 		s.adoptBuildVectorDimensions(firstEdgeVectorDimensions(edge))
 		s.indexMu.Lock()
-		_ = s.indexEdgeLocked(edge)
+		_ = s.indexEdgeLocked(edge, generation)
 		s.indexMu.Unlock()
 		return nil
 	}
@@ -3988,7 +3999,9 @@ func (s *Service) handleOrphanedEmbedding(ctx context.Context, nodeIDStr string,
 		return true // already logged and refreshed this request
 	}
 	s.logPrintf("[search] orphaned embedding detected, removing from indexes: nodeID=%s", nodeIDStr)
-	if removeErr := s.RefreshNode(storage.NodeID(nodeIDStr)); removeErr != nil {
+	if origin, admitted := storage.VectorWorkOrigin(ctx); !admitted {
+		s.logPrintf("[search] orphaned embedding cleanup not admitted: nodeID=%s: %v", nodeIDStr, storage.ErrVectorWorkNotAdmitted)
+	} else if removeErr := s.RefreshNode(storage.NodeID(nodeIDStr), origin); removeErr != nil {
 		s.logPrintf("[search] failed to remove orphaned embedding for nodeID=%s: %v", nodeIDStr, removeErr)
 	}
 	if seenOrphans != nil {
@@ -4007,7 +4020,12 @@ type NodeIterator interface {
 // When both fulltext and vector index paths are set, tries to load both from disk;
 // if both load with count > 0 (and semver format version matches), the full iteration
 // is skipped. Otherwise iterates over storage and saves both indexes at the end when paths are set.
-func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
+func (s *Service) BuildIndexes(ctx context.Context) error {
+	ctx, origin := storage.AdmitVectorWork(ctx)
+	return s.PrepareIndexBuild(origin)(ctx)
+}
+
+func (s *Service) buildIndexes(ctx context.Context, generation uint64) (resultErr error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -4412,8 +4430,13 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 	}
 	if skipIteration {
 		s.setBuildPhase("warmup_hnsw_or_kmeans")
-		// The indexes are restored: the population is complete.
+		// Node artifacts are restored; relationships still come from the same
+		// admitted baseline snapshot (they are not stored in those artifacts).
+		if err := s.buildRelationshipVectorIndexes(ctx, snapshot, generation); err != nil {
+			return err
+		}
 		closeSnapshot()
+		s.retireStalePropertyVectors(generation)
 		if err := s.completeBuildPopulation(); err != nil {
 			return err
 		}
@@ -4470,7 +4493,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 					s.ensureVectorFileStore()
 				}
 				for _, node := range filtered {
-					if err := s.indexStoredNodeLocked(node, false); err != nil {
+					if err := s.indexStoredNodeLocked(node, false, generation); err != nil {
 						return err
 					}
 				}
@@ -4508,7 +4531,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			}
 			s.indexMu.Lock()
 			for _, n := range filtered {
-				if err := s.indexStoredNodeLocked(n, true); err != nil {
+				if err := s.indexStoredNodeLocked(n, true, generation); err != nil {
 					s.indexMu.Unlock()
 					return err
 				}
@@ -4558,12 +4581,13 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		s.logPrintf("📊 Indexed %d total nodes", count)
 		s.logPrintf("📇 BuildIndexes: base index iteration complete (processed=%d)", count)
 		s.setBuildPhase("iterating_relationship_vectors")
-		if err := s.buildRelationshipVectorIndexes(ctx, snapshot); err != nil {
+		if err := s.buildRelationshipVectorIndexes(ctx, snapshot, generation); err != nil {
 			return err
 		}
 		// The population is complete: every queued operation, administrative
 		// ones included, is installed before the base save.
 		closeSnapshot()
+		s.retireStalePropertyVectors(generation)
 		if err := s.completeBuildPopulation(); err != nil {
 			return err
 		}
@@ -4631,7 +4655,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		}
 		s.indexMu.Lock()
 		for _, n := range filtered {
-			if err := s.indexStoredNodeLocked(n, true); err != nil {
+			if err := s.indexStoredNodeLocked(n, true, generation); err != nil {
 				s.indexMu.Unlock()
 				return err
 			}
@@ -4675,12 +4699,13 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 	s.logPrintf("📊 Indexed %d total nodes", count)
 	s.logPrintf("📇 BuildIndexes: base index iteration complete (processed=%d)", count)
 	s.setBuildPhase("iterating_relationship_vectors")
-	if err := s.buildRelationshipVectorIndexes(ctx, snapshot); err != nil {
+	if err := s.buildRelationshipVectorIndexes(ctx, snapshot, generation); err != nil {
 		return err
 	}
 	// The population is complete: every queued operation, administrative ones
 	// included, is installed before the base save.
 	closeSnapshot()
+	s.retireStalePropertyVectors(generation)
 	if err := s.completeBuildPopulation(); err != nil {
 		return err
 	}
@@ -4925,6 +4950,7 @@ func (s *Service) tryRestoreClusteredWarmupFromDisk(ctx context.Context, cluster
 //
 // Returns a SearchResponse with ranked results and metadata about the search method used.
 func (s *Service) Search(ctx context.Context, query string, embedding []float32, opts *SearchOptions) (resp *SearchResponse, err error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	start := time.Now()
 	// Plan 04-05-05: observe requests_total + candidates_rows at the
 	// single Search chokepoint so all internal call paths (vector-only,
@@ -5302,6 +5328,7 @@ type SearchCandidate struct {
 // with automatic strategy selection. HNSW is the default; CPU brute-force is
 // only selected automatically when NORNICDB_VECTOR_CPU_BRUTE_MAX_N is set above zero.
 func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float32, opts *SearchOptions) ([]SearchCandidate, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	if err := s.EnsureWarm(ctx); err != nil {
 		return nil, err
 	}

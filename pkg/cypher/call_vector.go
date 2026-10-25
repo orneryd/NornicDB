@@ -240,7 +240,9 @@ func (e *StorageExecutor) callDbIndexVectorQueryNodesInput(ctx context.Context, 
 				if !seenOrphans[hit.ID] {
 					e.logEvent(slog.LevelWarn, localization.CypherOrphanedEmbeddingDetectedEvent(hit.ID))
 					// Unless the node was stored again after this read.
-					if removeErr := svc.RefreshNode(storage.NodeID(hit.ID)); removeErr != nil {
+					if origin, admitted := storage.VectorWorkOrigin(ctx); !admitted {
+						e.logEvent(slog.LevelError, localization.CypherOrphanedEmbeddingRemovalFailedEvent(hit.ID, storage.ErrVectorWorkNotAdmitted))
+					} else if removeErr := svc.RefreshNode(storage.NodeID(hit.ID), origin); removeErr != nil {
 						e.logEvent(slog.LevelError, localization.CypherOrphanedEmbeddingRemovalFailedEvent(hit.ID, removeErr))
 					}
 					seenOrphans[hit.ID] = true

@@ -12,3 +12,14 @@ func (op *Operation) snapshotForNotification() {
 		op.Edge = copyEdge(op.Edge)
 	}
 }
+
+// bindVectorWorkOrigin is the sole writer of an operation admission identity.
+// The operation value must be owned by its staging/notification frame. Its
+// payload pointers may already be shared with readers or a retained commit:
+// binding an envelope never mutates those bodies. Body provenance belongs to
+// the buffered handover or the decoded read snapshot, before either is exposed.
+func (op *Operation) bindVectorWorkOrigin(origin uint64) {
+	if !op.vectorOriginBound {
+		op.vectorWorkOrigin, op.vectorOriginBound = origin, true
+	}
+}

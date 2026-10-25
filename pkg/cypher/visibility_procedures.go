@@ -15,6 +15,10 @@ import (
 // whether or not decay is enabled. Inside an explicit transaction the change
 // is applied when the transaction commits, and not at all if it rolls back.
 func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, args []interface{}, suppressed bool) (*ExecuteResult, error) {
+	origin, admitted := storage.VectorWorkOrigin(ctx)
+	if !admitted {
+		return nil, storage.ErrVectorWorkNotAdmitted
+	}
 	var entity interface{}
 	if len(args) > 0 {
 		entity = args[0]
@@ -24,7 +28,7 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 	case *storage.Node:
 		id := value.ID
 		apply = func(engine storage.ManualSuppressionEngine) error {
-			if err := engine.SetManualSuppression(storage.StoredEntityNodeKind, string(id), suppressed); err != nil {
+			if err := engine.SetManualSuppression(storage.StoredEntityNodeKind, string(id), suppressed, origin); err != nil {
 				return err
 			}
 			// Search drops a hidden node now rather than when a search can't
@@ -33,20 +37,20 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 			// reach search while the server's GraphQL handler holds it.
 			// Storage hides a suppressed node, so the refresh removes it.
 			if svc := e.search(); svc != nil {
-				_ = svc.RefreshNode(id)
+				_ = svc.RefreshNode(id, origin)
 			}
 			return nil
 		}
 	case *storage.Edge:
 		id := value.ID
 		apply = func(engine storage.ManualSuppressionEngine) error {
-			if err := engine.SetManualSuppression(storage.StoredEntityEdgeKind, string(id), suppressed); err != nil {
+			if err := engine.SetManualSuppression(storage.StoredEntityEdgeKind, string(id), suppressed, origin); err != nil {
 				return err
 			}
 			// As for a node: a hidden relationship leaves search now, so its
 			// vector doesn't take a top-k place, and a shown one returns.
 			if svc := e.search(); svc != nil {
-				_ = svc.RefreshEdge(id)
+				_ = svc.RefreshEdge(id, origin)
 			}
 			return nil
 		}

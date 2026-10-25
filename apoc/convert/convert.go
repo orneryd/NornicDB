@@ -5,7 +5,6 @@
 package convert
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -111,7 +110,7 @@ func ToMap(value interface{}) map[string]interface{} {
 		return v
 	case string:
 		var result map[string]interface{}
-		json.Unmarshal([]byte(v), &result)
+		valueconvert.CypherInputJSON.Unmarshal([]byte(v), &result)
 		return result
 	}
 	return make(map[string]interface{})
@@ -124,7 +123,7 @@ func ToMap(value interface{}) map[string]interface{} {
 //	apoc.convert.toJson({name:'Alice', age:30})
 //	=> '{"name":"Alice","age":30}'
 func ToJson(value interface{}) string {
-	bytes, err := json.Marshal(value)
+	bytes, err := valueconvert.PropertyJSON.Marshal(value)
 	if err != nil {
 		return "{}"
 	}
@@ -138,7 +137,7 @@ func ToJson(value interface{}) string {
 //	apoc.convert.fromJsonList('[1,2,3]') => [1,2,3]
 func FromJsonList(jsonStr string) []interface{} {
 	var result []interface{}
-	json.Unmarshal([]byte(jsonStr), &result)
+	valueconvert.CypherInputJSON.Unmarshal([]byte(jsonStr), &result)
 	return result
 }
 
@@ -149,7 +148,7 @@ func FromJsonList(jsonStr string) []interface{} {
 //	apoc.convert.fromJsonMap('{"name":"Alice"}') => {name:'Alice'}
 func FromJsonMap(jsonStr string) map[string]interface{} {
 	var result map[string]interface{}
-	json.Unmarshal([]byte(jsonStr), &result)
+	valueconvert.CypherInputJSON.Unmarshal([]byte(jsonStr), &result)
 	return result
 }
 

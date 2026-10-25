@@ -77,9 +77,11 @@ const (
 // field carries a tag.
 type Operation struct {
 	// Runtime notification kind; never part of WAL or persisted data.
-	embeddingOutcome bool
-	Type             OperationType `json:"type"`
-	Timestamp        time.Time     `json:"timestamp,omitempty"`
+	embeddingOutcome  bool
+	vectorWorkOrigin  uint64
+	vectorOriginBound bool
+	Type              OperationType `json:"type"`
+	Timestamp         time.Time     `json:"timestamp,omitempty"`
 
 	// For node operations
 	NodeID  NodeID `json:"node_id,omitempty"`
@@ -199,6 +201,8 @@ func copyEdge(edge *Edge) *Edge {
 	}
 
 	edgeCopy := &Edge{
+		entityWorkOrigin:     edge.entityWorkOrigin,
+		entityOriginBound:    edge.entityOriginBound,
 		Database:             edge.Database,
 		ID:                   edge.ID,
 		StartNode:            edge.StartNode,

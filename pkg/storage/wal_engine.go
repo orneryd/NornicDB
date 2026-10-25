@@ -588,8 +588,23 @@ func cloneEdgeForWAL(dbName string, edge *Edge) *Edge {
 	return &c
 }
 
+// admittedEntityWriter fixes public mutation admission before the WAL ordering
+// mutex and journal append. Already-admitted views call the retained On helpers
+// directly, so they keep their earlier origin instead of entering this owner.
+func (w *WALEngine) admittedEntityWriter() (Engine, error) {
+	return EngineWithVectorWorkOrigin(w.engine, CaptureVectorWorkOrigin())
+}
+
 // CreateNode logs then executes node creation.
 func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
+	inner, err := w.admittedEntityWriter()
+	if err != nil {
+		return "", err
+	}
+	return w.createNodeOn(inner, node)
+}
+
+func (w *WALEngine) createNodeOn(inner Engine, node *Node) (NodeID, error) {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -603,11 +618,19 @@ func (w *WALEngine) CreateNode(node *Node) (NodeID, error) {
 			return "", fmt.Errorf("wal: failed to log create_node: %w", err)
 		}
 	}
-	return w.engine.CreateNode(node)
+	return inner.CreateNode(node)
 }
 
 // UpdateNode logs then executes node update.
 func (w *WALEngine) UpdateNode(node *Node) error {
+	inner, err := w.admittedEntityWriter()
+	if err != nil {
+		return err
+	}
+	return w.updateNodeOn(inner, node)
+}
+
+func (w *WALEngine) updateNodeOn(inner Engine, node *Node) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -622,7 +645,7 @@ func (w *WALEngine) UpdateNode(node *Node) error {
 			return fmt.Errorf("wal: failed to log update_node: %w", err)
 		}
 	}
-	return w.engine.UpdateNode(node)
+	return inner.UpdateNode(node)
 }
 
 // UpdateNodeEmbeddingSidecar logs the OpUpdateEmbedding audit record and
@@ -658,6 +681,14 @@ func (w *WALEngine) StreamParkedEmbeddingFailures(ctx context.Context, visit fun
 
 // DeleteNode logs then executes node deletion.
 func (w *WALEngine) DeleteNode(id NodeID) error {
+	inner, err := w.admittedEntityWriter()
+	if err != nil {
+		return err
+	}
+	return w.deleteNodeOn(inner, id)
+}
+
+func (w *WALEngine) deleteNodeOn(inner Engine, id NodeID) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -670,11 +701,19 @@ func (w *WALEngine) DeleteNode(id NodeID) error {
 			return fmt.Errorf("wal: failed to log delete_node: %w", err)
 		}
 	}
-	return w.engine.DeleteNode(id)
+	return inner.DeleteNode(id)
 }
 
 // CreateEdge logs then executes edge creation.
 func (w *WALEngine) CreateEdge(edge *Edge) error {
+	inner, err := w.admittedEntityWriter()
+	if err != nil {
+		return err
+	}
+	return w.createEdgeOn(inner, edge)
+}
+
+func (w *WALEngine) createEdgeOn(inner Engine, edge *Edge) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -691,11 +730,19 @@ func (w *WALEngine) CreateEdge(edge *Edge) error {
 			return fmt.Errorf("wal: failed to log create_edge: %w", err)
 		}
 	}
-	return w.engine.CreateEdge(edge)
+	return inner.CreateEdge(edge)
 }
 
 // UpdateEdge logs then executes edge update.
 func (w *WALEngine) UpdateEdge(edge *Edge) error {
+	inner, err := w.admittedEntityWriter()
+	if err != nil {
+		return err
+	}
+	return w.updateEdgeOn(inner, edge)
+}
+
+func (w *WALEngine) updateEdgeOn(inner Engine, edge *Edge) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -708,11 +755,19 @@ func (w *WALEngine) UpdateEdge(edge *Edge) error {
 			return fmt.Errorf("wal: failed to log update_edge: %w", err)
 		}
 	}
-	return w.engine.UpdateEdge(edge)
+	return inner.UpdateEdge(edge)
 }
 
 // DeleteEdge logs then executes edge deletion.
 func (w *WALEngine) DeleteEdge(id EdgeID) error {
+	inner, err := w.admittedEntityWriter()
+	if err != nil {
+		return err
+	}
+	return w.deleteEdgeOn(inner, id)
+}
+
+func (w *WALEngine) deleteEdgeOn(inner Engine, id EdgeID) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -725,11 +780,19 @@ func (w *WALEngine) DeleteEdge(id EdgeID) error {
 			return fmt.Errorf("wal: failed to log delete_edge: %w", err)
 		}
 	}
-	return w.engine.DeleteEdge(id)
+	return inner.DeleteEdge(id)
 }
 
 // BulkCreateNodes logs then executes bulk node creation.
 func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
+	inner, err := w.admittedEntityWriter()
+	if err != nil {
+		return err
+	}
+	return w.bulkCreateNodesOn(inner, nodes)
+}
+
+func (w *WALEngine) bulkCreateNodesOn(inner Engine, nodes []*Node) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -760,11 +823,19 @@ func (w *WALEngine) BulkCreateNodes(nodes []*Node) error {
 			return fmt.Errorf("wal: failed to log bulk_create_nodes: %w", err)
 		}
 	}
-	return w.engine.BulkCreateNodes(nodes)
+	return inner.BulkCreateNodes(nodes)
 }
 
 // BulkCreateEdges logs then executes bulk edge creation.
 func (w *WALEngine) BulkCreateEdges(edges []*Edge) error {
+	inner, err := w.admittedEntityWriter()
+	if err != nil {
+		return err
+	}
+	return w.bulkCreateEdgesOn(inner, edges)
+}
+
+func (w *WALEngine) bulkCreateEdgesOn(inner Engine, edges []*Edge) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -797,11 +868,19 @@ func (w *WALEngine) BulkCreateEdges(edges []*Edge) error {
 			return fmt.Errorf("wal: failed to log bulk_create_edges: %w", err)
 		}
 	}
-	return w.engine.BulkCreateEdges(edges)
+	return inner.BulkCreateEdges(edges)
 }
 
 // BulkDeleteNodes logs then executes bulk node deletion.
 func (w *WALEngine) BulkDeleteNodes(ids []NodeID) error {
+	inner, err := w.admittedEntityWriter()
+	if err != nil {
+		return err
+	}
+	return w.bulkDeleteNodesOn(inner, ids)
+}
+
+func (w *WALEngine) bulkDeleteNodesOn(inner Engine, ids []NodeID) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -825,11 +904,19 @@ func (w *WALEngine) BulkDeleteNodes(ids []NodeID) error {
 			return fmt.Errorf("wal: failed to log bulk_delete_nodes: %w", err)
 		}
 	}
-	return w.engine.BulkDeleteNodes(ids)
+	return inner.BulkDeleteNodes(ids)
 }
 
 // BulkDeleteEdges logs then executes bulk edge deletion.
 func (w *WALEngine) BulkDeleteEdges(ids []EdgeID) error {
+	inner, err := w.admittedEntityWriter()
+	if err != nil {
+		return err
+	}
+	return w.bulkDeleteEdgesOn(inner, ids)
+}
+
+func (w *WALEngine) bulkDeleteEdgesOn(inner Engine, ids []EdgeID) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 
@@ -853,7 +940,7 @@ func (w *WALEngine) BulkDeleteEdges(ids []EdgeID) error {
 			return fmt.Errorf("wal: failed to log bulk_delete_edges: %w", err)
 		}
 	}
-	return w.engine.BulkDeleteEdges(ids)
+	return inner.BulkDeleteEdges(ids)
 }
 
 // Delegate read operations directly to underlying engine
@@ -1210,10 +1297,19 @@ func (w *WALEngine) MarkNodeEmbedded(nodeID NodeID) {
 	}
 }
 
-// AddToPendingEmbeddings delegates to underlying engine if it supports it.
-func (w *WALEngine) AddToPendingEmbeddings(nodeID NodeID) {
-	if mgr, ok := w.engine.(interface{ AddToPendingEmbeddings(NodeID) }); ok {
-		mgr.AddToPendingEmbeddings(nodeID)
+// RecoverPendingEmbedding delegates scanned pending membership to the
+// underlying engine if it supports it.
+func (w *WALEngine) RecoverPendingEmbedding(nodeID NodeID) {
+	if mgr, ok := w.engine.(interface{ RecoverPendingEmbedding(NodeID) }); ok {
+		mgr.RecoverPendingEmbedding(nodeID)
+	}
+}
+
+// AddToPendingEmbeddingsWithOrigin delegates admitted pending work to the
+// underlying engine if it supports it.
+func (w *WALEngine) AddToPendingEmbeddingsWithOrigin(nodeID NodeID, origin uint64) {
+	if mgr, ok := w.engine.(interface{ AddToPendingEmbeddingsWithOrigin(NodeID, uint64) }); ok {
+		mgr.AddToPendingEmbeddingsWithOrigin(nodeID, origin)
 	}
 }
 

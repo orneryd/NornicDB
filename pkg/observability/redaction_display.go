@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -559,8 +560,11 @@ func collectTextURLCredentials(text string, values *[]string) {
 func RedactText(text string, credentials ...string) string {
 	trimmed := strings.TrimSpace(text)
 	if len(trimmed) > 0 && strings.ContainsRune("{[\"", rune(trimmed[0])) {
+		// Numbers decode as json.Number, so a rewritten document keeps each
+		// one exactly as written: this text can be a statement's input.
 		var value any
-		if json.Unmarshal([]byte(text), &value) == nil {
+		if decoded, err := jsontext.UnmarshalValue([]byte(text)); err == nil {
+			value = decoded
 			safe, changed := redactJSONCredentialValues(value, "", IsSensitiveFieldName, func(text string) string {
 				return redactCredentialText(text, credentials)
 			}, nil)

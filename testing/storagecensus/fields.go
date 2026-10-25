@@ -28,14 +28,20 @@ type fieldRow struct {
 
 // ownedFieldClasses are the classes of fields that hold entity counts, quota
 // usage, suppression state or runtime publication order: only their owners change them.
-var ownedFieldClasses = map[string]bool{"entity-count": true, "derived-count": true, "quota": true, "suppression": true, "publication-order": true}
+var ownedFieldClasses = map[string]bool{"entity-count": true, "derived-count": true, "quota": true, "suppression": true, "publication-order": true, "search-retirement-origin": true}
 
 // fieldClasses classifies, by field, every numeric field of a state package
 // that the module writes (a field of integer, float or atomic integer type,
 // or a map, slice or array of them), and the non-numeric fields that hold
 // suppression state. A written numeric field with no row is a violation.
 var fieldClasses = map[string]fieldRow{
-	"pkg/storage.bufferedOrderResources.stripes": {class: "write-order stripes (the acquisition itself)"},
+	// Search retirement origins are transported schema identities, not entity
+	// counts. Their existing binders/envelope owner alone may assign them.
+	"pkg/storage.BadgerTransaction.vectorWorkOrigin": {class: "search-retirement-origin", owners: []string{"pkg/storage.BadgerTransaction.bindVectorWorkOriginLocked"}, readers: []string{"pkg/storage.BadgerTransaction.recordOperationLocked", "pkg/storage.BadgerTransaction.createNode", "pkg/storage.BadgerTransaction.UpdateGraphNode"}},
+	"pkg/storage.Operation.vectorWorkOrigin":         {class: "search-retirement-origin", owners: []string{"pkg/storage.Operation.bindVectorWorkOrigin"}, readers: []string{"pkg/storage.BadgerEngine.drainCommitNotifications", "pkg/storage.VectorWorkOriginFromArguments$1"}},
+	"pkg/storage.commitNotification.origin":          {class: "search-retirement-origin", owners: []string{"pkg/storage.BadgerEngine.queueCommitOperations"}, readers: []string{"pkg/storage.capturePublicationOperations"}},
+	"pkg/storage.Node.embeddingWorkOrigin":           {class: "search-retirement-origin", owners: []string{"pkg/storage.Node.bindEmbeddingWorkOrigin", "pkg/storage.copyNodeWithoutEmbeddings", "pkg/storage.Node.CopyEmbeddingIdentityFrom"}, readers: []string{"pkg/storage.Node.EmbeddingWorkOrigin"}},
+	"pkg/storage.bufferedOrderResources.stripes":     {class: "write-order stripes (the acquisition itself)"},
 	// Pending destructive cleanup is published by one lifecycle transition;
 	// point/scan/write owners consult the same scope fence.
 	"pkg/storage.prefixDrops.pendingCount": {class: "publication-order", owners: []string{"pkg/storage.BadgerEngine.transitionPending"}, readers: []string{"pkg/storage.BadgerEngine.pendingNamespaceConflict", "pkg/storage.BadgerEngine.pendingPrefixConflict", "pkg/storage.commitWriter.pendingNamespaceWriteConflict"}},

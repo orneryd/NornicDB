@@ -116,11 +116,13 @@ type SchemaManager struct {
 	// PropertyIndex type alias). fulltext/vector/range/lookup keep their own
 	// structures because they are ordered, token or vector indexes, not
 	// equality indexes.
-	compositeIndexes map[string]*CompositeIndex      // key: index name
-	fulltextIndexes  map[string]*FulltextIndex       // key: index_name
-	vectorIndexes    map[string]*VectorIndex         // key: index_name
-	rangeIndexes     map[string]*RangeIndex          // key: index_name
-	lookupIndexes    map[ConstraintEntityType]string // token lookup index name by entity type (schema_lookup_index.go)
+	compositeIndexes      map[string]*CompositeIndex // key: index name
+	fulltextIndexes       map[string]*FulltextIndex  // key: index_name
+	vectorIndexes         map[string]*VectorIndex    // key: index_name
+	vectorIndexGeneration uint64
+	vectorPropertyRetired map[vectorDescriptor]uint64
+	rangeIndexes          map[string]*RangeIndex          // key: index_name
+	lookupIndexes         map[ConstraintEntityType]string // token lookup index name by entity type (schema_lookup_index.go)
 
 	// Persistence hook (optional).
 	// When set (by BadgerEngine), schema changes are persisted transactionally.
@@ -1779,6 +1781,9 @@ func (sm *SchemaManager) DropIndex(name string) error {
 		}
 	}
 
+	if oldVector != nil && !hasVectorDescriptor(sm.vectorIndexes, vectorDescriptorOf(oldVector)) {
+		sm.retireVectorDescriptorsLocked(vectorDescriptorOf(oldVector))
+	}
 	return nil
 }
 

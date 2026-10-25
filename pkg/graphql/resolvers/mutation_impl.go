@@ -7,6 +7,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/auth"
 
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // MutationCreateNode creates a new node
@@ -345,7 +346,11 @@ func (r *mutationResolver) mutationTriggerEmbedding(ctx context.Context, regener
 
 	// Clear and regenerate if requested
 	if regen {
-		_, _ = r.DB.ClearAllEmbeddings()
+		origin, admitted := storage.VectorWorkOrigin(ctx)
+		if !admitted {
+			return nil, storage.ErrVectorWorkNotAdmitted
+		}
+		_, _ = r.DB.ClearAllEmbeddings(origin)
 		_ = r.DB.ResetEmbedWorker()
 	}
 

@@ -3,7 +3,6 @@ package nornicdb
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/envutil"
 	"github.com/orneryd/nornicdb/pkg/gpu"
@@ -549,6 +549,7 @@ func (db *DB) GetNode(ctx context.Context, id string) (*Node, error) {
 
 // CreateNode creates a new node.
 func (db *DB) CreateNode(ctx context.Context, labels []string, properties map[string]interface{}) (*Node, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	return db.createNode(ctx, generateID(), labels, properties, false)
 }
 
@@ -559,10 +560,15 @@ func (db *DB) CreateNodeWithID(ctx context.Context, id string, labels []string, 
 	if strings.TrimSpace(id) == "" {
 		return nil, localizedError(localization.NornicDBCoreNodeIDRequired(), nil)
 	}
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	return db.createNode(ctx, id, labels, properties, true)
 }
 
 func (db *DB) createNode(ctx context.Context, id string, labels []string, properties map[string]interface{}, rejectExisting bool) (*Node, error) {
+	origin, admitted := storage.VectorWorkOrigin(ctx)
+	if !admitted {
+		return nil, storage.ErrVectorWorkNotAdmitted
+	}
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
@@ -605,7 +611,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 	// Storage event callbacks still provide eventual consistency for external writers.
 	svc, svcErr := db.GetOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
 	if svcErr == nil && svc != nil {
-		if indexErr := svc.RefreshNode(actualID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
+		if indexErr := svc.RefreshNode(actualID, origin); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
 			return nil, indexErr
 		}
 	}
@@ -620,6 +626,7 @@ func (db *DB) createNode(ctx context.Context, id string, labels []string, proper
 
 // UpdateNode updates a node's properties.
 func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]interface{}) (*Node, error) {
+	ctx, origin := storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
@@ -670,7 +677,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 	// Keep search results immediately consistent after updates.
 	svc, svcErr := db.GetOrCreateSearchService(db.defaultDatabaseName(), storageEngine)
 	if svcErr == nil && svc != nil {
-		if indexErr := svc.RefreshNode(n.ID); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
+		if indexErr := svc.RefreshNode(n.ID, origin); indexErr != nil && !db.shouldIgnoreSearchIndexingError(indexErr) {
 			return nil, indexErr
 		}
 	}
@@ -688,6 +695,7 @@ func (db *DB) UpdateNode(ctx context.Context, id string, properties map[string]i
 
 // DeleteNode deletes a node.
 func (db *DB) DeleteNode(ctx context.Context, id string) error {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	if db.closed {
 		db.mu.RUnlock()
@@ -988,12 +996,14 @@ func mapSingleSearchResult(r search.SearchResult) *SearchResult {
 // Search performs full-text BM25 search.
 // For hybrid vector+text search, use HybridSearch with pre-computed query embedding.
 func (db *DB) Search(ctx context.Context, query string, labels []string, limit int) ([]*SearchResult, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	return db.SearchDatabase(ctx, db.defaultDatabaseName(), db.storage, query, labels, limit)
 }
 
 // SearchDatabase is Search over one database: database names it and engine
 // is its storage (the caller has resolved and authorized both).
 func (db *DB) SearchDatabase(ctx context.Context, database string, engine storage.Engine, query string, labels []string, limit int) ([]*SearchResult, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
@@ -1029,6 +1039,7 @@ func (db *DB) SearchDatabase(ctx context.Context, database string, engine storag
 // The queryEmbedding should be pre-computed by the caller.
 // This is the primary search method for semantic search with ranking fusion.
 func (db *DB) HybridSearch(ctx context.Context, query string, queryEmbedding []float32, labels []string, limit int) ([]*SearchResult, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	opts := search.GetAdaptiveRRFConfig(query)
 	opts.Limit = limit
 	if len(labels) > 0 {
@@ -1041,6 +1052,7 @@ func (db *DB) HybridSearch(ctx context.Context, query string, queryEmbedding []f
 // It is intended for callers that need reproducible retrieval settings, such as
 // offline benchmark runners.
 func (db *DB) HybridSearchWithOptions(ctx context.Context, query string, queryEmbedding []float32, opts *search.SearchOptions) ([]*SearchResult, error) {
+	ctx, _ = storage.AdmitVectorWork(ctx)
 	db.mu.RLock()
 	defer db.mu.RUnlock()
 
@@ -1453,13 +1465,13 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 	}
 
 	backup := map[string]interface{}{
-		"version":    "1.0",
+		"version":    "2.0", // Exact PropertyJSON numbers, including whole FLOATs and -0.
 		"created_at": time.Now().Format(time.RFC3339),
 		"nodes":      nodes,
 		"edges":      edges,
 	}
 
-	data, err := json.MarshalIndent(backup, "", "  ")
+	data, err := valueconvert.PropertyJSON.MarshalIndent(backup, "", "  ")
 	if err != nil {
 		return localizedError(localization.NornicDBCoreBackupMarshalFailed(err), err)
 	}
@@ -1557,7 +1569,7 @@ legacyJSONRestore:
 		Edges     []*storage.Edge `json:"edges"`
 	}
 
-	if err := json.Unmarshal(data, &backup); err != nil {
+	if err := valueconvert.PropertyJSON.Unmarshal(data, &backup); err != nil {
 		return localizedError(localization.NornicDBCoreBackupParseFailed(err), err)
 	}
 
@@ -1623,6 +1635,7 @@ func isJSONBackupFile(path string) (bool, error) {
 }
 
 func (db *DB) restartSearchAfterRestore() {
+	origin := storage.CaptureVectorWorkOrigin()
 	// Restart search indexing after releasing the DB write lock; starting the
 	// background search build while Restore still holds db.mu deadlocks via
 	// startBackgroundTask's read lock. A restore replaces every database, so
@@ -1641,7 +1654,7 @@ func (db *DB) restartSearchAfterRestore() {
 			if ctx == nil {
 				ctx = context.Background()
 			}
-			db.startSearchIndexBuild(entry, ctx)
+			db.startSearchIndexBuild(entry, storage.WithVectorWorkOrigin(ctx, origin))
 		}
 	} else if err != nil {
 		log.Printf("⚠️  Warning: failed to restart search indexing after restore: %v", err)
@@ -1682,7 +1695,7 @@ func (db *DB) ExportUserData(ctx context.Context, userID, format string) ([]byte
 	}
 
 	// Default to JSON
-	return json.Marshal(map[string]interface{}{
+	return valueconvert.PropertyJSON.Marshal(map[string]interface{}{
 		"user_id":     userID,
 		"data":        userData,
 		"exported_at": time.Now(),

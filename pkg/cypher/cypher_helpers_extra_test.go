@@ -1015,14 +1015,14 @@ func TestCypherHelpers_DatabaseNameAndRemoveNodeFromSearch(t *testing.T) {
 	assert.Equal(t, "nornic", execNoNS.databaseName())
 
 	// removeNodeFromSearch should early-return on empty id / nil search.
-	execNoNS.removeNodeFromSearch("")
-	execNoNS.removeNodeFromSearch("plain-id")
+	execNoNS.removeNodeFromSearch(context.Background(), "")
+	execNoNS.removeNodeFromSearch(context.Background(), "plain-id")
 
 	// With search service configured, prefixed IDs should be unprefixed before removal.
 	svc := search.NewService(base, search.DefaultVectorDimensions, nil)
 	execNoNS.SetSearchService(svc)
-	execNoNS.removeNodeFromSearch("tenant_cov:node-1")
-	execNoNS.removeNodeFromSearch("node-2")
+	execNoNS.removeNodeFromSearch(context.Background(), "tenant_cov:node-1")
+	execNoNS.removeNodeFromSearch(context.Background(), "node-2")
 }
 
 func TestCypherHelpers_VectorRegistryRegisterUnregister(t *testing.T) {

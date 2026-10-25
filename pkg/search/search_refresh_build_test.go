@@ -25,19 +25,19 @@ func TestRefreshesDuringBuildInstallOnlyTheNewest(t *testing.T) {
 
 	// A node refresh reserved, then reading an intermediate state, and a
 	// newer refresh reading the final one: both are handed to the build.
-	stale := svc.ReserveNodeMutation("nornic:a")
+	stale := svc.ReserveNodeMutation("nornic:a", storage.CaptureVectorWorkOrigin())
 	require.NoError(t, engine.UpdateNode(buildWriteNode("nornic:a", "midterm", []float32{0, 0, 1})))
 	requireReturnsDuringBuild(t, "a stale refresh", func() error { return svc.RefreshNodeWithMutation(stale) })
 	require.NoError(t, engine.UpdateNode(buildWriteNode("nornic:a", "newterm", []float32{0, 1, 1})))
-	requireReturnsDuringBuild(t, "a newer refresh", func() error { return svc.RefreshNode("nornic:a") })
+	requireReturnsDuringBuild(t, "a newer refresh", func() error { return svc.RefreshNode("nornic:a", storage.CaptureVectorWorkOrigin()) })
 
 	// A relationship refresh that read the vector, then a newer one that reads
 	// the deletion.
-	staleEdge := svc.ReserveEdgeMutation("nornic:r")
+	staleEdge := svc.ReserveEdgeMutation("nornic:r", storage.CaptureVectorWorkOrigin())
 	require.NoError(t, engine.UpdateEdge(&storage.Edge{ID: "nornic:r", StartNode: "nornic:a", EndNode: "nornic:b", Type: "REL", Properties: map[string]any{"v": []float32{0, 1, 0}}}))
 	requireReturnsDuringBuild(t, "a stale relationship refresh", func() error { return svc.RefreshEdgeWithMutation(staleEdge) })
 	require.NoError(t, engine.DeleteEdge("nornic:r"))
-	requireReturnsDuringBuild(t, "a newer relationship refresh", func() error { return svc.RefreshEdge("nornic:r") })
+	requireReturnsDuringBuild(t, "a newer relationship refresh", func() error { return svc.RefreshEdge("nornic:r", storage.CaptureVectorWorkOrigin()) })
 
 	engine.open()
 	require.NoError(t, <-built)

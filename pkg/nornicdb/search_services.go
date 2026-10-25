@@ -360,7 +360,7 @@ func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engi
 		// during the wait does NOT abort the build — the next reader will
 		// find the service warm.
 		warmDBName := dbName
-		svc.SetLazyWarming(true, search.WarmFunc(func() {
+		svc.SetLazyWarming(true, search.WarmFunc(func(warmCtx context.Context) {
 			ctx := db.buildCtx
 			if ctx == nil {
 				ctx = context.Background()
@@ -371,7 +371,12 @@ func (db *DB) GetOrCreateSearchService(dbName string, storageEngine storage.Engi
 			// service entry is already in db.searchServices because the
 			// outer GetOrCreateSearchService call inserted it before
 			// SetLazyWarming ran.
-			if err := db.ensureSearchIndexesBuilt(ctx, warmDBName); err != nil && !db.shouldIgnoreSearchIndexingError(err) {
+			origin, admitted := storage.VectorWorkOrigin(warmCtx)
+			if !admitted {
+				log.Printf("⚠️  Search lazy-warm build for db %s: %v", warmDBName, storage.ErrVectorWorkNotAdmitted)
+				return
+			}
+			if err := db.ensureSearchIndexesBuilt(storage.WithVectorWorkOrigin(ctx, origin), warmDBName); err != nil && !db.shouldIgnoreSearchIndexingError(err) {
 				log.Printf("⚠️  Search lazy-warm build failed for db %s: %v", warmDBName, err)
 			}
 		}))
@@ -677,9 +682,15 @@ func (db *DB) startSearchIndexBuild(entry *dbSearchService, ctx context.Context)
 	// storage write event fires (e.g. RecordConsent). Running the Once
 	// synchronously here would deadlock those callers against the in-flight
 	// build (db.mu → once.mu → db.mu).
+	origin, admitted := storage.VectorWorkOrigin(ctx)
+	if !admitted {
+		log.Printf("⚠️ Search index build for db %s: %v", entry.dbName, storage.ErrVectorWorkNotAdmitted)
+		return
+	}
+	build := entry.svc.PrepareIndexBuild(origin)
 	go entry.buildOnce.Do(func() {
 		if !db.startBackgroundTask(func() {
-			_ = db.runInitialSearchIndexBuild(entry, ctx)
+			_ = db.runInitialSearchIndexBuildWith(entry, ctx, build)
 		}) {
 			entry.buildErrMu.Lock()
 			entry.buildErr = ErrClosed
@@ -695,7 +706,15 @@ func (db *DB) startSearchIndexBuild(entry *dbSearchService, ctx context.Context)
 // entry.buildOnce, in the background (startSearchIndexBuild) or synchronously
 // (DB.BuildSearchIndexes).
 func (db *DB) runInitialSearchIndexBuild(entry *dbSearchService, ctx context.Context) error {
-	err := entry.svc.BuildIndexes(ctx)
+	origin, admitted := storage.VectorWorkOrigin(ctx)
+	if !admitted {
+		return storage.ErrVectorWorkNotAdmitted
+	}
+	return db.runInitialSearchIndexBuildWith(entry, ctx, entry.svc.PrepareIndexBuild(origin))
+}
+
+func (db *DB) runInitialSearchIndexBuildWith(entry *dbSearchService, ctx context.Context, build func(context.Context) error) error {
+	err := build(ctx)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("search index build failed for database %s: %v", entry.dbName, err)
 	}
@@ -720,6 +739,7 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 	if entry == nil || entry.svc == nil || entry.isRetired() {
 		return
 	}
+	origin := entry.queuedVectorWorkOrigin()
 	entry.pendingFlushMu.Lock()
 	if entry.pendingFlushTimer != nil {
 		entry.pendingFlushTimer.Stop()
@@ -752,7 +772,7 @@ func (db *DB) ensurePendingFlush(entry *dbSearchService) {
 				if ctx == nil {
 					ctx = context.Background()
 				}
-				db.startSearchIndexBuild(entry, ctx)
+				db.startSearchIndexBuild(entry, storage.WithVectorWorkOrigin(ctx, origin))
 				<-entry.buildDone
 			} else if !progress.Ready {
 				reschedulePending = false
@@ -853,6 +873,7 @@ func (db *DB) EnsureSearchIndexes(ctx context.Context, dbName string, storageEng
 	if mode != SearchIndexBuildStart && mode != SearchIndexBuildWait {
 		return nil, localizedError(localization.NornicDBCoreSearchIndexBuildModeInvalid(int(mode)), nil)
 	}
+	ctx, origin := storage.AdmitVectorWork(ctx)
 	svc, err := db.GetOrCreateSearchService(dbName, storageEngine)
 	if err != nil {
 		return nil, err
@@ -876,7 +897,7 @@ func (db *DB) EnsureSearchIndexes(ctx context.Context, dbName string, storageEng
 		return svc, nil
 	}
 	if mode == SearchIndexBuildStart {
-		db.startSearchIndexBuildForDatabase(dbName)
+		db.startSearchIndexBuildForDatabase(dbName, origin)
 		return svc, nil
 	}
 	return svc, db.ensureSearchIndexesBuilt(ctx, dbName)
@@ -884,7 +905,7 @@ func (db *DB) EnsureSearchIndexes(ctx context.Context, dbName string, storageEng
 
 // startSearchIndexBuildForDatabase starts the database's initial search build
 // on the database lifetime's context, if its service is loaded.
-func (db *DB) startSearchIndexBuildForDatabase(dbName string) {
+func (db *DB) startSearchIndexBuildForDatabase(dbName string, origin uint64) {
 	db.searchServicesMu.RLock()
 	entry := db.searchServices[dbName]
 	db.searchServicesMu.RUnlock()
@@ -895,22 +916,22 @@ func (db *DB) startSearchIndexBuildForDatabase(dbName string) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	db.startSearchIndexBuild(entry, ctx)
+	db.startSearchIndexBuild(entry, storage.WithVectorWorkOrigin(ctx, origin))
 }
 
 // indexNodeFromEvent queues a refresh for a node a storage event reports as
 // written. Only its ID is used: the refresh reads the node's stored state.
-func (db *DB) indexNodeFromEvent(node *storage.Node) {
+func (db *DB) indexNodeFromEvent(node *storage.Node, origin uint64) {
 	if node == nil {
 		return
 	}
 	// Accepted embedding outcomes publish before storage delivers the worker
 	// completion callback. Body events and outcomes awaiting a build use the
 	// same deferred refresh owner below.
-	if node.EmbeddingAttempt() != nil && db.publishEmbeddedNode(node) {
+	if node.EmbeddingAttempt() != nil && db.publishEmbeddedNode(node, origin) {
 		return
 	}
-	db.queueSearchRefreshEvent(searchNodeWrite, string(node.ID))
+	db.queueSearchRefreshEvent(searchNodeWrite, string(node.ID), origin)
 }
 
 type searchRefreshEventKind uint8
@@ -925,7 +946,7 @@ const (
 // the newest node or relationship refresh under pendingMu, and schedules the
 // deferred flush. Node writes can create a service; deletes and relationship
 // events only use an existing one.
-func (db *DB) queueSearchRefreshEvent(kind searchRefreshEventKind, id string) {
+func (db *DB) queueSearchRefreshEvent(kind searchRefreshEventKind, id string, origin uint64) {
 	if kind > searchRelationshipChange {
 		return
 	}
@@ -982,14 +1003,14 @@ func (db *DB) queueSearchRefreshEvent(kind searchRefreshEventKind, id string) {
 	var work search.RefreshRetry
 	if !entry.retired {
 		if kind == searchRelationshipChange {
-			work.Edge = entry.svc.ReserveEdgeMutation(storage.EdgeID(local))
+			work.Edge = entry.svc.ReserveEdgeMutation(storage.EdgeID(local), origin)
 		} else {
-			work.Node = entry.svc.ReserveNodeMutation(storage.NodeID(local))
+			work.Node = entry.svc.ReserveNodeMutation(storage.NodeID(local), origin)
 		}
 		entry.queueReservedRefreshLocked(local, work)
 	}
 	entry.pendingMu.Unlock()
-	db.scheduleQueuedRefreshes(entry)
+	db.scheduleQueuedRefreshes(entry, origin)
 }
 
 // publishEmbeddedNode indexes a node the embed worker has just persisted into
@@ -1000,7 +1021,7 @@ func (db *DB) queueSearchRefreshEvent(kind searchRefreshEventKind, id string) {
 //
 // Only the node's ID is used: the refresh reads its stored state, so a newer
 // write or delete wins over the worker's copy, and supersedes older queued work.
-func (db *DB) publishEmbeddedNode(node *storage.Node) bool {
+func (db *DB) publishEmbeddedNode(node *storage.Node, origin uint64) bool {
 	if db == nil || node == nil {
 		return false
 	}
@@ -1017,7 +1038,7 @@ func (db *DB) publishEmbeddedNode(node *storage.Node) bool {
 	if progress := entry.svc.GetBuildProgress(); !progress.Ready || progress.Building {
 		return false
 	}
-	if err := entry.svc.RefreshNode(storage.NodeID(local)); err != nil {
+	if err := entry.svc.RefreshNode(storage.NodeID(local), origin); err != nil {
 		if db.shouldIgnoreSearchIndexingError(err) {
 			return true
 		}
@@ -1028,16 +1049,21 @@ func (db *DB) publishEmbeddedNode(node *storage.Node) bool {
 	return true
 }
 
+// removeNodeFromEvent routes deletes through the same storage-event queue.
+func (db *DB) removeNodeFromEvent(nodeID storage.NodeID, origin uint64) {
+	db.queueSearchRefreshEvent(searchNodeDelete, string(nodeID), origin)
+}
+
 // scheduleQueuedRefreshes has queued refreshes applied: by the deferred flush
 // once the service is ready, after starting the build a write may trigger.
-func (db *DB) scheduleQueuedRefreshes(entry *dbSearchService) {
+func (db *DB) scheduleQueuedRefreshes(entry *dbSearchService, origin uint64) {
 	progress := entry.svc.GetBuildProgress()
 	if db.shouldStartSearchBuildForWriteEvent(entry.dbName, progress) {
 		ctx := db.buildCtx
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		db.startSearchIndexBuild(entry, ctx)
+		db.startSearchIndexBuild(entry, storage.WithVectorWorkOrigin(ctx, origin))
 		db.ensurePendingFlush(entry)
 		return
 	}

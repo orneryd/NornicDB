@@ -31,14 +31,14 @@ func TestSol1482R3DeferredEdgeDrain(t *testing.T) {
 					require.NoError(t, svc.BuildIndexes(context.Background()))
 				}
 				entry := &dbSearchService{svc: svc}
-				seedReservedSearchRefresh(entry, "r", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("r")})
+				seedReservedSearchRefresh(entry, "r", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("r", storage.CaptureVectorWorkOrigin())})
 				_, stale := entry.drainPending()
 				rel.Properties["vec"] = []float32{0, 1}
 				require.NoError(t, store.UpdateEdge(rel))
-				require.NoError(t, svc.RefreshEdge("r"))
+				require.NoError(t, svc.RefreshEdge("r", storage.CaptureVectorWorkOrigin()))
 				if remove {
 					require.NoError(t, store.DeleteEdge("r"))
-					seedReservedSearchRefresh(entry, "r", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("r")})
+					seedReservedSearchRefresh(entry, "r", search.RefreshRetry{Edge: entry.svc.ReserveEdgeMutation("r", storage.CaptureVectorWorkOrigin())})
 					_, newer := entry.drainPending()
 					require.NoError(t, svc.RefreshEdgeWithMutation(newer["r"]))
 				}

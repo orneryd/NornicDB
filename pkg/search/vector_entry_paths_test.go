@@ -72,7 +72,7 @@ func TestForEachNodeVectorEntryStopsWhenAsked(t *testing.T) {
 			svc.forEachNodeVectorEntry(node, 2, func(nodeVectorEntry) bool {
 				visited++
 				return false
-			})
+			}, storage.CaptureVectorWorkOrigin())
 			assert.Equal(t, 1, visited)
 		})
 	}
@@ -89,7 +89,7 @@ func TestForEachNodeVectorEntryStopsWhenAsked(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, item.entry, decoded, "the entry and its key must agree")
 		return true
-	})
+	}, storage.CaptureVectorWorkOrigin())
 	assert.Equal(t, []vectorEntryKind{vectorEntryNamed, vectorEntryMain, vectorEntryChunk, vectorEntryProperty}, kinds)
 }
 
@@ -144,12 +144,12 @@ func TestIndexNodeRejectsMismatchedEntriesBeforeMutation(t *testing.T) {
 		require.True(t, ok)
 		assert.Equal(t, "originaltoken", text)
 		svc.indexMu.RLock()
-		unchanged := svc.nodeVectorStateUnchangedLocked(invalid)
+		unchanged := svc.nodeVectorStateUnchangedLocked(invalid, storage.CaptureVectorWorkOrigin())
 		svc.indexMu.RUnlock()
 		assert.False(t, unchanged, "rejected entries must never match the indexed state")
 	}
 	svc.indexMu.RLock()
-	usage, err := svc.checkNodeIndexCapacityLocked(invalid, nodeFulltext{})
+	usage, err := svc.checkNodeIndexCapacityLocked(invalid, nodeFulltext{}, storage.CaptureVectorWorkOrigin())
 	svc.indexMu.RUnlock()
 	require.NoError(t, err)
 	assert.Equal(t, int64(len("n")+16+len(nodeNamedVectorKey("n", "v"))+16+len("n")+16), usage.vectorMetadata,

@@ -23,7 +23,7 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 	if err != nil {
 		return false, err
 	}
-	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit, write.vectorWorkOrigin)
 	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
 
 	if b.writeBehind != nil {

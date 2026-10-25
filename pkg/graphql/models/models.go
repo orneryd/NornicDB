@@ -10,6 +10,8 @@ import (
 	"io"
 	"strconv"
 	"time"
+
+	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // =============================================================================
@@ -25,7 +27,7 @@ func (j JSON) MarshalGQL(w io.Writer) {
 		w.Write([]byte("null"))
 		return
 	}
-	data, err := json.Marshal(j)
+	data, err := valueconvert.PropertyJSON.Marshal(j)
 	if err != nil {
 		w.Write([]byte("null"))
 		return
@@ -41,12 +43,16 @@ func (j *JSON) UnmarshalGQL(v interface{}) error {
 	}
 	switch val := v.(type) {
 	case map[string]interface{}:
-		*j = JSON(val)
+		normalized, err := valueconvert.CypherInputJSON.Numbers(val)
+		if err != nil {
+			return err
+		}
+		*j = JSON(normalized.(map[string]interface{}))
 		return nil
 	case string:
 		// Try to parse as JSON string
 		var result map[string]interface{}
-		if err := json.Unmarshal([]byte(val), &result); err != nil {
+		if err := valueconvert.CypherInputJSON.Unmarshal([]byte(val), &result); err != nil {
 			return fmt.Errorf("cannot unmarshal JSON: %w", err)
 		}
 		*j = JSON(result)
@@ -65,7 +71,7 @@ func (f FloatArray) MarshalGQL(w io.Writer) {
 		w.Write([]byte("null"))
 		return
 	}
-	data, err := json.Marshal([]float32(f))
+	data, err := valueconvert.PropertyJSON.Marshal([]float32(f))
 	if err != nil {
 		w.Write([]byte("null"))
 		return

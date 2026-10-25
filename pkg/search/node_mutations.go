@@ -33,15 +33,17 @@ func (s *Service) unlockMutation(lane *sync.Mutex) {
 // It is embedded in Service; pending is accessed only under nodeMutationMu.
 type mutationRegistry[ID ~string] struct {
 	service *Service
-	pending map[ID]uint64
+	pending map[ID]mutationReservation
 }
 
-// identityMutation is a comparable reservation naming one identity generation.
-// Its registry keeps service and map ownership outside the copied token.
+// identityMutation is a comparable reservation naming one identity generation
+// and the immutable vector-work origin admitted with it. Its registry keeps
+// service and map ownership outside the copied token.
 type identityMutation[ID ~string] struct {
 	registry   *mutationRegistry[ID]
 	id         ID
 	generation uint64
+	origin     uint64
 }
 
 // owner returns the issuing service, including for an empty reservation.
@@ -52,15 +54,17 @@ func (mutation identityMutation[ID]) owner() *Service {
 	return mutation.registry.service
 }
 
-// reserveIdentityMutation supersedes older work for id. Caller holds nodeMutationMu.
-func reserveIdentityMutation[ID ~string](s *Service, registry *mutationRegistry[ID], id ID) identityMutation[ID] {
+// reserveIdentityMutation supersedes older work for id. Caller holds
+// nodeMutationMu. A zero generation means newer-origin work is pending.
+func reserveIdentityMutation[ID ~string](s *Service, registry *mutationRegistry[ID], id ID, origin uint64) identityMutation[ID] {
 	if registry.pending == nil {
-		*registry = mutationRegistry[ID]{service: s, pending: make(map[ID]uint64)}
+		*registry = mutationRegistry[ID]{service: s, pending: make(map[ID]mutationReservation)}
 	}
 	return identityMutation[ID]{
 		registry:   registry,
 		id:         id,
-		generation: reserveMutation(&s.mutationReservations, registry.pending, id),
+		generation: reserveMutation(&s.mutationReservations, registry.pending, id, origin),
+		origin:     origin,
 	}
 }
 
@@ -95,7 +99,7 @@ func (mutation identityMutation[ID]) current() bool {
 
 // held is current for a caller holding the identity lane.
 func (mutation identityMutation[ID]) held(s *Service) bool {
-	return mutation.owner() == s && mutation.generation != 0 && mutation.registry.pending[mutation.id] == mutation.generation
+	return mutation.owner() == s && mutation.generation != 0 && mutation.registry.pending[mutation.id].generation == mutation.generation
 }
 
 // discard retires work that could not be prepared for application. It cannot
@@ -131,21 +135,21 @@ type NodeMutation struct {
 // ReserveNodeMutation supersedes older work for this node. Reservation and
 // application share one lock, so a newer reservation cannot slip between the
 // generation check and the index write. No lock is retained by the caller.
-func (s *Service) ReserveNodeMutation(nodeID storage.NodeID) NodeMutation {
+func (s *Service) ReserveNodeMutation(nodeID storage.NodeID, origin uint64) NodeMutation {
 	lane := s.lockMutation(string(nodeID))
 	defer s.unlockMutation(lane)
-	return NodeMutation{mutation: reserveIdentityMutation(s, &s.nodeMutations, nodeID)}
+	return NodeMutation{mutation: reserveIdentityMutation(s, &s.nodeMutations, nodeID, origin)}
 }
 
 // RefreshNode makes the node's index entries match storage: indexed while it
 // is stored and visible, removed otherwise. Live writers and readers that find
 // a node missing use it rather than IndexNode or RemoveNode, so none of them
 // decides from a read that a newer write may already have outdated.
-func (s *Service) RefreshNode(nodeID storage.NodeID) error {
+func (s *Service) RefreshNode(nodeID storage.NodeID, origin uint64) error {
 	if s == nil || nodeID == "" {
 		return nil
 	}
-	return s.RefreshNodeWithMutation(s.ReserveNodeMutation(nodeID))
+	return s.RefreshNodeWithMutation(s.ReserveNodeMutation(nodeID, origin))
 }
 
 // RefreshNodeWithMutation applies a refresh reserved earlier, such as one
@@ -181,19 +185,19 @@ type EdgeMutation struct {
 
 // ReserveEdgeMutation supersedes older work for this relationship. Generations
 // come from the same counter and registry as node reservations.
-func (s *Service) ReserveEdgeMutation(edgeID storage.EdgeID) EdgeMutation {
+func (s *Service) ReserveEdgeMutation(edgeID storage.EdgeID, origin uint64) EdgeMutation {
 	lane := s.lockMutation(string(edgeID))
 	defer s.unlockMutation(lane)
-	return EdgeMutation{mutation: reserveIdentityMutation(s, &s.edgeMutations, edgeID)}
+	return EdgeMutation{mutation: reserveIdentityMutation(s, &s.edgeMutations, edgeID, origin)}
 }
 
 // RefreshEdge makes the relationship's index entries match storage, as
 // RefreshNode does for nodes; a deleted relationship leaves them.
-func (s *Service) RefreshEdge(edgeID storage.EdgeID) error {
+func (s *Service) RefreshEdge(edgeID storage.EdgeID, origin uint64) error {
 	if s == nil || edgeID == "" {
 		return nil
 	}
-	return s.RefreshEdgeWithMutation(s.ReserveEdgeMutation(edgeID))
+	return s.RefreshEdgeWithMutation(s.ReserveEdgeMutation(edgeID, origin))
 }
 
 // RefreshEdgeWithMutation applies a relationship refresh reserved earlier;
@@ -245,7 +249,7 @@ func claimReservedIndexMutation[ID ~string](mutation identityMutation[ID]) bool 
 	}
 	lane := s.lockMutation(string(mutation.id))
 	defer s.unlockMutation(lane)
-	if mutation.registry.pending[mutation.id] != mutation.generation {
+	if mutation.registry.pending[mutation.id].generation != mutation.generation {
 		return false
 	}
 	mutation.complete(s)
@@ -260,7 +264,7 @@ func applyReservedIndexMutation[ID ~string](mutation identityMutation[ID], apply
 		return nil
 	}
 	lane := s.lockMutation(string(mutation.id))
-	if mutation.registry.pending[mutation.id] != mutation.generation {
+	if mutation.registry.pending[mutation.id].generation != mutation.generation {
 		s.unlockMutation(lane)
 		return nil
 	}
@@ -272,3 +276,15 @@ func applyReservedIndexMutation[ID ~string](mutation identityMutation[ID], apply
 	}()
 	return apply()
 }
+
+// IsZero reports a reservation rejected because newer-origin work is pending.
+func (mutation NodeMutation) IsZero() bool { return mutation.mutation.generation == 0 }
+
+// IsZero reports a relationship reservation with no admitted work.
+func (mutation EdgeMutation) IsZero() bool { return mutation.mutation.generation == 0 }
+
+// VectorWorkOrigin returns the immutable origin transported by this reservation.
+func (m NodeMutation) VectorWorkOrigin() uint64 { return m.mutation.origin }
+
+// VectorWorkOrigin returns the immutable relationship-work origin.
+func (m EdgeMutation) VectorWorkOrigin() uint64 { return m.mutation.origin }

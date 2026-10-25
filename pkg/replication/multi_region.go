@@ -239,6 +239,7 @@ func (r *MultiRegionReplicator) streamWALToRemoteRegions(ctx context.Context) {
 
 // Apply applies a command through the local Raft cluster.
 func (r *MultiRegionReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	cmd = admittedVectorCommand(cmd)
 	if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
 		return err
 	}
