@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -23,7 +24,7 @@ type managedCatalogDiskAudit struct {
 
 func auditManagedCatalogDisk(t *testing.T, dataDir string, base *storage.BadgerEngine) managedCatalogDiskAudit {
 	t.Helper()
-	db, err := badger.Open(badger.DefaultOptions(dataDir).WithReadOnly(true).WithLogger(nil))
+	db, err := fixtureowner.OwnResult[*badger.DB](t, badger.ErrDBClosed)(badger.Open(badger.DefaultOptions(dataDir).WithReadOnly(true).WithLogger(nil)))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, db.Close()) }()
 	audit := managedCatalogDiskAudit{forward: map[string]uint64{}, reverse: map[uint64]string{}, cachedForward: map[string]uint64{}, cachedReverse: map[uint64]string{}}
@@ -109,9 +110,9 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 				walDir := t.TempDir()
 				for generation := 0; generation < 3; generation++ {
 					dataDir := t.TempDir()
-					base, err := storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
+					base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{
 						DataDir: dataDir, WriteBehind: writeBehind, WriteBehindInterval: time.Hour,
-					})
+					}))
 					require.NoError(t, err)
 					wal, err := storage.NewWAL(walDir, storage.DefaultWALConfig())
 					require.NoError(t, err)

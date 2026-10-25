@@ -10,7 +10,7 @@ import (
 
 func TestMergeSharedScannerQuotedKeywordsAndModifiers(t *testing.T) {
 	query := "MERGE (n:Node {name:'MATCH in string'}) ON MATCH SET n.a = 1 WITH n OPTIONAL MATCH (m:Node) RETURN n"
-	clauses, ok := splitPipelineClauses(query)
+	clauses, ok := splitPipelineClauses(t.Context(), query)
 	require.True(t, ok)
 	require.Len(t, clauses, 4)
 	require.Equal(t, pipelineClauseMerge, clauses[0].kind)

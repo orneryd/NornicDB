@@ -21,7 +21,7 @@ func (e *StorageExecutor) admitResolvedStatementWrite(ctx context.Context, state
 	if !hasAdmission && state == nil {
 		return nil
 	}
-	contract, err := readStatementExecutionContract(statement)
+	contract, err := readStatementExecutionContract(ctx, statement)
 	if err != nil {
 		return err
 	}

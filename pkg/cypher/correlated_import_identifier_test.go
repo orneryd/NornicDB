@@ -64,7 +64,7 @@ func TestCorrelatedPipelineImportedIdentifierShortcutParity(t *testing.T) {
 				"MATCH (" + written + ") RETURN " + written + ".n AS n LIMIT 5",
 			} {
 				t.Run(source+"/"+body, func(t *testing.T) {
-					clauses, ok := canExecuteAsPipeline(body)
+					clauses, ok := canExecuteAsPipeline(t.Context(), body)
 					require.True(t, ok)
 					for _, seed := range seeds.Rows {
 						bindings := pipelineRow{name: seed[0]}
@@ -90,7 +90,7 @@ func TestCorrelatedPipelineImportedIdentifierShortcutParity(t *testing.T) {
 						require.ElementsMatch(t, general.Rows, actual.result.Rows)
 					}
 					unrelated := "MATCH (other:A) RETURN count(other) AS c"
-					unrelatedClauses, ok := canExecuteAsPipeline(unrelated)
+					unrelatedClauses, ok := canExecuteAsPipeline(t.Context(), unrelated)
 					require.True(t, ok)
 					require.False(t, exec.pipelineReadsImportedBinding(withValueBindings(ctx, pipelineRow{name: seeds.Rows[0][0]}), unrelatedClauses))
 					unrelatedResult := exec.executePipeline(ctx, unrelated)

@@ -58,22 +58,22 @@ func TestParseLeadingWithImportsKeywordAtStart(t *testing.T) {
 // whichever split is asked for first.
 func TestCachedPipelineClausesVariants(t *testing.T) {
 	const withCall = "CALL db.labels() YIELD label RETURN label /* variants */"
-	clauses, ok := splitPipelineClausesAllowingProcedureCalls(withCall)
+	clauses, ok := splitPipelineClausesAllowingProcedureCalls(t.Context(), withCall)
 	require.True(t, ok)
 	require.Len(t, clauses, 2)
-	_, ok = splitPipelineClauses(withCall)
+	_, ok = splitPipelineClauses(t.Context(), withCall)
 	require.False(t, ok)
 
 	const withCallFirst = "CALL db.labels() YIELD label RETURN label /* variants, other order */"
-	_, ok = splitPipelineClauses(withCallFirst)
+	_, ok = splitPipelineClauses(t.Context(), withCallFirst)
 	require.False(t, ok)
-	_, ok = splitPipelineClausesAllowingProcedureCalls(withCallFirst)
+	_, ok = splitPipelineClausesAllowingProcedureCalls(t.Context(), withCallFirst)
 	require.True(t, ok)
 
 	const plain = "MATCH (n) WITH n RETURN n /* variants */"
-	first, ok := splitPipelineClauses(plain)
+	first, ok := splitPipelineClauses(t.Context(), plain)
 	require.True(t, ok)
-	second, ok := splitPipelineClausesAllowingProcedureCalls(plain)
+	second, ok := splitPipelineClausesAllowingProcedureCalls(t.Context(), plain)
 	require.True(t, ok)
 	require.Equal(t, first, second)
 }

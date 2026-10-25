@@ -21,7 +21,7 @@ func TestDbRetrieveContinuationIssuedDepthCompletion(t *testing.T) {
 		require.NoError(t, service.IndexNode(node))
 	}
 	var depths []int
-	producer := func(_ context.Context, _ string, _ []float32, opts *search.SearchOptions) (*search.SearchResponse, error) {
+	producer := func(readerCtx context.Context, _ string, _ []float32, opts *search.SearchOptions) (*search.SearchResponse, error) {
 		depths = append(depths, opts.Limit)
 		results := make([]search.SearchResult, 5)
 		for i := range results {

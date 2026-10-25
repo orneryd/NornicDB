@@ -45,24 +45,49 @@ func TestShowSettingsSelectionAndUnsupportedComposition(t *testing.T) {
 }
 
 func TestShowSettingsUsesResolvedValuesAndRedactsSecrets(t *testing.T) {
-	executor := NewStorageExecutor(newTestMemoryEngine(t))
-	executor.SetSettingsResolver(func() SettingsSnapshot {
-		return SettingsSnapshot{
-			Configured: map[string]string{
-				"db.nornic.search.vector.warming": "lazy",
-				"db.nornic.embedding.api.key":     "configured-secret",
-			},
-			Active: map[string]string{
-				"db.nornic.search.vector.warming": "lazy",
-				"db.nornic.embedding.api.key":     "active-secret",
-			},
-		}
-	})
-
-	result, err := executor.Execute(context.Background(), "SHOW SETTINGS db.nornic.search.vector.warming, db.nornic.embedding.api.key YIELD name, value, startupValue, isExplicitlySet", nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{
-		{"db.nornic.embedding.api.key", "<REDACTED>", "<REDACTED>", true},
-		{"db.nornic.search.vector.warming", "lazy", "lazy", true},
-	}, result.Rows)
+	const key = "db.nornic.embedding.api.key"
+	for _, scenario := range []struct{ name, configured, active, want string }{
+		{"distinct_runtime_values", "configured-secret", "active-secret", "<REDACTED>"},
+		{"unset", "", "", ""},
+		{"set", "synthetic-show-set-credential-813624", "synthetic-show-set-credential-813624", "<REDACTED>"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			executor := NewStorageExecutor(newTestMemoryEngine(t))
+			configured := map[string]string{"db.nornic.search.vector.warming": "lazy", key: scenario.configured}
+			active := map[string]string{"db.nornic.search.vector.warming": "lazy", key: scenario.active}
+			executor.SetSettingsResolver(func() SettingsSnapshot { return SettingsSnapshot{Configured: configured, Active: active} })
+			result, err := executor.Execute(context.Background(), "SHOW SETTINGS db.nornic.search.vector.warming, db.nornic.embedding.api.key YIELD name, value, startupValue, isExplicitlySet", nil)
+			require.NoError(t, err)
+			if scenario.name == "distinct_runtime_values" {
+				require.Equal(t, [][]interface{}{{key, "<REDACTED>", "<REDACTED>", true}, {"db.nornic.search.vector.warming", "lazy", "lazy", true}}, result.Rows)
+			}
+			result, err = executor.Execute(context.Background(), "SHOW SETTINGS YIELD *", nil)
+			require.NoError(t, err)
+			columns := make(map[string]int)
+			for i, column := range result.Columns {
+				columns[column] = i
+			}
+			found := false
+			for _, row := range result.Rows {
+				if row[columns["name"]] != key {
+					continue
+				}
+				found = true
+				for _, column := range []string{"value", "startupValue"} {
+					if row[columns[column]] != scenario.want {
+						t.Error("SHOW changed unset state or disclosed a secret; row withheld")
+					}
+				}
+				if row[columns["defaultValue"]] != "" {
+					t.Error("SHOW changed the unset secret default")
+				}
+			}
+			if !found {
+				t.Error("secret setting row missing")
+			}
+			if active[key] != scenario.active || configured[key] != scenario.configured {
+				t.Error("SHOW changed runtime settings")
+			}
+		})
+	}
 }

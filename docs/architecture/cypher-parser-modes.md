@@ -86,6 +86,20 @@ flowchart TB
 > `Failed`), and unhandled statements fail with Neo4j's `Neo.ClientError.Statement.SyntaxError`
 > classification rather than being re-routed.
 
+### Cancellation granularity in the ANTLR runtime
+
+NornicDB pins `github.com/antlr4-go/antlr/v4` v4.13.1. Its internal prediction expansion does not provide a cancellation checkpoint. NornicDB's character and token streams check the request context, but an in-progress prediction step can finish before the runtime observes those streams again. A query deadline therefore does not impose a hard allocation or elapsed-time bound on that step, especially with cold prediction state.
+
+This also affects shared grammar-based semantic and result-column readers reached from the default `nornic` mode; changing parser modes does not guarantee avoiding the limitation.
+
+Earlier integrated revisions reproduced allocations above the unchanged `TestSelectedPathCountedCompilation` 8 MiB cap with a 5 ms deadline in three fresh processes. After the completed reader and owner convergence, the unchanged test passed in three fresh processes, with the million-step empty-graph cases allocating 7,578,048–8,229,080 bytes. These passing controls do not establish a hard allocation bound across cold prediction states: the runtime checkpoint limitation above remains. No test was skipped and no assertion or threshold was relaxed. Run the focused guard with:
+
+```bash
+go test ./pkg/cypher -run '^TestSelectedPathCountedCompilation$' -count=1 -v
+```
+
+As checked on 24 October 2026, [the official Go runtime release](https://github.com/antlr4-go/antlr/releases/tag/v4.13.1) is still v4.13.1 and [upstream prediction source](https://github.com/antlr4-go/antlr/blob/4d7e18847d8881a176db3d7cca909e3f3942a05f/parser_atn_simulator.go) matches the pinned dependency. No newer released fix was available. The runtime remains unmodified.
+
 ### Nornic validation is TCK-vetted
 
 The Nornic parser is a **scannerless recursive descent parser**: it descends over

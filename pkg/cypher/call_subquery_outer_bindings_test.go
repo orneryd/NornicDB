@@ -103,7 +103,7 @@ func TestProcedurePipelinePreservesTypedRowArguments(t *testing.T) {
 	var calls [][]interface{}
 	require.NoError(t, RegisterUserProcedure(
 		ProcedureSpec{Name: "custom.pipeline_entities", Mode: ProcedureModeRead, MinArgs: 3, MaxArgs: 3},
-		func(_ context.Context, _ *StorageExecutor, _ string, arguments []interface{}) (*ExecuteResult, error) {
+		func(readerCtx context.Context, _ *StorageExecutor, _ string, arguments []interface{}) (*ExecuteResult, error) {
 			calls = append(calls, arguments)
 			return &ExecuteResult{Columns: []string{"name"}, Rows: [][]interface{}{{arguments[0].(*storage.Node).Properties["name"]}}}, nil
 		},

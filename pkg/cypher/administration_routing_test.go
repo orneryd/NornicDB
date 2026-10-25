@@ -138,11 +138,11 @@ func (s transactionDatabasesStub) ResolveDatabase(name string) (string, error) {
 // database, with or without a database manager.
 func TestTransactionDatabaseError(t *testing.T) {
 	stub := transactionDatabasesStub{composite: map[string]bool{"comp": true}, aliases: map[string]string{"a": "nornic"}}
-	require.NoError(t, TransactionDatabaseError(stub, "nornic", "NORNIC", "RETURN 1"))
-	require.NoError(t, TransactionDatabaseError(stub, "nornic", "a", "RETURN 1"))
-	require.NoError(t, TransactionDatabaseError(stub, "comp", "comp.x", "RETURN 1"))
-	requireStatusCode(t, TransactionDatabaseError(stub, "nornic", "other", "CREATE (:X)"), "Neo.ClientError.Statement.AccessMode")
-	requireStatusCode(t, TransactionDatabaseError(nil, "nornic", "other", "RETURN 1"), "Neo.ClientError.Statement.AccessMode")
+	require.NoError(t, TransactionDatabaseError(t.Context(), stub, "nornic", "NORNIC", "RETURN 1"))
+	require.NoError(t, TransactionDatabaseError(t.Context(), stub, "nornic", "a", "RETURN 1"))
+	require.NoError(t, TransactionDatabaseError(t.Context(), stub, "comp", "comp.x", "RETURN 1"))
+	requireStatusCode(t, TransactionDatabaseError(t.Context(), stub, "nornic", "other", "CREATE (:X)"), "Neo.ClientError.Statement.AccessMode")
+	requireStatusCode(t, TransactionDatabaseError(t.Context(), nil, "nornic", "other", "RETURN 1"), "Neo.ClientError.Statement.AccessMode")
 }
 
 // On the system database a system procedure reads a view that holds no

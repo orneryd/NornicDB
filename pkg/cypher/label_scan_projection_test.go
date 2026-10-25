@@ -27,7 +27,7 @@ func (e *recordingLabelScanEngine) StreamNodesByLabelProjectedInScope(scope, lab
 
 func TestPipelineReadOnlyTail(t *testing.T) {
 	clauses := func(query string) []pipelineClause {
-		parsed, ok := pipelineClausesFor(query)
+		parsed, ok := pipelineClausesFor(t.Context(), query)
 		require.True(t, ok, query)
 		return parsed[1:]
 	}

@@ -499,7 +499,7 @@ func (s *Server) ProcedureGrantChecker(roles []string) func(procedure string) bo
 }
 
 func isMutationQuery(query string) bool {
-	requirements := cypher.QueryPermissionRequirements(query)
+	requirements := cypher.QueryPermissionRequirements(context.Background(), query)
 	return requirements.Write || requirements.Schema
 }
 

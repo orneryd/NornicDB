@@ -99,11 +99,11 @@ type quotedToken struct {
 // canonicalizeQuotedVariables rewrites the backtick-quoted variables of
 // query (see the file comment). It returns nil when there is nothing to
 // rewrite; a query without a backtick isn't scanned.
-func canonicalizeQuotedVariables(query string) (string, *quotedVariableNames) {
+func canonicalizeQuotedVariables(ctx context.Context, query string) (string, *quotedVariableNames) {
 	if strings.IndexByte(query, '`') < 0 {
 		return query, nil
 	}
-	tokens := scanQuotedTokens(query)
+	tokens := scanQuotedTokens(ctx, query)
 	if len(tokens) == 0 {
 		return query, nil
 	}
@@ -253,8 +253,8 @@ func internalVariableIdentifier(query, name string, used map[string]struct{}) st
 
 // scanQuotedTokens lists the backtick-quoted symbolic names of query outside
 // string literals, with their positions classified.
-func scanQuotedTokens(source string) []quotedToken {
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.StatementEntry, false)
+func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil
 	} // Syntax admission owns this statement's error.

@@ -57,18 +57,23 @@ func TestImpliedPropertyBounds(t *testing.T) {
 	}
 }
 
+func newKeysetPagingExecutor(t testing.TB, seed string) *StorageExecutor {
+	t.Helper()
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
+	for _, query := range []string{"CREATE INDEX item_t FOR (n:Item) ON (n.t)", seed} {
+		_, err := exec.Execute(context.Background(), query, nil)
+		require.NoError(t, err)
+	}
+	return exec
+}
+
 // TestKeysetPagingSeeksPastTheBound pages an indexed list with the keyset
 // predicate and checks the pages against the full ordered result, ties
 // included, both ways; and that a page near the end of the list costs about
 // what a page near the start does (#939).
 func TestKeysetPagingSeeksPastTheBound(t *testing.T) {
-	// No result cache: every page below executes its query.
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	exec := newKeysetPagingExecutor(t, "UNWIND range(0, 1999) AS i CREATE (:Item {t: i / 4, id: 'id' + toString(1999 - i)})")
 	ctx := context.Background()
-	_, err := exec.Execute(ctx, "CREATE INDEX item_t FOR (n:Item) ON (n.t)", nil)
-	require.NoError(t, err)
-	_, err = exec.Execute(ctx, "UNWIND range(0, 1999) AS i CREATE (:Item {t: i / 4, id: 'id' + toString(1999 - i)})", nil)
-	require.NoError(t, err)
 
 	for _, direction := range []struct{ order, after string }{
 		{"ASC", "n.t > $t OR (n.t = $t AND n.id > $id)"},

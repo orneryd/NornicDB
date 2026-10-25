@@ -47,7 +47,7 @@ func newLargeEmbeddingGraphOn(tb testing.TB, docs int, engine *storage.BadgerEng
 	// embedding (#963).
 	engine.SetEmbeddingTextPolicy(storage.EmbeddingTextPolicy{Exclude: []string{"seen"}, IncludeLabels: true})
 	g := &largeEmbeddingGraph{engine: engine, store: storage.NewNamespacedEngine(engine, "test")}
-	g.exec = NewStorageExecutorWithQueryCachePolicy(g.store, 0, 0)
+	g.exec = NewStorageExecutor(g.store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	g.run(tb, "CREATE INDEX doc_k FOR (n:Doc) ON (n.k)", nil)
 	if _, err := g.store.CreateNode(&storage.Node{ID: "hub", Labels: []string{"Hub"}, Properties: map[string]interface{}{"k": int64(0)}}); err != nil {
 		tb.Fatal(err)
@@ -204,7 +204,7 @@ func (s *queryNodeReadSpy) GetQueryNode(id storage.NodeID) (*storage.Node, error
 func TestAutoCommitQueryNodeReadsLeaveEmbeddingsInStorage(t *testing.T) {
 	g := newLargeEmbeddingGraph(t, 4)
 	spy := &queryNodeReadSpy{Engine: g.store}
-	exec := NewStorageExecutorWithQueryCachePolicy(spy, 0, 0)
+	exec := NewStorageExecutor(spy, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	run := func(t *testing.T, query string) *ExecuteResult {
 		t.Helper()
 		result, err := exec.Execute(context.Background(), query, nil)

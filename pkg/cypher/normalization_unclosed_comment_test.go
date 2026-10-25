@@ -13,7 +13,7 @@ import (
 func TestNormalizationRejectsUnclosedComment(t *testing.T) {
 	restore := config.WithCypherQueryNormalizationDisabled()
 	defer restore()
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, normalization := range []bool{false, true} {
 		config.SetCypherQueryNormalizationEnabled(normalization)
 		for route, execute := range map[string]func(context.Context, string, map[string]interface{}) (*ExecuteResult, error){
@@ -61,7 +61,7 @@ func TestExecutionModesRequireStatement(t *testing.T) {
 	defer restore()
 	for _, normalization := range []bool{false, true} {
 		config.SetCypherQueryNormalizationEnabled(normalization)
-		exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 		for _, header := range []struct {
 			prefix   string
 			conflict bool
@@ -138,7 +138,7 @@ func TestNormalizationRejectsUnclosedCommentBeforeWrites(t *testing.T) {
 	defer restore()
 	config.SetCypherQueryNormalizationEnabled(true)
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	_, err := exec.Execute(context.Background(), "CREATE (:UnclosedComment) /* incomplete", nil)
 	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 	result, err := exec.Execute(context.Background(), "MATCH (n:UnclosedComment) RETURN count(n)", nil)
@@ -171,7 +171,7 @@ func TestCommentAdmissionRetainsRawSourceAndTransactionSemantics(t *testing.T) {
 					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 					// A permissive classifier may inspect malformed source first.
 					// Its rewrite/cache entry must not certify execution admission.
-					exec.analyzer.Analyze(tc.query)
+					exec.analyzer.Analyze(t.Context(), tc.query)
 					if explicit {
 						_, err := exec.Execute(boundedContext(t), "BEGIN", nil)
 						require.NoError(t, err)

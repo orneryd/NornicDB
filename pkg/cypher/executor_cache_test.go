@@ -15,7 +15,7 @@ func TestExecutor_CacheReflectsExternalNodeDelete(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
 	otherStore := storage.NewNamespacedEngine(baseStore, "other")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 10, time.Minute)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	ctx := context.Background()
 	const query = `MATCH (n:CacheDelete) RETURN count(n)`
 
@@ -49,7 +49,7 @@ func TestExecutor_CacheReflectsExternalNodeDelete(t *testing.T) {
 func TestExecutor_CacheReflectsExternalEdgeDelete(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 10, time.Minute)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	ctx := context.Background()
 	const query = `MATCH ()-[r:CONNECTS]->() RETURN count(r)`
 
@@ -99,7 +99,7 @@ func TestExecutor_CacheDoesNotPublishOverlappingReadAtNewRevision(t *testing.T) 
 	}
 	_, err := store.CreateNode(&storage.Node{ID: "node", Labels: []string{"CacheDelete"}})
 	require.NoError(t, err)
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 10, time.Minute)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	const query = `MATCH (n:CacheDelete) RETURN count(n)`
 
 	done := make(chan error, 1)
@@ -122,7 +122,7 @@ func TestExecutor_CacheReflectsExternalAsyncNodeDeleteBeforeFlush(t *testing.T) 
 	asyncStore := baseStore
 	t.Cleanup(func() { require.NoError(t, asyncStore.Close()) })
 	store := storage.NewNamespacedEngine(asyncStore, "test")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 10, time.Minute)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	ctx := context.Background()
 	const query = `MATCH (n:CacheDelete) RETURN count(n)`
 
@@ -143,7 +143,7 @@ func TestExecutor_CacheReflectsExternalAsyncEdgeDeleteBeforeFlush(t *testing.T) 
 	asyncStore := baseStore
 	t.Cleanup(func() { require.NoError(t, asyncStore.Close()) })
 	store := storage.NewNamespacedEngine(asyncStore, "test")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 10, time.Minute)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	ctx := context.Background()
 	const query = `MATCH ()-[r:CONNECTS]->() RETURN count(r)`
 
@@ -167,7 +167,7 @@ func TestExecutor_CacheReflectsExternalAsyncEdgeDeleteBeforeFlush(t *testing.T) 
 func TestExecutor_CacheReflectsExternalNamespaceDelete(t *testing.T) {
 	baseStore := newTestMemoryEngine(t)
 	store := storage.NewNamespacedEngine(baseStore, "test")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 10, time.Minute)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	ctx := context.Background()
 	const query = `MATCH (n:CacheDelete) RETURN n`
 

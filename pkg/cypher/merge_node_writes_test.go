@@ -42,7 +42,7 @@ func TestMergeNodeWritesOf(t *testing.T) {
 		{"unknown procedure", []pipelineClause{merge("MERGE (n:Doc {id: 1})"), clause(pipelineClauseCall, "CALL no.such.procedure()")}, nil, nil, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			writes := mergeNodeWritesOf(c.clauses)
+			writes := mergeNodeWritesFromContext(withMergeNodeWrites(t.Context(), c.clauses))
 			require.Equal(t, c.writeAll, writes.all)
 			for _, variable := range c.written {
 				require.True(t, writes.writes(variable), variable)

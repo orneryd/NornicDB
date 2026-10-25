@@ -114,7 +114,7 @@ func TestStretchReadAnalysis(t *testing.T) {
 	require.True(t, writes.everything)
 
 	// A RETURN after the stretch that reads what it writes.
-	clauses, ok, _ := parsePipelineClauses("MATCH (d:Done) SET d.flag = true RETURN d.flag")
+	clauses, ok, _ := parsePipelineClauses(t.Context(), "MATCH (d:Done) SET d.flag = true RETURN d.flag")
 	require.True(t, ok)
 	require.True(t, pipelineWriteStretchConflicts(context.Background(), clauses[:2], clauses[2:]))
 	require.False(t, pipelineWriteStretchConflicts(context.Background(), clauses[:2], []pipelineClause{{kind: pipelineClauseReturn, text: "RETURN count(*)"}}))
@@ -122,7 +122,7 @@ func TestStretchReadAnalysis(t *testing.T) {
 
 func TestPipelineWriteStretchConflicts(t *testing.T) {
 	conflicts := func(query string) bool {
-		clauses, ok, _ := parsePipelineClauses(query)
+		clauses, ok, _ := parsePipelineClauses(t.Context(), query)
 		require.True(t, ok, query)
 		return pipelineWriteStretchConflicts(context.Background(), clauses, nil)
 	}

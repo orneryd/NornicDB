@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 )
@@ -18,32 +19,38 @@ func (e *StorageExecutor) StatementFacts(query string, incoming resultmetadata.S
 // Signature answers are not cached under query text: a participant may change
 // its procedure registry independently of this executor's registry generation.
 func (e *StorageExecutor) StatementFactsWith(query string, incoming resultmetadata.Scope, cypher25 bool, schema resultmetadata.ParticipantSchema) resultmetadata.Facts {
-	if schema == nil {
-		program := e.statementProjectionProgram(query, incoming, cypher25)
-		if program.complete {
-			return program.facts
-		}
-		return resultmetadata.UnresolvedFacts(resultmetadata.Unresolved{Reason: program.reason, Position: program.position, Err: program.err})
-	}
-	ensureBuiltInProceduresRegistered()
-	names := resultmetadata.Unknown()
-	incoming.Visit(func(known []string) { names = resultmetadata.Known(known) }, func() { names = resultmetadata.Unknown() })
-	compiler := projectionCompilation{executor: e, source: query, cypher25: cypher25, schema: schema}
-	program := compiler.root(names, resultmetadata.Known(nil))
-	if program.err == nil && program.statement != nil {
-		facts, err := resultmetadata.KnownFacts(*program.statement)
-		if err == nil {
-			return facts
-		}
-	}
-	return resultmetadata.UnresolvedFacts(resultmetadata.Unresolved{Reason: program.reason, Position: program.position, Err: program.err})
+	return e.statementProjectionProgram(context.Background(), query, incoming, cypher25, schema).facts
 }
 
-func (e *StorageExecutor) statementProjectionProgram(query string, incoming resultmetadata.Scope, cypher25 bool) *projectedScopeFacts {
+func (e *StorageExecutor) statementProjectionProgram(ctx context.Context, query string, incoming resultmetadata.Scope, cypher25 bool, schema resultmetadata.ParticipantSchema) *projectedScopeFacts {
 	ensureBuiltInProceduresRegistered()
 	names := resultmetadata.Unknown()
 	incoming.Visit(func(values []string) { names = resultmetadata.Known(values) }, func() { names = resultmetadata.Unknown() })
-	return e.projectedStatementScope(query, names, resultmetadata.Known(nil), cypher25)
+	var program *projectedScopeFacts
+	if schema == nil {
+		program = e.projectedStatementScope(ctx, query, names, resultmetadata.Known(nil), cypher25)
+	} else {
+		compiler := projectionCompilation{executor: e, source: query, cypher25: cypher25, schema: schema}
+		program = compiler.root(ctx, names, resultmetadata.Known(nil))
+	}
+	// Cached programs are immutable; participant-dependent compilation never
+	// enters that cache. Both paths expose the same terminal Facts contract.
+	if program.complete && ctx.Err() == nil {
+		return program
+	}
+	immutable := *program
+	if err := ctx.Err(); err != nil {
+		immutable.complete, immutable.err = false, err
+	}
+	if immutable.err == nil && immutable.statement != nil {
+		if facts, err := resultmetadata.KnownFacts(*immutable.statement); err == nil {
+			immutable.complete, immutable.facts = true, facts
+		}
+	}
+	if !immutable.complete {
+		immutable.facts = resultmetadata.UnresolvedFacts(resultmetadata.Unresolved{Reason: immutable.reason, Position: immutable.position, Err: immutable.err})
+	}
+	return &immutable
 }
 
 func projectionScope(names resultmetadata.Names) resultmetadata.Scope {
@@ -65,9 +72,9 @@ func programFailure(reason resultmetadata.UnresolvedReason, position int, err er
 // compileStatementProgram compiles the execution clause operators and their
 // scope transfers. WITH and RETURN use the same cached projection plans that
 // execute rows; CALL stores its nested program rather than re-inferring exports.
-func (e *StorageExecutor) compileStatementProgram(source string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
+func (e *StorageExecutor) compileStatementProgram(ctx context.Context, source string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
 	compiler := projectionCompilation{executor: e, source: source, cypher25: cypher25}
-	return compiler.root(incoming, retained)
+	return compiler.root(ctx, incoming, retained)
 }
 
 type projectionCompilation struct {
@@ -85,8 +92,8 @@ type projectionGraph struct {
 	outerIDs   map[string]statementBindingID
 }
 
-func (compiler *projectionCompilation) root(incoming, retained resultmetadata.Names) *projectedScopeFacts {
-	return compiler.compileBound(incoming, retained)
+func (compiler *projectionCompilation) root(ctx context.Context, incoming, retained resultmetadata.Names) *projectedScopeFacts {
+	return compiler.compileBound(ctx, incoming, retained)
 }
 func statementHasReturningOperator(statement resultmetadata.Statement) bool {
 	if len(statement.Branches) > 0 {

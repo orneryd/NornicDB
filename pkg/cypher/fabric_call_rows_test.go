@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newFabricCallRowsExecutor(t testing.TB) *StorageExecutor {
+func newFabricCallRowsExecutor(t testing.TB, narrow ...bool) *StorageExecutor {
 	t.Helper()
 	config := multidb.DefaultConfig()
 	config.RemoteEngineFactory = func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {
@@ -24,14 +24,22 @@ func newFabricCallRowsExecutor(t testing.TB) *StorageExecutor {
 			User: ref.User, Password: ref.Password,
 		})
 	}
-	mgr, err := multidb.NewDatabaseManager(runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed), config)
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+	if len(narrow) != 0 && narrow[0] {
+		base = runtimeFixtureOwner.Own(t, base)
+	}
+	mgr, err := multidb.NewDatabaseManager(base, config)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, mgr.Close()) })
 	for _, db := range []string{"one", "two"} {
 		require.NoError(t, mgr.CreateDatabase(db))
 		store, err := mgr.GetStorage(db)
 		require.NoError(t, err)
-		_, err = store.CreateNode(&storage.Node{ID: storage.NodeID(db), Labels: []string{"P"}, Properties: map[string]interface{}{"db": db}})
+		var properties map[string]interface{}
+		if len(narrow) == 0 || !narrow[0] {
+			properties = map[string]interface{}{"db": db}
+		}
+		_, err = store.CreateNode(&storage.Node{ID: storage.NodeID(db), Labels: []string{"P"}, Properties: properties})
 		require.NoError(t, err)
 	}
 	require.NoError(t, mgr.CreateCompositeDatabase("comp", []multidb.ConstituentRef{
@@ -40,7 +48,11 @@ func newFabricCallRowsExecutor(t testing.TB) *StorageExecutor {
 	}))
 	store, err := mgr.GetStorage(mgr.DefaultDatabaseName())
 	require.NoError(t, err)
-	exec := NewStorageExecutor(store)
+	var policy []QueryCachePolicy
+	if len(narrow) != 0 && narrow[0] {
+		policy = append(policy, QueryCachePolicy{MaxEntries: 0, TTL: 0})
+	}
+	exec := NewStorageExecutor(store, policy...)
 	exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: mgr})
 	return exec
 }

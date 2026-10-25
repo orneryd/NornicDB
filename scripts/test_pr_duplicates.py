@@ -786,5 +786,31 @@ class MainTests(unittest.TestCase):
         self.assertEqual(self.server.requests, [])
 
 
+
+class ScriptsIgnoreTests(unittest.TestCase):
+    def test_scripts_index_hits_are_not_duplicate_matches(self):
+        helper = EvaluateTests()
+        helper.setUp()
+        finding, moved = helper.evaluate([helper.hit('script', path='scripts/nested/tool.py')], ignore=pd.DEFAULT_IGNORE)
+        self.assertIsNone(finding)
+        self.assertFalse(moved)
+
+    def test_scripts_tree_is_excluded_without_excluding_product_code(self):
+        for path in ('scripts/tool.py', 'scripts/ci/check.py', 'scripts/nested/code.go'):
+            self.assertTrue(pd.ignored(path, pd.DEFAULT_IGNORE))
+        for path in ('pkg/cypher/parse.go', 'cmd/nornicdb/main.go'):
+            self.assertFalse(pd.ignored(path, pd.DEFAULT_IGNORE))
+
+
+class ANTLRGeneratedIgnoreTests(unittest.TestCase):
+    def test_generated_outputs_are_ignored_but_handwritten_sources_are_checked(self):
+        for name in ('cypher_lexer.go', 'cypher_parser.go', 'cypherparser_listener.go', 'cypherparser_base_listener.go'):
+            with self.subTest(name=name):
+                self.assertTrue(pd.ignored('pkg/cypher/antlr/' + name, pd.DEFAULT_IGNORE))
+        for name in ('parse.go', 'ascii_charstream.go', 'statement_syntax.go', 'transaction_batch.go', 'prediction_test.go', 'CypherParser.g4'):
+            with self.subTest(name=name):
+                self.assertFalse(pd.ignored('pkg/cypher/antlr/' + name, pd.DEFAULT_IGNORE))
+
+
 if __name__ == "__main__":
     unittest.main()

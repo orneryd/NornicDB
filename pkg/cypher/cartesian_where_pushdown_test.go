@@ -26,7 +26,7 @@ func BenchmarkCartesianMatchEqualityJoin(b *testing.B) {
 			}
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	query := "MATCH (a:CartesianLeft), (b:CartesianRight) WHERE a.key = b.key RETURN count(*) AS c"
 	b.ReportAllocs()
@@ -51,7 +51,7 @@ func BenchmarkGh728CartesianPreparedMembership(b *testing.B) {
 			require.NoError(b, err)
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	query := "MATCH (a:PreparedLeft), (b:PreparedRight) WHERE a.key IN $keys OR b.key IN $keys RETURN a.key AS key"
 
 	for _, length := range []int{64, 4096} {
@@ -105,7 +105,7 @@ func TestGh713CartesianPartitionEquivalence(t *testing.T) {
 		"RETURN a.key AS key, count(*) AS total", "RETURN a.key AS key, count(*) AS total LIMIT 0",
 	} {
 		t.Run(clause, func(t *testing.T) {
-			plan := returnProjectionPlanFor(clause)
+			plan := returnProjectionPlanFor(t.Context(), clause)
 			var rows []pipelineRow
 			for _, combination := range cartesianCombinations(patterns) {
 				values := make(pipelineRow, len(combination))
@@ -136,14 +136,14 @@ func TestGh713CartesianPartitionEquivalence(t *testing.T) {
 		})
 	}
 	for _, clause := range []string{"RETURN sum(0.5)", "RETURN avg(a.value)", "RETURN collect(a.value)", "RETURN count(DISTINCT a.key)", "RETURN sum(a.value + 1)", "RETURN labels(a), count(*)"} {
-		groups, handled, err := exec.tryCartesianAggregatePartitions(context.Background(), patterns, returnProjectionPlanFor(clause), 4)
+		groups, handled, err := exec.tryCartesianAggregatePartitions(context.Background(), patterns, returnProjectionPlanFor(t.Context(), clause), 4)
 		require.False(t, handled, clause)
 		require.NoError(t, err)
 		require.Nil(t, groups)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor("RETURN count(*)"), 4)
+	_, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(t.Context(), "RETURN count(*)"), 4)
 	require.True(t, handled)
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -173,7 +173,7 @@ func TestGh713CartesianPartitionNullAndCancellation(t *testing.T) {
 	for _, clause := range []string{"RETURN count(a.value) AS total", "RETURN sum(a.value) AS total", "RETURN a.key AS key, count(*) AS total"} {
 		for _, workers := range []int{1, 2, 8} {
 			ctx := withExpressionFailureSlot(context.Background())
-			groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(clause), workers)
+			groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(t.Context(), clause), workers)
 			require.True(t, handled)
 			require.NoError(t, err)
 			result, err := exec.projectMergeReturnSource(ctx, nil, clause, nil, groups)
@@ -189,7 +189,7 @@ func TestGh713CartesianPartitionNullAndCancellation(t *testing.T) {
 		}
 	}
 	patterns[0].nodes = append(patterns[0].nodes, patterns[0].nodes...)
-	_, handled, err := exec.tryCartesianAggregatePartitions(&cartesianCancelContext{Context: context.Background()}, patterns, returnProjectionPlanFor("RETURN count(*)"), 4)
+	_, handled, err := exec.tryCartesianAggregatePartitions(&cartesianCancelContext{Context: context.Background()}, patterns, returnProjectionPlanFor(t.Context(), "RETURN count(*)"), 4)
 	require.True(t, handled)
 	require.ErrorIs(t, err, context.Canceled)
 }
@@ -212,7 +212,7 @@ func BenchmarkGh713CartesianPartitionWorkers(b *testing.B) {
 				if mode == "serial" {
 					workers = 1
 				}
-				plan := returnProjectionPlanFor(clause)
+				plan := returnProjectionPlanFor(b.Context(), clause)
 				ctx := withExpressionFailureSlot(context.Background())
 				b.ReportAllocs()
 				b.ResetTimer()
@@ -256,7 +256,7 @@ func BenchmarkGh713CartesianParallel(b *testing.B) {
 					require.NoError(b, err)
 				}
 			}
-			exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			for _, test := range []struct {
 				name, clause string
 				rows         int
@@ -309,7 +309,7 @@ func BenchmarkGh713CartesianAggregation(b *testing.B) {
 			require.NoError(b, err)
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, test := range []struct {
 		name, clause string
 		rows         int
@@ -352,7 +352,7 @@ func TestGh728CartesianMembershipParameterFreshness(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	query := "MATCH (a:PreparedLeft), (b:PreparedRight) WHERE a.key IN $keys OR b.key IN $keys RETURN a.key AS left, b.key AS right"
 	keys := []interface{}{"key-1"}
 	ctx := withExpressionFailureSlot(withQueryParams(context.Background(), map[string]interface{}{"keys": keys}))
@@ -469,7 +469,7 @@ func TestGh713CartesianSharedProjectionWindows(t *testing.T) {
 			require.NoError(t, err)
 		}
 	}
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for _, test := range []struct {
 		name, tail, code string
 		columns          []string

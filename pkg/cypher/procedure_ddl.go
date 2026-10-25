@@ -108,14 +108,14 @@ func (e *StorageExecutor) executeCreateProcedure(ctx context.Context, cypher str
 // and registers it. CREATE PROCEDURE and apoc.custom share it.
 func (e *StorageExecutor) installPersistedProcedure(ctx context.Context, record persistedProcedureRecord, replace bool) error {
 	name := record.Name
-	spec, handler, record, err := e.compilePersistedProcedure(record)
+	spec, handler, record, err := e.compilePersistedProcedure(ctx, record)
 	if err != nil {
 		return err
 	}
 
 	nodeID := procedureCatalogNodeID(name)
 	store := e.getStorage(ctx)
-	existing, err := e.resolveProcedureCatalogIdentity(store, name)
+	existing, _, err := e.resolveProcedureCatalogIdentity(ctx, store, name)
 	if err != nil {
 		return err
 	}
@@ -175,7 +175,7 @@ func (e *StorageExecutor) executeDropProcedure(ctx context.Context, cypher strin
 // the user procedures from it.
 func (e *StorageExecutor) dropPersistedProcedure(ctx context.Context, name string) error {
 	store := e.getStorage(ctx)
-	existing, err := e.resolveProcedureCatalogIdentity(store, name)
+	existing, _, err := e.resolveProcedureCatalogIdentity(ctx, store, name)
 	if err != nil {
 		return err
 	}
@@ -187,7 +187,7 @@ func (e *StorageExecutor) dropPersistedProcedure(ctx context.Context, name strin
 	}
 	// Keep implementation simple and deterministic: refresh user registry from persisted catalog.
 	ClearUserProcedures()
-	if err := e.loadPersistedProcedures(); err != nil {
+	if err := e.loadPersistedProcedures(ctx); err != nil {
 		return localizedError(localization.CypherProceduresRegistryReloadFailed(err), nerrors.ErrProcedureRegistryReloadFailed)
 	}
 	return nil
@@ -221,7 +221,7 @@ func parseProcedureArgNames(raw string) ([]string, error) {
 	return args, nil
 }
 
-func (e *StorageExecutor) compilePersistedProcedure(record persistedProcedureRecord) (ProcedureSpec, ProcedureHandler, persistedProcedureRecord, error) {
+func (e *StorageExecutor) compilePersistedProcedure(ctx context.Context, record persistedProcedureRecord) (ProcedureSpec, ProcedureHandler, persistedProcedureRecord, error) {
 	mode := ProcedureMode(upperASCII(record.Mode))
 	switch mode {
 	case ProcedureModeRead, ProcedureModeWrite, ProcedureModeSchema, ProcedureModeAdmin, ProcedureModeDBMS:
@@ -229,7 +229,7 @@ func (e *StorageExecutor) compilePersistedProcedure(record persistedProcedureRec
 		return ProcedureSpec{}, nil, record, localizedError(localization.CypherProceduresInvalidMode(record.Mode), nil)
 	}
 
-	contract, err := readStatementExecutionContract(record.Body)
+	contract, err := readStatementExecutionContract(ctx, record.Body)
 	if err != nil {
 		return ProcedureSpec{}, nil, record, err
 	}
@@ -310,7 +310,7 @@ func ensureLabel(labels []string, label string) []string {
 	return append(labels, label)
 }
 
-func (e *StorageExecutor) loadPersistedProcedures() error {
+func (e *StorageExecutor) loadPersistedProcedures(ctx context.Context) error {
 	nodes, err := e.storage.GetNodesByLabel(procedureCatalogLabel)
 	if err != nil {
 		return localizedError(localization.CypherProceduresCatalogReadFailed(err), nerrors.ErrProcedureCatalogReadFailed)
@@ -323,11 +323,11 @@ func (e *StorageExecutor) loadPersistedProcedures() error {
 		if err != nil {
 			return err
 		}
-		spec, handler, _, err := e.compilePersistedProcedure(record)
+		spec, handler, _, err := e.compilePersistedProcedure(ctx, record)
 		if err != nil {
 			return localizedError(localization.CypherProceduresCatalogRecordInvalid(string(node.ID)), nerrors.ErrProcedureCatalogRecordInvalid)
 		}
-		if superseded, err := e.migrateProcedureCatalogIdentity(e.storage, node, record); err != nil {
+		if _, superseded, err := e.resolveProcedureCatalogIdentity(ctx, e.storage, record.Name, node); err != nil {
 			return err
 		} else if superseded {
 			continue

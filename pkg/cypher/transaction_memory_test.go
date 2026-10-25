@@ -203,7 +203,7 @@ func newTransactionMemoryEngine(t testing.TB) storage.Engine {
 // succeeded once runs again under a lower limit.
 func newTransactionMemoryExecutor(t testing.TB) *StorageExecutor {
 	t.Helper()
-	return NewStorageExecutorWithQueryCachePolicy(newTransactionMemoryEngine(t), 0, 0)
+	return NewStorageExecutor(newTransactionMemoryEngine(t), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 }
 
 // newTestMemoryTracker returns a pooled tracker in the clean state that
@@ -425,7 +425,7 @@ func TestTransactionMemoryPoolFailsWhileSmallStatementsSucceed(t *testing.T) {
 func TestTransactionMemoryConcurrentHeavyAggregationsUnderPool(t *testing.T) {
 	resetTransactionMemory(t)
 	engine := newTransactionMemoryEngine(t)
-	seed := NewStorageExecutorWithQueryCachePolicy(engine, 0, 0)
+	seed := NewStorageExecutor(engine, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	seedTopicGroupsGraph(t, seed, 120, 40)
 
 	// Measure one statement's peak under a generous limit.
@@ -753,7 +753,7 @@ func TestRowEstimatorCountsEveryRow(t *testing.T) {
 // within the limit: nothing is sampled, so nothing is undercounted.
 func TestTransactionMemoryLimitCatchesRowsThatGrowLate(t *testing.T) {
 	resetTransactionMemory(t)
-	executor := NewStorageExecutorWithQueryCachePolicy(newTransactionMemoryEngine(t), 0, 0)
+	executor := NewStorageExecutor(newTransactionMemoryEngine(t), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	const limit = 4 << 20
 	for name, query := range map[string]string{
 		// 1000 one-character rows, then 1000 rows of distinct
@@ -790,7 +790,7 @@ RETURN count(*) AS c, sum(size(l)) AS total`,
 func TestTransactionMemoryCreditReturnedOnFailure(t *testing.T) {
 	resetTransactionMemory(t)
 	ConfigureTransactionMemory(512<<20, TransactionMemoryLimits{TransactionMax: 2 << 20})
-	executor := NewStorageExecutorWithQueryCachePolicy(newTransactionMemoryEngine(t), 0, 0)
+	executor := NewStorageExecutor(newTransactionMemoryEngine(t), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	seedTopicGroupsGraph(t, executor, 40, 10)
 	for i := 0; i < 5; i++ {
 		_, err := executor.Execute(context.Background(), heavyCollectQuery, nil)

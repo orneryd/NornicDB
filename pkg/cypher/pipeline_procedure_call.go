@@ -8,13 +8,13 @@ import (
 // pipelineProcedureCallsAreClauses reports whether every CALL in the statement
 // is a top-level procedure call. Unknown procedures are admitted so execution
 // can report their classified lookup error even when no rows reach the call.
-func pipelineProcedureCallsAreClauses(cypher string) bool {
-	if !containsFold(cypher, "CALL") || hasCallSubqueryPattern(cypher) {
+func pipelineProcedureCallsAreClauses(ctx context.Context, cypher string) bool {
+	if !containsFold(cypher, "CALL") || hasCallSubqueryPattern(ctx, cypher) {
 		return false
 	}
 	ensureBuiltInProceduresRegistered()
 	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
-		procedure, found := globalProcedureRegistry.Get(extractProcedureName(cypher[position:]))
+		procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, cypher[position:]))
 		if found && procedure.Spec.Mode != ProcedureModeRead && !procedure.Spec.writes() && procedure.Spec.Mode != ProcedureModeDBMS && !(procedure.User && procedure.Spec.Mode == "") {
 			return false
 		}
@@ -49,9 +49,9 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 	if yieldIndex >= 0 {
 		invocation = strings.TrimSpace(clause[:yieldIndex])
 	}
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(invocation))
+	procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, invocation))
 	if !found {
-		return nil, nil, true, newSemanticError("Neo.ClientError.Procedure.ProcedureNotFound", "ProcedureNotFound", "There is no procedure with the name "+extractProcedureName(invocation)+" registered")
+		return nil, nil, true, newSemanticError("Neo.ClientError.Procedure.ProcedureNotFound", "ProcedureNotFound", "There is no procedure with the name "+extractProcedureName(ctx, invocation)+" registered")
 	}
 	if yieldIndex < 0 && len(procedure.Spec.Returns) > 0 {
 		return nil, nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", "procedure calls inside a query must name results explicitly using YIELD")
@@ -73,7 +73,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		yieldText = "YIELD " + yieldBody
 	}
 
-	arguments := explicitProcedureArgumentTexts(invocation)
+	arguments := explicitProcedureArgumentTexts(ctx, invocation)
 	if arguments != nil {
 		if err := validateProcedureArgumentCount(procedure.Spec, len(arguments)); err != nil {
 			return nil, nil, true, err
@@ -89,11 +89,11 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 
 	var yielded []string
 	if yieldIndex >= 0 {
-		yield := parseYieldClause(clause)
+		yield := parseYieldClause(ctx, clause)
 		if err := validateProcedureYieldBindings(yield, true); err != nil {
 			return nil, nil, true, err
 		}
-		if err := e.validateYieldModifiers(yield, true); err != nil {
+		if err := e.validateYieldModifiers(ctx, yield, true); err != nil {
 			return nil, nil, true, err
 		}
 		for _, item := range yield.items {

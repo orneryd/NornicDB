@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
@@ -1452,7 +1453,7 @@ func clauseTextUntil(text string, from int, keywords ...string) string {
 // UNWIND lists, pattern property values) and that may contain arithmetic.
 // afterProjection is set for the WHERE and ORDER BY of a RETURN / WITH, which
 // see the projection's aliases. It allocates only for clauses with arithmetic.
-func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause, visit func(expression string, afterProjection bool) error) error {
+func (e *StorageExecutor) forEachClauseOperatorExpression(ctx context.Context, clause pipelineClause, visit func(expression string, afterProjection bool) error) error {
 	text := strings.TrimSpace(clause.text)
 	if !mayNeedStaticTypeCheck(text) {
 		return nil
@@ -1515,7 +1516,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 		projection, _ = cutDistinct(projection)
 		if mayNeedStaticTypeCheck(projection) {
 			for _, item := range splitTopLevelComma(projection) {
-				expression, _ := parseProjectionExprAlias(strings.TrimSpace(item))
+				expression, _ := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
 				if mayNeedStaticTypeCheck(expression) {
 					if err := visit(expression, false); err != nil {
 						return err
@@ -1524,7 +1525,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 			}
 		}
 		if mayNeedStaticTypeCheck(rest) {
-			return forEachProjectedTailExpression(projection, rest, func(expression string) error {
+			return forEachProjectedTailExpression(ctx, projection, rest, func(expression string) error {
 				if !mayNeedStaticTypeCheck(expression) {
 					return nil
 				}
@@ -1570,7 +1571,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(clause pipelineClause,
 // and is left out; the item itself is checked with the incoming scope
 // (RETURN size(s) AS s ORDER BY size(s)). projection is the item list, with
 // or without its RETURN / WITH [DISTINCT] keyword.
-func forEachProjectedTailExpression(projection, rest string, visit func(expression string) error) error {
+func forEachProjectedTailExpression(ctx context.Context, projection, rest string, visit func(expression string) error) error {
 	if where := topLevelKeywordIndex(rest, "WHERE"); where >= 0 {
 		if err := visit(clauseTextUntil(rest, where+len("WHERE"), "ORDER BY", "SKIP", "LIMIT")); err != nil {
 			return err
@@ -1590,7 +1591,7 @@ func forEachProjectedTailExpression(projection, rest string, visit func(expressi
 	projection, _ = cutDistinct(strings.TrimSpace(projection))
 	items := splitTopLevelComma(projection)
 	item := func(index int) (string, string) {
-		return parseProjectionExprAlias(strings.TrimSpace(items[index]))
+		return parseProjectionExprAlias(ctx, strings.TrimSpace(items[index]))
 	}
 	for _, term := range parseOrderByClause(clauseTextUntil(rest, order+len("ORDER BY"), "SKIP", "LIMIT", "WHERE")) {
 		if orderedProjectionExpressions([]orderByTerm{term}, len(items), item) != nil {
@@ -1608,7 +1609,7 @@ func forEachProjectedTailExpression(projection, rest string, visit func(expressi
 // a projection use projectedScope (built only when needed), where the
 // projection's aliases replace the variables they rename
 // (RETURN n.num AS n ORDER BY n + 2).
-func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, scope staticTypeScope, projectedScope func() staticTypeScope, params map[string]interface{}) error {
+func (e *StorageExecutor) validateStaticOperatorTypes(ctx context.Context, clause pipelineClause, scope staticTypeScope, projectedScope func() staticTypeScope, params map[string]interface{}) error {
 	if clause.kind == pipelineClauseDelete {
 		if err := staticDeleteTargetTypeError(clause.text, scope); err != nil {
 			return err
@@ -1641,7 +1642,7 @@ func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, sco
 		}
 	}
 	var projected *staticOperatorChecker
-	return e.forEachClauseOperatorExpression(clause, func(expression string, afterProjection bool) error {
+	return e.forEachClauseOperatorExpression(ctx, clause, func(expression string, afterProjection bool) error {
 		checker := staticOperatorChecker{scope: scope, params: params}
 		if afterProjection && projectedScope != nil {
 			if projected == nil {
@@ -1652,28 +1653,6 @@ func (e *StorageExecutor) validateStaticOperatorTypes(clause pipelineClause, sco
 		_, err := checker.check(expression)
 		return err
 	})
-}
-
-// validateStaticOperatorParameters type-checks the operators of a statement
-// against its parameter values, as Neo4j does when it compiles a statement
-// with its parameters ("Type mismatch for parameter 's': …"). It parses the
-// statement only when a parameter next to an arithmetic operator has a value
-// that operator could reject: numbers never are, and neither are strings or
-// lists next to +, so parameterized arithmetic on hot paths costs one scan.
-func (e *StorageExecutor) validateStaticOperatorParameters(cypher string, params map[string]interface{}, cypher25 bool) error {
-	if len(params) == 0 || !parameterMayMismatchOperator(cypher, params) {
-		return nil
-	}
-	clauses, ok := splitPipelineClauses(cypher)
-	if !ok {
-		return nil
-	}
-	for _, clause := range clauses {
-		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{cypher25: cypher25}, nil, params); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // parameterMayMismatchOperator reports whether a $parameter next to an

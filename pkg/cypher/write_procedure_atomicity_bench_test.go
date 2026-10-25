@@ -13,7 +13,7 @@ func BenchmarkWriteProcedureAtomicity(b *testing.B) {
 		b.Run(route, func(b *testing.B) {
 			base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			b.Cleanup(func() { _ = base.Close() })
-			exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(base, "u5_bench"), 0, 0)
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(base, "u5_bench"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			ctx := context.Background()
 			const statement = "MERGE (n:U5BenchWrite {id:1}) SET n.value=$value RETURN n.value AS value"
 			if _, err := exec.Execute(ctx, statement, map[string]interface{}{"value": 0}); err != nil {

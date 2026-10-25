@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"io"
 	"log"
 	"os"
@@ -254,6 +255,7 @@ func registerServerCommands(rootCmd *cobra.Command, localizer *localization.Mana
 	decayCmd.AddCommand(decayStatsCmd)
 	rootCmd.AddCommand(decayCmd)
 	rootCmd.AddCommand(newStemmerCommand(text))
+	protectFlagDefaults(rootCmd)
 }
 
 // setCLIOverride stamps a single canonical NORNICDB_* key into
@@ -456,6 +458,11 @@ func runServe(cmd *cobra.Command, args []string) error {
 	if err := config.ValidateSecurityConfiguration(cfg); err != nil {
 		return err
 	}
+	if oauth := auth.GetOAuthConfig(); oauth != nil && oauth.Issuer != "" {
+		if err := security.ValidateURL(oauth.Issuer, security.URLPolicy{SchemePolicy: security.URLAbsoluteScheme, MaxLength: -1, HostPolicy: security.URLAnyHost, RejectCredentials: true}); err != nil {
+			return fmt.Errorf("invalid OAuth issuer: %w", err)
+		}
+	}
 
 	// Explicit CLI flags override the loaded env/YAML/default configuration.
 	applyServeEmbeddingOverrides(cmd, cfg)
@@ -567,7 +574,7 @@ func runServe(cmd *cobra.Command, args []string) error {
 		}
 		commandPrintln(cmd, localization.NornicDBCLIEmbeddingLocal(modelsDir, embeddingModel, embeddingDim, gpuMode))
 	} else {
-		commandPrintln(cmd, localization.NornicDBCLIEmbeddingURL(embeddingURL))
+		commandPrintln(cmd, localization.NornicDBCLIEmbeddingURL(observability.RedactURL(embeddingURL)))
 		commandPrintln(cmd, localization.NornicDBCLIEmbeddingModel(embeddingModel, embeddingDim))
 	}
 	if parallelEnabled {
@@ -1790,26 +1797,18 @@ func runShell(cmd *cobra.Command, args []string) error {
 
 		// Display results
 		if len(result.Columns) > 0 {
-			displayColumns := make([]string, len(result.Columns))
-			for i, col := range result.Columns {
-				displayColumns[i] = shellDisplayColumn(col)
-			}
 			// Print header
-			cmd.Println(strings.Join(displayColumns, " | "))
-			cmd.Println(strings.Repeat("-", len(strings.Join(displayColumns, " | "))))
+			header := strings.Join(result.Columns, " | ")
+			cmd.Println(header)
+			cmd.Println(strings.Repeat("-", len(header)))
 
 			// Print rows
 			for _, row := range result.Rows {
 				values := make([]string, len(row))
 				for i, v := range row {
-					column := ""
-					if i < len(result.Columns) {
-						column = result.Columns[i]
-					}
-					values[i] = shellDisplayValue(column, v)
+					values[i] = fmt.Sprintf("%v", v)
 				}
-				// lgtm[go/clear-text-logging] -- interactive local output is intentional;
-				// shellDisplayValue redacts values for sensitive column names.
+				// lgtm[go/clear-text-logging] -- render caller-owned query results faithfully.
 				cmd.Println(strings.Join(values, " | "))
 			}
 			cmd.Println()
@@ -1826,20 +1825,6 @@ func runShell(cmd *cobra.Command, args []string) error {
 
 	commandPrintln(cmd, localization.NornicDBCLIShellGoodbye())
 	return nil
-}
-
-func shellDisplayColumn(name string) string {
-	if observability.IsSensitiveFieldName(name) {
-		return observability.RedactedPlaceholder()
-	}
-	return name
-}
-
-func shellDisplayValue(column string, value interface{}) string {
-	if observability.IsSensitiveFieldName(column) {
-		return observability.RedactedPlaceholder()
-	}
-	return fmt.Sprintf("%v", value)
 }
 
 func runDecaySuppress(cmd *cobra.Command, args []string) error {

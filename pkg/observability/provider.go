@@ -138,7 +138,8 @@ func buildTracerProviderWithLogger(ctx context.Context, cfg TracingConfig, res *
 
 	exporter, err := buildSpanExporter(exporterCtx, cfg)
 	if err != nil {
-		logSlogBootstrapEvent(logger, bootstrapSpanExporterInitFailed, err)
+		endpoint, _ := cfg.OTLPEndpoint()
+		logSlogBootstrapEvent(logger, bootstrapSpanExporterInitFailed, RedactError(err, ClientCredentials(endpoint)...))
 		return noop.NewTracerProvider()
 	}
 

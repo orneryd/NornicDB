@@ -57,7 +57,7 @@ type nodeBatchMatchKey struct {
 func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 	ctx context.Context, unwindVar string, items []interface{}, restQuery string,
 ) (*ExecuteResult, bool, error) {
-	plan, ok := parseUnwindRelationshipMergeBatchPlan(restQuery, unwindVar)
+	plan, ok := parseUnwindRelationshipMergeBatchPlan(ctx, restQuery, unwindVar)
 	if !ok {
 		return nil, false, nil
 	}
@@ -88,7 +88,7 @@ func (e *StorageExecutor) executeUnwindRelationshipMergeBatch(
 	return result, handled, err
 }
 
-func parseUnwindRelationshipMergeBatchPlan(restQuery, unwindVar string) (unwindRelationshipMergeBatchPlan, bool) {
+func parseUnwindRelationshipMergeBatchPlan(ctx context.Context, restQuery, unwindVar string) (unwindRelationshipMergeBatchPlan, bool) {
 	plan := unwindRelationshipMergeBatchPlan{}
 	trimmed := strings.TrimSpace(restQuery)
 	if trimmed == "" || !startsWithKeywordFold(trimmed, "MATCH") {
@@ -99,7 +99,7 @@ func parseUnwindRelationshipMergeBatchPlan(restQuery, unwindVar string) (unwindR
 	if returnIdx < 0 {
 		return plan, false
 	}
-	returns, ok := parseRelationshipBatchReturn(strings.TrimSpace(trimmed[returnIdx+len("RETURN"):]), unwindVar)
+	returns, ok := parseRelationshipBatchReturn(ctx, strings.TrimSpace(trimmed[returnIdx+len("RETURN"):]), unwindVar)
 	if !ok {
 		return plan, false
 	}
@@ -334,8 +334,8 @@ func parseRelationshipBatchVectorSetters(clause, unwindVar string) ([]relationsh
 	return setters, true
 }
 
-func parseRelationshipBatchReturn(returnPart, unwindVar string) ([]rowFieldReturnSpec, bool) {
-	plan := returnProjectionPlanFor("RETURN " + returnPart)
+func parseRelationshipBatchReturn(ctx context.Context, returnPart, unwindVar string) ([]rowFieldReturnSpec, bool) {
+	plan := returnProjectionPlanFor(ctx, "RETURN "+returnPart)
 	if !plan.valid || plan.star || plan.distinct || plan.hasAggregate || plan.modifiers != "" {
 		return nil, false
 	}

@@ -2,6 +2,7 @@
 package cypher
 
 import (
+	"context"
 	"regexp"
 	"strconv"
 	"strings"
@@ -235,6 +236,10 @@ type ASTExpression struct {
 	Case      *ASTCaseExpr
 }
 
+// exprMarker lets lightweight Query consumers retain the complete canonical
+// expression product instead of reconstructing or discarding its structure.
+func (ASTExpression) exprMarker() {}
+
 // ASTExprType identifies expression types.
 type ASTExprType int
 
@@ -301,7 +306,7 @@ func (b *ASTBuilder) Build(cypher string) (*AST, error) {
 	clauses := b.splitIntoClauses(cypher)
 
 	for _, clauseInfo := range clauses {
-		clause := b.parseClause(clauseInfo.clauseType, clauseInfo.text, clauseInfo.startPos)
+		clause := b.parseClause(context.Background(), clauseInfo.clauseType, clauseInfo.text, clauseInfo.startPos)
 		ast.Clauses = append(ast.Clauses, *clause)
 	}
 
@@ -361,14 +366,15 @@ func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
 	}
 	var boundaries []boundary
 
+	options := defaultKeywordScanOpts()
+	options.SkipBraces = true
 	for _, kw := range keywords {
 		pos := 0
 		for {
-			idx := findKeywordPosition(upper[pos:], kw.keyword)
-			if idx < 0 {
+			absolutePos := keywordIndexFrom(cypher, kw.keyword, pos, options)
+			if absolutePos < 0 {
 				break
 			}
-			absolutePos := pos + idx
 
 			// Skip CREATE and SET if they're part of "ON CREATE SET" or "ON MATCH SET"
 			// These are MERGE clause modifiers, not standalone clauses
@@ -431,44 +437,8 @@ func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
 	return clauses
 }
 
-// findKeywordPosition finds keyword position respecting word boundaries.
-func findKeywordPosition(s, keyword string) int {
-	idx := strings.Index(s, keyword)
-	if idx < 0 {
-		return -1
-	}
-
-	// Check word boundaries
-	if idx > 0 {
-		prev := s[idx-1]
-		if isIdentByte(prev) {
-			// Try to find next occurrence
-			rest := findKeywordPosition(s[idx+1:], keyword)
-			if rest < 0 {
-				return -1
-			}
-			return idx + 1 + rest
-		}
-	}
-
-	end := idx + len(keyword)
-	if end < len(s) {
-		next := s[end]
-		if isIdentByte(next) {
-			// Try to find next occurrence
-			rest := findKeywordPosition(s[idx+1:], keyword)
-			if rest < 0 {
-				return -1
-			}
-			return idx + 1 + rest
-		}
-	}
-
-	return idx
-}
-
 // parseClause parses a single clause into its structured form.
-func (b *ASTBuilder) parseClause(clauseType ASTClauseType, text string, startPos int) *ASTClause {
+func (b *ASTBuilder) parseClause(ctx context.Context, clauseType ASTClauseType, text string, startPos int) *ASTClause {
 	clause := &ASTClause{
 		Type:     clauseType,
 		RawText:  text,
@@ -490,9 +460,9 @@ func (b *ASTBuilder) parseClause(clauseType ASTClauseType, text string, startPos
 	case ASTClauseRemove:
 		clause.Remove = b.parseRemove(text)
 	case ASTClauseReturn:
-		clause.Return = b.parseReturn(text)
+		clause.Return = b.parseReturn(ctx, text)
 	case ASTClauseWith:
-		clause.With = b.parseWith(text)
+		clause.With = b.parseWith(ctx, text)
 	case ASTClauseWhere:
 		clause.Where = b.parseWhere(text)
 	case ASTClauseUnwind:
@@ -666,7 +636,7 @@ func (b *ASTBuilder) parseRemove(text string) *ASTRemove {
 }
 
 // parseReturn parses a RETURN clause.
-func (b *ASTBuilder) parseReturn(text string) *ASTReturn {
+func (b *ASTBuilder) parseReturn(ctx context.Context, text string) *ASTReturn {
 	ret := &ASTReturn{}
 
 	itemsText := strings.TrimSpace(text[len("RETURN"):])
@@ -685,7 +655,7 @@ func (b *ASTBuilder) parseReturn(text string) *ASTReturn {
 		item := ASTReturnItem{RawText: part}
 
 		// Check for AS alias
-		if asIdx := projectionAliasIndex(part); asIdx > 0 {
+		if asIdx := projectionAliasIndex(ctx, part); asIdx > 0 {
 			item.Alias = strings.TrimSpace(part[asIdx+len("AS"):])
 			part = strings.TrimSpace(part[:asIdx])
 		}
@@ -698,7 +668,7 @@ func (b *ASTBuilder) parseReturn(text string) *ASTReturn {
 }
 
 // parseWith parses a WITH clause.
-func (b *ASTBuilder) parseWith(text string) *ASTWith {
+func (b *ASTBuilder) parseWith(ctx context.Context, text string) *ASTWith {
 	with := &ASTWith{}
 
 	itemsText := strings.TrimSpace(text[len("WITH"):])
@@ -717,7 +687,7 @@ func (b *ASTBuilder) parseWith(text string) *ASTWith {
 		item := ASTReturnItem{RawText: part}
 
 		// Check for AS alias
-		if asIdx := projectionAliasIndex(part); asIdx > 0 {
+		if asIdx := projectionAliasIndex(ctx, part); asIdx > 0 {
 			item.Alias = strings.TrimSpace(part[asIdx+len("AS"):])
 			part = strings.TrimSpace(part[:asIdx])
 		}

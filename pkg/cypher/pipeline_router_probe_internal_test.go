@@ -15,7 +15,7 @@ YIELD node, score
 CREATE (m:TailProbe {name: node.originalText})
 RETURN m.name AS probeName`
 
-	clauses, ok := canExecuteAsPipeline(q)
+	clauses, ok := canExecuteAsPipeline(t.Context(), q)
 	t.Logf("canExecuteAsPipeline returned ok=%v, clauses=%d", ok, len(clauses))
 	for i, c := range clauses {
 		t.Logf("  [%d] kind=%d text=%q", i, c.kind, c.text[:min(80, len(c.text))])
@@ -25,7 +25,7 @@ RETURN m.name AS probeName`
 
 func TestPipelineReportsUnknownCallInMiddle(t *testing.T) {
 	q := `MATCH (n) WITH n CALL foo.bar() YIELD x CREATE (:Y {v: x})`
-	_, ok := canExecuteAsPipeline(q)
+	_, ok := canExecuteAsPipeline(t.Context(), q)
 	require.True(t, ok)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	_, err := exec.executeRequiredPipeline(context.Background(), q)

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -35,11 +36,11 @@ func (s *semanticBindingScope) contains(name string) bool {
 // any of the specialized CREATE executors. It intentionally consumes the same
 // top-level clause decomposition as the semantic pipeline so fast paths cannot
 // disagree about whether a name is new, bound, or undefined.
-func (e *StorageExecutor) validateCreateSemanticScopes(cypher string, cypher25 bool) error {
+func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cypher string, cypher25 bool) error {
 	if findKeywordIndexInContext(cypher, "CREATE") < 0 || isCreateSchemaOrAdministrationCommand(cypher) {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(cypher)
+	clauses, ok := splitPipelineClauses(ctx, cypher)
 	if !ok {
 		return nil
 	}
@@ -55,7 +56,7 @@ func (e *StorageExecutor) validateCreateSemanticScopes(cypher string, cypher25 b
 				scope.bind(name)
 			}
 		case pipelineClauseWith:
-			scope = projectedBindingScope(scope, clause.text)
+			scope = projectedBindingScope(ctx, scope, clause.text)
 		case pipelineClauseLet:
 			if err := bindPipelineLet(scope, clause.text); err != nil {
 				return err
@@ -95,11 +96,11 @@ func isCreateSchemaOrAdministrationCommand(cypher string) bool {
 		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX")
 }
 
-func projectedBindingScope(input *semanticBindingScope, clause string) *semanticBindingScope {
+func projectedBindingScope(ctx context.Context, input *semanticBindingScope, clause string) *semanticBindingScope {
 	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
 	output := newSemanticBindingScope()
 	for _, raw := range splitTopLevelComma(body) {
-		expr, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
+		expr, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
 		if expr == "*" {
 			for name := range input.names {
 				output.bind(name)

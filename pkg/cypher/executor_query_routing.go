@@ -37,11 +37,11 @@ func isShowConstraintContractsCommand(cypher string) bool {
 // whole statement, including the auto-commit async CREATE fast paths (#781).
 // The substring guard keeps other queries off the structural scanner, which
 // tells top-level separators from nested subqueries.
-func topLevelUnion(cypher, upperQuery string) (unionAll, union bool) {
+func topLevelUnion(ctx context.Context, cypher, upperQuery string) (unionAll, union bool) {
 	if !strings.Contains(upperQuery, "UNION") {
 		return false, false
 	}
-	branches, unionAll, _, ok := parseTopLevelUnionBranches(cypher)
+	branches, unionAll, _, ok := parseTopLevelUnionBranches(ctx, cypher)
 	return unionAll, ok && len(branches) > 1
 }
 
@@ -52,7 +52,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if readScopeEngine != nil {
 		defer clearRevealScope(ctx, readScopeEngine)
 	}
-	if scoped := e.withStatementPropertyViews(cypher); scoped != nil {
+	if scoped := e.withStatementPropertyViews(ctx, cypher); scoped != nil {
 		return scoped.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 	if mayContainSubqueryExpression(cypher) && len(findSubqueryExpressions(cypher)) > 0 {
@@ -73,14 +73,14 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	}()
 	// A top-level UNION composes complete single queries. Route it before any
 	// handler can consume the leading MATCH, RETURN, or UNWIND branch.
-	if unionAll, union := topLevelUnion(cypher, upperQuery); union {
-		return e.executeUnion(ctx, cypher, unionAll)
+	if unionAll, union := topLevelUnion(ctx, cypher, upperQuery); union {
+		return e.executeUnion(ctx, cypher, unionAll, nil)
 	}
 	if result, handled, err := e.executeShowStatement(ctx, cypher); handled {
 		return result, err
 	}
 	if strings.Contains(upperQuery, "CALL") {
-		if firstTopLevelCallSubquery(cypher) >= 0 {
+		if firstTopLevelCallSubquery(ctx, cypher) >= 0 {
 			return e.executeRequiredPipeline(ctx, cypher)
 		}
 	}
@@ -88,7 +88,16 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if result, handled := e.tryFastPathSimpleMatchReturnLimit(ctx, cypher, upperQuery); handled {
 		return result, nil
 	}
-	if result, handled := e.tryFastPathAnyMatchVectorCosine(ctx, cypher, upperQuery); handled {
+	if result, handled := e.tryFastPathMatchVectorCosine(ctx, cypher, upperQuery); handled {
+		return result, nil
+	}
+	if result, handled := e.tryFastPathMatchWithVectorCosineProjection(ctx, cypher, upperQuery); handled {
+		return result, nil
+	}
+	if result, handled := e.tryFastPathMatchRelationshipVectorCosine(ctx, cypher, upperQuery); handled {
+		return result, nil
+	}
+	if result, handled := e.tryFastPathMatchWithRelationshipVectorCosineProjection(ctx, cypher, upperQuery); handled {
 		return result, nil
 	}
 
@@ -115,7 +124,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 			!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
 			!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
 			!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") {
-			if _, ok := canExecuteAsPipeline(cypher); ok {
+			if _, ok := canExecuteAsPipeline(ctx, cypher); ok {
 				return e.executeRequiredPipeline(ctx, cypher)
 			}
 		}
@@ -324,7 +333,7 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	parts := splitTopLevelComma(items)
 	for index, part := range parts {
 		// Same alias parsing as every projection (parseProjectionExprAlias).
-		part, _ = parseProjectionExprAlias(strings.TrimSpace(part))
+		part, _ = parseProjectionExprAlias(ctx, strings.TrimSpace(part))
 		parts[index] = part
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
 			return nil, err
@@ -442,7 +451,7 @@ func (e *StorageExecutor) validateSyntaxANTLR(ctx context.Context, cypher string
 	if err := e.validateSyntaxNornic(cypher); err != nil {
 		return err
 	}
-	if err := e.validateMatchSemanticScopes(cypher, cypher25); err != nil {
+	if err := e.validateMatchSemanticScopes(ctx, cypher, cypher25); err != nil {
 		return err
 	}
 	if err := validateKnownFunctions(cypher); err != nil {

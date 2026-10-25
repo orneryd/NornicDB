@@ -30,7 +30,7 @@ func pipelineProjectionHasOnlyAggregates(projections []returnProjection) bool {
 	return true
 }
 
-func pipelineClauseAggregates(clause pipelineClause) bool {
+func pipelineClauseAggregates(ctx context.Context, clause pipelineClause) bool {
 	if clause.kind != pipelineClauseWith && clause.kind != pipelineClauseReturn {
 		return false
 	}
@@ -41,7 +41,7 @@ func pipelineClauseAggregates(clause pipelineClause) bool {
 	if where := topLevelKeywordIndex(body, "WHERE"); where >= 0 {
 		body = body[:where]
 	}
-	return returnProjectionPlanFor("RETURN " + body).hasAggregate
+	return returnProjectionPlanFor(ctx, "RETURN "+body).hasAggregate
 }
 
 func pipelineRowsSource(rows []pipelineRow) pipelineRowSource {
@@ -130,7 +130,7 @@ func (e *StorageExecutor) pipelineAggregateGroups(ctx context.Context, source pi
 			return false
 		}
 		for _, clause := range validationClauses {
-			if err := e.validatePipelineProjectionValues([]pipelineRow{row}, clause, "WITH"); err != nil {
+			if err := e.validatePipelineProjectionValues(ctx, []pipelineRow{row}, clause, "WITH"); err != nil {
 				recordExpressionFailure(ctx, err)
 				run.valid = false
 				return false

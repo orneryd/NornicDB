@@ -57,32 +57,10 @@ func (p *LocalProvider) GenerateDataKey(_ context.Context, opts KeyGenOpts) (*Da
 	if p.closed {
 		return nil, ErrClosed
 	}
-	alg := opts.Algorithm
-	if alg == "" {
-		alg = defaultAlgorithm
-	}
-	plain := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, plain); err != nil {
-		return nil, err
-	}
-	ct, err := wrapWithMaster(p.master, p.version, plain)
-	if err != nil {
-		return nil, err
-	}
-	now := time.Now().UTC()
-	exp := time.Time{}
-	if opts.TTL > 0 {
-		exp = now.Add(opts.TTL)
-	}
-	return &DataKey{
-		KeyURI:     p.keyURI,
-		Ciphertext: ct,
-		Plaintext:  plain,
-		Version:    p.version,
-		CreatedAt:  now,
-		ExpiresAt:  exp,
-		Algorithm:  alg,
-	}, nil
+	return generateDataKey(opts, func(plain []byte) ([]byte, string, uint32, error) {
+		ct, err := wrapWithMaster(p.master, p.version, plain)
+		return ct, p.keyURI, p.version, err
+	})
 }
 
 func (p *LocalProvider) DecryptDataKey(_ context.Context, encryptedKey []byte, _ DecryptOpts) ([]byte, error) {

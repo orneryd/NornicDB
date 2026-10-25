@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 const (
@@ -47,54 +49,143 @@ func ValidateToken(token string) error {
 	return nil
 }
 
-// ValidateURL validates URLs to prevent SSRF attacks.
-func ValidateURL(rawURL string, isDevelopment, allowHTTP bool) error {
-	if len(rawURL) > MaxURLLength {
+// URLHostPolicy identifies an existing consumer's host access contract.
+type URLHostPolicy uint8
+
+const (
+	URLProductionHost URLHostPolicy = iota
+	URLDevelopmentHost
+	URLResolvedLoopback
+	URLAnyHost
+)
+
+// URLSchemePolicy selects the existing consumer's URL syntax contract.
+type URLSchemePolicy uint8
+
+const (
+	URLHTTPScheme URLSchemePolicy = iota
+	// URLAbsoluteScheme accepts any absolute scheme with an authority, as OAuth issuer configuration requires.
+	URLAbsoluteScheme
+)
+
+// URLPolicy selects a consumer's URL access contract. Its zero value applies
+// production host restrictions, HTTPS, and MaxURLLength. A negative MaxLength
+// explicitly disables the length bound; HostRejected preserves consumer errors.
+type URLPolicy struct {
+	SchemePolicy      URLSchemePolicy
+	RejectCredentials bool
+	MaxLength         int
+	AllowHTTP         bool
+	RejectUserinfo    bool
+	HostPolicy        URLHostPolicy
+	HostRejected      func(string) error
+}
+
+// ValidateURL is the shared ordered URL validation owner.
+// Security configuration rejects private literal addresses; eval separately
+// requires all DNS answers to be loopback unless remote evaluation is enabled.
+// The zero policy retains production defaults; callers explicitly select other
+// contracts rather than relying on mode booleans or compatibility wrappers.
+func ValidateURL(rawURL string, policy URLPolicy) error {
+	maximum := policy.MaxLength
+	if maximum == 0 {
+		maximum = MaxURLLength
+	}
+	if maximum > 0 && len(rawURL) > maximum {
 		return ErrURLTooLong
 	}
-	if rawURL == "" || strings.TrimSpace(rawURL) == "" {
+	if strings.TrimSpace(rawURL) == "" {
 		return ErrURLInvalid
 	}
-
-	parsedURL, err := url.Parse(rawURL)
+	parsed, err := ParseURL(rawURL)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrURLInvalid, err)
+		return err
 	}
-
-	scheme := strings.ToLower(parsedURL.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return ErrURLInvalidProtocol
-	}
-
-	if !isDevelopment && scheme == "http" && !allowHTTP {
-		return ErrURLHTTPNotAllowed
-	}
-
-	hostname := parsedURL.Hostname()
-	if hostname == "" {
+	hostname := parsed.Hostname()
+	switch policy.SchemePolicy {
+	case URLHTTPScheme:
+		scheme := strings.ToLower(parsed.Scheme)
+		if scheme != "http" && scheme != "https" {
+			return ErrURLInvalidProtocol
+		}
+		if scheme == "http" && !policy.AllowHTTP {
+			return ErrURLHTTPNotAllowed
+		}
+		if hostname == "" {
+			return ErrURLInvalid
+		}
+	case URLAbsoluteScheme:
+		if parsed.Scheme == "" || parsed.Host == "" {
+			return ErrURLInvalid
+		}
+	default:
 		return ErrURLInvalid
 	}
-
-	if !isDevelopment {
-		lowercaseHost := strings.ToLower(hostname)
-		if lowercaseHost == "localhost" || lowercaseHost == "host.docker.internal" {
-			return ErrURLLocalhost
-		}
+	if policy.RejectCredentials && (parsed.User != nil || len(observability.ClientCredentials(rawURL)) != 0) {
+		return fmt.Errorf("URLs with credentials are not allowed")
 	}
-
-	ip := net.ParseIP(hostname)
-	if ip != nil {
-		// In development mode, allow loopback IPs (127.x.x.x) only
-		if isDevelopment && ip.IsLoopback() {
+	if policy.RejectUserinfo && parsed.User != nil {
+		return fmt.Errorf("URLs with userinfo are not allowed")
+	}
+	switch policy.HostPolicy {
+	case URLAnyHost:
+		return nil
+	case URLResolvedLoopback:
+		if isLoopbackHost(hostname) {
 			return nil
 		}
-		// Block ALL private IPs (including in dev mode, except loopback)
-		if isPrivateIP(ip) {
-			return ErrURLPrivateIP
+		if policy.HostRejected != nil {
+			return policy.HostRejected(hostname)
+		}
+		return ErrURLPrivateIP
+	case URLDevelopmentHost, URLProductionHost:
+		if policy.HostPolicy == URLProductionHost {
+			lower := strings.ToLower(hostname)
+			if lower == "localhost" || lower == "host.docker.internal" {
+				return ErrURLLocalhost
+			}
+		}
+		if ip := net.ParseIP(hostname); ip != nil {
+			if policy.HostPolicy == URLDevelopmentHost && ip.IsLoopback() {
+				return nil
+			}
+			if isPrivateIP(ip) {
+				return ErrURLPrivateIP
+			}
+		}
+		return nil
+	default:
+		return ErrURLInvalid
+	}
+}
+
+// isLoopbackHost retains eval's all-address DNS rule without adding DNS
+// resolution to security configuration's literal-address policy.
+func isLoopbackHost(hostname string) bool {
+	if ip := net.ParseIP(hostname); ip != nil {
+		return ip.IsLoopback()
+	}
+	addresses, err := net.LookupIP(hostname)
+	if err != nil || len(addresses) == 0 {
+		return false
+	}
+	for _, address := range addresses {
+		if !address.IsLoopback() {
+			return false
 		}
 	}
+	return true
+}
 
-	return nil
+// ParseURL parses URL syntax and safely renders parse failures. It imposes no
+// protocol, hostname or network policy; ValidateURL applies the selected
+// consumer contract in its required order.
+func ParseURL(rawURL string) (*url.URL, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrURLInvalid, observability.RedactError(err, observability.ClientCredentials(rawURL)...))
+	}
+	return parsed, nil
 }
 
 // isPrivateIP checks if an IP address is in a private range.

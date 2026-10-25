@@ -222,13 +222,13 @@ type TransactionDatabases interface {
 // Community has one user database, so its error for a read of a second one
 // could not be observed; a read gets the same code with the message worded
 // for a read.
-func TransactionDatabaseError(databases TransactionDatabases, txDB, target, query string) error {
+func TransactionDatabaseError(ctx context.Context, databases TransactionDatabases, txDB, target, query string) error {
 	txDB = StatementDatabase(txDB, query)
 	target = StatementDatabase(target, query)
 	if sameTransactionDatabase(databases, txDB, target) {
 		return nil
 	}
-	requirements := QueryPermissionRequirements(query)
+	requirements := QueryPermissionRequirements(ctx, query)
 	if requirements.Write || requirements.Schema {
 		return localizedStatusError("Neo.ClientError.Statement.AccessMode", "AccessMode",
 			localization.CypherCommandRoutingTransactionSecondDatabaseWrite(target, txDB))
@@ -314,12 +314,12 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 		return nil, ctx, err
 	}
 	if strings.EqualFold(resolvedDB, "system") {
-		if err := systemDatabaseStatementError(query); err != nil {
+		if err := systemDatabaseStatementError(ctx, query); err != nil {
 			return nil, ctx, err
 		}
 	}
 	if scopedExec != e && e.inTransaction(ctx) {
-		if err := TransactionDatabaseError(e.dbManager, e.currentDatabaseName(), resolvedDB, query); err != nil {
+		if err := TransactionDatabaseError(ctx, e.dbManager, e.currentDatabaseName(), resolvedDB, query); err != nil {
 			return nil, ctx, err
 		}
 	}
@@ -344,7 +344,7 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 // of the system database's records (systemProcedureScope). This is the one
 // policy, applied on every route: the request's or session's database, USE,
 // a statement a procedure runs, and CALL { USE … }.
-func systemDatabaseStatementError(query string) error {
+func systemDatabaseStatementError(ctx context.Context, query string) error {
 	_, query = parseExecutionMode(query)
 	query = strings.TrimSpace(query)
 	// A SHOW command runs, and its tail is held to Neo4j's rules for it
@@ -362,16 +362,16 @@ func systemDatabaseStatementError(query string) error {
 		if statement, _, ok := splitTransactionScriptTailAction(body); ok {
 			body = statement
 		}
-		return systemDatabaseStatementError(body)
+		return systemDatabaseStatementError(ctx, body)
 	}
 	notRecognised := localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError",
 		localization.CypherAdminSystemProcedureUnsupported(query))
-	for _, procedure := range registeredProceduresForCalls(query) {
+	for _, procedure := range RegisteredProceduresForCalls(ctx, query) {
 		if !procedure.WorksOnSystem {
 			return notRecognised
 		}
 	}
-	requirements := QueryPermissionRequirements(query)
+	requirements := QueryPermissionRequirements(ctx, query)
 	graphAccess := localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError", localization.CypherAdminSystemGraphAccessUnsupported())
 	if requirements.Write || requirements.Schema || queryKeywords(query)["MATCH"] {
 		return graphAccess
@@ -438,7 +438,7 @@ func systemShowTailError(query string) error {
 // systemDatabaseWriteError is systemDatabaseStatementError for a statement
 // run on this executor's own database (a request's or session's database,
 // not one a USE selects): nil unless that is the system database.
-func (e *StorageExecutor) systemDatabaseWriteError(query string) error {
+func (e *StorageExecutor) systemDatabaseWriteError(ctx context.Context, query string) error {
 	database := e.currentDatabaseName()
 	if e.txContext != nil && e.txContext.active && e.txContext.statementKind == "Administration" {
 		database = "system"
@@ -446,7 +446,7 @@ func (e *StorageExecutor) systemDatabaseWriteError(query string) error {
 	if !strings.EqualFold(database, "system") {
 		return nil
 	}
-	return systemDatabaseStatementError(query)
+	return systemDatabaseStatementError(ctx, query)
 }
 
 // resolveCompositeStorage resolves USE <composite> to a CompositeEngine-backed executor.

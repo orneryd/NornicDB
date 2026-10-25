@@ -404,7 +404,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			}
 			return service.Search(ctx, text, queryEmbedding, searchOpts)
 		}
-		chunkQuery := func(_ context.Context, text string) ([]string, error) {
+		chunkQuery := func(readerCtx context.Context, text string) ([]string, error) {
 			return embedder.ChunkText(text, 512, 50)
 		}
 		// failClosed disables every fallback: an embedding failure or a
