@@ -109,7 +109,7 @@ func withMergeNodeWrites(ctx context.Context, clauses []pipelineClause) context.
 		case pipelineClauseForeach, pipelineClauseCallSubquery:
 			writes.all = true
 		case pipelineClauseCall:
-			if procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause.text)); !found || procedure.Spec.writes() {
+			if admittedProcedureWrites(ctx, clause) {
 				writes.all = true
 			}
 		}

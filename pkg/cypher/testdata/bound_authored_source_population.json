@@ -1,0 +1,642 @@
+{
+  "author": "#1640 lane (Codex)",
+  "date": "2026-10-26",
+  "scope": "Every observed text reconstruction before executor admission/compilation and its consumers. OPEN means depends on the lower normalization owner (credentials internal/cyphertext), consumed at composition; no approved product pin exists.",
+  "provenance": [
+    "sig/handoff/explain-header-rule73-20261022/bound-plan-correction/authored-source/provenance.json",
+    "sig/handoff/explain-header-rule73-20261022/bound-plan-correction/authored-source/all-tracked-0.log",
+    "sig/handoff/explain-header-rule73-20261022/bound-plan-correction/authored-source/all-tracked-1.log",
+    "sig/handoff/explain-header-rule73-20261022/bound-plan-correction/authored-source/own-delta.patch"
+  ],
+  "members": [
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:confusables",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "confusables",
+      "status": "OPEN",
+      "reason": "Confusable syntax replacement and BOM trimming precede admission; diagnostics on the accepted bytes need the lower original-span owner.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:normalizeQueryText",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "normalizeQueryText",
+      "status": "OPEN",
+      "reason": "Comment/spacing canonicalization precedes non-FINISH admission. The existing result restore cannot establish admitted original source identity.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:canonicalizeNumericLiterals",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "canonicalizeNumericLiterals",
+      "status": "OPEN",
+      "reason": "Digit-grouping removal changes accepted expression offsets before admission.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:canonicalizeFunctionAliases",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "canonicalizeFunctionAliases",
+      "status": "OPEN",
+      "reason": "Function alias expansion changes accepted expression source and public names.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:separateCypher25Parameters",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "separateCypher25Parameters",
+      "status": "OPEN",
+      "reason": "Cypher-25 parameter separation inserts source bytes before admission.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:desugarCypher25Expressions",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "desugarCypher25Expressions",
+      "status": "OPEN",
+      "reason": "Generated scalar expression text is admitted after Cypher-25 lowering; original retained handles require the lower accepted-view/span product.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:desugarQueryStructure",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "desugarQueryStructure",
+      "status": "OPEN",
+      "reason": "NEXT/WHEN/braced body expansion creates accepted query text before admission.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:canonicalizeQuotedVariables",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "canonicalizeQuotedVariables",
+      "status": "OPEN",
+      "reason": "Canonical variable spelling differs from authored identifier spans and expression names.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:desugarStandaloneOrderClauses",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "desugarStandaloneOrderClauses",
+      "status": "OPEN",
+      "reason": "Inserted WITH-star source is compiled by subsequent semantic/admission consumers.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:desugarLabelExpressions",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "desugarLabelExpressions",
+      "status": "OPEN",
+      "reason": "Label-expression lowering adds generated functions/predicates before the ordinary non-FINISH admission call.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:preprocessShellCommands",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "preprocessShellCommands",
+      "status": "OPEN",
+      "reason": "Shell commands select a remaining statement window; coordinates relative to the full request need lower authored-window provenance.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:stripWithEmbeddingSuffix",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "stripWithEmbeddingSuffix",
+      "status": "OPEN",
+      "reason": "Scope admission strips the existing execution-option suffix. Executable spans outside that window need the lower authored-view association.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:stripCypherPreamble",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "stripCypherPreamble",
+      "status": "OPEN",
+      "reason": "Preamble removal changes the ordinary execution input. The FINISH association carries original bytes; the general accepted-view join remains lower-owned.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:stripUnionBranchFinishes",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "stripUnionBranchFinishes",
+      "status": "authored-framing",
+      "reason": "The release framing fact now carries exact originalCypher; admission and its installed program consume it without appending a keyword or reconstructing spacing.",
+      "dependency": "",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.execute:parseExecutionMode",
+      "file": "pkg/cypher/executor_entry.go",
+      "symbol": "StorageExecutor.execute",
+      "operation": "parseExecutionMode",
+      "status": "authored-framing",
+      "reason": "Transparent EXPLAIN/PROFILE continuation rekeys the same FINISH framing association while retaining its original bytes, rather than creating scopeText from a stripped mode body.",
+      "dependency": "",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.executeInternal:normalizeQueryText",
+      "file": "pkg/cypher/executor_internal.go",
+      "symbol": "StorageExecutor.executeInternal",
+      "operation": "normalizeQueryText",
+      "status": "OPEN",
+      "reason": "Nested user/fragment normalization runs before ordinary admission; normalized-to-authored positions require the lower product.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_internal.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeInternal/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.executeInternal:canonicalizeNumericLiterals",
+      "file": "pkg/cypher/executor_internal.go",
+      "symbol": "StorageExecutor.executeInternal",
+      "operation": "canonicalizeNumericLiterals",
+      "status": "OPEN",
+      "reason": "Nested numeric spelling rewrite precedes admission.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_internal.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeInternal/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.executeInternal:canonicalizeFunctionAliases",
+      "file": "pkg/cypher/executor_internal.go",
+      "symbol": "StorageExecutor.executeInternal",
+      "operation": "canonicalizeFunctionAliases",
+      "status": "OPEN",
+      "reason": "Nested function alias rewrite precedes admission.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_internal.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeInternal/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.executeInternal:separateCypher25Parameters",
+      "file": "pkg/cypher/executor_internal.go",
+      "symbol": "StorageExecutor.executeInternal",
+      "operation": "separateCypher25Parameters",
+      "status": "OPEN",
+      "reason": "Nested Cypher-25 parameter separation changes source bytes.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_internal.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeInternal/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.executeInternal:desugarStandaloneOrderClauses",
+      "file": "pkg/cypher/executor_internal.go",
+      "symbol": "StorageExecutor.executeInternal",
+      "operation": "desugarStandaloneOrderClauses",
+      "status": "OPEN",
+      "reason": "Nested standalone ORDER lowering changes accepted clause text.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_internal.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeInternal/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.executeInternal:desugarLabelExpressions",
+      "file": "pkg/cypher/executor_internal.go",
+      "symbol": "StorageExecutor.executeInternal",
+      "operation": "desugarLabelExpressions",
+      "status": "OPEN",
+      "reason": "Nested physical label lowering changes expression text before later admission.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_internal.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeInternal/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.executeInternal:confusables",
+      "file": "pkg/cypher/executor_internal.go",
+      "symbol": "StorageExecutor.executeInternal",
+      "operation": "confusables",
+      "status": "OPEN",
+      "reason": "Nested syntax-confusable normalization changes authored bytes before compilation.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_internal.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeInternal/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.executeInternal:stripUnionBranchFinishes",
+      "file": "pkg/cypher/executor_internal.go",
+      "symbol": "StorageExecutor.executeInternal",
+      "operation": "stripUnionBranchFinishes",
+      "status": "authored-framing",
+      "reason": "Capture the existing framing-associated authored statement before stripping; both early and normal admission consume this source and install its canonical program.",
+      "dependency": "",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor_internal.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeInternal/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "statementAdmissionSource:FINISH-source-selection",
+      "file": "pkg/cypher/statement_framing.go",
+      "symbol": "statementAdmissionSource",
+      "operation": "FINISH-source-selection",
+      "status": "authored-framing",
+      "reason": "Reads original source solely from the existing framing context fact when the execution statement matches. It creates no accepted view, span map or normalized spelling.",
+      "dependency": "",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/statement_framing.go:github.com/orneryd/nornicdb/pkg/cypher.statementAdmissionSource/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "withFinishedStatement:FINISH-association",
+      "file": "pkg/cypher/statement_framing.go",
+      "symbol": "withFinishedStatement",
+      "operation": "FINISH-association",
+      "status": "authored-framing",
+      "reason": "Extends the release terminator association with original bytes. It remains one framing fact, scoped to one public statement or transparent continuation.",
+      "dependency": "",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/statement_framing.go:github.com/orneryd/nornicdb/pkg/cypher.withFinishedStatement/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.executeExplain:option-and-mode-window",
+      "file": "pkg/cypher/explain.go",
+      "symbol": "StorageExecutor.executeExplain",
+      "operation": "option-and-mode-window",
+      "status": "OPEN",
+      "reason": "The FINISH path consumes original framing source; ordinary option/mode/normalized windows still need the credentials accepted-view association at composition.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/explain.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeExplain/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.executeProfile:option-and-mode-window",
+      "file": "pkg/cypher/explain.go",
+      "symbol": "StorageExecutor.executeProfile",
+      "operation": "option-and-mode-window",
+      "status": "OPEN",
+      "reason": "The FINISH path consumes original framing source; ordinary option/mode/normalized windows still need the credentials accepted-view association at composition.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/explain.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeProfile/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.bindPipelineProgram:retained-operator-selection",
+      "file": "pkg/cypher/result_columns_execution.go",
+      "symbol": "StorageExecutor.bindPipelineProgram",
+      "operation": "retained-operator-selection",
+      "status": "authored-framing",
+      "reason": "FINISH execution selects the original admitted single-branch operator handles by order/kind; it does not compile a synthetic FINISH statement. General normalized fragment transport is not mapped locally.",
+      "dependency": "",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/result_columns_execution.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).bindPipelineProgram/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.bindPipelineProgram:normalized-fragment-coordinate-consumer",
+      "file": "pkg/cypher/result_columns_execution.go",
+      "symbol": "StorageExecutor.bindPipelineProgram",
+      "operation": "normalized-fragment-coordinate-consumer",
+      "status": "OPEN",
+      "reason": "Ordinary physical pipelines can arrive with normalized source instead of the authored source used by admission. Joining their retained IDs/spans requires the lower product and PR1583 consumer composition.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/result_columns_execution.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).bindPipelineProgram/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.enrichBoundTypes:normalized-admission-consumer",
+      "file": "pkg/cypher/bound_types.go",
+      "symbol": "StorageExecutor.enrichBoundTypes",
+      "operation": "normalized-admission-consumer",
+      "status": "OPEN",
+      "reason": "Type diagnostics consume retained expression handles; handles originating on normalized input need lower original-span provenance.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/bound_types.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).enrichBoundTypes/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.statementParametersError:normalized-admission-consumer",
+      "file": "pkg/cypher/executor.go",
+      "symbol": "StorageExecutor.statementParametersError",
+      "operation": "normalized-admission-consumer",
+      "status": "OPEN",
+      "reason": "Parameter diagnostics and declaration-relative source selection use admission source; normalized request views need the lower product.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/executor.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).statementParametersError/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.admitBoundStatement:normalized-admission-consumer",
+      "file": "pkg/cypher/result_columns_admission.go",
+      "symbol": "StorageExecutor.admitBoundStatement",
+      "operation": "normalized-admission-consumer",
+      "status": "OPEN",
+      "reason": "Canonical admission accepts the provided source without synthesizing it. Original versus accepted identity for general rewrites is a lower composition dependency.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/result_columns_admission.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).admitBoundStatement/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.projectionFactsFor:normalized-admission-consumer",
+      "file": "pkg/cypher/result_columns_scope.go",
+      "symbol": "StorageExecutor.projectionFactsFor",
+      "operation": "normalized-admission-consumer",
+      "status": "OPEN",
+      "reason": "Cache keys preserve the provided/admitted source; normalized and authored aliases must be related by the lower owner, not by another local text product.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/result_columns_scope.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).projectionFactsFor/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "projectionCompilation.compileBound:normalized-admission-consumer",
+      "file": "pkg/cypher/result_columns_compile.go",
+      "symbol": "projectionCompilation.compileBound",
+      "operation": "normalized-admission-consumer",
+      "status": "OPEN",
+      "reason": "The constructor retains the exact source it receives; a normalized source handle requires the lower original-span product for public coordinates.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/result_columns_compile.go:(*github.com/orneryd/nornicdb/pkg/cypher.projectionCompilation).compileBound/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "preserveStatementPresentation:existing-expression-name-preservation",
+      "file": "pkg/cypher/result_columns_normalization.go",
+      "symbol": "preserveStatementPresentation",
+      "operation": "existing-expression-name-preservation",
+      "status": "OPEN",
+      "reason": "This unchanged parent helper protects public expression-name spans while composing existing rewrite edits; the approved credentials product must replace/absorb the lower presentation responsibility at composition.",
+      "dependency": "credentials internal/cyphertext accepted-view/original-span product; consumed at composition",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/result_columns_normalization.go:github.com/orneryd/nornicdb/pkg/cypher.preserveStatementPresentation/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "callScopeClauseVariables:legacy-CALL-wrapper",
+      "file": "pkg/cypher/call_imports.go",
+      "symbol": "callScopeClauseVariables",
+      "operation": "legacy-CALL-wrapper",
+      "status": "upper-consumer",
+      "reason": "The source wrapper parses a standalone import-list syntax probe for legacy Fabric only. It publishes no canonical admitted statement; PR1583 deletes this adapter with the Fabric planner migration.",
+      "dependency": "",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/call_imports.go:github.com/orneryd/nornicdb/pkg/cypher.callScopeClauseVariables/bound-plan-candidate#1"
+    },
+    {
+      "author": "#1640 lane (Codex)",
+      "id": "StorageExecutor.executeCallTail:physical-seed-continuation",
+      "file": "pkg/cypher/call.go",
+      "symbol": "StorageExecutor.executeCallTail",
+      "operation": "physical-seed-continuation",
+      "status": "upper-consumer",
+      "reason": "Legacy physical tail transport is assigned to PR1583, which consumes canonical horizons. This layer does not create another serialization/lowering owner.",
+      "dependency": "",
+      "decisionAuthority": "Nornic2 normalization ownership decision, 2026-10-26",
+      "methods": [
+        "graphify",
+        "all-tracked-rg",
+        "own-delta"
+      ],
+      "subjectID": "pkg/cypher/call.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeCallTail/bound-plan-candidate#1"
+    }
+  ]
+}

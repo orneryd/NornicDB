@@ -72,6 +72,7 @@ func (e *StorageExecutor) StatementResultColumnsContext(ctx context.Context, que
 		return nil, source.Err
 	}
 	query = source.Text
+	query = statementAdmissionSource(ctx, query)
 	var columns []string
 	var failure error
 	cypher25 := cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25"
@@ -92,6 +93,7 @@ func knownResultColumns(names resultmetadata.Names) []string {
 // CachedResultColumns is a legacy cache-only hint for the Fabric consumers
 // being replaced by planned Facts. It never compiles or guesses a cold header.
 func (e *StorageExecutor) CachedResultColumns(ctx context.Context, query string, incoming []string) resultmetadata.Names {
+	query = statementAdmissionSource(ctx, query)
 	cypher25 := cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25"
 	names := make(map[string]struct{}, len(incoming)+len(e.fabricRecordBindings))
 	for _, name := range incoming {
@@ -109,44 +111,6 @@ func (e *StorageExecutor) CachedResultColumns(ctx context.Context, query string,
 	return resultmetadata.Unknown()
 }
 
-// statementProducesColumns is framing's presence-only view of the canonical
-// clause readers. Ordinary UNION execution does not compile a scope program.
-func (e *StorageExecutor) statementProducesColumns(ctx context.Context, query string) bool {
-	start, end, _, ok := queryStatementWindow(ctx, query)
-	return ok && queryBodyProducesColumns(ctx, query, readQueryBody(ctx, query, start, end), false)
-}
-
-func queryBodyProducesColumns(ctx context.Context, source string, body queryBody, directReturnsOnly bool) bool {
-	for _, branch := range body.branches {
-		if branch.declined || branch.finished || len(branch.clauses) == 0 {
-			continue
-		}
-		last := branch.clauses[len(branch.clauses)-1]
-		switch last.kind {
-		case pipelineClauseReturn:
-			return true
-		case pipelineClauseCall:
-			if directReturnsOnly {
-				continue
-			}
-			produced := false
-			projectedProcedureNames(ctx, last.text).Visit(func(names []string) { produced = len(names) > 0 }, func() { produced = false })
-			if produced {
-				return true
-			}
-		case pipelineClauseCallSubquery:
-			if directReturnsOnly {
-				continue
-			}
-			start, end, ok := callClauseBody(ctx, last)
-			if ok && queryBodyProducesColumns(ctx, source, readQueryBody(ctx, source, start, end), false) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // ResultProjection is the execution descriptor from the owner program. It
 // never expands a compound wildcard from the statement's entry scope.
 func (e *StorageExecutor) ResultProjection(ctx context.Context, query string, incoming []string, stage SourceStage) resultmetadata.Projection {
@@ -155,6 +119,7 @@ func (e *StorageExecutor) ResultProjection(ctx context.Context, query string, in
 		return resultmetadata.Projection{}
 	}
 	query = source.Text
+	query = statementAdmissionSource(ctx, query)
 	var projection resultmetadata.Projection
 	e.statementProjectionProgram(ctx, query, resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25", nil).facts.Visit(func(statement resultmetadata.Statement) {
 		if len(statement.Branches) != 0 || len(statement.Clauses) == 0 {

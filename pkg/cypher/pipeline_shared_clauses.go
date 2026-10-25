@@ -116,56 +116,16 @@ func sharedClauseSyntaxError(message string) error {
 	return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", message)
 }
 
-func bindPipelineLet(scope *semanticBindingScope, clause string) error {
-	projections, err := parsePipelineLet(clause)
-	if err != nil {
-		return err
-	}
-	for _, projection := range projections {
-		scope.bind(projection.alias)
-	}
-	return nil
-}
-
+// Legacy operand-helper entry: use the admitted-ID adapter, including LET.
 func (e *StorageExecutor) validateSharedClause(ctx context.Context, scope matchSemanticScope, values map[string]string, clause pipelineClause, cypher25 bool) error {
 	input := staticTypeScope{kinds: scope, values: values, complete: true, cypher25: cypher25}
-	if clause.kind == pipelineClauseFilter {
-		expression := pipelineFilterExpression(clause.text)
-		if expression == "" {
-			return sharedClauseSyntaxError("FILTER requires a predicate")
-		}
-		if pipelineExpressionContainsAggregate(expression) {
-			return sharedClauseSyntaxError("Aggregation is not allowed in FILTER")
-		}
-		if err := undefinedExpressionVariable(scope, expression); err != nil {
-			return err
-		}
-		return e.validateStaticClauseTypes(ctx, clause, input)
-	}
-	projections, err := parsePipelineLet(clause.text)
-	if err != nil {
-		return err
-	}
-	for _, projection := range projections {
-		if err := projectionItemTermError(projection.expression); err != nil {
-			return err
-		}
-		if err := undefinedExpressionVariable(scope, projection.expression); err != nil {
-			return err
-		}
-		if err := validateStaticFunctionVariables(projection.expression, input); err != nil {
-			return err
-		}
-	}
-	return e.validateStaticOperatorTypes(ctx, clause, input, nil, nil)
+	_, _, err := e.enrichBoundTypes(ctx, clause.text, typeScopeOf(input), semanticBodyFromContext(ctx), "", cypher25)
+	return err
 }
 
 func (e *StorageExecutor) pipelineSharedClauseSource(ctx context.Context, input pipelineRowSource, clause pipelineClause) (pipelineRowSource, error) {
 	if clause.kind == pipelineClauseFilter {
 		expression := pipelineFilterExpression(clause.text)
-		if expression == "" {
-			return nil, sharedClauseSyntaxError("FILTER requires a predicate")
-		}
 		return func(yield func(pipelineRow) bool) bool {
 			valid := true
 			completed := input(func(row pipelineRow) bool {

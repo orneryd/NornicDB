@@ -296,7 +296,7 @@ func TestGh648_SharedReturnBoundary(t *testing.T) {
 func TestGh648_OuterScopeAndColumnNames(t *testing.T) {
 	t.Run("independent_return_bindings", func(t *testing.T) {
 		exec := newGh648Executor(t)
-		rows, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(context.Background(), []pipelineRow{{"v": int64(1)}}, "CALL { RETURN 2 AS c }", nil)
+		rows, _, handled, err := exec.pipelineApplyCallSubqueryWithMetadata(context.Background(), []pipelineRow{{"v": int64(1)}}, "CALL { RETURN 2 AS c }", newPipelineCallMetadataForTest(t, exec, "CALL { RETURN 2 AS c }", []string{"v"}))
 		require.NoError(t, err)
 		require.True(t, handled)
 		require.Equal(t, []pipelineRow{{"v": int64(1), "c": int64(2)}}, rows)
@@ -438,11 +438,13 @@ func TestPR771TransactionalCallChainedRows(t *testing.T) {
 	query := "CALL { UNWIND [1,2,3] AS i RETURN i } CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS RETURN i ORDER BY i"
 	clauses, split := splitPipelineClausesAllowingProcedureCalls(t.Context(), query)
 	t.Logf("clauses: split=%v values=%+v", split, clauses)
-	callRows, callStats, callHandled, callErr := newGh648Executor(t).pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, "CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS", nil)
+	callProbe := newGh648Executor(t)
+	callQuery := "CALL (i) { CREATE (:X {i:i}) } IN TRANSACTIONS OF 2 ROWS"
+	callRows, callStats, callHandled, callErr := callProbe.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{"i": int64(1)}}, callQuery, newPipelineCallMetadataForTest(t, callProbe, callQuery, []string{"i"}))
 	t.Logf("call probe: rows=%+v stats=%+v handled=%v err=%v", callRows, callStats, callHandled, callErr)
 	runner := newGh648Executor(t)
-	firstRows, firstStats, firstHandled, firstErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{}}, clauses[0].text, nil)
-	secondRows, secondStats, secondHandled, secondErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, firstRows, clauses[1].text, nil)
+	firstRows, firstStats, firstHandled, firstErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, []pipelineRow{{}}, clauses[0].text, newPipelineCallMetadataForTest(t, runner, clauses[0].text, nil))
+	secondRows, secondStats, secondHandled, secondErr := runner.pipelineApplyCallSubqueryWithMetadata(ctx, firstRows, clauses[1].text, newPipelineCallMetadataForTest(t, runner, clauses[1].text, []string{"i"}))
 	t.Logf("step probes: first=%+v stats=%+v handled=%v err=%v second=%+v stats=%+v handled=%v err=%v", firstRows, firstStats, firstHandled, firstErr, secondRows, secondStats, secondHandled, secondErr)
 	manual, manualHandled, manualErr := runner.runPipelineClauseRows(ctx, []pipelineRow{{}}, map[string]struct{}{}, clauses, clauses, nil)
 	t.Logf("runner probe: handled=%v err=%v result=%+v", manualHandled, manualErr, manual)
@@ -655,7 +657,6 @@ func TestBranchDeclaresVariable(t *testing.T) {
 	} {
 		require.Equal(t, testCase.declares, branchDeclaresVariable(t.Context(), testCase.branch, testCase.variable), testCase.branch)
 	}
-	require.Equal(t, []string{"n"}, unscopedBranchLocals(t.Context(), "MATCH (n)-->(m) RETURN m, k", []string{"n", "k"}))
 	require.Equal(t, byte(0), previousNonSpace("  ", 2))
 	require.Equal(t, byte(0), nextNonSpace("a  ", 1))
 }

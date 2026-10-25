@@ -27,7 +27,7 @@ type fabricPreparedExecKey struct{}
 // statement metadata consumers and Fabric planning. The Fabric integration
 // supplies the resolver; without it, participant-owned implicit signatures are
 // deliberately unresolved before execution.
-func (e *StorageExecutor) participantSchemaForStatement(ctx context.Context, query string) resultmetadata.ParticipantSchema {
+func (e *StorageExecutor) participantSchemaForStatement(ctx context.Context, query string) ParticipantSchema {
 	return nil
 }
 
@@ -472,7 +472,7 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 		ctx = withQuotedVariableNames(ctx, names)
 		params = names.parameterValues(params)
 	}
-	desugared, _, err := desugarLabelExpressions(canonical, params, cypherVersionFromContext(ctx) == "25")
+	desugared, _, err := desugarLabelExpressions(ctx, canonical, params, cypherVersionFromContext(ctx) == "25")
 	if err == nil {
 		err = e.validateSemanticScopes(ctx, desugared)
 	}
@@ -862,7 +862,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	// scope/type owner runs. As at the composite entry, this validation copy
 	// must desugar label expressions first. executeInternal owns rewriting the
 	// actual local execution and restoring its result to the fragment source.
-	scopeQuery, _, scopeErr := desugarLabelExpressions(query, params, cypherVersionFromContext(ctx) == "25")
+	scopeQuery, _, scopeErr := desugarLabelExpressions(ctx, query, params, cypherVersionFromContext(ctx) == "25")
 	if scopeErr == nil {
 		scopeErr = exec.validateMatchSemanticScopes(ctx, scopeQuery, cypherVersionFromContext(ctx) == "25")
 	}
@@ -870,8 +870,14 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 		_, scopeErr = (resultRestoration{names: names}).restore(nil, scopeErr, parseReturnItems)
 		return nil, nil, scopeErr
 	}
+	admission, err := exec.admitBoundStatement(ctx, statementAdmissionSource(ctx, query))
+	if err != nil {
+		return nil, nil, err
+	}
+	if admission.program != nil {
+		ctx = withBoundStatementProgram(ctx, admission.program)
+	}
 	var result *ExecuteResult
-	var err error
 	if stripped, embedding := stripWithEmbeddingSuffix(query); embedding || statementHasEmbeddingCandidate(ctx, query) {
 		// Inline embeddings use the normal mutation/transaction owner. Internal
 		// fragment execution alone deliberately does not start an implicit tx.
@@ -881,7 +887,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	} else {
 		result, err = exec.executeInternal(ctx, query, params)
 	}
-	result, err = (resultRestoration{names: names}).restore(result, err, parseReturnItems)
+	result, err = (resultRestoration{names: names, program: admission.program}).restore(result, err, parseReturnItems)
 	if err != nil {
 		return nil, nil, err
 	}

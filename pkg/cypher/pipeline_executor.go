@@ -66,6 +66,7 @@ const (
 // keyword (MATCH/CREATE/WITH/UNWIND/RETURN) and the clause body — exactly
 // what you would pass to the clause implementation.
 type pipelineClause struct {
+	bindings *semanticBodyScope
 	kind               pipelineClauseKind
 	syntax             cypherantlr.SyntaxNode
 	embeddingCandidate string
@@ -557,9 +558,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		programClauses = clauses
 	}
 	var programErr error
-	ctx, programErr = e.bindPipelineProgram(ctx, programClauses, scope)
+	ctx, programClauses, programErr = e.bindPipelineProgram(ctx, programClauses, scope)
 	if programErr != nil {
 		return nil, true, programErr
+	}
+	if len(clauses) > 0 && endsInFinish(ctx, clauses[0].syntax.Source()) {
+		clauses, originalClauses = programClauses, programClauses
 	}
 	result := &ExecuteResult{
 		Columns: []string{},
@@ -596,7 +600,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			case pipelineClauseCreate, pipelineClauseMerge, pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseForeach:
 				writes = true
 			case pipelineClauseCall:
-				if procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause.text)); found && procedure.Spec.writes() {
+				if admittedProcedureWrites(ctx, clause) {
 					writes = true
 				}
 			}
@@ -864,12 +868,18 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source != nil && !carryAfter {
 				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause.text); supported {
 					source = windowed
-					scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+					scope, programErr = executionClauseScope(ctx, clause, true)
+					if programErr != nil {
+						return nil, true, programErr
+					}
 					continue
 				}
 				if plan, local := parsePipelineRowWith(ctx, clause.text); local {
 					source = e.pipelineWithRowSource(ctx, source, plan)
-					scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+					scope, programErr = executionClauseScope(ctx, clause, true)
+					if programErr != nil {
+						return nil, true, programErr
+					}
 					continue
 				}
 			}
@@ -901,7 +911,10 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return nil, true, err
 			}
 			rows = newRows
-			scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+			scope, programErr = executionClauseScope(ctx, clause, true)
+			if programErr != nil {
+				return nil, true, programErr
+			}
 			if carryAfter {
 				carryPipelineImports(rows, scope, carried)
 			}
@@ -917,7 +930,10 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				scope[alias] = struct{}{}
 			}
 			for offset := 1; offset <= consumed; offset++ {
-				scope = pipelineProjectionScope(ctx, scope, clauses[idx+offset].text, pipelineImports(ctx))
+				scope, programErr = executionClauseScope(ctx, clauses[idx+offset], true)
+				if programErr != nil {
+					return nil, true, programErr
+				}
 			}
 			idx += consumed
 			if idx+1 < len(clauses) && (pipelineClauseAggregates(ctx, clauses[idx+1]) || stream.forClause(ctx, &clauses[idx+1]) != nil) {
@@ -948,12 +964,12 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			var err error
 			if clause.optional {
 				newRows, err = pipelineApplyOptionally(rows, func(row []pipelineRow) ([]pipelineRow, []string, bool, error) {
-					rowsOut, names, handled, err := e.pipelineApplyProcedureCall(ctx, row, clause.text, result.Stats)
+					rowsOut, names, handled, err := e.pipelineApplyProcedureCall(ctx, row, clause, result.Stats)
 					yielded = names
 					return rowsOut, names, handled, err
 				}, &ok)
 			} else {
-				newRows, yielded, ok, err = e.pipelineApplyProcedureCall(ctx, rows, clause.text, result.Stats)
+				newRows, yielded, ok, err = e.pipelineApplyProcedureCall(ctx, rows, clause, result.Stats)
 			}
 			if err != nil {
 				return nil, true, err
@@ -965,11 +981,15 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			for _, name := range yielded {
 				scope[name] = struct{}{}
 			}
-			if procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause.text)); found && procedure.Spec.writes() {
+			if admittedProcedureWrites(ctx, clause) {
 				wrote = true
 			}
 		case pipelineClauseCallSubquery:
-			callMetadata := &pipelineCallMetadata{scope: scope, batch: callBatch}
+			original := clause
+			if idx < len(originalClauses) {
+				original = originalClauses[idx]
+			}
+			callMetadata := &pipelineCallMetadata{scope: scope, batch: callBatch, call: executionCallFacts(ctx, original)}
 			var newRows []pipelineRow
 			var stats *QueryStats
 			ok := true
@@ -1073,6 +1093,26 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		body, _, _, _ := e.parseCallSubquery(ctx, clauses[len(clauses)-1].text)
 		if topLevelKeywordIndex(body, "RETURN") >= 0 {
 			result = callPipelineResultFromRows(rows, nil, result.Stats, terminalCallColumns)
+		}
+	}
+	if output == nil && len(clauses) > 0 && clauses[len(clauses)-1].kind == pipelineClauseCall {
+		last := clauses[len(clauses)-1]
+		if len(originalClauses) > 0 {
+			last = originalClauses[len(originalClauses)-1]
+		}
+		columns, err := executionProcedureColumns(ctx, last)
+		if err != nil {
+			return nil, true, err
+		}
+		result.Columns = columns
+		if len(columns) > 0 {
+			for _, row := range rows {
+				values := make([]interface{}, len(columns))
+				for index, name := range columns {
+					values[index] = row[name]
+				}
+				result.Rows = append(result.Rows, values)
+			}
 		}
 	}
 	return result, true, nil

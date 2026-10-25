@@ -74,11 +74,11 @@ func TestPublicFactsRawParticipantObligation(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "source-obligations"))
 	query := `/* \u0061 */ USE comp.remote CALL custom.participantOnly(outer)`
 	calls := 0
-	facts := executor.StatementFactsWith(query, resultmetadata.KnownScope([]string{"outer"}), false, func(o resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
+	facts := executor.StatementFactsWith(query, resultmetadata.KnownScope([]string{"outer"}), false, func(o resultmetadata.SchemaObligation) (ParticipantProcedure, error) {
 		calls++
 		require.Equal(t, "CALL custom.participantOnly(outer)", query[o.Start:o.End])
 		require.Equal(t, "USE comp.remote", strings.TrimSpace(query[o.UseStart:o.UseEnd]))
-		return resultmetadata.KnownColumns([]string{"value"}), nil
+		return ParticipantProcedure{Spec: &ProcedureSpec{MinArgs: 1, MaxArgs: 1, Params: []ProcedureParam{{Name: "outer", Type: "ANY"}}, Returns: []ProcedureColumn{{Name: "value", Type: "ANY"}}}}, nil
 	}, RawSource)
 	facts.Visit(func(resultmetadata.Statement) {}, func() { t.Fatal("declined") }, func(r resultmetadata.Unresolved) { t.Fatal(r.Err) })
 	require.Equal(t, 1, calls)

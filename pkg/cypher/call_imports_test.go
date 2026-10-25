@@ -40,14 +40,20 @@ func TestCallSubqueryImports(t *testing.T) {
 		{"scope_quoted", "`a``b`, `odd name`", true, "RETURN 1", []string{"a`b", "odd name"}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := callSubqueryImportedVariables(t.Context(), tt.scope, tt.scoped, tt.body)
+			var got []string
+			var err error
+			if tt.scoped {
+				got, err = callScopeClauseVariables(t.Context(), tt.scope)
+			} else {
+				got = importingWithVariables(t.Context(), tt.body)
+			}
 			require.NoError(t, err)
 			require.Equal(t, tt.want, got)
 		})
 	}
 	// A scope clause item that is not a variable is a syntax error.
 	for _, scope := range []string{"1", "x + 1", "x, 1", "x, *", "x AS y", "$p"} {
-		_, err := callSubqueryImportedVariables(t.Context(), scope, true, "RETURN 1")
+		_, err := callScopeClauseVariables(t.Context(), scope)
 		require.ErrorContains(t, err, "CALL imports must contain only variable names", scope)
 	}
 	// Single-database execution reads scope clauses with the same reader.

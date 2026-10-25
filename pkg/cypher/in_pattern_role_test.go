@@ -63,7 +63,7 @@ func TestINListPositionRoleControls(t *testing.T) {
 			count := 0
 			require.NoError(t, forEachListOperand(tc.query, func(start, in int) error { count++; return nil }))
 			require.Equal(t, tc.want, count)
-			err := validateListOperands(tc.query, nil)
+			err := validateListOperands(t.Context(), tc.query, nil)
 			if tc.mismatch {
 				require.ErrorContains(t, err, "expected List<T> but was Map")
 				var classified interface {

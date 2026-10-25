@@ -17,7 +17,7 @@ func TestProcedureArgumentsRejectKnownIncompatibleTypes(t *testing.T) {
 		MaxArgs: 1,
 	}
 
-	_, err := extractProcedureInvocationArguments(context.Background(), spec, "CALL custom.acceptInteger(true)")
+	_, err := validateAndCoerceProcedureArguments(spec, []interface{}{true}, []string{"true"})
 	require.Error(t, err)
 
 	var semanticError *SemanticError
@@ -34,7 +34,7 @@ func TestProcedureArgumentsCoerceIntegerToFloat(t *testing.T) {
 		MaxArgs: 1,
 	}
 
-	args, err := extractProcedureInvocationArguments(context.Background(), spec, "CALL custom.acceptFloat(42)")
+	args, err := validateAndCoerceProcedureArguments(spec, []interface{}{int64(42)}, []string{"42"})
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{float64(42)}, args)
 }
@@ -47,11 +47,11 @@ func TestProcedureArgumentsAcceptNumericSubtypeAssignments(t *testing.T) {
 		MaxArgs: 1,
 	}
 
-	integerArgs, err := extractProcedureInvocationArguments(context.Background(), spec, "CALL custom.acceptNumber(42)")
+	integerArgs, err := validateAndCoerceProcedureArguments(spec, []interface{}{int64(42)}, []string{"42"})
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{int64(42)}, integerArgs)
 
-	floatArgs, err := extractProcedureInvocationArguments(context.Background(), spec, "CALL custom.acceptNumber(42.5)")
+	floatArgs, err := validateAndCoerceProcedureArguments(spec, []interface{}{float64(42.5)}, []string{"42.5"})
 	require.NoError(t, err)
 	require.Equal(t, []interface{}{float64(42.5)}, floatArgs)
 }
@@ -100,22 +100,26 @@ func TestProcedureYieldRejectsDuplicateBindings(t *testing.T) {
 		{name: "second", alias: "value"},
 	}}
 
-	err := validateProcedureYieldBindings(yield, true)
+	err := (&semanticBodyScope{}).admitYieldItems(yield, true)
 	require.Error(t, err)
 
-	var semanticError *SemanticError
-	require.ErrorAs(t, err, &semanticError)
-	require.Equal(t, "VariableAlreadyBound", semanticError.Detail)
+	var classified interface {
+		BoltErrorCode() string
+		BoltErrorDetail() string
+	}
+	require.ErrorAs(t, err, &classified)
+	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", classified.BoltErrorCode())
+	require.Equal(t, "VariableAlreadyBound", classified.BoltErrorDetail())
 }
 
 func TestProcedureYieldAllIsLimitedToStandaloneCalls(t *testing.T) {
-	err := validateProcedureYieldBindings(&yieldClause{yieldAll: true}, true)
+	err := (&semanticBodyScope{}).admitYieldItems(&yieldClause{yieldAll: true}, true)
 	require.Error(t, err)
 
 	var semanticError *SemanticError
 	require.ErrorAs(t, err, &semanticError)
 	require.Equal(t, "UnexpectedSyntax", semanticError.Detail)
-	require.NoError(t, validateProcedureYieldBindings(&yieldClause{yieldAll: true}, false))
+	require.NoError(t, (&semanticBodyScope{}).admitYieldItems(&yieldClause{yieldAll: true}, false))
 }
 
 func TestCallTailReturnAllPreservesColumnsAndValues(t *testing.T) {
@@ -137,4 +141,10 @@ func TestYieldReturnAllPreservesColumnsAndValues(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1)
 	require.ElementsMatch(t, []string{"name", "edition"}, result.Columns)
+}
+
+// Tests of the historical helper use the same admission constructor.
+func validateProcedureArgCount(spec ProcedureSpec, args []interface{}) error {
+	_, err := constructProcedureArity(spec, len(args))
+	return err
 }

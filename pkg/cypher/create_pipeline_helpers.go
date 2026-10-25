@@ -28,53 +28,6 @@ func containsString(slice []string, s string) bool {
 	return false
 }
 
-// validateSetAssignments pre-validates SET clause assignments before executing CREATE
-// This ensures we fail fast on invalid function calls, preventing orphaned nodes
-func (e *StorageExecutor) validateSetAssignments(assignments []string) error {
-	// Known Cypher functions
-	knownFunctions := map[string]bool{
-		"COALESCE": true, "TOSTRING": true, "TOINT": true, "TOFLOAT": true,
-		"TOBOOLEAN": true, "TOLOWER": true, "TOUPPER": true, "TRIM": true,
-		"SIZE": true, "LENGTH": true, "ABS": true, "CEIL": true, "FLOOR": true,
-		"ROUND": true, "RAND": true, "SQRT": true, "SIGN": true, "LOG": true,
-		"LOG10": true, "EXP": true, "SIN": true, "COS": true, "TAN": true,
-		"DATE": true, "DATETIME": true, "TIME": true, "TIMESTAMP": true,
-		"DURATION": true, "LOCALDATETIME": true, "LOCALTIME": true,
-		"HEAD": true, "LAST": true, "TAIL": true, "KEYS": true, "LABELS": true,
-		"TYPE": true, "ID": true, "ELEMENTID": true, "PROPERTIES": true,
-		"POINT": true, "DISTANCE": true, "REPLACE": true, "SUBSTRING": true,
-		"LEFT": true, "RIGHT": true, "SPLIT": true, "REVERSE": true,
-		"LTRIM": true, "RTRIM": true, "COLLECT": true, "RANGE": true,
-	}
-
-	for _, assignment := range assignments {
-		assignment = strings.TrimSpace(assignment)
-		if assignment == "" {
-			continue
-		}
-
-		// Parse assignment: var.property = value or var:Label
-		eqIdx := strings.Index(assignment, "=")
-		if eqIdx == -1 {
-			// Could be a label assignment like "n:Label" - these are valid
-			continue
-		}
-
-		rightSide := strings.TrimSpace(assignment[eqIdx+1:])
-
-		// Check if right side looks like a function call
-		if strings.Contains(rightSide, "(") && strings.HasSuffix(strings.TrimSpace(rightSide), ")") {
-			// Extract function name (before first parenthesis)
-			parenIdx := strings.Index(rightSide, "(")
-			funcName := upperASCII(strings.TrimSpace(rightSide[:parenIdx]))
-			if !knownFunctions[funcName] {
-				return localizedError(localization.CypherMergeUnknownFunction(funcName), nil)
-			}
-		}
-	}
-	return nil
-}
-
 // extractCreateVariableRefs returns variable names used as simple refs in CREATE relationship patterns
 // (e.g. (o)-[:R]->(pharmacy) yields ["o", "pharmacy"]). Used to know which bindings the pipeline must return.
 func extractCreateVariableRefs(createPart string) []string {

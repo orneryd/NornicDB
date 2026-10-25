@@ -1,8 +1,11 @@
 package cypher
 
 import (
-	"github.com/stretchr/testify/require"
+	"context"
 	"testing"
+
+	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCallReturnClauseSurvivesUnknownTypes(t *testing.T) {
@@ -26,6 +29,31 @@ func TestCallReturnClauseSurvivesUnknownTypes(t *testing.T) {
 			types, clause, err := e.callSubqueryReturnTypes(t.Context(), tc.call, tc.branches, typeScope{}, false)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, clause)
+			// A missing metadata hint cannot turn an invalid program into
+			// admitted Facts. This public boundary keeps the one owner's error.
+			if tc.name == "undefined implicit body" || tc.name == "unknown later UNION" || tc.name == "procedure wildcard" {
+				var admissionErr error
+				e.StatementFacts(tc.call, resultmetadata.KnownScope(nil), false, RawSource).Visit(
+					func(resultmetadata.Statement) { t.Fatal("invalid program admitted through a type hint") },
+					func() { t.Fatal("admission declined instead of rejecting") },
+					func(reason resultmetadata.Unresolved) {
+						require.Error(t, reason.Err)
+						admissionErr = reason.Err
+					},
+				)
+				wantCode, wantDetail, wantMessage := boundRuleError(admissionErr)
+				for _, prefix := range []string{"", "UNWIND [] AS ignored ", "UNWIND [0] AS ignored "} {
+					for _, mode := range []string{"", "EXPLAIN ", "PROFILE "} {
+						result, err := e.Execute(t.Context(), mode+prefix+tc.call+" RETURN k", nil)
+						require.Error(t, err, mode+prefix+tc.call)
+						require.Nil(t, result)
+						code, detail, message := boundRuleError(err)
+						require.Equal(t, wantCode, code)
+						require.Equal(t, wantDetail, detail)
+						require.Equal(t, wantMessage, message)
+					}
+				}
+			}
 			if tc.unknown {
 				require.Nil(t, types)
 			} else {
@@ -66,4 +94,32 @@ func TestPipelineClauseProductCacheIsolation(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, denied)
 	require.Equal(t, "RETURN label", cachedPipelineClauses(ctx, procedure, true).firstReturn)
+}
+
+// callSubqueryReturnTypes is a test-only witness of the former partial type
+// hint contract. Compiled callers are tests only; no product consumer may use
+// this compatibility witness as an admission result.
+// The shared clause product retains the first written RETURN even when a
+// branch is outside this hint's supported clause set. Unknown types never
+// authorize execution or publish Facts: the canonical constructor does that.
+func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, string, error) {
+	firstReturn := ""
+	typedBranch := false
+	for index, branch := range branches {
+		product := cachedPipelineClauses(ctx, branch, true)
+		if index == 0 {
+			firstReturn = product.firstReturn
+		}
+		typedBranch = typedBranch || product.ok
+	}
+	if !typedBranch || firstReturn == "" {
+		return nil, firstReturn, ctx.Err()
+	}
+	model, err := e.callQueryScope(ctx, callText, outer, subqueryScope{}, cypher25)
+	if err != nil || model == nil {
+		// A failed admitted program supplies no type hint. Its rejection is
+		// still returned by Facts/Execute, never decided again in this view.
+		return nil, firstReturn, ctx.Err()
+	}
+	return model.returned, firstReturn, nil
 }

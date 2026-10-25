@@ -24,7 +24,7 @@ func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr string) (v
 	if expr == "" {
 		return nil, false
 	}
-	for _, variable := range expressionFreeVariables(expr) {
+	for _, variable := range expressionFreeVariables(ctx, expr) {
 		if _, bound := e.boundValue(ctx, variable); !bound {
 			return nil, false
 		}

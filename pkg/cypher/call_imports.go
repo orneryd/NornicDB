@@ -7,22 +7,6 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
-// callSubqueryImportedVariables is the variables a CALL subquery imports from its
-// enclosing query ("*" for every variable), read with the CALL subquery
-// grammar single-database execution uses (fabric.CallImportReader). A scoped
-// subquery imports what its scope clause lists (CALL (x, y), CALL (*),
-// CALL ()); any other imports the items of its body's importing WITH that are
-// * or a plain variable reference (WITH x, `y z`). Comments are whitespace
-// here, so query normalization doesn't change what a subquery imports. A
-// scope clause item that is not a variable is an error (callScopeClauseVariables).
-func callSubqueryImportedVariables(ctx context.Context, scope string, scoped bool, body string) ([]string, error) {
-	if scoped {
-		return callScopeClauseVariables(ctx, scope)
-	}
-	names := importingWithVariables(ctx, body)
-	return names, ctx.Err()
-}
-
 // callScopeClauseVariables is the list of a CALL scope clause, the text
 // between its parentheses: "*" alone, or each variable's name, unquoted. Any
 // other item (CALL (1), CALL (x + 1), CALL (x, *)), or an empty one (CALL
@@ -74,4 +58,12 @@ func importingWithNode(node cypherantlr.SyntaxNode) []string {
 		}
 	}
 	return names
+}
+
+// Legacy Fabric syntax adapter, retained until #1583 replaces its planner.
+func callSubqueryImportedVariables(ctx context.Context, scope string, scoped bool, body string) ([]string, error) {
+	if scoped {
+		return callScopeClauseVariables(ctx, scope)
+	}
+	return importingWithVariables(ctx, body), ctx.Err()
 }

@@ -165,13 +165,6 @@ func cleanupAdmissionProcedure(t *testing.T, name string) {
 			return
 		}
 		delete(r.user, name)
-		fold := lowerASCII(name)
-		for other := range r.user {
-			if lowerASCII(other) == fold {
-				return
-			}
-		}
-		delete(r.userFold, fold)
 	})
 }
 

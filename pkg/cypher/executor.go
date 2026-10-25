@@ -2172,7 +2172,14 @@ func statementReadsGraphText(cypher string) bool {
 // values; in a procedure definition, $name is the procedure's argument.
 // Parameter names are reported as the statement wrote them (#734).
 func (e *StorageExecutor) statementParametersError(ctx context.Context, cypher string, params map[string]interface{}) error {
-	if strings.IndexByte(cypher, '$') < 0 || (isExplainOrProfile(cypher) && !startsWithKeywordFold(strings.TrimSpace(cypher), "PROFILE")) || isCreateProcedureCommand(cypher) {
+	cypher = statementAdmissionSource(ctx, cypher)
+	if strings.IndexByte(cypher, '$') < 0 || isCreateProcedureCommand(cypher) {
+		return nil
+	}
+	// Authored source can put CYPHER before the execution mode. Consume the
+	// framing owner's mode instead of classifying a stripped text prefix again.
+	mode, _, _ := statementExecutionModes(cypher)
+	if mode == ModeExplain {
 		return nil
 	}
 	shellParams := e.mergeShellParams(ctx, params)

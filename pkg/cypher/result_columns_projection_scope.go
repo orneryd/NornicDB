@@ -21,11 +21,21 @@ func (clause *boundClause) combinedBindings() (map[string]struct{}, map[string]s
 // second expression parser or a scope walk over rewritten text.
 func (clause *boundClause) projectionTailBindings(read cypherantlr.SyntaxNode) (map[string]struct{}, map[string]statementBindingID, bool) {
 	restricted := clause.plan != nil && (clause.plan.distinct || clause.plan.hasAggregate)
-	if restricted {
-		if name, symbol := read.Name(); symbol {
-			if _, retained := projectedNameMap(clause.branch.body.retained)[name]; retained {
-				names, ids := clause.combinedBindings()
-				return names, ids, false
+	// Every retained operand handle, including a compound expression's root,
+	// sees the same current constant identities as its admitted symbol reads.
+	// The transition owner decides this membership; the entry-name list may
+	// still contain a weak input shadowed and dropped by an earlier clause.
+	ordering := (projectionSemantics{clause: clause.source.syntax}).readPhase(read) == projectionOrdered
+	constants := clause.branch.bindings.projectionConstants(ordering)
+	projected, projectedIDs := clause.after, clause.afterIDs
+	if restricted && len(constants) > 0 {
+		projected, projectedIDs = copyBindingNames(projected), cloneBindingIDs(projectedIDs)
+		for name := range constants {
+			if _, current := clause.before[name]; !current {
+				continue
+			}
+			if _, output := projected[name]; !output {
+				projected[name], projectedIDs[name] = struct{}{}, clause.beforeIDs[name]
 			}
 		}
 	}
@@ -34,8 +44,8 @@ func (clause *boundClause) projectionTailBindings(read cypherantlr.SyntaxNode) (
 		return names, ids, false
 	}
 	if name, symbol := read.Name(); symbol {
-		if _, projected := clause.after[name]; projected {
-			return clause.after, clause.afterIDs, true
+		if _, output := clause.after[name]; output {
+			return projected, projectedIDs, true
 		}
 	}
 	for candidate := read; candidate.Valid() && candidate.ID() != clause.source.syntax.ID(); {
@@ -51,24 +61,11 @@ func (clause *boundClause) projectionTailBindings(read cypherantlr.SyntaxNode) (
 		}
 		candidate = parent
 	}
-	return clause.after, clause.afterIDs, true
+	return projected, projectedIDs, true
 }
 
 func projectionSyntaxCore(node cypherantlr.SyntaxNode) cypherantlr.SyntaxNode {
-	for node.Valid() {
-		if _, symbol := node.Name(); symbol || node.Rule() == cypherantlr.CypherParserRULE_invocationName {
-			break
-		}
-		if node.Rule() == cypherantlr.CypherParserRULE_parenthesizedExpression {
-			node = node.ChildRule(cypherantlr.CypherParserRULE_expression)
-			continue
-		}
-		if node.ChildCount() != 1 {
-			break
-		}
-		node = node.Child(0)
-	}
-	return node
+	return node.SemanticExpression()
 }
 
 // Compare grammatical expression structure. Symbol identities are already

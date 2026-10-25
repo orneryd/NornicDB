@@ -11,6 +11,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// Direct operator tests supply the same declared scope and immutable CALL facts
+// as the public pipeline; they do not bypass statement compilation.
+func newPipelineCallMetadataForTest(t *testing.T, executor *StorageExecutor, query string, incoming []string) *pipelineCallMetadata {
+	t.Helper()
+	metadata := &pipelineCallMetadata{scope: map[string]struct{}{}}
+	for _, name := range incoming {
+		metadata.scope[name] = struct{}{}
+	}
+	executor.StatementFacts(query, resultmetadata.KnownScope(incoming), false, RawSource).Visit(func(statement resultmetadata.Statement) {
+		require.Len(t, statement.Clauses, 1)
+		metadata.call = statement.Clauses[0].Call
+	}, func() { t.Fatal("CALL facts declined") }, func(reason resultmetadata.Unresolved) { t.Fatalf("CALL facts unresolved: %v", reason.Err) })
+	require.NotNil(t, metadata.call)
+	return metadata
+}
+
 func TestStatementFactsProgram(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "statement-facts"))
 	for _, tc := range []struct {
@@ -20,7 +36,9 @@ func TestStatementFactsProgram(t *testing.T) {
 		kind                    resultmetadata.CallKind
 	}{
 		{"CYPHER 25 USE comp CALL () { USE comp.two WITH 1 AS innerValue RETURN * } RETURN *", []string{"innerValue"}, []string{"innerValue"}, []string{}, resultmetadata.ImportListed, resultmetadata.CallReturning},
-		{"WITH 1 AS outerValue CALL (outerValue) { USE comp.two WITH 2 AS innerValue RETURN * } RETURN *", []string{"innerValue", "outerValue"}, []string{"innerValue", "outerValue"}, []string{"outerValue"}, resultmetadata.ImportListed, resultmetadata.CallReturning},
+		// WITH drops wildcard membership, while the scoped import remains
+		// readable explicitly and the enclosing query keeps its own column.
+		{"WITH 1 AS outerValue CALL (outerValue) { USE comp.two WITH 2 AS innerValue RETURN * } RETURN *", []string{"innerValue", "outerValue"}, []string{"innerValue"}, []string{"outerValue"}, resultmetadata.ImportListed, resultmetadata.CallReturning},
 		{"WITH 1 AS outerValue CALL { WITH outerValue USE comp.two WITH 2 AS innerValue RETURN * } RETURN *", []string{"innerValue", "outerValue"}, []string{"innerValue"}, []string{}, resultmetadata.ImportNone, resultmetadata.CallReturning},
 		{"CALL () { CREATE (:FactsUnit) } RETURN 1 AS value", []string{"value"}, []string{}, []string{}, resultmetadata.ImportListed, resultmetadata.CallUnit},
 	} {
@@ -57,13 +75,13 @@ func TestStatementFactsParticipantPreflight(t *testing.T) {
 	query := "USE comp.remote CALL custom.participantOnly(outer)"
 	for _, output := range []string{"first", "second"} {
 		calls := 0
-		facts := exec.StatementFactsWith(query, resultmetadata.KnownScope([]string{"outer"}), false, func(obligation resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
+		facts := exec.StatementFactsWith(query, resultmetadata.KnownScope([]string{"outer"}), false, func(obligation resultmetadata.SchemaObligation) (ParticipantProcedure, error) {
 			calls++
 			require.Equal(t, "custom.participantOnly", obligation.Procedure)
 			require.Equal(t, "CALL custom.participantOnly(outer)", query[obligation.Start:obligation.End])
 			require.Equal(t, "USE comp.remote", strings.TrimSpace(query[obligation.UseStart:obligation.UseEnd]))
 			obligation.Incoming.Visit(func(names []string) { require.Equal(t, []string{"outer"}, names) }, func() { t.Fatal("unknown argument scope reached participant") })
-			return resultmetadata.KnownColumns([]string{output}), nil
+			return ParticipantProcedure{Spec: &ProcedureSpec{MinArgs: 1, MaxArgs: 1, Params: []ProcedureParam{{Name: "outer", Type: "ANY"}}, Returns: []ProcedureColumn{{Name: output, Type: "ANY"}}}}, nil
 		}, RawSource)
 		facts.Visit(func(statement resultmetadata.Statement) {
 			statement.Columns.Visit(func(names []string) { require.Equal(t, []string{output}, names) }, func() { t.Fatal("participant schema was not completed") })
@@ -75,20 +93,19 @@ func TestStatementFactsParticipantPreflight(t *testing.T) {
 		require.Equal(t, resultmetadata.ReasonDynamicSchema, reason.Reason)
 		require.Error(t, reason.Err)
 	})
-	for _, answer := range []func(resultmetadata.SchemaObligation) (resultmetadata.Columns, error){
-		func(resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
-			return resultmetadata.UnknownColumns(), nil
+	for _, answer := range []func(resultmetadata.SchemaObligation) (ParticipantProcedure, error){
+		func(resultmetadata.SchemaObligation) (ParticipantProcedure, error) {
+			return ParticipantProcedure{}, nil
 		},
-		func(resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
-			return resultmetadata.UnknownColumns(), errors.New("participant failure")
+		func(resultmetadata.SchemaObligation) (ParticipantProcedure, error) {
+			return ParticipantProcedure{}, errors.New("participant failure")
 		},
 	} {
 		exec.StatementFactsWith(query, resultmetadata.KnownScope([]string{"outer"}), false, answer, RawSource).Visit(func(resultmetadata.Statement) { t.Fatal("unknown participant schema became complete") }, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) { require.Error(t, reason.Err) })
 	}
 	nested := "USE comp.remote CALL (outer) { CALL custom.participantOnly() YIELD value AS kept RETURN * } RETURN *"
-	exec.StatementFactsWith(nested, resultmetadata.KnownScope([]string{"outer"}), false, func(resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
-		t.Fatal("explicit YIELD must not require signature preflight")
-		return resultmetadata.UnknownColumns(), nil
+	exec.StatementFactsWith(nested, resultmetadata.KnownScope([]string{"outer"}), false, func(resultmetadata.SchemaObligation) (ParticipantProcedure, error) {
+		return ParticipantProcedure{Spec: &ProcedureSpec{MaxArgs: 0, Returns: []ProcedureColumn{{Name: "value", Type: "INTEGER"}}}}, nil
 	}, RawSource).Visit(func(statement resultmetadata.Statement) {
 		statement.Columns.Visit(func(names []string) { require.Equal(t, []string{"kept", "outer"}, names) }, func() { t.Fatal("explicit yields unresolved") })
 		for _, clause := range statement.Clauses {
@@ -98,9 +115,9 @@ func TestStatementFactsParticipantPreflight(t *testing.T) {
 		}
 	}, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) { t.Fatal(reason.Err) })
 	withoutUse := "CALL custom.participantOnly()"
-	exec.StatementFactsWith(withoutUse, resultmetadata.KnownScope(nil), false, func(resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
+	exec.StatementFactsWith(withoutUse, resultmetadata.KnownScope(nil), false, func(resultmetadata.SchemaObligation) (ParticipantProcedure, error) {
 		t.Fatal("a procedure without USE is owned by the local registry")
-		return resultmetadata.UnknownColumns(), nil
+		return ParticipantProcedure{}, nil
 	}, RawSource).Visit(func(resultmetadata.Statement) { t.Fatal("unknown local procedure accepted") }, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) {
 		require.Equal(t, resultmetadata.ReasonUnknownProcedure, reason.Reason)
 	})
@@ -181,8 +198,11 @@ func TestStatementFactsUnitAdministration(t *testing.T) {
 	} {
 		exec.StatementFacts(query, resultmetadata.KnownScope(nil), false, RawSource).Visit(func(statement resultmetadata.Statement) {
 			statement.Columns.Visit(func(names []string) { require.Empty(t, names) }, func() { t.Fatal("a parsed unit command has unknown columns") })
-			require.Len(t, statement.Clauses, 1)
-			require.Equal(t, resultmetadata.ClauseWrite, statement.Clauses[0].Kind)
+			// Typed administration commands publish their command product, not a
+			// synthetic graph-write clause with no graph horizon.
+			require.NotNil(t, statement.Command)
+			require.Equal(t, query, statement.Command.Text)
+			require.Empty(t, statement.Clauses)
 		}, func() { t.Fatal("owner declined a supported command") }, func(reason resultmetadata.Unresolved) { t.Fatal(query, reason.Err) })
 	}
 	exec.StatementFacts("GRANT EXECUTE PROCEDURE db.labels", resultmetadata.KnownScope(nil), false, RawSource).Visit(func(resultmetadata.Statement) {

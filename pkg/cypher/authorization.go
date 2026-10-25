@@ -124,16 +124,10 @@ func visitStatementProcedureSyntax(structure cypherantlr.StatementSyntax, visit 
 	for i := 0; i < effects.CallCount(); i++ {
 		call := effects.Call(i)
 		name := call.Name()
-		if procedure, found := globalProcedureRegistry.Get(name); found {
-			if visit(procedure.Spec, call.Text()) {
-				return true
-			}
-			continue
-		}
-		for _, procedure := range globalProcedureRegistry.List() {
-			if cyphertext.NameEqualFold(name, procedure.Name) && visit(procedure, call.Text()) {
-				return true
-			}
+		// Names resolve exactly, as at execution: a mis-cased name is no
+		// procedure, so no procedure's permission rule applies to it.
+		if procedure, found := globalProcedureRegistry.Get(name); found && visit(procedure.Spec, call.Text()) {
+			return true
 		}
 	}
 	return false

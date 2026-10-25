@@ -1,7 +1,9 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"context"
+	"strings"
 	"testing"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
@@ -68,4 +70,43 @@ func TestMaskProjectedExpression(t *testing.T) {
 	require.Equal(t, "xy + $x + 'x'", maskProjectedExpression("xy + $x + 'x'", "x"))
 	require.Equal(t, "\"a\\\"x\" + __nornic_projected", maskProjectedExpression("\"a\\\"x\" + x", "x"))
 	require.Equal(t, "y", maskProjectedExpression("y", "x"))
+}
+
+// Historical text-mask helper remains only as a test fixture; production
+// membership uses retained grammar and IDs in projectionTailBindings.
+// projectedExpressionPlaceholder stands for a projected expression in a
+// masked WHERE or ORDER BY (maskProjectedExpression).
+const projectedExpressionPlaceholder = "__nornic_projected"
+
+// maskProjectedExpression replaces each whole occurrence of a projected
+// expression in text, outside quotes, with projectedExpressionPlaceholder,
+// a name the check counts as projected, so the variables inside it (and a
+// property read on it: m.a after a projected m) don't count as read from
+// before the projection. An occurrence
+// is whole when the text around it doesn't continue an identifier or a
+// property access (x is not inside n.x or xy).
+func maskProjectedExpression(text, expression string) string {
+	if expression == "" || !strings.Contains(text, expression) {
+		return text
+	}
+	var out strings.Builder
+	for index := 0; index < len(text); {
+		if end, quoted := skipCypherLexicalToken(text, index); quoted {
+			out.WriteString(text[index:end])
+			index = end
+			continue
+		}
+		c := text[index]
+		end := index + len(expression)
+		if strings.HasPrefix(text[index:], expression) &&
+			(index == 0 || !(cyphertext.NamePartAt(text, index-1) || text[index-1] == '.' || text[index-1] == '$')) &&
+			(end == len(text) || !cyphertext.NamePartAt(text, end)) {
+			out.WriteString(projectedExpressionPlaceholder)
+			index = end
+			continue
+		}
+		out.WriteByte(c)
+		index++
+	}
+	return out.String()
 }

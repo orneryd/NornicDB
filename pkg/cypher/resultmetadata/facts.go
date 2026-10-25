@@ -7,14 +7,39 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
+// BindingID identifies one declaration within a compiled statement.
+type BindingID uint32
+
 // Scope is a set of visible, decoded variable identities. Its zero value is unknown.
-type Scope struct{ names Names }
+type Scope struct {
+	names    Names
+	bindings map[string]BindingID
+}
 
 // KnownScope copies, sorts and deduplicates a scope; an empty scope is known.
 func KnownScope(names []string) Scope {
 	values := append([]string{}, names...)
 	slices.Sort(values)
 	return Scope{names: Known(slices.Compact(values))}
+}
+
+// KnownBindingScope freezes the compiler's identities at one scope horizon.
+// Names-only scopes remain available for structural plans and external inputs.
+func KnownBindingScope(names []string, identities map[string]BindingID) Scope {
+	scope := KnownScope(names)
+	scope.bindings = make(map[string]BindingID, len(names))
+	for _, name := range names {
+		if id, ok := identities[name]; ok {
+			scope.bindings[name] = id
+		}
+	}
+	return scope
+}
+
+// Binding returns the canonical declaration of name at this horizon, if known.
+func (s Scope) Binding(name string) (BindingID, bool) {
+	id, ok := s.bindings[name]
+	return id, ok
 }
 
 // UnknownScope has no authoritative variable set.
@@ -108,14 +133,42 @@ const (
 	ImportAll
 )
 
+// BindingHorizon is one frozen semantic transition view. Current is wildcard
+// membership; Readable also includes carried inputs. Weak may be shadowed by a
+// declaration. Dependencies identifies entry values actually read, never rows.
+type BindingHorizon struct {
+	Readable, Current, Retained, Weak, Dependencies Scope
+}
+
+// StreamMode declares whether an operator consumes a complete input stream or
+// invokes a nested query per input row. Empty input retains its declared schema.
+type StreamMode uint8
+
+const (
+	CompleteStream StreamMode = iota + 1
+	PerInputRow
+)
+
 // Clause carries execution's scope transfer and original-query byte span.
 type Clause struct {
 	Kind                ClauseKind
 	Start, End          int
 	Before, After       Scope
+	Entry, Exit         *BindingHorizon
 	Projection          *Projection
 	Call                *Call
 	ParticipantResolved bool
+	// Routing is the enclosing horizon visible to a USE selector. It is not
+	// the participant body's Before/After scope.
+	Routing Scope
+	Graph   *GraphSelection
+}
+
+// GraphSelection retains the admitted USE selector from the compiler's CST.
+// Fabric owns its evaluation, participant lookup and access checks.
+type GraphSelection struct {
+	Name, Function string
+	Arguments      []string
 }
 
 // Call resolves imports and exports once at the point the subquery stands in.
@@ -129,6 +182,9 @@ type Call struct {
 	After      Scope
 	Statement  *Statement
 	Resolution Resolution
+	// Routing is the canonical set of enclosing inputs needed by this CALL's
+	// USE selectors, separate from participant-body imports.
+	Routing Scope
 }
 
 // Resolution records which signature owner completed the procedure facts.
@@ -147,21 +203,55 @@ type SchemaObligation struct {
 	Start, End       int
 	UseStart, UseEnd int
 	Incoming         Scope
+	Routing          Scope
+	Selection        GraphSelection
 }
-
-// ParticipantSchema reads the participant's own signature/protocol metadata.
-// An unknown answer or error is terminal before any statement effects.
-type ParticipantSchema func(SchemaObligation) (Columns, error)
 
 // Statement is a complete execution scope program, including nested statements.
 // Every span addresses the original query, not a rewritten or USE-free copy.
 type Statement struct {
+	// Command is an admitted non-graph command's typed continuation. Its
+	// participant owns its result; it has no query binding horizons.
+	Command                   *Command
 	Start, End                int
 	Incoming, Retained, After Scope
 	Clauses                   []Clause
 	Branches                  []Statement
 	UnionAll                  []bool
 	Columns                   Columns
+	// Routing preserves the selected USE horizon in a fragment view after
+	// that routing clause has been consumed. Original programs keep it on USE.
+	Routing Scope
+	// Fragments is the compiler's lowering program. Query steps carry complete
+	// horizons; USE and CALL steps refer to their canonical clause by index.
+	Fragments   []BoundFragment
+	Entry, Exit *BindingHorizon
+}
+
+// Command preserves the existing command-owner boundary when USE routes DDL or
+// SHOW to a participant. It never stands in for unresolved graph-query facts.
+type Command struct {
+	Text  string
+	Graph *GraphSelection
+}
+
+// BoundFragment is one compiler-owned fragment boundary. Fabric may serialize
+// its source clauses and choose participants, but never reconstruct its scope,
+// result schema, retained-value carriage or continuation multiplicity.
+type BoundFragment struct {
+	Kind                      ClauseKind
+	First, End                int
+	Incoming, Retained, After Scope
+	Columns                   Columns
+	// ParentInputs carry unchanged retained declarations from the CALL entry.
+	// RowInputs carry current stream values, including rebound retained names.
+	ParentInputs, RowInputs []string
+	WholeStream             bool
+	Multiplicity            StreamMode
+	Entry, Exit             *BindingHorizon
+	// Returning identifies an existing terminal RETURN to serialize as WITH
+	// before adding hygienic transport exports. Prefixes have no RETURN.
+	Returning bool
 }
 
 // UnresolvedReason is a typed explanation for a terminal owner failure.
@@ -241,13 +331,37 @@ func unresolvedError() error {
 	return localization.NewLocalizedError("Neo.ClientError.Statement.FeatureNotSupported", localization.CypherResultMetadataUnresolved(), nil)
 }
 
+func completeHorizon(horizon *BindingHorizon) bool {
+	return horizon != nil && horizon.Readable.names.known && horizon.Current.names.known && horizon.Retained.names.known && horizon.Weak.names.known && horizon.Dependencies.names.known
+}
+
 func completeStatement(statement *Statement, visiting map[*Statement]bool) bool {
+	if statement.Command != nil {
+		return statement.Command.Text != "" && statement.Entry == nil && statement.Exit == nil && len(statement.Clauses) == 0 && len(statement.Branches) == 0 && len(statement.Fragments) == 0 && (statement.Columns.names.known || len(statement.Columns.alternatives) > 0)
+	}
+	if !completeHorizon(statement.Entry) || !completeHorizon(statement.Exit) {
+		return false
+	}
 	if visiting[statement] || !statement.Incoming.names.known || !statement.Retained.names.known || !statement.After.names.known || !(statement.Columns.names.known || len(statement.Columns.alternatives) > 0) || len(statement.UnionAll) != max(0, len(statement.Branches)-1) {
 		return false
 	}
 	visiting[statement] = true
 	defer delete(visiting, statement)
+	for _, fragment := range statement.Fragments {
+		if !completeHorizon(fragment.Entry) || !completeHorizon(fragment.Exit) {
+			return false
+		}
+		if fragment.First < 0 || fragment.End <= fragment.First || fragment.End > len(statement.Clauses) {
+			return false
+		}
+		if fragment.Kind == ClauseOther && (!fragment.Incoming.names.known || !fragment.Retained.names.known || !fragment.After.names.known || !(fragment.Columns.names.known || len(fragment.Columns.alternatives) > 0)) {
+			return false
+		}
+	}
 	for _, clause := range statement.Clauses {
+		if !completeHorizon(clause.Entry) || !completeHorizon(clause.Exit) {
+			return false
+		}
 		if !clause.Before.names.known || !clause.After.names.known || (clause.Projection != nil && !clause.Projection.Names.known) {
 			return false
 		}
@@ -265,13 +379,44 @@ func completeStatement(statement *Statement, visiting map[*Statement]bool) bool 
 	return true
 }
 
+func cloneHorizon(horizon *BindingHorizon) *BindingHorizon {
+	if horizon == nil {
+		return nil
+	}
+	copy := *horizon
+	return &copy
+}
 func cloneStatement(statement Statement) Statement {
+	statement.Entry, statement.Exit = cloneHorizon(statement.Entry), cloneHorizon(statement.Exit)
+	if statement.Command != nil {
+		command := *statement.Command
+		if command.Graph != nil {
+			graph := *command.Graph
+			graph.Arguments = append([]string(nil), graph.Arguments...)
+			command.Graph = &graph
+		}
+		statement.Command = &command
+	}
+	statement.Fragments = append([]BoundFragment(nil), statement.Fragments...)
+	for index := range statement.Fragments {
+		fragment := &statement.Fragments[index]
+		fragment.Entry, fragment.Exit = cloneHorizon(fragment.Entry), cloneHorizon(fragment.Exit)
+		fragment.ParentInputs = append([]string(nil), fragment.ParentInputs...)
+		fragment.RowInputs = append([]string(nil), fragment.RowInputs...)
+	}
 	statement.Clauses = append([]Clause(nil), statement.Clauses...)
 	for index := range statement.Clauses {
 		clause := &statement.Clauses[index]
+		clause.Entry, clause.Exit = cloneHorizon(clause.Entry), cloneHorizon(clause.Exit)
+		if clause.Graph != nil {
+			graph := *clause.Graph
+			graph.Arguments = append([]string(nil), graph.Arguments...)
+			clause.Graph = &graph
+		}
 		if clause.Projection != nil {
 			projection := *clause.Projection
 			projection.Expressions = append([]string(nil), projection.Expressions...)
+			projection.Retention = append([]RetainedProjection(nil), projection.Retention...)
 			clause.Projection = &projection
 		}
 		if clause.Call != nil {

@@ -27,24 +27,12 @@ func (e *StorageExecutor) validateStatementFraming(ctx context.Context, cypher s
 	if conflict {
 		return executionModeConflictError()
 	}
-	// Only a statement with the word UNION in it can have UNION branches.
-	if findKeywordIndex(cypher, "UNION") < 0 || findKeywordIndex(cypher, "FINISH") < 0 {
-		return nil
-	}
-	if branches, _, _, ok := parseTopLevelUnionBranches(ctx, cypher); ok && len(branches) > 1 {
-		hasFinish, hasColumns := false, false
-		for _, branch := range branches {
-			_, finishes := readTrailingFinish(branch, stripPermittedFinish)
-			if finishes {
-				hasFinish = true
-			} else if e.statementProducesColumns(ctx, branch) {
-				hasColumns = true
-			}
-		}
-		if hasFinish && hasColumns {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidProjection",
-				"All sub queries in an UNION must have the same return column names")
-		}
+	// This framing boundary precedes terminator stripping and native syntax
+	// validation. Preserve that diagnostic order by invoking the same constructor
+	// here; framing never infers procedure/CALL output presence itself.
+	if findKeywordIndex(cypher, "UNION") >= 0 && findKeywordIndex(cypher, "FINISH") >= 0 {
+		_, err := e.admitBoundStatement(ctx, cypher)
+		return err
 	}
 	return nil
 }
@@ -292,20 +280,35 @@ func readTrailingFinish(cypher string, policy finishSuffixPolicy) (string, bool)
 
 type finishedStatementKey struct{}
 
+type finishedStatement struct {
+	statement string
+	authored  string
+}
+
 // withFinishedStatement records that statement (the text left after its
 // trailing FINISH was stripped) ended in FINISH. A CALL … YIELD with WHERE,
 // ORDER BY, SKIP or LIMIT that is the whole statement is then not a
 // standalone call: FINISH is the clause after it, as in Neo4j (#907).
-func withFinishedStatement(ctx context.Context, statement string) context.Context {
-	return context.WithValue(ctx, finishedStatementKey{}, strings.Join(strings.Fields(statement), " "))
+func withFinishedStatement(ctx context.Context, statement, authored string) context.Context {
+	return context.WithValue(ctx, finishedStatementKey{}, finishedStatement{statement: strings.Join(strings.Fields(statement), " "), authored: authored})
 }
 
 // endsInFinish reports whether statement is the one withFinishedStatement
 // recorded, compared with whitespace normalized: a CALL a subquery or a
 // procedure runs inside the statement is not.
 func endsInFinish(ctx context.Context, statement string) bool {
-	finished, _ := ctx.Value(finishedStatementKey{}).(string)
-	return finished != "" && finished == strings.Join(strings.Fields(statement), " ")
+	finished, ok := ctx.Value(finishedStatementKey{}).(finishedStatement)
+	return ok && finished.statement != "" && finished.statement == strings.Join(strings.Fields(statement), " ")
+}
+
+// statementAdmissionSource consumes the release framing owner's FINISH fact
+// and its authored input. It does not rebuild a terminated statement, normalize
+// its text, or map coordinates. Independent child statements retain their input.
+func statementAdmissionSource(ctx context.Context, statement string) string {
+	if endsInFinish(ctx, statement) {
+		return ctx.Value(finishedStatementKey{}).(finishedStatement).authored
+	}
+	return statement
 }
 
 // topLevelUnionCut returns the offset of the first top-level UNION keyword

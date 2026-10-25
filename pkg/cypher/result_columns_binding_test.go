@@ -107,11 +107,11 @@ func TestStatementFactsLegacyImportBinding(t *testing.T) {
 			for _, cypher25 := range []bool{false, true} {
 				for _, preflight := range []bool{false, true} {
 					t.Run(fmt.Sprintf("facts/dialect25=%v/preflight=%v", cypher25, preflight), func(t *testing.T) {
-						var schema resultmetadata.ParticipantSchema
+						var schema ParticipantSchema
 						if preflight {
-							schema = func(resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
+							schema = func(resultmetadata.SchemaObligation) (ParticipantProcedure, error) {
 								t.Fatal("no procedure schema is needed")
-								return resultmetadata.UnknownColumns(), nil
+								return ParticipantProcedure{}, nil
 							}
 						}
 						executor.StatementFactsWith(tc.query, resultmetadata.KnownScope(nil), cypher25, schema, RawSource).Visit(func(statement resultmetadata.Statement) {

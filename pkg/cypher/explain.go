@@ -92,26 +92,24 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	if err != nil {
 		return nil, err
 	}
-	if endsInFinish(ctx, query) {
-		query += " FINISH"
-	}
-	// Catalog commands are validated by their typed command preparation; graph
-	// body composition has no clauses to validate in their native DDL syntax.
-	if !isMetadataCommand(query, metadataCatalogExecution) {
-		if err := validateQueryBodyComposition(ctx, query); err != nil {
+	// The execution option reader owns WITH EMBEDDING. Plan the same graph
+	// statement that Execute admitted after consuming that option.
+	scopeQuery, _ := stripWithEmbeddingSuffix(statementAdmissionSource(ctx, query))
+	if !isMetadataCommand(scopeQuery, metadataCatalogExecution) {
+		if err := validateQueryBodyComposition(ctx, scopeQuery); err != nil {
 			return nil, err
 		}
 	}
-	columns, err := e.StatementResultColumnsContext(ctx, query, AcceptedSource)
+	columns, err := e.StatementResultColumnsContext(ctx, scopeQuery, AcceptedSource)
 	if err != nil {
 		return nil, err
 	}
 	if indexASCIIFold(query, "shortestpath") >= 0 {
-		if err := e.validateMatchSemanticScopes(ctx, query, cypherVersionFromContext(ctx) == "25"); err != nil {
+		if err := e.validateMatchSemanticScopes(ctx, scopeQuery, cypherVersionFromContext(ctx) == "25"); err != nil {
 			return nil, err
 		}
 	}
-	plan, err := e.buildExecutionPlan(query)
+	plan, err := e.buildExecutionPlan(scopeQuery)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)
 	}
@@ -130,17 +128,15 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	if err != nil {
 		return nil, err
 	}
-	if endsInFinish(ctx, query) {
-		query += " FINISH"
-	}
 	// Resolve participant signatures through the same owner as EXPLAIN and
 	// planning. Incomplete metadata cannot authorize execution effects.
-	columns, err := e.StatementResultColumnsContext(ctx, query, AcceptedSource)
+	scopeQuery, _ := stripWithEmbeddingSuffix(statementAdmissionSource(ctx, query))
+	columns, err := e.StatementResultColumnsContext(ctx, scopeQuery, AcceptedSource)
 	if err != nil {
 		return nil, err
 	}
 	// Build the plan first
-	plan, err := e.buildExecutionPlan(query)
+	plan, err := e.buildExecutionPlan(scopeQuery)
 	if err != nil {
 		return nil, localizedError(localization.CypherCoreExecutionPlanBuildFailed(err), err)
 	}

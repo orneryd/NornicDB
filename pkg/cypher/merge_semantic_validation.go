@@ -83,33 +83,8 @@ func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cyphe
 	if cached {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(ctx, cypher)
-	if !ok {
-		return nil
-	}
-
-	scope := newSemanticBindingScope()
-	for _, clause := range clauses {
-		switch clause.kind {
-		case pipelineClauseMatch, pipelineClauseOptionalMatch:
-			addMergePatternBindings(scope, clause.text)
-		case pipelineClauseCreate:
-			addMergePatternBindings(scope, clause.text)
-		case pipelineClauseWith:
-			scope = projectedBindingScope(ctx, scope, clause.text)
-		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text); err != nil {
-				return err
-			}
-		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
-				scope.bind(alias)
-			}
-		case pipelineClauseMerge:
-			if err := e.validateMergeClause(scope, clause.text, cypher25); err != nil {
-				return err
-			}
-		}
+	if _, err := e.admitBoundStatement(ctx, cypher); err != nil {
+		return err
 	}
 	if normalized {
 		e.mergeSemanticValidationCache.add(canonicalKey)
@@ -118,29 +93,10 @@ func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cyphe
 	return nil
 }
 
-func addMergePatternBindings(scope *semanticBindingScope, clause string) {
-	pattern := strings.TrimSpace(clause)
-	for _, keyword := range []string{"OPTIONAL MATCH", "MATCH", "CREATE"} {
-		if startsWithKeywordFold(pattern, keyword) {
-			pattern = strings.TrimSpace(pattern[len(keyword):])
-			break
-		}
-	}
-	for _, name := range extractNodeVariables(pattern) {
-		scope.bind(name)
-	}
-	for _, name := range extractRelationshipVariables(pattern) {
-		scope.bind(name)
-	}
-	if name := extractPathAssignmentVariable(pattern); name != "" {
-		scope.bind(name)
-	}
-}
-
 // cypher25 adds Neo4j 2026.09's rule for a Cypher 25 statement: a property
 // value may not read a node or relationship the same MERGE creates
 // (MERGE (a {x: 1})-[:T]->(b {x: a.x})).
-func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause string, cypher25 bool) error {
+func (e *StorageExecutor) validateMergeClause(ctx context.Context, scope *semanticBindingScope, clause string, cypher25 bool) error {
 	// Neo4j rejects EXISTS / COUNT / COLLECT { … } anywhere in a MERGE clause:
 	// its pattern, property maps and ON CREATE / ON MATCH SET actions.
 	if mayContainSubqueryExpression(clause) && len(findSubqueryExpressions(clause)) > 0 {
@@ -172,12 +128,12 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 	relationshipPattern := patternHasRelationship(pattern)
 	relationshipVariables := extractRelationshipVariables(pattern)
 	for _, variable := range relationshipVariables {
-		if scope.contains(variable) {
+		if scope.isDeclared(variable) {
 			return mergeVariableAlreadyBoundError(variable)
 		}
 	}
 	if cypher25 {
-		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables, make(map[string]string), "MERGE"); err != nil {
+		if err := e.validateCreateSamePatternReferences(ctx, scope, pattern, relationshipVariables, make(map[string]string), "MERGE"); err != nil {
 			return err
 		}
 	}
@@ -198,7 +154,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		if variable == "" {
 			continue
 		}
-		if scope.contains(variable) {
+		if scope.isDeclared(variable) {
 			if !relationshipPattern || createNodePatternHasDecoration(nodePattern) {
 				return mergeVariableAlreadyBoundError(variable)
 			}
@@ -210,12 +166,12 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		scope.bind(variable)
 	}
 	if pathVariable := extractPathAssignmentVariable(pattern); pathVariable != "" {
-		if scope.contains(pathVariable) {
+		if scope.isDeclared(pathVariable) {
 			return mergeVariableAlreadyBoundError(pathVariable)
 		}
 		scope.bind(pathVariable)
 	}
-	if err := e.validateMergeActionScopes(scope, clause); err != nil {
+	if err := e.validateMergeActionScopes(ctx, scope, clause); err != nil {
 		return err
 	}
 	for _, nodePattern := range e.splitNodePatterns(pattern) {
@@ -229,11 +185,11 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 	return nil
 }
 
-func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope, clause string) error {
+func (e *StorageExecutor) validateMergeActionScopes(ctx context.Context, scope *semanticBindingScope, clause string) error {
 	parts := splitMergeClauseActions(pipelineClauseBody(clause, "MERGE"), nil)
 	for _, clauses := range [...]mergeActionClauses{parts.onCreate, parts.onMatch} {
 		for index := 0; index < clauses.len(); index++ {
-			if err := e.validateSetClauseScope(scope, inlineOverflowAt(clauses.inline[:], clauses.overflow, index)); err != nil {
+			if err := e.validateSetClauseScope(ctx, scope, inlineOverflowAt(clauses.inline[:], clauses.overflow, index)); err != nil {
 				return err
 			}
 		}

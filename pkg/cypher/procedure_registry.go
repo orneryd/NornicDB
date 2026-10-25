@@ -115,14 +115,12 @@ type ProcedureRegistry struct {
 	generation atomic.Uint64
 	builtins   map[string]registeredProcedure
 	user       map[string]registeredProcedure
-	userFold   map[string]struct{}
 }
 
 func NewProcedureRegistry() *ProcedureRegistry {
 	return &ProcedureRegistry{
 		builtins: make(map[string]registeredProcedure),
 		user:     make(map[string]registeredProcedure),
-		userFold: make(map[string]struct{}),
 	}
 }
 
@@ -157,7 +155,6 @@ func (r *ProcedureRegistry) RegisterUser(spec ProcedureSpec, handler ProcedureHa
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.user[key] = registeredProcedure{Spec: spec, Handler: handler, User: true}
-	r.userFold[lowerASCII(spec.Name)] = struct{}{}
 	r.generation.Add(1)
 	return nil
 }
@@ -175,10 +172,9 @@ func (r *ProcedureRegistry) Get(name string) (registeredProcedure, bool) {
 
 // callsUserProcedure reports whether query calls a user-defined procedure:
 // a CALL of one anywhere in query, string literals included (a statement
-// query hands to apoc.cypher.run). A name matches in any letter case, so
-// the answer doesn't depend on how the registry keys a name; erring towards
-// "calls one" only skips the cache. It is false at once while none is
-// registered.
+// query hands to apoc.cypher.run). Names match exactly, as execution resolves
+// them: a mis-cased name calls no procedure. It is false at once while none
+// is registered.
 func (r *ProcedureRegistry) callsUserProcedure(query string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -197,7 +193,7 @@ func (r *ProcedureRegistry) callsUserProcedure(query string) bool {
 		}
 		from = at + len("CALL")
 		if name, ok := procedureNameAt(query, from); ok {
-			if _, exists := r.userFold[lowerASCII(name)]; exists {
+			if _, exists := r.user[name]; exists {
 				return true
 			}
 		}
@@ -234,7 +230,6 @@ func (r *ProcedureRegistry) ClearUser() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.user = make(map[string]registeredProcedure)
-	r.userFold = make(map[string]struct{})
 	r.generation.Add(1)
 }
 
@@ -251,12 +246,8 @@ func validateProcedureSpec(spec ProcedureSpec) error {
 	return nil
 }
 
-func procedureOutputTypes(ctx context.Context, clause string) map[string]string {
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, clause))
-	if !found {
-		return nil
-	}
-	outputs := procedureDeclaredReturns(procedure.Spec)
+func procedureOutputTypes(spec ProcedureSpec) map[string]string {
+	outputs := procedureDeclaredReturns(spec)
 	result := make(map[string]string, len(outputs))
 	for _, output := range outputs {
 		if typeName := procedureStaticType(output.Type); typeName != "" {
@@ -316,26 +307,4 @@ func ListRegisteredProcedures() []ProcedureSpec {
 // ClearUserProcedures resets user-defined procedures (primarily for tests/reload paths).
 func ClearUserProcedures() {
 	globalProcedureRegistry.ClearUser()
-}
-
-func validateProcedureArgCount(spec ProcedureSpec, args []interface{}) error {
-	return validateProcedureArgumentCount(spec, len(args))
-}
-
-func validateProcedureArgumentCount(spec ProcedureSpec, count int) error {
-	if spec.MinArgs > 0 && count < spec.MinArgs {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"InvalidNumberOfArguments",
-			fmt.Sprintf("procedure %s requires at least %d arguments, got %d", spec.Name, spec.MinArgs, count),
-		)
-	}
-	if spec.MaxArgs >= 0 && count > spec.MaxArgs {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"InvalidNumberOfArguments",
-			fmt.Sprintf("procedure %s accepts at most %d arguments, got %d", spec.Name, spec.MaxArgs, count),
-		)
-	}
-	return nil
 }

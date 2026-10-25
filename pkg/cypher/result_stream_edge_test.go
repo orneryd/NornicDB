@@ -111,7 +111,7 @@ func TestResultStreamDeclineBeforeAndAfterStreaming(t *testing.T) {
 		}
 	}
 	scope := map[string]struct{}{"x": {}}
-	ctx, bindErr := exec.bindPipelineProgram(context.Background(), clauses, scope)
+	ctx, _, bindErr := exec.bindPipelineProgram(context.Background(), clauses, scope)
 	require.NoError(t, bindErr)
 	columns, _, handled, err := exec.pipelineStreamReturn(ctx, NewResultStream(1, nil), nil, declineAfter(0), clauses, clauses, 0, scope, false)
 	require.NoError(t, err)

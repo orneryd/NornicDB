@@ -3,8 +3,6 @@ package cypher
 import (
 	"context"
 	"strings"
-
-	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // cypherVersionKey carries the statement's Cypher language version ("5" or
@@ -47,13 +45,14 @@ func cypherVersionFromContext(ctx context.Context) string {
 //   - an aggregating WITH groups by the imports read after it: over no rows
 //     it has no row, where Cypher 25 has one (WITH count(*) AS c RETURN c + g
 //     is [] in Cypher 5, [1] in Cypher 25);
-//   - a projected item that aggregates and reads an import outside its
-//     aggregates is Neo4j 5's implicit-grouping error (RETURN count(*) + g).
+//
+// Declaration legality has already been admitted by the canonical constructor;
+// this compatibility adapter only materializes the existing grouping operation.
 //
 // Cypher 25 aggregates over the body's rows alone, as the body runs.
-func cypher5ImportGrouping(body string, imports map[string]interface{}) (string, error) {
+func cypher5ImportGrouping(body string, imports map[string]interface{}) string {
 	if len(imports) == 0 || !containsAggregateFunc(body) {
-		return body, nil
+		return body
 	}
 	words := projectionWords(body)
 	type insertion struct {
@@ -88,16 +87,6 @@ func cypher5ImportGrouping(body string, imports map[string]interface{}) (string,
 				continue
 			}
 			aggregating = true
-			outside := expression
-			for i := len(spans) - 1; i >= 0; i-- {
-				outside = outside[:spans[i].start] + " " + outside[spans[i].end:]
-			}
-			for _, name := range expressionVariables(outside) {
-				if _, imported := imports[name]; imported {
-					return "", localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
-						localization.CypherCoreGroupByImplicitGroupingKey(name))
-				}
-			}
 		}
 		if !aggregating || word.upper != "WITH" {
 			continue
@@ -115,5 +104,5 @@ func cypher5ImportGrouping(body string, imports map[string]interface{}) (string,
 	for i := len(insertions) - 1; i >= 0; i-- {
 		body = body[:insertions[i].at] + insertions[i].text + body[insertions[i].at:]
 	}
-	return body, nil
+	return body
 }

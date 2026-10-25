@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
-
-	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
 // validateKnownFunctions is the unknown-function check: every function a
@@ -21,28 +19,32 @@ func validateKnownFunctions(expression string) error {
 		(isSchemaCommandStatement(expression) || isMetadataCommand(expression, metadataCreateAdmission)) {
 		return nil
 	}
-	return forEachFunctionCall(expression, func(name, normalized string) error {
-		if _, known := builtInCypherFunctions[normalized]; known {
-			if nativeAPOCCaseMismatch(name) {
-				if _, found := pluginFunctionHandler(name); !found {
-					return unknownFunctionError(name)
-				}
+	return forEachFunctionCall(expression, knownFunctionCallError)
+}
+
+// knownFunctionCallError is the signature owner for both retained grammar
+// invocations and legacy whole-statement scanning.
+func knownFunctionCallError(name, normalized string) error {
+	if _, known := builtInCypherFunctions[normalized]; known {
+		if nativeAPOCCaseMismatch(name) {
+			if _, found := pluginFunctionHandler(name); !found {
+				return unknownFunctionError(name)
 			}
-			return nil
 		}
-		// graph.byName / graph.byElementId are catalog names; outside USE
-		// they fail where they are evaluated. graph.names and
-		// graph.propertiesByName are known on a composite database;
-		// elsewhere the call reports Neo4j's "Unknown function"
-		// (fn.UnknownFunctionError).
-		if normalized == "graph.names" || normalized == "graph.propertiesbyname" {
-			return nil
-		}
-		if _, found := pluginFunctionHandler(name); found {
-			return nil
-		}
-		return unknownFunctionError(name)
-	})
+		return nil
+	}
+	// graph.byName / graph.byElementId are catalog names; outside USE
+	// they fail where they are evaluated. graph.names and
+	// graph.propertiesByName are known on a composite database;
+	// elsewhere the call reports Neo4j's "Unknown function"
+	// (fn.UnknownFunctionError).
+	if normalized == "graph.names" || normalized == "graph.propertiesbyname" {
+		return nil
+	}
+	if _, found := pluginFunctionHandler(name); found {
+		return nil
+	}
+	return unknownFunctionError(name)
 }
 
 // internalFunctionCallError rejects a statement, as its client sent it, that
@@ -93,103 +95,12 @@ func forEachFunctionCall(text string, visit func(name, normalized string) error)
 	return forEachFunctionInvocation(text, func(name, normalized string, _ int) error { return visit(name, normalized) })
 }
 
-// forEachFunctionInvocation preserves the common semantic scanner and also
-// exposes the argument delimiter to consumers that need invocation semantics.
+// forEachFunctionInvocation visits the function calls of text, read by the
+// grammar (syntaxFunctionCalls), with the offset of each call's "(".
 func forEachFunctionInvocation(text string, visit func(name, normalized string, open int) error) error {
-	expression := text
-	for index := 0; index < len(expression); {
-		if expression[index] >= 0x80 {
-			if width := queryWhitespaceAt(expression, index); width > 0 {
-				index += width
-				continue
-			}
-		}
-		if isCypherStringQuoteByte(expression[index]) {
-			index = skipQuotedSemanticText(expression, index)
-			continue
-		}
-		if end := queryCommentEnd(expression, index); end >= 0 {
-			index = end
-			continue
-		}
-		name, ok := cyphertext.ScanIdentifier(expression, index)
-		if !ok {
-			index++
-			continue
-		}
-		if !isCypherBacktickByte(expression[index]) && isUseKeyword(name.Value) {
-			syntax, err := cypherantlr.ParseSyntax(context.Background(), expression[index:], cypherantlr.UseEntry, false, cypherantlr.AcceptedSource)
-			if err != nil {
-				// USE may also be an identifier in a fragment. Syntax validation
-				// owns invalid clauses; this scanner never guesses their extent.
-				index = name.End
-				continue
-			}
-			reference := syntax.Root()
-			// The grammar owns the selector's invocationName and full extent.
-			// Only its argument expressions contain scalar function calls.
-			arguments := reference.ChildRule(cypherantlr.CypherParserRULE_useGraphArguments).ChildRule(cypherantlr.CypherParserRULE_expressionChain)
-			for i := 0; arguments.Valid() && i < arguments.ChildCount(); i++ {
-				argument := arguments.Child(i)
-				if argument.Rule() != cypherantlr.CypherParserRULE_expression {
-					continue
-				}
-				start, end := argument.Span()
-				if err := forEachFunctionInvocation(expression[index+start:index+end], func(name, normalized string, open int) error {
-					return visit(name, normalized, index+start+open)
-				}); err != nil {
-					return err
-				}
-			}
-			_, end := reference.Span()
-			index += end
-			continue
-		}
-		if !isCypherBacktickByte(expression[index]) && strings.EqualFold(name.Value, "CALL") {
-			index = skipCalledName(expression, name.End)
-			continue
-		}
-		parts, cursor := dottedNameParts(expression, name.End, true)
-		name.Value += parts
-		cursor = queryGapEnd(expression, cursor)
-		if cursor >= len(expression) || expression[cursor] != '(' {
-			index = name.End
-			continue
-		}
-		index = cursor + 1
-		normalized := lowerASCII(normalizeProjectionColumnName(name.Value))
-		// Clause and predicate keywords can legally be followed by a parenthesized
-		// pattern/expression (MATCH (n), STARTS WITH (...)). They are syntax, not
-		// function invocations.
-		if isNonFunctionSemanticKeyword(normalized) {
-			continue
-		}
-		if err := visit(name.Value, normalized, cursor); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func isNonFunctionSemanticKeyword(name string) bool {
-	switch name {
-	case "and", "by", "call", "case", "contains", "create", "delete", "detach", "distinct", "do", "each", "elements", "else", "end", "filter", "for", "foreach", "group", "groups", "in", "insert", "is", "limit", "match", "merge", "not", "of", "offset", "on", "optional", "or", "path", "paths", "remove", "require", "return", "set", "shortest", "skip", "starts", "then", "union", "unwind", "when", "where", "with", "xor", "yield":
-		return true
-	default:
-		return false
-	}
-}
-
-// skipCalledName returns where the procedure name after CALL ends. A procedure
-// name, dotted, is not a function call. Anything else after
-// the keyword (a subquery, its imports) is scanned on.
-func skipCalledName(expression string, start int) int {
-	end, ok := cyphertext.ScanIdentifier(expression, skipSpaces(expression, start))
-	if !ok {
-		return start
-	}
-	_, end.End = dottedNameParts(expression, end.End, true)
-	return end.End
+	return textFunctionCalls(context.Background(), text, func(call syntaxFunctionCall) error {
+		return visit(call.name, call.normalized, call.open)
+	})
 }
 
 // dottedNameParts returns the dotted parts (.b.c) following a name that ends

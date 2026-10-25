@@ -14,22 +14,33 @@ import (
 // clause composition. Runtime values deliberately do not live here: semantic
 // validation must finish before a mutation handler can produce effects.
 type semanticBindingScope struct {
-	names map[string]struct{}
+	names    map[string]struct{}
+	declared map[string]struct{}
 }
 
 func newSemanticBindingScope() *semanticBindingScope {
-	return &semanticBindingScope{names: make(map[string]struct{})}
+	names := make(map[string]struct{})
+	return &semanticBindingScope{names: names, declared: names}
 }
 
 func (s *semanticBindingScope) bind(name string) {
 	name = normalizeProjectionColumnName(strings.TrimSpace(name))
 	if name != "" {
 		s.names[name] = struct{}{}
+		s.declared[name] = struct{}{}
 	}
 }
 
 func (s *semanticBindingScope) contains(name string) bool {
 	_, exists := s.names[normalizeProjectionColumnName(strings.TrimSpace(name))]
+	return exists
+}
+
+// isDeclared consumes the constructor's strong declarations. Weak bare-CALL
+// inputs remain readable through contains, without becoming declarations in a
+// private mutation body. The maps are clause-local ordered-item scratch only.
+func (s *semanticBindingScope) isDeclared(name string) bool {
+	_, exists := s.declared[normalizeProjectionColumnName(strings.TrimSpace(name))]
 	return exists
 }
 
@@ -41,66 +52,23 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 	if findKeywordIndexInContext(cypher, "CREATE") < 0 || isMetadataCommand(cypher, metadataCreateAdmission) {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(ctx, cypher)
-	if !ok {
-		return nil
-	}
-
-	scope := newSemanticBindingScope()
-	for _, clause := range clauses {
-		switch clause.kind {
-		case pipelineClauseMatch, pipelineClauseOptionalMatch:
-			for _, name := range extractNodeVariables(clause.text) {
-				scope.bind(name)
-			}
-			for _, name := range extractRelationshipVariables(clause.text) {
-				scope.bind(name)
-			}
-		case pipelineClauseWith:
-			scope = projectedBindingScope(ctx, scope, clause.text)
-		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text); err != nil {
-				return err
-			}
-		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
-				scope.bind(alias)
-			}
-		case pipelineClauseMerge:
-			for _, name := range extractNodeVariables(clause.text) {
-				scope.bind(name)
-			}
-			for _, name := range extractRelationshipVariables(clause.text) {
-				scope.bind(name)
-			}
-		case pipelineClauseCreate:
-			if err := e.validateCreateClauseBindings(scope, clause.text, cypher25); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	_, err := e.admitBoundStatement(ctx, cypher)
+	return err
 }
 
-func projectedBindingScope(ctx context.Context, input *semanticBindingScope, clause string) *semanticBindingScope {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
-	output := newSemanticBindingScope()
-	for _, raw := range splitTopLevelComma(body) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
-		expr, alias := itemSource.expression, itemSource.alias
-		if expr == "*" {
-			for name := range input.names {
-				output.bind(name)
-			}
-			continue
-		}
-		if alias != "" {
-			output.bind(alias)
-		} else if name, ok := cyphertext.ScanIdentifier(expr, 0); ok && strings.TrimSpace(expr[name.End:]) == "" {
-			output.bind(name.Value)
-		}
-	}
-	return output
+func isCreateSchemaOrAdministrationCommand(cypher string) bool {
+	return isMetadataCommand(cypher, metadataCatalogExecution) || isCreateProcedureCommand(cypher) ||
+		startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") ||
+		startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") ||
+		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") ||
+		startsWithKeywords(cypher, "CREATE", "CONSTRAINT") ||
+		startsWithKeywords(cypher, "CREATE", "INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "RANGE INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "VECTOR INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "TEXT INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "POINT INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX")
 }
 
 // validateUnwindAlias rejects an UNWIND clause whose alias isn't exactly one
@@ -133,7 +101,7 @@ func unwindBindingName(clause string) string {
 	return ""
 }
 
-func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingScope, clause string, cypher25 bool) error {
+func (e *StorageExecutor) validateCreateClauseBindings(ctx context.Context, scope *semanticBindingScope, clause string, cypher25 bool) error {
 	body := strings.TrimSpace(clause[len("CREATE"):])
 	created := make(map[string]string)
 	for _, pattern := range e.splitCreatePatterns(body) {
@@ -147,7 +115,7 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 		isRelationshipPattern := patternHasRelationship(pattern)
 		relationshipVariables := extractRelationshipVariables(pattern)
 		for _, variable := range relationshipVariables {
-			if scope.contains(variable) {
+			if scope.isDeclared(variable) {
 				return createVariableAlreadyBoundError(variable)
 			}
 		}
@@ -157,7 +125,7 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 			}
 		}
 
-		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables, created, "CREATE"); err != nil {
+		if err := e.validateCreateSamePatternReferences(ctx, scope, pattern, relationshipVariables, created, "CREATE"); err != nil {
 			return err
 		}
 
@@ -169,7 +137,7 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 			if variable == "" {
 				continue
 			}
-			if scope.contains(variable) {
+			if scope.isDeclared(variable) {
 				if !isRelationshipPattern || createNodePatternHasDecoration(nodePattern) {
 					return createVariableAlreadyBoundError(variable)
 				}
@@ -295,10 +263,10 @@ func createRelationshipPropertyMapBodies(pattern string) []string {
 // pattern's): a fresh map per pattern for a Cypher 5 statement, one map per
 // clause for a Cypher 25 statement, where a pattern may not read an entity an
 // earlier pattern of the same CREATE creates either (Neo4j 2026.09).
-func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBindingScope, pattern string, relationshipVariables []string, created map[string]string, clause string) error {
+func (e *StorageExecutor) validateCreateSamePatternReferences(ctx context.Context, scope *semanticBindingScope, pattern string, relationshipVariables []string, created map[string]string, clause string) error {
 	nodePatterns := e.splitNodePatterns(pattern)
 	for _, nodePattern := range nodePatterns {
-		if variable := createNodePatternVariable(nodePattern); variable != "" && !scope.contains(variable) {
+		if variable := createNodePatternVariable(nodePattern); variable != "" && !scope.isDeclared(variable) {
 			created[variable] = "Node"
 		}
 	}
@@ -320,7 +288,7 @@ func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBin
 			if separator <= 0 {
 				continue
 			}
-			for _, variable := range expressionFreeVariables(pair[separator+1:]) {
+			for _, variable := range expressionFreeVariables(ctx, pair[separator+1:]) {
 				if kind, ok := created[variable]; ok {
 					return createSamePatternReferenceError(variable, kind, clause)
 				}

@@ -7,9 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Framing only needs to know whether a branch returns columns. Procedure
-// and nested CALL endings must agree with the owner without compiling its
-// full scope program on the ordinary execution path.
+// Framing no longer infers procedure or CALL headers independently. The
+// canonical admitted product supplies presence as well as ordered columns.
 func TestResultHeaderFramingPresence(t *testing.T) {
 	executor := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, tc := range []struct {
@@ -30,9 +29,7 @@ func TestResultHeaderFramingPresence(t *testing.T) {
 			key := projectionKey(query, resultmetadata.Known(nil), resultmetadata.Known(nil), false)
 			_, cached := projectionFactsCache.get(key)
 			require.False(t, cached)
-			require.Equal(t, tc.want, executor.statementProducesColumns(t.Context(), query))
-			_, cached = projectionFactsCache.get(key)
-			require.False(t, cached, "presence-only framing must not compile the scope program")
+			// Presence is a view of the admitted columns, not a separate cold-header reader.
 			columns, err := executor.StatementResultColumns(query, RawSource)
 			require.NoError(t, err)
 			require.Equal(t, tc.want, len(columns) > 0)

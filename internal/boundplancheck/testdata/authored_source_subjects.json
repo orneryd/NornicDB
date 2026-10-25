@@ -1,0 +1,207 @@
+{
+  "author": "#1640 lane (Codex)",
+  "scope": "Only the explicit authored/normalized-source dependency subjects, separate from direct bound-fact membership. OPEN rows grant no composition/readiness credit.",
+  "roots": [],
+  "members": [
+    {
+      "id": "pkg/cypher/bound_types.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).enrichBoundTypes/bound-plan-candidate#1",
+      "digest": "c2b1752713dd2f199c4f5819b6b968700319d94a57c4d020db60424185750110",
+      "owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).enrichBoundTypes",
+      "kind": "bound-plan-candidate",
+      "line": 27,
+      "review_owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).enrichBoundTypes",
+      "class": "frozen-consumer",
+      "reason": "Opens the canonical program and enriches its declared IDs; incoming operand values do not define a second clause schedule.",
+      "subjects": [
+        "pattern_value",
+        "with_siblings"
+      ]
+    },
+    {
+      "id": "pkg/cypher/call.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeCallTail/bound-plan-candidate#1",
+      "digest": "05bd9ea85b5a1f8bad5c82deb6be841002e915d76838774303f2ab39859e88fa",
+      "owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeCallTail",
+      "kind": "bound-plan-candidate",
+      "line": 132,
+      "review_owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeCallTail",
+      "class": "upper-migration",
+      "reason": "Legacy physical row-seed tail serialization is PR1583 consumer work. The canonical constructor supplies horizons and declared outputs; this lane does not claim the old transport has converged.",
+      "subjects": [
+        "call_identity_positive"
+      ]
+    },
+    {
+      "id": "pkg/cypher/call_imports.go:github.com/orneryd/nornicdb/pkg/cypher.callScopeClauseVariables/bound-plan-candidate#1",
+      "digest": "90dad81b0393310ab363574a5552d4b2ded0d1d2896d1a646e1e759971f7571c",
+      "owner": "github.com/orneryd/nornicdb/pkg/cypher.callScopeClauseVariables",
+      "kind": "bound-plan-candidate",
+      "line": 17,
+      "review_owner": "github.com/orneryd/nornicdb/pkg/cypher.callScopeClauseVariables",
+      "class": "syntax-owner",
+      "reason": "Decodes an isolated CALL header through CallEntry grammar; it supplies syntax candidates, while callBodyScope decides admitted imports.",
+      "subjects": [
+        "call_scoped_expression"
+      ]
+    },
+    {
+      "id": "pkg/cypher/executor.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).statementParametersError/bound-plan-candidate#1",
+      "digest": "c691fca45e7f4b1b4bff6d6628be9ad8fbe978f00b1cc94c7c33d27d1ba32625",
+      "owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).statementParametersError",
+      "kind": "bound-plan-candidate",
+      "line": 2264,
+      "review_owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).statementParametersError",
+      "class": "public-consumer",
+      "reason": "Consumes framing-authored source for parameter uses and the existing statementExecutionModes owner for EXPLAIN value omission across every preamble/mode order. It creates no graph namespace; normalized parameter naming/coordinates remain OPEN on credentials composition.",
+      "subjects": [
+        "parameter_operand"
+      ]
+    },
+    {
+      "id": "pkg/cypher/executor_entry.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute/bound-plan-candidate#1",
+      "digest": "b59269e9cc3ccf0b63e10af0abc4daadcfbbbe71bfbabb5a5cef8ae84bbb6f56",
+      "owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute",
+      "kind": "bound-plan-candidate",
+      "line": 116,
+      "review_owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).execute",
+      "class": "public-consumer",
+      "reason": "The public execution entry frames the statement and reaches admitted construction before result publication; it does not own another query namespace.",
+      "subjects": [
+        "current_create_bound_node",
+        "current_procedure_unknown_yield",
+        "current_procedure_implicit_arguments"
+      ]
+    },
+    {
+      "id": "pkg/cypher/executor_internal.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeInternal/bound-plan-candidate#1",
+      "digest": "94bc045ccd5031d7f2833aa105e21c8a75b094184218386f5e309a056ad9f88d",
+      "owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeInternal",
+      "kind": "bound-plan-candidate",
+      "line": 56,
+      "review_owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeInternal",
+      "class": "public-consumer",
+      "reason": "Internal admission consumes the release framing owner's authored source and terminator fact, transports the canonical program, and never appends FINISH. Normalized-source coordinate consumers remain open on the credentials accepted-view product.",
+      "subjects": [
+        "finish_union_empty"
+      ]
+    },
+    {
+      "id": "pkg/cypher/explain.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeExplain/bound-plan-candidate#1",
+      "digest": "144a79fb34b89792e6aee2a01ae7c8c9ad2fd91021e390009884139913d708a8",
+      "owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeExplain",
+      "kind": "bound-plan-candidate",
+      "line": 89,
+      "review_owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeExplain",
+      "class": "public-consumer",
+      "reason": "Uses the framing owner's authored statement for admission and declared columns; executable plan serialization is distinct. No synthetic FINISH is compiled.",
+      "subjects": [
+        "finish_union_empty",
+        "procedure_min_arity"
+      ]
+    },
+    {
+      "id": "pkg/cypher/explain.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeProfile/bound-plan-candidate#1",
+      "digest": "5ab9289bed3aabc0124387e94903ef478bb9c541d9f3f35430d0f378f77ca13b",
+      "owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeProfile",
+      "kind": "bound-plan-candidate",
+      "line": 123,
+      "review_owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).executeProfile",
+      "class": "public-consumer",
+      "reason": "Uses the same authored admission/header product before execution, carrying the framing fact through transparent reentry without synthesizing a terminator.",
+      "subjects": [
+        "finish_union_empty",
+        "procedure_min_arity"
+      ]
+    },
+    {
+      "id": "pkg/cypher/result_columns_admission.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).admitBoundStatement/bound-plan-candidate#1",
+      "digest": "266b58b112de56e2eb56f129f7022aa47f856d763c9d41601e6ed11ba7bc3c0e",
+      "owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).admitBoundStatement",
+      "kind": "bound-plan-candidate",
+      "line": 31,
+      "review_owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).admitBoundStatement",
+      "class": "constructor-entry",
+      "reason": "All graph execution paths call the one compiler before effects/publication; command continuations remain explicit typed commands.",
+      "subjects": [
+        "yield_rename",
+        "procedure_min_arity"
+      ]
+    },
+    {
+      "id": "pkg/cypher/result_columns_compile.go:(*github.com/orneryd/nornicdb/pkg/cypher.projectionCompilation).compileBound/bound-plan-candidate#1",
+      "digest": "be1151e640498b9c2b9cea6c10253c60692ce209cc7eace46f6bccf328d1f0c4",
+      "owner": "(*github.com/orneryd/nornicdb/pkg/cypher.projectionCompilation).compileBound",
+      "kind": "bound-plan-candidate",
+      "line": 108,
+      "review_owner": "(*github.com/orneryd/nornicdb/pkg/cypher.projectionCompilation).compileBound",
+      "class": "constructor-owner",
+      "reason": "Owns the complete admitted bound product and its terminal error/publication boundary.",
+      "subjects": [
+        "yield_rename",
+        "collect_multi"
+      ]
+    },
+    {
+      "id": "pkg/cypher/result_columns_execution.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).bindPipelineProgram/bound-plan-candidate#1",
+      "digest": "8b0217ec95fcea838c9013585c4a02ccf16aab4d60da912ab53eca3a7933669c",
+      "owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).bindPipelineProgram",
+      "kind": "bound-plan-candidate",
+      "line": 35,
+      "review_owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).bindPipelineProgram",
+      "class": "frozen-consumer",
+      "reason": "Reuses the transported admitted program for public execution; an isolated pipeline entry calls the same constructor with declared inputs.",
+      "subjects": [
+        "current_procedure_valid_modifiers"
+      ]
+    },
+    {
+      "id": "pkg/cypher/result_columns_normalization.go:github.com/orneryd/nornicdb/pkg/cypher.preserveStatementPresentation/bound-plan-candidate#1",
+      "digest": "67f0b9c3f5b6ee8fb38bc7000236d96f36036f47644149ac8b42522b10e55205",
+      "owner": "github.com/orneryd/nornicdb/pkg/cypher.preserveStatementPresentation",
+      "kind": "bound-plan-candidate",
+      "line": 24,
+      "review_owner": "github.com/orneryd/nornicdb/pkg/cypher.preserveStatementPresentation",
+      "class": "syntax-owner",
+      "reason": "Unchanged parent presentation helper preserves expression-name spans in existing normalization edits. Its accepted-view/provenance responsibility stays OPEN on credentials composition, with no replacement mapping in this lane.",
+      "subjects": []
+    },
+    {
+      "id": "pkg/cypher/result_columns_scope.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).projectionFactsFor/bound-plan-candidate#1",
+      "digest": "8d399f7d94f15e8e012513094277d7942e8f6689101371d2756260d2c4e46271",
+      "owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).projectionFactsFor",
+      "kind": "bound-plan-candidate",
+      "line": 89,
+      "review_owner": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).projectionFactsFor",
+      "class": "constructor-entry",
+      "reason": "Owns immutable cache publication and registry-generation invalidation for that program; no independent semantics are cached.",
+      "subjects": [
+        "procedure_min_arity"
+      ]
+    },
+    {
+      "id": "pkg/cypher/statement_framing.go:github.com/orneryd/nornicdb/pkg/cypher.statementAdmissionSource/bound-plan-candidate#1",
+      "digest": "f1a4a5b795de4200db8fe272d85a3693c3754e7af6eef2ac41e03dfbc033ebad",
+      "owner": "github.com/orneryd/nornicdb/pkg/cypher.statementAdmissionSource",
+      "kind": "bound-plan-candidate",
+      "line": 309,
+      "review_owner": "github.com/orneryd/nornicdb/pkg/cypher.statementAdmissionSource",
+      "class": "syntax-owner",
+      "reason": "Consumes the existing release framing association to select authored FINISH source; it performs no normalization or coordinate mapping.",
+      "subjects": [
+        "finish_union_empty"
+      ]
+    },
+    {
+      "id": "pkg/cypher/statement_framing.go:github.com/orneryd/nornicdb/pkg/cypher.withFinishedStatement/bound-plan-candidate#1",
+      "digest": "2934feb0fbc4de30853e6015f3a4a2c377ddef399222c305fdf178effd866a00",
+      "owner": "github.com/orneryd/nornicdb/pkg/cypher.withFinishedStatement",
+      "kind": "bound-plan-candidate",
+      "line": 294,
+      "review_owner": "github.com/orneryd/nornicdb/pkg/cypher.withFinishedStatement",
+      "class": "syntax-owner",
+      "reason": "The release framing fact associates the execution window with its authored FINISH statement; independent public calls clear it and transparent modes carry it.",
+      "subjects": [
+        "finish_union_empty"
+      ]
+    }
+  ]
+}

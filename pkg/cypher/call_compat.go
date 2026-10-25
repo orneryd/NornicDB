@@ -904,25 +904,6 @@ func (e *StorageExecutor) dropIndexOfKind(name, kind string, exists func(*storag
 	})
 }
 
-// callDbCreateSetNodeVectorProperty sets a vector property on a node - Neo4j db.create.setNodeVectorProperty()
-// Syntax: CALL db.create.setNodeVectorProperty(node, propertyKey, vector)
-func (e *StorageExecutor) callDbCreateSetNodeVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setNodeVectorProperty", MinArgs: 3, MaxArgs: 3}, cypher)
-	if err != nil {
-		return nil, err
-	}
-	return e.callSetVectorProperty(ctx, arguments, false)
-}
-
-// callDbCreateSetRelationshipVectorProperty sets a vector property on a relationship - Neo4j db.create.setRelationshipVectorProperty()
-// Syntax: CALL db.create.setRelationshipVectorProperty(relationship, propertyKey, vector)
-func (e *StorageExecutor) callDbCreateSetRelationshipVectorProperty(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	arguments, err := extractProcedureInvocationArguments(ctx, ProcedureSpec{Name: "db.create.setRelationshipVectorProperty", MinArgs: 3, MaxArgs: 3}, cypher)
-	if err != nil {
-		return nil, err
-	}
-	return e.callSetVectorProperty(ctx, arguments, true)
-}
 
 func (e *StorageExecutor) callSetVectorProperty(ctx context.Context, arguments []interface{}, relationship bool) (*ExecuteResult, error) {
 	if len(arguments) != 3 {

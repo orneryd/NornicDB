@@ -872,7 +872,7 @@ func continuationResultMetadata(value any) map[string]any {
 func desugarRetrievalWhere(ctx context.Context, where string) (string, error) {
 	where, _ = canonicalizeFunctionAliases(where)
 	const prefix, suffix = "RETURN ", " AS __nornic_where"
-	rewritten, rewrite, err := desugarLabelExpressions(prefix+where+suffix, getParamsFromContext(ctx), cypherVersionFromContext(ctx) == "25")
+	rewritten, rewrite, err := desugarLabelExpressions(ctx, prefix+where+suffix, getParamsFromContext(ctx), cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return "", err
 	}

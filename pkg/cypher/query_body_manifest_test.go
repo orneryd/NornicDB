@@ -151,7 +151,10 @@ func TestQueryBodyEndingsCoverEveryClauseKind(t *testing.T) {
 	}
 	require.Len(t, queryBodyEndings, int(pipelineClauseFilter)+1)
 	// An update clause concludes a body.
-	for kind := range updatingClauses {
+	for kind, class := range boundClauseAdmissionClasses {
+		if !class.updating {
+			continue
+		}
 		require.Empty(t, queryBodyEndings[kind], "update clause kind %d", kind)
 	}
 }

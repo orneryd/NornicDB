@@ -146,6 +146,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if administrative {
 		ctx = withStatementCredentials(ctx, cypher)
 	}
+	if clientText {
+		ctx = withFinishedStatement(ctx, "", "")
+	}
 	// The statement's context (deadlineCtx, once the database's query limits
 	// apply) ends at the first of its deadlines, and its cause names that
 	// deadline's owner: a Bolt client's tx_timeout, the server's statement
@@ -339,7 +342,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 	if config.IsANTLRParser() {
 		body, _ := stripCypherPreamble(cypher)
-		if cypherGrammarVersion(cypher) != "25" && usesSharedGrammarClauses(ctx, body) {
+		// PROFILE re-enters this path after the header has been consumed.
+		// The version owner already transported the admitted language in ctx.
+		if cypherVersionFromContext(ctx) != "25" && usesSharedGrammarClauses(ctx, body) {
 			return nil, sharedClauseSyntaxError("LET, FILTER and FOR require CYPHER 25 with the ANTLR parser")
 		}
 	}
@@ -406,11 +411,20 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if err := e.validateStatementFraming(ctx, cypher); err != nil {
 		return nil, err
 	}
-	finishTerminated := false
+	finishTerminated := endsInFinish(ctx, cypher)
 	if stripped, ok := stripUnionBranchFinishes(ctx, cypher); ok {
 		cypher = strings.TrimSpace(stripped)
 		finishTerminated = true
-		ctx = withFinishedStatement(ctx, cypher)
+		ctx = withFinishedStatement(ctx, cypher, originalCypher)
+	}
+	if finishTerminated {
+		admitted, err := e.admitBoundStatement(ctx, statementAdmissionSource(ctx, cypher))
+		if err != nil {
+			return nil, err
+		}
+		if admitted.program != nil {
+			ctx = withBoundStatementProgram(ctx, admitted.program)
+		}
 	}
 	if cypher == "" {
 		if finishTerminated {
@@ -494,6 +508,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// The quoted-variable and label-expression rewrites map the finished
 	// result's rows back, so a statement with either doesn't stream.
 	rowsRewritten := false
+	var outputProgram *boundStatementProgram
 	// Backtick-quoted variables become plain identifiers here, once, for
 	// every route; the result's columns and errors are mapped back (#734).
 	fabricQuery = fabricQuery || e.shouldUseFabricPlanner(ctx, cypher)
@@ -503,7 +518,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		ctx = withQuotedVariableNames(ctx, names)
 		rowsRewritten = true
 		defer func() {
-			result, retErr = (resultRestoration{names: names}).restore(result, retErr, func(text string) []returnItem { return e.parseReturnItems(ctx, text) })
+			result, retErr = (resultRestoration{names: names, program: outputProgram}).restore(result, retErr, func(text string) []returnItem { return e.parseReturnItems(ctx, text) })
 		}()
 	}
 
@@ -522,7 +537,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		ctx = withQueryParams(ctx, mergedParams)
 		mode, modeQuery := parseExecutionMode(cypher)
 		if finishTerminated {
-			ctx = withFinishedStatement(ctx, modeQuery)
+			ctx = withFinishedStatement(ctx, modeQuery, statementAdmissionSource(ctx, cypher))
 		}
 		if mode != ModeNormal {
 			if err := e.validateSyntax(ctx, modeQuery, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
@@ -628,7 +643,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// predicates the local evaluator reads. Route source Cypher first: remote
 	// evaluators do not implement our internal functions. The result's columns and
 	// errors are mapped back (#860).
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	desugared, labelRewrite, err := desugarLabelExpressions(ctx, cypher, params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
@@ -792,11 +807,8 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// WITH EMBEDDING is an execution option, not a WITH projection: the
 	// scopes are those of the statement without it. EXPLAIN and PROFILE
 	// check the statement they plan, as Neo4j compiles it.
-	_, scopeText := parseExecutionMode(cypher)
+	scopeText := statementAdmissionSource(ctx, cypher)
 	scopeText, _ = stripWithEmbeddingSuffix(scopeText)
-	if finishTerminated {
-		scopeText += " FINISH"
-	}
 	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
 		return nil, err
 	}
@@ -804,6 +816,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if admissionErr != nil {
 		return nil, admissionErr
 	}
+	outputProgram = admission.program
 	if admission.program != nil {
 		ctx = withBoundStatementProgram(ctx, admission.program)
 	}
@@ -954,7 +967,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if info.HasExplain || info.HasProfile {
 		mode, innerQuery := parseExecutionMode(cypher)
 		if finishTerminated {
-			ctx = withFinishedStatement(ctx, innerQuery)
+			ctx = withFinishedStatement(ctx, innerQuery, statementAdmissionSource(ctx, cypher))
 		}
 		if mode == ModeExplain {
 			return e.executeExplain(ctx, innerQuery)

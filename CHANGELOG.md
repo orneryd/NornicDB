@@ -68,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CascadeEdges` or `RejectConnected`. Migrate the removed transaction methods
   and custom deletion capabilities using the
   [transaction deletion migration guide](docs/development/transaction-node-deletion-api.md).
+- Cypher compilation now admits scope, declarations, CALL exports and result
+  headers together, including empty input and FINISH. COLLECT subqueries must
+  have exactly one statically expanded result column in RUN, EXPLAIN and PROFILE;
+  a written `RETURN *` remains supported when it expands to one column.
 
 - Embedded Go query readers now take explicit request contexts, and executor cache
   policy is configured on `NewStorageExecutor`. Migrate callers using the
@@ -87,6 +91,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `EXPLAIN` now rejects a procedure call with a wrong argument count or an
+  unknown `YIELD` column, with the same error as `RUN` and `PROFILE`, wherever
+  the call appears and whatever the input rows. Procedure declarations are
+  checked once when the statement is compiled. A `COLLECT { … RETURN * }`
+  subquery whose `*` expands to more than one column is now rejected in every
+  mode (`InvalidCollectSubquery`); a one-column `RETURN *` remains accepted.
 - Preserve canonical parse diagnostics for malformed statements under both parser
   modes, including extra UNWIND aliases; standalone validator diagnostics retain
   their API identity.
@@ -178,6 +188,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Share retained FOREACH bodies and CALL/UNION projection owners while preserving
   declared null fields, statistics and variable scope.
 
+- Admit CALL imports, lexical reads, weak shadows, projections and exports through
+  one identity-aware semantic owner. Publish branch-local inputs and declared
+  current/readable/dependency horizons, ordered headers and stream multiplicity
+  for physical and Fabric consumers, including empty UNION continuations and
+  FINISH. Reject YIELD, LET and FOR redeclarations before publishing facts or
+  headers; typed validation enriches admitted binding identities. Bare CALL
+  still reads outer values, while a dropped weak shadow is undefined.
+
 - Migrate the Go URL validator to `ValidateURL(url, URLPolicy)` with production
   defaults and explicit development/eval policies; update callers and examples.
 
@@ -195,10 +213,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Retain declared UNION branch schemas when participant metadata is absent, align both branch streams before DISTINCT, and keep nested planning on the UNION-aware entry.
 
 - Preserve remote CALL imports, outer bindings and typed Bolt/HTTP values, including exact integer numbers and temporal offsets. Reject invalid scope imports before writes and retain scoped imports across constituent WITH clauses.
+- Preserve correlated subquery inputs and wildcard columns across indexed reads,
+  nested CALLs, OPTIONAL CALL rows and UNION branches. Keep existing implicit
+  imports shadowable by declarations inside the body. Keep imported DELETE
+  targets readable after WITH and align bound headers with lexical CALL scope.
 
 - Keep the compile-time type check of nested list comprehensions, quantifiers and reduce linear in their nesting: each
   local scope types its arguments once, and enclosing scopes no longer type arguments that read its variables.
   Deeply nested reads in new explicit transactions no longer spend seconds in validation.
+- Preserve grouped variable identities and quoted mixed-star column order through
+  the canonical projection owner, and keep CALL input scopes local to each UNION
+  branch without extending the lifetime of explicit legacy imports. Read every
+  projection item from the incoming scope before publishing its outputs, so
+  shadowed CALL inputs do not depend on item order. Bind projection predicates
+  and ordering against their own branch's retained imports, including over empty
+  input, so UNION siblings cannot extend a legacy import's lifetime.
 
 - Keep transactional CALL batches independent while rolling back ordinary outer writes; preserve CREATE read phases, list element admission, and pagination opening order.
 
@@ -250,6 +279,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   input expressions before effects. Expand wildcards from the known scope and
   procedure registry, and expose complete facts to composite query planning;
   unresolved metadata is a terminal error rather than a guessed or empty header.
+- Use the same per-branch CALL imports for admission, static types, execution and
+  Fabric remote transport, including implicit inputs through nested subqueries,
+  retention across fragment projections and empty input. Keep graph-selector
+  inputs through routing without importing them into participant bodies, and run
+  aggregate, DISTINCT and paginated continuations over the complete CALL stream.
+  Lookup batches consume declared branch inputs and decline projections that
+  require an input binding the grouped rewrite cannot preserve.
+- Keep nested CALL exports separate from outer imports. Private subquery,
+  comprehension and FOREACH declarations do not keep an enclosing variable
+  alive after WITH drops it; nested scopes retain only their declared inputs.
 - Close internally allocated stores and WAL resources when recovery or startup fails; propagate malformed WAL manifests without panicking. Check test package boundaries for leaked stores and follow allocator identities through fields and call parameters.
 - Preserve property names when buffered WAL records are replayed after snapshot
   restoration, including stores with different property-token assignments. Ambiguous

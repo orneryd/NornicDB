@@ -46,7 +46,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(ctx context.Contex
 		if shape.forbidden {
 			return paginationCompileTypeError(keyword, expression)
 		}
-		if paginationExpressionUsesRowVariable(expression) {
+		if paginationExpressionUsesRowVariable(ctx, expression) {
 			return newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
 				"NonConstantExpression",
@@ -124,8 +124,8 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 // keys, function names and variables the expression binds itself (list
 // comprehensions, reduce) are not variables; expressionFreeVariables is the
 // one scanner that knows them (#829).
-func paginationExpressionUsesRowVariable(expression string) bool {
-	return len(expressionFreeVariables(expression)) > 0
+func paginationExpressionUsesRowVariable(ctx context.Context, expression string) bool {
+	return len(expressionFreeVariables(ctx, expression)) > 0
 }
 
 func paginationCompileTypeError(keyword string, value interface{}) error {

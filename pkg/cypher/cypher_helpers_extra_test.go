@@ -179,35 +179,6 @@ func TestCypherHelpers_ProcedureRegistryAndArgParsing_Errors(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "MaxArgs")
 
-	// parseProcedureArgLiteral branches.
-	v, err := parseProcedureArgLiteral("")
-	require.NoError(t, err)
-	assert.Equal(t, "", v)
-	v, err = parseProcedureArgLiteral("\"abc\"")
-	require.NoError(t, err)
-	assert.Equal(t, "abc", v)
-	v, err = parseProcedureArgLiteral("$param")
-	require.NoError(t, err)
-	assert.Equal(t, "$param", v)
-	v, err = parseProcedureArgLiteral("{a:1}")
-	require.NoError(t, err)
-	assert.Equal(t, "{a:1}", v)
-	v, err = parseProcedureArgLiteral("3.25")
-	require.NoError(t, err)
-	assert.Equal(t, 3.25, v)
-}
-
-func TestCypherHelpers_ExtractCallArguments_IgnoresTailFunctionParens(t *testing.T) {
-	args, err := extractCallArguments(
-		"CALL db.index.vector.queryNodes('idx_original_text', $topK, $text) " +
-			"YIELD node, score " +
-			"RETURN elementId(node) AS id, labels(node) AS labels, left(node.originalText,40) AS txt, score LIMIT 5",
-	)
-	require.NoError(t, err)
-	require.Len(t, args, 3)
-	assert.Equal(t, "idx_original_text", args[0])
-	assert.Equal(t, "$topK", args[1])
-	assert.Equal(t, "$text", args[2])
 }
 
 func TestCypherHelpers_ExecuteCall_DoesNotMiscountArgsWithTailFunctions(t *testing.T) {
@@ -242,10 +213,7 @@ func TestCypherHelpers_ExecuteCall_DoesNotMiscountArgsWithTailFunctions(t *testi
 	require.NotEmpty(t, res.Rows)
 }
 
-func TestCypherHelpers_LooksNumericAndSkipString(t *testing.T) {
-	assert.True(t, looksNumeric("42"))
-	assert.True(t, looksNumeric("3.1415"))
-	assert.False(t, looksNumeric("x42"))
+func TestCypherHelpers_SkipString(t *testing.T) {
 	assert.Equal(t, "17", ExtractSkipString("MATCH (n) RETURN n SKIP 17 LIMIT 5"))
 	assert.Equal(t, "", ExtractSkipString("MATCH (n) RETURN n"))
 }

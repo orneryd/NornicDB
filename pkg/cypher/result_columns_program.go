@@ -19,7 +19,7 @@ func (e *StorageExecutor) StatementFacts(query string, incoming resultmetadata.S
 // StatementFactsWith completes participant-owned signatures during compilation.
 // Signature answers are not cached under query text: a participant may change
 // its procedure registry independently of this executor's registry generation.
-func (e *StorageExecutor) StatementFactsWith(query string, incoming resultmetadata.Scope, cypher25 bool, schema resultmetadata.ParticipantSchema, stage SourceStage) resultmetadata.Facts {
+func (e *StorageExecutor) StatementFactsWith(query string, incoming resultmetadata.Scope, cypher25 bool, schema ParticipantSchema, stage SourceStage) resultmetadata.Facts {
 	source := cyphertext.NewSource(context.Background(), query, stage)
 	if source.Err != nil {
 		return resultmetadata.UnresolvedFacts(resultmetadata.Unresolved{Reason: resultmetadata.ReasonParserDecline, Err: source.Err})
@@ -27,18 +27,18 @@ func (e *StorageExecutor) StatementFactsWith(query string, incoming resultmetada
 	query = source.Text
 	if schema != nil && source.Text != source.Original {
 		participant := schema
-		schema = func(obligation resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
+		schema = func(obligation resultmetadata.SchemaObligation) (ParticipantProcedure, error) {
 			if obligation.Start >= 0 && obligation.End >= 0 {
 				span, ok := source.OriginalSpan(cyphertext.Span{Start: obligation.Start, End: obligation.End}, cyphertext.SourceExtent)
 				if !ok {
-					return resultmetadata.Columns{}, unresolvedStatementError()
+					return ParticipantProcedure{}, unresolvedStatementError()
 				}
 				obligation.Start, obligation.End = span.Start, span.End
 			}
 			if obligation.UseStart >= 0 && obligation.UseEnd >= 0 {
 				span, ok := source.OriginalSpan(cyphertext.Span{Start: obligation.UseStart, End: obligation.UseEnd}, cyphertext.SourceExtent)
 				if !ok {
-					return resultmetadata.Columns{}, unresolvedStatementError()
+					return ParticipantProcedure{}, unresolvedStatementError()
 				}
 				obligation.UseStart, obligation.UseEnd = span.Start, span.End
 			}
@@ -48,15 +48,16 @@ func (e *StorageExecutor) StatementFactsWith(query string, incoming resultmetada
 	return e.statementProjectionProgram(context.Background(), query, incoming, cypher25, schema).facts.SourceView(source)
 }
 
-func (e *StorageExecutor) statementProjectionProgram(ctx context.Context, query string, incoming resultmetadata.Scope, cypher25 bool, schema resultmetadata.ParticipantSchema) *projectedScopeFacts {
+func (e *StorageExecutor) statementProjectionProgram(ctx context.Context, query string, incoming resultmetadata.Scope, cypher25 bool, schema ParticipantSchema) *projectedScopeFacts {
+	query = statementAdmissionSource(ctx, query)
 	ensureBuiltInProceduresRegistered()
 	names := resultmetadata.Unknown()
 	incoming.Visit(func(values []string) { names = resultmetadata.Known(values) }, func() { names = resultmetadata.Unknown() })
 	var program *projectedScopeFacts
 	if schema == nil {
-		program = e.projectedStatementScope(ctx, query, names, resultmetadata.Known(nil), cypher25)
+		program = e.projectedStatementScope(ctx, query, names, resultmetadata.Known(nil), cypher25, semanticBodyFromContext(ctx))
 	} else {
-		compiler := projectionCompilation{executor: e, source: query, cypher25: cypher25, schema: schema}
+		compiler := projectionCompilation{executor: e, source: query, cypher25: cypher25, schema: schema, bindings: semanticBodyFromContext(ctx), scalarKind: scalarCompilationKind(ctx, query)}
 		program = compiler.root(ctx, names, resultmetadata.Known(nil))
 	}
 	// Cached programs are immutable; participant-dependent compilation never
@@ -98,16 +99,23 @@ func programFailure(reason resultmetadata.UnresolvedReason, position int, err er
 // compileStatementProgram compiles the execution clause operators and their
 // scope transfers. WITH and RETURN use the same cached projection plans that
 // execute rows; CALL stores its nested program rather than re-inferring exports.
-func (e *StorageExecutor) compileStatementProgram(ctx context.Context, source string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
-	compiler := projectionCompilation{executor: e, source: source, cypher25: cypher25}
+func (e *StorageExecutor) compileStatementProgram(ctx context.Context, source string, incoming, retained resultmetadata.Names, cypher25 bool, bodies ...*semanticBodyScope) *projectedScopeFacts {
+	compiler := projectionCompilation{executor: e, source: source, cypher25: cypher25, scalarKind: scalarCompilationKind(ctx, source)}
+	if len(bodies) != 0 {
+		compiler.bindings = bodies[0]
+	}
 	return compiler.root(ctx, incoming, retained)
 }
 
 type projectionCompilation struct {
+	names      *quotedVariableNames
+	bindings   *semanticBodyScope
+	scalarKind string
+
 	executor *StorageExecutor
 	source   string
 	cypher25 bool
-	schema   resultmetadata.ParticipantSchema
+	schema   ParticipantSchema
 	syntax   cypherantlr.StatementSyntax
 }
 
@@ -116,6 +124,8 @@ type projectionGraph struct {
 	selected   bool
 	outer      resultmetadata.Names
 	outerIDs   map[string]statementBindingID
+	routing    resultmetadata.Scope
+	selection  *resultmetadata.GraphSelection
 }
 
 func (compiler *projectionCompilation) root(ctx context.Context, incoming, retained resultmetadata.Names) *projectedScopeFacts {
@@ -155,4 +165,24 @@ func statementUsesParticipant(statement resultmetadata.Statement) bool {
 		}
 	}
 	return false
+}
+
+// presentationProjection selects the first UNION branch's admitted declaration
+// view. Public spelling stays with the existing naming/presentation owner.
+func (program *boundStatementProgram) presentationProjection() resultmetadata.Projection {
+	if program == nil || program.root == nil || program.root.program == nil || program.root.program.statement == nil {
+		return resultmetadata.Projection{}
+	}
+	statement := program.root.program.statement
+	for len(statement.Branches) != 0 {
+		statement = &statement.Branches[0]
+	}
+	if len(statement.Clauses) == 0 {
+		return resultmetadata.Projection{}
+	}
+	last := statement.Clauses[len(statement.Clauses)-1]
+	if last.Kind != resultmetadata.ClauseReturn || last.Projection == nil {
+		return resultmetadata.Projection{}
+	}
+	return *last.Projection
 }

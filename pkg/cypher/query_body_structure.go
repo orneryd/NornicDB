@@ -101,13 +101,13 @@ type queryBodyBranch struct {
 	finishStart, finishEnd int
 	declined               bool
 	useSyntax              cypherantlr.SyntaxNode
+	uses                   []cypherantlr.SyntaxNode
 	finishSyntax           cypherantlr.SyntaxNode
 }
 
 type queryBodyClause struct {
 	pipelineClause
 	start, end int
-	syntax     cypherantlr.SyntaxNode
 }
 
 func declinedQueryBody(start, end int) queryBody {
@@ -284,7 +284,7 @@ func queryExpressionBody(container cypherantlr.SyntaxNode) (queryBody, cypherant
 		_, end = where.Span()
 	}
 	branch := queryBodyBranch{start: start, end: end, useStart: -1, useEnd: -1, finishStart: -1, finishEnd: -1}
-	branch.clauses = []queryBodyClause{{pipelineClause: pipelineClause{kind: pipelineClauseMatch, text: container.Source()[start:end]}, start: start, end: end, syntax: container}}
+	branch.clauses = []queryBodyClause{{pipelineClause: pipelineClause{kind: pipelineClauseMatch, text: container.Source()[start:end], syntax: container}, start: start, end: end}}
 	return queryBody{status: queryBodyRead, branches: []queryBodyBranch{branch}}, container, true
 }
 
@@ -295,11 +295,14 @@ func newQueryBodyBranch(node cypherantlr.SyntaxNode) queryBodyBranch {
 
 func lastQueryBranchSpan(branch queryBodyBranch) (start, end int) {
 	start, end = branch.start, branch.start
-	if branch.useEnd > end {
-		end = branch.useEnd
+	for _, use := range branch.useNodes() {
+		_, useEnd := use.Span()
+		if useEnd > end {
+			end = useEnd
+		}
 	}
 	if len(branch.clauses) > 0 {
-		end = branch.clauses[len(branch.clauses)-1].end
+		end = max(end, branch.clauses[len(branch.clauses)-1].end)
 	}
 	if branch.finishEnd > end {
 		end = branch.finishEnd
@@ -307,13 +310,24 @@ func lastQueryBranchSpan(branch queryBodyBranch) (start, end int) {
 	return
 }
 
-func setQueryBodyUse(branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
-	if branch.useStart >= 0 {
-		branch.declined = true
-		return
+// useNodes retains every routing clause in this branch. useSyntax/useStart
+// remain the first selection for names-only views and pipeline eligibility.
+func (branch queryBodyBranch) useNodes() []cypherantlr.SyntaxNode {
+	if len(branch.uses) > 0 {
+		return branch.uses
 	}
-	branch.useStart, branch.useEnd = node.Span()
-	branch.useSyntax = node
+	if branch.useSyntax.Valid() {
+		return []cypherantlr.SyntaxNode{branch.useSyntax}
+	}
+	return nil
+}
+
+func setQueryBodyUse(branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
+	branch.uses = append(branch.uses, node)
+	start, end := node.Span()
+	if branch.useStart < 0 || start < branch.useStart {
+		branch.useStart, branch.useEnd, branch.useSyntax = start, end, node
+	}
 }
 
 // appendQuerySyntax unwraps grammar containers only. It does not enter a clause
@@ -358,7 +372,7 @@ func appendQuerySyntax(branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
 	if start > nodeStart {
 		text = text[start-nodeStart:]
 	}
-	branch.clauses = append(branch.clauses, queryBodyClause{pipelineClause: pipelineClause{kind: kind, text: text, optional: optional}, start: start, end: end, syntax: node})
+	branch.clauses = append(branch.clauses, queryBodyClause{pipelineClause: pipelineClause{kind: kind, text: text, optional: optional, syntax: node}, start: start, end: end})
 }
 
 // embeddingCandidate reports the documented nonterminal WITH EMBEDDING form:

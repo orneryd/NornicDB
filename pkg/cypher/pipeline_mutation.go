@@ -32,7 +32,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 				"DELETE accepts nodes, relationships, and paths, not labels or relationship types",
 			)
 		}
-		references := expressionFreeVariables(expression)
+		references := expressionFreeVariables(ctx, expression)
 		for _, name := range references {
 			if _, bound := scope[name]; !bound {
 				return nil, true, deleteUndefinedVariableError(name)
@@ -163,9 +163,6 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 
 	store := e.getStorage(ctx)
 	stats := &QueryStats{}
-	if err := validatePipelineSetAssignments(assignments); err != nil {
-		return nil, true, err
-	}
 	simpleTarget, simpleProperty, simpleExpression, simplePropertyAssignment := pipelineSimplePropertyAssignment(assignments)
 	targets := pipelineSetTargetVariables(assignments)
 	var runBuffer [4]setRun
@@ -963,19 +960,19 @@ func setSourceTypeError(property, operator string, source staticOperand) error {
 // check, validateStaticPropertyAccessParameters). Literal sources are checked
 // with each item's scope check (validateSetClauseScope), in item order, as
 // Neo4j reports them.
-func setClauseSourceTypeError(clause string, types map[string]string, params map[string]interface{}) error {
+func setClauseSourceTypeError(ctx context.Context, clause string, types map[string]string, params map[string]interface{}) error {
 	body := strings.TrimSpace(clause)
 	if startsWithKeywordFold(body, "SET") {
 		body = body[len("SET"):]
 	}
 	for _, assignment := range splitSetAssignments(body) {
 		_, property, operator, source := splitSetAssignment(assignment)
-		if staticLiteralType(source, literalLedExpression) != "" {
+		if staticLiteralType(ctx, source, literalLedExpression) != "" {
 			continue
 		}
 		// Parameter values are the run's facts (the per-execution check).
 		var operand staticOperand
-		if typeName := propertyAccessExpressionType(source, types, params); typeName != "" {
+		if typeName := propertyAccessExpressionType(ctx, source, types, params); typeName != "" {
 			operand = typedOperand(typeName).proved()
 		}
 		if err := setSourceTypeError(property, operator, operand); err != nil {

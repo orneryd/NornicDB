@@ -8,7 +8,8 @@ func TestReturnRejectsUnknownFunction(t *testing.T) {
 }
 
 func TestReturnAllowsNestedKnownFunctions(t *testing.T) {
-	err := validateReturnSemanticScope(t.Context(), matchSemanticScope{"node": matchBindingNode}, "RETURN toString(size(labels(node)))")
+	exec, ctx := newUnitExecutor(t)
+	_, _, err := exec.enrichBoundTypes(ctx, "RETURN toString(size(labels(node)))", typeScope{"node": provenOperand("Node")}, nil, "", false)
 	if err != nil {
 		t.Fatalf("unexpected semantic error: %v", err)
 	}

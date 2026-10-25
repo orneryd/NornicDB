@@ -226,10 +226,12 @@ func TestQueryBodyOutputPresencePolicies(t *testing.T) {
 		{"RETURN 1 AS value", true, true},
 		{"CALL () { RETURN 1 AS value }", false, true},
 		{"CALL db.labels()", false, true},
-		{"RETURN 1 AS value FINISH", false, false},
+		{"WITH 1 AS value FINISH", false, false},
 	} {
-		body := readQueryBody(t.Context(), test.query, 0, len(test.query))
-		require.Equal(t, test.direct, queryBodyProducesColumns(t.Context(), test.query, body, true), test.query)
-		require.Equal(t, test.declared, queryBodyProducesColumns(t.Context(), test.query, body, false), test.query)
+		exec, _ := newUnitExecutor(t)
+		exec.StatementFacts(test.query, resultmetadata.KnownScope(nil), false, RawSource).Visit(func(statement resultmetadata.Statement) {
+			require.Equal(t, test.direct, statementHasReturningOperator(statement), test.query)
+			require.Equal(t, test.declared, len(canonicalColumns(statement.Columns)) > 0, test.query)
+		}, func() { t.Fatal("declined", test.query) }, func(failure resultmetadata.Unresolved) { t.Fatal(failure.Err) })
 	}
 }

@@ -68,7 +68,7 @@ func TestQuotedQualifiedUnknownFunction(t *testing.T) {
 }
 
 func TestQuotedNamespaceStaticArguments(t *testing.T) {
-	err := forEachStaticFunctionArgument("`custom` . range('ok')", func(staticArgumentType, string, int) error { return nil })
+	err := forEachStaticFunctionArgument(t.Context(), "`custom` . range('ok')", func(staticArgumentType, string, int) error { return nil })
 	require.NoError(t, err)
 	require.Empty(t, semanticExpressionReferences("custom . /*c*/ range('ok')"))
 }
