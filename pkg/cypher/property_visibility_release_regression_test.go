@@ -76,7 +76,7 @@ func TestReleasePropertySuppressionQueryMaterialization(t *testing.T) {
 				if route.scoped {
 					engine = storage.NewNamespacedEngine(be, "testns")
 				}
-				exec := NewStorageExecutorWithQueryCachePolicy(engine, 100, time.Minute)
+				exec := NewStorageExecutor(engine, QueryCachePolicy{MaxEntries: 100, TTL: time.Minute})
 				if tc.name == "entity" {
 					raw, err := be.GetNode("testns:doc")
 					require.NoError(t, err)

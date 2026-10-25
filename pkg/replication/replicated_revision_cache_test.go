@@ -22,7 +22,7 @@ func TestReplicatedDeleteInvalidatesWarmLocalQuery(t *testing.T) {
 	adapter, err := replication.NewStorageAdapter(base)
 	require.NoError(t, err)
 	view := storage.NewNamespacedEngine(replication.NewReplicatedEngine(base, nil, 0), "library")
-	executor := cypher.NewStorageExecutorWithQueryCachePolicy(view, 10, time.Minute)
+	executor := cypher.NewStorageExecutor(view, cypher.QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	read := func(want int) {
 		t.Helper()
 		result, executeErr := executor.Execute(context.Background(), "MATCH (n) WHERE elementId(n)=$id RETURN n", map[string]interface{}{"id": "item"})

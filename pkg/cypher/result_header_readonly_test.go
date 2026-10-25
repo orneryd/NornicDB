@@ -25,12 +25,12 @@ func TestResultHeaderProcedureFactsStayReadOnly(t *testing.T) {
 	require.NoError(t, RegisterUserProcedure(ProcedureSpec{
 		Name: name, Mode: ProcedureModeRead, MinArgs: 0, MaxArgs: 0,
 		Signature: name + "() :: (z :: ANY, a :: STRING)",
-	}, func(_ context.Context, _ *StorageExecutor, query string, _ []interface{}) (*ExecuteResult, error) {
+	}, func(readerCtx context.Context, _ *StorageExecutor, query string, _ []interface{}) (*ExecuteResult, error) {
 		calls = append(calls, query)
 		return &ExecuteResult{Columns: []string{"z", "a"}, Rows: [][]interface{}{{int64(1), "value"}}}, nil
 	}))
 	for _, query := range []string{"CALL " + name + "()", "CALL " + name + "() YIELD *"} {
-		clauses, ok := splitPipelineClausesAllowingProcedureCalls(query)
+		clauses, ok := splitPipelineClausesAllowingProcedureCalls(t.Context(), query)
 		require.True(t, ok)
 		original := clauses[0].text
 		plan, err := exec.buildExecutionPlan(query)
@@ -43,7 +43,7 @@ func TestResultHeaderProcedureFactsStayReadOnly(t *testing.T) {
 			require.Equal(t, []string{"z", "a"}, result.Columns)
 		}
 		require.Len(t, calls, before, "header analysis and EXPLAIN must not call the procedure")
-		after, ok := splitPipelineClausesAllowingProcedureCalls(query)
+		after, ok := splitPipelineClausesAllowingProcedureCalls(t.Context(), query)
 		require.True(t, ok)
 		require.Equal(t, original, after[0].text, "cached clauses must remain the client's clauses")
 		afterPlan, err := exec.buildExecutionPlan(query)
@@ -248,7 +248,7 @@ func TestResultHeaderExecutionCacheOnly(t *testing.T) {
 	}
 	require.Equal(t, []string{"label", "r73CacheOnly"}, exec.StatementColumns(query))
 	exec.CachedResultColumns(ctx, query, nil).Visit(func(names []string) { require.Equal(t, []string{"label", "r73CacheOnly"}, names) }, func() { t.Fatal("owner did not populate the statement cache") })
-	exec.ResultProjection("RETURN 1 AS cheapProjection", nil)
+	exec.ResultProjection(context.Background(), "RETURN 1 AS cheapProjection", nil)
 	present := projectionKey("RETURN 1 AS cheapProjection", resultmetadata.Known(nil), resultmetadata.Known(nil), false)
 	if program, found := projectionFactsCache.get(present); !found || !program.complete {
 		t.Fatal("execution projection did not use the shared owner program")
@@ -299,7 +299,7 @@ func TestResultHeaderSharedExecutionProjection(t *testing.T) {
 		{"RETURN value AS kept SKIP 1 LIMIT 0", []string{"value"}, []string{"value"}, []string{"kept"}, true, false, "SKIP 1 LIMIT 0"},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			projection := exec.ResultProjection(tc.query, tc.incoming)
+			projection := exec.ResultProjection(context.Background(), tc.query, tc.incoming)
 			require.Equal(t, tc.expressions, projection.Expressions)
 			require.Equal(t, tc.standalone, projection.Standalone)
 			require.Equal(t, tc.distinct, projection.Distinct)
@@ -312,7 +312,7 @@ func TestResultHeaderSharedExecutionProjection(t *testing.T) {
 				}
 			}, func() { require.Nil(t, tc.names, "known projection became unknown") })
 			if tc.names != nil {
-				exec.ResultProjection(tc.query, tc.incoming).Names.Visit(func(names []string) {
+				exec.ResultProjection(context.Background(), tc.query, tc.incoming).Names.Visit(func(names []string) {
 					require.Equal(t, tc.names, names)
 				}, func() { t.Fatal("projection was mutated") })
 			}

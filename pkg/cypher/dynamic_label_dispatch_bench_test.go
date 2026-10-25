@@ -31,7 +31,7 @@ func BenchmarkDynamicLabelDispatch(b *testing.B) {
 					b.Fatal(err)
 				}
 			}
-			exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			ctx := context.Background()
 			params := map[string]interface{}{"labels": []interface{}{"A", "B"}}
 			result, err := exec.Execute(ctx, workload.query, params)

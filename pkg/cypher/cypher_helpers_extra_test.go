@@ -220,7 +220,7 @@ func TestCypherHelpers_ExecuteCall_DoesNotMiscountArgsWithTailFunctions(t *testi
 
 	err := globalProcedureRegistry.RegisterUser(
 		ProcedureSpec{Name: "custom.echo", MinArgs: 3, MaxArgs: 3},
-		func(_ context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
+		func(readerCtx context.Context, _ *StorageExecutor, _ string, args []interface{}) (*ExecuteResult, error) {
 			if len(args) != 3 {
 				return nil, fmt.Errorf("unexpected arg count: %d", len(args))
 			}
@@ -341,7 +341,7 @@ func TestCypherHelpers_UnwindMergeChainPlanCacheHelpers(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	mutation := "MERGE (t:TranslatedText {translationId: row.translationId, language: row.language}) ON CREATE SET t.translatedText = row.translatedText ON MATCH SET t.translatedText = row.translatedText"
 
-	plan := exec.cachedUnwindMergeChainPlan(mutation)
+	plan := exec.cachedUnwindMergeChainPlan(t.Context(), mutation)
 	require.True(t, plan.supported)
 	require.NotNil(t, exec.unwindMergeChainPlanCache)
 	assert.Len(t, exec.unwindMergeChainPlanCache.plans, 1)
@@ -349,7 +349,7 @@ func TestCypherHelpers_UnwindMergeChainPlanCacheHelpers(t *testing.T) {
 	clone := exec.cloneWithStorage(exec.storage)
 	require.Same(t, exec.unwindMergeChainPlanCache, clone.unwindMergeChainPlanCache)
 
-	clonedPlan := clone.cachedUnwindMergeChainPlan(mutation)
+	clonedPlan := clone.cachedUnwindMergeChainPlan(t.Context(), mutation)
 	assert.Equal(t, plan, clonedPlan)
 	assert.Len(t, exec.unwindMergeChainPlanCache.plans, 1)
 	assert.Len(t, clone.unwindMergeChainPlanCache.plans, 1)
@@ -484,34 +484,35 @@ func TestCypherHelpers_CallTxSetMetadata_SyntaxBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// No active transaction.
-	_, err := exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({app:'x'})")
+	_, err := exec.callTxSetMetadata(ctx, []interface{}{map[string]interface{}{"app": "x"}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires an active transaction")
 
 	// Active tx with unsupported tx implementation.
 	exec.txContext = &TransactionContext{active: true, tx: struct{}{}}
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({app:'x'})")
+	_, err = exec.callTxSetMetadata(ctx, []interface{}{map[string]interface{}{"app": "x"}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "transaction type not supported")
 
-	// Invalid syntax / missing payload branches.
-	exec.txContext = &TransactionContext{active: true, tx: struct{}{}}
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.meta({app:'x'})")
+	// Public admission owns procedure identity and missing payload diagnostics.
+	// Clear the deliberately unsupported fake transaction before public calls.
+	exec.txContext = nil
+	_, err = exec.Execute(ctx, "CALL tx.meta({app:'x'})", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid tx.setMetaData syntax")
+	assert.Contains(t, err.Error(), "Neo.ClientError.Procedure.ProcedureNotFound")
 
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData")
+	_, err = exec.Execute(ctx, "CALL tx.setMetaData", nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "requires at least 1 arguments")
+	assert.Contains(t, err.Error(), "missing implicit procedure parameter data")
 
-	_, err = exec.callTxSetMetadata(ctx, "CALL tx.setMetaData()")
+	_, err = exec.Execute(ctx, "CALL tx.setMetaData()", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires at least 1 arguments")
 
 	exec.txContext = nil
 	_, err = exec.Execute(ctx, "BEGIN", nil)
 	require.NoError(t, err)
-	result, err := exec.callTxSetMetadata(ctx, "CALL tx.setMetaData({})")
+	result, err := exec.Execute(ctx, "CALL tx.setMetaData({})", nil)
 	require.NoError(t, err)
 	require.Empty(t, result.Columns)
 	require.Empty(t, result.Rows)
@@ -2620,7 +2621,7 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 
 	// A RETURN after YIELD starts the tail; the YIELD keeps its own WHERE,
 	// ORDER BY, SKIP and LIMIT, which come before it.
-	parsed := parseYieldClause("CALL proc() YIELD node, score AS s WHERE s > 0 ORDER BY s DESC SKIP 1 LIMIT 2 RETURN node.id AS id")
+	parsed := parseYieldClause(t.Context(), "CALL proc() YIELD node, score AS s WHERE s > 0 ORDER BY s DESC SKIP 1 LIMIT 2 RETURN node.id AS id")
 	require.NotNil(t, parsed)
 	require.Len(t, parsed.items, 2)
 	assert.Equal(t, "node", parsed.items[0].name)
@@ -2631,12 +2632,12 @@ func TestCypherHelpers_YieldParsingAndFiltering_Branches(t *testing.T) {
 	assert.Equal(t, "2", parsed.limit)
 	assert.False(t, parsed.misplacedWhere)
 	malformed := "CALL proc() YIELD s ORDER BY s WHERE s > 0 RETURN s"
-	require.Nil(t, parseYieldClause(malformed), "the canonical reader declines malformed clause order")
+	require.Nil(t, parseYieldClause(t.Context(), malformed), "the canonical reader declines malformed clause order")
 	_, syntaxErr := exec.Execute(context.Background(), malformed, nil)
 	require.Error(t, syntaxErr)
 	requireStatusCode(t, syntaxErr, "Neo.ClientError.Statement.SyntaxError")
 	// STARTS WITH and a WHERE inside a subquery are part of the predicate.
-	parsedPredicate := parseYieldClause("CALL proc() YIELD s WHERE s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s } RETURN s")
+	parsedPredicate := parseYieldClause(t.Context(), "CALL proc() YIELD s WHERE s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s } RETURN s")
 	assert.Equal(t, "s STARTS WITH 'a' AND EXISTS { MATCH (n) WHERE n.v = s }", parsedPredicate.where)
 
 	node1 := &storage.Node{ID: "n1", Labels: []string{"Doc"}, Properties: map[string]interface{}{"id": "user-1"}}
@@ -2744,9 +2745,9 @@ func TestCypherHelpers_MergeRelationshipContextHelpers_Branches(t *testing.T) {
 	ctx := context.Background()
 
 	// extractVariableNamesFromPattern basic behavior.
-	vars := exec.extractVariableNamesFromPattern("(p:Person)<-[:REL]-(poc:POC)-[:BELONGS_TO]->(a:Area)")
+	vars := exec.extractVariableNamesFromPattern(t.Context(), "(p:Person)<-[:REL]-(poc:POC)-[:BELONGS_TO]->(a:Area)")
 	assert.ElementsMatch(t, []string{"p", "poc", "a"}, vars)
-	assert.Empty(t, exec.extractVariableNamesFromPattern("()-[:REL]->()"))
+	assert.Empty(t, exec.extractVariableNamesFromPattern(t.Context(), "()-[:REL]->()"))
 
 	// No variable names branch.
 	matches, handled, err := exec.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH ()-[:REL]->()")

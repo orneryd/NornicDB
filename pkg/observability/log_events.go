@@ -73,14 +73,21 @@ func logSlogBootstrapEvent(logger *slog.Logger, event bootstrapLogEvent, args ..
 	attrs := []slog.Attr{slog.String("event_id", event.id), slog.String("component", "observability")}
 	for index, name := range event.attrs {
 		if index < len(args) {
-			attrs = append(attrs, slog.Any(name, args[index]))
+			value := args[index]
+			switch item := value.(type) {
+			case string:
+				value = DisplayValue(name, item)
+			case error:
+				value = RedactError(item)
+			}
+			attrs = append(attrs, slog.Any(name, value))
 		}
 	}
 	level := slog.LevelInfo
 	if event.level == "WARN" {
 		level = slog.LevelWarn
 	}
-	logger.LogAttrs(context.Background(), level, event.message(args...).Fallback, attrs...)
+	logger.LogAttrs(context.Background(), level, RedactText(event.message(args...).Fallback), attrs...)
 }
 
 func sprintBootstrapArg(args []any, index int) string {

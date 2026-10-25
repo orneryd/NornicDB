@@ -10,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // Manager handles Heimdall SLM model loading and inference.
@@ -59,6 +61,7 @@ func NewManager(cfg Config) (*Manager, error) {
 	if !cfg.Enabled {
 		return nil, nil // Feature disabled
 	}
+	diagnosticCredentials := observability.ClientCredentials(cfg.APIURL, cfg.APIKey)
 
 	provider := strings.ToLower(strings.TrimSpace(cfg.Provider))
 	if provider == "" {
@@ -72,11 +75,12 @@ func NewManager(cfg Config) (*Manager, error) {
 	if provider == "local" || provider == "" {
 		generator, modelPath, err = loadLocalGenerator(cfg)
 		if err != nil {
-			return nil, err
+			return nil, observability.RedactError(err, diagnosticCredentials...)
 		}
 	} else if factory, ok := heimdallProviderFactories[provider]; ok {
 		generator, err = factory(cfg)
 		if err != nil {
+			err = observability.RedactError(err, diagnosticCredentials...)
 			return nil, fmt.Errorf("Heimdall %s provider: %w", provider, err)
 		}
 		modelPath = generator.ModelPath()
@@ -84,7 +88,7 @@ func NewManager(cfg Config) (*Manager, error) {
 	} else {
 		generator, modelPath, err = loadLocalGenerator(cfg)
 		if err != nil {
-			return nil, err
+			return nil, observability.RedactError(err, diagnosticCredentials...)
 		}
 	}
 
@@ -234,15 +238,16 @@ func (m *Manager) Generate(ctx context.Context, prompt string, params GeneratePa
 	m.lastUsed = time.Now()
 	m.mu.Unlock()
 
-	result, err := gen.Generate(ctx, prompt, params)
+	safePrompt, credentials := redactGeneratorPrompt(prompt)
+	result, err := gen.Generate(ctx, safePrompt, params)
 	if err != nil {
 		m.mu.Lock()
 		m.errorCount++
 		m.mu.Unlock()
-		return "", err
+		return "", observability.RedactError(err, credentials...)
 	}
 
-	return result, nil
+	return observability.RedactText(result, credentials...), nil
 }
 
 // GenerateStream produces tokens via callback.
@@ -264,14 +269,45 @@ func (m *Manager) GenerateStream(ctx context.Context, prompt string, params Gene
 	m.lastUsed = time.Now()
 	m.mu.Unlock()
 
-	err := gen.GenerateStream(ctx, prompt, params, callback)
+	safePrompt, credentials := redactGeneratorPrompt(prompt)
+	// A generated URL may carry credentials even when the prompt did not. Keep
+	// the entire response inside the manager until URL boundaries are known, so
+	// a credential split across callbacks cannot reach a consumer early.
+	var response strings.Builder
+	var chunks []string
+	err := gen.GenerateStream(ctx, safePrompt, params, func(token string) error {
+		chunks = append(chunks, token)
+		response.WriteString(token)
+		return nil
+	})
 	if err != nil {
 		m.mu.Lock()
 		m.errorCount++
 		m.mu.Unlock()
-		return err
+		return observability.RedactError(err, credentials...)
 	}
-
+	if response.Len() == 0 {
+		return nil
+	}
+	joined := response.String()
+	safe := observability.RedactText(joined, credentials...)
+	if safe == joined {
+		for _, chunk := range chunks {
+			if err := callback(chunk); err != nil {
+				m.mu.Lock()
+				m.errorCount++
+				m.mu.Unlock()
+				return observability.RedactError(err, credentials...)
+			}
+		}
+		return nil
+	}
+	if err := callback(safe); err != nil {
+		m.mu.Lock()
+		m.errorCount++
+		m.mu.Unlock()
+		return observability.RedactError(err, credentials...)
+	}
 	return nil
 }
 
@@ -312,7 +348,21 @@ func (m *Manager) GenerateWithTools(ctx context.Context, messages []ToolRoundMes
 	m.lastUsed = time.Now()
 	m.mu.Unlock()
 
-	return gwt.GenerateWithTools(ctx, messages, tools, params)
+	safeMessages, safeTools, credentials := redactToolRoundInput(messages, tools)
+	content, toolCalls, err = gwt.GenerateWithTools(ctx, safeMessages, safeTools, params)
+	if err != nil {
+		m.mu.Lock()
+		m.errorCount++
+		m.mu.Unlock()
+		return "", nil, observability.RedactError(err, credentials...)
+	}
+	content = observability.RedactText(content, credentials...)
+	for i := range toolCalls {
+		toolCalls[i].Id = observability.RedactText(toolCalls[i].Id, credentials...)
+		toolCalls[i].Name = observability.RedactText(toolCalls[i].Name, credentials...)
+		toolCalls[i].Arguments = observability.RedactText(toolCalls[i].Arguments, credentials...)
+	}
+	return content, toolCalls, nil
 }
 
 // Chat handles chat completion requests.

@@ -25,7 +25,7 @@ func BenchmarkRRetrieveOneShotCache(b *testing.B) {
 			name, query = "parameterized", "CALL db.rretrieve($request)"
 		}
 		b.Run(name, func(b *testing.B) {
-			exec := NewStorageExecutorWithQueryCachePolicy(store, 64, time.Hour)
+			exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 64, TTL: time.Hour})
 			exec.SetSearchService(svc)
 			params := map[string]any{"request": map[string]any{"query": "transcript", "limit": int64(2)}}
 			_, err := exec.Execute(context.Background(), query, params)

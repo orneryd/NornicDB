@@ -3,8 +3,8 @@ package kms
 import (
 	"context"
 
-	wrapping "github.com/hashicorp/go-kms-wrapping/v2"
 	awskms "github.com/hashicorp/go-kms-wrapping/wrappers/awskms/v2"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 type AWSProviderConfig struct {
@@ -28,45 +28,18 @@ type AWSProvider struct {
 
 func NewAWSProvider(ctx context.Context, cfg AWSProviderConfig) (*AWSProvider, error) {
 	w := awskms.NewWrapper()
-	configMap := map[string]string{}
-	if cfg.KeyID != "" {
-		configMap["kms_key_id"] = cfg.KeyID
+	configMap := map[string]string{
+		"kms_key_id":              cfg.KeyID,
+		"region":                  cfg.Region,
+		"endpoint":                cfg.Endpoint,
+		"role_arn":                cfg.RoleARN,
+		"role_session_name":       cfg.RoleSessionName,
+		"access_key":              cfg.AccessKey,
+		"secret_key":              cfg.SecretKey,
+		"session_token":           cfg.SessionToken,
+		"shared_creds_filename":   cfg.SharedCredsFilename,
+		"shared_creds_profile":    cfg.SharedCredsProfile,
+		"web_identity_token_file": cfg.WebIdentityTokenFile,
 	}
-	if cfg.Region != "" {
-		configMap["region"] = cfg.Region
-	}
-	if cfg.Endpoint != "" {
-		configMap["endpoint"] = cfg.Endpoint
-	}
-	if cfg.RoleARN != "" {
-		configMap["role_arn"] = cfg.RoleARN
-	}
-	if cfg.RoleSessionName != "" {
-		configMap["role_session_name"] = cfg.RoleSessionName
-	}
-	if cfg.AccessKey != "" {
-		configMap["access_key"] = cfg.AccessKey
-	}
-	if cfg.SecretKey != "" {
-		configMap["secret_key"] = cfg.SecretKey
-	}
-	if cfg.SessionToken != "" {
-		configMap["session_token"] = cfg.SessionToken
-	}
-	if cfg.SharedCredsFilename != "" {
-		configMap["shared_creds_filename"] = cfg.SharedCredsFilename
-	}
-	if cfg.SharedCredsProfile != "" {
-		configMap["shared_creds_profile"] = cfg.SharedCredsProfile
-	}
-	if cfg.WebIdentityTokenFile != "" {
-		configMap["web_identity_token_file"] = cfg.WebIdentityTokenFile
-	}
-	if cfg.DisallowEnvCredential {
-		configMap["disallow_env_vars"] = "true"
-	}
-	if _, err := w.SetConfig(ctx, wrapping.WithConfigMap(configMap)); err != nil {
-		return nil, err
-	}
-	return &AWSProvider{wrappingAdapter: newWrappingAdapter(w)}, nil
+	return configureWrappingProvider[AWSProvider](ctx, w, configMap, cfg.DisallowEnvCredential, observability.ClientCredentials(cfg.Endpoint, cfg.AccessKey, cfg.SecretKey, cfg.SessionToken)...)
 }

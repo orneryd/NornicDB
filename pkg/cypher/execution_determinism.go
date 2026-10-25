@@ -48,23 +48,28 @@ type executionTextPolicy struct {
 
 var executionPolicyCache = newBoundedCache[string, *executionDeterminismPolicy](4096, boundedCacheStringShardIndex)
 
-func cachedExecutionPolicy(text string) *executionDeterminismPolicy {
+func cachedExecutionPolicy(ctx context.Context, text string) *executionDeterminismPolicy {
 	ensureBuiltInProceduresRegistered()
 	generation := globalProcedureRegistry.generation.Load()
 	if policy, found := executionPolicyCache.get(text); found && policy.generation == generation {
 		return policy
 	}
-	policy := compileExecutionPolicy(text, 0)
-	executionPolicyCache.put(text, policy)
+	policy := compileExecutionPolicy(ctx, text, 0)
+	if ctx.Err() == nil {
+		executionPolicyCache.put(text, policy)
+	}
 	return policy
 }
 
 // compileExecutionPolicy performs the static work once: permissions, function
 // classification, registry dependencies, argument positions and literal values.
 // The binding phase below only reads the identified runtime inputs.
-func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy {
+func compileExecutionPolicy(ctx context.Context, text string, depth int) *executionDeterminismPolicy {
 	ensureBuiltInProceduresRegistered()
 	policy := &executionDeterminismPolicy{text: text, generation: globalProcedureRegistry.generation.Load()}
+	if ctx.Err() != nil {
+		return policy
+	}
 	if depth >= 16 {
 		return policy
 	}
@@ -75,7 +80,7 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 	if startsWithKeywordFold(trimmed, "SHOW") || startsWithKeywordFold(trimmed, "TERMINATE") || startsWithKeywordFold(trimmed, "PROFILE") || keywordIndexFrom(text, "LOAD", 0, opts) >= 0 {
 		return policy
 	}
-	requirements := QueryPermissionRequirements(text)
+	requirements := QueryPermissionRequirements(ctx, text)
 	if requirements.Write || requirements.Schema || requirements.Admin {
 		return policy
 	}
@@ -136,7 +141,7 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 			continue
 		}
 		var arguments []string
-		syntax, err := cypherantlr.ParseSyntax(context.Background(), text, cypherantlr.FragmentEntry, false)
+		syntax, err := cypherantlr.ParseSyntax(ctx, text, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
 		if err != nil {
 			return policy
 		}
@@ -219,7 +224,7 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 				if !isText {
 					return policy
 				}
-				dependency.child = compileExecutionPolicy(inner, depth+1)
+				dependency.child = compileExecutionPolicy(ctx, inner, depth+1)
 				if !dependency.child.cacheable {
 					return policy
 				}
@@ -235,16 +240,22 @@ func compileExecutionPolicy(text string, depth int) *executionDeterminismPolicy 
 			policy.calls = append(policy.calls, call)
 		}
 	}
+	if ctx.Err() != nil {
+		return policy
+	}
 	policy.cacheable = true
 	return policy
 }
 
-func (policy *executionDeterminismPolicy) allows(bindings executionBindings, depth int) bool {
+func (policy *executionDeterminismPolicy) allows(ctx context.Context, bindings executionBindings, depth int) bool {
+	if ctx.Err() != nil {
+		return false
+	}
 	if depth >= 16 {
 		return false
 	}
 	if policy.generation != globalProcedureRegistry.generation.Load() {
-		return cachedExecutionPolicy(policy.text).allows(bindings, depth)
+		return cachedExecutionPolicy(ctx, policy.text).allows(ctx, bindings, depth)
 	}
 	if !policy.cacheable {
 		return false
@@ -307,9 +318,9 @@ func (policy *executionDeterminismPolicy) allows(bindings executionBindings, dep
 				if !known || !isText {
 					return false
 				}
-				child = cachedExecutionPolicy(inner)
+				child = cachedExecutionPolicy(ctx, inner)
 			}
-			if !child.allows(childBindings, depth+1) {
+			if !child.allows(ctx, childBindings, depth+1) {
 				return false
 			}
 		}
@@ -318,5 +329,5 @@ func (policy *executionDeterminismPolicy) allows(bindings executionBindings, dep
 }
 
 func deterministicExecution(ctx context.Context, text string, depth int) bool {
-	return cachedExecutionPolicy(text).allows(newExecutionBindings(ctx), depth)
+	return cachedExecutionPolicy(ctx, text).allows(ctx, newExecutionBindings(ctx), depth)
 }

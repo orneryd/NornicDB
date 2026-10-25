@@ -127,7 +127,7 @@ func DetectQueryPattern(ctx context.Context, query string) PatternInfo {
 	}
 
 	// Check for edge property aggregation
-	if info.Pattern == PatternGeneric && detectEdgePropertyAgg(query, &info) {
+	if info.Pattern == PatternGeneric && detectEdgePropertyAgg(ctx, query, &info) {
 		return info
 	}
 
@@ -347,7 +347,7 @@ func parseDirectionalCountPattern(ctx context.Context, matchClause string, incom
 }
 
 // detectEdgePropertyAgg checks for avg(r.prop), sum(r.prop) patterns
-func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
+func detectEdgePropertyAgg(ctx context.Context, query string, info *PatternInfo) bool {
 	// First, find relationship variable in MATCH
 	matchClause := extractMatchClause(query)
 	relVar := extractRelationshipVariable(matchClause)
@@ -360,13 +360,13 @@ func detectEdgePropertyAgg(query string, info *PatternInfo) bool {
 	if returnIdx < 0 {
 		return false
 	}
-	returnItems := exec.parseReturnItems(strings.TrimSpace(query[returnIdx+len("RETURN"):]))
+	returnItems := exec.parseReturnItems(ctx, strings.TrimSpace(query[returnIdx+len("RETURN"):]))
 	if len(returnItems) < 2 {
 		return false
 	}
 
 	for _, item := range returnItems[1:] {
-		expr, _ := parseProjectionExprAlias(item.expr)
+		expr, _ := parseProjectionExprAlias(ctx, item.expr)
 		u := upperASCII(strings.ReplaceAll(strings.TrimSpace(expr), " ", ""))
 		open := strings.IndexByte(u, '(')
 		close := strings.LastIndexByte(u, ')')

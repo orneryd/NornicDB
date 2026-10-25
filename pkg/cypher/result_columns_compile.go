@@ -55,8 +55,14 @@ type boundClause struct {
 	expressionDepth     int
 }
 
-func (compiler *projectionCompilation) compileBound(incoming, retained resultmetadata.Names) *projectedScopeFacts {
-	syntax, err := cypherantlr.ParseSyntax(context.Background(), compiler.source, cypherantlr.StatementEntry, compiler.cypher25)
+func (compiler *projectionCompilation) compileBound(ctx context.Context, incoming, retained resultmetadata.Names) *projectedScopeFacts {
+	if compiler.cypher25 {
+		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
+	}
+	syntax, err := cypherantlr.ParseSyntax(ctx, compiler.source, cypherantlr.StatementEntry, compiler.cypher25)
+	if ctx.Err() != nil {
+		return programFailure(resultmetadata.ReasonParserDecline, 0, ctx.Err())
+	}
 	if err != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, syntaxAdmissionError(compiler.source, err))
 	}
@@ -85,7 +91,7 @@ func (compiler *projectionCompilation) compileBound(incoming, retained resultmet
 		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
 	}
 	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
-	body := compilation.prepareBody(queryBodyFromSyntax(query), query, start, end)
+	body := compilation.prepareBody(ctx, queryBodyFromSyntax(query), query, start, end)
 	body.incoming, body.retained = incoming, retained
 	body.incomingIDs = map[string]statementBindingID{}
 	input := projectedNameMap(incoming)
@@ -105,6 +111,9 @@ func (compiler *projectionCompilation) compileBound(incoming, retained resultmet
 	if body.program == nil {
 		return programFailure(resultmetadata.ReasonParserDecline, start, nil)
 	}
+	if ctx.Err() != nil {
+		return programFailure(resultmetadata.ReasonParserDecline, start, ctx.Err())
+	}
 	pipelineClauseEffectCache.put("\x00"+compiler.source, effects)
 	body.program.bound = compilation.product
 	return body.program
@@ -123,7 +132,7 @@ func (compilation *boundCompilation) fail(reason resultmetadata.UnresolvedReason
 		compilation.failure = programFailure(reason, position, err)
 	}
 }
-func (compilation *boundCompilation) prepareBody(shape queryBody, root cypherantlr.SyntaxNode, start, end int) *boundBody {
+func (compilation *boundCompilation) prepareBody(ctx context.Context, shape queryBody, root cypherantlr.SyntaxNode, start, end int) *boundBody {
 	body := &boundBody{start: start, end: end}
 	if shape.status != queryBodyRead || len(shape.branches) == 0 {
 		err := error(nil)
@@ -180,7 +189,7 @@ func (compilation *boundCompilation) prepareBody(shape queryBody, root cypherant
 			compilation.current, compilation.clause = previousBranch, previousClause
 		})
 		if branchShape.useSyntax.Valid() {
-			compilation.prepareUse(branch, branchShape.useSyntax)
+			compilation.prepareUse(ctx, branch, branchShape.useSyntax)
 		}
 		if branchShape.finished {
 			compilation.event(branchShape.finishSyntax).enter = append(compilation.event(branchShape.finishSyntax).enter, func() {
@@ -191,19 +200,19 @@ func (compilation *boundCompilation) prepareBody(shape queryBody, root cypherant
 			})
 		}
 		for _, clause := range branchShape.clauses {
-			compilation.prepareClause(branch, clause)
+			compilation.prepareClause(ctx, branch, clause)
 		}
 	}
 	return body
 }
 
-func (compilation *boundCompilation) prepareUse(branch *boundBranch, node cypherantlr.SyntaxNode) {
+func (compilation *boundCompilation) prepareUse(ctx context.Context, branch *boundBranch, node cypherantlr.SyntaxNode) {
 	var prior *boundClause
 	compilation.event(node).enter = append(compilation.event(node).enter, func() {
 		prior = compilation.clause
 		start, end := node.Span()
 		if !node.ChildRule(cypherantlr.CypherParserRULE_functionInvocation).Valid() && strings.EqualFold(node.QualifiedName(), "system") {
-			if err := systemDatabaseStatementError(strings.TrimSpace(compilation.owner.source[end:branch.shape.end])); err != nil {
+			if err := systemDatabaseStatementError(ctx, strings.TrimSpace(compilation.owner.source[end:branch.shape.end])); err != nil {
 				compilation.fail(resultmetadata.ReasonUnsupportedSyntax, start, err)
 				return
 			}
@@ -227,7 +236,7 @@ func (compilation *boundCompilation) prepareUse(branch *boundBranch, node cypher
 	compilation.event(node).leave = append(compilation.event(node).leave, func() { compilation.clause = prior })
 }
 
-func (compilation *boundCompilation) prepareClause(branch *boundBranch, source queryBodyClause) {
+func (compilation *boundCompilation) prepareClause(ctx context.Context, branch *boundBranch, source queryBodyClause) {
 	compilation.clauses[source.syntax.ID()] = source
 	clause := &boundClause{branch: branch, source: source}
 	var prior *boundClause
@@ -257,18 +266,11 @@ func (compilation *boundCompilation) prepareClause(branch *boundBranch, source q
 	})
 	if source.kind == pipelineClauseCallSubquery {
 		node := source.syntax.ChildRule(cypherantlr.CypherParserRULE_subqueryBody)
-		start, end, _ := callClauseBody(source)
-		clause.body = compilation.prepareBody(queryBodyFromSyntax(node), node, start, end)
+		start, end, _ := callClauseBody(ctx, source)
+		clause.body = compilation.prepareBody(ctx, queryBodyFromSyntax(node), node, start, end)
 	}
 	if source.kind == pipelineClauseForeach {
-		nestedShape := queryBodyBranch{start: source.start, end: source.end, useStart: -1, useEnd: -1, finishStart: -1, finishEnd: -1}
-		for i := 0; i < source.syntax.ChildCount(); i++ {
-			child := source.syntax.Child(i)
-			if child.Rule() == cypherantlr.CypherParserRULE_updatingStatement {
-				appendQuerySyntax(&nestedShape, child)
-			}
-		}
-		clause.body = compilation.prepareBody(queryBody{branches: []queryBodyBranch{nestedShape}, status: queryBodyRead}, source.syntax, source.start, source.end)
+		clause.body = compilation.prepareBody(ctx, queryBodyFromSyntax(source.syntax), source.syntax, source.start, source.end)
 	}
 	// Expression subqueries have an isolated projected scope. Their names do
 	// not leak out of the expression, but every input read must still bind.
@@ -296,7 +298,7 @@ func (compilation *boundCompilation) prepareClause(branch *boundBranch, source q
 			}
 		}
 		start, end := bodyNode.Span()
-		nested := compilation.prepareBody(shape, bodyNode, start, end)
+		nested := compilation.prepareBody(ctx, shape, bodyNode, start, end)
 		initialize := func() {
 			scope, ids, _ := compilation.expressionBindings(clause, node)
 			nested.incoming = projectedMapNames(scope)

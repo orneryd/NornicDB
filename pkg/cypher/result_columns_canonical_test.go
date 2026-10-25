@@ -81,7 +81,7 @@ func TestCanonicalStatementPublicMatrix(t *testing.T) {
 func TestCanonicalBoundIdentities(t *testing.T) {
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "bound-identities"))
 	query := "WITH 1 AS `écho` WITH `écho` + 1 AS `écho` RETURN [echo IN [1] | echo] AS local, `écho` AS result"
-	program := executor.statementProjectionProgram(query, resultmetadata.KnownScope(nil), false)
+	program := executor.statementProjectionProgram(t.Context(), query, resultmetadata.KnownScope(nil), false, nil)
 	require.True(t, program.complete, "%v", program.err)
 	require.NotNil(t, program.bound)
 	ids := map[statementBindingID]statementBinding{}

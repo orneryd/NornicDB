@@ -20,8 +20,8 @@ func TestCorrelatedCallEscapedIdentifierScopeParity(t *testing.T) {
 			prefix := "MATCH (a:A) WITH a AS " + name + " "
 			body := "MATCH (" + name + ":A) RETURN count(" + name + ") AS c"
 			query := prefix + "CALL { " + body + " } RETURN c"
-			canonical, _ := canonicalizeQuotedVariables(query)
-			clauses, ok := canExecuteAsPipeline(canonical)
+			canonical, _ := canonicalizeQuotedVariables(t.Context(), query)
+			clauses, ok := canExecuteAsPipeline(t.Context(), canonical)
 			require.True(t, ok)
 			// Bypass executePipeline and every statement shortcut entirely.
 			general, handled, err := exec.runPipelineClauseRows(ctx, []pipelineRow{{}}, map[string]struct{}{}, clauses, clauses, nil)

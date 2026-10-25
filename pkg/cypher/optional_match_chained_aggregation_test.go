@@ -51,7 +51,7 @@ RETURN collect(DISTINCT f.num) AS first, collect(DISTINCT n.num) AS missing, col
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			clauses, ok := canExecuteAsPipeline(tc.query)
+			clauses, ok := canExecuteAsPipeline(t.Context(), tc.query)
 			require.True(t, ok)
 			require.Len(t, clauses, tc.clauseCount)
 

@@ -26,7 +26,7 @@ func TestSystemShowTailError(t *testing.T) {
 		"SHOW DATABASES YIELD name CREATE (:X) RETURN name":                          "Invalid input 'CREATE'",
 		"EXPLAIN SHOW DATABASES YIELD name RETURN name, COUNT { (n) } AS c;":         "The COUNT expression is not valid on SHOW commands.",
 	} {
-		err := systemDatabaseStatementError(statement)
+		err := systemDatabaseStatementError(t.Context(), statement)
 		require.Error(t, err, statement)
 		require.Contains(t, err.Error(), message, statement)
 		require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err), statement)
@@ -39,7 +39,7 @@ func TestSystemShowTailError(t *testing.T) {
 		"SHOW USERS YIELD user WHERE user STARTS WITH 'a' RETURN user",
 		"SHOW TRANSACTIONS YIELD transactionId WHERE transactionId = 'x' TERMINATE TRANSACTIONS transactionId",
 	} {
-		require.NoError(t, systemDatabaseStatementError(statement), statement)
+		require.NoError(t, systemDatabaseStatementError(t.Context(), statement), statement)
 	}
 }
 

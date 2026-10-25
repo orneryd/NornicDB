@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/stretchr/testify/require"
 )
@@ -97,7 +98,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 						}
 						crashDir := t.TempDir()
 						require.NoError(t, os.WriteFile(filepath.Join(crashDir, "wal.log"), bytes[:cut], 0600))
-						dest, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
+						dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 						require.NoError(t, err)
 						result, _, err := RecoverIntoEngine(dest, crashDir, baselinePath)
 						require.NoError(t, err)
@@ -137,7 +138,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 			require.NoError(t, SaveSnapshot(snapshot, snapshotPath))
 			update("epoch:a", map[string]any{"alpha": "a2", "beta": "b2"})
 			check := func(alpha, beta string) {
-				dest, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
+				dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 				require.NoError(t, err)
 				result, _, err := RecoverIntoEngine(dest, walDir, snapshotPath)
 				require.NoError(t, err)
@@ -172,7 +173,7 @@ func TestWALPropertyEpochTransportAndRawLegacyBoundary(t *testing.T) {
 	require.NoError(t, err)
 	var transported WALEntry
 	require.NoError(t, json.Unmarshal(raw, &transported))
-	dest, err := NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()})
+	dest, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: t.TempDir()}))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, dest.Close()) })
 	_, err = dest.CreateNode(&Node{ID: "perf:sentinel", Properties: map[string]any{"other": "keep"}})

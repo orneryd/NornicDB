@@ -194,7 +194,7 @@ func TestCallDbRetrieveContinuesBeyondInitialLimit(t *testing.T) {
 
 func TestCallDbRetrieveContinuationBypassesCypherResultCache(t *testing.T) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(t), "test")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 10, time.Minute)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 10, TTL: time.Minute})
 	service := search.NewService(store)
 	exec.SetSearchService(service)
 

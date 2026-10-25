@@ -15,7 +15,7 @@ const quantifiedGroupBenchChain = 200
 
 func newQuantifiedGroupBenchExecutor(b *testing.B) *StorageExecutor {
 	b.Helper()
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(b), "qpp_bench"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "qpp_bench"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	if _, err := exec.Execute(ctx, "UNWIND range(0, $last) AS i CREATE (:N {id: i, k: i % 5})", map[string]interface{}{"last": int64(quantifiedGroupBenchChain - 1)}); err != nil {
 		b.Fatal(err)
@@ -76,7 +76,7 @@ func BenchmarkQuantifiedGroupPredicate_LocalScopes(b *testing.B) {
 // BenchmarkLocalScopeExpression: a WHERE whose quantifier binds a local
 // read by subscript, over 10k rows.
 func BenchmarkLocalScopeExpression(b *testing.B) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(b), "local_scope_bench"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "local_scope_bench"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	benchmarkStatementCount(b, exec,
 		"UNWIND range(1, 10000) AS i WITH i, [[i > 0], [true]] AS list WHERE all(r IN list WHERE r[0]) RETURN count(*) AS c",
 		nil, 10000)

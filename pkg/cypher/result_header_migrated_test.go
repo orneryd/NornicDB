@@ -8,7 +8,7 @@ import (
 
 func ownedLegacyHeaderColumns(t *testing.T, query string, incoming ...string) []string {
 	e := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "migrated-headers"))
-	columns, err := e.ResultColumns(query, resultmetadata.KnownScope(incoming), false)
+	columns, err := e.ResultColumns(t.Context(), query, resultmetadata.KnownScope(incoming), false)
 	if err != nil || len(columns) == 0 {
 		return nil
 	}
@@ -118,7 +118,7 @@ func TestInferReturnColumnsFromQuery_EmptyItemAfterComma(t *testing.T) {
 	// The removed text inferrer skipped malformed items. The statement owner
 	// must reject the query rather than publish a partial authoritative header.
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "migrated-invalid-header"))
-	_, err := executor.ResultColumns("RETURN a, ", resultmetadata.KnownScope([]string{"a"}), false)
+	_, err := executor.ResultColumns(t.Context(), "RETURN a, ", resultmetadata.KnownScope([]string{"a"}), false)
 	if err == nil {
 		t.Fatal("a trailing comma must not produce an authoritative header")
 	}

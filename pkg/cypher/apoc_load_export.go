@@ -210,7 +210,7 @@ func normalizeAPOCImportRelativePath(localPath string) string {
 }
 
 func (e *StorageExecutor) validateAPOCRemoteURL(rawURL string, allowlist []string) (*url.URL, error) {
-	if err := securitypkg.ValidateURL(rawURL, false, false); err != nil {
+	if err := securitypkg.ValidateURL(rawURL, securitypkg.URLPolicy{}); err != nil {
 		return nil, fmt.Errorf("invalid APOC remote URL: %w", err)
 	}
 	parsed, err := url.Parse(rawURL)

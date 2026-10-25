@@ -94,7 +94,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	if endsInFinish(ctx, query) {
 		query += " FINISH"
 	}
-	if err := validateQueryBodyComposition(query); err != nil {
+	if err := validateQueryBodyComposition(ctx, query); err != nil {
 		return nil, err
 	}
 	columns, err := e.StatementResultColumnsContext(ctx, query)
@@ -102,7 +102,7 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 		return nil, err
 	}
 	if indexASCIIFold(query, "shortestpath") >= 0 {
-		if err := e.validateMatchSemanticScopes(query, cypherVersionFromContext(ctx) == "25"); err != nil {
+		if err := e.validateMatchSemanticScopes(ctx, query, cypherVersionFromContext(ctx) == "25"); err != nil {
 			return nil, err
 		}
 	}

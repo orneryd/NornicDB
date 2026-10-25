@@ -61,7 +61,7 @@ func TestIsNumericLiteral_Branches(t *testing.T) {
 
 func BenchmarkExecuteMultiMatchCompiledWhere(b *testing.B) {
 	store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "multi_match_where_bench")
-	exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	for i := 0; i < 64; i++ {
 		_, err := store.CreateNode(&storage.Node{
 			ID:         storage.NodeID("where-" + strconv.Itoa(i)),

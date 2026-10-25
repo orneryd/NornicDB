@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 // redactionLogCorpus pins what the slow-query log shows for statements with
@@ -169,57 +171,80 @@ func TestSlowQueryLog_LargeStatementIsNotParsed(t *testing.T) {
 	}
 }
 
-// TestSlowQueryLog_ReusesGrammarVerdict checks that a statement the executor
-// already found grammar-valid is not parsed again for the log: under the
-// ANTLR parser Execute's validation supplies the verdict; under the default
-// parser the first log record parses once and later ones reuse it. The
-// logged text is the same on both parsers.
+// TestSlowQueryLog_ReusesGrammarVerdict covers both first consumers of the
+// exact-text verdict. With tracing disabled, ANTLR execution seeds it before
+// logging. With tracing enabled, span projection precedes execution validation
+// and seeds it once on either parser. Later spans and logs must reuse it.
+// A canonical execution shape must never share a grammar verdict across literal text.
 func TestSlowQueryLog_ReusesGrammarVerdict(t *testing.T) {
 	const query = `MATCH (n:Person) WHERE n.name = 'zzs14' RETURN n.name AS who`
 	const want = `MATCH (n:Person) WHERE n.name = <REDACTED> RETURN n.name AS who`
-	exec, logged := captureSlowQueryLog(t)
-	calls := countRedactGrammarParses(t)
-	if _, err := exec.Execute(t.Context(), query, nil); err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	wantParses := 1
-	if config.IsANTLRParser() {
-		wantParses = 0
-	}
-	if *calls != wantParses {
-		t.Fatalf("first slow-query record ran %d grammar parses, want %d", *calls, wantParses)
-	}
-	exec.emitSlowQueryLog(t.Context(), query, nil, time.Second)
-	if *calls != wantParses {
-		t.Fatalf("repeated slow-query record parsed again: %d parses, want %d", *calls, wantParses)
-	}
-	for i, q := range logged() {
-		if q != want {
-			t.Errorf("record %d:\n got %q\nwant %q", i, q, want)
-		}
-	}
-}
-
-// Execution verdicts may share a canonical literal shape; the log's grammar
-// verdict must belong to the exact statement that the grammar accepted.
-func TestSlowQueryLog_GrammarVerdictIsExactText(t *testing.T) {
-	exec, logged := captureSlowQueryLog(t)
-	calls := countRedactGrammarParses(t)
-	const first = "MATCH (n:Person) WHERE n.name = 'first' RETURN n.name"
-	const second = "MATCH (n:Person) WHERE n.name = 'second' RETURN n.name"
-	exec.emitSlowQueryLog(t.Context(), first, nil, time.Second)
-	if exec.hasCachedValidSyntax(second, syntaxGrammarAccepted) {
-		t.Fatal("grammar acceptance escaped the exact statement text")
-	}
-	exec.emitSlowQueryLog(t.Context(), second, nil, time.Second)
-	exec.emitSlowQueryLog(t.Context(), second, nil, time.Second)
-	if *calls != 2 {
-		t.Fatalf("want one grammar parse per exact text, got %d", *calls)
-	}
-	for _, query := range logged() {
-		if query != "MATCH (n:Person) WHERE n.name = <REDACTED> RETURN n.name" {
-			t.Fatalf("unexpected log text: %q", query)
-		}
+	for _, scenario := range []struct {
+		name               string
+		tracing, exactText bool
+	}{
+		{"tracing_disabled", false, false}, {"tracing_enabled", true, false}, {"exact_text", false, true},
+	} {
+		tracing := scenario.tracing
+		t.Run(scenario.name, func(t *testing.T) {
+			previous := otel.GetTracerProvider()
+			otel.SetTracerProvider(noop.NewTracerProvider())
+			defer otel.SetTracerProvider(previous)
+			if tracing {
+				_, restore := spanSetup(t)
+				defer restore()
+			}
+			exec, logged := captureSlowQueryLog(t)
+			calls := countRedactGrammarParses(t)
+			if scenario.exactText {
+				const first = "MATCH (n:Person) WHERE n.name = 'first' RETURN n.name"
+				const second = "MATCH (n:Person) WHERE n.name = 'second' RETURN n.name"
+				exec.emitSlowQueryLog(t.Context(), first, nil, time.Second)
+				if exec.hasCachedValidSyntax(second, syntaxGrammarAccepted) {
+					t.Fatal("grammar acceptance escaped the exact statement text")
+				}
+				exec.emitSlowQueryLog(t.Context(), second, nil, time.Second)
+				exec.emitSlowQueryLog(t.Context(), second, nil, time.Second)
+				if *calls != 2 {
+					t.Fatalf("want one grammar parse per exact text, got %d", *calls)
+				}
+				for _, query := range logged() {
+					if query != "MATCH (n:Person) WHERE n.name = <REDACTED> RETURN n.name" {
+						t.Fatalf("unexpected log text: %q", query)
+					}
+				}
+				return
+			}
+			if _, err := exec.Execute(t.Context(), query, nil); err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			wantParses := 1
+			if config.IsANTLRParser() && !tracing {
+				wantParses = 0
+			}
+			if *calls != wantParses {
+				t.Fatalf("first execution ran %d redactor grammar parses, want %d", *calls, wantParses)
+			}
+			if !exec.hasCachedValidSyntax(query, syntaxGrammarAccepted) {
+				t.Fatal("first execution did not retain the exact-text grammar verdict")
+			}
+			exec.emitSlowQueryLog(t.Context(), query, nil, time.Second)
+			if _, err := exec.Execute(t.Context(), query, nil); err != nil {
+				t.Fatalf("repeat execute: %v", err)
+			}
+			if *calls != wantParses {
+				t.Fatalf("repeated span or slow-query log parsed again: %d parses, want %d", *calls, wantParses)
+			}
+			queries := logged()
+			if len(queries) != 3 {
+				t.Fatalf("want 3 slow-query records, got %d", len(queries))
+			}
+			for i, q := range queries {
+				if q != want {
+					t.Errorf("record %d:\n got %q\nwant %q", i, q, want)
+				}
+			}
+		})
 	}
 }
 

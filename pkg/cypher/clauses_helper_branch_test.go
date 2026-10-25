@@ -72,17 +72,17 @@ func TestClauseHelpers_ParseAndRewrite(t *testing.T) {
 }
 
 func TestParseSimpleCountReturnAndRelClause(t *testing.T) {
-	alias, ok := parseSimpleCountReturn("RETURN count(n) AS total", "n")
+	alias, ok := parseSimpleCountReturn(t.Context(), "RETURN count(n) AS total", "n")
 	require.True(t, ok)
 	require.Equal(t, "total", alias)
 
-	alias, ok = parseSimpleCountReturn("", "n")
+	alias, ok = parseSimpleCountReturn(t.Context(), "", "n")
 	require.True(t, ok)
 	require.Empty(t, alias)
 
-	_, ok = parseSimpleCountReturn("RETURN count(m) AS total", "n")
+	_, ok = parseSimpleCountReturn(t.Context(), "RETURN count(m) AS total", "n")
 	require.False(t, ok)
-	alias, ok = parseSimpleCountReturn("RETURN count(n)", "n")
+	alias, ok = parseSimpleCountReturn(t.Context(), "RETURN count(n)", "n")
 	require.True(t, ok)
 	require.Equal(t, "count(n)", alias)
 

@@ -14,6 +14,7 @@ import (
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -70,19 +71,13 @@ func (e *StorageExecutor) executeShowSettings(_ context.Context, cypher string) 
 			value = activeValue
 			startupValue = activeValue
 		}
-		if definition.Redacted {
-			if value != "" {
-				value = "<REDACTED>"
-			}
-			if startupValue != "" {
-				startupValue = "<REDACTED>"
-			}
-		}
+		value = observability.DisplayValue(definition.Name, value)
+		startupValue = observability.DisplayValue(definition.Name, startupValue)
 		rows = append(rows, []interface{}{
 			definition.Name,
 			value,
 			definition.Dynamic,
-			definition.DefaultValue,
+			observability.DisplayValue(definition.Name, definition.DefaultValue),
 			definition.Description,
 			startupValue,
 			explicitlySet,
@@ -599,7 +594,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	}
 
 	items := strings.TrimSpace(body[:itemsEnd])
-	yield := parseYieldClause("CALL show() YIELD " + items)
+	yield := parseYieldClause(ctx, "CALL show() YIELD "+items)
 	if yield == nil || items == "" || continuation != "" && yield.yieldAll {
 		return nil, invalid()
 	}
@@ -658,7 +653,7 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 			}
 		}
 		clause := pipelineClause{kind: pipelineClauseWith, text: "WITH * WHERE " + where}
-		if err := e.validateStaticOperatorTypes(clause, staticTypeScope{values: types, cypher25: cypherVersionFromContext(ctx) == "25"}, nil, getParamsFromContext(ctx)); err != nil {
+		if err := e.validateStaticOperatorTypes(ctx, clause, staticTypeScope{values: types, cypher25: cypherVersionFromContext(ctx) == "25"}, nil, getParamsFromContext(ctx)); err != nil {
 			return nil, nornicerrors.MarkCompileTime(err)
 		}
 		clauses.WriteString("WITH * WHERE " + where + " ")

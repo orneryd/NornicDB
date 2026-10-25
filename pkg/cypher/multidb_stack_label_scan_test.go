@@ -51,7 +51,7 @@ func TestMultidbStack_LabelScanScalesWithLabelNotStore(t *testing.T) {
 	// Disable the query-result cache (maxEntries=0): the whole point of this
 	// repro is to measure the storage scan, and a warm cache would return
 	// the prior result in ~1us regardless of engine behavior.
-	exec := NewStorageExecutorWithQueryCachePolicy(dbStore, 0, 0)
+	exec := NewStorageExecutor(dbStore, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 
 	// 20 Repository nodes among a growing population of unrelated nodes.

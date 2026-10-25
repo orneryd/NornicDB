@@ -10,12 +10,27 @@ import (
 func TestASTBuilderDirectHelperCoverage(t *testing.T) {
 	builder := NewASTBuilder()
 
-	t.Run("findKeywordPosition skips embedded keywords and finds later valid match", func(t *testing.T) {
+	t.Run("canonical clause scanner skips embedded and quoted keywords", func(t *testing.T) {
 		s := "XMATCH MATCH1 MATCH RETURN"
-		assert.Equal(t, 14, findKeywordPosition(s, "MATCH"))
-		assert.Equal(t, 7, findKeywordPosition("MATCH1 MATCH", "MATCH"))
-		assert.Equal(t, -1, findKeywordPosition("XMATCH", "MATCH"))
-		assert.Equal(t, -1, findKeywordPosition("RETURNING", "RETURN"))
+		assert.Equal(t, 14, keywordIndexFrom(s, "MATCH", 0, defaultKeywordScanOpts()))
+		assert.Equal(t, 7, keywordIndexFrom("MATCH1 MATCH", "MATCH", 0, defaultKeywordScanOpts()))
+		assert.Equal(t, -1, keywordIndexFrom("XMATCH", "MATCH", 0, defaultKeywordScanOpts()))
+		assert.Equal(t, -1, keywordIndexFrom("RETURNING", "RETURN", 0, defaultKeywordScanOpts()))
+	})
+
+	t.Run("quoted clause names retain their complete RETURN projection", func(t *testing.T) {
+		for _, source := range []string{
+			"RETURN 'RETURN, AS' AS text, [1, 2] AS values",
+			"RETURN 'MATCH' AS text, {value: 'RETURN'} AS object",
+			"RETURN 1 AS `MATCH`, 2 AS `RETURN`",
+		} {
+			ast, err := builder.Build(source)
+			require.NoError(t, err)
+			require.Len(t, ast.Clauses, 1, source)
+			require.Equal(t, source, ast.Clauses[0].RawText)
+			require.NotNil(t, ast.Clauses[0].Return)
+			require.Len(t, ast.Clauses[0].Return.Items, 2)
+		}
 	})
 
 	t.Run("parseMerge handles on create and on match branches", func(t *testing.T) {
@@ -56,25 +71,25 @@ func TestASTBuilderDirectHelperCoverage(t *testing.T) {
 	})
 
 	t.Run("parseReturn and parseWith handle distinct and aliases", func(t *testing.T) {
-		ret := builder.parseReturn("RETURN DISTINCT n.name AS name, count(*) AS total")
+		ret := builder.parseReturn(t.Context(), "RETURN DISTINCT n.name AS name, count(*) AS total")
 		require.True(t, ret.Distinct)
 		require.Len(t, ret.Items, 2)
 		assert.Equal(t, "name", ret.Items[0].Alias)
 		assert.Equal(t, "total", ret.Items[1].Alias)
 
-		withClause := builder.parseWith("WITH DISTINCT n.name AS name, n.age")
+		withClause := builder.parseWith(t.Context(), "WITH DISTINCT n.name AS name, n.age")
 		require.True(t, withClause.Distinct)
 		require.Len(t, withClause.Items, 2)
 		assert.Equal(t, "name", withClause.Items[0].Alias)
 		assert.Equal(t, "", withClause.Items[1].Alias)
 
-		ret = builder.parseReturn("RETURN {name: 'Alice', age: 1} AS profile, , n")
+		ret = builder.parseReturn(t.Context(), "RETURN {name: 'Alice', age: 1} AS profile, , n")
 		require.Len(t, ret.Items, 2)
 		assert.Equal(t, ASTExprMap, ret.Items[0].Expression.Type)
 		assert.Equal(t, "profile", ret.Items[0].Alias)
 		assert.Equal(t, ASTExprVariable, ret.Items[1].Expression.Type)
 
-		withClause = builder.parseWith("WITH n, , {active: true} AS meta")
+		withClause = builder.parseWith(t.Context(), "WITH n, , {active: true} AS meta")
 		require.Len(t, withClause.Items, 2)
 		assert.Equal(t, ASTExprVariable, withClause.Items[0].Expression.Type)
 		assert.Equal(t, ASTExprMap, withClause.Items[1].Expression.Type)
@@ -103,20 +118,20 @@ func TestASTBuilderDirectHelperCoverage(t *testing.T) {
 	})
 
 	t.Run("parseClause populates remove limit skip and passthrough union", func(t *testing.T) {
-		clause := builder.parseClause(ASTClauseRemove, "REMOVE n.legacy", 10)
+		clause := builder.parseClause(t.Context(), ASTClauseRemove, "REMOVE n.legacy", 10)
 		require.NotNil(t, clause.Remove)
 		assert.Equal(t, "legacy", clause.Remove.Items[0].Property)
 		assert.Equal(t, 10+len("REMOVE n.legacy"), clause.EndPos)
 
-		clause = builder.parseClause(ASTClauseLimit, "LIMIT 7", 0)
+		clause = builder.parseClause(t.Context(), ASTClauseLimit, "LIMIT 7", 0)
 		require.NotNil(t, clause.Limit)
 		assert.Equal(t, int64(7), *clause.Limit)
 
-		clause = builder.parseClause(ASTClauseSkip, "SKIP 3", 0)
+		clause = builder.parseClause(t.Context(), ASTClauseSkip, "SKIP 3", 0)
 		require.NotNil(t, clause.Skip)
 		assert.Equal(t, int64(3), *clause.Skip)
 
-		clause = builder.parseClause(ASTClauseUnion, "UNION", 5)
+		clause = builder.parseClause(t.Context(), ASTClauseUnion, "UNION", 5)
 		assert.Nil(t, clause.Call)
 		assert.Nil(t, clause.Remove)
 	})

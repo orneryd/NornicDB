@@ -10,6 +10,18 @@ func IsQuote(character byte) bool {
 	return character == '\'' || character == '"' || character == '`'
 }
 
+// TrimQuoteWrapper removes a matching outer delimiter around a text span.
+// Internal URL apostrophes remain data; this does not scan a Cypher token.
+func TrimQuoteWrapper(text string, start, end int) int {
+	if start > 0 && end > start {
+		quote := text[start-1]
+		if IsQuote(quote) && text[end-1] == quote {
+			return end - 1
+		}
+	}
+	return end
+}
+
 // IsStringQuote reports whether character starts a Cypher string literal.
 func IsStringQuote(character byte) bool { return character == '\'' || character == '"' }
 

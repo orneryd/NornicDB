@@ -109,10 +109,10 @@ func TestLocalScopeOwners(t *testing.T) {
 
 	// The property-access check reads a local where it is bound.
 	types := map[string]string{"i": "Integer"}
-	require.NoError(t, checkExpressionPropertyAccesses("all(i IN [{p: 1}] WHERE i.p = 1)", types, nil))
-	require.Error(t, checkExpressionPropertyAccesses("i.p = 1 AND all(i IN [{p: 1}] WHERE i.p = 1)", types, nil))
-	require.NoError(t, checkExpressionPropertyAccesses("[i IN [{p: 1}] | [(n)-->(m) | i.p]]", types, nil))
-	require.Error(t, checkExpressionPropertyAccesses("[j IN [1] | [(n)-->(m) | i.p]]", types, nil))
+	require.NoError(t, checkExpressionPropertyAccesses(t.Context(), "all(i IN [{p: 1}] WHERE i.p = 1)", types, nil))
+	require.Error(t, checkExpressionPropertyAccesses(t.Context(), "i.p = 1 AND all(i IN [{p: 1}] WHERE i.p = 1)", types, nil))
+	require.NoError(t, checkExpressionPropertyAccesses(t.Context(), "[i IN [{p: 1}] | [(n)-->(m) | i.p]]", types, nil))
+	require.Error(t, checkExpressionPropertyAccesses(t.Context(), "[j IN [1] | [(n)-->(m) | i.p]]", types, nil))
 	require.Equal(t, types, newLocalReader("[i IN l | i]").withoutTypes(types, 0))
 }
 
@@ -269,11 +269,11 @@ func TestLocalScopeRound4Edges(t *testing.T) {
 	require.Equal(t, "CALL db.labels() YIELD label", maskNestedScopeBodies("CALL db.labels() YIELD label"))
 	require.Equal(t, "CALL { RETURN 1", maskNestedScopeBodies("CALL { RETURN 1"))
 
-	_, _, ok, err := callSubqueryImports("CALL db.labels()", typeScope{})
+	_, _, ok, err := callSubqueryImports(t.Context(), "CALL db.labels()", typeScope{})
 	require.NoError(t, err)
 	require.False(t, ok)
 	exec := &StorageExecutor{}
-	returned, err := exec.callSubqueryReturnTypes("CALL db.labels()", nil, typeScope{}, false)
+	returned, err := exec.callSubqueryReturnTypes(t.Context(), "CALL db.labels()", nil, typeScope{}, false)
 	require.NoError(t, err)
 	require.Nil(t, returned)
 }

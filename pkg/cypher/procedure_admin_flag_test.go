@@ -19,7 +19,7 @@ func TestProcedureAdminFlagIsTheAuthorizationRequirement(t *testing.T) {
 		t.Fatal("no procedures registered")
 	}
 	for _, procedure := range procedures {
-		requirements := QueryPermissionRequirements("CALL " + procedure.Name + "()")
+		requirements := QueryPermissionRequirements(t.Context(), "CALL "+procedure.Name+"()")
 		if requirements.Admin != procedure.Admin {
 			t.Errorf("%s: authorization requires admin=%v, Admin flag is %v", procedure.Name, requirements.Admin, procedure.Admin)
 		}

@@ -1,5 +1,7 @@
 package cypher
 
+import "context"
+
 import "strings"
 
 // expressionSubqueryClauseBindingError protects an expression subquery's
@@ -7,7 +9,7 @@ import "strings"
 // through WITH or RETURN, including redundant grouping, keeps its binding;
 // assigning a new value to that name shadows it. CALL bodies permit
 // redeclaring imports (enclosing.outer is false).
-func expressionSubqueryClauseBindingError(clause pipelineClause, enclosing subqueryScope) error {
+func expressionSubqueryClauseBindingError(ctx context.Context, clause pipelineClause, enclosing subqueryScope) error {
 	if !enclosing.outer {
 		return nil
 	}
@@ -29,7 +31,7 @@ func expressionSubqueryClauseBindingError(clause pipelineClause, enclosing subqu
 		projection, _ := projectionSemanticBodyAndTail(clause.text, keyword)
 		projection, _ = cutDistinct(strings.TrimSpace(projection))
 		for _, raw := range splitTopLevelComma(projection) {
-			expression, alias := parseProjectionExprAlias(strings.TrimSpace(raw))
+			expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
 			if err := check(expression, alias); err != nil {
 				return err
 			}

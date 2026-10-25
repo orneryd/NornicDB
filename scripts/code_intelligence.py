@@ -149,7 +149,7 @@ def check_staged(root):
     import pr_duplicates as pd
     raw = git(root, "diff", "--cached", "--unified=0", "--no-renames", "--no-color")
     diff = pd.parse_diff(raw)
-    if not any(Path(path).suffix.lower() in CODE_SUFFIXES and data.added for path, data in diff.items()):
+    if not any(Path(path).suffix.lower() in CODE_SUFFIXES and data.added and not pd.ignored(path, pd.DEFAULT_IGNORE) for path, data in diff.items()):
         print("Code intelligence: no staged source additions to check.")
         return
     uri, user, password, token = connection()
@@ -162,6 +162,17 @@ def check_staged(root):
         raise CheckError(f"git rev-parse failed: {revision.stderr.strip()}")
     head = revision.stdout.strip() if revision.returncode == 0 else ""
     staged = git(root, "write-tree")
+    import duplicate_check_cache as cache
+    cache_db = pd.NornicDB(uri, user, password, token, database, require_scores=True, repo=repo,
+                           deadline=time.monotonic()+30)
+    baseline = cache.baseline(cache_db, repo)
+    receipt_path, receipt_key = cache.receipt(root, staged, head,
+        {'uri':uri,'repo':repo,'database':database}, baseline)
+    if cache.passed(receipt_path, receipt_key):
+        if git(root, "write-tree") != staged:
+            raise CheckError("Index changed during cached-pass validation")
+        print("Mandatory duplicate check: cached successful result for unchanged staged tree and graph baseline.")
+        return
     with tempfile.TemporaryDirectory(prefix="nornic-staged-") as temp:
         directory = Path(temp)
         source = snapshot(root, staged, directory)
@@ -173,7 +184,8 @@ def check_staged(root):
         try:
             report = pd.analyze(db, repo, graph, source, diff, head_sha=head, base_sha=head,
                                 options={"search_limit": 1000, "max_candidates": sys.maxsize, "min_added_fraction": 0.0, "max_matches": 0,
-                                         "deadline_seconds": deadline_seconds},
+                                         "deadline_seconds": deadline_seconds,
+                                         "search_workers": int(os.environ.get("CODE_INTEL_SEARCH_WORKERS", "4"))},
                                 ignore=pd.DEFAULT_IGNORE)
         except pd.AnalysisError as error:
             raise CheckError(str(error)) from error
@@ -187,6 +199,11 @@ def check_staged(root):
         if report.reuse_candidates or report.refactor_targets:
             print(REFACTOR_INSTRUCTIONS, flush=True)
             raise CheckError("Commit blocked: fold the reported reuse/refactor candidates into their existing owner before retrying.")
+        if git(root, "write-tree") != staged:
+            raise CheckError("Index changed during duplicate analysis; rerun check-in.")
+        if cache.baseline(cache_db, repo) != baseline:
+            raise CheckError("Graph baseline changed during duplicate analysis; rerun check-in.")
+        cache.record(receipt_path, receipt_key)
 
 
 def main(argv=None):
@@ -224,6 +241,8 @@ def main(argv=None):
     else:
         return 0
     if args.command == "check-staged":
+        import duplicate_check_cache as cache
+        cache.invalidate(root)
         print(MANDATORY, file=sys.stderr)
     return 1
 

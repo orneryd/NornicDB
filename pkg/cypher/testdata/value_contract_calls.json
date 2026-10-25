@@ -333,9 +333,9 @@
     "reason": "Cypher three-valued equality or APOC value lookup; the domain adapter declares equality and its null policy."
   },
   {
-    "id": "clauses.go:*StorageExecutor.executeUnionBranches:addTupleByContract:1",
+    "id": "clauses.go:*StorageExecutor.executeUnion:addTupleByContract:1",
     "file": "clauses.go",
-    "caller": "*StorageExecutor.executeUnionBranches",
+    "caller": "*StorageExecutor.executeUnion",
     "callee": "addTupleByContract",
     "contract": "cypherEquivalenceContract",
     "line": 0,

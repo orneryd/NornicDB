@@ -42,7 +42,7 @@ func (r PermissionRequirements) AdminGrantedBy(allowsBoosted func(procedure stri
 
 // QueryPermissionRequirements returns the permissions required by a query and
 // a registered procedure invoked by that query, when present.
-func QueryPermissionRequirements(query string) PermissionRequirements {
+func QueryPermissionRequirements(ctx context.Context, query string) PermissionRequirements {
 	query = classificationText(query)
 	requirements := PermissionRequirements{
 		Read:   true,
@@ -51,7 +51,7 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 	}
 	if !requirements.Schema && !requirements.Admin {
 		_, body := parseExecutionMode(query)
-		contract, _ := readStatementExecutionContract(body)
+		contract, _ := readStatementExecutionContract(ctx, body)
 		requirements.Write = contract.writes
 	}
 
@@ -63,7 +63,7 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 	// An administration command needs admin whatever it calls; otherwise
 	// the admin procedures the query calls are listed for procedure grants.
 	adminCommand := requirements.Admin
-	for _, procedure := range registeredProceduresForCalls(query) {
+	for _, procedure := range RegisteredProceduresForCalls(ctx, query) {
 		switch procedure.Mode {
 		case ProcedureModeWrite:
 			requirements.Write = true
@@ -86,38 +86,38 @@ func QueryPermissionRequirements(query string) PermissionRequirements {
 	return requirements
 }
 
-// registeredProceduresForCalls returns the registered procedures named by
-// every CALL clause of query, wherever it stands (after another CALL's
-// YIELD, in a CALL { } / EXISTS { } / COUNT { } subquery, ...). CALL inside
-// string literals and comments is not a clause. Backticked name parts are
-// unquoted, as the executor resolves them.
-func registeredProceduresForCalls(query string) []ProcedureSpec {
+// RegisteredProceduresForCalls returns the registered procedures named by every
+// grammar-owned CALL clause, including nested subqueries. Strings and comments
+// do not add calls; quoted name parts use the same registry identity as execution.
+// For example, RegisteredProceduresForCalls(ctx, "CALL db.labels()") resolves
+// the declaration listed by SHOW PROCEDURES without exposing its handler.
+func RegisteredProceduresForCalls(ctx context.Context, query string) []ProcedureSpec {
+	structure, err := cypherantlr.ParseSyntax(ctx, query, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		return nil
+	}
 	var procedures []ProcedureSpec
-	visitRegisteredProcedureCalls(query, func(procedure ProcedureSpec, _ string) bool {
+	visitStatementProcedureSyntax(structure, nil, func(procedure ProcedureSpec, _ string) bool {
 		procedures = append(procedures, procedure)
 		return false
 	})
 	return procedures
 }
 
-// visitRegisteredProcedureCalls is the registry-backed CALL reader shared by
-// authorization and transaction admission. A true visit stops the scan without
-// materializing a list of complete procedure specifications.
-func visitRegisteredProcedureCalls(query string, visit func(ProcedureSpec, string) bool) bool {
-	structure, err := cypherantlr.ParseSyntax(context.Background(), query, cypherantlr.FragmentEntry, false)
-	if err != nil {
-		return false
-	}
-	return visitStructuredProcedureCalls(structure, visit)
-}
-
-// visitStructuredProcedureCalls visits only grammar-owned procedure invocation
-// nodes. Authorization and execution admission share this live registry reader.
-func visitStructuredProcedureCalls(structure cypherantlr.StatementSyntax, visit func(ProcedureSpec, string) bool) bool {
+// visitStatementProcedureSyntax is the single grammar walk for structural
+// statement admission and live registered-procedure resolution. inspect observes
+// every syntax node; visit observes resolved declarations and may stop the walk.
+func visitStatementProcedureSyntax(structure cypherantlr.StatementSyntax, inspect func(cypherantlr.SyntaxNode), visit func(ProcedureSpec, string) bool) bool {
 	ensureBuiltInProceduresRegistered()
 	stopped := false
 	structure.Walk(func(node cypherantlr.SyntaxNode) func() {
-		if stopped || (node.Rule() != cypherantlr.CypherParserRULE_queryCallSt && node.Rule() != cypherantlr.CypherParserRULE_standaloneCall) {
+		if stopped {
+			return nil
+		}
+		if inspect != nil {
+			inspect(node)
+		}
+		if node.Rule() != cypherantlr.CypherParserRULE_queryCallSt && node.Rule() != cypherantlr.CypherParserRULE_standaloneCall {
 			return nil
 		}
 		name := node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
@@ -625,8 +625,17 @@ func AuthorizeQuery(ctx context.Context, query string) error {
 	if hasPermission == nil {
 		return nil
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	requirements := QueryPermissionRequirements(ctx, query)
+	// An interrupted structural reader has no complete permission verdict.
+	// Never authorize its declined write classification as a read statement.
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	allowsBoosted, _ := ctx.Value(procedureGrantCheckerKey{}).(func(string) bool)
-	if missing := MissingPermission(QueryPermissionRequirements(query), hasPermission, allowsBoosted); missing != "" {
+	if missing := MissingPermission(requirements, hasPermission, allowsBoosted); missing != "" {
 		return &PermissionDeniedError{Permission: missing}
 	}
 	return nil
@@ -733,17 +742,6 @@ func (p PrincipalAccess) Allows(graph, permission string) bool {
 		return access.Write
 	}
 	return p.Entitlement == nil || p.Entitlement(permission)
-}
-
-// RegisteredProcedureForCall resolves a CALL statement through the canonical
-// procedure registry without exposing handlers to callers.
-func RegisteredProcedureForCall(query string) (ProcedureSpec, bool) {
-	ensureBuiltInProceduresRegistered()
-	procedure, found := globalProcedureRegistry.Get(extractProcedureName(query))
-	if !found {
-		return ProcedureSpec{}, false
-	}
-	return procedure.Spec, true
 }
 
 // authorizeDatabase requires permission on database when the context

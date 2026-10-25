@@ -34,6 +34,9 @@ func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string
 		return boundScopeAdmission{command: true}, nil
 	}
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25")
+	if err := ctx.Err(); err != nil {
+		return boundScopeAdmission{}, err
+	}
 	if err != nil {
 		// Non-graph commands retain their command owner's terminal diagnostic.
 		if startsWithKeywordFold(strings.TrimSpace(source), "SHOW") || startsWithKeywordFold(strings.TrimSpace(source), "DROP") {
@@ -61,7 +64,7 @@ func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string
 		for name := range pipelineImports(ctx) {
 			retained = append(retained, name)
 		}
-		program := e.projectedStatementScope(source, resultmetadata.Known(incoming), resultmetadata.Known(retained), cypherVersionFromContext(ctx) == "25")
+		program := e.projectedStatementScope(ctx, source, resultmetadata.Known(incoming), resultmetadata.Known(retained), cypherVersionFromContext(ctx) == "25")
 		if !program.complete {
 			if program.err != nil {
 				return boundScopeAdmission{}, program.err
@@ -71,7 +74,11 @@ func (e *StorageExecutor) admitBoundStatement(ctx context.Context, source string
 		return boundScopeAdmission{graph: true, columns: program.statement.Columns, program: program.bound}, nil
 	}
 	admission := boundScopeAdmission{}
-	e.StatementFactsWith(source, resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25", schema).Visit(func(statement resultmetadata.Statement) {
+	program := e.statementProjectionProgram(ctx, source, resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25", schema)
+	if err := ctx.Err(); err != nil {
+		return boundScopeAdmission{}, err
+	}
+	program.facts.Visit(func(statement resultmetadata.Statement) {
 		admission = boundScopeAdmission{graph: true, columns: statement.Columns}
 	}, func() { err = unresolvedStatementError() }, func(reason resultmetadata.Unresolved) { err = reason.Err })
 	return admission, err

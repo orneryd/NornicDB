@@ -9,7 +9,7 @@ import (
 )
 
 func TestUnwindCallInTransactionsPipeline_BatchesSeeStatementParameters(t *testing.T) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	_, err := exec.Execute(context.Background(), "UNWIND $rows AS x CALL { WITH x CREATE (:T {v: x, tag: $tag}) } IN TRANSACTIONS OF 2 ROWS", map[string]interface{}{
 		"tag":  "batched",
 		"rows": []interface{}{int64(1), int64(2), int64(3)},
@@ -22,7 +22,7 @@ func TestUnwindCallInTransactionsPipeline_BatchesSeeStatementParameters(t *testi
 }
 
 func TestVariableScopeCallInTransactionsFallback_BatchesSeeStatementParameters(t *testing.T) {
-	exec := NewStorageExecutorWithQueryCachePolicy(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), 0, 0)
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	_, err := exec.Execute(context.Background(), "UNWIND range(1, 3) AS i CREATE (:X {id: i})", nil)
 	require.NoError(t, err)
 	seeds, err := exec.storage.GetNodesByLabel("X")

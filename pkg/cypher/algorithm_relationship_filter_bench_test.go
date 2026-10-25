@@ -34,7 +34,7 @@ func BenchmarkAlgorithmRelationshipFilters(b *testing.B) {
 	for _, proc := range []string{"pageRank", "betweenness", "closeness", "louvain", "labelPropagation", "wcc"} {
 		for _, filtered := range []bool{false, true} {
 			b.Run(fmt.Sprintf("%s/filtered=%t", proc, filtered), func(b *testing.B) {
-				exec := NewStorageExecutorWithQueryCachePolicy(store, 0, 0)
+				exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0, TTL: 0})
 				args := "['P']"
 				if filtered {
 					args += ", ['K']"

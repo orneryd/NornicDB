@@ -1,0 +1,8 @@
+{
+  "pkg/observability/redaction_display.go:ContextCredentials 0a992c5c5dd972fbbafdf94abcad5b0f1d9633045d2f2e8530ff64987f06b61f": "Source-only helper: extracts URL-owned values into the caller-provided redaction set. Its output is internal credential data, not a display or transport sink.",
+  "pkg/observability/redaction_display.go:ContextCredentials ff4d74f0fc3cd5c49c960e323f701f63620eaed6a5c6366689a1434042f66efe": "Source-only helper: extracts grammar-validated URL-owned values for the caller's redaction set; it does not render, log, persist, or transmit them.",
+  "pkg/memory/wire_request.go:HTTPRequestWireBytes 2bb70c251f1685decc6eaecc3b3082f2ee87729e1a6ed97c0a0cb0e23ae14928": "Counts the request URI length for admission accounting and returns only a byte count; it does not emit or persist the URI.",
+  "pkg/memory/wire_request.go:HTTPRequestWireBytes 8eede98814d740272dd6edf07c1f1573ea743808a3a3167ac1341696dbc40bf9": "Counts the request URI length for admission accounting and returns only a byte count; it does not emit or persist the URI.",
+  "pkg/server/metadata_admission.go:bodylessControlRequest d737e993b22a68a918e35d79c0afa5fd13df6402945f07b7c1f0f1bb3ed5877f": "Classifies a request from method, path, and body metadata and returns a boolean. It does not log, persist, or send URL text.",
+  "pkg/server/server_middleware.go:*Server.requestTimeoutMiddleware a7cbbded7439e81dfae13f8b2910f327732abc643f9d6f7f2d138093c65c9561": "Chooses a fixed timeout response using URL.Path and passes the request to the in-process handler; it does not expose query or userinfo text."
+}

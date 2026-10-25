@@ -26,7 +26,7 @@ def main():
     runtime, hooks = home / "runtime", home / "hooks"
     runtime.mkdir(parents=True, exist_ok=True)
     hooks.mkdir(parents=True, exist_ok=True)
-    for name in ["code_intelligence.py", "graphify_local.py", "pr_duplicates.py", "code-intelligence-hook.sh", "requirements-code-intelligence.txt"]:
+    for name in ["code_intelligence.py", "duplicate_check_cache.py", "graphify_local.py", "pr_duplicates.py", "code-intelligence-hook.sh", "requirements-code-intelligence.txt"]:
         shutil.copy2(source / name, runtime / name)
     shutil.copy2(source / "code-intelligence-global-hook.sh", runtime / "code-intelligence-global-hook.sh")
     previous = config("--get", "core.hooksPath").stdout.strip()

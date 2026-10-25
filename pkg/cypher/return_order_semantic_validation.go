@@ -1,14 +1,16 @@
 package cypher
 
+import "context"
+
 import "strings"
 
-func validateReturnOrderBySemanticScope(clause string) error {
-	return validateReturnOrderBySemanticScopeIn(clause, nil)
+func validateReturnOrderBySemanticScope(ctx context.Context, clause string) error {
+	return validateReturnOrderBySemanticScopeIn(ctx, clause, nil)
 }
 
 // Retained imports are available throughout a subquery, including a DISTINCT
 // or aggregating horizon's ORDER BY. They remain outside its projection key.
-func validateReturnOrderBySemanticScopeIn(clause string, retained typeScope) error {
+func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, retained typeScope) error {
 	body := strings.TrimSpace(clause[len("RETURN"):])
 	orderIndex := topLevelKeywordIndex(body, "ORDER BY")
 	if orderIndex < 0 {
@@ -32,7 +34,7 @@ func validateReturnOrderBySemanticScopeIn(clause string, retained typeScope) err
 	// any of them (RETURN DISTINCT *, x AS y ORDER BY z, #883).
 	star := false
 	for _, item := range splitTopLevelComma(projectionBody) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(item))
+		expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
 		if expression == "*" {
 			star = true
 			continue
@@ -150,14 +152,14 @@ func canonicalSemanticExpression(expression string) string {
 	return normalized.String()
 }
 
-func validateReturnAggregationSemantics(body string) error {
-	return validateReturnAggregationSemanticsIn(body, nil)
+func validateReturnAggregationSemantics(ctx context.Context, body string) error {
+	return validateReturnAggregationSemanticsIn(ctx, body, nil)
 }
 
 // validateReturnAggregationSemanticsIn is validateReturnAggregationSemantics
 // with outer's variables constants: in an EXISTS / COUNT / COLLECT body the
 // enclosing query's variables aren't grouping keys.
-func validateReturnAggregationSemanticsIn(body string, outer typeScope) error {
+func validateReturnAggregationSemanticsIn(ctx context.Context, body string, outer typeScope) error {
 	end := len(body)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
 		if index := topLevelKeywordIndex(body, keyword); index >= 0 && index < end {
@@ -170,7 +172,7 @@ func validateReturnAggregationSemanticsIn(body string, outer typeScope) error {
 	aliases := make(map[string]struct{})
 	expressions := make([]string, 0)
 	for _, item := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(strings.TrimSpace(item))
+		expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
 		expressions = append(expressions, expression)
 		if alias != "" && alias != expression {
 			aliases[normalizeProjectionColumnName(alias)] = struct{}{}

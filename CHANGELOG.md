@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Embedded Go query readers now take explicit request contexts, and executor cache
+  policy is configured on `NewStorageExecutor`. Migrate callers using the
+  [Go API migration guide](docs/api-reference/README.md#embedded-go-query-readers-v144-migration).
+
 - Update llama.cpp libraries and headers to v0.7.0, the Windows yzma adapter
   to v1.30.0, and Vite to 8.3.5 from Dependabot PR #1626.
 
@@ -33,6 +37,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Preserve public parser RETURN items, aliases and DISTINCT through the shared AST
+  owner, and keep quoted clause keywords inside their expressions.
+
+- Propagate request cancellation through shared query readers, semantic validation,
+  result metadata and cache admission, preserving live query and permission behavior.
+- Share retained FOREACH bodies and CALL/UNION projection owners while preserving
+  declared null fields, statistics and variable scope.
+
+- Migrate the Go URL validator to `ValidateURL(url, URLPolicy)` with production
+  defaults and explicit development/eval policies; update callers and examples.
+
+- Register WAL recovery, snapshot and replication test databases with the shared
+  fixture lifetime owner so assertion failures still close their resources.
+- Keep generated plugin test sources outside repository package discovery.
+
+- Keep configured credentials out of CLI help, startup and configuration errors,
+  diagnostic URLs, logs, traces, profiler command-line output and provider errors,
+  while preserving runtime authentication and explicit command-line precedence (#1505).
 
 - Keep registered and dynamic procedure writes in the caller's rollback owner,
   enforce one writable composite database, and preserve periodic autocommit batch boundaries.

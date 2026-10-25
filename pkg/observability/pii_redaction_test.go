@@ -129,7 +129,7 @@ func TestPIICorpus_BoltHelloCredentialNeverOnSpan(t *testing.T) {
 	}
 
 	for _, key := range boltAuthKeys {
-		assert.True(t, isSensitiveKey(key),
+		assert.True(t, spanSensitiveNames().isSensitive(key),
 			"Bolt auth key %q must be detected as sensitive", key)
 	}
 }

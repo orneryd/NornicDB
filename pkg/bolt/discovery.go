@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
+	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/security"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -41,63 +43,56 @@ type discoveryBody struct {
 func validateDiscoveryURL(field, s string) error {
 	u, err := url.Parse(s)
 	if err != nil {
-		return fmt.Errorf("discovery: %s is not a valid URL: %w", field, err)
+		return fmt.Errorf("discovery: %s is not a valid URL: %w", field, observability.RedactError(err, observability.ClientCredentials(s)...))
 	}
 	if u.Scheme == "" || u.Host == "" {
-		return fmt.Errorf("discovery: %s must have a scheme and host (got %q)", field, s)
+		return fmt.Errorf("discovery: %s must have a scheme and host (got %q)", field, observability.RedactURL(s))
 	}
 	return nil
-}
-
-// buildDiscoveryBody returns marshalled JSON for the configured-OAuth case
-// or nil for the empty-body Community-parity case. Validates Issuer and
-// CallbackURL syntax; returns error on malformed URLs.
-func buildDiscoveryBody(oauthCfg *auth.OAuthConfig) ([]byte, error) {
-	if oauthCfg == nil || !oauthCfg.IsConfigured() {
-		return nil, nil
-	}
-
-	if err := validateDiscoveryURL("Issuer", oauthCfg.Issuer); err != nil {
-		return nil, err
-	}
-	if err := validateDiscoveryURL("CallbackURL", oauthCfg.CallbackURL); err != nil {
-		return nil, err
-	}
-
-	issuer := strings.TrimRight(oauthCfg.Issuer, "/")
-
-	body := discoveryBody{
-		DefaultProvider: "nornic-oauth",
-		Providers: []discoveryProvider{
-			{
-				ID:                      "nornic-oauth",
-				Name:                    "OAuth",
-				AuthProvider:            "oauth",
-				AuthEndpoint:            issuer + "/oauth2/v1/authorize",
-				TokenEndpoint:           issuer + "/oauth2/v1/token",
-				AuthFlow:                "pkce",
-				ClientID:                oauthCfg.ClientID,
-				RedirectURI:             oauthCfg.CallbackURL,
-				Scopes:                  []string{"openid", "profile", "email"},
-				Audience:                "nornic",
-				WellKnownDiscoveryURI:   issuer + "/.well-known/openid-configuration",
-				TokenTypePrincipal:      "id_token",
-				TokenTypeAuthentication: "id_token",
-			},
-		},
-	}
-
-	return json.Marshal(body)
 }
 
 // buildDiscoveryResponse returns the full pre-encoded HTTP/1.1 response
 // (status line + 5 headers + body + CRLFs). The Date header is rebuilt
 // each call; production callers should cache the slice and refresh it on
-// a 1s ticker. Returns error if buildDiscoveryBody errors.
+// a 1s ticker. Configured OAuth URLs are validated before any response is emitted.
+// RedirectURI must match CallbackURL exactly for the actual OAuth flow.
 func buildDiscoveryResponse(oauthCfg *auth.OAuthConfig, now time.Time) ([]byte, error) {
-	body, err := buildDiscoveryBody(oauthCfg)
-	if err != nil {
-		return nil, err
+	var body []byte
+	if oauthCfg != nil && oauthCfg.IsConfigured() {
+		if err := security.ValidateURL(oauthCfg.Issuer, security.URLPolicy{SchemePolicy: security.URLAbsoluteScheme, MaxLength: -1, HostPolicy: security.URLAnyHost, RejectCredentials: true}); err != nil {
+			return nil, fmt.Errorf("invalid OAuth issuer: %w", err)
+		}
+		if err := validateDiscoveryURL("CallbackURL", oauthCfg.CallbackURL); err != nil {
+			return nil, err
+		}
+
+		issuer := oauthCfg.Issuer
+
+		payload := discoveryBody{
+			DefaultProvider: "nornic-oauth",
+			Providers: []discoveryProvider{
+				{
+					ID:                      "nornic-oauth",
+					Name:                    "OAuth",
+					AuthProvider:            "oauth",
+					AuthEndpoint:            issuer + "/oauth2/v1/authorize",
+					TokenEndpoint:           issuer + "/oauth2/v1/token",
+					AuthFlow:                "pkce",
+					ClientID:                oauthCfg.ClientID,
+					RedirectURI:             oauthCfg.CallbackURL,
+					Scopes:                  []string{"openid", "profile", "email"},
+					Audience:                "nornic",
+					WellKnownDiscoveryURI:   issuer + "/.well-known/openid-configuration",
+					TokenTypePrincipal:      "id_token",
+					TokenTypeAuthentication: "id_token",
+				},
+			},
+		}
+		var err error
+		body, err = json.Marshal(payload)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	bodyLen := len(body) // nil body => 0
