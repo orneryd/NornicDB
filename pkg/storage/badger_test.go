@@ -1090,6 +1090,7 @@ func TestBadgerEngine_BulkCreateNodes(t *testing.T) {
 			testNode("notify-2"),
 		}
 		require.NoError(t, engine2.BulkCreateNodes(nodes))
+		engine2.WaitForListeners()
 		assert.ElementsMatch(t, []NodeID{nodes[0].ID, nodes[1].ID}, created)
 	})
 }
@@ -1166,6 +1167,7 @@ func TestBadgerEngine_BulkCreateEdges(t *testing.T) {
 
 		edges := []*Edge{testEdge("edge-notify", "edge-notify-1", "edge-notify-2", "LINK")}
 		require.NoError(t, engine2.BulkCreateEdges(edges))
+		engine2.WaitForListeners()
 		assert.Equal(t, []EdgeID{edges[0].ID}, created)
 	})
 }

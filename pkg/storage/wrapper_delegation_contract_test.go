@@ -555,6 +555,7 @@ func newWrapperDelegationStack(t *testing.T, name string, spy *delegationSpyEngi
 
 func flushDelegationStack(t *testing.T, engine Engine) {
 	t.Helper()
+	defer WaitForListeners(engine)
 	for {
 		if flusher, ok := engine.(interface{ Flush() error }); ok {
 			require.NoError(t, flusher.Flush())

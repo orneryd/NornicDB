@@ -51,7 +51,9 @@ func runCommitCacheReplayImages(t *testing.T, route string, seed int64) {
 			require.NoError(t, tx.UpdateNode(node))
 		}
 	}
-	require.NoError(t, tx.Commit())
+	if route == "wal-recovery" {
+		require.NoError(t, tx.Commit())
+	}
 	b := producer
 	replay := producer.FlushWriteBehind
 	if route == "wal-recovery" {
@@ -92,6 +94,9 @@ func runCommitCacheReplayImages(t *testing.T, route string, seed int64) {
 			<-resume
 		}
 	})
+	if route == "buffered-flush" {
+		require.NoError(t, tx.Commit())
+	}
 	done := make(chan error, 1)
 	t.Cleanup(func() {
 		release()

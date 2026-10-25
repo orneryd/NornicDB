@@ -38,7 +38,8 @@ type commitWriter struct {
 	pendingEmbeddingIDs map[NodeID]struct{}
 	// prev is the batch most recently written, whose counters the next
 	// batch takes over.
-	prev *badger.Txn
+	prev       *badger.Txn
+	versionTxn *badger.Txn
 	// beforeLarge, when set, runs once before the commit becomes large,
 	// i.e. before the exclusive commit gate is taken.
 	beforeLarge func()
@@ -56,6 +57,9 @@ func (b *BadgerEngine) newCommitWriter(scope nodeCacheWriteScope, db *managedBad
 		return nil, err
 	}
 	cw := &commitWriter{engine: b, db: db, cacheScope: scope}
+	if b.writeBehind != nil {
+		cw.versionTxn = txn
+	}
 	cw.batchWriter = batchWriter{txn: txn, to: cw}
 	return cw, nil
 }
@@ -67,6 +71,9 @@ func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
 		if err := nodeCacheScopeCheck(txn, cw.cacheScope); err != nil {
 			return err
 		}
+	}
+	if cw.versionTxn != nil {
+		cw.engine.moveCommitVersions(txn, cw.versionTxn)
 	}
 	cw.collectPendingEmbeddingAdds(txn)
 	if cw.large == nil {
@@ -122,6 +129,7 @@ func (cw *commitWriter) commitTokens(txn *badger.Txn) error {
 // tokens, or a large commit's last batch, publishing it. On error the
 // caller must abort.
 func (cw *commitWriter) finish(cacheToken ...uint64) error {
+	defer cw.releaseVersions()
 	if err := admitDurableWrite(cw.cacheScope); err != nil {
 		return err
 	}
@@ -155,6 +163,7 @@ func (cw *commitWriter) finish(cacheToken ...uint64) error {
 // belongs to the caller, which discards it. An error means the rollback
 // failed and the engine refuses writes until restart (commitOracle.fail).
 func (cw *commitWriter) abort() error {
+	defer cw.releaseVersions()
 	cw.engine.pendingEmbeddingAdds.Delete(cw.txn)
 	if cw.large == nil {
 		return nil

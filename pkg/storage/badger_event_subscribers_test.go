@@ -33,6 +33,7 @@ func TestBadgerEventCallbacksFanOut(t *testing.T) {
 	engine.notifyEdgeCreated(&Edge{ID: "test:r"})
 	engine.notifyEdgeUpdated(&Edge{ID: "test:r"})
 	engine.notifyEdgeDeleted("test:r")
+	engine.WaitForListeners()
 	require.Equal(t, []string{
 		"first created test:n", "second created test:n",
 		"first updated test:n", "second updated test:n",

@@ -18,6 +18,30 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 	if !b.decayEnabled {
 		return false, nil
 	}
+	finish, admissionErr := b.beginEventPublication()
+	if admissionErr != nil {
+		return false, admissionErr
+	}
+	defer finish()
+	releaseWrite, writeErr := b.beginWrite()
+	if writeErr != nil {
+		return false, writeErr
+	}
+	defer releaseWrite()
+	var nodes []NodeID
+	var edges []EdgeID
+	if isEdge {
+		edges = []EdgeID{EdgeID(entityID)}
+	} else {
+		nodes = []NodeID{NodeID(entityID)}
+	}
+	releaseOrder, err := b.orderDirectEntities(nodes, edges, false, false)
+	if err != nil {
+		return false, err
+	}
+	defer releaseOrder()
+	var notification *commitNotification
+	defer func() { b.completeCommitNotification(notification) }()
 
 	becameSuppressed := false
 	var nodeChanged *Node
@@ -26,7 +50,7 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 	if !isEdge {
 		scope = singleNodeCacheWrites(NodeID(entityID))
 	}
-	err := b.withUpdate(scope, func(txn *badger.Txn) error {
+	err = b.withUpdate(scope, func(txn *badger.Txn) error {
 		if isEdge {
 			changed, mutation, err := b.evaluateEdgeSuppressionInTxn(txn, EdgeID(entityID))
 			edgeChanged = mutation
@@ -41,6 +65,13 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 			becameSuppressed = true
 		}
 		return err
+	}, func() {
+		if nodeChanged != nil {
+			notification = b.reserveCommitOperations([]Operation{{Type: OpUpdateNode, Node: nodeChanged}})
+		}
+		if edgeChanged != nil {
+			notification = b.reserveCommitOperations([]Operation{{Type: OpUpdateEdge, Edge: edgeChanged}})
+		}
 	})
 	if err == nil && nodeChanged != nil {
 		// Suppression rewrites the persisted body without UpdateNode. Drop both
@@ -48,14 +79,14 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 		// and report the change as an update, as UpdateNode does: search drops a
 		// suppressed node and indexes one shown again.
 		b.cacheDeleteNode(NodeID(entityID))
-		b.notifyNodeUpdated(nodeChanged)
+		b.prepareCommitOperations([]Operation{{Type: OpUpdateNode, Node: nodeChanged}}, false)
 	}
 	if err == nil && edgeChanged != nil {
 		// A policy transition rewrites the relationship body just like UpdateEdge.
 		// Publish it through the same cache lifecycle so adjacency/type reads do
 		// not retain a suppressed body or an empty filtered scan after relaxation.
 		b.cacheOnEdgeUpdated(edgeChanged.Type, edgeChanged)
-		b.notifyEdgeUpdated(edgeChanged)
+		b.prepareCommitOperations([]Operation{{Type: OpUpdateEdge, Edge: edgeChanged}}, false)
 	}
 
 	return becameSuppressed, err

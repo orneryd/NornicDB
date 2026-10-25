@@ -65,11 +65,11 @@ func TestBadgerEngine_EventSetterCallbacks(t *testing.T) {
 	b.OnEdgeDeleted(edgeDeleted)
 
 	b.callbackMu.RLock()
-	defer b.callbackMu.RUnlock()
 	assert.NotNil(t, b.onNodeUpdated)
 	assert.NotNil(t, b.onEdgeCreated)
 	assert.NotNil(t, b.onEdgeUpdated)
 	assert.NotNil(t, b.onEdgeDeleted)
+	b.callbackMu.RUnlock()
 
 	b.notifyNodeCreated(testNode("evt-node"))
 	b.notifyNodeUpdated(testNode("evt-node"))
@@ -77,6 +77,7 @@ func TestBadgerEngine_EventSetterCallbacks(t *testing.T) {
 	b.notifyEdgeCreated(testEdge("evt-edge", "evt-start", "evt-end", "LINK"))
 	b.notifyEdgeUpdated(testEdge("evt-edge", "evt-start", "evt-end", "LINK"))
 	b.notifyEdgeDeleted(EdgeID(prefixTestID("evt-edge")))
+	b.WaitForListeners()
 
 	assert.Equal(t, 1, nodeCreatedCount)
 	assert.Equal(t, 1, nodeDeletedCount)

@@ -66,6 +66,16 @@ type BadgerTransaction struct {
 	// created after our begin) bind to sequence 0, which correctly
 	// treats anything committed under them as post-begin.
 	beginSnapshot map[string]MVCCVersion
+	// beginInflight holds, per namespace, the write-behind versions admitted
+	// but not yet visible when beginSnapshot was taken; readInflight is the
+	// pinned namespace's list. They are newer than the snapshot
+	// (snapshotIsolationConflict).
+	beginInflight map[string][]MVCCVersion
+	bufferEpoch   uint64
+	readInflight  []MVCCVersion
+	// bufferedTargetBuf backs the write targets of a small commit
+	// (bufferedCommitTargetsLocked), so admission allocates none for them.
+	bufferedTargetBuf [4]bufferedTarget
 	// CommitVersion is assigned once for a successful commit that mutates storage.
 	CommitVersion MVCCVersion
 
@@ -116,6 +126,15 @@ type BadgerTransaction struct {
 	commitReleaseWrite   func()
 	commitCountsHeld     bool
 	commitEdgeTypeCounts bool
+	// commitReleaseOrder releases the write-behind commit order Commit holds
+	// with the write barrier (write_behind_commit_order.go).
+	commitReleaseOrder func()
+	// bufferedNotification is the real event reserved at buffered ACK. Commit
+	// publishes its readiness after releasing accounting and admission leases.
+	bufferedNotification *commitNotification
+	// bufferedRetireEpoch is the buffer's retirement count before a buffered
+	// commit validated against Badger (reserveBufferedTargets).
+	bufferedRetireEpoch uint64
 
 	// Parent engine for constraint validation
 	engine *BadgerEngine
@@ -276,12 +295,16 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 	badgerDB := b.db
 	b.mu.RUnlock()
 
-	snapshotTx, badgerReadTs, err := badgerDB.beginTxn(false)
+	// Under write-behind no synchronous write may be between its version
+	// allocation and its publication while the snapshot is taken.
+	var bufferEpoch uint64
+	if b.writeBehind != nil {
+		bufferEpoch = b.writeBehind.readEpoch.Load()
+	}
+	snapshotTx, badgerReadTs, readTS, beginSnapshot, beginInflight, err := b.captureCommitSnapshot(badgerDB)
 	if err != nil {
 		return nil, err
 	}
-	readTS := b.currentMVCCReadVersion("")
-	beginSnapshot := b.snapshotNamespaceVersions()
 	// Unpinned scans span namespaces in the already captured physical snapshot.
 	// A wall-clock-only version (sequence zero) sorts before a committed head
 	// at the same timestamp on coarse clocks, or after a backward clock step.
@@ -302,6 +325,8 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 		Status:                  TxStatusActive,
 		readTS:                  readTS,
 		beginSnapshot:           beginSnapshot,
+		beginInflight:           beginInflight,
+		bufferEpoch:             bufferEpoch,
 		badgerTx:                badgerTx,
 		snapshotTx:              snapshotTx,
 		badgerDB:                badgerDB,
@@ -346,8 +371,15 @@ func (b *BadgerEngine) BeginTransaction() (*BadgerTransaction, error) {
 // namespace that did not exist when we started).
 func (tx *BadgerTransaction) refreshReadVersionForNamespaceLocked() error {
 	readTS, ok := tx.beginSnapshot[tx.namespace]
+	tx.readInflight = tx.beginInflight[tx.namespace]
 	if !ok {
-		readTS = MVCCVersion{CommitTimestamp: tx.StartTime.UTC()}
+		// Namespace state hydrates lazily after reopen. Its absence from the
+		// in-memory begin map does not imply absence from the physical store.
+		// Recover only from our original snapshot, so a later hydration or
+		// peer commit cannot move this transaction's logical boundary.
+		var err error
+		readTS, err = tx.coldNamespaceSnapshot()
+		if err != nil { return err }
 	}
 	tx.readTS = readTS
 	tx.snapshotReaderInfo.SnapshotVersion = readTS
@@ -374,6 +406,9 @@ func (tx *BadgerTransaction) IsActive() bool {
 }
 
 func (tx *BadgerTransaction) closeLocked(status TransactionStatus, discard bool, closedErr error) {
+	if tx.engine != nil && tx.badgerTx != nil {
+		tx.engine.releaseCommitVersions(tx.badgerTx)
+	}
 	if tx.badgerTx != nil && tx.engine != nil && tx.engine.idDict != nil {
 		// Drop any staged counter state. Safe whether the txn
 		// committed (flushTxnCounters already cleared it) or is being
@@ -1344,7 +1379,16 @@ func (tx *BadgerTransaction) DeleteNode(nodeID NodeID) error {
 // commits the same key after this transaction's snapshot validation and
 // before its Badger commit would be overwritten or deleted, and both
 // transactions would commit. A missing key still enrolls the read.
+//
+// Under write-behind no write lands between a synchronous commit's
+// validation and its Badger commit (write_behind_commit_order.go), and the
+// buffer the commit drains first holds images its snapshot already saw or
+// its MVCC validation rejects; enrolling would turn that drain into a false
+// conflict.
 func (tx *BadgerTransaction) enrollCommittedWriteLocked(key []byte, kind string) error {
+	if tx.engine.writeBehind != nil {
+		return nil
+	}
 	if _, err := tx.badgerTx.Get(key); err != nil && err != badger.ErrKeyNotFound {
 		return fmt.Errorf("tracking %s write conflict: %w", kind, err)
 	}
@@ -2870,10 +2914,17 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	var knowledgePolicyChanged func()
 	var notification *commitNotification
 	defer func() {
+		bufferedNotification := tx.bufferedNotification
+		tx.bufferedNotification = nil
 		tx.mu.Unlock()
+		// Own-event readiness follows engine/transaction lease release and
+		// the wrapper's accounting/admission publication. Producers never wait
+		// for callbacks. Explicit caller barriers belong outside other locks
+		// a callback may need.
 		if commitErr == nil && afterPublication != nil {
 			afterPublication()
 		}
+		tx.engine.completeCommitNotification(bufferedNotification)
 		tx.engine.completeCommitNotification(notification)
 		if knowledgePolicyChanged != nil {
 			knowledgePolicyChanged()
@@ -2934,6 +2985,35 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		return err
 	}
 
+	// Temporal history writes are staged before the commit picks its path:
+	// a commit that maintains them lands synchronously. Staging only adds
+	// to the transaction's own pending writes, which validation never reads.
+	temporalTargets, err := tx.bufferTemporalIndexWrites()
+	if err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return fmt.Errorf("buffering temporal index writes: %w", err)
+	}
+
+	// Write-behind buffering: an implicit autocommit commit with no schema,
+	// knowledge-policy or temporal writes is acknowledged after every
+	// validation phase below and replayed into Badger by the background
+	// flusher. Everything that must fail the statement synchronously runs
+	// before the acknowledgement. (Commit holds tx.mu, so read the
+	// knowledge-policy flag directly instead of HasKnowledgePolicyChanges.)
+	// A database that captures changes commits through Badger: its change
+	// events are written in the same commit as the data (#937).
+	buffered := tx.engine.writeBehindEnabled() && tx.implicit && tx.schemaRuntime == nil &&
+		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 &&
+		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff)
+	// The commit's place in the write-behind history is fixed before it
+	// validates against that history (write_behind_commit_order.go).
+	landAll := tx.schemaRuntime != nil || tx.knowledgeSchemaDirty || len(temporalTargets) > 0 ||
+		(tx.namespace != "" && tx.engine.ChangeCapture(tx.namespace) != ChangeCaptureOff)
+	if err := tx.enterWriteBehindCommitOrderLocked(buffered, landAll); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
+
 	// Final constraint validation before commit
 	if err := tx.validateAllConstraints(); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
@@ -2944,21 +3024,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 
 	if err := tx.validateSnapshotIsolationConflicts(); err != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
-		// MERGE-on-same-unique-value race: surface as the consumer-
-		// pinned constraint-violation wire shape so retry classifiers
-		// see the same prefix as a validate-time UNIQUE failure. The
-		// generic SI conflict shape stays unwrapped.
-		var cv *ConstraintViolationError
-		if errors.As(err, &cv) && cv.Type == ConstraintUnique {
-			return localizedError(localization.StorageTransactionConstraintViolation(err), err)
-		}
-		return err
-	}
-
-	temporalTargets, err := tx.bufferTemporalIndexWrites()
-	if err != nil {
-		tx.closeLocked(TxStatusRolledBack, true, nil)
-		return fmt.Errorf("buffering temporal index writes: %w", err)
+		return snapshotConflictCommitError(err)
 	}
 
 	// Log metadata. D-10a bracket-prefix migrated to a transaction_id slog
@@ -2976,17 +3042,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		return tx.abortCommitLocked(err)
 	}
 
-	// Write-behind buffering: an implicit autocommit commit with no schema,
-	// knowledge-policy or temporal writes is acknowledged after every
-	// validation phase above and replayed into Badger by the background
-	// flusher. Everything that must fail the statement synchronously has
-	// already run by this point. (Commit holds tx.mu, so read the
-	// knowledge-policy flag directly instead of HasKnowledgePolicyChanges.)
-	// A database that captures changes commits through Badger: its change
-	// events are written in the same commit as the data (#937).
-	if tx.engine.writeBehindEnabled() && tx.implicit && tx.schemaRuntime == nil &&
-		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 &&
-		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff) {
+	if buffered {
 		return tx.commitBufferedLocked()
 	}
 
@@ -3168,7 +3224,7 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 		}
 	}
 
-	tx.engine.prepareCommitOperations(tx.operations, notification != nil)
+	tx.engine.prepareCommitOperations(tx.operations, false)
 
 	// Update derived unique-constraint caches (in-memory) based on committed operations.
 	// This keeps non-transactional CreateNode() uniqueness checks consistent with transactional writes.
@@ -3178,47 +3234,12 @@ func (tx *BadgerTransaction) commit(afterPublication func()) (commitErr error) {
 	//
 	// NOTE: We don't persist these caches; they are rebuilt from stored nodes on startup.
 	if tx.namespace != "" {
-		schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-		if schema != nil {
-			for _, op := range tx.operations {
-				switch op.Type {
-				case OpCreateNode:
-					if op.Node == nil {
-						continue
-					}
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				case OpUpdateNode:
-					if op.OldNode != nil {
-						for _, label := range op.OldNode.Labels {
-							for propName, propValue := range op.OldNode.Properties {
-								schema.UnregisterUniqueValue(label, propName, propValue)
-							}
-						}
-					}
-					if op.Node != nil {
-						for _, label := range op.Node.Labels {
-							for propName, propValue := range op.Node.Properties {
-								schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-							}
-						}
-					}
-				case OpDeleteNode:
-					if op.OldNode == nil {
-						continue
-					}
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-			}
-		}
+		tx.engine.GetSchemaForNamespace(tx.namespace).publishUniqueValueOperations(tx.operations)
 	}
+
+	// Published: a write-behind commit of the same entities may be ordered
+	// after this one now. The fsync below does not hold the order.
+	tx.releaseWriteBehindOrderLocked()
 
 	// ACID GUARANTEE: Force fsync for EXPLICIT transactions only.
 	// Explicit COMMIT must be durable before we return success (user asked
@@ -3808,6 +3829,19 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 	return nil
 }
 
+// snapshotConflictCommitError shapes a snapshot-isolation failure for the
+// commit's caller. MERGE-on-same-unique-value race: surface as the consumer-
+// pinned constraint-violation wire shape so retry classifiers see the same
+// prefix as a validate-time UNIQUE failure. The generic SI conflict shape
+// stays unwrapped.
+func snapshotConflictCommitError(err error) error {
+	var cv *ConstraintViolationError
+	if errors.As(err, &cv) && cv.Type == ConstraintUnique {
+		return localizedError(localization.StorageTransactionConstraintViolation(err), err)
+	}
+	return err
+}
+
 // snapshotIsolationConflict reports true when the head version was
 // committed STRICTLY AFTER the transaction began, comparing on the
 // per-namespace monotonic commit sequence rather than on wall-clock
@@ -3831,13 +3865,14 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 // distinguish commits by seq, so allocateMVCCVersion forces strictly
 // increasing commit timestamps and this check falls back to
 // timestamp ordering only for the equal-MaxUint64 case.
-// snapshotIsolationConflict reports whether headVersion is logically newer
-// than the transaction's snapshot. Timestamps order commits: the
-// write-behind flusher backdates its heads to the buffered ACK time, so a
-// head the flusher lands after this transaction began can still be older
-// than the snapshot — not a conflict.
+// Buffered replay preserves the version reserved at ACK, including its
+// sequence. A physical publication after Begin is therefore not itself a
+// conflict. A version admitted but unpublished at Begin is still newer
+// (readInflight), even when its sequence precedes the captured high-water.
 func (tx *BadgerTransaction) snapshotIsolationConflict(headVersion MVCCVersion) bool {
-	return headVersion.Compare(tx.readTS) > 0
+	return headVersion.CommitSequence > tx.readTS.CommitSequence ||
+		(headVersion.CommitSequence == maxMVCCCommitSequence && tx.readTS.CommitSequence == maxMVCCCommitSequence && headVersion.Compare(tx.readTS) > 0) ||
+		slices.ContainsFunc(tx.readInflight, func(v MVCCVersion) bool { return v.Compare(headVersion) == 0 })
 }
 
 func (tx *BadgerTransaction) checkNodeCreateConflict(nodeID NodeID) error {
@@ -4712,7 +4747,10 @@ func (tx *BadgerTransaction) observedLocked() bool {
 // caches. The new snapshot is opened first, so a refresh turned away (a
 // restore holding reads) leaves the transaction on its current one.
 func (tx *BadgerTransaction) refreshSnapshotLocked() error {
-	snapshotTx, badgerReadTs, err := tx.badgerDB.beginTxn(false)
+	if tx.engine.writeBehind != nil {
+		tx.bufferEpoch = tx.engine.writeBehind.readEpoch.Load()
+	}
+	snapshotTx, badgerReadTs, _, beginSnapshot, beginInflight, err := tx.engine.captureCommitSnapshot(tx.badgerDB)
 	if err != nil {
 		return err
 	}
@@ -4736,7 +4774,8 @@ func (tx *BadgerTransaction) refreshSnapshotLocked() error {
 	tx.badgerReadTs = badgerReadTs
 	tx.badgerReadHeld = true
 	tx.badgerTx = tx.badgerDB.newTxnAt(badgerReadTs, true)
-	tx.beginSnapshot = tx.engine.snapshotNamespaceVersions()
+	tx.beginSnapshot = beginSnapshot
+	tx.beginInflight = beginInflight
 	tx.clearSnapshotCachesLocked()
 	return tx.refreshReadVersionForNamespaceLocked()
 }

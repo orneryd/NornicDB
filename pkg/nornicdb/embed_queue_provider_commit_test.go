@@ -33,7 +33,7 @@ func TestEmbedWorkerProviderChangeSerializesCommit(t *testing.T) {
 				gate := &providerCommitQueue{queue, make(chan struct{}), make(chan struct{})}
 				worker.storage = gate
 				published := make(chan bool, 1)
-				worker.onEmbedded = func(*storage.Node) { published <- worker.currentEmbedder() == old }
+				worker.onEmbedded = func(n *storage.Node) { published <- n.EmbedMeta["embedding_model"] == old.Model() }
 				written := make(chan struct{})
 				go func() { worker.processNextBatch(); close(written) }()
 				<-gate.started
@@ -63,7 +63,7 @@ func TestEmbedWorkerProviderChangeSerializesCommit(t *testing.T) {
 				close(gate.release)
 				<-written
 				<-changed
-				require.True(t, <-published, "publication belongs before provider transition")
+				require.True(t, <-published, "the accepted payload retains its committing provider identity")
 				active, err := worker.resolveEmbedder("node-000")
 				require.NoError(t, err)
 				require.Same(t, replacement, active)

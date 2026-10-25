@@ -202,6 +202,15 @@ func (b *BadgerEngine) GetSchema() *SchemaManager {
 func (b *BadgerEngine) Close() error {
 	b.closeMu.Lock()
 	defer b.closeMu.Unlock()
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		return nil
+	}
+	b.closing = true
+	b.mu.Unlock()
+	b.writeBarrier.Lock()
+	b.writeBarrier.Unlock()
 	// Stop the background backfills before taking the write barrier: they
 	// write through withUpdate and must not be left waiting on a barrier
 	// this goroutine holds while it waits for them to stop.
@@ -214,6 +223,12 @@ func (b *BadgerEngine) Close() error {
 	// Drain acknowledged write-behind commits before tearing down Badger so
 	// a shutdown never loses writes that were acknowledged to clients.
 	if b.writeBehind != nil {
+		// Close admission before the final drain: a buffered commit
+		// acknowledged after it would be lost. Commits admitted earlier hold
+		// the write-behind order shared until they append; wait for them. A
+		// listener the drain runs may still write synchronously.
+		b.writeBehind.closeAdmission()
+
 		if err := b.FlushWriteBehind(); err != nil && b.log != nil {
 			b.log.Error("write-behind drain on close failed", "subsystem", "storage", "error", err)
 		}
@@ -260,6 +275,8 @@ func (b *BadgerEngine) Close() error {
 	// when the engine is not closed.
 	b.txnWG.Wait()
 	b.notifyWG.Wait()
+	close(b.notificationStop)
+	<-b.notificationDone
 
 	// Fold any derived-count deltas the last commits left behind so a clean
 	// reopen has no open-time write to perform (PR #1043 item #2).

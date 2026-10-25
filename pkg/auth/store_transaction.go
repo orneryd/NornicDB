@@ -41,10 +41,8 @@ func WithStoreTransaction(ctx context.Context, engine storage.Engine, mutate fun
 	if !ok {
 		return storage.ErrNotImplemented
 	}
-	if drainer, ok := inner.(interface{ FlushWriteBehind() error }); ok {
-		if err := drainer.FlushWriteBehind(); err != nil {
-			return err
-		}
+	if err := storage.LandWriteBehind(inner); err != nil {
+		return err
 	}
 	tx, err := beginner.BeginTransaction()
 	if err != nil {

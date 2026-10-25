@@ -46,6 +46,7 @@ func TestEmbeddingPublicationProofPublicDelivery(t *testing.T) {
 				node.SetEmbeddingAttempt(NewEmbeddingAttempt(1, 1, node.EmbeddingRevision(), func() (func(), bool) { return func() {}, true }, func(*Node) { workers++ }))
 			}
 			require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
+			b.WaitForListeners()
 			require.Equal(t, 1, listeners)
 			if bound {
 				require.Equal(t, 1, workers)
@@ -85,6 +86,7 @@ func TestEmbeddingPublicationProofComesFromCommit(t *testing.T) {
 		require.True(t, same, "an intervening unrelated commit requires fresh validation, not rejection")
 	})
 	require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
+	b.WaitForListeners()
 	require.True(t, delivered)
 }
 
@@ -121,10 +123,12 @@ func TestEmbeddingPublicationProofRefreshesAfterReentrantWrite(t *testing.T) {
 	b := newSidecarTestBadger(t)
 	node := publicationProofPayload(t, b)
 	var proofs []embeddingPublicationProof
+	delivered := make(chan struct{})
 	b.OnNodeUpdated(func(accepted *Node) {
 		proofs = append(proofs, accepted.embeddingPublication)
 		require.True(t, accepted.embeddingPublication.matches(b, accepted.ID, accepted.embeddingRevision))
 		if len(proofs) != 1 {
+			close(delivered)
 			return
 		}
 		_, err := b.CreateNode(&Node{ID: "test:reentrant"})
@@ -134,6 +138,7 @@ func TestEmbeddingPublicationProofRefreshesAfterReentrantWrite(t *testing.T) {
 		require.NoError(t, b.UpdateNodeEmbeddingSidecar(next))
 	})
 	require.NoError(t, b.UpdateNodeEmbeddingSidecar(node))
+	<-delivered
 	require.Len(t, proofs, 2)
 	require.Greater(t, proofs[1].commitTs, proofs[0].commitTs)
 	require.False(t, proofs[0].matches(b, node.ID, node.embeddingRevision))

@@ -93,38 +93,72 @@ func (b *BadgerEngine) HasManualSuppressions() bool {
 // update, so search drops a hidden node and indexes a shown one. ErrNotFound
 // when no such node is stored.
 func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error {
-	var node *Node
-	err := b.setManualSuppression(manualSuppressionNode, string(id), nodeKey(id), suppressed, func(txn *badger.Txn, val []byte) error {
-		decoded, err := b.decodeNodeWithEmbeddings(txn, val, id)
-		node = decoded
-		return err
-	})
+	finish, admissionErr := b.beginEventPublication()
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer finish()
+	releaseWrite, writeErr := b.beginWrite()
+	if writeErr != nil {
+		return writeErr
+	}
+	defer releaseWrite()
+	releaseOrder, err := b.orderDirectEntities([]NodeID{id}, nil, false, false)
 	if err != nil {
 		return err
 	}
-	b.notifyNodeUpdated(node)
+	defer releaseOrder()
+	var notification *commitNotification
+	defer func() { b.completeCommitNotification(notification) }()
+	var node *Node
+	err = b.setManualSuppression(manualSuppressionNode, string(id), nodeKey(id), suppressed, func(txn *badger.Txn, val []byte) error {
+		decoded, err := b.decodeNodeWithEmbeddings(txn, val, id)
+		node = decoded
+		return err
+	}, func() { notification = b.reserveCommitOperations([]Operation{{Type: OpUpdateNode, Node: node}}) })
+	if err != nil {
+		return err
+	}
+	b.prepareCommitOperations([]Operation{{Type: OpUpdateNode, Node: node}}, false)
 	return nil
 }
 
 // SetEdgeManuallySuppressed is SetNodeManuallySuppressed for a relationship.
 func (b *BadgerEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error {
-	var edge *Edge
-	err := b.setManualSuppression(manualSuppressionEdge, string(id), edgeKey(id), suppressed, func(_ *badger.Txn, val []byte) error {
-		decoded, err := b.decodeEdgeBodyWithID(namespaceForEdgeID(id), val, id)
-		edge = decoded
-		return err
-	})
+	finish, admissionErr := b.beginEventPublication()
+	if admissionErr != nil {
+		return admissionErr
+	}
+	defer finish()
+	releaseWrite, writeErr := b.beginWrite()
+	if writeErr != nil {
+		return writeErr
+	}
+	defer releaseWrite()
+	releaseOrder, err := b.orderDirectEntities(nil, []EdgeID{id}, false, false)
 	if err != nil {
 		return err
 	}
-	b.notifyEdgeUpdated(edge)
+	defer releaseOrder()
+	var notification *commitNotification
+	defer func() { b.completeCommitNotification(notification) }()
+	var edge *Edge
+	err = b.setManualSuppression(manualSuppressionEdge, string(id), edgeKey(id), suppressed, func(_ *badger.Txn, val []byte) error {
+		decoded, err := b.decodeEdgeBodyWithID(namespaceForEdgeID(id), val, id)
+		edge = decoded
+		return err
+	}, func() { notification = b.reserveCommitOperations([]Operation{{Type: OpUpdateEdge, Edge: edge}}) })
+	if err != nil {
+		return err
+	}
+	b.prepareCommitOperations([]Operation{{Type: OpUpdateEdge, Edge: edge}}, false)
 	return nil
 }
 
 // setManualSuppression writes (or deletes) an entity's suppression key, once
 // its record is found, and mirrors it in memory. decode, when set, reads the
 // record.
-func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []byte, suppressed bool, decode func(*badger.Txn, []byte) error) error {
+func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []byte, suppressed bool, decode func(*badger.Txn, []byte) error, atCommit ...func()) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
@@ -145,7 +179,7 @@ func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []by
 			return txn.Set(manualSuppressionKey(kind, id), []byte{})
 		}
 		return txn.Delete(manualSuppressionKey(kind, id))
-	})
+	}, atCommit...)
 	if err != nil {
 		return err
 	}

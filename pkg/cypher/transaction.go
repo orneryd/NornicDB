@@ -258,10 +258,8 @@ func (e *StorageExecutor) handleBegin() (*ExecuteResult, error) {
 	}
 	// With write-behind buffering, drain acknowledged autocommit writes so
 	// the explicit snapshot observes every acknowledged statement.
-	if drainer, ok := engine.(interface{ FlushWriteBehind() error }); ok {
-		if err := drainer.FlushWriteBehind(); err != nil {
-			return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
-		}
+	if err := storage.LandWriteBehind(engine); err != nil {
+		return nil, localizedError(localization.CypherTransactionsStartFailed(err), err)
 	}
 	tx, err := beginTransactionSnapshot(txEngine)
 	if err != nil {

@@ -1,16 +1,16 @@
 package storage
 
-// A commit reserves its notification position while publishing, then becomes
-// ready after storage locks and the database's quota/accounting lease release.
-// A reentrant write enqueues behind its caller instead of waiting for itself.
+// The dispatcher is the sole delivery owner. Publication reserves an immutable
+// event image; publication completion and buffered retirement independently
+// make it ready. Neither transition runs callbacks or consumes other events.
 type commitNotification struct {
-	ops []Operation
-	// reset, when set, reports a DeleteByPrefix of this prefix instead of ops.
-	reset *string
-	// consumed, when set, is closed once the notification was dispatched.
-	consumed chan struct{}
-	ready    bool
-	next     *commitNotification
+	ops       []Operation
+	reset     *string
+	consumed  chan struct{}
+	published bool
+	replay    bool
+	ready     bool
+	next      *commitNotification
 }
 
 func (b *BadgerEngine) hasCommitListeners() bool {
@@ -19,36 +19,29 @@ func (b *BadgerEngine) hasCommitListeners() bool {
 	return len(b.onNodeCreated)+len(b.onNodeUpdated)+len(b.onNodeDeleted)+len(b.onEdgeCreated)+len(b.onEdgeUpdated)+len(b.onEdgeDeleted)+len(b.onNamespaceReset) > 0
 }
 
-// publishNamespaceReset reports a DeleteByPrefix after it removed everything,
-// behind the notifications already reserved, so a consumer drops its state for
-// the namespace after the events that preceded the deletion. DeleteByPrefix
-// awaits the returned notification (awaitCommitNotification) once its locks
-// are released, so a database recreated after it returns never meets the
-// dropped one's derived state.
-func (b *BadgerEngine) publishNamespaceReset(prefix string) *commitNotification {
-	n := b.reserveCommitOperations(nil)
-	if n == nil {
-		return nil
-	}
-	n.reset = &prefix
-	n.consumed = make(chan struct{})
-	b.completeCommitNotification(n)
-	return n
-}
-
-// awaitCommitNotification returns once n was dispatched. A consumer that
-// deleted a prefix from its own callback would wait on itself; none does.
-func (b *BadgerEngine) awaitCommitNotification(n *commitNotification) {
-	if n != nil && n.consumed != nil {
-		<-n.consumed
-	}
-}
-
 func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotification {
-	if !b.hasCommitListeners() && !hasEmbeddingOutcome(ops) {
+	return b.reserveNotification(ops, false)
+}
+
+func (b *BadgerEngine) reserveNotification(ops []Operation, replay bool) *commitNotification {
+	if b.beforeCommitReservation != nil {
+		b.beforeCommitReservation(ops)
+	}
+	if len(ops) == 0 {
 		return nil
 	}
-	n := &commitNotification{ops: ops}
+	if !b.hasCommitListeners() && !hasBoundEmbeddingOutcome(ops) {
+		return nil
+	}
+	image := make([]Operation, len(ops))
+	copy(image, ops)
+	for i := range image {
+		image[i].snapshotForNotification()
+	}
+	return b.queueCommitNotification(&commitNotification{ops: image, replay: replay, consumed: make(chan struct{})})
+}
+
+func (b *BadgerEngine) queueCommitNotification(n *commitNotification) *commitNotification {
 	b.notificationMu.Lock()
 	b.notifyWG.Add(1)
 	if b.notificationTail == nil {
@@ -57,22 +50,196 @@ func (b *BadgerEngine) reserveCommitOperations(ops []Operation) *commitNotificat
 		b.notificationTail.next = n
 	}
 	b.notificationTail = n
+	b.notificationLast = n
 	b.notificationMu.Unlock()
 	return n
 }
 
 func (b *BadgerEngine) enqueueCommitOperation(op Operation) {
-	if !b.hasCommitListeners() && !hasEmbeddingOutcome([]Operation{op}) {
-		return
-	}
-	op.snapshotForNotification()
-	n := b.reserveCommitOperations([]Operation{op})
-	b.completeCommitNotification(n)
+	b.completeCommitNotification(b.reserveCommitOperations([]Operation{op}))
 }
 
-func hasEmbeddingOutcome(ops []Operation) bool {
+// Reset ordering is consumed only at an explicit external lifecycle barrier.
+func (b *BadgerEngine) publishNamespaceReset(prefix string) *commitNotification {
+	if !b.hasCommitListeners() {
+		return nil
+	}
+	n := b.queueCommitNotification(&commitNotification{reset: &prefix, consumed: make(chan struct{})})
+	b.completeCommitNotification(n)
+	return n
+}
+
+func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
+	b.readyCommitNotification(n)
+}
+
+func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
+	if n == nil {
+		return false
+	}
+	b.notificationMu.Lock()
+	n.published = true
+	wake := !n.ready && !n.replay
+	if wake {
+		n.ready = true
+	}
+	b.notificationMu.Unlock()
+	if wake {
+		b.signalCommitNotifications()
+	}
+	return wake
+}
+
+func (b *BadgerEngine) retireCommitNotification(n *commitNotification) {
+	if n == nil {
+		return
+	}
+	b.notificationMu.Lock()
+	n.replay = false
+	wake := !n.ready && n.published
+	if wake {
+		n.ready = true
+	}
+	b.notificationMu.Unlock()
+	if wake {
+		b.signalCommitNotifications()
+	}
+}
+
+func (b *BadgerEngine) signalCommitNotifications() {
+	select {
+	case b.notificationWake <- struct{}{}:
+	default:
+	}
+}
+
+func (b *BadgerEngine) startCommitDispatcher() {
+	b.notificationWake = make(chan struct{}, 1)
+	b.notificationStop = make(chan struct{})
+	b.notificationDone = make(chan struct{})
+	go b.runCommitDispatcher()
+}
+
+func (b *BadgerEngine) runCommitDispatcher() {
+	defer close(b.notificationDone)
+	b.notificationOwner.Store(currentGoroutineID())
+	defer b.notificationOwner.Store(0)
+	for {
+		select {
+		case <-b.notificationStop:
+			return
+		case <-b.notificationWake:
+			for {
+				b.notificationMu.Lock()
+				n := b.notificationHead
+				if n == nil || !n.ready {
+					b.notificationMu.Unlock()
+					break
+				}
+				b.notificationHead = n.next
+				if b.notificationHead == nil {
+					b.notificationTail = nil
+				}
+				n.next = nil
+				b.notificationMu.Unlock()
+				if n.reset != nil {
+					b.dispatchNamespaceReset(*n.reset)
+				} else {
+					b.dispatchCommitOperations(n.ops)
+				}
+				// No producer mutates an entry after readiness. Release its
+				// detached image before publishing consumed completion.
+				b.consumeCommitNotification(n)
+				if b.writeBehind != nil {
+					b.writeBehind.pruneConsumedFrontier()
+				}
+				b.notifyWG.Done()
+			}
+		}
+	}
+}
+
+// Lifecycle actions attach to real events rather than allocating queue holds.
+// Registration and consumption share notificationMu, including a popped event.
+func (b *BadgerEngine) afterCommitNotification(n *commitNotification, after func()) {
+	b.notificationMu.Lock()
+	if n == nil || notificationConsumed(n) {
+		b.notificationMu.Unlock()
+		after()
+		return
+	}
+	if b.notificationCompletions == nil {
+		b.notificationCompletions = make(map[*commitNotification][]func())
+	}
+	b.notificationCompletions[n] = append(b.notificationCompletions[n], after)
+	b.notificationMu.Unlock()
+}
+
+func (b *BadgerEngine) consumeCommitNotification(n *commitNotification) {
+	for {
+		b.notificationMu.Lock()
+		actions := b.notificationCompletions[n]
+		delete(b.notificationCompletions, n)
+		if len(actions) == 0 {
+			n.ops = nil
+			close(n.consumed)
+			b.notificationMu.Unlock()
+			return
+		}
+		b.notificationMu.Unlock()
+		for _, action := range actions {
+			b.callCommitListener(action)
+		}
+	}
+}
+
+func (b *BadgerEngine) listenerFrontier() (*commitNotification, bool) {
+	reentrant := b.onCommitDispatcher()
+	b.notificationMu.Lock()
+	last := b.notificationLast
+	b.notificationMu.Unlock()
+	return last, reentrant
+}
+
+// Only explicit barriers inspect dispatcher identity. Ordinary writes never do.
+func (b *BadgerEngine) onCommitDispatcher() bool {
+	owner := b.notificationOwner.Load()
+	return owner != 0 && owner == currentGoroutineID()
+}
+
+// WaitForListeners waits through the finite frontier reserved on entry,
+// including an event already popped by the dispatcher. A dispatcher callback
+// cannot consume itself; it may land data but leaves consumption to its return.
+func (b *BadgerEngine) WaitForListeners() {
+	if b.onCommitDispatcher() {
+		return
+	}
+	b.notificationMu.Lock()
+	last := b.notificationLast
+	b.notificationMu.Unlock()
+	if last != nil {
+		<-last.consumed
+	}
+}
+
+func (b *BadgerEngine) awaitCommitNotification(n *commitNotification) {
+	if n != nil && !b.onCommitDispatcher() {
+		<-n.consumed
+	}
+}
+
+func (b *BadgerEngine) callCommitListener(call func()) {
+	defer func() {
+		if p := recover(); p != nil && b.log != nil {
+			b.log.Error("storage listener panicked", "subsystem", "storage", "panic", p)
+		}
+	}()
+	call()
+}
+
+func hasBoundEmbeddingOutcome(ops []Operation) bool {
 	for _, op := range ops {
-		if op.embeddingOutcome {
+		if op.embeddingOutcome && op.Node != nil && op.Node.embeddingAttempt != nil {
 			return true
 		}
 	}
@@ -107,53 +274,6 @@ func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool) {
 	}
 }
 
-func (b *BadgerEngine) completeCommitNotification(n *commitNotification) {
-	if n == nil {
-		return
-	}
-	b.notificationMu.Lock()
-	n.ready = true
-	if b.notificationDraining {
-		b.notificationMu.Unlock()
-		return
-	}
-	b.notificationDraining = true
-	var firstPanic any
-	for {
-		n = b.notificationHead
-		if n == nil || !n.ready {
-			b.notificationDraining = false
-			b.notificationMu.Unlock()
-			if firstPanic != nil {
-				panic(firstPanic)
-			}
-			return
-		}
-		b.notificationHead = n.next
-		if b.notificationHead == nil {
-			b.notificationTail = nil
-		}
-		b.notificationMu.Unlock()
-		func() {
-			defer b.notifyWG.Done()
-			if n.consumed != nil {
-				defer close(n.consumed)
-			}
-			defer func() {
-				if p := recover(); p != nil && firstPanic == nil {
-					firstPanic = p
-				}
-			}()
-			if n.reset != nil {
-				b.dispatchNamespaceReset(*n.reset)
-			} else {
-				b.dispatchCommitOperations(n.ops)
-			}
-		}()
-		b.notificationMu.Lock()
-	}
-}
-
 func (b *BadgerEngine) dispatchCommitOperations(ops []Operation) {
 	for _, op := range ops {
 		switch op.Type {
@@ -173,5 +293,14 @@ func (b *BadgerEngine) dispatchCommitOperations(ops []Operation) {
 		case OpDeleteEdge:
 			b.dispatchEdgeDeleted(op.EdgeID)
 		}
+	}
+}
+
+func notificationConsumed(n *commitNotification) bool {
+	select {
+	case <-n.consumed:
+		return true
+	default:
+		return false
 	}
 }

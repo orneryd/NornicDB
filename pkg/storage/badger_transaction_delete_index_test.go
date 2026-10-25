@@ -27,6 +27,7 @@ func TestBadgerTransaction_DeleteNode_FiresEventsAndClearsVectorIndex(t *testing
 	}
 	_, err = engine.CreateNode(node)
 	require.NoError(t, err)
+	storage.WaitForListeners(engine)
 	require.Equal(t, 1, svc.EmbeddingCount())
 
 	tx, err := engine.BeginTransaction()
@@ -34,5 +35,6 @@ func TestBadgerTransaction_DeleteNode_FiresEventsAndClearsVectorIndex(t *testing
 	require.NoError(t, tx.DeleteNode(node.ID))
 	require.NoError(t, tx.Commit())
 
+	storage.WaitForListeners(engine)
 	require.Equal(t, 0, svc.EmbeddingCount())
 }

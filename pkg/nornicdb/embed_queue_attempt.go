@@ -99,16 +99,30 @@ func (ew *EmbedWorker) commitNodeOutcome(node *storage.Node) error {
 	if node == nil || node.EmbeddingAttempt() == nil {
 		return storage.ErrEmbeddingSourceChanged
 	}
-	ew.providerWriteMu.RLock()
-	defer ew.providerWriteMu.RUnlock()
-	if !node.EmbeddingAttempt().IsCurrent() {
-		return storage.ErrEmbeddingSourceChanged
+	var complete func() error
+	err := func() error {
+		ew.providerWriteMu.RLock()
+		defer ew.providerWriteMu.RUnlock()
+		if !node.EmbeddingAttempt().IsCurrent() {
+			return storage.ErrEmbeddingSourceChanged
+		}
+		sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater)
+		if !ok {
+			return fmt.Errorf("storage engine %T does not support embedding sidecar writes", ew.storage)
+		}
+		var err error
+		complete, err = storage.PersistEmbeddingOutcome(node, func(accepted *storage.Node) error {
+			return sidecar.UpdateNodeEmbeddingSidecar(accepted)
+		})
+		return err
+	}()
+	if err != nil {
+		return err
 	}
-	sidecar, ok := ew.storage.(storage.EmbeddingSidecarUpdater)
-	if !ok {
-		return fmt.Errorf("storage engine %T does not support embedding sidecar writes", ew.storage)
+	if complete != nil {
+		return complete()
 	}
-	return sidecar.UpdateNodeEmbeddingSidecar(node)
+	return nil
 }
 
 // PendingEmbeddingsCount is the canonical drain view: MAIN union active claims

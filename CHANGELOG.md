@@ -34,6 +34,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- With write-behind enabled, keep acknowledged and synchronous writes one history: a flush never writes an
+  older acknowledged node or relationship over a newer committed one, so the stored body, label index, derived
+  counts and cache agree; concurrent writers of one entity get a retryable conflict instead of a silently lost
+  write; a UNIQUE value has one holder across buffered and immediate writes, database drops and restarts;
+  one dispatcher delivers change listeners, so database drops and listener write-back can finish without
+  consuming callbacks under caller locks; internal snapshots land data without waiting for listeners;
+  direct, transactional, embedding and suppression writes reserve events at commit with buffering on or off,
+  ordering cascaded relationships, both endpoints and endpoint moves together so a late helper update cannot
+  follow a cascade delete; buffered replay uses the same complete affected-entity order;
+  and embedding workers release provider leases before waiting for delivery;
+  explicit flush and close wait through their captured event frontier, and close
+  refuses writes it would not flush; and restart no longer fails with a label-count underflow after
+  concurrent writes.
+
 - Keep transactional CALL batches independent while rolling back ordinary outer writes; preserve CREATE read phases, list element admission, and pagination opening order.
 
 - Keep transaction adjacency reads local to incident pending relationships and reuse bounded snapshot equality candidates for row MERGE. Reuse newly created edge bodies during same-transaction cascades instead of repeatedly sorting pending Badger writes.

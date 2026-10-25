@@ -165,6 +165,7 @@ func (cw *commitWriter) publishPendingEmbeddingAdds() {
 // discard also releases unpublished hints when an engine write fails before
 // finish. Explicit transactions release theirs through abort below.
 func (cw *commitWriter) discard() {
+	cw.releaseVersions()
 	cw.engine.pendingEmbeddingAdds.Delete(cw.txn)
 	cw.batchWriter.discard()
 }

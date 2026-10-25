@@ -118,7 +118,7 @@ func (m *DatabaseManager) CreateCompositeDatabase(name string, constituents []Co
 	}
 
 	// Check if database already exists
-	if _, exists := m.databases[name]; exists {
+	if _, exists := m.databases[name]; exists || m.dropping[name] {
 		return ErrDatabaseExists
 	}
 

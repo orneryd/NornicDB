@@ -163,6 +163,7 @@ func TestCompositeCapabilityParity_AggregatesAndBroadcasts(t *testing.T) {
 		composite.OnNodeCreated(func(node *Node) { created = append(created, node.ID) })
 		_, err := nsB.CreateNode(&Node{ID: "m-2", Labels: []string{"Other"}})
 		require.NoError(t, err)
+		WaitForListeners(composite)
 		require.Equal(t, []NodeID{"m-2"}, created)
 	})
 }
@@ -180,11 +181,13 @@ func TestCompositeEvents_SharedEngineTranslatesEveryNamespace(t *testing.T) {
 	require.NoError(t, err)
 	_, err = nsB.CreateNode(&Node{ID: "shared-b", Labels: []string{"Other"}})
 	require.NoError(t, err)
+	WaitForListeners(composite)
 	require.ElementsMatch(t, []NodeID{"shared-a", "shared-b"}, created)
 
 	var deleted []NodeID
 	composite.OnNodeDeleted(func(nodeID NodeID) { deleted = append(deleted, nodeID) })
 	require.NoError(t, nsB.DeleteNode("shared-b"))
+	WaitForListeners(composite)
 	require.Equal(t, []NodeID{"shared-b"}, deleted)
 
 	_, err = nsB.CreateNode(&Node{ID: "shared-b2", Labels: []string{"Other"}})
@@ -194,5 +197,6 @@ func TestCompositeEvents_SharedEngineTranslatesEveryNamespace(t *testing.T) {
 	var createdEdges []EdgeID
 	composite.OnEdgeCreated(func(edge *Edge) { createdEdges = append(createdEdges, edge.ID) })
 	require.NoError(t, nsB.CreateEdge(&Edge{ID: "shared-e", StartNode: "shared-b2", EndNode: "shared-b3", Type: "R"}))
+	WaitForListeners(composite)
 	require.Equal(t, []EdgeID{"shared-e"}, createdEdges)
 }
