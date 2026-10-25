@@ -2,6 +2,7 @@ package storagecensus
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/workcensus"
 	"go/token"
 	"go/types"
 	"golang.org/x/tools/go/ssa"
@@ -14,12 +15,18 @@ import (
 // argument removes that call path.
 type typeGuard struct {
 	parameter int
+	free      bool          // index names a captured binding, rather than a call parameter
+	deref     bool          // the binding is a cell whose immutable value must be established
+	callee    *ssa.Function // alternative condition: this exact function target
 	asserted  types.Type
 	succeeds  bool
 }
 
 func (g typeGuard) id() string {
-	return fmt.Sprintf("%d:%s:%t", g.parameter, types.TypeString(g.asserted, nil), g.succeeds)
+	if g.callee != nil {
+		return fmt.Sprintf("%d:%t:%t:func:%s:%d:%t", g.parameter, g.free, g.deref, g.callee.String(), g.callee.Pos(), g.succeeds)
+	}
+	return fmt.Sprintf("%d:%t:%t:%s:%t", g.parameter, g.free, g.deref, types.TypeString(g.asserted, nil), g.succeeds)
 }
 func guardID(guards []typeGuard) string {
 	var ids []string
@@ -89,7 +96,7 @@ func typeGuardsAt(fn *ssa.Function, at ssa.Instruction) []typeGuard {
 		if no {
 			positive = !positive
 		}
-		guards = append(guards, typeGuard{index, assertion.AssertedType, positive})
+		guards = append(guards, typeGuard{parameter: index, asserted: assertion.AssertedType, succeeds: positive})
 	}
 	return guards
 }
@@ -136,14 +143,30 @@ func concreteAssertion(value ssa.Value, asserted types.Type, seen map[ssa.Value]
 
 // transferGuards normalizes each condition to a caller parameter index.
 // Local/opaque values lose their condition but retain the write obligation.
-func transferGuards(guards []typeGuard, args []ssa.Value) ([]typeGuard, bool) {
+func transferGuards(guards []typeGuard, args, captures []ssa.Value, at ssa.Instruction) ([]typeGuard, bool) {
 	var out []typeGuard
 	for _, g := range guards {
-		if g.parameter < 0 || g.parameter >= len(args) {
+		values := args
+		if g.free {
+			values = captures
+		}
+		if g.parameter < 0 || g.parameter >= len(values) {
 			continue
 		}
-		value := args[g.parameter]
-		yes, known := concreteAssertion(value, g.asserted, map[ssa.Value]bool{})
+		value := values[g.parameter]
+		if g.deref {
+			actual, known := workcensus.ImmutableCellValueAt(value, at)
+			if !known {
+				continue
+			} // unknown keeps the effect, never rejects it
+			value = actual
+		}
+		var yes, known bool
+		if g.callee != nil {
+			yes, known = workcensus.MatchesFunctionValue(value, g.callee)
+		} else {
+			yes, known = concreteAssertion(value, g.asserted, map[ssa.Value]bool{})
+		}
 		if known {
 			if yes != g.succeeds {
 				return nil, false
@@ -157,17 +180,83 @@ func transferGuards(guards []typeGuard, args []ssa.Value) ([]typeGuard, bool) {
 			}
 			value = changed.X
 		}
-		parameter, ok := value.(*ssa.Parameter)
-		if !ok {
-			continue
-		}
-		for i, p := range parameter.Parent().Params {
-			if p == parameter {
-				g.parameter = i
-				out = combineGuards(out, []typeGuard{g})
-				break
-			}
+		if binding, ok := guardBinding(value, g.asserted); ok {
+			binding.succeeds = g.succeeds
+			binding.callee = g.callee
+			out = combineGuards(out, []typeGuard{binding})
 		}
 	}
 	return out, true
+}
+
+func functionDispatchGuards(site ssa.CallInstruction, target *ssa.Function) ([]typeGuard, bool) {
+	c := site.Common()
+	if c.IsInvoke() || c.StaticCallee() != nil {
+		return nil, true
+	}
+	if yes, known := workcensus.MatchesFunctionValue(c.Value, target); known {
+		return nil, yes
+	}
+	if g, ok := guardBinding(c.Value, nil); ok {
+		g.callee = target
+		return []typeGuard{g}, true
+	}
+	return nil, true
+}
+
+// A resolved interface target is possible only for its actual receiver type.
+// This is a path condition, never acquisition credit or a name exemption.
+func dispatchGuards(site ssa.CallInstruction, target *types.Func) ([]typeGuard, bool) {
+	c := site.Common()
+	if !c.IsInvoke() {
+		return nil, true
+	}
+	sig, ok := target.Type().(*types.Signature)
+	if !ok || sig.Recv() == nil {
+		return nil, true
+	}
+	recv := sig.Recv().Type()
+	if yes, known := concreteAssertion(c.Value, recv, map[ssa.Value]bool{}); known {
+		return nil, yes
+	}
+	if g, ok := guardBinding(c.Value, recv); ok {
+		return []typeGuard{g}, true
+	}
+	return nil, true // unknown receiver keeps the obligation
+}
+
+func guardBinding(value ssa.Value, asserted types.Type) (typeGuard, bool) {
+	for {
+		changed, ok := value.(*ssa.ChangeInterface)
+		if !ok {
+			break
+		}
+		value = changed.X
+	}
+	if load, ok := value.(*ssa.UnOp); ok && load.Op == token.MUL {
+		if free, ok := load.X.(*ssa.FreeVar); ok {
+			if g, ok := guardBinding(free, asserted); ok {
+				g.deref = true
+				return g, true
+			}
+		}
+		if actual, known := workcensus.ImmutableCellValueAt(load.X, load); known {
+			return guardBinding(actual, asserted)
+		}
+	}
+	switch v := value.(type) {
+	case *ssa.Parameter:
+		for i, p := range v.Parent().Params {
+			if p == v {
+				return typeGuard{parameter: i, asserted: asserted, succeeds: true}, true
+			}
+		}
+	case *ssa.FreeVar:
+		for i, f := range v.Parent().FreeVars {
+			if f == v {
+				return typeGuard{parameter: i, free: true, asserted: asserted, succeeds: true}, true
+			}
+		}
+	}
+	return typeGuard{}, false
 }

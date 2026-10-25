@@ -107,3 +107,12 @@ func TestSemanticExpressionReferencesKeywordVariableProperty(t *testing.T) {
 	require.Equal(t, []string{"where.id", "x"}, semanticExpressionReferences("where.id + x"))
 	require.Equal(t, []string{"x"}, semanticExpressionReferences("x IS NOT NULL AND true"))
 }
+
+func (e *recordingLabelScanEngine) StreamNodesByLabelProjectedWithContext(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
+	e.projections = append(e.projections, properties)
+	return e.MemoryEngine.StreamNodesByLabelProjectedWithContext(ctx, label, properties, visit)
+}
+func (e *recordingLabelScanEngine) StreamNodesByLabelProjectedInScopeWithContext(ctx context.Context, scope, label string, properties []string, visit func(*storage.Node) error) error {
+	e.projections = append(e.projections, properties)
+	return e.MemoryEngine.StreamNodesByLabelProjectedInScopeWithContext(ctx, scope, label, properties, visit)
+}

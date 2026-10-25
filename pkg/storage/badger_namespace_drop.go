@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"strings"
@@ -49,6 +50,12 @@ func (b *BadgerEngine) pendingNamespaceConflict(namespace string) error {
 }
 
 func (b *BadgerEngine) pendingPrefixConflict(prefix string) error {
+	return b.pendingPrefixConflictWithContext(nil, prefix)
+}
+
+// pendingPrefixConflictWithContext keeps scope admission in the DROP owner.
+// A nil context belongs to an existing context-free/physical entrance.
+func (b *BadgerEngine) pendingPrefixConflictWithContext(ctx context.Context, prefix string) error {
 	if b.prefixDrops.pendingCount.Load() == 0 {
 		return nil
 	}
@@ -58,6 +65,11 @@ func (b *BadgerEngine) pendingPrefixConflict(prefix string) error {
 	b.prefixDrops.mu.Lock()
 	defer b.prefixDrops.mu.Unlock()
 	for ns := range b.prefixDrops.pending {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
 		scope := ns + ":"
 		if strings.HasPrefix(scope, prefix) || strings.HasPrefix(prefix, scope) {
 			return fmt.Errorf("%w: namespace %q has unfinished DROP cleanup", ErrConflict, ns)
@@ -312,7 +324,9 @@ func (b *BadgerEngine) recoverNamespaceDrops(held *lifecycleWrite) error {
 	}
 	for _, intent := range intents {
 		b.transitionPending(namespaceDropInstall, "", []*namespaceDropIntent{intent})
-		if _, _, _, err := b.deleteByPrefixHeld(intent.namespace+":", held, true); err != nil {
+		labelReset := &labelIndexReset{b: b, offline: true}
+		_, _, _, dropErr := b.deleteByPrefixHeld(intent.namespace+":", held, true, labelReset)
+		if err := labelReset.finish(dropErr); err != nil {
 			return err
 		}
 	}

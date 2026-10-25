@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"strings"
 	"time"
 
@@ -218,7 +219,7 @@ func (e *StorageExecutor) callApocCustomDrop(ctx context.Context, args []interfa
 // database, in APOC's columns: apoc.custom.list() and apoc.custom.show().
 func (e *StorageExecutor) callApocCustomList(ctx context.Context) (*ExecuteResult, error) {
 	result := &ExecuteResult{Columns: []string{"type", "name", "description", "mode", "statement", "inputs", "outputs", "forceSingle"}, Rows: [][]interface{}{}}
-	nodes, err := e.getStorage(ctx).GetNodesByLabel(procedureCatalogLabel)
+	nodes, err := storage.GetNodesByLabelWithContext(ctx, e.getStorage(ctx), procedureCatalogLabel)
 	if err != nil {
 		return nil, localizedError(localization.CypherProceduresCatalogReadFailed(err), err)
 	}

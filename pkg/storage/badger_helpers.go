@@ -596,6 +596,17 @@ func (b *BadgerEngine) labelIndexKeyStringLookup(label string, nodeID NodeID) []
 	return labelIndexKey(label, nodeNum)
 }
 
+// labelIndexKeyStringLookupInTxn resolves IDs through the caller's snapshot
+// (labelIndexNodeNumInTxn). Returns nil if the node has no numID in that
+// snapshot.
+func (b *BadgerEngine) labelIndexKeyStringLookupInTxn(txn *badger.Txn, label string, nodeID NodeID) ([]byte, error) {
+	nodeNum, ok, err := b.labelIndexNodeNumInTxn(txn, nodeID)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return labelIndexKey(label, nodeNum), nil
+}
+
 // mvccNodeHeadKeyString / mvccEdgeHeadKeyString wrap the numeric-keyed
 // MVCC head key with dict-backed string ID resolution. Writers allocate
 // the numID; readers use lookup-only.

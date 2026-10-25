@@ -60,7 +60,7 @@ func TestTransactionOverlayCommittedMergeCostIsLocal(t *testing.T) {
 	wrapper := &transactionStorageWrapper{tx: tx, underlying: store, namespace: "test", separator: ":", mutatedNodeIDs: make(map[string]struct{})}
 	reader := exec.cloneWithStorage(wrapper)
 	read := func() {
-		nodes, _, err := reader.findMergeNodesScanned(wrapper, []string{"Probe"}, map[string]interface{}{"id": "42"})
+		nodes, _, err := reader.findMergeNodesScanned(context.Background(), wrapper, []string{"Probe"}, map[string]interface{}{"id": "42"})
 		if err != nil || len(nodes) != 1 || nodes[0].Properties["id"] != "42" {
 			t.Fatalf("committed MERGE candidates: nodes=%v, err=%v", nodes, err)
 		}
@@ -68,7 +68,7 @@ func TestTransactionOverlayCommittedMergeCostIsLocal(t *testing.T) {
 	allocations := testing.AllocsPerRun(5, read)
 	t.Logf("repeated committed MERGE candidate allocations=%g", allocations)
 	require.Less(t, allocations, float64(100), "a repeated one-node match must not copy the whole label set")
-	nodes, complete, err := reader.findMergeNodesScanned(wrapper, []string{"Probe"}, map[string]interface{}{"id": "42"})
+	nodes, complete, err := reader.findMergeNodesScanned(context.Background(), wrapper, []string{"Probe"}, map[string]interface{}{"id": "42"})
 	require.NoError(t, err)
 	require.True(t, complete)
 	require.Len(t, nodes, 1, "peer namespace cannot join the pinned equality population")
@@ -216,11 +216,11 @@ func TestTransactionOverlayTemporalEqualityIsNotPruned(t *testing.T) {
 	props := map[string]interface{}{"at": value}
 	require.True(t, nodePropertiesMatch(candidates[0], props), "baseline Cypher equality accepts the stored value")
 	reader := exec.cloneWithStorage(wrapper)
-	nodes, _, err := reader.findMergeNodesScanned(wrapper, []string{"TemporalOverlay"}, props)
+	nodes, _, err := reader.findMergeNodesScanned(context.Background(), wrapper, []string{"TemporalOverlay"}, props)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1, "candidate keys cannot discard a Cypher-equal temporal value")
 	props["id"] = int64(1)
-	nodes, _, err = reader.findMergeNodesScanned(wrapper, []string{"TemporalOverlay"}, props)
+	nodes, _, err = reader.findMergeNodesScanned(context.Background(), wrapper, []string{"TemporalOverlay"}, props)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1, "scalar pruning leaves temporal equality to Cypher")
 }

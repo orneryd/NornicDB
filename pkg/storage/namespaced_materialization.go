@@ -1,8 +1,14 @@
 package storage
 
+import "context"
+
 // materializedRead owns the read/error/result boundary for namespace views.
 // Protocol bindings choose whether a provider's value survives its error.
 func materializedRead[T any](read func() (T, error), view func(T) T, keepErrorValue bool) (T, error) {
+	return materializedReadWithContext(context.Background(), read, func(value T) (T, error) { return view(value), nil }, keepErrorValue)
+}
+
+func materializedReadWithContext[T any](ctx context.Context, read func() (T, error), view func(T) (T, error), keepErrorValue bool) (T, error) {
 	value, err := read()
 	if err != nil && !keepErrorValue {
 		var zero T
@@ -11,38 +17,73 @@ func materializedRead[T any](read func() (T, error), view func(T) T, keepErrorVa
 	if err != nil {
 		return value, err
 	}
-	return view(value), nil
+	if err := ctx.Err(); err != nil {
+		var zero T
+		return zero, err
+	}
+	return view(value)
 }
 
 // materializedValues owns the collection walk. Its typed operation owns the
 // result so a borrowed initial slice or generic return cannot alias a local
 // append accumulator and inhibit the compiler's exclusive-slice optimization.
 func materializedValues[T any](values []*T, visit func(*T)) {
+	_ = materializedValuesWithContext(context.Background(), values, visit)
+}
+
+func materializedValuesWithContext[T any](ctx context.Context, values []*T, visit func(*T)) error {
 	for _, value := range values {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		visit(value)
 	}
+	return ctx.Err()
 }
 
 // materializedKeyed is the shared batch-result walk. Projection binds each
 // authoritative result key to its owned or borrowed entity view.
 func materializedKeyed[K comparable, T any](values map[K]*T, project func(K, *T) (K, *T)) map[K]*T {
+	out, _ := materializedKeyedWithContext(context.Background(), values, func(_ context.Context, key K, value *T) (K, *T, error) {
+		id, item := project(key, value)
+		return id, item, nil
+	})
+	return out
+}
+
+func materializedKeyedWithContext[K comparable, T any](ctx context.Context, values map[K]*T, project func(context.Context, K, *T) (K, *T, error)) (map[K]*T, error) {
 	out := make(map[K]*T, len(values))
 	for key, value := range values {
-		if id, item := project(key, value); item != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		id, item, err := project(ctx, key, value)
+		if err != nil {
+			return nil, err
+		}
+		if item != nil {
 			out[id] = item
 		}
 	}
-	return out
+	return out, ctx.Err()
 }
 
 // materializedIDs maps request identifiers once, preserving a non-nil empty
 // request for protocols that distinguish it from nil.
 func materializedIDs[I any](ids []I, prefix func(I) I) []I {
+	out, _ := materializedIDsWithContext(context.Background(), ids, prefix)
+	return out
+}
+
+func materializedIDsWithContext[I any](ctx context.Context, ids []I, prefix func(I) I) ([]I, error) {
 	out := make([]I, len(ids))
 	for i, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		out[i] = prefix(id)
 	}
-	return out
+	return out, ctx.Err()
 }
 
 // materializedCollection binds each protocol's empty result before creating

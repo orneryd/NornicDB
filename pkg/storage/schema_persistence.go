@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"sort"
+	"context"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 )
@@ -76,22 +76,54 @@ func (sm *SchemaManager) ExportDefinition() *SchemaDefinition {
 // exportDefinitionLocked builds a persisted schema definition from the current state.
 // REQUIRES: caller holds either sm.mu.RLock() or sm.mu.Lock().
 func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
+	def, _ := sm.exportDefinitionLockedWithContext(context.Background())
+	return def
+}
+
+func (sm *SchemaManager) exportDefinitionLockedWithContext(ctx context.Context) (*SchemaDefinition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var err error
 	def := &SchemaDefinition{Version: schemaDefinitionVersion}
-	def.LabelTokens = append([]string(nil), sm.tokenOrder.labels...)
-	def.RelationshipTypeTokens = append([]string(nil), sm.tokenOrder.relationships...)
-	def.LookupIndexes = sm.exportLookupIndexesLocked()
+	if len(sm.tokenOrder.labels) > 0 {
+		def.LabelTokens, err = copySliceWithContext(ctx, sm.tokenOrder.labels)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(sm.tokenOrder.relationships) > 0 {
+		def.RelationshipTypeTokens, err = copySliceWithContext(ctx, sm.tokenOrder.relationships)
+		if err != nil {
+			return nil, err
+		}
+	}
+	def.LookupIndexes, err = sm.exportLookupIndexesLockedWithContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	// Constraints (store as a sorted slice for stable persistence).
 	if len(sm.constraints) > 0 {
 		def.Constraints = make([]Constraint, 0, len(sm.constraints))
 		for _, c := range sm.constraints {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			// Copy properties slice to avoid aliasing.
-			props := make([]string, len(c.Properties))
-			copy(props, c.Properties)
+			props, err := copySliceWithContext(ctx, c.Properties)
+			if err != nil {
+				return nil, err
+			}
+			if props == nil {
+				props = make([]string, 0)
+			}
 			var allowedVals []interface{}
 			if len(c.AllowedValues) > 0 {
-				allowedVals = make([]interface{}, len(c.AllowedValues))
-				copy(allowedVals, c.AllowedValues)
+				allowedVals, err = copySliceWithContext(ctx, c.AllowedValues)
+				if err != nil {
+					return nil, err
+				}
 			}
 			def.Constraints = append(def.Constraints, Constraint{
 				Name:          c.Name,
@@ -108,28 +140,42 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 				PolicyMode:    c.PolicyMode,
 			})
 		}
-		sort.Slice(def.Constraints, func(i, j int) bool {
-			if def.Constraints[i].Label != def.Constraints[j].Label {
-				return def.Constraints[i].Label < def.Constraints[j].Label
+		if err := sortIndexCandidatesWithContext(ctx, def.Constraints, func(left, right Constraint) bool {
+			if left.Label != right.Label {
+				return left.Label < right.Label
 			}
-			return def.Constraints[i].Name < def.Constraints[j].Name
-		})
+			return left.Name < right.Name
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	if len(sm.constraintContracts) > 0 {
 		def.ConstraintContracts = make([]ConstraintContract, 0, len(sm.constraintContracts))
 		for _, contract := range sm.constraintContracts {
-			def.ConstraintContracts = append(def.ConstraintContracts, cloneConstraintContract(contract))
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			cloned, err := cloneConstraintContractWithContext(ctx, contract)
+			if err != nil {
+				return nil, err
+			}
+			def.ConstraintContracts = append(def.ConstraintContracts, cloned)
 		}
-		sort.Slice(def.ConstraintContracts, func(i, j int) bool {
-			return def.ConstraintContracts[i].Name < def.ConstraintContracts[j].Name
-		})
+		if err := sortIndexCandidatesWithContext(ctx, def.ConstraintContracts, func(left, right ConstraintContract) bool {
+			return left.Name < right.Name
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	// Property type constraints.
 	if len(sm.propertyTypeConstraints) > 0 {
 		def.PropertyTypeConstraints = make([]PropertyTypeConstraint, 0, len(sm.propertyTypeConstraints))
 		for _, c := range sm.propertyTypeConstraints {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			def.PropertyTypeConstraints = append(def.PropertyTypeConstraints, PropertyTypeConstraint{
 				Name:         c.Name,
 				EntityType:   c.EntityType,
@@ -138,12 +184,14 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 				ExpectedType: c.ExpectedType,
 			})
 		}
-		sort.Slice(def.PropertyTypeConstraints, func(i, j int) bool {
-			if def.PropertyTypeConstraints[i].Label != def.PropertyTypeConstraints[j].Label {
-				return def.PropertyTypeConstraints[i].Label < def.PropertyTypeConstraints[j].Label
+		if err := sortIndexCandidatesWithContext(ctx, def.PropertyTypeConstraints, func(left, right PropertyTypeConstraint) bool {
+			if left.Label != right.Label {
+				return left.Label < right.Label
 			}
-			return def.PropertyTypeConstraints[i].Name < def.PropertyTypeConstraints[j].Name
-		})
+			return left.Name < right.Name
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	// Equality indexes split into the two persisted arrays for on-disk
@@ -151,11 +199,19 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 	// Both load back into the single compositeIndexes map.
 	if len(sm.compositeIndexes) > 0 {
 		for _, idx := range sm.compositeIndexes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if idx.OwningConstraint != "" {
 				continue // derived from its constraint
 			}
-			props := make([]string, len(idx.Properties))
-			copy(props, idx.Properties)
+			props, err := copySliceWithContext(ctx, idx.Properties)
+			if err != nil {
+				return nil, err
+			}
+			if props == nil {
+				props = make([]string, 0)
+			}
 			if len(props) == 1 {
 				def.PropertyIndexes = append(def.PropertyIndexes, SchemaPropertyIndexDef{
 					Name:       idx.Name,
@@ -170,30 +226,52 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 				Properties: props,
 			})
 		}
-		sort.Slice(def.PropertyIndexes, func(i, j int) bool {
-			if def.PropertyIndexes[i].Label != def.PropertyIndexes[j].Label {
-				return def.PropertyIndexes[i].Label < def.PropertyIndexes[j].Label
+		if err := sortIndexCandidatesWithContext(ctx, def.PropertyIndexes, func(left, right SchemaPropertyIndexDef) bool {
+			if left.Label != right.Label {
+				return left.Label < right.Label
 			}
-			return def.PropertyIndexes[i].Name < def.PropertyIndexes[j].Name
-		})
-		sort.Slice(def.CompositeIndexes, func(i, j int) bool {
-			if def.CompositeIndexes[i].Label != def.CompositeIndexes[j].Label {
-				return def.CompositeIndexes[i].Label < def.CompositeIndexes[j].Label
+			return left.Name < right.Name
+		}); err != nil {
+			return nil, err
+		}
+		if err := sortIndexCandidatesWithContext(ctx, def.CompositeIndexes, func(left, right SchemaCompositeIndexDef) bool {
+			if left.Label != right.Label {
+				return left.Label < right.Label
 			}
-			return def.CompositeIndexes[i].Name < def.CompositeIndexes[j].Name
-		})
+			return left.Name < right.Name
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	// Fulltext indexes.
 	if len(sm.fulltextIndexes) > 0 {
 		def.FulltextIndexes = make([]FulltextIndex, 0, len(sm.fulltextIndexes))
 		for _, idx := range sm.fulltextIndexes {
-			labels := make([]string, len(idx.Labels))
-			copy(labels, idx.Labels)
-			relTypes := make([]string, len(idx.RelationshipTypes))
-			copy(relTypes, idx.RelationshipTypes)
-			props := make([]string, len(idx.Properties))
-			copy(props, idx.Properties)
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			labels, err := copySliceWithContext(ctx, idx.Labels)
+			if err != nil {
+				return nil, err
+			}
+			if labels == nil {
+				labels = make([]string, 0)
+			}
+			relTypes, err := copySliceWithContext(ctx, idx.RelationshipTypes)
+			if err != nil {
+				return nil, err
+			}
+			if relTypes == nil {
+				relTypes = make([]string, 0)
+			}
+			props, err := copySliceWithContext(ctx, idx.Properties)
+			if err != nil {
+				return nil, err
+			}
+			if props == nil {
+				props = make([]string, 0)
+			}
 			def.FulltextIndexes = append(def.FulltextIndexes, FulltextIndex{
 				Name:              idx.Name,
 				Labels:            labels,
@@ -201,15 +279,20 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 				Properties:        props,
 			})
 		}
-		sort.Slice(def.FulltextIndexes, func(i, j int) bool {
-			return def.FulltextIndexes[i].Name < def.FulltextIndexes[j].Name
-		})
+		if err := sortIndexCandidatesWithContext(ctx, def.FulltextIndexes, func(left, right FulltextIndex) bool {
+			return left.Name < right.Name
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	// Vector indexes.
 	if len(sm.vectorIndexes) > 0 {
 		def.VectorIndexes = make([]VectorIndex, 0, len(sm.vectorIndexes))
 		for _, idx := range sm.vectorIndexes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			def.VectorIndexes = append(def.VectorIndexes, VectorIndex{
 				Name:           idx.Name,
 				Label:          idx.Label,
@@ -219,97 +302,148 @@ func (sm *SchemaManager) exportDefinitionLocked() *SchemaDefinition {
 				EntityType:     defaultConstraintEntityType(idx.EntityType),
 			})
 		}
-		sort.Slice(def.VectorIndexes, func(i, j int) bool {
-			return def.VectorIndexes[i].Name < def.VectorIndexes[j].Name
-		})
+		if err := sortIndexCandidatesWithContext(ctx, def.VectorIndexes, func(left, right VectorIndex) bool {
+			return left.Name < right.Name
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	// Range indexes.
 	if len(sm.rangeIndexes) > 0 {
 		def.RangeIndexes = make([]SchemaRangeIndexDef, 0, len(sm.rangeIndexes))
 		for _, idx := range sm.rangeIndexes {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			properties, err := copySliceWithContext(ctx, idx.Properties)
+			if err != nil {
+				return nil, err
+			}
 			def.RangeIndexes = append(def.RangeIndexes, SchemaRangeIndexDef{
 				Name:             idx.Name,
 				Kind:             idx.Kind,
 				Label:            idx.Label,
 				Property:         idx.Property,
-				Properties:       idx.Properties,
+				Properties:       properties,
 				EntityType:       idx.EntityType,
 				OwningConstraint: idx.OwningConstraint,
 			})
 		}
-		sort.Slice(def.RangeIndexes, func(i, j int) bool {
-			return def.RangeIndexes[i].Name < def.RangeIndexes[j].Name
-		})
+		if err := sortIndexCandidatesWithContext(ctx, def.RangeIndexes, func(left, right SchemaRangeIndexDef) bool {
+			return left.Name < right.Name
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	// Decay profile bundles.
 	if len(sm.decayProfileBundles) > 0 {
 		def.DecayProfileBundles = make([]knowledgepolicy.DecayProfileBundle, 0, len(sm.decayProfileBundles))
 		for _, b := range sm.decayProfileBundles {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			def.DecayProfileBundles = append(def.DecayProfileBundles, *b)
 		}
-		sort.Slice(def.DecayProfileBundles, func(i, j int) bool {
-			return def.DecayProfileBundles[i].Name < def.DecayProfileBundles[j].Name
-		})
+		if err := sortIndexCandidatesWithContext(ctx, def.DecayProfileBundles, func(left, right knowledgepolicy.DecayProfileBundle) bool {
+			return left.Name < right.Name
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	// Decay profile bindings.
 	if len(sm.decayProfileBindings) > 0 {
 		def.DecayProfileBindings = make([]knowledgepolicy.DecayProfileBinding, 0, len(sm.decayProfileBindings))
 		for _, b := range sm.decayProfileBindings {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			bc := *b
 			if len(bc.TargetLabels) > 0 {
-				labels := make([]string, len(bc.TargetLabels))
-				copy(labels, bc.TargetLabels)
+				labels, err := copySliceWithContext(ctx, bc.TargetLabels)
+				if err != nil {
+					return nil, err
+				}
+				if labels == nil {
+					labels = make([]string, 0)
+				}
 				bc.TargetLabels = labels
 			}
 			if len(bc.PropertyRules) > 0 {
-				rules := make([]knowledgepolicy.DecayProfilePropertyRule, len(bc.PropertyRules))
-				copy(rules, bc.PropertyRules)
+				rules, err := copySliceWithContext(ctx, bc.PropertyRules)
+				if err != nil {
+					return nil, err
+				}
+				if rules == nil {
+					rules = make([]knowledgepolicy.DecayProfilePropertyRule, 0)
+				}
 				bc.PropertyRules = rules
 			}
 			def.DecayProfileBindings = append(def.DecayProfileBindings, bc)
 		}
-		sort.Slice(def.DecayProfileBindings, func(i, j int) bool {
-			return def.DecayProfileBindings[i].Name < def.DecayProfileBindings[j].Name
-		})
+		if err := sortIndexCandidatesWithContext(ctx, def.DecayProfileBindings, func(left, right knowledgepolicy.DecayProfileBinding) bool {
+			return left.Name < right.Name
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	// Promotion profiles.
 	if len(sm.promotionProfiles) > 0 {
 		def.PromotionProfiles = make([]knowledgepolicy.PromotionProfileDef, 0, len(sm.promotionProfiles))
 		for _, p := range sm.promotionProfiles {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			def.PromotionProfiles = append(def.PromotionProfiles, *p)
 		}
-		sort.Slice(def.PromotionProfiles, func(i, j int) bool {
-			return def.PromotionProfiles[i].Name < def.PromotionProfiles[j].Name
-		})
+		if err := sortIndexCandidatesWithContext(ctx, def.PromotionProfiles, func(left, right knowledgepolicy.PromotionProfileDef) bool {
+			return left.Name < right.Name
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	// Promotion policies.
 	if len(sm.promotionPolicies) > 0 {
 		def.PromotionPolicies = make([]knowledgepolicy.PromotionPolicyDef, 0, len(sm.promotionPolicies))
 		for _, p := range sm.promotionPolicies {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			pc := *p
 			if len(pc.TargetLabels) > 0 {
-				labels := make([]string, len(pc.TargetLabels))
-				copy(labels, pc.TargetLabels)
+				labels, err := copySliceWithContext(ctx, pc.TargetLabels)
+				if err != nil {
+					return nil, err
+				}
+				if labels == nil {
+					labels = make([]string, 0)
+				}
 				pc.TargetLabels = labels
 			}
 			if len(pc.WhenClauses) > 0 {
-				clauses := make([]knowledgepolicy.PromotionPolicyWhenClause, len(pc.WhenClauses))
-				copy(clauses, pc.WhenClauses)
+				clauses, err := copySliceWithContext(ctx, pc.WhenClauses)
+				if err != nil {
+					return nil, err
+				}
+				if clauses == nil {
+					clauses = make([]knowledgepolicy.PromotionPolicyWhenClause, 0)
+				}
 				pc.WhenClauses = clauses
 			}
 			def.PromotionPolicies = append(def.PromotionPolicies, pc)
 		}
-		sort.Slice(def.PromotionPolicies, func(i, j int) bool {
-			return def.PromotionPolicies[i].Name < def.PromotionPolicies[j].Name
-		})
+		if err := sortIndexCandidatesWithContext(ctx, def.PromotionPolicies, func(left, right knowledgepolicy.PromotionPolicyDef) bool {
+			return left.Name < right.Name
+		}); err != nil {
+			return nil, err
+		}
 	}
 
-	return def
+	return def, ctx.Err()
 }
 
 // ReplaceFromDefinition replaces the in-memory schema contents with the given definition.
@@ -470,12 +604,16 @@ func (sm *SchemaManager) replaceFromDefinitionLocked(def *SchemaDefinition) erro
 
 	// Range indexes.
 	for _, idx := range def.RangeIndexes {
+		properties, err := copySliceWithContext(context.Background(), idx.Properties)
+		if err != nil {
+			return err
+		}
 		sm.rangeIndexes[idx.Name] = &RangeIndex{
 			Name:             idx.Name,
 			Kind:             idx.Kind,
 			Label:            idx.Label,
 			Property:         idx.Property,
-			Properties:       idx.Properties,
+			Properties:       properties,
 			EntityType:       idx.EntityType,
 			OwningConstraint: idx.OwningConstraint,
 			entries:          make([]rangeEntry, 0),

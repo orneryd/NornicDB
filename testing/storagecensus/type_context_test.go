@@ -79,9 +79,9 @@ func TestKernelWriterContextsRemainFailClosed(t *testing.T) {
 	base, err := Census(root, baseOverlay)
 	require.NoError(t, err)
 	require.Empty(t, base.Violations)
-	for _, tc := range []struct{ name, source, entry string }{{"native", `func(b *BadgerEngine) CensusNativeDelete(tx *BadgerTransaction,id NodeID)error{_,err:=b.executeNodeDeletion(tx.badgerTx,id,nil);return err}`, "pkg/storage.BadgerEngine.CensusNativeDelete"}, {"unknown", `func(b *BadgerEngine) CensusUnknownDelete(w kvWriter,id NodeID)error{_,err:=b.executeNodeDeletion(w,id,nil);return err}`, "pkg/storage.BadgerEngine.CensusUnknownDelete"}, {"mixed", `func(b *BadgerEngine) CensusMixedDelete(tx *BadgerTransaction,id NodeID,native bool)error{var w kvWriter=tx.staged();if native{w=tx.badgerTx};_,err:=b.executeNodeDeletion(w,id,nil);return err}`, "pkg/storage.BadgerEngine.CensusMixedDelete"}} {
+	for _, tc := range []struct{ name, source, entry string }{{"native", `func(b *BadgerEngine) CensusNativeDelete(ctx context.Context,tx *BadgerTransaction,id NodeID)error{_,err:=b.executeNodeDeletion(ctx,tx.badgerTx,id,nil);return err}`, "pkg/storage.BadgerEngine.CensusNativeDelete"}, {"unknown", `func(b *BadgerEngine) CensusUnknownDelete(ctx context.Context,w kvWriter,id NodeID)error{_,err:=b.executeNodeDeletion(ctx,w,id,nil);return err}`, "pkg/storage.BadgerEngine.CensusUnknownDelete"}, {"mixed", `func(b *BadgerEngine) CensusMixedDelete(ctx context.Context,tx *BadgerTransaction,id NodeID,native bool)error{var w kvWriter=tx.staged();if native{w=tx.badgerTx};_,err:=b.executeNodeDeletion(ctx,w,id,nil);return err}`, "pkg/storage.BadgerEngine.CensusMixedDelete"}} {
 		t.Run(tc.name, func(t *testing.T) {
-			overlay := map[string][]byte{kernelPath: kernel, filepath.Join(abs, "pkg/storage/zz_census_type_context.go"): []byte("package storage\n" + tc.source)}
+			overlay := map[string][]byte{kernelPath: kernel, filepath.Join(abs, "pkg/storage/zz_census_type_context.go"): []byte("package storage\nimport \"context\"\n" + tc.source)}
 			report, err := Census(root, overlay)
 			require.NoError(t, err)
 			found := false
@@ -100,9 +100,9 @@ func TestKernelWriterContextsRemainFailClosed(t *testing.T) {
 	txPath := filepath.Join(abs, "pkg/storage/badger_transaction.go")
 	txSource, err := os.ReadFile(txPath)
 	require.NoError(t, err)
-	anchor := "tx.engine.executeNodeDeletion(tx.staged(), nodeID, oldNode)"
+	anchor := "tx.engine.executeNodeDeletion(ctx, tx.staged(), nodeID, oldNode)"
 	require.Equal(t, 1, strings.Count(string(txSource), anchor))
-	mutant := strings.Replace(string(txSource), anchor, "tx.engine.executeNodeDeletion(tx.badgerTx, nodeID, oldNode)", 1)
+	mutant := strings.Replace(string(txSource), anchor, "tx.engine.executeNodeDeletion(ctx, tx.badgerTx, nodeID, oldNode)", 1)
 	report, err := Census(root, map[string][]byte{kernelPath: kernel, txPath: []byte(mutant)})
 	require.NoError(t, err)
 	require.Contains(t, strings.Join(report.Violations, "\n"), "unordered write: pkg/storage.BadgerTransaction.DeleteGraphNode")

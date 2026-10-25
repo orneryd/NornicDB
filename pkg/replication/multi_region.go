@@ -287,18 +287,31 @@ func (r *MultiRegionReplicator) streamWALToRemoteRegions(ctx context.Context) {
 
 // Apply applies a command through the local Raft cluster.
 func (r *MultiRegionReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	return r.ApplyWithContext(nil, cmd, timeout)
+}
+
+// ApplyWithContext consumes the retained local Raft admission owner.
+func (r *MultiRegionReplicator) ApplyWithContext(ctx context.Context, cmd *Command, timeout time.Duration) error {
 	if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
 		return err
 	}
+	if ctx == nil {
+		ctx = r.LifetimeContext()
+	}
 
 	// Apply through local Raft
-	return r.localRaft.Apply(cmd, timeout)
+	return r.localRaft.ApplyWithContext(ctx, cmd, timeout)
 }
 
 // ApplyBatch applies multiple commands.
 func (r *MultiRegionReplicator) ApplyBatch(cmds []*Command, timeout time.Duration) error {
+	return r.ApplyBatchWithContext(nil, cmds, timeout)
+}
+
+// ApplyBatchWithContext passes one request lifetime through the existing list.
+func (r *MultiRegionReplicator) ApplyBatchWithContext(ctx context.Context, cmds []*Command, timeout time.Duration) error {
 	for _, cmd := range cmds {
-		if err := r.Apply(cmd, timeout); err != nil {
+		if err := r.ApplyWithContext(ctx, cmd, timeout); err != nil {
 			return err
 		}
 	}

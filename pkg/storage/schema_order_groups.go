@@ -1,7 +1,7 @@
 package storage
 
 import (
-	"sort"
+	"context"
 )
 
 // VisitPropertyIndexGroups visits non-null property-index entries in key order.
@@ -27,60 +27,109 @@ func (sm *SchemaManager) VisitPropertyIndexGroups(label, property string, descen
 // (WHERE n.t > $last …) starts at the bound instead of reading the whole
 // index before it (#939).
 func (sm *SchemaManager) VisitPropertyIndexGroupsInRange(label, property string, descending bool, bounds PropertyIndexBounds, visit func([]NodeID) bool) bool {
+	found, _ := sm.VisitPropertyIndexGroupsInRangeWithContext(context.Background(), label, property, descending, bounds, visit)
+	return found
+}
+
+// VisitPropertyIndexGroupsInRangeWithContext captures complete membership before
+// callbacks, observes every preparation pass, and releases locks before delivery.
+func (sm *SchemaManager) VisitPropertyIndexGroupsInRangeWithContext(ctx context.Context, label, property string, descending bool, bounds PropertyIndexBounds, visit func([]NodeID) bool) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	sm.mu.RLock()
 	idx, exists := sm.seekablePropertyIndexLocked(label, property)
 	sm.mu.RUnlock()
 	if !exists {
-		return false
+		return false, nil
 	}
-	// Snapshot group membership before invoking callbacks so index mutations
-	// cannot move an ID into a group that has yet to be visited.
-	idx.mu.Lock()
-	keys, _ := idx.sortedKeyRangeLocked(bounds)
-	totalIDs := 0
-	for _, key := range keys {
-		totalIDs += len(idx.values[key])
-	}
-	ids := make([]NodeID, 0, totalIDs)
-	groupEnds := make([]int, 0, len(keys))
-	appendGroup := func(group []interface{}) {
-		groupStart := len(ids)
-		for _, key := range group {
-			ids = append(ids, idx.values[key]...)
+	var ids []NodeID
+	var groupEnds []int
+	snapshotErr := func() error {
+		idx.mu.Lock()
+		defer idx.mu.Unlock()
+		if _, _, err := idx.sortedKeysViewLockedWithContext(ctx); err != nil {
+			return err
 		}
-		if len(ids) > groupStart {
-			groupEnds = append(groupEnds, len(ids))
-		}
-	}
-	if descending {
-		for end := len(keys); end > 0; {
-			start := end - 1
-			for start > 0 && compareSchemaIndexValues(keys[start-1], keys[end-1]) == 0 {
-				start--
+		keys, _ := idx.sortedKeyRangeLocked(bounds)
+		totalIDs := 0
+		for _, key := range keys {
+			if err := ctx.Err(); err != nil {
+				return err
 			}
-			appendGroup(keys[start:end])
-			end = start
+			totalIDs += len(idx.values[key])
 		}
-	} else {
-		for start := 0; start < len(keys); {
-			end := start + 1
-			for end < len(keys) && compareSchemaIndexValues(keys[start], keys[end]) == 0 {
-				end++
+		ids = make([]NodeID, 0, totalIDs)
+		groupEnds = make([]int, 0, len(keys))
+		appendGroup := func(group []interface{}) error {
+			groupStart := len(ids)
+			for _, key := range group {
+				for start := 0; start < len(idx.values[key]); start += 256 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					end := min(start+256, len(idx.values[key]))
+					ids = append(ids, idx.values[key][start:end]...)
+				}
 			}
-			appendGroup(keys[start:end])
-			start = end
+			if len(ids) > groupStart {
+				groupEnds = append(groupEnds, len(ids))
+			}
+			return nil
 		}
+		if descending {
+			for end := len(keys); end > 0; {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				start := end - 1
+				for start > 0 && compareSchemaIndexValues(keys[start-1], keys[end-1]) == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					start--
+				}
+				if err := appendGroup(keys[start:end]); err != nil {
+					return err
+				}
+				end = start
+			}
+		} else {
+			for start := 0; start < len(keys); {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				end := start + 1
+				for end < len(keys) && compareSchemaIndexValues(keys[start], keys[end]) == 0 {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
+					end++
+				}
+				if err := appendGroup(keys[start:end]); err != nil {
+					return err
+				}
+				start = end
+			}
+		}
+		return ctx.Err()
+	}()
+	if snapshotErr != nil {
+		return true, snapshotErr
 	}
-	idx.mu.Unlock()
-
 	groupStart := 0
 	for _, groupEnd := range groupEnds {
+		if err := ctx.Err(); err != nil {
+			return true, err
+		}
 		group := ids[groupStart:groupEnd]
-		sort.Slice(group, func(i, j int) bool { return group[i] < group[j] })
+		if err := sortIndexCandidatesWithContext(ctx, group, func(a, b NodeID) bool { return a < b }); err != nil {
+			return true, err
+		}
 		if !visit(group) {
 			break
 		}
 		groupStart = groupEnd
 	}
-	return true
+	return true, ctx.Err()
 }

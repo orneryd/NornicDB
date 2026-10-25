@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // StoredEntityChange is one entity's stored image before and after a logical
 // commit. A nil image denotes absence. Exactly one entity kind is populated;
 // repeated mutations of an ID produce one pair. Images include separately
@@ -16,6 +18,12 @@ type StoredEntityChange struct {
 // entities still consume capacity. Empty namespace selects all images.
 // For example, an absent prior and present final node contribute one node.
 func StoredEntityCountDelta(namespace string, changes []StoredEntityChange) (nodes, edges int64) {
+	nodes, edges, _ = StoredEntityCountDeltaWithContext(context.Background(), namespace, changes)
+	return nodes, edges
+}
+
+// StoredEntityCountDeltaWithContext observes pre-acceptance count projection.
+func StoredEntityCountDeltaWithContext(ctx context.Context, namespace string, changes []StoredEntityChange) (nodes, edges int64, err error) {
 	matches := func(id string) bool {
 		if namespace == "" {
 			return true
@@ -24,6 +32,9 @@ func StoredEntityCountDelta(namespace string, changes []StoredEntityChange) (nod
 		return actual == namespace
 	}
 	for _, change := range changes {
+		if err := ctx.Err(); err != nil {
+			return 0, 0, err
+		}
 		if change.BeforeNode != nil || change.AfterNode != nil {
 			if change.BeforeNode != nil && matches(string(change.BeforeNode.ID)) {
 				nodes--
@@ -40,5 +51,5 @@ func StoredEntityCountDelta(namespace string, changes []StoredEntityChange) (nod
 			}
 		}
 	}
-	return nodes, edges
+	return nodes, edges, ctx.Err()
 }

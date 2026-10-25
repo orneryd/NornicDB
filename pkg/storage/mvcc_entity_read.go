@@ -1,10 +1,18 @@
 package storage
 
-import "github.com/dgraph-io/badger/v4"
+import (
+	"context"
+
+	"github.com/dgraph-io/badger/v4"
+)
 
 // mvccEntityRead selects hydration and graph visibility at one logical version.
 // Edge bodies have no embedding hydration; vectors is used only by node loads.
 type mvccEntityRead struct {
+	// nodeNum pins an index candidate to its physical snapshot identity.
+	nodeNum    uint64
+	projected  bool
+	properties []string
 	vectors    bool
 	visibility readVisibility
 }
@@ -35,6 +43,13 @@ func readEntityAtWithView[I ~string, T Node | Edge, P any](b *BadgerEngine, id I
 // transactions already use their registered cached reader before reaching this
 // fallback, while public/fallback requests register for this complete view.
 func (b *BadgerEngine) readAdjacentEdgesAtWithView(nodeID NodeID, version MVCCVersion, direction EdgeDirection, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
+	return b.readAdjacentEdgesAtWithViewWithContext(context.Background(), nodeID, version, direction, view)
+}
+
+func (b *BadgerEngine) readAdjacentEdgesAtWithViewWithContext(ctx context.Context, nodeID NodeID, version MVCCVersion, direction EdgeDirection, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(nodeID)); err != nil {
 		return nil, err
 	}
@@ -57,11 +72,14 @@ func (b *BadgerEngine) readAdjacentEdgesAtWithView(nodeID NodeID, version MVCCVe
 	defer deregister()
 	var edges []*Edge
 	err = view(func(txn *badger.Txn) error {
-		ids, err := b.collectVisibleAdjacencyEdgeIDsInTxn(txn, prefix, version)
+		ids, err := b.collectVisibleAdjacencyEdgeIDsInTxnWithContext(ctx, txn, prefix, version)
 		if err != nil {
 			return err
 		}
 		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			edge, e := b.getEdgeAtInTxn(txn, id, version, mvccEntityRead{visibility: visibleRead})
 			if e == ErrNotFound || e == ErrNotVisibleAtSnapshot {
 				continue
@@ -78,5 +96,5 @@ func (b *BadgerEngine) readAdjacentEdgesAtWithView(nodeID NodeID, version MVCCVe
 	if err != nil {
 		return nil, err
 	}
-	return edges, nil
+	return edges, ctx.Err()
 }

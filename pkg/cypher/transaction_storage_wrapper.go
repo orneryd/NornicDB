@@ -17,29 +17,42 @@ import (
 // or changed are listed by their current values, nodes it changed or deleted
 // lose their committed entries (#809). The lookup stays an index lookup: a
 // transaction that reads by an indexed property doesn't scan the label.
-func propertyIndexLookup(engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) []storage.NodeID {
-	ids := schema.PropertyIndexLookup(label, property, value)
-	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
-		return wrapper.tx.MergePendingPropertyMatches(ids, label, property, value)
+func propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) ([]storage.NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return ids
+	ids, err := schema.PropertyIndexLookupWithContext(ctx, label, property, value)
+	if err != nil {
+		return nil, err
+	}
+	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+		return wrapper.tx.MergePendingPropertyMatchesWithContext(ctx, ids, label, property, value)
+	}
+	return ids, ctx.Err()
 }
 
 // compositeIndexLookup is the composite-index counterpart of
 // propertyIndexLookup: a full or prefix lookup against committed state, with
 // the transaction's own pending node writes merged in. full selects LookupFull
 // (all index properties equal) over LookupPrefix (leading properties equal).
-func compositeIndexLookup(engine storage.Engine, idx *storage.CompositeIndex, values []interface{}, full bool) []storage.NodeID {
+func compositeIndexLookup(ctx context.Context, engine storage.Engine, idx *storage.CompositeIndex, values []interface{}, full bool) ([]storage.NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	var ids []storage.NodeID
+	var err error
 	if full {
-		ids = idx.LookupFull(values...)
+		ids, err = idx.LookupFullWithContext(ctx, values...)
 	} else {
-		ids = idx.LookupPrefix(values...)
+		ids, err = idx.LookupPrefixWithContext(ctx, values...)
+	}
+	if err != nil {
+		return nil, err
 	}
 	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
-		return wrapper.tx.MergePendingCompositeMatches(ids, idx.Label, idx.Properties, values)
+		return wrapper.tx.MergePendingCompositeMatchesWithContext(ctx, ids, idx.Label, idx.Properties, values)
 	}
-	return ids
+	return ids, ctx.Err()
 }
 
 // labellessPropertyIndexUsable reports whether a pattern without a label may
@@ -47,7 +60,7 @@ func compositeIndexLookup(engine storage.Engine, idx *storage.CompositeIndex, va
 // indexes are per label, so their union for a property lists only the nodes
 // that carry an indexed label. A committed lookup is complete only when an
 // indexed label covers the namespace; transaction reads use the merged scan.
-func labellessPropertyIndexUsable(engine storage.Engine, labels ...string) bool {
+func labellessPropertyIndexUsable(ctx context.Context, engine storage.Engine, labels ...string) bool {
 	if _, transactional := engine.(*transactionStorageWrapper); transactional {
 		return false
 	}
@@ -60,7 +73,7 @@ func labellessPropertyIndexUsable(engine storage.Engine, labels ...string) bool 
 		return false
 	}
 	for _, label := range labels {
-		count, err := stats.NodeCountByLabel(label)
+		count, err := storage.NodeCountByLabelWithContext(ctx, stats, label)
 		if err == nil && count == total {
 			return true
 		}
@@ -238,16 +251,31 @@ func (w *transactionStorageWrapper) clearMutatedNodeIDs(processed map[string]str
 
 // Write operations - go through transaction for atomicity
 func (w *transactionStorageWrapper) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	return w.createNodes([]*storage.Node{node}, false)
+	return w.CreateNodeWithContext(context.Background(), node)
+}
+
+// CreateNodeWithContext carries the caller through mutation validation.
+func (w *transactionStorageWrapper) CreateNodeWithContext(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
+	return w.createNodesWithContext(ctx, []*storage.Node{node}, false)
 }
 
 // CreateMintedNode is CreateNode for a node whose ID the executor minted
 // (generateID); see storage.BadgerTransaction.CreateMintedNode.
 func (w *transactionStorageWrapper) CreateMintedNode(node *storage.Node) (storage.NodeID, error) {
-	return w.createNodes([]*storage.Node{node}, true)
+	return w.CreateMintedNodeWithContext(context.Background(), node)
+}
+
+// CreateMintedNodeWithContext carries the caller through mutation validation.
+func (w *transactionStorageWrapper) CreateMintedNodeWithContext(ctx context.Context, node *storage.Node) (storage.NodeID, error) {
+	return w.createNodesWithContext(ctx, []*storage.Node{node}, true)
 }
 
 func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
+	return w.UpdateNodeWithContext(context.Background(), node)
+}
+
+// UpdateNodeWithContext carries the caller through mutation validation.
+func (w *transactionStorageWrapper) UpdateNodeWithContext(ctx context.Context, node *storage.Node) error {
 	if node == nil {
 		return storage.ErrInvalidData
 	}
@@ -255,7 +283,7 @@ func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
 		return err
 	}
 	if w.namespace == "" {
-		err := w.tx.UpdateGraphNode(node, storage.ClientNodeEdits)
+		err := w.tx.UpdateGraphNodeWithContext(ctx, node, storage.ClientNodeEdits)
 		if err == nil {
 			w.markMutatedNodeID(node.ID)
 		}
@@ -263,7 +291,7 @@ func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
 	}
 	namespaced := storage.CopyNode(node)
 	namespaced.ID = w.prefixNodeID(node.ID)
-	err := w.tx.UpdateGraphNode(namespaced, storage.ClientNodeEdits)
+	err := w.tx.UpdateGraphNodeWithContext(ctx, namespaced, storage.ClientNodeEdits)
 	if err == nil {
 		w.markMutatedNodeID(node.ID)
 	}
@@ -271,25 +299,45 @@ func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
 }
 
 func (w *transactionStorageWrapper) DeleteNode(id storage.NodeID) error {
-	return w.tx.DeleteGraphNode(w.prefixNodeID(id), storage.CascadeEdges)
+	return w.DeleteNodeWithContext(context.Background(), id)
+}
+
+func (w *transactionStorageWrapper) DeleteNodeWithContext(ctx context.Context, id storage.NodeID) error {
+	return w.DeleteGraphNodeWithContext(ctx, id, storage.CascadeEdges)
 }
 
 // DeleteGraphNode applies a transactional deletion policy in this namespace.
 func (w *transactionStorageWrapper) DeleteGraphNode(id storage.NodeID, mode storage.NodeDeletionMode) error {
-	return w.tx.DeleteGraphNode(w.prefixNodeID(id), mode)
+	return w.DeleteGraphNodeWithContext(context.Background(), id, mode)
+}
+
+// DeleteGraphNodeWithContext uses the native transaction's one cascade owner.
+func (w *transactionStorageWrapper) DeleteGraphNodeWithContext(ctx context.Context, id storage.NodeID, mode storage.NodeDeletionMode) error {
+	return w.tx.DeleteGraphNodeWithContext(ctx, w.prefixNodeID(id), mode)
 }
 
 // IncidentEdges is BadgerTransaction.IncidentEdges for this wrapper's
 // namespace (storage.IncidentEdgeLister).
 func (w *transactionStorageWrapper) IncidentEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+	return w.IncidentEdgesWithContext(context.Background(), nodeID)
+}
+
+func (w *transactionStorageWrapper) IncidentEdgesWithContext(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	if w.namespace == "" {
-		return w.tx.IncidentEdges(nodeID)
+		return w.tx.IncidentEdgesWithContext(ctx, nodeID)
 	}
-	edges, err := w.tx.IncidentEdges(w.prefixNodeID(nodeID))
+	edges, err := w.tx.IncidentEdgesWithContext(ctx, w.prefixNodeID(nodeID))
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserEdges(edges), nil
+	out := make([]*storage.Edge, 0, len(edges))
+	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		out = append(out, w.toUserEdge(edge))
+	}
+	return out, nil
 }
 
 func (w *transactionStorageWrapper) CreateEdge(edge *storage.Edge) error {
@@ -313,7 +361,11 @@ func (w *transactionStorageWrapper) EdgeCreateWasNoOp(id storage.EdgeID) bool {
 }
 
 func (w *transactionStorageWrapper) DeleteEdge(id storage.EdgeID) error {
-	return w.tx.DeleteEdge(w.prefixEdgeID(id))
+	return w.DeleteEdgeWithContext(context.Background(), id)
+}
+
+func (w *transactionStorageWrapper) DeleteEdgeWithContext(ctx context.Context, id storage.EdgeID) error {
+	return w.tx.DeleteEdgeWithContext(ctx, w.prefixEdgeID(id))
 }
 
 // Read operations - transaction supports GetNode, forward others to underlying
@@ -374,6 +426,13 @@ func (w *transactionStorageWrapper) GetEdge(id storage.EdgeID) (*storage.Edge, e
 }
 
 func (w *transactionStorageWrapper) UpdateEdge(edge *storage.Edge) error {
+	return w.UpdateEdgeWithContext(context.Background(), edge)
+}
+
+func (w *transactionStorageWrapper) UpdateEdgeWithContext(ctx context.Context, edge *storage.Edge) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if edge == nil {
 		return storage.ErrInvalidData
 	}
@@ -381,24 +440,32 @@ func (w *transactionStorageWrapper) UpdateEdge(edge *storage.Edge) error {
 		return err
 	}
 	if w.namespace == "" {
-		return w.tx.UpdateEdge(edge)
+		return w.tx.UpdateEdgeWithContext(ctx, edge)
 	}
-	namespaced := storage.CopyEdge(edge)
+	namespaced, err := storage.CopyEdgeWithContext(ctx, edge)
+	if err != nil {
+		return err
+	}
 	namespaced.ID = w.prefixEdgeID(edge.ID)
 	namespaced.StartNode = w.prefixNodeID(edge.StartNode)
 	namespaced.EndNode = w.prefixNodeID(edge.EndNode)
-	return w.tx.UpdateEdge(namespaced)
+	return w.tx.UpdateEdgeWithContext(ctx, namespaced)
 }
 
 func (w *transactionStorageWrapper) GetNodesByLabel(label string) ([]*storage.Node, error) {
-	nodes, err := w.tx.GetNodesByLabel(label)
+	return w.GetNodesByLabelWithContext(context.Background(), label)
+}
+
+// GetNodesByLabelWithContext carries the caller through this read and its materialization.
+func (w *transactionStorageWrapper) GetNodesByLabelWithContext(ctx context.Context, label string) ([]*storage.Node, error) {
+	nodes, err := storage.GetNodesByLabelWithContext(ctx, w.tx, label)
 	if err != nil {
 		return nil, err
 	}
 	if w.namespace == "" {
 		return nodes, nil
 	}
-	return w.toUserNamespacedNodes(nodes), nil
+	return w.toUserNamespacedNodesWithContext(ctx, nodes)
 }
 
 // StreamNodesByLabelProjected keeps labelled MATCH reads on the transaction's
@@ -406,16 +473,29 @@ func (w *transactionStorageWrapper) GetNodesByLabel(label string) ([]*storage.No
 // Namespace conversion happens per visited node, so unconsumed nodes are never
 // copied into a transaction-local result slice.
 func (w *transactionStorageWrapper) StreamNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
-	return w.streamNodesByLabelProjected(label, properties, false, visit)
+	return w.StreamNodesByLabelProjectedWithContext(context.Background(), label, properties, visit)
+}
+
+// StreamNodesByLabelProjectedWithContext carries the caller through this read and its materialization.
+func (w *transactionStorageWrapper) StreamNodesByLabelProjectedWithContext(ctx context.Context, label string, properties []string, visit func(*storage.Node) error) error {
+	return w.streamNodesByLabelProjectedWithContext(ctx, label, properties, false, visit)
 }
 
 func (w *transactionStorageWrapper) streamNodesByLabelProjected(label string, properties []string, stored bool, visit func(*storage.Node) error) error {
+	return w.streamNodesByLabelProjectedWithContext(context.Background(), label, properties, stored, visit)
+}
+
+func (w *transactionStorageWrapper) streamNodesByLabelProjectedWithContext(ctx context.Context, label string, properties []string, stored bool, visit func(*storage.Node) error) error {
 	if visit == nil {
 		return storage.ErrInvalidData
 	}
-	stream := w.tx.StreamNodesByLabelProjected
+	stream := func(label string, properties []string, visit func(*storage.Node) error) error {
+		return w.tx.StreamNodesByLabelProjectedWithContext(ctx, label, properties, visit)
+	}
 	if stored {
-		stream = w.tx.StreamStoredNodesByLabelProjected
+		stream = func(label string, properties []string, visit func(*storage.Node) error) error {
+			return w.tx.StreamStoredNodesByLabelProjectedWithContext(ctx, label, properties, visit)
+		}
 	}
 	return stream(label, properties, func(node *storage.Node) error {
 		if node == nil {
@@ -469,7 +549,7 @@ func (w *transactionStorageWrapper) StreamNodesWithOptions(ctx context.Context, 
 			return fn(&out)
 		})
 	}
-	nodes, err := w.AllNodes()
+	nodes, err := storage.AllNodesWithContext(ctx, w)
 	if err != nil {
 		return err
 	}
@@ -524,7 +604,12 @@ func copyNodeWithoutEmbeddingVectors(node *storage.Node) *storage.Node {
 }
 
 func (w *transactionStorageWrapper) GetFirstNodeByLabel(label string) (*storage.Node, error) {
-	nodes, err := w.GetNodesByLabel(label)
+	return w.GetFirstNodeByLabelWithContext(context.Background(), label)
+}
+
+// GetFirstNodeByLabelWithContext carries the caller through this read and its materialization.
+func (w *transactionStorageWrapper) GetFirstNodeByLabelWithContext(ctx context.Context, label string) (*storage.Node, error) {
+	nodes, err := storage.GetNodesByLabelWithContext(ctx, w, label)
 	if err != nil {
 		return nil, err
 	}
@@ -535,16 +620,21 @@ func (w *transactionStorageWrapper) GetFirstNodeByLabel(label string) (*storage.
 }
 
 func (w *transactionStorageWrapper) ForEachNodeIDByLabel(label string, visit func(storage.NodeID) bool) error {
+	return w.ForEachNodeIDByLabelWithContext(context.Background(), label, visit)
+}
+
+// ForEachNodeIDByLabelWithContext carries the caller through this read and its materialization.
+func (w *transactionStorageWrapper) ForEachNodeIDByLabelWithContext(ctx context.Context, label string, visit func(storage.NodeID) bool) error {
 	if visit == nil {
 		return nil
 	}
 	if !w.tx.HasPendingNodeMutations() {
 		if lookup, ok := w.underlying.(storage.LabelNodeIDLookupEngine); ok {
-			return lookup.ForEachNodeIDByLabel(label, visit)
+			return storage.ForEachNodeIDByLabelWithContext(ctx, lookup, label, visit)
 		}
 	}
 
-	nodes, err := w.GetNodesByLabel(label)
+	nodes, err := storage.GetNodesByLabelWithContext(ctx, w, label)
 	if err != nil {
 		return err
 	}
@@ -560,14 +650,19 @@ func (w *transactionStorageWrapper) ForEachNodeIDByLabel(label string, visit fun
 }
 
 func (w *transactionStorageWrapper) GetOutgoingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+	return w.GetOutgoingEdgesWithContext(context.Background(), nodeID)
+}
+
+// GetOutgoingEdgesWithContext retains request/snapshot preparation and namespace copying.
+func (w *transactionStorageWrapper) GetOutgoingEdgesWithContext(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	if w.namespace == "" {
-		return w.tx.GetOutgoingEdges(nodeID)
+		return w.tx.GetOutgoingEdgesWithContext(ctx, nodeID)
 	}
-	edges, err := w.tx.GetOutgoingEdges(w.prefixNodeID(nodeID))
+	edges, err := w.tx.GetOutgoingEdgesWithContext(ctx, w.prefixNodeID(nodeID))
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdgesWithContext(ctx, edges)
 }
 
 // OutgoingEdgeHeaders lists the transaction's relationship headers in its
@@ -590,14 +685,19 @@ func (w *transactionStorageWrapper) userEdgeHeaders(edges []*storage.Edge, answe
 }
 
 func (w *transactionStorageWrapper) GetIncomingEdges(nodeID storage.NodeID) ([]*storage.Edge, error) {
+	return w.GetIncomingEdgesWithContext(context.Background(), nodeID)
+}
+
+// GetIncomingEdgesWithContext retains request/snapshot preparation and namespace copying.
+func (w *transactionStorageWrapper) GetIncomingEdgesWithContext(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	if w.namespace == "" {
-		return w.tx.GetIncomingEdges(nodeID)
+		return w.tx.GetIncomingEdgesWithContext(ctx, nodeID)
 	}
-	edges, err := w.tx.GetIncomingEdges(w.prefixNodeID(nodeID))
+	edges, err := w.tx.GetIncomingEdgesWithContext(ctx, w.prefixNodeID(nodeID))
 	if err != nil {
 		return nil, err
 	}
-	return w.toUserEdges(edges), nil
+	return w.toUserEdgesWithContext(ctx, edges)
 }
 
 func (w *transactionStorageWrapper) GetEdgesBetween(startID, endID storage.NodeID) ([]*storage.Edge, error) {
@@ -654,12 +754,17 @@ func (w *transactionStorageWrapper) GetEdgesByType(edgeType string) ([]*storage.
 }
 
 func (w *transactionStorageWrapper) GetNodesByLabelVisibleAt(label string, version storage.MVCCVersion) ([]*storage.Node, error) {
+	return w.GetNodesByLabelVisibleAtWithContext(context.Background(), label, version)
+}
+
+// GetNodesByLabelVisibleAtWithContext carries the caller through this read and its materialization.
+func (w *transactionStorageWrapper) GetNodesByLabelVisibleAtWithContext(ctx context.Context, label string, version storage.MVCCVersion) ([]*storage.Node, error) {
 	if provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine); ok {
-		nodes, err := provider.GetNodesByLabelVisibleAt(label, version)
+		nodes, err := storage.GetNodesByLabelVisibleAtWithContext(ctx, provider, label, version)
 		if err != nil || w.namespace == "" || w.underlyingIsNamespaced() {
 			return nodes, err
 		}
-		return w.toUserNamespacedNodes(nodes), nil
+		return w.toUserNamespacedNodesWithContext(ctx, nodes)
 	}
 	return nil, storage.ErrNotImplemented
 }
@@ -721,14 +826,19 @@ func (w *transactionStorageWrapper) GetEdgesBetweenVisibleAt(startID, endID stor
 }
 
 func (w *transactionStorageWrapper) AllNodes() ([]*storage.Node, error) {
-	nodes, err := w.tx.AllNodes()
+	return w.AllNodesWithContext(context.Background())
+}
+
+// AllNodesWithContext carries the caller through full materialization.
+func (w *transactionStorageWrapper) AllNodesWithContext(ctx context.Context) ([]*storage.Node, error) {
+	nodes, err := storage.AllNodesWithContext(ctx, w.tx)
 	if err != nil {
 		return nil, err
 	}
 	if w.namespace == "" {
 		return nodes, nil
 	}
-	return w.toUserNamespacedNodes(nodes), nil
+	return w.toUserNamespacedNodesWithContext(ctx, nodes)
 }
 
 func (w *transactionStorageWrapper) AllEdges() ([]*storage.Edge, error) {
@@ -765,22 +875,37 @@ func (w *transactionStorageWrapper) GetSchema() *storage.SchemaManager {
 // BulkCreateNodes shares node admission, namespace conversion and mutation
 // tracking with single creates.
 func (w *transactionStorageWrapper) BulkCreateNodes(nodes []*storage.Node) error {
-	_, err := w.createNodes(nodes, false)
+	return w.BulkCreateNodesWithContext(context.Background(), nodes)
+}
+
+// BulkCreateNodesWithContext carries the caller through mutation validation.
+func (w *transactionStorageWrapper) BulkCreateNodesWithContext(ctx context.Context, nodes []*storage.Node) error {
+	_, err := w.createNodesWithContext(ctx, nodes, false)
 	return err
 }
 
 // BulkCreateMintedNodes is BulkCreateNodes for nodes whose IDs the executor
 // minted (CreateMintedNode).
 func (w *transactionStorageWrapper) BulkCreateMintedNodes(nodes []*storage.Node) error {
-	_, err := w.createNodes(nodes, true)
+	return w.BulkCreateMintedNodesWithContext(context.Background(), nodes)
+}
+
+// BulkCreateMintedNodesWithContext carries the caller through mutation validation.
+func (w *transactionStorageWrapper) BulkCreateMintedNodesWithContext(ctx context.Context, nodes []*storage.Node) error {
+	_, err := w.createNodesWithContext(ctx, nodes, true)
 	return err
 }
 
 func (w *transactionStorageWrapper) createNodes(nodes []*storage.Node, minted bool) (storage.NodeID, error) {
+	return w.createNodesWithContext(context.Background(), nodes, minted)
+}
+
+// createNodesWithContext carries the caller through mutation validation.
+func (w *transactionStorageWrapper) createNodesWithContext(ctx context.Context, nodes []*storage.Node, minted bool) (storage.NodeID, error) {
 	var logicalID storage.NodeID
-	create := w.tx.CreateNode
+	create := func(n *storage.Node) (storage.NodeID, error) { return w.tx.CreateNodeWithContext(ctx, n) }
 	if minted {
-		create = w.tx.CreateMintedNode
+		create = func(n *storage.Node) (storage.NodeID, error) { return w.tx.CreateMintedNodeWithContext(ctx, n) }
 	}
 	for _, node := range nodes {
 		if node == nil {
@@ -815,7 +940,24 @@ func (w *transactionStorageWrapper) BulkCreateMintedEdges(edges []*storage.Edge)
 }
 
 func (w *transactionStorageWrapper) createEdges(edges []*storage.Edge, minted bool) error {
-	if err := w.GetSchema().RegisterEdgeTokens(edges); err != nil {
+	return w.createEdgesWithContext(context.Background(), edges, minted)
+}
+
+func (w *transactionStorageWrapper) CreateEdgeWithContext(ctx context.Context, edge *storage.Edge) error {
+	return w.createEdgesWithContext(ctx, []*storage.Edge{edge}, false)
+}
+func (w *transactionStorageWrapper) CreateMintedEdgeWithContext(ctx context.Context, edge *storage.Edge) error {
+	return w.createEdgesWithContext(ctx, []*storage.Edge{edge}, true)
+}
+func (w *transactionStorageWrapper) BulkCreateEdgesWithContext(ctx context.Context, edges []*storage.Edge) error {
+	return w.createEdgesWithContext(ctx, edges, false)
+}
+func (w *transactionStorageWrapper) BulkCreateMintedEdgesWithContext(ctx context.Context, edges []*storage.Edge) error {
+	return w.createEdgesWithContext(ctx, edges, true)
+}
+
+func (w *transactionStorageWrapper) createEdgesWithContext(ctx context.Context, edges []*storage.Edge, minted bool) error {
+	if err := w.GetSchema().RegisterEdgeTokensWithContext(ctx, edges); err != nil {
 		return err
 	}
 	var singleEdge [1]*storage.Edge
@@ -829,6 +971,9 @@ func (w *transactionStorageWrapper) createEdges(edges []*storage.Edge, minted bo
 	}
 	if w.namespace != "" {
 		for i, edge := range edges {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			cp := storage.CopyEdge(edge)
 			cp.ID = w.prefixEdgeID(edge.ID)
 			cp.StartNode = w.prefixNodeID(edge.StartNode)
@@ -838,14 +983,14 @@ func (w *transactionStorageWrapper) createEdges(edges []*storage.Edge, minted bo
 	}
 	if len(namespaced) == 1 {
 		if minted {
-			return w.tx.CreateMintedEdge(namespaced[0])
+			return w.tx.CreateMintedEdgeWithContext(ctx, namespaced[0])
 		}
-		return w.tx.CreateEdge(namespaced[0])
+		return w.tx.CreateEdgeWithContext(ctx, namespaced[0])
 	}
 	if minted {
-		return w.tx.BulkCreateMintedEdges(namespaced)
+		return w.tx.BulkCreateMintedEdgesWithContext(ctx, namespaced)
 	}
-	return w.tx.BulkCreateEdges(namespaced)
+	return w.tx.BulkCreateEdgesWithContext(ctx, namespaced)
 }
 
 func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error {
@@ -861,8 +1006,15 @@ func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error 
 // BulkDeleteEdges, it skips IDs that do not exist, those the transaction
 // already deleted included (#827).
 func (w *transactionStorageWrapper) BulkDeleteEdges(ids []storage.EdgeID) error {
+	return w.BulkDeleteEdgesWithContext(context.Background(), ids)
+}
+
+func (w *transactionStorageWrapper) BulkDeleteEdgesWithContext(ctx context.Context, ids []storage.EdgeID) error {
 	for _, id := range ids {
-		if err := w.tx.DeleteEdge(w.prefixEdgeID(id)); err != nil && !errors.Is(err, storage.ErrNotFound) {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := w.tx.DeleteEdgeWithContext(ctx, w.prefixEdgeID(id)); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return err
 		}
 	}
@@ -931,23 +1083,43 @@ func (w *transactionStorageWrapper) toUserNode(node *storage.Node) *storage.Node
 }
 
 func (w *transactionStorageWrapper) toUserEdge(edge *storage.Edge) *storage.Edge {
+	out, _ := w.toUserEdgeWithContext(context.Background(), edge)
+	return out
+}
+
+func (w *transactionStorageWrapper) toUserEdgeWithContext(ctx context.Context, edge *storage.Edge) (*storage.Edge, error) {
 	if edge == nil {
-		return nil
+		return nil, ctx.Err()
 	}
-	out := storage.CopyEdge(edge)
+	out, err := storage.CopyEdgeWithContext(ctx, edge)
+	if err != nil {
+		return nil, err
+	}
 	out.ID = w.unprefixEdgeID(out.ID)
 	out.Database = w.namespace
 	out.StartNode = w.unprefixNodeID(out.StartNode)
 	out.EndNode = w.unprefixNodeID(out.EndNode)
-	return out
+	return out, ctx.Err()
 }
 
 func (w *transactionStorageWrapper) toUserEdges(edges []*storage.Edge) []*storage.Edge {
+	out, _ := w.toUserEdgesWithContext(context.Background(), edges)
+	return out
+}
+
+func (w *transactionStorageWrapper) toUserEdgesWithContext(ctx context.Context, edges []*storage.Edge) ([]*storage.Edge, error) {
 	out := make([]*storage.Edge, 0, len(edges))
 	for _, edge := range edges {
-		out = append(out, w.toUserEdge(edge))
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		image, err := w.toUserEdgeWithContext(ctx, edge)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, image)
 	}
-	return out
+	return out, ctx.Err()
 }
 
 func (w *transactionStorageWrapper) toUserNamespacedEdges(edges []*storage.Edge) []*storage.Edge {
@@ -971,14 +1143,22 @@ func (w *transactionStorageWrapper) toUserNodes(nodes []*storage.Node) []*storag
 }
 
 func (w *transactionStorageWrapper) toUserNamespacedNodes(nodes []*storage.Node) []*storage.Node {
+	nodes, _ = w.toUserNamespacedNodesWithContext(context.Background(), nodes)
+	return nodes
+}
+
+func (w *transactionStorageWrapper) toUserNamespacedNodesWithContext(ctx context.Context, nodes []*storage.Node) ([]*storage.Node, error) {
 	prefix := w.namespace + w.separator
 	out := make([]*storage.Node, 0, len(nodes))
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if node != nil && strings.HasPrefix(string(node.ID), prefix) {
 			out = append(out, w.toUserNode(node))
 		}
 	}
-	return out
+	return out, nil
 }
 
 func (w *transactionStorageWrapper) underlyingIsNamespaced() bool {
@@ -987,7 +1167,13 @@ func (w *transactionStorageWrapper) underlyingIsNamespaced() bool {
 }
 
 func (w *transactionStorageWrapper) BatchGetNodes(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
-	return w.underlying.BatchGetNodes(ids)
+	return w.BatchGetNodesWithContext(context.Background(), ids)
+}
+
+// BatchGetNodesWithContext preserves the existing underlying batch semantics
+// while carrying statement cancellation into its preparation.
+func (w *transactionStorageWrapper) BatchGetNodesWithContext(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
+	return storage.BatchGetNodesWithContext(ctx, w.underlying, ids)
 }
 
 func (w *transactionStorageWrapper) Close() error {
@@ -1024,22 +1210,32 @@ func (w *transactionStorageWrapper) countersDescribeTransaction() bool {
 
 // NodeCountByLabel is the transaction-visible count of nodes with label.
 func (w *transactionStorageWrapper) NodeCountByLabel(label string) (int64, error) {
+	return w.NodeCountByLabelWithContext(context.Background(), label)
+}
+
+// NodeCountByLabelWithContext carries the caller through this read and its materialization.
+func (w *transactionStorageWrapper) NodeCountByLabelWithContext(ctx context.Context, label string) (int64, error) {
 	if w.countersDescribeTransaction() {
 		if counter, ok := w.underlying.(interface {
 			NodeCountByLabel(string) (int64, error)
 		}); ok {
 			delta, tracked := w.tx.PendingNodeLabelCountDelta(w.namespace, label)
 			if tracked || !w.tx.HasPendingNodeMutations() {
-				count, err := counter.NodeCountByLabel(label)
+				count, err := storage.NodeCountByLabelWithContext(ctx, counter, label)
 				return count + delta, err
 			}
 		}
 	}
-	return w.nodeCountByLabelScan(label)
+	return w.nodeCountByLabelScanWithContext(ctx, label)
 }
 
 func (w *transactionStorageWrapper) nodeCountByLabelScan(label string) (int64, error) {
-	nodes, err := w.GetNodesByLabel(label)
+	return w.nodeCountByLabelScanWithContext(context.Background(), label)
+}
+
+// nodeCountByLabelScanWithContext carries the caller through this read and its materialization.
+func (w *transactionStorageWrapper) nodeCountByLabelScanWithContext(ctx context.Context, label string) (int64, error) {
+	nodes, err := storage.GetNodesByLabelWithContext(ctx, w, label)
 	if err != nil {
 		return 0, err
 	}
@@ -1139,4 +1335,20 @@ func (w *transactionStorageWrapper) DeleteByPrefix(prefix string) (nodesDeleted 
 // WithStoreTransaction joins system-store mutations to this existing transaction.
 func (w *transactionStorageWrapper) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
 	return mutate(w)
+}
+
+// GetAdjacentEdgesWithContext uses the transaction's retained snapshot/pending
+// readers and then its one namespace result owner for each direction.
+func (w *transactionStorageWrapper) GetAdjacentEdgesWithContext(ctx context.Context, id storage.NodeID) ([]*storage.Edge, []*storage.Edge, error) {
+	out, err := w.GetOutgoingEdgesWithContext(ctx, id)
+	if err != nil {
+		return out, nil, err
+	}
+	in, err := w.GetIncomingEdgesWithContext(ctx, id)
+	return out, in, err
+}
+
+// OwnsDirectionalReads prevents inherited forwards from bypassing this view.
+func (w *transactionStorageWrapper) OwnsDirectionalReads(engine storage.Engine) bool {
+	return engine == w
 }

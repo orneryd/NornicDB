@@ -22,6 +22,7 @@ import (
 // range, simulating a legacy or partial store. No ranges retains planted entries.
 func wipeLabelIndexAndMarker(t *testing.T, eng *BadgerEngine, prefixes ...byte) {
 	t.Helper()
+	eng.invalidateLabelIndexReadyReadTs()
 	for _, prefix := range prefixes {
 		require.NoError(t, eng.db.DropPrefix(prefixDropOptions{}, []byte{prefix}))
 	}
@@ -259,6 +260,7 @@ func TestLabelIndexBackfill_ReadyMarkerRequiresCurrentScheme(t *testing.T) {
 				{name: "malformed", value: []byte{3, 0}},
 			} {
 				t.Run(testCase.name, func(t *testing.T) {
+					engine.invalidateLabelIndexReadyReadTs()
 					require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 						if testCase.value == nil {
 							return txn.Delete(key)
@@ -313,7 +315,10 @@ func TestLabelIndexBackfill_LegacyMarkerRebuildsCurrentScheme(t *testing.T) {
 			return err
 		}
 		return item.Value(func(value []byte) error {
-			assert.Equal(t, []byte{3}, value)
+			ready, generation, valid := decodeLabelIndexMarker(value)
+			assert.True(t, valid)
+			assert.True(t, ready)
+			assert.NotZero(t, generation)
 			return nil
 		})
 	}))
@@ -364,10 +369,19 @@ func TestLabelIndexBackfill_EmptyStoreMarksCurrentScheme(t *testing.T) {
 					return err
 				}
 				return item.Value(func(value []byte) error {
-					assert.Equal(t, []byte{3}, value)
+					ready, _, valid := decodeLabelIndexMarker(value)
+					assert.True(t, valid)
+					assert.True(t, ready)
 					return nil
 				})
 			}))
 		})
 	}
+}
+
+func TestLabelIndexMarkReadyReturnsClosedEngineError(t *testing.T) {
+	engine, err := NewBadgerEngine(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, engine.Close())
+	require.ErrorIs(t, engine.markEmptyLabelIndexReady(), ErrStorageClosed)
 }

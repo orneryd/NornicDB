@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"strconv"
 	"testing"
@@ -57,7 +58,7 @@ func TestNodeReferencePreservesScopedBookmarkDiagnostics(t *testing.T) {
 			}))
 			require.NoError(t, b.withView(func(txn *badger.Txn) error {
 				ref, found, err := b.snapshotNodeRef(txn, id)
-				reader := b.newNodeIndexReader(txn, "test:", labelIndexPrefix("Reference"), id)
+				reader := b.newNodeIndexReader(context.Background(), txn, "test:", labelIndexPrefix("Reference"), id)
 				defer reader.Close()
 				if n != 8 {
 					require.ErrorIs(t, err, ErrInvalidData)
@@ -79,7 +80,7 @@ func TestNodeReferencePreservesScopedBookmarkDiagnostics(t *testing.T) {
 		_, found, err := b.snapshotNodeRef(txn, missing)
 		require.NoError(t, err)
 		require.False(t, found)
-		reader := b.newNodeIndexReader(txn, "test:", labelIndexPrefix("Reference"), missing)
+		reader := b.newNodeIndexReader(context.Background(), txn, "test:", labelIndexPrefix("Reference"), missing)
 		defer reader.Close()
 		require.ErrorIs(t, reader.Err(), ErrNotFound)
 		return nil

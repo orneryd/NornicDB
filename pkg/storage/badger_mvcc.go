@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -435,6 +434,13 @@ func (b *BadgerEngine) getEdgeAtInTxn(txn *badger.Txn, id EdgeID, version MVCCVe
 // last one at or before version decides. (A reverse scan read past the prefix
 // over deleted keys; see badgerPrefixIteratorOptions.)
 func (b *BadgerEngine) collectVisibleAdjacencyEdgeIDsInTxn(txn *badger.Txn, prefix []byte, version MVCCVersion) ([]EdgeID, error) {
+	return b.collectVisibleAdjacencyEdgeIDsInTxnWithContext(context.Background(), txn, prefix, version)
+}
+
+func (b *BadgerEngine) collectVisibleAdjacencyEdgeIDsInTxnWithContext(ctx context.Context, txn *badger.Txn, prefix []byte, version MVCCVersion) ([]EdgeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if len(prefix) == 0 {
 		return nil, nil
 	}
@@ -455,6 +461,9 @@ func (b *BadgerEngine) collectVisibleAdjacencyEdgeIDsInTxn(txn *badger.Txn, pref
 	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 	defer it.Close()
 	for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		keyEdgeNum, recordVersion, err := extractEdgeNumIDAndMVCCVersionFromAdjacencyKey(it.Item().Key())
 		if err != nil {
 			return nil, err
@@ -477,7 +486,9 @@ func (b *BadgerEngine) collectVisibleAdjacencyEdgeIDsInTxn(txn *badger.Txn, pref
 		have, live = true, !record.Tombstoned
 	}
 	flush()
-	slices.Reverse(edgeIDs)
+	if err := reverseSliceWithContext(ctx, edgeIDs); err != nil {
+		return nil, err
+	}
 	return edgeIDs, nil
 }
 
@@ -766,10 +777,17 @@ func (b *BadgerEngine) loadNodeMVCCHead(id NodeID) (MVCCHead, error) {
 }
 
 func (b *BadgerEngine) loadNodeMVCCHeadInTxn(txn *badger.Txn, id NodeID) (MVCCHead, error) {
-	key := b.mvccNodeHeadKeyStringLookup(id)
-	if key == nil {
+	ref, ok := b.liveNodeRef(id)
+	if !ok {
 		return MVCCHead{}, ErrNotFound
 	}
+	return b.loadNodeMVCCHeadRefInTxn(txn, ref)
+}
+
+// loadNodeMVCCHeadRefInTxn is loadNodeMVCCHeadInTxn for a node the caller
+// has already numbered (label readers number through their snapshot).
+func (b *BadgerEngine) loadNodeMVCCHeadRefInTxn(txn *badger.Txn, ref nodeRef) (MVCCHead, error) {
+	key := mvccNodeHeadKey(ref.num)
 	item, err := txn.Get(key)
 	if err == badger.ErrKeyNotFound {
 		return MVCCHead{}, ErrNotFound
@@ -849,11 +867,21 @@ func (b *BadgerEngine) loadEdgeMVCCHeadByNumRawWithPhysicalVersionInTxn(txn *bad
 // loadNodeMVCCRecordExactInTxn reads the node version record at version,
 // rebuilding it when it is an undo record (resolveNodeUndoInTxn).
 func (b *BadgerEngine) loadNodeMVCCRecordExactInTxn(txn *badger.Txn, id NodeID, version MVCCVersion) (mvccNodeRecord, error) {
-	record, err := loadMVCCRecordExactInTxn[mvccNodeRecord, nodeMVCCVersionKeyer](b, txn, string(id), version, decodeMVCCNodeRecord)
+	ref, ok := b.liveNodeRef(id)
+	if !ok {
+		return mvccNodeRecord{}, ErrNotFound
+	}
+	return b.loadNodeMVCCRecordExactRefInTxn(txn, ref, version)
+}
+
+// loadNodeMVCCRecordExactRefInTxn is loadNodeMVCCRecordExactInTxn for a node
+// the caller has already numbered.
+func (b *BadgerEngine) loadNodeMVCCRecordExactRefInTxn(txn *badger.Txn, ref nodeRef, version MVCCVersion) (mvccNodeRecord, error) {
+	record, err := loadMVCCRecordAtKeyInTxn(txn, mvccNodeVersionKey(ref.num, version), decodeMVCCNodeRecord)
 	if err != nil || record.undo == nil {
 		return record, err
 	}
-	return b.resolveNodeUndoInTxn(txn, id, version, record.undo)
+	return b.resolveNodeUndoInTxn(txn, ref, version, record.undo)
 }
 
 // mvccVersionKeyer derives the exact version key and the version prefix for one
@@ -903,6 +931,13 @@ func loadMVCCRecordExactInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, txn *b
 	if key == nil {
 		return zero, ErrNotFound
 	}
+	return loadMVCCRecordAtKeyInTxn(txn, key, decode)
+}
+
+// loadMVCCRecordAtKeyInTxn reads and decodes the MVCC record at an exact
+// version key.
+func loadMVCCRecordAtKeyInTxn[R any](txn *badger.Txn, key []byte, decode func([]byte) (R, error)) (R, error) {
+	var zero R
 	item, err := txn.Get(key)
 	if err == badger.ErrKeyNotFound {
 		return zero, ErrNotFound
@@ -935,11 +970,21 @@ func (b *BadgerEngine) loadEdgeMVCCRecordExactInTxn(txn *badger.Txn, id EdgeID, 
 // loadNodeMVCCRecordAtOrBeforeInTxn reads the node version record at or
 // before version, rebuilding it when it is an undo record.
 func (b *BadgerEngine) loadNodeMVCCRecordAtOrBeforeInTxn(txn *badger.Txn, id NodeID, version MVCCVersion) (mvccNodeRecord, MVCCVersion, error) {
-	record, at, err := loadMVCCRecordAtOrBeforeInTxn[mvccNodeRecord, nodeMVCCVersionKeyer](b, txn, string(id), version, decodeMVCCNodeRecord)
+	ref, ok := b.liveNodeRef(id)
+	if !ok {
+		return mvccNodeRecord{}, MVCCVersion{}, ErrNotFound
+	}
+	return b.loadNodeMVCCRecordAtOrBeforeRefInTxn(txn, ref, version)
+}
+
+// loadNodeMVCCRecordAtOrBeforeRefInTxn is loadNodeMVCCRecordAtOrBeforeInTxn
+// for a node the caller has already numbered.
+func (b *BadgerEngine) loadNodeMVCCRecordAtOrBeforeRefInTxn(txn *badger.Txn, ref nodeRef, version MVCCVersion) (mvccNodeRecord, MVCCVersion, error) {
+	record, at, err := loadMVCCRecordAtOrBeforePrefixInTxn(txn, mvccNodeVersionPrefix(ref.num), version, decodeMVCCNodeRecord)
 	if err != nil || record.undo == nil {
 		return record, at, err
 	}
-	record, err = b.resolveNodeUndoInTxn(txn, id, at, record.undo)
+	record, err = b.resolveNodeUndoInTxn(txn, ref, at, record.undo)
 	return record, at, err
 }
 
@@ -957,6 +1002,13 @@ func loadMVCCRecordAtOrBeforeInTxn[R any, K mvccVersionKeyer](b *BadgerEngine, t
 	if prefix == nil {
 		return zero, MVCCVersion{}, ErrNotFound
 	}
+	return loadMVCCRecordAtOrBeforePrefixInTxn(txn, prefix, version, decode)
+}
+
+// loadMVCCRecordAtOrBeforePrefixInTxn reads the greatest record of one
+// entity's version prefix at or below version.
+func loadMVCCRecordAtOrBeforePrefixInTxn[R any](txn *badger.Txn, prefix []byte, version MVCCVersion, decode func([]byte) (R, error)) (R, MVCCVersion, error) {
+	var zero R
 	upper := append(append([]byte{}, prefix...), encodeMVCCSortVersion(version)...)
 	var (
 		record        R
@@ -1185,16 +1237,16 @@ func (b *BadgerEngine) BatchGetNodesLatestVisible(ids []NodeID) (map[NodeID]*Nod
 	return result, nil
 }
 
-// iterateNodesVisibleAtInScopeInTxn walks MVCC heads in the pinned physical
-// snapshot; an empty scope scans all database namespaces.
-func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope string, version MVCCVersion, yield func(*Node) error, readOptions ...StreamNodesOptions) error {
+// iterateNodesVisibleAtInScopeInTxn is iterateNodesVisibleAtInTxn over one
+// database's nodes, with candidates bounded to its dictionary namespace.
+func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(ctx context.Context, txn *badger.Txn, scope string, version MVCCVersion, yield func(*Node) error, readOptions ...StreamNodesOptions) error {
 	opts := nodeScanOptions(readOptions)
 	// Post-refactor: we walk the head keyspace (the definitive list of
 	// live node IDs) and resolve each ID to a body. If the request is at
 	// or after the current head version and the entity is live, the body
 	// comes from the primary nodeKey. Otherwise we fall back to historic
 	// mvccNodeVersionKey records (only present when retention > 0).
-	it := b.newNodeIndexReader(txn, scope, []byte{prefixMVCCNodeHead}, "")
+	it := b.newNodeIndexReader(ctx, txn, scope, []byte{prefixMVCCNodeHead}, "")
 	defer it.Close()
 
 	nowNanos := DecayScoringTime()
@@ -1255,7 +1307,17 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 			}
 		}
 		if body == nil {
-			record, _, err := b.loadNodeMVCCRecordAtOrBeforeInTxn(txn, nodeID, version)
+			// The head's number came from this snapshot, and so does its
+			// history. At or after the head, only the head's own record
+			// stands in for a missing primary body (DROP removes bodies
+			// physically): an older record would be a different version.
+			ref := nodeRef{id: nodeID, num: nodeNum}
+			var record mvccNodeRecord
+			if version.Compare(head.Version) >= 0 {
+				record, err = b.loadNodeMVCCRecordExactRefInTxn(txn, ref, head.Version)
+			} else {
+				record, _, err = b.loadNodeMVCCRecordAtOrBeforeRefInTxn(txn, ref, version)
+			}
 			if err == ErrNotFound {
 				continue
 			}
@@ -1266,9 +1328,15 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 				continue
 			}
 			if opts.QueryNodes && !opts.WithEmbeddings {
-				body = copyNodeForCaller(record.Node)
+				body, err = copyNodeForCallerWithContext(ctx, record.Node)
+				if err != nil {
+					return err
+				}
 			} else {
-				body = copyNode(record.Node)
+				body, err = copyNodeWithContext(ctx, record.Node)
+				if err != nil {
+					return err
+				}
 			}
 		}
 		if body == nil {

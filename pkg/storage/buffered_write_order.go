@@ -590,20 +590,27 @@ func (b *BadgerEngine) prefixDroppedSince(begin uint64, namespace string) bool {
 // Committing over it would bring the entity back without counting it, or
 // delete it, and count it, a second time.
 func (tx *BadgerTransaction) bufferedDeleteConflictLocked() error {
+	ctx := tx.validationContextLocked()
 	w := tx.engine.writeBehind
 	if w == nil || len(tx.operations) == 0 || w.readEpoch.Load()&1 == 0 {
 		return nil
 	}
 	var nodes map[NodeID]struct{}
 	var edges map[EdgeID]struct{}
-	written := func() {
+	written := func() error {
 		nodes, edges = make(map[NodeID]struct{}), make(map[EdgeID]struct{})
 		for i := range tx.operations {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			op := &tx.operations[i]
 			switch op.Type {
 			case OpUpdateNode, OpDeleteNode, OpUpdateEmbedding:
 				nodes[op.NodeID] = struct{}{}
 				for _, id := range op.DeletedEdgeIDs {
+					if err := ctx.Err(); err != nil {
+						return err
+					}
 					edges[id] = struct{}{}
 				}
 			case OpUpdateEdge:
@@ -614,37 +621,49 @@ func (tx *BadgerTransaction) bufferedDeleteConflictLocked() error {
 				edges[op.EdgeID] = struct{}{}
 			}
 		}
+		return nil
 	}
 	var node NodeID
 	var edge EdgeID
 	var version MVCCVersion
-	w.commitsSince(tx.readTS, func(v MVCCVersion, ops []Operation) bool {
+	err := w.commitsSince(ctx, tx.readTS, func(v MVCCVersion, ops []Operation) (bool, error) {
 		if nodes == nil {
-			written()
+			if err := written(); err != nil {
+				return false, err
+			}
 		}
 		for j := range ops {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
 			op := &ops[j]
 			switch op.Type {
 			case OpDeleteNode:
 				if _, ok := nodes[op.NodeID]; ok {
 					node, version = op.NodeID, v
-					return false
+					return false, nil
 				}
 				for _, id := range op.DeletedEdgeIDs {
+					if err := ctx.Err(); err != nil {
+						return false, err
+					}
 					if _, ok := edges[id]; ok {
 						edge, version = id, v
-						return false
+						return false, nil
 					}
 				}
 			case OpDeleteEdge:
 				if _, ok := edges[op.EdgeID]; ok {
 					edge, version = op.EdgeID, v
-					return false
+					return false, nil
 				}
 			}
 		}
-		return true
+		return true, nil
 	})
+	if err != nil {
+		return err
+	}
 	switch {
 	case node != "":
 		return localizedError(localization.StorageTransactionNodeChangedDetailed(string(node), version.String(), tx.readTS.String()), ErrConflict)
@@ -669,11 +688,15 @@ var errEndpointChanged = fmt.Errorf("%w: a relationship endpoint changed before 
 // checked. The caller holds the stripes of tx's entities, a deleted node's
 // exclusively, so neither side changes meanwhile.
 func (tx *BadgerTransaction) revalidateEndpointsLocked() error {
+	ctx := tx.validationContextLocked()
 	if len(tx.pendingEdges) == 0 && len(tx.deletedNodes) == 0 {
 		return nil
 	}
 	var checked map[NodeID]struct{}
 	for _, edge := range tx.pendingEdges {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		for _, id := range [...]NodeID{edge.StartNode, edge.EndNode} {
 			if _, deleted := tx.deletedNodes[id]; deleted {
 				return errEndpointChanged
@@ -696,15 +719,17 @@ func (tx *BadgerTransaction) revalidateEndpointsLocked() error {
 		}
 	}
 	for id := range tx.deletedNodes {
-		out, err := tx.engine.GetStoredOutgoingEdges(id)
-		if err != nil {
+		if err := ctx.Err(); err != nil {
 			return err
 		}
-		in, err := tx.engine.GetStoredIncomingEdges(id)
+		out, in, err := readAdjacencyWithContext(ctx, tx.engine, adjacencyBoth, id, "", nil, storedRead)
 		if err != nil {
 			return err
 		}
 		for _, edge := range append(out, in...) {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if _, deleted := tx.deletedEdges[edge.ID]; deleted {
 				continue
 			}

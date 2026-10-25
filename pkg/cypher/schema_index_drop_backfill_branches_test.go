@@ -141,7 +141,7 @@ func TestSchema_BackfillCompositeIndex_ErrorBranches(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, errStore.GetSchema().AddPropertyIndex("idx_err_label", "ErrLabel", []string{"p"}))
 
-	err = errExec.backfillCompositeIndex("idx_err_label", "ErrLabel", []string{"p"})
+	err = errExec.backfillCompositeIndex(context.Background(), "idx_err_label", "ErrLabel", []string{"p"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to backfill index for label ErrLabel")
 
@@ -152,10 +152,31 @@ func TestSchema_BackfillCompositeIndex_ErrorBranches(t *testing.T) {
 
 	_, err = missingStore.CreateNode(&storage.Node{ID: storage.NodeID("m1"), Labels: []string{"Doc"}, Properties: map[string]interface{}{"p": "v"}})
 	require.NoError(t, err)
-	err = missingExec.backfillCompositeIndex("missing_idx", "Doc", []string{"p"})
+	err = missingExec.backfillCompositeIndex(context.Background(), "missing_idx", "Doc", []string{"p"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to backfill property index")
 
 	// Keep ctx used to avoid lints in future edits.
 	require.NotNil(t, ctx)
+}
+
+// The same forced-error semantic view applies to contextual reads; embedded
+// methods must not bypass this fake when the statement forwards its context.
+func (e *getNodesByLabelErrorEngine) GetNodesByLabelWithContext(ctx context.Context, label string) ([]*storage.Node, error) {
+	if label == e.errOnLabel {
+		return nil, fmt.Errorf("forced label lookup error for %s", label)
+	}
+	return e.MemoryEngine.GetNodesByLabelWithContext(ctx, label)
+}
+func (e *getNodesByLabelErrorEngine) GetNodesByLabelInScopeWithContext(ctx context.Context, _ string, label string) ([]*storage.Node, error) {
+	return e.GetNodesByLabelWithContext(ctx, label)
+}
+func (e *getNodesByLabelErrorEngine) GetStoredNodesByLabelWithContext(ctx context.Context, label string) ([]*storage.Node, error) {
+	if label == e.errOnLabel {
+		return nil, fmt.Errorf("forced label lookup error for %s", label)
+	}
+	return e.MemoryEngine.GetStoredNodesByLabelWithContext(ctx, label)
+}
+func (e *getNodesByLabelErrorEngine) GetStoredNodesByLabelInScopeWithContext(ctx context.Context, _ string, label string) ([]*storage.Node, error) {
+	return e.GetStoredNodesByLabelWithContext(ctx, label)
 }

@@ -1086,10 +1086,10 @@ func TestBadgerConstraintValidationHelpers(t *testing.T) {
 				Label:      "User",
 				Properties: []string{"a", "b"},
 			}))
-			require.NoError(t, engine.validateNodeConstraintsInTxn(txn, nil, schema, "test", ""))
-			require.NoError(t, engine.validateNodeConstraintsInTxn(txn, &Node{ID: "test:u0", Labels: []string{"User"}}, nil, "test", ""))
+			require.NoError(t, engine.validateNodeConstraintsInTxn(context.Background(), txn, nil, schema, "test", ""))
+			require.NoError(t, engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{ID: "test:u0", Labels: []string{"User"}}, nil, "test", ""))
 
-			err := engine.validateNodeConstraintsInTxn(txn, &Node{
+			err := engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{
 				ID:         "test:u1",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"name": "ok"},
@@ -1128,49 +1128,49 @@ func TestBadgerConstraintValidationHelpers(t *testing.T) {
 			}))
 			require.NoError(t, schema.AddPropertyTypeConstraint("user_age_type", "User", "age", PropertyTypeInteger))
 
-			err := engine.validateNodeConstraintsInTxn(txn, &Node{
+			err := engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{
 				ID:         "test:u2",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"email": "dup@example.com", "tenant": "t2", "username": "bob", "name": "Bob", "account": "acct-2", "from": time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC), "to": time.Date(2026, 3, 7, 13, 0, 0, 0, time.UTC), "age": int64(31)},
 			}, schema, "test", "")
 			require.Error(t, err)
 
-			err = engine.validateNodeConstraintsInTxn(txn, &Node{
+			err = engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{
 				ID:         "test:u3",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"email": "other@example.com", "tenant": "t1", "name": "Bob", "account": "acct-3", "from": time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC), "to": time.Date(2026, 3, 7, 13, 0, 0, 0, time.UTC), "age": int64(31)},
 			}, schema, "test", "")
 			require.Error(t, err)
 
-			err = engine.validateNodeConstraintsInTxn(txn, &Node{
+			err = engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{
 				ID:         "test:u4",
 				Labels:     []string{"User"},
 				Properties: nil,
 			}, schema, "test", "")
 			require.Error(t, err)
 
-			err = engine.validateNodeConstraintsInTxn(txn, &Node{
+			err = engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{
 				ID:         "test:u5",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"email": "other@example.com", "tenant": "t5", "username": "eve", "name": "Eve"},
 			}, schema, "test", "")
 			require.Error(t, err)
 
-			err = engine.validateNodeConstraintsInTxn(txn, &Node{
+			err = engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{
 				ID:         "test:u6",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"email": "other@example.com", "tenant": "t6", "username": "mallory", "name": "Mallory", "account": "acct-6", "from": "bad", "to": time.Date(2026, 3, 7, 13, 0, 0, 0, time.UTC), "age": int64(31)},
 			}, schema, "test", "")
 			require.Error(t, err)
 
-			err = engine.validateNodeConstraintsInTxn(txn, &Node{
+			err = engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{
 				ID:         "test:u7",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"email": "other@example.com", "tenant": "t7", "username": "trent", "name": "Trent", "account": "acct", "from": time.Date(2026, 3, 7, 10, 30, 0, 0, time.UTC), "to": time.Date(2026, 3, 7, 12, 0, 0, 0, time.UTC), "age": int64(31)},
 			}, schema, "test", "")
 			require.Error(t, err)
 
-			err = engine.validateNodeConstraintsInTxn(txn, &Node{
+			err = engine.validateNodeConstraintsInTxn(context.Background(), txn, &Node{
 				ID:         "test:u8",
 				Labels:     []string{"User"},
 				Properties: map[string]any{"email": "other@example.com", "tenant": "t8", "username": "oscar", "name": "Oscar", "account": "acct-8", "from": time.Date(2026, 3, 7, 14, 0, 0, 0, time.UTC), "to": time.Date(2026, 3, 7, 15, 0, 0, 0, time.UTC), "age": "old"},

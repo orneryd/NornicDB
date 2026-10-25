@@ -167,7 +167,7 @@ func decodeMVCCEdgeUndo(data []byte) (*mvccEdgeUndo, error) {
 // version at describes: it follows Next links forward to a complete record
 // or the live head's current record, then applies the undos from the newest
 // back. A link that can't be followed reads as ErrNotFound.
-func (b *BadgerEngine) resolveNodeUndoInTxn(txn *badger.Txn, id NodeID, at MVCCVersion, undo *mvccNodeUndo) (mvccNodeRecord, error) {
+func (b *BadgerEngine) resolveNodeUndoInTxn(txn *badger.Txn, ref nodeRef, at MVCCVersion, undo *mvccNodeUndo) (mvccNodeRecord, error) {
 	chain := []*mvccNodeUndo{undo}
 	previous := at
 	var base *Node
@@ -176,7 +176,7 @@ func (b *BadgerEngine) resolveNodeUndoInTxn(txn *badger.Txn, id NodeID, at MVCCV
 		if next.Compare(previous) <= 0 {
 			return mvccNodeRecord{}, errMVCCUndoChain
 		}
-		record, err := loadMVCCRecordExactInTxn[mvccNodeRecord, nodeMVCCVersionKeyer](b, txn, string(id), next, decodeMVCCNodeRecord)
+		record, err := loadMVCCRecordAtKeyInTxn(txn, mvccNodeVersionKey(ref.num, next), decodeMVCCNodeRecord)
 		switch {
 		case err == nil && record.undo != nil:
 			chain = append(chain, record.undo)
@@ -187,7 +187,7 @@ func (b *BadgerEngine) resolveNodeUndoInTxn(txn *badger.Txn, id NodeID, at MVCCV
 			}
 			base = record.Node
 		case err == ErrNotFound:
-			if base, err = b.currentNodeAtHeadInTxn(txn, id, next); err != nil {
+			if base, err = b.currentNodeAtHeadInTxn(txn, ref, next); err != nil {
 				return mvccNodeRecord{}, err
 			}
 		default:
@@ -202,8 +202,9 @@ func (b *BadgerEngine) resolveNodeUndoInTxn(txn *badger.Txn, id NodeID, at MVCCV
 
 // currentNodeAtHeadInTxn returns the node's current record, without
 // embedding payloads, when its live head is at version.
-func (b *BadgerEngine) currentNodeAtHeadInTxn(txn *badger.Txn, id NodeID, version MVCCVersion) (*Node, error) {
-	head, err := b.loadNodeMVCCHeadInTxn(txn, id)
+func (b *BadgerEngine) currentNodeAtHeadInTxn(txn *badger.Txn, ref nodeRef, version MVCCVersion) (*Node, error) {
+	id := ref.id
+	head, err := b.loadNodeMVCCHeadRefInTxn(txn, ref)
 	if err != nil || head.Tombstoned || head.Version.Compare(version) != 0 {
 		return nil, ErrNotFound
 	}

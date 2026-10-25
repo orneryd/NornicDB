@@ -50,12 +50,20 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 			if pending, exists := tx.pendingEdges[edge.ID]; exists {
 				seen[edge.ID] = struct{}{}
 				if matches(pending) {
-					return invokeVisit(copyEdge(pending))
+					image, err := copyEdgeWithContext(ctx, pending)
+					if err != nil {
+						return err
+					}
+					return invokeVisit(image)
 				}
 				return nil
 			}
 		}
-		return invokeVisit(copyEdge(edge))
+		image, err := copyEdgeWithContext(ctx, edge)
+		if err != nil {
+			return err
+		}
+		return invokeVisit(image)
 	}
 
 	scope := tx.labelScanScopeLocked()
@@ -82,7 +90,11 @@ func (tx *BadgerTransaction) streamEdgesByType(ctx context.Context, edgeType str
 		if _, emitted := seen[id]; emitted || !matches(edge) {
 			continue
 		}
-		created = append(created, copyEdge(edge))
+		image, err := copyEdgeWithContext(ctx, edge)
+		if err != nil {
+			return err
+		}
+		created = append(created, image)
 	}
 	for _, edge := range created {
 		if err := ctx.Err(); err != nil {

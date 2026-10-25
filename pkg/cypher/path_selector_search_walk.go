@@ -318,8 +318,12 @@ func (s *pathSearch) bindWalks(source, target *storage.Node, walks [][]*storage.
 		}
 	}
 	if len(ids) > 0 {
-		loaded, err := s.e.storage.BatchGetNodes(ids)
+		loaded, err := storage.BatchGetNodesWithContext(s.ctx, s.e.storage, ids)
 		if err != nil {
+			if s.ctx.Err() != nil {
+				recordExpressionFailure(s.ctx, err)
+				return nil, true
+			}
 			return nil, false
 		}
 		for _, id := range ids {

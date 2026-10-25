@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"testing"
@@ -50,7 +51,9 @@ func TestUniqueConstraintCachePrecisionAndPendingCandidates(t *testing.T) {
 		require.Equal(t, want, got)
 		key, ok := indexValueKey(value)
 		require.True(t, ok)
-		require.Equal(t, []NodeID{want}, view.valueMatches(nil, "N", "v", key))
+		matches, err := view.appendInNamespaceWithContext(context.Background(), nil, view.valueMatchSet("N", "v", key))
+		require.NoError(t, err)
+		require.Equal(t, []NodeID{want}, matches)
 	}
 	// A user string matching the printed exceptional-key tag is still an
 	// ordinary string key, not the private comparable integer-key type.
@@ -141,10 +144,14 @@ func TestUniqueConstraintPendingNamespaceAndOrdinaryKeys(t *testing.T) {
 	} {
 		key, ok := indexValueKey(tc.value)
 		require.True(t, ok)
-		require.Equal(t, []NodeID{tc.want}, view.valueMatches(nil, "N", "v", key))
+		matches, err := view.appendInNamespaceWithContext(context.Background(), nil, view.valueMatchSet("N", "v", key))
+		require.NoError(t, err)
+		require.Equal(t, []NodeID{tc.want}, matches)
 		// The same real value on a schema with no write-behind attachment must
 		// neither fabricate a pending holder nor allocate an index dependency.
-		require.Empty(t, (pendingWriteView{}).valueMatches(nil, "N", "v", key))
+		empty, err := (pendingWriteView{}).appendInNamespaceWithContext(context.Background(), nil, nil)
+		require.NoError(t, err)
+		require.Empty(t, empty)
 	}
 	// The platform int path must preserve equality with an integral float.
 	integerKey, ok := indexValueKey(int(42))

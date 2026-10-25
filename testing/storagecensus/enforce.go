@@ -1,7 +1,6 @@
 package storagecensus
 
 import (
-	"github.com/orneryd/nornicdb/internal/lockeffect"
 	"github.com/orneryd/nornicdb/internal/workcensus"
 	"go/constant"
 	"go/token"
@@ -18,6 +17,10 @@ import (
 // census knows; nothing else becomes one by being listed or by its name.
 type acquisition struct {
 	reason string
+	// variantOf is a composition capability, not a missing-owner exemption.
+	// The variant is active/reported only when its actual body is loaded; its
+	// canonical acquisition must also exist in that source composition.
+	variantOf string
 	// errIndex is the result that reports failure: the hold exists only on
 	// the branch where it is nil.
 	errIndex int
@@ -29,6 +32,11 @@ type acquisition struct {
 }
 
 var acquisitions = map[string]acquisition{
+	"pkg/storage.BadgerEngine.orderAfterBufferedCommitsContext": {
+		reason:    "the contextual entrance to the same write-order stripe/drain acquisition; failed cancellation establishes no hold",
+		variantOf: "pkg/storage.BadgerEngine.orderAfterBufferedCommits",
+		errIndex:  1, releases: []string{"pkg/storage.writeRelease[pkg/storage.bufferedOrderResources].release"}, releaseValue: -1,
+	},
 	"pkg/storage.BadgerEngine.orderAfterBufferedCommits": {
 		reason:   "holds the write-order stripes of the written entities after draining their buffered commits",
 		errIndex: 1, releases: []string{"pkg/storage.writeRelease[pkg/storage.bufferedOrderResources].release"}, releaseValue: -1,
@@ -216,17 +224,14 @@ func (q *acquirer) flow(fn *ssa.Function, kind int, assumption flowAssumption) *
 		field := lockNames[kind-1]
 		for _, call := range calls {
 			callee := call.Common().StaticCallee()
-			if callee != nil && callee.Pkg != nil && callee.Pkg.Pkg.Path() == "sync" && len(call.Common().Args) > 0 {
-				action, exclusive := lockeffect.Classify(callee.Name(), false)
-				takes := action == "lock" && exclusive
-				releases := action == "unlock" && callee.Name() == "Unlock"
-				if takes || releases {
-					if name := q.mutexField(call.Common().Args[0], assumption, 0); name == field {
-						if takes {
-							f.genAt[call] = true
-						} else {
-							f.kills[call] = true
-						}
+			if callee != nil && len(call.Common().Args) > 0 {
+				if method, declared := retainedMutexMethods[q.p.methodIdentity(callee)]; declared && q.mutexField(call.Common().Args[0], assumption, 0) == field {
+					if method.release {
+						f.kills[call] = true
+					} else if method.errorIndex < 0 {
+						f.genAt[call] = true
+					} else if branch, success := workcensus.SuccessfulCallEdge(call, method.errorIndex); success != nil {
+						f.gen[[2]*ssa.BasicBlock{branch.Block(), success}] = true
 					}
 				}
 			}
@@ -251,7 +256,7 @@ func (q *acquirer) flow(fn *ssa.Function, kind int, assumption flowAssumption) *
 		if !ok {
 			continue
 		}
-		if iff, succ := successEdge(call, a.errIndex); succ != nil {
+		if iff, succ := workcensus.SuccessfulCallEdge(call, a.errIndex); succ != nil {
 			f.gen[[2]*ssa.BasicBlock{iff.Block(), succ}] = true
 		}
 		for _, rc := range calls {
@@ -418,41 +423,6 @@ func (q *acquirer) nilTest(cmp *ssa.BinOp) bool {
 	return isField(cmp.X) && isNil(cmp.Y) || isField(cmp.Y) && isNil(cmp.X)
 }
 
-// successEdge is the branch taken when the call's result errIndex is nil:
-// the If of "err != nil" (or "== nil") and its successor without an error.
-func successEdge(call *ssa.Call, errIndex int) (*ssa.If, *ssa.BasicBlock) {
-	// A call with one result (the error) is compared itself.
-	if _, tuple := call.Type().(*types.Tuple); !tuple && errIndex == 0 {
-		return workcensus.NilSuccessEdge(call)
-	}
-	for _, ref := range *call.Referrers() {
-		ex, ok := ref.(*ssa.Extract)
-		if !ok || ex.Index != errIndex {
-			continue
-		}
-		// The error, or (a named result a deferred closure captures lives
-		// in a cell) a load of the cell it is stored in.
-		errs := []ssa.Value{ex}
-		for _, r := range *ex.Referrers() {
-			if st, ok := r.(*ssa.Store); ok && st.Val == ex {
-				if cell, ok := st.Addr.(*ssa.Alloc); ok {
-					for _, u := range *cell.Referrers() {
-						if load, ok := u.(*ssa.UnOp); ok && load.Op == token.MUL && st.Block().Dominates(load.Block()) {
-							errs = append(errs, load)
-						}
-					}
-				}
-			}
-		}
-		for _, e := range errs {
-			if iff, succ := workcensus.NilSuccessEdge(e); succ != nil {
-				return iff, succ
-			}
-		}
-	}
-	return nil, nil
-}
-
 // covers reports whether the write order is held at ins on every path to
 // it.
 func (q *acquirer) covers(fn *ssa.Function, ins ssa.Instruction, facts ...flowAssumption) cover {
@@ -546,14 +516,14 @@ func (a *analysis) synchronous(mc *ssa.MakeClosure) bool {
 		a.syncClosure = map[*ssa.MakeClosure]bool{}
 	}
 	if ok, done := a.syncClosure[mc]; done {
-		return ok
+		return ok || a.sealedCallbackFrame(mc)
 	}
 	// A closure that reaches itself (one that captures the variable it is
 	// stored in) counts as synchronous while its answer is computed.
 	a.syncClosure[mc] = true
 	ok := a.syncValue(mc, map[ssa.Value]bool{})
 	a.syncClosure[mc] = ok
-	return ok
+	return ok || a.sealedCallbackFrame(mc)
 }
 
 func (a *analysis) syncValue(v ssa.Value, seen map[ssa.Value]bool) bool {
@@ -567,15 +537,24 @@ func (a *analysis) syncValue(v ssa.Value, seen map[ssa.Value]bool) bool {
 	}
 	for _, ref := range *refs {
 		switch r := ref.(type) {
-		case *ssa.Call:
-			c := r.Common()
+		case *ssa.Call, *ssa.Defer:
+			site := r.(ssa.CallInstruction)
+			c := site.Common()
 			if c.Value == v {
 				continue
 			}
 			if b, ok := c.Value.(*ssa.Builtin); ok {
-				// len, cap and copy keep nothing; append's result holds v.
-				if b.Name() == "append" && !a.syncValue(r, seen) {
+				// A deferred helper still runs in this frame, but it may
+				// retain its argument. A copy can move a callback-bearing
+				// container into storage we cannot prove local here.
+				if b.Name() == "copy" {
 					return false
+				}
+				if b.Name() == "append" {
+					result, ok := site.(*ssa.Call)
+					if !ok || !a.syncValue(result, seen) {
+						return false
+					}
 				}
 				continue
 			}
@@ -583,12 +562,10 @@ func (a *analysis) syncValue(v ssa.Value, seen map[ssa.Value]bool) bool {
 				if arg != v {
 					continue
 				}
-				if !a.syncParam(r, c, i) {
+				if !a.syncParam(site, c, i) {
 					return false
 				}
 			}
-		case *ssa.Defer:
-			continue
 		case *ssa.ChangeType, *ssa.Convert, *ssa.IndexAddr, *ssa.FieldAddr, *ssa.Slice, *ssa.Index, *ssa.Lookup, *ssa.Extract:
 			// Through a container: v (or the container holding it) is used
 			// as the derived value is.
@@ -722,19 +699,7 @@ func (a *analysis) closureArgCover(fn *ssa.Function, mc *ssa.MakeClosure, facts 
 	if len(facts) > 0 {
 		nonEmpty = facts[0]
 	}
-	refs := mc.Referrers()
-	if refs == nil || len(*refs) == 0 {
-		return 0
-	}
-	all := ^cover(0)
-	for _, ref := range *refs {
-		call, ok := ref.(*ssa.Call)
-		if !ok {
-			return 0
-		}
-		all &= a.argCover(fn, call, mc, nonEmpty)
-	}
-	return all
+	return a.parameterValueCover(fn, mc, nonEmpty, map[ssa.Value]bool{})
 }
 
 // argCover is the coverage v receives as an argument of call in fn: the
@@ -830,12 +795,25 @@ func (a *analysis) parameterValueCover(fn *ssa.Function, value ssa.Value, nonEmp
 	for _, ref := range *refs {
 		switch ref := ref.(type) {
 		case *ssa.Call:
-			all &= a.argCover(fn, ref, value, nonEmpty)
+			if builtin, ok := ref.Common().Value.(*ssa.Builtin); ok {
+				switch builtin.Name() {
+				case "append":
+					all &= a.parameterValueCover(fn, ref, nonEmpty, seen)
+				case "len", "cap", "delete", "clear":
+					// These do not invoke or retain a callback.
+				default:
+					all = 0
+				}
+			} else {
+				all &= a.argCover(fn, ref, value, nonEmpty)
+			}
 		case *ssa.MakeClosure:
 			if !a.synchronous(ref) {
 				all = 0
 			} else {
-				all &= a.closureArgCover(fn, ref, nonEmpty)
+				// A captured local can point back to the closure being
+				// analyzed. Preserve the same path's visited set.
+				all &= a.parameterValueCover(fn, ref, nonEmpty, seen)
 			}
 		case *ssa.Store:
 			if ref.Val == value {
@@ -851,7 +829,7 @@ func (a *analysis) parameterValueCover(fn *ssa.Function, value ssa.Value, nonEmp
 			} else {
 				all = 0
 			}
-		case *ssa.Phi, *ssa.ChangeType, *ssa.Convert:
+		case *ssa.Phi, *ssa.ChangeType, *ssa.Convert, *ssa.IndexAddr, *ssa.FieldAddr, *ssa.Slice, *ssa.Index, *ssa.Lookup, *ssa.Extract:
 			all &= a.parameterValueCover(fn, ref.(ssa.Value), nonEmpty, seen)
 		case *ssa.DebugRef:
 		default:
@@ -865,6 +843,11 @@ func (a *analysis) parameterValueCover(fn *ssa.Function, value ssa.Value, nonEmp
 // follows: it is exported, an init or a main, or a closure that runs after
 // its maker returns.
 func (a *analysis) entry(fn *ssa.Function) bool {
+	if fn.Pkg == nil && fn.Synthetic != "" {
+		// Compiler wrappers are reached through source callers/value carriers,
+		// not exported entry points of the dependency that owns their object.
+		return false
+	}
 	if fn.Parent() != nil {
 		for _, b := range fn.Parent().Blocks {
 			for _, ins := range b.Instrs {

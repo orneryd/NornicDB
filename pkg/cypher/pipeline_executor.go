@@ -1236,7 +1236,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		}
 	}
 
-	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
+	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(ctx, nodePattern, whereClause, params)
 	if err != nil {
 		return nil, true, err
 	}
@@ -1342,7 +1342,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 			return nil
 		}
 		if hasViewport && canCheckViewport {
-			visible, visibleErr := checker.IsCurrentTemporalNode(node, viewport.AsOf)
+			visible, visibleErr := storage.IsCurrentTemporalNodeWithContext(ctx, checker, node, viewport.AsOf)
 			if visibleErr != nil {
 				return visibleErr
 			}
@@ -1368,7 +1368,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		return &ExecuteResult{Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
 	}
 	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
-	err = reader.StreamNodesByLabelProjected(nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
+	err = storage.StreamNodesByLabelProjectedWithContext(ctx, reader, nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
 		return countNode(node, false)
 	})
 	if err != nil {

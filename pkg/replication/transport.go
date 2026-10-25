@@ -125,7 +125,8 @@ type ClusterTransport struct {
 	replay *replayCache
 
 	// Message handlers
-	handlers map[ClusterMessageType]MessageHandler
+	handlers       map[ClusterMessageType]MessageHandler
+	handlerContext context.Context // Borrowed from the registered replicator; no cancel owner here.
 	// Native construction dependencies permit I/O fault schedules without
 	// replacing Connect/Listen or their admission/publication paths.
 	dialNative   func(context.Context, string, string) (net.Conn, error)
@@ -545,7 +546,14 @@ func (c *ClusterConnection) sendRPC(ctx context.Context, msg *ClusterMessage) (*
 }
 
 func (c *ClusterConnection) readLoop() {
-	c.readLoopWithContext(context.Background())
+	c.transport.resources.mu.RLock()
+	ctx := c.transport.handlerContext
+	c.transport.resources.mu.RUnlock()
+	if ctx == nil {
+		// Unregistered generic transports have no replication owner.
+		ctx = context.Background()
+	}
+	c.readLoopWithContext(ctx)
 }
 
 func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {

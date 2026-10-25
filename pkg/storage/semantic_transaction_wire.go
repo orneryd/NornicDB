@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"time"
 
@@ -119,6 +120,15 @@ type EntityTransactionRequest struct {
 // Prepared input reads the accepted private snapshot without allocating the
 // detached public Operations view. Raw input retains its original validation.
 func EncodeEntityTransaction(request EntityTransactionRequest) ([]byte, error) {
+	return EncodeEntityTransactionRequestWithContext(context.Background(), request)
+}
+
+// EncodeEntityTransactionRequestWithContext carries admission lifetime through
+// the retained semantic wire owner, including private prepared snapshots.
+func EncodeEntityTransactionRequestWithContext(ctx context.Context, request EntityTransactionRequest) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	namespace, logicalID, ops, mode := request.Namespace, request.LogicalID, request.Operations, request.Mode
 	if prepared := request.Prepared; prepared != nil {
 		if namespace != "" || logicalID != "" || ops != nil || mode != 0 {
@@ -131,6 +141,9 @@ func EncodeEntityTransaction(request EntityTransactionRequest) ([]byte, error) {
 	}
 	var nodeCount, edgeCount int
 	for _, op := range ops {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			nodeCount++
@@ -146,6 +159,9 @@ func EncodeEntityTransaction(request EntityTransactionRequest) ([]byte, error) {
 	changes := make([]semanticTransactionChange, len(ops))
 	nextNode, nextEdge := 0, 0
 	for i, op := range ops {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node == nil {
@@ -193,11 +209,32 @@ func EncodeEntityTransaction(request EntityTransactionRequest) ([]byte, error) {
 			changes[i] = semanticTransactionChange{Type: EntityDeleteEdge, EdgeID: string(op.EdgeID)}
 		}
 	}
-	return msgpack.Marshal(semanticTransactionWire{Mode: mode, Version: EntityTransactionVersion, Namespace: namespace, LogicalTxID: logicalID, Changes: changes})
+	wire := semanticTransactionWire{Mode: mode, Version: EntityTransactionVersion, Namespace: namespace, LogicalTxID: logicalID, Changes: changes}
+	if ctx.Done() == nil {
+		return msgpack.Marshal(wire)
+	}
+	var encoded bytes.Buffer
+	err := msgpack.NewEncoder(&semanticTransactionWriter{ctx: ctx, buffer: &encoded}).Encode(wire)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return encoded.Bytes(), nil
 }
 
 // DecodeEntityTransaction validates and restores one semantic transaction.
 func DecodeEntityTransaction(data []byte) (EntityTransactionEnvelope, []Operation, error) {
+	return DecodeEntityTransactionWithContext(context.Background(), data)
+}
+
+// DecodeEntityTransactionWithContext is the contextual entrance to the same
+// strict semantic wire grammar used by recovery and replicated commands.
+func DecodeEntityTransactionWithContext(ctx context.Context, data []byte) (EntityTransactionEnvelope, []Operation, error) {
+	if err := ctx.Err(); err != nil {
+		return EntityTransactionEnvelope{}, nil, err
+	}
 	var wire semanticTransactionWire
 	var envelope EntityTransactionEnvelope
 	// The envelope, change list, change, entity, and property map account for
@@ -222,6 +259,9 @@ func DecodeEntityTransaction(data []byte) (EntityTransactionEnvelope, []Operatio
 	}
 	ops := make([]Operation, len(wire.Changes))
 	for i, change := range wire.Changes {
+		if err := ctx.Err(); err != nil {
+			return envelope, nil, err
+		}
 		switch change.Type {
 		case EntityCreateNode, EntityUpdateNode:
 			if change.Node == nil || !sameNamespace(change.Node.ID) {
@@ -271,5 +311,33 @@ func DecodeEntityTransaction(data []byte) (EntityTransactionEnvelope, []Operatio
 			return envelope, nil, ErrInvalidData
 		}
 	}
-	return envelope, ops, nil
+	return envelope, ops, ctx.Err()
+}
+
+// EncodeEntityTransactionWithContext keeps the contextual raw-operation entrance
+// on the maintainer's request codec. It never reinstates the superseded format.
+func EncodeEntityTransactionWithContext(ctx context.Context, namespace, logicalID string, ops []Operation, modes ...EntityCommitMode) ([]byte, error) {
+	if len(modes) > 1 {
+		return nil, ErrInvalidData
+	}
+	request := EntityTransactionRequest{Namespace: namespace, LogicalID: logicalID, Operations: ops}
+	if len(modes) == 1 {
+		request.Mode = modes[0]
+	}
+	return EncodeEntityTransactionRequestWithContext(ctx, request)
+}
+
+// semanticTransactionWriter keeps payload emission in the retained codec while
+// observing the admission lifetime. Uncancellable compatibility calls keep the
+// maintainer's pooled Marshal path; no detached prepared-image copy is restored.
+type semanticTransactionWriter struct {
+	ctx    context.Context
+	buffer *bytes.Buffer
+}
+
+func (w *semanticTransactionWriter) Write(data []byte) (int, error) {
+	if err := w.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return w.buffer.Write(data)
 }

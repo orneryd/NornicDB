@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,86 +54,71 @@ func (sm *SchemaManager) LookupUniqueConstraintValue(label, property string, val
 // cache has been rebuilt from storage and can be trusted for misses. Planners
 // may trust absence only when cacheComplete is true; otherwise they must retain
 // a scan fallback because the cache may not have been rebuilt from storage yet.
-func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property string, value interface{}) (nodeID NodeID, valueFound bool, constraintExists bool, cacheComplete bool) {
-	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
-	constraint, exists := sm.uniqueConstraints[key]
-	sm.mu.RUnlock()
-	if !exists || value == nil {
-		return "", false, exists, false
-	}
-	valueKey, ok := indexValueKey(value)
-	if !ok {
-		return "", false, true, false
-	}
-	nodeID, valueFound, cacheComplete = sm.lookupUniqueValue(constraint, label, property, value, valueKey)
-	return nodeID, valueFound, true, cacheComplete
+func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property string, value interface{}) (NodeID, bool, bool, bool) {
+	id, found, exists, complete, _ := sm.LookupUniqueConstraintValueForPlanningWithContext(context.Background(), label, property, value)
+	return id, found, exists, complete
 }
 
-func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, property string, value interface{}) (nodeID NodeID, valueFound bool, cacheComplete bool, constraintExists bool) {
-	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
-	constraint, exists := sm.uniqueConstraints[key]
-	sm.mu.RUnlock()
-	if !exists || value == nil {
-		return "", false, false, exists
+// LookupUniqueConstraintValueForPlanningWithContext observes pending holders
+// before reporting the cache answer. It does not change claim/lock ownership.
+func (sm *SchemaManager) LookupUniqueConstraintValueForPlanningWithContext(ctx context.Context, label, property string, value interface{}) (NodeID, bool, bool, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, false, false, err
 	}
-	valueKey, ok := indexValueKey(value)
-	if !ok {
-		return "", false, false, true
-	}
-
-	nodeID, valueFound, cacheComplete = sm.lookupUniqueValue(constraint, label, property, value, valueKey)
-	return nodeID, valueFound, cacheComplete, true
-}
-
-// uniqueValueHolders returns the nodes holding value under label's unique
-// constraint on property, merged with the pending writes: the registered
-// holder unless a pending write supersedes it, and every pending node with
-// the value. cacheComplete reports whether the registered values cover all
-// stored nodes, so an empty result can be trusted.
-func (sm *SchemaManager) uniqueValueHolders(label, property string, value interface{}) (holders []NodeID, cacheComplete bool, constraintExists bool) {
 	sm.mu.RLock()
 	constraint, exists := sm.uniqueConstraints[fmt.Sprintf("%s:%s", label, property)]
 	sm.mu.RUnlock()
-	if !exists {
-		return nil, false, false
+	if !exists || value == nil {
+		return "", false, exists, false, nil
 	}
-	valueKey, ok := indexValueKey(value)
+	key, ok := indexValueKey(value)
 	if !ok {
-		return nil, false, true
+		return "", false, true, false, nil
 	}
-	view, source := sm.beginPendingRead()
-	defer endPendingRead(source)
-	constraint.mu.RLock()
-	holder, found := constraint.values[valueKey]
-	cacheComplete = constraint.valuesCacheComplete
-	constraint.mu.RUnlock()
-	if found && view.keep(holder) {
-		holders = append(holders, holder)
-	}
-	holders = view.valueMatches(holders, label, property, valueKey)
-	return holders, cacheComplete, true
+	id, found, complete, err := sm.lookupUniqueValueWithContext(ctx, constraint, label, property, key)
+	return id, found, true, complete, err
 }
 
-// lookupUniqueValue returns the node holding valueKey under constraint,
-// merged with the pending writes: a registered holder with a pending update
-// or delete no longer counts, and a pending node with the value does.
-func (sm *SchemaManager) lookupUniqueValue(constraint *UniqueConstraint, label, property string, value, valueKey interface{}) (nodeID NodeID, found bool, cacheComplete bool) {
+// The compatibility entrance is retained for the post-conflict commit diagnostic.
+func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, property string, value interface{}) (NodeID, bool, bool, bool) {
+	id, found, complete, exists, _ := sm.lookupUniqueConstraintValueForValidationWithContext(context.Background(), label, property, value)
+	return id, found, complete, exists
+}
+
+func (sm *SchemaManager) lookupUniqueConstraintValueForValidationWithContext(ctx context.Context, label, property string, value interface{}) (NodeID, bool, bool, bool, error) {
+	id, found, exists, complete, err := sm.LookupUniqueConstraintValueForPlanningWithContext(ctx, label, property, value)
+	return id, found, complete, exists, err
+}
+
+func (sm *SchemaManager) lookupUniqueValueWithContext(ctx context.Context, constraint *UniqueConstraint, label, property string, valueKey interface{}) (NodeID, bool, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return "", false, false, err
+	}
 	view, source := sm.beginPendingRead()
 	defer endPendingRead(source)
 	constraint.mu.RLock()
-	nodeID, found = constraint.values[valueKey]
-	cacheComplete = constraint.valuesCacheComplete
+	id, found := constraint.values[valueKey]
+	complete := constraint.valuesCacheComplete
 	constraint.mu.RUnlock()
-	if found && !view.keep(nodeID) {
-		nodeID, found = "", false
+	if found && !view.keep(id) {
+		id, found = "", false
 	}
-	if pending := view.valueMatches(nil, label, property, valueKey); len(pending) > 0 {
-		sort.Slice(pending, func(i, j int) bool { return string(pending[i]) < string(pending[j]) })
-		nodeID, found = pending[0], true
+	// Selection needs the smallest holder, not a sorted materialized copy.
+	// Enumerate once and keep only the minimum namespace-visible identity.
+	var pendingID NodeID
+	pendingFound := false
+	for _, candidate := range view.valueMatchSet(label, property, valueKey) {
+		if err := ctx.Err(); err != nil {
+			return "", false, complete, err
+		}
+		if view.inNamespace(candidate) && (!pendingFound || candidate < pendingID) {
+			pendingID, pendingFound = candidate, true
+		}
 	}
-	return nodeID, found, cacheComplete
+	if pendingFound {
+		id, found = pendingID, true
+	}
+	return id, found, complete, ctx.Err()
 }
 
 // uniqueConstraintLockKey identifies one (label, property, value) triple for
@@ -231,14 +215,32 @@ func recycleUniqueConstraintRequests(batch *uniqueConstraintRequestBatch, reques
 // canonical registry. Entity and endpoint authority belongs to the earlier
 // write/prepare owner; unconstrained images append no keys.
 func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKey, nodes []*Node, edges []*Edge) []uniqueConstraintLockKey {
+	keys, _ = sm.appendConstraintValueKeysWithContext(context.Background(), keys, nodes, edges)
+	return keys
+}
+
+// appendConstraintValueKeysWithContext is the same value projection during
+// cancellable commit preparation. Context-free point writes and accepted
+// prepared-commit recovery use the compatibility entrance above.
+func (sm *SchemaManager) appendConstraintValueKeysWithContext(ctx context.Context, keys []uniqueConstraintLockKey, nodes []*Node, edges []*Edge) ([]uniqueConstraintLockKey, error) {
 	if sm == nil {
-		return keys
+		return keys, ctx.Err()
 	}
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if node == nil || len(node.Properties) == 0 {
 			continue
 		}
-		for _, c := range sm.GetConstraintsForLabels(node.Labels) {
+		constraints, err := sm.GetConstraintsForLabelsWithContext(ctx, node.Labels)
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range constraints {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if c.EffectiveEntityType() != ConstraintEntityNode {
 				continue
 			}
@@ -251,10 +253,20 @@ func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKe
 		}
 	}
 	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if edge == nil || len(edge.Properties) == 0 {
 			continue
 		}
-		for _, c := range sm.GetConstraintsForLabels([]string{edge.Type}) {
+		constraints, err := sm.GetConstraintsForLabelsWithContext(ctx, []string{edge.Type})
+		if err != nil {
+			return nil, err
+		}
+		for _, c := range constraints {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
 				continue
 			}
@@ -270,7 +282,7 @@ func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKe
 		}
 	}
 
-	return keys
+	return keys, ctx.Err()
 }
 
 // nodeConstraintLockKey is the canonical node key projection for both commit
@@ -376,6 +388,9 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 	for _, k := range keys {
 		shared := k.shared
 		k.shared = false // mode is not part of the identity: writes conflict with reads.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !lockableUniqueConstraintKey(k) {
 			continue
 		}
@@ -418,9 +433,10 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 		requests[i].lock = lock
 	}
 	sm.uniqueConstraintCommitLocksMu.Unlock()
-	sort.Slice(requests, func(i, j int) bool {
-		return requests[i].lock.order < requests[j].lock.order
-	})
+	if err := sortIndexCandidatesWithContext(ctx, requests, func(a, b uniqueConstraintLockRequest) bool { return a.lock.order < b.lock.order }); err != nil {
+		sm.releaseUniqueConstraintLocks(owner, nil, requests)
+		return nil, err
+	}
 
 	for i := range requests {
 		if err := sm.waitForUniqueConstraintLock(ctx, owner, requests[i]); err != nil {
@@ -697,12 +713,24 @@ type mergeAdmissionKey struct {
 }
 
 func (sm *SchemaManager) uniqueMergeKeys(labels []string, props map[string]interface{}) []mergeAdmissionKey {
+	keys, _ := sm.uniqueMergeKeysWithContext(context.Background(), labels, props)
+	return keys
+}
+
+func (sm *SchemaManager) uniqueMergeKeysWithContext(ctx context.Context, labels []string, props map[string]interface{}) ([]mergeAdmissionKey, error) {
 	if sm == nil || len(props) == 0 {
-		return nil
+		return nil, ctx.Err()
 	}
 	var keys []mergeAdmissionKey
 	node := &Node{Properties: props}
-	for _, c := range sm.GetConstraintsForLabels(labels) {
+	constraints, err := sm.GetConstraintsForLabelsWithContext(ctx, labels)
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range constraints {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if c.EffectiveEntityType() != ConstraintEntityNode || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
 			continue
 		}
@@ -712,7 +740,7 @@ func (sm *SchemaManager) uniqueMergeKeys(labels []string, props map[string]inter
 		}
 		keys = append(keys, mergeAdmissionKey{lock: key, properties: c.Properties})
 	}
-	return keys
+	return keys, ctx.Err()
 }
 
 // HasUniqueValueTracking reports whether any unique constraint exists whose

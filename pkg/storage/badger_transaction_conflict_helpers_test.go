@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -18,11 +19,17 @@ func TestBadgerTransaction_PendingCreateNodeOperationIndexLocked(t *testing.T) {
 		{Type: OpCreateNode, NodeID: "test:n1"},
 		{Type: OpUpdateNode, NodeID: "test:n1"},
 	}
-	require.Equal(t, 0, tx.pendingCreateNodeOperationIndexLocked("test:n1"))
+	index, prepErr := tx.pendingCreateNodeOperationIndexLocked(context.Background(), "test:n1")
+	require.NoError(t, prepErr)
+	require.Equal(t, 0, index)
 
 	tx.operations = append(tx.operations, Operation{Type: OpDeleteNode, NodeID: "test:n1"})
-	require.Equal(t, -1, tx.pendingCreateNodeOperationIndexLocked("test:n1"))
-	require.Equal(t, -1, tx.pendingCreateNodeOperationIndexLocked("test:missing"))
+	index, prepErr = tx.pendingCreateNodeOperationIndexLocked(context.Background(), "test:n1")
+	require.NoError(t, prepErr)
+	require.Equal(t, -1, index)
+	index, prepErr = tx.pendingCreateNodeOperationIndexLocked(context.Background(), "test:missing")
+	require.NoError(t, prepErr)
+	require.Equal(t, -1, index)
 }
 
 func TestBadgerTransaction_ConflictHelpers(t *testing.T) {

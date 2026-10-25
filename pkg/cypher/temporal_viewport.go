@@ -48,16 +48,19 @@ type temporalCurrentNodeChecker interface {
 	IsCurrentTemporalNode(node *storage.Node, asOf time.Time) (bool, error)
 }
 
-func filterNodesByTemporalViewport(nodes []*storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) ([]*storage.Node, error) {
+func filterNodesByTemporalViewport(ctx context.Context, nodes []*storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) ([]*storage.Node, error) {
 	if !viewport.Enabled() || checker == nil {
 		return nodes, nil
 	}
 	filtered := make([]*storage.Node, 0, len(nodes))
 	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if node == nil {
 			continue
 		}
-		visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
+		visible, err := storage.IsCurrentTemporalNodeWithContext(ctx, checker, node, viewport.AsOf)
 		if err != nil {
 			return nil, err
 		}
@@ -69,11 +72,11 @@ func filterNodesByTemporalViewport(nodes []*storage.Node, viewport TemporalViewp
 	return filtered, nil
 }
 
-func nodeVisibleInTemporalViewport(node *storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) (bool, error) {
+func nodeVisibleInTemporalViewport(ctx context.Context, node *storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) (bool, error) {
 	if !viewport.Enabled() || checker == nil || node == nil {
 		return true, nil
 	}
-	return checker.IsCurrentTemporalNode(node, viewport.AsOf)
+	return storage.IsCurrentTemporalNodeWithContext(ctx, checker, node, viewport.AsOf)
 }
 
 func filterNodesByRequiredLabels(nodes []*storage.Node, labels []string) []*storage.Node {

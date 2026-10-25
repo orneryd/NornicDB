@@ -87,7 +87,21 @@ func GetStoredNodesByLabel(engine Engine, label string) ([]*Node, error) {
 
 // GetStoredOutgoingEdges is GetStoredNode for a node's outgoing relationships.
 func GetStoredOutgoingEdges(engine Engine, nodeID NodeID) ([]*Edge, error) {
+	return GetStoredOutgoingEdgesWithContext(context.Background(), engine, nodeID)
+}
+
+// GetStoredOutgoingEdgesWithContext retains StoredReader policy while carrying
+// the caller into an available contextual directional reader.
+func GetStoredOutgoingEdgesWithContext(ctx context.Context, engine Engine, nodeID NodeID) ([]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if reader, ok := StoredReader(engine); ok {
+		if contextual, ok := reader.(interface {
+			GetStoredOutgoingEdgesWithContext(context.Context, NodeID) ([]*Edge, error)
+		}); ok {
+			return contextual.GetStoredOutgoingEdgesWithContext(ctx, nodeID)
+		}
 		return reader.GetStoredOutgoingEdges(nodeID)
 	}
 	return engine.GetOutgoingEdges(nodeID)
@@ -95,7 +109,21 @@ func GetStoredOutgoingEdges(engine Engine, nodeID NodeID) ([]*Edge, error) {
 
 // GetStoredIncomingEdges is GetStoredNode for a node's incoming relationships.
 func GetStoredIncomingEdges(engine Engine, nodeID NodeID) ([]*Edge, error) {
+	return GetStoredIncomingEdgesWithContext(context.Background(), engine, nodeID)
+}
+
+// GetStoredIncomingEdgesWithContext is the incoming counterpart of the same
+// stored-inclusive directional dispatch.
+func GetStoredIncomingEdgesWithContext(ctx context.Context, engine Engine, nodeID NodeID) ([]*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if reader, ok := StoredReader(engine); ok {
+		if contextual, ok := reader.(interface {
+			GetStoredIncomingEdgesWithContext(context.Context, NodeID) ([]*Edge, error)
+		}); ok {
+			return contextual.GetStoredIncomingEdgesWithContext(ctx, nodeID)
+		}
 		return reader.GetStoredIncomingEdges(nodeID)
 	}
 	return engine.GetIncomingEdges(nodeID)
@@ -170,14 +198,24 @@ func CollectStoredEdges(ctx context.Context, engine Engine) ([]*Edge, error) {
 // GetStoredNodesByLabelInScope is GetStoredNodesByLabel within one database
 // (ScopedStoredEntityReader).
 func (b *BadgerEngine) GetStoredNodesByLabelInScope(scope, label string) ([]*Node, error) {
-	return b.getNodesByLabelInScope(scope, label, storedRead)
+	return b.GetStoredNodesByLabelInScopeWithContext(context.Background(), scope, label)
+}
+
+// GetStoredNodesByLabelInScopeWithContext carries the caller through validation and label materialization.
+func (b *BadgerEngine) GetStoredNodesByLabelInScopeWithContext(ctx context.Context, scope, label string) ([]*Node, error) {
+	return b.getNodesByLabelInScopeWithContext(ctx, scope, label, storedRead)
 }
 
 // StreamStoredNodesByLabelProjectedInScope is
 // StreamStoredNodesByLabelProjected within one database
 // (ScopedStoredEntityReader).
 func (b *BadgerEngine) StreamStoredNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
-	return b.streamNodesByLabelProjectedInScope(scope, label, properties, storedRead, visit)
+	return b.StreamStoredNodesByLabelProjectedInScopeWithContext(context.Background(), scope, label, properties, visit)
+}
+
+// StreamStoredNodesByLabelProjectedInScopeWithContext carries the caller through this read and its materialization.
+func (b *BadgerEngine) StreamStoredNodesByLabelProjectedInScopeWithContext(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error {
+	return b.streamNodesByLabelProjectedInScopeWithContext(ctx, scope, label, properties, storedRead, visit)
 }
 
 // StreamStoredEdgesByTypeInScope is StreamStoredEdgesByType within one
@@ -202,23 +240,43 @@ func (w *WALEngine) GetStoredEdge(id EdgeID) (*Edge, error) {
 
 // GetStoredOutgoingEdges forwards to the inner engine (StoredEntityReader).
 func (w *WALEngine) GetStoredOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	return GetStoredOutgoingEdges(w.engine, nodeID)
+	return w.GetStoredOutgoingEdgesWithContext(context.Background(), nodeID)
+}
+
+// GetStoredOutgoingEdgesWithContext forwards the same stored read policy.
+func (w *WALEngine) GetStoredOutgoingEdgesWithContext(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	return GetStoredOutgoingEdgesWithContext(ctx, w.engine, nodeID)
 }
 
 // GetStoredIncomingEdges forwards to the inner engine (StoredEntityReader).
 func (w *WALEngine) GetStoredIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	return GetStoredIncomingEdges(w.engine, nodeID)
+	return w.GetStoredIncomingEdgesWithContext(context.Background(), nodeID)
+}
+
+// GetStoredIncomingEdgesWithContext forwards the same stored read policy.
+func (w *WALEngine) GetStoredIncomingEdgesWithContext(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	return GetStoredIncomingEdgesWithContext(ctx, w.engine, nodeID)
 }
 
 // GetStoredNodesByLabel forwards to the inner engine (StoredEntityReader).
 func (w *WALEngine) GetStoredNodesByLabel(label string) ([]*Node, error) {
-	return GetStoredNodesByLabel(w.engine, label)
+	return w.GetStoredNodesByLabelWithContext(context.Background(), label)
+}
+
+// GetStoredNodesByLabelWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) GetStoredNodesByLabelWithContext(ctx context.Context, label string) ([]*Node, error) {
+	return GetStoredNodesByLabelWithContext(ctx, w.engine, label)
 }
 
 // StreamStoredNodesByLabelProjected forwards to the inner engine
 // (StoredEntityReader).
 func (w *WALEngine) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
-	return w.StreamStoredNodesByLabelProjectedInScope("", label, properties, visit)
+	return w.StreamStoredNodesByLabelProjectedWithContext(context.Background(), label, properties, visit)
+}
+
+// StreamStoredNodesByLabelProjectedWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) StreamStoredNodesByLabelProjectedWithContext(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
+	return StreamStoredNodesByLabelProjectedInScopeWithContext(ctx, w, "", label, properties, visit)
 }
 
 // StreamStoredEdgesByType forwards to the inner engine (StoredEntityReader).
@@ -229,13 +287,23 @@ func (w *WALEngine) StreamStoredEdgesByType(ctx context.Context, edgeType string
 // GetStoredNodesByLabelInScope forwards to the inner engine
 // (ScopedStoredEntityReader).
 func (w *WALEngine) GetStoredNodesByLabelInScope(scope, label string) ([]*Node, error) {
-	return getStoredNodesByLabelInScope(w.engine, scope, label)
+	return w.GetStoredNodesByLabelInScopeWithContext(context.Background(), scope, label)
+}
+
+// GetStoredNodesByLabelInScopeWithContext carries the caller through validation and label materialization.
+func (w *WALEngine) GetStoredNodesByLabelInScopeWithContext(ctx context.Context, scope, label string) ([]*Node, error) {
+	return getStoredNodesByLabelInScopeWithContext(ctx, w.engine, scope, label)
 }
 
 // StreamStoredNodesByLabelProjectedInScope forwards to the inner engine
 // (ScopedStoredEntityReader).
 func (w *WALEngine) StreamStoredNodesByLabelProjectedInScope(scope, label string, properties []string, visit func(*Node) error) error {
-	return streamStoredNodesByLabelProjectedInScope(w.engine, scope, label, properties, visit)
+	return w.StreamStoredNodesByLabelProjectedInScopeWithContext(context.Background(), scope, label, properties, visit)
+}
+
+// StreamStoredNodesByLabelProjectedInScopeWithContext carries the caller through this read and its materialization.
+func (w *WALEngine) StreamStoredNodesByLabelProjectedInScopeWithContext(ctx context.Context, scope, label string, properties []string, visit func(*Node) error) error {
+	return streamStoredNodesByLabelProjectedInScopeWithContext(ctx, w.engine, scope, label, properties, visit)
 }
 
 // StreamStoredEdgesByTypeInScope forwards to the inner engine
@@ -275,28 +343,38 @@ func storedScopeReader(engine Engine) (ScopedStoredEntityReader, bool) {
 // database), else, for an engine that cannot read hidden entities, the scoped
 // scan of what it can read.
 func getStoredNodesByLabelInScope(engine Engine, scope, label string) ([]*Node, error) {
+	return getStoredNodesByLabelInScopeWithContext(context.Background(), engine, scope, label)
+}
+
+// getStoredNodesByLabelInScopeWithContext carries the caller through validation and label materialization.
+func getStoredNodesByLabelInScopeWithContext(ctx context.Context, engine Engine, scope, label string) ([]*Node, error) {
 	if scoped, ok := storedScopeReader(engine); ok {
-		return scoped.GetStoredNodesByLabelInScope(scope, label)
+		return GetStoredNodesByLabelInScopeWithContext(ctx, scoped, scope, label)
 	}
-	if reader, ok := StoredReader(engine); ok {
-		return reader.GetStoredNodesByLabel(label)
+	if _, ok := StoredReader(engine); ok {
+		return GetStoredNodesByLabelWithContext(ctx, engine, label)
 	}
-	return getNodesByLabelInScope(engine, scope, label)
+	return getNodesByLabelInScopeWithContext(ctx, engine, scope, label)
 }
 
 // streamStoredNodesByLabelProjectedInScope is getStoredNodesByLabelInScope
 // for the projected label stream.
 func streamStoredNodesByLabelProjectedInScope(engine Engine, scope, label string, properties []string, visit func(*Node) error) error {
+	return streamStoredNodesByLabelProjectedInScopeWithContext(context.Background(), engine, scope, label, properties, visit)
+}
+
+// streamStoredNodesByLabelProjectedInScopeWithContext carries the caller through this read and its materialization.
+func streamStoredNodesByLabelProjectedInScopeWithContext(ctx context.Context, engine Engine, scope, label string, properties []string, visit func(*Node) error) error {
 	if scoped, ok := storedScopeReader(engine); ok {
-		return scoped.StreamStoredNodesByLabelProjectedInScope(scope, label, properties, visit)
+		return StreamStoredNodesByLabelProjectedInScopeWithContext(ctx, scoped, scope, label, properties, visit)
 	}
 	if reader, ok := StoredReader(engine); ok {
-		return reader.StreamStoredNodesByLabelProjected(label, properties, visit)
+		return StreamStoredNodesByLabelProjectedWithContext(ctx, reader, label, properties, visit)
 	}
 	if _, ok := engine.(ScopedLabelNodeReader); ok {
-		return streamNodesByLabelProjectedInScope(engine, scope, label, properties, visit)
+		return streamNodesByLabelProjectedInScopeWithContext(ctx, engine, scope, label, properties, visit)
 	}
-	return streamNodesByLabelForValidation(engine, label, properties, visit)
+	return streamNodesByLabelForValidationWithContext(ctx, engine, label, properties, visit)
 }
 
 // streamStoredEdgesByTypeInScope is getStoredNodesByLabelInScope for the
@@ -330,25 +408,55 @@ func (n *NamespacedEngine) GetStoredEdge(id EdgeID) (*Edge, error) {
 // GetStoredOutgoingEdges is GetOutgoingEdges' stored read
 // (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	return materializedRead(func() ([]*Edge, error) { return GetStoredOutgoingEdges(n.inner, n.PrefixNodeID(nodeID)) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, true, false) }, false)
+	return n.GetStoredOutgoingEdgesWithContext(context.Background(), nodeID)
+}
+
+// GetStoredOutgoingEdgesWithContext observes capture and namespace projection.
+func (n *NamespacedEngine) GetStoredOutgoingEdgesWithContext(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	return materializedReadWithContext(ctx, func() ([]*Edge, error) {
+		return GetStoredOutgoingEdgesWithContext(ctx, n.inner, n.PrefixNodeID(nodeID))
+	}, func(edges []*Edge) ([]*Edge, error) {
+		return n.toUserEdgesInNamespaceWithContext(ctx, edges, true, false)
+	}, false)
 }
 
 // GetStoredIncomingEdges is GetIncomingEdges' stored read
 // (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	return materializedRead(func() ([]*Edge, error) { return GetStoredIncomingEdges(n.inner, n.PrefixNodeID(nodeID)) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, true, false) }, false)
+	return n.GetStoredIncomingEdgesWithContext(context.Background(), nodeID)
+}
+
+// GetStoredIncomingEdgesWithContext observes capture and namespace projection.
+func (n *NamespacedEngine) GetStoredIncomingEdgesWithContext(ctx context.Context, nodeID NodeID) ([]*Edge, error) {
+	return materializedReadWithContext(ctx, func() ([]*Edge, error) {
+		return GetStoredIncomingEdgesWithContext(ctx, n.inner, n.PrefixNodeID(nodeID))
+	}, func(edges []*Edge) ([]*Edge, error) {
+		return n.toUserEdgesInNamespaceWithContext(ctx, edges, true, false)
+	}, false)
 }
 
 // GetStoredNodesByLabel is GetNodesByLabel's stored read
 // (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredNodesByLabel(label string) ([]*Node, error) {
-	return materializedRead(func() ([]*Node, error) { return getStoredNodesByLabelInScope(n.inner, n.nodeScope(), label) }, func(nodes []*Node) []*Node { return n.toUserNodesInNamespace(nodes, true) }, false)
+	return n.GetStoredNodesByLabelWithContext(context.Background(), label)
+}
+
+// GetStoredNodesByLabelWithContext carries the caller through this read and its materialization.
+func (n *NamespacedEngine) GetStoredNodesByLabelWithContext(ctx context.Context, label string) ([]*Node, error) {
+	return materializedReadWithContext(ctx, func() ([]*Node, error) {
+		return getStoredNodesByLabelInScopeWithContext(ctx, n.inner, n.nodeScope(), label)
+	}, func(nodes []*Node) ([]*Node, error) { return n.toUserNodesInNamespaceWithContext(ctx, nodes, true) }, false)
 }
 
 // StreamStoredNodesByLabelProjected is StreamNodesByLabelProjected's stored
 // read (StoredEntityReader).
 func (n *NamespacedEngine) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
-	return n.streamNamespaceNodesProjected(label, properties, visit, true)
+	return n.StreamStoredNodesByLabelProjectedWithContext(context.Background(), label, properties, visit)
+}
+
+// StreamStoredNodesByLabelProjectedWithContext carries the caller through this read and its materialization.
+func (n *NamespacedEngine) StreamStoredNodesByLabelProjectedWithContext(ctx context.Context, label string, properties []string, visit func(*Node) error) error {
+	return n.streamNamespaceNodesProjectedWithContext(ctx, label, properties, visit, true)
 }
 
 // StreamStoredEdgesByType is StreamEdgesByType's stored read
@@ -367,35 +475,25 @@ func (n *NamespacedEngine) StreamStoredEdgesByType(ctx context.Context, edgeType
 
 // toUserEdgesInNamespace keeps the edges of this database, unprefixed.
 func (n *NamespacedEngine) toUserEdgesInNamespace(edges []*Edge, skipNil bool, reserve bool) []*Edge {
-	var empty []*Edge
+	out, _ := n.toUserEdgesInNamespaceWithContext(context.Background(), edges, skipNil, reserve)
+	return out
+}
+
+func (n *NamespacedEngine) toUserEdgesInNamespaceWithContext(ctx context.Context, edges []*Edge, skipNil bool, reserve bool) ([]*Edge, error) {
+	var out []*Edge
 	if reserve {
-		empty = []*Edge{}
+		out = make([]*Edge, 0, len(edges))
 	}
-	return materializedCollection(edges, empty, func(edges []*Edge) []*Edge {
-		project := func(edge *Edge) *Edge {
-			if skipNil && edge == nil {
-				return nil
-			}
-			if !n.hasEdgePrefix(edge.ID) {
-				return nil
-			}
-			return n.toUserEdge(edge)
+	err := materializedValuesWithContext(ctx, edges, func(edge *Edge) {
+		if skipNil && edge == nil {
+			return
 		}
-		if reserve {
-			reserved := make([]*Edge, 0, len(edges))
-			materializedValues(edges, func(edge *Edge) {
-				if view := project(edge); view != nil {
-					reserved = append(reserved, view)
-				}
-			})
-			return reserved
+		if n.hasEdgePrefix(edge.ID) {
+			out = append(out, n.toUserEdge(edge))
 		}
-		var out []*Edge
-		materializedValues(edges, func(edge *Edge) {
-			if view := project(edge); view != nil {
-				out = append(out, view)
-			}
-		})
-		return out
 	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }

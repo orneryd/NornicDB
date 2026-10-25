@@ -1,8 +1,8 @@
 package storage
 
 import (
+	"context"
 	"slices"
-	"sort"
 )
 
 // pendingNodeIndex indexes the nodes an AsyncEngine holds in its write
@@ -62,11 +62,19 @@ func newPendingNodeIndex() *pendingNodeIndex {
 
 // add lists node under its labels and each tracked (label, property) with a
 // comparable non-null value (the values the property indexes hold).
-func (p *pendingNodeIndex) add(node *Node) {
+func (p *pendingNodeIndex) add(node *Node) { _ = p.addWithContext(context.Background(), node) }
+
+func (p *pendingNodeIndex) addWithContext(ctx context.Context, node *Node) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if node == nil {
-		return
+		return nil
 	}
 	for _, label := range node.Labels {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		ids := p.byLabel[label]
 		if ids == nil {
 			ids = make(map[NodeID]bool)
@@ -74,9 +82,13 @@ func (p *pendingNodeIndex) add(node *Node) {
 		}
 		ids[node.ID] = true
 		for property := range p.tracked[label] {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			p.addValue(node, label, property)
 		}
 	}
+	return nil
 }
 
 // addValue indexes node's value of property under label.
@@ -198,20 +210,44 @@ func (p *pendingNodeIndex) empty() bool {
 // track indexes property by value for label's pending nodes from now on,
 // including the nodes already pending. cached looks a pending node up.
 func (p *pendingNodeIndex) track(label, property string, cached func(NodeID) *Node) {
-	properties := p.tracked[label]
-	if properties == nil {
-		properties = make(map[string]struct{})
-		p.tracked[label] = properties
+	_ = p.trackWithContext(context.Background(), label, property, cached)
+}
+
+// Build a pair privately. A canceled first use must not leave a partial pair
+// marked tracked; later writes and retries must see the complete same index.
+func (p *pendingNodeIndex) trackWithContext(ctx context.Context, label, property string, cached func(NodeID) *Node) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if _, already := properties[property]; already {
-		return
+	if _, already := p.tracked[label][property]; already {
+		return nil
 	}
-	properties[property] = struct{}{}
+	staged := newPendingNodeIndex()
 	for id := range p.byLabel[label] {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if node := cached(id); node != nil && hasLabel(node.Labels, label) {
-			p.addValue(node, label, property)
+			staged.addValue(node, label, property)
 		}
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// The lock protects this publication terminal; cancellation is observed
+	// throughout preparation, before publishing any derived state.
+	for key, ids := range staged.byValue {
+		p.byValue[key] = ids
+	}
+	pair := pendingPropertyKey{label: label, property: property}
+	if entries := staged.byProperty[pair]; entries != nil {
+		p.byProperty[pair] = entries
+	}
+	if p.tracked[label] == nil {
+		p.tracked[label] = make(map[string]struct{})
+	}
+	p.tracked[label][property] = struct{}{}
+	return nil
 }
 
 // pendingWriteSource is the write cache of a layer above the engine that
@@ -268,31 +304,36 @@ func (v pendingWriteView) valueMatchSet(label, property string, valueKey interfa
 	return v.index.byValue[pendingValueKey{label: label, property: property, value: valueKey}]
 }
 
-// valueMatches appends the namespace's pending nodes with label and
-// property = valueKey to out.
-func (v pendingWriteView) valueMatches(out []NodeID, label, property string, valueKey interface{}) []NodeID {
-	return v.appendInNamespace(out, v.valueMatchSet(label, property, valueKey))
-}
-
-// appendInNamespace appends the ids that belong to the view's namespace to
-// out.
-func (v pendingWriteView) appendInNamespace(out, ids []NodeID) []NodeID {
+// appendInNamespaceWithContext appends the namespace-visible pending candidates.
+func (v pendingWriteView) appendInNamespaceWithContext(ctx context.Context, out, ids []NodeID) ([]NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if v.inNamespace(id) {
 			out = append(out, id)
 		}
 	}
-	return out
+	return out, ctx.Err()
 }
 
 // propertyEntries returns the namespace's pending nodes with label and a
 // non-null property, grouped by value key.
-func (v pendingWriteView) propertyEntries(label, property string) map[interface{}][]NodeID {
+func (v pendingWriteView) propertyEntriesWithContext(ctx context.Context, label, property string) (map[interface{}][]NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if v.index == nil {
-		return nil
+		return nil, nil
 	}
 	var entries map[interface{}][]NodeID
 	for id, valueKey := range v.index.byProperty[pendingPropertyKey{label: label, property: property}] {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !v.inNamespace(id) {
 			continue
 		}
@@ -301,7 +342,7 @@ func (v pendingWriteView) propertyEntries(label, property string) map[interface{
 		}
 		entries[valueKey] = append(entries[valueKey], id)
 	}
-	return entries
+	return entries, ctx.Err()
 }
 
 // pendingWriteAttachment is a schema's attached pending-write source and
@@ -376,66 +417,93 @@ func endPendingRead(source pendingWriteSource) {
 // entries are dropped and pending nodes placed at their values. IDs with the
 // same value are in ID order. limit < 0 lists all. Caller holds idx.mu.
 // keep, when not nil, selects the index keys to list (PropertyIndexRange).
-func (idx *PropertyIndex) orderedIDsLocked(view pendingWriteView, property string, descending bool, limit int, bounds PropertyIndexBounds) []NodeID {
-	// Binary search narrows the keys to bounds where their kinds allow
-	// (sortedKeyRangeLocked); contains then checks every remaining key, so
-	// keys the search couldn't place are still filtered exactly.
+func (idx *PropertyIndex) orderedIDsLockedWithContext(ctx context.Context, view pendingWriteView, property string, descending bool, limit int, bounds PropertyIndexBounds) ([]NodeID, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	inRange, _ := idx.sortedKeyRangeLocked(bounds)
 	keys := make([]interface{}, 0, len(inRange))
 	for _, key := range inRange {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if !bounds.bounded() || bounds.contains(key) {
 			keys = append(keys, key)
 		}
 	}
-	pending := view.propertyEntries(idx.Label, property)
+	pending, err := view.propertyEntriesWithContext(ctx, idx.Label, property)
+	if err != nil {
+		return nil, err
+	}
 	if len(pending) > 0 {
 		for valueKey := range pending {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if valueKey == nil || (bounds.bounded() && !bounds.contains(valueKey)) {
 				continue
 			}
-			if ids := idx.values[valueKey]; len(ids) == 0 {
+			if len(idx.values[valueKey]) == 0 {
 				keys = append(keys, valueKey)
 			}
 		}
-		sort.SliceStable(keys, func(i, j int) bool { return compareSchemaIndexValues(keys[i], keys[j]) < 0 })
+		if err := sortIndexCandidatesWithContext(ctx, keys, func(a, b interface{}) bool { return compareSchemaIndexValues(a, b) < 0 }); err != nil {
+			return nil, err
+		}
 	}
 	capacity := len(keys)
 	if limit >= 0 && limit < capacity {
 		capacity = limit
 	}
 	out := make([]NodeID, 0, capacity)
-	appendKey := func(valueKey interface{}) bool {
+	appendKey := func(valueKey interface{}) (bool, error) {
 		ids := make([]NodeID, 0, len(idx.values[valueKey])+len(pending[valueKey]))
 		for _, id := range idx.values[valueKey] {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
 			if view.keep(id) {
 				ids = append(ids, id)
 			}
 		}
-		ids = append(ids, pending[valueKey]...)
-		sort.Slice(ids, func(i, j int) bool { return string(ids[i]) < string(ids[j]) })
+		for _, id := range pending[valueKey] {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
+			ids = append(ids, id)
+		}
+		if err := sortIndexCandidatesWithContext(ctx, ids, func(a, b NodeID) bool { return a < b }); err != nil {
+			return false, err
+		}
 		for _, id := range ids {
+			if err := ctx.Err(); err != nil {
+				return false, err
+			}
 			out = append(out, id)
 			if limit >= 0 && len(out) >= limit {
-				return false
+				return false, nil
 			}
 		}
-		return true
+		return true, nil
 	}
-	if descending {
-		for i := len(keys) - 1; i >= 0; i-- {
-			if !appendKey(keys[i]) {
-				break
-			}
+	for i := 0; i < len(keys); i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
-	} else {
-		for _, valueKey := range keys {
-			if !appendKey(valueKey) {
-				break
-			}
+		index := i
+		if descending {
+			index = len(keys) - 1 - i
+		}
+		more, err := appendKey(keys[index])
+		if err != nil {
+			return nil, err
+		}
+		if !more {
+			break
 		}
 	}
 	if len(out) == 0 {
-		return nil
+		return nil, ctx.Err()
 	}
-	return out
+	return out, ctx.Err()
 }

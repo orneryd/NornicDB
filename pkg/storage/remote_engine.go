@@ -867,25 +867,30 @@ func defaultCtx() (context.Context, context.CancelFunc) {
 // queryRemoteEntities owns the query boundary for entity reads. The required
 // admission function retains the caller's exact cardinality and result type;
 // single reads never allocate a list or inspect later rows.
-func queryRemoteEntities[T, R any](r *RemoteEngine, ctx context.Context, statement string, params map[string]interface{}, decode func(interface{}) (*T, error), admit func([][]interface{}, func(interface{}) (*T, error)) (R, error)) (R, error) {
+func queryRemoteEntities[T, R any](r *RemoteEngine, ctx context.Context, statement string, params map[string]interface{}, decode func(interface{}) (*T, error), admit func(context.Context, [][]interface{}, func(interface{}) (*T, error)) (R, error)) (R, error) {
 	_, rows, err := r.QueryCypher(ctx, statement, params, RemoteAccessRead)
 	if err != nil {
 		var zero R
 		return zero, err
 	}
-	return admit(rows, decode)
+	return admit(ctx, rows, decode)
 }
 
-func firstRemoteEntity[T any](rows [][]interface{}, decode func(interface{}) (*T, error)) (*T, error) {
+func firstRemoteEntity[T any](ctx context.Context, rows [][]interface{}, decode func(interface{}) (*T, error)) (*T, error) {
 	if len(rows) == 0 || len(rows[0]) == 0 {
 		return nil, ErrNotFound
 	}
 	return decode(rows[0][0])
 }
 
-func allRemoteEntities[T any](rows [][]interface{}, decode func(interface{}) (*T, error)) ([]*T, error) {
+func allRemoteEntities[T any](ctx context.Context, rows [][]interface{}, decode func(interface{}) (*T, error)) ([]*T, error) {
 	out := make([]*T, 0, len(rows))
 	for _, row := range rows {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		if len(row) == 0 {
 			continue
 		}
@@ -909,10 +914,14 @@ func (r *RemoteEngine) remoteCount(ctx context.Context, statement string, params
 
 // mutateRemoteEntity owns parameter binding and match admission for mutations.
 func (r *RemoteEngine) mutateRemoteEntity(statement, id string, props map[string]interface{}, requireMatch bool) error {
+	return r.mutateRemoteEntityWithContext(nil, statement, id, props, requireMatch)
+}
+
+func (r *RemoteEngine) mutateRemoteEntityWithContext(ctx context.Context, statement, id string, props map[string]interface{}, requireMatch bool) error {
 	params := map[string]interface{}{"id": id}
 	if requireMatch {
 		params["props"] = props
-		matched, err := r.remoteCount(nil, statement, params, RemoteAccessWrite)
+		matched, err := r.remoteCount(ctx, statement, params, RemoteAccessWrite)
 		if err != nil {
 			return err
 		}
@@ -921,11 +930,16 @@ func (r *RemoteEngine) mutateRemoteEntity(statement, id string, props map[string
 		}
 		return nil
 	}
-	_, _, err := r.QueryCypher(nil, statement, params, RemoteAccessWrite)
+	_, _, err := r.QueryCypher(ctx, statement, params, RemoteAccessWrite)
 	return err
 }
 
 func (r *RemoteEngine) CreateNode(node *Node) (NodeID, error) {
+	return r.CreateNodeWithContext(context.Background(), node)
+}
+
+// CreateNodeWithContext carries the caller through mutation validation.
+func (r *RemoteEngine) CreateNodeWithContext(ctx context.Context, node *Node) (NodeID, error) {
 	props := map[string]interface{}{}
 	for k, v := range node.Properties {
 		props[k] = v
@@ -936,7 +950,7 @@ func (r *RemoteEngine) CreateNode(node *Node) (NodeID, error) {
 		}
 	}
 	stmt := fmt.Sprintf("CREATE (n%s) SET n += $props RETURN n", labelsExpr(node.Labels))
-	ctx, cancel := defaultCtx()
+	ctx, cancel := context.WithTimeout(ctx, RemoteRequestTimeout)
 	defer cancel()
 	_, rows, err := r.transport.query(ctx, stmt, map[string]interface{}{"props": props}, RemoteAccessWrite)
 	if err != nil {
@@ -957,7 +971,14 @@ func (r *RemoteEngine) GetNode(id NodeID) (*Node, error) {
 }
 
 func (r *RemoteEngine) UpdateNode(node *Node) error {
-	return r.mutateRemoteEntity("MATCH (n) WHERE n.id = $id SET n += $props RETURN count(n)", string(node.ID), node.Properties, true)
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	return r.UpdateNodeWithContext(ctx, node)
+}
+
+// UpdateNodeWithContext carries the caller through mutation validation.
+func (r *RemoteEngine) UpdateNodeWithContext(ctx context.Context, node *Node) error {
+	return r.mutateRemoteEntityWithContext(ctx, "MATCH (n) WHERE n.id = $id SET n += $props RETURN count(n)", string(node.ID), node.Properties, true)
 }
 
 func (r *RemoteEngine) DeleteNode(id NodeID) error {
@@ -1016,6 +1037,11 @@ func (r *RemoteEngine) DeleteEdge(id EdgeID) error {
 func (r *RemoteEngine) GetNodesByLabel(label string) ([]*Node, error) {
 	ctx, cancel := defaultCtx()
 	defer cancel()
+	return r.GetNodesByLabelWithContext(ctx, label)
+}
+
+// GetNodesByLabelWithContext carries the caller through this read and its materialization.
+func (r *RemoteEngine) GetNodesByLabelWithContext(ctx context.Context, label string) ([]*Node, error) {
 	return r.getNodesByLabel(ctx, label)
 }
 
@@ -1039,11 +1065,18 @@ func (r *RemoteEngine) getNodesByLabelWithReveal(ctx context.Context, label stri
 }
 
 func (r *RemoteEngine) GetFirstNodeByLabel(label string) (*Node, error) {
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	return r.GetFirstNodeByLabelWithContext(ctx, label)
+}
+
+// GetFirstNodeByLabelWithContext carries the caller through this read and its materialization.
+func (r *RemoteEngine) GetFirstNodeByLabelWithContext(ctx context.Context, label string) (*Node, error) {
 	stmt := "MATCH (n) RETURN n LIMIT 1"
 	if strings.TrimSpace(label) != "" {
 		stmt = fmt.Sprintf("MATCH (n:%s) RETURN n LIMIT 1", cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource))
 	}
-	return queryRemoteEntities(r, nil, stmt, nil, valueToNode, firstRemoteEntity[Node])
+	return queryRemoteEntities(r, ctx, stmt, nil, valueToNode, firstRemoteEntity[Node])
 }
 
 func (r *RemoteEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
@@ -1082,7 +1115,16 @@ func (r *RemoteEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	return queryRemoteEntities(r, nil, fmt.Sprintf("MATCH ()-[r:%s]->() RETURN r", cyphertext.PrintIdentifier(edgeType, nil, cyphertext.RawSource)), nil, valueToEdge, allRemoteEntities[Edge])
 }
 
-func (r *RemoteEngine) AllNodes() ([]*Node, error) { return r.GetNodesByLabel("") }
+func (r *RemoteEngine) AllNodes() ([]*Node, error) {
+	ctx, cancel := defaultCtx()
+	defer cancel()
+	return r.AllNodesWithContext(ctx)
+}
+
+// AllNodesWithContext carries the caller through full materialization.
+func (r *RemoteEngine) AllNodesWithContext(ctx context.Context) ([]*Node, error) {
+	return r.GetNodesByLabelWithContext(ctx, "")
+}
 
 // StreamNodesWithOptions satisfies the Engine streaming contract for the
 // remote view: nodes are materialized through the remote read path and the
@@ -1111,9 +1153,12 @@ func (r *RemoteEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		out := node
 		switch {
 		case opts.Projection != nil:
-			out = projectCachedNodeForRead(node, opts.Projection, true)
+			out, err = copyNodeProjectedWithoutEmbeddingsWithContext(ctx, node, opts.Projection)
 		case opts.StripEmbeddings || (!opts.WithEmbeddings && !opts.ApplyDecayFilter):
-			out = copyNodeWithoutEmbeddings(node)
+			out, err = copyNodeWithoutEmbeddingsWithContext(ctx, node)
+		}
+		if err != nil {
+			return err
 		}
 		if err := fn(out); err != nil {
 			if err == ErrIterationStopped {
@@ -1153,7 +1198,12 @@ func (r *RemoteEngine) GetSchema() *SchemaManager { return r.schema }
 const remoteBulkChunkSize = 100
 
 func (r *RemoteEngine) BulkCreateNodes(nodes []*Node) error {
-	ctx, cancel := defaultCtx()
+	return r.BulkCreateNodesWithContext(context.Background(), nodes)
+}
+
+// BulkCreateNodesWithContext carries the caller through mutation validation.
+func (r *RemoteEngine) BulkCreateNodesWithContext(ctx context.Context, nodes []*Node) error {
+	ctx, cancel := context.WithTimeout(ctx, RemoteRequestTimeout)
 	defer cancel()
 	for i := 0; i < len(nodes); i += remoteBulkChunkSize {
 		end := i + remoteBulkChunkSize
@@ -1266,6 +1316,12 @@ func (r *RemoteEngine) BulkDeleteEdges(ids []EdgeID) error {
 func (r *RemoteEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 	ctx, cancel := defaultCtx()
 	defer cancel()
+	return r.BatchGetNodesWithContext(ctx, ids)
+}
+
+// BatchGetNodesWithContext uses the caller for request preparation and remote
+// transport, retaining the existing per-ID remote query semantics.
+func (r *RemoteEngine) BatchGetNodesWithContext(ctx context.Context, ids []NodeID) (map[NodeID]*Node, error) {
 	out := make(map[NodeID]*Node, len(ids))
 	for _, id := range ids {
 		node, err := queryRemoteEntities(r, ctx, "MATCH (n) WHERE n.id = $id RETURN n LIMIT 1", map[string]interface{}{"id": string(id)}, valueToNode, firstRemoteEntity[Node])

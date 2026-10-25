@@ -36,7 +36,11 @@ func (visitor *queryNodeScanVisitor) visit(node *Node) error {
 		return nil
 	}
 	if visitor.strip {
-		node = copyNodeWithoutEmbeddings(node)
+		var err error
+		node, err = copyNodeWithoutEmbeddingsWithContext(visitor.ctx, node)
+		if err != nil {
+			return err
+		}
 	}
 	return visitor.fn(node)
 }
@@ -62,6 +66,6 @@ func (opts StreamNodesOptions) readVisibility() readVisibility {
 	return storedRead
 }
 
-func (opts StreamNodesOptions) copyResidentNode(node *Node) *Node {
-	return projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings, opts.QueryNodes && !opts.WithEmbeddings)
+func (opts StreamNodesOptions) copyResidentNode(ctx context.Context, node *Node) (*Node, error) {
+	return projectCachedNodeForReadWithContext(ctx, node, opts.Projection, opts.StripEmbeddings, opts.QueryNodes && !opts.WithEmbeddings)
 }

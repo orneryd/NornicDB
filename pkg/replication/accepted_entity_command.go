@@ -29,6 +29,17 @@ type acceptedEntityCommand struct {
 	nativeOutcome storage.CommitOutcome
 }
 
+// targetsEngine recognizes the retained native frame through the same
+// authoritative wrapper selector used at preparation. A different peer or an
+// intervening journal owner must replay its serialized command instead.
+func (c *acceptedEntityCommand) targetsEngine(engine storage.Engine) bool {
+	if c.owner == engine {
+		return true
+	}
+	route, found := storage.EntityCommitSubmitterFor(engine)
+	return found && route.Submitter == c.inner
+}
+
 func (c *acceptedEntityCommand) apply() error {
 	c.once.Do(func() {
 		c.started.Store(true)
@@ -83,6 +94,9 @@ func (e *ReplicatedEngine) CheckEntityCommitAdmission() error {
 	return nil
 }
 func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *storage.PreparedEntityCommit, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
+	if ctx == nil {
+		ctx = e.replicator.LifetimeContext()
+	}
 	if err := e.CheckEntityCommitAdmission(); err != nil {
 		return nil, err
 	}
@@ -93,25 +107,32 @@ func (e *ReplicatedEngine) SubmitEntityCommit(ctx context.Context, prepared *sto
 	if !ok {
 		return nil, ErrNotReady
 	}
-	inner, found := storage.EntityCommitSubmitterFor(e.Engine)
+	inner, found, err := storage.EntityCommitSubmitterForWithContext(ctx, e.Engine)
+	if err != nil {
+		return nil, err
+	}
 	if !found {
 		return nil, storage.ErrInvalidData
 	}
 	// The prepared commit owns an immutable private snapshot; encoding reads it
 	// rather than duplicating a detached public Operations copy.
-	payload, err := storage.EncodeEntityTransaction(storage.EntityTransactionRequest{Prepared: prepared})
+	payload, err := storage.EncodeEntityTransactionRequestWithContext(ctx, storage.EntityTransactionRequest{Prepared: prepared})
 	if err != nil {
 		return nil, err
 	}
-	releaseAuthority, err := prepared.RetainAcceptedAuthority()
+	if !found {
+		return nil, storage.ErrInvalidData
+	}
+	releaseAuthority, err := prepared.RetainAcceptedAuthorityWithContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	cmd := &Command{Type: CmdCommitTransaction, Data: payload, Timestamp: time.Now(), RequestID: prepared.LogicalID()}
 	cmd.accepted = &acceptedEntityCommand{owner: e.Engine, prepared: storage.NewAcceptedEntityCommitHandle(prepared), inner: inner.Submitter, nativeDone: make(chan struct{})}
-	if ctx == nil {
-		ctx = context.Background()
+	if err := ctx.Err(); err != nil {
+		releaseAuthority()
+		return nil, err
 	}
 	queueCtx, cancelQueue := context.WithTimeout(ctx, e.timeout)
 	defer cancelQueue()
@@ -150,6 +171,9 @@ func submitAcceptedByApply(ctx context.Context, cmd *Command, settle func(storag
 	return receipt, nil
 }
 func (r *StandaloneReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
+	if ctx == nil {
+		ctx = r.LifetimeContext()
+	}
 	return submitAcceptedByApply(ctx, cmd, settle, func() error {
 		r.mu.RLock()
 		defer r.mu.RUnlock()
@@ -157,6 +181,9 @@ func (r *StandaloneReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *C
 	}, r.Apply, 0)
 }
 func (r *HAStandbyReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
+	if ctx == nil {
+		ctx = r.LifetimeContext()
+	}
 	return submitAcceptedByApply(ctx, cmd, settle, func() error {
 		if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
 			return err
@@ -175,6 +202,9 @@ func (r *MultiRegionReplicator) SubmitAcceptedCommand(ctx context.Context, cmd *
 	if !r.IsLeader() {
 		return nil, ErrNotLeader
 	}
+	if ctx == nil {
+		ctx = r.LifetimeContext()
+	}
 	// Preserve the existing mode owner: local Raft accepts and owns this entry.
 	submitter, ok := any(r.localRaft).(AcceptedCommandSubmitter)
 	if !ok {
@@ -189,7 +219,10 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 	if len(ops) == 0 {
 		return nil
 	}
-	if ctx != nil && ctx.Err() != nil {
+	if ctx == nil {
+		ctx = e.replicator.LifetimeContext()
+	}
+	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	forward := *e
@@ -211,18 +244,18 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 		op := ops[0]
 		switch op.Type {
 		case storage.OpCreateNode:
-			_, err := forward.CreateNode(op.Node)
+			_, err := forward.CreateNodeWithContext(ctx, op.Node)
 			return err
 		case storage.OpUpdateNode:
-			return forward.UpdateNode(op.Node)
+			return forward.UpdateNodeWithContext(ctx, op.Node)
 		case storage.OpDeleteNode:
-			return forward.DeleteNode(op.NodeID)
+			return forward.DeleteNodeWithContext(ctx, op.NodeID)
 		case storage.OpCreateEdge:
-			return forward.CreateEdge(op.Edge)
+			return forward.CreateEdgeWithContext(ctx, op.Edge)
 		case storage.OpUpdateEdge:
-			return forward.UpdateEdge(op.Edge)
+			return forward.UpdateEdgeWithContext(ctx, op.Edge)
 		case storage.OpDeleteEdge:
-			return forward.DeleteEdge(op.EdgeID)
+			return forward.DeleteEdgeWithContext(ctx, op.EdgeID)
 		}
 	}
 	if mode != storage.CommitModeImplicit {
@@ -230,6 +263,9 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 	}
 	kind := ops[0].Type
 	for _, op := range ops {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if op.Type != kind {
 			return storage.ErrInvalidData
 		}
@@ -238,27 +274,39 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 	case storage.OpCreateNode:
 		nodes := make([]*storage.Node, len(ops))
 		for i := range ops {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			nodes[i] = ops[i].Node
 		}
-		return forward.BulkCreateNodes(nodes)
+		return forward.BulkCreateNodesWithContext(ctx, nodes)
 	case storage.OpCreateEdge:
 		edges := make([]*storage.Edge, len(ops))
 		for i := range ops {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			edges[i] = ops[i].Edge
 		}
-		return forward.BulkCreateEdges(edges)
+		return forward.BulkCreateEdgesWithContext(ctx, edges)
 	case storage.OpDeleteNode:
 		ids := make([]storage.NodeID, len(ops))
 		for i := range ops {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			ids[i] = ops[i].NodeID
 		}
-		return forward.BulkDeleteNodes(ids)
+		return forward.BulkDeleteNodesWithContext(ctx, ids)
 	case storage.OpDeleteEdge:
 		ids := make([]storage.EdgeID, len(ops))
 		for i := range ops {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			ids[i] = ops[i].EdgeID
 		}
-		return forward.BulkDeleteEdges(ids)
+		return forward.BulkDeleteEdgesWithContext(ctx, ids)
 	}
 	return storage.ErrInvalidData
 }

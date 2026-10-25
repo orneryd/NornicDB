@@ -124,11 +124,9 @@ func TestLabelIndex_BulkCreatedNodesSurviveReopen(t *testing.T) {
 			if tc.checkBefore {
 				got, err := before.GetNodesByLabel(tc.label)
 				require.NoError(t, err)
-				want := tc.count
-				if tc.wipe {
-					want = 0
-				}
-				require.Len(t, got, want, "pre-reopen index population")
+				// A wiped index has no ready marker, so reads use the stored
+				// node bodies and still see every node.
+				require.Len(t, got, tc.count, "pre-reopen label read")
 			}
 			require.NoError(t, before.Close())
 			after, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(dir))

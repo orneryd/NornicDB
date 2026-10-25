@@ -11,14 +11,13 @@ package storagecensus
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/workcensus"
 	"go/token"
 	"go/types"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/orneryd/nornicdb/internal/workcensus"
 
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/packages"
@@ -30,11 +29,13 @@ const Module = "github.com/orneryd/nornicdb/"
 
 // program is the type-checked module as SSA, with its call graph.
 type program struct {
-	root  string // absolute module root
-	fset  *token.FileSet
-	ssa   *ssa.Program
-	funcs []*ssa.Function // every function with a body in the module, sorted
-	cg    *callgraph.Graph
+	loaded *workcensus.Program // canonical function/target/source-site queries
+	root   string              // absolute module root
+	fset   *token.FileSet
+	ssa    *ssa.Program
+	funcs  []*ssa.Function // every function with a body in the module, sorted
+	cg     *callgraph.Graph
+	names  map[*ssa.Function]string // immutable domain report names after SSA build
 }
 
 // load type-checks every package of the module rooted at root for
@@ -48,16 +49,11 @@ func load(root string, overlay map[string][]byte) (*program, error) {
 	if err != nil {
 		return nil, err
 	}
-	loaded, err := workcensus.LoadProgram(workcensus.Config{
-		Dir: abs, Patterns: []string{"./..."},
-		BuildFlags: []string{"-tags=noui,nolocalllm"}, LoadMode: packages.NeedTypesSizes,
-		Env:     append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=-mod=mod"),
-		Overlay: overlay,
-	})
+	loaded, err := workcensus.LoadProgram(workcensus.Config{Dir: abs, Patterns: []string{"./..."}, BuildFlags: []string{"-tags=noui,nolocalllm"}, LoadMode: packages.NeedTypesSizes, Env: append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=-mod=mod"), Overlay: overlay})
 	if err != nil {
 		return nil, err
 	}
-	p := &program{root: loaded.Root, fset: loaded.FileSet, ssa: loaded.SSA, cg: loaded.CallGraph}
+	p := &program{loaded: loaded, root: loaded.Root, fset: loaded.FileSet, ssa: loaded.SSA, cg: loaded.CallGraph}
 	for _, fn := range loaded.Functions {
 		// A generic function is analysed in its instantiations, not as
 		// written (its calls through type parameters resolve only there).
@@ -72,6 +68,7 @@ func load(root string, overlay map[string][]byte) (*program, error) {
 			p.funcs = append(p.funcs, fn)
 		}
 	}
+	p.funcs = loaded.IncludeSyntheticFunctions(p.funcs)
 	sort.Slice(p.funcs, func(i, j int) bool { return p.funcName(p.funcs[i]) < p.funcName(p.funcs[j]) })
 	return p, nil
 }
@@ -100,12 +97,19 @@ func inModule(fn *ssa.Function) bool {
 // the module, receiver type and name ("pkg/storage.BadgerEngine.CreateNode",
 // "pkg/storage.BadgerEngine.UpdateNode$1" for a closure).
 func (p *program) funcName(fn *ssa.Function) string {
+	if name, ok := p.names[fn]; ok {
+		return name
+	}
 	s := strings.ReplaceAll(fn.String(), Module, "")
 	if strings.HasPrefix(s, "(") {
 		if end := strings.Index(s, ")"); end > 0 {
 			s = strings.TrimPrefix(s[1:end], "*") + s[end+1:]
 		}
 	}
+	if p.names == nil {
+		p.names = map[*ssa.Function]string{}
+	}
+	p.names[fn] = s
 	return s
 }
 

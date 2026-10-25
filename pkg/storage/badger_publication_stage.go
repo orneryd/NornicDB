@@ -1,6 +1,9 @@
 package storage
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // Ordered post-commit publication (F-PUBLISH).
 //
@@ -313,7 +316,17 @@ func appendEdgePublicationKeys(keys []any, view *publicationConstraintView, id E
 // every node and edge they write, edges a node delete removed, and the unique
 // values they free and take.
 func appendOperationPublicationKeys(keys []any, view *publicationConstraintView, ops []Operation) []any {
+	// Physical publication completes with its owner lifetime. Before acceptance,
+	// prepared commands call the same projection with their caller context.
+	out, _ := appendOperationPublicationKeysWithContext(context.Background(), keys, view, ops)
+	return out
+}
+
+func appendOperationPublicationKeysWithContext(ctx context.Context, keys []any, view *publicationConstraintView, ops []Operation) ([]any, error) {
 	for _, op := range ops {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
 			if op.Node != nil {
@@ -322,6 +335,9 @@ func appendOperationPublicationKeys(keys []any, view *publicationConstraintView,
 		case OpDeleteNode:
 			keys = appendNodePublicationKeys(keys, view, op.NodeID, op.OldNode, nil)
 			for _, edgeID := range op.DeletedEdgeIDs {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
 				keys = append(keys, edgeID)
 			}
 		case OpCreateEdge, OpUpdateEdge:
@@ -332,7 +348,7 @@ func appendOperationPublicationKeys(keys []any, view *publicationConstraintView,
 			keys = appendEdgePublicationKeys(keys, view, op.EdgeID, op.OldEdge, nil)
 		}
 	}
-	return keys
+	return keys, nil
 }
 
 var (

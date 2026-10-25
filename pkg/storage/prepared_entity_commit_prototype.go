@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"errors"
-	"slices"
 	"sync"
 )
 
@@ -23,7 +22,7 @@ type PreparedEntityCommit struct {
 	markRecoveryPending  func()
 	hooksMu              sync.Mutex
 	appliedHooks         []func()
-	retainAuthority      func() (func(), error)
+	retainAuthority      func(context.Context) (func(), error)
 	engine               *BadgerEngine
 	terminal             CommitOutcome
 	afterPublication     func()
@@ -42,39 +41,65 @@ func (p *PreparedEntityCommit) LogicalID() string { return p.logicalID }
 // cascading-deletion IDs. Encoders use EntityTransactionRequest{Prepared: p}
 // to read the immutable accepted snapshot without allocating this public copy.
 func (p *PreparedEntityCommit) Operations() []Operation {
-	ops := append([]Operation(nil), p.operations...)
-	for i := range ops {
-		op := &ops[i]
-		op.Node = copyNode(op.Node)
-		op.Edge = copyEdge(op.Edge)
-		op.OldNode = copyNode(op.OldNode)
-		op.OldEdge = copyEdge(op.OldEdge)
-		detachPreparedPropertyMaps([]*Node{op.Node, op.OldNode}, []*Edge{op.Edge, op.OldEdge})
-		if op.DeletedEdgeIDs != nil {
-			ids := make([]EdgeID, len(op.DeletedEdgeIDs))
-			copy(ids, op.DeletedEdgeIDs)
-			op.DeletedEdgeIDs = ids
-		}
-	}
+	ops, _ := p.OperationsWithContext(context.Background())
 	return ops
+}
+
+// OperationsWithContext snapshots command images during pre-acceptance work.
+func (p *PreparedEntityCommit) OperationsWithContext(ctx context.Context) ([]Operation, error) {
+	return prepareEntityOperationsWithContext(ctx, p.operations)
 }
 
 // CountDelta projects namespace-scoped physical counts without copying images.
 // The prepared pairs remain private and immutable throughout admission.
 func (p *PreparedEntityCommit) CountDelta() (nodes, edges int64) {
-	return StoredEntityCountDelta(p.namespace, p.changes)
+	nodes, edges, _ = p.CountDeltaWithContext(context.Background())
+	return nodes, edges
+}
+
+// CountDeltaWithContext folds the same private stored images during admission.
+func (p *PreparedEntityCommit) CountDeltaWithContext(ctx context.Context) (nodes, edges int64, err error) {
+	return StoredEntityCountDeltaWithContext(ctx, p.namespace, p.changes)
 }
 func (p *PreparedEntityCommit) Changes() []StoredEntityChange {
-	changes := append([]StoredEntityChange(nil), p.changes...)
-	for i := range changes {
-		v := &changes[i]
-		v.BeforeNode = CopyNode(v.BeforeNode)
-		v.AfterNode = CopyNode(v.AfterNode)
-		v.BeforeEdge = CopyEdge(v.BeforeEdge)
-		v.AfterEdge = CopyEdge(v.AfterEdge)
-	}
+	changes, _ := p.ChangesWithContext(context.Background())
 	return changes
 }
+
+// ChangesWithContext copies an admission population without exposing a partial
+// snapshot on cancellation. Accepted publication uses the same compatibility body.
+func (p *PreparedEntityCommit) ChangesWithContext(ctx context.Context) ([]StoredEntityChange, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	changes := make([]StoredEntityChange, len(p.changes))
+	for i := range p.changes {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		changes[i] = p.changes[i]
+		v := &changes[i]
+		var err error
+		v.BeforeNode, err = copyNodeWithContext(ctx, v.BeforeNode)
+		if err != nil {
+			return nil, err
+		}
+		v.AfterNode, err = copyNodeWithContext(ctx, v.AfterNode)
+		if err != nil {
+			return nil, err
+		}
+		v.BeforeEdge, err = copyEdgeWithContext(ctx, v.BeforeEdge)
+		if err != nil {
+			return nil, err
+		}
+		v.AfterEdge, err = copyEdgeWithContext(ctx, v.AfterEdge)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return changes, ctx.Err()
+}
+
 func (p *PreparedEntityCommit) startCommit(afterPublication func()) error {
 	selected := false
 	p.once.Do(func() {
@@ -109,8 +134,9 @@ var errPreparedEntityDiscarded = errors.New("prepared entity commit discarded")
 // An already-staged transaction leaves Operations nil; replay passes its existing
 // operation slice without copying it or allocating a staging callback.
 type EntityCommitRequest struct {
-	LogicalID  string
-	Operations []Operation
+	LogicalID       string
+	Operations      []Operation
+	clientNodeEdits bool
 }
 
 // PrepareEntityCommit observes the logical receipt once, stages new entity work,
@@ -165,7 +191,12 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		return &PreparedEntityCommit{engine: engine, mode: mode, namespace: namespace, logicalID: logicalID, decide: make(chan bool, 1), finished: done, terminal: CommitOutcome{State: CommitApplied}}, nil
 	}
 	for _, op := range request.Operations {
-		if err := ApplyEntityChange(tx, op, func(node *Node) error { return tx.UpdateGraphNode(node, StoredNodeImages) }, func(id NodeID) error { return tx.DeleteGraphNode(id, CascadeEdges) }); err != nil {
+		if err := ApplyEntityChangeWithContext(ctx, tx, op, func(node *Node) error {
+			if request.clientNodeEdits {
+				return ApplyNodeUpdateWithContext(ctx, tx, node)
+			}
+			return tx.UpdateGraphNodeWithContext(ctx, node, StoredNodeImages)
+		}, func(id NodeID) error { return tx.DeleteGraphNodeWithContext(ctx, id, CascadeEdges) }); err != nil {
 			return nil, err
 		}
 	}
@@ -193,41 +224,19 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			if err != nil {
 				return err
 			}
-			operations := append([]Operation(nil), tx.operations...)
-			for i := range operations {
-				operations[i].snapshotForNotification()
+			operations, err := prepareEntityOperationsWithContext(ctx, tx.operations)
+			if err != nil {
+				return err
 			}
-			nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
+			nodes, edges, endpoints, err := tx.pendingEntityAuthorityKeysLocked(ctx)
+			if err != nil {
+				return err
+			}
 			schema, owner := tx.engine.GetSchemaForNamespace(tx.namespace), tx.ID
 			prepared = &PreparedEntityCommit{engine: tx.engine, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
 			tx.preparedEntityCommit = prepared
-			prepared.retainAuthority = func() (func(), error) {
-				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges, endpoints))
-				if err != nil {
-					return nil, err
-				}
-				var nodeImages []*Node
-				var edgeImages []*Edge
-				for _, op := range operations {
-					if op.Node != nil {
-						nodeImages = append(nodeImages, op.Node)
-					}
-					if op.OldNode != nil {
-						nodeImages = append(nodeImages, op.OldNode)
-					}
-					if op.Edge != nil {
-						edgeImages = append(edgeImages, op.Edge)
-					}
-					if op.OldEdge != nil {
-						edgeImages = append(edgeImages, op.OldEdge)
-					}
-				}
-				releaseValues, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, schema.appendConstraintValueKeys(nil, nodeImages, edgeImages))
-				if err != nil {
-					releaseEntities()
-					return nil, err
-				}
-				return func() { releaseValues(); releaseEntities() }, nil
+			prepared.retainAuthority = func(retainCtx context.Context) (func(), error) {
+				return retainPreparedAuthorityWithContext(retainCtx, schema, owner, nodes, edges, endpoints, operations)
 			}
 			prepared.markRecoveryPending = func() { schema.markCommitOwnerRecoveryPending(owner) }
 			tx.commitReleaseAcceptedAuthority = func() { drainReleaseCallbacks(&prepared.hooksMu, &prepared.appliedHooks) }
@@ -273,10 +282,16 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 // recovery-pending commands retain it after an inner native rollback.
 // The returned release is only for definite pre-record/log discard.
 func (p *PreparedEntityCommit) RetainAcceptedAuthority() (func(), error) {
+	return p.RetainAcceptedAuthorityWithContext(context.Background())
+}
+
+// RetainAcceptedAuthorityWithContext prepares an accepted owner's reentrant
+// holds before journal admission. Definite rejection leaves no new hold.
+func (p *PreparedEntityCommit) RetainAcceptedAuthorityWithContext(ctx context.Context) (func(), error) {
 	if p.retainAuthority == nil {
 		return func() {}, nil
 	}
-	release, err := p.retainAuthority()
+	release, err := p.retainAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -286,6 +301,53 @@ func (p *PreparedEntityCommit) RetainAcceptedAuthority() (func(), error) {
 	p.appliedHooks = append(p.appliedHooks, releaseOnce)
 	p.hooksMu.Unlock()
 	return releaseOnce, nil
+}
+
+// retainPreparedAuthorityWithContext is the single projection/acquisition body
+// shared by cancellable admission and context-free accepted recovery holders.
+func retainPreparedAuthorityWithContext(ctx context.Context, schema *SchemaManager, owner string, nodes []NodeID, edges []EdgeID, endpoints []NodeID, operations []Operation) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	keys, err := entityCommitKeysWithContext(ctx, nodes, edges, endpoints)
+	if err != nil {
+		return nil, err
+	}
+	releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(ctx, owner, keys)
+	if err != nil {
+		return nil, err
+	}
+	var nodeImages []*Node
+	var edgeImages []*Edge
+	for _, op := range operations {
+		if err := ctx.Err(); err != nil {
+			releaseEntities()
+			return nil, err
+		}
+		if op.Node != nil {
+			nodeImages = append(nodeImages, op.Node)
+		}
+		if op.OldNode != nil {
+			nodeImages = append(nodeImages, op.OldNode)
+		}
+		if op.Edge != nil {
+			edgeImages = append(edgeImages, op.Edge)
+		}
+		if op.OldEdge != nil {
+			edgeImages = append(edgeImages, op.OldEdge)
+		}
+	}
+	valueKeys, err := schema.appendConstraintValueKeysWithContext(ctx, nil, nodeImages, edgeImages)
+	if err != nil {
+		releaseEntities()
+		return nil, err
+	}
+	releaseValues, err := schema.acquireUniqueConstraintCommitLocks(ctx, owner, valueKeys)
+	if err != nil {
+		releaseEntities()
+		return nil, err
+	}
+	return func() { releaseValues(); releaseEntities() }, nil
 }
 
 // MarkRecoveryPending preserves accepted authority while making ordinary
@@ -324,65 +386,163 @@ func (p *PreparedEntityCommit) Mode() EntityCommitMode { return p.mode }
 // mutate supported list/map values without changing accepted commit images.
 // This is never used by the canonical prepared encoder or commit path.
 func detachPreparedPropertyMaps(nodes []*Node, edges []*Edge) {
-	detach := func(properties map[string]any) {
+	_ = detachPreparedPropertyMapsWithContext(context.Background(), nodes, edges)
+}
+func detachPreparedPropertyMapsWithContext(ctx context.Context, nodes []*Node, edges []*Edge) error {
+	detach := func(properties map[string]any) error {
 		for key, value := range properties {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if value != nil {
-				properties[key] = clonePreparedPropertyValue(value)
+				copied, err := clonePreparedPropertyValueWithContext(ctx, value)
+				if err != nil {
+					return err
+				}
+				properties[key] = copied
+			}
+		}
+		return nil
+	}
+	for _, node := range nodes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if node != nil {
+			if err := detach(node.Properties); err != nil {
+				return err
+			}
+			if err := detach(node.EmbedMeta); err != nil {
+				return err
 			}
 		}
 	}
-	for _, node := range nodes {
-		if node != nil {
-			detach(node.Properties)
-			detach(node.EmbedMeta)
-		}
-	}
 	for _, edge := range edges {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if edge != nil {
-			detach(edge.Properties)
+			if err := detach(edge.Properties); err != nil {
+				return err
+			}
 		}
 	}
+	return ctx.Err()
 }
 
 // clonePreparedPropertyValue preserves the concrete list/map types supported
 // by prepared wire images and nil containers. Scalars and strings are immutable.
 func clonePreparedPropertyValue(value any) any {
+	out, _ := clonePreparedPropertyValueWithContext(context.Background(), value)
+	return out
+}
+func clonePreparedPropertyValueWithContext(ctx context.Context, value any) (any, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	switch value := value.(type) {
 	case []byte:
-		return slices.Clone(value)
+		return clonePreparedScalarsWithContext(ctx, value)
 	case []string:
-		return slices.Clone(value)
+		return clonePreparedScalarsWithContext(ctx, value)
 	case []int:
-		return slices.Clone(value)
+		return clonePreparedScalarsWithContext(ctx, value)
 	case []int32:
-		return slices.Clone(value)
+		return clonePreparedScalarsWithContext(ctx, value)
 	case []int64:
-		return slices.Clone(value)
+		return clonePreparedScalarsWithContext(ctx, value)
 	case []float32:
-		return slices.Clone(value)
+		return clonePreparedScalarsWithContext(ctx, value)
 	case []float64:
-		return slices.Clone(value)
+		return clonePreparedScalarsWithContext(ctx, value)
 	case []bool:
-		return slices.Clone(value)
+		return clonePreparedScalarsWithContext(ctx, value)
 	case []any:
 		if value == nil {
-			return value
+			return value, nil
 		}
-		copied := make([]any, len(value))
-		for index, item := range value {
-			copied[index] = clonePreparedPropertyValue(item)
+		out := make([]any, len(value))
+		for i, item := range value {
+			v, err := clonePreparedPropertyValueWithContext(ctx, item)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = v
 		}
-		return copied
+		return out, ctx.Err()
 	case map[string]any:
 		if value == nil {
-			return value
+			return value, nil
 		}
-		copied := make(map[string]any, len(value))
+		out := make(map[string]any, len(value))
 		for key, item := range value {
-			copied[key] = clonePreparedPropertyValue(item)
+			v, err := clonePreparedPropertyValueWithContext(ctx, item)
+			if err != nil {
+				return nil, err
+			}
+			out[key] = v
 		}
-		return copied
+		return out, ctx.Err()
 	default:
-		return value
+		return value, nil
 	}
+}
+func clonePreparedScalarsWithContext[T byte | string | int | int32 | int64 | float32 | float64 | bool](ctx context.Context, source []T) ([]T, error) {
+	if source == nil {
+		return nil, ctx.Err()
+	}
+	out := make([]T, len(source))
+	for i, value := range source {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		out[i] = value
+	}
+	return out, ctx.Err()
+}
+
+// prepareEntityOperationsWithContext freezes the same detached prepared images
+// as Operations. Wire encoding consumes the immutable private snapshot directly.
+func prepareEntityOperationsWithContext(ctx context.Context, source []Operation) ([]Operation, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if len(source) == 0 {
+		return nil, nil
+	}
+	ops := make([]Operation, len(source))
+	for i, operation := range source {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		op := &ops[i]
+		*op = operation
+		var err error
+		if op.Node, err = copyNodeWithContext(ctx, op.Node); err != nil {
+			return nil, err
+		}
+		if op.Edge, err = copyEdgeWithContext(ctx, op.Edge); err != nil {
+			return nil, err
+		}
+		if op.OldNode, err = copyNodeWithContext(ctx, op.OldNode); err != nil {
+			return nil, err
+		}
+		if op.OldEdge, err = copyEdgeWithContext(ctx, op.OldEdge); err != nil {
+			return nil, err
+		}
+		if err = detachPreparedPropertyMapsWithContext(ctx, []*Node{op.Node, op.OldNode}, []*Edge{op.Edge, op.OldEdge}); err != nil {
+			return nil, err
+		}
+		if op.DeletedEdgeIDs != nil {
+			ids := make([]EdgeID, len(op.DeletedEdgeIDs))
+			for j, id := range op.DeletedEdgeIDs {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				ids[j] = id
+			}
+			op.DeletedEdgeIDs = ids
+		}
+	}
+	return ops, ctx.Err()
 }

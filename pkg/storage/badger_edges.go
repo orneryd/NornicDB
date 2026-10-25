@@ -767,7 +767,12 @@ func (b *BadgerEngine) BulkDeleteNodes(ids []NodeID) error {
 // BulkDeleteEdges deletes relationships as one transaction of any size
 // (#703). IDs that do not exist, or repeat within the call, are skipped.
 func (b *BadgerEngine) BulkDeleteEdges(ids []EdgeID) error {
-	return deleteBulkEntities(b, ids, (*BadgerTransaction).DeleteEdge)
+	return b.BulkDeleteEdgesWithContext(context.Background(), ids)
+}
+
+// BulkDeleteEdgesWithContext preserves the canonical batch filtering and commit.
+func (b *BadgerEngine) BulkDeleteEdgesWithContext(ctx context.Context, ids []EdgeID) error {
+	return deleteBulkEntitiesWithContext(ctx, b, ids, func(tx *BadgerTransaction, id EdgeID) error { return tx.DeleteEdgeWithContext(ctx, id) })
 }
 
 // ============================================================================

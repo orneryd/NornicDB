@@ -2,11 +2,11 @@ package storage
 
 import (
 	"go/ast"
-	"go/importer"
 	"go/parser"
-	"go/token"
 	"go/types"
 	"path/filepath"
+
+	"github.com/orneryd/nornicdb/internal/workcensus"
 	"sort"
 	"strings"
 	"testing"
@@ -28,37 +28,34 @@ var overlayBodyReadersOutsideComposition = map[string]string{
 // overlay_visibility.go, or entityStateLocked with an explicit complete read
 // policy. A new raw body reader outside those owners fails here.
 func TestOverlayBodiesAreReadThroughVisibility(t *testing.T) {
-	fset := token.NewFileSet()
-	paths, err := filepath.Glob("*.go")
-	require.NoError(t, err)
-	var files []*ast.File
-	for _, path := range paths {
-		if strings.HasSuffix(path, "_test.go") {
-			continue
-		}
-		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
-		require.NoError(t, err)
-		if !buildsOnLinux(file) {
-			continue
-		}
-		files = append(files, file)
+	readers, used := overlayBodyReaders(t, nil)
+	require.Empty(t, readers, "overlay bodies read outside the canonical visibility composition")
+	for name := range overlayBodyReadersOutsideComposition {
+		require.True(t, used[name], "classified overlay reader %s no longer reads the buffer", name)
 	}
-	info := &types.Info{Selections: make(map[*ast.SelectorExpr]*types.Selection)}
-	conf := types.Config{Importer: importer.ForCompiler(fset, "source", nil), Error: func(error) {}}
-	pkg, _ := conf.Check("github.com/orneryd/nornicdb/pkg/storage", fset, files, info)
-	require.NotNil(t, pkg)
+}
 
+// Generic parsing, typing, source traversal and owner identity are supplied by
+// workcensus. This client interprets only the storage visibility policy.
+func overlayBodyReaders(t *testing.T, overlay map[string][]byte) ([]string, map[string]bool) {
+	t.Helper()
+	const pkgPath = "github.com/orneryd/nornicdb/pkg/storage"
+	inv, err := workcensus.Extract(workcensus.Config{
+		Dir: "../..", Patterns: []string{"./pkg/storage"}, Packages: []string{pkgPath},
+		BuildFlags: []string{"-tags=noui,nolocalllm"}, SourceOnly: true, IncludeSyntax: true,
+		Overlay: overlay, Selectors: []workcensus.Selector{{Kind: "overlay reference", Node: "identifier", Reachability: "all"}},
+	})
+	require.NoError(t, err)
 	isBuffer := func(typ types.Type) bool {
 		if ptr, ok := typ.(*types.Pointer); ok {
 			typ = ptr.Elem()
 		}
 		named, ok := typ.(*types.Named)
-		return ok && named.Obj().Pkg() == pkg && (named.Obj().Name() == "WriteBehindBuffer" || named.Obj().Name() == "CommitBuffer")
+		return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == pkgPath && (named.Obj().Name() == "WriteBehindBuffer" || named.Obj().Name() == "CommitBuffer")
 	}
 	bodyType := func(typ types.Type) bool {
-		s := typ.String()
 		for _, body := range []string{".Node", ".Edge", ".bufferedEntityState", ".bufferedCommit", ".bufferedMutation", ".CommitBuffer", ".pendingNodeIndex"} {
-			if strings.Contains(s, body) {
+			if strings.Contains(typ.String(), body) {
 				return true
 			}
 		}
@@ -74,70 +71,91 @@ func TestOverlayBodiesAreReadThroughVisibility(t *testing.T) {
 	}
 	var readers []string
 	used := make(map[string]bool)
-	for _, file := range files {
-		inComposition := filepath.Base(fset.Position(file.Pos()).Filename) == "overlay_visibility.go"
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil || inComposition {
+	for _, member := range inv.Members {
+		site := member.Syntax
+		if site == nil || site.Info == nil || filepath.Base(member.File) == "overlay_visibility.go" {
+			continue
+		}
+		id, ok := site.Node.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		var selected *ast.SelectorExpr
+		var call *ast.CallExpr
+		var fn *ast.FuncDecl
+		for _, ancestor := range site.Ancestors {
+			switch node := ancestor.(type) {
+			case *ast.SelectorExpr:
+				if node.Sel == id {
+					selected = node
+				}
+			case *ast.CallExpr:
+				if sel, ok := node.Fun.(*ast.SelectorExpr); ok && sel.Sel == id {
+					call = node
+				}
+			case *ast.FuncDecl:
+				fn = node
+			}
+		}
+		if fn == nil {
+			fn, _ = site.Owner.(*ast.FuncDecl)
+		}
+		if selected == nil || fn == nil {
+			continue
+		}
+		name := fn.Name.Name
+		if fn.Recv != nil && len(fn.Recv.List) == 1 {
+			recv := fn.Recv.List[0].Type
+			if star, ok := recv.(*ast.StarExpr); ok {
+				recv = star.X
+			}
+			if id, ok := recv.(*ast.Ident); ok {
+				if id.Name == "WriteBehindBuffer" || id.Name == "CommitBuffer" {
+					continue
+				}
+				name = id.Name + "." + name
+			}
+		}
+		selection := site.Info.Selections[selected]
+		if selection == nil || !isBuffer(selection.Recv()) {
+			continue
+		}
+		switch selection.Kind() {
+		case types.FieldVal:
+			if !bodyType(selection.Type()) {
 				continue
 			}
-			name := fn.Name.Name
-			if fn.Recv != nil && len(fn.Recv.List) == 1 {
-				recv := fn.Recv.List[0].Type
-				if star, ok := recv.(*ast.StarExpr); ok {
-					recv = star.X
-				}
-				if id, ok := recv.(*ast.Ident); ok {
-					if id.Name == "WriteBehindBuffer" || id.Name == "CommitBuffer" {
-						continue
-					}
-					name = id.Name + "." + name
-				}
+		case types.MethodVal, types.MethodExpr:
+			if sig, ok := selection.Type().(*types.Signature); !ok || !carriesBodies(sig) {
+				continue
 			}
-			calls := make(map[*ast.SelectorExpr]*ast.CallExpr)
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok {
-					if selected, ok := call.Fun.(*ast.SelectorExpr); ok {
-						calls[selected] = call
-					}
-				}
-				sel, ok := n.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				selection := info.Selections[sel]
-				if selection == nil || !isBuffer(selection.Recv()) {
-					return true
-				}
-				switch selection.Kind() {
-				case types.FieldVal:
-					if !bodyType(selection.Type()) {
-						return true
-					}
-				case types.MethodVal, types.MethodExpr:
-					if sig, ok := selection.Type().(*types.Signature); !ok || !carriesBodies(sig) {
-						return true
-					}
-					if sel.Sel.Name == "entityStateLocked" && overlayReadHasVisibility(calls[sel], selection.Kind() == types.MethodExpr) {
-						return true
-					}
-				default:
-					return true
-				}
-				if _, classified := overlayBodyReadersOutsideComposition[name]; classified {
-					used[name] = true
-					return true
-				}
-				readers = append(readers, name+" uses "+sel.Sel.Name+" at "+fset.Position(sel.Pos()).String())
-				return true
-			})
+			if selected.Sel.Name == "entityStateLocked" && overlayReadHasVisibility(call, selection.Kind() == types.MethodExpr) {
+				continue
+			}
+		default:
+			continue
 		}
+		if _, classified := overlayBodyReadersOutsideComposition[name]; classified {
+			used[name] = true
+			continue
+		}
+		readers = append(readers, name+" uses "+selected.Sel.Name+" at "+site.FileSet.Position(selected.Pos()).String())
 	}
 	sort.Strings(readers)
-	require.Empty(t, readers, "overlay bodies read outside the canonical visibility composition")
-	for name := range overlayBodyReadersOutsideComposition {
-		require.True(t, used[name], "classified overlay reader %s no longer reads the buffer", name)
-	}
+	return readers, used
+}
+
+func TestOverlayVisibilitySourceControl(t *testing.T) {
+	path, err := filepath.Abs("census_overlay_probe.go")
+	require.NoError(t, err)
+	readers, _ := overlayBodyReaders(t, map[string][]byte{path: []byte(`package storage
+func censusRawOverlay(b *BadgerEngine) []*Node {
+ nodes, _ := b.writeBehind.allNodesOverlayLocked()
+ return nodes
+}
+`)})
+	require.Len(t, readers, 1)
+	require.Contains(t, readers[0], "censusRawOverlay uses allNodesOverlayLocked")
 }
 
 // overlayReadHasVisibility accepts only a direct canonical point read with a

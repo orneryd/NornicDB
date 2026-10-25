@@ -30,6 +30,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -116,14 +117,28 @@ type Transaction = BadgerTransaction
 // copyNode creates a deep copy of a node.
 // Used by transactions to preserve state for rollback.
 func copyNode(node *Node) *Node {
-	nodeCopy := copyNodeWithoutEmbeddings(node)
+	image, _ := copyNodeWithContext(context.Background(), node)
+	return image
+}
+
+func copyNodeWithContext(ctx context.Context, node *Node) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	nodeCopy, err := copyNodeWithoutEmbeddingsWithContext(ctx, node)
+	if err != nil {
+		return nil, err
+	}
 	if nodeCopy == nil {
-		return nil
+		return nil, nil
 	}
 
 	if len(node.ChunkEmbeddings) > 0 {
 		nodeCopy.ChunkEmbeddings = make([][]float32, len(node.ChunkEmbeddings))
 		for i, emb := range node.ChunkEmbeddings {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			nodeCopy.ChunkEmbeddings[i] = make([]float32, len(emb))
 			copy(nodeCopy.ChunkEmbeddings[i], emb)
 		}
@@ -132,13 +147,16 @@ func copyNode(node *Node) *Node {
 	if node.NamedEmbeddings != nil {
 		nodeCopy.NamedEmbeddings = make(map[string][]float32, len(node.NamedEmbeddings))
 		for name, emb := range node.NamedEmbeddings {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			embCopy := make([]float32, len(emb))
 			copy(embCopy, emb)
 			nodeCopy.NamedEmbeddings[name] = embCopy
 		}
 	}
 
-	return nodeCopy
+	return nodeCopy, ctx.Err()
 }
 
 // copyNodeForCaller is a copy of a node the transaction keeps in its snapshot
@@ -148,19 +166,35 @@ func copyNode(node *Node) *Node {
 // against, unchanged (#963). The embedding vectors, which callers replace
 // rather than modify, are shared.
 func copyNodeForCaller(node *Node) *Node {
-	nodeCopy := copyNodeWithoutEmbeddings(node)
+	image, _ := copyNodeForCallerWithContext(context.Background(), node)
+	return image
+}
+
+func copyNodeForCallerWithContext(ctx context.Context, node *Node) (*Node, error) {
+	nodeCopy, err := copyNodeWithoutEmbeddingsWithContext(ctx, node)
+	if err != nil {
+		return nil, err
+	}
 	if nodeCopy == nil {
-		return nil
+		return nil, nil
 	}
 	nodeCopy.ChunkEmbeddings = node.ChunkEmbeddings
 	nodeCopy.NamedEmbeddings = node.NamedEmbeddings
 	nodeCopy.VisibilitySuppressed = node.VisibilitySuppressed
-	return nodeCopy
+	return nodeCopy, ctx.Err()
 }
 
 func copyNodeWithoutEmbeddings(node *Node) *Node {
+	image, _ := copyNodeWithoutEmbeddingsWithContext(context.Background(), node)
+	return image
+}
+
+func copyNodeWithoutEmbeddingsWithContext(ctx context.Context, node *Node) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if node == nil {
-		return nil
+		return nil, nil
 	}
 
 	nodeCopy := &Node{
@@ -177,11 +211,17 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 		EmbeddingsStoredSeparately: node.EmbeddingsStoredSeparately,
 		VisibilitySuppressed:       node.VisibilitySuppressed,
 	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	nodeCopy.Labels = append(nodeCopy.Labels, node.Labels...)
 
 	if node.Properties != nil {
 		nodeCopy.Properties = make(map[string]interface{}, len(node.Properties))
 		for k, v := range node.Properties {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			nodeCopy.Properties[k] = v
 		}
 	}
@@ -189,18 +229,55 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 	if node.EmbedMeta != nil {
 		nodeCopy.EmbedMeta = make(map[string]any, len(node.EmbedMeta))
 		for k, v := range node.EmbedMeta {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			nodeCopy.EmbedMeta[k] = v
 		}
 	}
 
-	return nodeCopy
+	return nodeCopy, ctx.Err()
+}
+
+func copyNodeProjectedWithoutEmbeddings(node *Node, properties []string) *Node {
+	image, _ := copyNodeProjectedWithoutEmbeddingsWithContext(context.Background(), node, properties)
+	return image
+}
+
+func copyNodeProjectedWithoutEmbeddingsWithContext(ctx context.Context, node *Node, properties []string) (*Node, error) {
+	out, err := copyNodeWithoutEmbeddingsWithContext(ctx, node)
+	if err != nil {
+		return nil, err
+	}
+	if out == nil || properties == nil {
+		return out, nil
+	}
+	projected := make(map[string]any, len(properties))
+	for _, property := range properties {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if value, ok := out.Properties[property]; ok {
+			projected[property] = value
+		}
+	}
+	out.Properties = projected
+	return out, ctx.Err()
 }
 
 // copyEdge creates a deep copy of an edge.
 // Used by transactions to preserve state for rollback.
 func copyEdge(edge *Edge) *Edge {
+	image, _ := copyEdgeWithContext(context.Background(), edge)
+	return image
+}
+
+func copyEdgeWithContext(ctx context.Context, edge *Edge) (*Edge, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if edge == nil {
-		return nil
+		return nil, nil
 	}
 
 	edgeCopy := &Edge{
@@ -219,11 +296,14 @@ func copyEdge(edge *Edge) *Edge {
 	if edge.Properties != nil {
 		edgeCopy.Properties = make(map[string]interface{})
 		for k, v := range edge.Properties {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			edgeCopy.Properties[k] = v
 		}
 	}
 
-	return edgeCopy
+	return edgeCopy, nil
 }
 
 // CopyNode is the exported version of copyNode for use by other packages.
@@ -231,7 +311,20 @@ func CopyNode(node *Node) *Node {
 	return copyNode(node)
 }
 
+// CopyNodeWithContext detaches the same rollback/notification image while
+// observing caller-owned preparation. Property values retain their existing
+// shallow-copy semantics; embedding vectors are detached as in CopyNode.
+func CopyNodeWithContext(ctx context.Context, node *Node) (*Node, error) {
+	return copyNodeWithContext(ctx, node)
+}
+
 // CopyEdge is the exported version of copyEdge for use by other packages.
 func CopyEdge(edge *Edge) *Edge {
 	return copyEdge(edge)
+}
+
+// CopyEdgeWithContext copies the rollback/read image while observing the caller
+// inside its property pass. Property values retain CopyEdge's borrowing policy.
+func CopyEdgeWithContext(ctx context.Context, edge *Edge) (*Edge, error) {
+	return copyEdgeWithContext(ctx, edge)
 }

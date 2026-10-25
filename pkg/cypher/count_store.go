@@ -66,7 +66,7 @@ func (e *StorageExecutor) nodeCountFromStore(ctx context.Context, node nodePatte
 	if !ok {
 		return 0, false, nil
 	}
-	count, err := counter.NodeCountByLabel(node.labels[0])
+	count, err := storage.NodeCountByLabelWithContext(ctx, counter, node.labels[0])
 	return count, true, err
 }
 

@@ -69,7 +69,12 @@ func (n *NamespacedEngine) PropertyKeyKnown(name string) bool {
 
 // NodeCountByLabelInNamespace forwards the namespace-scoped label count.
 func (n *NamespacedEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
-	return namespaceLabelCount(n.inner, namespace, label)
+	return n.NodeCountByLabelInNamespaceWithContext(context.Background(), namespace, label)
+}
+
+// NodeCountByLabelInNamespaceWithContext carries the caller through this read and its materialization.
+func (n *NamespacedEngine) NodeCountByLabelInNamespaceWithContext(ctx context.Context, namespace, label string) (int64, error) {
+	return namespaceLabelCountWithContext(ctx, n.inner, namespace, label)
 }
 
 // IterateNodes streams this namespace's nodes with namespace prefixes stripped.

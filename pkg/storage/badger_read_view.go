@@ -197,7 +197,7 @@ func (b *BadgerEngine) withCurrentReadView(capture func(*WriteBehindBuffer), rea
 func (b *BadgerEngine) pendingReadConflict(opts readViewOptions) error {
 	switch opts.scopeKind {
 	case readPrefixScope:
-		return b.pendingPrefixConflict(opts.scope)
+		return b.pendingPrefixConflictWithContext(opts.ctx, opts.scope)
 	case readNodeIDsScope:
 		if b.pendingNamespaceConflict("") == nil {
 			return nil

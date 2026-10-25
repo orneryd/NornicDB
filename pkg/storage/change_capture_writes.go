@@ -1,6 +1,9 @@
 package storage
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 // inCaptureTransaction runs a direct (non-transactional) write as a
 // transaction when the database it writes captures changes, so that its
@@ -26,9 +29,14 @@ func (b *BadgerEngine) inCaptureTransaction(id string, write func(tx *BadgerTran
 // ApplyNodeUpdate is UpdateNode's upsert in a transaction: an
 // update, or a create when the node doesn't exist.
 func ApplyNodeUpdate(tx *BadgerTransaction, node *Node) error {
-	err := tx.UpdateGraphNode(node, ClientNodeEdits)
+	return ApplyNodeUpdateWithContext(context.Background(), tx, node)
+}
+
+// ApplyNodeUpdateWithContext shares graph image admission and CREATE fallback.
+func ApplyNodeUpdateWithContext(ctx context.Context, tx *BadgerTransaction, node *Node) error {
+	err := tx.UpdateGraphNodeWithContext(ctx, node, ClientNodeEdits)
 	if errors.Is(err, ErrNotFound) {
-		_, err = tx.CreateNode(node)
+		_, err = tx.CreateNodeWithContext(ctx, node)
 	}
 	return err
 }

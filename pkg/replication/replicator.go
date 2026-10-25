@@ -368,6 +368,16 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 
 // Apply applies a command directly to storage.
 func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	return r.ApplyWithContext(nil, cmd, timeout)
+}
+
+// ApplyWithContext keeps request preparation under the inbound lifetime.
+func (r *StandaloneReplicator) ApplyWithContext(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	r.mu.RLock()
 	if err := checkApplyReadiness(r.closed, r.started); err != nil {
 		r.mu.RUnlock()
@@ -375,8 +385,14 @@ func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error 
 	}
 	r.mu.RUnlock()
 
+	if ctx == nil {
+		ctx = r.LifetimeContext()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if cmd != nil {
-		if handled, err := routeLeaderEntityCommand(r.storage, r, cmd, timeout); handled || err != nil {
+		if handled, err := routeLeaderEntityCommand(ctx, r.storage, r, cmd, timeout); handled || err != nil {
 			return err
 		}
 	}
@@ -385,8 +401,13 @@ func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error 
 
 // ApplyBatch applies multiple commands directly to storage.
 func (r *StandaloneReplicator) ApplyBatch(cmds []*Command, timeout time.Duration) error {
+	return r.ApplyBatchWithContext(nil, cmds, timeout)
+}
+
+// ApplyBatchWithContext retains the inbound lifetime for each existing command.
+func (r *StandaloneReplicator) ApplyBatchWithContext(ctx context.Context, cmds []*Command, timeout time.Duration) error {
 	for _, cmd := range cmds {
-		if err := r.Apply(cmd, timeout); err != nil {
+		if err := r.ApplyWithContext(ctx, cmd, timeout); err != nil {
 			return err
 		}
 	}

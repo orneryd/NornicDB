@@ -248,6 +248,9 @@ type BadgerEngine struct {
 	// completely, and every write since maintains it. See
 	// temporal_index_completeness.go.
 	temporalIndexReady atomic.Bool
+	// labelIndex owns every label-index generation transition and the
+	// retire point (badger_label_index_lifecycle.go).
+	labelIndex labelIndexLifecycle
 
 	// Hot node cache for frequently accessed nodes
 	// Dramatically speeds up repeated MATCH lookups
@@ -373,6 +376,8 @@ type BadgerEngine struct {
 	labelIndexBackfillMu     sync.Mutex
 	labelIndexBackfillCancel context.CancelFunc
 	labelIndexBackfillDone   chan struct{}
+	// labelIndexAfterClearHook pauses a rebuild after versioned index clear.
+	labelIndexAfterClearHook func()
 
 	// idDict assigns compact 8-byte numeric IDs to string node/edge IDs
 	// so secondary indexes (edge-between, outgoing/incoming, edge-type,
@@ -1166,8 +1171,8 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	// node bodies for stores carried over from binaries that didn't
 	// maintain the index, or restored via file-level copy. Marker-gated
 	// so the walk runs at most once per store. Same non-fatal stance as
-	// the edge-between backfill — MATCH (n:Label) on an unrebuilt store
-	// reads the partial on-disk index until the goroutine finishes.
+	// the edge-between backfill — label reads use a complete node-body
+	// scan until the backfill commits its ready marker.
 	if err := engine.startIndexBackfill(startupLabelIndex, initializeIndexBackfill); err != nil {
 		engine.stopIndexBackfill(startupEdgeBetweenIndex)
 		engine.stopIndexBackfill(startupLabelIndex)
@@ -1209,6 +1214,7 @@ func (b *BadgerEngine) reopenForPostMigrationCompaction(badgerOpts badger.Option
 	if b.log != nil {
 		b.log.Info("post-migration DB reopen starting")
 	}
+	b.labelIndexStoreReplaced()
 	if err := b.db.Close(); err != nil {
 		return nil, fmt.Errorf("close pre-compaction DB: %w", err)
 	}

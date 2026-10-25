@@ -1,0 +1,6 @@
+{
+  "author": "#1667 implementation lane (Codex)",
+  "record": "envelope.json",
+  "sha256": "157c3a01e83f1a7304fdbd290fb626381f7175dd6929d6863ef5c7bc2542816e",
+  "responsibility": "Exact migration of 326 previously read envelope decisions, no new semantic approval."
+}

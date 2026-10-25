@@ -53,16 +53,23 @@ func (b *BadgerEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 	}
 	prefix, _ := ctx.Value(readSnapshotPrefixKey{}).(string)
 	snap := &badgerReadSnapshot{b: b, prefix: prefix}
+	var captureErr error
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
 		// Nodes are read whatever their visibility, relationships as visible
 		// reads see them, as their stored rows below.
-		pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedNodes, prefix: prefix})
-		snap.overlayNodes, snap.nodesTouched = pendingNodes.nodes, pendingNodes.nodesTouched
-		pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges, prefix: prefix})
-		snap.overlayEdges, snap.edgesTouched = pendingEdges.edges, pendingEdges.edgesTouched
-	}, readViewOptions{longLived: true, scope: prefix, scopeKind: readPrefixScope})
+		pendingNodes, readErr := b.readBufferedEntitiesWithContext(ctx, w, storedRead, bufferedEntityRead{kind: bufferedNodes, prefix: prefix})
+		snap.overlayNodes, snap.nodesTouched, captureErr = pendingNodes.nodes, pendingNodes.nodesTouched, readErr
+		if captureErr == nil {
+			pendingEdges, readErr := b.readBufferedEntitiesWithContext(ctx, w, visibleRead, bufferedEntityRead{kind: bufferedEdges, prefix: prefix})
+			snap.overlayEdges, snap.edgesTouched, captureErr = pendingEdges.edges, pendingEdges.edgesTouched, readErr
+		}
+	}, readViewOptions{ctx: ctx, longLived: true, scope: prefix, scopeKind: readPrefixScope})
 	if err != nil {
 		return nil, err
+	}
+	if captureErr != nil {
+		view.Close()
+		return nil, captureErr
 	}
 	snap.view = view
 	return snap, nil
@@ -159,7 +166,11 @@ func (s *badgerReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge) err
 		return err
 	}
 	for _, edge := range s.overlayEdges {
-		if err := fn(copyEdge(edge)); err != nil {
+		image, err := copyEdgeWithContext(ctx, edge)
+		if err != nil {
+			return err
+		}
+		if err := fn(image); err != nil {
 			if err == ErrIterationStopped {
 				return nil
 			}

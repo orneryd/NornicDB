@@ -688,6 +688,16 @@ func (r *HAStandbyReplicator) promote(ctx context.Context) error {
 
 // Apply applies a command to storage.
 func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
+	return r.ApplyWithContext(nil, cmd, timeout)
+}
+
+// ApplyWithContext carries the request into the existing primary admission path.
+func (r *HAStandbyReplicator) ApplyWithContext(ctx context.Context, cmd *Command, timeout time.Duration) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
 		return err
 	}
@@ -696,8 +706,14 @@ func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
 		return ErrStandbyMode
 	}
 
+	if ctx == nil {
+		ctx = r.LifetimeContext()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if cmd != nil {
-		if handled, err := routeLeaderEntityCommand(r.storage, r, cmd, timeout); handled || err != nil {
+		if handled, err := routeLeaderEntityCommand(ctx, r.storage, r, cmd, timeout); handled || err != nil {
 			return err
 		}
 	}
@@ -722,8 +738,13 @@ func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
 
 // ApplyBatch applies multiple commands.
 func (r *HAStandbyReplicator) ApplyBatch(cmds []*Command, timeout time.Duration) error {
+	return r.ApplyBatchWithContext(nil, cmds, timeout)
+}
+
+// ApplyBatchWithContext retains request cancellation across the command list.
+func (r *HAStandbyReplicator) ApplyBatchWithContext(ctx context.Context, cmds []*Command, timeout time.Duration) error {
 	for _, cmd := range cmds {
-		if err := r.Apply(cmd, timeout); err != nil {
+		if err := r.ApplyWithContext(ctx, cmd, timeout); err != nil {
 			return err
 		}
 	}

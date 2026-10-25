@@ -362,7 +362,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 				usedPropertyIndex = true
 			}
 			if !usedPropertyIndex {
-				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexNotNull(matches.StartNode, whereClause); idxErr == nil && used {
+				if nodes, used, idxErr := e.tryCollectNodesFromPropertyIndexNotNull(ctx, matches.StartNode, whereClause); idxErr == nil && used {
 					optimizedStartNodes = nodes
 					usedPropertyIndex = true
 				}
@@ -1343,7 +1343,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 			return nil, false, nil
 		}
 		stream = func(visit func(*storage.Node) error) error {
-			return reader.StreamNodesByLabelProjected(labels[0], nil, visit)
+			return storage.StreamNodesByLabelProjectedWithContext(ctx, reader, labels[0], nil, visit)
 		}
 	} else {
 		reader, ok := store.(storage.StreamingEngine)
@@ -1365,7 +1365,7 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
 			return nil
 		}
-		visible, err := nodeVisibleInTemporalViewport(node, viewport, checker)
+		visible, err := nodeVisibleInTemporalViewport(ctx, node, viewport, checker)
 		if err != nil {
 			return err
 		}
@@ -1784,7 +1784,7 @@ func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextN
 		}
 		ctx.nodeCache[nextNodeID] = nextNode
 	}
-	visible, err := nodeVisibleInTemporalViewport(nextNode, ctx.temporalViewport, ctx.temporalChecker)
+	visible, err := nodeVisibleInTemporalViewport(ctx.cancelCtx, nextNode, ctx.temporalViewport, ctx.temporalChecker)
 	if err != nil || !visible {
 		return nil, false
 	}

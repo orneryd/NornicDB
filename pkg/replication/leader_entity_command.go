@@ -13,7 +13,10 @@ type leaderEntityCommandPreparer interface {
 // PrepareEntityCommand normalizes client leaf/bulk input only at its leader.
 // Managed namespace admission comes from the existing stored-image registry.
 func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command) (*Command, func(storage.CommitOutcome), bool, error) {
-	ops, handled, err := decodeEntityCommandOperations(cmd.Type, cmd.Data)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ops, handled, err := decodeEntityCommandOperationsWithContext(ctx, cmd.Type, cmd.Data)
 	if !handled || err != nil {
 		return nil, nil, handled, err
 	}
@@ -31,7 +34,7 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 	}
 	prepared, settle, managed, err := storage.PrepareManagedEntityChanges(ctx, a.engine, namespace, ops, mode)
 	if !managed && err == nil {
-		tx, beginErr := storage.BeginEntityTransaction(a.engine, mode)
+		tx, beginErr := storage.BeginEntityTransactionWithContext(ctx, a.engine, mode)
 		if beginErr != nil {
 			return nil, nil, true, beginErr
 		}
@@ -41,7 +44,10 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 		}
 		if err == nil {
 			for _, op := range ops {
-				if err = storage.ApplyEntityChange(tx, op, func(node *storage.Node) error { return storage.ApplyNodeUpdate(tx, node) }, func(id storage.NodeID) error { return tx.DeleteGraphNode(id, storage.CascadeEdges) }); err != nil {
+				if err = ctx.Err(); err != nil {
+					break
+				}
+				if err = storage.ApplyEntityChangeWithContext(ctx, tx, op, func(node *storage.Node) error { return storage.ApplyNodeUpdateWithContext(ctx, tx, node) }, func(id storage.NodeID) error { return tx.DeleteGraphNodeWithContext(ctx, id, storage.CascadeEdges) }); err != nil {
 					break
 				}
 			}
@@ -62,7 +68,7 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 	}
 	// The prepared commit owns an immutable private snapshot; encoding reads it
 	// rather than duplicating a detached public Operations copy.
-	payload, err := storage.EncodeEntityTransaction(storage.EntityTransactionRequest{Prepared: prepared})
+	payload, err := storage.EncodeEntityTransactionRequestWithContext(ctx, storage.EntityTransactionRequest{Prepared: prepared})
 	if err != nil {
 		prepared.Abort()
 		if settle != nil {
@@ -70,15 +76,18 @@ func (a *StorageAdapter) PrepareEntityCommand(ctx context.Context, cmd *Command)
 		}
 		return nil, nil, true, err
 	}
-	inner, found := storage.EntityCommitSubmitterFor(a.engine)
-	if !found {
+	inner, found, err := storage.EntityCommitSubmitterForWithContext(ctx, a.engine)
+	if err == nil && !found {
+		err = storage.ErrInvalidData
+	}
+	if err != nil {
 		prepared.Abort()
 		if settle != nil {
-			settle(storage.CommitOutcome{State: storage.CommitDiscarded, Err: storage.ErrInvalidData})
+			settle(storage.CommitOutcome{State: storage.CommitDiscarded, Err: err})
 		}
-		return nil, nil, true, storage.ErrInvalidData
+		return nil, nil, true, err
 	}
-	releaseAuthority, err := prepared.RetainAcceptedAuthority()
+	releaseAuthority, err := prepared.RetainAcceptedAuthorityWithContext(ctx)
 	if err != nil {
 		prepared.Abort()
 		if settle != nil {
@@ -133,7 +142,10 @@ func entityOperationsNamespace(ops []storage.Operation) (string, error) {
 // routeLeaderEntityCommand is called only after the mode's leader check and
 // before any enqueue/log record. Cmd19 and non-entity commands stay at their
 // existing owners; one shared accepted submit path handles normalized work.
-func routeLeaderEntityCommand(owner Storage, replicator Replicator, cmd *Command, timeout time.Duration) (bool, error) {
+func routeLeaderEntityCommand(ctx context.Context, owner Storage, replicator Replicator, cmd *Command, timeout time.Duration) (bool, error) {
+	if ctx == nil {
+		ctx = replicator.LifetimeContext()
+	}
 	if err := retiredCommandError(cmd.Type); err != nil {
 		return true, err
 	}
@@ -147,7 +159,6 @@ func routeLeaderEntityCommand(owner Storage, replicator Replicator, cmd *Command
 	if !ok {
 		return false, nil
 	}
-	ctx := context.Background()
 	var cancel context.CancelFunc
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)

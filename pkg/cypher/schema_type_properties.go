@@ -5,6 +5,7 @@ import (
 
 	"context"
 	"github.com/orneryd/nornicdb/internal/collection"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"sort"
 	"strings"
 
@@ -92,7 +93,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		return found
 	}
 	if nodes {
-		all, err := e.storage.AllNodes()
+		all, err := storage.AllNodesWithContext(ctx, e.storage)
 		if err != nil {
 			return nil, err
 		}
