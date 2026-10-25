@@ -56,18 +56,6 @@ func (r *RoleStore) Load(ctx context.Context) error {
 	return nil
 }
 
-// AllRoles returns built-in role names plus all user-defined role names.
-func (r *RoleStore) AllRoles() []string {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]string, 0, len(builtinRoleNames)+len(r.roles))
-	out = append(out, builtinRoleNames...)
-	for name := range r.roles {
-		out = append(out, name)
-	}
-	return out
-}
-
 // IsBuiltin returns true if the role name is a built-in (admin, editor, viewer).
 func IsBuiltinRole(name string) bool {
 	n := NormalizeRoleName(name)

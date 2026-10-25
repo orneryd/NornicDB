@@ -21,6 +21,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/collection"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"runtime"
 	"sort"
@@ -1327,22 +1328,10 @@ func (e *StorageExecutor) callDbLabels() (*ExecuteResult, error) {
 		Columns: []string{"label"},
 		Rows:    make([][]interface{}, 0, len(labelSet)),
 	}
-	for _, label := range e.storage.GetSchema().OrderTokens(sortedStringSet(labelSet), false) {
+	for _, label := range e.storage.GetSchema().OrderTokens(collection.SortedKeys(labelSet), false) {
 		result.Rows = append(result.Rows, []interface{}{label})
 	}
 	return result, nil
-}
-
-// sortedStringSet returns a set's members in sorted order, so procedures
-// listing schema tokens (db.labels, db.relationshipTypes, …) return the same
-// order on every call.
-func sortedStringSet(set map[string]bool) []string {
-	members := make([]string, 0, len(set))
-	for member := range set {
-		members = append(members, member)
-	}
-	sort.Strings(members)
-	return members
 }
 
 func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
@@ -1360,7 +1349,7 @@ func (e *StorageExecutor) callDbRelationshipTypes() (*ExecuteResult, error) {
 		Columns: []string{"relationshipType"},
 		Rows:    make([][]interface{}, 0, len(typeSet)),
 	}
-	for _, relType := range e.storage.GetSchema().OrderTokens(sortedStringSet(typeSet), true) {
+	for _, relType := range e.storage.GetSchema().OrderTokens(collection.SortedKeys(typeSet), true) {
 		result.Rows = append(result.Rows, []interface{}{relType})
 	}
 	return result, nil
@@ -1679,7 +1668,7 @@ func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
 		Columns: []string{"propertyKey"},
 		Rows:    make([][]interface{}, 0, len(propSet)),
 	}
-	for _, prop := range sortedStringSet(propSet) {
+	for _, prop := range collection.SortedKeys(propSet) {
 		result.Rows = append(result.Rows, []interface{}{prop})
 	}
 

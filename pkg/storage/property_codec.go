@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"math"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -228,6 +229,20 @@ func decodeStrictTypedValue(dec *msgpack.Decoder) (any, error) {
 	if msgpcode.IsFixedMap(code) || code == msgpcode.Map16 || code == msgpcode.Map32 {
 		return decodeStrictTypedMap(dec)
 	}
+	// Every integer reads as int64, as Cypher integers are, whatever code
+	// msgpack stored it in (a Go int takes the narrowest that holds it, and
+	// Uint64 above 2^32-1); only a value above MaxInt64 stays uint64.
+	if isIntegerCode(code) {
+		var signed int64
+		overflow, err := decodeStoredInteger(dec, code, &signed)
+		if err != nil {
+			return nil, err
+		}
+		if overflow != nil {
+			return overflow, nil
+		}
+		return signed, nil
+	}
 	// DecodeInterface is the msgpack package's hand-written scalar path.
 	// Decode(&any) routes through reflection and dominates large property
 	// arrays such as Graphiti embedding vectors.
@@ -252,14 +267,85 @@ func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
 	switch {
 	case firstCode == msgpcode.Double:
 		return decodeFloat64Array(dec, n)
-	case isSignedIntegerCode(firstCode):
-		return decodeInt64Array(dec, n)
-	case isUnsignedIntegerCode(firstCode):
-		return decodeUint64Array(dec, n)
+	case firstCode == msgpcode.Float:
+		out := make([]float32, n)
+		i, err := walkTypedArray(dec, out, func(dec *msgpack.Decoder, slot *float32) error {
+			code, err := dec.PeekCode()
+			if err != nil {
+				return err
+			}
+			if code != msgpcode.Float {
+				return errTypedArrayMismatch
+			}
+			value, err := dec.DecodeFloat32()
+			*slot = value
+			return err
+		})
+		if i == len(out) {
+			return out, nil
+		}
+		return finishMixedArray(dec, out[:i], nil, len(out), err)
+	case isIntegerCode(firstCode):
+		out := make([]int64, n)
+		var alternate any
+		i, err := walkTypedArray(dec, out, func(dec *msgpack.Decoder, slot *int64) error {
+			code, err := dec.PeekCode()
+			if err != nil {
+				return err
+			}
+			if !isIntegerCode(code) {
+				return errTypedArrayMismatch
+			}
+			overflow, err := decodeStoredInteger(dec, code, slot)
+			alternate = overflow
+			if err != nil {
+				return err
+			}
+			if overflow != nil {
+				return errTypedArrayMismatch
+			}
+			return nil
+		})
+		if i == len(out) {
+			return out, nil
+		}
+		return finishMixedArray(dec, out[:i], alternate, len(out), err)
 	case msgpcode.IsString(firstCode):
-		return decodeStringArray(dec, n)
+		out := make([]string, n)
+		i, err := walkTypedArray(dec, out, func(dec *msgpack.Decoder, slot *string) error {
+			code, err := dec.PeekCode()
+			if err != nil {
+				return err
+			}
+			if !msgpcode.IsString(code) {
+				return errTypedArrayMismatch
+			}
+			value, err := dec.DecodeString()
+			*slot = value
+			return err
+		})
+		if i == len(out) {
+			return out, nil
+		}
+		return finishMixedArray(dec, out[:i], nil, len(out), err)
 	case firstCode == msgpcode.False || firstCode == msgpcode.True:
-		return decodeBoolArray(dec, n)
+		out := make([]bool, n)
+		i, err := walkTypedArray(dec, out, func(dec *msgpack.Decoder, slot *bool) error {
+			code, err := dec.PeekCode()
+			if err != nil {
+				return err
+			}
+			if code-msgpcode.False > msgpcode.True-msgpcode.False {
+				return errTypedArrayMismatch
+			}
+			value, err := dec.DecodeBool()
+			*slot = value
+			return err
+		})
+		if i == len(out) {
+			return out, nil
+		}
+		return finishMixedArray(dec, out[:i], nil, len(out), err)
 	}
 
 	// Decode the first element to learn the homogeneous kind candidate.
@@ -280,39 +366,9 @@ func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
 			if !ok {
 				// Mixed array. Rebuild as []interface{}, keeping previously
 				// decoded values, and decode the remainder loosely.
-				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
+				return finishMixedArray(dec, out[:i], next, n)
 			}
 			out[i] = f
-		}
-		return out, nil
-	case int64:
-		out := make([]int64, n)
-		out[0] = first.(int64)
-		for i := 1; i < n; i++ {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			v, ok := next.(int64)
-			if !ok {
-				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-			}
-			out[i] = v
-		}
-		return out, nil
-	case uint64:
-		out := make([]uint64, n)
-		out[0] = first.(uint64)
-		for i := 1; i < n; i++ {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			v, ok := next.(uint64)
-			if !ok {
-				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-			}
-			out[i] = v
 		}
 		return out, nil
 	case string:
@@ -325,7 +381,7 @@ func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
 			}
 			s, ok := next.(string)
 			if !ok {
-				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
+				return finishMixedArray(dec, out[:i], next, n)
 			}
 			out[i] = s
 		}
@@ -340,7 +396,7 @@ func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
 			}
 			b, ok := next.(bool)
 			if !ok {
-				return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
+				return finishMixedArray(dec, out[:i], next, n)
 			}
 			out[i] = b
 		}
@@ -363,121 +419,68 @@ func decodeStrictTypedArray(dec *msgpack.Decoder) (any, error) {
 
 func decodeFloat64Array(dec *msgpack.Decoder, n int) (any, error) {
 	out := make([]float64, n)
-	for i := 0; i < n; i++ {
+	i, err := walkTypedArray(dec, out, func(dec *msgpack.Decoder, slot *float64) error {
 		code, err := dec.PeekCode()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if code != msgpcode.Double {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
+			return errTypedArrayMismatch
 		}
-		v, err := dec.DecodeFloat64()
-		if err != nil {
-			return nil, err
-		}
-		out[i] = v
+		value, err := dec.DecodeFloat64()
+		*slot = value
+		return err
+	})
+	if i == len(out) {
+		return out, nil
 	}
-	return out, nil
+	return finishMixedArray(dec, out[:i], nil, len(out), err)
 }
 
-func decodeInt64Array(dec *msgpack.Decoder, n int) (any, error) {
-	out := make([]int64, n)
-	for i := 0; i < n; i++ {
-		code, err := dec.PeekCode()
-		if err != nil {
-			return nil, err
-		}
-		if !isSignedIntegerCode(code) {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-		}
-		v, err := dec.DecodeInt64()
-		if err != nil {
-			return nil, err
-		}
-		out[i] = v
-	}
-	return out, nil
-}
+// errTypedArrayMismatch stops the typed walk at a different element kind or
+// an already-decoded wide integer. The stop owner widens either form without
+// exposing this internal marker to callers.
+var errTypedArrayMismatch = fmt.Errorf("typed array element kind changed")
 
-func decodeUint64Array(dec *msgpack.Decoder, n int) (any, error) {
-	out := make([]uint64, n)
-	for i := 0; i < n; i++ {
-		code, err := dec.PeekCode()
-		if err != nil {
-			return nil, err
+// walkTypedArray is small enough to inline each literal wire operation, so
+// all primitive families share one walk without per-element dynamic dispatch.
+func walkTypedArray[T float64 | float32 | int64 | string | bool](dec *msgpack.Decoder, out []T, decode func(*msgpack.Decoder, *T) error) (int, error) {
+	for i := range out {
+		if err := decode(dec, &out[i]); err != nil {
+			return i, err
 		}
-		if !isUnsignedIntegerCode(code) {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-		}
-		v, err := dec.DecodeUint64()
-		if err != nil {
-			return nil, err
-		}
-		out[i] = v
 	}
-	return out, nil
-}
-
-func decodeStringArray(dec *msgpack.Decoder, n int) (any, error) {
-	out := make([]string, n)
-	for i := 0; i < n; i++ {
-		code, err := dec.PeekCode()
-		if err != nil {
-			return nil, err
-		}
-		if !msgpcode.IsString(code) {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-		}
-		v, err := dec.DecodeString()
-		if err != nil {
-			return nil, err
-		}
-		out[i] = v
-	}
-	return out, nil
-}
-
-func decodeBoolArray(dec *msgpack.Decoder, n int) (any, error) {
-	out := make([]bool, n)
-	for i := 0; i < n; i++ {
-		code, err := dec.PeekCode()
-		if err != nil {
-			return nil, err
-		}
-		if code != msgpcode.False && code != msgpcode.True {
-			next, err := decodeStrictTypedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			return finishMixedArray(dec, sliceToAny(out[:i]), next, n)
-		}
-		v, err := dec.DecodeBool()
-		if err != nil {
-			return nil, err
-		}
-		out[i] = v
-	}
-	return out, nil
+	return len(out), nil
 }
 
 func isSignedIntegerCode(code byte) bool {
 	return code == msgpcode.Int8 || code == msgpcode.Int16 || code == msgpcode.Int32 || code == msgpcode.Int64
+}
+
+// isIntegerCode reports whether code holds an integer: a fixnum or any
+// signed or unsigned integer code.
+func isIntegerCode(code byte) bool {
+	return isSignedIntegerCode(code) || isUnsignedIntegerCode(code) || msgpcode.IsFixedNum(code)
+}
+
+// decodeStoredInteger writes fitting values to signed without boxing. Only a
+// Uint64 above MaxInt64 returns an alternate value; scalar consumers box their
+// result at the scalar boundary, while homogeneous arrays keep typed slots.
+func decodeStoredInteger(dec *msgpack.Decoder, code byte, signed *int64) (any, error) {
+	if code != msgpcode.Uint64 {
+		value, err := dec.DecodeInt64()
+		*signed = value
+		return nil, err
+	}
+	n, err := dec.DecodeUint64()
+	if err != nil {
+		return nil, err
+	}
+	if n > math.MaxInt64 {
+		return n, nil
+	}
+	*signed = int64(n)
+	return nil, nil
 }
 
 func isUnsignedIntegerCode(code byte) bool {
@@ -507,16 +510,29 @@ func decodeStrictTypedMap(dec *msgpack.Decoder) (any, error) {
 	return out, nil
 }
 
-// finishMixedArray builds out an []interface{} when a homogeneous-kind
-// candidate failed mid-stream. `prefix` is the typed slice we already
-// committed (converted to []interface{}), `current` is the element that
-// broke homogeneity, and the decoder still has totalLen-len(prefix)-1
-// elements to read.
-func finishMixedArray(dec *msgpack.Decoder, prefix []interface{}, current any, totalLen int) (any, error) {
-	out := make([]interface{}, 0, totalLen)
-	out = append(out, prefix...)
+// finishMixedArray owns widening a typed prefix and decoding its remaining values.
+// A supplied stop reports an interrupted homogeneous walk. Only its private
+// mismatch marker enters widening; real decode errors return without consuming
+// another value. A non-nil current value already consumed a wide integer.
+func finishMixedArray[T any](dec *msgpack.Decoder, prefix []T, current any, totalLen int, stop ...error) (any, error) {
+	if len(stop) > 0 {
+		if stop[0] != errTypedArrayMismatch {
+			return nil, stop[0]
+		}
+		if current == nil {
+			var err error
+			current, err = decodeStrictTypedValue(dec)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	out := make([]any, 0, totalLen)
+	for _, value := range prefix {
+		out = append(out, value)
+	}
 	out = append(out, current)
-	for i := len(out); i < totalLen; i++ {
+	for len(out) < totalLen {
 		next, err := decodeStrictTypedValue(dec)
 		if err != nil {
 			return nil, err
@@ -524,17 +540,6 @@ func finishMixedArray(dec *msgpack.Decoder, prefix []interface{}, current any, t
 		out = append(out, next)
 	}
 	return out, nil
-}
-
-// sliceToAny boxes a typed slice into []interface{}. Used by
-// finishMixedArray when a homogeneity violation forces us to widen
-// already-decoded elements.
-func sliceToAny[T any](xs []T) []interface{} {
-	out := make([]interface{}, len(xs))
-	for i, v := range xs {
-		out[i] = v
-	}
-	return out
 }
 
 // readUvarint wraps binary.Uvarint with diagnostic error messages.

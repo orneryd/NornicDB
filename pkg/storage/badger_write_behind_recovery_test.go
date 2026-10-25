@@ -45,8 +45,8 @@ func TestBufferedRecoveryRetiresBatchBeforeReadingLaterInvalidRecord(t *testing.
 // from the forced append flush.
 func crashClose(t testing.TB, engine *BadgerEngine, wal *WAL) {
 	t.Helper()
-	engine.stopEdgeBetweenIndexBackfill()
-	engine.stopLabelIndexBackfill()
+	engine.stopIndexBackfill(startupEdgeBetweenIndex)
+	engine.stopIndexBackfill(startupLabelIndex)
 	engine.stopDeleteCleanup()
 	engine.stopCountDeltaFoldWorker()
 	if engine.writeBehind != nil {

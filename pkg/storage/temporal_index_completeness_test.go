@@ -226,10 +226,12 @@ func TestTemporalCurrentPointerRefresh_ScalesLinearly(t *testing.T) {
 		return time.Since(start)
 	}
 	run(300)
-	small, large := run(1000), run(8000)
-	ratio := float64(large) / float64(small)
-	t.Logf("commit of 1000 temporal nodes: %v, 8000: %v, ratio %.1f (linear ~8)", small, large, ratio)
-	require.Less(t, ratio, 20.0)
+	var samples [3][2]time.Duration
+	for i := range samples {
+		samples[i] = [2]time.Duration{run(1000), run(8000)}
+		t.Logf("sample %d: commit of 1000 temporal nodes: %v, 8000: %v, ratio %.1f (linear ~8)", i+1, samples[i][0], samples[i][1], float64(samples[i][1])/float64(samples[i][0]))
+	}
+	require.Less(t, medianPairedScalingRatio(samples), 20.0)
 }
 
 // The current pointer follows the latest version valid now, whether that

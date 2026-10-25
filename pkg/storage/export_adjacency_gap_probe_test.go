@@ -20,7 +20,7 @@ func (b *BadgerEngine) GapProbeAcrossReplay(t *testing.T, run func() (int64, err
 	}
 	b.writeBehind.mu.RUnlock()
 	require.NotNil(t, frontier)
-	b.adjCacheInvalidateAll()
+	b.adjCacheInvalidate()
 	b.adjCacheMu.RLock()
 	adjHeld := true
 	defer func() {

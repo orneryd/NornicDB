@@ -1157,48 +1157,38 @@ func TestConnectionTracker_Concurrent(t *testing.T) {
 // sizeTrackingEngine – CRUD with incremental size tracking
 // ============================================================================
 
-func TestSizeTrackingEngine_CreateNode(t *testing.T) {
-	manager, dbName := setupTestManager(t)
-	store, err := manager.GetStorage(dbName)
-	require.NoError(t, err)
-
-	node := &storage.Node{
-		ID:         storage.NodeID("st-node-1"),
-		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"name": "Alice"},
+func TestSizeTrackingEngine_NodeWrites(t *testing.T) {
+	for _, tc := range []struct {
+		name, id string
+		update   bool
+	}{
+		{name: "create", id: "st-node-1"}, {name: "update", id: "st-upd-1", update: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manager, dbName := setupTestManager(t)
+			store, err := manager.GetStorage(dbName)
+			require.NoError(t, err)
+			node := &storage.Node{ID: storage.NodeID(tc.id), Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "Alice"}}
+			id, err := store.CreateNode(node)
+			require.NoError(t, err)
+			if tc.update {
+				node.ID = id
+				node.Properties["name"] = "Alice Updated"
+				node.Properties["age"] = 30
+				require.NoError(t, store.UpdateNode(node))
+			} else {
+				assert.NotEmpty(t, id)
+			}
+			got, err := store.GetNode(id)
+			require.NoError(t, err)
+			if tc.update {
+				assert.Equal(t, "Alice Updated", got.Properties["name"])
+				assert.EqualValues(t, 30, got.Properties["age"])
+			} else {
+				assert.Equal(t, "Alice", got.Properties["name"])
+			}
+		})
 	}
-	id, err := store.CreateNode(node)
-	require.NoError(t, err)
-	assert.NotEmpty(t, id)
-
-	got, err := store.GetNode(id)
-	require.NoError(t, err)
-	assert.Equal(t, "Alice", got.Properties["name"])
-}
-
-func TestSizeTrackingEngine_UpdateNode(t *testing.T) {
-	manager, dbName := setupTestManager(t)
-	store, err := manager.GetStorage(dbName)
-	require.NoError(t, err)
-
-	node := &storage.Node{
-		ID:         storage.NodeID("st-upd-1"),
-		Labels:     []string{"Person"},
-		Properties: map[string]interface{}{"name": "Alice"},
-	}
-	id, err := store.CreateNode(node)
-	require.NoError(t, err)
-
-	node.ID = id
-	node.Properties["name"] = "Alice Updated"
-	node.Properties["age"] = 30
-	err = store.UpdateNode(node)
-	require.NoError(t, err)
-
-	got, err := store.GetNode(id)
-	require.NoError(t, err)
-	assert.Equal(t, "Alice Updated", got.Properties["name"])
-	assert.Equal(t, 30, got.Properties["age"])
 }
 
 func TestSizeTrackingEngine_DeleteNode(t *testing.T) {

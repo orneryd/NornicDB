@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/collection"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,7 +30,7 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 	}
 	virtualNodes := make([]*storage.Node, 0, len(labels))
 	virtualByLabel := make(map[string]*storage.Node, len(labels))
-	for _, label := range sortedStringSet(labels) {
+	for _, label := range collection.SortedKeys(labels) {
 		indexes, constraints := schemaVisualizationLabelMetadata(store.GetSchema(), label)
 		node := &storage.Node{
 			Database:   e.executionDatabaseName(ctx),
@@ -61,9 +62,9 @@ func (e *StorageExecutor) callDbSchemaVisualizationWithContext(ctx context.Conte
 		}
 	}
 	virtualEdges := make([]*storage.Edge, 0)
-	for _, relationshipType := range sortedStringSet(types) {
-		for _, start := range sortedStringSet(startLabels[relationshipType]) {
-			for _, end := range sortedStringSet(endLabels[relationshipType]) {
+	for _, relationshipType := range collection.SortedKeys(types) {
+		for _, start := range collection.SortedKeys(startLabels[relationshipType]) {
+			for _, end := range collection.SortedKeys(endLabels[relationshipType]) {
 				virtualEdges = append(virtualEdges, &storage.Edge{
 					Database:   e.executionDatabaseName(ctx),
 					ID:         storage.EdgeID("-" + strconv.Itoa(len(virtualNodes)+len(virtualEdges)+1)),

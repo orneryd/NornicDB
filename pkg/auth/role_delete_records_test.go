@@ -31,7 +31,7 @@ func TestDeletedRoleStartsEmptyAfterRecreation(t *testing.T) {
 	require.Empty(t, allowlist.Allowlist())
 	entitlements := NewRoleEntitlementsStore(system)
 	require.NoError(t, entitlements.Load(ctx))
-	require.Empty(t, entitlements.All())
+	require.Empty(t, ReadRoleCatalog(nil, entitlements).EntitlementOverrides)
 	user, err := system.GetNode("user:worker")
 	require.NoError(t, err)
 	require.Equal(t, `["viewer"]`, user.Properties["roles"])
@@ -100,7 +100,7 @@ func TestDeleteRolePublishesCachesAfterCommit(t *testing.T) {
 				require.False(t, roles.Exists("ops"))
 				require.Empty(t, stores.Allowlist.Allowlist())
 				require.Empty(t, stores.Privileges.Matrix())
-				require.Empty(t, stores.Entitlements.All())
+				require.Empty(t, ReadRoleCatalog(nil, stores.Entitlements).EntitlementOverrides)
 				require.Equal(t, []Role{RoleViewer}, stores.Users.users["worker"].Roles)
 			} else {
 				require.ErrorIs(t, err, errRoleMutation)
