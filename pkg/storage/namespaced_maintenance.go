@@ -95,21 +95,7 @@ func (n *NamespacedEngine) PropertyKeyKnown(name string) bool {
 
 // NodeCountByLabelInNamespace forwards the namespace-scoped label count.
 func (n *NamespacedEngine) NodeCountByLabelInNamespace(namespace, label string) (int64, error) {
-	if stats, ok := n.inner.(NamespaceLabelStatsProvider); ok {
-		return stats.NodeCountByLabelInNamespace(namespace, label)
-	}
-	nodes, err := n.inner.GetNodesByLabel(label)
-	if err != nil {
-		return 0, err
-	}
-	prefix := namespace + n.separator
-	var count int64
-	for _, node := range nodes {
-		if node != nil && strings.HasPrefix(string(node.ID), prefix) {
-			count++
-		}
-	}
-	return count, nil
+	return namespaceLabelCount(n.inner, namespace, label)
 }
 
 // IterateNodes streams this namespace's nodes with namespace prefixes stripped.
@@ -121,7 +107,7 @@ func (n *NamespacedEngine) IterateNodes(fn func(*Node) bool) error {
 			if node == nil || !n.hasNodePrefix(node.ID) {
 				return true
 			}
-			return fn(n.toUserNode(node))
+			return fn(n.toUserNode(node, nodeUserView{}))
 		})
 	}
 	nodes, err := n.inner.AllNodes()
@@ -132,7 +118,7 @@ func (n *NamespacedEngine) IterateNodes(fn func(*Node) bool) error {
 		if node == nil || !n.hasNodePrefix(node.ID) {
 			continue
 		}
-		if !fn(n.toUserNode(node)) {
+		if !fn(n.toUserNode(node, nodeUserView{})) {
 			break
 		}
 	}
@@ -203,7 +189,7 @@ func (n *NamespacedEngine) StreamParkedEmbeddingFailures(ctx context.Context, vi
 		count := 0
 		_, err := streamer.StreamParkedEmbeddingFailures(ctx, func(nodeID NodeID, meta map[string]any) error {
 			count++
-			return visit(n.unprefixNodeID(nodeID), meta)
+			return visit(NodeID(strings.TrimPrefix(string(nodeID), n.scope)), meta)
 		})
 		return count, err
 	}
@@ -213,67 +199,20 @@ func (n *NamespacedEngine) StreamParkedEmbeddingFailures(ctx context.Context, vi
 // Event-callback registration with namespace translation: callbacks only fire
 // for this namespace's entities and receive namespace-stripped IDs.
 func (n *NamespacedEngine) OnNodeCreated(callback NodeEventCallback) {
-	if notifier, ok := n.inner.(StorageEventNotifier); ok {
-		notifier.OnNodeCreated(func(node *Node) {
-			if node == nil || !n.hasNodePrefix(node.ID) {
-				return
-			}
-			callback(n.toUserNode(node))
-		})
-	}
+	subscribeStorageEvent([]storageEventTarget{{engine: n.inner, views: []*NamespacedEngine{n}}}, callback, StorageEventNotifier.OnNodeCreated)
 }
-
 func (n *NamespacedEngine) OnNodeUpdated(callback NodeEventCallback) {
-	if notifier, ok := n.inner.(StorageEventNotifier); ok {
-		notifier.OnNodeUpdated(func(node *Node) {
-			if node == nil || !n.hasNodePrefix(node.ID) {
-				return
-			}
-			callback(n.toUserNode(node))
-		})
-	}
+	subscribeStorageEvent([]storageEventTarget{{engine: n.inner, views: []*NamespacedEngine{n}}}, callback, StorageEventNotifier.OnNodeUpdated)
 }
-
 func (n *NamespacedEngine) OnNodeDeleted(callback NodeDeleteCallback) {
-	if notifier, ok := n.inner.(StorageEventNotifier); ok {
-		notifier.OnNodeDeleted(func(nodeID NodeID) {
-			if !n.hasNodePrefix(nodeID) {
-				return
-			}
-			callback(n.unprefixNodeID(nodeID))
-		})
-	}
+	subscribeStorageEvent([]storageEventTarget{{engine: n.inner, views: []*NamespacedEngine{n}}}, callback, StorageEventNotifier.OnNodeDeleted)
 }
-
 func (n *NamespacedEngine) OnEdgeCreated(callback EdgeEventCallback) {
-	if notifier, ok := n.inner.(StorageEventNotifier); ok {
-		notifier.OnEdgeCreated(func(edge *Edge) {
-			if edge == nil || !n.hasEdgePrefix(edge.ID) {
-				return
-			}
-			callback(n.toUserEdge(edge))
-		})
-	}
+	subscribeStorageEvent([]storageEventTarget{{engine: n.inner, views: []*NamespacedEngine{n}}}, callback, StorageEventNotifier.OnEdgeCreated)
 }
-
 func (n *NamespacedEngine) OnEdgeUpdated(callback EdgeEventCallback) {
-	if notifier, ok := n.inner.(StorageEventNotifier); ok {
-		notifier.OnEdgeUpdated(func(edge *Edge) {
-			if edge == nil || !n.hasEdgePrefix(edge.ID) {
-				return
-			}
-			callback(n.toUserEdge(edge))
-		})
-	}
+	subscribeStorageEvent([]storageEventTarget{{engine: n.inner, views: []*NamespacedEngine{n}}}, callback, StorageEventNotifier.OnEdgeUpdated)
 }
-
 func (n *NamespacedEngine) OnEdgeDeleted(callback EdgeDeleteCallback) {
-	if notifier, ok := n.inner.(StorageEventNotifier); ok {
-		notifier.OnEdgeDeleted(func(edgeID EdgeID) {
-			if !n.hasEdgePrefix(edgeID) {
-				return
-			}
-			callback(n.unprefixEdgeID(edgeID))
-		})
-	}
+	subscribeStorageEvent([]storageEventTarget{{engine: n.inner, views: []*NamespacedEngine{n}}}, callback, StorageEventNotifier.OnEdgeDeleted)
 }

@@ -45,7 +45,9 @@ import (
 type NamespacedEngine struct {
 	inner     Engine
 	namespace string
-	separator string // Default ":"
+	// scope is the namespace's ID prefix, namespace + ":", fixed at
+	// construction so prefix checks and count reads need not build it.
+	scope string
 
 	// log is the structured *slog.Logger for namespace-scoped emissions.
 	// Resolved lazily: if the inner engine implements StructuredLogger
@@ -101,7 +103,7 @@ func NewNamespacedEngine(inner Engine, namespace string) *NamespacedEngine {
 	return &NamespacedEngine{
 		inner:     inner,
 		namespace: namespace,
-		separator: ":",
+		scope:     namespace + ":",
 	}
 }
 
@@ -122,18 +124,7 @@ func (n *NamespacedEngine) prefixNodeID(id NodeID) NodeID {
 	if n.hasNodePrefix(id) {
 		return id
 	}
-	return NodeID(n.namespace + n.separator + string(id))
-}
-
-// unprefixNodeID removes namespace prefix from a node ID.
-// "tenant_a:123" → "123"
-func (n *NamespacedEngine) unprefixNodeID(id NodeID) NodeID {
-	prefix := n.namespace + n.separator
-	s := string(id)
-	if strings.HasPrefix(s, prefix) {
-		return NodeID(s[len(prefix):])
-	}
-	return id
+	return NodeID(n.scope + string(id))
 }
 
 // prefixEdgeID adds namespace prefix to an edge ID.
@@ -141,32 +132,29 @@ func (n *NamespacedEngine) prefixEdgeID(id EdgeID) EdgeID {
 	if n.hasEdgePrefix(id) {
 		return id
 	}
-	return EdgeID(n.namespace + n.separator + string(id))
-}
-
-// unprefixEdgeID removes namespace prefix from an edge ID.
-func (n *NamespacedEngine) unprefixEdgeID(id EdgeID) EdgeID {
-	prefix := n.namespace + n.separator
-	s := string(id)
-	if strings.HasPrefix(s, prefix) {
-		return EdgeID(s[len(prefix):])
-	}
-	return id
+	return EdgeID(n.scope + string(id))
 }
 
 // nodeScope is this namespace's node ID prefix, the scope of its label reads
 // (ScopedLabelNodeReader).
 func (n *NamespacedEngine) nodeScope() string {
-	return n.namespace + n.separator
+	return n.scope
 }
 
 // hasNodePrefix checks if an ID belongs to this namespace.
 func (n *NamespacedEngine) hasNodePrefix(id NodeID) bool {
-	return strings.HasPrefix(string(id), n.namespace+n.separator)
+	return strings.HasPrefix(string(id), n.scope)
 }
 
 func (n *NamespacedEngine) hasEdgePrefix(id EdgeID) bool {
-	return strings.HasPrefix(string(id), n.namespace+n.separator)
+	return strings.HasPrefix(string(id), n.scope)
+}
+
+// nodeUserView binds an owned body or an authoritative batch result key.
+// Its zero value preserves the ordinary shallow borrowed-body view.
+type nodeUserView struct {
+	owned, keyed bool
+	id           NodeID
 }
 
 // toUserNode returns a node with the namespace prefix stripped from its ID.
@@ -181,14 +169,22 @@ func (n *NamespacedEngine) hasEdgePrefix(id EdgeID) bool {
 // shortestPath benchmark. The deep copy was duplicating the Properties
 // map for every cache-hit edge — pure waste because nothing in the
 // traversal path touches the map.
-func (n *NamespacedEngine) toUserNode(node *Node) *Node {
+
+func (n *NamespacedEngine) toUserNode(node *Node, view nodeUserView) *Node {
 	if node == nil {
 		return nil
 	}
-	out := *node
-	out.ID = n.unprefixNodeID(out.ID)
+	out := node
+	if !view.owned {
+		copy := *node
+		out = &copy
+	}
+	if view.keyed {
+		out.ID = view.id
+	}
+	out.ID = NodeID(strings.TrimPrefix(string(out.ID), n.scope))
 	out.Database = n.namespace
-	return &out
+	return out
 }
 
 func keepNodeProperties(node *Node, properties []string) *Node {
@@ -214,10 +210,10 @@ func (n *NamespacedEngine) toUserEdge(edge *Edge) *Edge {
 		return nil
 	}
 	out := *edge
-	out.ID = n.unprefixEdgeID(out.ID)
+	out.ID = EdgeID(strings.TrimPrefix(string(out.ID), n.scope))
 	out.Database = n.namespace
-	out.StartNode = n.unprefixNodeID(out.StartNode)
-	out.EndNode = n.unprefixNodeID(out.EndNode)
+	out.StartNode = NodeID(strings.TrimPrefix(string(out.StartNode), n.scope))
+	out.EndNode = NodeID(strings.TrimPrefix(string(out.EndNode), n.scope))
 	return &out
 }
 
@@ -242,21 +238,11 @@ func (n *NamespacedEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	// Return unprefixed ID to user (user-facing API)
 	// But internally, we track the prefixed ID in nodeToConstituent
-	return n.unprefixNodeID(actualID), nil
+	return NodeID(strings.TrimPrefix(string(actualID), n.scope)), nil
 }
 
 func (n *NamespacedEngine) GetNode(id NodeID) (*Node, error) {
-	// Always prefix the ID (user-facing API always receives unprefixed IDs)
-	namespacedID := n.prefixNodeID(id)
-	node, err := n.inner.GetNode(namespacedID)
-	if err != nil {
-		return nil, err
-	}
-
-	// IMPORTANT: Never mutate nodes returned from the inner engine in-place.
-	// AsyncEngine (and other engines) may return pointers to cached objects that
-	// are later flushed; mutating IDs would corrupt cache state and cause data loss.
-	return n.toUserNode(node), nil
+	return materializedRead(func() (*Node, error) { return n.inner.GetNode(n.prefixNodeID(id)) }, func(value *Node) *Node { return n.toUserNode(value, nodeUserView{}) }, false)
 }
 
 // RelationshipEndpointVisible forwards with the namespace prefix applied.
@@ -277,11 +263,7 @@ func (n *NamespacedEngine) GetNodeProjected(id NodeID, properties []string) (*No
 		return keepNodeProperties(node, properties), nil
 	}
 
-	node, err := projected.GetNodeProjected(n.prefixNodeID(id), properties)
-	if err != nil || node == nil {
-		return node, err
-	}
-	return n.toUserNode(node), nil
+	return materializedRead(func() (*Node, error) { return projected.GetNodeProjected(n.prefixNodeID(id), properties) }, func(value *Node) *Node { return n.toUserNode(value, nodeUserView{}) }, true)
 }
 
 // GetQueryNode forwards the query-row node read (QueryNodeReader) with the
@@ -291,11 +273,7 @@ func (n *NamespacedEngine) GetQueryNode(id NodeID) (*Node, error) {
 	if !ok {
 		return n.GetNode(id)
 	}
-	node, err := reader.GetQueryNode(n.prefixNodeID(id))
-	if err != nil {
-		return nil, err
-	}
-	return n.toUserNode(node), nil
+	return materializedRead(func() (*Node, error) { return reader.GetQueryNode(n.prefixNodeID(id)) }, func(value *Node) *Node { return n.toUserNode(value, nodeUserView{}) }, false)
 }
 
 func (n *NamespacedEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
@@ -309,41 +287,14 @@ func (n *NamespacedEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
 		node.NamedEmbeddings = nil
 		return node, nil
 	}
-	node, err := reader.GetNodeWithoutEmbeddings(n.prefixNodeID(id))
-	if err != nil || node == nil {
-		return node, err
-	}
-	return n.toUserNode(node), nil
+	return materializedRead(func() (*Node, error) { return reader.GetNodeWithoutEmbeddings(n.prefixNodeID(id)) }, func(value *Node) *Node { return n.toUserNode(value, nodeUserView{}) }, true)
 }
 
 func (n *NamespacedEngine) BatchGetNodesWithoutEmbeddings(ids []NodeID) (map[NodeID]*Node, error) {
 	if len(ids) == 0 {
 		return make(map[NodeID]*Node), nil
 	}
-	reader, ok := n.inner.(BatchNodeWithoutEmbeddingsReader)
-	if !ok {
-		return nil, ErrNotImplemented
-	}
-
-	namespacedIDs := make([]NodeID, len(ids))
-	for i, id := range ids {
-		namespacedIDs[i] = n.prefixNodeID(id)
-	}
-	result, err := reader.BatchGetNodesWithoutEmbeddings(namespacedIDs)
-	if err != nil {
-		return nil, err
-	}
-	unprefixed := make(map[NodeID]*Node, len(result))
-	for namespacedID, node := range result {
-		if node == nil {
-			continue
-		}
-		unprefixedID := n.unprefixNodeID(namespacedID)
-		out := n.toUserNode(node)
-		out.ID = unprefixedID
-		unprefixed[unprefixedID] = out
-	}
-	return unprefixed, nil
+	return n.readNodeBatch(ids, true)
 }
 
 func (n *NamespacedEngine) BatchGetNodesWithoutEmbeddingsSupported() bool {
@@ -352,15 +303,7 @@ func (n *NamespacedEngine) BatchGetNodesWithoutEmbeddingsSupported() bool {
 
 // StreamNodesByLabelProjected iterates projected label matches in this namespace.
 func (n *NamespacedEngine) StreamNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
-	if visit == nil {
-		return ErrInvalidData
-	}
-	return streamNodesByLabelProjectedInScope(n.inner, n.nodeScope(), label, properties, func(node *Node) error {
-		if node == nil || !n.hasNodePrefix(node.ID) {
-			return nil
-		}
-		return visit(n.toUserNode(node))
-	})
+	return n.streamNamespaceNodesProjected(label, properties, visit, false)
 }
 
 func (n *NamespacedEngine) UpdateNode(node *Node) error {
@@ -415,14 +358,7 @@ func (n *NamespacedEngine) CreateEdge(edge *Edge) error {
 }
 
 func (n *NamespacedEngine) GetEdge(id EdgeID) (*Edge, error) {
-	namespacedID := n.prefixEdgeID(id)
-	edge, err := n.inner.GetEdge(namespacedID)
-	if err != nil {
-		return nil, err
-	}
-
-	// IMPORTANT: Never mutate edges returned from the inner engine in-place.
-	return n.toUserEdge(edge), nil
+	return materializedRead(func() (*Edge, error) { return n.inner.GetEdge(n.prefixEdgeID(id)) }, func(value *Edge) *Edge { return n.toUserEdge(value) }, false)
 }
 
 func (n *NamespacedEngine) UpdateEdge(edge *Edge) error {
@@ -452,30 +388,14 @@ func (n *NamespacedEngine) DeleteEdge(id EdgeID) error {
 // ============================================================================
 
 func (n *NamespacedEngine) GetNodesByLabel(label string) ([]*Node, error) {
-	// The scoped read skips other databases' nodes when the inner engine
-	// supports it; the filter below covers engines that do not (#851).
-	allNodes, err := getNodesByLabelInScope(n.inner, n.nodeScope(), label)
-	if err != nil {
-		return nil, err
-	}
-
-	var filtered []*Node
-	for _, node := range allNodes {
-		if node == nil {
-			continue
-		}
-		if n.hasNodePrefix(node.ID) {
-			filtered = append(filtered, n.toUserNode(node))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Node, error) { return getNodesByLabelInScope(n.inner, n.nodeScope(), label) }, func(nodes []*Node) []*Node { return n.toUserNodesInNamespace(nodes, true) }, false)
 }
 
 func (n *NamespacedEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 	// Fast path: delegate to inner engine's first-node lookup, then filter namespace.
 	if node, err := getFirstNodeByLabelInScope(n.inner, n.nodeScope(), label); err == nil && node != nil {
 		if n.hasNodePrefix(node.ID) {
-			return n.toUserNode(node), nil
+			return n.toUserNode(node, nodeUserView{}), nil
 		}
 	}
 
@@ -501,26 +421,12 @@ func (n *NamespacedEngine) ForEachNodeIDByLabel(label string, visit func(NodeID)
 		if !n.hasNodePrefix(id) {
 			return true
 		}
-		return visit(n.unprefixNodeID(id))
+		return visit(NodeID(strings.TrimPrefix(string(id), n.scope)))
 	})
 }
 
 func (n *NamespacedEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	// Always prefix the ID (user-facing API always receives unprefixed IDs)
-	namespacedID := n.prefixNodeID(nodeID)
-	edges, err := n.inner.GetOutgoingEdges(namespacedID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Filter to edges in our namespace and unprefix
-	var filtered []*Edge
-	for _, edge := range edges {
-		if n.hasEdgePrefix(edge.ID) {
-			filtered = append(filtered, n.toUserEdge(edge))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Edge, error) { return n.inner.GetOutgoingEdges(n.prefixNodeID(nodeID)) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, false, false) }, false)
 }
 
 // OutgoingEdgeHeaders forwards with the namespace applied, as
@@ -550,31 +456,11 @@ func (n *NamespacedEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, b
 	if !answered || err != nil {
 		return nil, answered, err
 	}
-	filtered := make([]*Edge, 0, len(edges))
-	for _, edge := range edges {
-		if n.hasEdgePrefix(edge.ID) {
-			filtered = append(filtered, n.toUserEdge(edge))
-		}
-	}
-	return filtered, true, nil
+	return n.toUserEdgesInNamespace(edges, false, true), true, nil
 }
 
 func (n *NamespacedEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	// Always prefix the ID (user-facing API always receives unprefixed IDs)
-	namespacedID := n.prefixNodeID(nodeID)
-	edges, err := n.inner.GetIncomingEdges(namespacedID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Filter to edges in our namespace and unprefix
-	var filtered []*Edge
-	for _, edge := range edges {
-		if n.hasEdgePrefix(edge.ID) {
-			filtered = append(filtered, n.toUserEdge(edge))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Edge, error) { return n.inner.GetIncomingEdges(n.prefixNodeID(nodeID)) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, false, false) }, false)
 }
 
 // GetAdjacentEdges fetches both directions through a single inner call when
@@ -601,37 +487,13 @@ func (n *NamespacedEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, er
 		outgoing, incoming = out, in
 	}
 
-	var filteredOut, filteredIn []*Edge
-	for _, edge := range outgoing {
-		if n.hasEdgePrefix(edge.ID) {
-			filteredOut = append(filteredOut, n.toUserEdge(edge))
-		}
-	}
-	for _, edge := range incoming {
-		if n.hasEdgePrefix(edge.ID) {
-			filteredIn = append(filteredIn, n.toUserEdge(edge))
-		}
-	}
-	return filteredOut, filteredIn, nil
+	return n.toUserEdgesInNamespace(outgoing, false, false), n.toUserEdgesInNamespace(incoming, false, false), nil
 }
 
 func (n *NamespacedEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
-	// Always prefix IDs (user-facing API always receives unprefixed IDs)
-	startNamespacedID := n.prefixNodeID(startID)
-	endNamespacedID := n.prefixNodeID(endID)
-	edges, err := n.inner.GetEdgesBetween(startNamespacedID, endNamespacedID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Filter to edges in our namespace and unprefix
-	var filtered []*Edge
-	for _, edge := range edges {
-		if n.hasEdgePrefix(edge.ID) {
-			filtered = append(filtered, n.toUserEdge(edge))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Edge, error) {
+		return n.inner.GetEdgesBetween(n.prefixNodeID(startID), n.prefixNodeID(endID))
+	}, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, false, false) }, false)
 }
 
 func (n *NamespacedEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
@@ -649,33 +511,14 @@ func (n *NamespacedEngine) GetEdgeBetween(startID, endID NodeID, edgeType string
 }
 
 func (n *NamespacedEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
-	allEdges, err := n.inner.GetEdgesByType(edgeType)
-	if err != nil {
-		return nil, err
-	}
-
-	var filtered []*Edge
-	for _, edge := range allEdges {
-		if n.hasEdgePrefix(edge.ID) {
-			filtered = append(filtered, n.toUserEdge(edge))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Edge, error) { return n.inner.GetEdgesByType(edgeType) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, false, false) }, false)
 }
 
 // GetNodesByLabelVisibleAt resolves snapshot-visible label queries within the namespace.
 func (n *NamespacedEngine) GetNodesByLabelVisibleAt(label string, version MVCCVersion) ([]*Node, error) {
-	allNodes, err := getNodesByLabelVisibleAtInScope(n.inner, n.nodeScope(), label, version)
-	if err != nil {
-		return nil, err
-	}
-	var filtered []*Node
-	for _, node := range allNodes {
-		if n.hasNodePrefix(node.ID) {
-			filtered = append(filtered, n.toUserNode(node))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Node, error) {
+		return getNodesByLabelVisibleAtInScope(n.inner, n.nodeScope(), label, version)
+	}, func(nodes []*Node) []*Node { return n.toUserNodesInNamespace(nodes, false) }, false)
 }
 
 // GetOutgoingEdgesVisibleAt resolves snapshot-visible outgoing adjacency queries within the namespace.
@@ -684,17 +527,9 @@ func (n *NamespacedEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCC
 	if !ok {
 		return nil, ErrNotImplemented
 	}
-	edges, err := provider.GetOutgoingEdgesVisibleAt(n.prefixNodeID(nodeID), version)
-	if err != nil {
-		return nil, err
-	}
-	filtered := make([]*Edge, 0, len(edges))
-	for _, edge := range edges {
-		if n.hasEdgePrefix(edge.ID) {
-			filtered = append(filtered, n.toUserEdge(edge))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Edge, error) { return provider.GetOutgoingEdgesVisibleAt(n.prefixNodeID(nodeID), version) }, func(edges []*Edge) []*Edge {
+		return n.toUserEdgesInNamespace(edges, false, true)
+	}, false)
 }
 
 // GetIncomingEdgesVisibleAt resolves snapshot-visible incoming adjacency queries within the namespace.
@@ -703,17 +538,9 @@ func (n *NamespacedEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCC
 	if !ok {
 		return nil, ErrNotImplemented
 	}
-	edges, err := provider.GetIncomingEdgesVisibleAt(n.prefixNodeID(nodeID), version)
-	if err != nil {
-		return nil, err
-	}
-	filtered := make([]*Edge, 0, len(edges))
-	for _, edge := range edges {
-		if n.hasEdgePrefix(edge.ID) {
-			filtered = append(filtered, n.toUserEdge(edge))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Edge, error) { return provider.GetIncomingEdgesVisibleAt(n.prefixNodeID(nodeID), version) }, func(edges []*Edge) []*Edge {
+		return n.toUserEdgesInNamespace(edges, false, true)
+	}, false)
 }
 
 // GetEdgesByTypeVisibleAt resolves snapshot-visible edge-type queries within the namespace.
@@ -722,17 +549,7 @@ func (n *NamespacedEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCC
 	if !ok {
 		return nil, ErrNotImplemented
 	}
-	allEdges, err := provider.GetEdgesByTypeVisibleAt(edgeType, version)
-	if err != nil {
-		return nil, err
-	}
-	var filtered []*Edge
-	for _, edge := range allEdges {
-		if n.hasEdgePrefix(edge.ID) {
-			filtered = append(filtered, n.toUserEdge(edge))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Edge, error) { return provider.GetEdgesByTypeVisibleAt(edgeType, version) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, false, false) }, false)
 }
 
 // GetEdgesBetweenVisibleAt resolves snapshot-visible topology queries within the namespace.
@@ -741,58 +558,23 @@ func (n *NamespacedEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, versi
 	if !ok {
 		return nil, ErrNotImplemented
 	}
-	edges, err := provider.GetEdgesBetweenVisibleAt(n.prefixNodeID(startID), n.prefixNodeID(endID), version)
-	if err != nil {
-		return nil, err
-	}
-	filtered := make([]*Edge, 0, len(edges))
-	for _, edge := range edges {
-		if n.hasEdgePrefix(edge.ID) {
-			filtered = append(filtered, n.toUserEdge(edge))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Edge, error) {
+		return provider.GetEdgesBetweenVisibleAt(n.prefixNodeID(startID), n.prefixNodeID(endID), version)
+	}, func(edges []*Edge) []*Edge {
+		return n.toUserEdgesInNamespace(edges, false, true)
+	}, false)
 }
 
 func (n *NamespacedEngine) AllNodes() ([]*Node, error) {
-	allNodes, err := n.inner.AllNodes()
-	if err != nil {
-		return nil, err
-	}
-
-	var filtered []*Node
-	for _, node := range allNodes {
-		if n.hasNodePrefix(node.ID) {
-			filtered = append(filtered, n.toUserNode(node))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Node, error) { return n.inner.AllNodes() }, func(values []*Node) []*Node { return n.toUserNodesInNamespace(values, false) }, false)
 }
 
 func (n *NamespacedEngine) AllEdges() ([]*Edge, error) {
-	allEdges, err := n.inner.AllEdges()
-	if err != nil {
-		return nil, err
-	}
-
-	var filtered []*Edge
-	for _, edge := range allEdges {
-		if n.hasEdgePrefix(edge.ID) {
-			filtered = append(filtered, n.toUserEdge(edge))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Edge, error) { return n.inner.AllEdges() }, func(values []*Edge) []*Edge { return n.toUserEdgesInNamespace(values, false, false) }, false)
 }
 
 func (n *NamespacedEngine) GetAllNodes() []*Node {
-	allNodes := n.inner.GetAllNodes()
-	var filtered []*Node
-	for _, node := range allNodes {
-		if n.hasNodePrefix(node.ID) {
-			filtered = append(filtered, n.toUserNode(node))
-		}
-	}
-	return filtered
+	return n.toUserNodesInNamespace(n.inner.GetAllNodes(), false)
 }
 
 // ============================================================================
@@ -830,7 +612,7 @@ func (n *NamespacedEngine) GetTemporalNodeAsOf(label, keyProp string, keyValue i
 	if err != nil || node == nil {
 		return node, err
 	}
-	return n.toUserNode(node), nil
+	return n.toUserNode(node, nodeUserView{}), nil
 }
 
 // IsCurrentTemporalNode reports whether node is the current/live temporal version.
@@ -848,11 +630,7 @@ func (n *NamespacedEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
 	if !ok {
 		return n.GetNode(id)
 	}
-	node, err := provider.GetNodeLatestVisible(n.prefixNodeID(id))
-	if err != nil || node == nil {
-		return node, err
-	}
-	return n.toUserNode(node), nil
+	return materializedRead(func() (*Node, error) { return provider.GetNodeLatestVisible(n.prefixNodeID(id)) }, func(value *Node) *Node { return n.toUserNode(value, nodeUserView{}) }, true)
 }
 
 // GetNodeVisibleAt resolves a snapshot-visible node within the namespace.
@@ -861,11 +639,7 @@ func (n *NamespacedEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*No
 	if !ok {
 		return nil, ErrNotImplemented
 	}
-	node, err := provider.GetNodeVisibleAt(n.prefixNodeID(id), version)
-	if err != nil || node == nil {
-		return node, err
-	}
-	return n.toUserNode(node), nil
+	return materializedRead(func() (*Node, error) { return provider.GetNodeVisibleAt(n.prefixNodeID(id), version) }, func(value *Node) *Node { return n.toUserNode(value, nodeUserView{}) }, true)
 }
 
 // GetEdgeLatestVisible resolves the latest visible edge within the namespace.
@@ -874,11 +648,7 @@ func (n *NamespacedEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
 	if !ok {
 		return n.GetEdge(id)
 	}
-	edge, err := provider.GetEdgeLatestVisible(n.prefixEdgeID(id))
-	if err != nil || edge == nil {
-		return edge, err
-	}
-	return n.toUserEdge(edge), nil
+	return materializedRead(func() (*Edge, error) { return provider.GetEdgeLatestVisible(n.prefixEdgeID(id)) }, func(value *Edge) *Edge { return n.toUserEdge(value) }, true)
 }
 
 // GetEdgeVisibleAt resolves a snapshot-visible edge within the namespace.
@@ -887,11 +657,7 @@ func (n *NamespacedEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Ed
 	if !ok {
 		return nil, ErrNotImplemented
 	}
-	edge, err := provider.GetEdgeVisibleAt(n.prefixEdgeID(id), version)
-	if err != nil || edge == nil {
-		return edge, err
-	}
-	return n.toUserEdge(edge), nil
+	return materializedRead(func() (*Edge, error) { return provider.GetEdgeVisibleAt(n.prefixEdgeID(id), version) }, func(value *Edge) *Edge { return n.toUserEdge(value) }, true)
 }
 
 // GetNodeLatestEffective resolves the latest-effective node within the
@@ -902,11 +668,7 @@ func (n *NamespacedEngine) GetNodeLatestEffective(id NodeID) (*Node, error) {
 	if !ok {
 		return n.GetNode(id)
 	}
-	node, err := provider.GetNodeLatestEffective(n.prefixNodeID(id))
-	if err != nil || node == nil {
-		return node, err
-	}
-	return n.toUserNode(node), nil
+	return materializedRead(func() (*Node, error) { return provider.GetNodeLatestEffective(n.prefixNodeID(id)) }, func(value *Node) *Node { return n.toUserNode(value, nodeUserView{}) }, true)
 }
 
 // GetEdgeLatestEffective resolves the latest-effective edge within the
@@ -917,11 +679,7 @@ func (n *NamespacedEngine) GetEdgeLatestEffective(id EdgeID) (*Edge, error) {
 	if !ok {
 		return n.GetEdge(id)
 	}
-	edge, err := provider.GetEdgeLatestEffective(n.prefixEdgeID(id))
-	if err != nil || edge == nil {
-		return edge, err
-	}
-	return n.toUserEdge(edge), nil
+	return materializedRead(func() (*Edge, error) { return provider.GetEdgeLatestEffective(n.prefixEdgeID(id)) }, func(value *Edge) *Edge { return n.toUserEdge(value) }, true)
 }
 
 // GetNodeCurrentHead resolves node head metadata within the namespace.
@@ -1052,19 +810,11 @@ func (n *NamespacedEngine) BulkCreateEdges(edges []*Edge) error {
 }
 
 func (n *NamespacedEngine) BulkDeleteNodes(ids []NodeID) error {
-	namespacedIDs := make([]NodeID, len(ids))
-	for i, id := range ids {
-		namespacedIDs[i] = n.prefixNodeID(id)
-	}
-	return n.inner.BulkDeleteNodes(namespacedIDs)
+	return n.inner.BulkDeleteNodes(materializedIDs(ids, func(id NodeID) NodeID { return n.prefixNodeID(id) }))
 }
 
 func (n *NamespacedEngine) BulkDeleteEdges(ids []EdgeID) error {
-	namespacedIDs := make([]EdgeID, len(ids))
-	for i, id := range ids {
-		namespacedIDs[i] = n.prefixEdgeID(id)
-	}
-	return n.inner.BulkDeleteEdges(namespacedIDs)
+	return n.inner.BulkDeleteEdges(materializedIDs(ids, func(id EdgeID) EdgeID { return n.prefixEdgeID(id) }))
 }
 
 // ============================================================================
@@ -1072,26 +822,23 @@ func (n *NamespacedEngine) BulkDeleteEdges(ids []EdgeID) error {
 // ============================================================================
 
 func (n *NamespacedEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
-	namespacedIDs := make([]NodeID, len(ids))
-	for i, id := range ids {
-		namespacedIDs[i] = n.prefixNodeID(id)
-	}
+	return n.readNodeBatch(ids, false)
+}
 
-	result, err := n.inner.BatchGetNodes(namespacedIDs)
-	if err != nil {
-		return nil, err
-	}
-
-	// Unprefix all returned nodes (user-facing API)
-	unprefixed := make(map[NodeID]*Node, len(result))
-	for namespacedID, node := range result {
-		unprefixedID := n.unprefixNodeID(namespacedID)
-		out := CopyNode(node)
-		out.ID = unprefixedID
-		out.Database = n.namespace
-		unprefixed[unprefixedID] = out
-	}
-	return unprefixed, nil
+// toUserNodeBatch binds stored result keys and copy ownership to the one
+// node view owner; materializedKeyed owns the batch materialization walk.
+func (n *NamespacedEngine) toUserNodeBatch(rows map[NodeID]*Node, withoutEmbeddings bool) map[NodeID]*Node {
+	return materializedKeyed(rows, func(key NodeID, node *Node) (NodeID, *Node) {
+		if withoutEmbeddings && node == nil {
+			return "", nil
+		}
+		owned := !withoutEmbeddings
+		if owned {
+			node = CopyNode(node)
+		}
+		out := n.toUserNode(node, nodeUserView{owned: owned, keyed: true, id: key})
+		return out.ID, out
+	})
 }
 
 // ============================================================================
@@ -1112,7 +859,7 @@ func (n *NamespacedEngine) NodeCount() (int64, error) {
 	// Prefer a prefix-scoped count from the inner engine to keep COUNT fast
 	// in multi-database deployments.
 	if stats, ok := n.inner.(PrefixStatsEngine); ok {
-		return stats.NodeCountByPrefix(n.namespace + n.separator)
+		return stats.NodeCountByPrefix(n.scope)
 	}
 
 	// Fallback: streaming scan (correct but slower; should be rare in production).
@@ -1181,7 +928,7 @@ func (n *NamespacedEngine) NodeCountByLabel(label string) (int64, error) {
 func (n *NamespacedEngine) EdgeCount() (int64, error) {
 	// Prefer a prefix-scoped count from the inner engine.
 	if stats, ok := n.inner.(PrefixStatsEngine); ok {
-		return stats.EdgeCountByPrefix(n.namespace + n.separator)
+		return stats.EdgeCountByPrefix(n.scope)
 	}
 
 	// Fallback: streaming scan (correct but slower; should be rare in production).
@@ -1251,9 +998,9 @@ func (n *NamespacedEngine) StreamNodesWithOptions(ctx context.Context, opts Stre
 		return ErrInvalidData
 	}
 	physicalOpts := opts
-	physicalOpts.Prefix = n.namespace + n.separator + opts.Prefix
+	physicalOpts.Prefix = n.scope + opts.Prefix
 	return n.inner.StreamNodesWithOptions(ctx, physicalOpts, func(node *Node) error {
-		return fn(n.toUserNode(node))
+		return fn(n.toUserNode(node, nodeUserView{}))
 	})
 }
 
@@ -1316,12 +1063,7 @@ func (n *NamespacedEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) 
 func (n *NamespacedEngine) StreamNodeChunks(ctx context.Context, chunkSize int, fn func(nodes []*Node) error) error {
 	if streamer, ok := n.inner.(StreamingEngine); ok {
 		return streamer.StreamNodeChunks(ctx, chunkSize, func(nodes []*Node) error {
-			var filtered []*Node
-			for _, node := range nodes {
-				if n.hasNodePrefix(node.ID) {
-					filtered = append(filtered, n.toUserNode(node))
-				}
-			}
+			filtered := n.toUserNodesInNamespace(nodes, false)
 			if len(filtered) > 0 {
 				return fn(filtered)
 			}
@@ -1350,7 +1092,7 @@ func (n *NamespacedEngine) StreamNodeChunks(ctx context.Context, chunkSize int, 
 func (n *NamespacedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesDeleted int64, err error) {
 	// Scope the deletion to this namespace by translating the user prefix into
 	// the stored namespace-prefixed form, then delegate.
-	return n.inner.DeleteByPrefix(n.namespace + n.separator + prefix)
+	return n.inner.DeleteByPrefix(n.scope + prefix)
 }
 
 // FindNodeNeedingEmbedding finds a node that needs embedding, but only from this namespace.
@@ -1404,7 +1146,7 @@ func (n *NamespacedEngine) FindNodeNeedingEmbedding() *Node {
 			}
 
 			// Return a user-facing copy (never mutate inner engine objects in-place).
-			out := n.toUserNode(node)
+			out := n.toUserNode(node, nodeUserView{})
 			if skippedCount > 0 && skippedCount%100 == 0 {
 				n.namespaceLog().Debug("skipped nodes from other namespaces while searching",
 					"skipped", skippedCount,
@@ -1578,3 +1320,55 @@ var _ Engine = (*NamespacedEngine)(nil)
 
 // Ensure NamespacedEngine implements StreamingEngine if inner does
 var _ StreamingEngine = (*NamespacedEngine)(nil)
+
+// toUserNodesInNamespace materializes one database's node views. Stored and
+// stream protocols permit absent rows; ordinary collection protocols require
+// actual entities and retain their established nil-input behavior.
+func (n *NamespacedEngine) toUserNodesInNamespace(nodes []*Node, skipNil bool) []*Node {
+	return materializedCollection(nodes, nil, func(nodes []*Node) []*Node {
+		var out []*Node
+		materializedValues(nodes, func(node *Node) {
+			if skipNil && node == nil {
+				return
+			}
+			if n.hasNodePrefix(node.ID) {
+				out = append(out, n.toUserNode(node, nodeUserView{}))
+			}
+		})
+		return out
+	})
+}
+
+// streamNamespaceNodesProjected owns admission and namespace/view delivery;
+// the binding selects visible or physically stored read semantics.
+func (n *NamespacedEngine) streamNamespaceNodesProjected(label string, properties []string, visit func(*Node) error, stored bool) error {
+	if visit == nil {
+		return ErrInvalidData
+	}
+	deliver := func(node *Node) error {
+		if node == nil || !n.hasNodePrefix(node.ID) {
+			return nil
+		}
+		return visit(n.toUserNode(node, nodeUserView{}))
+	}
+	if stored {
+		return streamStoredNodesByLabelProjectedInScope(n.inner, n.nodeScope(), label, properties, deliver)
+	}
+	return streamNodesByLabelProjectedInScope(n.inner, n.nodeScope(), label, properties, deliver)
+}
+
+func (n *NamespacedEngine) readNodeBatch(ids []NodeID, withoutEmbeddings bool) (map[NodeID]*Node, error) {
+	var projected BatchNodeWithoutEmbeddingsReader
+	if withoutEmbeddings {
+		var ok bool
+		projected, ok = n.inner.(BatchNodeWithoutEmbeddingsReader)
+		if !ok {
+			return nil, ErrNotImplemented
+		}
+	}
+	physical := materializedIDs(ids, func(id NodeID) NodeID { return n.prefixNodeID(id) })
+	if withoutEmbeddings {
+		return materializedRead(func() (map[NodeID]*Node, error) { return projected.BatchGetNodesWithoutEmbeddings(physical) }, func(rows map[NodeID]*Node) map[NodeID]*Node { return n.toUserNodeBatch(rows, true) }, false)
+	}
+	return materializedRead(func() (map[NodeID]*Node, error) { return n.inner.BatchGetNodes(physical) }, func(rows map[NodeID]*Node) map[NodeID]*Node { return n.toUserNodeBatch(rows, false) }, false)
+}

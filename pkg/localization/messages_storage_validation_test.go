@@ -60,3 +60,25 @@ func TestStorageRemoteGraphValidationCatalogRendering(t *testing.T) {
 		})
 	}
 }
+
+func TestStorageTransactionHiddenEdgeIdentityConflictRendering(t *testing.T) {
+	bundle := i18n.NewBundle(language.AmericanEnglish)
+	bundle.RegisterUnmarshalFunc("yaml", yaml.Unmarshal)
+	for _, locale := range []string{"en-US", "es-ES", "en-XA"} {
+		_, err := bundle.LoadMessageFileFS(catalogFS, "catalog/active.storagevalidation."+locale+".yaml")
+		require.NoError(t, err)
+	}
+	message := StorageTransactionHiddenEdgeIdentityConflict("r")
+	require.Equal(t, MessageStorageTransactionHiddenEdgeIdentityConflict, message.ID)
+	require.Equal(t, "stored hidden relationship r has a different final image", message.Fallback)
+	config := &i18n.LocalizeConfig{MessageID: string(message.ID), TemplateData: message.Data}
+	english, err := i18n.NewLocalizer(bundle, "en-US").Localize(config)
+	require.NoError(t, err)
+	require.Equal(t, message.Fallback, english)
+	spanish, err := i18n.NewLocalizer(bundle, "es-ES").Localize(config)
+	require.NoError(t, err)
+	require.Equal(t, "la relación oculta almacenada r tiene una imagen final diferente", spanish)
+	pseudo, err := i18n.NewLocalizer(bundle, "en-XA").Localize(config)
+	require.NoError(t, err)
+	require.Equal(t, "[!! "+english+" !!]", pseudo)
+}

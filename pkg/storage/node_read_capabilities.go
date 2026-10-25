@@ -1,5 +1,7 @@
 package storage
 
+import "strings"
+
 var (
 	_ NodeWithoutEmbeddingsReader          = (*WALEngine)(nil)
 	_ BatchNodeWithoutEmbeddingsReader     = (*WALEngine)(nil)
@@ -24,4 +26,24 @@ func batchNodeWithoutEmbeddingsSupported(engine Engine) bool {
 		return capability.BatchGetNodesWithoutEmbeddingsSupported()
 	}
 	return true
+}
+
+// namespaceLabelCount is the shared namespace-aware capability dispatch.
+// Wrappers preserve their public method while sharing the provider and scan owner.
+func namespaceLabelCount(engine Engine, namespace, label string) (int64, error) {
+	if provider, ok := engine.(NamespaceLabelStatsProvider); ok {
+		return provider.NodeCountByLabelInNamespace(namespace, label)
+	}
+	nodes, err := engine.GetNodesByLabel(label)
+	if err != nil {
+		return 0, err
+	}
+	prefix := namespace + ":"
+	var count int64
+	for _, node := range nodes {
+		if node != nil && strings.HasPrefix(string(node.ID), prefix) {
+			count++
+		}
+	}
+	return count, nil
 }

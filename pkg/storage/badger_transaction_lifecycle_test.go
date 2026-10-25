@@ -118,7 +118,7 @@ func TestSchemaTransactionRejectsAllEntityMutations(t *testing.T) {
 func TestSchemaWriteBarrierRejectsClosedEngine(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	require.NoError(t, engine.Close())
-	_, err := engine.beginSchemaWrite()
+	_, err := engine.beginBarrierWrite(true, false)
 	require.ErrorIs(t, err, ErrStorageClosed)
 }
 

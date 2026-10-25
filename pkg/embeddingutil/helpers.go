@@ -3,6 +3,7 @@ package embeddingutil
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
 	"strings"
 	"time"
@@ -224,27 +225,19 @@ func ChunkCount(meta map[string]any) int {
 }
 
 func storedInt(value any) (int, bool) {
-	switch number := value.(type) {
-	case int:
-		return number, true
-	case int8:
-		return int(number), true
-	case int16:
-		return int(number), true
-	case int32:
-		return int(number), true
-	case int64:
-		return int(number), true
-	case uint8:
-		return int(number), true
-	case uint16:
-		return int(number), true
-	case uint32:
-		return int(number), true
-	case uint64:
-		return int(number), true
+	// Metadata accepts the historical concrete integer carriers, without
+	// extending admission to floats, strings, named scalars or native uint.
+	switch value.(type) {
+	case int, int8, int16, int32, int64, uint8, uint16, uint32, uint64:
+		number, _ := convert.ReadNumber(value)
+		if signed, ok := number.Signed(); ok {
+			return int(signed), true
+		}
+		unsigned, _ := number.Unsigned()
+		return int(unsigned), true
+	default:
+		return 0, false
 	}
-	return 0, false
 }
 
 // IsMetadataPropertyKey reports whether a property key is internal embedding metadata.

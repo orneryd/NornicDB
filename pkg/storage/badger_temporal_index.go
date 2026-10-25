@@ -226,105 +226,95 @@ func nodeMatchesTemporalLookup(node *Node, c Constraint, keyValue interface{}, a
 	return true
 }
 
-func (b *BadgerEngine) temporalHistoryNodeAsOfInTxn(txn *badger.Txn, target temporalRefreshTarget, asOf time.Time, exclude map[NodeID]struct{}, withEmbeddings bool) (*Node, error) {
-	prefix := temporalHistoryPrefix(target.desc)
-	seek := append(append([]byte{}, prefix...), encodeTemporalSortTime(asOf)...)
-	seek = append(seek, 0xFF)
-	var found *Node
-	err := descendingPrefixKeys(txn, prefix, seek, func(item *badger.Item) (bool, error) {
-		nodeID := extractNodeIDFromTemporalHistoryKey(item.Key(), len(prefix))
-		if nodeID == "" {
-			return true, nil
-		}
-		if exclude != nil {
-			if _, skip := exclude[nodeID]; skip {
-				return true, nil
-			}
-		}
-		node, err := b.loadNodeForTemporalTxn(txn, nodeID, withEmbeddings)
-		if err != nil {
-			return false, err
-		}
-		if nodeMatchesTemporalLookup(node, target.constraint, target.keyValue, asOf) {
-			found = node
-			return false, nil
-		}
-		return true, nil
-	})
-	return found, err
+// temporalHistorySelection describes either an as-of body lookup or the two
+// neighbours needed by overlap validation, within the caller's transaction.
+type temporalHistorySelection struct {
+	at             time.Time
+	exclude        map[NodeID]struct{}
+	excludeNodeID  NodeID
+	withEmbeddings bool
+	adjacent       bool
+	latest         func(*Node) (bool, error)
+	touched        map[NodeID]bool
+	ctx            context.Context
 }
 
-func (b *BadgerEngine) temporalAdjacentNodesInTxn(txn *badger.Txn, target temporalRefreshTarget, start time.Time, excludeNodeID NodeID) (*Node, *Node, error) {
+// visitTemporalHistoryNodeInTxn owns history traversal and retained-body
+// materialization. It skips missing/excluded bodies before validating periods;
+// an adjacent search shares the backward scan and adds a bounded forward scan.
+func (b *BadgerEngine) visitTemporalHistoryNodeInTxn(txn *badger.Txn, target temporalRefreshTarget, selection temporalHistorySelection) (*Node, *Node, error) {
 	prefix := temporalHistoryPrefix(target.desc)
-	encodedStart := encodeTemporalSortTime(start)
-	seekPrev := append(append([]byte{}, prefix...), encodedStart...)
-	seekPrev = append(seekPrev, 0xFF)
-	var prevNode *Node
-	if err := descendingPrefixKeys(txn, prefix, seekPrev, func(item *badger.Item) (bool, error) {
-		nodeID := extractNodeIDFromTemporalHistoryKey(item.Key(), len(prefix))
-		if nodeID == "" || nodeID == excludeNodeID {
+	var encoded, seek []byte
+	if selection.latest == nil {
+		encoded = encodeTemporalSortTime(selection.at)
+		seek = append(append([]byte{}, prefix...), encoded...)
+		seek = append(seek, 0xFF)
+	}
+	var previous, next *Node
+	forward := false
+	accept := func(item *badger.Item) (bool, error) {
+		id := extractNodeIDFromTemporalHistoryKey(item.Key(), len(prefix))
+		_, excluded := selection.exclude[id]
+		if id == "" || excluded || selection.touched[id] || (selection.excludeNodeID != "" && id == selection.excludeNodeID) {
 			return true, nil
 		}
-		node, err := b.loadNodeForTemporalTxn(txn, nodeID, false)
+		node, err := b.loadNodeForTemporalTxn(txn, id, selection.withEmbeddings)
 		if err != nil {
 			return false, err
 		}
 		if node == nil {
 			return true, nil
 		}
-		key, _, _, _, ok := temporalNodeState(node, target.constraint)
-		if !ok || !temporalKeyValuesEqual(target.constraint, key, target.keyValue) {
+		if selection.latest != nil {
+			return selection.latest(node)
+		}
+		if selection.adjacent {
+			key, start, _, _, ok := temporalNodeState(node, target.constraint)
+			if !ok || !temporalKeyValuesEqual(target.constraint, key, target.keyValue) || (forward && start.Before(selection.at)) {
+				return true, nil
+			}
+		} else if !nodeMatchesTemporalLookup(node, target.constraint, target.keyValue, selection.at) {
 			return true, nil
 		}
-		prevNode = node
-		return false, nil
-	}); err != nil {
-		return nil, nil, err
-	}
-	seekNext := append(append([]byte{}, prefix...), encodedStart...)
-	forwardOpts := badgerIteratorOptions()
-	forwardOpts.Prefix = prefix
-	forwardIt := txn.NewIterator(forwardOpts)
-	defer forwardIt.Close()
-	var nextNode *Node
-	for forwardIt.Seek(seekNext); forwardIt.ValidForPrefix(prefix); forwardIt.Next() {
-		nodeID := extractNodeIDFromTemporalHistoryKey(forwardIt.Item().Key(), len(prefix))
-		if nodeID == "" || nodeID == excludeNodeID {
-			continue
+		if forward {
+			next = node
+		} else {
+			previous = node
 		}
-		node, err := b.loadNodeForTemporalTxn(txn, nodeID, false)
+		return false, nil
+	}
+	if selection.latest == nil {
+		if err := descendingPrefixKeys(txn, prefix, seek, accept); err != nil {
+			return nil, nil, err
+		}
+		if !selection.adjacent {
+			return previous, nil, nil
+		}
+	}
+	forward = true
+	opts := badgerPrefixIteratorOptions(prefix)
+	it := txn.NewIterator(opts)
+	defer it.Close()
+	if selection.latest != nil {
+		seek = prefix
+	} else {
+		seek = append(append([]byte{}, prefix...), encoded...)
+	}
+	for it.Seek(seek); it.ValidForPrefix(prefix); it.Next() {
+		if selection.ctx != nil {
+			if err := selection.ctx.Err(); err != nil {
+				return nil, nil, err
+			}
+		}
+		more, err := accept(it.Item())
 		if err != nil {
 			return nil, nil, err
 		}
-		if node == nil {
-			continue
+		if !more {
+			break
 		}
-		key, candidateStart, _, _, ok := temporalNodeState(node, target.constraint)
-		if !ok || !temporalKeyValuesEqual(target.constraint, key, target.keyValue) {
-			continue
-		}
-		if candidateStart.Before(start) {
-			continue
-		}
-		nextNode = node
-		break
 	}
-	return prevNode, nextNode, nil
-}
-
-func (b *BadgerEngine) refreshTemporalCurrentPointerInTxn(txn *badger.Txn, target temporalRefreshTarget, asOf time.Time, exclude map[NodeID]struct{}) error {
-	currentKey := temporalCurrentKey(target.desc)
-	node, err := b.temporalHistoryNodeAsOfInTxn(txn, target, asOf, exclude, false)
-	if err != nil {
-		return err
-	}
-	if node == nil {
-		if err := txn.Delete(currentKey); err != nil && err != badger.ErrKeyNotFound {
-			return err
-		}
-		return nil
-	}
-	return txn.Set(currentKey, []byte(node.ID))
+	return previous, next, nil
 }
 
 func (b *BadgerEngine) writeTemporalIndexForNodeInTxn(txn *badger.Txn, namespace string, node *Node, c Constraint) (temporalRefreshTarget, error) {
@@ -373,17 +363,11 @@ func (b *BadgerEngine) applyTemporalIndexesForNodeChangeInTxn(txn *badger.Txn, n
 			}
 		}
 	}
-	now := time.Now().UTC()
-	for _, target := range targets {
-		if err := b.refreshTemporalCurrentPointerInTxn(txn, target, now, nil); err != nil {
-			return err
-		}
-	}
-	return nil
+	return b.refreshTemporalCurrentPointers(&batchWriter{txn: txn}, targets, temporalPointerState{readTxn: txn, at: time.Now().UTC()})
 }
 
 func (b *BadgerEngine) GetTemporalNodeAsOfInNamespace(namespace, label, keyProp string, keyValue interface{}, validFromProp, validToProp string, asOf time.Time) (*Node, error) {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return nil, err
 	}
 	schema := b.GetSchemaForNamespace(namespace)
@@ -422,7 +406,7 @@ func (b *BadgerEngine) GetTemporalNodeAsOfInNamespace(namespace, label, keyProp 
 		} else if err != badger.ErrKeyNotFound {
 			return err
 		}
-		node, err = b.temporalHistoryNodeAsOfInTxn(txn, target, asOf, nil, true)
+		node, _, err = b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: asOf, withEmbeddings: true})
 		return err
 	})
 	if err != nil {
@@ -486,7 +470,7 @@ func (b *BadgerEngine) temporalListNodeAsOfInNamespace(namespace string, constra
 	var node *Node
 	err := b.withView(func(txn *badger.Txn) error {
 		var err error
-		node, err = b.temporalHistoryNodeAsOfInTxn(txn, target, asOf, nil, withEmbeddings)
+		node, _, err = b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: asOf, withEmbeddings: withEmbeddings})
 		return err
 	})
 	return node, err
@@ -494,7 +478,7 @@ func (b *BadgerEngine) temporalListNodeAsOfInNamespace(namespace string, constra
 
 // IsCurrentTemporalNodeInNamespace reports whether the given temporal node is the live/current version.
 func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *Node, asOf time.Time) (bool, error) {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return false, err
 	}
 	if node == nil {
@@ -545,7 +529,7 @@ func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *
 				} else if err != badger.ErrKeyNotFound {
 					return err
 				}
-				current, err = b.temporalHistoryNodeAsOfInTxn(txn, target, asOf, nil, false)
+				current, _, err = b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: asOf})
 				return err
 			})
 		}
@@ -584,7 +568,7 @@ func (b *BadgerEngine) clearBadgerPrefix(ctx context.Context, prefix byte) error
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 	wb := b.db.NewWriteBatch()
@@ -668,12 +652,20 @@ func (b *BadgerEngine) rebuildTemporalNodeInTxn(txn *badger.Txn, node *Node, asO
 
 // RebuildTemporalIndexes recreates the temporal history and current-pointer indexes from stored nodes.
 func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// The index is replaced wholesale from the stored nodes: a maintenance
+	// write (beginMaintenanceWrite), so every write-behind commit
+	// acknowledged before it is applied first and no write runs across it.
+	lifecycle, err := b.beginMaintenanceWrite(nil)
+	if err != nil {
+		return err
+	}
+	defer lifecycle.finish()
 	// The index is cleared and refilled below: until that finishes no
 	// constraint's index may be trusted to be complete.
 	b.temporalIndexReady.Store(false)
@@ -692,10 +684,12 @@ func (b *BadgerEngine) RebuildTemporalIndexes(ctx context.Context) error {
 		return err
 	}
 	asOf := time.Now().UTC()
-	if err := StreamStoredNodes(ctx, b, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
+	// The store's own nodes, every one (no decay filter): StreamStoredNodes on b.
+	if err := b.StreamNodesWithOptions(ctx, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		maintenancePause(pauseTemporalRebuildNode)
 		return b.withUpdate(func(txn *badger.Txn) error {
 			return b.rebuildTemporalNodeInTxn(txn, node, asOf)
 		})
@@ -774,7 +768,7 @@ type temporalPruneGroup struct {
 
 // PruneTemporalHistory removes older closed temporal versions according to opts.
 func (b *BadgerEngine) PruneTemporalHistory(ctx context.Context, opts TemporalPruneOptions) (int64, error) {
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
 	if opts.MaxVersionsPerKey <= 0 && opts.MinRetentionAge <= 0 {
@@ -939,19 +933,62 @@ func (tx *BadgerTransaction) bufferTemporalIndexWrites() (map[string]temporalRef
 	return targets, nil
 }
 
+// temporalPointerState keeps direct transaction reads and commit-overlay reads
+// explicit while both publish through the same target and batch-writer owner.
+type temporalPointerState struct {
+	readTxn *badger.Txn
+	at      time.Time
+	pending map[NodeID]*Node
+	deleted map[NodeID]struct{}
+}
+
 // refreshTemporalCurrentPointers recomputes the current-version pointer of
 // every temporal key the commit touched, writing through the commit writer w
 // (see Commit); each pointer is its own unit.
-func (tx *BadgerTransaction) refreshTemporalCurrentPointers(w *batchWriter, targets map[string]temporalRefreshTarget) error {
+func (b *BadgerEngine) refreshTemporalCurrentPointers(w *batchWriter, targets map[string]temporalRefreshTarget, state temporalPointerState) error {
 	if len(targets) == 0 {
 		return nil
 	}
-	now := time.Now().UTC()
-	exclude := make(map[NodeID]struct{}, util.SafePreallocSum(len(tx.deletedNodes), len(tx.pendingNodes)))
-	for nodeID := range tx.deletedNodes {
+	now := state.at
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	publish := func(target temporalRefreshTarget, id NodeID) error {
+		currentKey := temporalCurrentKey(target.desc)
+		return w.write(func(txn *badger.Txn) error {
+			if id == "" {
+				err := txn.Delete(currentKey)
+				if err == badger.ErrKeyNotFound {
+					return nil
+				}
+				return err
+			}
+			return txn.Set(currentKey, []byte(id))
+		})
+	}
+	// The direct operation already holds its transaction and target map. Keep
+	// each result on the stack instead of allocating commit-overlay maps.
+	if state.readTxn != nil {
+		for _, target := range targets {
+			node, _, err := b.visitTemporalHistoryNodeInTxn(state.readTxn, target, temporalHistorySelection{at: now})
+			if err != nil {
+				return err
+			}
+			var id NodeID
+			if node != nil {
+				id = node.ID
+			}
+			if err := publish(target, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	exclude := make(map[NodeID]struct{}, util.SafePreallocSum(len(state.deleted), len(state.pending)))
+	for nodeID := range state.deleted {
 		exclude[nodeID] = struct{}{}
 	}
-	for nodeID := range tx.pendingNodes {
+	for nodeID := range state.pending {
 		exclude[nodeID] = struct{}{}
 	}
 
@@ -963,7 +1000,7 @@ func (tx *BadgerTransaction) refreshTemporalCurrentPointers(w *batchWriter, targ
 		start time.Time
 	}
 	bestPending := make(map[string]pendingCurrent)
-	for _, node := range tx.pendingNodes {
+	for _, node := range state.pending {
 		if node == nil {
 			continue
 		}
@@ -971,7 +1008,7 @@ func (tx *BadgerTransaction) refreshTemporalCurrentPointers(w *batchWriter, targ
 		if !ok {
 			continue
 		}
-		for _, c := range temporalConstraintsForLabels(tx.engine.GetSchemaForNamespace(namespace), node.Labels) {
+		for _, c := range temporalConstraintsForLabels(b.GetSchemaForNamespace(namespace), node.Labels) {
 			target, _, ok := temporalTargetForNode(namespace, node, c)
 			if !ok {
 				continue
@@ -1000,12 +1037,12 @@ func (tx *BadgerTransaction) refreshTemporalCurrentPointers(w *batchWriter, targ
 		current[key] = p.id
 	}
 	if len(current) < len(targets) {
-		if err := tx.engine.withView(func(txn *badger.Txn) error {
+		read := func(txn *badger.Txn) error {
 			for key, target := range targets {
 				if _, done := current[key]; done {
 					continue
 				}
-				node, err := tx.engine.temporalHistoryNodeAsOfInTxn(txn, target, now, exclude, false)
+				node, _, err := b.visitTemporalHistoryNodeInTxn(txn, target, temporalHistorySelection{at: now, exclude: exclude})
 				if err != nil {
 					return err
 				}
@@ -1014,23 +1051,14 @@ func (tx *BadgerTransaction) refreshTemporalCurrentPointers(w *batchWriter, targ
 				}
 			}
 			return nil
-		}); err != nil {
+		}
+		if err := b.withView(read); err != nil {
 			return err
 		}
 	}
 
 	for _, target := range targets {
-		currentKey := temporalCurrentKey(target.desc)
-		id := current[temporalTargetMapKey(target)]
-		if err := w.write(func(txn *badger.Txn) error {
-			if id == "" {
-				if err := txn.Delete(currentKey); err != nil && err != badger.ErrKeyNotFound {
-					return err
-				}
-				return nil
-			}
-			return txn.Set(currentKey, []byte(id))
-		}); err != nil {
+		if err := publish(target, current[temporalTargetMapKey(target)]); err != nil {
 			return err
 		}
 	}

@@ -109,13 +109,13 @@ func TestBadgerEngine_TemporalIndexHelpers_ExtraBranches(t *testing.T) {
 		p := temporalHistoryPrefix(t1.desc)
 		require.NoError(t, txn.Set(append([]byte{}, p...), []byte{}))
 
-		prev, next, err := engine.temporalAdjacentNodesInTxn(txn, t1, base.Add(48*time.Hour), "")
+		prev, next, err := engine.visitTemporalHistoryNodeInTxn(txn, t1, temporalHistorySelection{at: base.Add(48 * time.Hour), adjacent: true})
 		require.NoError(t, err)
 		require.NotNil(t, prev)
 		require.NotNil(t, next)
 
 		// Excluding n2 should remove forward candidate.
-		_, next, err = engine.temporalAdjacentNodesInTxn(txn, t1, base.Add(48*time.Hour), "test:n2")
+		_, next, err = engine.visitTemporalHistoryNodeInTxn(txn, t1, temporalHistorySelection{at: base.Add(48 * time.Hour), excludeNodeID: "test:n2", adjacent: true})
 		require.NoError(t, err)
 		require.Nil(t, next)
 		return nil

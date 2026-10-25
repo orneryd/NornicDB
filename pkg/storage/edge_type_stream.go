@@ -139,7 +139,7 @@ func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edge
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurScan)
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 
@@ -151,9 +151,9 @@ func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edge
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
 		if edgeType != "" {
-			overlay, touched = w.typeOverlayLocked(edgeType)
+			overlay, touched = b.bufferedTypeEdges(w, v, edgeType)
 		} else {
-			overlay, touched = w.allEdgesOverlayLocked()
+			overlay, touched = b.bufferedAllEdges(w, v)
 		}
 	}
 
@@ -205,7 +205,7 @@ func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edge
 		return err
 	}
 	for _, e := range overlay {
-		if !edgeIDInScope(e.ID, scope) || b.hidesEdge(v, e, nowNanos) {
+		if !edgeIDInScope(e.ID, scope) {
 			continue
 		}
 		if err := visit(copyEdge(e)); err != nil {

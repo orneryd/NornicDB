@@ -59,16 +59,20 @@ func TestWriteBehind_NodeKeyBulkLoadScalesLinearly(t *testing.T) {
 		t.Skip("timing test")
 	}
 	run := func(n int) time.Duration {
-		engine := newWriteBehindTestEngine(t, time.Hour)
-		sm := engine.GetSchemaForNamespace("test")
-		require.NoError(t, sm.AddConstraint(factKey))
-		idx, _ := sm.ConstraintPropertyIndex(factKey.Name)
-		require.NoError(t, sm.BackfillCompositeIndex(idx.Name, nil))
-		start := time.Now()
-		for i := 0; i < n; i++ {
-			require.NoError(t, bufferedTry(t, engine, factNode(fmt.Sprintf("n-%d", i), int64(i), "name", 1)))
-		}
-		return time.Since(start)
+		var elapsed time.Duration
+		t.Run(fmt.Sprintf("nodes-%d", n), func(t *testing.T) {
+			engine := newWriteBehindTestEngine(t, time.Hour)
+			sm := engine.GetSchemaForNamespace("test")
+			require.NoError(t, sm.AddConstraint(factKey))
+			idx, _ := sm.ConstraintPropertyIndex(factKey.Name)
+			require.NoError(t, sm.BackfillCompositeIndex(idx.Name, nil))
+			start := time.Now()
+			for i := 0; i < n; i++ {
+				require.NoError(t, bufferedTry(t, engine, factNode(fmt.Sprintf("n-%d", i), int64(i), "name", 1)))
+			}
+			elapsed = time.Since(start)
+		})
+		return elapsed
 	}
 	run(200)
 	small, large := run(1000), run(8000)

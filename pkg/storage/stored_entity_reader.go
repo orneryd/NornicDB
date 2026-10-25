@@ -319,70 +319,36 @@ func streamStoredEdgesByTypeInScope(ctx context.Context, engine Engine, scope, e
 
 // GetStoredNode is GetNode's stored read (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredNode(id NodeID) (*Node, error) {
-	node, err := GetStoredNode(n.inner, n.prefixNodeID(id))
-	if err != nil {
-		return nil, err
-	}
-	return n.toUserNode(node), nil
+	return materializedRead(func() (*Node, error) { return GetStoredNode(n.inner, n.prefixNodeID(id)) }, func(value *Node) *Node { return n.toUserNode(value, nodeUserView{}) }, false)
 }
 
 // GetStoredEdge is GetEdge's stored read (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredEdge(id EdgeID) (*Edge, error) {
-	edge, err := GetStoredEdge(n.inner, n.prefixEdgeID(id))
-	if err != nil {
-		return nil, err
-	}
-	return n.toUserEdge(edge), nil
+	return materializedRead(func() (*Edge, error) { return GetStoredEdge(n.inner, n.prefixEdgeID(id)) }, func(value *Edge) *Edge { return n.toUserEdge(value) }, false)
 }
 
 // GetStoredOutgoingEdges is GetOutgoingEdges' stored read
 // (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	edges, err := GetStoredOutgoingEdges(n.inner, n.prefixNodeID(nodeID))
-	if err != nil {
-		return nil, err
-	}
-	return n.toUserEdgesInNamespace(edges), nil
+	return materializedRead(func() ([]*Edge, error) { return GetStoredOutgoingEdges(n.inner, n.prefixNodeID(nodeID)) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, true, false) }, false)
 }
 
 // GetStoredIncomingEdges is GetIncomingEdges' stored read
 // (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	edges, err := GetStoredIncomingEdges(n.inner, n.prefixNodeID(nodeID))
-	if err != nil {
-		return nil, err
-	}
-	return n.toUserEdgesInNamespace(edges), nil
+	return materializedRead(func() ([]*Edge, error) { return GetStoredIncomingEdges(n.inner, n.prefixNodeID(nodeID)) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, true, false) }, false)
 }
 
 // GetStoredNodesByLabel is GetNodesByLabel's stored read
 // (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredNodesByLabel(label string) ([]*Node, error) {
-	nodes, err := getStoredNodesByLabelInScope(n.inner, n.nodeScope(), label)
-	if err != nil {
-		return nil, err
-	}
-	var filtered []*Node
-	for _, node := range nodes {
-		if node != nil && n.hasNodePrefix(node.ID) {
-			filtered = append(filtered, n.toUserNode(node))
-		}
-	}
-	return filtered, nil
+	return materializedRead(func() ([]*Node, error) { return getStoredNodesByLabelInScope(n.inner, n.nodeScope(), label) }, func(nodes []*Node) []*Node { return n.toUserNodesInNamespace(nodes, true) }, false)
 }
 
 // StreamStoredNodesByLabelProjected is StreamNodesByLabelProjected's stored
 // read (StoredEntityReader).
 func (n *NamespacedEngine) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*Node) error) error {
-	if visit == nil {
-		return ErrInvalidData
-	}
-	return streamStoredNodesByLabelProjectedInScope(n.inner, n.nodeScope(), label, properties, func(node *Node) error {
-		if node == nil || !n.hasNodePrefix(node.ID) {
-			return nil
-		}
-		return visit(n.toUserNode(node))
-	})
+	return n.streamNamespaceNodesProjected(label, properties, visit, true)
 }
 
 // StreamStoredEdgesByType is StreamEdgesByType's stored read
@@ -400,12 +366,36 @@ func (n *NamespacedEngine) StreamStoredEdgesByType(ctx context.Context, edgeType
 }
 
 // toUserEdgesInNamespace keeps the edges of this database, unprefixed.
-func (n *NamespacedEngine) toUserEdgesInNamespace(edges []*Edge) []*Edge {
-	var filtered []*Edge
-	for _, edge := range edges {
-		if edge != nil && n.hasEdgePrefix(edge.ID) {
-			filtered = append(filtered, n.toUserEdge(edge))
-		}
+func (n *NamespacedEngine) toUserEdgesInNamespace(edges []*Edge, skipNil bool, reserve bool) []*Edge {
+	var empty []*Edge
+	if reserve {
+		empty = []*Edge{}
 	}
-	return filtered
+	return materializedCollection(edges, empty, func(edges []*Edge) []*Edge {
+		project := func(edge *Edge) *Edge {
+			if skipNil && edge == nil {
+				return nil
+			}
+			if !n.hasEdgePrefix(edge.ID) {
+				return nil
+			}
+			return n.toUserEdge(edge)
+		}
+		if reserve {
+			reserved := make([]*Edge, 0, len(edges))
+			materializedValues(edges, func(edge *Edge) {
+				if view := project(edge); view != nil {
+					reserved = append(reserved, view)
+				}
+			})
+			return reserved
+		}
+		var out []*Edge
+		materializedValues(edges, func(edge *Edge) {
+			if view := project(edge); view != nil {
+				out = append(out, view)
+			}
+		})
+		return out
+	})
 }
