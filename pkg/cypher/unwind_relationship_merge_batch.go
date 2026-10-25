@@ -189,47 +189,17 @@ func parseRelationshipBatchMergeClause(clause, unwindVar string) (relationshipMe
 		return spec, false
 	}
 	body = pipelineClauseBody(body, "MERGE")
-	arrowIdx := strings.Index(body, "]->")
-	if arrowIdx < 0 {
+	startVar, declaration, endVar, ok := boundOutgoingRelationship(body)
+	if !ok || !isSimpleIdentifier(declaration.variable) {
 		return spec, false
 	}
-	lBracketIdx := strings.LastIndex(body[:arrowIdx], "-[")
-	if lBracketIdx < 0 {
+	relVar := declaration.variable
+	relType, ok := declaration.singleStaticType()
+	if !ok {
 		return spec, false
 	}
-	startPart := strings.TrimSpace(body[:lBracketIdx])
-	if !strings.HasPrefix(startPart, "(") || !strings.HasSuffix(startPart, ")") {
-		return spec, false
-	}
-	startVar := strings.TrimSpace(startPart[1 : len(startPart)-1])
-	if !isSimpleIdentifier(startVar) {
-		return spec, false
-	}
-
-	endPart := strings.TrimSpace(body[arrowIdx+3:])
-	if !strings.HasPrefix(endPart, "(") || !strings.HasSuffix(endPart, ")") {
-		return spec, false
-	}
-	endVar := strings.TrimSpace(endPart[1 : len(endPart)-1])
-	if !isSimpleIdentifier(endVar) {
-		return spec, false
-	}
-
-	rel := strings.TrimSpace(body[lBracketIdx+2 : arrowIdx])
-	braceIdx := strings.Index(rel, "{")
-	closeBrace := strings.LastIndex(rel, "}")
-	if braceIdx <= 0 || closeBrace <= braceIdx || strings.TrimSpace(rel[closeBrace+1:]) != "" {
-		return spec, false
-	}
-	head := strings.TrimSpace(rel[:braceIdx])
-	propsBody := strings.TrimSpace(rel[braceIdx+1 : closeBrace])
-	headParts := strings.SplitN(head, ":", 2)
-	if len(headParts) != 2 {
-		return spec, false
-	}
-	relVar := strings.TrimSpace(headParts[0])
-	relType := strings.TrimSpace(headParts[1])
-	if !isSimpleIdentifier(relVar) || !isSimpleIdentifier(relType) {
+	propsBody, ok := declaration.propertyMapBody()
+	if !ok {
 		return spec, false
 	}
 	rowRefs, literals, ok := parsePropsBodyForUnwindFastPath(propsBody, unwindVar)

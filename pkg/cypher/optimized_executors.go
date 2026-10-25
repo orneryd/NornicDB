@@ -26,6 +26,13 @@ import (
 func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, patternInfo PatternInfo) (*ExecuteResult, bool) {
 	switch patternInfo.Pattern {
 	case PatternMutualRelationship:
+		// PatternInfo is public and may have been retained by a caller. Admit
+		// the query through the owner again before trusting its scalar hint.
+		admitted, ok := admitRelationshipOptimization(ctx, query, PatternMutualRelationship)
+		if !ok {
+			return nil, false
+		}
+		patternInfo = admitted
 		// Parse RETURN clause to get actual column names/aliases
 		returnItems := e.extractReturnItemsFromQuery(ctx, query)
 		columns := e.buildColumnsFromReturnItems(returnItems)
@@ -117,6 +124,11 @@ func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, pa
 // =============================================================================
 
 func (e *StorageExecutor) executeRelationshipCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+	admitted, ok := admitRelationshipOptimization(ctx, query, info.Pattern)
+	if !ok || info.Pattern != PatternIncomingCountAgg && info.Pattern != PatternOutgoingCountAgg {
+		return nil, fmt.Errorf("relationship count optimization declined")
+	}
+	info = admitted
 	// Parse RETURN clause to get actual column names/aliases
 	returnItems := e.extractReturnItemsFromQuery(ctx, query)
 	columns := e.buildColumnsFromReturnItems(returnItems)
@@ -198,6 +210,11 @@ type edgeAggStats struct {
 }
 
 func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+	admitted, ok := admitRelationshipOptimization(ctx, query, PatternEdgePropertyAgg)
+	if !ok {
+		return nil, fmt.Errorf("edge property optimization declined")
+	}
+	info = admitted
 	// This optimization handles queries like:
 	// MATCH (c)-[r:REVIEWED]->(p) RETURN p.name, avg(r.rating), count(r)
 	// GROUP BY p (the end node)
@@ -218,6 +235,9 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 	aggMap := make(map[storage.NodeID]*edgeAggStats)
 
 	for _, edge := range allEdges {
+		if info.RelType != "" && edge.Type != info.RelType {
+			continue
+		}
 		// Get property value
 		propVal, exists := edge.Properties[info.AggProperty]
 		if !exists {

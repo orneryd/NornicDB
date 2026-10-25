@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/auth"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
 )
 
@@ -123,12 +124,12 @@ func (r *mutationResolver) mutationMergeNode(ctx context.Context, labels []strin
 			whereClause += " AND "
 		}
 		paramName := fmt.Sprintf("p%d", i)
-		whereClause += fmt.Sprintf("n.%s = $%s", k, paramName)
+		whereClause += fmt.Sprintf("n.%s = $%s", cyphertext.NameText(k, "key"), paramName)
 		params[paramName] = v
 		i++
 	}
 
-	query := fmt.Sprintf("MATCH (n:%s) WHERE %s RETURN n LIMIT 1", label, whereClause)
+	query := fmt.Sprintf("MATCH (n:%s) WHERE %s RETURN n LIMIT 1", cyphertext.NameText(label, "label"), whereClause)
 	result, err := r.executeCypher(ctx, query, params, "")
 	if err == nil && len(result.Rows) > 0 {
 		// Update existing node - Rows is [][]interface{}

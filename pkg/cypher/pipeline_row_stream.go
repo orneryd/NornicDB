@@ -273,7 +273,7 @@ func (e *StorageExecutor) compilePipelineNodeMatchSource(clause string) pipeline
 	for _, template := range templates {
 		for _, property := range template.properties {
 			for _, reference := range semanticExpressionReferences(property.expr) {
-				variable := strings.SplitN(reference, ".", 2)[0]
+				variable := reference.variable
 				if _, dependent := variables[variable]; dependent {
 					return plan
 				}

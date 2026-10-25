@@ -1,0 +1,18 @@
+{
+  "pkg/cypher/knowledgepolicy_procedures.go": {
+    "quoteKnowledgePolicyName": "Distinct Cypher string-literal grammar for profile names, not symbolic-name emission. formatDecayBindingApply and formatPromotionPolicyApply retain authored PropertyPath, Predicate and mutation.Expression source. Their separate formatting subjects do not grant QuoteName reach.",
+    "formatDecayBindingApply": "Distinct profile-name string grammar; PropertyPath is retained authored source. The formatting subject checks ProfileRef output but does not create symbolic-name recorder evidence or cover every property-rule branch.",
+    "formatPromotionPolicyApply": "Distinct profile-name string grammar; Predicate and mutation.Expression are retained authored source. The formatting subject checks WHEN/profile output; mutation/ON ACCESS branches retain a source-only disposition."
+  },
+  "pkg/cypher/schema_type_properties.go": {
+    "schemaTypeKey": "Presentation key for db.schema type metadata, not executable source. Delegates symbolic-name escaping but no execution proof is claimed."
+  },
+  "pkg/cypher/explain.go": {
+    "(*StorageExecutor).analyzeNodeScan": "EXPLAIN description text delegates symbolic-name escaping. Recording proves construction only; descriptions are not executable statements."
+  },
+  "ui/src/utils/api.ts": {
+    "quoteCypherIdentifier": "Database administration uses its existing validated database-name protocol. Internal-backtick database support is excluded by the database reader contract; this suite does not drive database creation or deletion.",
+    "createDatabase": "CREATE DATABASE uses the distinct validated database-name administration protocol, including intentional API trimming. No generic decoded label/type/key identity or live database-DDL execution claim.",
+    "dropDatabase": "DROP DATABASE uses the distinct validated database-name administration protocol, including intentional API trimming. No generic decoded label/type/key identity or live database-DDL execution claim."
+  }
+}

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph3D, { type ForceGraph3DInstance } from "3d-force-graph";
 import * as THREE from "three";
 import { api, type CypherResponse } from "../utils/api";
+import { cypherResultRecord } from "../utils/cypherResults";
 import { generateGalaxy, type DemoGalaxy } from "../utils/demoSeed";
 
 const DEMO_DB = "d3_demo";
@@ -102,13 +103,7 @@ function rowsFromCypher(resp: CypherResponse): ParsedRow[] {
   const r = resp.results?.[0];
   const cols = r?.columns ?? [];
   const data = r?.data ?? [];
-  return data.map((d) => {
-    const out: ParsedRow = {};
-    for (let i = 0; i < cols.length; i++) {
-      out[cols[i]] = d.row[i];
-    }
-    return out;
-  });
+  return data.map((d) => cypherResultRecord(cols, d.row));
 }
 
 function chunk<T>(arr: T[], size: number): T[][] {

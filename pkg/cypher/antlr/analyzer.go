@@ -2,6 +2,7 @@
 package antlr
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sync"
 
 	"github.com/antlr4-go/antlr/v4"
@@ -321,7 +322,7 @@ func (w *queryWalker) EnterRelationshipTypes(ctx *RelationshipTypesContext) {
 
 func labelExpressionNames(tree antlr.Tree) []string {
 	if name, ok := tree.(INameContext); ok {
-		return []string{name.GetText()}
+		return []string{cyphertext.SymbolicNameValue(name.GetText())}
 	}
 	var names []string
 	for _, child := range tree.GetChildren() {

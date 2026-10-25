@@ -655,7 +655,7 @@ export function KnowledgePolicyEditorGrids({
     bundleApi.validate.setValidator(
       "requiredForCustom",
       () => (_oldValue, newValue, row) =>
-        row?.ScoreFrom !== "CUSTOM" || String(newValue ?? "").trim().length > 0,
+        row?.ScoreFrom !== "CUSTOM" || String(newValue ?? "").length > 0,
       () => "An anchor property is required when score source is CUSTOM",
     );
     return bundleApi.edit.on.afterCellEdit(

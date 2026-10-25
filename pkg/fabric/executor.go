@@ -935,7 +935,7 @@ func bindingsFromParentAndRow(parent map[string]interface{}, columns []string, r
 		if i >= len(row) {
 			break
 		}
-		if strings.TrimSpace(col) == "" {
+		if col == "" {
 			continue
 		}
 		out[col] = row[i]
@@ -954,7 +954,7 @@ func rowBindings(columns []string, row []interface{}) map[string]interface{} {
 		if i >= len(row) {
 			break
 		}
-		if strings.TrimSpace(col) == "" {
+		if col == "" {
 			continue
 		}
 		out[col] = row[i]
@@ -1705,7 +1705,6 @@ func (e *FabricExecutor) executeApplyAsPipeline(
 	rowsParam, rowVar := freeName("__fabric_apply_rows", trimmed, params), freeName("__fabric_row", trimmed, inputNames)
 	projections := make([]string, 0, len(inputResult.Columns))
 	for _, col := range inputResult.Columns {
-		col = strings.TrimSpace(col)
 		if col == "" {
 			continue
 		}
@@ -1815,7 +1814,6 @@ func mergeImportColumns(a, b []string) []string {
 	seen := make(map[string]struct{}, len(a)+len(b))
 	out := make([]string, 0, len(a)+len(b))
 	for _, col := range a {
-		col = strings.TrimSpace(col)
 		if col == "" {
 			continue
 		}
@@ -1826,7 +1824,6 @@ func mergeImportColumns(a, b []string) []string {
 		out = append(out, col)
 	}
 	for _, col := range b {
-		col = strings.TrimSpace(col)
 		if col == "" {
 			continue
 		}
@@ -2017,7 +2014,6 @@ func rewriteLeadingWithImports(query string, importCols []string) string {
 	}
 	assignments := make([]string, 0, len(importCols))
 	for _, col := range importCols {
-		col = strings.TrimSpace(col)
 		if col == "" {
 			continue
 		}
@@ -2073,7 +2069,6 @@ func isSimpleWithImportClause(withClause string, importCols []string) bool {
 	}
 	allowed := make(map[string]struct{}, len(importCols))
 	for _, col := range importCols {
-		col = strings.TrimSpace(col)
 		if col == "" {
 			continue
 		}
@@ -2253,7 +2248,7 @@ func minInt(a, b int) int {
 func buildColumnIndex(cols []string) map[string]int {
 	idx := make(map[string]int, len(cols))
 	for i, col := range cols {
-		if strings.TrimSpace(col) == "" {
+		if col == "" {
 			continue
 		}
 		idx[col] = i

@@ -213,7 +213,7 @@ func groupByEdit(query string, clause projectionWord, groupStart, keysStart, key
 		grouping = append(grouping, key+" AS "+groupByVariable("gb", index))
 	}
 	for index, item := range items {
-		column := labelExpressionNameText(item.alias)
+		column := labelExpressionNameText(item.alias, "alias")
 		if item.aggregates {
 			name := groupByVariable("agg", index)
 			grouping = append(grouping, item.expression+" AS "+name)

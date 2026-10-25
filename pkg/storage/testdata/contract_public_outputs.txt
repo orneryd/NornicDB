@@ -1,0 +1,17 @@
+# Exported APIs that can return constraint contract data, each with the
+# TestContractPublicOutputsAreDetached subject that exercises it.
+# Format: API|subject. TestContractPublicOutputsAreInventoried derives the
+# API list from the package's declarations.
+CompileConstraintContract|compile
+CompiledConstraintContract.Contract|contracts
+ConstraintFact.Constraint|facts
+SchemaManager.CompiledConstraintContracts|contracts
+SchemaManager.ExportDefinition|definition
+SchemaManager.GetAllConstraintContracts|contracts
+SchemaManager.GetAllConstraints|constraints
+SchemaManager.GetAllPropertyTypeConstraints|property-types
+SchemaManager.GetConstraintContractsForTarget|contracts
+SchemaManager.GetConstraintsForLabels|constraints
+SchemaManager.GetPropertyTypeConstraintsForLabels|property-types
+SchemaManager.SetPersister|persister
+SchemaManager.VisitConstraints|facts

@@ -55,7 +55,9 @@ func TestPublicationConstraintViewOwnsCompositeRelationshipProperties(t *testing
 		publicationUniqueKey{namespace: "alpha", value: uniqueConstraintLockKey{label: "\x00relationship:KNOWS", property: property, value: NewCompositeKey(newValues...).Hash}},
 	}
 	schema.mu.Lock()
-	schema.constraints["rel"].Properties[0] = "changed"
+	definition := schema.constraints["rel"].snapshot()
+	definition.Properties[0] = "changed"
+	schema.constraints["rel"] = installConstraintDefinition(definition)
 	schema.mu.Unlock()
 	require.Equal(t, want, appendEdgePublicationKeys(nil, &view, old.ID, old, written), "captured composite property names remain owned")
 	unrelated := *written

@@ -9,11 +9,11 @@ import (
 func TestQueryAnalyzer_AnalyzeQuery(t *testing.T) {
 	a := NewQueryAnalyzer()
 
-	// Label extraction in this lightweight analyzer expects explicit ":Label" tokens.
+	// A text-only compatibility entry has no parsed schema hints.
 	readWithLabelToken := a.AnalyzeQuery("MATCH :Person RETURN n")
-	assert.Contains(t, readWithLabelToken.Labels, "PERSON")
+	assert.Empty(t, readWithLabelToken.Labels)
 	assert.False(t, readWithLabelToken.IsWrite)
-	assert.False(t, readWithLabelToken.IsFullScan)
+	assert.True(t, readWithLabelToken.IsFullScan)
 
 	write := a.AnalyzeQuery("CREATE (n:Person {name: 'a'})")
 	assert.True(t, write.IsWrite)
@@ -44,10 +44,10 @@ func TestQueryAnalyzer_RouteQuery_LabelRouting(t *testing.T) {
 func TestQueryAnalyzer_AnalyzeQuery_ParenLabel(t *testing.T) {
 	a := NewQueryAnalyzer()
 
-	// Test the ( :Label pattern — triggers the uncovered branch at line 73
-	// where a label follows "(" or ","
+	// Spacing does not authorize a second pattern reader.
 	q := a.AnalyzeQuery("MATCH ( :Person ) RETURN n")
-	assert.Contains(t, q.Labels, "PERSON")
+	assert.Empty(t, q.Labels)
+	assert.True(t, q.IsFullScan)
 	assert.False(t, q.IsWrite)
 }
 

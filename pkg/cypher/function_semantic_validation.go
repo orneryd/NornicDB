@@ -97,7 +97,20 @@ func forEachFunctionCall(text string, visit func(name, normalized string) error)
 // exposes the argument delimiter to consumers that need invocation semantics.
 func forEachFunctionInvocation(text string, visit func(name, normalized string, open int) error) error {
 	expression := text
+	// The parameter owner supplies complete reference extents, including
+	// quoted names. A following pattern parenthesis is not a function call.
+	var parameterEnds map[int]int
+	cyphertext.ParameterReferences(expression, func(_ string, start, end int) {
+		if parameterEnds == nil {
+			parameterEnds = map[int]int{}
+		}
+		parameterEnds[start] = end
+	})
 	for index := 0; index < len(expression); {
+		if end := parameterEnds[index]; end > index {
+			index = end
+			continue
+		}
 		if expression[index] >= 0x80 {
 			if width := queryWhitespaceAt(expression, index); width > 0 {
 				index += width
@@ -149,15 +162,19 @@ func forEachFunctionInvocation(text string, visit func(name, normalized string, 
 			index = skipCalledName(expression, name.End)
 			continue
 		}
-		parts, cursor := dottedNameParts(expression, name.End, true)
-		name.Value += parts
+		qualified, cursor, valid := qualifiedNameAt(expression, index)
+		if !valid {
+			index = name.End
+			continue
+		}
+		name.Value = qualified
 		cursor = queryGapEnd(expression, cursor)
 		if cursor >= len(expression) || expression[cursor] != '(' {
 			index = name.End
 			continue
 		}
 		index = cursor + 1
-		normalized := lowerASCII(normalizeProjectionColumnName(name.Value))
+		normalized := lowerASCII(name.Value)
 		// Clause and predicate keywords can legally be followed by a parenthesized
 		// pattern/expression (MATCH (n), STARTS WITH (...)). They are syntax, not
 		// function invocations.
@@ -184,55 +201,11 @@ func isNonFunctionSemanticKeyword(name string) bool {
 // name, dotted, is not a function call. Anything else after
 // the keyword (a subquery, its imports) is scanned on.
 func skipCalledName(expression string, start int) int {
-	end, ok := cyphertext.ScanIdentifier(expression, skipSpaces(expression, start))
+	_, end, ok := qualifiedNameAt(expression, start)
 	if !ok {
 		return start
 	}
-	_, end.End = dottedNameParts(expression, end.End, true)
-	return end.End
-}
-
-// dottedNameParts returns the dotted parts (.b.c) following a name that ends
-// at end, and where they end. Each name is read as the code that runs it
-// reads it: whitespace may stand around a dot only when spaced is set, for a
-// procedure, function or graph name. Contiguous unquoted components reuse
-// the source slice; only names containing trivia or quotes are normalized.
-func dottedNameParts(expression string, end int, spaced bool) (string, int) {
-	skip := func(index int) int {
-		if spaced && index < len(expression) && (cyphertext.IsWhitespaceAt(expression, index) || expression[index] == '/' || expression[index] >= 0x80) {
-			return queryGapEnd(expression, index)
-		}
-		return index
-	}
-	origin := end
-	var normalized strings.Builder
-	normalizing := false
-	for {
-		dot := skip(end)
-		if dot >= len(expression) || expression[dot] != '.' {
-			if normalizing {
-				return normalized.String(), end
-			}
-			return expression[origin:end], end
-		}
-		partStart := skip(dot + 1)
-		part, ok := cyphertext.ScanIdentifier(expression, partStart)
-		if !ok {
-			if normalizing {
-				return normalized.String(), end
-			}
-			return expression[origin:end], end
-		}
-		if !normalizing && (dot != end || partStart != dot+1 || isCypherBacktickByte(expression[partStart])) {
-			normalized.WriteString(expression[origin:end])
-			normalizing = true
-		}
-		if normalizing {
-			normalized.WriteByte('.')
-			normalized.WriteString(part.Value)
-		}
-		end = part.End
-	}
+	return end
 }
 
 func skipQuotedSemanticText(expression string, start int) int {

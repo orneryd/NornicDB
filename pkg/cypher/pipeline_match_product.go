@@ -126,7 +126,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 	for _, template := range templates {
 		for _, property := range template.properties {
 			for _, reference := range semanticExpressionReferences(property.expr) {
-				variable := strings.SplitN(reference, ".", 2)[0]
+				variable := reference.variable
 				if _, dependent := variables[variable]; dependent {
 					return nil, false, nil
 				}

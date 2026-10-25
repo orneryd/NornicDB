@@ -236,11 +236,12 @@ func TestGraphComponents_IsolatedNodes(t *testing.T) {
 
 func TestNewGraphPropertyFilter(t *testing.T) {
 	require.Nil(t, newGraphPropertyFilter(graphPropertyFilterRequest{Scope: "Code"}))
-	require.Nil(t, newGraphPropertyFilter(graphPropertyFilterRequest{Property: "  "}))
+	require.Nil(t, newGraphPropertyFilter(graphPropertyFilterRequest{Property: ""}))
+	require.Equal(t, "  ", newGraphPropertyFilter(graphPropertyFilterRequest{Property: "  "}).property)
 
 	plain := newGraphPropertyFilter(graphPropertyFilterRequest{Scope: " Code ", Property: " entry "})
-	require.Equal(t, "Code", plain.scope)
-	require.Equal(t, "entry", plain.property)
+	require.Equal(t, " Code ", plain.scope)
+	require.Equal(t, " entry ", plain.property)
 	require.Nil(t, plain.value)
 
 	empty := ""

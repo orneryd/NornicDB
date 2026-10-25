@@ -16,10 +16,26 @@ const (
 	reportUnclosedRelationship
 )
 
-// readRelationshipBracket owns both closed lookup and malformed-pattern
-// reporting. Validation retains the opening offset of an unclosed bracket;
-// execution readers receive no bracket until both delimiters are present.
 func readRelationshipBracket(text string, from int, policy relationshipBracketPolicy) (open, close int) {
+	open, close = scanRelationshipBracketScope(text, from, false)
+	if close < 0 && policy == requireClosedRelationship {
+		return -1, -1
+	}
+	return open, close
+}
+
+func scanRelationshipBracket(text string, from int) (open, close int) {
+	return readRelationshipBracket(text, from, reportUnclosedRelationship)
+}
+
+func nextRelationshipBracketInExpressions(text string, from int) (open, close int) {
+	if open, close = scanRelationshipBracketScope(text, from, true); close < 0 {
+		return -1, -1
+	}
+	return open, close
+}
+
+func scanRelationshipBracketScope(text string, from int, includeExpressions bool) (open, close int) {
 	for index := from; index < len(text); index++ {
 		switch c := text[index]; cypherLexicalByte(c) {
 		case cypherQuoteClass:
@@ -29,6 +45,9 @@ func readRelationshipBracket(text string, from int, policy relationshipBracketPo
 				index = end - 1
 			}
 		case '{':
+			if includeExpressions {
+				continue
+			}
 			if end := cyphertext.FindMatchingDelimiter(text, index, '{', '}', cyphertext.OpeningDelimiter); end > index {
 				index = end
 			}
@@ -41,9 +60,6 @@ func readRelationshipBracket(text string, from int, policy relationshipBracketPo
 				continue
 			}
 			close := findMatchingBracket(text, index)
-			if close < 0 && policy == requireClosedRelationship {
-				return -1, -1
-			}
 			return index, close
 		}
 	}

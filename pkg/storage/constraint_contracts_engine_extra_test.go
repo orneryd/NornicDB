@@ -93,7 +93,7 @@ func TestAddConstraintContractBundle_Branches(t *testing.T) {
 	require.Contains(t, err.Error(), "already exists")
 
 	// conflict with existing constraint name branch.
-	sm.constraints["c_conflict"] = Constraint{Name: "c_conflict", Type: ConstraintUnique, Label: "Person", Properties: []string{"name"}}
+	sm.constraints["c_conflict"] = installConstraintDefinition(Constraint{Name: "c_conflict", Type: ConstraintUnique, Label: "Person", Properties: []string{"name"}})
 	err = sm.AddConstraintContractBundle(ConstraintContract{Name: "c_conflict", TargetEntityType: string(ConstraintEntityNode), TargetLabelOrType: "Person"}, nil, nil, false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "conflicts with an existing constraint name")

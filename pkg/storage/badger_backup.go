@@ -3,7 +3,6 @@ package storage
 
 import (
 	"bufio"
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"os"
@@ -116,12 +115,7 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	if err := db.Load(bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
-	// The restored derived-count deltas are folded, as open folds them:
-	// the engine that took the backup numbered them, and a new delta
-	// reusing one's suffix would overwrite it.
-	if err := b.foldRestoredCountDeltas(db); err != nil {
-		return localizedError(localization.StorageClientBackupFailed(err), err)
-	}
+
 	loader := heldViewer{db: db}
 	ids, keys := newIDDictionary(), newPropertyKeyDictionary()
 	if err := ids.loadFromBadger(loader); err != nil {
@@ -132,6 +126,11 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	}
 	b.idDict.replaceWith(ids)
 	b.propKeyDict.replaceWith(keys)
+	// The shared startup owners validate/rebuild counts while restore is still
+	// offline. Primary-record decoding uses the newly loaded dictionaries.
+	if err := b.foldRestoredCountDeltas(db); err != nil {
+		return localizedError(localization.StorageClientBackupFailed(err), err)
+	}
 	if err := b.initializeWALPropertyIdentity(db, true, true); err != nil {
 		return err
 	}
@@ -388,64 +387,6 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 		return 0, 0, nil, err
 	}
 
-	deleteIndexEntriesBySuffixPrefix := func(indexPrefix byte) error {
-		indexKeyPrefix := []byte{indexPrefix}
-		wb := b.db.NewWriteBatch()
-		defer wb.Cancel()
-
-		const flushEvery = 50_000
-		pending := 0
-
-		if err := b.db.viewHeld(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerPrefixIteratorOptions(indexKeyPrefix))
-			defer it.Close()
-
-			for it.Rewind(); it.ValidForPrefix(indexKeyPrefix); it.Next() {
-				item := it.Item()
-				key := item.Key()
-				if len(key) < 3 {
-					continue
-				}
-				sep := bytes.IndexByte(key[1:], 0x00)
-				if sep < 0 || 1+sep+1 >= len(key) {
-					continue
-				}
-				suffixID := key[1+sep+1:]
-				if !bytes.HasPrefix(suffixID, prefixBytes) {
-					continue
-				}
-
-				if err := wb.Delete(item.KeyCopy(nil)); err != nil {
-					return err
-				}
-				pending++
-				if pending >= flushEvery {
-					if err := wb.Flush(); err != nil {
-						return err
-					}
-					pending = 0
-				}
-			}
-			return nil
-		}); err != nil {
-			return err
-		}
-
-		if pending > 0 {
-			if err := wb.Flush(); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-
-	// Clean up secondary indexes where the db prefix appears in the suffix.
-	if err := deleteIndexEntriesBySuffixPrefix(prefixLabelIndex); err != nil {
-		return 0, 0, nil, localizedError(localization.StorageClientCleanLabelIndexFailed(err), err)
-	}
-	if err := deleteIndexEntriesBySuffixPrefix(prefixEdgeTypeIndex); err != nil {
-		return 0, 0, nil, localizedError(localization.StorageClientCleanEdgeTypeIndexFailed(err), err)
-	}
 	if len(deletedLabelCounts) > 0 {
 		if err := b.decrementLabelCounts(deletedLabelCounts); err != nil {
 			return 0, 0, nil, err

@@ -5,7 +5,6 @@ import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
-	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
@@ -40,18 +39,6 @@ type traversalOptRow struct {
 type optionalMatchClause struct {
 	pattern string
 	where   string
-}
-
-// optionalClauseEndpoints is the fully parsed form of one OPTIONAL MATCH
-// relationship pattern: both endpoint node patterns (variable, labels,
-// properties), the relationship variable/type, and the direction relative to
-// the source (left) endpoint.
-type optionalClauseEndpoints struct {
-	source    nodePatternInfo
-	target    nodePatternInfo
-	relVar    string
-	relType   string
-	direction string // "out", "in", or "both", relative to source
 }
 
 func (e *StorageExecutor) traversalOptionalWhereMatches(ctx context.Context, predicate string, row traversalOptRow) bool {
@@ -110,93 +97,17 @@ func splitOptionalMatchClauses(section string) []optionalMatchClause {
 // extractRelationshipVariables extracts relationship variable names from a
 // MATCH pattern, e.g. "rel" from "(a)-[rel:INHERITS]->(b)". Anonymous
 // relationships ("[:TYPE]", "[*1..2]") contribute nothing. A backtick-quoted
-// variable (`r r`) is returned as written.
+// variable (`r r`) is returned as written. The declaration owner reads the
+// variable, so one before a WHERE ([r WHERE …]) counts too.
 func extractRelationshipVariables(matchClause string) []string {
 	var vars []string
-	for i, end := readRelationshipBracket(matchClause, 0, requireClosedRelationship); i >= 0; i, end = readRelationshipBracket(matchClause, end+1, requireClosedRelationship) {
-		j := i + 1
-		for j < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, j) {
-			j++
-		}
-		name, next, ok := scanSymbolicName(matchClause, j)
-		if !ok {
-			continue
-		}
-		for next < len(matchClause) && cyphertext.IsWhitespaceAt(matchClause, next) {
-			next++
-		}
-		if next < len(matchClause) &&
-			(matchClause[next] == ':' || matchClause[next] == ']' || matchClause[next] == '*' || matchClause[next] == '{' || matchClause[next] == '$') {
+	for open, close := readRelationshipBracket(matchClause, 0, requireClosedRelationship); open >= 0; open, close = readRelationshipBracket(matchClause, close+1, requireClosedRelationship) {
+		variable := relationshipDeclarationHead(matchClause[open+1 : close]).variable
+		if name, end, ok := scanSymbolicName(variable, 0); ok && end == len(variable) {
 			vars = append(vars, name)
 		}
 	}
 	return vars
-}
-
-// parseOptionalClauseEndpoints parses one OPTIONAL MATCH relationship pattern
-// into both endpoint node patterns plus relationship variable, type, and
-// direction. It returns an error for patterns without two node endpoints.
-func (e *StorageExecutor) parseOptionalClauseEndpoints(ctx context.Context, pattern string) (optionalClauseEndpoints, error) {
-	eps := optionalClauseEndpoints{direction: "both"}
-	// Anonymous relationships (-->, <--, --) become bracketed ones, so the
-	// relationship bracket below always carries the direction.
-	pattern = normalizeAnonymousTraversalRelationships(pattern)
-
-	openIdx := strings.Index(pattern, "(")
-	if openIdx < 0 {
-		return eps, localizedError(localization.CypherMatchingOptionalMatchNodeEndpointMissing(truncateQuery(pattern, 60)), nil)
-	}
-	closeIdx := findMatchingParen(pattern, openIdx)
-	if closeIdx < 0 {
-		return eps, localizedError(localization.CypherMatchingOptionalMatchNodeEndpointUnterminated(truncateQuery(pattern, 60)), nil)
-	}
-	var parseErr error
-	eps.source, parseErr = e.parseNodePattern(ctx, pattern[openIdx:closeIdx+1])
-	if parseErr != nil {
-		return eps, parseErr
-	}
-
-	rest := pattern[closeIdx+1:]
-	if relOpen, relClose := readRelationshipBracket(rest, 0, requireClosedRelationship); relOpen >= 0 {
-		// The arrows around the relationship give the direction.
-		if strings.HasSuffix(strings.TrimSpace(rest[:relOpen]), "<-") {
-			eps.direction = "in"
-		} else if strings.HasPrefix(strings.TrimSpace(rest[relClose+1:]), "->") {
-			eps.direction = "out"
-		} else {
-			eps.direction = "both"
-		}
-		relStr := rest[relOpen+1 : relClose]
-		if colonIdx := strings.Index(relStr, ":"); colonIdx >= 0 {
-			eps.relVar = strings.TrimSpace(relStr[:colonIdx])
-			relType := strings.TrimSpace(relStr[colonIdx+1:])
-			if propIdx := strings.Index(relType, "{"); propIdx >= 0 {
-				relType = strings.TrimSpace(relType[:propIdx])
-			}
-			if starIdx := strings.Index(relType, "*"); starIdx >= 0 {
-				relType = strings.TrimSpace(relType[:starIdx])
-			}
-			eps.relType = relType
-		} else if starIdx := strings.Index(relStr, "*"); starIdx >= 0 {
-			eps.relVar = strings.TrimSpace(relStr[:starIdx])
-		} else {
-			eps.relVar = strings.TrimSpace(relStr)
-		}
-		rest = rest[relClose+1:]
-	}
-	tOpen := strings.Index(rest, "(")
-	if tOpen < 0 {
-		return eps, localizedError(localization.CypherMatchingOptionalMatchTargetEndpointMissing(truncateQuery(pattern, 60)), nil)
-	}
-	tClose := findMatchingParen(rest, tOpen)
-	if tClose < 0 {
-		return eps, localizedError(localization.CypherMatchingOptionalMatchTargetEndpointUnterminated(truncateQuery(pattern, 60)), nil)
-	}
-	eps.target, parseErr = e.parseNodePattern(ctx, rest[tOpen:tClose+1])
-	if parseErr != nil {
-		return eps, parseErr
-	}
-	return eps, nil
 }
 
 // invertOptionalDirection flips a traversal direction for seeding a join from

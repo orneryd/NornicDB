@@ -392,7 +392,13 @@ func parseDecayProfileBundleOptions(name, s string, i int) (interface{}, bool, e
 func parseDecayProfileOptions(body string) (map[string]interface{}, error) {
 	updates := make(map[string]interface{})
 	err := parseOptionsMap(body, func(key, rawVal string) error {
-		switch lowerASCII(key) {
+		option := lowerASCII(key)
+		// Numeric and enum options have their own value normalization. The
+		// custom anchor is an already-decoded property identity.
+		if option != "scorefromproperty" {
+			rawVal = strings.TrimSpace(rawVal)
+		}
+		switch option {
 		case "halflifeseconds":
 			n, err := strconv.ParseInt(rawVal, 10, 64)
 			if err != nil {
@@ -436,7 +442,7 @@ func parseDecayProfileOptions(body string) (map[string]interface{}, error) {
 			}
 			updates["scoreFrom"] = string(mode)
 		case "scorefromproperty":
-			updates["scoreFromProperty"] = strings.Trim(rawVal, "'\"")
+			updates["scoreFromProperty"] = rawVal
 		case "enabled":
 			b, err := strconv.ParseBool(rawVal)
 			if err != nil {
@@ -513,12 +519,13 @@ func parseForTarget(s string, i int, binding knowledgepolicy.DecayProfileBinding
 		labels := []string{}
 		for i < len(s) && s[i] == ':' {
 			i++
+			i = kpSkipSpaces(s, i)
 			label, j := cyphertext.IdentifierValue(s, i)
 			if label == "" {
 				return binding, i, localizedError(localization.CypherKnowledgePolicyLabelExpectedAfterColon(), nil)
 			}
 			labels = append(labels, label)
-			i = j
+			i = kpSkipSpaces(s, j)
 		}
 		binding.TargetLabels = labels
 	}
@@ -549,27 +556,19 @@ func parseEdgeTarget(s string, i int, binding knowledgepolicy.DecayProfileBindin
 	if i >= len(s) || s[i] != '[' {
 		return binding, i, localizedError(localization.CypherKnowledgePolicyEdgePatternExpectedIn("'['"), nil)
 	}
-	i++
-	i = kpSkipSpaces(s, i)
-
-	_, i = cyphertext.IdentifierValue(s, i)
-	i = kpSkipSpaces(s, i)
-
-	if i < len(s) && s[i] == ':' {
-		i++
-		edgeType, j := cyphertext.IdentifierValue(s, i)
-		if edgeType == "" {
+	close := findMatchingBracket(s, i)
+	if close < 0 {
+		return binding, i, localizedError(localization.CypherKnowledgePolicyEdgePatternExpectedIn("']'"), nil)
+	}
+	declaration := relationshipDeclarationOf(s[i+1 : close])
+	if declaration.hasColon {
+		if declaration.types.len() != 1 || declaration.invalidType != "" || declaration.dynamic || declaration.hasLength || declaration.properties != "" || declaration.predicate != "" {
 			return binding, i, localizedError(localization.CypherKnowledgePolicyEdgeTypeExpectedAfterColon(), nil)
 		}
-		binding.TargetEdgeType = edgeType
+		binding.TargetEdgeType = declaration.singleType()
 		binding.IsEdge = true
-		i = j
 	}
-
-	i = kpSkipSpaces(s, i)
-	if i < len(s) && s[i] == ']' {
-		i++
-	}
+	i = close + 1
 	if i < len(s) && s[i] == '-' {
 		i++
 	}
@@ -656,7 +655,7 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 		}
 
 		// Plan syntax: <var>.<prop> directives (e.g., n.tenantId NO DECAY)
-		if cyphertext.NameStartAt(body, i) {
+		if cyphertext.NameStartAt(body, i) || cyphertext.IsBacktick(body[i]) {
 			ident, j := cyphertext.IdentifierValue(body, i)
 			if ident != "" && j < len(body) && body[j] == '.' {
 				propName, k := cyphertext.IdentifierValue(body, j+1)
@@ -910,6 +909,7 @@ func parseCreatePromotionProfile(s string, i int) (interface{}, bool, error) {
 func parsePromotionProfileOptions(body string) (map[string]interface{}, error) {
 	updates := make(map[string]interface{})
 	err := parseOptionsMap(body, func(key, rawVal string) error {
+		rawVal = strings.TrimSpace(rawVal) // This profile contains only numeric, boolean and scope options.
 		switch lowerASCII(key) {
 		case "scope":
 			sc := knowledgepolicy.ScopeType(upperASCII(strings.Trim(rawVal, "'\"")))
@@ -1175,6 +1175,7 @@ func parseOnAccessBlock(source policyDDLSource) (*knowledgepolicy.PromotionPolic
 func parseKalmanConfigBlock(body string, cfg *knowledgepolicy.KalmanConfig) error {
 	hasR := false
 	if err := parseOptionsMap(body, func(key, rawVal string) error {
+		rawVal = strings.TrimSpace(rawVal) // Kalman configuration contains numeric options only.
 		switch lowerASCII(key) {
 		case "q":
 			f, err := strconv.ParseFloat(rawVal, 64)
@@ -1378,7 +1379,7 @@ func parseOptionsMap(body string, handler func(key, rawVal string) error) error 
 		rawVal, l := scanOptionValue(body, i)
 		i = l
 
-		if err := handler(key, strings.TrimSpace(rawVal)); err != nil {
+		if err := handler(key, rawVal); err != nil {
 			return err
 		}
 
@@ -1406,7 +1407,7 @@ func scanOptionValue(s string, i int) (string, int) {
 	for i < len(s) && s[i] != ',' && s[i] != ';' && s[i] != '\n' && s[i] != '}' {
 		i++
 	}
-	return s[start:i], i
+	return strings.TrimSpace(s[start:i]), i
 }
 
 func parseRawValue(raw string) interface{} {

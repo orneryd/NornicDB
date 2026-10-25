@@ -744,27 +744,25 @@ func parseCallTailNodeToken(input string) (variable, label, rest string, ok bool
 }
 
 func parseCallTailRelationshipToken(input string) (variable, relType, propertyKey, propertyExpr string, ok bool) {
-	rest := strings.TrimSpace(input)
-	variable, rest, ok = parseCallTailIdentifier(rest)
-	if !ok || variable == "" {
+	declaration := relationshipDeclarationOf(input)
+	variable, rest, ok := parseCallTailIdentifier(declaration.variable)
+	if !ok || variable == "" || strings.TrimSpace(rest) != "" {
 		return "", "", "", "", false
 	}
-	rest = strings.TrimSpace(rest)
-	if strings.HasPrefix(rest, ":") {
-		rest = strings.TrimSpace(rest[1:])
-		relType, rest, ok = parseCallTailIdentifier(rest)
-		if !ok || relType == "" {
+	if declaration.hasColon {
+		if relType, ok = declaration.singleStaticType(); !ok {
 			return "", "", "", "", false
 		}
-		rest = strings.TrimSpace(rest)
-	}
-	if rest == "" {
-		return variable, relType, "", "", true
-	}
-	if !strings.HasPrefix(rest, "{") {
+	} else if declaration.hasLength || declaration.lengthInvalid || declaration.predicate != "" {
 		return "", "", "", "", false
 	}
-	propertyKey, propertyExpr, rest, ok = parseCallTailSinglePropertyMap(rest)
+	if declaration.properties == "" {
+		return variable, relType, "", "", true
+	}
+	if !strings.HasPrefix(declaration.properties, "{") {
+		return "", "", "", "", false
+	}
+	propertyKey, propertyExpr, rest, ok = parseCallTailSinglePropertyMap(declaration.properties)
 	if !ok || strings.TrimSpace(rest) != "" {
 		return "", "", "", "", false
 	}
@@ -772,22 +770,16 @@ func parseCallTailRelationshipToken(input string) (variable, relType, propertyKe
 }
 
 func parseCallTailIdentifierAndOptionalType(input string) (variable, label string, ok bool) {
-	rest := strings.TrimSpace(input)
-	variable, rest, ok = parseCallTailIdentifier(rest)
-	if !ok || variable == "" {
+	variable, labels, valid := strictNodeHeadLabels(input)
+	if !valid || len(labels) > 1 {
 		return "", "", false
 	}
-	rest = strings.TrimSpace(rest)
-	if rest == "" {
-		return variable, "", true
-	}
-	if !strings.HasPrefix(rest, ":") {
+	variable, rest, ok := parseCallTailIdentifier(variable)
+	if !ok || variable == "" || strings.TrimSpace(rest) != "" {
 		return "", "", false
 	}
-	rest = strings.TrimSpace(rest[1:])
-	label, rest, ok = parseCallTailIdentifier(rest)
-	if !ok || label == "" || strings.TrimSpace(rest) != "" {
-		return "", "", false
+	if len(labels) == 1 {
+		label = labels[0]
 	}
 	return variable, label, true
 }
@@ -805,21 +797,11 @@ func parseCallTailSinglePropertyMap(input string) (key, expr, rest string, ok bo
 	if !ok {
 		return "", "", "", false
 	}
-	parts := splitTopLevelComma(inside)
-	if len(parts) != 1 {
+	expressions, err := parsePropertyExpressions("{" + inside + "}")
+	if err != nil || len(expressions) != 1 || !cyphertext.IsIdentifier(expressions[0].key) {
 		return "", "", "", false
 	}
-	inside = parts[0]
-	colonIdx := findTopLevelMapKeyValueSeparator(inside)
-	if colonIdx <= 0 {
-		return "", "", "", false
-	}
-	key = strings.TrimSpace(inside[:colonIdx])
-	expr = strings.TrimSpace(inside[colonIdx+1:])
-	if !cyphertext.IsIdentifier(key) || expr == "" {
-		return "", "", "", false
-	}
-	return key, expr, rest, true
+	return expressions[0].key, expressions[0].expr, rest, true
 }
 
 func resolveOptionalIntLiteralOrParam(ctx context.Context, raw string) (int, bool) {
@@ -1062,20 +1044,6 @@ func extractCallTailModifierToken(modifiers, keyword string) string {
 	return strings.TrimSpace(rest[:end])
 }
 
-func callTailHasRelationshipTypeConstraint(tail string) bool {
-	for from := 0; from < len(tail); {
-		open, close := readRelationshipBracket(tail, from, requireClosedRelationship)
-		if open < 0 {
-			return false
-		}
-		if findTopLevelOperator(tail[open+1:close], ":", false, true) >= 0 {
-			return true
-		}
-		from = close + 1
-	}
-	return false
-}
-
 // callTailRow returns a yielded row as a pipeline row, with the statement's
 // parameters bound as "$name" the way the statement pipeline binds them, so a
 // typed parameter (a list or map the text substitution keeps typed) resolves
@@ -1112,7 +1080,7 @@ func splitPathAssignment(patternPart string) (string, string, bool) {
 // backticks; matching raw query bytes loses those imported bindings.
 // This is a conservative name check, not a scope or variable-role analysis.
 func isIdentifierReferenced(query, identifier string) bool {
-	if strings.TrimSpace(identifier) == "" {
+	if identifier == "" {
 		return false
 	}
 	for index := 0; index < len(query); {

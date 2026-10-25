@@ -139,7 +139,12 @@ func TestCallSubqueryHelpers_CorrelationAndTopLevelSplits(t *testing.T) {
 	_, _, ok = parseCallSubqueryVarProp("1.bad")
 	require.False(t, ok)
 
-	require.True(t, isSimpleIdentifier("`outer_name`"))
+	// This eligibility predicate receives decoded identities. Source tokens
+	// are admitted and decoded by the shared identifier reader first.
+	decoded, _, valid := parseIdentifierToken("`outer_name`")
+	require.True(t, valid)
+	require.True(t, isSimpleIdentifier(decoded))
+	require.False(t, isSimpleIdentifier("`outer_name`"), "literal backticks in a decoded name are not a plain name")
 	require.False(t, isSimpleIdentifier("1outer"))
 }
 

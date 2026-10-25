@@ -29,8 +29,8 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 	projectionBody, distinct := cutDistinct(projectionBody)
 
 	aliases := make(map[string]struct{})
-	directExpressions := make(map[string]struct{})
-	complexReferences := make(map[string]struct{})
+	directExpressions := make(map[semanticReference]struct{})
+	complexReferences := make(map[semanticReference]struct{})
 	projectedAggregates := make(map[string]struct{})
 	hasProjectionAggregate := false
 	// star: a * item projects every variable in scope, so ORDER BY may use
@@ -44,7 +44,7 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 			continue
 		}
 		if alias != "" && alias != expression {
-			aliases[normalizeProjectionColumnName(alias)] = struct{}{}
+			aliases[alias] = struct{}{}
 		}
 		if containsAggregateFunc(expression) {
 			hasProjectionAggregate = true
@@ -53,7 +53,7 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 			}
 			continue
 		}
-		if reference := directSemanticReference(expression); reference != "" {
+		if reference, direct := directSemanticReference(expression); direct {
 			directExpressions[reference] = struct{}{}
 			continue
 		}
@@ -82,7 +82,7 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 				}
 				references := semanticFreeReferences(call)
 				if len(references) > 0 {
-					return createUndefinedVariableError(strings.SplitN(references[0], ".", 2)[0])
+					return createUndefinedVariableError(references[0].variable)
 				}
 				return newSemanticError(
 					"Neo.ClientError.Statement.SyntaxError",
@@ -96,17 +96,17 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 			scalarExpression = removeAggregateCalls(expression)
 		}
 		for _, reference := range semanticFreeReferencesIn(expression, scalarExpression) {
-			if _, projectedAlias := aliases[reference]; projectedAlias {
+			if _, projectedAlias := aliases[reference.variable]; !reference.propertyAccess && projectedAlias {
 				continue
 			}
 			if _, projectedDirectly := directExpressions[reference]; projectedDirectly {
 				continue
 			}
-			baseReference := strings.SplitN(reference, ".", 2)[0]
+			baseReference := reference.variable
 			if _, global := retained[baseReference]; global {
 				continue
 			}
-			if _, projectedEntity := directExpressions[baseReference]; projectedEntity || star {
+			if _, projectedEntity := directExpressions[semanticReference{variable: baseReference}]; projectedEntity || star {
 				continue
 			}
 			if hasOrderAggregate {
@@ -172,7 +172,7 @@ func validateReturnAggregationSemanticsIn(ctx context.Context, body string, oute
 	}
 	body = strings.TrimSpace(body[:end])
 	body, _ = cutDistinct(body)
-	directExpressions := make(map[string]struct{})
+	directExpressions := make(map[semanticReference]struct{})
 	aliases := make(map[string]struct{})
 	expressions := make([]string, 0)
 	for _, item := range splitTopLevelComma(body) {
@@ -180,10 +180,10 @@ func validateReturnAggregationSemanticsIn(ctx context.Context, body string, oute
 		expression, alias := itemSource.expression, itemSource.alias
 		expressions = append(expressions, expression)
 		if alias != "" && alias != expression {
-			aliases[normalizeProjectionColumnName(alias)] = struct{}{}
+			aliases[alias] = struct{}{}
 		}
 		if !containsAggregateFunc(expression) {
-			if reference := directSemanticReference(expression); reference != "" {
+			if reference, direct := directSemanticReference(expression); direct {
 				directExpressions[reference] = struct{}{}
 			}
 		}
@@ -212,13 +212,13 @@ func validateReturnAggregationSemanticsIn(ctx context.Context, body string, oute
 		// blanks them in place, so a local's scope is read where it is
 		// (x + size(collect([x IN l | x])) reads the outer x).
 		for _, reference := range semanticFreeReferencesIn(expression, removeAggregateCalls(expression)) {
-			if _, constant := outer[strings.SplitN(reference, ".", 2)[0]]; constant {
+			if _, constant := outer[reference.variable]; constant {
 				continue
 			}
 			if _, projected := directExpressions[reference]; projected {
 				continue
 			}
-			if _, projectedAlias := aliases[reference]; projectedAlias {
+			if _, projectedAlias := aliases[reference.variable]; !reference.propertyAccess && projectedAlias {
 				continue
 			}
 			return newSemanticError(
@@ -247,38 +247,37 @@ func aggregateContains(expression string, predicate func(string) bool) bool {
 }
 
 func containsFunctionCallNamed(expression, expected string) bool {
-	for index := 0; index < len(expression); {
-		name, ok := cyphertext.ScanIdentifier(expression, index)
-		if !ok {
-			index++
-			continue
-		}
-		cursor := name.End
-		for cursor < len(expression) && cyphertext.IsWhitespaceAt(expression, cursor) {
-			cursor++
-		}
-		if strings.EqualFold(normalizeProjectionColumnName(name.Value), expected) && cursor < len(expression) && expression[cursor] == '(' {
-			return true
-		}
-		index = name.End
-	}
-	return false
+	found := false
+	_ = forEachFunctionInvocation(expression, func(_ string, normalized string, _ int) error {
+		found = found || normalized == lowerASCII(expected)
+		return nil
+	})
+	return found
 }
 
-func directSemanticReference(expression string) string {
+// semanticReference keeps decoded identity components separate. Dots and
+// backticks inside a property name never become reference framing or source.
+// A variable and that variable's property are also distinct grouping keys.
+type semanticReference struct {
+	variable       string
+	property       string
+	propertyAccess bool
+}
+
+func directSemanticReference(expression string) (semanticReference, bool) {
 	expression = strings.TrimSpace(expression)
 	if identifier := simpleSemanticIdentifier(expression); identifier != "" {
-		return identifier
+		return semanticReference{variable: identifier}, true
 	}
 	if variable, property, ok := parseVarPropertyRef(expression); ok {
-		return normalizeProjectionColumnName(variable) + "." + normalizePropertyKey(property)
+		return semanticReference{variable: variable, property: property, propertyAccess: true}, true
 	}
-	return ""
+	return semanticReference{}, false
 }
 
-func semanticExpressionReferences(expression string) []string {
-	references := make([]string, 0, 2)
-	forEachSemanticExpressionReference(expression, func(reference string, _ int) {
+func semanticExpressionReferences(expression string) []semanticReference {
+	references := make([]semanticReference, 0, 2)
+	forEachSemanticExpressionReference(expression, func(reference semanticReference, _ int) {
 		references = append(references, reference)
 	})
 	return references
@@ -286,7 +285,7 @@ func semanticExpressionReferences(expression string) []string {
 
 // forEachSemanticExpressionReference calls visit with each reference
 // semanticExpressionReferences finds and the offset of its variable.
-func forEachSemanticExpressionReference(expression string, visit func(reference string, at int)) {
+func forEachSemanticExpressionReference(expression string, visit func(reference semanticReference, at int)) {
 	for index := 0; index < len(expression); {
 		if end := queryGapEnd(expression, index); end > index {
 			index = end
@@ -330,7 +329,7 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		if cursor < len(expression) && expression[cursor] == ':' {
 			continue
 		}
-		if end, call := qualifiedFunctionNameEnd(expression, cursor); call {
+		if end, call := qualifiedFunctionNameEnd(expression, start, cursor); call {
 			// apoc.coll.sort(…): a namespaced function's name, not a
 			// variable and its property.
 			index = end
@@ -343,24 +342,25 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		if !isCypherBacktickByte(name[0]) && !propertyAccess && isSemanticLiteralWord(normalized) {
 			continue
 		}
+		reference := semanticReference{variable: normalized}
 		if propertyAccess {
 			property, propertyEnd, propertyOK := scanSymbolicName(expression, cursor+1)
 			if propertyOK {
-				normalized += "." + normalizePropertyKey(property)
+				reference.property = normalizePropertyKey(property)
+				reference.propertyAccess = true
 				index = propertyEnd
 			}
 		}
-		visit(normalized, start)
+		visit(reference, start)
 	}
 }
 
-// qualifiedFunctionNameEnd reports whether the name before at continues as
-// a namespace path (.name …) that a call's '(' follows, and where the path
-// ends.
-func qualifiedFunctionNameEnd(expression string, at int) (int, bool) {
-	parts, end := dottedNameParts(expression, at, true)
+// qualifiedFunctionNameEnd recognizes a namespace continuation of the name
+// starting at start, through the same framing owner as function dispatch.
+func qualifiedFunctionNameEnd(expression string, start, at int) (int, bool) {
+	_, end, ok := qualifiedNameAt(expression, start)
 	cursor := queryGapEnd(expression, end)
-	if parts == "" || cursor >= len(expression) || expression[cursor] != '(' {
+	if !ok || end <= at || cursor >= len(expression) || expression[cursor] != '(' {
 		return at, false
 	}
 	return cursor, true
@@ -374,7 +374,7 @@ func qualifiedFunctionNameEnd(expression string, at int) (int, bool) {
 // inside braces (a COUNT / EXISTS / COLLECT subquery binds its own pattern
 // variables; a map projection's keys aren't variables). The base of a map
 // projection (n in n {.k}) is a reference.
-func semanticFreeReferences(expression string) []string {
+func semanticFreeReferences(expression string) []semanticReference {
 	return semanticFreeReferencesIn(expression, expression)
 }
 
@@ -382,12 +382,12 @@ func semanticFreeReferences(expression string) []string {
 // scopes read from scopes, a text of the same length text was blanked from
 // (removeAggregateCalls): blanking reduce(acc = 0, y IN collect(x) | …)'s
 // list would leave no reduce to bind y.
-func semanticFreeReferencesIn(scopes, text string) []string {
+func semanticFreeReferencesIn(scopes, text string) []semanticReference {
 	locals := newLocalReader(scopes)
-	free := make([]string, 0, 2)
+	free := make([]semanticReference, 0, 2)
 	// maskSemanticBraceBodies keeps offsets: each one is the scopes text's.
-	forEachSemanticExpressionReference(maskSemanticBraceBodies(text), func(reference string, at int) {
-		if !locals.shadows(strings.SplitN(reference, ".", 2)[0], at) {
+	forEachSemanticExpressionReference(maskSemanticBraceBodies(text), func(reference semanticReference, at int) {
+		if !locals.shadows(reference.variable, at) {
 			free = append(free, reference)
 		}
 	})

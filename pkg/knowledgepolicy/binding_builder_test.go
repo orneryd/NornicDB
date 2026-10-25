@@ -43,7 +43,7 @@ func TestBuildBindingTable_SingleNodeBinding(t *testing.T) {
 		t.Fatalf("expected 1 node binding, got %d", bt.NodeCount())
 	}
 
-	cb := bt.LookupNode("User")
+	cb := bt.LookupNode(LabelSetKey([]string{"User"}))
 	if cb == nil {
 		t.Fatal("expected binding for User")
 	}
@@ -74,7 +74,7 @@ func TestBuildBindingTable_ThresholdAgeNanos_Exponential(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("X")
+	cb := bt.LookupNode(LabelSetKey([]string{"X"}))
 	expected := int64(-float64(3600*1e9) * math.Log(0.10) / ln2)
 	if cb.ThresholdAgeNanos != expected {
 		t.Errorf("exponential threshold: expected %d, got %d", expected, cb.ThresholdAgeNanos)
@@ -94,7 +94,7 @@ func TestBuildBindingTable_ThresholdAgeNanos_Linear(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("X")
+	cb := bt.LookupNode(LabelSetKey([]string{"X"}))
 	expected := int64((1.0 - 0.10) * float64(3600*1e9) * 2.0)
 	if cb.ThresholdAgeNanos != expected {
 		t.Errorf("linear threshold: expected %d, got %d", expected, cb.ThresholdAgeNanos)
@@ -114,7 +114,7 @@ func TestBuildBindingTable_ThresholdAgeNanos_Step(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("X")
+	cb := bt.LookupNode(LabelSetKey([]string{"X"}))
 	if cb.ThresholdAgeNanos != 3600*1e9 {
 		t.Errorf("step threshold: expected %d, got %d", int64(3600*1e9), cb.ThresholdAgeNanos)
 	}
@@ -133,7 +133,7 @@ func TestBuildBindingTable_ThresholdAgeNanos_None(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("X")
+	cb := bt.LookupNode(LabelSetKey([]string{"X"}))
 	if cb.ThresholdAgeNanos != math.MaxInt64 {
 		t.Errorf("none threshold: expected MaxInt64, got %d", cb.ThresholdAgeNanos)
 	}
@@ -149,7 +149,7 @@ func TestBuildBindingTable_NoDecayBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("Permanent")
+	cb := bt.LookupNode(LabelSetKey([]string{"Permanent"}))
 	if cb == nil {
 		t.Fatal("expected binding")
 	}
@@ -173,7 +173,7 @@ func TestBuildBindingTable_WildcardNode(t *testing.T) {
 	if !bt.HasWildNode() {
 		t.Fatal("expected wildcard node")
 	}
-	cb := bt.LookupNode("AnyLabel")
+	cb := bt.LookupNode(LabelSetKey([]string{"AnyLabel"}))
 	if cb == nil {
 		t.Fatal("wildcard should match any label")
 	}
@@ -238,7 +238,7 @@ func TestBuildBindingTable_MultiLabelKey(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("Recipe\x00Tested")
+	cb := bt.LookupNode(LabelSetKey([]string{"Recipe", "Tested"}))
 	if cb == nil {
 		t.Fatal("expected multi-label binding")
 	}
@@ -257,7 +257,7 @@ func TestBuildBindingTable_BindingOverridesThreshold(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("X")
+	cb := bt.LookupNode(LabelSetKey([]string{"X"}))
 	if cb.VisibilityThreshold != 0.25 {
 		t.Errorf("expected threshold 0.25, got %f", cb.VisibilityThreshold)
 	}
@@ -285,7 +285,7 @@ func TestBuildBindingTable_PropertyRuleExpansion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("User")
+	cb := bt.LookupNode(LabelSetKey([]string{"User"}))
 	if len(cb.CompiledPropertyRules) != 3 {
 		t.Fatalf("expected 3 property rules, got %d", len(cb.CompiledPropertyRules))
 	}
@@ -361,7 +361,7 @@ func TestBuildBindingTable_PromotionPolicyAssociation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("User")
+	cb := bt.LookupNode(LabelSetKey([]string{"User"}))
 	if cb.PromotionPolicy == nil {
 		t.Fatal("expected promotion policy to be associated")
 	}
@@ -386,7 +386,7 @@ func TestBuildBindingTable_DisabledPolicyNotAssociated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("User")
+	cb := bt.LookupNode(LabelSetKey([]string{"User"}))
 	if cb.PromotionPolicy != nil {
 		t.Error("disabled policy should not be associated")
 	}
@@ -405,7 +405,7 @@ func TestBuildBindingTable_DefaultFunctionIsExponential(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("X")
+	cb := bt.LookupNode(LabelSetKey([]string{"X"}))
 	if cb.Function != DecayFunctionExponential {
 		t.Errorf("expected default function exponential, got %s", cb.Function)
 	}
@@ -424,7 +424,7 @@ func TestBuildBindingTable_DecayFloorFromBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cb := bt.LookupNode("X")
+	cb := bt.LookupNode(LabelSetKey([]string{"X"}))
 	if cb.DecayFloor != 0.15 {
 		t.Errorf("expected decay floor 0.15, got %f", cb.DecayFloor)
 	}

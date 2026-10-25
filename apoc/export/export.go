@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // Node represents a graph node.
@@ -163,7 +165,7 @@ func Cypher(nodes []*Node, rels []*Relationship) string {
 
 		// Labels
 		for _, label := range node.Labels {
-			builder.WriteString(fmt.Sprintf(":%s", label))
+			builder.WriteString(":" + cyphertext.QuoteName(label, "label"))
 		}
 
 		// Properties
@@ -174,7 +176,7 @@ func Cypher(nodes []*Node, rels []*Relationship) string {
 				if !first {
 					builder.WriteString(", ")
 				}
-				builder.WriteString(fmt.Sprintf("%s: %v", key, formatValue(val)))
+				builder.WriteString(fmt.Sprintf("%s: %v", cyphertext.QuoteName(key, "key"), formatValue(val)))
 				first = false
 			}
 			builder.WriteString("}")
@@ -186,7 +188,7 @@ func Cypher(nodes []*Node, rels []*Relationship) string {
 	// Export relationships
 	for _, rel := range rels {
 		builder.WriteString(fmt.Sprintf("MATCH (a), (b) WHERE id(a) = %d AND id(b) = %d\n", rel.StartNode, rel.EndNode))
-		builder.WriteString(fmt.Sprintf("CREATE (a)-[r:%s", rel.Type))
+		builder.WriteString("CREATE (a)-[r:" + cyphertext.QuoteName(rel.Type, "type"))
 
 		// Properties
 		if len(rel.Properties) > 0 {
@@ -196,7 +198,7 @@ func Cypher(nodes []*Node, rels []*Relationship) string {
 				if !first {
 					builder.WriteString(", ")
 				}
-				builder.WriteString(fmt.Sprintf("%s: %v", key, formatValue(val)))
+				builder.WriteString(fmt.Sprintf("%s: %v", cyphertext.QuoteName(key, "key"), formatValue(val)))
 				first = false
 			}
 			builder.WriteString("}")

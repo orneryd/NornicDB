@@ -33,15 +33,14 @@ func (e *StorageExecutor) validateMutationClauseScopes(ctx context.Context, clau
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseMerge, pipelineClauseCreate:
 			for _, name := range extractNodeVariables(clause.text) {
-				scope.bind(name)
+				scope.bindWritten(name)
 			}
 			for _, name := range extractRelationshipVariables(clause.text) {
-				scope.bind(name)
+				scope.bindWritten(name)
 			}
-			// Path variables (p = (…)), with the pipeline's own binder.
-			patternBindings := make(map[string]struct{})
-			addPipelinePatternBindings(ctx, e, patternBindings, clause.text, pipelineClauseKeyword(clause.kind))
-			for name := range patternBindings {
+			// The path adapter already returns a decoded identity.
+			pattern := pipelineClauseBody(clause.text, pipelineClauseKeyword(clause.kind))
+			if name := extractPathAssignmentVariable(pattern); name != "" {
 				scope.bind(name)
 			}
 		case pipelineClauseWith:
@@ -111,7 +110,7 @@ func validateRemoveClauseScope(scope *semanticBindingScope, clause string) error
 		return err
 	}
 	for _, item := range items {
-		if !scope.contains(item.variable) {
+		if !scope.contains(normalizeProjectionColumnName(item.variable)) {
 			return createUndefinedVariableError(item.variable)
 		}
 		expressions := make([]string, 0, len(item.labels)+1)
@@ -263,6 +262,8 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		if operator == "" {
 			continue
 		}
+		// splitSetAssignment retains the target's written spelling.
+		target = normalizeProjectionColumnName(target)
 		if target != "" && !scope.contains(target) {
 			return createUndefinedVariableError(target)
 		}
@@ -417,7 +418,7 @@ func expressionFreeVariables(expression string) []string {
 				}
 			}
 		}
-		if functionEnd, call := qualifiedFunctionNameEnd(expression, name.End); call {
+		if functionEnd, call := qualifiedFunctionNameEnd(expression, index, name.End); call {
 			delimiters = append(delimiters, '(')
 			index = functionEnd + 1
 			continue

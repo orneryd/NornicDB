@@ -108,17 +108,17 @@ func (r *labelExpressionRewriter) quantifiedRelationship(open, close, at int, qu
 		return err
 	}
 	q := r.query
-	insert := close
-	if where := elementWhereIndex(q, open, close); where >= 0 {
-		insert = where
-	}
-	if brace := indexOutsideQuotes(q[open+1:insert], '{'); brace >= 0 {
-		insert = open + 1 + brace
-	}
-	if indexOutsideQuotes(q[open+1:insert], '*') >= 0 {
+	declaration := r.relationships.readDeclaration(q[open+1 : close])
+	if declaration.hasLength {
 		return labelExpressionSyntaxError(localization.CypherMatchingVariableLengthInQuantifiedPath())
 	}
-	insert = trimRightIndex(q, open+1, insert)
+	// The length goes before the property map, which comes before the
+	// predicate.
+	insert := close
+	if declaration.whereOffset >= 0 {
+		insert = open + 1 + declaration.whereOffset
+	}
+	insert = trimRightIndex(q, open+1, trimRightIndex(q, open+1, insert)-len(declaration.properties))
 	r.edit(insert, insert, quantifier.length())
 	r.edit(at, quantifier.end, "")
 	return nil
@@ -157,23 +157,23 @@ func arrowEndsAt(query string, start, i int) bool {
 	return query[j-1] == '>' && query[j-2] == '-' || query[j-1] == '-' && (query[j-2] == '-' || query[j-2] == ']')
 }
 
-// blankQuotedText returns s with every quoted text (', " or `, quotes
-// included) replaced by spaces, so a scan for syntax characters can't match
-// inside a string or a backticked name (#879). Indexes are unchanged.
+// blankQuotedText masks opaque quoted tokens and comments with spaces, so
+// declaration punctuation is read only from live source. Byte offsets stay
+// unchanged; lexical extents come from the shared source owner.
 func blankQuotedText(s string) string {
 	var out []byte
 	for i := 0; i < len(s); i++ {
-		switch c := s[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
-			if out == nil {
-				out = []byte(s)
-			}
-			end := skipCypherQuotedText(s, i, c)
-			for j := i; j < end && j < len(out); j++ {
-				out[j] = ' '
-			}
-			i = end - 1
+		end, opaque := skipCypherLexicalToken(s, i)
+		if !opaque {
+			continue
 		}
+		if out == nil {
+			out = []byte(s)
+		}
+		for j := i; j < end; j++ {
+			out[j] = ' '
+		}
+		i = end - 1
 	}
 	if out == nil {
 		return s

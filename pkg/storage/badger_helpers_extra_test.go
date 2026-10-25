@@ -121,11 +121,11 @@ func TestExtractNodeNumIDAndMVCCVersionFromVersionKey(t *testing.T) {
 
 func TestExtractEdgeNumIDFromEdgeTypeKey(t *testing.T) {
 	key := edgeTypeIndexKey("KNOWS", 987)
-	num, ok := extractEdgeNumIDFromEdgeTypeKey(key)
+	num, ok := extractNumIDFromNamedIndex(key, len("KNOWS"))
 	require.True(t, ok)
 	require.Equal(t, uint64(987), num)
 
-	_, ok = extractEdgeNumIDFromEdgeTypeKey([]byte{prefixEdgeTypeIndex, 'r'})
+	_, ok = extractNumIDFromNamedIndex([]byte{prefixEdgeTypeIndex, 'r'}, len("KNOWS"))
 	require.False(t, ok)
 }
 

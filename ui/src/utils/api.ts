@@ -9,12 +9,14 @@
 // wire, so this single import is enough as long as the channel swap
 // is wired in vite.config.ts.
 import neo4j, {
-  isInt,
   type AuthToken,
   type Driver,
   type Integer,
   type Session,
 } from "neo4j-driver";
+import { quoteName } from "./cypherNames.mjs";
+import { cypherResultRecord } from "./cypherResults";
+import { identityRecord } from "./identityRecords";
 import { BASE_PATH, joinBasePath } from "./basePath";
 
 export interface AuthConfig {
@@ -418,25 +420,26 @@ function neo4jValueToPlain(v: unknown): unknown {
   if (v === null || v === undefined) {
     return v;
   }
-  // neo4j Integer: detected via the driver's isInt() typeguard. Values
+  // Driver class identity distinguishes native integers from data maps. Values
   // within Number.MIN_SAFE_INTEGER..MAX_SAFE_INTEGER come back as JS
   // Number; larger ones round-trip as String to avoid precision loss.
-  if (isInt(v)) {
+  if (v instanceof neo4j.types.Integer) {
     const intValue = v as Integer;
     if (intValue.inSafeRange()) {
       return intValue.toNumber();
     }
     return intValue.toString();
   }
-  // Node / Relationship / PathSegment: serialize properties + identity.
+  // Driver entities have class identity. Ordinary Cypher maps may use any
+  // field names, including identity/properties and the driver's marker keys.
+  // Paths and their segments recurse through the generic value walk below.
   // Surface elementId at the top level so downstream consumers
   // (extractNodeFromResult, the Browser select-button column) can find
   // it without diving into driver-specific fields.
   if (
-    typeof v === "object" &&
-    v !== null &&
-    "properties" in (v as Record<string, unknown>) &&
-    "identity" in (v as Record<string, unknown>)
+    v instanceof neo4j.types.Node ||
+    v instanceof neo4j.types.Relationship ||
+    v instanceof neo4j.types.UnboundRelationship
   ) {
     const node = v as {
       identity: unknown;
@@ -486,7 +489,7 @@ function neo4jValueToPlain(v: unknown): unknown {
   }
   if (typeof v === "object") {
     const obj = v as Record<string, unknown>;
-    const out: Record<string, unknown> = {};
+    const out = identityRecord();
     for (const [k, val] of Object.entries(obj)) {
       out[k] = neo4jValueToPlain(val);
     }
@@ -634,7 +637,7 @@ function txRowToBoltShape(
           cursor++;
           return toEntity(value as Record<string, unknown>, m);
         }
-        const out: Record<string, unknown> = {};
+        const out = identityRecord();
         for (const [key, nested] of Object.entries(value)) {
           out[key] = walk(nested);
         }
@@ -730,10 +733,6 @@ function asStringArray(value: unknown): string[] | undefined {
     (item): item is string => typeof item === "string",
   );
   return strings.length > 0 ? strings : undefined;
-}
-
-function escapeCypherStringLiteral(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
 class NornicDBClient {
@@ -1385,11 +1384,7 @@ class NornicDBClient {
     const data = result?.data || [];
     return data.map((d) => {
       const row = d.row || [];
-      const out: Record<string, unknown> = {};
-      for (let i = 0; i < columns.length; i++) {
-        out[columns[i]] = row[i];
-      }
-      return out as T;
+      return cypherResultRecord<T>(columns, row);
     });
   }
 
@@ -1432,9 +1427,7 @@ class NornicDBClient {
   }
 
   private quoteCypherIdentifier(identifier: string): string {
-    // Cypher uses backticks for identifier quoting; escape embedded backticks by doubling them.
-    // Example: db name `a`b` => `a``b`
-    return `\`${identifier.split("`").join("``")}\``;
+    return quoteName(identifier, "alias");
   }
 
   private validateDatabaseName(name: string): string {
@@ -1597,7 +1590,7 @@ class NornicDBClient {
 
     for (const [key, value] of Object.entries(properties)) {
       const paramName = `p${paramIndex}`;
-      setParts.push(`n.${key} = $${paramName}`);
+      setParts.push(`n.${quoteName(key, "key")} = $${paramName}`);
       parameters[paramName] = value;
       paramIndex++;
     }
@@ -2205,12 +2198,12 @@ class NornicDBClient {
     database?: string;
   }): Promise<ScoringResolution> {
     const dbName = await this.getResolvedDatabaseName(params.database);
-    const statement = `CALL kp.resolve('${escapeCypherStringLiteral(
-      params.entityId ?? "",
-    )}', '${escapeCypherStringLiteral((params.labels ?? []).join(","))}', '${escapeCypherStringLiteral(
-      params.edgeType ?? "",
-    )}')`;
-    const resp = await this.executeCypherOnDatabase(dbName, statement);
+    const statement = "CALL kp.resolve($entityId, $labels, $edgeType)";
+    const resp = await this.executeCypherOnDatabase(dbName, statement, {
+      entityId: params.entityId ?? "",
+      labels: params.labels ?? [],
+      edgeType: params.edgeType ?? "",
+    });
     this.assertCypherSuccess(resp, "Failed to resolve knowledge policy");
 
     const row = this.parseCypherRows<Record<string, unknown>>(resp)[0] ?? {};

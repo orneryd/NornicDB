@@ -333,12 +333,12 @@ func (e *StorageExecutor) boundRelationshipDeleteTargetNode(
 	return target, true, nil
 }
 
-func relationshipTypeAllowed(edgeType string, allowed []string, allowedSet map[string]struct{}) bool {
-	if len(allowed) == 0 {
+func relationshipTypeAllowed(edgeType string, allowed relationshipTypes, allowedSet map[string]struct{}) bool {
+	if allowed.len() == 0 {
 		return true
 	}
-	if len(allowed) == 1 {
-		return edgeType == allowed[0]
+	if allowed.len() == 1 {
+		return edgeType == allowed.at(0).storageName()
 	}
 	_, ok := allowedSet[edgeType]
 	return ok

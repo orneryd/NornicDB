@@ -21,7 +21,7 @@ type parsedSimpleMatchRelationshipPattern struct {
 	rightVar    string
 	rightLabels []string
 	relVar      string
-	relType     string
+	relType     relationshipTypeFacts
 	isReverse   bool
 }
 
@@ -309,12 +309,8 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	if len(withItems) < 2 {
 		return nil, false
 	}
-	if !withProjectionContainsVariable(withItems, varName) {
-		return nil, false
-	}
-
-	_, vectorProp, queryExpr, scoreRef, ok := parseCosineReturnShape(withItems, varName)
-	if !ok {
+	cosineIdx, vectorProp, queryExpr, scoreRef, ok := parseCosineReturnShape(withItems, varName)
+	if !ok || !vectorWithProjectionPreservesBindings(withItems, cosineIdx, varName) {
 		return nil, false
 	}
 	if scoreRef == "" {
@@ -349,7 +345,11 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	}
 
 	orderPart := strings.TrimSpace(trimmed[orderIdx+len("ORDER BY") : limitIdx])
-	orderDesc, ok := parseOrderByScoreDirection(orderPart, scoreRef)
+	orderProjections := returnItems
+	if orderBeforeReturn {
+		orderProjections = nil
+	}
+	orderDesc, ok := parseOrderByScoreDirection(orderPart, scoreRef, orderProjections...)
 	if !ok {
 		return nil, false
 	}
@@ -381,7 +381,7 @@ func (e *StorageExecutor) tryFastPathMatchWithVectorCosineProjection(ctx context
 	scoreExprIsAlias := make([]bool, len(returnItems))
 	hasMatchProps := len(matchProps) > 0
 	for i := range returnItems {
-		scoreExprIsAlias[i] = strings.EqualFold(strings.TrimSpace(returnItems[i].expr), scoreRef)
+		scoreExprIsAlias[i] = simpleSemanticIdentifier(returnItems[i].expr) == scoreRef
 	}
 	projectedProps, projectionOK := nodeProjectionPropertiesForVectorFastPath(varName, vectorProp, returnItems, scoreExprIsAlias, preWhereClause, preWhereNotNullProp, matchProps)
 	if !projectionOK {
@@ -552,7 +552,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 	}
 
 	pattern, ok := e.parseSimpleMatchRelationshipPattern(matchSegment)
-	if !ok || strings.TrimSpace(pattern.relVar) == "" || strings.TrimSpace(pattern.relType) == "" {
+	if !ok || strings.TrimSpace(pattern.relVar) == "" {
 		return nil, false
 	}
 
@@ -588,7 +588,7 @@ func (e *StorageExecutor) tryFastPathMatchRelationshipVectorCosine(ctx context.C
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
+	indexName, hasIndex := findCosineVectorIndexNameMatching(e.storage.GetSchema(), vectorProp, storage.ConstraintEntityRelationship, pattern.relType.matchesStorageName)
 	if !hasIndex {
 		return nil, false
 	}
@@ -677,7 +677,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 	}
 
 	pattern, ok := e.parseSimpleMatchRelationshipPattern(preWithSegment)
-	if !ok || strings.TrimSpace(pattern.relVar) == "" || strings.TrimSpace(pattern.relType) == "" {
+	if !ok || strings.TrimSpace(pattern.relVar) == "" {
 		return nil, false
 	}
 
@@ -694,12 +694,12 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 
 	withProjection, _ := cutDistinct(withProjectionRaw)
 	withItems := e.parseReturnItems(ctx, withProjection)
-	if len(withItems) < 2 || !withProjectionContainsVariable(withItems, pattern.relVar) {
+	if len(withItems) < 2 {
 		return nil, false
 	}
 
-	_, vectorProp, queryExpr, scoreRef, ok := parseCosineReturnShape(withItems, pattern.relVar)
-	if !ok || scoreRef == "" {
+	cosineIdx, vectorProp, queryExpr, scoreRef, ok := parseCosineReturnShape(withItems, pattern.relVar)
+	if !ok || scoreRef == "" || !vectorWithProjectionPreservesBindings(withItems, cosineIdx, pattern.relVar, pattern.leftVar, pattern.rightVar) {
 		return nil, false
 	}
 
@@ -721,7 +721,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 	}
 
 	orderPart := strings.TrimSpace(trimmed[orderIdx+len("ORDER BY") : limitIdx])
-	orderDesc, ok := parseOrderByScoreDirection(orderPart, scoreRef)
+	orderDesc, ok := parseOrderByScoreDirection(orderPart, scoreRef, returnItems...)
 	if !ok {
 		return nil, false
 	}
@@ -741,7 +741,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 		return &ExecuteResult{Columns: columns, Rows: [][]interface{}{}, Stats: &QueryStats{}}, true
 	}
 
-	indexName, hasIndex := findCosineVectorIndexName(e.storage.GetSchema(), pattern.relType, vectorProp, storage.ConstraintEntityRelationship)
+	indexName, hasIndex := findCosineVectorIndexNameMatching(e.storage.GetSchema(), vectorProp, storage.ConstraintEntityRelationship, pattern.relType.matchesStorageName)
 	if !hasIndex {
 		return nil, false
 	}
@@ -757,7 +757,7 @@ func (e *StorageExecutor) tryFastPathMatchWithRelationshipVectorCosineProjection
 	edgeCtx := make(map[string]*storage.Edge, 1)
 	scoreExprIsAlias := make([]bool, len(returnItems))
 	for i := range returnItems {
-		scoreExprIsAlias[i] = strings.EqualFold(strings.TrimSpace(returnItems[i].expr), scoreRef)
+		scoreExprIsAlias[i] = simpleSemanticIdentifier(returnItems[i].expr) == scoreRef
 	}
 	for _, hit := range edgeScores {
 		edge := hit.edge
@@ -1281,7 +1281,7 @@ func parseCosineReturnShape(items []returnItem, varName string) (cosineIdx int, 
 			return -1, "", "", "", false
 		}
 
-		if strings.Contains(query, varName+".") || strings.EqualFold(strings.TrimSpace(query), varName) {
+		if strings.Contains(query, varName+".") || simpleSemanticIdentifier(query) == varName {
 			return -1, "", "", "", false
 		}
 		if cosineIdx >= 0 {
@@ -1295,50 +1295,44 @@ func parseCosineReturnShape(items []returnItem, varName string) (cosineIdx int, 
 		scoreRef = item.column()
 	}
 
-	if cosineIdx < 0 || strings.TrimSpace(vectorProp) == "" || strings.TrimSpace(queryExpr) == "" {
+	if cosineIdx < 0 || vectorProp == "" || strings.TrimSpace(queryExpr) == "" {
 		return -1, "", "", "", false
 	}
 	return cosineIdx, vectorProp, queryExpr, scoreRef, true
 }
 
+// parseVarPropertyRef is the single-qualified-reference adapter of the same
+// name/qualifier/key framing used by DDL. Its callers own their fast-path and
+// expression eligibility; both returned components are decoded identities.
 func parseVarPropertyRef(expr string) (string, string, bool) {
-	expr = strings.TrimSpace(expr)
-	dot := strings.IndexByte(expr, '.')
-	if dot <= 0 || dot == len(expr)-1 {
+	refs, ok := readDDLPropertyReferences(expr, false)
+	if !ok || len(refs) != 1 || refs[0].Qualifier == "" {
 		return "", "", false
 	}
-	v := strings.TrimSpace(expr[:dot])
-	rawProperty := strings.TrimSpace(expr[dot+1:])
-	p := normalizePropertyKey(rawProperty)
-	delimited := len(rawProperty) >= 2 && isCypherBacktickByte(rawProperty[0]) && isCypherBacktickByte(rawProperty[len(rawProperty)-1])
-	if v == "" || p == "" || strings.Contains(v, " ") || (!delimited && (strings.Contains(p, " ") || strings.Contains(p, "."))) {
-		return "", "", false
-	}
-	return v, p, true
+	return refs[0].Qualifier, refs[0].Key, true
 }
 
-func parseOrderByScoreDirection(orderPart string, scoreRef string) (bool, bool) {
-	terms := splitTopLevelComma(orderPart)
+func parseOrderByScoreDirection(orderPart string, scoreRef string, projections ...returnItem) (bool, bool) {
+	terms := parseOrderByClause(orderPart)
 	if len(terms) != 1 {
 		return false, false
 	}
-	fields := strings.Fields(strings.TrimSpace(terms[0]))
-	if len(fields) == 0 || len(fields) > 2 {
+	term := terms[0]
+	if name, symbolic := isOneSymbolicName(term.column); symbolic {
+		if name != scoreRef {
+			return false, false
+		}
+		// A RETURN alias can replace the WITH score binding before ORDER BY.
+		for _, projection := range projections {
+			if projection.column() == name && simpleSemanticIdentifier(projection.expr) != scoreRef {
+				return false, false
+			}
+		}
+	} else if term.column != scoreRef {
+		// Without an alias, scoreRef is the original cosine expression.
 		return false, false
 	}
-	if !strings.EqualFold(strings.TrimSpace(fields[0]), strings.TrimSpace(scoreRef)) {
-		return false, false
-	}
-	if len(fields) == 1 {
-		return true, true
-	}
-	if strings.EqualFold(fields[1], "DESC") {
-		return true, true
-	}
-	if strings.EqualFold(fields[1], "ASC") {
-		return false, true
-	}
-	return false, false
+	return term.descending, true
 }
 
 func parseFastPathLimit(ctx context.Context, limitPart string) (int, bool) {
@@ -1350,6 +1344,12 @@ func parseFastPathLimit(ctx context.Context, limitPart string) (int, bool) {
 }
 
 func findCosineVectorIndexName(schema *storage.SchemaManager, label string, property string, entityType storage.ConstraintEntityType) (string, bool) {
+	return findCosineVectorIndexNameMatching(schema, property, entityType, func(name string) bool {
+		return name == label
+	})
+}
+
+func findCosineVectorIndexNameMatching(schema *storage.SchemaManager, property string, entityType storage.ConstraintEntityType, nameMatches func(string) bool) (string, bool) {
 	if schema == nil {
 		return "", false
 	}
@@ -1368,11 +1368,11 @@ func findCosineVectorIndexName(schema *storage.SchemaManager, label string, prop
 			continue
 		}
 		idxLabel, _ := idx["label"].(string)
-		if strings.TrimSpace(idxLabel) != strings.TrimSpace(label) {
+		if !nameMatches(idxLabel) {
 			continue
 		}
 		idxProp, _ := idx["property"].(string)
-		if !strings.EqualFold(strings.TrimSpace(idxProp), strings.TrimSpace(property)) {
+		if idxProp != property {
 			continue
 		}
 		idxEntityType, _ := idx["entityType"].(string)
@@ -1391,7 +1391,7 @@ func findCosineVectorIndexName(schema *storage.SchemaManager, label string, prop
 			continue
 		}
 
-		if name, ok := idx["name"].(string); ok && strings.TrimSpace(name) != "" {
+		if name, ok := idx["name"].(string); ok && name != "" {
 			matches = append(matches, name)
 		}
 	}
@@ -1459,8 +1459,9 @@ func (e *StorageExecutor) parseSimpleMatchRelationshipPattern(pattern string) (p
 	if err != nil || strings.TrimSpace(remainder) != "" {
 		return parsedSimpleMatchRelationshipPattern{}, false
 	}
-	relVar, relType, relPropsStr, err := parseCreateRelationshipContent(relContent)
-	if err != nil || strings.TrimSpace(relPropsStr) != "" || strings.TrimSpace(relType) == "" {
+	declaration := relationshipDeclarationOf(relContent)
+	relType, ok := declaration.singleLiteralType()
+	if !ok || declaration.properties != "" {
 		return parsedSimpleMatchRelationshipPattern{}, false
 	}
 
@@ -1478,8 +1479,8 @@ func (e *StorageExecutor) parseSimpleMatchRelationshipPattern(pattern string) (p
 		leftLabels:  leftLabels,
 		rightVar:    rightVar,
 		rightLabels: rightLabels,
-		relVar:      strings.TrimSpace(relVar),
-		relType:     strings.TrimSpace(relType),
+		relVar:      declaration.variable,
+		relType:     relType,
 		isReverse:   isReverse,
 	}, true
 }
@@ -1564,13 +1565,28 @@ func evaluateExpressionBoolWithContext(e *StorageExecutor, ctx context.Context, 
 	return false
 }
 
-func withProjectionContainsVariable(items []returnItem, variable string) bool {
-	for _, item := range items {
-		if strings.EqualFold(strings.TrimSpace(item.expr), variable) {
-			return true
+// The shortcut materializes entity bindings and the cosine binding only.
+// A renamed entity or another WITH expression belongs to the general pipeline.
+func vectorWithProjectionPreservesBindings(items []returnItem, cosineIdx int, required string, additional ...string) bool {
+	allowed := make(map[string]bool, len(additional)+1)
+	allowed[required] = true
+	for _, name := range additional {
+		if name != "" {
+			allowed[name] = true
 		}
 	}
-	return false
+	found := false
+	for index, item := range items {
+		if index == cosineIdx {
+			continue
+		}
+		name := simpleSemanticIdentifier(item.expr)
+		if name == "" || !allowed[name] || item.column() != name {
+			return false
+		}
+		found = found || name == required
+	}
+	return found
 }
 
 func parseFastPathPropertyNotNullPredicate(whereClause string, variable string) (string, bool) {
@@ -1582,7 +1598,7 @@ func parseFastPathPropertyNotNullPredicate(whereClause string, variable string) 
 		return "", false
 	}
 	refVar, prop, ok := parseVarPropertyRef(fields[0])
-	if !ok || !strings.EqualFold(refVar, variable) {
+	if !ok || simpleSemanticIdentifier(refVar) != variable {
 		return "", false
 	}
 	return prop, true
@@ -1618,9 +1634,9 @@ func (e *StorageExecutor) parseScoreComparisonPredicate(ctx context.Context, whe
 
 	normalizedOp := op
 	cmpExpr := ""
-	if strings.EqualFold(left, scoreAlias) {
+	if simpleSemanticIdentifier(left) == scoreAlias {
 		cmpExpr = right
-	} else if strings.EqualFold(right, scoreAlias) {
+	} else if simpleSemanticIdentifier(right) == scoreAlias {
 		cmpExpr = left
 		switch op {
 		case ">":

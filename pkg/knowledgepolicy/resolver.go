@@ -3,7 +3,6 @@ package knowledgepolicy
 import (
 	"log"
 	"sort"
-	"strings"
 )
 
 // Resolver resolves effective decay and promotion configuration for a target.
@@ -22,7 +21,7 @@ func NewResolver(bt *BindingTable, logger *log.Logger) *Resolver {
 // Labels are sorted internally; the caller's slice is not modified.
 func (r *Resolver) ResolveNode(labels []string) *CompiledBinding {
 	if len(labels) == 0 {
-		return r.bt.LookupNode("")
+		return r.bt.LookupNode(LabelSetKey(nil))
 	}
 
 	sorted := make([]string, len(labels))
@@ -30,10 +29,10 @@ func (r *Resolver) ResolveNode(labels []string) *CompiledBinding {
 	sort.Strings(sorted)
 
 	if len(sorted) == 1 {
-		return r.bt.LookupNode(sorted[0])
+		return r.bt.LookupNode(labelSetKeySorted(sorted))
 	}
 
-	fullKey := strings.Join(sorted, "\x00")
+	fullKey := labelSetKeySorted(sorted)
 	if cb := r.bt.lookupNodeExact(fullKey); cb != nil {
 		return cb
 	}
@@ -49,7 +48,7 @@ func (r *Resolver) ResolveNode(labels []string) *CompiledBinding {
 		return r.resolveConflict(matches)
 	}
 
-	return r.bt.LookupNode("")
+	return r.bt.LookupNode(LabelSetKey(nil))
 }
 
 // ResolveEdge returns the CompiledBinding for an edge identified by its type.
@@ -106,7 +105,7 @@ func (r *Resolver) collectSubsetMatches(sorted []string, k int) []*CompiledBindi
 		for i, idx := range indices {
 			parts[i] = sorted[idx]
 		}
-		key := strings.Join(parts, "\x00")
+		key := labelSetKeySorted(parts)
 		if cb := r.bt.lookupNodeExact(key); cb != nil {
 			matches = append(matches, cb)
 		}

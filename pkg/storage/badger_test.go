@@ -1747,7 +1747,7 @@ func TestKeyEncoding(t *testing.T) {
 	t.Run("labelIndexKey round-trips the numID suffix", func(t *testing.T) {
 		key := labelIndexKey("Person", 123)
 		assert.Equal(t, prefixLabelIndex, key[0])
-		num, ok := extractNodeNumIDFromLabelIndex(key, len("person"))
+		num, ok := extractNumIDFromNamedIndex(key, len("person"))
 		require.True(t, ok)
 		assert.Equal(t, uint64(123), num)
 	})
@@ -1786,7 +1786,7 @@ func TestKeyEncoding(t *testing.T) {
 	t.Run("extract helpers return empty on malformed keys", func(t *testing.T) {
 		_, ok := extractEdgeNumIDFromOutgoingKey([]byte{prefixOutgoingIndex, 'x', 'y'})
 		assert.False(t, ok)
-		_, ok = extractNodeNumIDFromLabelIndex([]byte{prefixLabelIndex, 'P', 'e'}, len("Person"))
+		_, ok = extractNumIDFromNamedIndex([]byte{prefixLabelIndex, 'P', 'e'}, len("Person"))
 		assert.False(t, ok)
 	})
 }

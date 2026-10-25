@@ -34,6 +34,7 @@
 //      with their vector and payload, hitting UnwindSimpleMergeBatch.
 //   4. Counts and reports parity per collection.
 
+import { quoteName } from "../../../ui/src/utils/cypherNames.mjs";
 import { QdrantClient } from "@qdrant/js-client-rest";
 import neo4j from "neo4j-driver";
 
@@ -79,8 +80,8 @@ const labelFor = (prefix, name) =>
 
 async function ensureSchema(session, label, dimensions, dryRun) {
   const ddl = [
-    `CREATE CONSTRAINT ${label}_qdrant_id_unique IF NOT EXISTS FOR (n:${label}) REQUIRE n.qdrant_id IS UNIQUE`,
-    `CREATE VECTOR INDEX ${label}_embedding IF NOT EXISTS FOR (n:${label}) ON (n.embedding) OPTIONS {indexConfig: {\`vector.dimensions\`: ${dimensions}, \`vector.similarity_function\`: 'cosine'}}`,
+    `CREATE CONSTRAINT ${quoteName(label + "_qdrant_id_unique", "alias")} IF NOT EXISTS FOR (n:${quoteName(label, "label")}) REQUIRE n.qdrant_id IS UNIQUE`,
+    `CREATE VECTOR INDEX ${quoteName(label + "_embedding", "alias")} IF NOT EXISTS FOR (n:${quoteName(label, "label")}) ON (n.embedding) OPTIONS {indexConfig: {\`vector.dimensions\`: ${dimensions}, \`vector.similarity_function\`: 'cosine'}}`,
   ];
   for (const stmt of ddl) {
     console.log(`  → ${stmt}`);
@@ -106,7 +107,7 @@ async function* streamPoints(src, name, batch) {
 
 const UPSERT_CYPHER = (label) => `
 UNWIND $rows AS row
-MERGE (n:${label} {qdrant_id: row.id})
+MERGE (n:${quoteName(label, "label")} {qdrant_id: row.id})
 SET   n.embedding = row.vector,
       n          += row.payload,
       n.qdrant_collection = $collection
@@ -126,7 +127,7 @@ async function migrateCollection(src, session, name, batchSize, labelPrefix, ski
   const label = labelFor(labelPrefix, name);
 
   if (skipExisting) {
-    const result = await session.run(`MATCH (n:${label}) RETURN count(n) AS c`);
+    const result = await session.run(`MATCH (n:${quoteName(label, "label")}) RETURN count(n) AS c`);
     if (Number(result.records[0]?.get("c") ?? 0) > 0) {
       console.log(`  · target already has rows for label ${label}, --skip-existing → skipping`);
       return 0;

@@ -53,7 +53,12 @@ func TestCallSubqueryWriteAndIdentifierChecks(t *testing.T) {
 	require.False(t, callSubqueryQueryIsWrite("MATCH (n) RETURN n"))
 
 	require.True(t, isSimpleIdentifier("name_1"))
-	require.True(t, isSimpleIdentifier("`quoted`"))
+	// This eligibility predicate receives decoded identities. Source tokens
+	// are admitted and decoded by the shared identifier reader first.
+	decoded, _, valid := parseIdentifierToken("`quoted`")
+	require.True(t, valid)
+	require.True(t, isSimpleIdentifier(decoded))
+	require.False(t, isSimpleIdentifier("`quoted`"), "literal backticks in a decoded name are not a plain name")
 	require.False(t, isSimpleIdentifier("1bad"))
 	require.False(t, isSimpleIdentifier("bad-char"))
 }

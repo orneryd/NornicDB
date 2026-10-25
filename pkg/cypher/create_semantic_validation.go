@@ -21,16 +21,21 @@ func newSemanticBindingScope() *semanticBindingScope {
 	return &semanticBindingScope{names: make(map[string]struct{})}
 }
 
+// bind and contains consume decoded identities. Written pattern adapters use
+// bindWritten; projection aliases and inherited bindings must not be decoded twice.
 func (s *semanticBindingScope) bind(name string) {
-	name = normalizeProjectionColumnName(strings.TrimSpace(name))
 	if name != "" {
 		s.names[name] = struct{}{}
 	}
 }
 
 func (s *semanticBindingScope) contains(name string) bool {
-	_, exists := s.names[normalizeProjectionColumnName(strings.TrimSpace(name))]
+	_, exists := s.names[name]
 	return exists
+}
+
+func (s *semanticBindingScope) bindWritten(written string) {
+	s.bind(normalizeProjectionColumnName(written))
 }
 
 // validateCreateSemanticScopes applies one symbol contract before routing to
@@ -51,10 +56,10 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
 			for _, name := range extractNodeVariables(clause.text) {
-				scope.bind(name)
+				scope.bindWritten(name)
 			}
 			for _, name := range extractRelationshipVariables(clause.text) {
-				scope.bind(name)
+				scope.bindWritten(name)
 			}
 		case pipelineClauseWith:
 			scope = projectedBindingScope(ctx, scope, clause.text)
@@ -68,10 +73,10 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 			}
 		case pipelineClauseMerge:
 			for _, name := range extractNodeVariables(clause.text) {
-				scope.bind(name)
+				scope.bindWritten(name)
 			}
 			for _, name := range extractRelationshipVariables(clause.text) {
-				scope.bind(name)
+				scope.bindWritten(name)
 			}
 		case pipelineClauseCreate:
 			if err := e.validateCreateClauseBindings(scope, clause.text, cypher25); err != nil {
@@ -147,6 +152,7 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 		isRelationshipPattern := patternHasRelationship(pattern)
 		relationshipVariables := extractRelationshipVariables(pattern)
 		for _, variable := range relationshipVariables {
+			variable = normalizeProjectionColumnName(variable)
 			if scope.contains(variable) {
 				return createVariableAlreadyBoundError(variable)
 			}
@@ -182,7 +188,7 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 			return err
 		}
 		for _, variable := range relationshipVariables {
-			scope.bind(variable)
+			scope.bindWritten(variable)
 		}
 	}
 	return nil
@@ -262,23 +268,14 @@ func createPropertyMapBody(pattern string) (string, bool) {
 }
 
 // createRelationshipPropertyMapBodies returns the property map text of every
-// relationship ([...]) in a CREATE path pattern.
+// relationship ([...]) in a CREATE path pattern, read by the declaration
+// owner: a '{' in a dynamic type is not the map.
 func createRelationshipPropertyMapBodies(pattern string) []string {
 	var bodies []string
-	for offset := 0; offset < len(pattern); {
-		open := strings.Index(pattern[offset:], "[")
-		if open < 0 {
-			break
-		}
-		open += offset
-		close := findMatchingBracket(pattern, open)
-		if close < 0 {
-			break
-		}
-		if properties, ok := createPropertyMapBody(pattern[open+1 : close]); ok {
+	for open, close := readRelationshipBracket(pattern, 0, requireClosedRelationship); open >= 0; open, close = readRelationshipBracket(pattern, close+1, requireClosedRelationship) {
+		if properties, ok := relationshipDeclarationHead(pattern[open+1 : close]).propertyMapBody(); ok {
 			bodies = append(bodies, properties)
 		}
-		offset = close + 1
 	}
 	return bodies
 }
@@ -303,7 +300,7 @@ func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBin
 		}
 	}
 	for _, variable := range relationshipVariables {
-		created[variable] = "Relationship"
+		created[normalizeProjectionColumnName(variable)] = "Relationship"
 	}
 	if len(created) == 0 {
 		return nil
@@ -376,7 +373,7 @@ func simpleCreatePropertyReference(expression string) (string, bool) {
 	}
 	// A qualified call can be followed by a property/subscript access. Its
 	// namespace is not a variable, as in the shared free-reference reader.
-	if _, call := qualifiedFunctionNameEnd(expression, root.End); call {
+	if _, call := qualifiedFunctionNameEnd(expression, 0, root.End); call {
 		return "", false
 	}
 	remainder := strings.TrimSpace(expression[root.End:])

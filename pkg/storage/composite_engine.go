@@ -51,7 +51,7 @@ func anyToStringSlice(raw interface{}) []string {
 	case []string:
 		out := make([]string, 0, len(v))
 		for _, s := range v {
-			if strings.TrimSpace(s) != "" {
+			if s != "" {
 				out = append(out, s)
 			}
 		}
@@ -59,7 +59,7 @@ func anyToStringSlice(raw interface{}) []string {
 	case []interface{}:
 		out := make([]string, 0, len(v))
 		for _, item := range v {
-			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+			if s, ok := item.(string); ok && s != "" {
 				out = append(out, s)
 			}
 		}
@@ -1123,7 +1123,7 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 		}
 
 		// Also get all constraints from the constraints map (includes all types)
-		allConstraints := constituentSchema.GetAllConstraints()
+		allConstraints := constituentSchema.allConstraints()
 		for i := range allConstraints {
 			constraint := &allConstraints[i]
 			mergedConstraints := mergedSchema.GetConstraints()
@@ -1136,7 +1136,7 @@ func (c *CompositeEngine) GetSchema() *SchemaManager {
 				}
 			}
 			if !found {
-				_ = mergedSchema.AddConstraint(*constraint)
+				_ = mergedSchema.AddConstraint(constraint.snapshot())
 			}
 		}
 

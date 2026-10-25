@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -184,7 +185,7 @@ func formatDecayBindingApply(binding knowledgepolicy.DecayProfileBinding) string
 		variable = "r"
 	}
 	for _, rule := range binding.PropertyRules {
-		prefix := variable + "." + rule.PropertyPath
+		prefix := variable + "." + cyphertext.QuoteName(rule.PropertyPath)
 		if rule.NoDecay {
 			lines = append(lines, prefix+" NO DECAY")
 		}
@@ -229,7 +230,7 @@ func formatPromotionPolicyApply(policy knowledgepolicy.PromotionPolicyDef) strin
 }
 
 func quoteKnowledgePolicyName(name string) string {
-	return "'" + strings.ReplaceAll(name, "'", "\\'") + "'"
+	return cypherStringLiteral(name)
 }
 
 func formatKnowledgePolicyFloat(value float64) string {
@@ -245,7 +246,7 @@ const (
 )
 
 func parseKnowledgePolicyEntityID(entityID string) (string, knowledgePolicyEntityKind) {
-	parts := strings.SplitN(strings.TrimSpace(entityID), ":", 3)
+	parts := strings.SplitN(entityID, ":", 3)
 	if len(parts) != 3 {
 		return entityID, knowledgePolicyEntityAny
 	}
@@ -264,7 +265,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 	if err != nil {
 		return nil, err
 	}
-	labelsCSV, err := optionalStringArg(args, 1)
+	labels, err := knowledgePolicyLabelArg(args, 1)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +273,7 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 	if err != nil {
 		return nil, err
 	}
-	if entityID == "" && labelsCSV == "" && edgeType == "" {
+	if entityID == "" && len(labels) == 0 && edgeType == "" {
 		return nil, localizedError(localization.CypherKnowledgePolicyResolveTargetRequired(), nil)
 	}
 
@@ -327,7 +328,6 @@ func (e *StorageExecutor) callNornicDbKnowledgePolicyResolve(args []interface{})
 	} else if edgeType != "" {
 		resolution = scorer.ScoreEdge("dry-run", edgeType, nil, nowNanos, nowNanos, nowNanos)
 	} else {
-		labels := splitCSVLabels(labelsCSV)
 		resolution = scorer.ScoreNode("dry-run", labels, nil, nowNanos, nowNanos, nowNanos)
 	}
 
@@ -399,7 +399,33 @@ func optionalStringArg(args []interface{}, idx int) (string, error) {
 	if !ok {
 		return "", localizedError(localization.CypherKnowledgePolicyArgumentStringRequired(idx+1), nil)
 	}
-	return strings.TrimSpace(s), nil
+	return s, nil
+}
+
+// Lists carry decoded label identities. The original string argument remains
+// an explicitly written CSV convenience syntax for existing clients.
+func knowledgePolicyLabelArg(args []interface{}, idx int) ([]string, error) {
+	if idx >= len(args) || args[idx] == nil {
+		return nil, nil
+	}
+	switch value := args[idx].(type) {
+	case string:
+		return splitCSVLabels(value), nil
+	case []string:
+		return value, nil
+	case []interface{}:
+		labels := make([]string, len(value))
+		for i, item := range value {
+			label, ok := item.(string)
+			if !ok {
+				return nil, localizedError(localization.CypherKnowledgePolicyArgumentStringRequired(idx+1), nil)
+			}
+			labels[i] = label
+		}
+		return labels, nil
+	default:
+		return nil, localizedError(localization.CypherKnowledgePolicyArgumentStringRequired(idx+1), nil)
+	}
 }
 
 func splitCSVLabels(labelsCSV string) []string {

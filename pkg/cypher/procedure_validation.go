@@ -155,7 +155,6 @@ func validateProcedureYieldBindings(yield *yieldClause, hasTail bool) error {
 	bindings := make(map[string]struct{}, len(yield.items))
 	for _, item := range yield.items {
 		binding := item.column()
-		binding = normalizeProjectionColumnName(binding)
 		if _, exists := bindings[binding]; exists {
 			return newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",

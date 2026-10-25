@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -48,53 +49,6 @@ func ccExpectByte(s string, i int, b byte) int {
 	return -1
 }
 
-// ccScanLabels reads zero or more `:Label` sequences starting at i.
-func ccScanLabels(s string, i int) ([]string, int) {
-	var labels []string
-	for {
-		p := ccSkipSpaces(s, i)
-		if p >= len(s) || s[p] != ':' {
-			return labels, i
-		}
-		p++ // skip ':'
-		p = ccSkipSpaces(s, p)
-		label, next := cyphertext.IdentifierValue(s, p)
-		if label == "" {
-			return labels, i // colon without ident — don't consume
-		}
-		labels = append(labels, label)
-		i = next
-	}
-}
-
-// ccScanNodeContents reads the inside of a node pattern (...) starting after '('.
-// Returns any labels found and the position after ')'.
-func ccScanNodeContents(s string, i int) ([]string, int, bool) {
-	p := ccSkipSpaces(s, i)
-	// Optional variable name
-	if _, next := cyphertext.IdentifierValue(s, p); next > p {
-		p = next
-	}
-	// Zero or more :Label
-	labels, p := ccScanLabels(s, p)
-	p = ccSkipSpaces(s, p)
-	p = ccExpectByte(s, p, ')')
-	if p == -1 {
-		return nil, 0, false
-	}
-	return labels, p, true
-}
-
-// hasAllLabels checks that all required labels exist on the node.
-func hasAllLabels(labels []string, required []string) bool {
-	for _, req := range required {
-		if !hasLabel(labels, req) {
-			return false
-		}
-	}
-	return true
-}
-
 const (
 	ConstraintContractKindPrimitiveNode         = "primitive-node"
 	ConstraintContractKindPrimitiveRelationship = "primitive-relationship"
@@ -125,23 +79,236 @@ type ConstraintContractEntry struct {
 	Expression    string   `json:"expression,omitempty"`
 }
 
-func cloneConstraintContractEntry(entry ConstraintContractEntry) ConstraintContractEntry {
-	cloned := entry
-	if len(entry.Properties) > 0 {
-		cloned.Properties = append([]string(nil), entry.Properties...)
-	}
-	return cloned
+// constraintContractRevision is one immutable revision of a contract, held by
+// value: the schema and every handle keep their own copy. It holds no pointer,
+// slice or map. Its own copy of the description and the plan compiled from
+// each entry live only inside the closures compileConstraintContractRevision
+// builds, which no other code can name, and its scalars are copied with the
+// value. Copying, converting or overwriting a revision value therefore changes
+// only that value, never what the schema enforces: there is no pointer to
+// installed memory to hand out. The zero value holds no contract.
+type constraintContractRevision struct {
+	name              string
+	targetEntityType  string
+	targetLabelOrType string
+	entries           int
+	invalid           func() error // the first entry that does not compile, or nil
+	primitive         func(index int) bool
+	check             func(view constraintGraphView, kind string, node *Node, edge *Edge) error
+	describe          func() ConstraintContract
 }
 
-func cloneConstraintContract(contract ConstraintContract) ConstraintContract {
-	cloned := contract
-	if len(contract.Entries) > 0 {
-		cloned.Entries = make([]ConstraintContractEntry, 0, len(contract.Entries))
-		for _, entry := range contract.Entries {
-			cloned.Entries = append(cloned.Entries, cloneConstraintContractEntry(entry))
+// constraintContractRevisionEntry is one entry of a revision: its own copy of
+// the entry's description and the plan compiled from it. Entries exist only
+// inside a revision's closures.
+type constraintContractRevisionEntry struct {
+	kind          string
+	primitiveType string
+	properties    []string
+	property      string
+	expectedType  string
+	expression    string
+	plan          constraintContractEntryPlan
+}
+
+// CompiledConstraintContract is an opaque handle to an admitted revision. It
+// is a value with no exported fields and holds its revision by value:
+// assigning to a handle, or to anything reached from it, changes only the
+// caller's copy, never the revision the schema installed. The zero handle
+// holds no contract.
+type CompiledConstraintContract struct {
+	revision constraintContractRevision
+}
+
+// constraintContractEntryPlan is a boolean entry's compiled predicate, or the
+// error compiling it, which every evaluation of the entry reports. The error
+// is kept as immutable data and rebuilt on each report.
+type constraintContractEntryPlan struct {
+	node         contractNodePredicate
+	relationship contractRelationshipPredicate
+	failure      retainedError
+}
+
+// constraintContractCompileHook lets storage tests count predicate
+// compilations, so validation cannot regress to compiling per entity.
+var constraintContractCompileHook atomic.Pointer[func()]
+
+// compileConstraintContractEntryPlan compiles one entry's predicate. Only a
+// compiled revision and admission's validation call it; ok is false for a
+// non-boolean entry.
+func compileConstraintContractEntryPlan(entry ConstraintContractEntry) (plan constraintContractEntryPlan, ok bool) {
+	var err error
+	switch entry.Kind {
+	case ConstraintContractKindBooleanNode:
+		plan.node, err = compileNodeConstraintContractExpression(entry.Expression)
+	case ConstraintContractKindBooleanRelationship:
+		plan.relationship, err = compileRelationshipConstraintContractExpression(entry.Expression)
+	default:
+		return plan, false
+	}
+	plan.failure = retainError(err)
+	return plan, true
+}
+
+// compileConstraintContractRevision is the one producer of contract plans. It
+// deep-copies contract into memory only the returned closures can reach, so
+// neither later edits to the caller's value nor anything done with a copy of
+// the revision can change what it checks. An entry that does not compile
+// keeps its error in its plan.
+func compileConstraintContractRevision(contract ConstraintContract) constraintContractRevision {
+	name, definition := contract.Name, contract.Definition
+	entityType, labelOrType := contract.TargetEntityType, contract.TargetLabelOrType
+	entries := make([]constraintContractRevisionEntry, len(contract.Entries))
+	for index, entry := range contract.Entries {
+		installed := &entries[index]
+		installed.kind, installed.primitiveType, installed.property = entry.Kind, entry.PrimitiveType, entry.Property
+		installed.expectedType, installed.expression = entry.ExpectedType, entry.Expression
+		if len(entry.Properties) > 0 {
+			installed.properties = append([]string(nil), entry.Properties...)
+		}
+		installed.plan, _ = compileConstraintContractEntryPlan(entry)
+	}
+	revision := constraintContractRevision{
+		name:              name,
+		targetEntityType:  entityType,
+		targetLabelOrType: labelOrType,
+		entries:           len(entries),
+		primitive: func(index int) bool {
+			kind := entries[index].kind
+			return kind == ConstraintContractKindPrimitiveNode || kind == ConstraintContractKindPrimitiveRelationship
+		},
+		check: func(view constraintGraphView, kind string, node *Node, edge *Edge) error {
+			for index := range entries {
+				entry := &entries[index]
+				if entry.kind != kind {
+					continue
+				}
+				var ok bool
+				var err error
+				if node != nil {
+					ok, err = evaluateNodeConstraintContractPlan(view, node, &entry.plan)
+				} else {
+					ok, err = evaluateRelationshipConstraintContractPlan(view, edge, &entry.plan)
+				}
+				if err != nil {
+					err = constraintContractInvalidError(name, entry.expression, err)
+					if entry.plan.failure != (retainedError{}) {
+						// The entry's own compile error: reported as a copy.
+						return reportedContractError(err)
+					}
+					return err
+				}
+				if !ok {
+					return localizedError(localization.StorageSchemaConstraintContractViolated(name, entry.expression), nil)
+				}
+			}
+			return nil
+		},
+		describe: func() ConstraintContract {
+			contract := ConstraintContract{Name: name, TargetEntityType: entityType, TargetLabelOrType: labelOrType, Definition: definition}
+			if len(entries) > 0 {
+				contract.Entries = make([]ConstraintContractEntry, len(entries))
+			}
+			for index := range entries {
+				entry := &entries[index]
+				contract.Entries[index] = ConstraintContractEntry{
+					Kind:          entry.kind,
+					PrimitiveType: entry.primitiveType,
+					Property:      entry.property,
+					ExpectedType:  entry.expectedType,
+					Expression:    entry.expression,
+				}
+				if len(entry.properties) > 0 {
+					contract.Entries[index].Properties = append([]string(nil), entry.properties...)
+				}
+			}
+			return contract
+		},
+	}
+	for index := range entries {
+		if failure := entries[index].plan.failure; failure != (retainedError{}) {
+			expression := entries[index].expression
+			revision.invalid = func() error {
+				return reportedContractError(constraintContractInvalidError(name, expression, failure.err()))
+			}
+			break
 		}
 	}
-	return cloned
+	return revision
+}
+
+// firstError is the error admission reports for the revision: its first entry
+// that does not compile.
+func (revision constraintContractRevision) firstError() error {
+	if revision.invalid == nil {
+		return nil
+	}
+	return revision.invalid()
+}
+
+// CompileConstraintContract compiles contract once for admission, its scan of
+// existing data and the schema revision that stores it.
+func CompileConstraintContract(contract ConstraintContract) (CompiledConstraintContract, error) {
+	revision := compileConstraintContractRevision(contract)
+	if err := revision.firstError(); err != nil {
+		return CompiledConstraintContract{}, err
+	}
+	return CompiledConstraintContract{revision: revision}, nil
+}
+
+// Contract returns a copy of the description the handle's revision compiled;
+// the zero handle returns the zero contract.
+func (compiled CompiledConstraintContract) Contract() ConstraintContract {
+	return compiled.revision.description()
+}
+
+// admittedRevision returns the handle's revision; the zero handle holds no
+// contract, so it names no supported target.
+func (compiled CompiledConstraintContract) admittedRevision() (constraintContractRevision, error) {
+	if compiled.revision.check == nil {
+		return constraintContractRevision{}, localizedError(localization.StorageSchemaUnsupportedContractTargetEntityType(""), nil)
+	}
+	return compiled.revision, nil
+}
+
+// description returns a detached copy of the description this revision
+// compiled: nothing in it shares memory with the revision. The zero revision
+// returns the zero contract.
+func (revision constraintContractRevision) description() ConstraintContract {
+	if revision.describe == nil {
+		return ConstraintContract{}
+	}
+	return revision.describe()
+}
+
+// contractName is the name of the revision's contract.
+func (revision constraintContractRevision) contractName() string { return revision.name }
+
+// target is the entity type and the label or relationship type the revision
+// checks.
+func (revision constraintContractRevision) target() (ConstraintEntityType, string) {
+	return ConstraintEntityType(revision.targetEntityType), revision.targetLabelOrType
+}
+
+// entryCount and isPrimitiveEntry tell DROP which entries compiled to
+// standard constraints.
+func (revision constraintContractRevision) entryCount() int { return revision.entries }
+
+func (revision constraintContractRevision) isPrimitiveEntry(index int) bool {
+	return revision.primitive(index)
+}
+
+// validate checks a node or a relationship (exactly one is non-nil) against
+// each entry of kind with the entry's stored plan; nothing is compiled.
+func (revision constraintContractRevision) validate(view constraintGraphView, kind string, node *Node, edge *Edge) error {
+	if revision.check == nil {
+		return nil
+	}
+	return revision.check(view, kind, node, edge)
+}
+
+func constraintContractInvalidError(name, expression string, err error) error {
+	return localizedError(localization.StorageSchemaConstraintContractInvalid(name, expression, err), err)
 }
 
 func constraintContractEqual(a, b ConstraintContract) bool {
@@ -177,8 +344,8 @@ func (sm *SchemaManager) GetAllConstraintContracts() []ConstraintContract {
 	defer sm.mu.RUnlock()
 
 	contracts := make([]ConstraintContract, 0, len(sm.constraintContracts))
-	for _, contract := range sm.constraintContracts {
-		contracts = append(contracts, cloneConstraintContract(contract))
+	for _, revision := range sm.constraintContracts {
+		contracts = append(contracts, revision.description())
 	}
 	sort.Slice(contracts, func(i, j int) bool {
 		return contracts[i].Name < contracts[j].Name
@@ -197,39 +364,83 @@ func (sm *SchemaManager) HasAnyConstraintContract() bool {
 }
 
 func (sm *SchemaManager) GetConstraintContractsForTarget(entityType ConstraintEntityType, labelOrType string) []ConstraintContract {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-
 	contracts := make([]ConstraintContract, 0)
-	for _, contract := range sm.constraintContracts {
-		if contract.TargetEntityType != string(entityType) || contract.TargetLabelOrType != labelOrType {
-			continue
-		}
-		contracts = append(contracts, cloneConstraintContract(contract))
+	for _, revision := range sm.constraintContractRevisionsForTarget(entityType, labelOrType) {
+		contracts = append(contracts, revision.description())
 	}
-	sort.Slice(contracts, func(i, j int) bool {
-		return contracts[i].Name < contracts[j].Name
-	})
 	return contracts
 }
 
+// constraintContractRevisionsForTarget returns the stored revisions for a
+// target, in name order. Revisions are immutable and shared, not copied.
+func (sm *SchemaManager) constraintContractRevisionsForTarget(entityType ConstraintEntityType, labelOrType string) []constraintContractRevision {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	revisions := make([]constraintContractRevision, 0)
+	for _, revision := range sm.constraintContracts {
+		if entity, target := revision.target(); entity != entityType || target != labelOrType {
+			continue
+		}
+		revisions = append(revisions, revision)
+	}
+	sort.Slice(revisions, func(i, j int) bool {
+		return revisions[i].contractName() < revisions[j].contractName()
+	})
+	return revisions
+}
+
+// AddConstraintContractBundle stores contract as a new compiled revision. An
+// entry that does not compile is stored and fails where it is evaluated, as
+// before; CREATE CONSTRAINT admits contracts through CompileConstraintContract.
 func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract, compiledConstraints []Constraint, compiledTypes []PropertyTypeConstraint, ifNotExists bool) error {
+	return sm.addConstraintContractRevision(compileConstraintContractRevision(contract), compiledConstraints, compiledTypes, ifNotExists)
+}
+
+// AddCompiledConstraintContractBundle installs the revision an admitted handle
+// refers to. The schema keeps the revision, never the caller's handle.
+func (sm *SchemaManager) AddCompiledConstraintContractBundle(compiled CompiledConstraintContract, compiledConstraints []Constraint, compiledTypes []PropertyTypeConstraint, ifNotExists bool) error {
+	revision, err := compiled.admittedRevision()
+	if err != nil {
+		return err
+	}
+	return sm.addConstraintContractRevision(revision, compiledConstraints, compiledTypes, ifNotExists)
+}
+
+// CompiledConstraintContracts returns handles to the installed revisions, in
+// name order, for checks that reuse them (such as import validation).
+func (sm *SchemaManager) CompiledConstraintContracts() []CompiledConstraintContract {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	handles := make([]CompiledConstraintContract, 0, len(sm.constraintContracts))
+	for _, revision := range sm.constraintContracts {
+		handles = append(handles, CompiledConstraintContract{revision: revision})
+	}
+	sort.Slice(handles, func(i, j int) bool {
+		return handles[i].revision.contractName() < handles[j].revision.contractName()
+	})
+	return handles
+}
+
+func (sm *SchemaManager) addConstraintContractRevision(revision constraintContractRevision, compiledConstraints []Constraint, compiledTypes []PropertyTypeConstraint, ifNotExists bool) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	name := revision.contractName()
 	snapshot := sm.exportDefinitionLocked()
 
-	if existing, exists := sm.constraintContracts[contract.Name]; exists {
-		if ifNotExists && constraintContractEqual(existing, contract) {
+	if existing, exists := sm.constraintContracts[name]; exists {
+		if ifNotExists && constraintContractEqual(existing.description(), revision.description()) {
 			return nil
 		}
-		return localizedError(localization.StorageSchemaConstraintContractAlreadyExists(contract.Name), nil)
+		return localizedError(localization.StorageSchemaConstraintContractAlreadyExists(name), nil)
 	}
-	if _, exists := sm.constraints[contract.Name]; exists {
-		return localizedError(localization.StorageSchemaConstraintContractNameConflict(contract.Name), nil)
+	if _, exists := sm.constraints[name]; exists {
+		return localizedError(localization.StorageSchemaConstraintContractNameConflict(name), nil)
 	}
-	if _, exists := sm.propertyTypeConstraints[contract.Name]; exists {
-		return localizedError(localization.StorageSchemaConstraintContractNameConflict(contract.Name), nil)
+	if _, exists := sm.propertyTypeConstraints[name]; exists {
+		return localizedError(localization.StorageSchemaConstraintContractNameConflict(name), nil)
 	}
 
 	for _, compiled := range compiledConstraints {
@@ -245,7 +456,7 @@ func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract
 		}
 	}
 
-	sm.constraintContracts[contract.Name] = cloneConstraintContract(contract)
+	sm.constraintContracts[name] = revision
 
 	if sm.persist != nil {
 		def := sm.exportDefinitionLocked()
@@ -259,18 +470,30 @@ func (sm *SchemaManager) AddConstraintContractBundle(contract ConstraintContract
 }
 
 func ValidateConstraintContractOnCreationForEngine(engine Engine, contract ConstraintContract) error {
-	if err := ValidateConstraintContractExpressions(contract); err != nil {
+	compiled, err := CompileConstraintContract(contract)
+	if err != nil {
 		return err
 	}
-	entityType := ConstraintEntityType(contract.TargetEntityType)
+	return ValidateCompiledConstraintContractOnCreationForEngine(engine, compiled)
+}
+
+// ValidateCompiledConstraintContractOnCreationForEngine checks existing data
+// against an admitted revision: one plan per entry serves the whole scan.
+func ValidateCompiledConstraintContractOnCreationForEngine(engine Engine, compiled CompiledConstraintContract) error {
+	revision, err := compiled.admittedRevision()
+	if err != nil {
+		return err
+	}
+	view := engineConstraintView{engine}
+	entityType, labelOrType := revision.target()
 	switch entityType {
 	case ConstraintEntityNode:
-		nodes, err := GetStoredNodesByLabel(engine, contract.TargetLabelOrType)
+		nodes, err := GetStoredNodesByLabel(engine, labelOrType)
 		if err != nil {
 			return localizedError(localization.StorageSchemaScanNodesFailed(err), err)
 		}
 		for _, node := range nodes {
-			if err := validateConstraintContractForNodeEngine(engine, contract, node); err != nil {
+			if err := revision.validate(view, ConstraintContractKindBooleanNode, node, nil); err != nil {
 				return err
 			}
 		}
@@ -278,11 +501,11 @@ func ValidateConstraintContractOnCreationForEngine(engine Engine, contract Const
 		// Stream the relationship type (scoped to the engine's database)
 		// instead of loading every edge of the type into memory.
 		var violation error
-		err := StreamStoredEdgesByType(context.Background(), engine, contract.TargetLabelOrType, func(edge *Edge) error {
+		err := StreamStoredEdgesByType(context.Background(), engine, labelOrType, func(edge *Edge) error {
 			if edge == nil {
 				return nil
 			}
-			if err := validateConstraintContractForEdgeEngine(engine, contract, edge); err != nil {
+			if err := revision.validate(view, ConstraintContractKindBooleanRelationship, nil, edge); err != nil {
 				violation = err
 				return err
 			}
@@ -295,39 +518,7 @@ func ValidateConstraintContractOnCreationForEngine(engine Engine, contract Const
 			return localizedError(localization.StorageSchemaScanRelationshipsFailed(err), err)
 		}
 	default:
-		return localizedError(localization.StorageSchemaUnsupportedContractTargetEntityType(contract.TargetEntityType), nil)
-	}
-	return nil
-}
-
-func validateConstraintContractForNodeEngine(engine Engine, contract ConstraintContract, node *Node) error {
-	for _, entry := range contract.Entries {
-		if entry.Kind != ConstraintContractKindBooleanNode {
-			continue
-		}
-		ok, err := evaluateNodeConstraintContractExpressionEngine(engine, node, entry.Expression)
-		if err != nil {
-			return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
-		}
-		if !ok {
-			return localizedError(localization.StorageSchemaConstraintContractViolated(contract.Name, entry.Expression), nil)
-		}
-	}
-	return nil
-}
-
-func validateConstraintContractForEdgeEngine(engine Engine, contract ConstraintContract, edge *Edge) error {
-	for _, entry := range contract.Entries {
-		if entry.Kind != ConstraintContractKindBooleanRelationship {
-			continue
-		}
-		ok, err := evaluateRelationshipConstraintContractExpressionEngine(engine, edge, entry.Expression)
-		if err != nil {
-			return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
-		}
-		if !ok {
-			return localizedError(localization.StorageSchemaConstraintContractViolated(contract.Name, entry.Expression), nil)
-		}
+		return localizedError(localization.StorageSchemaUnsupportedContractTargetEntityType(string(entityType)), nil)
 	}
 	return nil
 }
@@ -367,153 +558,164 @@ func (v txConstraintView) Node(id NodeID) (*Node, error) {
 	return v.tx.currentNodeLocked(id)
 }
 
-func evaluateNodeConstraintContractExpressionEngine(engine Engine, node *Node, expr string) (bool, error) {
-	return evaluateNodeConstraintContractExpression(engineConstraintView{engine}, node, expr)
+// Evaluation reads a revision's plan; it never compiles.
+func evaluateNodeConstraintContractPlan(view constraintGraphView, node *Node, plan *constraintContractEntryPlan) (bool, error) {
+	if plan.failure != (retainedError{}) {
+		return false, plan.failure.err()
+	}
+	return plan.node.evaluate(view, node)
 }
 
-func evaluateNodeConstraintContractExpression(view constraintGraphView, node *Node, expr string) (bool, error) {
-	predicate, err := compileNodeConstraintContractExpression(expr)
-	if err != nil {
-		return false, err
-	}
-	return predicate(view, node)
+// Admission and runtime consume the same immutable value plan. Creating a
+// contract must validate every supported predicate, even on an empty graph,
+// but need not allocate a runtime function and discard it after validation.
+type contractPredicateKind uint8
+
+const (
+	contractPropertyIn contractPredicateKind = iota
+	contractPropertyComparison
+	contractPatternCount
+	contractPatternAbsent
+	contractDistinctEndpoints
+	contractEndpointProperties
+)
+
+type contractNodePredicate struct {
+	kind                 contractPredicateKind
+	property, comparator string
+	values               []interface{}
+	value                interface{}
+	pattern              contractPattern
+	threshold            int
 }
 
-// contractNodePredicate / contractRelationshipPredicate are compiled runtime
-// contract entries. Compiling is pure parsing, so contract creation compiles
-// every boolean entry up front (an unsupported predicate is rejected at
-// CREATE CONSTRAINT instead of blocking every later write), and write-time
-// evaluation goes through the same compiler.
-type contractNodePredicate func(view constraintGraphView, node *Node) (bool, error)
-type contractRelationshipPredicate func(view constraintGraphView, edge *Edge) (bool, error)
-
-// Property predicates (`x.p IN [...]`, `x.p > v`) follow SQL CHECK semantics:
-// an absent property satisfies them, the same way primitive domain and type
-// constraints accept null. Presence is required with `x.p IS NOT NULL`.
-func compileNodeConstraintContractExpression(expr string) (contractNodePredicate, error) {
-	if matched, values, property, err := parsePropertyInExpression(expr); err != nil {
-		return nil, err
-	} else if matched {
-		return func(_ constraintGraphView, node *Node) (bool, error) {
-			return evaluatePropertyInExpression(node.Properties[property], values), nil
-		}, nil
-	}
-
-	if matched, property, comparator, value, err := parseRelationshipPropertyComparisonExpression(expr); err != nil {
-		return nil, err
-	} else if matched {
-		return func(_ constraintGraphView, node *Node) (bool, error) {
-			return compareConstraintExpressionValue(node.Properties[property], comparator, value), nil
-		}, nil
-	}
-
-	if matched, pattern, comparator, threshold, err := parseCountPatternExpression(expr); err != nil {
-		return nil, err
-	} else if matched {
-		return func(view constraintGraphView, node *Node) (bool, error) {
-			count, err := countMatchingPatternEdges(view, node, pattern)
-			if err != nil {
-				return false, err
-			}
-			return compareInt(count, comparator, threshold), nil
-		}, nil
-	}
-
-	if matched, pattern, err := parseNotExistsPatternExpression(expr); err != nil {
-		return nil, err
-	} else if matched {
-		return func(view constraintGraphView, node *Node) (bool, error) {
-			count, err := countMatchingPatternEdges(view, node, pattern)
-			if err != nil {
-				return false, err
-			}
+// Property predicates retain SQL CHECK semantics: an absent property satisfies
+// them; presence is required separately with IS NOT NULL.
+func (predicate *contractNodePredicate) evaluate(view constraintGraphView, node *Node) (bool, error) {
+	switch predicate.kind {
+	case contractPropertyIn:
+		return evaluatePropertyInExpression(node.Properties[predicate.property], predicate.values), nil
+	case contractPropertyComparison:
+		return compareConstraintExpressionValue(node.Properties[predicate.property], predicate.comparator, predicate.value), nil
+	case contractPatternCount, contractPatternAbsent:
+		count, err := countMatchingPatternEdges(view, node, predicate.pattern)
+		if err != nil {
+			return false, err
+		}
+		if predicate.kind == contractPatternAbsent {
 			return count == 0, nil
-		}, nil
+		}
+		return compareInt(count, predicate.comparator, predicate.threshold), nil
+	default:
+		panic("invalid node constraint predicate plan")
 	}
-
-	return nil, localizedError(localization.StorageSchemaUnsupportedNodePredicate(), nil)
 }
 
-func evaluateRelationshipConstraintContractExpressionEngine(engine Engine, edge *Edge, expr string) (bool, error) {
-	return evaluateRelationshipConstraintContractExpression(engineConstraintView{engine}, edge, expr)
+func compileNodeConstraintContractExpression(expr string) (contractNodePredicate, error) {
+	if hook := constraintContractCompileHook.Load(); hook != nil {
+		(*hook)()
+	}
+	if matched, values, property, err := parsePropertyInExpression(expr); err != nil {
+		return contractNodePredicate{}, err
+	} else if matched {
+		return contractNodePredicate{kind: contractPropertyIn, property: property, values: values}, nil
+	}
+	if matched, property, comparator, value, err := parseRelationshipPropertyComparisonExpression(expr); err != nil {
+		return contractNodePredicate{}, err
+	} else if matched {
+		return contractNodePredicate{kind: contractPropertyComparison, property: property, comparator: comparator, value: value}, nil
+	}
+	if matched, pattern, comparator, threshold, err := parseCountPatternExpression(expr); err != nil {
+		return contractNodePredicate{}, err
+	} else if matched {
+		return contractNodePredicate{kind: contractPatternCount, pattern: pattern, comparator: comparator, threshold: threshold}, nil
+	}
+	if matched, pattern, err := parseNotExistsPatternExpression(expr); err != nil {
+		return contractNodePredicate{}, err
+	} else if matched {
+		return contractNodePredicate{kind: contractPatternAbsent, pattern: pattern}, nil
+	}
+	return contractNodePredicate{}, localizedError(localization.StorageSchemaUnsupportedNodePredicate(), nil)
 }
 
-func evaluateRelationshipConstraintContractExpression(view constraintGraphView, edge *Edge, expr string) (bool, error) {
-	predicate, err := compileRelationshipConstraintContractExpression(expr)
-	if err != nil {
-		return false, err
+func evaluateRelationshipConstraintContractPlan(view constraintGraphView, edge *Edge, plan *constraintContractEntryPlan) (bool, error) {
+	if plan.failure != (retainedError{}) {
+		return false, plan.failure.err()
 	}
-	return predicate(view, edge)
+	return plan.relationship.evaluate(view, edge)
+}
+
+type contractRelationshipPredicate struct {
+	kind                 contractPredicateKind
+	property, comparator string
+	leftProp, rightProp  string
+	values               []interface{}
+	value                interface{}
+}
+
+func (predicate *contractRelationshipPredicate) evaluate(view constraintGraphView, edge *Edge) (bool, error) {
+	switch predicate.kind {
+	case contractPropertyIn:
+		return evaluatePropertyInExpression(edge.Properties[predicate.property], predicate.values), nil
+	case contractPropertyComparison:
+		return compareConstraintExpressionValue(edge.Properties[predicate.property], predicate.comparator, predicate.value), nil
+	case contractDistinctEndpoints:
+		return edge.StartNode != edge.EndNode, nil
+	case contractEndpointProperties:
+		startNode, err := view.Node(edge.StartNode)
+		if err != nil {
+			return false, err
+		}
+		endNode, err := view.Node(edge.EndNode)
+		if err != nil {
+			return false, err
+		}
+		if startNode == nil || endNode == nil {
+			return false, localizedError(localization.StorageSchemaMissingRelationshipEndpoint(), nil)
+		}
+		return compareValues(startNode.Properties[predicate.leftProp], endNode.Properties[predicate.rightProp]), nil
+	default:
+		panic("invalid relationship constraint predicate plan")
+	}
 }
 
 func compileRelationshipConstraintContractExpression(expr string) (contractRelationshipPredicate, error) {
+	if hook := constraintContractCompileHook.Load(); hook != nil {
+		(*hook)()
+	}
 	if matched, property, values, err := parseRelationshipPropertyInExpression(expr); err != nil {
-		return nil, err
+		return contractRelationshipPredicate{}, err
 	} else if matched {
-		return func(_ constraintGraphView, edge *Edge) (bool, error) {
-			return evaluatePropertyInExpression(edge.Properties[property], values), nil
-		}, nil
+		return contractRelationshipPredicate{kind: contractPropertyIn, property: property, values: values}, nil
 	}
-
 	if isDistinctEndpointsExpression(expr) {
-		return func(_ constraintGraphView, edge *Edge) (bool, error) {
-			return edge.StartNode != edge.EndNode, nil
-		}, nil
+		return contractRelationshipPredicate{kind: contractDistinctEndpoints}, nil
 	}
-
 	if matched, leftProp, rightProp := parseEndpointPropertyEqualityExpression(expr); matched {
-		return func(view constraintGraphView, edge *Edge) (bool, error) {
-			startNode, err := view.Node(edge.StartNode)
-			if err != nil {
-				return false, err
-			}
-			endNode, err := view.Node(edge.EndNode)
-			if err != nil {
-				return false, err
-			}
-			if startNode == nil || endNode == nil {
-				return false, localizedError(localization.StorageSchemaMissingRelationshipEndpoint(), nil)
-			}
-			return compareValues(startNode.Properties[leftProp], endNode.Properties[rightProp]), nil
-		}, nil
+		return contractRelationshipPredicate{kind: contractEndpointProperties, leftProp: leftProp, rightProp: rightProp}, nil
 	}
-
 	if matched, property, comparator, value, err := parseRelationshipPropertyComparisonExpression(expr); err != nil {
-		return nil, err
+		return contractRelationshipPredicate{}, err
 	} else if matched {
-		return func(_ constraintGraphView, edge *Edge) (bool, error) {
-			return compareConstraintExpressionValue(edge.Properties[property], comparator, value), nil
-		}, nil
+		return contractRelationshipPredicate{kind: contractPropertyComparison, property: property, comparator: comparator, value: value}, nil
 	}
-
-	return nil, localizedError(localization.StorageSchemaUnsupportedRelationshipPredicate(), nil)
+	return contractRelationshipPredicate{}, localizedError(localization.StorageSchemaUnsupportedRelationshipPredicate(), nil)
 }
 
 // ValidateConstraintContractExpressions compiles every boolean entry of a
 // contract so unsupported predicates fail at creation, even on an empty graph.
+// Validation alone retains no plan: it compiles each entry with the same
+// owner and keeps only the first error.
 func ValidateConstraintContractExpressions(contract ConstraintContract) error {
 	for _, entry := range contract.Entries {
-		var err error
-		switch entry.Kind {
-		case ConstraintContractKindBooleanNode:
-			_, err = compileNodeConstraintContractExpression(entry.Expression)
-		case ConstraintContractKindBooleanRelationship:
-			_, err = compileRelationshipConstraintContractExpression(entry.Expression)
-		default:
-			continue
-		}
-		if err != nil {
-			return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
+		if plan, ok := compileConstraintContractEntryPlan(entry); ok && plan.failure != (retainedError{}) {
+			return reportedContractError(constraintContractInvalidError(contract.Name, entry.Expression, plan.failure.err()))
 		}
 	}
 	return nil
 }
 
-type contractPattern struct {
-	Direction    string
-	RelationType string
-	TargetLabels []string
-}
+type contractPattern = cyphertext.ConstraintPattern
 
 // ============================================================================
 // Expression parsers — keyword scanning, no regex.
@@ -600,15 +802,12 @@ func parseCountPatternExpression(expr string) (bool, contractPattern, string, in
 	if ccExpectByte(s, p, '{') == -1 {
 		return false, contractPattern{}, "", 0, nil
 	}
-	p++
-	// Find matching }
-	braceStart := p
-	p = cyphertext.FindMatchingDelimiter(s, p-1, '{', '}', cyphertext.OpeningDelimiter)
-	if p < 0 {
+	close := cyphertext.FindMatchingDelimiter(s, p, '{', '}', cyphertext.OpeningDelimiter)
+	if close < 0 {
 		return false, contractPattern{}, "", 0, nil
 	}
-	inner := strings.TrimSpace(s[braceStart:p])
-	p++ // skip '}'
+	inner := strings.TrimSpace(s[p+1 : close])
+	p = close + 1
 
 	// Optional MATCH keyword inside braces
 	if end := cyphertext.KeywordEnd(inner, 0, "MATCH", cyphertext.CypherWord); end != -1 {
@@ -672,15 +871,12 @@ func parseNotExistsPatternExpression(expr string) (bool, contractPattern, error)
 	if ccExpectByte(s, p, '{') == -1 {
 		return false, contractPattern{}, nil
 	}
-	p++
-	// Find matching }
-	braceStart := p
-	p = cyphertext.FindMatchingDelimiter(s, p-1, '{', '}', cyphertext.OpeningDelimiter)
-	if p < 0 {
+	close := cyphertext.FindMatchingDelimiter(s, p, '{', '}', cyphertext.OpeningDelimiter)
+	if close < 0 {
 		return false, contractPattern{}, nil
 	}
-	inner := strings.TrimSpace(s[braceStart:p])
-	p++ // skip '}'
+	inner := strings.TrimSpace(s[p+1 : close])
+	p = close + 1
 
 	if ccSkipSpaces(s, p) != len(s) {
 		return false, contractPattern{}, nil
@@ -701,92 +897,11 @@ func parseNotExistsPatternExpression(expr string) (bool, contractPattern, error)
 // parseConstraintPattern: (node)-[:TYPE]->(node) or (node)<-[:TYPE]-(node)
 // Supports n-arity labels on both source and target: (n:A:B)-[:R]->(:X:Y:Z)
 func parseConstraintPattern(raw string) (contractPattern, error) {
-	s := strings.TrimSpace(raw)
-	p := 0
-
-	// Source node: ( ... )
-	if ccExpectByte(s, p, '(') == -1 {
-		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
-	}
-	p++
-	_, p, ok := ccScanNodeContents(s, p)
+	pattern, ok := cyphertext.CompileConstraintPattern(raw)
 	if !ok {
 		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
 	}
-
-	// Arrow start: - or <-
-	p = ccSkipSpaces(s, p)
-	direction := ""
-	if p+1 < len(s) && s[p] == '<' && s[p+1] == '-' {
-		direction = "INCOMING"
-		p += 2
-	} else if p < len(s) && s[p] == '-' {
-		p++
-	} else {
-		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
-	}
-
-	// Relationship: [ :TYPE ]
-	p = ccSkipSpaces(s, p)
-	if ccExpectByte(s, p, '[') == -1 {
-		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
-	}
-	p++
-	p = ccSkipSpaces(s, p)
-	if ccExpectByte(s, p, ':') == -1 {
-		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
-	}
-	p++
-	p = ccSkipSpaces(s, p)
-	relType, next := cyphertext.IdentifierValue(s, p)
-	if relType == "" {
-		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
-	}
-	p = next
-	p = ccSkipSpaces(s, p)
-	if ccExpectByte(s, p, ']') == -1 {
-		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
-	}
-	p++
-
-	// Arrow end: -> or -
-	p = ccSkipSpaces(s, p)
-	if direction == "" {
-		// Must be outgoing: ->
-		if p+1 < len(s) && s[p] == '-' && s[p+1] == '>' {
-			direction = "OUTGOING"
-			p += 2
-		} else {
-			return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
-		}
-	} else {
-		// INCOMING: expect -
-		if ccExpectByte(s, p, '-') == -1 {
-			return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
-		}
-		p++
-	}
-
-	// Target node: ( ... )
-	p = ccSkipSpaces(s, p)
-	if ccExpectByte(s, p, '(') == -1 {
-		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
-	}
-	p++
-	targetLabels, p, ok := ccScanNodeContents(s, p)
-	if !ok {
-		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
-	}
-
-	if ccSkipSpaces(s, p) != len(s) {
-		return contractPattern{}, localizedError(localization.StorageSchemaUnsupportedConstraintPattern(raw), nil)
-	}
-
-	return contractPattern{
-		Direction:    direction,
-		RelationType: relType,
-		TargetLabels: targetLabels,
-	}, nil
+	return pattern, nil
 }
 
 // isDistinctEndpointsExpression: startNode(r) <> endNode(r)
@@ -1145,7 +1260,7 @@ func countMatchingPatternEdgesEngine(engine Engine, node *Node, pattern contract
 func countMatchingPatternEdges(view constraintGraphView, node *Node, pattern contractPattern) (int, error) {
 	var edges []*Edge
 	var err error
-	if pattern.Direction == "INCOMING" {
+	if pattern.Direction() == "INCOMING" {
 		edges, err = view.IncomingEdges(node.ID)
 	} else {
 		edges, err = view.OutgoingEdges(node.ID)
@@ -1155,19 +1270,19 @@ func countMatchingPatternEdges(view constraintGraphView, node *Node, pattern con
 	}
 	count := 0
 	for _, edge := range edges {
-		if edge.Type != pattern.RelationType {
+		if !pattern.MatchesType(edge.Type) {
 			continue
 		}
-		if len(pattern.TargetLabels) > 0 {
+		if pattern.TargetLabelCount() > 0 {
 			otherID := edge.EndNode
-			if pattern.Direction == "INCOMING" {
+			if pattern.Direction() == "INCOMING" {
 				otherID = edge.StartNode
 			}
 			otherNode, err := view.Node(otherID)
 			if err != nil {
 				return 0, err
 			}
-			if otherNode == nil || !hasAllLabels(otherNode.Labels, pattern.TargetLabels) {
+			if otherNode == nil || !pattern.MatchesTargetLabels(otherNode.Labels) {
 				continue
 			}
 		}
@@ -1323,28 +1438,14 @@ func (tx *BadgerTransaction) validateConstraintContractsLocked(dbName string, en
 	// several of the entity's targets.
 	seen := make(map[string]struct{})
 	for _, target := range targets {
-		for _, contract := range schema.GetConstraintContractsForTarget(entity, target) {
-			if _, dup := seen[contract.Name]; dup {
+		for _, revision := range schema.constraintContractRevisionsForTarget(entity, target) {
+			name := revision.contractName()
+			if _, dup := seen[name]; dup {
 				continue
 			}
-			seen[contract.Name] = struct{}{}
-			for _, entry := range contract.Entries {
-				if entry.Kind != kind {
-					continue
-				}
-				var ok bool
-				var err error
-				if node != nil {
-					ok, err = tx.evaluateNodeConstraintContractExpressionLocked(node, entry.Expression)
-				} else {
-					ok, err = tx.evaluateRelationshipConstraintContractExpressionLocked(edge, entry.Expression)
-				}
-				if err != nil {
-					return localizedError(localization.StorageSchemaConstraintContractInvalid(contract.Name, entry.Expression, err), err)
-				}
-				if !ok {
-					return localizedError(localization.StorageSchemaConstraintContractViolated(contract.Name, entry.Expression), nil)
-				}
+			seen[name] = struct{}{}
+			if err := revision.validate(txConstraintView{tx}, kind, node, edge); err != nil {
+				return err
 			}
 		}
 	}
@@ -1357,14 +1458,6 @@ func (tx *BadgerTransaction) validateConstraintContractsForEdgeLocked(edge *Edge
 		return nil
 	}
 	return tx.validateConstraintContractsLocked(dbName, ConstraintEntityRelationship, []string{edge.Type}, ConstraintContractKindBooleanRelationship, nil, edge)
-}
-
-func (tx *BadgerTransaction) evaluateNodeConstraintContractExpressionLocked(node *Node, expr string) (bool, error) {
-	return evaluateNodeConstraintContractExpression(txConstraintView{tx}, node, expr)
-}
-
-func (tx *BadgerTransaction) evaluateRelationshipConstraintContractExpressionLocked(edge *Edge, expr string) (bool, error) {
-	return evaluateRelationshipConstraintContractExpression(txConstraintView{tx}, edge, expr)
 }
 
 func (tx *BadgerTransaction) countMatchingPatternEdgesLocked(node *Node, pattern contractPattern) (int, error) {

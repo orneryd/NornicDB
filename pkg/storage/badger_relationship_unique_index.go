@@ -27,14 +27,18 @@ type relationshipUniqueIndexSet struct {
 	entries map[relationshipUniqueIndexKey]*relationshipUniqueIndex
 }
 
-func relationshipConstraintValues(properties []string, values map[string]interface{}) ([]interface{}, bool) {
+func relationshipConstraintValues(sourceProperties any, values map[string]interface{}) ([]interface{}, bool) {
+	properties := constraintPropertyNamesOf(sourceProperties)
+
 	return relationshipConstraintValueKeys(properties, values, false)
 }
 
 // Composite/list keys serialize equal-value commits, but remain scan validated.
-func relationshipConstraintValueKeys(properties []string, values map[string]interface{}, includeComposite bool) ([]interface{}, bool) {
-	out := make([]interface{}, len(properties))
-	for i, p := range properties {
+func relationshipConstraintValueKeys(sourceProperties any, values map[string]interface{}, includeComposite bool) ([]interface{}, bool) {
+	properties := constraintPropertyNamesOf(sourceProperties)
+
+	out := make([]interface{}, properties.Len())
+	for i, p := range properties.All() {
 		key, ok := indexValueKey(values[p])
 		switch v := key.(type) {
 		case float64:
@@ -89,8 +93,10 @@ func (idx *relationshipUniqueIndex) put(edge *Edge) {
 // complete scan, rather than trusting an incomplete index miss. The index is
 // built from every stored relationship of the type: one hidden from reads
 // still holds its value.
-func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, namespace string) ([]NodeID, bool, error) {
-	if b.writeBehind != nil || b.decayEnabled || namespace == "" || len(c.Properties) == 0 {
+func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, source constraintDefinitionSource, namespace string) ([]NodeID, bool, error) {
+	c := source.installedConstraint()
+
+	if b.writeBehind != nil || b.decayEnabled || namespace == "" || c.Properties.Len() == 0 {
 		return nil, false, nil
 	}
 	if _, ok := relationshipConstraintValues(c.Properties, edge.Properties); !ok {
@@ -111,7 +117,7 @@ func (b *BadgerEngine) relationshipUniqueCandidates(edge *Edge, c Constraint, na
 			set.active.Store(len(set.entries) > 0)
 			return nil, false, err
 		}
-		idx = &relationshipUniqueIndex{key: key, properties: append([]string(nil), c.Properties...), keys: make(map[EdgeID][]interface{}), index: &CompositeIndex{Properties: append([]string(nil), c.Properties...), values: make(map[interface{}][]NodeID), fullIndex: make(map[string][]NodeID), prefixIndex: make(map[string][]NodeID)}}
+		idx = &relationshipUniqueIndex{key: key, properties: c.Properties.snapshot(), keys: make(map[EdgeID][]interface{}), index: &CompositeIndex{Properties: c.Properties.snapshot(), values: make(map[interface{}][]NodeID), fullIndex: make(map[string][]NodeID), prefixIndex: make(map[string][]NodeID)}}
 		for _, existing := range edges {
 			idx.put(existing)
 		}
@@ -161,7 +167,11 @@ func (b *BadgerEngine) resetRelationshipUniqueIndexes() {
 	set.mu.Unlock()
 }
 
-func relationshipPropertyKey(properties []string) string {
-	data, _ := json.Marshal(properties)
+func relationshipPropertyKey(properties any) string {
+	names := constraintPropertyNamesOf(properties)
+	if names.key != "" {
+		return names.key
+	}
+	data, _ := json.Marshal(names.snapshot())
 	return string(data)
 }

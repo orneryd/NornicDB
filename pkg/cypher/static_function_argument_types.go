@@ -402,8 +402,12 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			continue
 		}
 		// A qualified name has one canonical identity in validation and dispatch.
-		parts, end := dottedNameParts(text, name.End, true)
-		name.Value, name.End = name.Value+parts, end
+		qualified, end, valid := qualifiedNameAt(text, index)
+		if !valid {
+			index = name.End
+			continue
+		}
+		name.Value, name.End = qualified, end
 
 		open := skipSpaces(text, name.End)
 		if open >= len(text) || text[open] != '(' {
@@ -827,10 +831,7 @@ func validateStaticFunctionVariablesTyped(text string, scopeOf func() staticType
 			locals = expressionLocalBindings(text)
 		}
 		for _, reference := range semanticExpressionReferences(expression) {
-			if dot := strings.IndexByte(reference, '.'); dot > 0 {
-				reference = reference[:dot]
-			}
-			if _, local := locals[reference]; local && localVariableShadowsAt(text, at, reference) {
+			if _, local := locals[reference.variable]; local && localVariableShadowsAt(text, at, reference.variable) {
 				return nil // the comprehension owner checks its local types
 			}
 		}

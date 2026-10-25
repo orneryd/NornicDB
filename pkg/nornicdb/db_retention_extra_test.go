@@ -124,22 +124,24 @@ func TestRetentionContext_FallbackChain(t *testing.T) {
 	require.Equal(t, want, db.retentionContext(want))
 }
 
-func TestRetentionExcludedLabels_TrimWhitespaceAndDropEmpty(t *testing.T) {
+func TestRetentionExcludedLabels_PreserveDecodedNamesAndDropEmpty(t *testing.T) {
 	require.Nil(t, (*DB)(nil).retentionExcludedLabels())
 
 	// No config → nil.
 	db := &DB{}
 	require.Nil(t, db.retentionExcludedLabels())
 
-	// Whitespace-only labels are pruned.
+	// The config list already contains decoded labels. Only exact empty is absent.
 	cfg := &Config{}
 	cfg.Retention.ExcludedLabels = []string{"  AuditLog  ", "", " ", "System"}
 	db.config = cfg
 	got := db.retentionExcludedLabels()
 	require.Equal(t, map[string]struct{}{
-		"AuditLog": {},
-		"System":   {},
+		"  AuditLog  ": {},
+		" ":            {},
+		"System":       {},
 	}, got)
+	require.False(t, hasExcludedLabel(&storage.Node{Labels: []string{"AuditLog"}}, got))
 }
 
 func TestRetentionMaxSweepRecords_DefaultsAndOverride(t *testing.T) {

@@ -139,70 +139,11 @@ func visitStatementProcedureSyntax(structure cypherantlr.StatementSyntax, visit 
 	return false
 }
 
-// procedureNameAt parses the dotted procedure name after a CALL keyword
-// ending at offset: segments of identifier characters or backticked text,
-// separated by dots, with whitespace allowed around them.
+// procedureNameAt projects the shared qualified-name reader for CALL permission
+// discovery. The enclosing statement owner checks invocation syntax.
 func procedureNameAt(query string, offset int) (string, bool) {
-	i := offset
-	skipSpace := func() {
-		for i < len(query) && cyphertext.IsWhitespaceAt(query, i) {
-			i++
-		}
-	}
-	// Keep the ordinary dotted name as a source slice. Only quoted parts
-	// or spaces around separators need normalization, shared by auth and CALL.
-	var normalized strings.Builder
-	normalizing := false
-	startName, endName, components := offset, offset, 0
-	expectComponent := false
-	for {
-		skipSpace()
-		if i >= len(query) {
-			break
-		}
-		partStart := i
-		part, ok := cyphertext.ScanIdentifier(query, i)
-		if !ok {
-			if expectComponent {
-				return "", false
-			}
-			break
-		}
-		expectComponent = false
-		quoted := isCypherBacktickByte(query[i])
-		i = part.End
-		if components == 0 {
-			startName = partStart
-		}
-		if !normalizing && (quoted || components > 0 && partStart != endName+1) {
-			if components > 0 {
-				normalized.WriteString(query[startName:endName])
-			}
-			normalizing = true
-		}
-		if normalizing {
-			if components > 0 {
-				normalized.WriteByte('.')
-			}
-			normalized.WriteString(part.Value)
-		}
-		endName = i
-		components++
-		skipSpace()
-		if i < len(query) && query[i] == '.' {
-			i++
-			expectComponent = true
-			continue
-		}
-		break
-	}
-	if components == 0 {
-		return "", false
-	}
-	if normalizing {
-		return normalized.String(), true
-	}
-	return query[startName:endName], true
+	name, _, ok := qualifiedNameAt(query, offset)
+	return name, ok
 }
 
 func isSchemaPermissionQuery(query string) bool {

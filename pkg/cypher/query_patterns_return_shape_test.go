@@ -123,9 +123,9 @@ func TestIsReturnNameCountShape(t *testing.T) {
 			want:  true,
 		},
 		{
-			name:  "case insensitive",
+			name:  "identities remain case sensitive",
 			query: "match (p:person)<-[:follows]-(f:person) return P.NAME, COUNT(F)",
-			want:  true,
+			want:  false,
 		},
 		{
 			name:  "wrong aggregate target",
@@ -171,7 +171,7 @@ func TestIsReturnNameCountShape(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isReturnNameCountShape(tt.query, "p", "f"))
+			assert.Equal(t, tt.want, isReturnNameCountShape(t.Context(), tt.query, "p", "f"))
 		})
 	}
 }
@@ -201,9 +201,9 @@ func TestIsReturnEdgePropertyAggNameShape_ClearCases(t *testing.T) {
 			want:  true,
 		},
 		{
-			name:  "case insensitive",
+			name:  "identities remain case sensitive",
 			query: "match (c)-[r:R]->(p) return P.NAME, AVG(R.RATING)",
-			want:  true,
+			want:  false,
 		},
 		{
 			name:  "non aggregation trailing item",
@@ -244,7 +244,7 @@ func TestIsReturnEdgePropertyAggNameShape_ClearCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, isReturnEdgePropertyAggNameShape(tt.query, "r", "rating"))
+			assert.Equal(t, tt.want, detectedEdgePropertyShape(t.Context(), tt.query, "r", "rating"))
 		})
 	}
 }
@@ -270,4 +270,10 @@ func TestDetectQueryPattern_ReturnShapeCanonicalized(t *testing.T) {
 	// Non-matching shapes keep falling through to generic execution.
 	generic := DetectQueryPattern(ctx, "MATCH (p:Person)<-[:FOLLOWS]-(f:Person) RETURN p.name, count(p)")
 	assert.Equal(t, PatternGeneric, generic.Pattern)
+}
+
+// The shape observation uses the actual optimizer, not the deleted text reader.
+func detectedEdgePropertyShape(ctx context.Context, query, variable, property string) bool {
+	var info PatternInfo
+	return detectEdgePropertyAgg(ctx, query, &info) && info.RelVar == variable && info.AggProperty == property
 }

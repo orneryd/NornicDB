@@ -908,23 +908,12 @@ func extractEdgeNumIDFromOutgoingKey(key []byte) (uint64, bool) {
 	return binary.BigEndian.Uint64(key[1+8:]), true
 }
 
-// extractEdgeNumIDFromEdgeTypeKey pulls the trailing 8-byte edge numID
-// from an edge-type index key.
-//
-// Layout: [prefix(1)][type...][0x00][edgeNumID(8)].
-func extractEdgeNumIDFromEdgeTypeKey(key []byte) (uint64, bool) {
-	if len(key) < 1+1+8 {
-		return 0, false
-	}
-	suffix := key[len(key)-8:]
-	return binary.BigEndian.Uint64(suffix), true
-}
-
-// extractNodeNumIDFromLabelIndex extracts the 8-byte node numID from a
-// label index key. Layout: [prefix(1)][label(labelLen)][0x00][numID(8)].
-func extractNodeNumIDFromLabelIndex(key []byte, labelLen int) (uint64, bool) {
-	offset := 1 + labelLen + 1
-	if offset+8 != len(key) {
+// extractNumIDFromNamedIndex reads the fixed-width numeric suffix of a label
+// or relationship-type index key. The caller supplies the exact decoded name's
+// byte length, so a longer name sharing its prefix is not the same index entry.
+func extractNumIDFromNamedIndex(key []byte, nameLen int) (uint64, bool) {
+	offset := 1 + nameLen + 1
+	if nameLen < 0 || offset+8 != len(key) || key[offset-1] != 0 {
 		return 0, false
 	}
 	return binary.BigEndian.Uint64(key[offset:]), true

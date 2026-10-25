@@ -721,7 +721,7 @@ func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edg
 			if checkTombstones && hasIndexTombstone(txn, key) {
 				continue
 			}
-			edgeNum, ok := extractEdgeNumIDFromEdgeTypeKey(key)
+			edgeNum, ok := extractNumIDFromNamedIndex(key, len(edgeType))
 			if !ok {
 				continue
 			}

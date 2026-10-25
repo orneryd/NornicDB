@@ -288,7 +288,7 @@ func TestGDSConfigHas(t *testing.T) {
 // id, whatever order storage streams them in.
 func TestGDSProjectionReadsRelationshipsInIDOrder(t *testing.T) {
 	for attempt := 0; attempt < 10; attempt++ {
-		graphProjections = make(map[string]*GraphProjection)
+		graphProjections = make(map[gdsProjectionIdentity]*GraphProjection)
 		exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "order"))
 		for _, query := range []string{
 			"CREATE (:P {name: 'a'}), (:P {name: 'b'})",
@@ -307,5 +307,5 @@ func TestGDSProjectionReadsRelationshipsInIDOrder(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, result.Rows[0][1], projection.Relationships[0].Properties["w"])
 	}
-	graphProjections = make(map[string]*GraphProjection)
+	graphProjections = make(map[gdsProjectionIdentity]*GraphProjection)
 }

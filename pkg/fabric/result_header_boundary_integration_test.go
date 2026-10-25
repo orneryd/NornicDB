@@ -2,6 +2,7 @@ package fabric_test
 
 import (
 	"context"
+	"errors"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
 	"testing"
@@ -42,7 +43,10 @@ func (l *headerBoundaryLocal) ExecuteQuery(ctx context.Context, _ string, _ stor
 	return result.Columns, result.Rows, nil
 }
 
-func (l *headerBoundaryLocal) ExecuteQueryWithRecord(ctx context.Context, db string, engine storage.Engine, query string, params map[string]interface{}, _ map[string]interface{}) ([]string, [][]interface{}, error) {
+func (l *headerBoundaryLocal) ExecuteQueryWithRecord(ctx context.Context, db string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
+	if len(recordBindings) != 0 {
+		return nil, nil, errors.New("header-only fixture does not implement correlated record bindings")
+	}
 	return l.ExecuteQuery(ctx, db, engine, query, params)
 }
 

@@ -39,7 +39,7 @@ func TestBuildBindingTable_SameKeyDifferentOrder_LowerWins(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	cb := bt.LookupNode("User")
+	cb := bt.LookupNode(LabelSetKey([]string{"User"}))
 	if cb.HalfLifeNanos != 1800*1e9 {
 		t.Errorf("expected lower-Order binding (fast, 1800s), got halflife %d", cb.HalfLifeNanos)
 	}

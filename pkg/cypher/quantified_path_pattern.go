@@ -521,22 +521,15 @@ func quantifiedGroups(pattern string) []quantifiedGroupSpan {
 // of its WHERE keyword through its body.
 func elementPredicateSpans(pattern string, from, to int) [][2]int {
 	var spans [][2]int
-	for index := from; index < to; index++ {
-		switch c := pattern[index]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
-			index = skipCypherQuotedText(pattern, index, c) - 1
-		case '(', '[':
-			closeBy := map[byte]byte{'(': ')', '[': ']'}[c]
-			close := cyphertext.FindMatchingDelimiter(pattern, index, rune(c), rune(closeBy), cyphertext.OpeningDelimiter)
-			if close < 0 || close > to {
-				return spans
-			}
-			if where := elementWhereIndex(pattern, index, close); where >= 0 {
-				spans = append(spans, [2]int{where, close})
-			}
-			index = close
+	eachPatternElement(pattern[from:to], func(element patternElement) {
+		where := element.relationship.whereOffset
+		if !element.isRelationship {
+			where = topLevelKeywordIndex(element.node[1:len(element.node)-1], "WHERE")
 		}
-	}
+		if where >= 0 {
+			spans = append(spans, [2]int{from + element.start + 1 + where, from + element.end})
+		}
+	})
 	return spans
 }
 

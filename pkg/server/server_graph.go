@@ -469,13 +469,11 @@ func newGraphFilterSet(labels, relationshipTypes []string) graphFilterSet {
 		relationshipTypes: make(map[string]struct{}),
 	}
 	for _, label := range labels {
-		label = strings.TrimSpace(label)
 		if label != "" {
 			set.labels[label] = struct{}{}
 		}
 	}
 	for _, relType := range relationshipTypes {
-		relType = strings.TrimSpace(relType)
 		if relType != "" {
 			set.relationshipTypes[relType] = struct{}{}
 		}
@@ -573,7 +571,8 @@ func (f graphFilterSet) allowEdge(edge *storage.Edge) bool {
 }
 
 // withFilters returns a copy of the filter set augmented with the inclusion
-// and exclusion filters. Name entries are whitespace-trimmed; property
+// and exclusion filters. Display-name values are whitespace-trimmed; decoded
+// label/type/key identities remain exact. Property
 // entries without a property key are ignored.
 func (f graphFilterSet) withFilters(includeNames, excludeNames []string, includeProperties, excludeProperties []graphPropertyFilterRequest, excludeLabels, excludeRelationshipTypes []string) graphFilterSet {
 	if len(includeNames) == 0 && len(excludeNames) == 0 && len(includeProperties) == 0 && len(excludeProperties) == 0 && len(excludeLabels) == 0 && len(excludeRelationshipTypes) == 0 {
@@ -600,13 +599,11 @@ func (f graphFilterSet) withFilters(includeNames, excludeNames []string, include
 		}
 	}
 	for _, label := range excludeLabels {
-		label = strings.TrimSpace(label)
 		if label != "" {
 			out.excludeLabels[label] = struct{}{}
 		}
 	}
 	for _, relType := range excludeRelationshipTypes {
-		relType = strings.TrimSpace(relType)
 		if relType != "" {
 			out.excludeRelTypes[relType] = struct{}{}
 		}
@@ -627,12 +624,12 @@ func (f graphFilterSet) withFilters(includeNames, excludeNames []string, include
 // newGraphPropertyFilter converts an explicit request entry; entries without
 // a property key are rejected.
 func newGraphPropertyFilter(entry graphPropertyFilterRequest) *graphPropertyFilter {
-	property := strings.TrimSpace(entry.Property)
+	property := entry.Property
 	if property == "" {
 		return nil
 	}
 	filter := &graphPropertyFilter{
-		scope:    strings.TrimSpace(entry.Scope),
+		scope:    entry.Scope,
 		property: property,
 	}
 	if entry.Value != nil {

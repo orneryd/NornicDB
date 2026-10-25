@@ -743,7 +743,7 @@ func parseRetrievalFilters(raw interface{}) map[string][]string {
 	}
 	parsed := make(map[string][]string, len(filters))
 	for property, rawValues := range filters {
-		if strings.TrimSpace(property) == "" {
+		if property == "" {
 			continue
 		}
 		var values []string

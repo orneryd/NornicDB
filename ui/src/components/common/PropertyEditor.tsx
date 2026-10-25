@@ -7,6 +7,7 @@ import { useState } from "react";
 import { ChevronRight, X, Check, Plus } from "lucide-react";
 import { JsonPreview } from "./JsonPreview";
 import { isReadOnlyProperty } from "../../utils/nodeUtils";
+import { identityRecord } from "../../utils/identityRecords";
 
 interface PropertyEditorProps {
   properties: Record<string, unknown>;
@@ -25,7 +26,7 @@ export function PropertyEditor({
     const props: Record<
       string,
       { key: string; value: string; type: string }
-    > = {};
+    > = identityRecord();
     for (const [key, value] of Object.entries(properties)) {
       if (isReadOnlyProperty(key)) continue;
       const valueType =
@@ -56,7 +57,7 @@ export function PropertyEditor({
   const [saving, setSaving] = useState(false);
 
   const addNewProperty = () => {
-    if (!newPropKey.trim()) return;
+    if (newPropKey === "") return;
 
     let parsedValue: unknown;
     try {
@@ -80,24 +81,24 @@ export function PropertyEditor({
       return;
     }
 
-    setEditedProps({
-      ...editedProps,
-      [newPropKey]: {
+    setEditedProps(identityRecord([
+      ...Object.entries(editedProps),
+      [newPropKey, {
         key: newPropKey,
         value:
           newPropType === "string"
             ? newPropValue
             : JSON.stringify(parsedValue),
         type: newPropType,
-      },
-    });
+      }],
+    ]));
     setNewPropKey("");
     setNewPropValue("");
     setNewPropType("string");
   };
 
   const removeProperty = (key: string) => {
-    const newProps = { ...editedProps };
+    const newProps = identityRecord(Object.entries(editedProps));
     delete newProps[key];
     setEditedProps(newProps);
   };
@@ -108,7 +109,7 @@ export function PropertyEditor({
     value: string,
     type: string
   ) => {
-    const newProps = { ...editedProps };
+    const newProps = identityRecord(Object.entries(editedProps));
     if (oldKey !== newKey) {
       delete newProps[oldKey];
     }
@@ -119,7 +120,7 @@ export function PropertyEditor({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const propsToSave: Record<string, unknown> = {};
+      const propsToSave = identityRecord();
 
       for (const prop of Object.values(editedProps)) {
         try {

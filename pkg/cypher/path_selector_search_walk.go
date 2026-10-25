@@ -77,7 +77,7 @@ func uniformTransition(a *pathSearchAutomaton) (uniform *pathSearchTransition, s
 				uniform = transition
 				continue
 			}
-			if transition.direction != uniform.direction || !equalStrings(transition.types, uniform.types) {
+			if transition.direction != uniform.direction || !transition.types.same(uniform.types) {
 				return nil, -1
 			}
 		}
@@ -199,7 +199,7 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 				if index&bfsCancelCheckMask == 0 && s.ctx.Err() != nil {
 					return -1, nil
 				}
-				if !walkTypeMatches(s.a.uniform.types, edge.Type) {
+				if !s.a.uniform.types.matches(edge.Type) {
 					continue
 				}
 				node := otherEnd(edge, id)
@@ -239,20 +239,6 @@ func (s *pathSearch) walkLevel(side, other *pathSearchWalkSide, groups bool) (in
 // walkEdges lists node's relationships in direction, in two lists.
 func (s *pathSearch) walkEdges(node storage.NodeID, direction string) ([]*storage.Edge, []*storage.Edge, error) {
 	return incidentEdgeListsContext(s.ctx, s.e.storage, node, direction)
-}
-
-// walkTypeMatches reports whether a relationship of the type name takes a
-// transition of types (any type when there are none).
-func walkTypeMatches(types []string, name string) bool {
-	if len(types) == 0 {
-		return true
-	}
-	for _, typeName := range types {
-		if typeName == name {
-			return true
-		}
-	}
-	return false
 }
 
 // walkHops returns the shortest walks from side's end to node, each as its

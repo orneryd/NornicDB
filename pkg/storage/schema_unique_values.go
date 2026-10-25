@@ -2,12 +2,10 @@ package storage
 
 import (
 	"context"
-	"fmt"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -16,7 +14,7 @@ import (
 // Returns error if constraint is violated.
 func (sm *SchemaManager) CheckUniqueConstraint(label, property string, value interface{}, excludeNode NodeID) error {
 	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
+	key := uniqueConstraintIdentity{label, property}
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 
@@ -57,7 +55,7 @@ func (sm *SchemaManager) LookupUniqueConstraintValue(label, property string, val
 // a scan fallback because the cache may not have been rebuilt from storage yet.
 func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property string, value interface{}) (nodeID NodeID, valueFound bool, constraintExists bool, cacheComplete bool) {
 	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
+	key := uniqueConstraintIdentity{label, property}
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 	if !exists || value == nil {
@@ -73,7 +71,7 @@ func (sm *SchemaManager) LookupUniqueConstraintValueForPlanning(label, property 
 
 func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, property string, value interface{}) (nodeID NodeID, valueFound bool, cacheComplete bool, constraintExists bool) {
 	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
+	key := uniqueConstraintIdentity{label, property}
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 	if !exists || value == nil {
@@ -95,7 +93,7 @@ func (sm *SchemaManager) lookupUniqueConstraintValueForValidation(label, propert
 // stored nodes, so an empty result can be trusted.
 func (sm *SchemaManager) uniqueValueHolders(label, property string, value interface{}) (holders []NodeID, cacheComplete bool, constraintExists bool) {
 	sm.mu.RLock()
-	constraint, exists := sm.uniqueConstraints[fmt.Sprintf("%s:%s", label, property)]
+	constraint, exists := sm.uniqueConstraints[uniqueConstraintIdentity{label, property}]
 	sm.mu.RUnlock()
 	if !exists {
 		return nil, false, false
@@ -238,7 +236,7 @@ func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKe
 		if node == nil || len(node.Properties) == 0 {
 			continue
 		}
-		for _, c := range sm.GetConstraintsForLabels(node.Labels) {
+		for _, c := range sm.constraintsForLabels(node.Labels) {
 			if c.EffectiveEntityType() != ConstraintEntityNode {
 				continue
 			}
@@ -254,7 +252,7 @@ func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKe
 		if edge == nil || len(edge.Properties) == 0 {
 			continue
 		}
-		for _, c := range sm.GetConstraintsForLabels([]string{edge.Type}) {
+		for _, c := range sm.constraintsForLabels([]string{edge.Type}) {
 			if c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
 				continue
 			}
@@ -276,38 +274,40 @@ func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKe
 // nodeConstraintLockKey is the canonical node key projection for both commit
 // and MERGE admission. Composite constraints lock one tuple, never its columns,
 // under the hash the constraint's composite index files that tuple under.
-func nodeConstraintLockKey(c Constraint, node *Node) (uniqueConstraintLockKey, bool) {
-	var properties []string
+func nodeConstraintLockKey(source constraintDefinitionSource, node *Node) (uniqueConstraintLockKey, bool) {
+	c := source.installedConstraint()
+
+	var properties constraintPropertyNames
 	switch {
-	case (c.Type == ConstraintUnique || c.Type == ConstraintNodeKey) && len(c.Properties) > 0:
+	case (c.Type == ConstraintUnique || c.Type == ConstraintNodeKey) && c.Properties.Len() > 0:
 		properties = c.Properties
-	case c.Type == ConstraintTemporal && len(c.Properties) >= 3:
-		properties = c.Properties[:len(c.Properties)-2]
+	case c.Type == ConstraintTemporal && c.Properties.Len() >= 3:
+		properties = c.Properties.Slice(0, c.Properties.Len()-2)
 	default:
 		return uniqueConstraintLockKey{}, false
 	}
 	// Preserve TEMPORAL's raw whole-key hash for composite list-bearing keys.
-	if c.Type == ConstraintTemporal && len(properties) > 1 {
+	if c.Type == ConstraintTemporal && properties.Len() > 1 {
 		if spec, ok := splitTemporalKeySpec(c.Properties); ok {
 			value, missing := spec.keyValue(node.Properties)
 			if missing == "" && spec.composite() && spec.listBearing(value) {
-				return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: spec.keyHash(value)}, true
+				return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + properties.Join(","), value: spec.keyHash(value)}, true
 			}
 		}
 	}
-	if len(properties) == 1 {
-		value, ok := constraintLockValue(node, properties[0])
-		return uniqueConstraintLockKey{label: c.Label, property: properties[0], value: value}, ok
+	if properties.Len() == 1 {
+		value, ok := constraintLockValue(node, properties.At(0))
+		return uniqueConstraintLockKey{label: c.Label, property: properties.At(0), value: value}, ok
 	}
-	values := make([]interface{}, len(properties))
-	for i, property := range properties {
+	values := make([]interface{}, properties.Len())
+	for i, property := range properties.All() {
 		value, ok := constraintLockValue(node, property)
 		if !ok {
 			return uniqueConstraintLockKey{}, false
 		}
 		values[i] = value
 	}
-	return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + strings.Join(properties, ","), value: constraintCompositeKey(values)}, true
+	return uniqueConstraintLockKey{label: c.Label, property: string(c.Type) + ":" + properties.Join(","), value: constraintCompositeKey(values)}, true
 }
 
 // constraintLockValue is node's canonical value of prop for a constraint key
@@ -693,7 +693,7 @@ func newEngineWriteLockOwner() string {
 // lock's value is the tuple's full key hash in that index.
 type mergeAdmissionKey struct {
 	lock       uniqueConstraintLockKey
-	properties []string
+	properties constraintPropertyNames
 }
 
 func (sm *SchemaManager) uniqueMergeKeys(labels []string, props map[string]interface{}) []mergeAdmissionKey {
@@ -702,7 +702,7 @@ func (sm *SchemaManager) uniqueMergeKeys(labels []string, props map[string]inter
 	}
 	var keys []mergeAdmissionKey
 	node := &Node{Properties: props}
-	for _, c := range sm.GetConstraintsForLabels(labels) {
+	for _, c := range sm.constraintsForLabels(labels) {
 		if c.EffectiveEntityType() != ConstraintEntityNode || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
 			continue
 		}
@@ -727,7 +727,7 @@ func (sm *SchemaManager) HasUniqueValueTracking() bool {
 // RegisterUniqueValue registers a value for a unique constraint.
 func (sm *SchemaManager) RegisterUniqueValue(label, property string, value interface{}, nodeID NodeID) {
 	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
+	key := uniqueConstraintIdentity{label, property}
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 
@@ -747,7 +747,7 @@ func (sm *SchemaManager) RegisterUniqueValue(label, property string, value inter
 // UnregisterUniqueValue removes a value from a unique constraint.
 func (sm *SchemaManager) UnregisterUniqueValue(label, property string, value interface{}) {
 	sm.mu.RLock()
-	key := fmt.Sprintf("%s:%s", label, property)
+	key := uniqueConstraintIdentity{label, property}
 	constraint, exists := sm.uniqueConstraints[key]
 	sm.mu.RUnlock()
 

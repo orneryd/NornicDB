@@ -42,6 +42,12 @@ from typing import Iterable
 from neo4j import GraphDatabase, Driver, Session
 
 
+# The standalone CLI and imported test adapter use the same runtime owner.
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from cypher_names import quote_name
+
+
 # --------------------------------------------------------------------------
 # Args
 # --------------------------------------------------------------------------
@@ -101,27 +107,27 @@ def constraint_to_cypher(c: dict) -> str | None:
     props = c.get("properties") or []
     if not labels or not props:
         return None
-    label = labels[0]
-    proplist = ", ".join(f"n.{p}" for p in props)
+    label = quote_name(labels[0], "type" if entity_type == "RELATIONSHIP" else "label")
+    proplist = ", ".join(f"n.{quote_name(p, 'key')}" for p in props)
     proplist_paren = f"({proplist})" if len(props) > 1 else proplist
 
     if entity_type == "NODE":
         if ctype == "UNIQUENESS":
-            return f"CREATE CONSTRAINT {name} IF NOT EXISTS FOR (n:{label}) REQUIRE {proplist_paren} IS UNIQUE"
+            return f"CREATE CONSTRAINT {quote_name(name, 'alias')} IF NOT EXISTS FOR (n:{label}) REQUIRE {proplist_paren} IS UNIQUE"
         if ctype == "NODE_KEY":
-            return f"CREATE CONSTRAINT {name} IF NOT EXISTS FOR (n:{label}) REQUIRE {proplist_paren} IS NODE KEY"
+            return f"CREATE CONSTRAINT {quote_name(name, 'alias')} IF NOT EXISTS FOR (n:{label}) REQUIRE {proplist_paren} IS NODE KEY"
         if ctype == "NODE_PROPERTY_EXISTENCE":
-            return f"CREATE CONSTRAINT {name} IF NOT EXISTS FOR (n:{label}) REQUIRE {proplist_paren} IS NOT NULL"
+            return f"CREATE CONSTRAINT {quote_name(name, 'alias')} IF NOT EXISTS FOR (n:{label}) REQUIRE {proplist_paren} IS NOT NULL"
     elif entity_type == "RELATIONSHIP":
         if ctype == "RELATIONSHIP_PROPERTY_EXISTENCE":
             return (
-                f"CREATE CONSTRAINT {name} IF NOT EXISTS "
-                f"FOR ()-[r:{label}]-() REQUIRE r.{props[0]} IS NOT NULL"
+                f"CREATE CONSTRAINT {quote_name(name, 'alias')} IF NOT EXISTS "
+                f"FOR ()-[r:{label}]-() REQUIRE r.{quote_name(props[0], 'key')} IS NOT NULL"
             )
         if ctype == "RELATIONSHIP_UNIQUENESS":
             return (
-                f"CREATE CONSTRAINT {name} IF NOT EXISTS "
-                f"FOR ()-[r:{label}]-() REQUIRE r.{props[0]} IS UNIQUE"
+                f"CREATE CONSTRAINT {quote_name(name, 'alias')} IF NOT EXISTS "
+                f"FOR ()-[r:{label}]-() REQUIRE r.{quote_name(props[0], 'key')} IS UNIQUE"
             )
     return None
 
@@ -137,20 +143,21 @@ def index_to_cypher(idx: dict) -> str | None:
     props = idx.get("properties") or []
     if not labels or not props:
         return None
-    label = labels[0]
+    label = quote_name(labels[0], "type" if entity == "RELATIONSHIP" else "label")
     if entity != "NODE":
         return None
+    proplist = ", ".join(f"n.{quote_name(p, 'key')}" for p in props)
     if itype in ("RANGE", "BTREE"):
         if len(props) == 1:
-            return f"CREATE INDEX {name} IF NOT EXISTS FOR (n:{label}) ON (n.{props[0]})"
+            return f"CREATE INDEX {quote_name(name, 'alias')} IF NOT EXISTS FOR (n:{label}) ON (n.{quote_name(props[0], 'key')})"
         return (
-            f"CREATE INDEX {name} IF NOT EXISTS FOR (n:{label}) "
-            f"ON ({', '.join(f'n.{p}' for p in props)})"
+            f"CREATE INDEX {quote_name(name, 'alias')} IF NOT EXISTS FOR (n:{label}) "
+            f"ON ({proplist})"
         )
     if itype == "FULLTEXT":
         return (
-            f"CREATE FULLTEXT INDEX {name} IF NOT EXISTS "
-            f"FOR (n:{label}) ON EACH [{', '.join(f'n.{p}' for p in props)}]"
+            f"CREATE FULLTEXT INDEX {quote_name(name, 'alias')} IF NOT EXISTS "
+            f"FOR (n:{label}) ON EACH [{proplist}]"
         )
     if itype == "VECTOR":
         opts = idx.get("options") or {}
@@ -160,8 +167,8 @@ def index_to_cypher(idx: dict) -> str | None:
         if not dims:
             return None
         return (
-            f"CREATE VECTOR INDEX {name} IF NOT EXISTS "
-            f"FOR (n:{label}) ON (n.{props[0]}) "
+            f"CREATE VECTOR INDEX {quote_name(name, 'alias')} IF NOT EXISTS "
+            f"FOR (n:{label}) ON (n.{quote_name(props[0], 'key')}) "
             f"OPTIONS {{indexConfig: {{`vector.dimensions`: {int(dims)}, "
             f"`vector.similarity_function`: '{sim}'}}}}"
         )
@@ -202,7 +209,7 @@ def stream_nodes(sess: Session, label: str, batch: int) -> Iterable[list[dict]]:
     while True:
         if last_id is None:
             q = (
-                f"MATCH (n:`{label}`) "
+                f"MATCH (n:{quote_name(label, 'label')}) "
                 "RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props "
                 "ORDER BY elementId(n) "
                 "LIMIT $limit"
@@ -210,7 +217,7 @@ def stream_nodes(sess: Session, label: str, batch: int) -> Iterable[list[dict]]:
             res = sess.run(q, limit=batch)
         else:
             q = (
-                f"MATCH (n:`{label}`) "
+                f"MATCH (n:{quote_name(label, 'label')}) "
                 "WHERE elementId(n) > $cursor "
                 "RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props "
                 "ORDER BY elementId(n) "
@@ -303,7 +310,7 @@ def stream_edges(sess: Session, rel_type: str, batch: int) -> Iterable[list[dict
     while True:
         if last_id is None:
             q = (
-                f"MATCH (a)-[r:`{rel_type}`]->(b) "
+                f"MATCH (a)-[r:{quote_name(rel_type, 'type')}]->(b) "
                 "RETURN elementId(r) AS id, elementId(a) AS startId, elementId(b) AS endId, "
                 "       properties(r) AS props "
                 "ORDER BY elementId(r) "
@@ -312,7 +319,7 @@ def stream_edges(sess: Session, rel_type: str, batch: int) -> Iterable[list[dict
             res = sess.run(q, limit=batch)
         else:
             q = (
-                f"MATCH (a)-[r:`{rel_type}`]->(b) "
+                f"MATCH (a)-[r:{quote_name(rel_type, 'type')}]->(b) "
                 "WHERE elementId(r) > $cursor "
                 "RETURN elementId(r) AS id, elementId(a) AS startId, elementId(b) AS endId, "
                 "       properties(r) AS props "
@@ -340,7 +347,7 @@ def edge_create_cypher(rel_type: str) -> str:
         "UNWIND $rows AS row "
         "MATCH (a:_Migrated {_neo4j_id: row.startId}) "
         "MATCH (b:_Migrated {_neo4j_id: row.endId}) "
-        f"CREATE (a)-[:`{rel_type}` {{_neo4j_id: row.id}}]->(b)"
+        f"CREATE (a)-[:{quote_name(rel_type, 'type')} {{_neo4j_id: row.id}}]->(b)"
     )
 
 
@@ -351,7 +358,7 @@ def edge_props_cypher(rel_type: str) -> str:
     """
     return (
         "UNWIND $rows AS row "
-        f"MATCH (a:_Migrated {{_neo4j_id: row.startId}})-[r:`{rel_type}` "
+        f"MATCH (a:_Migrated {{_neo4j_id: row.startId}})-[r:{quote_name(rel_type, 'type')} "
         "{_neo4j_id: row.id}]->(b:_Migrated {_neo4j_id: row.endId}) "
         "SET r += row.props"
     )

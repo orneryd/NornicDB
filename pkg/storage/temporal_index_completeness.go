@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -42,15 +41,24 @@ func setTemporalConstraintScanHook(hook func()) func() {
 
 // temporalIndexCompletenessKey identifies a temporal constraint by what its
 // index entries are keyed on (label and properties), not by name.
-func temporalIndexCompletenessKey(c Constraint) string {
-	return c.Label + "\x00" + strings.Join(c.Properties, "\x00")
+type temporalConstraintIdentity struct {
+	label      string
+	properties string
+}
+
+func temporalIndexCompletenessKey(source constraintDefinitionSource) temporalConstraintIdentity {
+	c := source.installedConstraint()
+
+	return temporalConstraintIdentity{label: c.Label, properties: relationshipPropertyKey(c.Properties)}
 }
 
 // temporalIndexAuthoritative reports whether c's history index covers every
 // stored node c applies to: c was created on an empty label (complete from
 // the start), or the engine's index was rebuilt and c was not created since
 // over existing nodes.
-func (b *BadgerEngine) temporalIndexAuthoritative(sm *SchemaManager, c Constraint) bool {
+func (b *BadgerEngine) temporalIndexAuthoritative(sm *SchemaManager, source constraintDefinitionSource) bool {
+	c := source.installedConstraint()
+
 	if b == nil || sm == nil {
 		return false
 	}
@@ -64,7 +72,9 @@ func (b *BadgerEngine) temporalIndexAuthoritative(sm *SchemaManager, c Constrain
 
 // forgetTemporalIndexCompleteLocked drops c's runtime completeness marks: a
 // constraint that is (re)registered or dropped starts over.
-func (sm *SchemaManager) forgetTemporalIndexCompleteLocked(c Constraint) {
+func (sm *SchemaManager) forgetTemporalIndexCompleteLocked(source constraintDefinitionSource) {
+	c := source.installedConstraint()
+
 	if c.Type != ConstraintTemporal {
 		return
 	}
@@ -73,7 +83,9 @@ func (sm *SchemaManager) forgetTemporalIndexCompleteLocked(c Constraint) {
 	delete(sm.temporalIndexIncompleteKeys, key)
 }
 
-func (sm *SchemaManager) markTemporalIndexCreated(c Constraint, complete bool) {
+func (sm *SchemaManager) markTemporalIndexCreated(source constraintDefinitionSource, complete bool) {
+	c := source.installedConstraint()
+
 	key := temporalIndexCompletenessKey(c)
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -82,7 +94,7 @@ func (sm *SchemaManager) markTemporalIndexCreated(c Constraint, complete bool) {
 		target = &sm.temporalIndexCompleteKeys
 	}
 	if *target == nil {
-		*target = make(map[string]struct{})
+		*target = make(map[temporalConstraintIdentity]struct{})
 	}
 	(*target)[key] = struct{}{}
 }
@@ -226,7 +238,9 @@ func labelHasNoNodes(engine Engine, label string) (bool, error) {
 // node's key under c, read at the latest committed state (the state the label
 // scan reads). Nodes whose entry outlived them (a rebuild racing a delete)
 // are skipped. ok is false when node has no complete key or start.
-func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namespace string, c Constraint, node *Node) (nodes []*Node, ok bool, err error) {
+func (b *BadgerEngine) temporalKeyHistoryNodesLatest(ctx context.Context, namespace string, source constraintDefinitionSource, node *Node) (nodes []*Node, ok bool, err error) {
+	c := source.installedConstraint()
+
 	target, _, ok := temporalTargetForNode(namespace, node, c)
 	if !ok {
 		return nil, false, nil

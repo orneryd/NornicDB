@@ -1516,31 +1516,6 @@ func TestCypherHelpers_ModuloAndMapLiteralFullBranches(t *testing.T) {
 	}
 }
 
-func TestCypherHelpers_QueryPatternAndFastPathHelpers(t *testing.T) {
-	// extractRelationshipType branches.
-	assert.Equal(t, "KNOWS", extractRelationshipType("(a)-[:KNOWS]-(b)"))
-	assert.Equal(t, "RATED", extractRelationshipType("(a)-[r:RATED]-(b)"))
-	assert.Equal(t, "", extractRelationshipType("(a)-->(b)"))
-
-	// isReturnEdgePropertyAggNameShape strictness.
-	assert.True(t, isReturnEdgePropertyAggNameShape(
-		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.rating) AS score, count(r) AS cnt",
-		"r",
-		"rating",
-	))
-	assert.False(t, isReturnEdgePropertyAggNameShape(
-		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.id AS id, avg(r.rating) AS score",
-		"r",
-		"rating",
-	))
-	assert.False(t, isReturnEdgePropertyAggNameShape(
-		"MATCH (c)-[r:REVIEWED]->(p) RETURN p.name AS name, avg(r.other) AS score",
-		"r",
-		"rating",
-	))
-	assert.False(t, isReturnEdgePropertyAggNameShape("RETURN p.name", "r", "rating"))
-}
-
 func TestExtractMatchOrderByClause_IgnoresOrderLabelsAndRelationshipTypes(t *testing.T) {
 	query := `
 		MATCH (c:Customer)-[:PURCHASED]->(o:Order)-[:ORDERS]->(p:Product)<-[:SUPPLIES]-(s:Supplier)
@@ -2255,78 +2230,6 @@ func TestCypherHelpers_ExecuteCartesianProductMatch_LabelAndAnonymousBranches(t 
 	assert.Len(t, anonOut.Rows, 2)
 }
 
-func TestCypherHelpers_MutationRelationshipPatternHelpers(t *testing.T) {
-	base := newTestMemoryEngine(t)
-	eng := storage.NewNamespacedEngine(base, "test")
-	exec := NewStorageExecutor(eng)
-
-	_, err := eng.CreateNode(&storage.Node{ID: "n1", Labels: []string{"Person"}, Properties: map[string]interface{}{"age": int64(40)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "n2", Labels: []string{"Person"}, Properties: map[string]interface{}{"age": int64(30)}})
-	require.NoError(t, err)
-	_, err = eng.CreateNode(&storage.Node{ID: "n3", Labels: []string{"Person"}, Properties: map[string]interface{}{"age": int64(20)}})
-	require.NoError(t, err)
-	err = eng.CreateEdge(&storage.Edge{ID: "e1", StartNode: "n1", EndNode: "n2", Type: "KNOWS"})
-	require.NoError(t, err)
-	err = eng.CreateEdge(&storage.Edge{ID: "e2", StartNode: "n2", EndNode: "n3", Type: "LIKES"})
-	require.NoError(t, err)
-
-	n1, err := eng.GetNode("n1")
-	require.NoError(t, err)
-	n2, err := eng.GetNode("n2")
-	require.NoError(t, err)
-	n3, err := eng.GetNode("n3")
-	require.NoError(t, err)
-
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(x)-[:KNOWS]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:KNOWS]->()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:LIKES]->()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n2, "n", "(n)<-[:KNOWS]-()"))
-	assert.False(t, exec.evaluateRelationshipPatternInWhere(n2, "n", "(n)-[:ANY]-()"))
-	assert.True(t, exec.evaluateRelationshipPatternInWhere(n1, "n", "(n)-[:KNOWS]->()-[:LIKES]->()"))
-
-	assert.False(t, exec.checkChainedPattern(n1, "x", "(n)-[:KNOWS]->()-[:LIKES]->()", ""))
-	assert.True(t, exec.checkChainedPattern(n1, "n", "(n:Person)-[:KNOWS]->()-[:LIKES]->()", ""))
-
-	hops := exec.parseRelationshipHops("(n)-[:KNOWS|FRIEND]->()-[:LIKES]->()", "n")
-	require.Len(t, hops, 2)
-	assert.True(t, hops[0].outgoing)
-	assert.ElementsMatch(t, []string{"KNOWS", "FRIEND"}, hops[0].relTypes)
-	assert.True(t, hops[1].outgoing)
-	assert.ElementsMatch(t, []string{"LIKES"}, hops[1].relTypes)
-	assert.Empty(t, exec.parseRelationshipHops("(n)-[:BROKEN->()", "n"))
-	incomingHops := exec.parseRelationshipHops("(n)<-[:LIKES|FOLLOWS]-()<-[]-()", "n")
-	require.Len(t, incomingHops, 2)
-	assert.False(t, incomingHops[0].outgoing)
-	assert.ElementsMatch(t, []string{"LIKES", "FOLLOWS"}, incomingHops[0].relTypes)
-	assert.False(t, incomingHops[1].outgoing)
-	assert.Empty(t, incomingHops[1].relTypes)
-	assert.Empty(t, exec.parseRelationshipHops("(n)<-[:BROKEN-()", "n"))
-
-	assert.True(t, exec.traverseChain(n1, []relationshipHop{
-		{relTypes: []string{"KNOWS"}, outgoing: true},
-		{relTypes: []string{"LIKES"}, outgoing: true},
-	}, 0))
-	assert.False(t, exec.traverseChain(n1, []relationshipHop{
-		{relTypes: []string{"KNOWS"}, outgoing: true},
-		{relTypes: []string{"MISSING"}, outgoing: true},
-	}, 0))
-
-	// Incoming traversal branch.
-	assert.True(t, exec.traverseChain(n3, []relationshipHop{
-		{relTypes: []string{"LIKES"}, outgoing: false},
-		{relTypes: []string{"KNOWS"}, outgoing: false},
-	}, 0))
-	assert.False(t, exec.traverseChain(n3, []relationshipHop{
-		{relTypes: []string{"MISSING"}, outgoing: false},
-	}, 0))
-
-	// No type filter branch.
-	assert.True(t, exec.traverseChain(n1, []relationshipHop{
-		{relTypes: nil, outgoing: true},
-	}, 0))
-}
-
 func TestCypherHelpers_ExecuteMatchRelationshipsWithClause_Branches(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "test")
@@ -2427,17 +2330,11 @@ func TestCypherHelpers_CountSubqueryAndComparison_Branches(t *testing.T) {
 }
 
 func TestCypherHelpers_ExtractionHelpers_Branches(t *testing.T) {
-	exec := NewStorageExecutor(newTestMemoryEngine(t))
-
 	assert.Equal(t, "", extractVariableNameFromReturnItem(""))
 	assert.Equal(t, "n", extractVariableNameFromReturnItem("n"))
 	assert.Equal(t, "n", extractVariableNameFromReturnItem("n.name"))
 	assert.Equal(t, "n", extractVariableNameFromReturnItem("id(n)"))
 	assert.Equal(t, "n", extractVariableNameFromReturnItem("id(n.name)"))
-
-	assert.Equal(t, "b", exec.extractTargetVariable("(a)-[:KNOWS]->(b:Person)", "a"))
-	assert.Equal(t, "a", exec.extractTargetVariable("(a:Person)<-[:KNOWS]-(b)", "b"))
-	assert.Equal(t, "", exec.extractTargetVariable("(a)-[:KNOWS]-", "a"))
 
 	got := dedupeNonEmpty([]string{"a", "", "a", " b ", "b"}, []string{"", "c", "a"})
 	assert.Equal(t, []string{"a", "b", "c"}, got)

@@ -3,7 +3,6 @@ package storage
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -480,9 +479,9 @@ func (sm *SchemaManager) validateBindingTarget(binding *knowledgepolicy.DecayPro
 			}
 		}
 	} else if !binding.IsWildcard && len(binding.TargetLabels) > 0 {
-		targetKey := sortedLabelKey(binding.TargetLabels)
+		targetKey := knowledgepolicy.LabelSetKey(binding.TargetLabels)
 		for _, existingBinding := range sm.decayProfileBindings {
-			if !existingBinding.IsEdge && !existingBinding.IsWildcard && sortedLabelKey(existingBinding.TargetLabels) == targetKey && existingBinding.Name != binding.Name {
+			if !existingBinding.IsEdge && !existingBinding.IsWildcard && knowledgepolicy.LabelSetKey(existingBinding.TargetLabels) == targetKey && existingBinding.Name != binding.Name {
 				return localizedError(localization.StorageSchemaDecayLabelBindingConflict(binding.TargetLabels, existingBinding.Name), nil)
 			}
 		}
@@ -498,12 +497,25 @@ func (sm *SchemaManager) validateBindingTarget(binding *knowledgepolicy.DecayPro
 }
 
 func (sm *SchemaManager) isPropertyInStructuralIndex(labels []string, property string) bool {
-	for _, label := range labels {
-		key := label + ":" + property
-		if _, ok := sm.rangeIndexes[key]; ok {
-			return true
+	for _, idx := range sm.rangeIndexes {
+		if idx.EntityType == ConstraintEntityRelationship || idx.OwningConstraint != "" {
+			continue
+		}
+		for _, label := range labels {
+			if idx.Label != label {
+				continue
+			}
+			if len(idx.Properties) == 0 && idx.Property == property {
+				return true
+			}
+			for _, indexed := range idx.Properties {
+				if indexed == property {
+					return true
+				}
+			}
 		}
 	}
+
 	for _, idx := range sm.compositeIndexes {
 		if idx.OwningConstraint != "" {
 			continue
@@ -520,13 +532,6 @@ func (sm *SchemaManager) isPropertyInStructuralIndex(labels []string, property s
 		}
 	}
 	return false
-}
-
-func sortedLabelKey(labels []string) string {
-	sorted := make([]string, len(labels))
-	copy(sorted, labels)
-	sort.Strings(sorted)
-	return strings.Join(sorted, "\x00")
 }
 
 func validateDecayProfileBundle(b *knowledgepolicy.DecayProfileBundle) error {

@@ -83,17 +83,15 @@ func parseCustomSignature(signature string) (customSignature, bool) {
 	if strings.EqualFold(rest, "VOID") {
 		return parsed, true
 	}
-	inner, ok := stripEnclosingRowDelimiter(rest, '(', ')')
+	outputs, ok := parseProcedureOutputColumns(rest)
 	if !ok {
 		return customSignature{}, false
 	}
-	for _, part := range splitTopLevelComma(inner) {
-		name, typeName, found := strings.Cut(part, "::")
-		name, typeName = strings.TrimSpace(name), strings.TrimSpace(typeName)
-		if !found || !cyphertext.IsIdentifier(name) || typeName == "" {
+	for _, output := range outputs {
+		if !cyphertext.IsIdentifier(output.Name) {
 			return customSignature{}, false
 		}
-		parsed.outputs = append(parsed.outputs, ProcedureColumn{Name: name, Type: upperASCII(typeName)})
+		parsed.outputs = append(parsed.outputs, ProcedureColumn{Name: output.Name, Type: upperASCII(output.Type)})
 	}
 	return parsed, true
 }

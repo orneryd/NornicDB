@@ -2,10 +2,10 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -426,15 +426,15 @@ func (r *structureRewriter) whenBranches(start, end int) ([]whenBranch, bool) {
 	return branches, true
 }
 
-// returnColumnsText is " RETURN c1, c2" for columns (each quoted when it
-// isn't a plain name), empty for none.
+// returnColumnsText quotes decoded result columns, including keyword aliases.
+// An empty column list emits no RETURN clause.
 func returnColumnsText(columns []string) string {
 	if len(columns) == 0 {
 		return ""
 	}
 	quoted := make([]string, len(columns))
 	for index, column := range columns {
-		quoted[index] = labelExpressionNameText(column)
+		quoted[index] = cyphertext.QuoteName(column, "alias")
 	}
 	return " RETURN " + strings.Join(quoted, ", ")
 }

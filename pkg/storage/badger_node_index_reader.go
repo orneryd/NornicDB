@@ -130,14 +130,14 @@ func (r *nodeIndexReader) Next() bool {
 		for ; r.index.Valid(); r.index.Next() {
 			item := r.index.Item()
 			key := item.Key()
-			if len(key) != len(r.prefix)+8 {
+			num, valid := extractNumIDFromNamedIndex(key, len(r.prefix)-2)
+			if !valid {
 				if r.scope != "" {
 					r.useScopedCandidates()
 					return r.Next()
 				}
 				continue
 			}
-			num := binary.BigEndian.Uint64(key[len(r.prefix):])
 			id, ok := r.engine.idDict.lookupNodeIDByNum(num)
 			if r.scope != "" && (!ok || id == "" || !nodeIDInScope(id, r.scope)) {
 				r.useScopedCandidates()

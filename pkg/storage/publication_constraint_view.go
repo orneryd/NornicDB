@@ -31,20 +31,20 @@ func capturePublicationConstraintView(schema *SchemaManager) publicationConstrai
 	for _, c := range schema.constraints {
 		switch c.EffectiveEntityType() {
 		case ConstraintEntityNode:
-			if !nodeRules || len(c.Properties) != 1 || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
+			if !nodeRules || c.Properties.Len() != 1 || (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) {
 				continue
 			}
-			view.add(publicationConstraintRule{label: c.Label, property: c.Properties[0], kind: ConstraintEntityNode})
+			view.add(publicationConstraintRule{label: c.Label, property: c.Properties.At(0), kind: ConstraintEntityNode})
 			view.nodeRules++
 		case ConstraintEntityRelationship:
-			if len(c.Properties) == 0 || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
+			if c.Properties.Len() == 0 || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
 				continue
 			}
 			rule := publicationConstraintRule{label: c.Label, kind: ConstraintEntityRelationship, propertyKey: relationshipPropertyKey(c.Properties)}
-			if len(c.Properties) == 1 {
-				rule.property = c.Properties[0]
+			if c.Properties.Len() == 1 {
+				rule.property = c.Properties.At(0)
 			} else {
-				rule.properties = append([]string(nil), c.Properties...)
+				rule.properties = c.Properties.snapshot()
 			}
 			view.add(rule)
 		}

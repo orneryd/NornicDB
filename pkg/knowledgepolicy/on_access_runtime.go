@@ -105,18 +105,19 @@ func scoreEntityProperty(scorer *Scorer, entityID string, meta EntityMeta, prope
 }
 
 func splitOnAccessAssignment(expression string) (string, string, bool) {
-	expression = strings.TrimSpace(expression)
-	parts := strings.SplitN(expression, "=", 2)
-	if len(parts) != 2 {
+	lexer := onAccessLexer{input: expression}
+	variable := lexer.next()
+	if variable.typ != tokenIdent || variable.text == "" || lexer.next().typ != tokenDot {
 		return "", "", false
 	}
-	lhs := strings.TrimSpace(parts[0])
-	rhs := strings.TrimSpace(parts[1])
-	dot := strings.IndexByte(lhs, '.')
-	if dot <= 0 || dot == len(lhs)-1 {
+	property := lexer.next()
+	if !property.isPropertyName() {
 		return "", "", false
 	}
-	return strings.TrimSpace(lhs[dot+1:]), rhs, true
+	if property.text == "" || lexer.next().typ != tokenEq {
+		return "", "", false
+	}
+	return property.text, strings.TrimSpace(expression[lexer.pos:]), true
 }
 
 type onAccessEvalContext struct {
@@ -159,8 +160,20 @@ const (
 )
 
 type onAccessToken struct {
-	typ  onAccessTokenType
-	text string
+	typ    onAccessTokenType
+	text   string
+	quoted bool
+}
+
+// Property positions share one admission policy. A keyword token still carries
+// its original decoded name when it follows a dot or is an assignment target.
+func (token onAccessToken) isPropertyName() bool {
+	switch token.typ {
+	case tokenIdent, tokenCase, tokenWhen, tokenThen, tokenElse, tokenEnd, tokenAnd, tokenOr:
+		return true
+	default:
+		return false
+	}
 }
 
 type onAccessLexer struct {
@@ -269,7 +282,7 @@ func (l *onAccessLexer) next() onAccessToken {
 		l.pos = name.End
 		text := name.Value
 		if name.Quoted {
-			return onAccessToken{typ: tokenIdent, text: text}
+			return onAccessToken{typ: tokenIdent, text: text, quoted: true}
 		}
 		switch strings.ToUpper(text) {
 		case "CASE":
@@ -482,18 +495,22 @@ func (p *onAccessParser) parsePrimary() (interface{}, error) {
 		return p.parseCase()
 	case tokenIdent:
 		ident := p.cur.text
+		quoted := p.cur.quoted
 		p.next()
 		if p.cur.typ == tokenLParen {
 			return p.parseFunction(ident)
 		}
 		if p.cur.typ == tokenDot {
 			p.next()
-			if p.cur.typ != tokenIdent {
+			if !p.cur.isPropertyName() {
 				return nil, fmt.Errorf("expected property name")
 			}
 			prop := p.cur.text
 			p.next()
 			return getOnAccessProperty(p.ctx, prop), nil
+		}
+		if quoted {
+			return getOnAccessProperty(p.ctx, ident), nil
 		}
 		switch strings.ToUpper(ident) {
 		case "TRUE":

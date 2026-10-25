@@ -105,3 +105,34 @@ func TestCanonicalBoundIdentities(t *testing.T) {
 	}
 	require.NotZero(t, prior)
 }
+
+// PROFILE runs the same canonical statement as execution and checks it with
+// the same result-column owner: a quoted alias names one column, a,b, with
+// normalization off or on, in autocommit and explicit transactions.
+func TestProfileQuotedAliasColumnsMatchExecution(t *testing.T) {
+	ctx := context.Background()
+	query := "CALL db.labels() YIELD `label` AS `a,b` RETURN *"
+	for _, normalized := range []bool{false, true} {
+		t.Run(fmt.Sprintf("normalization=%v", normalized), func(t *testing.T) {
+			restore := config.WithCypherQueryNormalizationDisabled()
+			defer restore()
+			config.SetCypherQueryNormalizationEnabled(normalized)
+			for _, explicit := range []bool{false, true} {
+				t.Run(fmt.Sprintf("explicit=%v", explicit), func(t *testing.T) {
+					executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "neo4j"))
+					if explicit {
+						_, err := executor.Execute(ctx, "BEGIN", nil)
+						require.NoError(t, err)
+						defer executor.Execute(ctx, "ROLLBACK", nil)
+					}
+					executed, err := executor.Execute(ctx, query, nil)
+					require.NoError(t, err)
+					profiled, err := executor.Execute(ctx, "PROFILE "+query, nil)
+					require.NoError(t, err)
+					require.Equal(t, []string{"a,b"}, executed.Columns)
+					require.Equal(t, executed.Columns, profiled.Columns)
+				})
+			}
+		})
+	}
+}

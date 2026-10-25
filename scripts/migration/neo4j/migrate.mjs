@@ -23,7 +23,9 @@
 // Flags: --skip-schema, --skip-nodes, --skip-edges, --labels A,B, --types T,U,
 // --dry-run.
 
+import { quoteName } from "../../../ui/src/utils/cypherNames.mjs";
 import neo4j from "neo4j-driver";
+
 
 function parseArgs(argv) {
   const args = {
@@ -91,22 +93,22 @@ function constraintToCypher(c) {
   const labels = c.labelsOrTypes ?? [];
   const props = c.properties ?? [];
   if (!labels.length || !props.length) return null;
-  const label = labels[0];
-  const propParts = props.map((p) => `n.${p}`);
+  const label = quoteName(labels[0], entity === "RELATIONSHIP" ? "type" : "label");
+  const propParts = props.map((p) => `n.${quoteName(p, "key")}`);
   const propList = props.length > 1 ? `(${propParts.join(", ")})` : propParts[0];
 
   if (entity === "NODE") {
     if (ctype === "UNIQUENESS")
-      return `CREATE CONSTRAINT ${name} IF NOT EXISTS FOR (n:${label}) REQUIRE ${propList} IS UNIQUE`;
+      return `CREATE CONSTRAINT ${quoteName(name, "alias")} IF NOT EXISTS FOR (n:${label}) REQUIRE ${propList} IS UNIQUE`;
     if (ctype === "NODE_KEY")
-      return `CREATE CONSTRAINT ${name} IF NOT EXISTS FOR (n:${label}) REQUIRE ${propList} IS NODE KEY`;
+      return `CREATE CONSTRAINT ${quoteName(name, "alias")} IF NOT EXISTS FOR (n:${label}) REQUIRE ${propList} IS NODE KEY`;
     if (ctype === "NODE_PROPERTY_EXISTENCE")
-      return `CREATE CONSTRAINT ${name} IF NOT EXISTS FOR (n:${label}) REQUIRE ${propList} IS NOT NULL`;
+      return `CREATE CONSTRAINT ${quoteName(name, "alias")} IF NOT EXISTS FOR (n:${label}) REQUIRE ${propList} IS NOT NULL`;
   } else if (entity === "RELATIONSHIP") {
     if (ctype === "RELATIONSHIP_PROPERTY_EXISTENCE")
-      return `CREATE CONSTRAINT ${name} IF NOT EXISTS FOR ()-[r:${label}]-() REQUIRE r.${props[0]} IS NOT NULL`;
+      return `CREATE CONSTRAINT ${quoteName(name, "alias")} IF NOT EXISTS FOR ()-[r:${label}]-() REQUIRE r.${quoteName(props[0], "key")} IS NOT NULL`;
     if (ctype === "RELATIONSHIP_UNIQUENESS")
-      return `CREATE CONSTRAINT ${name} IF NOT EXISTS FOR ()-[r:${label}]-() REQUIRE r.${props[0]} IS UNIQUE`;
+      return `CREATE CONSTRAINT ${quoteName(name, "alias")} IF NOT EXISTS FOR ()-[r:${label}]-() REQUIRE r.${quoteName(props[0], "key")} IS UNIQUE`;
   }
   return null;
 }
@@ -119,18 +121,18 @@ function indexToCypher(idx) {
   const labels = idx.labelsOrTypes ?? [];
   const props = idx.properties ?? [];
   if (!labels.length || !props.length || entity !== "NODE") return null;
-  const label = labels[0];
+  const label = quoteName(labels[0], entity === "RELATIONSHIP" ? "type" : "label");
 
   if (itype === "RANGE" || itype === "BTREE") {
     if (props.length === 1)
-      return `CREATE INDEX ${name} IF NOT EXISTS FOR (n:${label}) ON (n.${props[0]})`;
-    return `CREATE INDEX ${name} IF NOT EXISTS FOR (n:${label}) ON (${props
-      .map((p) => `n.${p}`)
+      return `CREATE INDEX ${quoteName(name, "alias")} IF NOT EXISTS FOR (n:${label}) ON (n.${quoteName(props[0], "key")})`;
+    return `CREATE INDEX ${quoteName(name, "alias")} IF NOT EXISTS FOR (n:${label}) ON (${props
+      .map((p) => `n.${quoteName(p, "key")}`)
       .join(", ")})`;
   }
   if (itype === "FULLTEXT") {
-    return `CREATE FULLTEXT INDEX ${name} IF NOT EXISTS FOR (n:${label}) ON EACH [${props
-      .map((p) => `n.${p}`)
+    return `CREATE FULLTEXT INDEX ${quoteName(name, "alias")} IF NOT EXISTS FOR (n:${label}) ON EACH [${props
+      .map((p) => `n.${quoteName(p, "key")}`)
       .join(", ")}]`;
   }
   if (itype === "VECTOR") {
@@ -138,7 +140,7 @@ function indexToCypher(idx) {
     const dims = Number(cfg["vector.dimensions"]);
     const sim = cfg["vector.similarity_function"] ?? "cosine";
     if (!Number.isFinite(dims) || dims <= 0) return null;
-    return `CREATE VECTOR INDEX ${name} IF NOT EXISTS FOR (n:${label}) ON (n.${props[0]}) OPTIONS {indexConfig: {\`vector.dimensions\`: ${dims}, \`vector.similarity_function\`: '${sim}'}}`;
+    return `CREATE VECTOR INDEX ${quoteName(name, "alias")} IF NOT EXISTS FOR (n:${label}) ON (n.${quoteName(props[0], "key")}) OPTIONS {indexConfig: {\`vector.dimensions\`: ${dims}, \`vector.similarity_function\`: '${sim}'}}`;
   }
   return null;
 }
@@ -185,12 +187,12 @@ async function* streamNodes(sess, label, batch) {
     let res;
     if (lastId === null) {
       res = await sess.run(
-        `MATCH (n:\`${label}\`) RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props ORDER BY elementId(n) LIMIT $limit`,
+        `MATCH (n:${quoteName(label, "label")}) RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props ORDER BY elementId(n) LIMIT $limit`,
         { limit: neo4j.int(batch) },
       );
     } else {
       res = await sess.run(
-        `MATCH (n:\`${label}\`) WHERE elementId(n) > $cursor RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props ORDER BY elementId(n) LIMIT $limit`,
+        `MATCH (n:${quoteName(label, "label")}) WHERE elementId(n) > $cursor RETURN elementId(n) AS id, labels(n) AS labels, properties(n) AS props ORDER BY elementId(n) LIMIT $limit`,
         { cursor: lastId, limit: neo4j.int(batch) },
       );
     }
@@ -241,12 +243,12 @@ async function* streamEdges(sess, relType, batch) {
     let res;
     if (lastId === null) {
       res = await sess.run(
-        `MATCH (a)-[r:\`${relType}\`]->(b) RETURN elementId(r) AS id, elementId(a) AS startId, elementId(b) AS endId, properties(r) AS props ORDER BY elementId(r) LIMIT $limit`,
+        `MATCH (a)-[r:${quoteName(relType, "type")}]->(b) RETURN elementId(r) AS id, elementId(a) AS startId, elementId(b) AS endId, properties(r) AS props ORDER BY elementId(r) LIMIT $limit`,
         { limit: neo4j.int(batch) },
       );
     } else {
       res = await sess.run(
-        `MATCH (a)-[r:\`${relType}\`]->(b) WHERE elementId(r) > $cursor RETURN elementId(r) AS id, elementId(a) AS startId, elementId(b) AS endId, properties(r) AS props ORDER BY elementId(r) LIMIT $limit`,
+        `MATCH (a)-[r:${quoteName(relType, "type")}]->(b) WHERE elementId(r) > $cursor RETURN elementId(r) AS id, elementId(a) AS startId, elementId(b) AS endId, properties(r) AS props ORDER BY elementId(r) LIMIT $limit`,
         { cursor: lastId, limit: neo4j.int(batch) },
       );
     }
@@ -264,10 +266,10 @@ async function* streamEdges(sess, relType, batch) {
 }
 
 const edgeCreateCypher = (t) =>
-  `UNWIND $rows AS row MATCH (a:_Migrated {_neo4j_id: row.startId}) MATCH (b:_Migrated {_neo4j_id: row.endId}) CREATE (a)-[:\`${t}\` {_neo4j_id: row.id}]->(b)`;
+  `UNWIND $rows AS row MATCH (a:_Migrated {_neo4j_id: row.startId}) MATCH (b:_Migrated {_neo4j_id: row.endId}) CREATE (a)-[:${quoteName(t, "type")} {_neo4j_id: row.id}]->(b)`;
 
 const edgePropsCypher = (t) =>
-  `UNWIND $rows AS row MATCH (a:_Migrated {_neo4j_id: row.startId})-[r:\`${t}\` {_neo4j_id: row.id}]->(b:_Migrated {_neo4j_id: row.endId}) SET r += row.props`;
+  `UNWIND $rows AS row MATCH (a:_Migrated {_neo4j_id: row.startId})-[r:${quoteName(t, "type")} {_neo4j_id: row.id}]->(b:_Migrated {_neo4j_id: row.endId}) SET r += row.props`;
 
 async function replicateEdges(srcSess, dstSess, types, filter, batch, dryRun) {
   console.log("\n[edges]");

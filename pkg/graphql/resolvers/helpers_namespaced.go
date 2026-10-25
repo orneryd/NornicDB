@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -105,7 +106,7 @@ func (r *Resolver) updateNodeViaCypher(ctx context.Context, id string, propertie
 	i := 0
 	for k, v := range properties {
 		paramName := fmt.Sprintf("p%d", i)
-		setParts = append(setParts, fmt.Sprintf("n.%s = $%s", k, paramName))
+		setParts = append(setParts, fmt.Sprintf("n.%s = $%s", cyphertext.NameText(k, "key"), paramName))
 		params[paramName] = v
 		i++
 	}
@@ -166,7 +167,7 @@ func (r *Resolver) getNodeViaCypher(ctx context.Context, id string) (*nornicdb.N
 func (r *Resolver) listNodesViaCypher(ctx context.Context, label string, limit, offset int) ([]*nornicdb.Node, error) {
 	labelClause := ""
 	if label != "" {
-		labelClause = ":" + label
+		labelClause = ":" + cyphertext.NameText(label, "label")
 	}
 
 	// Use id(n) function for ordering (more reliable than user id property)
@@ -200,7 +201,7 @@ func (r *Resolver) createEdgeViaCypher(ctx context.Context, source, target, edge
 
 	// Use id(n) function for matching internal storage ID, or fallback to n.id property
 	// Note: id() returns unprefixed IDs when using NamespacedEngine, so source/target should be unprefixed
-	query := fmt.Sprintf("MATCH (a), (b) WHERE (id(a) = $source OR a.id = $source) AND (id(b) = $target OR b.id = $target) CREATE (a)-[r:%s %s]->(b) RETURN r, id(a) as source, id(b) as target", edgeType, propsStr)
+	query := createEdgeStatement(edgeType, propsStr)
 	result, err := r.executeCypher(ctx, query, params, "")
 	if err != nil {
 		return nil, err
@@ -313,7 +314,7 @@ func (r *Resolver) getEdgesForNodeViaCypher(ctx context.Context, nodeID string) 
 func (r *Resolver) listEdgesViaCypher(ctx context.Context, relType string, limit, offset int) ([]*nornicdb.GraphEdge, error) {
 	typeClause := ""
 	if relType != "" {
-		typeClause = ":" + relType
+		typeClause = ":" + cyphertext.NameText(relType, "type")
 	}
 
 	// Use MATCH pattern to get source/target nodes explicitly
@@ -453,7 +454,11 @@ func buildLabelsString(labels []string) string {
 	if len(labels) == 0 {
 		return ""
 	}
-	return ":" + strings.Join(labels, ":")
+	names := make([]string, len(labels))
+	for index, label := range labels {
+		names[index] = cyphertext.NameText(label, "label")
+	}
+	return ":" + strings.Join(names, ":")
 }
 
 // coerceResultNodeID normalizes Cypher result values that represent a node ID.
@@ -492,7 +497,7 @@ func buildPropertiesString(properties map[string]interface{}) (string, map[strin
 		}
 		first = false
 		paramName := fmt.Sprintf("p%d", i)
-		propsStr += fmt.Sprintf("%s: $%s", k, paramName)
+		propsStr += fmt.Sprintf("%s: $%s", cyphertext.NameText(k, "key"), paramName)
 		params[paramName] = v
 		i++
 	}
@@ -690,4 +695,9 @@ func extractEdgeFromResult(row []interface{}) (*nornicdb.GraphEdge, error) {
 	}
 
 	return edge, nil
+}
+
+// createEdgeStatement is the source writer used by the GraphQL CREATE route.
+func createEdgeStatement(edgeType, propsStr string) string {
+	return fmt.Sprintf("MATCH (a), (b) WHERE (id(a) = $source OR a.id = $source) AND (id(b) = $target OR b.id = $target) CREATE (a)-[r:%s %s]->(b) RETURN r, id(a) as source, id(b) as target", cyphertext.NameText(edgeType, "type"), propsStr)
 }

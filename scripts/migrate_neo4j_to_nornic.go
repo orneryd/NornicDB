@@ -18,6 +18,8 @@ import (
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // Config
@@ -223,7 +225,7 @@ func insertNodesIntoNornic(nodes []Neo4jNode) (time.Duration, error) {
 			if j > 0 {
 				labelStr += ":"
 			}
-			labelStr += l
+			labelStr += cyphertext.QuoteName(l, "label")
 		}
 		if labelStr == "" {
 			labelStr = "Node"

@@ -588,7 +588,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		}
 
 		if fabricResultCacheKey != "" {
-			e.cache.putWithLabelsAndTraceForEmbedding(fabricResultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), HotPathTrace{}, embeddingGeneration)
+			e.cache.putWithDependenciesAndTraceForEmbedding(fabricResultCacheKey, result, e.queryCacheTTL, info.schemaFacts, HotPathTrace{}, embeddingGeneration)
 		}
 
 		e.invalidateResultCacheForQuery(info)
@@ -1027,7 +1027,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		if finishMode != nil {
 			result = finishMode(result)
 		}
-		e.cache.putWithLabelsAndTraceForEmbedding(resultCacheKey, result, e.queryCacheTTL, extractLabelsFromQuery(cypher), e.LastHotPathTrace(), embeddingGeneration)
+		e.cache.putWithDependenciesAndTraceForEmbedding(resultCacheKey, result, e.queryCacheTTL, info.schemaFacts, e.LastHotPathTrace(), embeddingGeneration)
 	}
 
 	e.invalidateCachesForQuery(info, cypher)

@@ -1146,18 +1146,11 @@ func parseCartesianNullTerm(term string) (string, string, bool, bool) {
 }
 
 func parseCartesianVarProp(expr string) (string, string, bool) {
-	expr = strings.TrimSpace(expr)
-	dot := strings.IndexByte(expr, '.')
-	if dot <= 0 || dot >= len(expr)-1 {
+	variable, property, ok := parseVarPropertyRef(expr)
+	if !ok || !isSimpleIdentifierCartesian(variable) {
 		return "", "", false
 	}
-	v := strings.TrimSpace(expr[:dot])
-	p := strings.TrimSpace(expr[dot+1:])
-	property, validProperty := isOneSymbolicName(p)
-	if !isSimpleIdentifierCartesian(v) || !validProperty {
-		return "", "", false
-	}
-	return v, property, true
+	return variable, property, true
 }
 
 func parseCartesianSingleNodeComparisonTerm(term string) (string, bool) {

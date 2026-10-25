@@ -651,7 +651,7 @@ func validateOrderByReferences(input, output matchSemanticScope, orderBody strin
 	}
 	for _, term := range parseOrderByClause(orderBody) {
 		for _, reference := range semanticFreeReferences(term.column) {
-			base := strings.SplitN(reference, ".", 2)[0]
+			base := reference.variable
 			if _, available := input[base]; available {
 				continue
 			}
@@ -1671,7 +1671,7 @@ func callSubqueryReturnsOuterUnchanged(ctx context.Context, branches []string, n
 				for _, raw := range splitTopLevelComma(items) {
 					itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
 					expression, alias := itemSource.expression, itemSource.alias
-					if normalizeProjectionColumnName(alias) == name && normalizeProjectionColumnName(expression) != name {
+					if alias == name && normalizeProjectionColumnName(expression) != name {
 						return false
 					}
 				}

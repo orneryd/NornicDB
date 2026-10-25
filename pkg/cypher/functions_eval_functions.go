@@ -189,11 +189,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 				return value
 			}
 		}
-		// Check for property access
-		if dotIdx := strings.Index(inner, "."); dotIdx > 0 {
-			varName := inner[:dotIdx]
-			propName := inner[dotIdx+1:]
-			if node, ok := nodes[varName]; ok {
+		// Property framing/decoding is shared with other property consumers.
+		// The written quoted key is not the identity stored in the map.
+		if variable, propName, property := parseVarPropertyRef(inner); property {
+			if node, ok := nodes[variable]; ok {
 				_, exists := e.queryEntityProperties(node)[propName]
 				return exists
 			}

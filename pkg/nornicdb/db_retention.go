@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -146,9 +145,8 @@ func (db *DB) retentionExcludedLabels() map[string]struct{} {
 	}
 	set := make(map[string]struct{}, len(db.config.Retention.ExcludedLabels))
 	for _, label := range db.config.Retention.ExcludedLabels {
-		trimmed := strings.TrimSpace(label)
-		if trimmed != "" {
-			set[trimmed] = struct{}{}
+		if label != "" {
+			set[label] = struct{}{}
 		}
 	}
 	return set

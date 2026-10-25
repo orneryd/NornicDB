@@ -60,13 +60,18 @@ type ProjectedRelationship struct {
 // Global graph projection store (thread-safe): one catalog per database, as
 // GDS keeps it (#1161), keyed by gdsCatalogKey.
 var (
-	graphProjections = make(map[string]*GraphProjection)
+	graphProjections = make(map[gdsProjectionIdentity]*GraphProjection)
 	projectionsMu    sync.RWMutex
 )
 
 // gdsCatalogKey is a projection's key in the catalog: its database and name.
-func gdsCatalogKey(database, name string) string {
-	return database + "\x00" + name
+type gdsProjectionIdentity struct {
+	database string
+	name     string
+}
+
+func gdsCatalogKey(database, name string) gdsProjectionIdentity {
+	return gdsProjectionIdentity{database: database, name: name}
 }
 
 // lookupGraphProjection is database's projection called name, or GDS's
@@ -142,10 +147,10 @@ func (spec gdsElementSpec) merges() bool {
 // is '*' (everything), a label or type name, a list of them, or a map from
 // the projected name to the stored label or type, or to its settings
 // (label / type, properties, and for relationships orientation, aggregation
-// and indexInverse). A name text may also list several, separated by ':' or
-// '|' ('Person:User', 'KNOWS|REFERENCES'): NornicDB's kept form. Labels,
-// types and properties no stored element has, and a name already in use,
-// are refused with GDS's messages.
+// and indexInverse). A name text is one literal name, as in GDS: 'A|B' and
+// 'Person:User' name the label or type with that name, and several names are
+// a list. Labels, types and properties no stored element has, and a name
+// already in use, are refused with GDS's messages.
 func (e *StorageExecutor) callGdsGraphProject(args []interface{}) (*ExecuteResult, error) {
 	const procedure = "gds.graph.project"
 	started := time.Now()
@@ -256,17 +261,8 @@ func gdsProjectionSpecs(value interface{}, kind string) ([]gdsElementSpec, error
 		}
 		specs = append(specs, spec)
 	}
-	addText := func(text string) {
-		for _, name := range strings.FieldsFunc(text, func(r rune) bool { return r == ':' || r == '|' }) {
-			if name = strings.TrimSpace(name); name != "" {
-				add(name, name)
-			}
-		}
-	}
 	switch projection := value.(type) {
 	case nil:
-	case string:
-		addText(projection)
 	case map[string]interface{}:
 		keys := make([]string, 0, len(projection))
 		for key := range projection {
@@ -289,16 +285,14 @@ func gdsProjectionSpecs(value interface{}, kind string) ([]gdsElementSpec, error
 			specs = append(specs, spec)
 		}
 	default:
-		items, isList := cypherListValue(value)
-		if !isList {
-			return nil, localizedError(localization.CypherGraphProceduresInvalidProjection(kind, gdsJavaClass(value)), nil)
+		// A string or list names labels or types literally, as in Neo4j GDS:
+		// 'A|B' projects the one type A|B; several names are a list.
+		names, bad, ok := resolvedTokenNames(value)
+		if !ok {
+			return nil, localizedError(localization.CypherGraphProceduresInvalidProjection(kind, gdsJavaClass(bad)), nil)
 		}
-		for _, item := range items {
-			name, isString := item.(string)
-			if !isString {
-				return nil, localizedError(localization.CypherGraphProceduresInvalidProjection(kind, gdsJavaClass(item)), nil)
-			}
-			addText(name)
+		for _, name := range names {
+			add(name, name)
 		}
 	}
 	if len(specs) == 0 {

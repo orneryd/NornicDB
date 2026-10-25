@@ -69,10 +69,17 @@ func namespaceOwnsBadgerKey(key []byte, prefix []byte, namespace string, wholeNa
 		return hasEdge(1)
 	case prefixMVCCPruneFloor:
 		return len(key) == 10 && ((key[1] == prefixMVCCNode && hasNode(2)) || (key[1] == prefixMVCCEdge && hasEdge(2)))
-	case prefixLabelIndex:
-		return len(key) >= 10 && key[len(key)-9] == 0 && hasNode(len(key)-8)
-	case prefixEdgeTypeIndex:
-		return len(key) >= 10 && key[len(key)-9] == 0 && hasEdge(len(key)-8)
+	case prefixLabelIndex, prefixEdgeTypeIndex:
+		num, valid := extractNumIDFromNamedIndex(key, len(key)-10)
+		if !valid {
+			return false
+		}
+		if key[0] == prefixLabelIndex {
+			_, present := nodes[num]
+			return present
+		}
+		_, present := edges[num]
+		return present
 	case prefixOutgoingIndex, prefixIncomingIndex:
 		return hasNode(1) || hasEdge(9)
 	case prefixEdgeBetweenIndex:

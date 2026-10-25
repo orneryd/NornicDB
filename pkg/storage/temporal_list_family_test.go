@@ -134,7 +134,7 @@ func tlfKeyPrecondition(t *testing.T, c Constraint, properties map[string]interf
 		require.True(t, spec.composite(), "R4 input must be composite")
 		values, ok := key.([]interface{})
 		require.True(t, ok)
-		require.Len(t, values, len(spec.keyProps))
+		require.Len(t, values, spec.keyProps.Len())
 	}
 	values := []interface{}{key}
 	if spec.composite() {

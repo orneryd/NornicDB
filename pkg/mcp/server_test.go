@@ -765,7 +765,7 @@ func TestCallToolEnforcesRequestDatabaseScopeBeforeDispatch(t *testing.T) {
 
 func TestServerUtilityHelpers(t *testing.T) {
 	args := map[string]interface{}{"database": " tenant_a ", "db": "tenant_b"}
-	require.Equal(t, "tenant_a", extractDatabaseArg(args))
+	require.Equal(t, " tenant_a ", extractDatabaseArg(args))
 	require.NotContains(t, args, "database")
 	require.NotContains(t, args, "db")
 

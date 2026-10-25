@@ -64,12 +64,81 @@ type Constraint struct {
 	PolicyMode    string               `json:"policy_mode,omitempty"`    // for RELATIONSHIP_POLICY constraints: "ALLOWED" or "DISALLOWED"
 }
 
+// detached is a copy of c that shares no memory with c: its property list
+// and allowed values are copied, at every depth. The schema installs
+// constraints, and hands them out, only as detached copies, so nothing a
+// caller does with one reaches what the schema enforces.
+func (c Constraint) detached() Constraint {
+	c.Properties = slices.Clone(c.Properties)
+	if c.AllowedValues != nil {
+		c.AllowedValues = copyContractValue(c.AllowedValues).([]interface{})
+	}
+	return c
+}
+
+// copyContractValue copies admitted property lists and maps at every depth,
+// preserving typed list elements and nil/empty containers. Scalar property
+// values (strings, numbers, booleans and temporal values) are kept.
+func copyContractValue(value any) any {
+	switch typed := value.(type) {
+	case []any:
+		if typed == nil {
+			return typed
+		}
+		copied := make([]any, len(typed))
+		for index, item := range typed {
+			copied[index] = copyContractValue(item)
+		}
+		return copied
+	case map[string]any:
+		if typed == nil {
+			return typed
+		}
+		copied := make(map[string]any, len(typed))
+		for key, item := range typed {
+			copied[key] = copyContractValue(item)
+		}
+		return copied
+	}
+	// Keep typed lists in their exact representation, including nested lists
+	// supplied in DOMAIN definitions. This is property-value copying, not the
+	// diagnostic codec: numbers and nil/empty containers are never coerced.
+	reflected := reflect.ValueOf(value)
+	if reflected.IsValid() && reflected.Kind() == reflect.Slice {
+		if reflected.IsNil() {
+			return value
+		}
+		copied := reflect.MakeSlice(reflected.Type(), reflected.Len(), reflected.Len())
+		switch reflected.Type().Elem().Kind() {
+		case reflect.Slice, reflect.Map, reflect.Interface:
+			for index := 0; index < reflected.Len(); index++ {
+				item := copyContractValue(reflected.Index(index).Interface())
+				if item == nil {
+					copied.Index(index).SetZero()
+				} else {
+					copied.Index(index).Set(reflect.ValueOf(item))
+				}
+			}
+		default:
+			reflect.Copy(copied, reflected)
+		}
+		return copied.Interface()
+	}
+	return value
+}
+
 // EffectiveEntityType returns the entity type, defaulting to NODE for backward compatibility.
 func (c Constraint) EffectiveEntityType() ConstraintEntityType {
 	if c.EntityType == "" {
 		return ConstraintEntityNode
 	}
 	return c.EntityType
+}
+
+// uniqueConstraintIdentity is the exact node label/property cache identity.
+// Both components are decoded names; punctuation is data, never framing.
+type uniqueConstraintIdentity struct {
+	label, property string
 }
 
 // SchemaManager manages database schema including constraints and indexes.
@@ -84,8 +153,8 @@ type SchemaManager struct {
 	// runtime: on an empty label their history index is complete from the
 	// start; over existing nodes it is incomplete until the next rebuild. See
 	// temporal_index_completeness.go.
-	temporalIndexCompleteKeys   map[string]struct{}
-	temporalIndexIncompleteKeys map[string]struct{}
+	temporalIndexCompleteKeys   map[temporalConstraintIdentity]struct{}
+	temporalIndexIncompleteKeys map[temporalConstraintIdentity]struct{}
 
 	// Active commit-time locks for exact UNIQUE constraint values. Entries are
 	// reference-counted across holders and waiters, then removed when unused, so
@@ -101,10 +170,10 @@ type SchemaManager struct {
 	schemaMutationMu               sync.Mutex
 
 	// Constraints
-	uniqueConstraints       map[string]*UniqueConstraint      // key: "Label:property"
-	constraints             map[string]Constraint             // key: constraint name, stores all constraint types
-	constraintContracts     map[string]ConstraintContract     // key: contract name
-	propertyTypeConstraints map[string]PropertyTypeConstraint // key: constraint name
+	uniqueConstraints       map[uniqueConstraintIdentity]*UniqueConstraint // exact node label/property tuple
+	constraints             map[string]installedConstraintDefinition       // key: constraint name, stores all constraint types
+	constraintContracts     map[string]constraintContractRevision          // key: contract name
+	propertyTypeConstraints map[string]PropertyTypeConstraint              // key: constraint name
 
 	// pendingWrites is the write cache of an AsyncEngine above the engine that
 	// maintains these indexes; index lookups merge its pending writes (#719).
@@ -220,9 +289,9 @@ type SchemaManager struct {
 //	All methods are thread-safe for concurrent access.
 func NewSchemaManager() *SchemaManager {
 	return &SchemaManager{
-		uniqueConstraints:       make(map[string]*UniqueConstraint),
-		constraints:             make(map[string]Constraint),
-		constraintContracts:     make(map[string]ConstraintContract),
+		uniqueConstraints:       make(map[uniqueConstraintIdentity]*UniqueConstraint),
+		constraints:             make(map[string]installedConstraintDefinition),
+		constraintContracts:     make(map[string]constraintContractRevision),
 		propertyTypeConstraints: make(map[string]PropertyTypeConstraint),
 		compositeIndexes:        make(map[string]*CompositeIndex),
 		fulltextIndexes:         make(map[string]*FulltextIndex),
@@ -234,7 +303,9 @@ func NewSchemaManager() *SchemaManager {
 
 // addConstraintLocked admits c (admitConstraintLocked) and applies it when
 // admitted; added is false for an IF NOT EXISTS that finds it present.
-func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate bool) (added bool, err error) {
+func (sm *SchemaManager) addConstraintLocked(source constraintDefinitionSource, silentOnDuplicate bool) (added bool, err error) {
+	c := source.installedConstraint()
+
 	added, err = sm.admitConstraintLocked(c, silentOnDuplicate)
 	if added {
 		sm.applyConstraintLocked(c)
@@ -245,13 +316,15 @@ func (sm *SchemaManager) addConstraintLocked(c Constraint, silentOnDuplicate boo
 // admitConstraintLocked checks c against the schema without changing it:
 // an error for a conflict, false for an equivalent constraint under IF NOT
 // EXISTS, true when c is to be added.
-func (sm *SchemaManager) admitConstraintLocked(c Constraint, silentOnDuplicate bool) (bool, error) {
+func (sm *SchemaManager) admitConstraintLocked(source constraintDefinitionSource, silentOnDuplicate bool) (bool, error) {
+	c := source.installedConstraint()
+
 	if _, exists := sm.constraintContracts[c.Name]; exists {
 		return false, newSchemaAdmissionError("ConstraintWithNameAlreadyExists", localization.StorageSchemaConstraintAlreadyExists(c.Name))
 	}
 	if existing, exists := sm.constraints[c.Name]; exists {
 		if sameConstraintSchema(existing, c) && existing.Type == c.Type {
-			if c.Type == ConstraintDomain && !allowedValuesEqual(existing.AllowedValues, c.AllowedValues) {
+			if c.Type == ConstraintDomain && !allowedValuesEqual(existing.AllowedValues.snapshot(), c.AllowedValues.snapshot()) {
 				return false, localizedError(localization.StorageSchemaConstraintDifferentAllowedValues(c.Name), nil)
 			}
 			if c.Type == ConstraintCardinality && existing.MaxCount != c.MaxCount {
@@ -280,7 +353,7 @@ func (sm *SchemaManager) admitConstraintLocked(c Constraint, silentOnDuplicate b
 			continue
 		}
 		if existing.Type == c.Type {
-			if c.Type == ConstraintDomain && !allowedValuesEqual(existing.AllowedValues, c.AllowedValues) {
+			if c.Type == ConstraintDomain && !allowedValuesEqual(existing.AllowedValues.snapshot(), c.AllowedValues.snapshot()) {
 				return false, localizedError(localization.StorageSchemaConflictingDomainConstraint(existing.Name), nil)
 			}
 			if c.Type == ConstraintCardinality && existing.MaxCount != c.MaxCount {
@@ -302,8 +375,8 @@ func (sm *SchemaManager) admitConstraintLocked(c Constraint, silentOnDuplicate b
 	// The constraint's index can't duplicate an index of its own, even under
 	// IF NOT EXISTS: they are different schema rules (#884).
 	if constraintPropertyIndexKey(c) != "" {
-		if idx, exists := sm.arity1PropertyIndexLocked(c.Label, c.Properties[0]); exists && idx.OwningConstraint == "" {
-			return false, newSchemaAdmissionError("IndexAlreadyExists", localization.StorageSchemaConstraintOverIndex(c.Label, c.Properties[0]))
+		if idx, exists := sm.arity1PropertyIndexLocked(c.Label, c.Properties.At(0)); exists && idx.OwningConstraint == "" {
+			return false, newSchemaAdmissionError("IndexAlreadyExists", localization.StorageSchemaConstraintOverIndex(c.Label, c.Properties.At(0)))
 		}
 	}
 
@@ -312,7 +385,9 @@ func (sm *SchemaManager) admitConstraintLocked(c Constraint, silentOnDuplicate b
 
 // applyConstraintLocked adds c, which admitConstraintLocked admitted, with
 // its owned index and unique-value tracking.
-func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
+func (sm *SchemaManager) applyConstraintLocked(source constraintDefinitionSource) {
+	c := source.installedConstraint()
+
 	// An index-backed constraint owns an index of its own name, for nodes and
 	// relationships alike, as in Neo4j.
 	if c.OwnedIndex == "" && (c.Type == ConstraintUnique || c.Type == ConstraintNodeKey || c.Type == ConstraintRelationshipKey) {
@@ -325,14 +400,14 @@ func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
 	if c.OwnedIndex != "" {
 		if _, exists := sm.rangeIndexes[c.OwnedIndex]; !exists {
 			prop := ""
-			if len(c.Properties) > 0 {
-				prop = c.Properties[0]
+			if c.Properties.Len() > 0 {
+				prop = c.Properties.At(0)
 			}
 			sm.rangeIndexes[c.OwnedIndex] = &RangeIndex{
 				Name:             c.OwnedIndex,
 				Label:            c.Label,
 				Property:         prop,
-				Properties:       c.Properties,
+				Properties:       c.Properties.snapshot(),
 				EntityType:       c.EffectiveEntityType(),
 				OwningConstraint: c.Name,
 				entries:          make([]rangeEntry, 0),
@@ -343,13 +418,13 @@ func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
 
 	sm.addConstraintPropertyIndexLocked(c)
 
-	if c.Type == ConstraintUnique && len(c.Properties) == 1 {
-		uniqueKey := fmt.Sprintf("%s:%s", c.Label, c.Properties[0])
+	if c.Type == ConstraintUnique && c.Properties.Len() == 1 {
+		uniqueKey := uniqueConstraintIdentity{c.Label, c.Properties.At(0)}
 		if _, exists := sm.uniqueConstraints[uniqueKey]; !exists {
 			sm.uniqueConstraints[uniqueKey] = &UniqueConstraint{
 				Name:     c.Name,
 				Label:    c.Label,
-				Property: c.Properties[0],
+				Property: c.Properties.At(0),
 				values:   make(map[interface{}]NodeID),
 			}
 		}
@@ -360,11 +435,13 @@ func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
 // single-property node equality index (uniqueness or node key): it is the
 // index's canonical name ("Label:property") when it does, "" otherwise. It
 // is still used by callers that need to know whether c owns such an index.
-func constraintPropertyIndexKey(c Constraint) string {
-	if (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) || len(c.Properties) != 1 || c.EffectiveEntityType() != ConstraintEntityNode {
+func constraintPropertyIndexKey(source constraintDefinitionSource) string {
+	c := source.installedConstraint()
+
+	if (c.Type != ConstraintUnique && c.Type != ConstraintNodeKey) || c.Properties.Len() != 1 || c.EffectiveEntityType() != ConstraintEntityNode {
 		return ""
 	}
-	return c.Label + ":" + c.Properties[0]
+	return c.Label + ":" + c.Properties.At(0)
 }
 
 // nodeKeyScanHook lets storage tests assert that NODE KEY validation with a
@@ -375,8 +452,10 @@ var nodeKeyScanHook atomic.Pointer[func()]
 // node key (or multi-property uniqueness) constraint: it owns an arity-N
 // equality index over its properties, so validating a write looks its key up
 // instead of scanning the label.
-func constraintCompositeKeyIndexWanted(c Constraint) bool {
-	return (c.Type == ConstraintNodeKey || c.Type == ConstraintUnique) && len(c.Properties) > 1 && c.EffectiveEntityType() == ConstraintEntityNode
+func constraintCompositeKeyIndexWanted(source constraintDefinitionSource) bool {
+	c := source.installedConstraint()
+
+	return (c.Type == ConstraintNodeKey || c.Type == ConstraintUnique) && c.Properties.Len() > 1 && c.EffectiveEntityType() == ConstraintEntityNode
 }
 
 // addConstraintCompositeKeyIndexLocked registers the arity-N equality index a
@@ -384,7 +463,9 @@ func constraintCompositeKeyIndexWanted(c Constraint) bool {
 // owned index it starts unfilled: writes maintain it, and a fill (the DDL
 // backfill or the startup rebuild) makes it usable for validation and seeks.
 // An existing standalone index on exactly these properties serves instead.
-func (sm *SchemaManager) addConstraintCompositeKeyIndexLocked(c Constraint) {
+func (sm *SchemaManager) addConstraintCompositeKeyIndexLocked(source constraintDefinitionSource) {
+	c := source.installedConstraint()
+
 	if sm.compositeKeyIndexLocked(c.Label, c.Properties) != nil {
 		return
 	}
@@ -395,7 +476,7 @@ func (sm *SchemaManager) addConstraintCompositeKeyIndexLocked(c Constraint) {
 	idx := &CompositeIndex{
 		Name:             name,
 		Label:            c.Label,
-		Properties:       append([]string(nil), c.Properties...),
+		Properties:       c.Properties.snapshot(),
 		OwningConstraint: c.Name,
 		values:           make(map[interface{}][]NodeID),
 		keysDirty:        true,
@@ -408,9 +489,11 @@ func (sm *SchemaManager) addConstraintCompositeKeyIndexLocked(c Constraint) {
 
 // compositeKeyIndexLocked returns the equality index on exactly label's
 // properties (in order), owned or standalone, or nil. The caller holds sm.mu.
-func (sm *SchemaManager) compositeKeyIndexLocked(label string, properties []string) *CompositeIndex {
+func (sm *SchemaManager) compositeKeyIndexLocked(label string, sourceProperties any) *CompositeIndex {
+	properties := constraintPropertyNamesOf(sourceProperties)
+
 	for _, idx := range sm.compositeIndexes {
-		if idx != nil && idx.Label == label && slices.Equal(idx.Properties, properties) {
+		if idx != nil && idx.Label == label && sameConstraintPropertyOrderSlice(idx.Properties, properties) {
 			return idx
 		}
 	}
@@ -419,7 +502,9 @@ func (sm *SchemaManager) compositeKeyIndexLocked(label string, properties []stri
 
 // filledKeyIndex returns a filled equality index on exactly label's
 // properties, or nil while there is none (validation then scans the label).
-func (sm *SchemaManager) filledKeyIndex(label string, properties []string) *CompositeIndex {
+func (sm *SchemaManager) filledKeyIndex(label string, sourceProperties any) *CompositeIndex {
+	properties := constraintPropertyNamesOf(sourceProperties)
+
 	if sm == nil {
 		return nil
 	}
@@ -451,7 +536,9 @@ func (sm *SchemaManager) arity1PropertyIndexLocked(label, property string) (*Com
 // other indexes, or by an import's rebuild. A store from before this index
 // existed may already have an index of its own on the property, which then
 // serves the seeks.
-func (sm *SchemaManager) addConstraintPropertyIndexLocked(c Constraint) {
+func (sm *SchemaManager) addConstraintPropertyIndexLocked(source constraintDefinitionSource) {
+	c := source.installedConstraint()
+
 	if constraintCompositeKeyIndexWanted(c) {
 		sm.addConstraintCompositeKeyIndexLocked(c)
 		return
@@ -459,7 +546,7 @@ func (sm *SchemaManager) addConstraintPropertyIndexLocked(c Constraint) {
 	if constraintPropertyIndexKey(c) == "" {
 		return
 	}
-	if _, exists := sm.arity1PropertyIndexLocked(c.Label, c.Properties[0]); exists {
+	if _, exists := sm.arity1PropertyIndexLocked(c.Label, c.Properties.At(0)); exists {
 		return
 	}
 	name := c.OwnedIndex
@@ -469,7 +556,7 @@ func (sm *SchemaManager) addConstraintPropertyIndexLocked(c Constraint) {
 	sm.compositeIndexes[name] = &CompositeIndex{
 		Name:             name,
 		Label:            c.Label,
-		Properties:       []string{c.Properties[0]},
+		Properties:       []string{c.Properties.At(0)},
 		OwningConstraint: c.Name,
 		values:           make(map[interface{}][]NodeID),
 		keysDirty:        true,
@@ -1575,14 +1662,26 @@ func (sm *SchemaManager) GetConstraints() []UniqueConstraint {
 }
 
 // GetConstraintsForLabels returns all constraints for given labels, ordered
-// by constraint name so validation reports the same violation every time an
-// entity breaks several constraints. Returns constraints from the constraints
-// map, preserving their original types.
+// by constraint name, as detached copies.
 func (sm *SchemaManager) GetConstraintsForLabels(labels []string) []Constraint {
+	definitions := sm.constraintsForLabels(labels)
+	result := make([]Constraint, len(definitions))
+	for index, definition := range definitions {
+		result[index] = definition.snapshot()
+	}
+	return result
+}
+
+// constraintsForLabels returns all constraints for given labels, ordered by
+// constraint name so validation reports the same violation every time an
+// entity breaks several constraints. Returns constraints from the constraints
+// map, preserving their original types. Their lists are the schema's own:
+// only storage's validation reads them, and a report copies what it names.
+func (sm *SchemaManager) constraintsForLabels(labels []string) []installedConstraintDefinition {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
-	result := make([]Constraint, 0)
+	result := make([]installedConstraintDefinition, 0)
 
 	// Get constraints from the constraints map (preserves original type)
 	for _, c := range sm.constraints {
@@ -1593,18 +1692,30 @@ func (sm *SchemaManager) GetConstraintsForLabels(labels []string) []Constraint {
 			}
 		}
 	}
-	slices.SortFunc(result, func(a, b Constraint) int { return strings.Compare(a.Name, b.Name) })
+	slices.SortFunc(result, func(a, b installedConstraintDefinition) int { return strings.Compare(a.Name, b.Name) })
 
 	return result
 }
 
-// GetAllConstraints returns all constraints in the schema, regardless of label.
-// This is used by db.constraints() procedure to list all constraints.
+// GetAllConstraints returns all constraints in the schema, regardless of
+// label, as detached copies. This is used by db.constraints() procedure to
+// list all constraints.
 func (sm *SchemaManager) GetAllConstraints() []Constraint {
+	definitions := sm.allConstraints()
+	result := make([]Constraint, len(definitions))
+	for index, definition := range definitions {
+		result[index] = definition.snapshot()
+	}
+	return result
+}
+
+// allConstraints returns all constraints in the schema. Their lists are the
+// schema's own: only storage reads them, and a report copies what it names.
+func (sm *SchemaManager) allConstraints() []installedConstraintDefinition {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
-	result := make([]Constraint, 0, len(sm.constraints))
+	result := make([]installedConstraintDefinition, 0, len(sm.constraints))
 	for _, c := range sm.constraints {
 		result = append(result, c)
 	}
@@ -1612,12 +1723,51 @@ func (sm *SchemaManager) GetAllConstraints() []Constraint {
 	return result
 }
 
+// ConstraintFact is a read-only view of an installed constraint, for a
+// reader outside storage that only decides something from it, such as a
+// planner or a write check. Its accessors return values, never the
+// constraint's own lists, so it hands out nothing a reader could change, and
+// reading it copies nothing. Constraint returns a detached copy, for a
+// reader that keeps or returns one.
+type ConstraintFact struct {
+	constraint installedConstraintDefinition
+}
+
+func (f ConstraintFact) Name() string                     { return f.constraint.Name }
+func (f ConstraintFact) Type() ConstraintType             { return f.constraint.Type }
+func (f ConstraintFact) EntityType() ConstraintEntityType { return f.constraint.EffectiveEntityType() }
+func (f ConstraintFact) Label() string                    { return f.constraint.Label }
+func (f ConstraintFact) PropertyCount() int               { return f.constraint.Properties.Len() }
+func (f ConstraintFact) Property(index int) string        { return f.constraint.Properties.At(index) }
+func (f ConstraintFact) Constraint() Constraint           { return f.constraint.snapshot() }
+
+// VisitConstraints calls visit with each installed constraint on one of
+// labels (every constraint when labels is nil), in name order, until visit
+// returns false. It copies no constraint.
+func (sm *SchemaManager) VisitConstraints(labels []string, visit func(ConstraintFact) bool) {
+	var constraints []installedConstraintDefinition
+	if labels == nil {
+		constraints = sm.allConstraints()
+		sort.Slice(constraints, func(i, j int) bool { return constraints[i].Name < constraints[j].Name })
+	} else {
+		constraints = sm.constraintsForLabels(labels)
+	}
+	for _, constraint := range constraints {
+		if !visit(ConstraintFact{constraint: constraint}) {
+			return
+		}
+	}
+}
+
 // sameConstraintSchema reports whether a and b constrain the same schema:
 // entity type, label (or relationship type) and set of properties, plus a
 // relationship policy's endpoints and mode or a cardinality constraint's
 // direction. It allocates nothing; admitting a constraint compares it with
 // every existing one (#823).
-func sameConstraintSchema(a, b Constraint) bool {
+func sameConstraintSchema(sourceA, sourceB constraintDefinitionSource) bool {
+	a := sourceA.installedConstraint()
+	b := sourceB.installedConstraint()
+
 	if a.EffectiveEntityType() != b.EffectiveEntityType() || a.Label != b.Label || !samePropertySet(a.Properties, b.Properties) {
 		return false
 	}
@@ -1632,11 +1782,13 @@ func sameConstraintSchema(a, b Constraint) bool {
 
 // samePropertySet reports whether a and b hold the same property names, in
 // any order.
-func samePropertySet(a, b []string) bool {
-	if len(a) != len(b) {
+func samePropertySet(sourceA, sourceB any) bool {
+	a, b := constraintPropertyNamesOf(sourceA), constraintPropertyNamesOf(sourceB)
+
+	if a.Len() != b.Len() {
 		return false
 	}
-	for _, name := range a {
+	for _, name := range a.All() {
 		if countName(a, name) != countName(b, name) {
 			return false
 		}
@@ -1644,9 +1796,11 @@ func samePropertySet(a, b []string) bool {
 	return true
 }
 
-func countName(names []string, name string) int {
+func countName(sourceNames any, name string) int {
+	names := constraintPropertyNamesOf(sourceNames)
+
 	count := 0
-	for _, candidate := range names {
+	for _, candidate := range names.All() {
 		if candidate == name {
 			count++
 		}

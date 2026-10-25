@@ -2,11 +2,30 @@ package cypher
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestQuotedVariableCachedParametersConcurrent(t *testing.T) {
+	// The same spelling plan must not retain a caller's parameters, rows or
+	// restored result wrapper, including when executions overlap.
+	for index := 0; index < 8; index++ {
+		t.Run(strconv.Itoa(index), func(t *testing.T) {
+			t.Parallel()
+			exec, _ := newTestExecutor(t)
+			for value := int64(1); value <= 3; value++ {
+				result, err := exec.Execute(context.Background(), "WITH $`input value` AS `true` RETURN `true` AS result", map[string]interface{}{"input value": value})
+				require.NoError(t, err)
+				require.Equal(t, []string{"result"}, result.Columns)
+				require.Equal(t, [][]interface{}{{value}}, result.Rows)
+				result.Rows[0][0] = int64(-1)
+			}
+		})
+	}
+}
 
 // TestQuotedVariablesMatchNeo4j: backtick-quoted variables, labels, keys and
 // parameters in every position read as Neo4j 5.26 reads them (#734); the
@@ -35,6 +54,10 @@ func TestQuotedVariablesMatchNeo4j(t *testing.T) {
 		{"WITH {k: 1} AS m, 5 AS `a b` RETURN m {.k, `a b`} AS r", nil, []string{"r"}, [][]interface{}{{map[string]interface{}{"k": int64(1), "a b": int64(5)}}}},
 		{"WITH [1, 2, 3] AS l RETURN [`e e` IN l WHERE `e e` > 1 | `e e` * 2] AS c, reduce(`s s` = 0, `e e` IN l | `s s` + `e e`) AS r", nil, []string{"c", "r"}, [][]interface{}{{[]interface{}{int64(4), int64(6)}, int64(6)}}},
 		{"WITH 1 AS `a``b` RETURN `a``b` AS v, `a``b`", nil, []string{"v", "a`b"}, [][]interface{}{{int64(1), int64(1)}}},
+		{"UNWIND [7] AS ```a``` RETURN ```a``` AS v", nil, []string{"v"}, [][]interface{}{{int64(7)}}},
+		{"WITH 7 AS ```a``` RETURN ```a``` AS v, $```a``` AS p", map[string]interface{}{"`a`": int64(9)}, []string{"v", "p"}, [][]interface{}{{int64(7), int64(9)}}},
+		{"WITH {k:1} AS m, 7 AS ```a``` RETURN m {.k, ```a```} AS v", nil, []string{"v"}, [][]interface{}{{map[string]interface{}{"k": int64(1), "`a`": int64(7)}}}},
+		{"RETURN [```a``` IN [1,2,3] WHERE ```a``` > 1 | ```a``` * 2] AS v", nil, []string{"v"}, [][]interface{}{{[]interface{}{int64(4), int64(6)}}}},
 		{"WITH 1 AS x RETURN `x`", nil, []string{"x"}, [][]interface{}{{int64(1)}}},
 		{"WITH 1 AS `x` RETURN x + 1, `x` + 1", nil, []string{"x + 1", "`x` + 1"}, [][]interface{}{{int64(2), int64(2)}}},
 		{"WITH 2 AS `a b` RETURN `a b` + 1, `a b` * `a b` AS sq", nil, []string{"`a b` + 1", "sq"}, [][]interface{}{{int64(3), int64(4)}}},
@@ -45,6 +68,7 @@ func TestQuotedVariablesMatchNeo4j(t *testing.T) {
 		{"WITH {`a b`: 5} AS `a b` RETURN `a b`.`a b` AS v", nil, []string{"v"}, [][]interface{}{{int64(5)}}},
 		{"MATCH (`n n`:P {name: 'a'}) // a `comment`\nRETURN `n n`.name AS v", nil, []string{"v"}, [][]interface{}{{"a"}}},
 		{"CALL db.labels() YIELD label AS `l l` RETURN `l l` ORDER BY `l l`", nil, []string{"l l"}, [][]interface{}{{"P"}}},
+		{"CALL db.labels() YIELD label AS ```a``` RETURN ```a``` AS v", nil, []string{"v"}, [][]interface{}{{"P"}}},
 		{"UNWIND [1, 2] AS `x x` CALL { WITH `x x` RETURN `x x` * 2 AS d } RETURN d ORDER BY d", nil, []string{"d"}, [][]interface{}{{int64(2)}, {int64(4)}}},
 		{"RETURN $`a b` AS v", map[string]interface{}{"a b": int64(1)}, []string{"v"}, [][]interface{}{{int64(1)}}},
 		{"WITH $`a b` + 1 AS `a b` RETURN `a b`, $`p` AS p", map[string]interface{}{"a b": int64(1), "p": "x"}, []string{"a b", "p"}, [][]interface{}{{int64(2), "x"}}},
@@ -134,10 +158,8 @@ func TestCanonicalizeQuotedVariables(t *testing.T) {
 	// An identifier the statement already uses is never the internal one.
 	first, firstNames := canonicalizeQuotedVariablesWithBindings(t.Context(), "WITH 1 AS `a b` RETURN `a b`", nil)
 	require.NotNil(t, firstNames)
-	var internal string
-	for identifier := range firstNames.internal {
-		internal = identifier
-	}
+	require.Len(t, firstNames.internalOrder, 1)
+	internal := firstNames.internalOrder[0]
 	collided, _ := canonicalizeQuotedVariablesWithBindings(t.Context(), "WITH 1 AS `a b`, 2 AS "+internal+" RETURN `a b`, "+internal, nil)
 	require.Contains(t, collided, " 2 AS "+internal+" RETURN", "the user's own variable keeps its name: %s", collided)
 	require.NotContains(t, collided, "`a b`")

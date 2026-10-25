@@ -52,7 +52,7 @@ func (p *QueryAnalyzer) SetPropertyDefault(propertyName string, constituent stri
 }
 
 // AnalyzeQuery extracts routing information from a Cypher query string.
-// This is a simplified analyzer - a full implementation would parse the AST.
+// Schema hints require parsed facts; this compatibility entry uses general routing.
 func (a *QueryAnalyzer) AnalyzeQuery(cypher string) *QueryInfo {
 	upper := strings.ToUpper(cypher)
 	info := &QueryInfo{
@@ -62,27 +62,10 @@ func (a *QueryAnalyzer) AnalyzeQuery(cypher string) *QueryInfo {
 		IsFullScan: false,
 	}
 
-	// Extract labels (simplified - looks for :Label patterns)
-	// This is a basic implementation - full parser would be more accurate
-	words := strings.Fields(upper)
-	for i, word := range words {
-		if strings.HasPrefix(word, ":") && len(word) > 1 {
-			label := strings.TrimPrefix(word, ":")
-			label = strings.Trim(label, "()[]{},;")
-			if label != "" {
-				info.Labels = append(info.Labels, label)
-			}
-		}
-		// Also check for patterns like "MATCH (n:Label)"
-		if i > 0 && (words[i-1] == "(" || words[i-1] == ",") && strings.HasPrefix(word, ":") {
-			label := strings.TrimPrefix(word, ":")
-			label = strings.Trim(label, "()[]{},;")
-			if label != "" {
-				info.Labels = append(info.Labels, label)
-			}
-		}
-	}
-
+	// This text-only compatibility entry has no parsed dependency plan. It
+	// deliberately supplies no schema hints: routing must use the general
+	// constituent path. Callers with resolved labels/properties retain the
+	// explicit QueryInfo data protocol accepted by RouteQuery.
 	// If no labels found and it's a read query, it's likely a full scan
 	if len(info.Labels) == 0 && !info.IsWrite {
 		info.IsFullScan = true

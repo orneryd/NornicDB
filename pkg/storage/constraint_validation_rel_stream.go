@@ -87,7 +87,9 @@ func ofType(edgeType string, visit func(*Edge) error) func(*Edge) error {
 // validateRelationshipConstraintOnCreationForEngine validates relationship
 // constraints using the Engine interface. It streams only the edges of the
 // constrained relationship type (c.Label).
-func validateRelationshipConstraintOnCreationForEngine(engine Engine, c Constraint) error {
+func validateRelationshipConstraintOnCreationForEngine(engine Engine, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
 	chk, err := newRelationshipConstraintCheck(engine, c)
 	if err != nil {
 		return err
@@ -95,7 +97,9 @@ func validateRelationshipConstraintOnCreationForEngine(engine Engine, c Constrai
 	return runRelEdgeCheck(engine, c.Label, chk)
 }
 
-func newRelationshipConstraintCheck(engine Engine, c Constraint) (relEdgeCheck, error) {
+func newRelationshipConstraintCheck(engine Engine, source constraintDefinitionSource) (relEdgeCheck, error) {
+	c := source.installedConstraint()
+
 	switch c.Type {
 	case ConstraintUnique:
 		return newRelUniquenessCheck(c), nil
@@ -120,11 +124,13 @@ func newRelationshipConstraintCheck(engine Engine, c Constraint) (relEdgeCheck, 
 }
 
 // newRelUniquenessCheck checks uniqueness for relationship properties.
-func newRelUniquenessCheck(c Constraint) relEdgeCheck {
-	if len(c.Properties) != 1 {
+func newRelUniquenessCheck(source constraintDefinitionSource) relEdgeCheck {
+	c := source.installedConstraint()
+
+	if c.Properties.Len() != 1 {
 		return newRelCompositeUniquenessCheck(c)
 	}
-	property := c.Properties[0]
+	property := c.Properties.At(0)
 	seen := make(constraintCreationValues)
 	return relEdgeCheck{visit: ofType(c.Label, func(edge *Edge) error {
 		value := edge.Properties[property]
@@ -140,11 +146,13 @@ func newRelUniquenessCheck(c Constraint) relEdgeCheck {
 }
 
 // newRelCompositeUniquenessCheck checks composite uniqueness for relationship properties.
-func newRelCompositeUniquenessCheck(c Constraint) relEdgeCheck {
+func newRelCompositeUniquenessCheck(source constraintDefinitionSource) relEdgeCheck {
+	c := source.installedConstraint()
+
 	seen := make(constraintCreationValues)
 	return relEdgeCheck{visit: ofType(c.Label, func(edge *Edge) error {
-		values := make([]interface{}, len(c.Properties))
-		for i, prop := range c.Properties {
+		values := make([]interface{}, c.Properties.Len())
+		for i, prop := range c.Properties.All() {
 			value := edge.Properties[prop]
 			if value == nil {
 				return nil
@@ -157,16 +165,18 @@ func newRelCompositeUniquenessCheck(c Constraint) relEdgeCheck {
 				parts[i] = fmt.Sprint(value)
 			}
 			message := localization.StorageValidationRelationshipCompositeDuplicate(existingID, string(edge.ID), parts)
-			return newLocalizedConstraintViolation(ConstraintUnique, c.Label, c.Properties, message, nil)
+			return newLocalizedConstraintViolation(ConstraintUnique, c.Label, c.Properties.snapshot(), message, nil)
 		}
 		return nil
 	})}
 }
 
 // newRelExistenceCheck checks existence for relationship properties.
-func newRelExistenceCheck(c Constraint) relEdgeCheck {
+func newRelExistenceCheck(source constraintDefinitionSource) relEdgeCheck {
+	c := source.installedConstraint()
+
 	return relEdgeCheck{visit: ofType(c.Label, func(edge *Edge) error {
-		for _, prop := range c.Properties {
+		for _, prop := range c.Properties.All() {
 			if edge.Properties[prop] == nil {
 				message := localization.StorageValidationRelationshipPropertyMissing(string(edge.ID), prop)
 				return newLocalizedConstraintViolation(ConstraintExists, c.Label, []string{prop}, message, nil)
@@ -181,7 +191,9 @@ func newRelExistenceCheck(c Constraint) relEdgeCheck {
 // the type (the order the two separate scans used to report them), so a
 // duplicate is remembered and reported only after the whole type passed the
 // existence check.
-func newRelKeyCheck(c Constraint) relEdgeCheck {
+func newRelKeyCheck(source constraintDefinitionSource) relEdgeCheck {
+	c := source.installedConstraint()
+
 	exists := newRelExistenceCheck(c)
 	unique := newRelCompositeUniquenessCheck(c)
 	var duplicate error
@@ -200,7 +212,8 @@ func newRelKeyCheck(c Constraint) relEdgeCheck {
 }
 
 // temporalCompositeKey extracts the raw grouping value using the shared key spec.
-func temporalCompositeKey(edge *Edge, keyProps []string) (interface{}, error) {
+func temporalCompositeKey(edge *Edge, sourceKeyProps any) (interface{}, error) {
+	keyProps := constraintPropertyNamesOf(sourceKeyProps)
 	spec := temporalKeySpec{keyProps: keyProps}
 	key, missing := spec.keyValue(edge.Properties)
 	if missing != "" {
@@ -214,8 +227,10 @@ func temporalCompositeKey(edge *Edge, keyProps []string) (interface{}, error) {
 // everything before that forms a composite key (e.g., from_id, to_id,
 // valid_from, valid_to). Intervals are kept per key; overlaps are reported
 // once the whole type has been read.
-func newRelTemporalCheck(c Constraint) (relEdgeCheck, error) {
-	if len(c.Properties) < 3 {
+func newRelTemporalCheck(source constraintDefinitionSource) (relEdgeCheck, error) {
+	c := source.installedConstraint()
+
+	if c.Properties.Len() < 3 {
 		return relEdgeCheck{}, localizedError(localization.StorageValidationTemporalPropertiesAtLeastThree(), nil)
 	}
 	spec, _ := splitTemporalKeySpec(c.Properties)
@@ -233,12 +248,12 @@ func newRelTemporalCheck(c Constraint) (relEdgeCheck, error) {
 		key, err := temporalCompositeKey(edge, keyProps)
 		if err != nil {
 			message := localization.StorageValidationTemporalCreationFailed(err.Error())
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, err)
+			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties.snapshot(), message, err)
 		}
 		start, ok := CoerceTemporalTime(edge.Properties[startProp])
 		if !ok {
 			message := localization.StorageValidationTemporalEdgeInvalid(string(edge.ID), startProp)
-			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+			return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties.snapshot(), message, nil)
 		}
 		end, hasEnd := CoerceTemporalTime(edge.Properties[endProp])
 		group := groups.groupFor(key)
@@ -258,7 +273,7 @@ func newRelTemporalCheck(c Constraint) (relEdgeCheck, error) {
 				curr := intervals[i]
 				if intervalsOverlap(prev.temporalInterval, curr.temporalInterval) {
 					message := localization.StorageValidationTemporalEdgesOverlap(string(prev.edgeID), string(curr.edgeID))
-					return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties, message, nil)
+					return newLocalizedConstraintViolation(ConstraintTemporal, c.Label, c.Properties.snapshot(), message, nil)
 				}
 			}
 		}
@@ -268,21 +283,23 @@ func newRelTemporalCheck(c Constraint) (relEdgeCheck, error) {
 }
 
 // newRelDomainCheck checks that every edge's property is in the allowed list.
-func newRelDomainCheck(c Constraint) (relEdgeCheck, error) {
-	if len(c.Properties) != 1 {
-		return relEdgeCheck{}, localizedError(localization.StorageValidationDomainPropertyCount(len(c.Properties)), nil)
+func newRelDomainCheck(source constraintDefinitionSource) (relEdgeCheck, error) {
+	c := source.installedConstraint()
+
+	if c.Properties.Len() != 1 {
+		return relEdgeCheck{}, localizedError(localization.StorageValidationDomainPropertyCount(c.Properties.Len()), nil)
 	}
-	if len(c.AllowedValues) == 0 {
+	if c.AllowedValues.Len() == 0 {
 		return relEdgeCheck{}, localizedError(localization.StorageValidationDomainAllowedValuesRequired(), nil)
 	}
-	property := c.Properties[0]
+	property := c.Properties.At(0)
 	return relEdgeCheck{visit: ofType(c.Label, func(edge *Edge) error {
 		value := edge.Properties[property]
 		if value == nil {
 			return nil // NULL is valid for domain constraints
 		}
-		if !isValueInAllowedList(value, c.AllowedValues) {
-			message := localization.StorageValidationDomainEdgeInvalid(string(edge.ID), property, value, c.AllowedValues)
+		if !c.AllowedValues.Allows(value) {
+			message := localization.StorageValidationDomainEdgeInvalid(string(edge.ID), property, value, c.AllowedValues.snapshot())
 			return newLocalizedConstraintViolation(ConstraintDomain, c.Label, []string{property}, message, nil)
 		}
 		return nil
@@ -291,7 +308,9 @@ func newRelDomainCheck(c Constraint) (relEdgeCheck, error) {
 
 // newRelCardinalityCheck counts edges per anchor node (start node for
 // OUTGOING, end node otherwise) and reports a node above c.MaxCount.
-func newRelCardinalityCheck(c Constraint) relEdgeCheck {
+func newRelCardinalityCheck(source constraintDefinitionSource) relEdgeCheck {
+	c := source.installedConstraint()
+
 	counts := make(map[NodeID]int)
 	visit := ofType(c.Label, func(edge *Edge) error {
 		if c.Direction == "OUTGOING" {
@@ -317,11 +336,13 @@ func newRelCardinalityCheck(c Constraint) relEdgeCheck {
 // For ALLOWED policies, the full set of ALLOWED policies for this
 // relationship type (existing ones from the schema plus the new one being
 // created) must cover every edge of the type.
-func newRelPolicyCheck(engine Engine, c Constraint) relEdgeCheck {
-	var allowedSet []Constraint
+func newRelPolicyCheck(engine Engine, source constraintDefinitionSource) relEdgeCheck {
+	c := source.installedConstraint()
+
+	var allowedSet []installedConstraintDefinition
 	if c.PolicyMode == "ALLOWED" {
 		if schema := engine.GetSchema(); schema != nil {
-			for _, existing := range schema.GetAllConstraints() {
+			for _, existing := range schema.allConstraints() {
 				if existing.Type == ConstraintPolicy && existing.Label == c.Label && existing.PolicyMode == "ALLOWED" {
 					allowedSet = append(allowedSet, existing)
 				}
@@ -373,19 +394,27 @@ func newRelPropertyTypeCheck(ptc PropertyTypeConstraint) relEdgeCheck {
 
 // Slice forms of the checks, for callers that already hold the edges.
 
-func validateRelUniquenessOnEdges(edges []*Edge, c Constraint) error {
+func validateRelUniquenessOnEdges(edges []*Edge, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
 	return checkEdgeSlice(newRelUniquenessCheck(c), edges)
 }
 
-func validateRelCompositeUniquenessOnEdges(edges []*Edge, c Constraint) error {
+func validateRelCompositeUniquenessOnEdges(edges []*Edge, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
 	return checkEdgeSlice(newRelCompositeUniquenessCheck(c), edges)
 }
 
-func validateRelExistenceOnEdges(edges []*Edge, c Constraint) error {
+func validateRelExistenceOnEdges(edges []*Edge, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
 	return checkEdgeSlice(newRelExistenceCheck(c), edges)
 }
 
-func validateRelTemporalOnCreationForEngine(edges []*Edge, c Constraint) error {
+func validateRelTemporalOnCreationForEngine(edges []*Edge, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
 	chk, err := newRelTemporalCheck(c)
 	if err != nil {
 		return err
@@ -393,7 +422,9 @@ func validateRelTemporalOnCreationForEngine(edges []*Edge, c Constraint) error {
 	return checkEdgeSlice(chk, edges)
 }
 
-func validateRelDomainOnCreationForEngine(edges []*Edge, c Constraint) error {
+func validateRelDomainOnCreationForEngine(edges []*Edge, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
 	chk, err := newRelDomainCheck(c)
 	if err != nil {
 		return err
@@ -401,10 +432,14 @@ func validateRelDomainOnCreationForEngine(edges []*Edge, c Constraint) error {
 	return checkEdgeSlice(chk, edges)
 }
 
-func validateCardinalityOnCreationForEngine(edges []*Edge, c Constraint) error {
+func validateCardinalityOnCreationForEngine(edges []*Edge, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
 	return checkEdgeSlice(newRelCardinalityCheck(c), edges)
 }
 
-func validatePolicyOnCreationForEngine(engine Engine, edges []*Edge, c Constraint) error {
+func validatePolicyOnCreationForEngine(engine Engine, edges []*Edge, source constraintDefinitionSource) error {
+	c := source.installedConstraint()
+
 	return checkEdgeSlice(newRelPolicyCheck(engine, c), edges)
 }

@@ -116,7 +116,7 @@ func boolTestName(disabled bool) string {
 
 func TestTypedNumericGDSProjection(t *testing.T) {
 	previous := graphProjections
-	graphProjections = make(map[string]*GraphProjection)
+	graphProjections = make(map[gdsProjectionIdentity]*GraphProjection)
 	t.Cleanup(func() { graphProjections = previous; rowValueProgramsDisabled.Store(false) })
 	for _, input := range typedNumericWidths() {
 		t.Run(input.Name, func(t *testing.T) {

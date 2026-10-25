@@ -101,7 +101,6 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 					if name == "" {
 						continue
 					}
-					name = normalizeProjectionColumnName(name)
 					next[name] = propertyAccessExpressionType(expression, types, params)
 				}
 			}
@@ -198,7 +197,7 @@ func propertyAccessExpressionType(expression string, types map[string]string, pa
 		return parameterPropertyAccessType(value)
 	}
 	if variable := simpleSemanticIdentifier(expression); variable != "" {
-		return types[normalizeProjectionColumnName(variable)]
+		return types[variable]
 	}
 	// Every other expression (CASE, a computed list, a call, arithmetic) is
 	// typed by the static operand owner, which keeps a union's alternatives.

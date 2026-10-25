@@ -15,7 +15,7 @@ func TestServiceFulltextLabelAllowlist(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, base.Close()) })
 	service := NewService(base, DefaultVectorDimensions, nil)
 	service.SetFulltextLabels([]string{"Searchable", " ", "Source", "Searchable"})
-	require.Equal(t, []string{"Searchable", "Source"}, service.FulltextLabels())
+	require.Equal(t, []string{"Searchable", " ", "Source"}, service.FulltextLabels())
 
 	listed := &storage.Node{ID: "listed", Labels: []string{"Doc", "Searchable"}, Properties: map[string]any{"text": "zephyr report"}}
 	other := &storage.Node{ID: "other", Labels: []string{"Doc"}, Properties: map[string]any{"text": "zephyr memo"}}
@@ -37,7 +37,7 @@ func TestServiceFulltextLabelAllowlist(t *testing.T) {
 	require.NoError(t, service.IndexNode(listed))
 	require.Empty(t, ids(), "a node that lost its listed label is no longer a keyword hit")
 
-	require.Contains(t, service.composeBM25BuildSettings(), ";labels=Searchable,Source")
+	require.Contains(t, service.composeBM25BuildSettings(), ";labels=Searchable, ,Source")
 	unset := NewService(newTestMemoryEngine(t), DefaultVectorDimensions, nil)
 	require.NotContains(t, unset.composeBM25BuildSettings(), "labels=")
 	require.NotEqual(t, unset.composeBM25BuildSettings(), service.composeBM25BuildSettings())
