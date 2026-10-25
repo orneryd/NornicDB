@@ -18,6 +18,29 @@ func (b *BadgerEngine) ensureOpen() error {
 	return nil
 }
 
+func (b *BadgerEngine) ensureWriteOpen() error {
+	b.mu.RLock()
+	closed := b.closed || b.closing
+	b.mu.RUnlock()
+	if closed {
+		return ErrStorageClosed
+	}
+	return nil
+}
+
+// beginEventPublication keeps helper writes admitted through their event
+// reservation, beyond the inner durable write's lifetime. Close waits for
+// these producers before stopping the dispatcher. It holds no callback lease.
+func (b *BadgerEngine) beginEventPublication() (func(), error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if b.closed || b.closing {
+		return nil, ErrStorageClosed
+	}
+	b.txnWG.Add(1)
+	return b.txnWG.Done, nil
+}
+
 // beginWrite marks a durable write in flight so Close waits for it before
 // releasing engine state. It returns the release func the caller must defer,
 // or ErrStorageClosed when the engine has already closed (the caller must
@@ -26,7 +49,7 @@ func (b *BadgerEngine) ensureOpen() error {
 // started yet cannot slip in between the check and the write.
 func (b *BadgerEngine) beginWrite() (func(), error) {
 	b.writeBarrier.RLock()
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureWriteOpen(); err != nil {
 		b.writeBarrier.RUnlock()
 		return nil, err
 	}
@@ -35,7 +58,7 @@ func (b *BadgerEngine) beginWrite() (func(), error) {
 
 func (b *BadgerEngine) beginSchemaWrite() (func(), error) {
 	b.writeBarrier.Lock()
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureWriteOpen(); err != nil {
 		b.writeBarrier.Unlock()
 		return nil, err
 	}
@@ -68,14 +91,14 @@ func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 // transaction and cannot be repeated, so its writes must fit one Badger
 // batch (badger.ErrTxnTooBig otherwise); writes of any size go through
 // withUpdateUnits.
-func (b *BadgerEngine) withUpdate(scope nodeCacheWriteScope, fn func(txn *badger.Txn) error) error {
-	return b.withScopedNodeCacheUpdate(scope, fn, nil)
+func (b *BadgerEngine) withUpdate(scope nodeCacheWriteScope, fn func(txn *badger.Txn) error, atCommit ...func()) error {
+	return b.withScopedNodeCacheUpdate(scope, fn, nil, atCommit...)
 }
 
-func (b *BadgerEngine) withScopedNodeCacheUpdate(scope nodeCacheWriteScope, fn func(txn *badger.Txn) error, cacheToken []uint64) error {
+func (b *BadgerEngine) withScopedNodeCacheUpdate(scope nodeCacheWriteScope, fn func(txn *badger.Txn) error, cacheToken []uint64, atCommit ...func()) error {
 	return b.commitEngineWriteWithCache(scope, func(cw *commitWriter) error {
 		return cw.writeOnce(fn)
-	}, cacheToken)
+	}, cacheToken, atCommit...)
 }
 
 // withUpdateUnits commits units as one atomic engine write of any size. Each
@@ -102,11 +125,15 @@ func (b *BadgerEngine) withUpdateUnits(scope nodeCacheWriteScope, units []func(t
 // matching Neo4j's token-before-entity invariant), and the numeric-ID
 // counter high-water marks are persisted after the commit, in a separate
 // transaction, so concurrent writers never conflict on the shared keys.
-func (b *BadgerEngine) commitEngineWrite(scope nodeCacheWriteScope, write func(cw *commitWriter) error) error {
-	return b.commitEngineWriteWithCache(scope, write, nil)
+func (b *BadgerEngine) commitEngineWrite(scope nodeCacheWriteScope, write func(cw *commitWriter) error, atCommit ...func()) error {
+	return b.commitEngineWriteWithCache(scope, write, nil, atCommit...)
 }
 
-func (b *BadgerEngine) commitEngineWriteWithCache(scope nodeCacheWriteScope, write func(cw *commitWriter) error, cacheToken []uint64) error {
+// atCommit is the successful commit's reservation phase, inside the caller's
+// entity order and before the post-commit scheduling hook.
+// It never readies the event or waits for delivery; the outer publication tail
+// owns readiness once its accounting is complete. Failed writes never reserve.
+func (b *BadgerEngine) commitEngineWriteWithCache(scope nodeCacheWriteScope, write func(cw *commitWriter) error, cacheToken []uint64, atCommit ...func()) error {
 	if err := admitDurableWrite(scope); err != nil {
 		return err
 	}
@@ -145,6 +172,9 @@ func (b *BadgerEngine) commitEngineWriteWithCache(scope nodeCacheWriteScope, wri
 			return fail(err)
 		}
 		b.idDict.markTxnCommitted(committing)
+		for _, reserve := range atCommit {
+			reserve()
+		}
 		return nil
 	})
 	if err == nil {

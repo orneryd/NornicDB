@@ -222,9 +222,20 @@ func (tx *BadgerTransaction) writeScalarCountDeltasInCommitLocked(w *batchWriter
 }
 
 func (tx *BadgerTransaction) releaseWriteBarrierLocked() {
+	tx.releaseWriteBehindOrderLocked()
 	if tx.commitReleaseWrite != nil {
 		release := tx.commitReleaseWrite
 		tx.commitReleaseWrite = nil
+		release()
+	}
+}
+
+// releaseWriteBehindOrderLocked releases the write-behind commit order Commit
+// holds, once; the write barrier stays held.
+func (tx *BadgerTransaction) releaseWriteBehindOrderLocked() {
+	if tx.commitReleaseOrder != nil {
+		release := tx.commitReleaseOrder
+		tx.commitReleaseOrder = nil
 		release()
 	}
 }

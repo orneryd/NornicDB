@@ -145,5 +145,6 @@ func TestAlgorithmRelationshipFilterForwardsStorageEvents(t *testing.T) {
 	}))
 	_, err := store.CreateNode(&storage.Node{ID: "event-node", Labels: []string{"P"}})
 	require.NoError(t, err)
+	storage.WaitForListeners(store)
 	require.Equal(t, []storage.NodeID{"event-node"}, created)
 }

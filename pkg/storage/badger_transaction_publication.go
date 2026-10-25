@@ -3,8 +3,8 @@ package storage
 import "context"
 
 // CommitContextWithPublication commits atomically, then invokes afterPublication
-// once on success after publication locks are released but before synchronous
-// listeners run. Database wrappers finalize accounting and release admission at
+// once on success after publication locks are released but before this commit's
+// event becomes ready for the dispatcher. Wrappers finalize accounting and admission at
 // this boundary. The callback must not panic. Failed commits never invoke it.
 // Buffered commits invoke it at their acknowledged-publication boundary.
 func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, afterPublication func()) error {

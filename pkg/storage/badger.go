@@ -171,9 +171,15 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
-	db     *managedBadgerDB
-	mu     sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
-	closed bool
+	// Entity order outlives the optional buffer. Every producer retains the
+	// same stripes from its physical commit through event reservation.
+	entityOrder writeOrder
+	// Test seam at the commit/reservation boundary; installed before writers start.
+	beforeCommitReservation func([]Operation)
+	db                      *managedBadgerDB
+	mu                      sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
+	closed                  bool
+	closing                 bool
 	// pendingCandidates accelerates the durable pending-embedding index. Adds
 	// are published by the common commit writer only after a successful commit.
 	pendingCandidates           pendingEmbeddingCandidates
@@ -187,7 +193,12 @@ type BadgerEngine struct {
 	notifyWG                           sync.WaitGroup
 	notificationMu                     sync.Mutex
 	notificationHead, notificationTail *commitNotification
-	notificationDraining               bool
+	notificationLast                   *commitNotification
+	notificationCompletions            map[*commitNotification][]func()
+	notificationWake                   chan struct{}
+	notificationStop                   chan struct{}
+	notificationDone                   chan struct{}
+	notificationOwner                  atomic.Uint64
 	closeMu                            sync.Mutex
 	txnWG                              sync.WaitGroup
 	// writeBarrier orders Close against durable writes. Every public
@@ -585,7 +596,7 @@ func (b *BadgerEngine) dispatchNamespaceReset(prefix string) {
 	callbacks := b.onNamespaceReset
 	b.callbackMu.RUnlock()
 	for _, callback := range callbacks {
-		callback(prefix)
+		b.callCommitListener(func() { callback(prefix) })
 	}
 }
 
@@ -606,7 +617,7 @@ func (b *BadgerEngine) dispatchNodeCreated(node *Node) {
 	b.callbackMu.RUnlock()
 
 	for _, callback := range callbacks {
-		callback(node)
+		b.callCommitListener(func() { callback(node) })
 	}
 }
 
@@ -631,7 +642,7 @@ func (b *BadgerEngine) dispatchNodeUpdatedOutcome(node *Node, outcome bool) {
 		callbacks := b.onNodeUpdated
 		b.callbackMu.RUnlock()
 		for _, callback := range callbacks {
-			callback(node)
+			b.callCommitListener(func() { callback(node) })
 		}
 	})
 }
@@ -655,7 +666,7 @@ func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
 	b.callbackMu.RUnlock()
 
 	for _, callback := range callbacks {
-		callback(nodeID)
+		b.callCommitListener(func() { callback(nodeID) })
 	}
 }
 
@@ -676,7 +687,7 @@ func (b *BadgerEngine) dispatchEdgeCreated(edge *Edge) {
 	b.callbackMu.RUnlock()
 
 	for _, callback := range callbacks {
-		callback(edge)
+		b.callCommitListener(func() { callback(edge) })
 	}
 }
 
@@ -697,7 +708,7 @@ func (b *BadgerEngine) dispatchEdgeUpdated(edge *Edge) {
 	b.callbackMu.RUnlock()
 
 	for _, callback := range callbacks {
-		callback(edge)
+		b.callCommitListener(func() { callback(edge) })
 	}
 }
 
@@ -720,7 +731,7 @@ func (b *BadgerEngine) dispatchEdgeDeleted(edgeID EdgeID) {
 	b.callbackMu.RUnlock()
 
 	for _, callback := range callbacks {
-		callback(edgeID)
+		b.callCommitListener(func() { callback(edgeID) })
 	}
 }
 
@@ -1229,10 +1240,15 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 			interval = 50 * time.Millisecond
 		}
 		engine.writeBehind = NewWriteBehindBuffer(interval, opts.WriteBehindMaxOps, engine.replayWriteBehind)
+		engine.writeBehind.reserve = func(ops []Operation) *commitNotification { return engine.reserveNotification(ops, true) }
+		engine.writeBehind.isDispatcher = engine.onCommitDispatcher
+		engine.writeBehind.release = func(n *commitNotification, _ bool) { engine.retireCommitNotification(n) }
 		engine.writeBehind.SetWarn(func(msg string) {
 			engine.log.Warn(msg, "subsystem", "storage")
 		})
+		engine.attachWriteBehindToSchemas()
 	}
+	engine.startCommitDispatcher()
 	return engine, nil
 }
 
@@ -1365,7 +1381,7 @@ func (b *BadgerEngine) loadPersistedMVCCSequence() (uint64, error) {
 // between commit and persistence loses at most the unflushed window of
 // allocated-but-unpersisted sequences, which is reconciled by the
 // startup max-of-persisted-and-legacy floor.
-func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
+func (b *BadgerEngine) allocateMVCCVersionRaw(txn *badger.Txn, namespace string, commitTime time.Time) (MVCCVersion, error) {
 	_ = txn // intentionally unused — see doc above
 	state, err := b.namespaceMVCC(namespace)
 	if err != nil {

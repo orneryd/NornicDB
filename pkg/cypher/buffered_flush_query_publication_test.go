@@ -18,13 +18,6 @@ func TestBufferedFlushPreservesQueryViewAndCacheRevision(t *testing.T) {
 	uncached := NewStorageExecutorWithQueryCachePolicy(ns, 0, time.Minute)
 	ctx := context.Background()
 	const query = "MATCH (c:Category)<-[:PART_OF]-(p:Product) RETURN c.categoryName AS categoryName, count(p) AS productCount ORDER BY productCount DESC"
-	_, err = cached.Execute(ctx, "CREATE (c:Category {categoryName:'c'})<-[:PART_OF]-(p:Product {id:1})", nil)
-	require.NoError(t, err)
-	before, err := cached.Execute(ctx, query, nil)
-	require.NoError(t, err)
-	require.Equal(t, [][]interface{}{{"c", int64(1)}}, before.Rows)
-	versionBefore, _ := ns.GraphMutationVersion()
-	hitsBefore, _, _, _, _ := cached.cache.Stats()
 	type observation struct {
 		raw, cached      *ExecuteResult
 		rawErr, cacheErr error
@@ -38,6 +31,14 @@ func TestBufferedFlushPreservesQueryViewAndCacheRevision(t *testing.T) {
 		hit, cacheErr := cached.Execute(ctx, query, nil)
 		observations <- observation{raw, hit, rawErr, cacheErr}
 	})
+	_, err = cached.Execute(ctx, "CREATE (c:Category {categoryName:'c'})<-[:PART_OF]-(p:Product {id:1})", nil)
+	require.NoError(t, err)
+	before, err := cached.Execute(ctx, query, nil)
+	require.NoError(t, err)
+	require.Equal(t, [][]interface{}{{"c", int64(1)}}, before.Rows)
+	versionBefore, _ := ns.GraphMutationVersion()
+	hitsBefore, _, _, _, _ := cached.cache.Stats()
+
 	require.NoError(t, engine.FlushWriteBehind())
 	var got observation
 	select {

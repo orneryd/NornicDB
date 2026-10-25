@@ -19,6 +19,10 @@ import (
 // Uses BadgerDB's streaming backup which creates a consistent snapshot.
 // The backup file is a self-contained, portable copy of the database.
 func (b *BadgerEngine) Backup(path string) error {
+	// Every write acknowledged before the backup is in it.
+	if err := b.LandWriteBehind(); err != nil {
+		return err
+	}
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -96,6 +100,13 @@ func (b *BadgerEngine) restartIndexBackfills() error {
 func (b *BadgerEngine) restoreOffline(path string) error {
 	b.writeBarrier.Lock()
 	defer b.writeBarrier.Unlock()
+	// Every acknowledged write-behind generation lands before the restore
+	// replaces the data; none can land on top of it afterwards.
+	releaseOrder, err := b.orderDirectEntities(nil, nil, false, true)
+	if err != nil {
+		return err
+	}
+	defer releaseOrder()
 
 	b.mu.RLock()
 	closed := b.closed
@@ -219,9 +230,16 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	if err := b.ensureOpen(); err != nil {
 		return 0, 0, err
 	}
-	// Runs after the lock below is released: the reset's consumers may write.
-	var reset *commitNotification
-	defer func() { b.awaitCommitNotification(reset) }()
+	// Order after acknowledged data so the drop removes and counts it as
+	// stored state. Reset is queued without waiting; external lifecycle
+	// callers consume it after releasing their own leases.
+	b.writeBarrier.Lock()
+	defer b.writeBarrier.Unlock()
+	releaseOrder, err := b.orderDirectEntities(nil, nil, false, true)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer releaseOrder()
 	b.labelCountWriteMu.Lock()
 	defer b.labelCountWriteMu.Unlock()
 
@@ -483,7 +501,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	b.namespaceCountsMu.Unlock()
 
 	// No per-entity event was published for what this removed.
-	reset = b.publishNamespaceReset(prefix)
+	b.publishNamespaceReset(prefix)
 	return nodesDeleted, edgesDeleted, nil
 }
 

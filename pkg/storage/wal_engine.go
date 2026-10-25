@@ -448,10 +448,10 @@ func (w *WALEngine) createSnapshotAndCompact() error {
 	// OpBufferedCommit entries while their data still lives only in the
 	// in-memory buffer: the snapshot reads committed Badger state, and the
 	// truncation would otherwise delete the only durable copy.
-	if flusher, ok := w.engine.(interface{ FlushWriteBehind() error }); ok {
-		if err := flusher.FlushWriteBehind(); err != nil {
-			return fmt.Errorf("failed to flush write-behind before snapshot: %w", err)
-		}
+	// mutationMu is held: land them without delivering their listeners here,
+	// where a listener's write through this engine would wait for it.
+	if err := LandWriteBehind(w.engine); err != nil {
+		return fmt.Errorf("failed to flush write-behind before snapshot: %w", err)
 	}
 
 	if err := SaveStreamingSnapshot(context.Background(), w.engine, snapshotPath, SnapshotOptions{Sequence: snapshotSequence}); err != nil {
@@ -621,6 +621,18 @@ func (w *WALEngine) UpdateNode(node *Node) error {
 // EmbeddingSidecarUpdater (compile-time asserted); anything else is an
 // invariant violation, reported as an error rather than silently degraded.
 func (w *WALEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
+	complete, err := PersistEmbeddingOutcome(node, w.persistEmbeddingOutcome)
+	if err != nil {
+		return err
+	}
+	if complete != nil {
+		return complete()
+	}
+	return nil
+}
+
+// persistEmbeddingOutcome owns only persistence/reservation, never consumption.
+func (w *WALEngine) persistEmbeddingOutcome(node *Node) error {
 	w.mutationMu.RLock()
 	defer w.mutationMu.RUnlock()
 

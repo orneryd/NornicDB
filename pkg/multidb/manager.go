@@ -50,6 +50,7 @@ type DatabaseManager struct {
 	inner storage.Engine
 
 	// Database metadata (persisted in "system" namespace)
+	dropping        map[string]bool
 	databases       map[string]*DatabaseInfo
 	serverID        string
 	serverCreatedAt time.Time
@@ -365,7 +366,7 @@ func (m *DatabaseManager) CreateDatabase(name string) error {
 	}
 
 	// Check if exists
-	if _, exists := m.databases[name]; exists {
+	if _, exists := m.databases[name]; exists || m.dropping[name] {
 		return ErrDatabaseExists
 	}
 
@@ -397,7 +398,16 @@ func (m *DatabaseManager) CreateDatabase(name string) error {
 func (m *DatabaseManager) DropDatabase(name string) error {
 	m.mu.Lock()
 	changed := false
-	defer func() { m.unlockStatementCacheIndexes(changed, false) }()
+	defer func() {
+		m.unlockStatementCacheIndexes(changed, false)
+		if changed {
+			storage.WaitForListenersThen(m.inner, func() {
+				m.mu.Lock()
+				delete(m.dropping, name)
+				m.mu.Unlock()
+			})
+		}
+	}()
 
 	// Check if exists
 	info, exists := m.databases[name]
@@ -439,6 +449,10 @@ func (m *DatabaseManager) DropDatabase(name string) error {
 	}
 	delete(m.limitCheckers, name)
 	m.dropDatabaseStatementCachesLocked(name)
+	if m.dropping == nil {
+		m.dropping = make(map[string]bool)
+	}
+	m.dropping[name] = true
 	changed = true
 
 	return nil
@@ -754,15 +768,16 @@ func (m *DatabaseManager) SetDatabaseStatus(name, status string) error {
 // Close releases resources.
 func (m *DatabaseManager) Close() error {
 	m.mu.Lock()
-	defer m.unlockStatementCacheIndexes(true, true)
-
 	// Clear all cached engines
 	m.engines = make(map[string]storage.Engine)
 	m.limitCheckers = make(map[string]*databaseLimitChecker)
 	m.statementCachesClosed = true
 	m.disposeStatementCachesLocked()
+	m.unlockStatementCacheIndexes(true, true)
 
-	// Close the underlying storage
+	// Close the underlying storage after releasing the manager lock: closing
+	// lands acknowledged write-behind writes and delivers their listeners,
+	// which may commit through this manager (storageSizeInitialized).
 	return m.inner.Close()
 }
 

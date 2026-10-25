@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -513,6 +514,98 @@ func (sm *SchemaManager) RegisterUniqueValue(label, property string, value inter
 	constraint.mu.Lock()
 	constraint.values[valueKey] = nodeID
 	constraint.mu.Unlock()
+}
+
+// ReleaseUniqueValue removes value from the unique constraint only while
+// holder still holds it: an earlier holder's late publication (a write-behind
+// replay landing after a direct writer reclaimed the value) never releases a
+// later holder's claim.
+func (sm *SchemaManager) ReleaseUniqueValue(label, property string, value interface{}, holder NodeID) {
+	sm.mu.RLock()
+	key := fmt.Sprintf("%s:%s", label, property)
+	constraint, exists := sm.uniqueConstraints[key]
+	sm.mu.RUnlock()
+
+	if !exists {
+		return
+	}
+	valueKey, ok := indexValueKey(value)
+	if !ok {
+		return
+	}
+
+	constraint.mu.Lock()
+	if constraint.values[valueKey] == holder {
+		delete(constraint.values, valueKey)
+	}
+	constraint.mu.Unlock()
+}
+
+// releaseNodeUniqueValues releases the unique values the node with id held as
+// body node.
+func (sm *SchemaManager) releaseNodeUniqueValues(id NodeID, node *Node) {
+	if sm == nil || node == nil || !sm.HasUniqueValueTracking() {
+		return
+	}
+	for _, label := range node.Labels {
+		for propName, propValue := range node.Properties {
+			sm.ReleaseUniqueValue(label, propName, propValue, id)
+		}
+	}
+}
+
+// registerNodeUniqueValues claims node's unique values for it.
+func (sm *SchemaManager) registerNodeUniqueValues(node *Node) {
+	if sm == nil || node == nil || !sm.HasUniqueValueTracking() {
+		return
+	}
+	for _, label := range node.Labels {
+		for propName, propValue := range node.Properties {
+			sm.RegisterUniqueValue(label, propName, propValue, node.ID)
+		}
+	}
+}
+
+// valueOrdered reports whether a write of an entity of kind with these labels
+// (relationship type), or of any labels when labels is nil, is subject to a
+// uniqueness constraint: its claims are ordered by value, after every
+// acknowledged write-behind generation (directLanding.enter).
+func (sm *SchemaManager) valueOrdered(kind ConstraintEntityType, labels []string) bool {
+	if sm == nil {
+		return false
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	for _, c := range sm.constraints {
+		if c.EffectiveEntityType() != kind || (labels != nil && !slices.Contains(labels, c.Label)) {
+			continue
+		}
+		switch c.Type {
+		case ConstraintUnique, ConstraintNodeKey, ConstraintRelationshipKey:
+			return true
+		}
+	}
+	return false
+}
+
+// publishUniqueValueOperations applies committed node operations to the
+// unique-value cache in commit order: the one owner shared by the synchronous
+// commit tail and the write-behind replay. Releases are holder-checked.
+func (sm *SchemaManager) publishUniqueValueOperations(ops []Operation) {
+	if sm == nil || !sm.HasUniqueValueTracking() {
+		return
+	}
+	for _, op := range ops {
+		switch op.Type {
+		case OpCreateNode:
+			sm.registerNodeUniqueValues(op.Node)
+		case OpUpdateNode:
+			sm.releaseNodeUniqueValues(op.NodeID, op.OldNode)
+			sm.registerNodeUniqueValues(op.Node)
+		case OpDeleteNode:
+			sm.releaseNodeUniqueValues(op.NodeID, op.OldNode)
+		}
+	}
 }
 
 // UnregisterUniqueValue removes a value from a unique constraint.

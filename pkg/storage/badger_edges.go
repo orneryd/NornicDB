@@ -44,6 +44,16 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		return constraintErr
 	}
 	defer releaseConstraint()
+	// Write-behind: land after every older buffered image of what this writes
+	// (write_behind_commit_order.go).
+	releaseOrder, orderErr := b.orderDirectEntities([]NodeID{edge.StartNode, edge.EndNode}, []EdgeID{edge.ID}, false,
+		b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID)).valueOrdered(ConstraintEntityRelationship, []string{edge.Type}))
+	if orderErr != nil {
+		return orderErr
+	}
+	defer releaseOrder()
+	var notification *commitNotification
+	defer func() { b.completeCommitNotification(notification) }()
 
 	if edge.CreatedAt.IsZero() {
 		edge.CreatedAt = time.Now()
@@ -171,14 +181,16 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		}
 		// Create-only: primary key IS the current head body.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	}, nil)
+	}, nil, func() {
+		notification = b.reserveCommitOperations([]Operation{Operation{Type: OpCreateEdge, Edge: edge}})
+	})
 
 	// Invalidate only this edge type (not entire cache)
 	if err == nil {
 		b.cacheOnEdgeCreated(edge)
 
 		// Notify listeners (e.g., graph analyzers) about the new edge
-		b.notifyEdgeCreated(edge)
+		b.prepareCommitOperations([]Operation{{Type: OpCreateEdge, Edge: edge}}, false)
 	}
 
 	return err
@@ -310,6 +322,16 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		return constraintErr
 	}
 	defer releaseConstraint()
+	// Write-behind: land after every older buffered image of what this writes
+	// (write_behind_commit_order.go).
+	releaseOrder, orderErr := b.orderDirectEntities([]NodeID{edge.StartNode, edge.EndNode}, []EdgeID{edge.ID}, false,
+		b.GetSchemaForNamespace(namespaceForEdgeID(edge.ID)).valueOrdered(ConstraintEntityRelationship, []string{edge.Type}))
+	if orderErr != nil {
+		return orderErr
+	}
+	defer releaseOrder()
+	var notification *commitNotification
+	defer func() { b.completeCommitNotification(notification) }()
 
 	var oldType string
 	var oldEdge *Edge
@@ -496,12 +518,14 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		}
 		// Primary key now holds the new body; archival above handled history.
 		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
-	}, nil)
+	}, nil, func() {
+		notification = b.reserveCommitOperations([]Operation{Operation{Type: OpUpdateEdge, Edge: edge}})
+	})
 
 	// Notify listeners on successful update
 	if err == nil {
 		b.cacheOnEdgeUpdated(oldType, edge)
-		b.notifyEdgeUpdated(edge)
+		b.prepareCommitOperations([]Operation{{Type: OpUpdateEdge, Edge: edge}}, false)
 	}
 
 	return err
@@ -528,6 +552,15 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	// Write-behind: land after every older buffered image of what this writes
+	// (write_behind_commit_order.go).
+	releaseOrder, orderErr := b.orderDirectEntities(nil, []EdgeID{id}, false, b.GetSchemaForNamespace(namespaceForEdgeID(id)).valueOrdered(ConstraintEntityRelationship, nil))
+	if orderErr != nil {
+		return orderErr
+	}
+	defer releaseOrder()
+	var notification *commitNotification
+	defer func() { b.completeCommitNotification(notification) }()
 
 	// Get edge type before deletion for selective cache invalidation
 	edge, _ := b.GetEdge(id)
@@ -585,6 +618,8 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 			return err
 		}
 		return b.writeEdgeMVCCHeadInTxn(txn, id, version, true)
+	}, func() {
+		notification = b.reserveCommitOperations([]Operation{Operation{Type: OpDeleteEdge, EdgeID: id}})
 	})
 
 	// Invalidate only this edge type (not entire cache)
@@ -596,7 +631,7 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 		}
 
 		// Notify listeners (e.g., graph analyzers) about the deleted edge
-		b.notifyEdgeDeleted(id)
+		b.prepareCommitOperations([]Operation{{Type: OpDeleteEdge, EdgeID: id}}, false)
 	}
 
 	return err

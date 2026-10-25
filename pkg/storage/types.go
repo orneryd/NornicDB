@@ -211,12 +211,13 @@ type Node struct {
 	embeddingOwner   *BadgerEngine
 	embeddingOwnerID NodeID
 	// Transient storage snapshot and attempt identity; never part of user data.
-	embeddingRevision    EmbeddingBodyRevision `json:"-" msgpack:"-"`
-	embeddingAttempt     *EmbeddingAttempt     `json:"-" msgpack:"-"`
-	embeddingPublication embeddingPublicationProof
-	ID                   NodeID         `json:"id"`
-	Labels               []string       `json:"labels"`
-	Properties           map[string]any `json:"properties"`
+	embeddingRevision     EmbeddingBodyRevision `json:"-" msgpack:"-"`
+	embeddingWaitDeferred bool
+	embeddingAttempt      *EmbeddingAttempt `json:"-" msgpack:"-"`
+	embeddingPublication  embeddingPublicationProof
+	ID                    NodeID         `json:"id"`
+	Labels                []string       `json:"labels"`
+	Properties            map[string]any `json:"properties"`
 
 	// NornicDB extensions
 	CreatedAt       time.Time            `json:"-"`

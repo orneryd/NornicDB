@@ -70,9 +70,19 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	if lockErr != nil {
 		return "", lockErr
 	}
+	// Write-behind: land after every older buffered image of what this writes
+	// (write_behind_commit_order.go).
+	releaseOrder, orderErr := b.orderDirectEntities([]NodeID{node.ID}, nil, false, schema.valueOrdered(ConstraintEntityNode, node.Labels))
+	if orderErr != nil {
+		releaseUniqueLocks()
+		return "", orderErr
+	}
+	defer releaseOrder()
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
 	cacheNode := node
+	var notification *commitNotification
+	defer func() { b.completeCommitNotification(notification) }()
 	err := b.withScopedNodeCacheUpdate(nodeBodyCacheWrites(&cacheNode, node.ID), func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
@@ -130,7 +140,9 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		}
 		// Create-only path: primary key IS the current head body.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
-	}, nil)
+	}, nil, func() {
+		notification = b.reserveCommitOperations([]Operation{Operation{Type: OpCreateNode, Node: node}})
+	})
 	if err != nil {
 		releaseUniqueLocks()
 		return "", err
@@ -152,7 +164,7 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	b.cacheOnNodeCreated(node)
 
 	// Notify listeners (e.g., search service) to index the new node
-	b.notifyNodeCreated(node)
+	b.prepareCommitOperations([]Operation{{Type: OpCreateNode, Node: node}}, false)
 
 	return node.ID, nil
 }
@@ -415,6 +427,13 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		return lockErr
 	}
 	defer releaseUniqueLocks()
+	// Write-behind: land after every older buffered image of what this writes
+	// (write_behind_commit_order.go).
+	releaseOrder, orderErr := b.orderDirectEntities([]NodeID{node.ID}, nil, false, schema.valueOrdered(ConstraintEntityNode, node.Labels), Operation{Type: OpUpdateNode, Node: node})
+	if orderErr != nil {
+		return orderErr
+	}
+	defer releaseOrder()
 
 	// Track if this is an insert (new node) or update (existing node)
 	wasInsert := false
@@ -423,6 +442,8 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
 	cacheNode := node
+	var notification *commitNotification
+	defer func() { b.completeCommitNotification(notification) }()
 	err := b.withScopedNodeCacheUpdate(nodeBodyCacheWrites(&cacheNode, node.ID), func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
@@ -604,7 +625,13 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		// Primary key now holds the new head body; archive of old body
 		// into mvccNodeVersionKey(oldHead.Version) happened above.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
-	}, nil)
+	}, nil, func() {
+		kind := OpUpdateNode
+		if wasInsert {
+			kind = OpCreateNode
+		}
+		notification = b.reserveCommitOperations([]Operation{{Type: kind, Node: node}})
+	})
 	if err == nil && persistSeparateEmbeddings {
 		err = b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist)
 	}
@@ -621,15 +648,9 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 			b.cacheOnNodeCreated(node)
 			// Notify listeners about the new node
-			b.notifyNodeCreated(node)
+			b.prepareCommitOperations([]Operation{{Type: OpCreateNode, Node: node}}, false)
 		} else {
-			if existingNode != nil {
-				for _, label := range existingNode.Labels {
-					for propName, propValue := range existingNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
+			schema.releaseNodeUniqueValues(node.ID, existingNode)
 			for _, label := range node.Labels {
 				for propName, propValue := range node.Properties {
 					schema.RegisterUniqueValue(label, propName, propValue, node.ID)
@@ -638,7 +659,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 			b.cacheOnNodeUpdatedWithOldNode(node, existingNode)
 			// Notify listeners to re-index the updated node
-			b.notifyNodeUpdated(node)
+			b.prepareCommitOperations([]Operation{{Type: OpUpdateNode, Node: node}}, false)
 		}
 	}
 
@@ -677,8 +698,17 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	if err := b.ensureOpen(); err != nil {
 		return err
 	}
+	// Write-behind: land after every older buffered image of what this writes
+	// (write_behind_commit_order.go).
+	releaseOrder, orderErr := b.orderDirectEntities([]NodeID{id}, nil, true, b.GetSchemaForNamespace(namespaceForNodeID(id)).valueOrdered(ConstraintEntityNode, nil))
+	if orderErr != nil {
+		return orderErr
+	}
+	defer releaseOrder()
 
 	// Track edge deletions for counter update after transaction
+	var notification *commitNotification
+	defer func() { b.completeCommitNotification(notification) }()
 	var totalEdgesDeleted int64
 	var deletedEdgeIDs []EdgeID
 	var deletedEdges []*Edge
@@ -761,19 +791,16 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 			}
 		}
 		return nil
-	}, nil)
+	}, nil, func() {
+		notification = b.reserveCommitOperations([]Operation{Operation{Type: OpDeleteNode, NodeID: id, DeletedEdgeIDs: deletedEdgeIDs}})
+	})
 
 	// Invalidate cache on successful delete
 	if err == nil {
 		if deletedNode != nil {
 			dbName, _, ok := ParseDatabasePrefix(string(deletedNode.ID))
 			if ok {
-				schema := b.GetSchemaForNamespace(dbName)
-				for _, label := range deletedNode.Labels {
-					for propName, propValue := range deletedNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
+				b.GetSchemaForNamespace(dbName).releaseNodeUniqueValues(deletedNode.ID, deletedNode)
 			}
 		}
 
@@ -783,13 +810,7 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 			b.cacheOnNodeDeleted(id, totalEdgesDeleted)
 		}
 
-		// Notify listeners about deleted edges
-		for _, edgeID := range deletedEdgeIDs {
-			b.notifyEdgeDeleted(edgeID)
-		}
-
-		// Notify listeners (e.g., search service) to remove from indexes
-		b.notifyNodeDeleted(id)
+		b.prepareCommitOperations([]Operation{{Type: OpDeleteNode, NodeID: id, DeletedEdgeIDs: deletedEdgeIDs}}, false)
 	}
 
 	return err

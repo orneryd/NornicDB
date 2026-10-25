@@ -117,10 +117,10 @@ func TestBadgerTransaction_ConflictHelperAdditionalBranches(t *testing.T) {
 	require.NoError(t, tx.checkNodeCreateConflict("test:n1"))
 	require.NoError(t, tx.checkEdgeCreateConflict("test:e"))
 
-	// snapshotIsolationConflict orders by timestamp first: same sequence
-	// with a newer timestamp is a conflict.
+	// Unsaturated equal sequences identify the same commit regardless of
+	// wall time. Concurrent commits have different sequences.
 	tx.readTS = MVCCVersion{CommitTimestamp: time.Unix(10, 0).UTC(), CommitSequence: 9}
-	require.True(t, tx.snapshotIsolationConflict(MVCCVersion{
+	require.False(t, tx.snapshotIsolationConflict(MVCCVersion{
 		CommitTimestamp: time.Unix(20, 0).UTC(),
 		CommitSequence:  9,
 	}))

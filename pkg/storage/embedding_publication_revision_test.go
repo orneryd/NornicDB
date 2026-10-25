@@ -89,6 +89,7 @@ func TestReviewR73QueuedOutcomeRevisionBarrier(t *testing.T) {
 				t.Fatal("obsolete outcome did not finish")
 			}
 			require.NoError(t, <-blockedDone)
+			WaitForListeners(store)
 			mu.Lock()
 			observed := append([]string(nil), events...)
 			mu.Unlock()

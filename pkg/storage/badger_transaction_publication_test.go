@@ -26,6 +26,7 @@ func TestBadgerTransaction_PublicationBeforeReentrantListener(t *testing.T) {
 	_, err = tx.CreateNode(&Node{ID: "review:outer"})
 	require.NoError(t, err)
 	require.NoError(t, tx.CommitContextWithPublication(context.Background(), func() { published = true }))
+	engine.WaitForListeners()
 	count, err := engine.NodeCount()
 	require.NoError(t, err)
 	require.EqualValues(t, 2, count)
@@ -78,6 +79,7 @@ func TestBadgerTransaction_ListenerOrderAndSnapshotUnderReentry(t *testing.T) {
 	}
 	close(release)
 	require.NoError(t, <-done)
+	engine.WaitForListeners()
 	mu.Lock()
 	defer mu.Unlock()
 	require.Equal(t, []string{"first", "second"}, observed)
@@ -141,12 +143,14 @@ func TestBadgerTransaction_ListenerPanicPreservesPublicationAndQueue(t *testing.
 			panic("listener failed")
 		}
 	})
+	observed := make(chan NodeID, 2)
+	engine.OnNodeCreated(func(node *Node) { observed <- node.ID })
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	_, err = tx.CreateNode(&Node{ID: "review:panic"})
 	require.NoError(t, err)
 	published := false
-	require.PanicsWithValue(t, "listener failed", func() { _ = tx.CommitContextWithPublication(context.Background(), func() { published = true }) })
+	require.NoError(t, tx.CommitContextWithPublication(context.Background(), func() { published = true }))
 	require.True(t, published)
 	_, err = engine.GetNode("review:panic")
 	require.NoError(t, err, "listener failure cannot erase committed data")
@@ -154,5 +158,8 @@ func TestBadgerTransaction_ListenerPanicPreservesPublicationAndQueue(t *testing.
 	require.NoError(t, err)
 	_, err = next.CreateNode(&Node{ID: "review:after-panic"})
 	require.NoError(t, err)
-	require.NoError(t, next.Commit(), "the notification queue remains usable after a surfaced callback panic")
+	require.NoError(t, next.Commit(), "the notification queue remains usable after a callback panic")
+	engine.WaitForListeners()
+	require.Equal(t, NodeID("review:panic"), <-observed)
+	require.Equal(t, NodeID("review:after-panic"), <-observed)
 }

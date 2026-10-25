@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/memory"
 )
 
@@ -42,13 +43,14 @@ type bufferedMutation struct {
 // commit for background replay: its ordered physical operations, raw KV
 // writes/deletes, namespace, and staged ID-counter high-water marks.
 type bufferedCommit struct {
-	memoryLease *memory.Lease // Retained until this generation is retired.
-	recovered   bool          // WAL operations require authoritative binary-body hydration before publication.
-	namespace   string
-	txID        string // transaction ID, used for the WAL buffered-commit payload and flush marker
-	ops         []Operation
-	writes      map[string][]byte
-	deletes     map[string]bool
+	memoryLease  *memory.Lease // Retained until this generation is retired.
+	recovered    bool          // WAL operations require authoritative binary-body hydration before publication.
+	namespace    string
+	notification *commitNotification
+	txID         string // transaction ID, used for the WAL buffered-commit payload and flush marker
+	ops          []Operation
+	writes       map[string][]byte
+	deletes      map[string]bool
 
 	// version is the MVCC version allocated at ACK time. The DB-local
 	// sequence counter orders the commit's history exactly where it
@@ -90,6 +92,11 @@ type CommitBuffer struct {
 	deletes map[string]bufferedEntityKind // legacy generic deletion masks only
 	order   []bufferedMutation
 
+	// nodeVersions / edgeVersions record the ACK version of each live
+	// buffered body: write conflicts compare it with a committer's snapshot.
+	nodeVersions map[NodeID]MVCCVersion
+	edgeVersions map[EdgeID]MVCCVersion
+
 	nodesByLabel map[string][]NodeID
 	edgesByType  map[string][]EdgeID
 
@@ -99,11 +106,12 @@ type CommitBuffer struct {
 	outgoingByNode map[NodeID][]EdgeID
 	incomingByNode map[NodeID][]EdgeID
 	adjSeen        map[edgeAdjSeenKey]struct{}
-	deletedEdgeIDs map[EdgeID]struct{}
+	deletedEdgeIDs map[EdgeID]MVCCVersion
 
 	// deletedNodeIDs mirrors deletedEdgeIDs so prefix-scoped node counters
-	// can fold the buffered delete set into scan fallbacks.
-	deletedNodeIDs map[NodeID]struct{}
+	// can fold the buffered delete set into scan fallbacks. Both record the
+	// deleting commit's ACK version, which classifies a vanished write target.
+	deletedNodeIDs map[NodeID]MVCCVersion
 
 	// edgeCreateCount / edgeDeleteCount feed the buffered total edge-count
 	// delta (creates minus deletes) the engine's EdgeCount readers overlay.
@@ -132,6 +140,12 @@ type CommitBuffer struct {
 	// generation that reached the applied state retires its nodes from the
 	// index exactly once, whichever drain path reaches it first.
 	retired atomic.Bool
+
+	// publication is the listener notification its replay queued and held
+	// (replayWriteBehind); retiring the generation releases it, once,
+	// whoever applied it (settle).
+	publication *commitNotification
+	settleOnce  sync.Once
 }
 
 type labelSeenKey struct {
@@ -148,6 +162,8 @@ func newCommitBuffer() *CommitBuffer {
 	return &CommitBuffer{
 		nodes:          make(map[NodeID]*Node),
 		edges:          make(map[EdgeID]*Edge),
+		nodeVersions:   make(map[NodeID]MVCCVersion),
+		edgeVersions:   make(map[EdgeID]MVCCVersion),
 		deletes:        make(map[string]bufferedEntityKind),
 		nodesByLabel:   make(map[string][]NodeID),
 		edgesByType:    make(map[string][]EdgeID),
@@ -156,8 +172,8 @@ func newCommitBuffer() *CommitBuffer {
 		outgoingByNode: make(map[NodeID][]EdgeID),
 		incomingByNode: make(map[NodeID][]EdgeID),
 		adjSeen:        make(map[edgeAdjSeenKey]struct{}),
-		deletedEdgeIDs: make(map[EdgeID]struct{}),
-		deletedNodeIDs: make(map[NodeID]struct{}),
+		deletedEdgeIDs: make(map[EdgeID]MVCCVersion),
+		deletedNodeIDs: make(map[NodeID]MVCCVersion),
 	}
 }
 
@@ -195,6 +211,7 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 				}
 				b.clearEntityDeletion(bufferedNodeEntity, string(op.Node.ID))
 				b.nodes[op.Node.ID] = op.Node
+				b.nodeVersions[op.Node.ID] = c.version
 				b.indexNodeLabels(op.Node.ID, op.Node.Labels)
 				if op.OldNode != nil {
 					// Removing a label must shadow its durable membership and
@@ -203,7 +220,7 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 				}
 			}
 		case OpDeleteNode:
-			b.deletedNodeIDs[op.NodeID] = struct{}{}
+			b.deletedNodeIDs[op.NodeID] = c.version
 			// DETACH DELETE tombstones the node's relationships too. Fold
 			// them into the generation's delete set so the overlay hides
 			// the committed rows immediately and later buffered batches
@@ -211,7 +228,7 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 			// delete (and count) them a second time.
 			for _, edgeID := range op.DeletedEdgeIDs {
 				if edgeID != "" {
-					b.deletedEdgeIDs[edgeID] = struct{}{}
+					b.deletedEdgeIDs[edgeID] = c.version
 					b.edgeDeleteCount++
 				}
 			}
@@ -224,6 +241,7 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 			if op.Edge != nil && op.Edge.ID != "" {
 				b.clearEntityDeletion(bufferedEdgeEntity, string(op.Edge.ID))
 				b.edges[op.Edge.ID] = op.Edge
+				b.edgeVersions[op.Edge.ID] = c.version
 				key := typeSeenKey{edgeType: op.Edge.Type, id: op.Edge.ID}
 				if _, seen := b.typeSeen[key]; !seen {
 					b.typeSeen[key] = struct{}{}
@@ -235,7 +253,7 @@ func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 				}
 			}
 		case OpDeleteEdge:
-			b.deletedEdgeIDs[op.EdgeID] = struct{}{}
+			b.deletedEdgeIDs[op.EdgeID] = c.version
 			b.edgeDeleteCount++
 			if op.OldEdge != nil && op.OldEdge.Type != "" {
 				key := typeSeenKey{edgeType: op.OldEdge.Type, id: op.EdgeID}
@@ -356,17 +374,20 @@ func (b *CommitBuffer) getEdge(id EdgeID) (*Edge, bool, bool) {
 // generations. Apply is injected so the replay destination (Badger) stays a
 // detail of the caller.
 type WriteBehindBuffer struct {
-	mu           sync.RWMutex
-	readScopes   sync.Map
-	readEpoch    atomic.Uint64
-	readTracking bool
-	active       *CommitBuffer
-	draining     []*CommitBuffer
-	opCount      int
+	mu                  sync.RWMutex
+	publicationEpoch    atomic.Uint64
+	synchronousVersions map[*badger.Txn][]bufferedReservation
+	readScopes          sync.Map
+	readEpoch           atomic.Uint64
+	readTracking        bool
+	active              *CommitBuffer
+	draining            []*CommitBuffer
+	opCount             int
 
 	interval time.Duration
 	maxOps   int
 	apply    func(*CommitBuffer) error
+	reserve  func([]Operation) *commitNotification
 
 	// Adaptive sizing: draining a generation is deterministic — a drain of
 	// size S at throughput R takes S/R — so the size threshold that rotates
@@ -408,6 +429,11 @@ type WriteBehindBuffer struct {
 	// has been released empty. Guarded by mu.
 	trackedPairs []pendingPropertyKey
 
+	// release delivers or readies a retired generation's held notification
+	// (deliver false: the caller holds the commit order and delivers it once
+	// released). Nil leaves notifications to their applier.
+	release func(n *commitNotification, deliver bool)
+
 	flushCh chan struct{}
 	done    chan struct{}
 	closeMu sync.Mutex
@@ -416,6 +442,37 @@ type WriteBehindBuffer struct {
 
 	errMu   sync.Mutex
 	lastErr error
+
+	// frontier lists the retired generations whose listener notification is
+	// not consumed yet, so a later flush or Close still waits for them
+	// (write_behind_generation.go). Guarded by mu.
+	frontier []*CommitBuffer
+	// admissionClosed refuses buffered admission once Close began
+	// (closeAdmission). Guarded by mu.
+	admissionClosed bool
+	// isDispatcher reports whether the caller is the goroutine delivering
+	// listener notifications; such a flush cannot wait for its own delivery.
+	isDispatcher func() bool
+
+	// admitMu guards the admission state below. An admission holds it under
+	// mu read-locked, so admissions exclude each other, appends and
+	// retirements but not readers; an append takes it under mu. Lock order:
+	// mu, then admitMu.
+	admitMu sync.Mutex
+	// holds are the write targets buffered commits reserved between their
+	// conflict check and their append (write_behind_commit_order.go).
+	holds map[bufferedTargetKey]bufferedHold
+	// inflight lists each namespace's admitted but not yet appended buffered
+	// versions in sequence order; snapshots stay below them.
+	inflight map[string][]MVCCVersion
+	// inflightCount is the number of versions in inflight. It is raised
+	// before a version is allocated and lowered once the commit is visible,
+	// so a snapshot that reads it as zero after its read version covers no
+	// in-flight version and skips admitMu (inflightVersions).
+	inflightCount atomic.Int64
+	// retireEpoch counts retired generations: a buffered commit whose Badger
+	// validation straddles a retirement validates again.
+	retireEpoch atomic.Uint64
 }
 
 // minAdaptiveOps keeps a slow flusher from rotating into generation sizes so
@@ -563,6 +620,16 @@ func (w *WriteBehindBuffer) AppendDelete(key string) {
 // counts every operation toward the size threshold.
 func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 	w.mu.Lock()
+	rotate := w.appendCommitLocked(c)
+	w.mu.Unlock()
+	if rotate {
+		w.signal()
+	}
+}
+
+// appendCommitLocked is AppendCommit's body; it reports whether the size
+// threshold asks for a rotation. Caller holds w.mu.
+func (w *WriteBehindBuffer) appendCommitLocked(c bufferedCommit) bool {
 	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
 	w.markCommitReadScopesLocked(c)
 	w.active.AddCommit(c)
@@ -595,26 +662,26 @@ func (w *WriteBehindBuffer) AppendCommit(c bufferedCommit) {
 			}
 		}
 	}
-	rotate := w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
-	w.mu.Unlock()
-	if rotate {
-		w.signal()
-	}
+	return w.opCount >= w.targetSizeLocked() && w.targetSizeLocked() > 0
 }
 
 // rotate moves the active generation into draining and installs a fresh one.
 // It is O(1); writers immediately continue on the new generation.
 func (w *WriteBehindBuffer) rotate() {
 	w.mu.Lock()
+	w.rotateLocked()
+	w.mu.Unlock()
+}
+
+// rotateLocked is rotate. Caller holds w.mu.
+func (w *WriteBehindBuffer) rotateLocked() {
 	if w.opCount == 0 {
-		w.mu.Unlock()
 		return
 	}
 	w.active.ops = w.opCount
 	w.draining = append(w.draining, w.active)
 	w.active = newCommitBuffer()
 	w.opCount = 0
-	w.mu.Unlock()
 }
 
 // targetSizeLocked returns the current size threshold. Caller holds w.mu.
@@ -675,6 +742,12 @@ func (w *WriteBehindBuffer) run() {
 
 // drainOne replays the oldest draining generation, if any.
 func (w *WriteBehindBuffer) drainOne() {
+	w.drainOneFor(true)
+}
+
+// drainOneFor is drainOne; deliver false leaves the listener notifications of
+// a generation it retires for its caller to deliver (settle).
+func (w *WriteBehindBuffer) drainOneFor(deliver bool) {
 	w.mu.RLock()
 	buf := (*CommitBuffer)(nil)
 	if len(w.draining) > 0 {
@@ -685,7 +758,10 @@ func (w *WriteBehindBuffer) drainOne() {
 		return
 	}
 	if buf.IsApplied() {
-		w.removeDrained(buf)
+		// Applied outside the drain loop, for example by an external
+		// applier still holding its claim: retiring it is the same
+		// ownership transfer as after a drain's own apply.
+		w.retire(buf, deliver)
 		return
 	}
 	if !buf.claimDrain() {
@@ -732,7 +808,7 @@ func (w *WriteBehindBuffer) drainOne() {
 	}
 	w.setLastErr(nil) // this generation applied; a prior failure is resolved
 	buf.markApplied()
-	w.removeDrained(buf)
+	w.retire(buf, deliver)
 }
 
 func (w *WriteBehindBuffer) setLastErr(err error) {
@@ -741,10 +817,11 @@ func (w *WriteBehindBuffer) setLastErr(err error) {
 	w.errMu.Unlock()
 }
 
-// removeDrained drops the applied generation from the draining queue and
+// dequeueApplied drops the applied generation from the draining queue and
 // retires its nodes from the pending-node index exactly once: the committed
-// schema index covers them from the replay onward.
-func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
+// schema index covers them from the replay onward. It reports whether this
+// call retired it.
+func (w *WriteBehindBuffer) dequeueApplied(buf *CommitBuffer) bool {
 	w.mu.Lock()
 	retired := false
 	if len(w.draining) > 0 && w.draining[0] == buf {
@@ -753,7 +830,9 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 		w.draining[0] = nil
 		w.draining = w.draining[1:]
 		w.retireReadScopesLocked(buf)
+		w.retireEpoch.Add(1)
 		retired = true
+		w.enterFrontierLocked(buf)
 	}
 
 	// The generation's writes are committed: the schema's committed index
@@ -793,6 +872,7 @@ func (w *WriteBehindBuffer) removeDrained(buf *CommitBuffer) {
 			commit.memoryLease.Release()
 		}
 	}
+	return retired
 }
 
 // nodeLocked resolves the newest buffered version of id across the active
@@ -896,35 +976,6 @@ func (w *WriteBehindBuffer) newestNodeLocked(id NodeID) (*Node, bool) {
 // the pending-write lock (w.mu), so no locking here.
 func (w *WriteBehindBuffer) nodeSupersededLocked(id NodeID) bool {
 	return w.entityStateLocked(bufferedNodeEntity, string(id)).found
-}
-
-// Flush rotates the active generation and drains every generation
-// synchronously. It retries failed applies; if no generation makes progress
-// for ~2s it returns the last apply error.
-func (w *WriteBehindBuffer) Flush() error {
-	w.rotate()
-	w.signal()
-	lastPending := -1
-	stalls := 0
-	for {
-		w.drainOne()
-		w.mu.RLock()
-		pending := len(w.draining)
-		w.mu.RUnlock()
-		if pending == 0 {
-			return nil
-		}
-		if pending == lastPending {
-			stalls++
-		} else {
-			stalls = 0
-		}
-		lastPending = pending
-		if stalls > 2000 {
-			return w.LastErr()
-		}
-		time.Sleep(time.Millisecond)
-	}
 }
 
 // LastErr returns the most recent apply error, if any.

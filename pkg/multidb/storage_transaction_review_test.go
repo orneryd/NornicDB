@@ -59,6 +59,7 @@ func TestTransactionQuotaListenerReentry(t *testing.T) {
 				}
 			})
 			require.NoError(t, tracker.CommitTransaction(context.Background(), stagedQuotaNode(t, manager, db, "outer")))
+			storage.WaitForListeners(base)
 			if callbackFailed {
 				select {
 				case <-completed:

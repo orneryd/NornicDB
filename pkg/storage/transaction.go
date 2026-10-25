@@ -168,6 +168,7 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 		embeddingRevision:          node.embeddingRevision,
 		embeddingAttempt:           node.embeddingAttempt,
 		embeddingPublication:       node.embeddingPublication,
+		embeddingWaitDeferred:      node.embeddingWaitDeferred,
 		Labels:                     make([]string, 0, len(node.Labels)),
 		CreatedAt:                  node.CreatedAt,
 		UpdatedAt:                  node.UpdatedAt,

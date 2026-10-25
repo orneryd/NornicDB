@@ -254,6 +254,12 @@ func (b *BadgerEngine) loadPersistedNamespaceSequence(namespace string) (uint64,
 }
 
 func (b *BadgerEngine) recoverNamespaceMVCCFloor(namespace string) (uint64, int64, error) {
+	return b.recoverNamespaceMVCCFloorAt(namespace, b.withView)
+}
+
+// The same recovery reader also binds a cold namespace to a transaction's
+// original physical snapshot, never the engine's later hydrated sequence.
+func (b *BadgerEngine) recoverNamespaceMVCCFloorAt(namespace string, view func(func(*badger.Txn) error) error) (uint64, int64, error) {
 	if namespace == "" {
 		return 0, 0, nil
 	}
@@ -270,39 +276,44 @@ func (b *BadgerEngine) recoverNamespaceMVCCFloor(namespace string) (uint64, int6
 		}
 	}
 
-	err := b.withView(func(txn *badger.Txn) error {
-		for _, prefix := range []byte{prefixNode, prefixEdge} {
+	err := view(func(txn *badger.Txn) error {
+		// Heads include deleted entities. Scanning only live primary bodies
+		// loses the namespace floor after a delete/reopen and can reuse a
+		// sequence or reject a sequential recreation against its tombstone.
+		for _, prefix := range []byte{prefixMVCCNodeHead, prefixMVCCEdgeHead} {
 			opts := badgerIteratorOptions()
 			opts.Prefix = []byte{prefix}
 			it := txn.NewIterator(opts)
 			for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
 				key := it.Item().Key()
-				if len(key) <= 1 || !bytes.HasPrefix(key[1:], namespacePrefix) {
+				if len(key) != 9 {
 					continue
 				}
-				if prefix == prefixNode {
-					head, err := b.loadNodeMVCCHeadInTxn(txn, NodeID(string(key[1:])))
-					if errors.Is(err, ErrNotFound) {
-						continue
-					}
+				num := binary.BigEndian.Uint64(key[1:])
+				var id string
+				if prefix == prefixMVCCNodeHead {
+					value, _ := b.idDict.lookupNodeIDByNum(num)
+					id = string(value)
+				} else {
+					value, _ := b.idDict.lookupEdgeIDByNum(num)
+					id = string(value)
+				}
+				if !bytes.HasPrefix([]byte(id), namespacePrefix) {
+					continue
+				}
+				err := it.Item().Value(func(data []byte) error {
+					head, err := decodeMVCCHead(data)
 					if err != nil {
-						it.Close()
 						return err
 					}
 					track(head.Version)
 					track(head.FloorVersion)
-					continue
-				}
-				head, err := b.loadEdgeMVCCHeadInTxn(txn, EdgeID(string(key[1:])))
-				if errors.Is(err, ErrNotFound) {
-					continue
-				}
+					return nil
+				})
 				if err != nil {
 					it.Close()
 					return err
 				}
-				track(head.Version)
-				track(head.FloorVersion)
 			}
 			it.Close()
 		}

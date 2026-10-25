@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"testing"
@@ -63,9 +64,14 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 	crashClose(t, b, w)
 	b, w = open()
 	t.Cleanup(func() { _ = w.Close(); _ = b.Close() })
+	var history wbEventHistory
+	b.OnNodeUpdated(func(n *Node) { history.add(fmt.Sprint("node:", n.Properties["v"])) })
+	b.OnEdgeUpdated(func(e *Edge) { history.add(fmt.Sprint("edge:", e.Properties["v"])) })
 	count, err := RecoverBufferedCommits(b, w)
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
+	b.WaitForListeners()
+	require.NoError(t, wbHistoryCompare([]string{"node:2", "edge:2", "node:3", "edge:3"}, history.snapshot()))
 	check := func(stage string) {
 		t.Helper()
 		for i, v := range versions {

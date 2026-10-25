@@ -181,13 +181,16 @@ func TestWrapperCapabilityParity_EventCallbacksTranslateThroughWrappers(t *testi
 	// view's callback.
 	_, err = nsB.CreateNode(&Node{ID: "foreign", Labels: []string{"B"}})
 	require.NoError(t, err)
+	WaitForListeners(nsA)
 	require.Empty(t, createdA)
 
 	_, err = nsA.CreateNode(&Node{ID: "only-a", Labels: []string{"A"}})
 	require.NoError(t, err)
+	WaitForListeners(nsA)
 	require.Equal(t, []NodeID{"only-a"}, createdA)
 
 	require.NoError(t, nsA.DeleteNode("only-a"))
+	WaitForListeners(nsA)
 	require.Equal(t, []NodeID{"only-a"}, deletedA)
 
 	t.Run("WAL passes events through unchanged", func(t *testing.T) {
@@ -205,6 +208,7 @@ func TestWrapperCapabilityParity_EventCallbacksTranslateThroughWrappers(t *testi
 		require.NoError(t, err)
 		err = wal.CreateEdge(&Edge{ID: "w:e", Type: "T", StartNode: "w:x", EndNode: "w:x"})
 		require.NoError(t, err)
+		WaitForListeners(wal)
 		require.Equal(t, []NodeID{"w:x"}, created)
 		require.Equal(t, []EdgeID{"w:e"}, edges)
 	})

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -8,47 +9,53 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// DeleteByPrefix returns only once its namespace reset was consumed, also
-// when another writer is delivering earlier events: a database recreated
-// after the deletion returns never meets the dropped one's derived state.
-func TestDeleteByPrefixReturnsAfterResetConsumed(t *testing.T) {
+// Deletion lands data without consuming callbacks. Its explicit external
+// barrier covers the reset behind a callback already popped for delivery.
+func TestDeleteByPrefixDataLandingAndResetBarrier(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
 	_, err := engine.CreateNode(&Node{ID: "test:keep"})
 	require.NoError(t, err)
-
-	delivering := make(chan struct{})
-	release := make(chan struct{})
+	delivering, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	defer unblock()
 	var consumed atomic.Bool
 	require.NoError(t, engine.SubscribeEvents(EventHandlers{
-		NodeCreated: func(node *Node) {
-			if node.ID == "test:slow" {
+		NodeCreated: func(n *Node) {
+			if n.ID == "test:slow" {
 				close(delivering)
 				<-release
 			}
 		},
 		NamespaceReset: func(string) { consumed.Store(true) },
 	}))
-	go func() {
-		_, _ = engine.CreateNode(&Node{ID: "test:slow"})
-	}()
-	<-delivering // that writer now delivers; the reset queues behind it
-
-	deleted := make(chan struct{})
-	go func() {
-		_, _, _ = engine.DeleteByPrefix("test:")
-		close(deleted)
-	}()
+	_, err = engine.CreateNode(&Node{ID: "test:slow"})
+	require.NoError(t, err)
+	<-delivering
+	deleted := make(chan error, 1)
+	go func() { _, _, err := engine.DeleteByPrefix("test:"); deleted <- err }()
 	select {
-	case <-deleted:
-		t.Fatal("DeleteByPrefix returned before its namespace reset was consumed")
-	case <-time.After(200 * time.Millisecond):
+	case err := <-deleted:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("data deletion consumed a blocked listener")
 	}
-	close(release)
+	require.False(t, consumed.Load())
+	_, err = engine.GetStoredNode("test:keep")
+	require.ErrorIs(t, err, ErrNotFound)
+	waited := make(chan struct{})
+	go func() { engine.WaitForListeners(); close(waited) }()
 	select {
-	case <-deleted:
+	case <-waited:
+		t.Fatal("barrier returned before reset consumption")
+	case <-time.After(100 * time.Millisecond):
+	}
+	unblock()
+	select {
+	case <-waited:
 	case <-time.After(5 * time.Second):
-		t.Fatal("DeleteByPrefix did not return")
+		t.Fatal("reset barrier did not complete")
 	}
-	require.True(t, consumed.Load(), "DeleteByPrefix returned before its namespace reset was consumed")
+	require.True(t, consumed.Load())
 }

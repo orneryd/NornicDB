@@ -91,13 +91,33 @@ func (b *BadgerEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 	if node == nil {
 		return ErrInvalidData
 	}
-	return commitEmbeddingOutcome(node, func() error { return b.persistNodeEmbeddingSidecar(node) }, func(accepted *Node) {
+	finish, err := b.beginEventPublication()
+	if err != nil {
+		return err
+	}
+	defer finish()
+	var notification *commitNotification
+	return commitEmbeddingOutcome(node, func() error {
+		releaseWrite, err := b.beginWrite()
+		if err != nil {
+			return err
+		}
+		defer releaseWrite()
+		releaseOrder, err := b.orderDirectEntities([]NodeID{node.ID}, nil, false, false)
+		if err != nil {
+			return err
+		}
+		defer releaseOrder()
+		return b.persistNodeEmbeddingSidecar(node, func() {
+			notification = b.reserveCommitOperations([]Operation{{Type: OpUpdateNode, Node: node, embeddingOutcome: true}})
+		})
+	}, func(accepted *Node) {
 		b.graphMutationVersions.changed(namespaceForNodeID(accepted.ID))
-		b.enqueueCommitOperation(Operation{Type: OpUpdateNode, Node: accepted, embeddingOutcome: true})
+		b.completeCommitNotification(notification)
 	})
 }
 
-func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node) error {
+func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node, atCommit ...func()) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
 	if node == nil {
@@ -159,7 +179,7 @@ func (b *BadgerEngine) persistNodeEmbeddingSidecar(node *Node) error {
 			return err
 		}
 		return cw.write(func(txn *badger.Txn) error { return txn.Delete(pendingEmbedKey(node.ID)) })
-	})
+	}, atCommit...)
 	if errors.Is(err, badger.ErrConflict) {
 		return ErrEmbeddingSourceChanged
 	}
