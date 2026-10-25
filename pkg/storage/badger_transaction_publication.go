@@ -33,13 +33,14 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 
 	tx.mu.Lock()
 	var knowledgePolicyChanged func()
-	var notification *commitNotification
+	var notification, publication *commitNotification
 	defer func() {
 		tx.mu.Unlock()
 		if commitErr == nil && afterPublication != nil {
 			afterPublication()
 		}
 		tx.engine.completeCommitNotification(notification)
+		tx.engine.completeCommitNotification(publication)
 		if knowledgePolicyChanged != nil {
 			knowledgePolicyChanged()
 		}
@@ -55,18 +56,16 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 	// publication; shared otherwise, so Close waits for the commit and a
 	// commit that arrives after Close finished fails here without touching
 	// Badger.
-	var releaseWrite func()
-	var writeErr error
-	if tx.schemaRuntime != nil {
-		releaseWrite, writeErr = tx.engine.beginSchemaWrite()
-	} else {
-		releaseWrite, writeErr = tx.engine.beginWrite()
-	}
+	lease, writeErr := tx.engine.beginBarrierWrite(tx.schemaRuntime != nil, false)
 	if writeErr != nil {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return writeErr
 	}
-	tx.commitReleaseWrite = releaseWrite
+	tx.commitReleaseWrite = lease.releaseCallback()
+	if len(tx.operations) > 0 && tx.engine.prefixDroppedSince(tx.lifecycleSeq, tx.namespace) {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return fmt.Errorf("%w: namespace %q was deleted or rewritten by maintenance after the transaction began", ErrConflict, tx.namespace)
+	}
 	if tx.schemaRuntime != nil && tx.engine.currentMVCCReadVersion(tx.namespace).CommitSequence != tx.readTS.CommitSequence {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return fmt.Errorf("schema snapshot changed before commit: %w", ErrConflict)
@@ -141,6 +140,13 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 		return tx.abortCommitLocked(err)
 	}
 
+	// Buffered replay can run before this function returns, including from
+	// the accounting callback itself. Reserve its publication position before
+	// either admission path so listeners wait for accounting/admission to
+	// finish after every storage lock is released. Failed commits release the
+	// same hold without invoking afterPublication.
+	publication = tx.engine.holdPublication()
+
 	// Write-behind buffering: an implicit autocommit commit with no schema,
 	// knowledge-policy or temporal writes is acknowledged after every
 	// validation phase above and replayed into Badger by the background
@@ -153,6 +159,35 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 &&
 		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff) {
 		return tx.commitBufferedLocked()
+	}
+
+	// A commit the buffer does not take writes Badger itself: it is ordered
+	// after the commits acknowledged before it (orderAfterBufferedCommits).
+	var order orderHold
+	if tx.engine.writeBehindEnabled() {
+		drained, err := tx.engine.orderAfterBufferedCommits(&order, operationEntities(tx.operations))
+		if err != nil {
+			return tx.abortCommitLocked(err)
+		}
+		defer order.release()
+		if (drained || tx.replayedSinceBeginLocked()) && tx.schemaRuntime == nil && !tx.knowledgeSchemaDirty {
+			if err := tx.rebaseBadgerAfterDrainLocked(); err != nil {
+				tx.closeLocked(TxStatusRolledBack, true, nil)
+				return err
+			}
+		}
+		// Commits of its endpoints or of a deleted node's relationships,
+		// drained or committed directly, may have landed after this commit
+		// staged and validated them.
+		if err := tx.revalidateEndpointsLocked(); err != nil {
+			return tx.abortCommitLocked(err)
+		}
+	}
+
+	// MVCC history, change events, the entity caches and the callbacks all
+	// take each entity's final body as storage returns it.
+	if err := tx.engine.storeWrittenBodies(tx.pendingWrites, tx.operations); err != nil {
+		return tx.abortCommitLocked(err)
 	}
 
 	physicalOperations := tx.physicalOperationsLocked()
@@ -206,7 +241,7 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 	if err := tx.flushBufferedWrites(&cw.batchWriter); err != nil {
 		return tx.abortCommitLocked(fmt.Errorf("flushing buffered writes: %w", err))
 	}
-	if err := tx.refreshTemporalCurrentPointers(&cw.batchWriter, temporalTargets); err != nil {
+	if err := tx.engine.refreshTemporalCurrentPointers(&cw.batchWriter, temporalTargets, temporalPointerState{pending: tx.pendingNodes, deleted: tx.deletedNodes}); err != nil {
 		return tx.abortCommitLocked(fmt.Errorf("refreshing temporal current pointers: %w", err))
 	}
 
@@ -249,6 +284,8 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 	if len(tx.operations) > 0 {
 		notification = tx.engine.queueCommitOperations(tx.operations, nil)
 	}
+	// Later acknowledgements must order after this committed image.
+	order.release()
 	runCommitTailHook()
 
 	tx.endChangeCaptureLocked(true)
@@ -312,7 +349,7 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 				tx.engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
 			}
 		case OpCreateEdge:
-			tx.engine.cacheOnEdgeCreatedWithCounts(op.Edge, !op.ReplacesExisting)
+			tx.engine.cacheOnEdgeCreated(op.Edge)
 		case OpUpdateEdge:
 			oldType := ""
 			if op.OldEdge != nil {

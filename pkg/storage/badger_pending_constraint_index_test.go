@@ -146,7 +146,7 @@ func TestPendingConstraintIndex_LargeTransactionScalesLinearly(t *testing.T) {
 		samples[i] = [2]time.Duration{run(2000), run(16000)}
 		t.Logf("sample %d: 2000 nodes: %v, 16000 nodes: %v, ratio %.1f", i+1, samples[i][0], samples[i][1], float64(samples[i][1])/float64(samples[i][0]))
 	}
-	ratio := pendingConstraintMedianScaleRatio(samples)
+	ratio := medianPairedScalingRatio(samples)
 	t.Logf("median paired ratio %.1f (linear ~8, quadratic ~64)", ratio)
 	require.Less(t, ratio, 24.0, "a large transaction's constraint validation grows faster than linearly")
 }
@@ -154,7 +154,7 @@ func TestPendingConstraintIndex_LargeTransactionScalesLinearly(t *testing.T) {
 // The median keeps a single delayed sample from deciding the complexity gate.
 // Each ratio pairs nearby workloads, rather than mixing independently selected
 // small and large timings from different machine conditions.
-func pendingConstraintMedianScaleRatio(samples [3][2]time.Duration) float64 {
+func medianPairedScalingRatio(samples [3][2]time.Duration) float64 {
 	var ratios [3]float64
 	for i, sample := range samples {
 		ratios[i] = float64(sample[1]) / float64(sample[0])
@@ -173,13 +173,15 @@ func TestPendingConstraintIndex_ScaleSamplingRejectsSustainedQuadraticGrowth(t *
 	// single pair fail even though both remaining pairs have linear growth.
 	naiveRatio := float64(linearWithPause[0][1]) / float64(linearWithPause[0][0])
 	require.GreaterOrEqual(t, naiveRatio, 24.0)
-	require.Equal(t, 9.0, pendingConstraintMedianScaleRatio(linearWithPause))
-	require.Less(t, pendingConstraintMedianScaleRatio(linearWithPause), 24.0)
+	require.Equal(t, 9.0, medianPairedScalingRatio(linearWithPause))
+	require.Less(t, medianPairedScalingRatio(linearWithPause), 24.0)
 	quadratic := [3][2]time.Duration{
 		{25 * time.Millisecond, 1600 * time.Millisecond},
 		{30 * time.Millisecond, 1920 * time.Millisecond},
 		{20 * time.Millisecond, 1280 * time.Millisecond},
 	}
-	require.Equal(t, 64.0, pendingConstraintMedianScaleRatio(quadratic))
-	require.GreaterOrEqual(t, pendingConstraintMedianScaleRatio(quadratic), 24.0)
+	require.Equal(t, 64.0, medianPairedScalingRatio(quadratic))
+	require.GreaterOrEqual(t, medianPairedScalingRatio(quadratic), 24.0)
+	require.Less(t, medianPairedScalingRatio(linearWithPause), 20.0, "the temporal gate keeps its stricter limit")
+	require.GreaterOrEqual(t, medianPairedScalingRatio(quadratic), 20.0)
 }

@@ -288,11 +288,12 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 			edge.Database = storage.DatabaseOf(store)
 		}
 	}
+	// Every ID a create plan writes was minted for it (generateID).
 	switch len(plan.nodes) {
 	case 0:
 	case 1:
 		node := plan.nodes[0]
-		actualID, err := store.CreateNode(node)
+		actualID, err := createMintedNode(store, node)
 		if err != nil {
 			return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
@@ -300,7 +301,7 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 			node.ID = actualID
 		}
 	default:
-		if err := store.BulkCreateNodes(plan.nodes); err != nil {
+		if err := bulkCreateMintedNodes(store, plan.nodes); err != nil {
 			return localizedError(localization.CypherMutationsCreateNodeFailed(err), err)
 		}
 	}
@@ -308,9 +309,9 @@ func (e *StorageExecutor) applyCreatePlan(ctx context.Context, plan *createPlan,
 	switch len(plan.edges) {
 	case 0:
 	case 1:
-		edgeErr = store.CreateEdge(plan.edges[0])
+		edgeErr = createMintedEdge(store, plan.edges[0])
 	default:
-		edgeErr = store.BulkCreateEdges(plan.edges)
+		edgeErr = bulkCreateMintedEdges(store, plan.edges)
 	}
 	if edgeErr != nil {
 		// The clause's nodes are already written; remove them so the clause

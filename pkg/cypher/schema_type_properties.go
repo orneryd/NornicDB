@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/collection"
 	"sort"
 	"strings"
 
@@ -134,7 +135,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 		sort.Strings(names)
 		for _, name := range names {
 			property := found.properties[name]
-			row := append(append([]interface{}(nil), head...), name, sortedStringSet(property.types), property.members == found.members)
+			row := append(append([]interface{}(nil), head...), name, collection.SortedKeys(property.types), property.members == found.members)
 			result.Rows = append(result.Rows, row)
 		}
 	}

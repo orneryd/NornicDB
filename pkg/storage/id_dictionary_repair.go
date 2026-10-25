@@ -103,6 +103,14 @@ func numIDsInKeys(txn *badger.Txn, prefix byte) map[uint64]bool {
 // An entity that isn't identified unambiguously (an unlabelled node, two
 // lost relationships alike) is listed as unresolved and left unchanged.
 func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
+	// The check and the repair rewrite dictionary entries and MVCC heads: a
+	// maintenance write (beginMaintenanceWrite), so every write-behind commit
+	// acknowledged before it is applied first and no write runs across it.
+	lifecycle, err := b.beginMaintenanceWrite(nil)
+	if err != nil {
+		return nil, err
+	}
+	defer lifecycle.finish()
 	report, err := b.CheckIDDictionary()
 	if err != nil {
 		return nil, err
@@ -118,6 +126,7 @@ func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
 				report.UnresolvedNodes = append(report.UnresolvedNodes, id)
 				continue
 			}
+			maintenancePause(pauseIDRepairRestore)
 			if err := b.restoreIDEntry(id, "", num); err != nil {
 				return report, err
 			}
@@ -136,6 +145,7 @@ func (b *BadgerEngine) RepairIDDictionary() (*IDDictionaryReport, error) {
 				report.UnresolvedEdges = append(report.UnresolvedEdges, id)
 				continue
 			}
+			maintenancePause(pauseIDRepairRestore)
 			if err := b.restoreIDEntry("", id, num); err != nil {
 				return report, err
 			}

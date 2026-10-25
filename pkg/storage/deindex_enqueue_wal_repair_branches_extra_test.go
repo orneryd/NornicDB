@@ -101,13 +101,19 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 
 		engine.SetDecayEnabled(false)
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			return engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", node)
+			rewritten, err := engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", node)
+			require.Nil(t, rewritten, "decay disabled rewrites nothing")
+			return err
 		}))
 
 		engine.SetDecayEnabled(true)
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			require.NoError(t, engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", nil))
-			return engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", node)
+			rewritten, err := engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", nil)
+			require.NoError(t, err)
+			require.Nil(t, rewritten)
+			rewritten, err = engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", node)
+			require.NotEmpty(t, rewritten, "the rescored body is returned")
+			return err
 		}))
 
 		// This test calls a transaction-local helper directly, bypassing the
@@ -120,7 +126,9 @@ func TestBadgerDeindexEnqueue_NodeEdgeBranchCoverage(t *testing.T) {
 		_, err = engine.CreateNode(node2)
 		require.NoError(t, err)
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			return engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", node2)
+			rewritten, err := engine.rescoreSuppressionAfterLabelChangeInTxn(txn, "test", node2)
+			require.Nil(t, rewritten, "an unchanged flag keeps the written body")
+			return err
 		}))
 	})
 }

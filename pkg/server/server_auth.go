@@ -663,7 +663,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 	case http.MethodGet:
 		var roles []string
 		if s.roleStore != nil {
-			roles = s.roleStore.AllRoles()
+			roles = auth.ReadRoleCatalog(s.roleStore, nil).RoleNames
 		}
 		out := make([]struct {
 			Role         string   `json:"role"`
@@ -750,104 +750,88 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-// handleRoles serves GET/POST /auth/roles (user-defined roles, admin only).
-// GET returns list of role names (built-in + user-defined). POST creates a user-defined role; body { "name": string }.
+// handleRoles owns the role resource: GET/POST /auth/roles and PATCH/DELETE
+// /auth/roles/:name. Both routes retain their administrator permission boundary.
+// Collection and item policies share admission, request validation, mutation
+// dispatch and responses while preserving their distinct wire error contracts.
 func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
+	roleName := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/auth/roles/"))
+	if r.URL.Path == "/auth/roles" {
+		roleName = ""
+	}
+	collection := roleName == ""
 	if s.roleStore == nil {
-		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", localization.RolesUnavailableDetailed())
+		message := localization.RolesUnavailableDetailed()
+		if !collection {
+			message = localization.RolesUnavailable()
+		}
+		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", message)
 		return
 	}
-	switch r.Method {
-	case http.MethodGet:
-		s.writeJSON(w, http.StatusOK, s.roleStore.AllRoles())
-	case http.MethodPost:
-		var req struct {
-			Name string `json:"name"`
-		}
-		if err := s.readJSON(r, &req); err != nil {
-			s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
+	if collection {
+		if r.Method == http.MethodGet {
+			s.writeJSON(w, http.StatusOK, auth.ReadRoleCatalog(s.roleStore, nil).RoleNames)
 			return
 		}
-		if strings.TrimSpace(req.Name) == "" {
-			s.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "name")
+		if r.Method != http.MethodPost {
+			s.writeGetOrPostRequired(w, r)
 			return
 		}
-		if err := s.roleStore.CreateRole(r.Context(), req.Name); err != nil {
-			if err == auth.ErrRoleExists {
-				s.writeLocalizedNeo4jError(w, r, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", localization.RoleAlreadyExists())
-				return
-			}
-			if err == auth.ErrInvalidRoleName {
-				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err)
-				return
-			}
-			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
-			return
-		}
-		s.writeJSON(w, http.StatusCreated, map[string]string{"name": strings.ToLower(strings.TrimSpace(req.Name))})
-	default:
-		s.writeGetOrPostRequired(w, r)
-	}
-}
-
-// handleRoleByID serves PATCH/DELETE /auth/roles/:name (rename or delete user-defined role, admin only).
-func (s *Server) handleRoleByID(w http.ResponseWriter, r *http.Request) {
-	roleName := strings.TrimPrefix(r.URL.Path, "/auth/roles/")
-	roleName = strings.TrimSpace(roleName)
-	if roleName == "" {
-		s.handleRoles(w, r)
-		return
-	}
-	if s.roleStore == nil {
-		s.writeLocalizedNeo4jError(w, r, http.StatusServiceUnavailable, "Neo.ClientError.General.Unavailable", localization.RolesUnavailable())
-		return
-	}
-	switch r.Method {
-	case http.MethodPatch:
-		var req struct {
-			Name string `json:"name"`
-		}
-		if err := s.readJSON(r, &req); err != nil {
-			s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
-			return
-		}
-		newName := strings.TrimSpace(req.Name)
-		if newName == "" {
-			s.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "name")
-			return
-		}
-		if err := s.roleStore.RenameRoleWithStores(r.Context(), roleName, newName, auth.RoleMutationStores{
-			Allowlist: s.allowlistStore, Privileges: s.privilegesStore,
-			Entitlements: s.roleEntitlementsStore, Users: s.auth,
-		}); err != nil {
-			if err == auth.ErrCannotDeleteBuiltinRole || err == auth.ErrRoleNotFound {
-				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err)
-				return
-			}
-			if err == auth.ErrRoleExists {
-				s.writeLocalizedNeo4jError(w, r, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", localization.NewRoleNameAlreadyExists())
-				return
-			}
-			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
-			return
-		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"name": newName})
-	case http.MethodDelete:
-		if err := s.roleStore.DeleteRoleWithStores(r.Context(), roleName, auth.RoleMutationStores{
-			Allowlist: s.allowlistStore, Privileges: s.privilegesStore,
-			Entitlements: s.roleEntitlementsStore, Users: s.auth,
-		}); err != nil {
-			if err == auth.ErrCannotDeleteBuiltinRole || err == auth.ErrRoleNotFound {
-				s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err)
-				return
-			}
-			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
-			return
-		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
-	default:
+	} else if r.Method != http.MethodPatch && r.Method != http.MethodDelete {
 		s.writeLocalizedError(w, r, http.StatusMethodNotAllowed, localization.PatchOrDeleteRequired(), ErrMethodNotAllowed)
+		return
 	}
+	var body struct {
+		Name string `json:"name"`
+	}
+	name := ""
+	if r.Method != http.MethodDelete {
+		if err := s.readJSON(r, &body); err != nil {
+			s.writeNeo4jInvalidRequestBody(w, r, "Neo.ClientError.Request.InvalidFormat")
+			return
+		}
+		name = strings.TrimSpace(body.Name)
+		if name == "" {
+			s.writeNeo4jRequestFieldRequired(w, r, "Neo.ClientError.Request.InvalidFormat", "name")
+			return
+		}
+	}
+	stores := auth.RoleMutationStores{Allowlist: s.allowlistStore, Privileges: s.privilegesStore, Entitlements: s.roleEntitlementsStore, Users: s.auth}
+	var err error
+	switch r.Method {
+	case http.MethodPost:
+		err = s.roleStore.CreateRole(r.Context(), body.Name)
+	case http.MethodPatch:
+		err = s.roleStore.RenameRoleWithStores(r.Context(), roleName, name, stores)
+	case http.MethodDelete:
+		err = s.roleStore.DeleteRoleWithStores(r.Context(), roleName, stores)
+	}
+	if err != nil {
+		switch {
+		case !collection && (err == auth.ErrCannotDeleteBuiltinRole || err == auth.ErrRoleNotFound):
+			s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.General.SchemaViolation", err)
+		case r.Method != http.MethodDelete && err == auth.ErrRoleExists:
+			message := localization.RoleAlreadyExists()
+			if !collection {
+				message = localization.NewRoleNameAlreadyExists()
+			}
+			s.writeLocalizedNeo4jError(w, r, http.StatusConflict, "Neo.ClientError.General.SchemaViolation", message)
+		case collection && err == auth.ErrInvalidRoleName:
+			s.writeBoundaryNeo4jError(w, r, http.StatusBadRequest, "Neo.ClientError.Request.InvalidFormat", err)
+		default:
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.ClientError.General.UnknownError", err)
+		}
+		return
+	}
+	status := http.StatusOK
+	field, value := "name", name
+	if collection {
+		status = http.StatusCreated
+		value = strings.ToLower(strings.TrimSpace(body.Name))
+	} else if r.Method == http.MethodDelete {
+		field, value = "status", "deleted"
+	}
+	s.writeJSON(w, status, map[string]string{field: value})
 }
 
 // handleAccessDatabases serves GET/PUT /auth/access/databases (per-database allowlist, admin only).

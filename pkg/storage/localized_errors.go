@@ -23,6 +23,30 @@ func newSchemaAdmissionError(code string, message localization.Message) error {
 	return &schemaAdmissionError{code: "Neo.ClientError.Schema." + code, cause: localizedError(message, nil)}
 }
 
+// HiddenEdgeIdentityConflictError is the permanent result of a CREATE whose
+// physical ID belongs to a hidden relationship but whose final transaction
+// image is not semantically identical. It unwraps to ErrAlreadyExists for
+// storage callers while exposing a non-retryable client status to Bolt/HTTP.
+type HiddenEdgeIdentityConflictError struct {
+	EdgeID    EdgeID
+	Namespace string
+}
+
+func (err *HiddenEdgeIdentityConflictError) Error() string {
+	id := strings.TrimPrefix(string(err.EdgeID), err.Namespace+":")
+	return localizedError(localization.StorageTransactionHiddenEdgeIdentityConflict(id), ErrAlreadyExists).Error()
+}
+
+func (err *HiddenEdgeIdentityConflictError) Unwrap() error { return ErrAlreadyExists }
+
+func (err *HiddenEdgeIdentityConflictError) BoltErrorCode() string {
+	return "Neo.ClientError.Schema.ConstraintValidationFailed"
+}
+
+func (err *HiddenEdgeIdentityConflictError) BoltErrorDetail() string {
+	return "RelationshipIdentityConflict"
+}
+
 // NodeStillConnectedError fails the commit of a transaction that deleted a
 // node with a non-DETACH DELETE while relationships still connected it at
 // commit (BadgerTransaction.DeleteConnectedNode): Neo4j's DeleteConnectedNode

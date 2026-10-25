@@ -22,13 +22,30 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 			return err
 		}
 	}
+	err := b.createEdgeDirect(edge)
+	if !errors.Is(err, ErrAlreadyExists) || edge == nil || edge.ID == "" {
+		return err
+	}
+	// Fresh direct creates keep their allocation-free optimized path above.
+	// Only the physical-ID conflict enters the transaction commit owner, the
+	// same owner bulk, explicit, write-behind and Cypher routes use. It alone
+	// may classify an identical stored hidden relationship as a no-op.
+	return b.inBulkTransaction(namespaceForEdgeID(edge.ID), func(tx *BadgerTransaction) error {
+		return tx.CreateEdge(edge)
+	})
+}
+
+// createEdgeDirect is the optimized fresh-create path. Its only conflict
+// result is routed by CreateEdge through BadgerTransaction's single
+// hidden-edge conflict owner.
+func (b *BadgerEngine) createEdgeDirect(edge *Edge) error {
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	ordered, barrierErr := b.beginOrderedWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer release()
+	defer ordered.finish()
 	if edge == nil {
 		return ErrInvalidData
 	}
@@ -36,7 +53,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		return ErrInvalidID
 	}
 
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 	releaseConstraint, constraintErr := b.lockRelationshipConstraintEdge(edge)
@@ -52,6 +69,17 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		edge.UpdatedAt = edge.CreatedAt
 	}
 
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), before it reads whether the relationship
+	// and its endpoints exist, so it sees them and their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{edges: []EdgeID{edge.ID}, nodes: []NodeID{edge.StartNode, edge.EndNode}})
+		if orderErr != nil {
+			return orderErr
+		}
+		defer order.release()
+	}
 	// PERFORMANCE OPTIMIZATION: Use WriteBatch to batch all writes (edge + indexes)
 	// This reduces write amplification from 4 separate writes to 1 batch operation.
 	// We still validate existence via a read transaction first.
@@ -96,6 +124,7 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 		return ErrAlreadyExists
 	}
 
+	var image *Edge
 	err = b.withUpdate(func(txn *badger.Txn) error {
 		// Validate relationship constraints before writing
 		dbName, _, _ := ParseDatabasePrefix(string(edge.ID))
@@ -115,6 +144,9 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 			return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
 		}
 		if err := txn.Set(edgeKey(edge.ID), data); err != nil {
+			return err
+		}
+		if image, err = b.writtenEdgeImage(data, edge); err != nil {
 			return err
 		}
 		outKey, err := b.outgoingIndexKeyString(txn, edge.StartNode, edge.ID)
@@ -175,10 +207,10 @@ func (b *BadgerEngine) CreateEdge(edge *Edge) error {
 
 	// Invalidate only this edge type (not entire cache)
 	if err == nil {
-		b.cacheOnEdgeCreated(edge)
+		b.cacheOnEdgeCreated(image)
 
 		// Notify listeners (e.g., graph analyzers) about the new edge
-		b.notifyEdgeCreated(edge)
+		b.notifyEdgeCreated(image)
 	}
 
 	return err
@@ -236,7 +268,7 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 		return nil, ErrInvalidID
 	}
 
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return nil, err
 	}
 
@@ -245,9 +277,9 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 	cached := func(w *WriteBehindBuffer) (bool, error) {
 		edge = nil
 		if w != nil {
-			state := w.entityStateLocked(bufferedEdgeEntity, string(id))
+			state := w.entityStateLocked(bufferedEdgeEntity, string(id), bufferedReadVisibility{engine: b, visibility: v})
 			if state.found {
-				if state.deleted || b.hidesEdge(v, state.edge, DecayScoringTime()) {
+				if state.deleted {
 					return true, ErrNotFound
 				}
 				edge = copyEdge(state.edge)
@@ -258,9 +290,11 @@ func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
 		// The adjacency body cache cannot establish record presence.
 		return false, nil
 	}
-	err := b.withReadView(func(w *WriteBehindBuffer) { state = w.entityStateLocked(bufferedEdgeEntity, string(id)) }, func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) {
+		state = w.entityStateLocked(bufferedEdgeEntity, string(id), bufferedReadVisibility{engine: b, visibility: v})
+	}, func(txn *badger.Txn) error {
 		if state.found {
-			if state.deleted || b.hidesEdge(v, state.edge, DecayScoringTime()) {
+			if state.deleted {
 				return ErrNotFound
 			}
 			edge = copyEdge(state.edge)
@@ -289,11 +323,11 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	release, barrierErr := b.beginWrite()
+	ordered, barrierErr := b.beginOrderedWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer release()
+	defer ordered.finish()
 	if edge == nil {
 		return ErrInvalidData
 	}
@@ -301,7 +335,7 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		return ErrInvalidID
 	}
 
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 	releaseConstraint, constraintErr := b.lockRelationshipConstraintEdge(edge)
@@ -311,6 +345,17 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 	defer releaseConstraint()
 
 	var oldType string
+	var image *Edge
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	if b.writeBehind != nil {
+		// The relationship's former endpoints too: a move rewrites their adjacency.
+		if err := b.orderCovering(&order, writtenEntities{edges: []EdgeID{edge.ID}, nodes: []NodeID{edge.StartNode, edge.EndNode}}, b.storedEdgeEndpoints(edge.ID, nil)); err != nil {
+			return err
+		}
+		defer order.release()
+	}
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), time.Now())
 		if err != nil {
@@ -444,6 +489,9 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 		if err != nil {
 			return localizedError(localization.StorageClientEdgeEncodeFailed(err), err)
 		}
+		if image, err = b.writtenEdgeImage(data, edge); err != nil {
+			return err
+		}
 
 		// Positional (label, type) counters move with type or endpoint changes.
 		if existing.Type != edge.Type || existing.StartNode != edge.StartNode || existing.EndNode != edge.EndNode {
@@ -497,8 +545,8 @@ func (b *BadgerEngine) UpdateEdge(edge *Edge) error {
 
 	// Notify listeners on successful update
 	if err == nil {
-		b.cacheOnEdgeUpdated(oldType, edge)
-		b.notifyEdgeUpdated(edge)
+		b.cacheOnEdgeUpdated(oldType, image)
+		b.notifyEdgeUpdated(image)
 	}
 
 	return err
@@ -513,26 +561,38 @@ func (b *BadgerEngine) DeleteEdge(id EdgeID) error {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	release, barrierErr := b.beginWrite()
+	ordered, barrierErr := b.beginOrderedWrite()
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer release()
+	defer ordered.finish()
 	if id == "" {
 		return ErrInvalidID
 	}
 
-	if err := b.ensureOpen(); err != nil {
+	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
 
-	// Get edge type before deletion for selective cache invalidation
-	edge, _ := b.GetEdge(id)
+	// Ordered after the write-behind commits acknowledged before it
+	// (orderAfterBufferedCommits), so their replay cannot undo it.
+	var order orderHold
+	var edge *Edge
+	if b.writeBehind != nil {
+		// The stored image the order read last, after the order: the newest.
+		if err := b.orderCovering(&order, writtenEntities{edges: []EdgeID{id}}, b.storedEdgeEndpoints(id, &edge)); err != nil {
+			return err
+		}
+		defer order.release()
+	} else {
+		edge, _ = b.GetEdge(id)
+	}
+
+	// The edge type before deletion, for selective cache invalidation.
 	var edgeType string
 	if edge != nil {
 		edgeType = edge.Type
 	}
-
 	err := b.withUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(id), time.Now())
 		if err != nil {
