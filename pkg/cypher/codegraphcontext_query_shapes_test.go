@@ -71,7 +71,7 @@ CREATE (f)-[:IMPORTS {imported_name: 'neo4j', line_number: 1}]->(m)
 // shapes emitted by CodeGraphContext against both parsers. This provides a
 // compatibility contract without needing every query to execute end-to-end.
 func TestCodeGraphContextQueriesParseWithExplain(t *testing.T) {
-	t.Parallel()
+	// Not parallel: its subtests switch the process-wide parser.
 
 	store := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(store)

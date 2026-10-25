@@ -15,7 +15,7 @@ import (
 // the macOS Swift File Indexer flows by parsing/planning them with EXPLAIN. This
 // avoids mutating storage while still exercising parser compatibility.
 func TestSwiftFileIndexerQueriesParseWithExplain(t *testing.T) {
-	t.Parallel()
+	// Not parallel: its subtests switch the process-wide parser.
 
 	store := newTestMemoryEngine(t)
 	exec := NewStorageExecutor(store)
@@ -209,7 +209,7 @@ FOREACH (chunk IN chunks | DETACH DELETE chunk)
 // This intentionally executes (not EXPLAINs) SET clauses using reduce(...)
 // to catch cases where expressions are stored as literal strings.
 func TestSwiftFileIndexerTagQueriesExecuteReduceExpressions(t *testing.T) {
-	t.Parallel()
+	// Not parallel: its subtests switch the process-wide parser.
 
 	run := func(t *testing.T) {
 		t.Helper()
