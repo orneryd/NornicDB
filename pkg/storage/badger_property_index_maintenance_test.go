@@ -35,25 +35,15 @@ func TestMaintainPropertyIndexesOnNodeCreated_Updated_Deleted(t *testing.T) {
 	engine.nodeCache[node.ID] = &Node{ID: node.ID, Labels: []string{"Person"}, Properties: map[string]any{"name": "Alicia"}}
 	engine.nodeCacheMu.Unlock()
 
-	engine.maintainPropertyIndexesOnNodeDeletedWithLabels(node.ID, []string{"Person"})
+	engine.maintainPropertyIndexesOnNodeDeletedWithNode(node.ID, node)
 	require.Empty(t, sm.PropertyIndexLookup("Person", "name", "Alicia"))
 }
 
-func TestMaintainPropertyIndexesOnNodeDeletedWithLabels_EarlyReturns(t *testing.T) {
+func TestMaintainPropertyIndexesOnNodeDeletedWithNode_EarlyReturns(t *testing.T) {
 	engine := newTestEngine(t)
-	nodeID := NodeID("tenant:n2")
-
-	// No labels branch.
-	engine.maintainPropertyIndexesOnNodeDeletedWithLabels(nodeID, nil)
-
-	// Labels with no index branch.
-	sm := engine.GetSchemaForNamespace("tenant")
-	require.False(t, sm.HasAnyPropertyIndexForLabel("Person"))
-	engine.maintainPropertyIndexesOnNodeDeletedWithLabels(nodeID, []string{"Person"})
-
-	// Indexed label but cache miss branch.
-	require.NoError(t, sm.AddPropertyIndex("idx_person_name", "Person", []string{"name"}))
-	engine.maintainPropertyIndexesOnNodeDeletedWithLabels(nodeID, []string{"Person"})
+	engine.maintainPropertyIndexesOnNodeDeletedWithNode("tenant:n2", nil)
+	engine.maintainPropertyIndexesOnNodeDeletedWithNode("tenant:n2", &Node{ID: "tenant:n2"})
+	engine.maintainPropertyIndexesOnNodeDeletedWithNode("unprefixed", &Node{ID: "unprefixed", Labels: []string{"Person"}})
 }
 
 func TestSchemaForNodeID_ReturnsNamespaceSchemaOrNil(t *testing.T) {

@@ -92,7 +92,7 @@ func TestBadgerTransaction_ListenerOrderAndSnapshotUnderReentry(t *testing.T) {
 	}
 	updated := make(chan error, 1)
 	require.NoError(t, runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error {
-		return tx.UpdateNode(&Node{ID: "review:ordered", Properties: map[string]any{"value": "second"}})
+		return tx.UpdateGraphNode(&Node{ID: "review:ordered", Properties: map[string]any{"value": "second"}}, ClientNodeEdits)
 	}, updated))
 	select {
 	case err := <-updated:

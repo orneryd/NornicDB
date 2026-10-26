@@ -34,7 +34,7 @@ func TestRelationshipEndpointsHoldAcrossOrderedCommits(t *testing.T) {
 	createEdge := func(tx *BadgerTransaction) error {
 		return tx.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"})
 	}
-	deleteNode := func(tx *BadgerTransaction) error { return tx.DeleteNode("test:a") }
+	deleteNode := func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("test:a", CascadeEdges) }
 	for _, c := range []struct {
 		name string
 		// staged is validated first and committed last.
@@ -103,13 +103,13 @@ func TestManualSuppressionOrdersAfterBufferedCommits(t *testing.T) {
 				require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
 					switch {
 					case kind == "node" && buffered == "create":
-						if err := tx.DeleteNode("test:n"); err != nil {
+						if err := tx.DeleteGraphNode("test:n", CascadeEdges); err != nil {
 							return err
 						}
 						_, err := tx.CreateNode(&Node{ID: "test:fresh", Properties: map[string]any{"v": "acknowledged"}})
 						return err
 					case kind == "node":
-						return tx.UpdateNode(listenerOrderNode("acknowledged"))
+						return tx.UpdateGraphNode(listenerOrderNode("acknowledged"), ClientNodeEdits)
 					case buffered == "create":
 						return tx.CreateEdge(listenerOrderEdge("acknowledged"))
 					default:
@@ -125,13 +125,13 @@ func TestManualSuppressionOrdersAfterBufferedCommits(t *testing.T) {
 				}
 				notified = nil
 				if kind == "node" {
-					require.NoError(t, engine.SetNodeManuallySuppressed(NodeID(id), true))
+					require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, string(id), true))
 					// Showing it again reports it on both branches.
-					require.NoError(t, engine.SetNodeManuallySuppressed(NodeID(id), false))
+					require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, string(id), false))
 					require.Equal(t, "acknowledged", notified, "the update reported the acknowledged body")
-					require.NoError(t, engine.SetNodeManuallySuppressed(NodeID(id), true))
+					require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, string(id), true))
 				} else {
-					require.NoError(t, engine.SetEdgeManuallySuppressed(EdgeID(id), true))
+					require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(id), true))
 					if notified != nil {
 						require.Equal(t, "acknowledged", notified, "the update reported the acknowledged body")
 					}
@@ -168,7 +168,9 @@ func TestEmbeddingSidecarOrdersAfterBufferedCommits(t *testing.T) {
 	_, err = engine.CreateNode(listenerOrderNode("initial"))
 	require.NoError(t, err)
 	require.NoError(t, engine.FlushWriteBehind())
-	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error { return tx.UpdateNode(listenerOrderNode("acknowledged")) }, nil))
+	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
+		return tx.UpdateGraphNode(listenerOrderNode("acknowledged"), ClientNodeEdits)
+	}, nil))
 	embedded := listenerOrderNode("acknowledged")
 	embedded.ChunkEmbeddings = [][]float32{{1, 2, 3}}
 	embedded.EmbedMeta = map[string]any{"has_embedding": true, "chunk_count": 1}
@@ -199,7 +201,7 @@ func TestRelationshipDeleteCountsTheNewestEndpointLabels(t *testing.T) {
 			require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
 			require.NoError(t, engine.FlushWriteBehind())
 			require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
-				return tx.UpdateNode(&Node{ID: "test:a", Labels: []string{"New"}})
+				return tx.UpdateGraphNode(&Node{ID: "test:a", Labels: []string{"New"}}, ClientNodeEdits)
 			}, nil))
 			if route == "direct" {
 				require.NoError(t, engine.DeleteEdge("test:r"))
@@ -228,7 +230,7 @@ func TestDirectRelationshipCreateSeesAcknowledgedCommits(t *testing.T) {
 		return tx.CreateEdge(&Edge{ID: "test:s", StartNode: "test:b", EndNode: "test:a", Type: "LINK"})
 	}, nil))
 	require.ErrorIs(t, engine.CreateEdge(&Edge{ID: "test:s", StartNode: "test:b", EndNode: "test:a", Type: "LINK", Properties: map[string]any{"v": "direct"}}), ErrAlreadyExists, "the acknowledged relationship exists")
-	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error { return tx.DeleteNode("test:b") }, nil))
+	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("test:b", CascadeEdges) }, nil))
 	require.ErrorIs(t, engine.CreateEdge(&Edge{ID: "test:t", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}), ErrNotFound, "the acknowledged delete removed the endpoint")
 	noDanglingRelationships(t, engine)
 }

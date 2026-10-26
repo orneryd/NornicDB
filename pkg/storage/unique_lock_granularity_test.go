@@ -300,9 +300,9 @@ func acquireLocksForTest(sm *SchemaManager, keys []uniqueConstraintLockKey) func
 	return release
 }
 
-// lockNodesForTest is lockConstraintKeysOf for a fresh owner.
+// lockNodesForTest projects node values for a fresh registry owner.
 func lockNodesForTest(sm *SchemaManager, nodes ...*Node) func() {
-	release, err := sm.lockConstraintKeysOf(context.Background(), newEngineWriteLockOwner(), nodes...)
+	release, err := sm.acquireUniqueConstraintCommitLocks(context.Background(), newEngineWriteLockOwner(), sm.appendConstraintValueKeys(nil, nodes, nil))
 	if err != nil {
 		panic(err)
 	}

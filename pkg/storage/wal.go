@@ -248,6 +248,7 @@ type WALPropKeyEntry struct {
 // committed entities after replay (crash recovery is rare, so the full
 // rebuild is acceptable).
 type WALBufferedCommitData struct {
+	LogicalTxID string            `json:"logical_tx_id,omitempty"`
 	TxID        string            `json:"tx_id"`
 	Namespace   string            `json:"namespace,omitempty"`
 	Ops         []Operation       `json:"ops"`
@@ -720,6 +721,7 @@ func (w *WAL) AppendBufferedCommit(c *bufferedCommit, dictionary *propertyKeyDic
 		return nil
 	}
 	data := walBufferedCommitPayload{
+		LogicalTxID: c.logicalTxID,
 		TxID:        c.txID,
 		Namespace:   c.namespace,
 		Ops:         c.ops,
@@ -2351,6 +2353,12 @@ func ReplayWALEntry(engine Engine, entry WALEntry) error {
 	namespacedEngine := NewNamespacedEngine(baseEngine, dbName)
 
 	switch entry.Operation {
+	case OpEntityCommit:
+		var data walEntityCommitData
+		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
+			return err
+		}
+		return ApplyAcceptedEntityTransaction(baseEngine, data.Payload)
 	case OpCreateNode:
 		var data WALNodeData
 		if err := decodeRecoveryPayload(entry.Data, &data); err != nil {
@@ -2994,7 +3002,10 @@ func RecoverFromWALWithResult(walDir, snapshotPath string) (*MemoryEngine, Repla
 
 	// Replay entries with proper error tracking
 	// Each entry will use its own database name (stored in entry.Database)
-	result = ReplayWALEntries(engine, entries)
+	result.Errors = make([]ReplayError, 0)
+	for _, entry := range entries {
+		result.Record(entry, ReplayWALEntry(engine, entry))
+	}
 
 	return store.release(), result, nil
 }
@@ -3018,41 +3029,20 @@ func (v engineSnapshotVisitor) VisitEdge(edge *Edge) error {
 	return nil
 }
 
-// ReplayWALEntries replays multiple entries and tracks results.
-// Expected errors (duplicates, checkpoints) are counted as skipped.
-// Unexpected errors (corruption, constraint violations) are counted as failed.
-func ReplayWALEntries(engine Engine, entries []WALEntry) ReplayResult {
-	result := ReplayResult{
-		Errors: make([]ReplayError, 0),
+// Record accumulates the actual outcome of ReplayWALEntry. Checkpoints and
+// duplicate creates are expected skips; every other error retains its original
+// sequence, operation and cause. For example, a caller replaying a slice uses:
+//
+//	for _, entry := range entries {
+//		result.Record(entry, ReplayWALEntry(engine, entry))
+//	}
+func (r *ReplayResult) Record(entry WALEntry, err error) {
+	if entry.Operation == OpCheckpoint || errors.Is(err, ErrAlreadyExists) {
+		r.Skipped++
+	} else if err == nil {
+		r.Applied++
+	} else {
+		r.Failed++
+		r.Errors = append(r.Errors, ReplayError{Sequence: entry.Sequence, Operation: entry.Operation, Error: err})
 	}
-
-	for _, entry := range entries {
-		// Checkpoints are markers only - skip them (no-op, don't count as applied)
-		if entry.Operation == OpCheckpoint {
-			result.Skipped++
-			continue
-		}
-
-		err := ReplayWALEntry(engine, entry)
-		if err == nil {
-			result.Applied++
-			continue
-		}
-
-		// Classify the error
-		if errors.Is(err, ErrAlreadyExists) {
-			// Duplicate during replay - expected (idempotency)
-			result.Skipped++
-		} else {
-			// Unexpected error - track it
-			result.Failed++
-			result.Errors = append(result.Errors, ReplayError{
-				Sequence:  entry.Sequence,
-				Operation: entry.Operation,
-				Error:     err,
-			})
-		}
-	}
-
-	return result
 }

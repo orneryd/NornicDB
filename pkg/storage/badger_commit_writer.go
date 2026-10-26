@@ -26,6 +26,10 @@ import (
 // reference them (ordinary commit: one separate commit before it; large
 // commit: a batch of their own ahead of each batch).
 type commitWriter struct {
+	publish      func()
+	stored       *storedEntityCommit
+	publishKeys  []any
+	notification *commitNotification
 	batchWriter
 	engine              *BadgerEngine
 	embeddingOutcome    *Node
@@ -56,10 +60,11 @@ func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
 		if cw.beforeLarge != nil {
 			cw.beforeLarge()
 		}
-		lc, err := cw.db.beginLargeCommit()
+		lc, err := cw.db.beginLargeCommit(cw.reserveNotification)
 		if err != nil {
 			return err
 		}
+		lc.originalReadTs = txn.ReadTs()
 		cw.large = lc
 	}
 	if err := cw.commitTokens(txn); err != nil {
@@ -114,15 +119,11 @@ func (cw *commitWriter) finish() error {
 		if err := cw.commitOutcome(); err != nil {
 			return err
 		}
-		cw.publishPendingEmbeddingAdds()
 		return nil
 	}
 	err := cw.commitTokens(cw.txn)
 	if err == nil {
-		err = cw.large.finish(&cw.batchWriter)
-	}
-	if err == nil {
-		cw.publishPendingEmbeddingAdds()
+		err = cw.large.finish(&cw.batchWriter, cw.publication())
 	}
 	return err
 }
@@ -131,6 +132,7 @@ func (cw *commitWriter) finish() error {
 // belongs to the caller, which discards it. An error means the rollback
 // failed and the engine refuses writes until restart (commitOracle.fail).
 func (cw *commitWriter) abort() error {
+	cw.cancelNotification()
 	cw.engine.pendingEmbeddingAdds.Delete(cw.txn)
 	if cw.large == nil {
 		return nil
@@ -149,5 +151,36 @@ func (cw *commitWriter) abort() error {
 var errPersistingTokens = errors.New("persisting property key dictionary")
 
 func (cw *commitWriter) commitOutcomeBatch() (uint64, error) {
-	return cw.db.commitShared(cw.txn)
+	return cw.db.commitShared(cw.txn, cw.publication())
+}
+
+// publication is the memory-only delta associated with this physical commit.
+func (cw *commitWriter) publication() *commitPublication {
+	if cw.publish == nil && cw.notification == nil && len(cw.pendingEmbeddingIDs)+len(cw.publishKeys) == 0 {
+		return nil
+	}
+	keys := cw.publishKeys
+	for id := range cw.pendingEmbeddingIDs {
+		keys = append(keys, id)
+	}
+	return &commitPublication{keys: keys, owner: cw, run: cw.runPublication}
+}
+
+func (cw *commitWriter) runPublication() {
+	if cw.stored != nil && cw.stored.publish != nil {
+		cw.stored.publish()
+	}
+	cw.publishPendingEmbeddingAdds()
+	if cw.publish != nil {
+		cw.publish()
+	}
+}
+
+func (cw *commitWriter) reserveNotification() { cw.engine.reserveCommitNotification(cw.notification) }
+
+// cancelNotification leaves queue retirement to the caller after its locks release.
+func (cw *commitWriter) cancelNotification() {
+	if cw.notification != nil {
+		cw.notification.ops = nil
+	}
 }

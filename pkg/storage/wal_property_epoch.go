@@ -64,6 +64,7 @@ func decodeWALPropertyEpochFrame(entry WALEntry) (walPropertyEpochFrame, error) 
 // fields are deliberately absent, including from JSON reflection and the
 // per-record allocation. Only AppendBufferedCommit constructs this payload.
 type walBufferedCommitPayload struct {
+	LogicalTxID     string            `json:"logical_tx_id,omitempty"`
 	TxID            string            `json:"tx_id"`
 	Namespace       string            `json:"namespace,omitempty"`
 	Ops             []Operation       `json:"ops"`

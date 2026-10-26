@@ -42,6 +42,7 @@ type bufferedMutation struct {
 // commit for background replay: its ordered physical operations, raw KV
 // writes/deletes, namespace, and staged ID-counter high-water marks.
 type bufferedCommit struct {
+	logicalTxID string        // Stable accepted lineage, empty for historical native records.
 	memoryLease *memory.Lease // Retained until this generation is retired.
 	recovered   bool          // WAL operations require authoritative binary-body hydration before publication.
 	namespace   string
@@ -1079,14 +1080,14 @@ func (w *WriteBehindBuffer) LabelOverlay(label string) ([]*Node, map[NodeID]bool
 
 // Keep closure-backed selection behind the nil check: captured result locals
 // otherwise escape at function entry even when an empty overlay returns early.
-func (w *WriteBehindBuffer) labelOverlayLocked(label string) ([]*Node, map[NodeID]bool) {
+func (w *WriteBehindBuffer) labelOverlayLocked(label string, prefixes ...string) ([]*Node, map[NodeID]bool) {
 	if w == nil {
 		return nil, nil
 	}
-	return w.selectLabelOverlayLocked(label)
+	return w.selectLabelOverlayLocked(label, prefixes...)
 }
 
-func (w *WriteBehindBuffer) selectLabelOverlayLocked(label string) ([]*Node, map[NodeID]bool) {
+func (w *WriteBehindBuffer) selectLabelOverlayLocked(label string, prefixes ...string) ([]*Node, map[NodeID]bool) {
 	touched := make(map[NodeID]bool)
 	var out []*Node
 	w.visitEntityOverlayLocked(bufferedNodeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -1099,7 +1100,7 @@ func (w *WriteBehindBuffer) selectLabelOverlayLocked(label string) ([]*Node, map
 		if !state.deleted && hasLabel(state.node.Labels, label) {
 			out = append(out, state.node)
 		}
-	})
+	}, prefixes...)
 	return out, touched
 }
 
@@ -1110,14 +1111,10 @@ func (w *WriteBehindBuffer) TypeOverlay(edgeType string) ([]*Edge, map[EdgeID]bo
 	return w.typeOverlayLocked(edgeType)
 }
 
-func (w *WriteBehindBuffer) typeOverlayLocked(edgeType string) ([]*Edge, map[EdgeID]bool) {
+func (w *WriteBehindBuffer) typeOverlayLocked(edgeType string, prefixes ...string) ([]*Edge, map[EdgeID]bool) {
 	if w == nil {
 		return nil, nil
 	}
-	return w.selectTypeOverlayLocked(edgeType)
-}
-
-func (w *WriteBehindBuffer) selectTypeOverlayLocked(edgeType string) ([]*Edge, map[EdgeID]bool) {
 	touched := make(map[EdgeID]bool)
 	var out []*Edge
 	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -1130,7 +1127,7 @@ func (w *WriteBehindBuffer) selectTypeOverlayLocked(edgeType string) ([]*Edge, m
 		if !state.deleted && state.edge.Type == edgeType {
 			out = append(out, state.edge)
 		}
-	})
+	}, prefixes...)
 	return out, touched
 }
 
@@ -1177,14 +1174,14 @@ func (w *WriteBehindBuffer) AllNodesOverlay() ([]*Node, map[NodeID]bool) {
 	return w.allNodesOverlayLocked()
 }
 
-func (w *WriteBehindBuffer) allNodesOverlayLocked() ([]*Node, map[NodeID]bool) {
+func (w *WriteBehindBuffer) allNodesOverlayLocked(prefixes ...string) ([]*Node, map[NodeID]bool) {
 	if w == nil {
 		return nil, nil
 	}
-	return w.selectAllNodesOverlayLocked()
+	return w.selectAllNodesOverlayLocked(prefixes...)
 }
 
-func (w *WriteBehindBuffer) selectAllNodesOverlayLocked() ([]*Node, map[NodeID]bool) {
+func (w *WriteBehindBuffer) selectAllNodesOverlayLocked(prefixes ...string) ([]*Node, map[NodeID]bool) {
 	touched := make(map[NodeID]bool)
 	var out []*Node
 	w.visitEntityOverlayLocked(bufferedNodeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -1196,7 +1193,7 @@ func (w *WriteBehindBuffer) selectAllNodesOverlayLocked() ([]*Node, map[NodeID]b
 		if !state.deleted {
 			out = append(out, state.node)
 		}
-	})
+	}, prefixes...)
 	return out, touched
 }
 
@@ -1207,14 +1204,14 @@ func (w *WriteBehindBuffer) AllEdgesOverlay() ([]*Edge, map[EdgeID]bool) {
 	return w.allEdgesOverlayLocked()
 }
 
-func (w *WriteBehindBuffer) allEdgesOverlayLocked() ([]*Edge, map[EdgeID]bool) {
+func (w *WriteBehindBuffer) allEdgesOverlayLocked(prefixes ...string) ([]*Edge, map[EdgeID]bool) {
 	if w == nil {
 		return nil, nil
 	}
-	return w.selectAllEdgesOverlayLocked()
+	return w.selectAllEdgesOverlayLocked(prefixes...)
 }
 
-func (w *WriteBehindBuffer) selectAllEdgesOverlayLocked() ([]*Edge, map[EdgeID]bool) {
+func (w *WriteBehindBuffer) selectAllEdgesOverlayLocked(prefixes ...string) ([]*Edge, map[EdgeID]bool) {
 	touched := make(map[EdgeID]bool)
 	var out []*Edge
 	w.visitEntityOverlayLocked(bufferedEdgeEntity, func(buf *CommitBuffer, emit func(string)) {
@@ -1226,7 +1223,7 @@ func (w *WriteBehindBuffer) selectAllEdgesOverlayLocked() ([]*Edge, map[EdgeID]b
 		if !state.deleted {
 			out = append(out, state.edge)
 		}
-	})
+	}, prefixes...)
 	return out, touched
 }
 

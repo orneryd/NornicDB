@@ -67,10 +67,13 @@ func (b *BadgerEngine) markManualSuppression(kind byte, id string, suppressed bo
 
 // dropSuppressionEnd discards the pending end of an entity's stored
 // suppression, which the caller's suppression write superseded.
-func (b *BadgerEngine) dropSuppressionEnd(kind byte, id string) {
+func (b *BadgerEngine) dropSuppressionEnd(kind byte, id string) bool {
 	b.manualSuppressionMu.Lock()
-	delete(b.suppressionEnds, string(kind)+id)
+	key := string(kind) + id
+	_, pending := b.suppressionEnds[key]
+	delete(b.suppressionEnds, key)
 	b.manualSuppressionMu.Unlock()
+	return pending
 }
 
 // manuallySuppressed reports whether an entity is suppressed on demand. It
@@ -98,41 +101,73 @@ func (b *BadgerEngine) HasManualSuppressions() bool {
 	return b.manualSuppressionCount.Load() > 0
 }
 
-// SetNodeManuallySuppressed hides a node on demand, or shows it again: hidden
-// from MATCH, traversal and search, its data kept and visible under reveal(),
-// whether or not decay is enabled (#1064). Either way it is reported as an
-// update, so search drops a hidden node and indexes a shown one. ErrNotFound
-// when no such node is stored.
-func (b *BadgerEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error {
+// manualSuppressionKind preserves the persisted metadata kind bytes.
+func manualSuppressionKind(kind StoredEntityKind) (byte, error) {
+	switch kind {
+	case StoredEntityNodeKind:
+		return manualSuppressionNode, nil
+	case StoredEntityEdgeKind:
+		return manualSuppressionEdge, nil
+	default:
+		return 0, ErrInvalidData
+	}
+}
+
+// SetManualSuppression hides or shows a stored node or relationship without
+// deleting its data. Hidden entities remain available under reveal(). Changes
+// publish an update for search consumers, whether or not decay is enabled.
+// Unknown kinds return ErrInvalidData; missing entities return ErrNotFound.
+func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id string, suppressed bool) error {
+	kind, err := manualSuppressionKind(entityKind)
+	if err != nil {
+		return err
+	}
 	var node *Node
-	return b.setManualSuppression(manualSuppressionNode, string(id), nodeKey(id), suppressed, func(txn *badger.Txn, val []byte) error {
-		decoded, err := b.decodeNodeWithEmbeddings(txn, val, id)
-		node = decoded
-		return err
-	}, func() { b.notifyNodeUpdated(node) })
-}
-
-// SetEdgeManuallySuppressed is SetNodeManuallySuppressed for a relationship.
-func (b *BadgerEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error {
 	var edge *Edge
-	return b.setManualSuppression(manualSuppressionEdge, string(id), edgeKey(id), suppressed, func(_ *badger.Txn, val []byte) error {
-		decoded, err := b.decodeEdgeBodyWithID(namespaceForEdgeID(id), val, id)
-		edge = decoded
+	recordKey := edgeKey(EdgeID(id))
+	if kind == manualSuppressionNode {
+		recordKey = nodeKey(NodeID(id))
+	}
+	decode := func(txn *badger.Txn, value []byte) (err error) {
+		if kind == manualSuppressionNode {
+			node, err = b.decodeNodeWithEmbeddings(txn, value, NodeID(id))
+		} else {
+			edge, err = b.decodeEdgeBodyWithID(namespaceForEdgeID(EdgeID(id)), value, EdgeID(id))
+		}
 		return err
-	}, func() { b.notifyEdgeUpdated(edge) })
-}
-
-// setManualSuppression writes (or deletes) an entity's suppression key, once
-// its record is found, mirrors it in memory and reports it (notify). decode,
-// when set, reads the record.
-func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []byte, suppressed bool, decode func(*badger.Txn, []byte) error, notify func()) error {
+	}
+	operation := func() Operation {
+		if kind == manualSuppressionNode {
+			return Operation{Type: OpUpdateNode, Node: node}
+		}
+		return Operation{Type: OpUpdateEdge, Edge: edge}
+	}
 	if err := b.ensureOpen(false); err != nil {
 		return err
+	}
+	write, releaseWrite, err := b.beginEntityWrite(id, kind == manualSuppressionEdge, nil)
+	if err != nil {
+		return err
+	}
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
+	var ops []Operation
+	publish := func() {
+		b.markManualSuppression(kind, id, suppressed)
+		b.dropSuppressionEnd(kind, id)
+		b.prepareCommitOperations(ops, false)
+	}
+	keys := func() []any {
+		ops = []Operation{operation()}
+		capturePublicationOperations(notification, ops)
+		if kind == manualSuppressionNode {
+			return []any{NodeID(id)}
+		}
+		return []any{EdgeID(id)}
 	}
 	if b.writeBehind != nil {
 		// The commits its drain replays, then this one, are delivered once
 		// the order is released (holdPublication).
-		defer b.completeCommitNotification(b.holdPublication())
 		// Ordered after the acknowledged commits of the entity
 		// (orderAfterBufferedCommits): it finds and reports the newest body.
 		entities := writtenEntities{nodes: []NodeID{NodeID(id)}}
@@ -148,7 +183,7 @@ func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []by
 	// Ordered with the end of a deleted entity's suppression
 	// (endSuppressions): this write supersedes a pending end of its key.
 	b.suppressionWriteMu.Lock()
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
 		item, err := txn.Get(recordKey)
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound
@@ -165,16 +200,11 @@ func (b *BadgerEngine) setManualSuppression(kind byte, id string, recordKey []by
 			return txn.Set(manualSuppressionKey(kind, id), []byte{})
 		}
 		return txn.Delete(manualSuppressionKey(kind, id))
-	})
-	if err == nil {
-		b.markManualSuppression(kind, id, suppressed)
-		b.dropSuppressionEnd(kind, id)
-	}
+	}, publish, keys, notification, write.stagePublication)
 	b.suppressionWriteMu.Unlock()
 	if err != nil {
 		return err
 	}
-	notify()
 	return nil
 }
 
@@ -199,7 +229,7 @@ func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
 	b.suppressionEnding = true
 	b.manualSuppressionMu.Unlock()
 	if start {
-		go b.endSuppressions()
+		go b.endSuppressions(nil)
 	}
 }
 
@@ -209,41 +239,74 @@ func (b *BadgerEngine) forgetManualSuppression(kind byte, id string) {
 // again with the same ID drops the pending end of its key, so it is never
 // deleted, and a lifecycle write discards the ends it supersedes. Close runs
 // it after its final drain.
-func (b *BadgerEngine) endSuppressions() {
+func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) {
 	for {
-		b.suppressionWriteMu.Lock()
 		b.manualSuppressionMu.Lock()
-		ends := b.suppressionEnds
-		b.suppressionEnds = nil
-		if len(ends) == 0 {
+		if len(b.suppressionEnds) == 0 {
 			b.suppressionEnding = false
 			b.manualSuppressionMu.Unlock()
-			b.suppressionWriteMu.Unlock()
 			return
 		}
+		ends := make(map[string]struct{}, len(b.suppressionEnds))
+		var first string
+		for key := range b.suppressionEnds {
+			ends[key] = struct{}{}
+			if first == "" || key < first {
+				first = key
+			}
+		}
 		b.manualSuppressionMu.Unlock()
-		units := make([]func(txn *badger.Txn) error, 0, len(ends))
+		write, releaseWrite, err := b.beginEntityWrite(first[1:], first[0] == manualSuppressionEdge, inherited, entityWritePlan{batches: suppressionEndFootprints(ends)})
+		if err != nil {
+			b.manualSuppressionMu.Lock()
+			b.suppressionEnding = false
+			b.manualSuppressionMu.Unlock()
+			return
+		}
+		// Never wait for entity authority while holding this mutex: an admitted
+		// manual suppression owns its entity first and can cancel a pending end.
+		b.suppressionWriteMu.Lock()
+		for key := range ends {
+			if !b.dropSuppressionEnd(key[0], key[1:]) {
+				delete(ends, key)
+			}
+		}
+		units := make([]func(*badger.Txn) error, 0, len(ends))
 		for key := range ends {
 			stored := manualSuppressionKey(key[0], key[1:])
 			units = append(units, func(txn *badger.Txn) error { return txn.Delete(stored) })
 		}
-		err := b.commitEngineWrite(nil, units)
+		if len(units) > 0 {
+			err = b.commitEngineWrite(func(cw *commitWriter) error {
+				for key := range ends {
+					if key[0] == manualSuppressionEdge {
+						cw.publishKeys = append(cw.publishKeys, EdgeID(key[1:]))
+					} else {
+						cw.publishKeys = append(cw.publishKeys, NodeID(key[1:]))
+					}
+				}
+				if err := write.stagePublication(cw); err != nil {
+					return err
+				}
+				for _, unit := range units {
+					if err := cw.write(unit); err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+		}
+		b.suppressionWriteMu.Unlock()
+		releaseWrite()
 		if err != nil {
-			// The store is closed: a store that opens it again reads the
-			// keys back, as it does after a crash.
 			b.manualSuppressionMu.Lock()
 			b.suppressionEnding = false
 			b.manualSuppressionMu.Unlock()
-		}
-		b.suppressionWriteMu.Unlock()
-		if err != nil {
 			return
 		}
 	}
 }
 
-// dropManualSuppressions forgets the suppressions, and their pending ends, of
-// the entities whose ID starts with prefix; the caller deleted their keys.
 func (b *BadgerEngine) dropManualSuppressions(prefix string) {
 	b.manualSuppressionMu.Lock()
 	defer b.manualSuppressionMu.Unlock()
@@ -263,45 +326,30 @@ func (b *BadgerEngine) dropManualSuppressions(prefix string) {
 // ManualSuppressionEngine hides and shows nodes and relationships on demand
 // (kp.suppress / unsuppress, #1064).
 type ManualSuppressionEngine interface {
-	SetNodeManuallySuppressed(id NodeID, suppressed bool) error
-	SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error
+	SetManualSuppression(kind StoredEntityKind, id string, suppressed bool) error
 }
 
-// SetNodeManuallySuppressed suppresses or shows a node of this namespace.
-func (n *NamespacedEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error {
+// SetManualSuppression hides or shows an entity within this namespace.
+func (n *NamespacedEngine) SetManualSuppression(kind StoredEntityKind, id string, suppressed bool) error {
+	if _, err := manualSuppressionKind(kind); err != nil {
+		return err
+	}
 	inner, ok := n.inner.(ManualSuppressionEngine)
 	if !ok {
 		return ErrNotImplemented
 	}
-	return inner.SetNodeManuallySuppressed(n.prefixNodeID(id), suppressed)
+	return inner.SetManualSuppression(kind, qualifyEntityID(n.scope, id), suppressed)
 }
 
-// SetEdgeManuallySuppressed suppresses or shows a relationship of this
-// namespace.
-func (n *NamespacedEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error {
-	inner, ok := n.inner.(ManualSuppressionEngine)
-	if !ok {
-		return ErrNotImplemented
+// SetManualSuppression passes storage metadata through to the wrapped
+// capability without adding a graph-write WAL record.
+func (w *WALEngine) SetManualSuppression(kind StoredEntityKind, id string, suppressed bool) error {
+	if _, err := manualSuppressionKind(kind); err != nil {
+		return err
 	}
-	return inner.SetEdgeManuallySuppressed(n.prefixEdgeID(id), suppressed)
-}
-
-// SetNodeManuallySuppressed passes through to the stored engine: the
-// suppression is storage metadata, like decay's suppression flag, not a
-// logged graph write.
-func (w *WALEngine) SetNodeManuallySuppressed(id NodeID, suppressed bool) error {
 	inner, ok := w.engine.(ManualSuppressionEngine)
 	if !ok {
 		return ErrNotImplemented
 	}
-	return inner.SetNodeManuallySuppressed(id, suppressed)
-}
-
-// SetEdgeManuallySuppressed is SetNodeManuallySuppressed for a relationship.
-func (w *WALEngine) SetEdgeManuallySuppressed(id EdgeID, suppressed bool) error {
-	inner, ok := w.engine.(ManualSuppressionEngine)
-	if !ok {
-		return ErrNotImplemented
-	}
-	return inner.SetEdgeManuallySuppressed(id, suppressed)
+	return inner.SetManualSuppression(kind, id, suppressed)
 }

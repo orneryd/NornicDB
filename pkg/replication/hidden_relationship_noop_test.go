@@ -18,8 +18,32 @@ import (
 )
 
 type hiddenNoOpFanout struct {
-	mu      sync.Mutex
-	targets []*replication.StorageAdapter
+	mu       sync.Mutex
+	targets  []*replication.StorageAdapter
+	accepted *replication.StandaloneReplicator
+}
+
+// Use the real accepted owner while preserving the fixture's Apply fanout.
+type hiddenNoOpFanoutStorage struct {
+	replication.Storage
+	fanout *hiddenNoOpFanout
+}
+
+func (s *hiddenNoOpFanoutStorage) ApplyCommand(cmd *replication.Command) error {
+	return s.fanout.Apply(cmd, 0)
+}
+func (r *hiddenNoOpFanout) SubmitAcceptedCommand(ctx context.Context, cmd *replication.Command, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
+	r.mu.Lock()
+	if r.accepted == nil {
+		r.accepted = replication.NewStandaloneReplicator(&replication.Config{}, &hiddenNoOpFanoutStorage{Storage: r.targets[0], fanout: r})
+		if err := r.accepted.Start(context.Background()); err != nil {
+			r.mu.Unlock()
+			return nil, err
+		}
+	}
+	accepted := r.accepted
+	r.mu.Unlock()
+	return accepted.SubmitAcceptedCommand(ctx, cmd, settle)
 }
 
 func (r *hiddenNoOpFanout) Start(context.Context) error { return nil }
@@ -106,7 +130,7 @@ func TestRepeatedHiddenRelationshipMergeKeepsFollowerConverged(t *testing.T) {
 					require.NoError(t, base.FlushWriteBehind())
 					_, err = base.GetStoredEdge(fullID)
 					require.NoError(t, err)
-					require.NoError(t, base.SetEdgeManuallySuppressed(fullID, true))
+					require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(fullID), true))
 				}
 
 				result, err := exec.Execute(ctx, "UNWIND [1,2] AS i "+merge+

@@ -398,13 +398,10 @@ func (b *BadgerEngine) loadEdgeForAdjacencyTombstoneInTxn(txn *badger.Txn, id Ed
 	return copyEdge(record.Edge), nil
 }
 
-func (b *BadgerEngine) getEdgeVisibleAtInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion) (*Edge, error) {
-	return b.getEdgeAtInTxn(txn, id, version, visibleRead)
-}
-
 // getEdgeAtInTxn resolves the edge's state at version in txn, through the
 // visibility layer when v applies it.
-func (b *BadgerEngine) getEdgeAtInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion, v readVisibility) (*Edge, error) {
+func (b *BadgerEngine) getEdgeAtInTxn(txn *badger.Txn, id EdgeID, version MVCCVersion, policy mvccEntityRead) (*Edge, error) {
+	v := policy.visibility
 	head, err := b.loadEdgeMVCCHeadInTxn(txn, id)
 	if err != nil {
 		return nil, err
@@ -1082,6 +1079,10 @@ func (b *BadgerEngine) UpdateEdgeCurrentHead(id EdgeID, version MVCCVersion, tom
 }
 
 func (b *BadgerEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
+		return MVCCHead{}, err
+	}
+
 	var head MVCCHead
 	err := b.withView(func(txn *badger.Txn) error {
 		var innerErr error
@@ -1092,6 +1093,10 @@ func (b *BadgerEngine) GetNodeCurrentHead(id NodeID) (MVCCHead, error) {
 }
 
 func (b *BadgerEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
+	if err := b.pendingNamespaceConflict(namespaceForEdgeID(id)); err != nil {
+		return MVCCHead{}, err
+	}
+
 	var head MVCCHead
 	err := b.withView(func(txn *badger.Txn) error {
 		var innerErr error
@@ -1107,6 +1112,8 @@ func (b *BadgerEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
 	// read succeeds, we're done — no need to resolve a version record.
 	if node, err := b.GetNode(id); err == nil {
 		return node, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
 	var node *Node
 	err := b.withView(func(txn *badger.Txn) error {
@@ -1146,6 +1153,8 @@ func (b *BadgerEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
 func (b *BadgerEngine) getEdgeLatest(id EdgeID, v readVisibility) (*Edge, error) {
 	if edge, err := b.getEdge(id, v); err == nil {
 		return edge, nil
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
 	}
 	var edge *Edge
 	err := b.withView(func(txn *badger.Txn) error {
@@ -1177,129 +1186,22 @@ func (b *BadgerEngine) getEdgeLatest(id EdgeID, v readVisibility) (*Edge, error)
 }
 
 func (b *BadgerEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, error) {
-	return b.getEdgeVisibleAtWithView(id, version, b.withView)
-}
-
-func (b *BadgerEngine) getEdgeVisibleAtWithView(id EdgeID, version MVCCVersion, view func(func(*badger.Txn) error) error) (*Edge, error) {
-	return b.getEdgeAtWithView(id, version, visibleRead, view)
-}
-
-// getEdgeAtWithView is getEdgeVisibleAtWithView through the visibility layer
-// when v applies it.
-func (b *BadgerEngine) getEdgeAtWithView(id EdgeID, version MVCCVersion, v readVisibility, view func(func(*badger.Txn) error) error) (*Edge, error) {
-	deregister, err := b.beginMVCCSnapshotRead(version)
-	if err != nil {
-		return nil, err
-	}
-	defer deregister()
-	var edge *Edge
-	err = view(func(txn *badger.Txn) error {
-		var innerErr error
-		edge, innerErr = b.getEdgeAtInTxn(txn, id, version, v)
-		return innerErr
-	})
-	return edge, err
+	return readEntityAtWithView(b, id, version, mvccEntityRead{visibility: visibleRead}, b.withView, (*BadgerEngine).getEdgeAtInTxn)
 }
 
 func (b *BadgerEngine) GetOutgoingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	return b.getOutgoingEdgesVisibleAtWithView(nodeID, version, b.withView)
-}
-
-func (b *BadgerEngine) getOutgoingEdgesVisibleAtWithView(nodeID NodeID, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
-	return b.getOutgoingEdgesVisibleAtWithViewRegistration(nodeID, version, view, true)
-}
-
-func (b *BadgerEngine) getOutgoingEdgesVisibleAtWithPinnedSnapshot(nodeID NodeID, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
-	return b.getOutgoingEdgesVisibleAtWithViewRegistration(nodeID, version, view, false)
-}
-
-func (b *BadgerEngine) getOutgoingEdgesVisibleAtWithViewRegistration(nodeID NodeID, version MVCCVersion, view func(func(*badger.Txn) error) error, registerReader bool) ([]*Edge, error) {
-	if nodeID == "" {
-		return nil, ErrInvalidID
-	}
-	if registerReader {
-		deregister, err := b.beginMVCCSnapshotRead(version)
-		if err != nil {
-			return nil, err
-		}
-		defer deregister()
-	}
-	var edges []*Edge
-	err := view(func(txn *badger.Txn) error {
-		edgeIDs, err := b.collectVisibleAdjacencyEdgeIDsInTxn(txn, b.mvccOutgoingAdjacencyPrefixString(nodeID), version)
-		if err != nil {
-			return err
-		}
-		for _, edgeID := range edgeIDs {
-			edge, edgeErr := b.getEdgeVisibleAtInTxn(txn, edgeID, version)
-			if edgeErr == ErrNotFound || edgeErr == ErrNotVisibleAtSnapshot {
-				continue
-			}
-			if edgeErr != nil {
-				return edgeErr
-			}
-			if edge != nil && edge.StartNode == nodeID {
-				edges = append(edges, edge)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return edges, nil
+	return b.readAdjacentEdgesAtWithView(nodeID, version, Outgoing, b.withView)
 }
 
 func (b *BadgerEngine) GetIncomingEdgesVisibleAt(nodeID NodeID, version MVCCVersion) ([]*Edge, error) {
-	return b.getIncomingEdgesVisibleAtWithView(nodeID, version, b.withView)
-}
-
-func (b *BadgerEngine) getIncomingEdgesVisibleAtWithView(nodeID NodeID, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
-	return b.getIncomingEdgesVisibleAtWithViewRegistration(nodeID, version, view, true)
-}
-
-func (b *BadgerEngine) getIncomingEdgesVisibleAtWithPinnedSnapshot(nodeID NodeID, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
-	return b.getIncomingEdgesVisibleAtWithViewRegistration(nodeID, version, view, false)
-}
-
-func (b *BadgerEngine) getIncomingEdgesVisibleAtWithViewRegistration(nodeID NodeID, version MVCCVersion, view func(func(*badger.Txn) error) error, registerReader bool) ([]*Edge, error) {
-	if nodeID == "" {
-		return nil, ErrInvalidID
-	}
-	if registerReader {
-		deregister, err := b.beginMVCCSnapshotRead(version)
-		if err != nil {
-			return nil, err
-		}
-		defer deregister()
-	}
-	var edges []*Edge
-	err := view(func(txn *badger.Txn) error {
-		edgeIDs, err := b.collectVisibleAdjacencyEdgeIDsInTxn(txn, b.mvccIncomingAdjacencyPrefixString(nodeID), version)
-		if err != nil {
-			return err
-		}
-		for _, edgeID := range edgeIDs {
-			edge, edgeErr := b.getEdgeVisibleAtInTxn(txn, edgeID, version)
-			if edgeErr == ErrNotFound || edgeErr == ErrNotVisibleAtSnapshot {
-				continue
-			}
-			if edgeErr != nil {
-				return edgeErr
-			}
-			if edge != nil && edge.EndNode == nodeID {
-				edges = append(edges, edge)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, err
-	}
-	return edges, nil
+	return b.readAdjacentEdgesAtWithView(nodeID, version, Incoming, b.withView)
 }
 
 func (b *BadgerEngine) BatchGetNodesLatestVisible(ids []NodeID) (map[NodeID]*Node, error) {
+	if err := b.pendingReadConflict(readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids}); err != nil {
+		return nil, err
+	}
+
 	result := make(map[NodeID]*Node, len(ids))
 	for _, id := range ids {
 		node, err := b.GetNodeLatestVisible(id)
@@ -1310,12 +1212,8 @@ func (b *BadgerEngine) BatchGetNodesLatestVisible(ids []NodeID) (map[NodeID]*Nod
 	return result, nil
 }
 
-func (b *BadgerEngine) iterateNodesVisibleAtInTxn(txn *badger.Txn, version MVCCVersion, yield func(*Node) error) error {
-	return b.iterateNodesVisibleAtInScopeInTxn(txn, "", version, yield)
-}
-
-// iterateNodesVisibleAtInScopeInTxn is iterateNodesVisibleAtInTxn over one
-// database's nodes, with candidates bounded to its dictionary namespace.
+// iterateNodesVisibleAtInScopeInTxn walks MVCC heads in the pinned physical
+// snapshot; an empty scope scans all database namespaces.
 func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope string, version MVCCVersion, yield func(*Node) error, readOptions ...StreamNodesOptions) error {
 	opts := nodeScanOptions(readOptions)
 	// Post-refactor: we walk the head keyspace (the definitive list of
@@ -1367,7 +1265,7 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 			} else {
 				if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings {
 					var readErr error
-					body, readErr = b.readQueryNodeItemInTxn(txn, item, nodeID)
+					body, readErr = b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
 					if readErr != nil {
 						return readErr
 					}
@@ -1413,12 +1311,8 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 	return it.Err()
 }
 
-func (b *BadgerEngine) iterateEdgesVisibleAtInTxn(txn *badger.Txn, version MVCCVersion, yield func(*Edge) error) error {
-	return b.iterateEdgesAtInTxn(txn, version, visibleRead, yield)
-}
-
-func (b *BadgerEngine) iterateEdgesAtInTxn(txn *badger.Txn, version MVCCVersion, v readVisibility, yield func(*Edge) error) error {
-	// See iterateNodesVisibleAtInTxn for the walk-heads pattern and why
+func (b *BadgerEngine) iterateEdgesAtInTxn(txn *badger.Txn, version MVCCVersion, v readVisibility, yield func(*Edge) error, prefixes ...string) error {
+	// See iterateNodesVisibleAtInScopeInTxn for the walk-heads pattern and why
 	// we can't just scan the version prefix post-refactor.
 	headPrefix := []byte{prefixMVCCEdgeHead}
 	opts := badgerIteratorOptions()
@@ -1437,6 +1331,9 @@ func (b *BadgerEngine) iterateEdgesAtInTxn(txn *badger.Txn, version MVCCVersion,
 		}
 		edgeNum := binary.BigEndian.Uint64(key[1:])
 		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
+		if len(prefixes) > 0 && !edgeIDInScope(edgeID, prefixes[0]) {
+			continue
+		}
 		if !ok {
 			continue
 		}

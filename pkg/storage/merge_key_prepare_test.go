@@ -57,7 +57,7 @@ func TestPrepareMergeKeyMovesSnapshotToCommittedNode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), node.Properties["k"])
 	node.Properties["seen"] = true
-	require.NoError(t, fresh.UpdateNode(node))
+	require.NoError(t, fresh.UpdateGraphNode(node, ClientNodeEdits))
 	require.NoError(t, fresh.Commit())
 
 	require.ErrorIs(t, reader.PrepareMergeKey(ctx, "U", "k", int64(1)), ErrConflict)
@@ -292,7 +292,7 @@ func TestPrepareMergeKeyEdgeBranches(t *testing.T) {
 func TestEngineWriteLockFailureIsReturned(t *testing.T) {
 	engine, _ := newMergeKeyTestEngine(t)
 	previous := lockEngineWriteKeys
-	lockEngineWriteKeys = func(*SchemaManager, *Node) (func(), error) { return nil, ErrDeadlock }
+	lockEngineWriteKeys = func(*SchemaManager, *Node, string) (func(), error) { return nil, ErrDeadlock }
 	t.Cleanup(func() { lockEngineWriteKeys = previous })
 	node := &Node{ID: NodeID(prefixTestID("direct")), Labels: []string{"U"}, Properties: map[string]interface{}{"k": int64(20)}}
 	_, err := engine.CreateNode(node)

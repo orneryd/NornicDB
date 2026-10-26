@@ -41,8 +41,8 @@ func TestCreatePresenceReadSkipsOnlyMintedIDs(t *testing.T) {
 			if buffered {
 				require.NoError(t, engine.FlushWriteBehind())
 			}
-			require.NoError(t, engine.SetNodeManuallySuppressed(hiddenNode, true))
-			require.NoError(t, engine.SetEdgeManuallySuppressed(hiddenEdge, true))
+			require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, string(hiddenNode), true))
+			require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(hiddenEdge), true))
 
 			begin := func() *BadgerTransaction {
 				tx, err := engine.BeginTransaction()
@@ -127,7 +127,7 @@ func TestWALReplayCreateMeetsHiddenPredecessor(t *testing.T) {
 		_, err = engine.CreateNode(&Node{ID: hidden, Labels: []string{"Original"}})
 		require.NoError(t, err)
 		require.NoError(t, engine.FlushWriteBehind())
-		require.NoError(t, engine.SetNodeManuallySuppressed(hidden, true))
+		require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, string(hidden), true))
 
 		data, err := encodeRecoveryPayload(WALNodeData{Node: &Node{ID: NodeID(raw), Labels: []string{"Replayed"}}})
 		require.NoError(t, err)

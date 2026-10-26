@@ -74,7 +74,7 @@ func testWALPropertyEpochCleanStop(t *testing.T, walFirst bool) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("close"))
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "close:a", Properties: map[string]any{"alpha": int64(2)}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "close:a", Properties: map[string]any{"alpha": int64(2)}}, ClientNodeEdits))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	path := filepath.Join(logDir, "wal.log")

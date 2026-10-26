@@ -1576,8 +1576,8 @@ func TestNamespacedEngine_UnprefixFallback(t *testing.T) {
 	defer inner.Close()
 
 	ns := NewNamespacedEngine(inner, "mydb")
-	assert.Equal(t, NodeID("mydb:n1"), ns.prefixNodeID("mydb:n1"))
-	assert.Equal(t, EdgeID("mydb:e1"), ns.prefixEdgeID("mydb:e1"))
+	assert.Equal(t, NodeID("mydb:n1"), ns.PrefixNodeID("mydb:n1"))
+	assert.Equal(t, EdgeID("mydb:e1"), ns.PrefixEdgeID("mydb:e1"))
 
 	// IDs that don't match the namespace should be returned as-is
 	assert.Equal(t, NodeID("otherdb:n1"), ns.toUserNode(&Node{ID: "otherdb:n1"}, nodeUserView{}).ID)

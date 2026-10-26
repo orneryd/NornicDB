@@ -78,6 +78,10 @@ func (b *BadgerEngine) initializeCounts() error {
 }
 
 func (b *BadgerEngine) NodeCount() (int64, error) {
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return 0, err
+	}
+
 	b.totalCountWriteMu.RLock()
 	defer b.totalCountWriteMu.RUnlock()
 	if err := b.ensureOpen(false); err != nil {
@@ -109,6 +113,14 @@ type adjacencyCountRequest struct {
 // the degree API convention of returning the count while discarding view errors
 // (HARD_CONVERGENCE.md item 5: node/edge twin consolidation).
 func (b *BadgerEngine) countByPrefix(prefix string, keyType byte, cache map[string]int64, adjacency ...adjacencyCountRequest) (int64, error) {
+	readPrefix := prefix
+	if len(adjacency) > 0 {
+		readPrefix = string(adjacency[0].nodeID)
+	}
+	if err := b.pendingPrefixConflict(readPrefix); err != nil {
+		return 0, err
+	}
+
 	if len(adjacency) == 0 {
 		if err := b.ensureOpen(false); err != nil {
 			return 0, err
@@ -175,6 +187,10 @@ func (b *BadgerEngine) NodeCountByPrefix(prefix string) (int64, error) {
 // EdgeCount returns the total number of valid, decodable edges.
 // This is consistent with AllEdges() - only counts edges that can be successfully decoded.
 func (b *BadgerEngine) EdgeCount() (int64, error) {
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return 0, err
+	}
+
 	b.totalCountWriteMu.RLock()
 	defer b.totalCountWriteMu.RUnlock()
 	if err := b.ensureOpen(false); err != nil {
@@ -240,7 +256,9 @@ func (b *BadgerEngine) Close() error {
 	}
 	// The suppressions the deletes so far ended are deleted before the store
 	// closes (forgetManualSuppression).
-	b.endSuppressions()
+	b.writeBarrier.RLock()
+	b.endSuppressions(&entityWriteContext{engine: b, owner: newEngineWriteLockOwner()})
+	b.writeBarrier.RUnlock()
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
 	// be parked behind a barrier this goroutine is about to hold. The call
@@ -309,6 +327,7 @@ func (b *BadgerEngine) Close() error {
 //
 // b.mu must be held and b.closed must already be true.
 func (b *BadgerEngine) releaseClosedStateLocked() {
+	b.transitionPending(namespaceDropRelease, "", nil)
 	b.db = nil
 	b.nodeCache = nil
 	b.queryNodeCache = nil
@@ -374,6 +393,10 @@ func (b *BadgerEngine) Size() (lsm, vlog int64) {
 // Badger batch commits batch by batch, so it always makes progress. Claim
 // serialization remains with the worker.
 func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
+	if b.pendingNamespaceConflict("") != nil {
+		return nil
+	}
+
 	if b.ensureOpen(false) != nil {
 		return nil
 	}
@@ -503,15 +526,15 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 // MarkNodeEmbedded removes a node from the pending embeddings index.
 // Call this after successfully embedding a node.
 func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
-	_ = b.withUpdate(func(txn *badger.Txn) error {
+	_ = b.withPublishingUpdate(func(txn *badger.Txn) error {
 		return txn.Delete(pendingEmbedKey(nodeID))
-	})
+	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))} }, nil)
 }
 
 // AddToPendingEmbeddings adds a node to the pending embeddings index.
 // Call this when creating a node that needs embedding.
 func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
-	_ = b.withUpdate(func(txn *badger.Txn) error {
+	_ = b.withPublishingUpdate(func(txn *badger.Txn) error {
 		item, err := txn.Get(nodeKey(nodeID))
 		if err == nil {
 			var node *Node
@@ -529,7 +552,7 @@ func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
 			return err
 		}
 		return b.setPendingEmbeddingInTxn(txn, nodeID)
-	})
+	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))} }, nil)
 }
 
 // PendingEmbeddingsCount returns the number of nodes waiting for embedding.
@@ -780,7 +803,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		v = visibleRead
 	}
 	capture := func(w *WriteBehindBuffer) {
-		overlay, touched = b.bufferedAllNodes(w, v)
+		overlay, touched = b.bufferedAllNodes(w, v, opts.Prefix)
 	}
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
@@ -803,7 +826,7 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 	}
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		return b.streamNodesWithOptionsInTxn(ctx, txn, opts, emit)
-	})
+	}, readViewOptions{scope: opts.Prefix, scopeKind: readPrefixScope})
 	if err != nil {
 		return err
 	}
@@ -846,7 +869,7 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 		var node *Node
 		var err error
 		if opts.QueryNodes && opts.Projection == nil && !opts.WithEmbeddings {
-			node, err = b.readQueryNodeItemInTxn(txn, item, NodeID(item.Key()[1:]))
+			node, err = b.readNodeItemInTxn(txn, item, NodeID(item.Key()[1:]), nodeItemQueryMetadata)
 		} else {
 			err = item.Value(func(val []byte) error {
 				key := item.Key()

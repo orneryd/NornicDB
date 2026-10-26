@@ -129,6 +129,32 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error, entities ...wr
 	return b.commitEngineWrite(func(cw *commitWriter) error { return cw.writeOnce(fn) })
 }
 
+// withPublishingUpdate binds a memory-only delta to the existing atomic writer.
+// keys reads the prior/written images captured by fn, after fn succeeds.
+func (b *BadgerEngine) withPublishingUpdate(fn func(*badger.Txn) error, publish func(), keys func() []any, notification *commitNotification, stages ...func(*commitWriter) error) error {
+	return b.commitEngineWrite(func(cw *commitWriter) error {
+		cw.notification = notification
+		if err := cw.writeOnce(fn); err != nil {
+			return err
+		}
+		cw.publish = publish
+		if keys != nil {
+			cw.publishKeys = keys()
+		}
+		for _, stage := range stages {
+			if err := stage(cw); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+type engineWriteOptions struct {
+	units     []func(*badger.Txn) error
+	lifecycle *lifecycleWrite
+}
+
 // commitEngineWrite is the one commit of the engine's own writes (withUpdate callbacks or repeatable units): write fills the commit writer, which then commits. A
 // failure rolls back any batches a large commit already wrote.
 //
@@ -137,7 +163,14 @@ func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error, entities ...wr
 // matching Neo4j's token-before-entity invariant), and the numeric-ID
 // counter high-water marks are persisted after the commit, in a separate
 // transaction, so concurrent writers never conflict on the shared keys.
-func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, units ...[]func(*badger.Txn) error) error {
+func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, options ...engineWriteOptions) error {
+	var option engineWriteOptions
+	if len(options) > 0 {
+		option = options[0]
+	}
+	if option.lifecycle != nil && (option.lifecycle.b != b || !option.lifecycle.suppressions) {
+		return ErrInvalidData
+	}
 	db, err := b.beginHelperTxn()
 	if err != nil {
 		return err
@@ -145,7 +178,14 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, uni
 	defer b.txnWG.Done()
 	var nodeMax, edgeMax uint64
 	err = recoverBadgerClosedPanic(func() error {
-		txn, readTs, err := db.beginTxn(true)
+		var txn *badger.Txn
+		var readTs uint64
+		if option.lifecycle != nil {
+			readTs = db.oracle.beginReadHeld()
+			txn = db.newTxnAt(readTs, true)
+		} else {
+			txn, readTs, err = db.beginTxn(true)
+		}
 		if err != nil {
 			return err
 		}
@@ -161,8 +201,8 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, uni
 			return err
 		}
 		var writeErr error
-		if len(units) > 0 {
-			for _, unit := range units[0] {
+		if option.units != nil {
+			for _, unit := range option.units {
 				if writeErr = cw.write(unit); writeErr != nil {
 					break
 				}

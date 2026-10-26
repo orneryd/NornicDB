@@ -57,7 +57,7 @@ func TestStorageSizeTracksAcknowledgedBodies(t *testing.T) {
 									return err
 								}
 								node.Properties["payload"] = payload
-								return tx.UpdateNode(node)
+								return tx.UpdateGraphNode(node, storage.ClientNodeEdits)
 							}
 							edge, err := tx.GetStoredEdge("nornic:r")
 							if err != nil {
@@ -91,14 +91,14 @@ func TestStorageSizeTracksAcknowledgedBodies(t *testing.T) {
 					requireRecount("update")
 					if hidden {
 						if kind == "node" {
-							require.NoError(t, base.SetNodeManuallySuppressed("nornic:n", true))
+							require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, "nornic:n", true))
 						} else {
-							require.NoError(t, base.SetEdgeManuallySuppressed("nornic:r", true))
+							require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, "nornic:r", true))
 						}
 					}
 					write(func(tx *storage.BadgerTransaction) error {
 						if kind == "node" {
-							return tx.DeleteNode("nornic:n")
+							return tx.DeleteGraphNode("nornic:n", storage.CascadeEdges)
 						}
 						return tx.DeleteEdge("nornic:r")
 					})

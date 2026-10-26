@@ -89,8 +89,8 @@ func TestSchemaTransactionRejectsAllEntityMutations(t *testing.T) {
 	_, err = tx.CreateNode(&Node{ID: "schema_mutations:node"})
 	require.ErrorContains(t, err, "ForbiddenDueToTransactionType")
 	for _, mutation := range []func() error{
-		func() error { return tx.UpdateNode(&Node{ID: "schema_mutations:node"}) },
-		func() error { return tx.DeleteNode("schema_mutations:node") },
+		func() error { return tx.UpdateGraphNode(&Node{ID: "schema_mutations:node"}, ClientNodeEdits) },
+		func() error { return tx.DeleteGraphNode("schema_mutations:node", CascadeEdges) },
 		func() error { return tx.CreateEdge(&Edge{ID: "schema_mutations:edge"}) },
 		func() error { return tx.BulkCreateEdges([]*Edge{{ID: "schema_mutations:edge"}}) },
 		func() error { return tx.UpdateEdge(&Edge{ID: "schema_mutations:edge"}) },

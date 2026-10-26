@@ -132,7 +132,7 @@ func TestTransactionHighPerformanceCascadePreservesPostValidationPeerWrite(t *te
 	writer, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = writer.Rollback() })
-	require.NoError(t, writer.DeleteNode(source))
+	require.NoError(t, writer.DeleteGraphNode(source, CascadeEdges))
 	require.NoError(t, writer.SetMetadata(map[string]interface{}{"validation_publication_control": true}))
 	barrier.target = writer.ID
 	var release sync.Once

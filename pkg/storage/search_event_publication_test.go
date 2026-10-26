@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -78,10 +79,10 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 	requirePublished(t, events, "edge updated test:r", "UpdateEdge")
 
 	for _, suppressed := range []bool{true, false} {
-		require.NoError(t, engine.SetNodeManuallySuppressed("test:a", suppressed))
-		requirePublished(t, events, "node updated test:a", "SetNodeManuallySuppressed")
-		require.NoError(t, engine.SetEdgeManuallySuppressed("test:r", suppressed))
-		requirePublished(t, events, "edge updated test:r", "SetEdgeManuallySuppressed")
+		require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:a", suppressed))
+		requirePublished(t, events, "node updated test:a", "SetManualSuppression(node)")
+		require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:r", suppressed))
+		requirePublished(t, events, "edge updated test:r", "SetManualSuppression(edge)")
 	}
 
 	stored, err := engine.GetNode("test:a")
@@ -93,9 +94,51 @@ func TestStorageMutatorsPublishTheirEvents(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:a", Properties: map[string]any{"v": 2}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"v": 2}}, ClientNodeEdits))
 	require.NoError(t, tx.Commit())
 	requirePublished(t, events, "node updated test:a", "a transaction commit")
+	for _, images := range []EntityImagePolicy{ClientNodeEdits, StoredNodeImages} {
+		for _, abort := range []bool{true, false} {
+			tx, err := BeginEntityTransaction(engine, CommitModeExplicit)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = tx.Rollback() })
+			require.NoError(t, tx.SetNamespace("test"))
+			prior, err := engine.GetStoredNode("test:a")
+			require.NoError(t, err)
+			require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"prepared": true}}, images))
+			prepared, err := tx.PrepareEntityCommit(context.Background(), tx.ID)
+			require.NoError(t, err)
+			t.Cleanup(prepared.Abort)
+			require.False(t, events.has("node updated test:a"), "preparation must not publish before acceptance")
+			if abort {
+				prepared.Abort()
+				require.False(t, events.has("node updated test:a"), "discarded preparation must not publish")
+				actual, err := engine.GetStoredNode("test:a")
+				require.NoError(t, err)
+				require.Equal(t, prior, actual, "discarded preparation must preserve the complete stored image")
+			} else {
+				require.NoError(t, prepared.Commit(nil))
+				func() {
+					events.mu.Lock()
+					defer events.mu.Unlock()
+					require.Len(t, events.events, 1, "one prepared commit publishes exactly once")
+				}()
+				requirePublished(t, events, "node updated test:a", "a prepared transaction commit")
+			}
+		}
+	}
+	for _, mode := range []NodeDeletionMode{CascadeEdges, RejectConnected} {
+		_, err := engine.CreateNode(&Node{ID: "test:tx-delete"})
+		require.NoError(t, err)
+		events.reset()
+		tx, err := engine.BeginTransaction()
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = tx.Rollback() })
+		require.NoError(t, tx.DeleteGraphNode("test:tx-delete", mode))
+		require.False(t, events.has("node deleted test:tx-delete"), "staging deletion must not publish before commit")
+		require.NoError(t, tx.Commit())
+		requirePublished(t, events, "node deleted test:tx-delete", "a transaction deletion commit")
+	}
 
 	require.NoError(t, engine.UpdateNode(&Node{ID: "test:a", ChunkEmbeddings: [][]float32{{1, 0}}}))
 	events.reset()

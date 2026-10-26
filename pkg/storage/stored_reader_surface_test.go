@@ -76,8 +76,8 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 	} {
 		require.NoError(t, base.CreateEdge(edge))
 	}
-	require.NoError(t, base.SetNodeManuallySuppressed("ns:h", true))
-	require.NoError(t, base.SetEdgeManuallySuppressed("ns:x", true))
+	require.NoError(t, base.SetManualSuppression(StoredEntityNodeKind, "ns:h", true))
+	require.NoError(t, base.SetManualSuppression(StoredEntityEdgeKind, "ns:x", true))
 	ctx := context.Background()
 
 	t.Run("physical readers", func(t *testing.T) {
@@ -210,7 +210,7 @@ func TestStoredReaderSurfaceIncludesHiddenEntities(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, tx.DeleteEdge("ns:r"))
 		require.NoError(t, tx.CreateEdge(&Edge{ID: "ns:y", StartNode: "ns:a", EndNode: "ns:b", Type: "LINK"}))
-		require.NoError(t, tx.DeleteNode("ns:iso"))
+		require.NoError(t, tx.DeleteGraphNode("ns:iso", CascadeEdges))
 		summary := tx.PendingChanges(false)
 		require.Equal(t, "ns", summary.Namespace)
 		require.Positive(t, summary.Operations)

@@ -4,6 +4,9 @@ import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
+	"github.com/dgraph-io/badger/v4"
+	"github.com/vmihailenco/msgpack/v5"
+
 	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/stretchr/testify/require"
 )
@@ -294,5 +297,57 @@ func TestAccessMeta_WithVarianceTracker(t *testing.T) {
 	}
 	if ks.Variance.WindowIdx != 3 {
 		t.Errorf("expected WindowIdx 3, got %d", ks.Variance.WindowIdx)
+	}
+}
+
+func TestAccessMetaReadSelectionAndErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		id      string
+		entry   knowledgepolicy.AccessMetaEntry
+		corrupt bool
+		point   bool
+		scan    bool
+	}{
+		{name: "access state", id: "test:entity", entry: knowledgepolicy.AccessMetaEntry{HasAccessState: true}, point: true, scan: true},
+		{name: "catalog only", id: "test:entity", entry: knowledgepolicy.AccessMetaEntry{HasIndexKeys: true}},
+		{name: "tombstone", id: "test:entity", entry: knowledgepolicy.AccessMetaEntry{IndexTombstone: true}, point: true},
+		{name: "internal work", id: policyWorkMetaIDPrefix + "work", entry: knowledgepolicy.AccessMetaEntry{HasAccessState: true}, point: true},
+		{name: "corrupt entity", id: "test:entity", corrupt: true},
+		{name: "corrupt internal work", id: policyWorkMetaIDPrefix + "work", corrupt: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newTestEngine(t)
+			data, err := msgpack.Marshal(&tc.entry)
+			require.NoError(t, err)
+			if tc.corrupt {
+				data = []byte{0xc1}
+			}
+			require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error { return txn.Set(accessMetaKey(tc.id), data) }))
+			point, err := engine.GetAccessMeta(tc.id)
+			if tc.corrupt {
+				require.Error(t, err)
+				require.Nil(t, point)
+			} else {
+				require.NoError(t, err)
+				if tc.point {
+					require.Equal(t, &tc.entry, point)
+				} else {
+					require.Nil(t, point)
+				}
+			}
+			entries, err := engine.ScanAccessMeta()
+			if tc.corrupt && tc.id[0] != 0 {
+				require.Error(t, err)
+				require.Nil(t, entries)
+			} else {
+				require.NoError(t, err)
+				if tc.scan {
+					require.Equal(t, []*knowledgepolicy.AccessMetaEntry{&tc.entry}, entries)
+				} else {
+					require.Nil(t, entries)
+				}
+			}
+		})
 	}
 }

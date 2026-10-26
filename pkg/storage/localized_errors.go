@@ -73,9 +73,9 @@ func (err *NodeStillConnectedError) BoltErrorDetail() string { return "DeleteCon
 
 // ConnectedNodeDeleter is a store that can delete a node that relationships
 // still connect, failing the commit unless they are deleted first
-// (BadgerTransaction.DeleteConnectedNode).
+// (BadgerTransaction.DeleteGraphNode with RejectConnected).
 type ConnectedNodeDeleter interface {
-	DeleteConnectedNode(id NodeID) error
+	DeleteGraphNode(id NodeID, mode NodeDeletionMode) error
 }
 
 // IncidentEdgeLister is a store that lists every relationship connecting a

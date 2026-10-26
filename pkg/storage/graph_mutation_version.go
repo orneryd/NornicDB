@@ -73,11 +73,19 @@ func graphMutationVersion(engine Engine, namespace string) (uint64, bool) {
 
 // GraphMutationVersion reports all graph mutations published by this engine.
 func (b *BadgerEngine) GraphMutationVersion() (uint64, bool) {
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return 0, false
+	}
+
 	return b.graphMutationVersions.read(""), true
 }
 
 // GraphMutationVersionInNamespace reports graph mutations for one database.
 func (b *BadgerEngine) GraphMutationVersionInNamespace(namespace string) (uint64, bool) {
+	if err := b.pendingNamespaceConflict(namespace); err != nil {
+		return 0, false
+	}
+
 	return b.graphMutationVersions.read(namespace), true
 }
 

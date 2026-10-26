@@ -147,7 +147,7 @@ func TestBulkOperations_ClosedEngine(t *testing.T) {
 	// No namespace to load: the transaction itself reports the closed engine.
 	require.ErrorIs(t, engine.BulkDeleteEdges([]EdgeID{""}), ErrStorageClosed)
 	require.ErrorIs(t, engine.BulkDeleteNodes([]NodeID{"test:n"}), ErrStorageClosed)
-	require.ErrorIs(t, engine.replaceSeparateEmbeddingChunks("test:n", nil), ErrStorageClosed)
+	require.ErrorIs(t, engine.replaceSeparateEmbeddingChunks("test:n", nil, nil), ErrStorageClosed)
 }
 
 func TestEncodeFailuresAreLocalized(t *testing.T) {
@@ -167,7 +167,7 @@ func TestEncodeFailuresAreLocalized(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	defer func() { _ = tx.Rollback() }()
-	require.ErrorContains(t, tx.UpdateNode(&Node{ID: nodes[0].ID, Labels: []string{"Bulk"}, Properties: bad}), "failed to encode node")
+	require.ErrorContains(t, tx.UpdateGraphNode(&Node{ID: nodes[0].ID, Labels: []string{"Bulk"}, Properties: bad}, ClientNodeEdits), "failed to encode node")
 	require.ErrorContains(t, tx.CreateEdge(&Edge{ID: "test:enc-e2", StartNode: nodes[0].ID, EndNode: nodes[1].ID, Type: "R", Properties: bad}), "failed to encode edge")
 	require.ErrorContains(t, tx.UpdateEdge(&Edge{ID: edge.ID, StartNode: nodes[0].ID, EndNode: nodes[1].ID, Type: "R", Properties: bad}), "failed to encode edge")
 }
@@ -200,10 +200,10 @@ func TestEngineWriteUnits(t *testing.T) {
 	engine := openLargeCommitTestEngine(t, t.TempDir())
 	defer engine.Close()
 	failure := errors.New("unit failed")
-	err := engine.commitEngineWrite(nil, []func(txn *badger.Txn) error{
+	err := engine.commitEngineWrite(nil, engineWriteOptions{units: []func(txn *badger.Txn) error{
 		func(txn *badger.Txn) error { return txn.Set([]byte("unit-a"), []byte("a")) },
 		func(*badger.Txn) error { return failure },
-	})
+	}})
 	require.ErrorIs(t, err, failure)
 	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 		_, err := txn.Get([]byte("unit-a"))
@@ -211,7 +211,7 @@ func TestEngineWriteUnits(t *testing.T) {
 		return nil
 	}))
 	// Nothing stored and nothing to store is not a write.
-	require.NoError(t, engine.replaceSeparateEmbeddingChunks("test:no-chunks", nil))
+	require.NoError(t, engine.replaceSeparateEmbeddingChunks("test:no-chunks", nil, nil))
 }
 
 type failingBulkEngine struct {

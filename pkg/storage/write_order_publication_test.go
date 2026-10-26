@@ -110,7 +110,7 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 			buffered := func() error {
 				return runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
 					if kind == "node" {
-						return tx.UpdateNode(listenerOrderNode("buffered"))
+						return tx.UpdateGraphNode(listenerOrderNode("buffered"), ClientNodeEdits)
 					}
 					return tx.UpdateEdge(listenerOrderEdge("buffered"))
 				}, nil)
@@ -137,7 +137,9 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 				case "node/explicit-update-after-buffered-update":
 					if writeErr = buffered(); writeErr == nil {
 						writing.Store(true)
-						writeErr = runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error { return tx.UpdateNode(listenerOrderNode("explicit")) }, nil)
+						writeErr = runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error {
+							return tx.UpdateGraphNode(listenerOrderNode("explicit"), ClientNodeEdits)
+						}, nil)
 					}
 				case "node/direct-update-no-buffer":
 					writing.Store(true)
@@ -147,7 +149,9 @@ func TestListenerWriteBackAfterOrderedWrites(t *testing.T) {
 					writeErr = engine.UpdateEdge(listenerOrderEdge("direct"))
 				case "node/explicit-update-no-buffer":
 					writing.Store(true)
-					writeErr = runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error { return tx.UpdateNode(listenerOrderNode("explicit")) }, nil)
+					writeErr = runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error {
+						return tx.UpdateGraphNode(listenerOrderNode("explicit"), ClientNodeEdits)
+					}, nil)
 				}
 				if writeErr == nil {
 					writeErr = engine.FlushWriteBehind()
@@ -210,7 +214,9 @@ func TestReplayListenerDoesNotHoldUpOrderedWrites(t *testing.T) {
 		}
 		listenerErr = engine.UpdateNode(listenerOrderNode("listener"))
 	})
-	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error { return tx.UpdateNode(listenerOrderNode("acknowledged")) }, nil))
+	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
+		return tx.UpdateGraphNode(listenerOrderNode("acknowledged"), ClientNodeEdits)
+	}, nil))
 
 	mark := lockHolds.mark()
 	var writeErr, flushErr error
@@ -256,7 +262,9 @@ func TestOrderedWriteWaitsForAnInFlightReplay(t *testing.T) {
 			_, err := engine.CreateNode(listenerOrderNode("initial"))
 			require.NoError(t, err)
 			require.NoError(t, engine.FlushWriteBehind())
-			require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error { return tx.UpdateNode(listenerOrderNode("acknowledged")) }, nil))
+			require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
+				return tx.UpdateGraphNode(listenerOrderNode("acknowledged"), ClientNodeEdits)
+			}, nil))
 			slow.Store(true)
 			flushed := make(chan error, 1)
 			go func() { flushed <- engine.FlushWriteBehind() }()
@@ -267,7 +275,9 @@ func TestOrderedWriteWaitsForAnInFlightReplay(t *testing.T) {
 			case "direct-update":
 				err = engine.UpdateNode(listenerOrderNode("synchronous"))
 			case "explicit-update":
-				err = runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error { return tx.UpdateNode(listenerOrderNode("synchronous")) }, nil)
+				err = runPublicationTransaction(engine, false, func(tx *BadgerTransaction) error {
+					return tx.UpdateGraphNode(listenerOrderNode("synchronous"), ClientNodeEdits)
+				}, nil)
 			}
 			require.NoError(t, err)
 			require.NoError(t, <-flushed)
@@ -302,7 +312,9 @@ func TestListenerWriteBackAfterSuppressionRewrite(t *testing.T) {
 			listenerErr = engine.UpdateNode(node([]string{"Doc"}, "listener"))
 		}
 	})
-	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error { return tx.UpdateNode(node([]string{"Doc"}, "relabelled")) }, nil))
+	require.NoError(t, runPublicationTransaction(engine, true, func(tx *BadgerTransaction) error {
+		return tx.UpdateGraphNode(node([]string{"Doc"}, "relabelled"), ClientNodeEdits)
+	}, nil))
 
 	mark := lockHolds.mark()
 	var rewriteErr error

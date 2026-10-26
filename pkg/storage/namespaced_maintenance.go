@@ -33,39 +33,13 @@ func (n *NamespacedEngine) MarkCleanShutdown(ctx context.Context) error {
 // NodeCountByPrefix counts nodes in this namespace whose ID starts with prefix.
 // The caller-supplied prefix is namespace-relative.
 func (n *NamespacedEngine) NodeCountByPrefix(prefix string) (int64, error) {
-	if stats, ok := n.inner.(PrefixStatsEngine); ok {
-		return stats.NodeCountByPrefix(string(n.prefixNodeID(NodeID(prefix))))
-	}
-	nodes, err := n.AllNodes()
-	if err != nil {
-		return 0, err
-	}
-	var count int64
-	for _, node := range nodes {
-		if node != nil && strings.HasPrefix(string(node.ID), prefix) {
-			count++
-		}
-	}
-	return count, nil
+	return namespacedPrefixCount(n, prefix, PrefixStatsEngine.NodeCountByPrefix, n.AllNodes, func(node *Node) string { return string(node.ID) })
 }
 
 // EdgeCountByPrefix counts edges in this namespace whose ID starts with prefix.
 // The caller-supplied prefix is namespace-relative.
 func (n *NamespacedEngine) EdgeCountByPrefix(prefix string) (int64, error) {
-	if stats, ok := n.inner.(PrefixStatsEngine); ok {
-		return stats.EdgeCountByPrefix(string(n.prefixEdgeID(EdgeID(prefix))))
-	}
-	edges, err := n.AllEdges()
-	if err != nil {
-		return 0, err
-	}
-	var count int64
-	for _, edge := range edges {
-		if edge != nil && strings.HasPrefix(string(edge.ID), prefix) {
-			count++
-		}
-	}
-	return count, nil
+	return namespacedPrefixCount(n, prefix, PrefixStatsEngine.EdgeCountByPrefix, n.AllEdges, func(edge *Edge) string { return string(edge.ID) })
 }
 
 // GetSchemaForNamespace forwards the per-namespace schema lookup.
@@ -178,7 +152,7 @@ func (n *NamespacedEngine) UpdateNodeEmbeddingSidecar(node *Node) error {
 		return fmt.Errorf("storage engine %T does not support embedding sidecar writes", n.inner)
 	}
 	namespaced := copyNode(node)
-	namespaced.ID = n.prefixNodeID(node.ID)
+	namespaced.ID = n.PrefixNodeID(node.ID)
 	return sidecar.UpdateNodeEmbeddingSidecar(namespaced)
 }
 

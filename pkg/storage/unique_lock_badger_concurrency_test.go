@@ -44,7 +44,7 @@ func TestBadgerUniqueConstraintCommit_DisjointFunctionBatchesAreParallel(t *test
 		}
 		for key := range badgerUniqueLockKeysPerWriter {
 			node := badgerUniqueFunctionNode(writer, key, 1)
-			if err := tx.UpdateNode(node); err != nil {
+			if err := tx.UpdateGraphNode(node, ClientNodeEdits); err != nil {
 				t.Fatalf("UpdateNode writer %d key %d: %v", writer, key, err)
 			}
 		}
@@ -151,11 +151,11 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 		if err := tx.SetDeferredConstraintValidation(true); err != nil {
 			t.Fatalf("SetDeferredConstraintValidation revision %d: %v", index+1, err)
 		}
-		if err := tx.UpdateNode(&Node{
+		if err := tx.UpdateGraphNode(&Node{
 			ID:         nodeID,
 			Labels:     []string{"Function"},
 			Properties: map[string]interface{}{"uid": uid, "revision": index + 1},
-		}); err != nil {
+		}, ClientNodeEdits); err != nil {
 			t.Fatalf("UpdateNode revision %d: %v", index+1, err)
 		}
 		transactions[index] = tx
@@ -209,11 +209,11 @@ func TestBadgerUniqueConstraintCommit_SameUIDRetryPreservesExactness(t *testing.
 	if err := retry.SetDeferredConstraintValidation(true); err != nil {
 		t.Fatalf("SetDeferredConstraintValidation retry: %v", err)
 	}
-	if err := retry.UpdateNode(&Node{
+	if err := retry.UpdateGraphNode(&Node{
 		ID:         nodeID,
 		Labels:     []string{"Function"},
 		Properties: map[string]interface{}{"uid": uid, "revision": loser.revision},
-	}); err != nil {
+	}, ClientNodeEdits); err != nil {
 		t.Fatalf("UpdateNode retry: %v", err)
 	}
 	if err := retry.Commit(); err != nil {
@@ -263,7 +263,7 @@ func BenchmarkBadgerUniqueConstraintCommit_DisjointFunctionBatches(b *testing.B)
 				b.Fatalf("SetDeferredConstraintValidation writer %d: %v", writer, err)
 			}
 			for key := range badgerUniqueLockKeysPerWriter {
-				if err := tx.UpdateNode(badgerUniqueFunctionNode(writer, key, iteration+1)); err != nil {
+				if err := tx.UpdateGraphNode(badgerUniqueFunctionNode(writer, key, iteration+1), ClientNodeEdits); err != nil {
 					b.Fatalf("UpdateNode writer %d key %d: %v", writer, key, err)
 				}
 			}

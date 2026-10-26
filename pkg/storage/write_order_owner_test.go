@@ -108,7 +108,7 @@ func TestMVCCWritersApplyAcknowledgedCommitsFirst(t *testing.T) {
 	tx, err := e.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits))
 	require.NoError(t, tx.Commit())
 	require.NotZero(t, e.writeBehind.PendingOps(), "the update is acknowledged, not applied")
 

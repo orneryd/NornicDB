@@ -56,6 +56,14 @@ func filterEdgesBetween(edges []*Edge, startID, endID NodeID, edgeType string, p
 // hides that row, and buffered live edges of the type are appended
 // (PR #1043 read-overlay parity — MERGE identity reads).
 func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(endID)); err != nil {
+		return nil, err
+	}
+
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(startID)); err != nil {
+		return nil, err
+	}
+
 	if b.writeBehind == nil {
 		return b.committedMatchEdgesBetween(startID, endID, edgeType, properties, match)
 	}
@@ -64,7 +72,7 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 	var sourceDeleted, targetDeleted bool
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
 		live, suppressed, sourceDeleted, targetDeleted = b.bufferedEdgesBetween(w, visibleRead, startID, endID)
-	})
+	}, readViewOptions{scope: namespaceForNodeID(startID)})
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +274,7 @@ func (tx *BadgerTransaction) MatchEdgesBetween(startID, endID NodeID, edgeType s
 // MatchEdgesBetween matches the engine's edges with this namespace's IDs.
 func (n *NamespacedEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	var candidate Edge
-	edges, err := MatchEdgesBetween(n.inner, n.prefixNodeID(startID), n.prefixNodeID(endID), edgeType, properties, func(edge *Edge) bool {
+	edges, err := MatchEdgesBetween(n.inner, n.PrefixNodeID(startID), n.PrefixNodeID(endID), edgeType, properties, func(edge *Edge) bool {
 		if !n.hasEdgePrefix(edge.ID) {
 			return false
 		}
