@@ -47,8 +47,9 @@ func TestAccessMetaCustomValuesRoundTripThroughFlush(t *testing.T) {
 				acc.IncrementCustom(id, "views", value)
 				acc.SetTimestamp(id, "seenAt", value)
 				flusher.Flush()
-				stored, err := engine.GetAccessMeta(id)
+				storedResult, err := engine.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: id})
 				require.NoError(t, err)
+				stored := storedResult.Entry
 				require.NotNil(t, stored, "value %d", value)
 				t.Logf("%d: counter decodes as %T, timestamp as %T", value, stored.Overflow["views"], stored.Overflow["seenAt"])
 				require.IsType(t, int64(0), stored.Overflow["views"], "counter %d decoded as %T", value, stored.Overflow["views"])
@@ -62,8 +63,9 @@ func TestAccessMetaCustomValuesRoundTripThroughFlush(t *testing.T) {
 				acc.IncrementCustom(id, "views", 5)
 				acc.SetTimestamp(id, "seenAt", 1)
 				flusher.Flush()
-				stored, err = engine.GetAccessMeta(id)
+				storedResult, err = engine.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: id})
 				require.NoError(t, err)
+				stored = storedResult.Entry
 				require.Equal(t, value+5, stored.Overflow["views"], "counter %d after +5", value)
 				wantSeen := value
 				if value <= 0 {

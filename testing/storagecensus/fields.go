@@ -363,13 +363,20 @@ func (a *analysis) fieldWrites() []fieldWrite {
 			}
 		}
 	}
+	sortFieldWrites(out)
+	return out
+}
+
+func sortFieldWrites(out []fieldWrite) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].field != out[j].field {
 			return out[i].field < out[j].field
 		}
-		return out[i].pos < out[j].pos
+		if out[i].pos != out[j].pos {
+			return out[i].pos < out[j].pos
+		}
+		return out[i].fn < out[j].fn
 	})
-	return out
 }
 
 // fieldReads finds every read of a state field: a load through its

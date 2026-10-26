@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 	"github.com/stretchr/testify/require"
 )
 
@@ -504,8 +505,9 @@ func TestRunOnStartMigrations_ChainsV0ThroughV2(t *testing.T) {
 	require.Equal(t, storageVersionCurrent, eng.storageVersion)
 
 	// V0→V1 ran: access metadata for the legacy node must exist.
-	meta, err := eng.GetAccessMeta("test:legacy")
+	metaResult, err := eng.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:legacy"})
 	require.NoError(t, err)
+	meta := metaResult.Entry
 	require.NotNil(t, meta)
 	require.Equal(t, int64(99), meta.Fixed.AccessCount)
 }

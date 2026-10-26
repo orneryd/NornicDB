@@ -227,8 +227,9 @@ func TestLegacyPolicyMetadataTransferBranches(t *testing.T) {
 		require.NoError(t, err)
 		writeRawValue(t, engine, append([]byte{0x11}, []byte(entityID)...), value)
 		require.NoError(t, engine.migrateLegacyPolicyMetadata(context.Background()))
-		got, err := engine.GetAccessMeta(entityID)
+		gotResult, err := engine.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: entityID})
 		require.NoError(t, err)
+		got := gotResult.Entry
 		require.NotNil(t, got)
 		require.Equal(t, int64(42), got.Fixed.AccessCount)
 	})

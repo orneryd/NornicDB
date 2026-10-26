@@ -71,7 +71,8 @@ func (b *BadgerEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string,
 	var suppressed map[EdgeID]struct{}
 	var sourceDeleted, targetDeleted bool
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-		live, suppressed, sourceDeleted, targetDeleted = b.bufferedEdgesBetween(w, visibleRead, startID, endID)
+		pendingBetween := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: startID, target: endID})
+		live, suppressed, sourceDeleted, targetDeleted = pendingBetween.edges, pendingBetween.suppressed, pendingBetween.sourceDeleted, pendingBetween.targetDeleted
 	}, readViewOptions{scope: namespaceForNodeID(startID)})
 	if err != nil {
 		return nil, err
@@ -154,7 +155,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 			// a match is returned as a copy).
 			if cached, hit := b.cacheLoadEdge(edgeID); hit && b.writeBehind == nil {
 				if cached.StartNode != startID || cached.EndNode != endID || cached.Type != edgeType ||
-					b.filterEdgeByDecay(cached, nowNanos) || !match(cached) {
+					b.filterEntityByDecay(visibleRead, cached, nowNanos) || !match(cached) {
 					continue
 				}
 				matched = append(matched, copyEdge(cached))
@@ -176,7 +177,7 @@ func (b *BadgerEngine) committedMatchEdgesBetween(startID, endID NodeID, edgeTyp
 					return nil
 				}
 				candidate.StartNode, candidate.EndNode = startID, endID
-				if candidate.Type != edgeType || b.filterEdgeByDecay(candidate, nowNanos) || !match(candidate) {
+				if candidate.Type != edgeType || b.filterEntityByDecay(visibleRead, candidate, nowNanos) || !match(candidate) {
 					return nil
 				}
 				edge, err := b.decodeEdgeBodyByID(data, edgeID)

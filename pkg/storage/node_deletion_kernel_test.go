@@ -44,8 +44,9 @@ func TestDirectDeleteKernelCatalogAndRollback(t *testing.T) {
 			require.NoError(t, err)
 			original := &knowledgepolicy.AccessMetaEntry{TargetID: string(id), TargetScope: knowledgepolicy.ScopeNode, HasAccessState: true, LastMutatedAt: 123, HasIndexKeys: true, IndexKeys: [][]byte{{1, 2}}, Deindexed: true}
 			require.NoError(t, b.PutAccessMeta(string(id), original))
-			original, e := b.GetAccessMeta(string(id))
+			originalResult, e := b.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: string(id)})
 			require.NoError(t, e)
+			originalEntry := originalResult.Entry
 			if commit {
 				require.NoError(t, b.DeleteNode(id))
 			} else {
@@ -54,8 +55,9 @@ func TestDirectDeleteKernelCatalogAndRollback(t *testing.T) {
 				require.NoError(t, tx.DeleteGraphNode(id, CascadeEdges))
 				require.NoError(t, tx.Rollback())
 			}
-			meta, e := b.GetAccessMeta(string(id))
+			metaResult, e := b.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: string(id)})
 			require.NoError(t, e)
+			meta := metaResult.Entry
 			require.NotNil(t, meta)
 			require.Equal(t, int64(123), meta.LastMutatedAt)
 			catalog, e := b.GetIndexEntryCatalog(string(id))
@@ -67,7 +69,7 @@ func TestDirectDeleteKernelCatalogAndRollback(t *testing.T) {
 			} else {
 				require.NotNil(t, catalog)
 				require.True(t, meta.HasIndexKeys)
-				require.Equal(t, original.IndexKeys, meta.IndexKeys)
+				require.Equal(t, originalEntry.IndexKeys, meta.IndexKeys)
 			}
 		})
 	}

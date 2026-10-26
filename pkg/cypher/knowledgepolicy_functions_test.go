@@ -93,9 +93,15 @@ func TestDecay_ScoreMatchesDecayScore(t *testing.T) {
 	statement := time.Now().UTC()
 	ctx := context.WithValue(context.Background(), temporalStatementTimeKey{}, statement)
 
-	dsResult := exec.evalKnowledgePolicy(ctx, "decayScore(n)", nodes, rels)
+	dsResult, policyHandled := exec.evaluateKnowledgePolicyFunction(ctx, "decayScore(n)", "", nodes, rels)
+	if !policyHandled {
+		t.Fatal("knowledge-policy expression was not handled")
+	}
 	time.Sleep(10 * time.Millisecond)
-	dResult := exec.evalKnowledgePolicy(ctx, "decay(n)", nodes, rels)
+	dResult, policyHandled := exec.evaluateKnowledgePolicyFunction(ctx, "decay(n)", "", nodes, rels)
+	if !policyHandled {
+		t.Fatal("knowledge-policy expression was not handled")
+	}
 
 	dsScore, _ := dsResult.(float64)
 	dMap, _ := dResult.(map[string]interface{})
