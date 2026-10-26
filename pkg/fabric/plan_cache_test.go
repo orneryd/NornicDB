@@ -131,19 +131,63 @@ func TestPlanCache_Clear(t *testing.T) {
 	}
 }
 
-func TestPlanCache_WhitespaceNormalization(t *testing.T) {
-	pc := NewPlanCache(10)
-	frag := &FragmentExec{Query: "q", Columns: []string{"a"}}
-
-	pc.Put("MATCH  (n)   RETURN n", "neo4j", frag)
-
-	// Same query with different whitespace should be a hit
-	got, ok := pc.Get("MATCH (n) RETURN n", "neo4j")
-	if !ok {
-		t.Fatal("expected cache hit with normalized whitespace")
+// Author: #1640 lane (Codex). Source-preserving plans may only share an entry
+// for the exact accepted query and admitted database identity.
+func TestPlanCache_ExactIdentity(t *testing.T) {
+	for _, sample := range []struct{ name, query, database string }{
+		{"literal whitespace", "RETURN 'a b' AS out", "db"},
+		{"clause whitespace", "RETURN  'a  b' AS out", "db"},
+		{"comment whitespace", "RETURN /* a b */ 'a  b' AS out", "db"},
+		{"query case", "return 'a  b' AS out", "db"},
+		{"database whitespace", "RETURN 'a  b' AS out", "d b"},
+		{"database case", "RETURN 'a  b' AS out", "DB"},
+	} {
+		t.Run(sample.name, func(t *testing.T) {
+			pc := NewPlanCache(10)
+			originalQuery, originalDB := "RETURN 'a  b' AS out", "db"
+			if sample.name == "database whitespace" {
+				originalDB = "d  b"
+			}
+			if sample.name == "comment whitespace" {
+				originalQuery = "RETURN /* a  b */ 'a  b' AS out"
+			}
+			original := &FragmentExec{Query: originalQuery, Columns: []string{"out"}}
+			pc.Put(originalQuery, originalDB, original)
+			if _, ok := pc.Get(sample.query, sample.database); ok {
+				t.Fatal("different accepted identity reused a plan")
+			}
+			variant := &FragmentExec{Query: sample.query, Columns: []string{"out"}}
+			pc.Put(sample.query, sample.database, variant)
+			if got, ok := pc.Get(originalQuery, originalDB); !ok || got != original {
+				t.Fatal("original plan changed")
+			}
+			if got, ok := pc.Get(sample.query, sample.database); !ok || got != variant {
+				t.Fatal("variant lost its own source plan")
+			}
+			hits, misses, size := pc.Stats()
+			if hits != 2 || misses != 1 || size != 2 {
+				t.Fatalf("unexpected hit/miss/size: %d/%d/%d", hits, misses, size)
+			}
+		})
 	}
-	if got == nil {
-		t.Fatal("expected non-nil fragment")
+	// A delimited string is not an injective encoding of two arbitrary identities.
+	pc := NewPlanCache(10)
+	pc.Put("c", "a|b", &FragmentExec{Query: "c"})
+	if _, ok := pc.Get("b|c", "a"); ok {
+		t.Fatal("database/query separator collision")
+	}
+}
+
+func BenchmarkPlanCacheExactHit(b *testing.B) {
+	pc := NewPlanCache(10)
+	query := "USE comp CALL { USE comp.part RETURN 'a  b' AS out } RETURN out"
+	pc.Put(query, "comp", &FragmentExec{Query: query})
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, ok := pc.Get(query, "comp"); !ok {
+			b.Fatal("miss")
+		}
 	}
 }
 
@@ -165,23 +209,5 @@ func TestPlanCache_DifferentSessionDBsAreSeparate(t *testing.T) {
 	}
 	if got1.(*FragmentExec).Columns[0] != "a" || got2.(*FragmentExec).Columns[0] != "b" {
 		t.Fatal("expected different fragments for different session DBs")
-	}
-}
-
-func TestNormalizePlanQuery(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected string
-	}{
-		{"  MATCH  (n)   RETURN  n ", "MATCH (n) RETURN n"},
-		{"simple", "simple"},
-		{"", ""},
-		{"\t\n\r hello  world\n", "hello world"},
-	}
-	for _, tt := range tests {
-		got := normalizePlanQuery(tt.input)
-		if got != tt.expected {
-			t.Errorf("normalizePlanQuery(%q) = %q, want %q", tt.input, got, tt.expected)
-		}
 	}
 }
