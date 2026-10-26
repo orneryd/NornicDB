@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/apoc/registry"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/stretchr/testify/require"
 )
@@ -17,9 +18,13 @@ func TestHTTPTransactionMemoryPoolReloadPreservesRunningStatement(t *testing.T) 
 	entered, proceed := make(chan struct{}), make(chan struct{})
 	var once, release sync.Once
 	previous := cypher.PluginFunctionLookup
-	cypher.PluginFunctionLookup = func(name string) (any, bool) {
+	// Plugin functions are admitted callables since #1685 (Author: Claude,
+	// NOR-180 restack: this test predates that signature).
+	barrier, err := registry.Compile(func() int64 { once.Do(func() { close(entered); <-proceed }); return 1 })
+	require.NoError(t, err)
+	cypher.PluginFunctionLookup = func(name string) (*cypher.PluginFunctionHandler, bool) {
 		if name == "test.poolReloadBarrier" {
-			return func() int64 { once.Do(func() { close(entered); <-proceed }); return 1 }, true
+			return barrier, true
 		}
 		if previous != nil {
 			return previous(name)

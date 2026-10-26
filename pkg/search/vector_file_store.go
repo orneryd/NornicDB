@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
 	"github.com/orneryd/nornicdb/pkg/security"
@@ -1037,7 +1038,7 @@ func (v *VectorFileStore) Close() error {
 	if v.file != nil {
 		err := v.file.Close()
 		v.file = nil
-		return errors.Join(mappingErr, err)
+		return compose.Outcomes(mappingErr, err)
 	}
 	return mappingErr
 }

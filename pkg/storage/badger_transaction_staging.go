@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -247,7 +248,7 @@ func (tx *BadgerTransaction) abortCommitLocked(err error) error {
 				slog.Any("commit_error", err),
 				slog.Any("rollback_error", abortErr),
 			)
-			err = fmt.Errorf("%w (%w)", err, abortErr)
+			err = compose.Outcomes(err, abortErr)
 		}
 		tx.commitW = nil
 	}

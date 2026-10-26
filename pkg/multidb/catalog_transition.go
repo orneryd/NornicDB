@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/google/uuid"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -129,7 +130,7 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 					m.transitionPendingDrop(policy.dropName, true)
 					m.mu.Unlock()
 				}
-				publicationErr = errors.Join(publicationErr, syncErr)
+				publicationErr = compose.Outcomes(publicationErr, syncErr)
 			}
 		}
 		release()
@@ -141,12 +142,12 @@ func (m *DatabaseManager) transitionCatalog(ctx context.Context, policy catalogT
 	}
 	outcome := receipt.WaitOutcome(ctx)
 	if outcome.State == storage.CommitDiscarded {
-		return errors.Join(errors.New("catalog commit discarded"), outcome.Err)
+		return compose.Outcomes(errors.New("catalog commit discarded"), outcome.Err)
 	}
 	if outcome.State == storage.CommitRecoveryPending {
 		return &storage.AcceptedCommitError{State: outcome.State, LogicalID: logicalID, Err: outcome.Err}
 	}
-	err = errors.Join(outcome.Err, publicationErr)
+	err = compose.Outcomes(outcome.Err, publicationErr)
 	if err != nil {
 		return &storage.AcceptedCommitError{State: storage.CommitApplied, LogicalID: logicalID, Err: err}
 	}
@@ -218,7 +219,7 @@ func (m *DatabaseManager) publishCatalog(candidate *DatabaseManager) (result err
 		if fresh && !m.statementCachesClosed && current.Type == "standard" && !candidate.pendingDrops[name] {
 			runtime, err := bindManagedRuntime(current, current.Limits, name, managedEntityOwnerFor(m.inner))
 			if err != nil {
-				result = errors.Join(result, err)
+				result = compose.Outcomes(result, err)
 			} else {
 				runtime.activateDatabase(current.Limits)
 			}
@@ -243,7 +244,7 @@ func (m *DatabaseManager) publishCatalog(candidate *DatabaseManager) (result err
 	m.serverID, m.serverCreatedAt = candidate.serverID, candidate.serverCreatedAt
 	m.rebuildRuntimeConstituents()
 	if !m.statementCachesClosed {
-		result = errors.Join(result, m.registerGraphRuntimeOwners())
+		result = compose.Outcomes(result, m.registerGraphRuntimeOwners())
 	}
 	return result
 }
