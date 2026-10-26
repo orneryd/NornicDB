@@ -174,5 +174,9 @@ func routeLeaderEntityCommand(owner Storage, replicator Replicator, cmd *Command
 		}
 		return true, err
 	}
-	return true, receipt.WaitOutcome(ctx).Err
+	outcome := receipt.WaitOutcome(ctx)
+	if outcome.Err == nil || outcome.State == storage.CommitDiscarded {
+		return true, outcome.Err
+	}
+	return true, &storage.AcceptedCommitError{State: outcome.State, LogicalID: normalized.RequestID, Err: outcome.Err}
 }

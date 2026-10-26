@@ -21,6 +21,19 @@ type CommitOutcome struct {
 	Err   error
 }
 
+// AcceptedCommitError reports an error after a command was accepted. It must
+// not be treated as a definite rejection or used to roll back an admission.
+// State preserves an applied acknowledgement failure versus recovery-pending
+// work. Unwrap preserves the original timeout or transport error for errors.Is.
+type AcceptedCommitError struct {
+	State     CommitOutcomeState
+	LogicalID string
+	Err       error
+}
+
+func (e *AcceptedCommitError) Error() string { return e.Err.Error() }
+func (e *AcceptedCommitError) Unwrap() error { return e.Err }
+
 // CommitReceipt owns accepted work until physical application or definite discard.
 // Wait cancellation never discards accepted work or releases its admission lease.
 type CommitReceipt struct {

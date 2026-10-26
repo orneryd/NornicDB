@@ -28,11 +28,11 @@ func (b *BadgerEngine) PutDeindexWorkItem(item *DeindexWorkItem) error {
 }
 
 func (b *BadgerEngine) GetDeindexWorkItem(workItemID string) (*DeindexWorkItem, error) {
-	entry, err := b.GetAccessMeta(policyWorkMetaIDPrefix + workItemID)
-	if err != nil || entry == nil {
+	result, err := b.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: policyWorkMetaIDPrefix + workItemID})
+	if err != nil || result.Entry == nil {
 		return nil, err
 	}
-	return entry.DeindexWork, nil
+	return result.Entry.DeindexWork, nil
 }
 
 func (b *BadgerEngine) DeleteDeindexWorkItem(workItemID string) error {

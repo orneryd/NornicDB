@@ -97,6 +97,11 @@ func TestDecayRelaxAfterHiddenNodeUpdateRefreshesCache(t *testing.T) {
 	assert.Len(t, nodes, 1)
 }
 
+// TestSuppressionTransactionRollbackDoesNotPublishCaches drives both
+// entities through the single suppression owner inside one transaction.
+// The transaction takes the write order the public
+// EnqueueDeindexIfSuppressed path takes for the same entities; a rollback
+// publishes neither cache, and the stored bodies keep the flags they had.
 func TestSuppressionTransactionRollbackDoesNotPublishCaches(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 	t.Cleanup(func() { _ = engine.Close() })
@@ -108,15 +113,23 @@ func TestSuppressionTransactionRollbackDoesNotPublishCaches(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:e", StartNode: "test:n", EndNode: "test:b", Type: "LINKS", VisibilitySuppressed: true}))
 	nodeGen, edgeGen := engine.nodeCacheGen.current(), engine.edgeCacheGen.current()
 	rollback := errors.New("injected rollback after suppression writes")
+	var changedNode *Node
+	var changedEdge *Edge
 	err = engine.withUpdate(func(txn *badger.Txn) error {
-		_, changedNode, err := engine.evaluateNodeSuppressionInTxn(txn, "test:n")
+		evaluation1, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: "test:n", isEdge: false})
+		changed, mutation := evaluation1.suppressed, evaluation1.node
+		require.False(t, changed)
 		require.NoError(t, err)
+		changedNode = mutation
 		require.NotNil(t, changedNode)
-		_, changedEdge, err := engine.evaluateEdgeSuppressionInTxn(txn, "test:e")
+		evaluation2, err := engine.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: "test:e", isEdge: true})
+		changed, mutationEdge := evaluation2.suppressed, evaluation2.edge
+		require.False(t, changed)
 		require.NoError(t, err)
+		changedEdge = mutationEdge
 		require.NotNil(t, changedEdge)
 		return rollback
-	})
+	}, writtenEntities{nodes: []NodeID{"test:n"}, edges: []EdgeID{"test:e"}})
 	require.ErrorIs(t, err, rollback)
 	suppressed, _, err := engine.readNodeSuppressionState("test:n")
 	require.NoError(t, err)

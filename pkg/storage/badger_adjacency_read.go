@@ -31,13 +31,15 @@ func (b *BadgerEngine) captureAdjacencyReader(nodeID NodeID, wantOut, wantIn boo
 		if wantOut {
 			reader.out.ids, reader.out.hit = b.adjCacheLoadOutgoing(nodeID)
 			if w != nil {
-				reader.out.live, reader.out.suppressed, reader.out.deleted = b.bufferedAdjacency(w, v, nodeID, true)
+				pendingAdjacency := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: true})
+				reader.out.live, reader.out.suppressed, reader.out.deleted = pendingAdjacency.edges, pendingAdjacency.suppressed, pendingAdjacency.sourceDeleted
 			}
 		}
 		if wantIn {
 			reader.in.ids, reader.in.hit = b.adjCacheLoadIncoming(nodeID)
 			if w != nil {
-				reader.in.live, reader.in.suppressed, reader.in.deleted = b.bufferedAdjacency(w, v, nodeID, false)
+				pendingAdjacency := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: false})
+				reader.in.live, reader.in.suppressed, reader.in.deleted = pendingAdjacency.edges, pendingAdjacency.suppressed, pendingAdjacency.sourceDeleted
 			}
 		}
 	}, readViewOptions{scope: namespaceForNodeID(nodeID), cached: func(w *WriteBehindBuffer) (bool, error) {
@@ -94,7 +96,7 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
 				if err != nil {
 					return err
 				}
-				if edge != nil && !b.hidesEdge(v, edge, DecayScoringTime()) {
+				if edge != nil && !b.filterEntityByDecay(v, edge, DecayScoringTime()) {
 					edges = append(edges, edge)
 				}
 			}
@@ -159,7 +161,7 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 	read := func(ids []EdgeID, outgoing bool) ([]*Edge, bool) {
 		var live []*Edge
 		if w != nil {
-			live = b.bufferedLiveAdjacency(w, v, id, outgoing)
+			live = b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedLiveAdjacency, source: id, outgoing: outgoing}).edges
 		}
 		if len(ids) == 0 && len(live) == 0 {
 			return nil, true
@@ -173,7 +175,7 @@ func (b *BadgerEngine) cachedAdjacency(w *WriteBehindBuffer, id NodeID, wantOut,
 			if edge == nil {
 				return nil, false
 			}
-			if attachedAt(edge, id, outgoing) && !b.hidesEdge(v, edge, now) {
+			if attachedAt(edge, id, outgoing) && !b.filterEntityByDecay(v, edge, now) {
 				result = append(result, edge)
 			}
 		}

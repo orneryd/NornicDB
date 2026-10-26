@@ -419,9 +419,9 @@ func loadAccessMeta(eng storage.Engine, entityID string) *knowledgepolicy.Access
 	if be == nil {
 		return nil
 	}
-	meta, err := be.GetAccessMeta(storage.QualifiedEntityID(eng, entityID))
+	result, err := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: storage.QualifiedEntityID(eng, entityID)})
 	if err != nil {
 		return nil
 	}
-	return meta
+	return result.Entry
 }

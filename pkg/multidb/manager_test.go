@@ -995,19 +995,19 @@ func TestDatabaseManager_InternalStorageAndAliasHelpers(t *testing.T) {
 	t.Run("getStorageInternal handles cache not found and offline", func(t *testing.T) {
 		require.NoError(t, manager.CreateDatabase("tenant_a"))
 		manager.mu.Lock()
-		engine1, err := manager.getStorageInternal("tenant_a")
+		engine1, _, err := manager.databaseViewLocked("tenant_a", true)
 		require.NoError(t, err)
-		engine2, err := manager.getStorageInternal("tenant_a")
+		engine2, _, err := manager.databaseViewLocked("tenant_a", true)
 		require.NoError(t, err)
 		manager.mu.Unlock()
 		assert.Same(t, engine1, engine2)
 
 		manager.mu.Lock()
-		_, err = manager.getStorageInternal("missing")
+		_, _, err = manager.databaseViewLocked("missing", true)
 		require.ErrorIs(t, err, ErrDatabaseNotFound)
 		manager.databases["tenant_a"].Status = "offline"
 		delete(manager.engines, "tenant_a")
-		_, err = manager.getStorageInternal("tenant_a")
+		_, _, err = manager.databaseViewLocked("tenant_a", true)
 		require.ErrorIs(t, err, ErrDatabaseOffline)
 		manager.mu.Unlock()
 	})

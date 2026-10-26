@@ -285,7 +285,7 @@ func (b *BadgerEngine) getNodeByID(id NodeID, v readVisibility, decode func(txn 
 		node = hitCopy(node)
 	}
 	node.embeddingOwner, node.embeddingOwnerID = b, id
-	if b.hidesNode(v, node, DecayScoringTime()) {
+	if b.filterEntityByDecay(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	if loaded {
@@ -685,12 +685,12 @@ func (b *BadgerEngine) updateNodeWithWriteContext(node *Node, inherited *entityW
 		// rebind. Without this, a node previously suppressed under one binding
 		// stays suppressed forever after rotating to an unbound label.
 		if !labelsEqual(node.Labels, existingNode.Labels) {
-			rewritten, err := b.rescoreSuppressionAfterLabelChangeInTxn(txn, dbName, node)
+			mutation, err := b.evaluateSuppressionInTxn(txn, suppressionEvaluation{staged: true, node: node})
 			if err != nil {
 				return err
 			}
-			if rewritten != nil {
-				written = rewritten
+			if mutation.written != nil {
+				written = mutation.written
 			}
 		}
 		if image, err = b.writtenNodeImage(written, node); err != nil {

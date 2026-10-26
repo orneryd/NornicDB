@@ -281,8 +281,9 @@ func TestMigrationV2ToV3PreservesLegacyPolicyMetadata(t *testing.T) {
 		fixtureowner.Own(t, engine)
 	}
 	require.NoError(t, err)
-	got, err := engine.GetAccessMeta(string(node.ID))
+	gotResult, err := engine.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: string(node.ID)})
 	require.NoError(t, err)
+	got := gotResult.Entry
 	require.NotNil(t, got)
 	require.Equal(t, int64(42), got.Fixed.AccessCount)
 	require.Equal(t, int64(7), got.Overflow["custom"])

@@ -19,9 +19,10 @@ func (b *BadgerEngine) keyConstraintNodes(idx *CompositeIndex, label, property s
 			return
 		}
 		if valueKey, ok := indexValueKey(values[0]); ok {
-			pending = b.bufferedKeyCandidates(w, storedRead, label, property, valueKey)
+			pending = b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedKey, label: label, property: property, valueKey: valueKey}).nodes
 		} else {
-			pending, _ = b.bufferedLabelNodes(w, storedRead, label)
+			pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: label})
+			pending, _ = pendingNodes.nodes, pendingNodes.nodesTouched
 		}
 		states = make(map[NodeID]bufferedEntityState, len(ids))
 		for _, id := range ids {

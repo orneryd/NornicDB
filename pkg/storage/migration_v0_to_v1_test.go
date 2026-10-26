@@ -3,6 +3,8 @@ package storage
 import (
 	"testing"
 	"time"
+
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 )
 
 func TestMigrateV0ToV1_ExtractsAccessState(t *testing.T) {
@@ -18,10 +20,12 @@ func TestMigrateV0ToV1_ExtractsAccessState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	meta, err := eng.GetAccessMeta("nornic:scored")
+	metaResult, err := eng.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "nornic:scored"})
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	meta := metaResult.Entry
 	if meta == nil {
 		t.Fatal("expected AccessMetaEntry")
 	}
@@ -52,10 +56,12 @@ func TestMigrateV0ToV1_SkipsZeroAccessState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	meta, err := eng.GetAccessMeta("nornic:nostate")
+	metaResult, err := eng.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "nornic:nostate"})
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	meta := metaResult.Entry
 	if meta != nil {
 		t.Error("expected no AccessMetaEntry for zero-access-state node")
 	}
@@ -77,10 +83,12 @@ func TestMigrateV0ToV1_Idempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	meta, err := eng.GetAccessMeta("nornic:idem")
+	metaResult, err := eng.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "nornic:idem"})
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	meta := metaResult.Entry
 	if meta == nil {
 		t.Fatal("expected AccessMetaEntry")
 	}
@@ -105,20 +113,22 @@ func TestMigrateV0ToV1_MultipleNodes(t *testing.T) {
 	}
 
 	// Node with idx=0 has AccessCount=0, should be skipped.
-	meta, err := eng.GetAccessMeta("nornic:multia")
+	metaResult, err := eng.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "nornic:multia"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	meta := metaResult.Entry
 	if meta != nil {
 		t.Error("expected no entry for zero-access node")
 	}
 
 	for i := 1; i < 5; i++ {
 		id := "nornic:multi" + string(rune('a'+i))
-		meta, err := eng.GetAccessMeta(id)
+		metaResult, err := eng.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: id})
 		if err != nil {
 			t.Fatal(err)
 		}
+		meta := metaResult.Entry
 		if meta == nil {
 			t.Errorf("expected entry for %s", id)
 			continue

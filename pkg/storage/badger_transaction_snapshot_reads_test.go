@@ -3,12 +3,47 @@ package storage
 import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
+	"context"
 	"fmt"
 	"testing"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTransactionEdgeCollectionsRemainGlobalAfterNamespaceWrite(t *testing.T) {
+	engine := createMVCCBadgerEngine(t)
+	for _, namespace := range []string{"alpha", "beta"} {
+		for _, name := range []string{"start", "end"} {
+			_, err := engine.CreateNode(&Node{ID: NodeID(namespace + ":" + name)})
+			require.NoError(t, err)
+		}
+		require.NoError(t, engine.CreateEdge(&Edge{ID: EdgeID(namespace + ":edge"), StartNode: NodeID(namespace + ":start"), EndNode: NodeID(namespace + ":end"), Type: "MATCHES"}))
+	}
+	reader, err := engine.BeginTransaction()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = reader.Rollback() })
+	_, err = reader.CreateNode(&Node{ID: "alpha:pending"})
+	require.NoError(t, err)
+	require.NoError(t, reader.CreateEdge(&Edge{ID: "alpha:pending-edge", StartNode: "alpha:start", EndNode: "alpha:pending", Type: "OTHER"}))
+	all, err := reader.AllEdges()
+	require.NoError(t, err)
+	ids := make([]EdgeID, 0, len(all))
+	for _, edge := range all {
+		ids = append(ids, edge.ID)
+	}
+	require.ElementsMatch(t, []EdgeID{"alpha:edge", "beta:edge", "alpha:pending-edge"}, ids)
+	typed, err := reader.GetEdgesByType("MATCHES")
+	require.NoError(t, err)
+	ids = ids[:0]
+	for _, edge := range typed {
+		ids = append(ids, edge.ID)
+	}
+	require.ElementsMatch(t, []EdgeID{"alpha:edge", "beta:edge"}, ids)
+	emptyType, err := reader.GetEdgesByType("")
+	require.NoError(t, err)
+	require.Empty(t, emptyType, "an empty type must not include differently typed pending edges")
+}
 
 func TestTransactionLabelLookupDoesNotDecodeUnrelatedNodes(t *testing.T) {
 	engine := createMVCCBadgerEngine(t)
@@ -123,7 +158,11 @@ func TestTransactionIndexedLookupsIgnoreMalformedAndStaleIndexEntries(t *testing
 		}
 		return nil
 	}))
-	allEdges, err := engine.getEdgesByTypeVisibleAtSnapshotWithView("", engine.currentMVCCReadVersion("test"), engine.withView)
+	var allEdges []*Edge
+	err = engine.streamEdgesByTypeAtSnapshotWithView(context.Background(), "", "", engine.currentMVCCReadVersion("test"), engine.withView, visibleRead, func(edge *Edge) error {
+		allEdges = append(allEdges, edge)
+		return nil
+	})
 	require.NoError(t, err)
 	require.Len(t, allEdges, 2)
 
