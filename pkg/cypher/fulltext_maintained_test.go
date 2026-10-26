@@ -27,7 +27,9 @@ func (s *fulltextCountingStore) AllNodes() ([]*storage.Node, error) {
 
 func fulltextMaintainedFixture(tb testing.TB, count int) (*StorageExecutor, *fulltextCountingStore) {
 	tb.Helper()
-	base := storage.NewMemoryEngine()
+	// Use the physical Badger owner (in memory). The MemoryEngine wrapper's
+	// missing canonical unwrapping is tracked separately as NOR-289.
+	base := storage.NewMemoryEngine().BadgerEngine
 	store := &fulltextCountingStore{NamespacedEngine: storage.NewNamespacedEngine(base, "fulltext_fixture")}
 	tb.Cleanup(func() { require.NoError(tb, base.Close()) })
 	nodes := make([]*storage.Node, count)
