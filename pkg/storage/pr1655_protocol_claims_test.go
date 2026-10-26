@@ -38,7 +38,7 @@ func pr1655PublicStatus(err error) string {
 	if errors.As(err, &boltError) {
 		return boltError.Code
 	}
-	code, _ := nornicerrors.Neo4jCommitStatus(err)
+	code, _ := nornicerrors.Neo4jStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err))
 	return code
 }
 

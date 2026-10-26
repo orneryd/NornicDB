@@ -1,22 +1,26 @@
 package graphql
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
+	gql "github.com/99designs/gqlgen/graphql"
 	"github.com/99designs/gqlgen/graphql/handler"
 	"github.com/99designs/gqlgen/graphql/handler/extension"
 	"github.com/99designs/gqlgen/graphql/handler/lru"
 	"github.com/99designs/gqlgen/graphql/handler/transport"
 	"github.com/99designs/gqlgen/graphql/playground"
 	"github.com/gorilla/websocket"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/graphql/generated"
 	"github.com/orneryd/nornicdb/pkg/graphql/resolvers"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/nornicdb"
 	"github.com/vektah/gqlparser/v2/ast"
+	"github.com/vektah/gqlparser/v2/gqlerror"
 )
 
 // Handler represents the GraphQL HTTP handler.
@@ -64,11 +68,45 @@ func newHandler(db *nornicdb.DB, dbManager *multidb.DatabaseManager, policy *mem
 		srv.Use(extension.AutomaticPersistedQuery{Cache: lru.New[string](100)})
 	}
 
+	// Author: Codex,NOR-180. One root-field completion owns all statements
+	// that its resolver aggregates. Loops keep their ordinary count policies;
+	// a produced terminal failure is retained before any result is marshalled.
+	srv.AroundFields(func(ctx context.Context, next gql.Resolver) (any, error) {
+		// A root field's parent is the operation's synthetic object context,
+		// which has no selected field; every nested field's parent has one.
+		field := gql.GetFieldContext(ctx)
+		if field == nil || (field.Parent != nil && field.Parent.Field.Field != nil) {
+			return next(ctx)
+		}
+		outcome := nornicerrors.NewTerminalOutcomeScope(ctx)
+		result, err := next(outcome)
+		err = outcome.Complete(err)
+		if nornicerrors.HasTerminalOutcome(err) {
+			return nil, err
+		}
+		return result, err
+	})
+	srv.SetErrorPresenter(presentGraphQLError)
 	return &Handler{
 		server:           srv,
 		policy:           policy,
 		playgroundHandle: playground.Handler("NornicDB GraphQL Playground", "/graphql"),
 	}
+}
+
+// Author: Codex, NOR-180. gqlgen may select a contained primary gqlerror and
+// discard its joined siblings. Keep its status, path and extensions while the
+// existing shared status owner carries supplementary terminal diagnostics.
+func presentGraphQLError(ctx context.Context, err error) *gqlerror.Error {
+	presented := gql.DefaultErrorPresenter(ctx, err)
+	if presented == nil || !nornicerrors.HasStatusDiagnostic(err) {
+		return presented
+	}
+	retained := *presented
+	err = nornicerrors.NormalizeTerminalOutcome(err)
+	retained.Message = nornicerrors.AppendStatusDiagnostics(err, "", nil)
+	retained.Err = err
+	return &retained
 }
 
 // ServeHTTP handles GraphQL requests using gqlgen.
