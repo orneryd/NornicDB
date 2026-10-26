@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 terminal WAL outcome propagation, 2026-10-26.
 package cypher
 
 import (
@@ -127,6 +128,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		e.txContext = member.transaction
 	}
 
+	var statement *statementExecutionContext
 	ctx, source := cyphertext.WithSource(ctx, cypher)
 	if source.Err != nil {
 		if invalid, ok := source.Err.(*cyphertext.UnicodeSourceError); ok {
@@ -136,7 +138,17 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 	// Retain the original credential context across admission and routing errors.
 	defer func(original string) {
-		redactAdminCommandErrorSource(source, original, &retErr, statementCredentials(ctx))
+		var owner context.Context
+		if statement != nil {
+			owner = statement
+		}
+		completeStatementTerminalOutcome(owner, &result, &retErr, func() {
+			redactAdminCommandErrorSource(source, original, &retErr, statementCredentials(ctx))
+			retErr = nornicerrors.ProjectTerminalOutcomeMessages(retErr, func(display error) error {
+				redactAdminCommandErrorSource(source, original, &display, statementCredentials(ctx))
+				return display
+			})
+		})
 	}(cypher)
 	// One classification decides both the credential context and the
 	// collected statistics: an administration command carries the caller's
@@ -162,11 +174,16 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	// Every rejection of the caller's statement fails its explicit transaction,
 	// including errors before parsing, routing or the system statement policy.
 	if e.txContext != nil && e.txContext.active && ctx.Value(ctxKeyTxStorage) == nil {
+		// The statement is one of the transaction's: its UNIQUE violation is
+		// classified by the same MERGE retry rule as the transaction's COMMIT.
+		tx := e.txContext
+		recordMergeRetry(ctx, &tx.mergeRetry, cypher, params)
 		defer func() {
 			if cause := recover(); cause != nil {
 				e.failTransaction(ctx, fmt.Errorf("statement panicked: %v", cause))
 				panic(cause)
 			}
+			retErr = classifyMergeRetry(ctx, e.analyzer, tx.mergeRetry, retErr)
 			e.failTransaction(ctx, retErr)
 		}()
 	}
@@ -210,7 +227,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if elapsed == nil {
 		elapsed = time.Since
 	}
-	statement := e.newStatementExecutionContext(ctx, slowStart.UTC(), outcome)
+	statement = e.newStatementExecutionContext(ctx, slowStart.UTC(), outcome)
 	embeddingState := statement.state
 	var embeddingGeneration uint64
 	if embeddingState != nil {
@@ -236,13 +253,13 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 				}
 			}
 		}
-		if err := running.memoryFailure(); err != nil && !statement.outcome.committed.Load() {
+		if err := running.memoryFailure(); err != nil && !statement.outcome.committed() {
 			if statementErr != nil && (statementErr == context.Canceled || statementErr == context.DeadlineExceeded) {
-				result, retErr = nil, statementErr
+				result, retErr = nil, statement.outcome.retainTerminalFailures(statementErr)
 			} else {
-				result, retErr = nil, err
+				result, retErr = nil, statement.outcome.retainTerminalFailures(err)
 			}
-		} else if retErr == nil && result != nil && running.memory != nil && !statement.outcome.committed.Load() {
+		} else if retErr == nil && result != nil && running.memory != nil && !statement.outcome.committed() {
 			// A nested execution hands its retained rows to its parent scope.
 			if err := running.memory.handOver(running.memoryMark, result.Rows); err != nil {
 				result, retErr = nil, err
@@ -250,9 +267,9 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			running.memory = nil
 		}
 		terminated := running.done()
-		if !statement.outcome.committed.Load() {
+		if !statement.outcome.committed() {
 			if terminated {
-				result, retErr = nil, transactionTerminatedError()
+				result, retErr = nil, statement.outcome.retainTerminalFailures(transactionTerminatedError())
 			} else if retErr == nil && statementErr != nil {
 				result, retErr = nil, statementErr
 			}
@@ -267,6 +284,13 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		}
 	}()
 	defer func() {
+		// Author: Codex, NOR-180. The producer already recorded every failed
+		// terminal append, before a callback or aggregate could discard it.
+		// Restore those outcomes before rejection logs and completion statistics.
+		if statement.outcome.hasTerminalFailures() {
+			retErr = statement.outcome.retainTerminalFailures(retErr)
+			result = nil
+		}
 		executionDuration = elapsed(slowStart)
 		dur := executionDuration
 		redactAdminCommandError(originalCypher, &retErr, statementCredentials(ctx))
@@ -699,8 +723,8 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 			// BEGIN: the client's transaction metadata (WithTransactionMetadata).
 			if tx, ok := e.txContext.tx.(*storage.BadgerTransaction); ok {
 				if metadataErr := applyTransactionMetadata(ctx, tx); metadataErr != nil {
-					_, _ = e.handleRollback()
-					return nil, metadataErr
+					_, cleanup := e.handleRollback(ctx, metadataErr)
+					return nil, nornicerrors.CombineTerminalOutcomes(metadataErr, cleanup)
 				}
 			}
 		}
@@ -741,8 +765,8 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 	if e.txContext != nil && e.txContext.active {
 		if runErr := registerStatement(); runErr != nil {
-			_, _ = e.handleRollback()
-			return nil, runErr
+			_, cleanup := e.handleRollback(ctx, runErr)
+			return nil, nornicerrors.CombineTerminalOutcomes(runErr, cleanup)
 		}
 	}
 

@@ -14,6 +14,12 @@ type statementExecutionContract struct {
 	unknownProcedure                    bool
 }
 
+// readStatementStructure is the grammar-owned structure of one statement body.
+func readStatementStructure(ctx context.Context, body string) (cypherantlr.StatementSyntax, error) {
+	cypher25 := cypherVersionFromContext(ctx) == "25"
+	return cypherantlr.ParseSyntax(ctx, body, cypherantlr.FragmentEntry, cypher25, cypherantlr.AcceptedSource)
+}
+
 func readStatementExecutionContract(ctx context.Context, query string) (statementExecutionContract, error) {
 	mode, body := parseExecutionMode(query)
 	if mode == ModeExplain {
@@ -29,8 +35,7 @@ func readStatementExecutionContract(ctx context.Context, query string) (statemen
 		writes := startsWithKeywordFold(body, "CREATE")
 		return statementExecutionContract{writes: writes, transaction: writes}, nil
 	}
-	cypher25 := cypherVersionFromContext(ctx) == "25"
-	structure, err := cypherantlr.ParseSyntax(ctx, body, cypherantlr.FragmentEntry, cypher25, cypherantlr.AcceptedSource)
+	structure, err := readStatementStructure(ctx, body)
 	if err := ctx.Err(); err != nil {
 		return statementExecutionContract{}, err
 	}

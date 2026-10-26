@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
@@ -194,7 +195,7 @@ func TestTransactionUnknownTypeBranches(t *testing.T) {
 
 	exec.txContext.active = true
 	exec.txContext.tx = 123
-	_, err = exec.handleRollback()
+	_, err = exec.handleRollback(context.Background(), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown transaction type")
 }
