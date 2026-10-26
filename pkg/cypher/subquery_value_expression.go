@@ -125,6 +125,7 @@ type rowSubqueryPlan struct {
 	names     []string
 	rewritten string
 	logical   bool
+	scope     semanticScalarScopeCache
 	// integerComparison is set when the rewritten predicate is exactly
 	// __subquery_value_0 <op> <integer literal> (COUNT { … } > 1): the
 	// comparison is parsed once and applied to an integer value directly.
@@ -269,7 +270,11 @@ func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string
 // COUNT how many rows it has, COLLECT the list of its single returned column.
 // A body that is only a pattern is matched as MATCH <pattern>.
 func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool) {
-	value, ok, err := e.rowSubqueryValue(ctx, kind, body, values)
+	return e.evaluateRowSubqueryValueWithScope(ctx, kind, body, values, nil)
+}
+
+func (e *StorageExecutor) evaluateRowSubqueryValueWithScope(ctx context.Context, kind, body string, values map[string]interface{}, cache *semanticScalarScopeCache) (interface{}, bool) {
+	value, ok, err := e.rowSubqueryValueWithScope(ctx, kind, body, values, cache)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil, false
@@ -282,10 +287,19 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // COLLECT subqueries: the body runs as a pipeline, so its WHERE, ORDER BY,
 // SKIP / LIMIT and RETURN all apply.
 func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
+	return e.rowSubqueryValueWithScope(ctx, kind, body, values, nil)
+}
+
+func (e *StorageExecutor) rowSubqueryValueWithScope(ctx context.Context, kind, body string, values map[string]interface{}, cache *semanticScalarScopeCache) (interface{}, bool, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return nil, false, nil
 	}
+	model, scopeErr := e.runtimeScalarQueryScope(ctx, kind, body, values, cache)
+	if scopeErr != nil {
+		return nil, false, scopeErr
+	}
+	values = model.scalarInput(values)
 	// EXISTS is whether the body has a row and COUNT how many: one
 	// evaluation, so a body gives EXISTS and COUNT the same rows.
 	if kind == "EXISTS" || kind == "COUNT" {
@@ -298,6 +312,9 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 		if count, ok := e.boundChainCount(ctx, body, values, kind == "EXISTS"); ok {
 			return rowCountValue(kind, count), true, nil
 		}
+	}
+	if model.complete {
+		body = model.executionQuery()
 	}
 	if cypherVersionFromContext(ctx) != "25" {
 		grouped, err := cypher5ImportGrouping(body, values)
@@ -319,7 +336,7 @@ func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body strin
 			query += " RETURN 1 AS __exists LIMIT 1"
 		}
 	}
-	result, err := e.runCorrelatedSubquery(ctx, query, values)
+	result, err := e.runCorrelatedSubquery(ctx, query, values, model)
 	if err != nil {
 		return nil, false, err
 	}
@@ -359,24 +376,10 @@ func rowCountValue(kind string, rows int64) interface{} {
 // values bound when the pipeline declines the body (a CALL subquery or a
 // procedure call in it, …). EXISTS, COUNT and COLLECT all run their bodies
 // here, so a body gives the same rows whichever of them wraps it.
-func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
-	// Correlated expression imports remain visible across a WITH horizon. The
-	// existing context masks them when a nested CALL selects its own imports.
-	// Without a WITH there is no dropping horizon and the row already owns them.
-	if indexASCIIFold(query, "with") >= 0 {
-		imports := pipelineRow(values)
-		for name := range values {
-			if strings.HasPrefix(name, "$") || strings.HasPrefix(name, "\x00") {
-				imports = make(pipelineRow, len(values))
-				for variable, value := range values {
-					if !strings.HasPrefix(variable, "$") && !strings.HasPrefix(variable, "\x00") {
-						imports[variable] = value
-					}
-				}
-				break
-			}
-		}
-		ctx = withPipelineImports(ctx, imports)
+func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}, programs ...*semanticQueryScope) (*ExecuteResult, error) {
+	var program *semanticQueryScope
+	if len(programs) != 0 {
+		program = programs[0]
 	}
 	// The expression's current lexical row owns its imports. A traversal's
 	// ambient context may still bind the same name to an earlier endpoint;
@@ -389,11 +392,30 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnion) joins them, as for a top-level UNION.
 	if _, unionAll, _, union := parseTopLevelUnionBranches(ctx, query); union {
+		branchIndex := 0
 		return e.executeUnion(ctx, query, unionAll, func(branch string) (*ExecuteResult, error) {
-			return e.runCorrelatedSubquery(ctx, branch, values)
+			var branchProgram *semanticQueryScope
+			if program != nil && branchIndex < len(program.branches) {
+				branchProgram = program.branches[branchIndex]
+			}
+			branchIndex++
+			return e.runCorrelatedSubquery(ctx, branch, values, branchProgram)
 		})
 	}
-	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)
+	if program != nil && len(program.branches) == 1 {
+		program = program.branches[0]
+	}
+	if program != nil && len(program.clauses) != 0 {
+		ctx = context.WithValue(ctx, semanticBodyInputKey{}, pipelineRow(values))
+		ctx = withSemanticBodyClause(ctx, program.clauses[0].bindings)
+	}
+	// Carrying is needed only across a WITH horizon. Other bodies already
+	// receive the complete imported row through correlatedSubqueryExecutor.
+	split := cachedPipelineClauseSplit(ctx, query)
+	if !split.ok || pipelineHasClauseKind(split.clauses, pipelineClauseWith) {
+		ctx = withSemanticSubqueryGlobals(ctx, values, nil)
+	}
+	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipelineWithScope(ctx, query, program)
 	if outcome.terminal() {
 		return outcome.result, outcome.err
 	}
@@ -411,8 +433,16 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 		params[name] = value
 	}
 	names := make([]string, 0, len(values))
+	dependencies := pipelineDependencyClauses(query)
+	input := make(typeScope, len(values))
 	for name := range values {
-		if !strings.HasPrefix(name, "$") && containsIdentifierWord(query, name) {
+		if semanticBindingName(name) {
+			input[name] = staticOperand{}
+		}
+	}
+	proof, complete := input.pipelineDependencies(ctx, dependencies)
+	for name := range values {
+		if semanticBindingName(name) && (!complete || proof.reads[name]) {
 			names = append(names, name)
 		}
 	}
@@ -448,7 +478,7 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	if len(carried) > 0 {
 		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
 	}
-	return e.executeInternal(ctx, prefix.String()+query, params)
+	return e.executeInternal(withSemanticSubqueryGlobals(ctx, values, names), prefix.String()+query, params)
 }
 
 // boundNodeLookupCount counts the rows of a body that is one labelled node

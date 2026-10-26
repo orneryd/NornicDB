@@ -172,26 +172,9 @@ func deleteExpressionRootIdentifier(expression string) string {
 }
 
 func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {
-	pattern := strings.TrimSpace(clause)
-	if len(pattern) >= len(keyword) && strings.EqualFold(pattern[:len(keyword)], keyword) {
-		pattern = strings.TrimSpace(pattern[len(keyword):])
-	}
-	if where := findKeywordIndexInContext(pattern, "WHERE"); where >= 0 {
-		pattern = strings.TrimSpace(pattern[:where])
-	}
-	for _, variable := range executor.extractVariableNamesFromPattern(ctx, pattern) {
-		if variable != "" {
-			scope[variable] = struct{}{}
-		}
-	}
-	for _, variable := range extractRelationshipVariables(pattern) {
-		if variable != "" {
-			scope[variable] = struct{}{}
-		}
-	}
-	if variable := extractPathAssignmentVariable(pattern); variable != "" {
+	forEachMatchPatternBinding(ctx, clause, func(variable string, _ matchBindingKind) {
 		scope[variable] = struct{}{}
-	}
+	})
 }
 
 func extractPathAssignmentVariable(pattern string) string {
@@ -334,13 +317,13 @@ func residualRelationshipDeleteError(nodeID storage.NodeID) error {
 // staticDeleteTargetTypeError keeps known non-entity values as compile-time
 // errors, while widened UNWIND map elements remain runtime checks. Strings
 // and lists retain the existing NornicDB DELETE extensions.
-func staticDeleteTargetTypeError(clause string, scope staticTypeScope) error {
+func staticDeleteTargetTypeError(ctx context.Context, clause string, scope staticTypeScope) error {
 	targets, _, _ := deleteClauseTargets(clause)
 	// Undefined targets retain the existing DELETE scope error owner.
 	scope.complete = false
 	checker := staticOperatorChecker{scope: scope}
 	for _, target := range targets {
-		operand, err := checker.check(strings.TrimSpace(target))
+		operand, err := checker.check(ctx, strings.TrimSpace(target))
 		if err != nil {
 			return err
 		}

@@ -29,6 +29,7 @@ type projectedScopeFacts struct {
 type projectionFactsKey struct {
 	query, incoming, retained              string
 	incomingKnown, retainedKnown, cypher25 bool
+	body                                   *semanticBodyScope
 }
 
 var projectionFactsCache = newBoundedCache[projectionFactsKey, *projectedScopeFacts](4096, func(key projectionFactsKey) int {
@@ -83,16 +84,19 @@ func projectionKey(query string, incoming, retained resultmetadata.Names, cypher
 	retainedKey, retainedKnown := namesKey(retained)
 	return projectionFactsKey{query: query, incoming: inputKey, retained: retainedKey, incomingKnown: inputKnown, retainedKnown: retainedKnown, cypher25: cypher25}
 }
-func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
+func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool, bodies ...*semanticBodyScope) *projectedScopeFacts {
 	if err := ctx.Err(); err != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}
 	key := projectionKey(query, incoming, retained, cypher25)
+	if len(bodies) != 0 {
+		key.body = bodies[0]
+	}
 	generation := globalProcedureRegistry.generation.Load()
 	if facts, found := projectionFactsCache.get(key); found && facts.generation == generation {
 		return facts
 	}
-	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25)
+	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25, key.body)
 	if err := ctx.Err(); err != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}
@@ -113,8 +117,8 @@ func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, 
 	return facts
 }
 
-func (e *StorageExecutor) projectedStatementScope(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool) *projectedScopeFacts {
-	return e.projectionFactsFor(ctx, query, incoming, retained, cypher25)
+func (e *StorageExecutor) projectedStatementScope(ctx context.Context, query string, incoming, retained resultmetadata.Names, cypher25 bool, bodies ...*semanticBodyScope) *projectedScopeFacts {
+	return e.projectionFactsFor(ctx, query, incoming, retained, cypher25, bodies...)
 }
 
 func projectedNameMap(names resultmetadata.Names) map[string]struct{} {

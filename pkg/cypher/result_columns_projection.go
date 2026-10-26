@@ -273,16 +273,3 @@ func projectionPlanScope(plan *returnProjectionPlan, previous map[string]struct{
 	}
 	return next
 }
-
-func pipelineProjectionScope(ctx context.Context, previous map[string]struct{}, clause string, imports pipelineRow) map[string]struct{} {
-	projection, _ := splitWithProjection(clause)
-	plan := returnProjectionPlanFor(ctx, "RETURN "+pipelineClauseBody(projection, "WITH"))
-	next := projectionPlanScope(plan, previous)
-	if next == nil {
-		return nil
-	}
-	for name := range imports {
-		next[name] = struct{}{}
-	}
-	return next
-}

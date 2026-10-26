@@ -68,7 +68,7 @@ func TestValidateListOperandParameters(t *testing.T) {
 		"RETURN [x IN $p | x] AS l",
 		"RETURN /* 1 IN $p */ 5 IN $p AS valid",
 	} {
-		err := validateListOperands(q, params)
+		err := validateListOperands(t.Context(), q, params)
 		if assert.Error(t, err, q) {
 			assert.Contains(t, err.Error(), "Type mismatch for parameter 'p': expected List<T> but was Integer", q)
 		}
@@ -89,7 +89,7 @@ func TestValidateListOperandParameters(t *testing.T) {
 		"RETURN 1 AS value // 5 IN $p",
 		"RETURN 1 AS value /* 5 IN $p */",
 	} {
-		assert.NoError(t, validateListOperands(q, params), q)
+		assert.NoError(t, validateListOperands(t.Context(), q, params), q)
 	}
 }
 
@@ -104,7 +104,7 @@ func BenchmarkValidateListOperands(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for iteration := 0; iteration < b.N; iteration++ {
-				if err := validateListOperands(tc.query, nil); err != nil {
+				if err := validateListOperands(b.Context(), tc.query, nil); err != nil {
 					b.Fatal(err)
 				}
 			}

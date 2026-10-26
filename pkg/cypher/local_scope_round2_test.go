@@ -167,14 +167,14 @@ func TestLocalScopeRound3(t *testing.T) {
 	})
 	scope := matchSemanticScope{"r": matchBindingRelationship}
 	text := "all(r IN [1] WHERE EXISTS { (r)-->() }) AND all(r IN [y] WHERE true)"
-	require.Equal(t, matchBindingValue, withLocalTypes(staticTypeScope{kinds: scope}, text, strings.Index(text, "EXISTS")).kinds["r"])
-	require.Equal(t, matchBindingPath, localBindingKind("[p = (a)-->(b) | p]", 17, "p", staticTypeScope{}))
-	require.Equal(t, matchBindingUnknown, localBindingKind("reduce(a = b, x IN l | a)", 23, "a", staticTypeScope{}))
-	require.Equal(t, matchBindingValue, localBindingKind("reduce(a = 0, x IN l | a)", 23, "a", staticTypeScope{}))
-	require.Equal(t, scope, withLocalTypes(staticTypeScope{kinds: scope}, "true", 0).kinds)
-	require.Equal(t, matchBindingUnknown, localBindingKind("x", 0, "x", staticTypeScope{}))
-	require.Equal(t, matchBindingUnknown, localBindingKind("[x IN| x]", 7, "x", staticTypeScope{}))
-	require.Equal(t, matchSemanticScope{"x": matchBindingValue}, withLocalTypes(staticTypeScope{}, "[x IN [1] | x]", 12).kinds)
+	require.Equal(t, matchBindingValue, withLocalTypes(t.Context(), staticTypeScope{kinds: scope}, text, strings.Index(text, "EXISTS")).kinds["r"])
+	require.Equal(t, matchBindingPath, localBindingKind(t.Context(), "[p = (a)-->(b) | p]", 17, "p", staticTypeScope{}))
+	require.Equal(t, matchBindingUnknown, localBindingKind(t.Context(), "reduce(a = b, x IN l | a)", 23, "a", staticTypeScope{}))
+	require.Equal(t, matchBindingValue, localBindingKind(t.Context(), "reduce(a = 0, x IN l | a)", 23, "a", staticTypeScope{}))
+	require.Equal(t, scope, withLocalTypes(t.Context(), staticTypeScope{kinds: scope}, "true", 0).kinds)
+	require.Equal(t, matchBindingUnknown, localBindingKind(t.Context(), "x", 0, "x", staticTypeScope{}))
+	require.Equal(t, matchBindingUnknown, localBindingKind(t.Context(), "[x IN| x]", 7, "x", staticTypeScope{}))
+	require.Equal(t, matchSemanticScope{"x": matchBindingValue}, withLocalTypes(t.Context(), staticTypeScope{}, "[x IN [1] | x]", 12).kinds)
 }
 
 // TestSubqueryBodiesWalkTheirOwnScope: an EXISTS / COUNT / COLLECT body and
@@ -262,17 +262,17 @@ func TestLocalScopeRound4Edges(t *testing.T) {
 	local := localOccurrences{text: text}
 	require.Equal(t, "7 / 2 + [x IN l | x]", replaceIdentifierOutsideQuotesUnless(text, "x", "7", &local))
 
-	scope := withPatternComprehensionBindings(staticTypeScope{}, "[(a)-->(b) | b]", len("[(a)-->(b) | "))
+	scope := withPatternComprehensionBindings(t.Context(), staticTypeScope{}, "[(a)-->(b) | b]", len("[(a)-->(b) | "))
 	require.True(t, scope.bound("a"))
 	require.True(t, scope.bound("b"))
 
 	require.Equal(t, "CALL db.labels() YIELD label", maskNestedScopeBodies("CALL db.labels() YIELD label"))
 	require.Equal(t, "CALL { RETURN 1", maskNestedScopeBodies("CALL { RETURN 1"))
 
-	_, _, ok, err := callSubqueryImports(t.Context(), "CALL db.labels()", typeScope{})
-	require.NoError(t, err)
-	require.False(t, ok)
 	exec := &StorageExecutor{}
+	model, err := exec.callQueryScope(t.Context(), "CALL db.labels()", typeScope{}, subqueryScope{}, false)
+	require.NoError(t, err)
+	require.Nil(t, model)
 	returned, err := exec.callSubqueryReturnTypes(t.Context(), "CALL db.labels()", nil, typeScope{}, false)
 	require.NoError(t, err)
 	require.Nil(t, returned)

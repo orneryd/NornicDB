@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 // staticOperand is an operand's static type. The type is authoritative in
 // one place: a single type has its name as operandCategory, and a CASE union
@@ -381,8 +384,8 @@ func (operand staticOperand) reversedOperand() staticOperand {
 // reads a type through it and decides through fits or excludes. Each call
 // types the expression in this scope only, so the same text in another
 // scope (a shadowing WITH, another UNION branch) is typed by that scope.
-func (scope staticTypeScope) operandOf(expression string) staticOperand {
-	operand, err := (staticOperatorChecker{scope: scope}).check(strings.TrimSpace(expression))
+func (scope staticTypeScope) operandOf(ctx context.Context, expression string) staticOperand {
+	operand, err := (staticOperatorChecker{scope: scope}).check(ctx, strings.TrimSpace(expression))
 	if err != nil {
 		return staticOperand{}
 	}
@@ -393,14 +396,14 @@ func (scope staticTypeScope) operandOf(expression string) staticOperand {
 // expression with no variable or parameter facts: a literal's, a
 // constructor's, an operator's, a function call's; "" when it derives none.
 // A reader without a scope reads an expression's type here.
-func staticTextType(expression string) string {
-	return (staticTypeScope{}).operandOf(expression).typeName()
+func staticTextType(ctx context.Context, expression string) string {
+	return (staticTypeScope{}).operandOf(ctx, expression).typeName()
 }
 
 // staticLiteralTypeName is staticTextType for an expression led by a
 // literal, "" for one led by a variable, a parameter or a call (typed with
 // its scope).
-func staticLiteralTypeName(expression string) string {
+func staticLiteralTypeName(ctx context.Context, expression string) string {
 	expression = strings.TrimSpace(expression)
 	for {
 		inner, ok := stripEnclosingExpressionParentheses(expression)
@@ -415,7 +418,7 @@ func staticLiteralTypeName(expression string) string {
 	if token, _, ok := scanIdentifierToken(expression, 0); ok && !strings.EqualFold(token, "true") && !strings.EqualFold(token, "false") {
 		return ""
 	}
-	return staticTextType(expression)
+	return staticTextType(ctx, expression)
 }
 
 // unwoundOperand is the static type of a value UNWIND binds from operand:

@@ -40,40 +40,13 @@ func (e *StorageExecutor) validateCreateSemanticScopes(ctx context.Context, cyph
 	if findKeywordIndexInContext(cypher, "CREATE") < 0 || isCreateSchemaOrAdministrationCommand(cypher) {
 		return nil
 	}
-	clauses, ok := splitPipelineClauses(ctx, cypher)
-	if !ok {
-		return nil
+	clauses, err := e.boundMutationClauses(ctx, cypher, cypher25)
+	if err != nil {
+		return err
 	}
-
-	scope := newSemanticBindingScope()
 	for _, clause := range clauses {
-		switch clause.kind {
-		case pipelineClauseMatch, pipelineClauseOptionalMatch:
-			for _, name := range extractNodeVariables(clause.text) {
-				scope.bind(name)
-			}
-			for _, name := range extractRelationshipVariables(clause.text) {
-				scope.bind(name)
-			}
-		case pipelineClauseWith:
-			scope = projectedBindingScope(ctx, scope, clause.text)
-		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text); err != nil {
-				return err
-			}
-		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
-				scope.bind(alias)
-			}
-		case pipelineClauseMerge:
-			for _, name := range extractNodeVariables(clause.text) {
-				scope.bind(name)
-			}
-			for _, name := range extractRelationshipVariables(clause.text) {
-				scope.bind(name)
-			}
-		case pipelineClauseCreate:
-			if err := e.validateCreateClauseBindings(scope, clause.text, cypher25); err != nil {
+		if clause.kind == pipelineClauseCreate {
+			if err := e.validateCreateClauseBindings(ctx, clauseBindingScope(clause, nil), clause.text, cypher25); err != nil {
 				return err
 			}
 		}
@@ -97,23 +70,9 @@ func isCreateSchemaOrAdministrationCommand(cypher string) bool {
 }
 
 func projectedBindingScope(ctx context.Context, input *semanticBindingScope, clause string) *semanticBindingScope {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
-	output := newSemanticBindingScope()
-	for _, raw := range splitTopLevelComma(body) {
-		expr, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
-		if expr == "*" {
-			for name := range input.names {
-				output.bind(name)
-			}
-			continue
-		}
-		if alias != "" {
-			output.bind(alias)
-		} else if name, next, ok := scanIdentifierToken(expr, 0); ok && strings.TrimSpace(expr[next:]) == "" {
-			output.bind(name)
-		}
-	}
-	return output
+	projection, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	plan := returnProjectionPlanFor(ctx, "RETURN "+projection)
+	return &semanticBindingScope{names: projectionPlanScope(plan, input.names)}
 }
 
 // validateUnwindAlias rejects an UNWIND clause whose alias isn't exactly one
@@ -146,7 +105,7 @@ func unwindBindingName(clause string) string {
 	return ""
 }
 
-func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingScope, clause string, cypher25 bool) error {
+func (e *StorageExecutor) validateCreateClauseBindings(ctx context.Context, scope *semanticBindingScope, clause string, cypher25 bool) error {
 	body := strings.TrimSpace(clause[len("CREATE"):])
 	created := make(map[string]string)
 	for _, pattern := range e.splitCreatePatterns(body) {
@@ -170,7 +129,7 @@ func (e *StorageExecutor) validateCreateClauseBindings(scope *semanticBindingSco
 			}
 		}
 
-		if err := e.validateCreateSamePatternReferences(scope, pattern, relationshipVariables, created, "CREATE"); err != nil {
+		if err := e.validateCreateSamePatternReferences(ctx, scope, pattern, relationshipVariables, created, "CREATE"); err != nil {
 			return err
 		}
 
@@ -371,7 +330,7 @@ func createRelationshipPropertyMapBodies(pattern string) []string {
 // pattern's): a fresh map per pattern for a Cypher 5 statement, one map per
 // clause for a Cypher 25 statement, where a pattern may not read an entity an
 // earlier pattern of the same CREATE creates either (Neo4j 2026.09).
-func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBindingScope, pattern string, relationshipVariables []string, created map[string]string, clause string) error {
+func (e *StorageExecutor) validateCreateSamePatternReferences(ctx context.Context, scope *semanticBindingScope, pattern string, relationshipVariables []string, created map[string]string, clause string) error {
 	nodePatterns := e.splitNodePatterns(pattern)
 	for _, nodePattern := range nodePatterns {
 		if variable := createNodePatternVariable(nodePattern); variable != "" && !scope.contains(variable) {
@@ -396,7 +355,7 @@ func (e *StorageExecutor) validateCreateSamePatternReferences(scope *semanticBin
 			if separator <= 0 {
 				continue
 			}
-			for _, variable := range expressionFreeVariables(pair[separator+1:]) {
+			for _, variable := range expressionFreeVariables(ctx, pair[separator+1:]) {
 				if kind, ok := created[variable]; ok {
 					return createSamePatternReferenceError(variable, kind, clause)
 				}

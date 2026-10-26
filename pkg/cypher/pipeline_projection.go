@@ -83,15 +83,21 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		out := make([]pipelineRow, 0, len(rows))
 		for _, row := range rows {
 			projected := make(pipelineRow, len(row))
-			for name, value := range row {
-				projected[name] = value
+			for _, name := range pipelineProjectionColumns(ctx, rows) {
+				projected[name] = row[name]
 			}
+			for name, value := range row {
+				if strings.HasPrefix(name, "$") {
+					projected[name] = value
+				}
+			}
+			carryPipelineRowImports(projected, row, pipelineImports(ctx))
 			out = append(out, projected)
 		}
 		if withDistinct {
 			// WITH DISTINCT * keeps one row per distinct set of the
 			// variables in scope (#883).
-			out = deduplicatePipelineRows(memoryScopeFromContext(ctx), out, pipelineWildcardColumns(out))
+			out = deduplicatePipelineRows(memoryScopeFromContext(ctx), out, pipelineProjectionColumns(ctx, out))
 		}
 		out = e.filterPipelineRows(ctx, out, postWithWhere)
 		if !e.orderPipelineRows(ctx, out, orderTerms) {
@@ -105,7 +111,7 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 	}
 	if strings.TrimSpace(items[0]) == "*" {
 		// WITH *, items: the * is every variable in scope (#883).
-		items = starProjectionItems(ctx, pipelineWildcardColumns(rows), items[1:])
+		items = starProjectionItems(ctx, pipelineProjectionColumns(ctx, rows), items[1:])
 	}
 
 	type withProjection struct {
@@ -475,6 +481,7 @@ func stripExpressionWhitespace(expression string) string {
 // false; when an operator of it failed (1/0, a runtime TypeError) that failure
 // is recorded as the statement's error, as for a projection item.
 func (e *StorageExecutor) orderPipelineRowsWithScopes(ctx context.Context, rows, scopes []pipelineRow, terms []orderByTerm) bool {
+	ctx = withSemanticProjectedBody(ctx)
 	if len(terms) == 0 || len(rows) == 0 {
 		return true
 	}
@@ -757,10 +764,10 @@ func (e *StorageExecutor) pipelineApplyReturnPlan(ctx context.Context, rows []pi
 	}
 	modifiers, returnDistinct := plan.modifiers, plan.distinct
 	if plan.star && len(plan.starItems) > 0 {
-		return e.pipelineApplyReturnPlan(ctx, rows, plan.withStarExpanded(pipelineWildcardColumns(rows)), source, rowsValidated)
+		return e.pipelineApplyReturnPlan(ctx, rows, plan.withStarExpanded(pipelineProjectionColumns(ctx, rows)), source, rowsValidated)
 	}
 	if plan.star {
-		columns := pipelineWildcardColumns(rows)
+		columns := pipelineProjectionColumns(ctx, rows)
 		result := &ExecuteResult{Columns: columns, Rows: make([][]interface{}, 0, len(rows))}
 		for _, row := range rows {
 			projected := make([]interface{}, len(columns))

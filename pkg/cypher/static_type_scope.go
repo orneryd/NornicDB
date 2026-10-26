@@ -2,7 +2,7 @@ package cypher
 
 import (
 	"context"
-	"maps"
+	"slices"
 	"strings"
 )
 
@@ -105,33 +105,65 @@ func projectTypeScope(ctx context.Context, types typeScope, cypher25 bool, claus
 // projectTypeScopeIn is projectTypeScope for a caller that holds types'
 // static view (input) already.
 func projectTypeScopeIn(ctx context.Context, types typeScope, input staticTypeScope, clause string) typeScope {
-	body, _ := projectionSemanticBodyAndTail(clause, "WITH")
+	return projectLocalTypeScope(ctx, types, types, input, clause)
+}
+
+func projectLocalTypeScope(ctx context.Context, types, named typeScope, input staticTypeScope, clause string) typeScope {
 	input.complete = false
 	projected := make(typeScope)
-	for _, raw := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
-		if expression == "*" {
-			for name, operand := range types {
-				projected[name] = operand
-			}
-			continue
-		}
-		name := alias
-		if name == "" {
-			name = simpleSemanticIdentifier(expression)
-		}
-		if name == "" {
-			continue
-		}
-		operand := projectedOperand(types, input, expression)
-		if simpleSemanticIdentifier(name) == "" {
-			// Unaliased, a column is named by its text (WITH {a: 1}); only a
-			// name binds a variable whose members are known.
-			operand.members = nil
-		}
-		projected[normalizeProjectionColumnName(name)] = operand
-	}
+	types.forEachProjectedBinding(ctx, clause, func(name, expression, text string, inherited bool) {
+		projected[name] = projectedBindingOperand(ctx, types, named, input, name, expression, inherited)
+	})
 	return projected
+}
+
+// Both projection typing and the semantic model consume the same binding
+// operand, including the distinction between a named variable and a column
+// named by an unaliased expression's text.
+func projectedBindingOperand(ctx context.Context, types, named typeScope, input staticTypeScope, name, expression string, inherited bool) staticOperand {
+	if inherited {
+		return types[name]
+	}
+	operand := projectedOperand(ctx, named, input, expression)
+
+	return operand
+}
+
+// forEachProjectedBinding owns projection names and wildcard expansion for
+// type inference and dependency proofs. A proof need not allocate or infer
+// another type scope just to observe which incoming bindings a * consumes.
+func (types typeScope) forEachProjectedBinding(ctx context.Context, clause string, visit func(name, expression, text string, inherited bool)) (wildcard bool) {
+	plan := returnProjectionPlanFor(ctx, clause)
+	if !plan.valid {
+		return false
+	}
+	wildcard = plan.star
+	if wildcard {
+		names := make([]string, 0, len(types))
+		for name := range types {
+			names = append(names, name)
+		}
+		slices.Sort(names)
+		plan = plan.withStarExpanded(names)
+	}
+	for _, item := range plan.projections {
+		inherited := wildcard && item.definitionStart == -1 && item.direct
+		text := item.expr + " AS " + projectionVariableText(item.alias)
+		visit(item.alias, item.expr, text, inherited)
+	}
+	return wildcard
+}
+
+// projectedSourceVariable distinguishes a variable's identity from a literal
+// with the same spelling. Quoted true/null remain variables; their unquoted
+// spellings are values. Projection types and import provenance share this fact.
+func projectedSourceVariable(expression string) string {
+	expression = unwrapOuterParens(strings.TrimSpace(StripComments(expression)))
+	name := simpleSemanticIdentifier(expression)
+	if name != "" && (isBacktickQuotedName(expression) || !isLiteralKeyword(name)) {
+		return name
+	}
+	return ""
 }
 
 // projectedOperand is the static type of a projected expression, as Neo4j
@@ -143,35 +175,35 @@ func projectTypeScopeIn(ctx context.Context, types typeScope, input staticTypeSc
 // any other expression the type the static operator check gives it (a
 // literal, arithmetic, a function's result, CASE, a comparison, a map
 // projection, a comprehension, a subscript or slice of a typed list).
-func projectedOperand(types typeScope, input staticTypeScope, expression string) staticOperand {
+func projectedOperand(ctx context.Context, types typeScope, input staticTypeScope, expression string) staticOperand {
 	expression = strings.TrimSpace(expression)
 	if strings.EqualFold(expression, "null") {
 		// Null, as written in place (+z of WITH null AS z is a number); it
 		// fits every position and binds as any kind (bindingKind).
 		return provenOperand("Null")
 	}
-	if source := simpleSemanticIdentifier(expression); source != "" && !isLiteralKeyword(source) {
+	if source := projectedSourceVariable(expression); source != "" {
 		return types[source]
 	}
 	if kind, ok := entityListLiteralKind(expression, input.kinds); ok {
 		return operandOfKind(kind)
 	}
 	// Every other expression has the one static type its scope derives.
-	return input.operandOf(expression)
+	return input.operandOf(ctx, expression)
 }
 
 // unwoundOperand is the static type of the variable UNWIND binds from list:
 // a list's element type (a node of a List<Node>, an Integer of a
 // List<Integer>), a known non-list value itself (UNWIND 5), unknown for a
 // list of unknown elements.
-func unwoundOperand(types typeScope, input staticTypeScope, clause string) staticOperand {
-	return listElementOperand(types, input, unwindSourceExpression(clause))
+func unwoundOperand(ctx context.Context, types typeScope, input staticTypeScope, clause string) staticOperand {
+	return listElementOperand(ctx, types, input, unwindSourceExpression(clause))
 }
 
 // listElementOperand is the static type of an element of list (UNWIND's
 // variable, a comprehension's or quantifier's local; localBindingKind).
-func listElementOperand(types typeScope, input staticTypeScope, list string) staticOperand {
-	operand := projectedOperand(types, input, list)
+func listElementOperand(ctx context.Context, types typeScope, input staticTypeScope, list string) staticOperand {
+	operand := projectedOperand(ctx, types, input, list)
 	if !operand.union && operand.known() && !operand.list() {
 		return operand // UNWIND 5 binds 5
 	}
@@ -205,41 +237,9 @@ func projectStaticValueMembers(ctx context.Context, scope staticTypeScope, claus
 	return projectTypeScopeIn(ctx, typeScopeOf(scope), scope, clause).static(true).members
 }
 
-// callSubqueryImports is the scope a CALL subquery's body starts from: CALL
-// (a, b) { … } imports a and b, CALL (*) { … } and an old-style CALL { … }
-// every outer variable (the latter's leading WITH picks them). ok is false
-// for a CALL without a body; scoped is set for CALL (…) { }. A variable a
-// scope clause names that outer doesn't bind is Neo4j's compile-time
-// "Variable `x` not defined", reported here, where every statement is
-// checked before it plans or runs, on every route alike.
-func callSubqueryImports(ctx context.Context, callText string, outer typeScope) (typeScope, bool, bool, error) {
-	scope := readCallSubqueryScope(ctx, callText)
-	if scope.invalid {
-		return nil, false, false, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidVariableImport", "CALL imports must contain only variable names")
-	}
-	if scope.bodyOffset == 0 || scope.bodyOffset >= len(callText) || callText[scope.bodyOffset] != '{' {
-		return nil, false, false, nil
-	}
-	initial := make(typeScope)
-	if scope.scoped && scope.names != nil {
-		for _, name := range scope.names {
-			operand, bound := outer[name]
-			if !bound {
-				return nil, false, false, createUndefinedVariableError(name)
-			}
-			initial[name] = operand
-		}
-		return initial, true, true, nil
-	}
-	for name, operand := range outer {
-		initial[name] = operand
-	}
-	return initial, scope.scoped, true, nil
-}
-
 // callSubqueryReturnTypes walks a CALL subquery's body, each UNION branch
 // as a query of its own, with the one clause walk (semanticScopeWalk) from
-// the variables it imports (callSubqueryImports), and returns the static
+// the variables resolved by callQueryScope, and returns the static
 // type of each column a one-branch body returns. Its expression subqueries
 // see the body's scope, not the enclosing query's. A CALL (a, b) body sees
 // its imports through the whole body, after a WITH in it too, and may
@@ -247,65 +247,9 @@ func callSubqueryImports(ctx context.Context, callText string, outer typeScope) 
 // doesn't end in RETURN, gives no types; a scoped body's walk error is the
 // statement's.
 func (e *StorageExecutor) callSubqueryReturnTypes(ctx context.Context, callText string, branches []string, outer typeScope, cypher25 bool) (typeScope, error) {
-	initial, scoped, ok, err := callSubqueryImports(ctx, callText, outer)
-	if err != nil || !ok {
+	model, err := e.callQueryScope(ctx, callText, outer, subqueryScope{}, cypher25)
+	if err != nil || model == nil {
 		return nil, err
 	}
-	var returned typeScope
-	typedBranches := 0
-	for _, branch := range branches {
-		clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, branch)
-		if !ok || len(clauses) == 0 {
-			continue
-		}
-		retained := initial
-		importing := false
-		if !scoped {
-			// Unlisted outer names remain implicit imports under the documented
-			// gh648 extension. A leading importing WITH explicitly projects its
-			// listed names (including *), so those names follow ordinary WITH
-			// scope instead. A branch's own declarations never become imports.
-			retained = maps.Clone(initial)
-			_, importing, _ = branchLeadingWithImport(ctx, branch, func(name string) bool { _, exists := initial[name]; return exists }, false)
-			if importing {
-				for name := range projectTypeScope(ctx, initial, cypher25, clauses[0].text) {
-					delete(retained, name)
-				}
-			}
-			for name := range retained {
-				if branchDeclaresVariable(ctx, branch, name) {
-					delete(retained, name)
-				}
-			}
-		}
-		final, complete, err := e.semanticScopeWalk(ctx, clauses, maps.Clone(initial), cypher25, subqueryScope{visible: retained})
-		if err != nil {
-			if !scoped {
-				if detail, classified := err.(interface{ BoltErrorDetail() string }); importing && classified && detail.BoltErrorDetail() == "UndefinedVariable" {
-					return nil, err
-				}
-				// An old-style CALL { … } keeps NornicDB's implicit imports
-				// (gh648: an outer name it doesn't import is visible, or
-				// declared anew), so its walk only types its columns.
-				return nil, nil
-			}
-			return nil, err
-		}
-		last := clauses[len(clauses)-1]
-		if !complete || last.kind != pipelineClauseReturn {
-			return nil, nil
-		}
-		returnClause := strings.TrimSpace(last.text)
-		branchTypes := projectTypeScope(ctx, final, cypher25, "WITH "+strings.TrimSpace(returnClause[len("RETURN"):]))
-		if typedBranches == 0 {
-			returned = branchTypes
-		} else {
-			// A UNION column is a value of any branch's type.
-			for name, operand := range returned {
-				returned[name] = joinedOperand(operand, branchTypes[name])
-			}
-		}
-		typedBranches++
-	}
-	return returned, nil
+	return model.returned, nil
 }

@@ -188,14 +188,10 @@ func (e *StorageExecutor) executeUnwindRowsPipeline(ctx context.Context, variabl
 	ctx = withExpressionFailureSlot(ctx)
 	scope := map[string]struct{}{variable: {}}
 	base := pipelineRow{}
-	for name, value := range e.fabricRecordBindings {
+	e.forEachPipelineImport(ctx, nil, func(name string, value interface{}) {
 		base[name] = value
 		scope[name] = struct{}{}
-	}
-	for name, value := range valueBindingsFromContext(ctx) {
-		base[name] = value
-		scope[name] = struct{}{}
-	}
+	})
 	bindParameterRow(ctx, base)
 	rows := make([]pipelineRow, 0, len(items))
 	for _, item := range items {

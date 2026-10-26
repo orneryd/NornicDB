@@ -151,6 +151,7 @@ func splitArithmeticExpression(expr string) []string {
 // evaluateWithWhereCondition evaluates a WHERE condition against computed WITH values.
 // This is for filtering after WITH aggregation (like SQL HAVING).
 func (e *StorageExecutor) evaluateWithWhereCondition(ctx context.Context, whereClause string, values map[string]interface{}) bool {
+	ctx = withSemanticProjectedBody(ctx)
 	return e.evaluateRowPredicate(ctx, whereClause, values)
 }
 

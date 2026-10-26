@@ -215,7 +215,7 @@ func TestRowPredicateProgramsMatchNeo4j(t *testing.T) {
 				if text {
 					value = exec.evaluateRowPredicateText(ctx, tc.expression, row)
 				} else {
-					value = compileRowPredicateProgram(tc.expression).holds(exec, ctx, row)
+					value = compileRowPredicateProgram(t.Context(), tc.expression).holds(exec, ctx, row)
 				}
 				require.NoError(t, getExpressionFailure(ctx))
 				require.Equal(t, tc.want, value)

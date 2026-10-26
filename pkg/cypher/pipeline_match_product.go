@@ -25,7 +25,7 @@ func (e *StorageExecutor) pipelineApplyMatchProduct(ctx context.Context, rows []
 			}
 		}
 	}
-	nodeWhere, rest := splitWhereByVariable(where, nodeVariables)
+	nodeWhere, rest := splitWhereByVariable(ctx, where, nodeVariables)
 	if joined, handled, err := e.pipelineApplyNodeJoinProduct(ctx, rows, parts, where); handled || err != nil {
 		return joined, handled, err
 	}
@@ -147,7 +147,7 @@ func (e *StorageExecutor) pipelineApplyNodeJoinProduct(ctx context.Context, rows
 	for name := range variables {
 		names = append(names, name)
 	}
-	nodeWhere, _ := splitWhereByVariable(where, names)
+	nodeWhere, _ := splitWhereByVariable(ctx, where, names)
 	var out []pipelineRow
 	for _, row := range rows {
 		if err := ctx.Err(); err != nil {

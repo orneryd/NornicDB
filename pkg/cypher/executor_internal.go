@@ -126,7 +126,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 
 	// Local fragments own their lowering and restore generated names before
 	// returning to Fabric or their containing expression.
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	desugared, labelRewrite, err := desugarLabelExpressions(ctx, cypher, params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +199,7 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 	if err := validateStaticPropertyAccessParameters(ctx, cypher, params); err != nil {
 		return err
 	}
-	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := validateStaticFunctionParameters(ctx, cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
 	// A transactional CALL commits independently before later runtime
@@ -210,5 +210,5 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 			return err
 		}
 	}
-	return validateListOperands(cypher, params)
+	return validateListOperands(ctx, cypher, params)
 }

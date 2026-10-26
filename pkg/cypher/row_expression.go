@@ -1323,13 +1323,13 @@ func (e *StorageExecutor) evaluateRowPredicateMode(ctx context.Context, expressi
 	}
 	// A predicate evaluated before is evaluated from its program: the
 	// decisions below, read from its text once (row_predicate_program.go).
-	if program := rowPredicateProgramFor(expression); program != nil {
+	if program := rowPredicateProgramFor(ctx, expression); program != nil {
 		return program.holds(e, ctx, values)
 	}
 	// CASE stays in the value program at its original operand position,
 	// including on the first row.
 	if mayContainCaseKeyword(expression) && len(caseBlockSpans(expression)) > 0 {
-		program := compileRowPredicateProgram(expression)
+		program := compileRowPredicateProgram(ctx, expression)
 		rowPredicatePrograms.put(expression, program)
 		return program.holds(e, ctx, values)
 	}
@@ -1401,7 +1401,7 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 	if inner, ok := stripEnclosingExpressionParentheses(expression); ok {
 		return e.evaluateRowPredicateParts(ctx, inner, values)
 	}
-	strictLogical := rowPredicateIsStrictLogical(expression)
+	strictLogical := rowPredicateIsStrictLogical(ctx, expression)
 	if mayContainArithmetic(expression) && strictLogical && !containsRelationshipPattern(expression) {
 		value, evaluated, err := e.evaluateRowValue(expression, values)
 		if err != nil {
@@ -1419,7 +1419,7 @@ func (e *StorageExecutor) evaluateRowPredicateParts(ctx context.Context, express
 // evaluates whole with the row value evaluator first: one with arithmetic
 // that is a NOT or an XOR, or an AND / OR with an operand of a type the
 // static checker can't tell.
-func rowPredicateIsStrictLogical(expression string) bool {
+func rowPredicateIsStrictLogical(ctx context.Context, expression string) bool {
 	strictLogical := startsWithKeywordFold(expression, "NOT") || topLevelKeywordIndex(expression, "XOR") >= 0
 	if mayContainArithmetic(expression) && !strictLogical {
 		checker := staticOperatorChecker{}
@@ -1429,9 +1429,9 @@ func rowPredicateIsStrictLogical(expression string) bool {
 					if mayContainArithmetic(operand) {
 						continue
 					}
-					typeInfo, _ := checker.check(operand)
+					typeInfo, _ := checker.check(ctx, operand)
 					if !typeInfo.known() {
-						typeInfo, _ = checker.checkAtom(operand)
+						typeInfo, _ = checker.checkAtom(ctx, operand)
 					}
 					if !typeInfo.known() {
 						strictLogical = true
@@ -1455,7 +1455,7 @@ func (e *StorageExecutor) evaluateRowPredicatePartsFromSubqueries(ctx context.Co
 		if plan.integerComparison != nil {
 			// COUNT { … } <op> <integer>: compare the count directly; a null
 			// or non-integer value takes the general comparison.
-			value, _ := e.evaluateRowSubqueryValue(ctx, plan.found[0].kind, plan.found[0].body, values)
+			value, _ := e.evaluateRowSubqueryValueWithScope(ctx, plan.found[0].kind, plan.found[0].body, values, &plan.scope)
 			if count, ok := value.(int64); ok {
 				return plan.integerComparison.holds(count)
 			}

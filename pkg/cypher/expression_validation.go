@@ -21,13 +21,13 @@ import (
 // that isn't a list is a list of that one value (coerceToUnwindItems). Variables
 // bound to a node, relationship or path are checked with their scope
 // (graphListOperandTypeError).
-func validateListOperands(cypher string, params map[string]interface{}) error {
+func validateListOperands(ctx context.Context, cypher string, params map[string]interface{}) error {
 	return forEachListOperand(cypher, func(start, in int) error {
 		// FOREACH (x IN 5 | …) runs once with x = 5 in Neo4j, not a type error.
 		if foreachDeclaration(cypher, in) || forIterationDeclaration(cypher, in) {
 			return nil
 		}
-		end, typeName, parameter := staticListOperand(cypher, start, params)
+		end, typeName, parameter := staticListOperand(ctx, cypher, start, params)
 		if typeName == "" || !wholeListOperand(cypher, end) {
 			return nil
 		}
@@ -410,7 +410,7 @@ func localBindingStep(text string, open int, name string) (int, localBinding, bo
 // around it typed first (withLocalTypes): in
 // all(x IN [y] WHERE all(r IN [x] WHERE …)) [x] holds the outer local's
 // node. It is unknown when that type isn't known.
-func localBindingOperand(text string, at int, name string, scope staticTypeScope) staticOperand {
+func localBindingOperand(ctx context.Context, text string, at int, name string, scope staticTypeScope) staticOperand {
 	binding, index, ok := localBindingOf(text, at, name)
 	if !ok {
 		return staticOperand{}
@@ -423,18 +423,18 @@ func localBindingOperand(text string, at int, name string, scope staticTypeScope
 		return staticOperand{}
 	}
 	source := strings.TrimSpace(text[span[0]:span[1]])
-	inner := withLocalTypes(scope, text, span[0])
+	inner := withLocalTypes(ctx, scope, text, span[0])
 	types := typeScopeOf(inner)
 	if binding.element[index] {
-		return listElementOperand(types, inner, source)
+		return listElementOperand(ctx, types, inner, source)
 	}
 	// The one other local is reduce's accumulator.
-	return reduceAccumulatorOperand(projectedOperand(types, inner, source))
+	return reduceAccumulatorOperand(projectedOperand(ctx, types, inner, source))
 }
 
 // localBindingKind is localBindingOperand's binding kind.
-func localBindingKind(text string, at int, name string, scope staticTypeScope) matchBindingKind {
-	return localBindingOperand(text, at, name, scope).bindingKind()
+func localBindingKind(ctx context.Context, text string, at int, name string, scope staticTypeScope) matchBindingKind {
+	return localBindingOperand(ctx, text, at, name, scope).bindingKind()
 }
 
 // withLocalTypes is scope with each name a local binds around offset at of
@@ -442,7 +442,7 @@ func localBindingKind(text string, at int, name string, scope staticTypeScope) m
 // (localBindingOperand): in all(r IN [1] WHERE EXISTS { (r)-->() }) the r
 // a subquery's pattern reads is an Integer, not the clause's relationship.
 // The scope goes through typeScope, the one type of every variable.
-func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope {
+func withLocalTypes(ctx context.Context, scope staticTypeScope, text string, at int) staticTypeScope {
 	var types typeScope
 	for name := range expressionLocalBindings(text) {
 		if !localVariableShadowsAt(text, at, name) {
@@ -451,7 +451,7 @@ func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope 
 		if types == nil {
 			types = typeScopeOf(scope)
 		}
-		types[name] = localBindingOperand(text, at, name, scope)
+		types[name] = localBindingOperand(ctx, text, at, name, scope)
 	}
 	if types == nil {
 		return scope
@@ -670,7 +670,7 @@ func withoutLocalVariables(scope staticTypeScope, text string, at int) (staticTy
 // staticListOperand reads the operand of a list position starting at start
 // and returns where it ends and, when its type is static and not a list, that
 // type's Neo4j name (with the parameter's name for a parameter).
-func staticListOperand(cypher string, start int, params map[string]interface{}) (end int, typeName, parameter string) {
+func staticListOperand(ctx context.Context, cypher string, start int, params map[string]interface{}) (end int, typeName, parameter string) {
 	if start >= len(cypher) {
 		return start, "", ""
 	}
@@ -720,7 +720,7 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 	// The operator check types the operand (a variable or a property is
 	// known per row); a list position rejects a type with no list or null
 	// alternative.
-	operand := (staticTypeScope{}).operandOf(cypher[start:end])
+	operand := (staticTypeScope{}).operandOf(ctx, cypher[start:end])
 	if operand.typeName() == "" || !operand.excludes(isListTypeName) {
 		return end, "", ""
 	}

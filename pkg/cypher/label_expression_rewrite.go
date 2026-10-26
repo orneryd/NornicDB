@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,6 +47,7 @@ type labelRewriteEdit struct {
 }
 
 type labelExpressionRewriter struct {
+	ctx       context.Context
 	query     string
 	edits     []labelRewriteEdit
 	generated int
@@ -94,7 +96,7 @@ func (m labelPatternMode) clause() string {
 // desugarLabelExpressions returns query with its label expressions
 // rewritten (see above) and the rewrite that maps the result back, or query
 // and nil when nothing changes.
-func desugarLabelExpressions(query string, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
+func desugarLabelExpressions(ctx context.Context, query string, params map[string]interface{}, cypher25 bool) (string, *queryRewrite, error) {
 	if !mayUseLabelExpressions(query) && !mayUseRelationshipQuantifier(query) && !mayUsePatternPredicate(query) &&
 		!mayAssignAnonymousNodePath(query) && !mayUsePathPatternPrefix(query) &&
 		!mayRepeatRelationshipVariable(query) && !mayUseQuantifiedGroup(query) &&
@@ -102,7 +104,7 @@ func desugarLabelExpressions(query string, params map[string]interface{}, cypher
 		!mayTestExpressionLabels(query) {
 		return query, nil, nil
 	}
-	r := &labelExpressionRewriter{query: query, params: params, cypher25: cypher25}
+	r := &labelExpressionRewriter{ctx: ctx, query: query, params: params, cypher25: cypher25}
 	if err := r.statement(0, len(query)); err != nil {
 		return query, nil, err
 	}
@@ -954,7 +956,7 @@ func (r *labelExpressionRewriter) elementWhere(open, where, close int, variable 
 // moves out of its element: the moved text isn't read again (#1181). Its
 // generated variables continue the statement's.
 func (r *labelExpressionRewriter) rewrittenPredicate(predicate string) (string, error) {
-	sub := &labelExpressionRewriter{query: predicate, params: r.params, cypher25: r.cypher25, generated: r.generated, syntax: r.syntax, named: map[int]string{}}
+	sub := &labelExpressionRewriter{ctx: r.ctx, query: predicate, params: r.params, cypher25: r.cypher25, generated: r.generated, syntax: r.syntax, named: map[int]string{}}
 	if err := sub.expression(0, len(predicate)); err != nil {
 		return "", err
 	}
@@ -1066,7 +1068,7 @@ func (r *labelExpressionRewriter) resolveDynamicChain(chain labelChain, mode lab
 // SyntaxError, staticDynamicTokenError) or a supplied parameter.
 func (r *labelExpressionRewriter) resolveConstant(expression string) (interface{}, bool, error) {
 	expression = strings.TrimSpace(expression)
-	if err := staticDynamicTokenError(expression, staticTypeScope{}, dynamicTokenLabel); err != nil {
+	if err := staticDynamicTokenError(r.ctx, expression, staticTypeScope{}, dynamicTokenLabel); err != nil {
 		return nil, false, err
 	}
 	if strings.HasPrefix(expression, "$") {

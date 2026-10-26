@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
+	"maps"
 	"regexp"
 	"sort"
 	"strconv"
@@ -247,7 +248,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 		if parseErr != nil {
 			return nil, parseErr
 		}
-		if np.variable != "" && !isIdentifierReferenced(trimmedOuter, variable) {
+		if np.variable != "" && !pipelineReadsBinding(ctx, pipelineDependencyClauses(trimmedOuter), variable) {
 			return nil, nil
 		}
 		if strings.EqualFold(strings.TrimSpace(np.variable), variable) {
@@ -643,17 +644,23 @@ func (e *StorageExecutor) addLimitSkipToSubquery(ctx context.Context, subquery s
 	return beforeReturn + fmt.Sprintf(" LIMIT %d ", limit) + returnClause
 }
 
-func detectReferencedCallSubquerySeedColumns(seedResult *ExecuteResult, subqueryBody string) []string {
+func detectReferencedCallSubquerySeedColumns(ctx context.Context, seedResult *ExecuteResult, subqueryBody string) []string {
 	if seedResult == nil || len(seedResult.Columns) == 0 {
 		return nil
 	}
 	referenced := make([]string, 0, len(seedResult.Columns))
+	dependencies := pipelineDependencyClauses(subqueryBody)
+	input := make(typeScope, len(seedResult.Columns))
+	for _, name := range seedResult.Columns {
+		input[strings.TrimSpace(name)] = staticOperand{}
+	}
+	proof, complete := input.pipelineDependencies(ctx, dependencies)
 	for _, col := range seedResult.Columns {
 		name := strings.TrimSpace(col)
 		if name == "" {
 			continue
 		}
-		if isIdentifierReferenced(subqueryBody, name) {
+		if !complete || proof.reads[name] {
 			referenced = append(referenced, name)
 		}
 	}
@@ -724,67 +731,6 @@ func isLeadingWithFollower(word string) bool {
 	return false
 }
 
-// unscopedCallImports reads the importing WITHs of an unscoped CALL
-// subquery's body: whether any UNION branch (or the body, without UNION)
-// starts with an importing WITH (branchLeadingWithImport), and the
-// variables those WITHs list. A branch that imports nothing adds none,
-// whatever the other branches import (#907); it still reads outer variables
-// through NornicDB's implicit import (pipelineApplyCallSubqueryWithMetadata).
-// A CALL with a scope clause has no importing WITH
-// (callSubqueryHasScopeClause).
-//
-// names is filled only when collectNames.
-func unscopedCallImports(ctx context.Context, source string, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
-	body := readQueryBody(ctx, source, 0, len(source))
-	for _, branch := range body.branches {
-		next, imports, failure := branchSyntaxImports(branch, outer, collectNames)
-		if failure != nil {
-			return nil, false, failure
-		}
-		if imports {
-			importing = true
-			names = append(names, next...)
-		}
-	}
-	return names, importing, nil
-}
-
-func branchLeadingWithImport(ctx context.Context, source string, outer func(string) bool, collectNames bool) ([]string, bool, error) {
-	body := readQueryBody(ctx, source, 0, len(source))
-	if len(body.branches) == 0 {
-		return nil, false, nil
-	}
-	return branchSyntaxImports(body.branches[0], outer, collectNames)
-}
-
-func branchSyntaxImports(branch queryBodyBranch, outer func(string) bool, collectNames bool) (names []string, importing bool, err error) {
-	if len(branch.clauses) == 0 || branch.clauses[0].kind != pipelineClauseWith {
-		return nil, false, nil
-	}
-	plan := projectionPlanFromSyntax(branch.clauses[0].syntax)
-	importing = plan.star
-	if plan.star {
-		plan = plan.withStarExpanded(nil)
-	}
-	for _, item := range plan.projections {
-		if collectNames {
-			names = append(names, item.alias)
-		}
-		for _, name := range expressionFreeVariables(item.expr) {
-			if outer(name) {
-				importing = true
-			}
-		}
-	}
-	if !importing {
-		return nil, false, nil
-	}
-	if len(branch.clauses) == 1 && branch.useStart < 0 && !branch.finished {
-		return names, true, localizedError(localization.CypherSubqueriesWithQueryClauseRequired(), nil)
-	}
-	return names, true, nil
-}
-
 // unscopedBranchLocals returns the outer variables (names) that one branch
 // of an unscoped CALL body declares itself (branchDeclaresVariable): the
 // branch doesn't receive their outer values through NornicDB's implicit
@@ -806,24 +752,16 @@ func unscopedBranchLocals(ctx context.Context, branch string, names []string) []
 // Cypher gives such a branch a new variable; NornicDB's implicit import of an
 // outer variable applies only to a name the branch reads first (#907).
 func branchDeclaresVariable(ctx context.Context, branch, variable string) bool {
-	clauses, ok := splitPipelineClauses(ctx, strings.TrimSpace(branch))
+	clauses, ok := splitPipelineClausesAllowingProcedureCalls(ctx, branch)
 	if !ok {
 		return false
 	}
-	for _, clause := range clauses {
-		index := firstVariableOccurrence(clause.text, variable)
-		if index < 0 {
-			continue
-		}
-		switch clause.kind {
-		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseCreate, pipelineClauseMerge:
-			return index < patternPartEnd(clause) && isPatternVariableAt(clause.text, index, len(variable))
-		case pipelineClauseUnwind, pipelineClauseWith:
-			return precededByAS(clause.text, index)
-		}
-		return false
-	}
-	return false
+	input := typeScope{variable: staticOperand{}}
+	proof := newSemanticDependencies(input)
+	model := &semanticQueryScope{locals: make(map[string]bool)}
+	bindings := &semanticBodyScope{entry: input, carried: maps.Clone(input), implicit: maps.Clone(input), caller: input, bare: true}
+	_, _, _ = (&StorageExecutor{}).semanticScopeWalk(ctx, clauses, input, false, subqueryScope{bindings: bindings, dependencies: proof, result: model})
+	return model.locals[variable]
 }
 
 // patternPartEnd is where a MATCH, CREATE or MERGE clause's pattern ends:
@@ -836,33 +774,6 @@ func patternPartEnd(clause pipelineClause) int {
 		}
 	}
 	return end
-}
-
-// firstVariableOccurrence is the index of the first use of variable in text
-// as a variable: a whole word outside string literals, not a property key
-// (m.variable), a parameter ($variable) or a map key ({variable: …}).
-// -1 when there is none.
-func firstVariableOccurrence(text, variable string) int {
-	for index := 0; index+len(variable) <= len(text); index++ {
-		switch c := text[index]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
-			index = skipCypherQuotedText(text, index, c) - 1
-			continue
-		}
-		if text[index:index+len(variable)] != variable {
-			continue
-		}
-		end := index + len(variable)
-		if (index > 0 && isIdentByte(text[index-1])) || (end < len(text) && isIdentByte(text[end])) {
-			continue
-		}
-		previous, next := previousNonSpace(text, index), nextNonSpace(text, end)
-		if previous == '.' || previous == '$' || ((previous == '{' || previous == ',') && next == ':') {
-			continue
-		}
-		return index
-	}
-	return -1
 }
 
 // isPatternVariableAt reports whether the word at index is a pattern's node
