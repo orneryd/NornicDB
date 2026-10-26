@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
@@ -76,7 +77,7 @@ func TestUnwindRangeAggregationDoesNotRetainInputRows(t *testing.T) {
 				if explicit {
 					_, err := executor.handleBegin()
 					require.NoError(t, err)
-					t.Cleanup(func() { _, _ = executor.handleRollback() })
+					t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 				}
 				var before, after runtime.MemStats
 				runtime.ReadMemStats(&before)
@@ -100,7 +101,7 @@ func TestUnwindRangeExplicitTransactionFiltersBeforeMaterializingRows(t *testing
 	executor := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "range_explicit"))
 	_, err := executor.handleBegin()
 	require.NoError(t, err)
-	t.Cleanup(func() { _, _ = executor.handleRollback() })
+	t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 	query := "UNWIND range(1, 30000) AS x WITH x WHERE x < 0 RETURN count(*) AS c"
 	var before, after runtime.MemStats
 	runtime.ReadMemStats(&before)
@@ -134,7 +135,7 @@ func TestUnwindStreamingAggregateSemantics(t *testing.T) {
 				if explicit {
 					_, err = executor.handleBegin()
 					require.NoError(t, err)
-					t.Cleanup(func() { _, _ = executor.handleRollback() })
+					t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 					result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
 				} else {
 					result, err = executor.Execute(context.Background(), test.query, nil)
@@ -350,7 +351,7 @@ func TestUnwindRangeReportedWorkload(t *testing.T) {
 					if explicit {
 						_, err = executor.handleBegin()
 						require.NoError(t, err)
-						t.Cleanup(func() { _, _ = executor.handleRollback() })
+						t.Cleanup(func() { _, _ = executor.handleRollback(context.Background(), nil) })
 						result, err = executor.executeInTransaction(context.Background(), test.query, test.query)
 					} else {
 						result, err = executor.Execute(context.Background(), test.query, nil)

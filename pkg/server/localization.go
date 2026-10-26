@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 malformed-request cleanup diagnostics, 2026-10-27.
 package server
 
 import (
@@ -75,8 +76,7 @@ func (s *Server) writeNeo4jInvalidTransactionBody(w http.ResponseWriter, r *http
 	var additional []QueryError
 	for _, cleanupErr := range cleanupErrors {
 		if cleanupErr != nil {
-			code, message := mapSessionExecError(cleanupErr)
-			additional = append(additional, QueryError{Code: code, Message: message})
+			additional = append(additional, rollbackError(cleanupErr))
 		}
 	}
 	s.writeNeo4jError(w, statusCode, "Neo.ClientError.Request.InvalidFormat", s.localizedText(w, r, localization.InvalidRequestBody()), additional...)
