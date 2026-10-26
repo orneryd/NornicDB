@@ -56,7 +56,9 @@ func (f adjacencyFailingEngine) GetIncomingEdges(storage.NodeID) ([]*storage.Edg
 	return nil, errAdjacencyRead
 }
 
-func (f adjacencyFailingEngine) DeleteConnectedNode(storage.NodeID) error { return nil }
+func (f adjacencyFailingEngine) DeleteGraphNode(storage.NodeID, storage.NodeDeletionMode) error {
+	return nil
+}
 
 // A failed relationship lookup fails the connected-node check and the DELETE.
 func TestConnectedDeleteTargetsLookupErrors(t *testing.T) {

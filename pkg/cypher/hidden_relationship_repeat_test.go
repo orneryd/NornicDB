@@ -73,7 +73,7 @@ func forEachHiddenRelationshipFixture(t *testing.T, check func(t *testing.T, bas
 				require.NoError(t, err)
 				require.Len(t, edges, 1)
 				before := storage.CopyEdge(edges[0])
-				require.NoError(t, base.SetEdgeManuallySuppressed(before.ID, true))
+				require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(before.ID), true))
 				check(t, base, exec, before)
 			})
 		}
@@ -238,7 +238,7 @@ func TestHiddenRelationshipIdentityUsesStoredValueRepresentation(t *testing.T) {
 					require.NoError(t, err)
 					require.Len(t, edges, 1)
 					before := storage.CopyEdge(edges[0])
-					require.NoError(t, base.SetEdgeManuallySuppressed(before.ID, true))
+					require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(before.ID), true))
 
 					result, err := exec.Execute(ctx, hiddenRelationshipMerge+" ON CREATE SET r.payload = "+tc.same, tc.params)
 					require.NoError(t, err, "an identical value is the permitted no-op")

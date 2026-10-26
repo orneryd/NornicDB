@@ -70,9 +70,9 @@ func TestStorageNodeSuppressionRefreshesSearch(t *testing.T) {
 	requireIndexed(t, svc, 1, "the node is indexed")
 	suppressor, ok := db.storage.(storage.ManualSuppressionEngine)
 	require.True(t, ok)
-	require.NoError(t, suppressor.SetNodeManuallySuppressed("a", true))
+	require.NoError(t, suppressor.SetManualSuppression(storage.StoredEntityNodeKind, "a", true))
 	requireIndexed(t, svc, 0, "a hidden node stayed indexed")
-	require.NoError(t, suppressor.SetNodeManuallySuppressed("a", false))
+	require.NoError(t, suppressor.SetManualSuppression(storage.StoredEntityNodeKind, "a", false))
 	requireIndexed(t, svc, 1, "a node shown again was not indexed")
 }
 

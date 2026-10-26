@@ -43,7 +43,7 @@ func BenchmarkSnapshotOverlayReads(b *testing.B) {
 				if err = tx.SetNamespace("test"); err != nil {
 					b.Fatal(err)
 				}
-				if err = tx.UpdateNode(&Node{ID: ids[1], Labels: []string{"L"}, Properties: map[string]any{"v": int64(100)}}); err != nil {
+				if err = tx.UpdateGraphNode(&Node{ID: ids[1], Labels: []string{"L"}, Properties: map[string]any{"v": int64(100)}}, ClientNodeEdits); err != nil {
 					b.Fatal(err)
 				}
 				if err = tx.CreateEdge(&Edge{ID: "test:pending", StartNode: ids[0], EndNode: ids[1], Type: "REL"}); err != nil {

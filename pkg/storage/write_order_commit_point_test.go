@@ -35,7 +35,7 @@ func TestBufferedCommitAfterSynchronousCommitPointIsOrderedAfterIt(t *testing.T)
 				return err
 			}
 		}
-		if err := tx.UpdateNode(&Node{ID: "test:n", Properties: map[string]any{"v": v}}); err != nil {
+		if err := tx.UpdateGraphNode(&Node{ID: "test:n", Properties: map[string]any{"v": v}}, ClientNodeEdits); err != nil {
 			_ = tx.Rollback()
 			return err
 		}

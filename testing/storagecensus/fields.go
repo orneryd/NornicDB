@@ -26,29 +26,39 @@ type fieldRow struct {
 }
 
 // ownedFieldClasses are the classes of fields that hold entity counts, quota
-// usage or suppression state: only their owners change them.
-var ownedFieldClasses = map[string]bool{"entity-count": true, "derived-count": true, "quota": true, "suppression": true}
+// usage, suppression state or runtime publication order: only their owners change them.
+var ownedFieldClasses = map[string]bool{"entity-count": true, "derived-count": true, "quota": true, "suppression": true, "publication-order": true}
 
 // fieldClasses classifies, by field, every numeric field of a state package
 // that the module writes (a field of integer, float or atomic integer type,
 // or a map, slice or array of them), and the non-numeric fields that hold
 // suppression state. A written numeric field with no row is a violation.
 var fieldClasses = map[string]fieldRow{
+	"pkg/storage.bufferedOrderResources.stripes": {class: "write-order stripes (the acquisition itself)"},
+	// Pending destructive cleanup is published by one lifecycle transition;
+	// point/scan/write owners consult the same scope fence.
+	"pkg/storage.prefixDrops.pendingCount": {class: "publication-order", owners: []string{"pkg/storage.BadgerEngine.transitionPending"}, readers: []string{"pkg/storage.BadgerEngine.pendingNamespaceConflict", "pkg/storage.BadgerEngine.pendingPrefixConflict", "pkg/storage.commitWriter.pendingNamespaceWriteConflict"}},
+	"pkg/storage.prefixDrops.pending":      {class: "publication-order", owners: []string{"pkg/storage.BadgerEngine.transitionPending"}, readers: []string{"pkg/storage.BadgerEngine.pendingNamespaceConflict", "pkg/storage.BadgerEngine.pendingPrefixConflict", "pkg/storage.BadgerEngine.pendingNamespaceDrop"}},
+	"pkg/storage.prefixDrops.seq":          {class: "prefix-delete sequence"},
+	"pkg/storage.prefixDrops.start":        {class: "prefix-delete sequence"},
+
+	// Runtime publication order is assigned only by stage registration, not an entity MVCC field.
+	"pkg/storage.commitPublication.ts": {class: "publication-order", owners: []string{"pkg/storage.publicationStage.register"}},
 	// Entity counts: applied by the engine's count publication (after a
 	// direct write, a transaction commit and a write-behind replay), the
 	// prefix delete, the recount at open, and construction and close.
 	"pkg/storage.BadgerEngine.nodeCount": {class: "entity-count", owners: []string{
-		"pkg/storage.BadgerEngine.DeleteByPrefix", "pkg/storage.BadgerEngine.cacheOnNodeCreatedWithCounts", "pkg/storage.BadgerEngine.cacheOnNodeDeletedWithCounts",
+		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.cacheOnNodeCreatedWithCounts", "pkg/storage.BadgerEngine.cacheOnNodeDeletedWithCounts",
 		"pkg/storage.BadgerEngine.cacheOnNodesDeleted", "pkg/storage.BadgerEngine.initializeCounts", "pkg/storage.BadgerEngine.publishBufferedTotalCounts"}, readers: []string{"pkg/storage.BadgerEngine.NodeCount", "pkg/storage.BadgerEngine.labelCoversScope"}},
 	"pkg/storage.BadgerEngine.edgeCount": {class: "entity-count", owners: []string{
-		"pkg/storage.BadgerEngine.DeleteByPrefix", "pkg/storage.BadgerEngine.cacheOnEdgeCreatedWithCounts", "pkg/storage.BadgerEngine.cacheOnEdgeDeletedWithCounts",
+		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.cacheOnEdgeCreatedWithCounts", "pkg/storage.BadgerEngine.cacheOnEdgeDeletedWithCounts",
 		"pkg/storage.BadgerEngine.cacheOnEdgesDeleted", "pkg/storage.BadgerEngine.cacheOnNodeDeletedWithCounts", "pkg/storage.BadgerEngine.cacheOnNodesDeleted",
 		"pkg/storage.BadgerEngine.initializeCounts", "pkg/storage.BadgerEngine.publishBufferedTotalCounts"}, readers: []string{"pkg/storage.BadgerEngine.EdgeCount"}},
 	"pkg/storage.BadgerEngine.namespaceNodeCounts": {class: "entity-count", owners: []string{
-		"pkg/storage.BadgerEngine.DeleteByPrefix", "pkg/storage.BadgerEngine.addNamespaceNodeCount", "pkg/storage.BadgerEngine.cacheOnNodesDeleted",
+		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.addNamespaceNodeCount", "pkg/storage.BadgerEngine.cacheOnNodesDeleted",
 		"pkg/storage.BadgerEngine.initializeCounts", "pkg/storage.BadgerEngine.releaseClosedStateLocked", "pkg/storage.NewBadgerEngineWithOptions"}, readers: []string{"pkg/storage.BadgerEngine.entityCountByPrefix", "pkg/storage.BadgerEngine.ListNamespaces"}},
 	"pkg/storage.BadgerEngine.namespaceEdgeCounts": {class: "entity-count", owners: []string{
-		"pkg/storage.BadgerEngine.DeleteByPrefix", "pkg/storage.BadgerEngine.addNamespaceEdgeCount", "pkg/storage.BadgerEngine.addNamespaceEdgeCountFromNode",
+		"pkg/storage.BadgerEngine.deleteByPrefixHeld", "pkg/storage.BadgerEngine.addNamespaceEdgeCount", "pkg/storage.BadgerEngine.addNamespaceEdgeCountFromNode",
 		"pkg/storage.BadgerEngine.cacheOnEdgesDeleted", "pkg/storage.BadgerEngine.cacheOnNodesDeleted", "pkg/storage.BadgerEngine.initializeCounts",
 		"pkg/storage.BadgerEngine.releaseClosedStateLocked", "pkg/storage.NewBadgerEngineWithOptions"}, readers: []string{"pkg/storage.BadgerEngine.entityCountByPrefix", "pkg/storage.BadgerEngine.ListNamespaces"}},
 	// Counts of acknowledged write-behind commits not yet applied.
@@ -61,17 +71,32 @@ var fieldClasses = map[string]fieldRow{
 	// Derived counts a transaction stages until it commits.
 	"pkg/storage.BadgerTransaction.pendingLabelCountDeltas":         {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustLabelCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.CommitContextWithPublication", "pkg/storage.BadgerTransaction.PendingNodeLabelCountDelta"}},
 	"pkg/storage.BadgerTransaction.pendingEdgeTypeCountDeltas":      {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.CommitContextWithPublication", "pkg/storage.BadgerTransaction.PendingEdgeTypeCountDelta"}},
-	"pkg/storage.BadgerTransaction.pendingEdgeTypeLabelCountDeltas": {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeLabelCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.CommitContextWithPublication", "pkg/storage.BadgerTransaction.acquireCommitPublicationLocked"}},
+	"pkg/storage.BadgerTransaction.pendingEdgeTypeLabelCountDeltas": {class: "derived-count", owners: []string{"pkg/storage.BadgerTransaction.bufferAdjustEdgeTypeLabelCount", "pkg/storage.BadgerTransaction.closeLocked"}, readers: []string{"pkg/storage.BadgerTransaction.writeScalarCountDeltasInCommitLocked", "pkg/storage.BadgerTransaction.commitBufferedLocked", "pkg/storage.BadgerTransaction.commitContextWithPreparation", "pkg/storage.BadgerTransaction.acquireCommitPublicationLocked"}},
 	// Suppression: whether reads must consult manual suppression at all.
 	"pkg/storage.BadgerEngine.manualSuppressionCount": {class: "suppression", owners: []string{
 		"pkg/storage.BadgerEngine.dropManualSuppressions", "pkg/storage.BadgerEngine.forgetManualSuppression",
 		"pkg/storage.BadgerEngine.loadManualSuppressions", "pkg/storage.BadgerEngine.markManualSuppression"}, readers: []string{"pkg/storage.BadgerEngine.manuallySuppressed", "pkg/storage.BadgerEngine.visibilityFiltered", "pkg/storage.BadgerEngine.HasManualSuppressions"}},
 	// Quota usage: the cached stored bytes of each database.
-	"pkg/multidb.DatabaseInfo.nodeSize":         {class: "quota", owners: []string{"pkg/multidb.DatabaseManager.applyStorageSizeDelta", "pkg/multidb.DatabaseManager.ensureStorageSizeInitialized", "pkg/multidb.databaseLimitChecker.getCurrentStorageSize"}, readers: []string{"pkg/multidb.DatabaseManager.GetStorageSize", "pkg/multidb.cloneDatabaseInfo"}},
-	"pkg/multidb.DatabaseInfo.edgeSize":         {class: "quota", owners: []string{"pkg/multidb.DatabaseManager.applyStorageSizeDelta", "pkg/multidb.DatabaseManager.ensureStorageSizeInitialized", "pkg/multidb.databaseLimitChecker.getCurrentStorageSize"}, readers: []string{"pkg/multidb.DatabaseManager.GetStorageSize", "pkg/multidb.cloneDatabaseInfo"}},
-	"pkg/multidb.DatabaseInfo.totalSize":        {class: "quota", owners: []string{"pkg/multidb.DatabaseManager.applyStorageSizeDelta", "pkg/multidb.DatabaseManager.ensureStorageSizeInitialized", "pkg/multidb.databaseLimitChecker.getCurrentStorageSize"}, readers: []string{"pkg/multidb.DatabaseManager.GetStorageSize", "pkg/multidb.cloneDatabaseInfo"}},
-	"pkg/multidb.databaseLimitChecker.nodeSize": {class: "quota", owners: []string{"pkg/multidb.databaseLimitChecker.getCurrentStorageSize"}},
-	"pkg/multidb.databaseLimitChecker.edgeSize": {class: "quota", owners: []string{"pkg/multidb.databaseLimitChecker.getCurrentStorageSize"}},
+	"pkg/multidb.DatabaseInfo.nodeSize":  {class: "quota", owners: []string{"pkg/multidb.DatabaseManager.applyStorageSizeDelta", "pkg/multidb.DatabaseManager.ensureStorageSizeInitialized", "pkg/multidb.managedDatabaseRuntime.initializeStorageUsage", "pkg/multidb.managedDatabaseRuntime.ResetManagedEntityUsage", "pkg/multidb.DatabaseInfo.publishStorageUsage"}, readers: []string{"pkg/multidb.DatabaseManager.readStorageSize", "pkg/multidb.DatabaseManager.GetStorageSize", "pkg/multidb.cloneDatabaseInfo", "pkg/multidb.DatabaseInfo.reserveStorageUsage"}},
+	"pkg/multidb.DatabaseInfo.edgeSize":  {class: "quota", owners: []string{"pkg/multidb.DatabaseManager.applyStorageSizeDelta", "pkg/multidb.DatabaseManager.ensureStorageSizeInitialized", "pkg/multidb.managedDatabaseRuntime.initializeStorageUsage", "pkg/multidb.managedDatabaseRuntime.ResetManagedEntityUsage", "pkg/multidb.DatabaseInfo.publishStorageUsage"}, readers: []string{"pkg/multidb.DatabaseManager.readStorageSize", "pkg/multidb.DatabaseManager.GetStorageSize", "pkg/multidb.cloneDatabaseInfo", "pkg/multidb.DatabaseInfo.reserveStorageUsage"}},
+	"pkg/multidb.DatabaseInfo.totalSize": {class: "quota", owners: []string{"pkg/multidb.DatabaseManager.applyStorageSizeDelta", "pkg/multidb.DatabaseManager.ensureStorageSizeInitialized", "pkg/multidb.managedDatabaseRuntime.initializeStorageUsage", "pkg/multidb.managedDatabaseRuntime.ResetManagedEntityUsage", "pkg/multidb.DatabaseInfo.publishStorageUsage"}, readers: []string{"pkg/multidb.DatabaseManager.readStorageSize", "pkg/multidb.DatabaseManager.GetStorageSize", "pkg/multidb.cloneDatabaseInfo", "pkg/multidb.DatabaseInfo.reserveStorageUsage"}},
+
+	// Accepted allowance identities are quota state even though their map values
+	// are structs, so numeric-field discovery alone cannot classify this map.
+	"pkg/multidb.DatabaseInfo.pending": {class: "quota", owners: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage", "pkg/multidb.DatabaseInfo.removeReservationLocked"}},
+
+	// Shared actual counts and accepted allowances use the existing byte-cache mutex.
+	"pkg/multidb.DatabaseInfo.usageNodes":      {class: "quota", owners: []string{"pkg/multidb.managedDatabaseRuntime.initializeStorageUsage", "pkg/multidb.managedDatabaseRuntime.ResetManagedEntityUsage", "pkg/multidb.DatabaseInfo.publishStorageUsage"}, readers: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage"}},
+	"pkg/multidb.DatabaseInfo.usageEdges":      {class: "quota", owners: []string{"pkg/multidb.managedDatabaseRuntime.initializeStorageUsage", "pkg/multidb.managedDatabaseRuntime.ResetManagedEntityUsage", "pkg/multidb.DatabaseInfo.publishStorageUsage"}, readers: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage"}},
+	"pkg/multidb.reservedUsage.nodes":          {class: "quota", owners: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage", "pkg/multidb.DatabaseInfo.removeReservationLocked"}},
+	"pkg/multidb.reservedUsage.edges":          {class: "quota", owners: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage", "pkg/multidb.DatabaseInfo.removeReservationLocked"}},
+	"pkg/multidb.reservedUsage.bytes":          {class: "quota", owners: []string{"pkg/multidb.DatabaseInfo.reserveStorageUsage", "pkg/multidb.DatabaseInfo.removeReservationLocked"}},
+	"pkg/multidb.storageUsage.nodes":           {class: "local stored-image accounting delta"},
+	"pkg/multidb.storageUsage.edges":           {class: "local stored-image accounting delta"},
+	"pkg/multidb.storageUsage.nodeBytes":       {class: "local stored-image accounting delta"},
+	"pkg/multidb.storageUsage.edgeBytes":       {class: "local stored-image accounting delta"},
+	"pkg/storage.BadgerTransaction.commitMode": {class: "transaction producer durability and ACK policy"},
+	"pkg/storage.CommitOutcome.State":          {class: "accepted command outcome value"},
 
 	// These are explicit per-field classifications, not type exemptions.
 	// MarshalJSON owns the request buffer; it never publishes stored entities.
@@ -155,10 +180,8 @@ var typeClasses = map[string]string{
 	"pkg/storage.largeCommit":                  "large-commit batching",
 	"pkg/storage.namespaceMVCCState":           "MVCC timestamps",
 	"pkg/storage.nodeIndexReader":              "a scan cursor",
-	"pkg/storage.orderHold":                    "write-order stripes (the acquisition itself)",
 	"pkg/storage.overlayScopeEpoch":            "write-behind read scopes",
 	"pkg/storage.pendingEmbeddingCandidates":   "pending-embedding index cache",
-	"pkg/storage.prefixDrops":                  "prefix-delete sequence",
 	"pkg/storage.projectedNodeDecoder":         "a decoder's scratch state",
 	"pkg/storage.temporalCreationGroups":       "a temporal index build's scratch state",
 	"pkg/storage.v1ToV2IndexStats":             "migration statistics",
@@ -174,6 +197,7 @@ var typeClasses = map[string]string{
 // stateTypes hold stored-entity counts, quota usage or suppression state
 // among other fields: each of their written numeric fields needs its own row.
 var stateTypes = map[string]bool{
+	"pkg/storage.prefixDrops":  true,
 	"pkg/storage.BadgerEngine": true, "pkg/storage.BadgerTransaction": true, "pkg/storage.WriteBehindBuffer": true,
 	"pkg/storage.CommitBuffer": true, "pkg/storage.bufferedCardinalityDeltas": true,
 	"pkg/multidb.DatabaseInfo": true, "pkg/multidb.DatabaseManager": true, "pkg/multidb.databaseLimitChecker": true,

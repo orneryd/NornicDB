@@ -57,7 +57,7 @@ func TestBadgerTransaction_UpdateAndDelete_ReadCommittedDecodeErrors(t *testing.
 	require.NoError(t, tx.SetNamespace("test"))
 	defer tx.Rollback()
 
-	err = tx.UpdateNode(&Node{ID: "test:n1", Labels: []string{"Doc"}})
+	err = tx.UpdateGraphNode(&Node{ID: "test:n1", Labels: []string{"Doc"}}, ClientNodeEdits)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "reading node")
 

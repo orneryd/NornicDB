@@ -163,10 +163,7 @@ var (
 // RelationshipEndpointVisible forwards to the underlying engine; WAL adds no
 // overlay.
 func (w *WALEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
-	if checker, ok := w.engine.(RelationshipEndpointChecker); ok {
-		return checker.RelationshipEndpointVisible(id)
-	}
-	return false, false
+	return relationshipEndpointVisibility(w.engine, id)
 }
 
 // OutgoingEdgeHeaders forwards to the underlying engine; WAL adds no overlay.

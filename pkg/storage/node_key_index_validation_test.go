@@ -63,10 +63,10 @@ func TestNodeKeyIndex_ValidationUsesFilledIndex(t *testing.T) {
 	// A committed node the transaction rewrites or deletes frees its key.
 	tx, err = engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateNode(factNode("f-7-1", 7, "name", 99)))
+	require.NoError(t, tx.UpdateGraphNode(factNode("f-7-1", 7, "name", 99), ClientNodeEdits))
 	_, err = tx.CreateNode(factNode("reuse-7", 7, "name", 1))
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteNode(NodeID(prefixTestID("f-8-1"))))
+	require.NoError(t, tx.DeleteGraphNode(NodeID(prefixTestID("f-8-1")), CascadeEdges))
 	_, err = tx.CreateNode(factNode("reuse-8", 8, "name", 1))
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())

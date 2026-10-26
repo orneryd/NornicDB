@@ -79,7 +79,7 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 					}
 					return tx.CreateEdge(edge(round))
 				}
-				if err := tx.UpdateNode(node(round)); err != nil {
+				if err := tx.UpdateGraphNode(node(round), ClientNodeEdits); err != nil {
 					return err
 				}
 				return tx.UpdateEdge(edge(round))
@@ -93,7 +93,7 @@ func TestEveryIngressPublishesStoredImage(t *testing.T) {
 					}
 					return tx.CreateEdge(edge(round))
 				}
-				if err := tx.UpdateNode(node(round)); err != nil {
+				if err := tx.UpdateGraphNode(node(round), ClientNodeEdits); err != nil {
 					return err
 				}
 				return tx.UpdateEdge(edge(round))

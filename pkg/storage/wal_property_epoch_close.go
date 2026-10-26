@@ -324,7 +324,9 @@ func (b *BadgerEngine) finishPropertyWALOnClose(db *managedBadgerDB) error {
 			}
 			// Decode only the transaction identity, not bodies/binding tables.
 			var data struct {
-				TxID string `json:"tx_id"`
+				TxID        string `json:"tx_id"`
+				Namespace   string `json:"namespace"`
+				LogicalTxID string `json:"logical_tx_id"`
 			}
 			if err := json.Unmarshal(payload, &data); err != nil {
 				return err
@@ -332,7 +334,7 @@ func (b *BadgerEngine) finishPropertyWALOnClose(db *managedBadgerDB) error {
 			if data.TxID == "" {
 				return fmt.Errorf("wal: cannot seal buffered record without transaction identity")
 			}
-			if _, err := tx.Get(bufferedFlushKey(data.TxID)); err != nil {
+			if _, err := tx.Get(bufferedCommitMarkerKey(data.Namespace, data.TxID, data.LogicalTxID)); err != nil {
 				return fmt.Errorf("wal: cannot seal unapplied buffered commit %q: %w", data.TxID, err)
 			}
 			return nil

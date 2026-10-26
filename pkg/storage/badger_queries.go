@@ -24,6 +24,10 @@ func (b *BadgerEngine) GetFirstNodeByLabel(label string) (*Node, error) {
 // GetFirstNodeByLabelInScope is GetFirstNodeByLabel within one database
 // (ScopedLabelNodeReader).
 func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, error) {
+	if err := b.pendingPrefixConflict(scope); err != nil {
+		return nil, err
+	}
+
 	var node *Node
 	if b.writeBehind != nil {
 		// Share the overlay's shadowing and current-label decisions with the
@@ -87,6 +91,10 @@ func (b *BadgerEngine) ForEachNodeIDByLabel(label string, visit func(NodeID) boo
 // ForEachNodeIDByLabelInScope streams only this database's label IDs. Empty
 // scope preserves the unscoped interface's behavior.
 func (b *BadgerEngine) ForEachNodeIDByLabelInScope(scope, label string, visit func(NodeID) bool) error {
+	if err := b.pendingPrefixConflict(scope); err != nil {
+		return err
+	}
+
 	if visit == nil {
 		return nil
 	}
@@ -196,7 +204,7 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
 	checkTombstones := b.checksIndexTombstones(v)
-	err := b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = b.bufferedLabelNodes(w, v, label) }, func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = b.bufferedLabelNodes(w, v, label, scope) }, func(txn *badger.Txn) error {
 		nodes = nil
 		loaded = nil
 		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
@@ -238,7 +246,7 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 
 			var node *Node
 			var readErr error
-			node, readErr = b.readNodeItemInTxn(txn, item, nodeID, b.loadNodeEmbeddings)
+			node, readErr = b.readNodeItemInTxn(txn, item, nodeID, nodeItemFullEmbeddings)
 			if readErr != nil {
 				return readErr
 			}
@@ -251,7 +259,7 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 			nodes = append(nodes, node)
 		}
 		return it.Err()
-	}, readViewOptions{scope: scope, current: &current})
+	}, readViewOptions{scope: scope, scopeKind: readPrefixScope, current: &current})
 
 	if err != nil {
 		return nil, err
@@ -314,7 +322,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 	var overlay []*Node
 	var touched map[NodeID]bool
 	capture := func(w *WriteBehindBuffer) {
-		overlay, touched = b.bufferedLabelNodes(w, v, label)
+		overlay, touched = b.bufferedLabelNodes(w, v, label, scope)
 	}
 
 	include := propertyProjectionSet(properties)
@@ -329,7 +337,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
 			if queryNodes {
-				return b.readQueryNodeItemInTxn(txn, item, nodeID)
+				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
 			}
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
 		}
@@ -441,7 +449,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 			}
 		}
 		return nil
-	})
+	}, readViewOptions{scope: scope, scopeKind: readPrefixScope})
 	if err != nil {
 		return err
 	}
@@ -562,7 +570,7 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 
 			var node *Node
 			var readErr error
-			node, readErr = b.readNodeItemInTxn(txn, it.Item(), nodeID, b.loadNodeEmbeddings)
+			node, readErr = b.readNodeItemInTxn(txn, it.Item(), nodeID, nodeItemFullEmbeddings)
 			if readErr != nil {
 				return readErr
 			}
@@ -893,9 +901,9 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 				if err != nil {
 					return err
 				}
-				var hydrate func(*badger.Txn, *Node, NodeID) (*Node, error)
+				hydrate := nodeItemBodyOnly
 				if embeddings {
-					hydrate = b.loadNodeEmbeddings
+					hydrate = nodeItemFullEmbeddings
 				}
 				node, err = b.readNodeItemInTxn(txn, item, id, hydrate)
 				if err != nil {
@@ -910,7 +918,7 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 			}
 		}
 		return nil
-	}, readViewOptions{cached: cached, current: &current})
+	}, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids, cached: cached, current: &current})
 	if err != nil {
 		return nil, err
 	}
@@ -969,7 +977,7 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 			return err
 		}
 		return nil
-	})
+	}, readViewOptions{scopeKind: readNodeIDsScope, nodeIDs: ids})
 	if err != nil {
 		return nil, err
 	}
@@ -978,13 +986,13 @@ func (b *BadgerEngine) HasLabelBatch(ids []NodeID, label string) (map[NodeID]boo
 
 // GetOutgoingEdges returns all edges where the given node is the source.
 func (b *BadgerEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	out, _, err := b.readAdjacency(nodeID, true, false, visibleRead)
+	out, _, err := readAdjacency(b, adjacencyOutgoing, nodeID, "", nil, visibleRead)
 	return out, err
 }
 
 // GetStoredOutgoingEdges includes hidden bodies through the shared read view.
 func (b *BadgerEngine) GetStoredOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	out, _, err := b.readAdjacency(nodeID, true, false, storedRead)
+	out, _, err := readAdjacency(b, adjacencyOutgoing, nodeID, "", nil, storedRead)
 	return out, err
 }
 
@@ -993,7 +1001,7 @@ func (b *BadgerEngine) GetStoredOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 // entirely, falling back to a single view transaction when either direction
 // misses.
 func (b *BadgerEngine) GetAdjacentEdges(nodeID NodeID) ([]*Edge, []*Edge, error) {
-	return b.readAdjacency(nodeID, true, true, visibleRead)
+	return readAdjacency(b, adjacencyBoth, nodeID, "", nil, visibleRead)
 }
 
 // materializeAdjEdges resolves a list of EdgeIDs to live *Edge bodies by
@@ -1105,6 +1113,10 @@ func (b *BadgerEngine) IncomingEdgeHeaders(nodeID NodeID) ([]*Edge, bool, error)
 }
 
 func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool, error) {
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(nodeID)); err != nil {
+		return nil, true, err
+	}
+
 	if nodeID == "" {
 		return nil, true, ErrInvalidID
 	}
@@ -1120,7 +1132,7 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 		var nodeDeleted bool
 		view, err := b.captureReadView(func(w *WriteBehindBuffer) {
 			live, suppressed, nodeDeleted = b.bufferedAdjacency(w, visibleRead, nodeID, outgoing)
-		})
+		}, readViewOptions{scope: namespaceForNodeID(nodeID)})
 		if err != nil {
 			return nil, true, err
 		}
@@ -1295,18 +1307,26 @@ func (b *BadgerEngine) readIndexedEdgeInTxn(txn *badger.Txn, edgeID EdgeID, gen 
 
 // GetIncomingEdges returns all edges where the given node is the target.
 func (b *BadgerEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	_, in, err := b.readAdjacency(nodeID, false, true, visibleRead)
+	_, in, err := readAdjacency(b, adjacencyIncoming, nodeID, "", nil, visibleRead)
 	return in, err
 }
 
 // GetStoredIncomingEdges includes hidden bodies through the shared read view.
 func (b *BadgerEngine) GetStoredIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	_, in, err := b.readAdjacency(nodeID, false, true, storedRead)
+	_, in, err := readAdjacency(b, adjacencyIncoming, nodeID, "", nil, storedRead)
 	return in, err
 }
 
 // GetEdgesBetween returns all edges between two nodes.
 func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(startID)); err != nil {
+		return nil, err
+	}
+
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(endID)); err != nil {
+		return nil, err
+	}
+
 	if startID == "" || endID == "" {
 		return nil, ErrInvalidID
 	}
@@ -1322,7 +1342,7 @@ func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 		var sourceDeleted, targetDeleted bool
 		view, err := b.captureReadView(func(w *WriteBehindBuffer) {
 			live, suppressed, sourceDeleted, targetDeleted = b.bufferedEdgesBetween(w, visibleRead, startID, endID)
-		})
+		}, readViewOptions{scope: namespaceForNodeID(startID)})
 		if err != nil {
 			return nil, err
 		}
@@ -1381,6 +1401,14 @@ func (b *BadgerEngine) committedEdgesBetween(startID, endID NodeID, edgeType str
 
 // GetEdgeBetween returns an edge between two nodes with the given type.
 func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *Edge {
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(source)); err != nil {
+		return nil
+	}
+
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(target)); err != nil {
+		return nil
+	}
+
 	if source == "" || target == "" {
 		return nil
 	}
@@ -1394,7 +1422,7 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 	var sourceDeleted, targetDeleted bool
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
 		live, suppressed, sourceDeleted, targetDeleted = b.bufferedEdgesBetween(w, visibleRead, source, target)
-	})
+	}, readViewOptions{scope: namespaceForNodeID(source)})
 	if err != nil {
 		return nil
 	}

@@ -76,6 +76,7 @@ type Replicator interface {
 
 // Command represents a write operation to be replicated.
 type Command struct {
+	accepted *acceptedEntityCommand
 	// Type identifies the operation type.
 	Type CommandType
 
@@ -114,14 +115,14 @@ const (
 	// CmdUpdateEdge updates an existing edge.
 	CmdUpdateEdge
 
-	// CmdSetProperty sets a property on a node.
-	CmdSetProperty
+	// cmdRetiredSetProperty sets a property on a node.
+	cmdRetiredSetProperty
 
-	// CmdBatchWrite is a batch of multiple writes.
-	CmdBatchWrite
+	// cmdRetiredBatchWrite is a batch of multiple writes.
+	cmdRetiredBatchWrite
 
-	// CmdCypher is a Cypher write query.
-	CmdCypher
+	// cmdRetiredCypher is a Cypher write query.
+	cmdRetiredCypher
 
 	// CmdVoteRequest is a Raft vote request.
 	CmdVoteRequest
@@ -149,6 +150,9 @@ const (
 
 	// CmdBulkDeleteEdges deletes multiple edges.
 	CmdBulkDeleteEdges
+
+	// CmdCommitTransaction applies one atomic versioned entity transaction.
+	CmdCommitTransaction
 )
 
 // HealthStatus represents the health state of the replicator.
@@ -345,16 +349,17 @@ func (r *StandaloneReplicator) Start(ctx context.Context) error {
 // Apply applies a command directly to storage.
 func (r *StandaloneReplicator) Apply(cmd *Command, timeout time.Duration) error {
 	r.mu.RLock()
-	if r.closed {
+	if err := checkApplyReadiness(r.closed, r.started); err != nil {
 		r.mu.RUnlock()
-		return ErrClosed
-	}
-	if !r.started {
-		r.mu.RUnlock()
-		return ErrNotReady
+		return err
 	}
 	r.mu.RUnlock()
 
+	if cmd != nil {
+		if handled, err := routeLeaderEntityCommand(r.storage, r, cmd, timeout); handled || err != nil {
+			return err
+		}
+	}
 	return r.storage.ApplyCommand(cmd)
 }
 

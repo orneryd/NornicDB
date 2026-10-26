@@ -73,7 +73,7 @@ func TestUndoHistoryRebuildsNodeVersions(t *testing.T) {
 	node, err := tx.GetNode(id)
 	require.NoError(t, err)
 	node.Properties = map[string]any{"a": int64(3)}
-	require.NoError(t, tx.UpdateNode(node))
+	require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 	require.NoError(t, tx.Commit())
 	v3 := nodeHeadVersion(t, eng, id)
 
@@ -175,13 +175,13 @@ func TestUndoHistoryUsesTheCommitsFinalState(t *testing.T) {
 		node, err := tx.GetNode("test:twice")
 		require.NoError(t, err)
 		node.Properties = map[string]any{"v": value}
-		require.NoError(t, tx.UpdateNode(node))
+		require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 	}
 	gone, err := tx.GetNode("test:gone")
 	require.NoError(t, err)
 	gone.Properties = map[string]any{"v": int64(2)}
-	require.NoError(t, tx.UpdateNode(gone))
-	require.NoError(t, tx.DeleteNode("test:gone"))
+	require.NoError(t, tx.UpdateGraphNode(gone, ClientNodeEdits))
+	require.NoError(t, tx.DeleteGraphNode("test:gone", CascadeEdges))
 	require.NoError(t, tx.Commit())
 
 	got, err := eng.GetNodeVisibleAt("test:twice", twiceV1)

@@ -419,8 +419,8 @@ tx := engine.BeginTransaction()
 // All operations are buffered
 tx.CreateNode(&storage.Node{...})
 tx.CreateEdge(&storage.Edge{...})
-tx.UpdateNode(nodeID, &storage.Node{...})
-tx.DeleteNode(nodeID)
+tx.UpdateGraphNode(&storage.Node{ID: nodeID}, storage.ClientNodeEdits)
+tx.DeleteGraphNode(nodeID, storage.CascadeEdges)
 
 // Atomic commit - all or nothing
 err := tx.Commit()

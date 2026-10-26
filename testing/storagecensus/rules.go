@@ -22,6 +22,7 @@ var dispositionOwners = map[string]string{
 // state by design, each with the reason; every row names a function that
 // exists and still decides.
 var decisionOwners = map[string]string{
+	"pkg/storage.BadgerEngine.evaluateNodeSuppressionInTxn": "the node decay-suppression owner: evaluates the stored node and rewrites its body when suppression changes",
 	"pkg/storage.BadgerEngine.evaluateEdgeSuppressionInTxn": "the decay-suppression owner: decides from the stored relationship whether decay hides it, and rewrites its body and adjacency when that changes",
 	"pkg/storage.BadgerEngine.forgetManualSuppression":      "the manual-suppression owner: a deleted entity's on-demand suppression ends only when it has one",
 	"pkg/storage.MarkNewTemporalConstraintsForEngine$1":     "decides, under its maintenance write, whether the label has stored nodes; hidden ones count, as they keep their history",
@@ -57,15 +58,7 @@ func ownsDisposition(fn string) bool {
 // that the stacked change converging every write into one owner removes.
 // Each row must name code that still exists: a row whose code is gone is
 // stale and must be deleted, so the list only shrinks.
-var pendingConvergence = map[string]string{
-	"pkg/multidb.databaseLimitChecker.CheckStorageLimits": "sizes an update's prior through a visible read; the accounting batch over stored images replaces it (#1406)",
-	"pkg/multidb.sizeTrackingEngine.CreateNode":           "re-derives the hidden-ID create policy for quota; managed writes stage through the transaction commit (#1406)",
-	"pkg/multidb.sizeTrackingEngine.BulkCreateEdges$1":    "re-derives the hidden-ID create policy for quota; managed writes stage through the transaction commit (#1406)",
-	"pkg/multidb.sizeTrackingEngine.UpdateNode":           "sizes the prior and the result itself; managed writes stage through the transaction commit (#1406)",
-	"pkg/multidb.sizeTrackingEngine.UpdateEdge":           "sizes the prior and the result itself; managed writes stage through the transaction commit (#1406)",
-	"pkg/multidb.sizeTrackingEngine.DeleteNode":           "sizes the deleted entity itself; managed writes stage through the transaction commit (#1406)",
-	"pkg/multidb.sizeTrackingEngine.DeleteEdge":           "sizes the deleted entity itself; managed writes stage through the transaction commit (#1406)",
-}
+var pendingConvergence = map[string]string{}
 
 // rawEngineFields hold an engine that sees every database: a count read
 // through one is a total across databases, never one database's usage.
@@ -108,7 +101,7 @@ func (a *analysis) checkRules(r *Report, names map[string]*ssa.Function) {
 		return false
 	}
 	for _, d := range r.Decisions {
-		if ownsDisposition(d.Func) || note(d.Func) || decisionOwnerOnPath(d) != "" {
+		if ownsDisposition(d.Func) || note(d.Func) || (len(d.Owners) > 0 && !d.unowned) {
 			continue
 		}
 		r.Violations = append(r.Violations, fmt.Sprintf("hidden decision outside the disposition owner: %s at %s (decides %s)", d.Func, d.Pos, d.Gates))
@@ -157,7 +150,9 @@ func (a *analysis) checkRules(r *Report, names map[string]*ssa.Function) {
 	for _, d := range r.Decisions {
 		decided[d.Func] = true
 		decided[outer(d.Func)] = true
-		decided[decisionOwnerOnPath(d)] = true
+		for _, owner := range d.Owners {
+			decided[owner] = true
+		}
 	}
 	for _, fn := range collection.SortedKeys(decisionOwners) {
 		if names[fn] == nil {

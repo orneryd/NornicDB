@@ -9,9 +9,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -93,12 +95,20 @@ type DatabaseInfo struct {
 	// DATABASE … SET OPTION), by Neo4j's option name.
 	Options map[string]string `json:"options,omitempty"`
 
+	managed atomic.Pointer[managedDatabaseRuntime]
+
 	// Size tracking (incremental, not recalculated)
-	totalSize       int64        // Total storage size in bytes
-	nodeSize        int64        // Total size of all nodes in bytes
-	edgeSize        int64        // Total size of all edges in bytes
-	sizeInitialized bool         // Whether size has been calculated at least once
-	sizeMu          sync.RWMutex // Protects size tracking
+	totalSize       int64 // Total storage size in bytes
+	nodeSize        int64 // Total size of all nodes in bytes
+	edgeSize        int64 // Total size of all edges in bytes
+	sizeInitialized bool  // Whether size has been calculated at least once
+	// Actual counts, canonical byte counters, and accepted pending allowances
+	// share sizeMu so publication replaces a reservation atomically.
+	usageNodes, usageEdges int64
+	usageInitialized       bool
+	reserved               reservedUsage
+	pending                map[string]reservedUsage
+	sizeMu                 sync.RWMutex // Protects actual and reserved usage
 }
 
 // Config holds DatabaseManager configuration.
@@ -223,6 +233,9 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 			}
 		}
 		log.Printf("ℹ️  multidb: storage is read-only; skipping metadata writes and migrations")
+		if err := m.registerGraphRuntimeOwners(); err != nil {
+			return nil, err
+		}
 		return m, nil
 	}
 
@@ -242,7 +255,24 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 	// queries against the default database don't show system internals.
 	m.cleanupLeakedSystemNodes()
 
+	if err := m.registerGraphRuntimeOwners(); err != nil {
+		return nil, err
+	}
 	return m, nil
+}
+
+// registerGraphRuntimeOwners attaches graph admission before raw replication
+// can reach a namespace. Construction only registers callbacks; it never scans.
+func (m *DatabaseManager) registerGraphRuntimeOwners() error {
+	for name, info := range m.databases {
+		if info.Type != "standard" || name == m.config.SystemDatabase {
+			continue
+		}
+		if _, err := m.getStorageInternal(name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (m *DatabaseManager) cleanupLeakedSystemNodes() {
@@ -384,7 +414,17 @@ func (m *DatabaseManager) CreateDatabase(name string) error {
 		UpdatedAt: time.Now(),
 	}
 
-	return m.persistMetadata()
+	if err := m.persistMetadata(); err != nil {
+		return err
+	}
+	owner := managedEntityOwnerFor(m.inner)
+	runtime, err := bindManagedRuntime(m.databases[name], m.databases[name].Limits, name, owner)
+	if err != nil {
+		return err
+	}
+	runtime.activateDatabase(m.databases[name].Limits)
+	_, err = m.getStorageInternal(name)
+	return err
 }
 
 // DropDatabase removes a database and all its data.
@@ -436,6 +476,16 @@ func (m *DatabaseManager) DropDatabase(name string) error {
 		// This prevents the database from being dropped in memory but still existing in storage
 		m.databases[name] = info
 		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
+	}
+	if runtime := info.managed.Load(); runtime != nil {
+		runtime.retireDatabase()
+	} else {
+		owner := managedEntityOwnerFor(m.inner)
+		if owner.registry != nil {
+			if runtime, ok := owner.registry.GetOrAttachManagedEntityRuntime(name, nil).(*managedDatabaseRuntime); ok && runtime != nil {
+				runtime.retireDatabase()
+			}
+		}
 	}
 	delete(m.limitCheckers, name)
 	m.dropDatabaseStatementCachesLocked(name)
@@ -555,7 +605,10 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 
 	// Create the standard database wrapper chain once per canonical database.
 	baseEngine := storage.NewNamespacedEngine(m.inner, name)
-	checker := m.getOrCreateLimitCheckerLocked(name, info)
+	checker, err := m.getOrCreateLimitCheckerLocked(name)
+	if err != nil {
+		return nil, err
+	}
 	engine := newSizeTrackingEngine(baseEngine, m, name, checker)
 	m.engines[name] = engine
 
@@ -618,7 +671,10 @@ func (m *DatabaseManager) getStorageInternal(name string) (storage.Engine, error
 
 	// Create namespaced engine with storage-size tracking.
 	baseEngine := storage.NewNamespacedEngine(m.inner, name)
-	checker := m.getOrCreateLimitCheckerLocked(name, info)
+	checker, err := m.getOrCreateLimitCheckerLocked(name)
+	if err != nil {
+		return nil, err
+	}
 	engine := newSizeTrackingEngine(baseEngine, m, name, checker)
 	m.engines[name] = engine
 
@@ -674,21 +730,18 @@ func (m *DatabaseManager) GetDatabase(name string) (*DatabaseInfo, error) {
 // cloneDatabaseInfo returns a deep-enough, lock-safe snapshot of DatabaseInfo.
 // Caller must hold m.mu (read or write) before invoking.
 func cloneDatabaseInfo(info *DatabaseInfo) *DatabaseInfo {
-	var limitsCopy *Limits
-	if info.Limits != nil {
-		lc := *info.Limits
-		limitsCopy = &lc
-	}
+	limitsCopy := info.limitsSnapshot()
 
 	aliases := append([]string(nil), info.Aliases...)
 	constituents := append([]ConstituentRef(nil), info.Constituents...)
 
-	info.sizeMu.RLock()
-	totalSize := info.totalSize
-	nodeSize := info.nodeSize
-	edgeSize := info.edgeSize
-	sizeInitialized := info.sizeInitialized
-	info.sizeMu.RUnlock()
+	accounting := info.accountingOwner()
+	accounting.sizeMu.RLock()
+	totalSize := accounting.totalSize
+	nodeSize := accounting.nodeSize
+	edgeSize := accounting.edgeSize
+	sizeInitialized := accounting.sizeInitialized
+	accounting.sizeMu.RUnlock()
 
 	return &DatabaseInfo{
 		ID:              info.ID,
@@ -703,6 +756,7 @@ func cloneDatabaseInfo(info *DatabaseInfo) *DatabaseInfo {
 		Aliases:         aliases,
 		Limits:          limitsCopy,
 		Constituents:    constituents,
+		Options:         maps.Clone(info.Options),
 		totalSize:       totalSize,
 		nodeSize:        nodeSize,
 		edgeSize:        edgeSize,
@@ -915,24 +969,28 @@ func (m *DatabaseManager) ListAliases(databaseName string) map[string]string {
 func (m *DatabaseManager) SetDatabaseLimits(databaseName string, limits *Limits) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	info, exists := m.databases[databaseName]
-	if !exists {
+	info := m.databases[databaseName]
+	if info == nil {
 		return ErrDatabaseNotFound
 	}
-
-	limits = cloneLimits(limits)
-	previousLimits := info.Limits
-	info.Limits = limits
-	info.UpdatedAt = time.Now()
-
-	if err := m.persistMetadata(); err != nil {
-		info.Limits = previousLimits
+	runtime, err := bindManagedRuntime(info, info.limitsSnapshot(), databaseName, managedEntityOwnerFor(m.inner))
+	if err != nil {
 		return err
 	}
-	if checker := m.limitCheckers[databaseName]; checker != nil {
-		checker.updateLimits(limits)
+	if runtime.retired.Load() {
+		return ErrDatabaseNotFound
 	}
+	runtime.policyUpdateMu.Lock()
+	defer runtime.policyUpdateMu.Unlock()
+	limits = cloneLimits(limits)
+	// Persist the proposal without exposing an uncommitted quota to another
+	// manager handle. A failed catalog write preserves policy and rate tokens.
+	if err := m.persistMetadata(databaseLimitsChange{database: databaseName, limits: limits}); err != nil {
+		return err
+	}
+	info.Limits = cloneLimits(limits)
+	info.UpdatedAt = time.Now()
+	runtime.policy.updateLimits(limits)
 	return nil
 }
 
@@ -946,16 +1004,24 @@ func (m *DatabaseManager) GetDatabaseLimits(databaseName string) (*Limits, error
 		return nil, ErrDatabaseNotFound
 	}
 
-	return cloneLimits(info.Limits), nil
+	return info.limitsSnapshot(), nil
 }
 
-func (m *DatabaseManager) getOrCreateLimitCheckerLocked(databaseName string, info *DatabaseInfo) *databaseLimitChecker {
-	if checker := m.limitCheckers[databaseName]; checker != nil {
-		return checker
+// getOrCreateLimitCheckerLocked owns namespace checker lookup and construction.
+// Caller holds manager.mu; this does not initialize storage or invoke callbacks.
+func (m *DatabaseManager) getOrCreateLimitCheckerLocked(databaseName string) (*databaseLimitChecker, error) {
+	info := m.databases[databaseName]
+	if info == nil {
+		return nil, ErrDatabaseNotFound
 	}
-	checker := newDatabaseLimitCheckerWithLimits(m, databaseName, info.Limits)
+	if checker := m.limitCheckers[databaseName]; checker != nil {
+		return checker, nil
+	}
+	checker := &databaseLimitChecker{manager: m, databaseName: databaseName, localPolicy: &databaseLimitPolicy{}}
+	checker.localPolicy.updateLimits(info.limitsSnapshot())
+	checker.info.Store(info)
 	m.limitCheckers[databaseName] = checker
-	return checker
+	return checker, nil
 }
 
 func cloneLimits(limits *Limits) *Limits {
@@ -1057,10 +1123,24 @@ func (m *DatabaseManager) DecrementStorageSize(databaseName string, nodeSize, ed
 //
 // Thread-safe: This method is safe to call from multiple goroutines.
 func (m *DatabaseManager) GetStorageSize(databaseName string) (int64, int64, int64) {
+	total, nodes, edges, _ := m.readStorageSize(databaseName, nil, sizeForReporting)
+	return total, nodes, edges
+}
+
+// readStorageSize resolves the actual reader before lazy initialization. Manager
+// lookup locks are released before storage callbacks; the canonical accounting
+// owner supplies all scalar counters even if initialization reports an error.
+type storageSizeReadMode uint8
+
+const (
+	sizeForReporting storageSizeReadMode = iota
+	sizeForAdmission
+)
+
+func (m *DatabaseManager) readStorageSize(databaseName string, engine storage.Engine, mode storageSizeReadMode) (int64, int64, int64, error) {
 	m.mu.RLock()
-	info, exists := m.databases[databaseName]
-	var engine storage.Engine
-	if exists {
+	info := m.databases[databaseName]
+	if info != nil && engine == nil {
 		if cached, ok := m.engines[databaseName]; ok {
 			engine = cached
 		} else {
@@ -1068,18 +1148,25 @@ func (m *DatabaseManager) GetStorageSize(databaseName string) (int64, int64, int
 		}
 	}
 	m.mu.RUnlock()
-
-	if !exists {
-		return 0, 0, 0
+	if info == nil {
+		return 0, 0, 0, ErrDatabaseNotFound
 	}
-
-	if tracker, ok := engine.(*sizeTrackingEngine); ok {
-		_ = tracker.ensureStorageSizeInitialized()
-	} else {
-		_ = m.ensureStorageSizeInitialized(databaseName, engine)
+	err := m.ensureStorageSizeInitialized(databaseName, engine)
+	if mode == sizeForAdmission {
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		// Admission retains its original post-callback catalog check. Reporting
+		// retains its original captured-info read and ignored initialization error.
+		m.mu.RLock()
+		info = m.databases[databaseName]
+		m.mu.RUnlock()
+		if info == nil {
+			return 0, 0, 0, ErrDatabaseNotFound
+		}
 	}
-
+	info = info.accountingOwner()
 	info.sizeMu.RLock()
 	defer info.sizeMu.RUnlock()
-	return info.totalSize, info.nodeSize, info.edgeSize
+	return info.totalSize, info.nodeSize, info.edgeSize, err
 }

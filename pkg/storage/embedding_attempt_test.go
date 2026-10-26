@@ -88,7 +88,7 @@ func TestEmbeddingAttemptBufferedBodyRevision(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, tx.SetImplicit(true))
 				require.NoError(t, tx.SetNamespace("test"))
-				require.NoError(t, tx.UpdateNode(current))
+				require.NoError(t, tx.UpdateGraphNode(current, ClientNodeEdits))
 				require.NoError(t, tx.Commit())
 			}
 			require.NoError(t, disk.FlushWriteBehind())

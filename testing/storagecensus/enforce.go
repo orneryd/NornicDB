@@ -30,11 +30,11 @@ type acquisition struct {
 var acquisitions = map[string]acquisition{
 	"pkg/storage.BadgerEngine.orderAfterBufferedCommits": {
 		reason:   "holds the write-order stripes of the written entities after draining their buffered commits",
-		errIndex: 1, releases: []string{"pkg/storage.orderHold.release"}, releaseValue: -1,
+		errIndex: 1, releases: []string{"pkg/storage.writeRelease[pkg/storage.bufferedOrderResources].release"}, releaseValue: -1,
 	},
 	"pkg/storage.BadgerEngine.orderCovering": {
 		reason:   "orderAfterBufferedCommits over the written entities and every node the write reaches through stored state, taken again until it holds them all",
-		errIndex: 0, releases: []string{"pkg/storage.orderHold.release"}, releaseValue: -1,
+		errIndex: 0, releases: []string{"pkg/storage.writeRelease[pkg/storage.bufferedOrderResources].release"}, releaseValue: -1,
 	},
 	"pkg/storage.BadgerEngine.beginLifecycleWrite": {
 		reason:   "holds the write barrier and every write-order stripe after draining the whole buffer",

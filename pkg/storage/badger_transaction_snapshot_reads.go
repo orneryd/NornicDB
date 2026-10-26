@@ -386,20 +386,7 @@ func (tx *BadgerTransaction) getCommittedAdjacentEdgesLocked(nodeID NodeID, dire
 	if tx.snapshotDeregister != nil {
 		return tx.readCachedSnapshotAdjacentEdgesLocked(nodeID, direction, false)
 	}
-	switch direction {
-	case Outgoing:
-		if tx.snapshotDeregister != nil {
-			return tx.engine.getOutgoingEdgesVisibleAtWithPinnedSnapshot(nodeID, tx.readTS, tx.withSnapshotViewLocked)
-		}
-		return tx.engine.getOutgoingEdgesVisibleAtWithView(nodeID, tx.readTS, tx.withSnapshotViewLocked)
-	case Incoming:
-		if tx.snapshotDeregister != nil {
-			return tx.engine.getIncomingEdgesVisibleAtWithPinnedSnapshot(nodeID, tx.readTS, tx.withSnapshotViewLocked)
-		}
-		return tx.engine.getIncomingEdgesVisibleAtWithView(nodeID, tx.readTS, tx.withSnapshotViewLocked)
-	default:
-		return nil, ErrInvalidData
-	}
+	return tx.engine.readAdjacentEdgesAtWithView(nodeID, tx.readTS, direction, tx.withSnapshotViewLocked)
 }
 
 // readCachedSnapshotAdjacentEdgesLocked reads nodeID's relationships at the
@@ -458,7 +445,7 @@ func (tx *BadgerTransaction) readSnapshotAdjacentEdgesLocked(nodeID NodeID, dire
 				edge = header
 			} else {
 				var edgeErr error
-				edge, edgeErr = tx.engine.getEdgeVisibleAtInTxn(snapshot, edgeID, tx.readTS)
+				edge, edgeErr = tx.engine.getEdgeAtInTxn(snapshot, edgeID, tx.readTS, mvccEntityRead{visibility: visibleRead})
 				if edgeErr == ErrNotFound || edgeErr == ErrNotVisibleAtSnapshot {
 					continue
 				}
@@ -561,6 +548,12 @@ func (tx *BadgerTransaction) snapshotHeaderLocked(snapshot *badger.Txn, headers 
 // reservation. Fresh Views would admit that peer halfway through this reader.
 // The separate read-only transaction does not enlarge the writer's SSI read set.
 func (tx *BadgerTransaction) withSnapshotViewLocked(read func(*badger.Txn) error) error {
+	if tx.namespace != "" && tx.engine != nil {
+		if err := tx.engine.pendingNamespaceConflict(tx.namespace); err != nil {
+			return err
+		}
+	}
+
 	tx.observed = true
 	if tx.snapshotTx != nil {
 		return read(tx.snapshotTx)

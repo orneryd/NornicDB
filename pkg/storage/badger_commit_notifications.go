@@ -13,9 +13,10 @@ type commitNotification struct {
 	consumed chan struct{}
 	// pooled marks a publication hold, returned to publicationHolds once it
 	// was dispatched; its holder no longer refers to it after completing it.
-	pooled bool
-	ready  bool
-	next   *commitNotification
+	pooled   bool
+	ready    bool
+	reserved bool
+	next     *commitNotification
 }
 
 // A direct event keeps its one-operation backing store with the queue entry.
@@ -37,12 +38,12 @@ func (b *BadgerEngine) hasCommitListeners() bool {
 // are released, so a database recreated after it returns never meets the
 // dropped one's derived state.
 func (b *BadgerEngine) publishNamespaceReset(prefix string) *commitNotification {
-	n := b.queueCommitOperations(nil, nil)
+	b.resetManagedEntityUsage(prefix)
+	n := b.queueCommitOperations(nil, nil, notificationAwaited)
 	if n == nil {
 		return nil
 	}
 	n.reset = &prefix
-	n.consumed = make(chan struct{})
 	b.completeCommitNotification(n)
 	return n
 }
@@ -55,10 +56,31 @@ func (b *BadgerEngine) awaitCommitNotification(n *commitNotification) {
 	}
 }
 
-// queueCommitOperations owns queue admission, reservation and direct completion.
-// A direct operation is snapshotted into its inline entry; a transaction batch
-// retains its existing slice and is completed by its publication owner.
-func (b *BadgerEngine) queueCommitOperations(ops []Operation, direct *Operation) *commitNotification {
+// notificationAdmission selects when the canonical notification owner reserves
+// its queue position. Physical writes reserve under timestamp assignment.
+type notificationAdmission uint8
+
+const (
+	notificationImmediate notificationAdmission = iota
+	notificationAtCommit
+	// notificationAwaited reserves an immediate fence with one completion owner.
+	notificationAwaited
+)
+
+// queueCommitOperations owns payload creation, queue admission and direct
+// completion. At-commit payloads are reserved by the commit writer and become
+// ready only after their caller releases storage and accounting locks.
+func (b *BadgerEngine) queueCommitOperations(ops []Operation, direct *Operation, admission notificationAdmission) *commitNotification {
+	// Immediate notifications describe an already visible mutation. Keep its
+	// revision and deletion cleanup in the same canonical operation owner.
+	// At-commit writes perform these effects inside ordered publication.
+	if admission == notificationImmediate || admission == notificationAwaited {
+		if direct != nil {
+			b.prepareCommitOperations([]Operation{*direct}, false)
+		} else {
+			b.prepareCommitOperations(ops, false)
+		}
+	}
 	var n *commitNotification
 	if direct != nil {
 		if !b.hasCommitListeners() && !hasEmbeddingOutcome([]Operation{*direct}) {
@@ -77,9 +99,14 @@ func (b *BadgerEngine) queueCommitOperations(ops []Operation, direct *Operation)
 		n = &commitNotification{}
 	}
 	n.ops = ops
-	n = b.queueCommitNotification(n)
-	if direct != nil {
-		b.completeCommitNotification(n)
+	if admission == notificationAwaited {
+		n.consumed = make(chan struct{})
+	}
+	if admission == notificationImmediate || admission == notificationAwaited {
+		b.reserveCommitNotification(n)
+		if direct != nil {
+			b.completeCommitNotification(n)
+		}
 	}
 	return n
 }
@@ -103,7 +130,20 @@ func (b *BadgerEngine) holdPublication() *commitNotification {
 var publicationHolds = sync.Pool{New: func() any { return new(commitNotification) }}
 
 func (b *BadgerEngine) queueCommitNotification(n *commitNotification) *commitNotification {
+	b.reserveCommitNotification(n)
+	return n
+}
+
+func (b *BadgerEngine) reserveCommitNotification(n *commitNotification) {
+	if n == nil {
+		return
+	}
 	b.notificationMu.Lock()
+	if n.reserved {
+		b.notificationMu.Unlock()
+		return
+	}
+	n.reserved = true
 	b.notifyWG.Add(1)
 	if b.notificationTail == nil {
 		b.notificationHead = n
@@ -112,7 +152,6 @@ func (b *BadgerEngine) queueCommitNotification(n *commitNotification) *commitNot
 	}
 	b.notificationTail = n
 	b.notificationMu.Unlock()
-	return n
 }
 
 func hasEmbeddingOutcome(ops []Operation) bool {
@@ -124,7 +163,8 @@ func hasEmbeddingOutcome(ops []Operation) bool {
 	return false
 }
 
-func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool) {
+func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool, revisions ...bool) {
+	publishRevision := len(revisions) == 0 || revisions[0]
 	for i := range ops {
 		op := &ops[i]
 		if snapshot {
@@ -132,20 +172,30 @@ func (b *BadgerEngine) prepareCommitOperations(ops []Operation, snapshot bool) {
 		}
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
-			b.graphMutationVersions.changed(namespaceForNodeID(op.Node.ID))
+			if publishRevision {
+				b.graphMutationVersions.changed(namespaceForNodeID(op.Node.ID))
+			}
 		case OpDeleteNode:
-			b.graphMutationVersions.changed(namespaceForNodeID(op.NodeID))
+			if publishRevision {
+				b.graphMutationVersions.changed(namespaceForNodeID(op.NodeID))
+			}
 			b.forgetManualSuppression(manualSuppressionNode, string(op.NodeID))
 			b.deleteCleanup.recordDelete()
 			for _, id := range op.DeletedEdgeIDs {
-				b.graphMutationVersions.changed(namespaceForEdgeID(id))
+				if publishRevision {
+					b.graphMutationVersions.changed(namespaceForEdgeID(id))
+				}
 				b.forgetManualSuppression(manualSuppressionEdge, string(id))
 				b.deleteCleanup.recordDelete()
 			}
 		case OpCreateEdge, OpUpdateEdge:
-			b.graphMutationVersions.changed(namespaceForEdgeID(op.Edge.ID))
+			if publishRevision {
+				b.graphMutationVersions.changed(namespaceForEdgeID(op.Edge.ID))
+			}
 		case OpDeleteEdge:
-			b.graphMutationVersions.changed(namespaceForEdgeID(op.EdgeID))
+			if publishRevision {
+				b.graphMutationVersions.changed(namespaceForEdgeID(op.EdgeID))
+			}
 			b.forgetManualSuppression(manualSuppressionEdge, string(op.EdgeID))
 			b.deleteCleanup.recordDelete()
 		}
@@ -163,6 +213,10 @@ func (b *BadgerEngine) readyCommitNotification(n *commitNotification) bool {
 		return false
 	}
 	b.notificationMu.Lock()
+	if !n.reserved {
+		b.notificationMu.Unlock()
+		return false
+	}
 	n.ready = true
 	b.notificationMu.Unlock()
 	return true

@@ -121,7 +121,7 @@ func TestReadViewIdleAdjacencyCommittedIDs(t *testing.T) {
 			}
 			edge := &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "R"}
 			if retired {
-				bufferedCreateEdge(t, b, edge)
+				bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.CreateEdge(edge) })
 				require.NoError(t, b.FlushWriteBehind())
 			} else {
 				require.NoError(t, b.CreateEdge(edge))
@@ -132,7 +132,7 @@ func TestReadViewIdleAdjacencyCommittedIDs(t *testing.T) {
 				func() ([]*Edge, error) { return b.GetOutgoingEdges("test:a") },
 				func() ([]*Edge, error) { return b.GetIncomingEdges("test:b") },
 				func() ([]*Edge, error) {
-					out, in, err := b.readAdjacency("test:a", true, true, visibleRead)
+					out, in, err := readAdjacency(b, adjacencyBoth, "test:a", "", nil, visibleRead)
 					require.Empty(t, in)
 					return out, err
 				},

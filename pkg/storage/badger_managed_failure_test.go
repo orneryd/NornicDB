@@ -47,7 +47,7 @@ func TestCommit_BadgerConflictAfterValidation(t *testing.T) {
 		if large {
 			stageLargeCreate(t, tx, 6000)
 		}
-		require.NoError(t, tx.UpdateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}))
+		require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits))
 		overwriteRaw(t, engine, nodeKey("test:base"))
 
 		err = tx.Commit()
@@ -93,7 +93,7 @@ func requireUnrecoverableRollback(t *testing.T, batchFails bool) {
 	})
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits))
 	stageLargeCreate(t, tx, 6000)
 	err = tx.Commit()
 	restore()

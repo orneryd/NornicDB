@@ -111,7 +111,7 @@ func TestTransactionGetQueryNodeKeepsFullReads(t *testing.T) {
 			require.Equal(t, chunks, full.ChunkEmbeddings)
 
 			node.Properties["other"] = int64(1)
-			require.NoError(t, tx.UpdateNode(node))
+			require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 			require.NoError(t, tx.Commit())
 
 			stored, err := b.GetNode(id)
@@ -135,7 +135,7 @@ func TestTransactionGetQueryNodeKeepsFullReads(t *testing.T) {
 			node, err = tx.GetQueryNode(id)
 			require.NoError(t, err)
 			node.Properties["title"] = "new text"
-			require.NoError(t, tx.UpdateNode(node))
+			require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 			require.NoError(t, tx.Commit())
 			stored, err = b.GetNode(id)
 			require.NoError(t, err)
@@ -166,7 +166,7 @@ func TestTransactionGetQueryNodeVisibility(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "p", again.Properties["title"])
 
-	require.NoError(t, tx.DeleteNode(pending.ID))
+	require.NoError(t, tx.DeleteGraphNode(pending.ID, CascadeEdges))
 	_, err = tx.GetQueryNode(pending.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = tx.GetQueryNode("test:missing")
@@ -211,7 +211,7 @@ func TestTransactionGetQueryNodeKeepsEmbeddingKeyLifecycle(t *testing.T) {
 		node, err := read(tx)
 		require.NoError(t, err)
 		node.Properties["seen"] = true
-		require.NoError(t, tx.UpdateNode(node))
+		require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 		require.NoError(t, tx.Commit())
 		out.keysAfterUpdate = countQueryReadEmbeddingKeys(t, b, id)
 		b.invalidateCachesAfterRestore()
@@ -223,7 +223,7 @@ func TestTransactionGetQueryNodeKeepsEmbeddingKeyLifecycle(t *testing.T) {
 		require.NoError(t, err)
 		_, err = read(tx)
 		require.NoError(t, err)
-		require.NoError(t, tx.DeleteNode(id))
+		require.NoError(t, tx.DeleteGraphNode(id, CascadeEdges))
 		require.NoError(t, tx.Commit())
 		out.keysAfterDelete = countQueryReadEmbeddingKeys(t, b, id)
 		return out
@@ -320,7 +320,7 @@ func TestEngineGetQueryNodeMatchesGetNode(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
 		require.NoError(t, tx.SetNamespace("test"))
-		require.NoError(t, tx.DeleteNode(id))
+		require.NoError(t, tx.DeleteGraphNode(id, CascadeEdges))
 		require.NoError(t, tx.Commit())
 		_, err = b.GetNode(id)
 		require.ErrorIs(t, err, ErrNotFound)

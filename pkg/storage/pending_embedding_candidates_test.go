@@ -195,7 +195,7 @@ func TestPendingCandidatesLargeCommitPublication(t *testing.T) {
 					return txn.Set([]byte(fmt.Sprintf("pending-probe-%06d", i)), []byte(strings.Repeat("x", 256)))
 				}
 			}
-			err := e.commitEngineWrite(nil, units)
+			err := e.commitEngineWrite(nil, engineWriteOptions{units: units})
 			require.Greater(t, batches, 1, "fixture must split into multiple atomic batches")
 			if fail {
 				require.ErrorIs(t, err, sentinel)

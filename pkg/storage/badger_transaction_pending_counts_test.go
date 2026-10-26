@@ -42,7 +42,7 @@ func TestBadgerTransactionPendingCountDeltas(t *testing.T) {
 	require.False(t, tracked)
 
 	require.NoError(t, tx.DeleteEdge("tenant:e"))
-	require.NoError(t, tx.DeleteNode("tenant:b"))
+	require.NoError(t, tx.DeleteGraphNode("tenant:b", CascadeEdges))
 	delta, _ = tx.PendingNodeLabelCountDelta("tenant", "L")
 	require.EqualValues(t, 1, delta)
 	delta, _ = tx.PendingEdgeTypeCountDelta("tenant", "T")
