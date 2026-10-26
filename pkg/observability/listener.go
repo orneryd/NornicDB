@@ -11,6 +11,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/lifecycle"
 )
 
@@ -165,10 +166,10 @@ func (l *telemetryListener) Start(ctx context.Context) error {
 func (l *telemetryListener) Shutdown(ctx context.Context) error {
 	var errs error
 	if err := l.prov.Shutdown(ctx); err != nil {
-		errs = errors.Join(errs, fmt.Errorf("provider shutdown: %w", err))
+		errs = compose.Outcomes(errs, fmt.Errorf("provider shutdown: %w", err))
 	}
 	if err := l.srv.Shutdown(ctx); err != nil {
-		errs = errors.Join(errs, fmt.Errorf("telemetry listener shutdown: %w", err))
+		errs = compose.Outcomes(errs, fmt.Errorf("telemetry listener shutdown: %w", err))
 	}
 	return errs
 }

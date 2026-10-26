@@ -94,7 +94,6 @@ package replication
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -102,6 +101,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -589,7 +589,7 @@ func LoadFromEnv() *Config {
 	config.TLS.CAFile = envutil.Get("NORNICDB_CLUSTER_TLS_CA_FILE", "")
 	config.TLS.VerifyClient = securityBool("NORNICDB_CLUSTER_TLS_VERIFY_CLIENT", true) // Default to secure
 	config.TLS.InsecureSkipVerify = securityBool("NORNICDB_CLUSTER_TLS_INSECURE_SKIP_VERIFY", false)
-	config.loadErr = errors.Join(loadErrs...)
+	config.loadErr = compose.Outcomes(nil, loadErrs...)
 	config.TLS.ServerName = envutil.Get("NORNICDB_CLUSTER_TLS_SERVER_NAME", "")
 	config.TLS.MinVersion = envutil.Get("NORNICDB_CLUSTER_TLS_MIN_VERSION", "1.2")
 	config.TLS.CipherSuites = parseCSV(envutil.Get("NORNICDB_CLUSTER_TLS_CIPHER_SUITES", ""))

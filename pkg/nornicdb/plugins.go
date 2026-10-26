@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
@@ -220,7 +221,7 @@ func LoadPluginsFromDir(dir string, heimdallCtx *heimdall.SubsystemContext) erro
 	fmt.Println("╚══════════════════════════════════════════════════════════════╝")
 
 	pluginsInitialized = true
-	return errors.Join(failures...)
+	return compose.Outcomes(nil, failures...)
 }
 
 // loadPluginFile loads a single .so plugin and auto-detects its type.
@@ -376,7 +377,7 @@ func registerHeimdallPlugin(hp heimdall.HeimdallPlugin, path string, ctx *heimda
 	// Start the plugin
 	if err := hp.Start(); err != nil {
 		mgr.UnregisterPlugin(hp.Name())
-		return nil, errors.Join(fmt.Errorf("start: %w", err), hp.Shutdown())
+		return nil, compose.Outcomes(fmt.Errorf("start: %w", err), hp.Shutdown())
 	}
 
 	return &LoadedPlugin{
