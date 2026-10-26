@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"runtime"
@@ -179,28 +180,24 @@ func (b *BadgerEngine) rebuildLabelIndexForV2(stats *v1ToV2IndexStats) error {
 	for {
 		var batch []migrationItem
 		err := b.withView(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
-			defer it.Close()
 			start := cursor
 			if len(start) == 0 {
 				start = []byte{prefixNode}
 			}
 			batch = batch[:0]
-			for it.Seek(start); it.ValidForPrefix([]byte{prefixNode}); it.Next() {
-				if len(batch) >= batchSize {
-					return nil
-				}
-				item := it.Item()
-				val, vErr := item.ValueCopy(nil)
-				if vErr != nil {
-					return vErr
-				}
-				if len(val) == 0 {
-					continue
-				}
-				batch = append(batch, migrationItem{key: item.KeyCopy(nil), value: val})
-			}
-			return nil
+			// The engine's node-row scan hands each stored body over
+			// undecoded; the write pass below decodes it.
+			rows := nodeRowScan{scope: allRows(), overlay: noOverlay[NodeID](), decode: decodeErrorsFail, visibility: scanStored,
+				body: func(id NodeID, val []byte) (bool, error) {
+					if len(batch) >= batchSize {
+						return true, ErrIterationStopped
+					}
+					if len(val) > 0 {
+						batch = append(batch, migrationItem{key: nodeKey(id), value: append([]byte(nil), val...)})
+					}
+					return true, nil
+				}}
+			return b.streamNodeRowsFrom(context.Background(), txn, start, rows, StreamNodesOptions{}, func(*Node) error { return nil })
 		})
 		if err != nil {
 			return fmt.Errorf("scan nodes for index rebuild: %w", err)
@@ -264,31 +261,28 @@ func (b *BadgerEngine) rebuildEdgeIndexesForV2(stats *v1ToV2IndexStats) error {
 	for {
 		var batch []migrationItem
 		err := b.withView(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEdge}))
-			defer it.Close()
 			start := cursor
 			if len(start) == 0 {
 				start = []byte{prefixEdge}
 			}
 			batch = batch[:0]
-			for it.Seek(start); it.ValidForPrefix([]byte{prefixEdge}); it.Next() {
-				if len(batch) >= batchSize {
-					return nil
-				}
-				item := it.Item()
-				val, vErr := item.ValueCopy(nil)
-				if vErr != nil {
-					return vErr
-				}
-				if len(val) == 0 {
+			// The engine's relationship-row scan hands each stored body over
+			// undecoded; the write pass below decodes it.
+			scan := edgeRowScan{scope: allRows(), overlay: noOverlay[EdgeID](), decode: decodeErrorsFail, visibility: scanStored,
+				body: func(id EdgeID, val []byte) (bool, error) {
+					if len(batch) >= batchSize {
+						return true, ErrIterationStopped
+					}
 					// Empty edge bodies aren't decodable; the body-rewrite
 					// pass also skips them. Leave them on disk; index
 					// rebuild has nothing to emit for them.
-					continue
-				}
-				batch = append(batch, migrationItem{key: item.KeyCopy(nil), value: val})
-			}
-			return nil
+					if len(val) > 0 {
+						batch = append(batch, migrationItem{key: edgeKey(id), value: append([]byte(nil), val...)})
+					}
+					return true, nil
+				}}
+			_, err := b.scanEdgeRowsFrom(context.Background(), txn, start, scan, func(*Edge) error { return nil })
+			return err
 		})
 		if err != nil {
 			return fmt.Errorf("scan edges for index rebuild: %w", err)

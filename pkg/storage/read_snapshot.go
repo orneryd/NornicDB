@@ -1,3 +1,4 @@
+// Author: Codex implementation lane, 2026-10-27 (NOR-148 visible snapshot adapter).
 package storage
 
 import (
@@ -25,6 +26,14 @@ type ReadSnapshotView interface {
 	Close()
 }
 
+// VisibleReadSnapshot exposes the canonical user-visible node population at a
+// captured view. IterateNodes retains its stored-entity build contract; this
+// adapter applies the same visibility and decode-error policy as AllNodes.
+type VisibleReadSnapshot interface {
+	ReadSnapshotView
+	IterateVisibleNodes(context.Context, func(*Node) bool) error
+}
+
 type readSnapshotPrefixKey struct{}
 
 // badgerReadSnapshot is BadgerEngine's ReadSnapshotView: a long-lived read
@@ -33,13 +42,16 @@ type readSnapshotPrefixKey struct{}
 // timestamp between scans, which keeps compaction from discarding a version
 // it can see until Close; each scan opens its own transaction at it.
 type badgerReadSnapshot struct {
-	prefix       string
-	b            *BadgerEngine
-	view         *badgerReadView
-	overlayNodes []*Node
-	nodesTouched map[NodeID]bool
-	overlayEdges []*Edge
-	edgesTouched map[EdgeID]bool
+	reader        SnapshotReader
+	revision      SnapshotReadRevision
+	revisionValid bool
+	prefix        string
+	b             *BadgerEngine
+	view          *badgerReadView
+	overlayNodes  []*Node
+	nodesTouched  map[NodeID]bool
+	overlayEdges  []*Edge
+	edgesTouched  map[EdgeID]bool
 }
 
 // OpenReadSnapshot captures a long-lived read view and, at the same point,
@@ -52,19 +64,33 @@ func (b *BadgerEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 		return nil, err
 	}
 	prefix, _ := ctx.Value(readSnapshotPrefixKey{}).(string)
-	snap := &badgerReadSnapshot{b: b, prefix: prefix}
+	snap := &badgerReadSnapshot{b: b, prefix: prefix, reader: requestedSnapshotReader(ctx)}
+	var before SnapshotReadRevision
+	var beforeOK bool
+	if snap.reader != SnapshotStored {
+		before, beforeOK = b.snapshotReadRevision(snap.reader)
+	}
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
 		// Nodes are read whatever their visibility, relationships as visible
 		// reads see them, as their stored rows below.
-		pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedNodes, prefix: prefix})
-		snap.overlayNodes, snap.nodesTouched = pendingNodes.nodes, pendingNodes.nodesTouched
-		pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges, prefix: prefix})
-		snap.overlayEdges, snap.edgesTouched = pendingEdges.edges, pendingEdges.edgesTouched
+		if snap.reader != SnapshotAllEdges && snap.reader != SnapshotStreamEdges {
+			pendingNodes := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedNodes, prefix: prefix})
+			snap.overlayNodes, snap.nodesTouched = pendingNodes.nodes, pendingNodes.nodesTouched
+		}
+		if snap.reader != SnapshotAllNodes {
+			pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges, prefix: prefix})
+			snap.overlayEdges, snap.edgesTouched = pendingEdges.edges, pendingEdges.edgesTouched
+		}
 	}, readViewOptions{longLived: true, scope: prefix, scopeKind: readPrefixScope})
 	if err != nil {
 		return nil, err
 	}
 	snap.view = view
+	if snap.reader != SnapshotStored {
+		after, afterOK := b.snapshotReadRevision(snap.reader)
+		snap.revision, snap.revisionValid = after, beforeOK && afterOK && before == after && after.timestamp == view.readTs
+		snap.revision.timestamp = view.readTs
+	}
 	return snap, nil
 }
 
@@ -72,34 +98,49 @@ func (b *BadgerEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 // write-behind overlay merged as StreamEdges merges it: a buffered node
 // shadows its committed row and is visited after the scan.
 func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
+	return s.iterateNodes(fn, true)
+}
+
+// IterateVisibleNodes uses the same captured transaction/overlay iterator and
+// canonical visibility kernel as ordinary user reads. Cancellation stops scans.
+func (s *badgerReadSnapshot) IterateVisibleNodes(ctx context.Context, fn func(*Node) bool) error {
+	now := DecayScoringTime()
+	err := s.iterateNodes(func(node *Node) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		if s.b.filterEntityByDecay(visibleRead, node, now) {
+			return true
+		}
+		return fn(node)
+	}, false)
+	if err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+func (s *badgerReadSnapshot) iterateNodes(fn func(*Node) bool, skipInvalid bool) error {
 	stopped := false
 	err := s.view.withView(func(txn *badger.Txn) error {
-		prefix := append([]byte{prefixNode}, s.prefix...)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			key := it.Item().Key()
-			if len(key) <= 1 {
-				continue
-			}
-			nodeID := NodeID(key[1:])
-			if s.nodesTouched[nodeID] {
-				continue // the write-behind overlay shadows this committed row
-			}
-			var node *Node
-			if err := it.Item().Value(func(val []byte) error {
-				var decErr error
-				node, decErr = s.b.decodeNodeWithEmbeddings(txn, val, nodeID)
-				return decErr
-			}); err != nil {
-				continue // Skip invalid nodes, as IterateNodes does
-			}
+		// The engine's one node-row scan, over the captured transaction.
+		// Captured scans decode once into the retained population; the
+		// canonical decoder/hydrator needs no additional body-cache copy.
+		// Visibility is applied by IterateVisibleNodes to committed and overlay
+		// nodes alike, so the row scan itself keeps every stored row.
+		rows := nodeRowScan{
+			scope:      rowsWithPrefix(s.prefix),
+			overlay:    overlayReplaces(s.nodesTouched),
+			decode:     decodePolicyFor(skipInvalid), // skipping is the stored build iterator's contract
+			visibility: scanStored,
+		}
+		return s.b.streamNodesWithOptionsInTxn(context.Background(), txn, rows, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
 			if !fn(node) {
 				stopped = true
-				return nil
+				return ErrIterationStopped
 			}
-		}
-		return nil
+			return nil
+		})
 	})
 	if err != nil || stopped {
 		return err
@@ -115,48 +156,26 @@ func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 // StreamEdges is BadgerEngine.StreamEdges at the snapshot, with the
 // write-behind overlay captured when the snapshot was opened.
 func (s *badgerReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge) error) error {
-	nowNanos := DecayScoringTime()
+	return s.iterateEdges(ctx, fn, true)
+}
+
+// IterateAllEdges is AllEdges at the captured point, including decode errors.
+func (s *badgerReadSnapshot) IterateAllEdges(ctx context.Context, fn func(*Edge) error) error {
+	return s.iterateEdges(ctx, fn, false)
+}
+
+func (s *badgerReadSnapshot) iterateEdges(ctx context.Context, fn func(*Edge) error, skipInvalid bool) error {
+	stopped := false
 	err := s.view.withView(func(txn *badger.Txn) error {
-		prefix := append([]byte{prefixEdge}, s.prefix...)
-		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			key := it.Item().Key()
-			var edgeID EdgeID
-			if len(key) > 1 {
-				edgeID = EdgeID(key[1:])
-			}
-			if s.edgesTouched[edgeID] {
-				continue // the write-behind overlay shadows this committed row
-			}
-			var edge *Edge
-			if err := it.Item().Value(func(val []byte) error {
-				var decErr error
-				edge, decErr = s.b.decodeEdgeBodyByID(val, edgeID)
-				return decErr
-			}); err != nil {
-				continue // Skip invalid edges, as StreamEdges does
-			}
-			if edge == nil || s.b.filterEntityByDecay(visibleRead, edge, nowNanos) {
-				continue
-			}
-			if err := fn(edge); err != nil {
-				if err == ErrIterationStopped {
-					return errSnapshotScanStopped
-				}
-				return err
-			}
-		}
-		return nil
+		var err error
+		stopped, err = s.b.scanEdgeRows(ctx, txn, edgeRowScan{scope: rowsWithPrefix(s.prefix), overlay: overlayReplaces(s.edgesTouched), decode: decodePolicyFor(skipInvalid), visibility: scanVisible}, fn)
+		return err
 	})
-	if err == errSnapshotScanStopped {
-		return nil
-	}
 	if err != nil {
 		return err
+	}
+	if stopped {
+		return nil
 	}
 	for _, edge := range s.overlayEdges {
 		if err := fn(copyEdge(edge)); err != nil {
@@ -168,14 +187,6 @@ func (s *badgerReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge) err
 	}
 	return nil
 }
-
-// errSnapshotScanStopped ends a snapshot scan the caller stopped, before the
-// overlay is visited.
-var errSnapshotScanStopped = &snapshotScanStopped{}
-
-type snapshotScanStopped struct{}
-
-func (*snapshotScanStopped) Error() string { return "storage: snapshot scan stopped" }
 
 // Close releases the snapshot's read view; later reads fail. It waits for a
 // scan in progress and is idempotent (badgerReadView.Close).
@@ -189,6 +200,13 @@ var ErrReadSnapshotUnsupported = errors.New("storage: read snapshots are not sup
 // OpenReadSnapshot opens a read snapshot of engine, or returns
 // ErrReadSnapshotUnsupported when engine has no ReadSnapshotter.
 func OpenReadSnapshot(ctx context.Context, engine any) (ReadSnapshotView, error) {
+	if requestedSnapshotReader(ctx) != SnapshotStored {
+		issued, ok := engine.(Engine)
+		owner, owns := engine.(SnapshotReaderOwner)
+		if !ok || !owns || !owner.OwnsSnapshotReader(issued) {
+			return nil, ErrReadSnapshotUnsupported
+		}
+	}
 	if snapshotter, ok := engine.(ReadSnapshotter); ok {
 		return snapshotter.OpenReadSnapshot(ctx)
 	}
@@ -199,7 +217,7 @@ func OpenReadSnapshot(ctx context.Context, engine any) (ReadSnapshotView, error)
 // applies every write to it before acknowledging, so it holds no other
 // state a read could see.
 func (w *WALEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, error) {
-	return OpenReadSnapshot(ctx, w.engine)
+	return OpenReadSnapshot(SnapshotStreamFallbackContext(ctx, w.engine), w.engine)
 }
 
 // OpenReadSnapshot forwards to the traced engine.
@@ -210,8 +228,11 @@ func (t *TracedEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 // OpenReadSnapshot opens the inner engine's snapshot and scopes it to this
 // namespace, translating IDs as IterateNodes and StreamEdges do.
 func (n *NamespacedEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, error) {
-	prefix, _ := ctx.Value(readSnapshotPrefixKey{}).(string)
-	ctx = context.WithValue(ctx, readSnapshotPrefixKey{}, string(n.PrefixNodeID(NodeID(prefix))))
+	ctx = SnapshotStreamFallbackContext(ctx, n.inner)
+	if requestedSnapshotReader(ctx) == SnapshotStored {
+		prefix, _ := ctx.Value(readSnapshotPrefixKey{}).(string)
+		ctx = context.WithValue(ctx, readSnapshotPrefixKey{}, string(n.PrefixNodeID(NodeID(prefix))))
+	}
 
 	inner, err := OpenReadSnapshot(ctx, n.inner)
 	if err != nil {
@@ -227,6 +248,21 @@ type namespacedReadSnapshot struct {
 
 func (s *namespacedReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 	return s.inner.IterateNodes(func(node *Node) bool {
+		if node == nil || !s.n.hasNodePrefix(node.ID) {
+			return true
+		}
+		return fn(s.n.toUserNode(node, nodeUserView{}))
+	})
+}
+
+// IterateVisibleNodes forwards visibility to the captured owner before applying
+// this namespace's ID view, exactly as the ordinary namespaced node population.
+func (s *namespacedReadSnapshot) IterateVisibleNodes(ctx context.Context, fn func(*Node) bool) error {
+	inner, ok := s.inner.(VisibleReadSnapshot)
+	if !ok {
+		return ErrReadSnapshotUnsupported
+	}
+	return inner.IterateVisibleNodes(ctx, func(node *Node) bool {
 		if node == nil || !s.n.hasNodePrefix(node.ID) {
 			return true
 		}
