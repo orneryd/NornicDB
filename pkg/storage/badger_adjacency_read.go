@@ -1,115 +1,128 @@
 package storage
 
-import "github.com/dgraph-io/badger/v4"
+// nativeAdjacencyReader is one owned physical read cut. Returning the frame
+// by value keeps directional state out of escaping higher-order callbacks.
+type nativeAdjacencyReader struct {
+	engine              *BadgerEngine
+	nodeID              NodeID
+	visibility          readVisibility
+	adjGen, edgeGen     uint64
+	out, in             adjacencyDirection
+	cachedOut, cachedIn []*Edge
+	view                *badgerReadView
+}
+type adjacencyDirection struct {
+	ids        []EdgeID
+	hit        bool
+	live       []*Edge
+	suppressed map[EdgeID]struct{}
+	deleted    bool
+}
 
-// readAdjacency captures both directions, including cached ID lists, at one
-// read point. Cache publication may overlap replay; the captured overlay still
-// owns every generation absent from the transaction.
-func (b *BadgerEngine) readAdjacency(nodeID NodeID, wantOut, wantIn bool, v readVisibility) ([]*Edge, []*Edge, error) {
+// captureAdjacencyReader selects both native directions at one cache/overlay
+// boundary. A nil view means the captured cache result is already complete.
+func (b *BadgerEngine) captureAdjacencyReader(nodeID NodeID, wantOut, wantIn bool, v readVisibility) (reader nativeAdjacencyReader, err error) {
 	if nodeID == "" {
-		return nil, nil, ErrInvalidID
+		return reader, ErrInvalidID
 	}
-	type direction struct {
-		ids        []EdgeID
-		hit        bool
-		live       []*Edge
-		suppressed map[EdgeID]struct{}
-		deleted    bool
-	}
-	var out, in direction
-	load := func(w *WriteBehindBuffer) {
+	reader.engine, reader.nodeID, reader.visibility = b, nodeID, v
+	reader.adjGen, reader.edgeGen = b.adjCacheGen.current(), b.edgeCacheGen.current()
+	reader.view, err = b.captureReadView(func(w *WriteBehindBuffer) {
 		if wantOut {
-			out.ids, out.hit = b.adjCacheLoadOutgoing(nodeID)
+			reader.out.ids, reader.out.hit = b.adjCacheLoadOutgoing(nodeID)
 			if w != nil {
-				out.live, out.suppressed, out.deleted = b.bufferedAdjacency(w, v, nodeID, true)
+				reader.out.live, reader.out.suppressed, reader.out.deleted = b.bufferedAdjacency(w, v, nodeID, true)
 			}
 		}
 		if wantIn {
-			in.ids, in.hit = b.adjCacheLoadIncoming(nodeID)
+			reader.in.ids, reader.in.hit = b.adjCacheLoadIncoming(nodeID)
 			if w != nil {
-				in.live, in.suppressed, in.deleted = b.bufferedAdjacency(w, v, nodeID, false)
+				reader.in.live, reader.in.suppressed, reader.in.deleted = b.bufferedAdjacency(w, v, nodeID, false)
 			}
 		}
+	}, readViewOptions{scope: namespaceForNodeID(nodeID), cached: func(w *WriteBehindBuffer) (bool, error) {
+		var complete bool
+		reader.cachedOut, reader.cachedIn, complete = b.cachedAdjacency(w, nodeID, wantOut, wantIn, v)
+		return complete, nil
+	}})
+	return reader, err
+}
+
+// read hydrates one captured direction; it never selects a later view or cache.
+func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
+	if r.view == nil {
+		if outgoing {
+			return r.cachedOut, nil
+		}
+		return r.cachedIn, nil
 	}
-	adjGen, edgeGen := b.adjCacheGen.current(), b.edgeCacheGen.current()
-	var outgoing, incoming []*Edge
-	cached := func(w *WriteBehindBuffer) (bool, error) {
-		var ok bool
-		outgoing, incoming, ok = b.cachedAdjacency(w, nodeID, wantOut, wantIn, v)
-		return ok, nil
+	b, nodeID, v := r.engine, r.nodeID, r.visibility
+	adjGen, edgeGen, txn := r.adjGen, r.edgeGen, r.view.txn
+	d := &r.in
+	if outgoing {
+		d = &r.out
 	}
-	err := b.withReadView(load, func(txn *badger.Txn) error {
-		read := func(d *direction, outgoing bool) ([]*Edge, error) {
-			if d.deleted {
-				return nil, nil
+	err = recoverBadgerClosedPanic(func() error {
+		if d.deleted {
+			return nil
+		}
+		if !d.hit {
+			prefix := b.incomingIndexPrefixString(nodeID)
+			if outgoing {
+				prefix = b.outgoingIndexPrefixString(nodeID)
 			}
-			var edges []*Edge
-			if !d.hit {
-				prefix := b.incomingIndexPrefixString(nodeID)
-				if outgoing {
-					prefix = b.outgoingIndexPrefixString(nodeID)
-				}
-				if prefix != nil {
-					var err error
-					edges, d.ids, err = b.collectEdgesByIndexPrefix(txn, prefix, DecayScoringTime(), edgeGen, v)
-					if err != nil {
-						return nil, err
-					}
-				}
-				if outgoing {
-					b.adjCacheStoreOutgoing(adjGen, nodeID, d.ids)
-				} else {
-					b.adjCacheStoreIncoming(adjGen, nodeID, d.ids)
+			if prefix != nil {
+				var err error
+				edges, d.ids, err = b.collectEdgesByIndexPrefix(txn, prefix, DecayScoringTime(), edgeGen, v)
+				if err != nil {
+					return err
 				}
 			}
-			// Read cached IDs from this transaction, never a later body cache.
-			if edges == nil {
-				for _, id := range d.ids {
-					if _, hidden := d.suppressed[id]; hidden {
-						continue
-					}
-					edge, err := b.readIndexedEdgeInTxn(txn, id, edgeGen)
-					if err != nil {
-						return nil, err
-					}
-					if edge != nil && !b.hidesEdge(v, edge, DecayScoringTime()) {
-						edges = append(edges, edge)
-					}
-				}
-			} else if len(d.suppressed) != 0 {
-				visible := edges[:0]
-				for _, edge := range edges {
-					if _, hidden := d.suppressed[edge.ID]; !hidden {
-						visible = append(visible, edge)
-					}
-				}
-				edges = visible
+			if outgoing {
+				b.adjCacheStoreOutgoing(adjGen, nodeID, d.ids)
+			} else {
+				b.adjCacheStoreIncoming(adjGen, nodeID, d.ids)
 			}
-			attached := edges[:0]
+		}
+		// Read cached IDs from this transaction, never a later body cache.
+		if edges == nil {
+			for _, id := range d.ids {
+				if _, hidden := d.suppressed[id]; hidden {
+					continue
+				}
+				edge, err := b.readIndexedEdgeInTxn(txn, id, edgeGen)
+				if err != nil {
+					return err
+				}
+				if edge != nil && !b.hidesEdge(v, edge, DecayScoringTime()) {
+					edges = append(edges, edge)
+				}
+			}
+		} else if len(d.suppressed) != 0 {
+			visible := edges[:0]
 			for _, edge := range edges {
-				if attachedAt(edge, nodeID, outgoing) {
-					attached = append(attached, edge)
+				if _, hidden := d.suppressed[edge.ID]; !hidden {
+					visible = append(visible, edge)
 				}
 			}
-			edges = attached
-			for _, edge := range d.live {
-				edges = append(edges, copyEdge(edge))
-			}
-			return edges, nil
+			edges = visible
 		}
-		var err error
-		if wantOut {
-			outgoing, err = read(&out, true)
-			if err != nil {
-				return err
+		attached := edges[:0]
+		for _, edge := range edges {
+			if attachedAt(edge, nodeID, outgoing) {
+				attached = append(attached, edge)
 			}
 		}
-		if wantIn {
-			incoming, err = read(&in, false)
+		edges = attached
+		for _, edge := range d.live {
+			edges = append(edges, copyEdge(edge))
 		}
-		return err
-	}, readViewOptions{scope: namespaceForNodeID(nodeID), cached: cached})
-	return outgoing, incoming, err
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return edges, nil
 }
 
 // attachedAt reports whether edge has nodeID at the end an adjacency read in

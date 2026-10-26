@@ -38,15 +38,15 @@ func TestTransactionStoredReaderKeepsOverlayAndHiddenBodies(t *testing.T) {
 				}
 			}
 			require.NoError(t, base.FlushWriteBehind())
-			require.NoError(t, base.SetNodeManuallySuppressed("a:x", true))
-			require.NoError(t, base.SetEdgeManuallySuppressed("a:hidden", true))
+			require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, "a:x", true))
+			require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, "a:hidden", true))
 			tx, err := base.BeginTransaction()
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = tx.Rollback() })
 			require.NoError(t, tx.SetNamespace("a"))
 			_, err = tx.CreateNode(&storage.Node{ID: "a:pending", Labels: []string{"N"}, Properties: map[string]any{"k": "x"}})
 			require.NoError(t, err)
-			require.NoError(t, tx.DeleteNode("a:removed"))
+			require.NoError(t, tx.DeleteGraphNode("a:removed", storage.CascadeEdges))
 			require.NoError(t, tx.DeleteEdge("a:deleted"))
 			require.NoError(t, tx.CreateEdge(&storage.Edge{ID: "a:pending", StartNode: "a:y", EndNode: "a:z", Type: "REL", Properties: map[string]any{"k": "dup"}}))
 			wrapper := &transactionStorageWrapper{tx: tx, underlying: storage.NewNamespacedEngine(base, "a"), namespace: "a", separator: ":"}
@@ -136,8 +136,8 @@ func TestTransactionStoredReaderKeepsSnapshot(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.NoError(t, ns.CreateEdge(&storage.Edge{ID: "hidden", StartNode: "x", EndNode: "y", Type: "REL", Properties: map[string]any{"k": "before"}}))
-	require.NoError(t, base.SetNodeManuallySuppressed("a:x", true))
-	require.NoError(t, base.SetEdgeManuallySuppressed("a:hidden", true))
+	require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, "a:x", true))
+	require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, "a:hidden", true))
 	tx, err := base.BeginTransaction()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })

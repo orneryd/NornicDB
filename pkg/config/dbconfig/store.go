@@ -7,6 +7,7 @@ package dbconfig
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -147,7 +148,7 @@ func (s *Store) SetOverrides(ctx context.Context, dbName string, overrides map[s
 	}
 	nodeID := storage.NodeID(dbConfigPrefix + dbName)
 	if len(overrides) == 0 {
-		if err := s.storage.DeleteNode(nodeID); err != nil && err != storage.ErrNotFound {
+		if err := s.storage.DeleteNode(nodeID); err != nil && !errors.Is(err, storage.ErrNotFound) {
 			return err
 		}
 		s.mu.Lock()
@@ -169,7 +170,7 @@ func (s *Store) SetOverrides(ctx context.Context, dbName string, overrides map[s
 		},
 	}
 	existing, err := s.storage.GetNode(nodeID)
-	if err == storage.ErrNotFound {
+	if errors.Is(err, storage.ErrNotFound) {
 		_, err = s.storage.CreateNode(node)
 		if err != nil {
 			return err

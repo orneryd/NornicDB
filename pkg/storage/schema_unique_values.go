@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
 
@@ -159,9 +160,13 @@ func (sm *SchemaManager) lookupUniqueValue(constraint *UniqueConstraint, label, 
 // writers commit concurrently while still preventing the silent-overwrite
 // race that motivated the lock.
 type uniqueConstraintLockKey struct {
-	label    string
-	property string
-	value    interface{}
+	// entityKind zero retains the existing constraint value identity. Entity
+	// authority shares this registry and the existing reentrant transaction owner.
+	entityKind uint8
+	entityID   string
+	label      string
+	property   string
+	value      interface{}
 }
 
 // uniqueConstraintCommitLock is one constraint key's lock. It belongs to one
@@ -169,11 +174,12 @@ type uniqueConstraintLockKey struct {
 // owner may take it again (holds counts its acquisitions), and released is
 // closed whenever it becomes free, waking its waiters (#961).
 type uniqueConstraintCommitLock struct {
-	owner    string
-	holds    int
-	refs     int
-	order    uint64
-	released chan struct{}
+	recoveryPending bool
+	owner           string
+	holds           int
+	refs            int
+	order           uint64
+	released        chan struct{}
 }
 
 type uniqueConstraintLockRequest struct {
@@ -181,32 +187,13 @@ type uniqueConstraintLockRequest struct {
 	lock *uniqueConstraintCommitLock
 }
 
-// lockConstraintKeysOf acquires the commit locks of the constraint keys the
-// nodes' values fall under, and returns their release function: the exact
-// value of each single-property UNIQUE constraint, the composite value of each
-// NODE KEY, and the key value of each TEMPORAL (no-overlap) constraint. Every
-// writer of a constrained node holds them across its constraint check, its
-// write and the publication of the value to the constraint cache: a
-// transaction at commit, and the engine's own CreateNode / UpdateNode /
-// BulkCreateNodes. So two writers of the same key (two transactions, or a
-// transaction and a direct engine write such as the AsyncEngine's
-// write-through of a constrained node) serialize, and the second one's check
-// sees the first one's write (#700).
-//
-// A key that can't be a map key (a list or map value) takes no lock; the
-// constraint check still runs, and serialization is best-effort for such
-// values, which constrained workloads don't use in practice. A NODE KEY with a
-// missing property takes no lock: the check rejects the node anyway.
-//
-// owner holds the locks (acquireUniqueConstraintCommitLocks); keys it already
-// holds, such as a MERGE key a transaction locked, are taken again without
-// waiting.
-func (sm *SchemaManager) lockConstraintKeysOf(ctx context.Context, owner string, nodes ...*Node) (func(), error) {
-	if sm == nil || len(nodes) == 0 {
-		return func() {}, nil
+// appendConstraintValueKeys projects node and relationship VALUE keys for the
+// canonical registry. Entity and endpoint authority belongs to the earlier
+// write/prepare owner; unconstrained images append no keys.
+func (sm *SchemaManager) appendConstraintValueKeys(keys []uniqueConstraintLockKey, nodes []*Node, edges []*Edge) []uniqueConstraintLockKey {
+	if sm == nil {
+		return keys
 	}
-	// Allocated on the first key: an unconstrained write allocates nothing.
-	var keys []uniqueConstraintLockKey
 	for _, node := range nodes {
 		if node == nil || len(node.Properties) == 0 {
 			continue
@@ -223,7 +210,27 @@ func (sm *SchemaManager) lockConstraintKeysOf(ctx context.Context, owner string,
 			}
 		}
 	}
-	return sm.acquireUniqueConstraintCommitLocks(ctx, owner, keys)
+	for _, edge := range edges {
+		if edge == nil || len(edge.Properties) == 0 {
+			continue
+		}
+		for _, c := range sm.GetConstraintsForLabels([]string{edge.Type}) {
+			if c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
+				continue
+			}
+			values, ok := relationshipConstraintValueKeys(c.Properties, edge.Properties, true)
+			if !ok || len(values) == 0 {
+				continue
+			}
+			var key interface{} = values[0]
+			if len(values) > 1 {
+				key = NewCompositeKey(values...).Hash
+			}
+			keys = append(keys, uniqueConstraintLockKey{label: "\x00relationship:" + edge.Type, property: relationshipPropertyKey(c.Properties), value: key})
+		}
+	}
+
+	return keys
 }
 
 // nodeConstraintLockKey is the canonical node key projection for both commit
@@ -298,6 +305,9 @@ func constraintLockValue(node *Node, prop string) (interface{}, bool) {
 // ErrDeadlock, and a wait ends with ctx's error when ctx ends. The locks
 // taken so far are released either way.
 func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context, owner string, keys []uniqueConstraintLockKey) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(keys) == 0 {
 		return func() {}, nil
 	}
@@ -348,9 +358,8 @@ func (sm *SchemaManager) acquireUniqueConstraintCommitLocks(ctx context.Context,
 			return nil, err
 		}
 	}
-	return func() {
-		sm.releaseUniqueConstraintLocks(owner, requests, nil)
-	}, nil
+	var releaseOnce sync.Once
+	return func() { releaseOnce.Do(func() { sm.releaseUniqueConstraintLocks(owner, requests, nil) }) }, nil
 }
 
 // lockableUniqueConstraintKey reports whether k can key a constraint lock: its
@@ -378,6 +387,11 @@ func (sm *SchemaManager) waitForUniqueConstraintLock(ctx context.Context, owner 
 			delete(sm.uniqueConstraintLockWaits, owner)
 			sm.uniqueConstraintCommitLocksMu.Unlock()
 			return nil
+		}
+		if lock.recoveryPending {
+			delete(sm.uniqueConstraintLockWaits, owner)
+			sm.uniqueConstraintCommitLocksMu.Unlock()
+			return ErrConflict
 		}
 		if sm.uniqueConstraintLockWaitClosesCycleLocked(owner, lock) {
 			delete(sm.uniqueConstraintLockWaits, owner)
@@ -436,6 +450,7 @@ func (sm *SchemaManager) releaseUniqueConstraintLocks(owner string, held, unacqu
 		lock.holds--
 		if lock.holds == 0 {
 			lock.owner = ""
+			lock.recoveryPending = false
 			close(lock.released)
 			lock.released = make(chan struct{})
 		}
@@ -533,4 +548,19 @@ func (sm *SchemaManager) UnregisterUniqueValue(label, property string, value int
 	constraint.mu.Lock()
 	delete(constraint.values, valueKey)
 	constraint.mu.Unlock()
+}
+
+// markCommitOwnerRecoveryPending wakes the existing registry's waiters. They
+// must relinquish lifecycle admission instead of blocking safe repair behind
+// a durable command whose native attempt already rolled back.
+func (sm *SchemaManager) markCommitOwnerRecoveryPending(owner string) {
+	sm.uniqueConstraintCommitLocksMu.Lock()
+	defer sm.uniqueConstraintCommitLocksMu.Unlock()
+	for _, lock := range sm.uniqueConstraintCommitLocks {
+		if lock.owner == owner && !lock.recoveryPending {
+			lock.recoveryPending = true
+			close(lock.released)
+			lock.released = make(chan struct{})
+		}
+	}
 }

@@ -52,7 +52,7 @@ func TestOrderReleaseEvictsCachedImages(t *testing.T) {
 
 	tx, err := b.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteNode("test:b"))
+	require.NoError(t, tx.DeleteGraphNode("test:b", CascadeEdges))
 	require.NoError(t, tx.Commit())
 	restore()
 	createErr := <-created

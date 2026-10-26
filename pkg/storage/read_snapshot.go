@@ -25,12 +25,15 @@ type ReadSnapshotView interface {
 	Close()
 }
 
+type readSnapshotPrefixKey struct{}
+
 // badgerReadSnapshot is BadgerEngine's ReadSnapshotView: a long-lived read
 // view of the storage capture owner (captureReadView) and the write-behind
 // overlay captured with it. The view holds only its registered read
 // timestamp between scans, which keeps compaction from discarding a version
 // it can see until Close; each scan opens its own transaction at it.
 type badgerReadSnapshot struct {
+	prefix       string
 	b            *BadgerEngine
 	view         *badgerReadView
 	overlayNodes []*Node
@@ -48,13 +51,14 @@ func (b *BadgerEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 	if err := b.ensureOpen(false); err != nil {
 		return nil, err
 	}
-	snap := &badgerReadSnapshot{b: b}
+	prefix, _ := ctx.Value(readSnapshotPrefixKey{}).(string)
+	snap := &badgerReadSnapshot{b: b, prefix: prefix}
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
 		// Nodes are read whatever their visibility, relationships as visible
 		// reads see them, as their stored rows below.
-		snap.overlayNodes, snap.nodesTouched = b.bufferedAllNodes(w, storedRead)
-		snap.overlayEdges, snap.edgesTouched = b.bufferedAllEdges(w, visibleRead)
-	}, readViewOptions{longLived: true})
+		snap.overlayNodes, snap.nodesTouched = b.bufferedAllNodes(w, storedRead, prefix)
+		snap.overlayEdges, snap.edgesTouched = b.bufferedAllEdges(w, visibleRead, prefix)
+	}, readViewOptions{longLived: true, scope: prefix, scopeKind: readPrefixScope})
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +72,7 @@ func (b *BadgerEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 	stopped := false
 	err := s.view.withView(func(txn *badger.Txn) error {
-		prefix := []byte{prefixNode}
+		prefix := append([]byte{prefixNode}, s.prefix...)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -111,7 +115,7 @@ func (s *badgerReadSnapshot) IterateNodes(fn func(*Node) bool) error {
 func (s *badgerReadSnapshot) StreamEdges(ctx context.Context, fn func(*Edge) error) error {
 	nowNanos := DecayScoringTime()
 	err := s.view.withView(func(txn *badger.Txn) error {
-		prefix := []byte{prefixEdge}
+		prefix := append([]byte{prefixEdge}, s.prefix...)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
 		for it.Rewind(); it.Valid(); it.Next() {
@@ -204,6 +208,9 @@ func (t *TracedEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, 
 // OpenReadSnapshot opens the inner engine's snapshot and scopes it to this
 // namespace, translating IDs as IterateNodes and StreamEdges do.
 func (n *NamespacedEngine) OpenReadSnapshot(ctx context.Context) (ReadSnapshotView, error) {
+	prefix, _ := ctx.Value(readSnapshotPrefixKey{}).(string)
+	ctx = context.WithValue(ctx, readSnapshotPrefixKey{}, string(n.PrefixNodeID(NodeID(prefix))))
+
 	inner, err := OpenReadSnapshot(ctx, n.inner)
 	if err != nil {
 		return nil, err

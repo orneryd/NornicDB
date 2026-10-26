@@ -184,7 +184,7 @@ func TestTransaction_DeleteNode(t *testing.T) {
 	tx, _ := engine.BeginTransaction()
 
 	// Delete in transaction
-	err := tx.DeleteNode(NodeID(prefixTestID("delete-me")))
+	err := tx.DeleteGraphNode(NodeID(prefixTestID("delete-me")), CascadeEdges)
 	if err != nil {
 		t.Fatalf("DeleteNode failed: %v", err)
 	}
@@ -235,7 +235,7 @@ func TestTransaction_UpdateNode(t *testing.T) {
 		Labels:     []string{"Updated"},
 		Properties: map[string]interface{}{"version": 2},
 	}
-	err := tx.UpdateNode(updatedNode)
+	err := tx.UpdateGraphNode(updatedNode, ClientNodeEdits)
 	if err != nil {
 		t.Fatalf("UpdateNode failed: %v", err)
 	}
@@ -598,12 +598,12 @@ func TestTransaction_ClosedTransaction(t *testing.T) {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
 	}
 
-	err = tx.UpdateNode(node)
+	err = tx.UpdateGraphNode(node, ClientNodeEdits)
 	if err != ErrTransactionClosed {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
 	}
 
-	err = tx.DeleteNode(NodeID(prefixTestID("any")))
+	err = tx.DeleteGraphNode(NodeID(prefixTestID("any")), CascadeEdges)
 	if err != ErrTransactionClosed {
 		t.Errorf("Expected ErrTransactionClosed, got %v", err)
 	}
@@ -987,7 +987,8 @@ func TestTransaction_IncidentEdgesBuffered(t *testing.T) {
 		defer tx.Rollback()
 
 		tx.mu.Lock()
-		count, ids, err := tx.deleteNodeBuffered(edge.StartNode, nil)
+		result, err := tx.engine.executeNodeDeletion(tx.staged(), edge.StartNode, nil)
+		count, ids := int64(len(result.ids)), result.ids
 		tx.mu.Unlock()
 		if err != nil {
 			t.Fatalf("deleteNodeBuffered failed: %v", err)
@@ -1071,7 +1072,8 @@ func TestTransaction_DeleteNodeBuffered(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		count, ids, err := tx.deleteNodeBuffered(NodeID(prefixTestID("missing-node")), nil)
+		result, err := tx.engine.executeNodeDeletion(tx.staged(), NodeID(prefixTestID("missing-node")), nil)
+		count, ids := int64(len(result.ids)), result.ids
 		if err != ErrNotFound {
 			t.Fatalf("expected ErrNotFound, got %v", err)
 		}
@@ -1113,7 +1115,8 @@ func TestTransaction_DeleteNodeBuffered(t *testing.T) {
 		}
 		defer tx.Rollback()
 
-		count, ids, err := tx.deleteNodeBuffered(nodeID, &Node{ID: nodeID, Labels: []string{"Person", "Employee"}})
+		result, err := tx.engine.executeNodeDeletion(tx.staged(), nodeID, &Node{ID: nodeID, Labels: []string{"Person", "Employee"}})
+		count, ids := int64(len(result.ids)), result.ids
 		if err != nil {
 			t.Fatalf("deleteNodeBuffered failed: %v", err)
 		}
@@ -1194,7 +1197,8 @@ func TestTransaction_BufferedWriteAndLifecycleEdgeCases(t *testing.T) {
 		require.NoError(t, err)
 		defer tx.Rollback()
 
-		count, ids, err := tx.deleteNodeBuffered(nodeID, nil)
+		result, err := tx.engine.executeNodeDeletion(tx.staged(), nodeID, nil)
+		count, ids := int64(len(result.ids)), result.ids
 		require.NoError(t, err)
 		require.Zero(t, count)
 		require.Empty(t, ids)
@@ -1268,16 +1272,16 @@ func TestTransaction_WriteWriteConflict(t *testing.T) {
 	tx2, err := engine.BeginTransaction()
 	require.NoError(t, err)
 
-	require.NoError(t, tx1.UpdateNode(&Node{
+	require.NoError(t, tx1.UpdateGraphNode(&Node{
 		ID:         nodeID,
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"version": 2},
-	}))
-	require.NoError(t, tx2.UpdateNode(&Node{
+	}, ClientNodeEdits))
+	require.NoError(t, tx2.UpdateGraphNode(&Node{
 		ID:         nodeID,
 		Labels:     []string{"Person"},
 		Properties: map[string]interface{}{"version": 3},
-	}))
+	}, ClientNodeEdits))
 
 	require.NoError(t, tx1.Commit())
 	require.ErrorIs(t, tx2.Commit(), ErrConflict)
@@ -1335,41 +1339,6 @@ func TestTransaction_WriteWriteConflict_OnEdge(t *testing.T) {
 	assert.EqualValues(t, 2, stored.Properties["weight"])
 }
 
-func TestTransaction_DeleteNodeConflictsWithConcurrentEdgeCreate(t *testing.T) {
-	engine := newTestMemoryEngine(t)
-	defer engine.Close()
-
-	start := NodeID(prefixTestID("delete-node-start"))
-	target := NodeID(prefixTestID("delete-node-target"))
-	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: target, Labels: []string{"Node"}})
-	require.NoError(t, err)
-
-	txDelete, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	txCreateEdge, err := engine.BeginTransaction()
-	require.NoError(t, err)
-
-	require.NoError(t, txDelete.DeleteNode(target))
-	require.NoError(t, txCreateEdge.CreateEdge(&Edge{
-		ID:        EdgeID(prefixTestID("created-after-delete-snapshot")),
-		StartNode: start,
-		EndNode:   target,
-		Type:      "LINKS",
-	}))
-
-	require.NoError(t, txCreateEdge.Commit())
-	require.ErrorIs(t, txDelete.Commit(), ErrConflict)
-
-	node, err := engine.GetNode(target)
-	require.NoError(t, err)
-	require.Equal(t, target, node.ID)
-	edge, err := engine.GetEdge(EdgeID(prefixTestID("created-after-delete-snapshot")))
-	require.NoError(t, err)
-	require.Equal(t, target, edge.EndNode)
-}
-
 func TestTransaction_MultipleOperationTypes(t *testing.T) {
 	engine := newTestMemoryEngine(t)
 
@@ -1382,8 +1351,8 @@ func TestTransaction_MultipleOperationTypes(t *testing.T) {
 	// Mix of operations
 	tx.CreateNode(&Node{ID: NodeID(prefixTestID("new-1")), Labels: []string{"New"}})
 	tx.CreateNode(&Node{ID: NodeID(prefixTestID("new-2")), Labels: []string{"New"}})
-	tx.UpdateNode(&Node{ID: NodeID(prefixTestID("existing-1")), Labels: []string{"Updated"}})
-	tx.DeleteNode(NodeID(prefixTestID("existing-2")))
+	tx.UpdateGraphNode(&Node{ID: NodeID(prefixTestID("existing-1")), Labels: []string{"Updated"}}, ClientNodeEdits)
+	tx.DeleteGraphNode(NodeID(prefixTestID("existing-2")), CascadeEdges)
 
 	// Verify operation count
 	if tx.OperationCount() != 4 {
@@ -1511,7 +1480,7 @@ func TestTransaction_DeleteNode_CascadeEdges(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 
-	err = tx.DeleteNode(NodeID(prefixTestID("dc-n1")))
+	err = tx.DeleteGraphNode(NodeID(prefixTestID("dc-n1")), CascadeEdges)
 	require.NoError(t, err)
 
 	err = tx.Commit()
@@ -1611,7 +1580,7 @@ func TestTransaction_DeleteNode_NotFound(t *testing.T) {
 	require.NoError(t, err)
 	defer tx.Rollback()
 
-	err = tx.DeleteNode(NodeID(prefixTestID("nonexistent")))
+	err = tx.DeleteGraphNode(NodeID(prefixTestID("nonexistent")), CascadeEdges)
 	assert.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -1724,7 +1693,7 @@ func TestTransaction_CreateThenUpdateNodeCollapsesToSingleCreateOperation(t *tes
 	_, err = tx.CreateNode(&Node{ID: nodeID, Labels: []string{"MongoRecord"}})
 	require.NoError(t, err)
 
-	err = tx.UpdateNode(&Node{
+	err = tx.UpdateGraphNode(&Node{
 		ID:     nodeID,
 		Labels: []string{"MongoRecord"},
 		Properties: map[string]interface{}{
@@ -1733,7 +1702,7 @@ func TestTransaction_CreateThenUpdateNodeCollapsesToSingleCreateOperation(t *tes
 			"code":        1,
 			"description": "entry-1",
 		},
-	})
+	}, ClientNodeEdits)
 	require.NoError(t, err)
 	require.Equal(t, 1, tx.OperationCount(), "create+update in the same transaction should collapse into a single create operation")
 

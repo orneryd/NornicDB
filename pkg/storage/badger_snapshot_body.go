@@ -2,10 +2,18 @@ package storage
 
 import "github.com/dgraph-io/badger/v4"
 
+type nodeItemHydration uint8
+
+const (
+	nodeItemBodyOnly nodeItemHydration = iota
+	nodeItemQueryMetadata
+	nodeItemFullEmbeddings
+)
+
 // readNodeItemInTxn reuses only a body with this record's physical version.
 // Worker embedding state is hydrated from the same transaction, independently
 // of the body cache: sidecar writes do not change the node record's version.
-func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate func(*badger.Txn, *Node, NodeID) (*Node, error)) (*Node, error) {
+func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, hydrate nodeItemHydration) (*Node, error) {
 	node, hit := b.cacheLoadNodeBody(id, item.Version())
 	if !hit {
 		err := item.Value(func(value []byte) error {
@@ -21,10 +29,14 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 		}
 		b.cacheStoreNodeBody(id, item.Version(), node)
 	}
-	if hydrate != nil {
-		return hydrate(txn, node, id)
+	switch hydrate {
+	case nodeItemBodyOnly:
+		return node, nil
+	case nodeItemQueryMetadata, nodeItemFullEmbeddings:
+		return b.loadNodeEmbeddingState(embeddingRecordReader{txn: txn}, node, id, hydrate == nodeItemFullEmbeddings)
+	default:
+		return nil, ErrInvalidData
 	}
-	return node, nil
 }
 
 // cacheLoadEdgeAtVersion is the version-checked form of the edge body's hot
@@ -40,7 +52,7 @@ func (b *BadgerEngine) cacheLoadEdgeAtVersion(id EdgeID, version uint64) (*Edge,
 // label and MVCC projection readers. A nil projection retains full hydration.
 func (b *BadgerEngine) readProjectedNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID, properties []string, include map[string]struct{}) (*Node, error) {
 	if properties == nil {
-		return b.readNodeItemInTxn(txn, item, id, b.loadNodeEmbeddings)
+		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings)
 	}
 	if cached, ok := b.cacheLoadNodeBody(id, item.Version()); ok {
 		return projectCachedNodeForRead(cached, properties, false), nil

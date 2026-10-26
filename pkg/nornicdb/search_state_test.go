@@ -47,16 +47,16 @@ func searchConsumerConfigs() []searchConsumerConfig {
 			t.Helper()
 			switch cmd {
 			case replication.CmdCreateNode:
-				p := payload.(*replication.NodePayload)
+				p := payload.(*storage.NodePayload)
 				_, err := store.CreateNode(&storage.Node{ID: storage.NodeID(p.ID), Labels: p.Labels, Properties: p.Properties})
 				require.NoError(t, err)
 			case replication.CmdUpdateNode:
-				p := payload.(*replication.NodePayload)
+				p := payload.(*storage.NodePayload)
 				require.NoError(t, store.UpdateNode(&storage.Node{ID: storage.NodeID(p.ID), Labels: p.Labels, Properties: p.Properties}))
 			case replication.CmdDeleteNode:
 				require.NoError(t, store.DeleteNode(storage.NodeID(payload.(string))))
 			case replication.CmdCreateEdge:
-				p := payload.(*replication.EdgePayload)
+				p := payload.(*storage.EdgePayload)
 				require.NoError(t, store.CreateEdge(&storage.Edge{ID: storage.EdgeID(p.ID), StartNode: storage.NodeID(p.StartNode), EndNode: storage.NodeID(p.EndNode), Type: p.Type, Properties: p.Properties}))
 			case replication.CmdDeleteEdge:
 				require.NoError(t, store.DeleteEdge(storage.EdgeID(payload.(string))))
@@ -146,20 +146,20 @@ func TestSearchConsumesStorageInEveryConfiguration(t *testing.T) {
 			}
 			vector := make([]float32, dims)
 			vector[0] = 1
-			apply(t, replication.CmdCreateNode, &replication.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "oldword"}})
+			apply(t, replication.CmdCreateNode, &storage.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "oldword"}})
 			tenant := storage.NewNamespacedEngine(db.GetBaseStorageForManager(), "tenant")
 			svc, err := db.EnsureSearchIndexesBuilt(ctx, "tenant", tenant)
 			require.NoError(t, err)
 			require.Equal(t, 1, consumerDBHits(t, svc, "oldword"))
 
-			apply(t, replication.CmdUpdateNode, &replication.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "newword"}})
+			apply(t, replication.CmdUpdateNode, &storage.NodePayload{ID: "tenant:a", Labels: []string{"Doc"}, Properties: map[string]any{"content": "newword"}})
 			settleQueuedRefreshes()
 			require.Equal(t, 1, consumerDBHits(t, svc, "newword"), "node update")
-			apply(t, replication.CmdCreateNode, &replication.NodePayload{ID: "tenant:b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "bword"}})
+			apply(t, replication.CmdCreateNode, &storage.NodePayload{ID: "tenant:b", Labels: []string{"Doc"}, Properties: map[string]any{"content": "bword"}})
 			settleQueuedRefreshes()
 			require.Equal(t, 1, consumerDBHits(t, svc, "bword"), "node create")
 
-			apply(t, replication.CmdCreateEdge, &replication.EdgePayload{ID: "tenant:r", StartNode: "tenant:a", EndNode: "tenant:b", Type: "CITES", Properties: map[string]any{"vec": vector}})
+			apply(t, replication.CmdCreateEdge, &storage.EdgePayload{ID: "tenant:r", StartNode: "tenant:a", EndNode: "tenant:b", Type: "CITES", Properties: map[string]any{"vec": vector}})
 			settleQueuedRefreshes()
 			require.True(t, svc.HasRelationshipVectorEntries("CITES", "vec"), "edge create")
 			apply(t, replication.CmdDeleteEdge, "tenant:r")

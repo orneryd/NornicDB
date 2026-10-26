@@ -79,12 +79,12 @@ func BenchmarkStartupLeakedSystemCleanup(b *testing.B) {
 func BenchmarkStartupStorageSizeReconciliation(b *testing.B) {
 	engine := newStartupBenchmarkEngine(b, true)
 	namespaced := storage.NewNamespacedEngine(engine, "nornic")
-	checker := &databaseLimitChecker{}
+	manager := &DatabaseManager{}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
-		if _, _, err := checker.calculateCurrentStorageSize(namespaced); err != nil {
+		if _, _, err := manager.calculateStorageSizeFromEngine(namespaced); err != nil {
 			b.Fatal(err)
 		}
 	}

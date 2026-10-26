@@ -96,10 +96,10 @@ func BenchmarkSearchRefreshSuppressionFlips(b *testing.B) {
 	b.ResetTimer()
 	for range b.N {
 		for _, hidden := range []bool{true, false} {
-			if err := suppressor.SetNodeManuallySuppressed("a", hidden); err != nil {
+			if err := suppressor.SetManualSuppression(storage.StoredEntityNodeKind, "a", hidden); err != nil {
 				b.Fatal(err)
 			}
-			if err := suppressor.SetEdgeManuallySuppressed("r", hidden); err != nil {
+			if err := suppressor.SetManualSuppression(storage.StoredEntityEdgeKind, "r", hidden); err != nil {
 				b.Fatal(err)
 			}
 			waitDrained(entry)

@@ -44,7 +44,7 @@ func TestBufferedRecoveryMultipleCommitsPreserveHistory(t *testing.T) {
 		n, err := tx.GetNode("test:a")
 		require.NoError(t, err)
 		n.Properties = map[string]any{"v": v}
-		require.NoError(t, tx.UpdateNode(n))
+		require.NoError(t, tx.UpdateGraphNode(n, ClientNodeEdits))
 		e, err := tx.GetEdge("test:r")
 		require.NoError(t, err)
 		e.Properties = map[string]any{"v": v}

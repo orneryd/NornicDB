@@ -39,9 +39,9 @@ func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 						}
 						if hidden == "manual" {
 							if entity == "node" {
-								require.NoError(t, base.SetNodeManuallySuppressed(storage.NodeID(db+":n"), true))
+								require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, string(db+":n"), true))
 							} else {
-								require.NoError(t, base.SetEdgeManuallySuppressed(storage.EdgeID(db+":e"), true))
+								require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(db+":e"), true))
 							}
 						} else {
 							base.SetDecayEnabled(true)
@@ -77,12 +77,12 @@ func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 						require.NoError(t, tx.SetNamespace(db))
 						if entity == "node" {
 							if operation == "delete" {
-								err = tx.DeleteNode(storage.NodeID(db + ":n"))
+								err = tx.DeleteGraphNode(storage.NodeID(db+":n"), storage.CascadeEdges)
 							} else {
 								prior, getErr := tx.GetStoredNode(storage.NodeID(db + ":n"))
 								require.NoError(t, getErr)
 								prior.Properties = map[string]interface{}{"payload": "small"}
-								err = tx.UpdateNode(prior)
+								err = tx.UpdateGraphNode(prior, storage.ClientNodeEdits)
 							}
 						} else if operation == "delete" {
 							err = tx.DeleteEdge(storage.EdgeID(db + ":e"))
@@ -94,7 +94,7 @@ func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 						}
 						require.NoError(t, err)
 						require.NoError(t, tracker.CommitTransaction(context.Background(), tx), "update or deletion does not insert the hidden entity")
-						wantNodes, wantEdges, err := tracker.checker.calculateCurrentStorageSize(tracker.Engine)
+						wantNodes, wantEdges, err := tracker.manager.calculateStorageSizeFromEngine(tracker.Engine)
 						require.NoError(t, err)
 						got, gotNodes, gotEdges := manager.GetStorageSize(db)
 						require.Equal(t, wantNodes, gotNodes, "node byte delta must include the hidden prior body")

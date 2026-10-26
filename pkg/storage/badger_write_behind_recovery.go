@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
@@ -10,7 +11,8 @@ import (
 // and is applied alone; this is a batching target, not an allocator limit.
 const bufferedRecoveryBatchBytes int64 = 8 << 20
 
-// RecoverBufferedCommits replays write-behind commits that were acknowledged
+// RecoverBufferedCommits replays accepted semantic transactions and write-behind
+// commits that were acknowledged
 // into the WAL but never reached Badger before a crash lost the in-memory
 // buffer. It runs at engine open, after both the engine and the WAL are
 // constructed and before the engine serves traffic.
@@ -25,19 +27,19 @@ const bufferedRecoveryBatchBytes int64 = 8 << 20
 // deltas: crash recovery is rare, and the authoritative rebuild is the same
 // recovery boundary the sync path uses.
 func RecoverBufferedCommits(engine Engine, wal *WAL) (int, error) {
-	return recoverBufferedCommits(engine, wal, walForeignImport)
+	return recoverAcceptedCommits(engine, wal, walForeignImport)
 }
 
-// RecoverBufferedCommitsAtOpen is exclusively the constructor's recovery of a
+// RecoverBufferedCommitsAtOpen replays both accepted record kinds and is exclusively the constructor's recovery of a
 // store's own configured WAL directory, before traffic. That structural authority
 // preserves unstamped historical upgrades; a foreign-populated store cannot use it.
 func RecoverBufferedCommitsAtOpen(engine Engine, wal *WAL) (int, error) {
-	return recoverBufferedCommits(engine, wal, walOwnDirectoryAtOpen)
+	return recoverAcceptedCommits(engine, wal, walOwnDirectoryAtOpen)
 }
 
-func recoverBufferedCommits(engine Engine, wal *WAL, authority walPropertyAuthority) (int, error) {
+func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthority) (int, error) {
 	b, ok := engine.(*BadgerEngine)
-	if !ok || b == nil || wal == nil || b.writeBehind == nil {
+	if !ok || b == nil || wal == nil {
 		return 0, nil
 	}
 	// The batch reader retains engine state through import, physical apply
@@ -70,6 +72,42 @@ func recoverBufferedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		return nil
 	}
 	err := VisitWALEntriesAfterFromDir(wal.config.Dir, 0, func(entry WALEntry) error {
+		if entry.Operation == OpEntityCommit {
+			// Keep the existing streaming replay owner: an earlier physical
+			// batch must finish before this semantic record can inspect its
+			// same-commit logical receipt.
+			if err := flush(); err != nil {
+				return err
+			}
+			var record walEntityCommitData
+			if err := decodeRecoveryPayload(entry.Data, &record); err != nil {
+				return err
+			}
+			envelope, ops, err := DecodeEntityTransaction(record.Payload)
+			if err != nil {
+				return err
+			}
+			present, err := b.bufferedFlushMarkerExists(envelope.Namespace, "", envelope.LogicalTxID)
+			if err != nil {
+				return err
+			}
+			if present {
+				return nil
+			}
+			// Recovery applies an already accepted record physically, as the
+			// existing buffered replay does; it must not emit a fresh ACK or
+			// append another buffered record while visiting this WAL.
+			envelope.Mode = CommitModeDirect
+			receipt, err := submitDecodedEntityTransaction(context.Background(), b, envelope, ops, nil)
+			if err != nil {
+				return err
+			}
+			if outcome := receipt.WaitOutcome(context.Background()); outcome.Err != nil {
+				return outcome.Err
+			}
+			replayed++
+			return nil
+		}
 		if entry.Operation != OpBufferedCommit {
 			return nil
 		}
@@ -80,7 +118,7 @@ func recoverBufferedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 		if data.TxID == "" {
 			return nil
 		}
-		exists, err := b.bufferedFlushMarkerExists(data.TxID)
+		exists, err := b.bufferedFlushMarkerExists(data.Namespace, data.TxID, data.LogicalTxID)
 		if err != nil {
 			return fmt.Errorf("wal: failed to check flush marker for %q: %w", data.TxID, err)
 		}

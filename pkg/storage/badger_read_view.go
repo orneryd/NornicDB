@@ -1,9 +1,18 @@
 package storage
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/dgraph-io/badger/v4"
+)
+
+type readScopeKind uint8
+
+const (
+	readNamespaceScope readScopeKind = iota
+	readPrefixScope
+	readNodeIDsScope
 )
 
 // readViewOptions is private to the storage owner. cached must have no externally
@@ -11,6 +20,8 @@ import (
 // for materializers with no user callbacks; it permits current body-cache reads,
 // validated as one group, with a strict snapshot retry if a cache changes.
 type readViewOptions struct {
+	scopeKind readScopeKind
+	nodeIDs   []NodeID
 	longLived bool
 	scope     string
 	cached    func(*WriteBehindBuffer) (bool, error)
@@ -18,6 +29,8 @@ type readViewOptions struct {
 }
 
 type badgerReadView struct {
+	scope     string
+	scopeKind readScopeKind
 	txn       *badger.Txn
 	db        *managedBadgerDB
 	engine    *BadgerEngine
@@ -38,10 +51,13 @@ type badgerReadView struct {
 // allocating. Committed index/cache reads belong outside any nil-overlay guard.
 // Only a complete cached result can return without opening a view or capturing.
 func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options ...readViewOptions) (*badgerReadView, error) {
-	if len(options) == 0 {
-		return b.captureReadViewFallback(b.writeBehind, capture, readViewOptions{})
+	var opts readViewOptions
+	if len(options) > 0 {
+		opts = options[0]
 	}
-	opts := &options[0]
+	if err := b.pendingReadConflict(opts); err != nil {
+		return nil, err
+	}
 	w := b.writeBehind
 	if opts.cached != nil {
 		epoch, idle := w.idleReadEpoch(opts.scope)
@@ -52,11 +68,7 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 			}
 		}
 	}
-	return b.captureReadViewFallback(w, capture, *opts)
-}
-
-// Keep transaction creation and its defers off the committed-cache fast path.
-func (b *BadgerEngine) captureReadViewFallback(w *WriteBehindBuffer, capture func(*WriteBehindBuffer), opts readViewOptions) (*badgerReadView, error) {
+	// Only the slow capture branch acquires a transaction and retirement lease.
 	if w != nil {
 		w.mu.RLock()
 		defer w.mu.RUnlock()
@@ -81,7 +93,7 @@ func (b *BadgerEngine) captureReadViewFallback(w *WriteBehindBuffer, capture fun
 		b.txnWG.Done()
 		return nil, err
 	}
-	view := &badgerReadView{txn: txn, db: db, engine: b, readTs: readTs, longLived: opts.longLived}
+	view := &badgerReadView{scope: strings.Clone(opts.scope), scopeKind: opts.scopeKind, txn: txn, db: db, engine: b, readTs: readTs, longLived: opts.longLived}
 	if capture != nil {
 		overlay := w
 		if _, idle := w.idleReadEpoch(opts.scope); idle {
@@ -123,6 +135,10 @@ func (v *badgerReadView) withView(read func(*badger.Txn) error) error {
 	if v.closed {
 		return ErrStorageClosed
 	}
+	if err := v.engine.pendingReadConflict(readViewOptions{scope: v.scope, scopeKind: v.scopeKind}); err != nil {
+		return err
+	}
+
 	db, err := v.engine.beginHelperTxn()
 	if err != nil {
 		return err
@@ -171,4 +187,28 @@ func (b *BadgerEngine) withCurrentReadView(capture func(*WriteBehindBuffer), rea
 		return recoverBadgerClosedPanic(func() error { return view.withView(read) })
 	}
 	return err
+}
+
+// pendingReadConflict admits exactly the graph population the capture reads.
+// Bounded ID requests only consult their namespaces when any DROP is pending;
+// the healthy batch path retains one atomic admission check rather than N.
+func (b *BadgerEngine) pendingReadConflict(opts readViewOptions) error {
+	switch opts.scopeKind {
+	case readPrefixScope:
+		return b.pendingPrefixConflict(opts.scope)
+	case readNodeIDsScope:
+		if b.pendingNamespaceConflict("") == nil {
+			return nil
+		}
+		for _, id := range opts.nodeIDs {
+			if id != "" {
+				if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	default:
+		return b.pendingNamespaceConflict(opts.scope)
+	}
 }

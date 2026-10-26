@@ -46,7 +46,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("legacy"))
 				require.NoError(t, tx.SetImplicit(true))
-				require.NoError(t, tx.UpdateNode(&Node{ID: "legacy:a", Properties: map[string]any{"value": int64(i)}}))
+				require.NoError(t, tx.UpdateGraphNode(&Node{ID: "legacy:a", Properties: map[string]any{"value": int64(i)}}, ClientNodeEdits))
 				require.NoError(t, tx.Commit())
 				require.True(t, tx.AcknowledgedBuffered())
 			}
@@ -105,7 +105,7 @@ func TestReviewLegacySameStoreUpgrade(t *testing.T) {
 				data, err := decodeBufferedWALRecord(entry)
 				require.NoError(t, err)
 				require.NotEmpty(t, data.TxID)
-				marked, err := recovered.bufferedFlushMarkerExists(data.TxID)
+				marked, err := recovered.bufferedFlushMarkerExists("", data.TxID, "")
 				require.NoError(t, err)
 				require.False(t, marked, "fixture update unexpectedly reached storage")
 			}
@@ -142,7 +142,7 @@ func TestReviewLegacyLosslessNamedRecords(t *testing.T) {
 		if i == 0 {
 			_, err = tx.CreateNode(node)
 		} else {
-			err = tx.UpdateNode(node)
+			err = tx.UpdateGraphNode(node, ClientNodeEdits)
 		}
 		require.NoError(t, err)
 		require.NoError(t, tx.Commit())
@@ -226,7 +226,7 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 					require.NoError(t, err)
 					require.NoError(t, tx.SetNamespace(ns))
 					require.NoError(t, tx.SetImplicit(true))
-					require.NoError(t, tx.UpdateNode(&Node{ID: NodeID(ns + ":a"), Properties: props}))
+					require.NoError(t, tx.UpdateGraphNode(&Node{ID: NodeID(ns + ":a"), Properties: props}, ClientNodeEdits))
 					require.NoError(t, tx.UpdateEdge(&Edge{ID: EdgeID(ns + ":r"), StartNode: NodeID(ns + ":a"), EndNode: NodeID(ns + ":b"), Type: "R", Properties: props}))
 					require.NoError(t, tx.Commit())
 					require.True(t, tx.AcknowledgedBuffered())
@@ -304,7 +304,7 @@ func TestReviewBindingGrowthAndRestart(t *testing.T) {
 			require.NoError(t, tx.SetImplicit(true))
 			node, err := dest.GetNode("growth:a")
 			require.NoError(t, err)
-			require.NoError(t, tx.UpdateNode(node))
+			require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 			require.NoError(t, tx.Commit())
 			require.True(t, tx.AcknowledgedBuffered())
 			third := reviewBindingEngine(t, t.TempDir())

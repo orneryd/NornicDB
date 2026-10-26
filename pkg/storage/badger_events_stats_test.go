@@ -71,12 +71,12 @@ func TestBadgerEngine_EventSetterCallbacks(t *testing.T) {
 	assert.NotNil(t, b.onEdgeUpdated)
 	assert.NotNil(t, b.onEdgeDeleted)
 
-	b.notifyNodeCreated(testNode("evt-node"))
-	b.notifyNodeUpdated(testNode("evt-node"))
-	b.notifyNodeDeleted(NodeID(prefixTestID("evt-node")))
-	b.notifyEdgeCreated(testEdge("evt-edge", "evt-start", "evt-end", "LINK"))
-	b.notifyEdgeUpdated(testEdge("evt-edge", "evt-start", "evt-end", "LINK"))
-	b.notifyEdgeDeleted(EdgeID(prefixTestID("evt-edge")))
+	b.queueCommitOperations(nil, &Operation{Type: OpCreateNode, Node: testNode("evt-node")}, notificationImmediate)
+	b.queueCommitOperations(nil, &Operation{Type: OpUpdateNode, Node: testNode("evt-node")}, notificationImmediate)
+	b.queueCommitOperations(nil, &Operation{Type: OpDeleteNode, NodeID: NodeID(prefixTestID("evt-node"))}, notificationImmediate)
+	b.queueCommitOperations(nil, &Operation{Type: OpCreateEdge, Edge: testEdge("evt-edge", "evt-start", "evt-end", "LINK")}, notificationImmediate)
+	b.queueCommitOperations(nil, &Operation{Type: OpUpdateEdge, Edge: testEdge("evt-edge", "evt-start", "evt-end", "LINK")}, notificationImmediate)
+	b.queueCommitOperations(nil, &Operation{Type: OpDeleteEdge, EdgeID: EdgeID(prefixTestID("evt-edge"))}, notificationImmediate)
 
 	assert.Equal(t, 1, nodeCreatedCount)
 	assert.Equal(t, 1, nodeDeletedCount)

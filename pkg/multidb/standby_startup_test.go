@@ -10,18 +10,12 @@ import (
 )
 
 type leaderAwareEngine struct {
-	storage.Engine
+	*opaqueEntityEngine
 	leader      bool
-	createCalls atomic.Int32
 	updateCalls atomic.Int32
 }
 
 func (e *leaderAwareEngine) IsLeader() bool { return e.leader }
-
-func (e *leaderAwareEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	e.createCalls.Add(1)
-	return e.Engine.CreateNode(node)
-}
 
 func (e *leaderAwareEngine) UpdateNode(node *storage.Node) error {
 	e.updateCalls.Add(1)
@@ -29,7 +23,7 @@ func (e *leaderAwareEngine) UpdateNode(node *storage.Node) error {
 }
 
 func TestNewDatabaseManager_ReadOnlyEngine_SkipsMetadataWrites(t *testing.T) {
-	base := &leaderAwareEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), leader: false}
+	base := &leaderAwareEngine{opaqueEntityEngine: &opaqueEntityEngine{Engine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}, leader: false}
 
 	m, err := NewDatabaseManager(base, &Config{DefaultDatabase: "nornic", SystemDatabase: "system"})
 	require.NoError(t, err)

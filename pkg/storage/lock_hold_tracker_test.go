@@ -109,5 +109,5 @@ func TestLockHoldTrackerRecordsDeliveryUnderAStripe(t *testing.T) {
 // calling goroutine.
 func deliverNodeUpdate(engine *BadgerEngine, node *Node) {
 	operation := Operation{Type: OpUpdateNode, Node: node}
-	engine.queueCommitOperations(nil, &operation)
+	engine.queueCommitOperations(nil, &operation, notificationImmediate)
 }

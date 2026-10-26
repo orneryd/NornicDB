@@ -39,7 +39,10 @@ func (w *WALEngine) logger() *slog.Logger {
 //   - Auto-compaction: optional periodic snapshots + WAL truncation to prevent
 //     unbounded WAL growth.
 type WALEngine struct {
-	engine Engine
+	pendingEntityCommits sync.Map
+	entityWaitCtx        context.Context
+	stopEntityWait       context.CancelFunc
+	engine               Engine
 	// keyRegistry is engine's PropertyKeyRegistry, nil when it keeps none.
 	keyRegistry PropertyKeyRegistry
 	wal         *WAL
@@ -283,7 +286,9 @@ func (w *WALEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 
 // NewWALEngine creates a WAL-backed storage engine.
 func NewWALEngine(engine Engine, wal *WAL) *WALEngine {
+	waitCtx, stopWait := context.WithCancel(context.Background())
 	w := &WALEngine{
+		entityWaitCtx: waitCtx, stopEntityWait: stopWait,
 		engine: engine,
 		wal:    wal,
 	}
@@ -1156,15 +1161,19 @@ func (w *WALEngine) EdgeCountByPrefix(prefix string) (int64, error) {
 
 // Close closes both the WAL and underlying engine.
 func (w *WALEngine) Close() error {
-	// Stop auto-compaction if enabled
+	// Seal admission before draining registered native frames. Registration uses
+	// the same WAL mutex, so no pending frame can appear after this cut.
+	_ = w.wal.Close()
+	w.stopEntityWait()
+	w.pendingEntityCommits.Range(func(_, value any) bool {
+		accepted := value.(*walAcceptedEntityCommit)
+		accepted.prepared.CloseNative()
+		accepted.releaseMutation()
+		_ = accepted.resolve.Resolve(CommitOutcome{State: CommitRecoveryPending, Err: ErrStorageClosed})
+		return true
+	})
+	// A snapshot worker may have been waiting behind an accepted mutation lease.
 	w.DisableAutoCompaction()
-
-	// Stop log appends first, preserving the existing admission order. The
-	// engine's lifetime owner then drains native data and seals the closed
-	// log for downgrade; sealing owns the WAL file mutex, not an open handle.
-	if err := w.wal.Close(); err != nil {
-		// Log but continue closing storage.
-	}
 	return w.engine.Close()
 }
 

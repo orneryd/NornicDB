@@ -64,7 +64,7 @@ func TestEmbeddingSidecarHistoryBoundedWork(t *testing.T) {
 				case "transaction":
 					tx, err := engine.BeginTransaction()
 					require.NoError(t, err)
-					require.NoError(t, tx.UpdateNode(current))
+					require.NoError(t, tx.UpdateGraphNode(current, ClientNodeEdits))
 					require.NoError(t, tx.Commit())
 				case "delete":
 					require.NoError(t, engine.DeleteNode(body.ID))

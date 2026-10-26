@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"net"
 	"sync/atomic"
 	"testing"
@@ -33,7 +34,7 @@ func preNonceFrame(t *testing.T, msgType ClusterMessageType) []byte {
 	writeInt64(mac, msg.Timestamp)
 	writeBytesWithLength(mac, msg.Payload)
 	msg.Signature = hex.EncodeToString(mac.Sum(nil))
-	data, err := encodeGob(&msg)
+	data, err := storage.EncodeCommandPayload(&msg)
 	require.NoError(t, err)
 	return data
 }
@@ -89,10 +90,10 @@ func TestSignMessage_AlwaysUsesFreshNonceSignature(t *testing.T) {
 		require.Len(t, msg.Nonce, messageNonceSize)
 		require.NotEqual(t, previous, msg.Nonce)
 		require.NotEmpty(t, msg.SignatureV2)
-		data, err := encodeGob(msg)
+		data, err := storage.EncodeCommandPayload(msg)
 		require.NoError(t, err)
 		var old preNonceMessage
-		require.NoError(t, decodeGob(data, &old))
+		require.NoError(t, storage.DecodeCommandPayload(data, &old))
 		require.Empty(t, old.Signature, "the v1 signature must never be sent")
 		require.NoError(t, receiver.createConnection("receiver", nil).verifyMessage(msg))
 		require.Error(t, receiver.createConnection("replay", nil).verifyMessage(msg))

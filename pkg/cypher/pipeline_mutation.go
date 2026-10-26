@@ -121,7 +121,9 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	for _, nodeID := range nodeIDs {
 		deleteNode := store.DeleteNode
 		if _, stillConnected := connected[nodeID]; stillConnected {
-			deleteNode = store.(storage.ConnectedNodeDeleter).DeleteConnectedNode
+			deleteNode = func(id storage.NodeID) error {
+				return store.(storage.ConnectedNodeDeleter).DeleteGraphNode(id, storage.RejectConnected)
+			}
 		}
 		if err := deleteNode(nodeID); err != nil {
 			if errors.Is(err, storage.ErrNotFound) {

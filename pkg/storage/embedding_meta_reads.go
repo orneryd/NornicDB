@@ -7,7 +7,7 @@ func (w *WALEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
 
 // GetNodeEmbeddingMeta reads the metadata of the node's namespaced ID.
 func (n *NamespacedEngine) GetNodeEmbeddingMeta(id NodeID) (map[string]any, error) {
-	return embeddingMetaOf(n.inner, n.prefixNodeID(id))
+	return embeddingMetaOf(n.inner, n.PrefixNodeID(id))
 }
 
 // embeddingMetaOf is the node's embedding metadata from engine: its

@@ -151,9 +151,9 @@ func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edge
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
 		if edgeType != "" {
-			overlay, touched = b.bufferedTypeEdges(w, v, edgeType)
+			overlay, touched = b.bufferedTypeEdges(w, v, edgeType, scope)
 		} else {
-			overlay, touched = b.bufferedAllEdges(w, v)
+			overlay, touched = b.bufferedAllEdges(w, v, scope)
 		}
 	}
 
@@ -200,7 +200,7 @@ func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edge
 			}
 		}
 		return nil
-	})
+	}, readViewOptions{scope: scope, scopeKind: readPrefixScope})
 	if err != nil {
 		return err
 	}
@@ -267,14 +267,13 @@ func (b *BadgerEngine) streamAllEdgesInScopeTxn(ctx context.Context, txn *badger
 	return nil
 }
 
-// streamEdgesByTypeVisibleAtSnapshotWithView is the streaming form of
-// getEdgesByTypeVisibleAtSnapshotWithView: type candidates come from the same
-// physical snapshot an explicit transaction reads, one edge at a time.
-func (b *BadgerEngine) streamEdgesByTypeVisibleAtSnapshotWithView(ctx context.Context, scope, edgeType string, version MVCCVersion, view func(func(*badger.Txn) error) error, visit func(*Edge) error) error {
-	return b.streamEdgesByTypeAtSnapshotWithView(ctx, scope, edgeType, version, view, visibleRead, visit)
-}
-
+// streamEdgesByTypeAtSnapshotWithView reads scoped type candidates and bodies
+// from the supplied physical snapshot using the requested visibility policy.
 func (b *BadgerEngine) streamEdgesByTypeAtSnapshotWithView(ctx context.Context, scope, edgeType string, version MVCCVersion, view func(func(*badger.Txn) error) error, v readVisibility, visit func(*Edge) error) error {
+	if err := b.pendingPrefixConflict(scope); err != nil {
+		return err
+	}
+
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return err
@@ -290,7 +289,7 @@ func (b *BadgerEngine) streamEdgesByTypeAtSnapshotWithView(ctx context.Context, 
 					return nil
 				}
 				return visit(edge)
-			})
+			}, scope)
 		}
 		prefix := edgeTypeIndexPrefix(edgeType)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
@@ -307,7 +306,7 @@ func (b *BadgerEngine) streamEdgesByTypeAtSnapshotWithView(ctx context.Context, 
 			if !ok || edgeID == "" || !edgeIDInScope(edgeID, scope) {
 				continue
 			}
-			edge, getErr := b.getEdgeAtInTxn(txn, edgeID, version, v)
+			edge, getErr := b.getEdgeAtInTxn(txn, edgeID, version, mvccEntityRead{visibility: v})
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
 				continue
 			}

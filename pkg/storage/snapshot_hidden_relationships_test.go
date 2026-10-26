@@ -46,7 +46,7 @@ func TestSnapshotRecoveryKeepsHiddenRelationships(t *testing.T) {
 	} {
 		require.NoError(t, source.CreateEdge(edge))
 	}
-	require.NoError(t, source.SetEdgeManuallySuppressed("test:suppressed", true))
+	require.NoError(t, source.SetManualSuppression(StoredEntityEdgeKind, "test:suppressed", true))
 	for _, id := range []EdgeID{"test:suppressed", "test:decayed"} {
 		_, err := source.GetEdge(id)
 		require.ErrorIs(t, err, ErrNotFound, "%s is hidden from reads", id)

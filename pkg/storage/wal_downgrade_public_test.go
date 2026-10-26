@@ -122,7 +122,7 @@ func TestWALPublicDowngradeFixture(t *testing.T) {
 		check(err)
 		check(tx.SetNamespace("upgrade"))
 		check(tx.SetImplicit(true))
-		check(tx.UpdateNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": value}}))
+		check(tx.UpdateGraphNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": value}}, ClientNodeEdits))
 		check(tx.Commit())
 		if !tx.AcknowledgedBuffered() {
 			t.Fatal("fixture did not exercise write-behind")
@@ -207,7 +207,7 @@ func walDowngradeForeignSource(t *testing.T, destination *BadgerEngine, logDir s
 	check(err)
 	check(tx.SetNamespace("upgrade"))
 	check(tx.SetImplicit(true))
-	check(tx.UpdateNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(2)}}))
+	check(tx.UpdateGraphNode(&Node{ID: "upgrade:a", Properties: map[string]any{"alpha": int64(2)}}, ClientNodeEdits))
 	check(tx.Commit())
 	if !tx.AcknowledgedBuffered() {
 		t.Fatal("foreign fixture did not use a buffered record")

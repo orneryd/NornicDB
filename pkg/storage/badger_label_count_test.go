@@ -78,7 +78,7 @@ func TestBadgerEngine_LabelCountMetadataMaintainedAcrossTransactionalCommit(t *t
 
 	_, err = tx.CreateNode(&Node{ID: "db1:t1", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateNode(&Node{ID: "db1:t1", Labels: []string{"Employee"}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "db1:t1", Labels: []string{"Employee"}}, ClientNodeEdits))
 	require.NoError(t, tx.Commit())
 
 	count, err := engine.NodeCountByLabelInNamespace("db1", "Person")
@@ -92,7 +92,7 @@ func TestBadgerEngine_LabelCountMetadataMaintainedAcrossTransactionalCommit(t *t
 	tx, err = engine.BeginTransaction()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
-	require.NoError(t, tx.DeleteNode("db1:t1"))
+	require.NoError(t, tx.DeleteGraphNode("db1:t1", CascadeEdges))
 	require.NoError(t, tx.Commit())
 
 	count, err = engine.NodeCountByLabelInNamespace("db1", "Employee")

@@ -113,7 +113,7 @@ func TestBadgerTransactionRelationshipEndpointVisible(t *testing.T) {
 
 	_, err = tx.CreateNode(&Node{ID: "ns:new", Labels: []string{"Doc"}})
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteNode("ns:gone"))
+	require.NoError(t, tx.DeleteGraphNode("ns:gone", CascadeEdges))
 
 	check := func(id NodeID, wantVisible, wantAnswered bool) {
 		t.Helper()

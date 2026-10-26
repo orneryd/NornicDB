@@ -42,7 +42,7 @@ func TestClusterTransport_ReplayedFrameIsRejected(t *testing.T) {
 
 	send := func(conn net.Conn, msg *ClusterMessage) {
 		w := bufio.NewWriter(conn)
-		require.NoError(t, writeClusterMessage(w, msg))
+		require.NoError(t, transferClusterMessage(msg, nil, w, 0))
 		require.NoError(t, w.Flush())
 	}
 	first, err := net.Dial("tcp", addr)

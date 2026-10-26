@@ -7,58 +7,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
-
-// Fault injection stays at the storage-read seam. Transactions and rollback use
-// real Badger storage; an I/O failure must not consume capacity or publish data.
-type quotaAdmissionReadFailure struct {
-	storage.StreamingEngine
-	storage.StoredEntityReader
-	at  string
-	err error
-}
-
-func (e *quotaAdmissionReadFailure) GetStoredNode(id storage.NodeID) (*storage.Node, error) {
-	if e.at == "node" {
-		return nil, e.err
-	}
-	return e.StoredEntityReader.GetStoredNode(id)
-}
-func (e *quotaAdmissionReadFailure) GetStoredEdge(id storage.EdgeID) (*storage.Edge, error) {
-	if e.at == "edge" {
-		return nil, e.err
-	}
-	return e.StoredEntityReader.GetStoredEdge(id)
-}
-func (e *quotaAdmissionReadFailure) NodeCount() (int64, error) {
-	if e.at == "nodes" {
-		return 0, e.err
-	}
-	return e.StreamingEngine.NodeCount()
-}
-func (e *quotaAdmissionReadFailure) EdgeCount() (int64, error) {
-	if e.at == "edges" {
-		return 0, e.err
-	}
-	return e.StreamingEngine.EdgeCount()
-}
-func (e *quotaAdmissionReadFailure) StreamNodes(ctx context.Context, fn func(*storage.Node) error) error {
-	if e.at == "bytes" {
-		return e.err
-	}
-	return e.StreamingEngine.StreamNodes(ctx, fn)
-}
-
-// Storage sizing streams stored nodes (storage.StreamStoredNodes).
-func (e *quotaAdmissionReadFailure) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, fn func(*storage.Node) error) error {
-	if e.at == "bytes" {
-		return e.err
-	}
-	return e.StreamingEngine.StreamNodesWithOptions(ctx, opts, fn)
-}
 
 func TestTransactionQuotaAdmissionReadFailureRollsBack(t *testing.T) {
 	for _, at := range []string{"node", "edge", "nodes", "edges", "bytes"} {
@@ -83,7 +36,9 @@ func TestTransactionQuotaAdmissionReadFailureRollsBack(t *testing.T) {
 			injected := errors.New("test storage read failed")
 			stored, ok := storage.StoredReader(underlying)
 			require.True(t, ok)
-			tracker.Engine = &quotaAdmissionReadFailure{StreamingEngine: underlying.(storage.StreamingEngine), StoredEntityReader: stored, at: at, err: injected}
+			faults := storagefault.NewReadFailureEngine(underlying.(storagefault.ReadEngine), stored, injected)
+			faults.SetFailure(storagefault.ReadOperation(at))
+			tracker.Engine = faults
 			tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction()
 			require.NoError(t, err)
 			require.NoError(t, tx.SetNamespace(db))
@@ -93,7 +48,9 @@ func TestTransactionQuotaAdmissionReadFailureRollsBack(t *testing.T) {
 				_, err = tx.CreateNode(&storage.Node{ID: storage.NodeID(db + ":rejected")})
 				require.NoError(t, err)
 			}
-			require.ErrorIs(t, tracker.CommitTransaction(context.Background(), tx), injected)
+			commitErr := tracker.CommitTransaction(context.Background(), tx)
+			require.ErrorIs(t, commitErr, injected)
+			require.True(t, nornicerrors.IsCommitRolledBack(commitErr))
 			require.False(t, tx.IsActive())
 			count, err := underlying.NodeCount()
 			require.NoError(t, err)

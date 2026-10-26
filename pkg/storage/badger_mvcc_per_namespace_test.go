@@ -257,7 +257,7 @@ func TestEnsureNamespaceMVCC_RecoversSequenceFromExistingHeadsAfterReopen(t *tes
 	node, err := tx.GetNode(NodeID("nornic:node-1"))
 	require.NoError(t, err)
 	node.Properties = map[string]any{"updated": true}
-	require.NoError(t, tx.UpdateNode(node))
+	require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 	require.NoError(t, tx.Commit(),
 		"updating a pre-reopen node must not conflict against a recovered namespace floor")
 }

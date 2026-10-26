@@ -104,8 +104,8 @@ func TestTxReads_StreamNodesByLabelProjected_MergesSnapshotAndPendingWrites(t *t
 	require.NoError(t, err)
 	bob.Properties["name"] = "Robert"
 	bob.Properties["secret"] = "not projected"
-	require.NoError(t, tx.UpdateNode(bob))
-	require.NoError(t, tx.DeleteNode("test:carol"))
+	require.NoError(t, tx.UpdateGraphNode(bob, ClientNodeEdits))
+	require.NoError(t, tx.DeleteGraphNode("test:carol", CascadeEdges))
 	_, err = tx.CreateNode(&Node{
 		ID: "test:erin", Labels: []string{"Person"},
 		Properties: map[string]any{"name": "Erin", "secret": "not projected"},
@@ -231,8 +231,8 @@ func TestTxReads_StreamNodesByLabelProjected_ReplaysBoundedPrefixAndResumes(t *t
 	alice, err := tx.GetNode("test:alice")
 	require.NoError(t, err)
 	alice.Properties["name"] = "Alicia"
-	require.NoError(t, tx.UpdateNode(alice))
-	require.NoError(t, tx.DeleteNode("test:bob"))
+	require.NoError(t, tx.UpdateGraphNode(alice, ClientNodeEdits))
+	require.NoError(t, tx.DeleteGraphNode("test:bob", CascadeEdges))
 	_, err = tx.CreateNode(&Node{ID: "test:erin", Labels: []string{"Person"}, Properties: map[string]any{"name": "Erin"}})
 	require.NoError(t, err)
 
@@ -415,11 +415,11 @@ func TestTxReads_GetNodeUsesUnprojectedSnapshotPrefix(t *testing.T) {
 	require.Equal(t, first.Properties["name"], gotAgain.Properties["name"])
 
 	gotAgain.Properties["name"] = "pending update"
-	require.NoError(t, tx.UpdateNode(gotAgain))
+	require.NoError(t, tx.UpdateGraphNode(gotAgain, ClientNodeEdits))
 	pending, err := tx.GetNode(first.ID)
 	require.NoError(t, err)
 	require.Equal(t, "pending update", pending.Properties["name"], "pending state must take priority over the committed prefix cache")
-	require.NoError(t, tx.DeleteNode(first.ID))
+	require.NoError(t, tx.DeleteGraphNode(first.ID, CascadeEdges))
 	_, err = tx.GetNode(first.ID)
 	require.ErrorIs(t, err, ErrNotFound, "deleted state must take priority over the committed prefix cache")
 }
@@ -437,7 +437,7 @@ func TestTxReads_StreamNodesByLabelProjected_CachedReplayKeepsBeginSnapshot(t *t
 	bob, err := writer.GetNode("test:bob")
 	require.NoError(t, err)
 	bob.Properties["name"] = "Changed after reader began"
-	require.NoError(t, writer.UpdateNode(bob))
+	require.NoError(t, writer.UpdateGraphNode(bob, ClientNodeEdits))
 	require.NoError(t, writer.Commit())
 
 	readNames := func() map[NodeID]string {
@@ -728,7 +728,7 @@ func TestTxReads_GetNodesByLabel_PendingNodeMerges(t *testing.T) {
 	require.Equal(t, []string{"test:eve"}, nodeIDs(designers))
 
 	// Deleted committed node must drop out.
-	require.NoError(t, tx.DeleteNode("test:bob"))
+	require.NoError(t, tx.DeleteGraphNode("test:bob", CascadeEdges))
 	people, err = tx.GetNodesByLabel("Person")
 	require.NoError(t, err)
 	require.NotContains(t, nodeIDs(people), "test:bob")
@@ -782,7 +782,7 @@ func TestTxReads_AllNodesAndGetAllNodes(t *testing.T) {
 		ID: "test:eve", Labels: []string{"Person"}, Properties: map[string]any{},
 	})
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteNode("test:dave"))
+	require.NoError(t, tx.DeleteGraphNode("test:dave", CascadeEdges))
 
 	all, err = tx.AllNodes()
 	require.NoError(t, err)
@@ -1024,10 +1024,10 @@ func TestTxReads_SetImplicit(t *testing.T) {
 	t.Cleanup(func() { _ = tx.Rollback() })
 
 	require.NoError(t, tx.SetImplicit(true))
-	require.True(t, tx.implicit, "SetImplicit(true) must flip the flag")
+	require.Equal(t, CommitModeImplicit, tx.commitMode, "SetImplicit(true) must flip the flag")
 
 	require.NoError(t, tx.SetImplicit(false))
-	require.False(t, tx.implicit, "SetImplicit(false) must clear the flag")
+	require.Equal(t, CommitModeExplicit, tx.commitMode, "SetImplicit(false) must clear the flag")
 
 	// Closed transaction rejects further config changes.
 	require.NoError(t, tx.Rollback())

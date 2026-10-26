@@ -241,11 +241,15 @@ func TestReplayResultTracking(t *testing.T) {
 	entries := []WALEntry{
 		{Sequence: 1, Operation: OpCreateNode, Data: node1Data},
 		{Sequence: 2, Operation: OpCreateNode, Data: node2Data},
-		{Sequence: 3, Operation: OpCheckpoint, Data: []byte("{}")}, // Should skip
-		{Sequence: 4, Operation: OpCreateNode, Data: node1Data},    // Duplicate - should skip
+		{Sequence: 3, Operation: OpCheckpoint, Data: []byte("{}")},       // Should skip
+		{Sequence: 4, Operation: OpCreateNode, Data: node1Data},          // Duplicate - should skip
+		{Sequence: 5, Operation: OpCreateNode, Data: []byte("{corrupt")}, // Must retain the unexpected failure
 	}
 
-	result := ReplayWALEntries(engine, entries)
+	result := ReplayResult{Errors: make([]ReplayError, 0)}
+	for _, entry := range entries {
+		result.Record(entry, ReplayWALEntry(engine, entry))
+	}
 
 	if result.Applied != 2 {
 		t.Errorf("Expected 2 applied, got %d", result.Applied)
@@ -253,8 +257,17 @@ func TestReplayResultTracking(t *testing.T) {
 	if result.Skipped != 2 {
 		t.Errorf("Expected 2 skipped (checkpoint + duplicate), got %d", result.Skipped)
 	}
-	if result.Failed != 0 {
-		t.Errorf("Expected 0 failed, got %d", result.Failed)
+	if result.Failed != 1 {
+		t.Errorf("Expected 1 unexpected failure, got %d", result.Failed)
+	}
+	if len(result.Errors) != 1 {
+		t.Fatalf("Expected exact corrupt-entry error, got %+v", result.Errors)
+	}
+	if result.Errors[0].Sequence != 5 || result.Errors[0].Operation != OpCreateNode || result.Errors[0].Error == nil {
+		t.Fatalf("Unexpected failure lost its provenance: %+v", result.Errors[0])
+	}
+	if !result.HasCriticalErrors() {
+		t.Fatal("corrupt entry must remain a critical replay failure")
 	}
 }
 

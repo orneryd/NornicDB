@@ -29,7 +29,7 @@ func (tx *BadgerTransaction) retainedSidecarMetadataLocked(node *Node) (map[stri
 		err = tx.withSnapshotViewLocked(func(view *badger.Txn) error {
 			var fresh bool
 			var readErr error
-			meta, fresh, readErr = tx.engine.loadEmbeddingSidecar(view, node, node.ID)
+			meta, fresh, readErr = tx.engine.loadEmbeddingSidecar(embeddingRecordReader{txn: view}, node, node.ID)
 			if !fresh {
 				meta = nil
 			}

@@ -93,9 +93,9 @@ func stageOp(tx *BadgerTransaction, op writeordertest.Op, v int64) error {
 		_, err := tx.CreateNode(&Node{ID: modelNodeID(op.Node), Properties: props})
 		return err
 	case writeordertest.UpdateNode:
-		return tx.UpdateNode(&Node{ID: modelNodeID(op.Node), Properties: props})
+		return tx.UpdateGraphNode(&Node{ID: modelNodeID(op.Node), Properties: props}, ClientNodeEdits)
 	case writeordertest.DeleteNode:
-		return tx.DeleteNode(modelNodeID(op.Node))
+		return tx.DeleteGraphNode(modelNodeID(op.Node), CascadeEdges)
 	case writeordertest.CreateEdge:
 		return tx.CreateEdge(&Edge{ID: modelEdgeID(op.Edge), StartNode: modelNodeID(op.Start), EndNode: modelNodeID(op.End), Type: "LINK", Properties: props})
 	case writeordertest.UpdateEdge:
@@ -187,7 +187,21 @@ func (d *engineDriver) Rollback(slot int) {
 	}
 }
 
-func (d *engineDriver) Flush() error { return d.e.FlushWriteBehind() }
+func (d *engineDriver) Flush() error {
+	if err := d.e.FlushWriteBehind(); err != nil {
+		return err
+	}
+	// FlushWriteBehind joins buffered generations. A direct write can queue
+	// behind a concurrently running notification drainer, even with no buffered
+	// generation left. The model's quiescent observation must join that work
+	// too, before comparing the last delivered image with the stored image.
+	n := d.e.queueCommitOperations(nil, nil, notificationAwaited)
+	if n != nil {
+		d.e.completeCommitNotification(n)
+		d.e.awaitCommitNotification(n)
+	}
+	return nil
+}
 
 func (d *engineDriver) DeletePrefix() (writeordertest.Outcome, error) {
 	_, _, err := d.e.DeleteByPrefix("test:")
@@ -212,9 +226,9 @@ func (d *engineDriver) Restore(slot int) (writeordertest.Outcome, error) {
 
 func (d *engineDriver) Suppress(id string, edge, flag bool) (writeordertest.Outcome, error) {
 	if edge {
-		return outcomeOf(d.e.SetEdgeManuallySuppressed(modelEdgeID(id), flag))
+		return outcomeOf(d.e.SetManualSuppression(StoredEntityEdgeKind, string(modelEdgeID(id)), flag))
 	}
-	return outcomeOf(d.e.SetNodeManuallySuppressed(modelNodeID(id), flag))
+	return outcomeOf(d.e.SetManualSuppression(StoredEntityNodeKind, string(modelNodeID(id)), flag))
 }
 
 func (d *engineDriver) Sidecar(node string, v int64) (writeordertest.Outcome, error) {

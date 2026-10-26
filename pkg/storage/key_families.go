@@ -32,6 +32,9 @@ var badgerKeyFamilies = []struct {
 }
 
 func namespaceOwnsBadgerKey(key []byte, prefix []byte, namespace string, wholeNamespace bool, nodes, edges map[uint64]struct{}) bool {
+	if isNamespaceDropIntentKey(key) {
+		return false
+	}
 	if len(key) < 2 {
 		return false
 	}
@@ -52,6 +55,8 @@ func namespaceOwnsBadgerKey(key []byte, prefix []byte, namespace string, wholeNa
 	switch key[0] {
 	case prefixNode, prefixEdge, prefixPendingEmbed, prefixEmbedding:
 		return bytes.HasPrefix(key[1:], prefix)
+	case prefixSchema:
+		return wholeNamespace && bytes.Equal(key, schemaKey(namespace))
 	case prefixChangeEvent:
 		// "db:" then binary positions: only a whole database owns them.
 		return wholeNamespace && bytes.HasPrefix(key[1:], prefix)

@@ -39,7 +39,7 @@ func TestWrittenImageNeverModifiesWriterMaps(t *testing.T) {
 				edge := &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: shared}
 				write(func(tx *BadgerTransaction) error { return tx.CreateEdge(edge) }, func() error { return engine.CreateEdge(edge) })
 				update := &Node{ID: "test:a", Labels: []string{"N"}, Properties: shared}
-				write(func(tx *BadgerTransaction) error { return tx.UpdateNode(update) }, func() error { return engine.UpdateNode(update) })
+				write(func(tx *BadgerTransaction) error { return tx.UpdateGraphNode(update, ClientNodeEdits) }, func() error { return engine.UpdateNode(update) })
 				require.Equal(t, map[string]any{"n": 7, "u": uint16(8), "s": "x"}, shared)
 				stored, err := engine.GetNode("test:a")
 				require.NoError(t, err)

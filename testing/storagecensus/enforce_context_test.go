@@ -13,12 +13,16 @@ import (
 )
 
 // coverageProgram keeps the regression on the analyzer's real typed SSA path.
-func coverageProgram(t *testing.T, source string) (*program, *ssa.Package) {
+func coverageProgram(t *testing.T, source string, packagePaths ...string) (*program, *ssa.Package) {
 	t.Helper()
 	set := token.NewFileSet()
 	file, err := parser.ParseFile(set, "coverage.go", source, 0)
 	require.NoError(t, err)
-	pkg, _, err := ssautil.BuildPackage(&types.Config{}, set, types.NewPackage(Module+"pkg/storage", "storage"), []*ast.File{file}, ssa.SanityCheckFunctions)
+	packagePath := "pkg/storage"
+	if len(packagePaths) > 0 {
+		packagePath = packagePaths[0]
+	}
+	pkg, _, err := ssautil.BuildPackage(&types.Config{}, set, types.NewPackage(Module+packagePath, file.Name.Name), []*ast.File{file}, ssa.SanityCheckFunctions)
 	require.NoError(t, err)
 	return &program{fset: set, ssa: pkg.Prog}, pkg
 }

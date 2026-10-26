@@ -38,6 +38,7 @@ import (
 	"crypto/tls"
 	"encoding/binary"
 	"errors"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"io"
 	"log/slog"
 	"net"
@@ -107,14 +108,9 @@ type ClusterMessage struct {
 //   - WAL streaming for HA
 //   - Cluster coordination
 type ClusterTransport struct {
-	mu           sync.RWMutex
+	clusterLifecycle[transportResources]
 	nodeID       string
 	bindAddr     string
-	listener     net.Listener
-	connections  map[string]*ClusterConnection
-	closed       atomic.Bool
-	closeCh      chan struct{}
-	wg           sync.WaitGroup
 	dialTimeout  time.Duration
 	readTimeout  time.Duration
 	writeTimeout time.Duration
@@ -123,8 +119,6 @@ type ClusterTransport struct {
 	tlsClient    *tls.Config
 	authSecret   []byte
 	authMaxSkew  time.Duration
-	logger       *slog.Logger
-	localizer    *localization.Manager
 
 	// replay records message nonces for every connection of this transport.
 	replay *replayCache
@@ -185,10 +179,16 @@ func NewClusterTransport(config *ClusterTransportConfig) *ClusterTransport {
 		}
 	}
 	return &ClusterTransport{
+		clusterLifecycle: clusterLifecycle[transportResources]{
+			closeCh: make(chan struct{}),
+			resources: transportResources{
+				connections: make(map[string]*ClusterConnection),
+				logger:      config.Logger,
+				localizer:   config.Localizer,
+			},
+		},
 		nodeID:       config.NodeID,
 		bindAddr:     config.BindAddr,
-		connections:  make(map[string]*ClusterConnection),
-		closeCh:      make(chan struct{}),
 		dialTimeout:  config.DialTimeout,
 		readTimeout:  config.ReadTimeout,
 		writeTimeout: config.WriteTimeout,
@@ -197,37 +197,39 @@ func NewClusterTransport(config *ClusterTransportConfig) *ClusterTransport {
 		tlsClient:    config.TLSClient,
 		authSecret:   config.AuthSecret,
 		authMaxSkew:  config.AuthMaxSkew,
-		logger:       config.Logger,
-		localizer:    config.Localizer,
 		replay:       newReplayCache(),
 		handlers:     make(map[ClusterMessageType]MessageHandler),
 	}
 }
 
 func (t *ClusterTransport) logPrintf(ctx context.Context, level slog.Level, format string, args ...any) {
-	logReplicationEvent(ctx, t.logger, t.localizer, level, localization.ReplicationOperatorEvent(format, args...))
+	logReplicationEvent(ctx, t.resources.logger, t.resources.localizer, level, localization.ReplicationOperatorEvent(format, args...))
 }
 
 // RegisterHandler registers a handler for a message type.
 func (t *ClusterTransport) RegisterHandler(msgType ClusterMessageType, handler MessageHandler) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.resources.mu.Lock()
+	defer t.resources.mu.Unlock()
 	t.handlers[msgType] = handler
 }
 
 // Connect establishes a connection to a peer node.
 func (t *ClusterTransport) Connect(ctx context.Context, addr string) (PeerConnection, error) {
-	if t.closed.Load() {
+	if t.resources.closed.Load() {
 		return nil, localizedError(localization.ReplicationTransportClosed(), nil)
 	}
 
-	// Check for existing connection
-	t.mu.RLock()
-	if conn, ok := t.connections[addr]; ok && conn.IsConnected() {
-		t.mu.RUnlock()
+	// Check for existing connection under the same shutdown admission cut.
+	t.resources.mu.RLock()
+	if t.resources.closed.Load() {
+		t.resources.mu.RUnlock()
+		return nil, localizedError(localization.ReplicationTransportClosed(), nil)
+	}
+	if conn, ok := t.resources.connections[addr]; ok && conn.IsConnected() {
+		t.resources.mu.RUnlock()
 		return conn, nil
 	}
-	t.mu.RUnlock()
+	t.resources.mu.RUnlock()
 
 	// Dial with timeout (also set Dialer.Timeout so the net stack doesn't hang
 	// if a caller passes a context without a deadline).
@@ -252,13 +254,22 @@ func (t *ClusterTransport) Connect(ctx context.Context, addr string) (PeerConnec
 	}
 
 	conn := t.createConnection(addr, netConn)
+	t.resources.mu.Lock()
+	if t.resources.closed.Load() {
+		t.resources.mu.Unlock()
+		_ = netConn.Close()
+		return nil, localizedError(localization.ReplicationTransportClosed(), nil)
+	}
+	// A concurrent dial may already have installed the reusable peer.
+	if existing := t.resources.connections[addr]; existing != nil && existing.IsConnected() {
+		t.resources.mu.Unlock()
+		_ = netConn.Close()
+		return existing, nil
+	}
 	conn.wg.Add(1)
+	t.resources.connections[addr] = conn
+	t.resources.mu.Unlock()
 	go conn.readLoop()
-
-	// Store connection
-	t.mu.Lock()
-	t.connections[addr] = conn
-	t.mu.Unlock()
 
 	t.logPrintf(ctx, slog.LevelInfo, "[Cluster] Connected to peer %s", addr)
 	return conn, nil
@@ -266,15 +277,17 @@ func (t *ClusterTransport) Connect(ctx context.Context, addr string) (PeerConnec
 
 func (t *ClusterTransport) createConnection(addr string, netConn net.Conn) *ClusterConnection {
 	conn := &ClusterConnection{
+		clusterLifecycle: clusterLifecycle[connectionResources]{
+			closeCh:   make(chan struct{}),
+			resources: connectionResources{conn: netConn},
+		},
 		transport:    t,
 		addr:         addr,
-		conn:         netConn,
 		reader:       bufio.NewReader(netConn),
 		writer:       bufio.NewWriter(netConn),
 		readTimeout:  t.readTimeout,
 		writeTimeout: t.writeTimeout,
 		maxMsgSize:   t.maxMsgSize,
-		closeCh:      make(chan struct{}),
 		pendingRPCs:  make(map[uint64]chan *ClusterMessage),
 		authSecret:   t.authSecret,
 		authMaxSkew:  t.authMaxSkew,
@@ -286,7 +299,7 @@ func (t *ClusterTransport) createConnection(addr string, netConn net.Conn) *Clus
 
 // Listen starts accepting cluster connections.
 func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler ConnectionHandler) error {
-	if t.closed.Load() {
+	if t.resources.closed.Load() {
 		return localizedError(localization.ReplicationTransportClosed(), nil)
 	}
 
@@ -301,12 +314,17 @@ func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler Conn
 		return localizedError(localization.ReplicationTransportListenFailed(addr, err), err)
 	}
 
-	t.mu.Lock()
-	t.listener = listener
+	t.resources.mu.Lock()
+	if t.resources.closed.Load() {
+		t.resources.mu.Unlock()
+		_ = listener.Close()
+		return nil
+	}
+	t.resources.listener = listener
 	// If an ephemeral port was requested (or the caller passes an empty addr in tests),
 	// record the actual bound address for later dials/diagnostics.
 	t.bindAddr = listener.Addr().String()
-	t.mu.Unlock()
+	t.resources.mu.Unlock()
 
 	t.logPrintf(ctx, slog.LevelInfo, "[Cluster] Listening on %s", listener.Addr().String())
 
@@ -326,7 +344,7 @@ func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler Conn
 		}
 		// Close closes the listener, so a blocked Accept returns and the
 		// loop exits here.
-		if t.closed.Load() {
+		if t.resources.closed.Load() {
 			return nil
 		}
 
@@ -340,13 +358,20 @@ func (t *ClusterTransport) Listen(ctx context.Context, addr string, handler Conn
 			if ne, ok := err.(net.Error); ok && ne.Timeout() {
 				continue
 			}
-			if !t.closed.Load() {
+			if !t.resources.closed.Load() {
 				t.logPrintf(ctx, slog.LevelError, "[Cluster] Accept error: %v", err)
 			}
 			continue
 		}
 
+		t.resources.mu.Lock()
+		if t.resources.closed.Load() {
+			t.resources.mu.Unlock()
+			_ = netConn.Close()
+			return nil
+		}
 		t.wg.Add(1)
+		t.resources.mu.Unlock()
 		go t.handleIncoming(ctx, netConn, handler)
 	}
 }
@@ -362,9 +387,15 @@ func (t *ClusterTransport) handleIncoming(ctx context.Context, netConn net.Conn,
 	// 2) be used to send requests back to the peer (e.g., fencing during failover)
 	conn := t.createConnection(remoteAddr, netConn)
 
-	t.mu.Lock()
-	t.connections[remoteAddr] = conn
-	t.mu.Unlock()
+	t.resources.mu.Lock()
+	if t.resources.closed.Load() {
+		t.resources.mu.Unlock()
+		_ = netConn.Close()
+		return
+	}
+	conn.wg.Add(1)
+	t.resources.connections[remoteAddr] = conn
+	t.resources.mu.Unlock()
 
 	// The peer is announced only once a message from it has been read and
 	// verified (TLS handshake done, signature checked), so a bare connect
@@ -373,44 +404,18 @@ func (t *ClusterTransport) handleIncoming(ctx context.Context, netConn net.Conn,
 		conn.onAuthenticated = func() { onConnect(conn) }
 	}
 
-	conn.wg.Add(1)
 	go conn.readLoopWithContext(ctx)
 	conn.wg.Wait()
 }
 
-// Close shuts down the transport.
-func (t *ClusterTransport) Close() error {
-	if t.closed.Swap(true) {
-		return nil
-	}
-
-	close(t.closeCh)
-
-	t.mu.Lock()
-	if t.listener != nil {
-		t.listener.Close()
-	}
-	for _, conn := range t.connections {
-		conn.Close()
-	}
-	t.mu.Unlock()
-
-	t.wg.Wait()
-	t.logPrintf(context.Background(), slog.LevelInfo, "[Cluster] Transport closed")
-	return nil
-}
-
 // ClusterConnection implements PeerConnection for cluster communication.
 type ClusterConnection struct {
+	clusterLifecycle[connectionResources]
 	transport    *ClusterTransport
 	addr         string
-	conn         net.Conn
 	reader       *bufio.Reader
 	writer       *bufio.Writer
-	mu           sync.Mutex
 	connected    atomic.Bool
-	closeCh      chan struct{}
-	wg           sync.WaitGroup
 	readTimeout  time.Duration
 	writeTimeout time.Duration
 	maxMsgSize   int
@@ -455,13 +460,13 @@ func (c *ClusterConnection) sendRPC(ctx context.Context, msg *ClusterMessage) (*
 	}()
 
 	// Send request
-	c.mu.Lock()
-	c.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
-	err := writeClusterMessage(c.writer, msg)
+	c.resources.mu.Lock()
+	c.resources.conn.SetWriteDeadline(time.Now().Add(c.writeTimeout))
+	err := transferClusterMessage(msg, nil, c.writer, 0)
 	if err == nil {
 		err = c.writer.Flush()
 	}
-	c.mu.Unlock()
+	c.resources.mu.Unlock()
 
 	if err != nil {
 		return nil, localizedError(localization.ReplicationRPCWriteFailed(err), err)
@@ -488,8 +493,8 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
 	defer func() {
 		c.connected.Store(false)
 		close(c.closeCh)
-		if c.conn != nil {
-			_ = c.conn.Close()
+		if c.resources.conn != nil {
+			_ = c.resources.conn.Close()
 		}
 	}()
 
@@ -506,8 +511,9 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
 		if readTimeout <= 0 {
 			readTimeout = 30 * time.Second
 		}
-		c.conn.SetReadDeadline(time.Now().Add(readTimeout))
-		msg, err := readClusterMessage(c.reader, c.maxMsgSize)
+		c.resources.conn.SetReadDeadline(time.Now().Add(readTimeout))
+		msg := new(ClusterMessage)
+		err := transferClusterMessage(msg, c.reader, nil, c.maxMsgSize)
 		if err != nil {
 			if !errors.Is(err, io.EOF) {
 				var netErr net.Error
@@ -554,9 +560,9 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
 			continue
 		}
 
-		c.transport.mu.RLock()
+		c.transport.resources.mu.RLock()
 		handler, ok := c.transport.handlers[msg.Type]
-		c.transport.mu.RUnlock()
+		c.transport.resources.mu.RUnlock()
 		if !ok {
 			c.transport.logPrintf(ctx, slog.LevelWarn, "[Cluster] No handler for message type %d", msg.Type)
 			continue
@@ -572,17 +578,17 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
 		}
 
 		c.signMessage(resp)
-		c.mu.Lock()
+		c.resources.mu.Lock()
 		writeTimeout := c.writeTimeout
 		if writeTimeout <= 0 {
 			writeTimeout = 10 * time.Second
 		}
-		c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-		werr := writeClusterMessage(c.writer, resp)
+		c.resources.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+		werr := transferClusterMessage(resp, nil, c.writer, 0)
 		if werr == nil {
 			werr = c.writer.Flush()
 		}
-		c.mu.Unlock()
+		c.resources.mu.Unlock()
 
 		if werr != nil {
 			c.transport.logPrintf(ctx, slog.LevelError, "[Cluster] Write error to %s: %v", c.addr, werr)
@@ -593,146 +599,32 @@ func (c *ClusterConnection) readLoopWithContext(ctx context.Context) {
 
 // SendWALBatch sends WAL entries to the peer.
 func (c *ClusterConnection) SendWALBatch(ctx context.Context, entries []*WALEntry) (*WALBatchResponse, error) {
-	payload, err := encodeGob(entries)
-	if err != nil {
-		return nil, localizedError(localization.ReplicationRPCEncodeFailed("", err), err)
-	}
-
-	msg := &ClusterMessage{
-		Type:    ClusterMsgWALBatch,
-		Payload: payload,
-	}
-
-	resp, err := c.sendRPC(ctx, msg)
-	if err != nil {
-		return nil, err
-	}
-
-	var result WALBatchResponse
-	if err := decodeGob(resp.Payload, &result); err != nil {
-		return nil, localizedError(localization.ReplicationRPCDecodeFailed("", err), err)
-	}
-	return &result, nil
+	return exchangeClusterRPC[WALBatchResponse](c, ctx, ClusterMsgWALBatch, entries, "", "")
 }
 
 // SendHeartbeat sends a heartbeat to the peer.
 func (c *ClusterConnection) SendHeartbeat(ctx context.Context, req *HeartbeatRequest) (*HeartbeatResponse, error) {
-	payload, err := encodeGob(req)
-	if err != nil {
-		return nil, localizedError(localization.ReplicationRPCEncodeFailed("", err), err)
-	}
-
-	msg := &ClusterMessage{
-		Type:    ClusterMsgHeartbeat,
-		Payload: payload,
-	}
-
-	resp, err := c.sendRPC(ctx, msg)
-	if err != nil {
-		return nil, err
-	}
-
-	var result HeartbeatResponse
-	if err := decodeGob(resp.Payload, &result); err != nil {
-		return nil, localizedError(localization.ReplicationRPCDecodeFailed("", err), err)
-	}
-	return &result, nil
+	return exchangeClusterRPC[HeartbeatResponse](c, ctx, ClusterMsgHeartbeat, req, "", "")
 }
 
 // SendFence sends a fence request to the peer.
 func (c *ClusterConnection) SendFence(ctx context.Context, req *FenceRequest) (*FenceResponse, error) {
-	payload, err := encodeGob(req)
-	if err != nil {
-		return nil, localizedError(localization.ReplicationRPCEncodeFailed("", err), err)
-	}
-
-	msg := &ClusterMessage{
-		Type:    ClusterMsgFence,
-		Payload: payload,
-	}
-
-	resp, err := c.sendRPC(ctx, msg)
-	if err != nil {
-		return nil, err
-	}
-
-	var result FenceResponse
-	if err := decodeGob(resp.Payload, &result); err != nil {
-		return nil, localizedError(localization.ReplicationRPCDecodeFailed("", err), err)
-	}
-	return &result, nil
+	return exchangeClusterRPC[FenceResponse](c, ctx, ClusterMsgFence, req, "", "")
 }
 
 // SendPromote sends a promote request to the peer.
 func (c *ClusterConnection) SendPromote(ctx context.Context, req *PromoteRequest) (*PromoteResponse, error) {
-	payload, err := encodeGob(req)
-	if err != nil {
-		return nil, localizedError(localization.ReplicationRPCEncodeFailed("", err), err)
-	}
-
-	msg := &ClusterMessage{
-		Type:    ClusterMsgPromote,
-		Payload: payload,
-	}
-
-	resp, err := c.sendRPC(ctx, msg)
-	if err != nil {
-		return nil, err
-	}
-
-	var result PromoteResponse
-	if err := decodeGob(resp.Payload, &result); err != nil {
-		return nil, localizedError(localization.ReplicationRPCDecodeFailed("", err), err)
-	}
-	return &result, nil
+	return exchangeClusterRPC[PromoteResponse](c, ctx, ClusterMsgPromote, req, "", "")
 }
 
 // SendRaftVote sends a Raft vote request to the peer.
 func (c *ClusterConnection) SendRaftVote(ctx context.Context, req *RaftVoteRequest) (*RaftVoteResponse, error) {
-	payload, err := encodeGob(req)
-	if err != nil {
-		return nil, localizedError(localization.ReplicationRPCEncodeFailed("", err), err)
-	}
-
-	msg := &ClusterMessage{
-		Type:    ClusterMsgVoteRequest,
-		Payload: payload,
-	}
-
-	resp, err := c.sendRPC(ctx, msg)
-	if err != nil {
-		return nil, err
-	}
-
-	var result RaftVoteResponse
-	if err := decodeGob(resp.Payload, &result); err != nil {
-		return nil, localizedError(localization.ReplicationRPCDecodeFailed("", err), err)
-	}
-	return &result, nil
+	return exchangeClusterRPC[RaftVoteResponse](c, ctx, ClusterMsgVoteRequest, req, "", "")
 }
 
 // SendRaftAppendEntries sends Raft append entries to the peer.
 func (c *ClusterConnection) SendRaftAppendEntries(ctx context.Context, req *RaftAppendEntriesRequest) (*RaftAppendEntriesResponse, error) {
-	payload, err := encodeGob(req)
-	if err != nil {
-		return nil, localizedError(localization.ReplicationRPCEncodeFailed("", err), err)
-	}
-
-	msg := &ClusterMessage{
-		Type:    ClusterMsgAppendEntries,
-		Payload: payload,
-	}
-
-	resp, err := c.sendRPC(ctx, msg)
-	if err != nil {
-		return nil, err
-	}
-
-	var result RaftAppendEntriesResponse
-	if err := decodeGob(resp.Payload, &result); err != nil {
-		return nil, localizedError(localization.ReplicationRPCDecodeFailed("", err), err)
-	}
-	return &result, nil
+	return exchangeClusterRPC[RaftAppendEntriesResponse](c, ctx, ClusterMsgAppendEntries, req, "", "")
 }
 
 // SendForwardApply sends a write command to the leader for application.
@@ -741,38 +633,14 @@ func (c *ClusterConnection) SendForwardApply(ctx context.Context, cmd *Command, 
 	if cmd == nil {
 		return localizedError(localization.ReplicationRPCCommandRequired(), nil)
 	}
-	payload, err := encodeGob(cmd)
-	if err != nil {
-		return localizedError(localization.ReplicationRPCEncodeFailed("command", err), err)
-	}
-	msg := &ClusterMessage{
-		Type:    ClusterMsgForwardApply,
-		Payload: payload,
-	}
-	resp, err := c.sendRPC(ctx, msg)
+	result, err := exchangeClusterRPC[forwardApplyResponse](c, ctx, ClusterMsgForwardApply, cmd, "command", "forward apply response")
 	if err != nil {
 		return err
-	}
-	var result forwardApplyResponse
-	if err := decodeGob(resp.Payload, &result); err != nil {
-		return localizedError(localization.ReplicationRPCDecodeFailed("forward apply response", err), err)
 	}
 	if result.Err != "" {
 		cause := errors.New(result.Err)
 		return localizedError(localization.ReplicationRPCRemoteApplyFailed(result.Err), cause)
 	}
-	return nil
-}
-
-// Close closes the connection.
-func (c *ClusterConnection) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.conn != nil {
-		c.conn.Close()
-	}
-	c.wg.Wait()
 	return nil
 }
 
@@ -839,45 +707,37 @@ func (c *ClusterConnection) verifyMessage(msg *ClusterMessage) error {
 
 // Wire protocol helpers
 
-func writeClusterMessage(w *bufio.Writer, msg *ClusterMessage) error {
-	data, err := encodeGob(msg)
-	if err != nil {
-		return err
+func transferClusterMessage(message *ClusterMessage, reader io.Reader, writer io.Writer, maxSize int) error {
+	var data []byte
+	var err error
+	if writer != nil {
+		data, err = storage.EncodeCommandPayload(message)
+		if err != nil {
+			return err
+		}
 	}
-
-	// Length prefix (4 bytes, big endian)
 	length := uint32(len(data))
-	if err := binary.Write(w, binary.BigEndian, length); err != nil {
+	if writer != nil {
+		if err = binary.Write(writer, binary.BigEndian, length); err != nil {
+			return err
+		}
+		_, err = writer.Write(data)
 		return err
 	}
-
-	_, err = w.Write(data)
-	return err
-}
-
-func readClusterMessage(r *bufio.Reader, maxSize int) (*ClusterMessage, error) {
-	// Read length prefix
-	var length uint32
-	if err := binary.Read(r, binary.BigEndian, &length); err != nil {
-		return nil, localizedError(localization.ReplicationRPCReadFailed(err), err)
+	if err = binary.Read(reader, binary.BigEndian, &length); err != nil {
+		return localizedError(localization.ReplicationRPCReadFailed(err), err)
 	}
-
 	if int(length) > maxSize {
-		return nil, localizedError(localization.ReplicationRPCMessageTooLarge(length, maxSize), nil)
+		return localizedError(localization.ReplicationRPCMessageTooLarge(length, maxSize), nil)
 	}
-
-	// Read data
-	data := make([]byte, length)
-	if _, err := io.ReadFull(r, data); err != nil {
-		return nil, localizedError(localization.ReplicationRPCReadFailed(err), err)
+	data = make([]byte, length)
+	if _, err = io.ReadFull(reader, data); err != nil {
+		return localizedError(localization.ReplicationRPCReadFailed(err), err)
 	}
-
-	var msg ClusterMessage
-	if err := decodeGob(data, &msg); err != nil {
-		return nil, localizedError(localization.ReplicationRPCReadFailed(err), err)
+	if err = storage.DecodeCommandPayload(data, message); err != nil {
+		return localizedError(localization.ReplicationRPCReadFailed(err), err)
 	}
-
-	return &msg, nil
+	return nil
 }
 
 func writeInt64(w io.Writer, v int64) {
@@ -902,3 +762,88 @@ func writeBytesWithLength(w io.Writer, b []byte) {
 // Verify interface compliance
 var _ Transport = (*ClusterTransport)(nil)
 var _ PeerConnection = (*ClusterConnection)(nil)
+
+// exchangeClusterRPC owns payload encoding, the existing RPC transport, and
+// response decoding for the public typed RPC entry points.
+func exchangeClusterRPC[Response any](c *ClusterConnection, ctx context.Context, kind ClusterMessageType, request any, encodeLabel, decodeLabel string) (*Response, error) {
+	payload, err := storage.EncodeCommandPayload(request)
+	if err != nil {
+		return nil, localizedError(localization.ReplicationRPCEncodeFailed(encodeLabel, err), err)
+	}
+	response, err := c.sendRPC(ctx, &ClusterMessage{Type: kind, Payload: payload})
+	if err != nil {
+		return nil, err
+	}
+	var result Response
+	if err = storage.DecodeCommandPayload(response.Payload, &result); err != nil {
+		return nil, localizedError(localization.ReplicationRPCDecodeFailed(decodeLabel, err), err)
+	}
+	return &result, nil
+}
+
+type transportResources struct {
+	mu          sync.RWMutex
+	closed      atomic.Bool
+	listener    net.Listener
+	connections map[string]*ClusterConnection
+	logger      *slog.Logger
+	localizer   *localization.Manager
+}
+
+type connectionResources struct {
+	mu   sync.Mutex
+	conn net.Conn
+}
+
+// clusterLifecycle owns the admission/write mutex, worker join and shutdown
+// signal for either cluster resource. Its concrete payload contains only that
+// role's resources; neither owner keeps a back-pointer or shutdown callback.
+type clusterLifecycle[Resources transportResources | connectionResources] struct {
+	wg        sync.WaitGroup
+	closeCh   chan struct{}
+	resources Resources
+}
+
+// Close retires admission under the resource's mutex, closes dependent sockets
+// and joins workers outside that mutex. Transport repeats return immediately;
+// connection repeats still close their socket and join the existing read loop.
+func (owner *clusterLifecycle[Resources]) Close() error {
+	var mu sync.Locker
+	var transport *transportResources
+	var connection *connectionResources
+	switch payload := any(&owner.resources).(type) {
+	case *transportResources:
+		transport, mu = payload, &payload.mu
+	case *connectionResources:
+		connection, mu = payload, &payload.mu
+	}
+	mu.Lock()
+	var resources []io.Closer
+	if transport != nil {
+		if transport.closed.Swap(true) {
+			mu.Unlock()
+			return nil
+		}
+		close(owner.closeCh)
+		resources = make([]io.Closer, 0, len(transport.connections)+1)
+		if transport.listener != nil {
+			resources = append(resources, transport.listener)
+		}
+		for _, child := range transport.connections {
+			resources = append(resources, child)
+		}
+	} else if connection.conn != nil {
+		// Socket close remains excluded against concrete response writers.
+		// Worker joins happen only after releasing the same mutex they need.
+		_ = connection.conn.Close()
+	}
+	mu.Unlock()
+	for _, resource := range resources {
+		_ = resource.Close()
+	}
+	owner.wg.Wait()
+	if transport != nil {
+		logReplicationEvent(context.Background(), transport.logger, transport.localizer, slog.LevelInfo, localization.ReplicationOperatorEvent("[Cluster] Transport closed"))
+	}
+	return nil
+}

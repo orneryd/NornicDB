@@ -14,6 +14,10 @@ type PendingEmbeddingCounter interface {
 }
 
 func (b *BadgerEngine) CountPendingEmbeddingIDs(accept func([]byte) bool) int {
+	if b.pendingNamespaceConflict("") != nil {
+		return 0
+	}
+
 	count := 0
 	_ = b.withView(func(txn *badger.Txn) error {
 		prefix := []byte{prefixPendingEmbed}

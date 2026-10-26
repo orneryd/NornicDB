@@ -20,22 +20,29 @@ type rejectingEngine struct {
 
 var errRejected = errors.New("rejected")
 
-func (e *rejectingEngine) CreateNode(node *storage.Node) (storage.NodeID, error) {
-	if node.ID == e.rejectNode {
-		return "", errRejected
-	}
-	return e.Engine.CreateNode(node)
-}
+func (e *rejectingEngine) GetInnerEngine() storage.Engine { return e.Engine }
 
-func (e *rejectingEngine) CreateEdge(edge *storage.Edge) error {
-	if edge.ID == e.rejectEdge {
+// WithEntityChange is the one rejection policy for direct and atomic staged
+// writes. Its continuation writes only the transaction supplied by the owner.
+func (e *rejectingEngine) WithEntityChange(op storage.Operation, apply func() error) error {
+	if op.Type == storage.OpCreateNode && op.Node != nil && op.Node.ID == e.rejectNode {
 		return errRejected
 	}
-	return e.Engine.CreateEdge(edge)
+	if op.Type == storage.OpCreateEdge && op.Edge != nil && op.Edge.ID == e.rejectEdge {
+		return errRejected
+	}
+	return apply()
+}
+func (e *rejectingEngine) CreateNode(node *storage.Node) (id storage.NodeID, err error) {
+	err = e.WithEntityChange(storage.Operation{Type: storage.OpCreateNode, Node: node}, func() error { id, err = e.Engine.CreateNode(node); return err })
+	return
+}
+func (e *rejectingEngine) CreateEdge(edge *storage.Edge) error {
+	return e.WithEntityChange(storage.Operation{Type: storage.OpCreateEdge, Edge: edge}, func() error { return e.Engine.CreateEdge(edge) })
 }
 
 // A bulk create through the size-tracking wrapper is all-or-nothing: when one
-// entity of the batch is rejected, the ones created before it are removed.
+// entity of the batch is rejected, no staged prefix becomes visible.
 func TestSizeTrackingEngine_BulkCreateIsAllOrNothing(t *testing.T) {
 	manager, dbName := setupTestManager(t)
 	id := func(name string) string { return dbName + ":" + name }

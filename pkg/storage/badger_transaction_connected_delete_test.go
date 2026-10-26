@@ -21,8 +21,8 @@ func TestDeleteConnectedNode(t *testing.T) {
 	// Its relationship deleted later in the transaction: the commit deletes it.
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteConnectedNode("test:a"))
-	require.ErrorIs(t, tx.DeleteConnectedNode("test:a"), ErrNotFound)
+	require.NoError(t, tx.DeleteGraphNode("test:a", RejectConnected))
+	require.ErrorIs(t, tx.DeleteGraphNode("test:a", RejectConnected), ErrNotFound)
 	require.Equal(t, 1, tx.OperationCount())
 	node, err := tx.GetNode("test:a")
 	require.NoError(t, err)
@@ -38,7 +38,7 @@ func TestDeleteConnectedNode(t *testing.T) {
 	// Still connected at commit: the commit fails and changes nothing.
 	tx, err = engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteConnectedNode("test:c"))
+	require.NoError(t, tx.DeleteGraphNode("test:c", RejectConnected))
 	err = tx.Commit()
 	var connected *NodeStillConnectedError
 	require.True(t, errors.As(err, &connected))
@@ -50,8 +50,8 @@ func TestDeleteConnectedNode(t *testing.T) {
 
 	tx, err = engine.BeginTransaction()
 	require.NoError(t, err)
-	require.ErrorIs(t, tx.DeleteConnectedNode(""), ErrInvalidID)
-	require.ErrorIs(t, tx.DeleteConnectedNode("test:missing"), ErrNotFound)
+	require.ErrorIs(t, tx.DeleteGraphNode("", RejectConnected), ErrInvalidID)
+	require.ErrorIs(t, tx.DeleteGraphNode("test:missing", RejectConnected), ErrNotFound)
 	require.NoError(t, tx.Rollback())
 }
 
@@ -67,18 +67,18 @@ func TestDeleteConnectedNodeFailures(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.Rollback())
-	require.Error(t, tx.DeleteConnectedNode("test:a"))
+	require.Error(t, tx.DeleteGraphNode("test:a", RejectConnected))
 	tx, err = engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
-	require.Error(t, tx.DeleteConnectedNode("other:a"))
+	require.Error(t, tx.DeleteGraphNode("other:a", RejectConnected))
 	require.NoError(t, tx.Rollback())
 
 	// A relationship created in the transaction still leads into the node.
 	tx, err = engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "R"}))
-	require.NoError(t, tx.DeleteConnectedNode("test:b"))
+	require.NoError(t, tx.DeleteGraphNode("test:b", RejectConnected))
 	var connected *NodeStillConnectedError
 	require.True(t, errors.As(tx.Commit(), &connected))
 	require.Equal(t, NodeID("test:b"), connected.NodeID)
@@ -89,7 +89,7 @@ func TestDeleteConnectedNodeFailures(t *testing.T) {
 	tx.pendingEdges["test:bad"] = &Edge{ID: "test:bad", StartNode: "test:a", EndNode: "test:b", Type: "R", Properties: map[string]any{"x": make(chan int)}}
 	tx.deferredEdgeWrites = map[EdgeID]struct{}{"test:bad": {}}
 	tx.operations = append(tx.operations, Operation{Type: OpCreateEdge, EdgeID: "test:bad"})
-	require.Error(t, tx.DeleteConnectedNode("test:a"))
+	require.Error(t, tx.DeleteGraphNode("test:a", RejectConnected))
 	require.NoError(t, tx.Rollback())
 
 	// A node that is gone by commit time fails it.

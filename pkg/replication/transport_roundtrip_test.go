@@ -2,6 +2,7 @@ package replication
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,19 +37,19 @@ func TestClusterTransport_HeartbeatRoundTrip(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var boundAddr string
 	for time.Now().Before(deadline) {
-		server.mu.RLock()
-		ln := server.listener
+		server.resources.mu.RLock()
+		ln := server.resources.listener
 		boundAddr = server.bindAddr
-		server.mu.RUnlock()
+		server.resources.mu.RUnlock()
 		if ln != nil {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	server.mu.RLock()
-	ln := server.listener
+	server.resources.mu.RLock()
+	ln := server.resources.listener
 	boundAddr = server.bindAddr
-	server.mu.RUnlock()
+	server.resources.mu.RUnlock()
 	if ln == nil {
 		t.Fatalf("server did not start listening")
 	}
@@ -107,43 +108,43 @@ func TestClusterTransport_AllRPCSendersRoundTrip(t *testing.T) {
 
 	server.RegisterHandler(ClusterMsgWALBatch, func(ctx context.Context, nodeID string, msg *ClusterMessage) (*ClusterMessage, error) {
 		var in []*WALEntry
-		require.NoError(t, decodeGob(msg.Payload, &in))
-		out, err := encodeGob(&WALBatchResponse{AckedPosition: 11, ReceivedPosition: 11})
+		require.NoError(t, storage.DecodeCommandPayload(msg.Payload, &in))
+		out, err := storage.EncodeCommandPayload(&WALBatchResponse{AckedPosition: 11, ReceivedPosition: 11})
 		require.NoError(t, err)
 		return &ClusterMessage{Type: ClusterMsgWALBatchResponse, Payload: out}, nil
 	})
 	server.RegisterHandler(ClusterMsgFence, func(ctx context.Context, nodeID string, msg *ClusterMessage) (*ClusterMessage, error) {
 		var in FenceRequest
-		require.NoError(t, decodeGob(msg.Payload, &in))
-		out, err := encodeGob(&FenceResponse{Fenced: true})
+		require.NoError(t, storage.DecodeCommandPayload(msg.Payload, &in))
+		out, err := storage.EncodeCommandPayload(&FenceResponse{Fenced: true})
 		require.NoError(t, err)
 		return &ClusterMessage{Type: ClusterMsgFenceResponse, Payload: out}, nil
 	})
 	server.RegisterHandler(ClusterMsgPromote, func(ctx context.Context, nodeID string, msg *ClusterMessage) (*ClusterMessage, error) {
 		var in PromoteRequest
-		require.NoError(t, decodeGob(msg.Payload, &in))
-		out, err := encodeGob(&PromoteResponse{Ready: true})
+		require.NoError(t, storage.DecodeCommandPayload(msg.Payload, &in))
+		out, err := storage.EncodeCommandPayload(&PromoteResponse{Ready: true})
 		require.NoError(t, err)
 		return &ClusterMessage{Type: ClusterMsgPromoteResponse, Payload: out}, nil
 	})
 	server.RegisterHandler(ClusterMsgVoteRequest, func(ctx context.Context, nodeID string, msg *ClusterMessage) (*ClusterMessage, error) {
 		var in RaftVoteRequest
-		require.NoError(t, decodeGob(msg.Payload, &in))
-		out, err := encodeGob(&RaftVoteResponse{Term: in.Term, VoteGranted: true, VoterID: "server-2"})
+		require.NoError(t, storage.DecodeCommandPayload(msg.Payload, &in))
+		out, err := storage.EncodeCommandPayload(&RaftVoteResponse{Term: in.Term, VoteGranted: true, VoterID: "server-2"})
 		require.NoError(t, err)
 		return &ClusterMessage{Type: ClusterMsgVoteResponse, Payload: out}, nil
 	})
 	server.RegisterHandler(ClusterMsgAppendEntries, func(ctx context.Context, nodeID string, msg *ClusterMessage) (*ClusterMessage, error) {
 		var in RaftAppendEntriesRequest
-		require.NoError(t, decodeGob(msg.Payload, &in))
-		out, err := encodeGob(&RaftAppendEntriesResponse{Term: in.Term, Success: true, MatchIndex: in.PrevLogIndex})
+		require.NoError(t, storage.DecodeCommandPayload(msg.Payload, &in))
+		out, err := storage.EncodeCommandPayload(&RaftAppendEntriesResponse{Term: in.Term, Success: true, MatchIndex: in.PrevLogIndex})
 		require.NoError(t, err)
 		return &ClusterMessage{Type: ClusterMsgAppendEntriesResponse, Payload: out}, nil
 	})
 	server.RegisterHandler(ClusterMsgForwardApply, func(ctx context.Context, nodeID string, msg *ClusterMessage) (*ClusterMessage, error) {
 		var in Command
-		require.NoError(t, decodeGob(msg.Payload, &in))
-		out, err := encodeGob(forwardApplyResponse{})
+		require.NoError(t, storage.DecodeCommandPayload(msg.Payload, &in))
+		out, err := storage.EncodeCommandPayload(forwardApplyResponse{})
 		require.NoError(t, err)
 		return &ClusterMessage{Type: ClusterMsgForwardApplyResponse, Payload: out}, nil
 	})
@@ -155,10 +156,10 @@ func TestClusterTransport_AllRPCSendersRoundTrip(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	var boundAddr string
 	for time.Now().Before(deadline) {
-		server.mu.RLock()
-		ln := server.listener
+		server.resources.mu.RLock()
+		ln := server.resources.listener
 		boundAddr = server.bindAddr
-		server.mu.RUnlock()
+		server.resources.mu.RUnlock()
 		if ln != nil {
 			break
 		}

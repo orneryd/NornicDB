@@ -52,7 +52,12 @@ func (m *DatabaseManager) loadMetadata() error {
 }
 
 // persistMetadata saves database metadata to storage.
-func (m *DatabaseManager) persistMetadata() error {
+type databaseLimitsChange struct {
+	database string
+	limits   *Limits
+}
+
+func (m *DatabaseManager) persistMetadata(changes ...databaseLimitsChange) error {
 	if m.serverID == "" {
 		m.serverID = uuid.NewString()
 	}
@@ -65,7 +70,16 @@ func (m *DatabaseManager) persistMetadata() error {
 		}
 	}
 	// Serialize metadata
-	data, err := json.Marshal(m.databases)
+	snapshot := make(map[string]*DatabaseInfo, len(m.databases))
+	for name, info := range m.databases {
+		snapshot[name] = cloneDatabaseInfo(info)
+	}
+	for _, change := range changes {
+		if info := snapshot[change.database]; info != nil {
+			info.Limits = cloneLimits(change.limits)
+		}
+	}
+	data, err := json.Marshal(snapshot)
 	if err != nil {
 		return localizedError(localization.MultidbMetadataSerializeFailed(err), err)
 	}

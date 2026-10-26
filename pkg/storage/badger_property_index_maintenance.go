@@ -107,9 +107,9 @@ func (b *BadgerEngine) maintainCompositeIndexesOnNodeUpdated(node, oldNode *Node
 }
 
 // maintainPropertyIndexesOnNodeDeletedWithNode removes index entries for a
-// deleted node using the caller's pre-delete snapshot. The replay path uses
-// it because a buffered node never entered the engine node cache, so the
-// cache-based variant would leave its committed index entries dangling.
+// deleted node using the caller's pre-delete snapshot. All delete writers
+// use this image because cache invalidation precedes index maintenance and
+// buffered nodes may never have entered the engine cache.
 func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithNode(nodeID NodeID, old *Node) {
 	if old == nil || len(old.Labels) == 0 {
 		return
@@ -121,55 +121,15 @@ func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithNode(nodeID NodeI
 	b.maintainCompositeIndexesOnNodeDeleted(nodeID, old, sm)
 }
 
-// maintainPropertyIndexesOnNodeDeletedWithLabels removes index entries for
-// every equality index the deleted node touched. The caller provides the
-// labels (via cacheOnNodeDeletedWithLabels) because the node itself is
-// already gone from the cache; the cached copy supplies the property payload.
-func (b *BadgerEngine) maintainPropertyIndexesOnNodeDeletedWithLabels(id NodeID, labels []string) {
-	if len(labels) == 0 {
-		return
-	}
-	sm := b.schemaForNodeID(id)
-	if sm == nil {
-		return
-	}
-	// Only read the pre-delete snapshot when at least one indexed label
-	// applies to this node. If none of the labels declare an index, skip
-	// the read entirely.
-	anyIndexed := false
-	for _, label := range labels {
-		if len(sm.GetCompositeIndexesForLabel(label)) > 0 {
-			anyIndexed = true
-			break
-		}
-	}
-	if !anyIndexed {
-		return
-	}
-	// We no longer have the node — take the last-known cached copy, or
-	// skip if neither cache nor MVCC has a pre-delete view. Correctness
-	// note: if the cache was evicted AND the node is gone, a dangling
-	// index entry may persist until the next rebuild. That's a known
-	// limitation; avoid it by calling DeleteNode paths that surface the
-	// old node (UpdateNode equivalents already do).
-	b.nodeCacheMu.RLock()
-	cached, hit := b.nodeCache[id]
-	b.nodeCacheMu.RUnlock()
-	if !hit || cached == nil {
-		return
-	}
-	b.maintainCompositeIndexesOnNodeDeleted(id, cached, sm)
-}
-
 // maintainCompositeIndexesOnNodeDeleted removes the node from every equality
-// index its cached copy could have been filed under.
-func (b *BadgerEngine) maintainCompositeIndexesOnNodeDeleted(id NodeID, cached *Node, sm *SchemaManager) {
-	for _, label := range cached.Labels {
+// index its pre-delete image could have been filed under.
+func (b *BadgerEngine) maintainCompositeIndexesOnNodeDeleted(id NodeID, old *Node, sm *SchemaManager) {
+	for _, label := range old.Labels {
 		for _, idx := range sm.GetCompositeIndexesForLabel(label) {
 			if idx == nil {
 				continue
 			}
-			idx.RemoveNode(id, cached.Properties)
+			idx.RemoveNode(id, old.Properties)
 		}
 	}
 }
@@ -186,4 +146,26 @@ func (b *BadgerEngine) schemaForNodeID(id NodeID) *SchemaManager {
 	sm := b.schemas[ns]
 	b.schemasMu.RUnlock()
 	return sm
+}
+
+// publishUniqueValues updates the registry from the committed before/after images.
+// The publication stage orders all users of each old and new UNIQUE value.
+func (b *BadgerEngine) publishUniqueValues(schema *SchemaManager, id NodeID, old, written *Node) {
+	if schema == nil || !schema.HasUniqueValueTracking() {
+		return
+	}
+	if old != nil {
+		for _, label := range old.Labels {
+			for property, value := range old.Properties {
+				schema.UnregisterUniqueValue(label, property, value)
+			}
+		}
+	}
+	if written != nil {
+		for _, label := range written.Labels {
+			for property, value := range written.Properties {
+				schema.RegisterUniqueValue(label, property, value, id)
+			}
+		}
+	}
 }

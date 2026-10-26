@@ -89,7 +89,7 @@ func TestSnapshotOverlayQueryCacheWithWriteBehind(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, tx.SetImplicit(true))
 			require.NoError(t, tx.SetNamespace("test"))
-			require.NoError(t, tx.UpdateNode(node))
+			require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 			require.NoError(t, tx.Commit())
 			node, err = b.GetQueryNode("test:cached")
 			require.NoError(t, err)
@@ -98,7 +98,7 @@ func TestSnapshotOverlayQueryCacheWithWriteBehind(t *testing.T) {
 			node, err = b.GetQueryNode("test:cached")
 			require.NoError(t, err)
 			require.Equal(t, int64(2), node.Properties["v"])
-			bufferedDeleteNode(t, b, "test:cached")
+			bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("test:cached", CascadeEdges) })
 			_, err = b.GetQueryNode("test:cached")
 			require.ErrorIs(t, err, ErrNotFound, "pending tombstone shadows the cache")
 		})
@@ -121,11 +121,11 @@ func TestSnapshotOverlayCascadeInvalidatesAdjacency(t *testing.T) {
 			if writer == "engine" {
 				require.NoError(t, b.DeleteNode("test:hub"))
 			} else if writer == "buffered" {
-				bufferedDeleteNode(t, b, "test:hub")
+				bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("test:hub", CascadeEdges) })
 			} else {
 				tx, err := b.BeginTransaction()
 				require.NoError(t, err)
-				require.NoError(t, tx.DeleteNode("test:hub"))
+				require.NoError(t, tx.DeleteGraphNode("test:hub", CascadeEdges))
 				require.NoError(t, tx.Commit())
 			}
 			require.NoError(t, b.FlushWriteBehind())

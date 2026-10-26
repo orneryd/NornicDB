@@ -186,14 +186,17 @@ func (a *analysis) report() *Report {
 			if q.class == "unclassified" {
 				continue // reported as an unclassified key
 			}
-			u := byWrite[id]
+			writeID := q.space + "|" + q.origin
+			u := byWrite[writeID]
 			if u == nil {
 				u = &unordered{q: q, chains: map[string][]string{}}
-				byWrite[id] = u
+				byWrite[writeID] = u
 			} else if shorter(q.chain, u.q.chain) {
 				u.q = q
 			}
-			u.entries = append(u.entries, a.p.funcName(fn))
+			if _, seen := u.chains[a.p.funcName(fn)]; !seen {
+				u.entries = append(u.entries, a.p.funcName(fn))
+			}
 			u.chains[a.p.funcName(fn)] = q.chain
 		}
 	}
