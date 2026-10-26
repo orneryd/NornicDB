@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // materializedRead owns the read/error/result boundary for namespace views.
 // Protocol bindings choose whether a provider's value survives its error.
 func materializedRead[T any](read func() (T, error), view func(T) T, keepErrorValue bool) (T, error) {
@@ -23,16 +25,20 @@ func materializedValues[T any](values []*T, visit func(*T)) {
 	}
 }
 
-// materializedKeyed is the shared batch-result walk. Projection binds each
-// authoritative result key to its owned or borrowed entity view.
-func materializedKeyed[K comparable, T any](values map[K]*T, project func(K, *T) (K, *T)) map[K]*T {
+// materializedKeyedWithContext joins the original requests to their already
+// qualified keys. Projection changes the entity view, never the caller's key.
+// physical is produced by materializedIDsWithContext from the same requests.
+func materializedKeyedWithContext[K comparable, T any](ctx context.Context, requests, physical []K, values map[K]*T, project func(K, *T) *T) (map[K]*T, error) {
 	out := make(map[K]*T, len(values))
-	for key, value := range values {
-		if id, item := project(key, value); item != nil {
-			out[id] = item
+	for i, key := range requests {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if item := project(physical[i], values[physical[i]]); item != nil {
+			out[key] = item
 		}
 	}
-	return out
+	return out, nil
 }
 
 // materializedIDs maps request identifiers once, preserving a non-nil empty

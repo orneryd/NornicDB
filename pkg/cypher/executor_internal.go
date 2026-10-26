@@ -8,6 +8,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // executeInternal executes a Cypher fragment as part of a larger execution flow.
@@ -44,7 +45,7 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 	}
 	if StatementDatabase("", statement) == "system" {
 		var transaction any
-		if wrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
+		if wrapper, ok := storage.OwnedCapability[*transactionStorageWrapper](ctx.Value(ctxKeyTxStorage)); ok {
 			transaction = wrapper.tx
 		} else if e.txContext != nil && e.txContext.active {
 			transaction = e.txContext.tx
@@ -55,6 +56,11 @@ func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement st
 }
 
 func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, params map[string]interface{}) (result *ExecuteResult, retErr error) {
+	var bindingErr error
+	ctx, bindingErr = e.boundExecutionContext(ctx)
+	if bindingErr != nil {
+		return nil, bindingErr
+	}
 	if e.txContext != nil && e.txContext.active {
 		defer func() { e.failTransaction(ctx, retErr) }()
 	}

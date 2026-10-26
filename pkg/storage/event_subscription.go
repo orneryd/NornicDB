@@ -33,7 +33,7 @@ type EventSubscriber interface {
 // deliver events. It checks engine only, never unwrapping it: a wrapper that
 // does not forward the capability is an error, not a silent gap.
 func SubscribeEvents(engine Engine, handlers EventHandlers) error {
-	subscriber, ok := engine.(EventSubscriber)
+	subscriber, ok := ViewMetadataForEngine[EventSubscriber](engine)
 	if !ok || subscriber == nil {
 		return ErrEventSubscriptionUnsupported
 	}

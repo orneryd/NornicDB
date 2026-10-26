@@ -32,21 +32,60 @@ type Decision struct {
 }
 
 type decider struct {
-	a       *analysis
-	stored  map[string]bool // StoredEntityReader method names
-	reader  *types.Interface
-	tainted map[*ssa.Function]bool
+	a               *analysis
+	stored          map[string]bool // StoredEntityReader method names
+	reader          *types.Interface
+	readers         []*types.Interface
+	visible         *types.Interface // public Engine outcome, distinct from stored facts
+	facts           []types.Type     // exact stored-result declarations from the loaded package
+	errorPredicates map[*ssa.Function]bool
+	readOperations  map[*types.Func]bool
+	tainted         map[*ssa.Function]bool
 }
 
 func (a *analysis) decisions() []Decision {
 	d := &decider{a: a, stored: map[string]bool{}, tainted: map[*ssa.Function]bool{}}
+	d.errorPredicates = map[*ssa.Function]bool{}
+	d.readOperations = map[*types.Func]bool{}
+	if pkg := a.p.ssa.ImportedPackage("errors"); pkg != nil {
+		for _, name := range []string{"Is", "As"} {
+			if fn := pkg.Func(name); fn != nil {
+				d.errorPredicates[fn] = true
+			}
+		}
+	}
 	if pkg := a.p.ssa.ImportedPackage(Module + "pkg/storage"); pkg != nil {
+		// These are the existing operation owners, identified by their actual
+		// declarations. Only an invocation whose callback has the stored-reader
+		// contract is a stored source; binding/availability APIs are not reads.
+		for _, name := range []string{"ReadWithCapability", "ReadValueWithCapability", "VisitWithCapability", "VisitWhileWithCapability"} {
+			if declaration, ok := pkg.Pkg.Scope().Lookup(name).(*types.Func); ok {
+				d.readOperations[declaration.Origin()] = true
+			}
+		}
+		if declaration, ok := pkg.Pkg.Scope().Lookup("Engine").(*types.TypeName); ok {
+			d.visible, _ = declaration.Type().Underlying().(*types.Interface)
+		}
 		if tn, ok := pkg.Pkg.Scope().Lookup("StoredEntityReader").(*types.TypeName); ok {
 			if it, ok := tn.Type().Underlying().(*types.Interface); ok {
 				d.reader = it
+				d.readers = append(d.readers, it)
 				for i := 0; i < it.NumMethods(); i++ {
 					d.stored[it.Method(i).Name()] = true
 				}
+			}
+		}
+		if declaration, ok := pkg.Pkg.Scope().Lookup("ScopedStoredEntityReader").(*types.TypeName); ok {
+			if contract, ok := declaration.Type().Underlying().(*types.Interface); ok {
+				d.readers = append(d.readers, contract)
+			}
+		}
+		// Author: Lane #1644 (Codex). Stored facts remain hidden-state sources
+		// when the caller requests the payload-free operation. Resolve the
+		// actual declarations, not function-name or receiver-name patterns.
+		for _, name := range []string{"StoredReadResult", "StoredMetadata", "StoredNodeFact", "StoredEdgeFact"} {
+			if declaration, ok := pkg.Pkg.Scope().Lookup(name).(*types.TypeName); ok {
+				d.facts = append(d.facts, types.Unalias(declaration.Type()))
 			}
 		}
 	}
@@ -65,6 +104,21 @@ func (a *analysis) decisions() []Decision {
 						if t[v] {
 							d.tainted[fn] = true
 							changed = true
+						}
+					}
+				}
+				// A callback-based probe can return constant true/false from
+				// different successors of a read-dependent branch. Its result
+				// still carries that dependency even without an SSA Phi.
+				if branch, ok := b.Instrs[len(b.Instrs)-1].(*ssa.If); ok && t[branch.Cond] {
+					for _, exit := range fn.Blocks {
+						if ret, ok := exit.Instrs[len(exit.Instrs)-1].(*ssa.Return); ok && branch.Block().Succs[0].Dominates(exit) != branch.Block().Succs[1].Dominates(exit) {
+							for _, value := range ret.Results {
+								if types.Identical(value.Type(), types.Typ[types.Bool]) {
+									d.tainted[fn] = true
+									changed = true
+								}
+							}
 						}
 					}
 				}
@@ -106,6 +160,12 @@ func (a *analysis) decisions() []Decision {
 // source reports whether a call returns hidden state or a read that sees
 // hidden entities.
 func (d *decider) source(c *ssa.CallCommon) bool {
+	if d.storedOperation(c.StaticCallee(), c) {
+		return true
+	}
+	if d.returnsFacts(c.Signature().Results()) {
+		return true
+	}
 	if c.IsInvoke() {
 		return d.stored[c.Method.Name()] && d.reader != nil && types.Implements(c.Value.Type(), d.reader)
 	}
@@ -114,11 +174,85 @@ func (d *decider) source(c *ssa.CallCommon) bool {
 		return false
 	}
 	name := d.a.p.funcName(callee)
-	if visibilityPrimitives[name] || d.tainted[callee] {
+	if visibilityPrimitives[name] || (d.tainted[callee] && !d.visibleOutcome(callee)) {
 		return true
 	}
 	if recv := callee.Signature.Recv(); recv != nil && d.stored[callee.Name()] && d.reader != nil {
 		return types.Implements(recv.Type(), d.reader)
+	}
+	return false
+}
+
+func (d *decider) storedOperation(fn *ssa.Function, call *ssa.CallCommon) bool {
+	if fn == nil || d.reader == nil || len(call.Args) < 2 {
+		return false
+	}
+	object, ok := fn.Object().(*types.Func)
+	if !ok || !d.readOperations[object.Origin()] {
+		return false
+	}
+	callback, ok := call.Args[1].Type().Underlying().(*types.Signature)
+	if !ok || callback.Params().Len() == 0 {
+		return false
+	}
+	contract, ok := callback.Params().At(0).Type().Underlying().(*types.Interface)
+	// Operations deliberately bind a method-sized interface, not the full
+	// StoredEntityReader. Require a nonempty actual subset of that method set.
+	if !ok || contract.NumMethods() == 0 {
+		return false
+	}
+	for _, stored := range d.readers {
+		if types.Implements(stored, contract) {
+			return true
+		}
+	}
+	return false
+}
+
+// A public visible Engine outcome does not disclose the physical state behind
+// its visibility decision. A consumer may legitimately branch on visible
+// absence (MERGE admission, for example). Keep that policy boundary when
+// propagating internal stored dependencies through the resolved call graph.
+func (d *decider) visibleOutcome(fn *ssa.Function) bool {
+	if d.visible == nil || fn.Signature.Recv() == nil || !types.Implements(fn.Signature.Recv().Type(), d.visible) {
+		return false
+	}
+	for i := 0; i < d.visible.NumMethods(); i++ {
+		method := d.visible.Method(i)
+		if fn.Name() == method.Name() && types.Identical(fn.Signature, method.Type()) {
+			return true
+		}
+	}
+	return false
+}
+
+func (d *decider) returnsFacts(results *types.Tuple) bool {
+	for i := 0; i < results.Len(); i++ {
+		for _, fact := range d.facts {
+			if types.Identical(types.Unalias(results.At(i).Type()), fact) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// callSource consumes the shared loader's VTA edges for bound methods and
+// function values. Static-only inspection loses the stored dependency as soon
+// as a capability operation invokes its selected callback indirectly.
+// Author: Lane #1644 (Codex).
+func (d *decider) callSource(fn *ssa.Function, call *ssa.Call) bool {
+	if d.source(call.Common()) {
+		return true
+	}
+	if d.a.p.cg != nil {
+		if node := d.a.p.cg.Nodes[fn]; node != nil {
+			for _, edge := range node.Out {
+				if edge.Site == call && d.storedOperation(edge.Callee.Func, call.Common()) {
+					return true
+				}
+			}
+		}
 	}
 	return false
 }
@@ -129,7 +263,7 @@ func (d *decider) taint(fn *ssa.Function) map[ssa.Value]bool {
 	var work []ssa.Value
 	for _, b := range fn.Blocks {
 		for _, ins := range b.Instrs {
-			if call, ok := ins.(*ssa.Call); ok && d.source(call.Common()) {
+			if call, ok := ins.(*ssa.Call); ok && d.callSource(fn, call) {
 				t[call] = true
 				work = append(work, call)
 			}
@@ -148,6 +282,15 @@ func (d *decider) taint(fn *ssa.Function) map[ssa.Value]bool {
 			case *ssa.Extract, *ssa.BinOp, *ssa.UnOp, *ssa.Phi, *ssa.Field, *ssa.FieldAddr, *ssa.Convert,
 				*ssa.ChangeType, *ssa.MakeInterface, *ssa.TypeAssert, *ssa.Slice, *ssa.Index, *ssa.IndexAddr, *ssa.Lookup:
 				out = r.(ssa.Value)
+			case *ssa.Call:
+				// Interpret only the actual standard error predicates and
+				// builtin size operations here. An arbitrary effectful call
+				// receiving a read value does not make its result hidden data.
+				if d.errorPredicates[r.Common().StaticCallee()] {
+					out = r
+				} else if builtin, ok := r.Common().Value.(*ssa.Builtin); ok && (builtin.Name() == "len" || builtin.Name() == "cap") {
+					out = r
+				}
 			}
 			if out != nil && !t[out] {
 				t[out] = true

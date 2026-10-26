@@ -168,7 +168,7 @@ func searchPersistenceBasePath(dataDir, dbName string) (string, error) {
 }
 
 func (db *DB) defaultDatabaseName() string {
-	if namespaced, ok := db.storage.(*storage.NamespacedEngine); ok {
+	if namespaced, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](db.storage); ok {
 		return namespaced.Namespace()
 	}
 	// DB storage must always be namespaced; anything else is a programmer error.
@@ -1083,7 +1083,7 @@ func (db *DB) runClusteringOnceAllDatabases(ctx context.Context) {
 
 	// If storage can enumerate namespaces, initialize per-database services so
 	// clustering can run across all known databases (excluding system).
-	if lister, ok := db.baseStorage.(storage.NamespaceLister); ok {
+	if lister, ok := storage.ViewMetadataForEngine[storage.NamespaceLister](db.baseStorage); ok {
 		for _, ns := range lister.ListNamespaces() {
 			if ns == "" || ns == "system" {
 				continue

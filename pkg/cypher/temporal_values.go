@@ -259,7 +259,7 @@ func (e *StorageExecutor) temporalClockTime(ctx context.Context, clock string) t
 				return transaction.StartTime.UTC()
 			}
 		}
-		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+		if wrapper, ok := e.nativeMemberFor(e.storage); ok {
 			return wrapper.tx.StartTime.UTC()
 		}
 	}

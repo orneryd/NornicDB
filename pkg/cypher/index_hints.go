@@ -35,6 +35,8 @@
 package cypher
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -343,12 +345,18 @@ func ApplyIndexHint(store storage.Engine, schema *storage.SchemaManager, hint In
 	}
 
 	// Try to use the property index for O(1) lookup
-	nodeIDs := propertyIndexLookup(store, schema, hint.Label, hint.Property, propertyValue)
+	nodeIDs, lookupErr := propertyIndexLookup(context.Background(), store, schema, hint.Label, hint.Property, propertyValue)
+	if lookupErr != nil {
+		return nil, lookupErr
+	}
 	if nodeIDs != nil {
 		// Index exists and was used! Get the actual nodes.
 		var result []*storage.Node
 		for _, nodeID := range nodeIDs {
 			node, err := store.GetNode(nodeID)
+			if err != nil && !errors.Is(err, storage.ErrNotFound) {
+				return nil, err
+			}
 			if err == nil && node != nil {
 				result = append(result, node)
 			}

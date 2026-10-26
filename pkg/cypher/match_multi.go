@@ -125,8 +125,8 @@ func splitMatchClauses(cypher string, whereIdx, returnIdx int) []string {
 // ...) construct and index `binding{...}` directly, so widening its value
 // type would ripple into all of them for no benefit. Relationship variables
 // bound by a MATCH clause (e.g. "rel" in `(s)-[rel]->(x)`) are tracked in a
-// parallel `map[string]*storage.Edge` — see executeFirstMatch/
-// executeChainedMatch below — that travels index-aligned alongside a
+// parallel `map[string]*storage.Edge` â€” see executeFirstMatch/
+// executeChainedMatch below â€” that travels index-aligned alongside a
 // []binding slice rather than living inside binding itself.
 type binding map[string]*storage.Node
 type relationshipBinding map[string]interface{}
@@ -237,7 +237,11 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 				continue
 			}
 
-			nodes, _ := e.loadPatternNodes(rowCtx, nodePattern.labels, nodePattern.properties)
+			nodes, err := e.loadPatternNodes(rowCtx, nodePattern.labels, nodePattern.properties)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return nil, nil
+			}
 
 			for _, node := range nodes {
 				b := make(binding)
@@ -386,7 +390,7 @@ func (e *StorageExecutor) filterBindingsByWhere(ctx context.Context, bindings []
 // This reuses the existing node-only WHERE compiler
 // (binding_where_compile.go) unchanged by presenting each bound relationship
 // as a read-only property view alongside the row's real node bindings for
-// the duration of the WHERE check only — see bindingWithRelView. The real
+// the duration of the WHERE check only â€” see bindingWithRelView. The real
 // *storage.Edge values (needed for RETURN/DELETE) are returned separately
 // and never replaced by the view.
 func (e *StorageExecutor) filterBindingsByWhereWithRels(ctx context.Context, bindings []binding, relBindings []relationshipBinding, whereClause string, params map[string]interface{}) ([]binding, []relationshipBinding) {
@@ -480,7 +484,7 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 		return nil
 	}
 
-	// elementId(var) — check node bindings first, then relationship bindings.
+	// elementId(var) â€” check node bindings first, then relationship bindings.
 	if strings.HasPrefix(lowerASCII(expr), "elementid(") && strings.HasSuffix(expr, ")") {
 		inner := strings.TrimSpace(expr[len("elementId(") : len(expr)-1])
 		if node := b[inner]; node != nil {
@@ -508,7 +512,7 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 		return value
 	}
 
-	// Property access: var.prop — check node bindings first, then
+	// Property access: var.prop â€” check node bindings first, then
 	// relationship bindings (e.g. "rel.evidence_source").
 	if dotIdx := strings.Index(expr, "."); dotIdx > 0 && isSimpleIdentifierOrProperty(expr) {
 		varName := expr[:dotIdx]
@@ -531,7 +535,7 @@ func (e *StorageExecutor) resolveBindingExprWithRelationships(ctx context.Contex
 	}
 
 	// BUG FIX: relationship variable (e.g. bare "rel" in `RETURN rel` or
-	// `DELETE rel`). Previously unreachable — `binding` never stored
+	// `DELETE rel`). Previously unreachable â€” `binding` never stored
 	// relationships, so this always fell through to the generic evaluator
 	// below with a nil rels map and produced nil. Returning the real
 	// *storage.Edge here (rather than a synthetic node) matters because
@@ -631,7 +635,7 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 ) error {
 	store := e.getStorage(ctx)
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
-	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
+	checker := temporalCheckerForView(ctx, store)
 	hideSystemNodes := shouldHideSystemNodes(store)
 	visited := 0
 	var whereFilter FilterFunc
@@ -651,8 +655,8 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 		if whereFilter != nil && !whereFilter(node) {
 			return nil
 		}
-		if hasViewport && canCheckViewport {
-			visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
+		if hasViewport {
+			visible, err := checkTemporalNode(checker, node, viewport.AsOf)
 			if err != nil {
 				return err
 			}
@@ -684,181 +688,138 @@ func (e *StorageExecutor) visitNodesWithStreamingProjection(
 	// pinned transactions. Stores may ignore the label hint; collect retains
 	// every residual label and property check.
 	queryReader := e.queryNodeReader(store)
-	if projection == nil && queryReader != nil && len(labels) > 0 {
+	if projection == nil && queryReader && len(labels) > 0 {
 		err := streamQueryNodes(ctx, store, labels, collect)
 		if err == storage.ErrIterationStopped {
 			return nil
 		}
 		return err
 	}
-	// A label-indexed stream is the primary physical scan for every labelled
-	// MATCH. It preserves the shared row pipeline while keeping work
-	// proportional to the matching label, applies residual predicates before
-	// materialising rows, and lets LIMIT stop the storage iterator early.
-	if len(labels) > 0 {
-		if reader, ok := store.(storage.ProjectedLabelNodeReader); ok {
-			err := reader.StreamNodesByLabelProjected(labels[0], projection, collect)
-			if err == nil || err == storage.ErrIterationStopped {
-				return nil
-			}
-			return err
-		}
-	}
-
-	// Compatibility path for stores that expose label IDs but not label-node
-	// streaming. This still avoids a full graph scan for bounded simple reads.
-	if limit > 0 && len(labels) == 1 && len(properties) == 0 && strings.TrimSpace(whereClause) == "" {
-		ids, err := storage.NodeIDsByLabel(store, labels[0], limit)
-		if err != nil {
-			return err
-		}
-		filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
-		for _, id := range ids {
-			node, getErr := e.getQueryNode(store, id)
-			if getErr != nil {
-				return getErr
-			}
-			if node == nil {
-				continue
-			}
-			if hideSystemNodes && isSystemNode(node) {
-				continue
-			}
-			if hasViewport && canCheckViewport {
-				visible, err := checker.IsCurrentTemporalNode(node, viewport.AsOf)
-				if err != nil {
-					return err
-				}
-				if !visible {
-					continue
-				}
-			}
-			filtered = append(filtered, node)
-			if len(filtered) >= limit {
-				break
-			}
-		}
-		return visitAll(filtered)
-	}
-
-	var nodes []*storage.Node
-	var err error
-
-	// A label-less property match reads every node (#824): decode only the
-	// properties a match must have, let the engine skip a node that fails them
-	// before decoding the rest of it, and read the whole node only for a
-	// match. A required string is compared with the stored bytes, so a node
-	// without it is skipped undecoded (#857). The node then passes the same
-	// filters as on the full scan, including the whole WHERE. The required
-	// properties are the pattern's and the WHERE's top-level equalities on
-	// the variable (WHERE n.id = $id, #857), which every match satisfies.
-	var required map[string]interface{}
-	if len(labels) == 0 {
-		required = e.labellessScanRequiredProperties(ctx, properties, whereVariable, whereClause)
-	}
-	if len(required) > 0 {
-		keys := make([]string, 0, len(required))
-		var stringEquals map[string]string
-		for key, value := range required {
-			keys = append(keys, key)
-			if text, ok := value.(string); ok {
-				if stringEquals == nil {
-					stringEquals = make(map[string]string, len(required))
-				}
-				stringEquals[key] = text
-			}
-		}
-		matches := func(props map[string]interface{}) bool {
-			return nodePropertiesMatch(&storage.Node{Properties: props}, required)
-		}
-		err := store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: keys, ApplyDecayFilter: true, PropertyFilter: matches, PropertyStringEquals: stringEquals}, func(projected *storage.Node) error {
-			if projected == nil || !matches(projected.Properties) {
-				return nil
-			}
-			node, err := e.getQueryNode(store, projected.ID)
-			if errors.Is(err, storage.ErrNotFound) {
-				return nil
-			}
+	// The ordinary route retains its label-ID, indexed/property and query-node
+	// fast paths. The shared execution owner invokes it only before delivery.
+	ordinary := func() error {
+		// Compatibility path for stores that expose label IDs but not label-node
+		// streaming. This still avoids a full graph scan for bounded simple reads.
+		if limit > 0 && len(labels) == 1 && len(properties) == 0 && strings.TrimSpace(whereClause) == "" {
+			ids, err := storage.NodeIDsByLabel(store, labels[0], limit)
 			if err != nil {
 				return err
 			}
-			return collect(node)
-		})
-		if err != nil && err != storage.ErrIterationStopped {
+			filtered := make([]*storage.Node, 0, util.SafePreallocCap(len(ids)))
+			for _, id := range ids {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				node, getErr := e.getQueryNode(store, id)
+				if getErr != nil {
+					return getErr
+				}
+				if node == nil {
+					continue
+				}
+				if hideSystemNodes && isSystemNode(node) {
+					continue
+				}
+				if hasViewport {
+					visible, err := checkTemporalNode(checker, node, viewport.AsOf)
+					if err != nil {
+						return err
+					}
+					if !visible {
+						continue
+					}
+				}
+				filtered = append(filtered, node)
+				if len(filtered) >= limit {
+					break
+				}
+			}
+			return visitAll(filtered)
+		}
+
+		var err error
+
+		// A label-less property match reads every node (#824): decode only the
+		// properties a match must have, let the engine skip a node that fails them
+		// before decoding the rest of it, and read the whole node only for a
+		// match. A required string is compared with the stored bytes, so a node
+		// without it is skipped undecoded (#857). The node then passes the same
+		// filters as on the full scan, including the whole WHERE. The required
+		// properties are the pattern's and the WHERE's top-level equalities on
+		// the variable (WHERE n.id = $id, #857), which every match satisfies.
+		var required map[string]interface{}
+		if len(labels) == 0 {
+			required = e.labellessScanRequiredProperties(ctx, properties, whereVariable, whereClause)
+		}
+		if len(required) > 0 {
+			keys := make([]string, 0, len(required))
+			var stringEquals map[string]string
+			for key, value := range required {
+				keys = append(keys, key)
+				if text, ok := value.(string); ok {
+					if stringEquals == nil {
+						stringEquals = make(map[string]string, len(required))
+					}
+					stringEquals[key] = text
+				}
+			}
+			matches := func(props map[string]interface{}) bool {
+				return nodePropertiesMatch(&storage.Node{Properties: props}, required)
+			}
+			err := store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: keys, ApplyDecayFilter: true, PropertyFilter: matches, PropertyStringEquals: stringEquals}, func(projected *storage.Node) error {
+				if projected == nil || !matches(projected.Properties) {
+					return nil
+				}
+				node, err := e.getQueryNode(store, projected.ID)
+				if errors.Is(err, storage.ErrNotFound) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				return collect(node)
+			})
+			if err != nil && err != storage.ErrIterationStopped {
+				return err
+			}
+			return nil
+		}
+
+		// Streaming is the shared scan primitive for the converged executor. Apply
+		// every residual filter in the visitor so both bounded and unbounded scans
+		// avoid the storage APIs that first materialize the complete population.
+		// LIMIT additionally stops storage iteration as soon as enough qualifying
+		// nodes have been produced.
+		if queryReader {
+			if projection == nil {
+				err = streamQueryNodes(ctx, store, labels, collect)
+			} else {
+				err = store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: projection, ApplyDecayFilter: true}, collect)
+			}
+			if err == storage.ErrIterationStopped {
+				return nil
+			}
 			return err
 		}
-		return nil
-	}
-
-	// Streaming is the shared scan primitive for the converged executor. Apply
-	// every residual filter in the visitor so both bounded and unbounded scans
-	// avoid the storage APIs that first materialize the complete population.
-	// LIMIT additionally stops storage iteration as soon as enough qualifying
-	// nodes have been produced.
-	if queryReader != nil {
-		if projection == nil {
-			err = streamQueryNodes(ctx, store, labels, collect)
-		} else {
-			err = store.StreamNodesWithOptions(ctx, storage.StreamNodesOptions{Projection: projection, ApplyDecayFilter: true}, collect)
-		}
+		err = storage.StreamNodesWithFallback(ctx, store, 1000, collect)
 		if err == storage.ErrIterationStopped {
 			return nil
 		}
 		return err
 	}
-	if streamer, ok := store.(storage.StreamingEngine); ok {
-		err = streamer.StreamNodes(ctx, collect)
-		if err == storage.ErrIterationStopped {
-			err = nil
-		}
-		return err
-	}
-
-	// Compatibility fallback for storage implementations without StreamingEngine.
 	if len(labels) > 0 {
-		nodes, err = store.GetNodesByLabel(labels[0])
-	} else {
-		nodes, err = store.AllNodes()
-	}
-	if err != nil {
+		err := storage.VisitWithCapability(store, func(reader storage.ProjectedLabelNodeReader, deliver func(*storage.Node) error) error {
+			return storage.StreamNodesByLabelProjectedWithContext(ctx, reader, labels[0], projection, deliver)
+		}, func(_ func(*storage.Node) error) error { return ordinary() }, collect)
+		if err == storage.ErrIterationStopped {
+			return nil
+		}
 		return err
 	}
+	return ordinary()
 
-	// Filter out system nodes (labels starting with _)
-	filteredNodes := make([]*storage.Node, 0, len(nodes))
-	for _, node := range nodes {
-		if len(labels) > 0 && !mergeNodeHasLabels(node, labels) {
-			continue
-		}
-		if !hideSystemNodes || !isSystemNode(node) {
-			filteredNodes = append(filteredNodes, node)
-		}
-	}
-	nodes = filteredNodes
-	if hasViewport && canCheckViewport {
-		nodes, err = filterNodesByTemporalViewport(nodes, viewport, checker)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Apply property filters
-	if len(properties) > 0 {
-		nodes = e.filterNodesByProperties(nodes, properties)
-	}
-	if strings.TrimSpace(whereClause) != "" {
-		nodes = e.filterNodes(ctx, nodes, whereVariable, whereClause)
-	}
-	if limit > 0 && len(nodes) > limit {
-		nodes = nodes[:limit]
-	}
-
-	return visitAll(nodes)
 }
 
-// visitNodeList hands nodes to visit in order. visit returning
-// storage.ErrIterationStopped ends the visit without error; any other error
-// ends it with that error.
 func visitNodeList(nodes []*storage.Node, visit func(*storage.Node) error) error {
 	for _, node := range nodes {
 		if err := visit(node); err != nil {
@@ -902,7 +863,7 @@ func shouldHideSystemNodes(engine storage.Engine) bool {
 	// Allow system nodes to be queried when the active database is system.
 	// For all other databases, hide internal nodes (labels starting with "_")
 	// to avoid leaking metadata into normal user queries.
-	if namespaced, ok := engine.(*storage.NamespacedEngine); ok {
+	if namespaced, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](engine); ok {
 		return namespaced.Namespace() != "system"
 	}
 	return true
@@ -1436,7 +1397,7 @@ func (e *StorageExecutor) evaluateRowRelationshipPattern(ctx context.Context, cl
 // parseBoundRelationshipPattern parses clause as a relationship pattern
 // predicate ((a)-[:R]->(b)). Only a text that is one whole relationship chain
 // (isRelationshipPatternOperand) is a pattern: a parenthesised expression
-// whose subqueries hold patterns, (NOT EXISTS { (h)-[:C]->(x) } AND …), is
+// whose subqueries hold patterns, (NOT EXISTS { (h)-[:C]->(x) } AND â€¦), is
 // not one.
 func (e *StorageExecutor) parseBoundRelationshipPattern(ctx context.Context, clause string) (*TraversalMatch, bool) {
 	return readBoundRelationshipPattern(ctx, clause, e.parseTraversalPattern)
@@ -1516,7 +1477,7 @@ func (e *StorageExecutor) evaluateBoundOneHopPattern(ctx context.Context, match 
 		return false
 	}
 	viewport, _ := TemporalViewportFromContext(ctx)
-	checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
+	checker := temporalCheckerForView(ctx, e.getStorage(ctx))
 	paths := e.traverseGraphSequential(ctx, match, []*storage.Node{start}, viewport, checker)
 	end, bound := nodes[match.EndNode.variable]
 	for _, path := range paths {

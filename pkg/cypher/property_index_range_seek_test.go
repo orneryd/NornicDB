@@ -121,7 +121,7 @@ func TestPropertyIndexSeedsAreUsed(t *testing.T) {
 	ctx := context.Background()
 	item := nodePatternInfo{variable: "n", labels: []string{"Item"}}
 
-	nodes, used, err := exec.tryCollectNodesFromPropertyIndexRange(item, "n.v >= 2 AND n.v < 4 AND n.w > 0", nil)
+	nodes, used, err := exec.tryCollectNodesFromPropertyIndexRange(ctx, item, "n.v >= 2 AND n.v < 4 AND n.w > 0", nil)
 	require.NoError(t, err)
 	require.True(t, used)
 	values := make([]string, 0, len(nodes))
@@ -130,7 +130,7 @@ func TestPropertyIndexSeedsAreUsed(t *testing.T) {
 	}
 	require.ElementsMatch(t, []string{"2", "2.5", "3"}, values, "the seed holds every value within the bounds; the rest of the WHERE is applied later")
 
-	_, used, err = exec.tryCollectNodesFromPropertyIndexRange(item, "n.v < 0 OR n.v > 10", nil)
+	_, used, err = exec.tryCollectNodesFromPropertyIndexRange(ctx, item, "n.v < 0 OR n.v > 10", nil)
 	require.NoError(t, err)
 	require.False(t, used, "a disjunction places no bound")
 

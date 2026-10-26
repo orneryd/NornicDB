@@ -1,5 +1,7 @@
 package storage
 
+import "context"
+
 // Shared test fixtures moved out of the deleted async engine test file so the
 // remaining suites keep compiling. makeNode/makeEdge are used by temporal and
 // storage-event tests.
@@ -22,13 +24,20 @@ func makeEdge(id, from, to string) *Edge {
 	}
 }
 
-// nonStreamingCountEngine hides optional streaming-count paths so wrappers
-// fall back to AllNodes/AllEdges, and injects scan errors. Moved out of the
-// deleted async engine test file because composite tests still use it.
+// nonStreamingCountEngine hides optional streams. Its mandatory node kernel
+// and materialized APIs share the injected ordinary-scan failure; embedding
+// Engine must not let the promoted native kernel bypass that fault owner.
 type nonStreamingCountEngine struct {
 	Engine
 	allNodesErr error
 	allEdgesErr error
+}
+
+func (e *nonStreamingCountEngine) StreamNodesWithOptions(ctx context.Context, options StreamNodesOptions, visit func(*Node) error) error {
+	if e.allNodesErr != nil {
+		return e.allNodesErr
+	}
+	return e.Engine.StreamNodesWithOptions(ctx, options, visit)
 }
 
 func (e *nonStreamingCountEngine) AllNodes() ([]*Node, error) {

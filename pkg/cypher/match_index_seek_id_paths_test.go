@@ -221,10 +221,10 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	schema := store.GetSchema()
 	require.NotNil(t, schema)
 
-	labels := exec.indexCandidateLabels(schema, []string{"Person", "Book"}, "name")
+	labels := exec.indexCandidateLabels(t.Context(), schema, []string{"Person", "Book"}, "name")
 	require.Equal(t, []string{"Person"}, labels)
 
-	labels = exec.indexCandidateLabels(schema, nil, "name")
+	labels = exec.indexCandidateLabels(t.Context(), schema, nil, "name")
 	require.Empty(t, labels)
 
 	for _, nodeID := range []storage.NodeID{"p1", "p2", "m1"} {
@@ -235,9 +235,9 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	}
 	_, err = exec.Execute(ctx, "CREATE INDEX idx_all_name_cov FOR (n:All) ON (n.name)", nil)
 	require.NoError(t, err)
-	labels = exec.indexCandidateLabels(schema, nil, "name")
+	labels = exec.indexCandidateLabels(t.Context(), schema, nil, "name")
 	require.Equal(t, []string{"All", "Movie", "Person"}, labels)
 
-	labels = exec.indexCandidateLabels(schema, nil, "unknown")
+	labels = exec.indexCandidateLabels(t.Context(), schema, nil, "unknown")
 	require.Empty(t, labels)
 }

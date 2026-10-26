@@ -53,7 +53,7 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 	default:
 		return nil, localizedError(localization.CypherKnowledgePolicyVisibilityEntityRequired(procedure), nil)
 	}
-	engine := manualSuppressionEngine(e.storage)
+	engine := manualSuppressionEngine(e.getStorage(ctx))
 	if engine == nil {
 		return nil, localizedError(localization.CypherKnowledgePolicyVisibilityUnsupported(procedure), nil)
 	}
@@ -66,9 +66,9 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 		e.InvalidateCommittedWriteCaches()
 		return nil
 	}
-	if e.txContext != nil && e.txContext.active && e.txContext.storageWrapper != nil {
+	if wrapper, ok := e.pendingMember(); ok && wrapper.tx != nil && wrapper.tx.IsActive() {
 		// An entity the transaction deleted is gone by then; nothing to do.
-		e.txContext.storageWrapper.schemaCommitActions = append(e.txContext.storageWrapper.schemaCommitActions, func() { _ = run() })
+		wrapper.schemaCommitActions = append(wrapper.schemaCommitActions, func() { _ = run() })
 	} else if err := run(); err != nil {
 		return nil, err
 	}
@@ -79,19 +79,13 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 // suppresses on demand, past a transaction's wrapper: the namespaced engine,
 // which maps the entity's ID to the stored one.
 func manualSuppressionEngine(engine storage.Engine) storage.ManualSuppressionEngine {
-	visited := map[storage.Engine]bool{}
-	for engine != nil && !visited[engine] {
-		visited[engine] = true
-		if _, transactional := engine.(*transactionStorageWrapper); !transactional {
-			if suppressor, ok := engine.(storage.ManualSuppressionEngine); ok {
-				return suppressor
-			}
-		}
-		unwrapper, ok := engine.(storage.EngineUnwrapper)
-		if !ok {
-			return nil
-		}
-		engine = unwrapper.GetInnerEngine()
+	if provider, ok := storage.OwnedCapability[storage.ManualSuppressionEngine](engine); ok {
+		return provider
 	}
-	return nil
+	if wrapper, ok := storage.OwnedCapability[*transactionStorageWrapper](storage.MembershipForEngine(engine).Adapter); ok {
+		engine = wrapper.underlying
+	}
+	provider, _ := storage.OwnedCapability[storage.ManualSuppressionEngine](engine)
+	return provider
+
 }

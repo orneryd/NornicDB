@@ -523,6 +523,8 @@ func projectCachedNodeForRead(node *Node, properties []string, stripEmbeddings b
 }
 
 // GetAllNodes returns all nodes in the storage.
+//
+// Deprecated: Use AllNodes to receive errors. Failed reads are omitted and may appear as an empty collection.
 func (b *BadgerEngine) GetAllNodes() []*Node {
 	nodes, _ := b.AllNodes()
 	return nodes
@@ -1412,6 +1414,8 @@ func (b *BadgerEngine) committedEdgesBetween(startID, endID NodeID, edgeType str
 }
 
 // GetEdgeBetween returns an edge between two nodes with the given type.
+//
+// Deprecated: Use GetEdgesBetween and filter by type to receive errors. Failed lookups may appear as nil.
 func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *Edge {
 	if err := b.pendingNamespaceConflict(namespaceForNodeID(source)); err != nil {
 		return nil

@@ -2,16 +2,17 @@ package search
 
 import (
 	"context"
+	"errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 	"unsafe"
 )
 
 // enrichResults converts RRF results to SearchResult with full node data.
-func (s *Service) enrichResults(ctx context.Context, rrfResults []rrfResult, opts *SearchOptions, seenOrphans map[string]bool, query hitMatchQuery) []SearchResult {
+func (s *Service) enrichResults(ctx context.Context, rrfResults []rrfResult, opts *SearchOptions, seenOrphans map[string]bool, query hitMatchQuery) ([]SearchResult, error) {
 	resultLimit := boundedResultLimit(len(rrfResults), opts.Limit)
 	if resultLimit == 0 {
-		return nil
+		return nil, nil
 	}
 	ctx, visible, release := storage.BeginQueryResultProjectionContext(ctx, s.engine)
 	defer release()
@@ -19,9 +20,9 @@ func (s *Service) enrichResults(ctx context.Context, rrfResults []rrfResult, opt
 	for index := 0; index < resultLimit; index++ {
 		ids[index] = storage.NodeID(rrfResults[index].ID)
 	}
-	nodes, ok := s.hitNodes(ctx, ids, seenOrphans)
-	if !ok {
-		return nil
+	nodes, err := s.hitNodes(ctx, ids, seenOrphans)
+	if err != nil {
+		return nil, err
 	}
 	projection := newResultPropertyProjection(opts.IncludeProperties, opts.ExcludeProperties)
 	results := make([]SearchResult, 0, resultLimit)
@@ -47,16 +48,16 @@ func (s *Service) enrichResults(ctx context.Context, rrfResults []rrfResult, opt
 			results[i].Matches = visibleSearchMatches(results[i].Matches, found[i].Properties)
 		}
 	}
-	return results
+	return results, nil
 }
 
 // enrichIndexResults converts raw index results to SearchResult.
 // Every result ID is already an owning node ID: vector results were decoded
 // once at collapse, and fulltext document IDs are node IDs. Nothing here decodes.
-func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexResult, opts *SearchOptions, seenOrphans map[string]bool, query hitMatchQuery) []SearchResult {
+func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexResult, opts *SearchOptions, seenOrphans map[string]bool, query hitMatchQuery) ([]SearchResult, error) {
 	resultLimit := boundedResultLimit(len(indexResults), opts.Limit)
 	if resultLimit == 0 {
-		return nil
+		return nil, nil
 	}
 	ctx, visible, release := storage.BeginQueryResultProjectionContext(ctx, s.engine)
 	defer release()
@@ -98,9 +99,9 @@ func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexRe
 		ids = append(ids, storage.NodeID(nodeIDStr))
 		scores = append(scores, ir.Score)
 	}
-	nodes, ok := s.hitNodes(ctx, ids, seenOrphans)
-	if !ok {
-		return nil
+	nodes, err := s.hitNodes(ctx, ids, seenOrphans)
+	if err != nil {
+		return nil, err
 	}
 	results := make([]SearchResult, 0, len(ids))
 	found := make([]*storage.Node, 0, len(ids))
@@ -121,35 +122,34 @@ func (s *Service) enrichIndexResults(ctx context.Context, indexResults []indexRe
 			results[i].Matches = visibleSearchMatches(results[i].Matches, found[i].Properties)
 		}
 	}
-	return results
+	return results, nil
 }
 
 // hitNodes reads the nodes of the hits ids, without their embeddings. A
-// node that is gone is nil, and handled as an orphaned embedding; false
-// when the batch read fails.
-func (s *Service) hitNodes(ctx context.Context, ids []storage.NodeID, seenOrphans map[string]bool) ([]*storage.Node, bool) {
+// node that is gone is nil and handled as an orphaned embedding. An
+// unrecovered storage error remains an error through the public Search terminal.
+func (s *Service) hitNodes(ctx context.Context, ids []storage.NodeID, seenOrphans map[string]bool) ([]*storage.Node, error) {
 	nodes := make([]*storage.Node, len(ids))
 	if s.supportsBatchNodesWithoutEmbeddings() {
 		batch, err := s.batchGetNodesWithoutEmbeddings(ids)
 		if err != nil {
-			return nil, false
+			return nil, searchReadFailure(err)
 		}
 		for index, id := range ids {
 			if nodes[index] = batch[id]; nodes[index] == nil {
 				_ = s.handleOrphanedEmbedding(ctx, string(id), storage.ErrNotFound, seenOrphans)
 			}
 		}
-		return nodes, true
+		return nodes, nil
 	}
 	for index, id := range ids {
-		node, err := s.getNodeWithoutEmbeddings(id)
+		node, err := s.readSearchNode(ctx, id, seenOrphans)
 		if err != nil {
-			_ = s.handleOrphanedEmbedding(ctx, string(id), err, seenOrphans)
-			continue
+			return nil, err
 		}
 		nodes[index] = node
 	}
-	return nodes, true
+	return nodes, nil
 }
 
 // searchResultFromNode is the result of a hit on node: its identity,
@@ -218,4 +218,49 @@ func (result SearchResult) nodeMetadataBytes() int64 {
 		return 0
 	}
 	return int64(unsafe.Sizeof(storage.Node{})) + util.EstimateValueBytes(result.sourceNode.EmbedMeta)
+}
+
+// searchNodeReadFailure marks an unrecovered required node read. Retrieval-backend
+// fallback cannot turn this failure into an authoritative empty page. The public
+// Search error return remains the sole terminal/diagnostic owner.
+type searchNodeReadFailure struct{ cause error }
+
+func (e *searchNodeReadFailure) Error() string { return e.cause.Error() }
+func (e *searchNodeReadFailure) Unwrap() error { return e.cause }
+func searchReadFailure(err error) error {
+	if err == nil {
+		return nil
+	}
+	var failure *searchNodeReadFailure
+	if errors.As(err, &failure) {
+		return err
+	}
+	return &searchNodeReadFailure{cause: err}
+}
+func isSearchReadFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	var failure *searchNodeReadFailure
+	return errors.As(err, &failure)
+}
+
+// readSearchNode is the required point consumer. Missing/hidden nodes retain the
+// orphan policy; all other failures remain visible. Cancellation uses searchBatch.
+func (s *Service) readSearchNode(ctx context.Context, id storage.NodeID, seenOrphans map[string]bool) (*storage.Node, error) {
+	work := newSearchBatch(ctx)
+	if err := work.check(); err != nil {
+		return nil, err
+	}
+	node, err := s.getNodeWithoutEmbeddings(id)
+	if err != nil {
+		if s.handleOrphanedEmbedding(ctx, string(id), err, seenOrphans) {
+			return nil, nil
+		}
+		return nil, searchReadFailure(err)
+	}
+	if err := work.check(); err != nil {
+		return nil, err
+	}
+	return node, nil
 }

@@ -23,6 +23,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"github.com/orneryd/nornicdb/internal/contextslot"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
@@ -1236,7 +1237,7 @@ func (e *StorageExecutor) tryExecutePipelineSimpleNodeReadPlan(ctx context.Conte
 		}
 	}
 
-	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
+	candidates, usedIndex, err := e.tryCollectNodesFromPropertyIndexInOrParam(ctx, nodePattern, whereClause, params)
 	if err != nil {
 		return nil, true, err
 	}
@@ -1312,10 +1313,6 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		return nil, false, nil
 	}
 	store := e.getStorage(ctx)
-	reader, ok := store.(storage.ProjectedLabelNodeReader)
-	if !ok {
-		return nil, false, nil
-	}
 
 	predicateRow := pipelineNodeRow(ctx, nodePattern.variable, nil)
 	predicatePlan := planRowPredicate(whereClause)
@@ -1332,7 +1329,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 	}
 	hideSystemNodes := shouldHideSystemNodes(store)
 	viewport, hasViewport := TemporalViewportFromContext(ctx)
-	checker, canCheckViewport := store.(temporalCurrentNodeChecker)
+	checker := temporalCheckerForView(ctx, store)
 	var count int64
 	countNode := func(node *storage.Node, whereApplied bool) error {
 		if node == nil || (hideSystemNodes && isSystemNode(node)) {
@@ -1341,8 +1338,8 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		if !mergeNodeHasLabels(node, nodePattern.labels) || !e.nodeMatchesProps(node, nodePattern.properties) || (!whereApplied && !whereFilter(node)) {
 			return nil
 		}
-		if hasViewport && canCheckViewport {
-			visible, visibleErr := checker.IsCurrentTemporalNode(node, viewport.AsOf)
+		if hasViewport {
+			visible, visibleErr := checkTemporalNode(checker, node, viewport.AsOf)
 			if visibleErr != nil {
 				return visibleErr
 			}
@@ -1368,7 +1365,7 @@ func (e *StorageExecutor) tryStreamPipelineFilteredNodeCount(
 		return &ExecuteResult{Columns: []string{column}, Rows: [][]interface{}{{count}}, Stats: &QueryStats{}}, true, nil
 	}
 	projectedProperties := pipelineNodePredicateProperties(nodePattern.variable, whereClause, nodePattern.properties)
-	err = reader.StreamNodesByLabelProjected(nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
+	err = storage.StreamLabelNodesWithContext(ctx, store, nodePattern.labels[0], projectedProperties, func(node *storage.Node) error {
 		return countNode(node, false)
 	})
 	if err != nil {
@@ -2119,13 +2116,19 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 		}
 
 		for _, endpoints := range traceRelationshipList(relationships, match.Relationship.Direction) {
-			startID, startValid := endpoints[0].NodeLookupID(store)
-			endID, endValid := endpoints[1].NodeLookupID(store)
+			startID, startValid := e.identityLookup(store).NodeLookupID(endpoints[0])
+			endID, endValid := e.identityLookup(store).NodeLookupID(endpoints[1])
 			if !startValid || !endValid {
 				continue
 			}
 			start, startErr := e.getQueryNode(store, startID)
+			if startErr != nil && !errors.Is(startErr, storage.ErrNotFound) {
+				return nil, true, startErr
+			}
 			end, endErr := e.getQueryNode(store, endID)
+			if endErr != nil && !errors.Is(endErr, storage.ErrNotFound) {
+				return nil, true, endErr
+			}
 			if startErr != nil || endErr != nil || start == nil || end == nil ||
 				!e.pipelineNodeMatchesPattern(start, match.StartNode) || !e.pipelineNodeMatchesPattern(end, match.EndNode) {
 				continue

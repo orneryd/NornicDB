@@ -613,13 +613,18 @@ func TestServerStorageAndExecutorHelpers(t *testing.T) {
 		require.NotNil(t, store)
 		require.Equal(t, "tenant_a", calledDB)
 
-		related := server.getRelatedNodes(ContextWithDatabase(context.Background(), "tenant_a"), "tenant_a:1", 2)
+		related, relatedErr := server.getRelatedNodes(ContextWithDatabase(context.Background(), "tenant_a"), "tenant_a:1", 2)
+		require.NoError(t, relatedErr)
 		require.Len(t, related, 2)
 		require.ElementsMatch(t, []string{"outgoing", "incoming"}, []string{related[0].Direction, related[1].Direction})
 		require.ElementsMatch(t, []string{"Task", "Doc"}, []string{related[0].Type, related[1].Type})
 
-		require.Nil(t, server.getRelatedNodes(context.Background(), "tenant_a:1", 1))
-		require.Nil(t, server.getRelatedNodes(context.Background(), "", 2))
+		emptyRelated, emptyRelatedErr := server.getRelatedNodes(context.Background(), "tenant_a:1", 1)
+		require.NoError(t, emptyRelatedErr)
+		require.Nil(t, emptyRelated)
+		emptyRelated, emptyRelatedErr = server.getRelatedNodes(context.Background(), "", 2)
+		require.NoError(t, emptyRelatedErr)
+		require.Nil(t, emptyRelated)
 	})
 
 	t.Run("default database fallback and direct db helpers", func(t *testing.T) {

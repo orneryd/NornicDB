@@ -16,8 +16,10 @@ type compositeStreamEngine struct {
 	chunkErr      error
 }
 
+// This fixture intercepts the core Engine surface. Embedding a native concrete
+// leaf would advertise contextual operations that bypass these fault owners.
 type compositeErrorEngine struct {
-	*MemoryEngine
+	Engine
 	getNodeErr         error
 	getEdgeErr         error
 	firstNodeErr       error
@@ -42,14 +44,14 @@ func (e *compositeErrorEngine) GetNode(id NodeID) (*Node, error) {
 	if e.getNodeErr != nil {
 		return nil, e.getNodeErr
 	}
-	return e.MemoryEngine.GetNode(id)
+	return e.Engine.GetNode(id)
 }
 
 func (e *compositeErrorEngine) GetEdge(id EdgeID) (*Edge, error) {
 	if e.getEdgeErr != nil {
 		return nil, e.getEdgeErr
 	}
-	return e.MemoryEngine.GetEdge(id)
+	return e.Engine.GetEdge(id)
 }
 
 func (e *compositeErrorEngine) GetFirstNodeByLabel(label string) (*Node, error) {
@@ -59,105 +61,105 @@ func (e *compositeErrorEngine) GetFirstNodeByLabel(label string) (*Node, error) 
 	if e.returnNilFirstNode {
 		return nil, nil
 	}
-	return e.MemoryEngine.GetFirstNodeByLabel(label)
+	return e.Engine.GetFirstNodeByLabel(label)
 }
 
 func (e *compositeErrorEngine) GetOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
 	if e.outgoingErr != nil {
 		return nil, e.outgoingErr
 	}
-	return e.MemoryEngine.GetOutgoingEdges(nodeID)
+	return e.Engine.GetOutgoingEdges(nodeID)
 }
 
 func (e *compositeErrorEngine) GetIncomingEdges(nodeID NodeID) ([]*Edge, error) {
 	if e.incomingErr != nil {
 		return nil, e.incomingErr
 	}
-	return e.MemoryEngine.GetIncomingEdges(nodeID)
+	return e.Engine.GetIncomingEdges(nodeID)
 }
 
 func (e *compositeErrorEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 	if e.betweenErr != nil {
 		return nil, e.betweenErr
 	}
-	return e.MemoryEngine.GetEdgesBetween(startID, endID)
+	return e.Engine.GetEdgesBetween(startID, endID)
 }
 
 func (e *compositeErrorEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
 	if e.byTypeErr != nil {
 		return nil, e.byTypeErr
 	}
-	return e.MemoryEngine.GetEdgesByType(edgeType)
+	return e.Engine.GetEdgesByType(edgeType)
 }
 
 func (e *compositeErrorEngine) AllNodes() ([]*Node, error) {
 	if e.allNodesErr != nil {
 		return nil, e.allNodesErr
 	}
-	return e.MemoryEngine.AllNodes()
+	return e.Engine.AllNodes()
 }
 
 func (e *compositeErrorEngine) AllEdges() ([]*Edge, error) {
 	if e.allEdgesErr != nil {
 		return nil, e.allEdgesErr
 	}
-	return e.MemoryEngine.AllEdges()
+	return e.Engine.AllEdges()
 }
 
 func (e *compositeErrorEngine) BatchGetNodes(ids []NodeID) (map[NodeID]*Node, error) {
 	if e.batchGetErr != nil {
 		return nil, e.batchGetErr
 	}
-	return e.MemoryEngine.BatchGetNodes(ids)
+	return e.Engine.BatchGetNodes(ids)
 }
 
 func (e *compositeErrorEngine) NodeCount() (int64, error) {
 	if e.nodeCountErr != nil {
 		return 0, e.nodeCountErr
 	}
-	return e.MemoryEngine.NodeCount()
+	return e.Engine.NodeCount()
 }
 
 func (e *compositeErrorEngine) EdgeCount() (int64, error) {
 	if e.edgeCountErr != nil {
 		return 0, e.edgeCountErr
 	}
-	return e.MemoryEngine.EdgeCount()
+	return e.Engine.EdgeCount()
 }
 
 func (e *compositeErrorEngine) Close() error {
 	if e.closeErr != nil {
 		return e.closeErr
 	}
-	return e.MemoryEngine.Close()
+	return e.Engine.Close()
 }
 
 func (e *compositeErrorEngine) CreateNode(node *Node) (NodeID, error) {
 	if e.createNodeErr != nil {
 		return "", e.createNodeErr
 	}
-	return e.MemoryEngine.CreateNode(node)
+	return e.Engine.CreateNode(node)
 }
 
 func (e *compositeErrorEngine) CreateEdge(edge *Edge) error {
 	if e.createEdgeErr != nil {
 		return e.createEdgeErr
 	}
-	return e.MemoryEngine.CreateEdge(edge)
+	return e.Engine.CreateEdge(edge)
 }
 
 func (e *compositeErrorEngine) BulkCreateNodes(nodes []*Node) error {
 	if e.bulkCreateNodesErr != nil {
 		return e.bulkCreateNodesErr
 	}
-	return e.MemoryEngine.BulkCreateNodes(nodes)
+	return e.Engine.BulkCreateNodes(nodes)
 }
 
 func (e *compositeErrorEngine) BulkCreateEdges(edges []*Edge) error {
 	if e.bulkCreateEdgesErr != nil {
 		return e.bulkCreateEdgesErr
 	}
-	return e.MemoryEngine.BulkCreateEdges(edges)
+	return e.Engine.BulkCreateEdges(edges)
 }
 
 func (e *compositeStreamEngine) StreamNodes(_ context.Context, fn func(node *Node) error) error {
@@ -324,7 +326,7 @@ func TestCompositeEngine_StreamingFallbackAndErrors(t *testing.T) {
 		require.ErrorContains(t, err, "error streaming from constituent 'db1'")
 	})
 
-	t.Run("fallback engines use allnodes and alledges", func(t *testing.T) {
+	t.Run("fallback engines retain ordinary node kernel and edge scan failures", func(t *testing.T) {
 		base1 := newTestMemoryEngine(t)
 		base2 := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = base1.Close() })
@@ -1502,15 +1504,19 @@ func TestCompositeEngine_BulkDeleteNodes(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Delete nodes
+	// A direct composite has no cross-constituent atomic commit owner.
 	err := composite.BulkDeleteNodes([]NodeID{node1.ID, node2.ID})
-	require.NoError(t, err)
-
-	// Verify nodes are deleted
-	_, err = composite.GetNode(node1.ID)
-	assert.Error(t, err)
-	_, err = composite.GetNode(node2.ID)
-	assert.Error(t, err)
+	require.ErrorIs(t, err, ErrCrossNamespaceTransaction)
+	for _, id := range []NodeID{node1.ID, node2.ID} {
+		_, err = composite.GetNode(id)
+		require.NoError(t, err, "the refused batch must leave every source unchanged")
+	}
+	// Each supported single-source batch retains the native input contract.
+	for _, id := range []NodeID{node1.ID, node2.ID} {
+		require.NoError(t, composite.BulkDeleteNodes([]NodeID{id, id, "", "test:missing"}))
+		_, err = composite.GetNode(id)
+		require.ErrorIs(t, err, ErrNotFound)
+	}
 }
 
 func TestCompositeEngine_BulkDeleteEdges(t *testing.T) {
@@ -1547,15 +1553,19 @@ func TestCompositeEngine_BulkDeleteEdges(t *testing.T) {
 	}
 	composite := NewCompositeEngine(constituents, constituentNames, accessModes)
 
-	// Delete edges
+	// A direct composite has no cross-constituent atomic commit owner.
 	err := composite.BulkDeleteEdges([]EdgeID{edge1.ID, edge2.ID})
-	require.NoError(t, err)
-
-	// Verify edges are deleted
-	_, err = composite.GetEdge(edge1.ID)
-	assert.Error(t, err)
-	_, err = composite.GetEdge(edge2.ID)
-	assert.Error(t, err)
+	require.ErrorIs(t, err, ErrCrossNamespaceTransaction)
+	for _, id := range []EdgeID{edge1.ID, edge2.ID} {
+		_, err = composite.GetEdge(id)
+		require.NoError(t, err, "the refused batch must leave every source unchanged")
+	}
+	// Each supported single-source batch retains the native input contract.
+	for _, id := range []EdgeID{edge1.ID, edge2.ID} {
+		require.NoError(t, composite.BulkDeleteEdges([]EdgeID{id, id, "", "test:missing"}))
+		_, err = composite.GetEdge(id)
+		require.ErrorIs(t, err, ErrNotFound)
+	}
 }
 
 func TestCompositeEngine_routeWrite_PropertyBased(t *testing.T) {
@@ -2272,9 +2282,9 @@ func TestCompositeEngine_EdgeCount(t *testing.T) {
 func TestCompositeEngine_ErrorPaths(t *testing.T) {
 	t.Run("query helpers propagate constituent errors and continue nil-first-node results", func(t *testing.T) {
 		boom := errors.New("boom")
-		errEngine := &compositeErrorEngine{MemoryEngine: newTestMemoryEngine(t)}
+		errEngine := &compositeErrorEngine{Engine: newTestMemoryEngine(t)}
 		okEngine := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = errEngine.MemoryEngine.Close() })
+		t.Cleanup(func() { _ = errEngine.Engine.Close() })
 		t.Cleanup(func() { _ = okEngine.Close() })
 
 		okNode := &Node{ID: NodeID(prefixTestID("ok-node")), Labels: []string{"Person"}}
@@ -2369,9 +2379,9 @@ func TestCompositeEngine_ErrorPaths(t *testing.T) {
 
 	t.Run("write helpers propagate routed constituent and close errors", func(t *testing.T) {
 		boom := errors.New("boom")
-		errEngine := &compositeErrorEngine{MemoryEngine: newTestMemoryEngine(t)}
+		errEngine := &compositeErrorEngine{Engine: newTestMemoryEngine(t)}
 		okEngine := newTestMemoryEngine(t)
-		t.Cleanup(func() { _ = errEngine.MemoryEngine.Close() })
+		t.Cleanup(func() { _ = errEngine.Engine.Close() })
 		t.Cleanup(func() { _ = okEngine.Close() })
 
 		composite := NewCompositeEngine(

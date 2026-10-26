@@ -21,6 +21,7 @@
 package multidb
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -52,7 +53,11 @@ const (
 // persisted in the system database to prevent re-running.
 func (m *DatabaseManager) migrateLegacyData() error {
 	// Check if migration already completed
-	if m.isMigrationComplete() {
+	complete, err := m.isMigrationComplete()
+	if err != nil {
+		return fmt.Errorf("failed to read migration status: %w", err)
+	}
+	if complete {
 		return nil
 	}
 
@@ -68,8 +73,7 @@ func (m *DatabaseManager) migrateLegacyData() error {
 
 	if !hasUnprefixedData {
 		// No unprefixed data - mark migration as complete
-		_ = m.markMigrationComplete()
-		return nil
+		return m.markMigrationComplete()
 	}
 
 	log.Printf("⚠️  Legacy (unprefixed) data detected; attempting one-time migration into default database %q", m.config.DefaultDatabase)
@@ -85,9 +89,7 @@ func (m *DatabaseManager) migrateLegacyData() error {
 	}
 
 	// Mark migration as complete
-	_ = m.markMigrationComplete()
-
-	return nil
+	return m.markMigrationComplete()
 }
 
 // isMigrationComplete checks if legacy data migration has been completed.
@@ -95,23 +97,23 @@ func (m *DatabaseManager) migrateLegacyData() error {
 // Returns true if migration has already been run and marked as complete
 // in the system database metadata. This prevents the migration from
 // running multiple times.
-func (m *DatabaseManager) isMigrationComplete() bool {
+func (m *DatabaseManager) isMigrationComplete() (bool, error) {
 	// Check metadata for migration status
 	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
 	node, err := systemEngine.GetNode(storage.NodeID(migrationStatusKey))
-	if err == storage.ErrNotFound {
-		return false
+	if errors.Is(err, storage.ErrNotFound) {
+		return false, nil
 	}
 	if err != nil {
-		return false
+		return false, err
 	}
 
 	// Check if migration is marked as complete
 	if status, ok := node.Properties["status"].(string); ok {
-		return status == "complete"
+		return status == "complete", nil
 	}
 
-	return false
+	return false, nil
 }
 
 // markMigrationComplete marks the migration as complete in metadata.

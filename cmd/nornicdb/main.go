@@ -1511,7 +1511,7 @@ func defaultBoltDatabaseName(db *nornicdb.DB) string {
 	if db == nil {
 		return "nornic"
 	}
-	if namespaced, ok := db.GetStorage().(interface{ Namespace() string }); ok {
+	if namespaced, ok := storage.ViewMetadataForEngine[interface{ Namespace() string }](db.GetStorage()); ok {
 		if ns := strings.TrimSpace(namespaced.Namespace()); ns != "" {
 			return ns
 		}

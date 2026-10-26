@@ -17,6 +17,7 @@ import (
 // before any validation or mutation so a multi-row, multi-variable DELETE
 // (e.g. "DELETE a, r") can be judged as a whole statement.
 func collectDeleteMutationTargets(store storage.Engine, matchResult *ExecuteResult) (nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) {
+	lookup := storage.BindEntityIdentityLookup(store)
 	seenNodes := make(map[string]struct{}, len(matchResult.Rows))
 	seenEdges := make(map[string]struct{}, len(matchResult.Rows))
 	nodeIDs = make([]storage.NodeID, 0, len(matchResult.Rows))
@@ -24,19 +25,19 @@ func collectDeleteMutationTargets(store storage.Engine, matchResult *ExecuteResu
 
 	for _, row := range matchResult.Rows {
 		for _, val := range row {
-			collectDeleteTargetValue(store, val, seenNodes, seenEdges, &nodeIDs, &edgeIDs)
+			collectDeleteTargetValue(lookup, val, seenNodes, seenEdges, &nodeIDs, &edgeIDs)
 		}
 	}
 
 	return nodeIDs, edgeIDs
 }
 
-func collectDeleteTargetValue(store storage.Engine, value interface{}, seenNodes, seenEdges map[string]struct{}, nodeIDs *[]storage.NodeID, edgeIDs *[]storage.EdgeID) {
+func collectDeleteTargetValue(lookup storage.EntityIdentityLookup, value interface{}, seenNodes, seenEdges map[string]struct{}, nodeIDs *[]storage.NodeID, edgeIDs *[]storage.EdgeID) {
 	target := classifyDeleteTargetValue(value)
 	switch entity := value.(type) {
 	case *storage.Node:
 		if entity != nil {
-			id, ok := entity.Identity().NodeLookupID(store)
+			id, ok := lookup.NodeLookupID(entity.Identity())
 			if !ok {
 				return
 			}
@@ -44,7 +45,7 @@ func collectDeleteTargetValue(store storage.Engine, value interface{}, seenNodes
 		}
 	case *storage.Edge:
 		if entity != nil {
-			id, ok := entity.Identity().LookupID(store, "5")
+			id, ok := lookup.LookupID(entity.Identity(), "5")
 			if !ok {
 				return
 			}
@@ -71,26 +72,26 @@ func collectDeleteTargetValue(store storage.Engine, value interface{}, seenNodes
 	switch typed := value.(type) {
 	case PathResult:
 		for _, node := range typed.Nodes {
-			collectDeleteTargetValue(store, node, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(lookup, node, seenNodes, seenEdges, nodeIDs, edgeIDs)
 		}
 		for _, edge := range typed.Relationships {
-			collectDeleteTargetValue(store, edge, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(lookup, edge, seenNodes, seenEdges, nodeIDs, edgeIDs)
 		}
 	case *PathResult:
 		if typed != nil {
-			collectDeleteTargetValue(store, *typed, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(lookup, *typed, seenNodes, seenEdges, nodeIDs, edgeIDs)
 		}
 	case []interface{}:
 		for _, item := range typed {
-			collectDeleteTargetValue(store, item, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(lookup, item, seenNodes, seenEdges, nodeIDs, edgeIDs)
 		}
 	case map[string]interface{}:
 		if path, ok := typed["_pathResult"]; ok {
-			collectDeleteTargetValue(store, path, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(lookup, path, seenNodes, seenEdges, nodeIDs, edgeIDs)
 			return
 		}
 		for _, item := range typed {
-			collectDeleteTargetValue(store, item, seenNodes, seenEdges, nodeIDs, edgeIDs)
+			collectDeleteTargetValue(lookup, item, seenNodes, seenEdges, nodeIDs, edgeIDs)
 		}
 	}
 }
@@ -239,10 +240,14 @@ func pipelineUnwindAlias(clause string) string {
 // same statement is also deleting that edge (e.g.
 // "MATCH (a)-[r]->(b) DELETE a, r"); edgeIDs holds every edge this
 // statement is about to remove, so those are subtracted before the check.
-func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) error {
+func validateNoResidualRelationships(ctx context.Context, store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) error {
+	lookup := storage.BindEntityIdentityLookup(store)
 	beingDeleted := deletingEdgeSet(edgeIDs)
 	for _, nodeID := range nodeIDs {
-		connected, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		connected, err := nodeHasResidualRelationships(ctx, store, lookup, nodeID, beingDeleted)
 		if err != nil {
 			return err
 		}
@@ -258,11 +263,15 @@ func validateNoResidualRelationships(store storage.Engine, nodeIDs []storage.Nod
 // deletes them for now, and the transaction's commit fails unless a later
 // clause deletes those relationships, as in Neo4j
 // (storage.ConnectedNodeDeleter).
-func connectedDeleteTargets(store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) (map[storage.NodeID]struct{}, error) {
+func connectedDeleteTargets(ctx context.Context, store storage.Engine, nodeIDs []storage.NodeID, edgeIDs []storage.EdgeID) (map[storage.NodeID]struct{}, error) {
+	lookup := storage.BindEntityIdentityLookup(store)
 	beingDeleted := deletingEdgeSet(edgeIDs)
 	var connected map[storage.NodeID]struct{}
 	for _, nodeID := range nodeIDs {
-		residual, err := nodeHasResidualRelationships(store, nodeID, beingDeleted)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		residual, err := nodeHasResidualRelationships(ctx, store, lookup, nodeID, beingDeleted)
 		if err != nil {
 			return nil, err
 		}
@@ -286,13 +295,17 @@ func deletingEdgeSet(edgeIDs []storage.EdgeID) map[storage.EdgeID]struct{} {
 
 // nodeHasResidualRelationships reports whether a relationship other than
 // those beingDeleted connects nodeID (connectingRelationships).
-func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
-	connecting, err := connectingRelationships(store, nodeID)
+func nodeHasResidualRelationships(ctx context.Context, store storage.Engine, lookup storage.EntityIdentityLookup, nodeID storage.NodeID, beingDeleted map[storage.EdgeID]struct{}) (bool, error) {
+	connecting, err := connectingRelationships(ctx, store, nodeID)
 	if err != nil {
 		return false, err
 	}
 	for _, edge := range connecting {
-		if _, deleting := beingDeleted[deleteEdgeLookupID(store, edge)]; !deleting {
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		id, _ := lookup.LookupID(edge.Identity(), "5")
+		if _, deleting := beingDeleted[storage.EdgeID(id)]; !deleting {
 			return true, nil
 		}
 	}
@@ -308,11 +321,28 @@ func nodeHasResidualRelationships(store storage.Engine, nodeID storage.NodeID, b
 // in Neo4j it fails with DeleteConnectedNode for any relationship. Stores run
 // without a transaction (composite and remote databases) list what their
 // reads return.
-func connectingRelationships(store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
-	if lister, ok := store.(storage.IncidentEdgeLister); ok {
-		return lister.IncidentEdges(nodeID)
-	}
-	return undirectedIncidentEdges(store, nodeID)
+func connectingRelationships(ctx context.Context, store storage.Engine, nodeID storage.NodeID) ([]*storage.Edge, error) {
+	return storage.ReadWithCapability(store, func(lister storage.IncidentEdgeLister) ([]*storage.Edge, error) {
+		if contextual, ok := storage.OwnedCapability[interface {
+			IncidentEdgesWithContext(context.Context, storage.NodeID) ([]*storage.Edge, error)
+		}](lister); ok {
+			return contextual.IncidentEdgesWithContext(ctx, nodeID)
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		edges, err := lister.IncidentEdges(nodeID)
+		if err == nil {
+			err = ctx.Err()
+		}
+		return edges, err
+	}, func() ([]*storage.Edge, error) {
+		out, in, err := incidentEdgeListsContext(ctx, store, nodeID, "both")
+		if err != nil {
+			return nil, err
+		}
+		return combineIncidentEdges(ctx, nodeID, out, in)
+	})
 }
 
 // residualRelationshipDeleteError builds the error returned when a

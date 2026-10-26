@@ -28,37 +28,29 @@ type managedEntityOwner struct {
 func managedEntityOwnerFor(engine storage.Engine) managedEntityOwner {
 	route, found := storage.EntityCommitSubmitterFor(engine)
 	owner := managedEntityOwner{route: route, found: found}
-	for engine != nil {
-		if policy, ok := engine.(storage.EntityWriteBoundary); ok {
+	storage.VisitPhysicalEngineOwners(engine, func(layer storage.Engine) bool {
+		if policy, ok := storage.OwnedCapability[storage.EntityWriteBoundary](layer); ok {
 			owner.writeBoundaries = append(owner.writeBoundaries, policy)
 		}
 		if owner.boundary == nil {
-			owner.boundary, _ = engine.(storage.StoredEntityReadBoundary)
+			owner.boundary, _ = storage.OwnedCapability[storage.StoredEntityReadBoundary](layer)
 		}
 		if owner.begin == nil {
-			owner.begin, _ = engine.(interface {
+			owner.begin, _ = storage.OwnedCapability[interface {
 				BeginTransaction() (*storage.BadgerTransaction, error)
-			})
+			}](layer)
 		}
 		if owner.registry == nil {
-			owner.registry, _ = engine.(storage.ManagedEntityRuntimeRegistry)
+			owner.registry, _ = storage.OwnedCapability[storage.ManagedEntityRuntimeRegistry](layer)
 		}
 		if owner.observer == nil {
-			owner.observer, _ = engine.(storedEntityObserverInitializer)
+			owner.observer, _ = storage.OwnedCapability[storedEntityObserverInitializer](layer)
 		}
 		if owner.namespace == nil {
-			owner.namespace, _ = engine.(*storage.NamespacedEngine)
+			owner.namespace, _ = storage.OwnedCapability[*storage.NamespacedEngine](layer)
 		}
-		wrapper, ok := engine.(storage.EngineUnwrapper)
-		if !ok {
-			break
-		}
-		next := wrapper.GetInnerEngine()
-		if next == engine {
-			break
-		}
-		engine = next
-	}
+		return true
+	})
 	return owner
 }
 func (t *sizeTrackingEngine) managedUsageState() (*DatabaseInfo, *Limits, error) {

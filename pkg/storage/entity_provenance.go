@@ -54,13 +54,43 @@ func (id EntityIdentity) NodeLookupID(engine Engine) (NodeID, bool) {
 // LookupID translates an identity for a storage read without dropping a source
 // selection when the engine is composite. kind is the element ID entity kind.
 func (id EntityIdentity) LookupID(engine Engine, kind string) (string, bool) {
-	if CompositeDatabaseOf(engine) != "" {
+	return BindEntityIdentityLookup(engine).LookupID(id, kind)
+}
+
+// EntityIdentityLookup retains identity providers for one issued operation.
+// The providers' values remain live; translating each row performs no discovery.
+type EntityIdentityLookup struct {
+	namespace interface{ Namespace() string }
+	composite interface{ CompositeName() string }
+}
+
+func BindEntityIdentityLookup(engine Engine) EntityIdentityLookup {
+	namespace, _ := ViewMetadataForEngine[interface{ Namespace() string }](engine)
+	composite, _ := ViewMetadataForEngine[interface{ CompositeName() string }](engine)
+	return EntityIdentityLookup{namespace: namespace, composite: composite}
+}
+func (lookup EntityIdentityLookup) Database() string {
+	if lookup.namespace != nil {
+		return lookup.namespace.Namespace()
+	}
+	return ""
+}
+func (lookup EntityIdentityLookup) NodeLookupID(id EntityIdentity) (NodeID, bool) {
+	value, ok := lookup.LookupID(id, "4")
+	return NodeID(value), ok
+}
+func (lookup EntityIdentityLookup) LookupID(id EntityIdentity, kind string) (string, bool) {
+	if lookup.composite != nil && lookup.composite.CompositeName() != "" {
 		if id.Database != "" {
 			return kind + ":" + id.Database + ":" + id.LocalID, true
 		}
 		return id.LocalID, true
 	}
-	if source := DatabaseOf(engine); id.Database != "" && source != "" && source != id.Database {
+	source := ""
+	if lookup.namespace != nil {
+		source = lookup.namespace.Namespace()
+	}
+	if id.Database != "" && source != "" && source != id.Database {
 		return "", false
 	}
 	return id.LocalID, true
@@ -69,15 +99,8 @@ func (id EntityIdentity) LookupID(engine Engine, kind string) (string, bool) {
 // CompositeDatabaseOf identifies a composite through read/admission wrappers;
 // it does not unwrap the actual operation or bypass those owners.
 func CompositeDatabaseOf(engine Engine) string {
-	for depth := 0; engine != nil && depth < 16; depth++ {
-		if composite, ok := engine.(interface{ CompositeName() string }); ok {
-			return composite.CompositeName()
-		}
-		wrapper, ok := engine.(EngineUnwrapper)
-		if !ok {
-			break
-		}
-		engine = wrapper.GetInnerEngine()
+	if composite, ok := ViewMetadataForEngine[interface{ CompositeName() string }](engine); ok {
+		return composite.CompositeName()
 	}
 	return ""
 }
@@ -132,24 +155,10 @@ func (e *Edge) EndElementID(fallback string) string {
 	return NodeElementID(fallback, e.EndNode)
 }
 
-// DatabaseOf follows the same wrapper boundary as QualifiedEntityID. It does
+// DatabaseOf follows the declared read-view metadata boundary. It does
 // not infer provenance from a stored ID, which may itself contain colons.
 func DatabaseOf(engine Engine) string {
-	for engine != nil {
-		if scoped, ok := engine.(interface{ Namespace() string }); ok {
-			return scoped.Namespace()
-		}
-		wrapper, ok := engine.(EngineUnwrapper)
-		if !ok {
-			return ""
-		}
-		inner := wrapper.GetInnerEngine()
-		if inner == engine {
-			return ""
-		}
-		engine = inner
-	}
-	return ""
+	return namespaceForEngine(engine)
 }
 
 // SetEndpoints binds an edge to native endpoint identities before storage can

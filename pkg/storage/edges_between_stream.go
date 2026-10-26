@@ -23,15 +23,45 @@ type EdgesBetweenMatcher interface {
 
 // MatchEdgesBetween is engine's EdgesBetweenMatcher, or GetEdgesBetween and
 // the same filter for an engine without one: both give the same edges.
-func MatchEdgesBetween(engine Engine, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
-	if matcher, ok := engine.(EdgesBetweenMatcher); ok {
-		return matcher.MatchEdgesBetween(startID, endID, edgeType, properties, match)
+func MatchEdgesBetween(engine any, startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
+	if match == nil {
+		return nil, ErrInvalidData
 	}
-	edges, err := engine.GetEdgesBetween(startID, endID)
-	if err != nil {
+	var edges []*Edge
+	accepted := false
+	predicate := func(deliver func(*Edge) error) func(*Edge) bool {
+		return func(edge *Edge) bool {
+			if err := deliver(edge); err != nil {
+				return false
+			}
+			return accepted
+		}
+	}
+	err := VisitWithCapability(engine, func(matcher EdgesBetweenMatcher, deliver func(*Edge) error) error {
+		var err error
+		edges, err = matcher.MatchEdgesBetween(startID, endID, edgeType, properties, predicate(deliver))
+		return err
+	}, func(deliver func(*Edge) error) error {
+		core, ok := OwnedCapability[interface {
+			GetEdgesBetween(NodeID, NodeID) ([]*Edge, error)
+		}](engine)
+		if !ok {
+			return ErrNotImplemented
+		}
+		candidates, err := core.GetEdgesBetween(startID, endID)
+		if err != nil {
+			return err
+		}
+		edges = filterEdgesBetween(candidates, startID, endID, edgeType, properties, predicate(deliver))
+		return nil
+	}, func(edge *Edge) error {
+		accepted = match(edge)
+		return nil
+	})
+	if errors.Is(err, ErrNotImplemented) {
 		return nil, err
 	}
-	return filterEdgesBetween(edges, startID, endID, edgeType, properties, match), nil
+	return edges, err
 }
 
 // filterEdgesBetween returns the edges of edges from startID to endID of
@@ -226,7 +256,7 @@ func (tx *BadgerTransaction) MatchEdgesBetween(startID, endID NodeID, edgeType s
 	if err := tx.pinNamespaceFromIDLocked(string(endID)); err != nil {
 		return nil, err
 	}
-	matched, err := tx.engine.MatchEdgesBetween(startID, endID, edgeType, properties, func(edge *Edge) bool {
+	matched, err := MatchEdgesBetween(tx.engine, startID, endID, edgeType, properties, func(edge *Edge) bool {
 		if _, deleted := tx.deletedEdges[edge.ID]; deleted {
 			return false
 		}
@@ -253,7 +283,7 @@ func (tx *BadgerTransaction) MatchEdgesBetween(startID, endID NodeID, edgeType s
 func (n *NamespacedEngine) MatchEdgesBetween(startID, endID NodeID, edgeType string, properties []string, match func(*Edge) bool) ([]*Edge, error) {
 	var candidate Edge
 	edges, err := MatchEdgesBetween(n.inner, n.PrefixNodeID(startID), n.PrefixNodeID(endID), edgeType, properties, func(edge *Edge) bool {
-		if !n.hasEdgePrefix(edge.ID) {
+		if !n.edgeInScope(edge) {
 			return false
 		}
 		candidate = *edge
@@ -283,7 +313,7 @@ func (c *CompositeEngine) MatchEdgesBetween(startID, endID NodeID, edgeType stri
 	for _, alias := range c.getConstituentsForRead() {
 		engine, err := c.getConstituent(alias)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		edges, err := MatchEdgesBetween(engine, startID, endID, edgeType, properties, func(edge *Edge) bool {
 			if _, dup := seen[edge.ID]; dup {

@@ -53,28 +53,34 @@ const (
 // indexBackfillReady reads the selected family marker. Labels require the exact
 // current scheme byte; relationship backfill retains key-presence semantics.
 func (b *BadgerEngine) indexBackfillReady(kind startupIndexKind) (bool, error) {
+	var ready bool
+	err := b.db.View(func(txn *badger.Txn) error {
+		var err error
+		ready, err = b.indexBackfillReadyInTxn(txn, kind)
+		return err
+	})
+	return ready, err
+}
+
+// indexBackfillReadyInTxn is the same marker owner at an already captured cut.
+// Author: Lane #1644 (Codex); preserves TJ's family-specific marker semantics.
+func (b *BadgerEngine) indexBackfillReadyInTxn(txn *badger.Txn, kind startupIndexKind) (bool, error) {
 	key := labelIndexReadyKey
 	if kind == startupEdgeBetweenIndex {
 		key = edgeBetweenIndexReadyKey
 	}
+	item, err := txn.Get(key)
+	if errors.Is(err, badger.ErrKeyNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if kind == startupEdgeBetweenIndex {
+		return true, nil
+	}
 	var ready bool
-	err := b.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(key)
-		if err == nil {
-			if kind == startupEdgeBetweenIndex {
-				ready = true
-				return nil
-			}
-			return item.Value(func(value []byte) error {
-				ready = len(value) == 1 && value[0] == labelIndexSchemeVersion
-				return nil
-			})
-		}
-		if errors.Is(err, badger.ErrKeyNotFound) {
-			return nil
-		}
-		return err
-	})
+	err = item.Value(func(value []byte) error { ready = len(value) == 1 && value[0] == labelIndexSchemeVersion; return nil })
 	return ready, err
 }
 
@@ -237,18 +243,18 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 			return 0, false, nil
 		}
 		nodeID := NodeID(key[1:])
-		namespace, _, ok := ParseDatabasePrefix(string(nodeID))
+		_, _, ok := ParseDatabasePrefix(string(nodeID))
 		if !ok {
 			// Nodes without a namespace prefix predate multi-DB support.
 			// Skip — they can't participate in the per-namespace dict
 			// either.
 			return 0, false, nil
 		}
-		node, err := b.decodeNode(namespace, val)
+		labels, err := decodeStoredNodeLabels(val)
 		if err != nil {
 			return 0, false, fmt.Errorf("decode node %q for label rebuild: %w", nodeID, err)
 		}
-		for i, label := range node.Labels {
+		for i, label := range labels {
 			lblKey, err := b.labelIndexKeyString(txn, label, nodeID)
 			if err == nil {
 				err = txn.Set(lblKey, []byte{})
@@ -257,7 +263,7 @@ func (b *BadgerEngine) rebuildLabelIndex(ctx context.Context) (int, error) {
 				return i, false, fmt.Errorf("write label index for %q/%q: %w", nodeID, label, err)
 			}
 		}
-		return len(node.Labels), true, nil
+		return len(labels), true, nil
 	})
 	if err != nil {
 		return processed, err

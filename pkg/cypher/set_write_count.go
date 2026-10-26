@@ -68,7 +68,7 @@ func (w *setWrites) property(existed bool, key string, value interface{}, merged
 // propertyKeyLookup is store's key-name lookup for SET's counter
 // (setWrites.known), or nil when the store keeps none.
 func propertyKeyLookup(store storage.Engine) storage.PropertyKeyLookup {
-	lookup, _ := store.(storage.PropertyKeyLookup)
+	lookup, _ := storage.ViewMetadataForEngine[storage.PropertyKeyLookup](store)
 	return lookup
 }
 

@@ -20,6 +20,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/collection"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
@@ -653,11 +654,17 @@ func (e *StorageExecutor) tryExecuteCallTailRelationshipMatchProjection(
 			continue
 		}
 		startNode, err := getNode(relationship.StartNode)
-		if err != nil || startNode == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, true, err
+		}
+		if startNode == nil {
 			continue
 		}
 		endNode, err := getNode(relationship.EndNode)
-		if err != nil || endNode == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, true, err
+		}
+		if endNode == nil {
 			continue
 		}
 		if plan.startLabel != "" && !containsString(startNode.Labels, plan.startLabel) {
@@ -1498,21 +1505,35 @@ func (e *StorageExecutor) callNornicDbVersion() (*ExecuteResult, error) {
 }
 
 func (e *StorageExecutor) callNornicDbStats() (*ExecuteResult, error) {
-	nodeCount, _ := e.storage.NodeCount()
-	edgeCount, _ := e.storage.EdgeCount()
+	nodeCount, err := e.storage.NodeCount()
+	if err != nil {
+		return nil, err
+	}
+	edgeCount, err := e.storage.EdgeCount()
+	if err != nil {
+		return nil, err
+	}
 
+	labels, err := e.countLabels()
+	if err != nil {
+		return nil, err
+	}
+	relationshipTypes, err := e.countRelTypes()
+	if err != nil {
+		return nil, err
+	}
 	return &ExecuteResult{
 		Columns: []string{"nodes", "relationships", "labels", "relationshipTypes"},
 		Rows: [][]interface{}{
-			{nodeCount, edgeCount, e.countLabels(), e.countRelTypes()},
+			{nodeCount, edgeCount, labels, relationshipTypes},
 		},
 	}, nil
 }
 
-func (e *StorageExecutor) countLabels() int {
+func (e *StorageExecutor) countLabels() (int, error) {
 	nodes, err := e.storage.AllNodes()
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	labelSet := make(map[string]bool)
 	for _, node := range nodes {
@@ -1520,19 +1541,19 @@ func (e *StorageExecutor) countLabels() int {
 			labelSet[label] = true
 		}
 	}
-	return len(labelSet)
+	return len(labelSet), nil
 }
 
-func (e *StorageExecutor) countRelTypes() int {
+func (e *StorageExecutor) countRelTypes() (int, error) {
 	edges, err := e.storage.AllEdges()
 	if err != nil {
-		return 0
+		return 0, err
 	}
 	typeSet := make(map[string]bool)
 	for _, edge := range edges {
 		typeSet[edge.Type] = true
 	}
-	return len(typeSet)
+	return len(typeSet), nil
 }
 
 func (e *StorageExecutor) callNornicDbDecayInfo() (*ExecuteResult, error) {
@@ -1592,7 +1613,10 @@ func (e *StorageExecutor) callDbSchemaVisualization() (*ExecuteResult, error) {
 }
 
 func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
-	nodes, _ := e.storage.AllNodes()
+	nodes, err := e.storage.AllNodes()
+	if err != nil {
+		return nil, err
+	}
 
 	// Collect properties per label
 	labelProps := make(map[string]map[string]bool)
@@ -1622,7 +1646,10 @@ func (e *StorageExecutor) callDbSchemaNodeProperties() (*ExecuteResult, error) {
 }
 
 func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
-	edges, _ := e.storage.AllEdges()
+	edges, err := e.storage.AllEdges()
+	if err != nil {
+		return nil, err
+	}
 
 	// Collect properties per relationship type
 	typeProps := make(map[string]map[string]bool)
@@ -1650,8 +1677,14 @@ func (e *StorageExecutor) callDbSchemaRelProperties() (*ExecuteResult, error) {
 }
 
 func (e *StorageExecutor) callDbPropertyKeys() (*ExecuteResult, error) {
-	nodes, _ := e.storage.AllNodes()
-	edges, _ := e.storage.AllEdges()
+	nodes, err := e.storage.AllNodes()
+	if err != nil {
+		return nil, err
+	}
+	edges, err := e.storage.AllEdges()
+	if err != nil {
+		return nil, err
+	}
 
 	propSet := make(map[string]bool)
 	for _, node := range nodes {

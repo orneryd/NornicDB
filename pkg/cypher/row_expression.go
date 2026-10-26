@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
@@ -1761,32 +1762,35 @@ func (e *StorageExecutor) relationshipEndpointValue(value interface{}, end bool)
 	if err != nil {
 		return nil, err
 	}
-	return e.relationshipEndpoint(edge, end, store), nil
+	return e.relationshipEndpoint(edge, end, store)
 }
 
 // relationshipEndpoint is startNode(edge) / endNode(edge) (end): the
 // endpoint read by its id, null when it is gone. The one implementation, for
 // the row evaluator (rowRelationshipEndpoint) and the context evaluator
 // (evaluateExpressionWithContextFullMath).
-func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool, stores ...storage.Engine) interface{} {
+func (e *StorageExecutor) relationshipEndpoint(edge *storage.Edge, end bool, stores ...storage.Engine) (interface{}, error) {
 	return e.relationshipEndpointWithProperties(edge, end, nil, stores...)
 }
 
-func (e *StorageExecutor) relationshipEndpointWithProperties(edge *storage.Edge, end bool, properties []string, stores ...storage.Engine) interface{} {
+func (e *StorageExecutor) relationshipEndpointWithProperties(edge *storage.Edge, end bool, properties []string, stores ...storage.Engine) (interface{}, error) {
 	store := e.storage
 	if len(stores) > 0 {
 		store = stores[0]
 	}
-	id, exists := e.relationshipEndpointID(edge, end, store)
+	id, exists, err := e.relationshipEndpointID(edge, end, store)
+	if err != nil {
+		return nil, err
+	}
 	if !exists {
-		return nil
+		return nil, nil
 	}
 	return e.readRelationshipEndpoint(id, properties, store)
 }
 
-func (e *StorageExecutor) relationshipEndpointID(edge *storage.Edge, end bool, stores ...storage.Engine) (storage.NodeID, bool) {
+func (e *StorageExecutor) relationshipEndpointID(edge *storage.Edge, end bool, stores ...storage.Engine) (storage.NodeID, bool, error) {
 	if edge == nil {
-		return "", false
+		return "", false, nil
 	}
 	store := e.storage
 	if len(stores) > 0 {
@@ -1796,27 +1800,34 @@ func (e *StorageExecutor) relationshipEndpointID(edge *storage.Edge, end bool, s
 	if end {
 		id = edge.EndNode
 	}
-	edgeID, edgeSelected := edge.Identity().LookupID(store, "5")
-	nodeID, nodeSelected := (storage.EntityIdentity{Database: edge.Database, LocalID: string(id)}).NodeLookupID(store)
+	edgeID, edgeSelected := e.identityLookup(store).LookupID(edge.Identity(), "5")
+	nodeID, nodeSelected := e.identityLookup(store).NodeLookupID(storage.EntityIdentity{Database: edge.Database, LocalID: string(id)})
 	if !edgeSelected || !nodeSelected {
-		return "", false
+		return "", false, nil
 	}
-	if current, err := store.GetEdge(storage.EdgeID(edgeID)); err != nil || current == nil {
-		return "", false
+	current, err := store.GetEdge(storage.EdgeID(edgeID))
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return "", false, err
 	}
-	return nodeID, true
+	if current == nil {
+		return "", false, nil
+	}
+	return nodeID, true, nil
 }
 
-func (e *StorageExecutor) readRelationshipEndpoint(id storage.NodeID, properties []string, stores ...storage.Engine) interface{} {
+func (e *StorageExecutor) readRelationshipEndpoint(id storage.NodeID, properties []string, stores ...storage.Engine) (interface{}, error) {
 	store := e.storage
 	if len(stores) > 0 {
 		store = stores[0]
 	}
 	node, err := e.newRelationshipEndpointReader(store).read(id, properties)
-	if err != nil {
-		return nil
+	if errors.Is(err, storage.ErrNotFound) {
+		return nil, nil
 	}
-	return node
+	if err != nil {
+		return nil, err
+	}
+	return node, nil
 }
 
 // isRelationshipPatternOperand reports whether expression is one whole

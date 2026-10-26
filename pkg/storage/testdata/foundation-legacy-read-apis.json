@@ -1,0 +1,512 @@
+[
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/auth.storeTransaction).GetAllNodes",
+    "class": "legacy compatibility",
+    "peer": "AllNodes",
+    "reason": "Auth transaction adapter forwards the same transaction GetAllNodes; this is solely the legacy provider implementation, not an auth data consumer.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/auth/store_transaction.go:(*github.com/orneryd/nornicdb/pkg/auth.storeTransaction).GetAllNodes/identifier#3",
+    "digest": "9140c88daa2a3b5d993e52c91588bfd44f6a1070704e2b906f5b58907faa6050",
+    "owner_digest": "705d64c6457153460b6de928ce5ef7388c31573eecbf58411fb91c57010b123e"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).BatchGetNodes",
+    "class": "legacy compatibility",
+    "peer": "BatchGetNodesContext",
+    "reason": "Executor wrapper calls its issued-view error-returning batch owner and retains the documented omission policy for external callers.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/optimized_executors.go:(*github.com/orneryd/nornicdb/pkg/cypher.StorageExecutor).BatchGetNodes/identifier#3",
+    "digest": "384c828e6729b6cf135735add7a22b6b2fed405e16d126fc6da08ede9eeec5f1",
+    "owner_digest": "076c2fd1f8a50756467c357b5bf1991807d7c9eb387c494cab34060d55b9b4e2"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/cypher.graphIdentityStorage).GetAllNodes",
+    "class": "legacy compatibility",
+    "peer": "AllNodes",
+    "reason": "Graph identity view transforms the returned nodes from its original Engine; its error-bearing AllNodes exposes failures to internal graph algorithms.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/graph_entity_identity.go:(*github.com/orneryd/nornicdb/pkg/cypher.graphIdentityStorage).GetAllNodes/identifier#3",
+    "digest": "9140c88daa2a3b5d993e52c91588bfd44f6a1070704e2b906f5b58907faa6050",
+    "owner_digest": "fa5a3242d9fb2c1cba46b0fa663ac32da16aa56e939f31ec56a02877543aec08"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/cypher.graphIdentityStorage).GetEdgeBetween",
+    "class": "legacy compatibility",
+    "peer": "GetEdgesBetween",
+    "reason": "Graph identity view translates both endpoint keys before its legacy single-edge projection; internal graph reads use error-bearing between/adjacency operations.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/graph_entity_identity.go:(*github.com/orneryd/nornicdb/pkg/cypher.graphIdentityStorage).GetEdgeBetween/identifier#3",
+    "digest": "884321ab2064f08596833f9b77d08323bf602922341debd22162c4e788a3ba29",
+    "owner_digest": "3ad43aeece5d2846a5ac7915d48a3c429d2cf36303cab8afcff9338da86b3290"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/cypher.graphIdentityStorage).GetInDegree",
+    "class": "legacy compatibility",
+    "peer": "GetIncomingEdges",
+    "reason": "Graph identity incoming-degree projection counts the issued incoming adjacency and keeps the int-only omission contract.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/graph_entity_identity.go:(*github.com/orneryd/nornicdb/pkg/cypher.graphIdentityStorage).GetInDegree/identifier#3",
+    "digest": "d68c0bbd9a5beacb14ea29c4c4276cb2a71f778e22e07d0501097874647a694e",
+    "owner_digest": "b59b5b13a1f84fd39436e1f738147b18ac66ace88fc8c15697ccc8cbd56216cc"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/cypher.graphIdentityStorage).GetOutDegree",
+    "class": "legacy compatibility",
+    "peer": "GetOutgoingEdges",
+    "reason": "Graph identity outgoing-degree projection counts the issued outgoing adjacency and keeps the int-only omission contract.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/graph_entity_identity.go:(*github.com/orneryd/nornicdb/pkg/cypher.graphIdentityStorage).GetOutDegree/identifier#3",
+    "digest": "c9e1e9af728af153dacdd8b7a19622fad4da57ec8a0fac79b4020a9cc622ed88",
+    "owner_digest": "1670d5f1555b2da7a9c80976d170eee154bb3abfe67fbd855a48d0ca95844c01"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/cypher.transactionStorageWrapper).EdgeCreateWasNoOp",
+    "class": "distinct responsibility",
+    "peer": "",
+    "reason": "Transaction wrapper projects the existing EdgeCreateWasNoOp outcome in prefixed ID space; this is a buffered mutation disposition, with no fallible data read.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/transaction_storage_wrapper.go:(*github.com/orneryd/nornicdb/pkg/cypher.transactionStorageWrapper).EdgeCreateWasNoOp/identifier#3",
+    "digest": "232704ee22c4f5cedabbf3c3c22cf3650b2d705dc9e3b2c1628e3eff3d4d15bd",
+    "owner_digest": "8c73a589fd36e885659181c2111a7779f5c7ea4584c53197b7d9efac0c0002d0"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/cypher.transactionStorageWrapper).GetAllNodes",
+    "class": "legacy compatibility",
+    "peer": "AllNodes",
+    "reason": "Transaction wrapper reads the actual transaction collection and converts only its own namespace; it does not read committed base nodes.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/transaction_storage_wrapper.go:(*github.com/orneryd/nornicdb/pkg/cypher.transactionStorageWrapper).GetAllNodes/identifier#3",
+    "digest": "9140c88daa2a3b5d993e52c91588bfd44f6a1070704e2b906f5b58907faa6050",
+    "owner_digest": "3127fece1f8ebe00e3761db128c1e822156cab9cbccf56ff5eb128c67c59eed0"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/cypher.transactionStorageWrapper).GetEdgeBetween",
+    "class": "legacy compatibility",
+    "peer": "GetEdgesBetween",
+    "reason": "Transaction wrapper prefixes both endpoints and converts the selected transaction edge; GetEdgesBetween exposes its errors.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/transaction_storage_wrapper.go:(*github.com/orneryd/nornicdb/pkg/cypher.transactionStorageWrapper).GetEdgeBetween/identifier#3",
+    "digest": "884321ab2064f08596833f9b77d08323bf602922341debd22162c4e788a3ba29",
+    "owner_digest": "e4e2a2434fff29b870df11bd3e5e67b5199e1918da6fe6223be76577a803a7e0"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/cypher.transactionStorageWrapper).GetInDegree",
+    "class": "legacy compatibility",
+    "peer": "GetIncomingEdges",
+    "reason": "Transaction incoming-degree facade now counts this wrapper’s issued adjacency; the previous bare-base bypass is reproduced and corrected.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/transaction_storage_wrapper.go:(*github.com/orneryd/nornicdb/pkg/cypher.transactionStorageWrapper).GetInDegree/identifier#3",
+    "digest": "d68c0bbd9a5beacb14ea29c4c4276cb2a71f778e22e07d0501097874647a694e",
+    "owner_digest": "2495770cbd2dc46cf407adc689acb766b3861819031c2ad9be5edd380d096158"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/cypher.transactionStorageWrapper).GetOutDegree",
+    "class": "legacy compatibility",
+    "peer": "GetOutgoingEdges",
+    "reason": "Transaction outgoing-degree facade now counts this wrapper’s issued adjacency; the previous bare-base bypass is reproduced and corrected.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/transaction_storage_wrapper.go:(*github.com/orneryd/nornicdb/pkg/cypher.transactionStorageWrapper).GetOutDegree/identifier#3",
+    "digest": "c9e1e9af728af153dacdd8b7a19622fad4da57ec8a0fac79b4020a9cc622ed88",
+    "owner_digest": "685308fb92eb5071ab2ae9f0df2d1a512f170eb98a7a7e5241c066d501f32399"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FindNodeNeedingEmbedding",
+    "class": "distinct responsibility",
+    "peer": "",
+    "reason": "Native embedding candidate poll serializes durable marker validation/cleanup and returns a candidate or nil to its work scheduler, not an authoritative query collection. Failed cleanup invalidates cached candidates for retry.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/badger_stats.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).FindNodeNeedingEmbedding/identifier#3",
+    "digest": "02c205b487a9587c820f8f1e6c0910df19a5928ca0b1a55aafcd0c53281dc608",
+    "owner_digest": "c0db3346a1a86cad022301b0841e65d0e3c1fcffb69858a4271d13d2d22bb649"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).GetAllNodes",
+    "class": "legacy compatibility",
+    "peer": "AllNodes",
+    "reason": "Native whole-node facade delegates to AllNodes and returns its collection while retaining the existing errorless release signature.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/badger_queries.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).GetAllNodes/identifier#3",
+    "digest": "9140c88daa2a3b5d993e52c91588bfd44f6a1070704e2b906f5b58907faa6050",
+    "owner_digest": "5e459302d7ec449d9f8b682bf9fdc7f98bb04d48dc4bb3995c547a85fb30f6ca"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).GetEdgeBetween",
+    "class": "legacy compatibility",
+    "peer": "GetEdgesBetween",
+    "reason": "Native single-edge facade merges pending endpoint/edge suppression with its captured committed edge selector; public release selection behavior is retained and internal reads use GetEdgesBetween.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/badger_queries.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).GetEdgeBetween/identifier#3",
+    "digest": "884321ab2064f08596833f9b77d08323bf602922341debd22162c4e788a3ba29",
+    "owner_digest": "c5ff38b4ff61f91bd6b8ac234e6174eebc8df65a7827101446ee6995db8b82c7"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).GetInDegree",
+    "class": "legacy compatibility",
+    "peer": "GetIncomingEdges",
+    "reason": "Native incoming-degree facade projects countByPrefix adjacency and retains the zero-on-failure int signature; TJ owns the native counter implementation.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/badger_bulk.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).GetInDegree/identifier#3",
+    "digest": "d68c0bbd9a5beacb14ea29c4c4276cb2a71f778e22e07d0501097874647a694e",
+    "owner_digest": "d87fe9b5f30cda51c325eb6387df8f5d5c80ed89c5f78238cc75df0a4dcfb129"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).GetOutDegree",
+    "class": "legacy compatibility",
+    "peer": "GetOutgoingEdges",
+    "reason": "Native outgoing-degree facade projects countByPrefix adjacency and retains the zero-on-failure int signature; TJ owns the native counter implementation.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/badger_bulk.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerEngine).GetOutDegree/identifier#3",
+    "digest": "c9e1e9af728af153dacdd8b7a19622fad4da57ec8a0fac79b4020a9cc622ed88",
+    "owner_digest": "9bd811ea17b6bdcefdaf26ab7347b556c1f848d95a7070fdbb0c6c7356ac1d7c"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).EdgeCreateWasNoOp",
+    "class": "distinct responsibility",
+    "peer": "",
+    "reason": "Badger transaction reads its edgeCreateNoOps map under its mutex; the result is a buffered candidate publication disposition, not storage I/O.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/badger_transaction.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).EdgeCreateWasNoOp/identifier#3",
+    "digest": "232704ee22c4f5cedabbf3c3c22cf3650b2d705dc9e3b2c1628e3eff3d4d15bd",
+    "owner_digest": "949eef42ad4a9811da1b852d47fd50e06e075bf95b606e2bb045715115f702ec"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).GetAllNodes",
+    "class": "legacy compatibility",
+    "peer": "AllNodes",
+    "reason": "Native transaction whole-node facade returns AllNodes from the same transaction and maps its failure to nil for compatibility.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/badger_transaction.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).GetAllNodes/identifier#3",
+    "digest": "9140c88daa2a3b5d993e52c91588bfd44f6a1070704e2b906f5b58907faa6050",
+    "owner_digest": "25624f1f53bc6d1c5dea82663e5142138e18afbaf1ca62ba47c09415d6b9c7e5"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).GetEdgeBetween",
+    "class": "legacy compatibility",
+    "peer": "GetEdgesBetween",
+    "reason": "Native transaction single-edge facade filters its error-bearing between-edge result by type and returns the first eligible edge.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/badger_transaction.go:(*github.com/orneryd/nornicdb/pkg/storage.BadgerTransaction).GetEdgeBetween/identifier#3",
+    "digest": "884321ab2064f08596833f9b77d08323bf602922341debd22162c4e788a3ba29",
+    "owner_digest": "18d1b348714b6630ad7a53509b2a0f5b1519816611e6fec2ee7a102e4c79983c"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.CompositeEngine).ConstituentDatabaseForEdge",
+    "class": "legacy compatibility",
+    "peer": "GetEdge (Database field)",
+    "reason": "Composite edge-source facade returns exactly GetEdge’s Database on success and empty on failure; its internal transport consumers have migrated to the point owner plus error terminal.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/composite_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.CompositeEngine).ConstituentDatabaseForEdge/identifier#3",
+    "digest": "5a4461615da34a815663e2a104ee0f6612f0c1e323c666e44150841d2f59fdaa",
+    "owner_digest": "c7588fd798144742a19d3aeb8f51079d1c01513f1f21520a1541d06a9f3a255d"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.CompositeEngine).ConstituentDatabaseForNode",
+    "class": "legacy compatibility",
+    "peer": "GetNode (Database field)",
+    "reason": "Composite node-source facade returns exactly GetNode’s Database on success and empty on failure; its internal transport consumers have migrated to the point owner plus error terminal.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/composite_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.CompositeEngine).ConstituentDatabaseForNode/identifier#3",
+    "digest": "61e8e85c15f1b23b15876f19fc4ed68a998df0c93ae4da9f8c78b25ccb7db5ff",
+    "owner_digest": "a2da6fe17734fdc6f63262d93677cf3f3208e33357db78543aa7596f208ee450"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.CompositeEngine).GetAllNodes",
+    "class": "legacy compatibility",
+    "peer": "AllNodes",
+    "reason": "Composite whole-node facade projects the composite AllNodes operation without selecting a second source-resolution policy.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/composite_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.CompositeEngine).GetAllNodes/identifier#3",
+    "digest": "9140c88daa2a3b5d993e52c91588bfd44f6a1070704e2b906f5b58907faa6050",
+    "owner_digest": "0e8e9613d321596f1d6ca63339ab45e5cab50eb6637ab234fad30aa415b0d97b"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.CompositeEngine).GetEdgeBetween",
+    "class": "legacy compatibility",
+    "peer": "GetEdgesBetween",
+    "reason": "Composite legacy single-edge projection preserves the qualified route and first successful constituent selection; only compatibility providers may forward this facade.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/composite_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.CompositeEngine).GetEdgeBetween/identifier#3",
+    "digest": "884321ab2064f08596833f9b77d08323bf602922341debd22162c4e788a3ba29",
+    "owner_digest": "ea8cb13a681b48132d89ba7f0ddff18dd3d1b26f66d33ea3957a26fc6923b4f5"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.CompositeEngine).GetInDegree",
+    "class": "legacy compatibility",
+    "peer": "GetIncomingEdges",
+    "reason": "Composite incoming-degree facade preserves qualified routing or constituent sum and its historical omitted-child failures; internal count reads use error-bearing adjacency.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/composite_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.CompositeEngine).GetInDegree/identifier#3",
+    "digest": "d68c0bbd9a5beacb14ea29c4c4276cb2a71f778e22e07d0501097874647a694e",
+    "owner_digest": "a0ce5d84305210580a437f12defcd3bfa19d41f31e934dace0b1cc85bc4dc8a8"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.CompositeEngine).GetOutDegree",
+    "class": "legacy compatibility",
+    "peer": "GetOutgoingEdges",
+    "reason": "Composite outgoing-degree facade preserves qualified routing or constituent sum and its historical omitted-child failures; internal count reads use error-bearing adjacency.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/composite_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.CompositeEngine).GetOutDegree/identifier#3",
+    "digest": "c9e1e9af728af153dacdd8b7a19622fad4da57ec8a0fac79b4020a9cc622ed88",
+    "owner_digest": "281c4e5030aafb9284c4dac769c1b0b21c82fe174de27bbfc40e38ae30e47712"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.NamespacedEngine).FindNodeNeedingEmbedding",
+    "class": "distinct responsibility",
+    "peer": "",
+    "reason": "Namespaced optional candidate poll preserves pending work on a hard validation failure and retires only real absence. Nil is a retryable work-poll outcome, not an authoritative query result. Public failure/recovery/absence controls qualify this distinction.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/namespaced.go:(*github.com/orneryd/nornicdb/pkg/storage.NamespacedEngine).FindNodeNeedingEmbedding/identifier#3",
+    "digest": "02c205b487a9587c820f8f1e6c0910df19a5928ca0b1a55aafcd0c53281dc608",
+    "owner_digest": "982d63601fd288da4647e7b22193009268d5795dc0544428310e4815e41153b2"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.NamespacedEngine).GetAllNodes",
+    "class": "legacy compatibility",
+    "peer": "AllNodes",
+    "reason": "Namespace whole-node facade filters and converts the underlying legacy collection to user IDs; error-bearing AllNodes is the internal reader.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/namespaced.go:(*github.com/orneryd/nornicdb/pkg/storage.NamespacedEngine).GetAllNodes/identifier#3",
+    "digest": "9140c88daa2a3b5d993e52c91588bfd44f6a1070704e2b906f5b58907faa6050",
+    "owner_digest": "460ed038895824e289179b8a6f66cb3bbc5a4bc5afcfa4599e0c51c28014353c"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.NamespacedEngine).GetEdgeBetween",
+    "class": "legacy compatibility",
+    "peer": "GetEdgesBetween",
+    "reason": "Namespace single-edge facade prefixes both IDs, verifies returned edge scope and converts it; its release errorless contract is retained.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/namespaced.go:(*github.com/orneryd/nornicdb/pkg/storage.NamespacedEngine).GetEdgeBetween/identifier#3",
+    "digest": "884321ab2064f08596833f9b77d08323bf602922341debd22162c4e788a3ba29",
+    "owner_digest": "14e8c45c804500e039d49be2acd9e7ac2e095caa049f4b4b2b589065709c68d4"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.NamespacedEngine).GetInDegree",
+    "class": "legacy compatibility",
+    "peer": "GetIncomingEdges",
+    "reason": "Namespace incoming-degree facade prefixes the node and forwards the legacy result; this is a compatibility provider, not new counter forwarding.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/namespaced.go:(*github.com/orneryd/nornicdb/pkg/storage.NamespacedEngine).GetInDegree/identifier#3",
+    "digest": "d68c0bbd9a5beacb14ea29c4c4276cb2a71f778e22e07d0501097874647a694e",
+    "owner_digest": "0a8bedd7ced8254e90b663b292262828021dfa1cab54c43a71f154211404034c"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.NamespacedEngine).GetOutDegree",
+    "class": "legacy compatibility",
+    "peer": "GetOutgoingEdges",
+    "reason": "Namespace outgoing-degree facade prefixes the node and forwards the legacy result; this is a compatibility provider, not new counter forwarding.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/namespaced.go:(*github.com/orneryd/nornicdb/pkg/storage.NamespacedEngine).GetOutDegree/identifier#3",
+    "digest": "c9e1e9af728af153dacdd8b7a19622fad4da57ec8a0fac79b4020a9cc622ed88",
+    "owner_digest": "eb82df259bec75929f7a89341a2c7d732acd0445bea9e2d702e9e77243b54f2d"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.RemoteEngine).GetAllNodes",
+    "class": "legacy compatibility",
+    "peer": "AllNodes",
+    "reason": "Remote whole-node facade returns an empty slice when its AllNodes request fails, preserving the historical exported contract.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/remote_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.RemoteEngine).GetAllNodes/identifier#3",
+    "digest": "9140c88daa2a3b5d993e52c91588bfd44f6a1070704e2b906f5b58907faa6050",
+    "owner_digest": "b211d672c8f3ef5188b6fb9e27c8395350cb3b584183efa46fd3d4aa77e9eb69"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.RemoteEngine).GetEdgeBetween",
+    "class": "legacy compatibility",
+    "peer": "GetEdgesBetween",
+    "reason": "Remote single-edge facade projects its typed readEdgesBetween query’s first edge; error-bearing between reads are available to internal consumers.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/remote_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.RemoteEngine).GetEdgeBetween/identifier#3",
+    "digest": "884321ab2064f08596833f9b77d08323bf602922341debd22162c4e788a3ba29",
+    "owner_digest": "4cd771f05adf607614a81fb94ad9f3c6a0f7691dc53cc2d34a44b946c734fe8f"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.RemoteEngine).GetInDegree",
+    "class": "legacy compatibility",
+    "peer": "GetIncomingEdges",
+    "reason": "Remote scalar compatibility facade retains release zero-on-failure behavior. Its Deprecated comment names the error-carrying adjacency peer; no internal read consumer may use this exported compatibility path.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/remote_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.RemoteEngine).GetInDegree/identifier#3",
+    "digest": "d68c0bbd9a5beacb14ea29c4c4276cb2a71f778e22e07d0501097874647a694e",
+    "owner_digest": "1990d88497895365933d7c639c759cc2b8f5273ea7cbab1ae222cd7e95969af2"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.RemoteEngine).GetOutDegree",
+    "class": "legacy compatibility",
+    "peer": "GetOutgoingEdges",
+    "reason": "Remote scalar compatibility facade retains release zero-on-failure behavior. Its Deprecated comment names the error-carrying adjacency peer; no internal read consumer may use this exported compatibility path.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/remote_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.RemoteEngine).GetOutDegree/identifier#3",
+    "digest": "c9e1e9af728af153dacdd8b7a19622fad4da57ec8a0fac79b4020a9cc622ed88",
+    "owner_digest": "2621cf62a70c7a771ecf218bd9d48bf15240b45f46a2da172e914cf09892d55e"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.WALEngine).FindNodeNeedingEmbedding",
+    "class": "distinct responsibility",
+    "peer": "",
+    "reason": "WAL candidate-poll adapter delegates through ReadValueWithCapability and has no mutation or query-result terminal; it retains the optional work-poll protocol.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/wal_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.WALEngine).FindNodeNeedingEmbedding/identifier#3",
+    "digest": "02c205b487a9587c820f8f1e6c0910df19a5928ca0b1a55aafcd0c53281dc608",
+    "owner_digest": "aa2a145e5d485517f2414ac003e0a05279fbacc99edfb612ab73cfda53a49803"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.WALEngine).GetAllNodes",
+    "class": "legacy compatibility",
+    "peer": "AllNodes",
+    "reason": "WAL whole-node legacy provider forwards the exact wrapped engine’s legacy result; internal callers cannot use it.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/wal_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.WALEngine).GetAllNodes/identifier#3",
+    "digest": "9140c88daa2a3b5d993e52c91588bfd44f6a1070704e2b906f5b58907faa6050",
+    "owner_digest": "2df7dcd3e5fd3aeec5db45325974b3d1aa76ca1c4a21b80c7b792fbaecb620f1"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.WALEngine).GetEdgeBetween",
+    "class": "legacy compatibility",
+    "peer": "GetEdgesBetween",
+    "reason": "WAL single-edge legacy provider forwards the exact wrapped engine without bypassing its view; internal reads use the error-bearing peer.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/wal_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.WALEngine).GetEdgeBetween/identifier#3",
+    "digest": "884321ab2064f08596833f9b77d08323bf602922341debd22162c4e788a3ba29",
+    "owner_digest": "1d66996c0ea6c02776c709601c852a5968a9797248afeec3a5ef7cabd868ffd6"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.WALEngine).GetInDegree",
+    "class": "legacy compatibility",
+    "peer": "GetIncomingEdges",
+    "reason": "WAL incoming-degree legacy provider forwards the wrapped result, preserving release behavior without extending counter capabilities.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/wal_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.WALEngine).GetInDegree/identifier#3",
+    "digest": "d68c0bbd9a5beacb14ea29c4c4276cb2a71f778e22e07d0501097874647a694e",
+    "owner_digest": "e6b48b09f4c5892776cd1dc9c0067692488170156297f7014456ab7b94533633"
+  },
+  {
+    "method": "(*github.com/orneryd/nornicdb/pkg/storage.WALEngine).GetOutDegree",
+    "class": "legacy compatibility",
+    "peer": "GetOutgoingEdges",
+    "reason": "WAL outgoing-degree legacy provider forwards the wrapped result, preserving release behavior without extending counter capabilities.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/wal_engine.go:(*github.com/orneryd/nornicdb/pkg/storage.WALEngine).GetOutDegree/identifier#3",
+    "digest": "c9e1e9af728af153dacdd8b7a19622fad4da57ec8a0fac79b4020a9cc622ed88",
+    "owner_digest": "4d0a53ee4e00f97901f6ac4e62bce8bb7e314376b29b0d35cc77c2aa2e06c62d"
+  },
+  {
+    "method": "(github.com/orneryd/nornicdb/pkg/cypher.systemGraphView).GetAllNodes",
+    "class": "legacy compatibility",
+    "peer": "AllNodes",
+    "reason": "System procedure graph is deliberately empty: its legacy whole-node result is nil just as error-bearing AllNodes is empty.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/system_procedure_scope.go:(github.com/orneryd/nornicdb/pkg/cypher.systemGraphView).GetAllNodes/identifier#2",
+    "digest": "9140c88daa2a3b5d993e52c91588bfd44f6a1070704e2b906f5b58907faa6050",
+    "owner_digest": "942de9767740166aa5ded8a0fd78cec9aee7f6fc7a70d41feb06f2ccd44b6a55"
+  },
+  {
+    "method": "(github.com/orneryd/nornicdb/pkg/cypher.systemGraphView).GetEdgeBetween",
+    "class": "legacy compatibility",
+    "peer": "GetEdgesBetween",
+    "reason": "System procedure graph is deliberately empty: its legacy single-edge projection is nil and the error-bearing between read is empty.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/system_procedure_scope.go:(github.com/orneryd/nornicdb/pkg/cypher.systemGraphView).GetEdgeBetween/identifier#2",
+    "digest": "884321ab2064f08596833f9b77d08323bf602922341debd22162c4e788a3ba29",
+    "owner_digest": "a8533a3d92220c0ee1687fa7800e61fe23bc626bc5e5ec86c07b635ccdca7bda"
+  },
+  {
+    "method": "(github.com/orneryd/nornicdb/pkg/cypher.systemGraphView).GetInDegree",
+    "class": "legacy compatibility",
+    "peer": "GetIncomingEdges",
+    "reason": "System procedure graph incoming degree is identically zero because this issued graph has no edges.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/system_procedure_scope.go:(github.com/orneryd/nornicdb/pkg/cypher.systemGraphView).GetInDegree/identifier#2",
+    "digest": "d68c0bbd9a5beacb14ea29c4c4276cb2a71f778e22e07d0501097874647a694e",
+    "owner_digest": "bbad8763aa882675e62555bf555745e690178669d39e70d0e11ac3279f59ac55"
+  },
+  {
+    "method": "(github.com/orneryd/nornicdb/pkg/cypher.systemGraphView).GetOutDegree",
+    "class": "legacy compatibility",
+    "peer": "GetOutgoingEdges",
+    "reason": "System procedure graph outgoing degree is identically zero because this issued graph has no edges.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/cypher/system_procedure_scope.go:(github.com/orneryd/nornicdb/pkg/cypher.systemGraphView).GetOutDegree/identifier#2",
+    "digest": "c9e1e9af728af153dacdd8b7a19622fad4da57ec8a0fac79b4020a9cc622ed88",
+    "owner_digest": "c7fd6ebf96af15a7a3008fe818431b795956eb51a7706bc91efe5dd7838e530d"
+  },
+  {
+    "method": "(github.com/orneryd/nornicdb/pkg/storage.Engine).GetAllNodes",
+    "class": "legacy compatibility",
+    "peer": "AllNodes",
+    "reason": "Engine interface keeps the exported whole-node signature and documents omitted failures; AllNodes is the required internal peer.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/types.go:github.com/orneryd/nornicdb/pkg/storage.type:Engine/identifier#81",
+    "digest": "9140c88daa2a3b5d993e52c91588bfd44f6a1070704e2b906f5b58907faa6050",
+    "owner_digest": "1db65c352d9da22ab0b8a7314aa4c6ae991af81dcde8cafdcd373e980bd29f1c"
+  },
+  {
+    "method": "(github.com/orneryd/nornicdb/pkg/storage.Engine).GetEdgeBetween",
+    "class": "legacy compatibility",
+    "peer": "GetEdgesBetween",
+    "reason": "Engine interface keeps the exported single-edge signature and documents absence/failure ambiguity; GetEdgesBetween is the error-bearing peer.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/types.go:github.com/orneryd/nornicdb/pkg/storage.type:Engine/identifier#63",
+    "digest": "884321ab2064f08596833f9b77d08323bf602922341debd22162c4e788a3ba29",
+    "owner_digest": "1db65c352d9da22ab0b8a7314aa4c6ae991af81dcde8cafdcd373e980bd29f1c"
+  },
+  {
+    "method": "(github.com/orneryd/nornicdb/pkg/storage.Engine).GetInDegree",
+    "class": "legacy compatibility",
+    "peer": "GetIncomingEdges",
+    "reason": "Engine interface keeps the exported incoming-degree signature and documents zero on failure; internal adjacency reads carry errors.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/types.go:github.com/orneryd/nornicdb/pkg/storage.type:Engine/identifier#94",
+    "digest": "d68c0bbd9a5beacb14ea29c4c4276cb2a71f778e22e07d0501097874647a694e",
+    "owner_digest": "1db65c352d9da22ab0b8a7314aa4c6ae991af81dcde8cafdcd373e980bd29f1c"
+  },
+  {
+    "method": "(github.com/orneryd/nornicdb/pkg/storage.Engine).GetOutDegree",
+    "class": "legacy compatibility",
+    "peer": "GetOutgoingEdges",
+    "reason": "Engine interface keeps the exported outgoing-degree signature and documents zero on failure; internal adjacency reads carry errors.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/types.go:github.com/orneryd/nornicdb/pkg/storage.type:Engine/identifier#98",
+    "digest": "c9e1e9af728af153dacdd8b7a19622fad4da57ec8a0fac79b4020a9cc622ed88",
+    "owner_digest": "1db65c352d9da22ab0b8a7314aa4c6ae991af81dcde8cafdcd373e980bd29f1c"
+  },
+  {
+    "method": "github.com/orneryd/nornicdb/pkg/storage.CopyEdge",
+    "class": "distinct responsibility",
+    "peer": "",
+    "reason": "CopyEdge delegates to the shared in-memory copy owner; it reads no storage and cannot report a storage failure.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/transaction.go:github.com/orneryd/nornicdb/pkg/storage.CopyEdge/identifier#1",
+    "digest": "6fa5ba42f2669797b6447192ba87e23478c1b76eac73801d587ca1c3024fd957",
+    "owner_digest": "0ae74dbf24c6831404d45f4bfe981bf1f749962082579fd0068a0e30459d4362"
+  },
+  {
+    "method": "github.com/orneryd/nornicdb/pkg/storage.CopyNode",
+    "class": "distinct responsibility",
+    "peer": "",
+    "reason": "CopyNode delegates to the shared in-memory copy owner; it reads no storage and cannot report a storage failure.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/transaction.go:github.com/orneryd/nornicdb/pkg/storage.CopyNode/identifier#1",
+    "digest": "2804aa0f06fe7315877ddc9f9736ccc1f36c97e902d43af3db80d8905a672e6c",
+    "owner_digest": "0321f3f4a217d91cf915a2006e5aa0b23d50ea2317949eeae37fa033f2dd2277"
+  },
+  {
+    "method": "github.com/orneryd/nornicdb/pkg/storage.FindNodeNeedingEmbedding",
+    "class": "distinct responsibility",
+    "peer": "",
+    "reason": "Generic embedding candidate poll stops VisitNodes on the first NodeNeedsEmbedding value and returns nil when polling cannot supply work; it is not a user query’s success result.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/loader.go:github.com/orneryd/nornicdb/pkg/storage.FindNodeNeedingEmbedding/identifier#1",
+    "digest": "02c205b487a9587c820f8f1e6c0910df19a5928ca0b1a55aafcd0c53281dc608",
+    "owner_digest": "fc2dda8222a4bda41fa3b7f8230c1e27049ccf0d4248f80e31bcdaa79a90934c"
+  },
+  {
+    "method": "github.com/orneryd/nornicdb/pkg/storage.NodeNeedsEmbedding",
+    "class": "distinct responsibility",
+    "peer": "",
+    "reason": "NodeNeedsEmbedding inspects the supplied node’s labels, embeddings and skip/failure properties only; no store operation occurs.",
+    "author": "Lane #1644 (Codex)",
+    "declaration_id": "pkg/storage/types.go:github.com/orneryd/nornicdb/pkg/storage.NodeNeedsEmbedding/identifier#1",
+    "digest": "a4659402781568741382330929372f8626dc098f0200ffb2da11fda56cfb2fcd",
+    "owner_digest": "8e1f13ad511b4ffbe22ddc1a57a5dbcff154c0098f60cd3d92b57463f5dfabc0"
+  }
+]

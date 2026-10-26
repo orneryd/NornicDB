@@ -38,8 +38,20 @@ var fieldClasses = map[string]fieldRow{
 	// Author: #1667 implementation lane (Codex). This is the dictionary
 	// number returned in a caller-owned snapshot reference, not stored count,
 	// quota, suppression or publication state. Future fields need their own row.
-	"pkg/storage.nodeRef.num":                    {class: "snapshot dictionary numeric reference (local value)"},
-	"pkg/storage.bufferedOrderResources.stripes": {class: "write-order stripes (the acquisition itself)"},
+	"pkg/storage.nodeRef.num": {class: "snapshot dictionary numeric reference (local value)"},
+	// Author: Lane #1644 (Codex). These exact fields are qualification
+	// measurements or owned read-result values; none is a persisted count,
+	// quota, suppression decision or publication frontier.
+	"pkg/storage.CapabilityWork.sites":                {class: "opt-in structural-work trace samples"},
+	"pkg/storage.StoredReadWork.Captures":             {class: "per-operation capture work measurement"},
+	"pkg/storage.StoredReadWork.EnvelopeParses":       {class: "per-operation envelope work measurement"},
+	"pkg/storage.StoredReadWork.MetadataBytes":        {class: "per-operation decoded metadata work measurement"},
+	"pkg/storage.StoredReadWork.PropertyValues":       {class: "per-operation decoded property work measurement"},
+	"pkg/storage.StoredReadWork.PropertyBytes":        {class: "per-operation property byte work measurement"},
+	"pkg/storage.StoredReadWork.VectorValues":         {class: "per-operation decoded vector work measurement"},
+	"pkg/storage.StoredReadWork.FullMaterializations": {class: "per-operation full-image work measurement"},
+	"pkg/storage.StoredReference.NumericID":           {class: "owned captured dictionary reference result"},
+	"pkg/storage.bufferedOrderResources.stripes":      {class: "write-order stripes (the acquisition itself)"},
 	// Pending destructive cleanup is published by one lifecycle transition;
 	// point/scan/write owners consult the same scope fence.
 	"pkg/storage.prefixDrops.pendingCount": {class: "publication-order", owners: []string{"pkg/storage.BadgerEngine.transitionPending"}, readers: []string{"pkg/storage.BadgerEngine.pendingNamespaceConflict", "pkg/storage.BadgerEngine.pendingPrefixConflict", "pkg/storage.commitWriter.pendingNamespaceWriteConflict"}},

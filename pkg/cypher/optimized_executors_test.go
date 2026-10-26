@@ -347,7 +347,9 @@ func TestExecuteEdgePropertyAggOptimized_Branches(t *testing.T) {
 
 	// getNodeCached nil branch for missing node ID.
 	cache := map[storage.NodeID]*storage.Node{}
-	assert.Nil(t, exec.getNodeCached("missing-end", cache))
+	missing, err := exec.getNodeCached(storage.BindQueryNodeRead(exec.storage), "missing-end", cache)
+	require.NoError(t, err)
+	assert.Nil(t, missing)
 }
 
 func TestDetectQueryPattern_EdgePropertyAgg(t *testing.T) {
@@ -738,7 +740,9 @@ func TestGetNodeCached(t *testing.T) {
 	cache := make(map[storage.NodeID]*storage.Node)
 
 	// First call should fetch from storage
-	node1 := exec.getNodeCached(nodeID, cache)
+	read := storage.BindQueryNodeRead(store)
+	node1, err := exec.getNodeCached(read, nodeID, cache)
+	require.NoError(t, err)
 	require.NotNil(t, node1)
 	assert.Equal(t, "TestNode", node1.Properties["name"])
 
@@ -746,7 +750,8 @@ func TestGetNodeCached(t *testing.T) {
 	assert.Contains(t, cache, nodeID)
 
 	// Second call should use cache
-	node2 := exec.getNodeCached(nodeID, cache)
+	node2, err := exec.getNodeCached(read, nodeID, cache)
+	require.NoError(t, err)
 	require.NotNil(t, node2)
 	assert.Equal(t, node1, node2, "Should return same cached node")
 }
@@ -794,7 +799,8 @@ func TestBatchGetNodes(t *testing.T) {
 	}
 
 	// Batch get
-	result := exec.BatchGetNodes(ids)
+	result, err := exec.BatchGetNodesContext(ctx, ids)
+	require.NoError(t, err)
 	assert.Len(t, result, 3, "Should return all 3 nodes")
 
 	for _, id := range ids {

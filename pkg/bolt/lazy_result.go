@@ -29,6 +29,7 @@ type lazyResult struct {
 	cancel   context.CancelFunc
 	query    string
 	database string
+	executor QueryExecutor
 	start    time.Time
 	rows     int
 
@@ -55,7 +56,7 @@ var errStatementAborted = errors.New("statement aborted")
 // runStreamed then returns served once both are done, with nothing left to
 // answer. Only a statement that streams starts a goroutine.
 func (s *Session) runStreamed(ctx context.Context, cancel context.CancelFunc, executor QueryExecutor, query string, params map[string]any, database string, start time.Time) (result *QueryResult, served bool, err error) {
-	lazy := &lazyResult{session: s, cancel: cancel, query: query, database: database, start: start}
+	lazy := &lazyResult{session: s, cancel: cancel, query: query, database: database, executor: executor, start: start}
 	lazy.stream = cypher.NewResultStream(lazyResultThreshold, lazy)
 	defer lazy.endStatement()
 	result, err = executor.Execute(cypher.WithResultStream(ctx, lazy.stream), query, params)
@@ -76,6 +77,7 @@ func (l *lazyResult) ResultStreamStarted() {
 	s := l.session
 	s.lastQueryIsWrite = false
 	s.lastQueryDatabase = l.database
+	s.lastEntitySource = s.recordEntityDatabaseResolver(l.database, l.executor)
 	s.lastResult = &QueryResult{Columns: l.stream.Columns()}
 	s.resultIndex = 0
 	s.lastLazy = l
@@ -159,6 +161,7 @@ func (s *Session) closeLazyResult() {
 	s.lastResultMemoryLease.Release()
 	s.lastResultMemoryLease = nil
 	s.lastResult = nil
+	s.lastEntitySource = nil
 	s.resultIndex = 0
 	lazy.close()
 	s.clearActiveRun()

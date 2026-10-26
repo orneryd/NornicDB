@@ -71,7 +71,7 @@ func TestBadgerTransaction_ConflictHelpers(t *testing.T) {
 
 	// Tombstone endpoint after tx2 readTS.
 	require.NoError(t, engine.DeleteNode("test:c"))
-	err = tx2.checkEdgeEndpointConflicts(&Edge{ID: "test:ec", StartNode: "test:c", EndNode: "test:b", Type: "REL"})
+	err = checkEndpointConflictForTest(tx2, &Edge{ID: "test:ec", StartNode: "test:c", EndNode: "test:b", Type: "REL"})
 	require.Error(t, err)
 }
 
@@ -136,10 +136,10 @@ func TestBadgerTransaction_ConflictHelperAdditionalBranches(t *testing.T) {
 	}))
 
 	// nil edge shortcut branch.
-	require.NoError(t, tx.checkEdgeEndpointConflicts(nil))
+	require.NoError(t, checkEndpointConflictForTest(tx, nil))
 
 	// Endpoint not found in either head/body => invalid edge.
-	err = tx.checkEdgeEndpointConflicts(&Edge{ID: "test:e-missing", StartNode: "test:missing", EndNode: "test:n2", Type: "REL"})
+	err = checkEndpointConflictForTest(tx, &Edge{ID: "test:e-missing", StartNode: "test:missing", EndNode: "test:n2", Type: "REL"})
 	require.ErrorIs(t, err, ErrInvalidEdge)
 }
 

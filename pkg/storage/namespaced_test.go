@@ -1431,12 +1431,12 @@ func TestNamespacedEngine_OptionalDelegateFallbackBranches(t *testing.T) {
 	require.Same(t, logger, ns.namespaceLog())
 
 	node, err := ns.GetTemporalNodeAsOf("Doc", "id", "n1", "from", "to", time.Now())
-	require.NoError(t, err)
+	require.ErrorIs(t, err, ErrNotImplemented)
 	require.Nil(t, node)
 
 	current, err := ns.IsCurrentTemporalNode(&Node{ID: "n1", Labels: []string{"Doc"}}, time.Now())
-	require.NoError(t, err)
-	require.True(t, current)
+	require.ErrorIs(t, err, ErrNotImplemented)
+	require.False(t, current, "a refused predicate cannot manufacture visibility")
 
 	_, err = ns.GetNodeVisibleAt("n1", MVCCVersion{})
 	require.ErrorIs(t, err, ErrNotImplemented)
@@ -1579,13 +1579,14 @@ func TestNamespacedEngine_UnprefixFallback(t *testing.T) {
 	assert.Equal(t, NodeID("mydb:n1"), ns.PrefixNodeID("mydb:n1"))
 	assert.Equal(t, EdgeID("mydb:e1"), ns.PrefixEdgeID("mydb:e1"))
 
-	// IDs that don't match the namespace should be returned as-is
-	assert.Equal(t, NodeID("otherdb:n1"), ns.toUserNode(&Node{ID: "otherdb:n1"}, nodeUserView{}).ID)
-	assert.Equal(t, EdgeID("otherdb:e1"), ns.toUserEdge(&Edge{ID: "otherdb:e1"}).ID)
+	// Foreign rows are rejected before translation.
+	assert.Nil(t, ns.toUserNode(&Node{ID: "otherdb:n1"}, nodeUserView{}))
+	assert.Nil(t, ns.toUserEdge(&Edge{ID: "otherdb:e1", StartNode: "otherdb:n1", EndNode: "otherdb:n2"}))
+	assert.Nil(t, ns.toUserEdge(&Edge{ID: "mydb:e1", StartNode: "mydb:n1", EndNode: "otherdb:n2"}))
 
 	// IDs that match should be stripped
 	assert.Equal(t, NodeID("n1"), ns.toUserNode(&Node{ID: "mydb:n1"}, nodeUserView{}).ID)
-	assert.Equal(t, EdgeID("e1"), ns.toUserEdge(&Edge{ID: "mydb:e1"}).ID)
+	assert.Equal(t, EdgeID("e1"), ns.toUserEdge(&Edge{ID: "mydb:e1", StartNode: "mydb:n1", EndNode: "mydb:n2"}).ID)
 }
 
 func TestNamespacedEngine_GetEdgeBetween_NotFound(t *testing.T) {

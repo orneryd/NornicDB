@@ -1,36 +1,27 @@
 package storage
 
-import (
-	"errors"
-)
+import "context"
 
 // nativeDeletionFootprint reads stored-inclusive adjacency, including hidden
 // and acknowledged entities. Preflight supplies identities only; mutation keeps
 // its canonical final read after ownership and write-behind settlement.
 func (b *BadgerEngine) nativeDeletionFootprint(id string, isEdge bool) (writtenEntities, error) {
-	var edges []*Edge
+	request := StoredReadRequest{}
 	if isEdge {
-		edge, err := b.GetStoredEdge(EdgeID(id))
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return writtenEntities{}, err
-		}
-		if edge != nil {
-			edges = append(edges, edge)
-		}
+		request.Edges = []EdgeID{EdgeID(id)}
 	} else {
-		outgoing, err := b.GetStoredOutgoingEdges(NodeID(id))
-		if err != nil {
-			return writtenEntities{}, err
-		}
-		incoming, err := b.GetStoredIncomingEdges(NodeID(id))
-		if err != nil {
-			return writtenEntities{}, err
-		}
-		edges = append(outgoing, incoming...)
+		request.Adjacency = []StoredAdjacencyRequest{{Node: NodeID(id), Direction: Outgoing}, {Node: NodeID(id), Direction: Incoming}}
 	}
-	nodes := make([]NodeID, 0, len(edges)*2)
-	identifiers := make([]EdgeID, 0, len(edges))
-	for _, edge := range edges {
+	facts, err := ReadStoredMetadata(context.Background(), b, request)
+	if err != nil {
+		return writtenEntities{}, err
+	}
+	nodes := make([]NodeID, 0, len(facts.Edges)*2)
+	identifiers := make([]EdgeID, 0, len(facts.Edges))
+	for _, edge := range facts.Edges {
+		if !edge.Exists {
+			continue
+		}
 		nodes = append(nodes, edge.StartNode, edge.EndNode)
 		identifiers = append(identifiers, edge.ID)
 	}

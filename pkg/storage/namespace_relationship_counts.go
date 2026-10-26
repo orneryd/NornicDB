@@ -20,20 +20,24 @@ const (
 // point-read guarantee. Transparent decorators forward here without unwrapping
 // transaction, composite or other views that own different read semantics.
 func NamespaceRelationshipCount(engine Engine, namespace, edgeType, label string, tier RelationshipCountTier) (int64, error) {
-	counter, ok := engine.(NamespaceEdgeTypeStatsProvider)
-	if !ok {
+	selected := false
+	count, err := ReadWithCapability(engine, func(counter NamespaceEdgeTypeStatsProvider) (int64, error) {
+		selected = true
+		switch tier {
+		case RelationshipCountByType:
+			return counter.EdgeCountByTypeInNamespace(namespace, edgeType)
+		case RelationshipCountByStartLabel:
+			return counter.EdgeCountByStartLabelInNamespace(namespace, label, edgeType)
+		case RelationshipCountByEndLabel:
+			return counter.EdgeCountByEndLabelInNamespace(namespace, label, edgeType)
+		default:
+			return 0, ErrInvalidData
+		}
+	}, nil)
+	if !selected {
 		return 0, fmt.Errorf("%w: namespace relationship counters unavailable on %T", ErrInvalidData, engine)
 	}
-	switch tier {
-	case RelationshipCountByType:
-		return counter.EdgeCountByTypeInNamespace(namespace, edgeType)
-	case RelationshipCountByStartLabel:
-		return counter.EdgeCountByStartLabelInNamespace(namespace, label, edgeType)
-	case RelationshipCountByEndLabel:
-		return counter.EdgeCountByEndLabelInNamespace(namespace, label, edgeType)
-	default:
-		return 0, ErrInvalidData
-	}
+	return count, err
 }
 
 // EdgeCountByTypeInNamespace preserves the namespace relationship counter.

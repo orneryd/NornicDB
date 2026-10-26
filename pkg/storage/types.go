@@ -415,10 +415,12 @@ type Engine interface {
 	GetOutgoingEdges(nodeID NodeID) ([]*Edge, error)
 	GetIncomingEdges(nodeID NodeID) ([]*Edge, error)
 	GetEdgesBetween(startID, endID NodeID) ([]*Edge, error)
+	// Deprecated: Use GetEdgesBetween and filter by type to receive errors. Failed lookups may appear as nil.
 	GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge
 	GetEdgesByType(edgeType string) ([]*Edge, error) // Fast lookup by edge type
 	AllNodes() ([]*Node, error)
 	AllEdges() ([]*Edge, error)
+	// Deprecated: Use AllNodes to receive errors. Failed reads are omitted and may appear as an empty collection.
 	GetAllNodes() []*Node
 
 	// Streaming operations
@@ -429,7 +431,9 @@ type Engine interface {
 	StreamNodesWithOptions(ctx context.Context, opts StreamNodesOptions, fn func(node *Node) error) error
 
 	// Degree operations (for graph algorithms)
+	// Deprecated: Use GetIncomingEdges and count the returned edges to receive errors. Failed reads may appear as zero.
 	GetInDegree(nodeID NodeID) int
+	// Deprecated: Use GetOutgoingEdges and count the returned edges to receive errors. Failed reads may appear as zero.
 	GetOutDegree(nodeID NodeID) int
 
 	// Schema operations
@@ -650,7 +654,14 @@ type NamespaceLister interface {
 // Reads, and writes of null, make no name known. Cypher's SET counts a null
 // written for a known key the entity lacks (properties_set, #907).
 type PropertyKeyRegistry interface {
+	NamespacePropertyKeyLookup
 	NotePropertyKeysInNamespace(namespace string, properties map[string]interface{})
+}
+
+// NamespacePropertyKeyLookup reads the key names known in a particular database.
+// It is the read-only part of PropertyKeyRegistry, so read discovery can retain
+// the database view without granting access to token registration operations.
+type NamespacePropertyKeyLookup interface {
 	PropertyKeyKnownInNamespace(namespace, name string) bool
 }
 
@@ -1410,82 +1421,32 @@ type EngineUnwrapper interface {
 // implement EngineUnwrapper. It returns the engine unchanged when it is not
 // wrapped and never loops on self-referencing wrappers.
 func UnwrapEngine(engine Engine) Engine {
-	for {
-		unwrapper, ok := engine.(EngineUnwrapper)
-		if !ok {
-			return engine
+	result, ok := engineCapability[Engine](engine, capabilityIdentityOwner, func(candidate Engine) bool {
+		wrapper, wrapped := OwnedCapability[EngineUnwrapper](candidate)
+		if !wrapped {
+			return true
 		}
-		inner := unwrapper.GetInnerEngine()
-		if inner == nil || inner == engine {
-			return engine
-		}
-		engine = inner
+		inner := wrapper.GetInnerEngine()
+		return inner == nil || sameCapabilityOwner(inner, candidate)
+	})
+	if !ok {
+		return engine
 	}
+	return result
 }
 
 // StreamNodesWithFallback provides streaming iteration with fallback.
 // If the engine supports StreamingEngine, it uses that.
 // Otherwise, it loads all nodes but processes them in chunks.
 func StreamNodesWithFallback(ctx context.Context, engine Engine, chunkSize int, fn NodeVisitor) error {
-	// Try streaming interface first
-	if streamer, ok := engine.(StreamingEngine); ok {
-		return streamer.StreamNodes(ctx, fn)
-	}
-
-	// Fallback: load all but process in chunks to allow GC between
-	nodes, err := engine.AllNodes()
-	if err != nil {
-		return err
-	}
-
-	for i, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if err := fn(node); err != nil {
-			return err
-		}
-
-		// Hint GC every chunk. We intentionally do not mutate the backing slice
-		// returned by the engine because some engines may reuse that storage.
-		if chunkSize > 0 && (i+1)%chunkSize == 0 {
-			// runtime.GC() // Optional: enable for aggressive GC
-		}
-	}
-
-	return nil
+	return VisitWithCapability(engine, func(reader nodeStreamer, deliver func(*Node) error) error { return reader.StreamNodes(ctx, deliver) }, func(deliver func(*Node) error) error {
+		return (nodeReadOperation{engine, StreamNodesOptions{WithEmbeddings: true, ApplyDecayFilter: true}}).visit(ctx, deliver)
+	}, func(node *Node) error { return fn(node) })
 }
 
 // StreamEdgesWithFallback provides streaming iteration with fallback.
 func StreamEdgesWithFallback(ctx context.Context, engine Engine, chunkSize int, fn EdgeVisitor) error {
-	// Try streaming interface first
-	if streamer, ok := engine.(StreamingEngine); ok {
-		return streamer.StreamEdges(ctx, fn)
-	}
-
-	// Fallback: load all but process in chunks
-	edges, err := engine.AllEdges()
-	if err != nil {
-		return err
-	}
-
-	for _, edge := range edges {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		if err := fn(edge); err != nil {
-			return err
-		}
-
-	}
-
-	return nil
+	return VisitWithCapability(engine, func(reader edgeStreamer, deliver func(*Edge) error) error { return reader.StreamEdges(ctx, deliver) }, func(deliver func(*Edge) error) error { return streamEdgesCore(ctx, engine, deliver) }, func(edge *Edge) error { return fn(edge) })
 }
 
 // NodeNeedsEmbedding checks if a node needs an embedding to be generated.
@@ -1547,23 +1508,24 @@ func NodeNeedsEmbedding(node *Node) bool {
 
 // CountNodesWithLabel counts nodes with a specific label using streaming.
 func CountNodesWithLabel(ctx context.Context, engine Engine, label string) (int64, error) {
-	if stats, ok := engine.(LabelStatsEngine); ok {
-		return stats.NodeCountByLabel(label)
+	if composite, ok := ViewMetadataForEngine[*CompositeEngine](engine); ok {
+		return composite.countNodesByLabel(ctx, label)
 	}
-
-	var count int64
-
-	err := StreamNodesWithFallback(ctx, engine, 1000, func(node *Node) error {
-		for _, l := range node.Labels {
-			if l == label {
-				count++
-				break
+	return ReadWithCapability(engine, func(reader LabelStatsEngine) (int64, error) {
+		return NodeCountByLabelWithContext(ctx, reader, label)
+	}, func() (int64, error) {
+		var count int64
+		err := (nodeReadOperation{engine, StreamNodesOptions{Label: label, Projection: []string{}, ApplyDecayFilter: true}}).visit(ctx, func(node *Node) error {
+			for _, candidate := range node.Labels {
+				if candidate == label {
+					count++
+					break
+				}
 			}
-		}
-		return nil
+			return nil
+		})
+		return count, err
 	})
-
-	return count, err
 }
 
 // CollectLabels collects all unique labels using streaming.

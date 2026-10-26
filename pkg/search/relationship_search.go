@@ -775,18 +775,22 @@ func (s *Service) SearchRelationships(ctx context.Context, query string, embeddi
 		}
 		edge, err := s.engine.GetEdge(storage.EdgeID(c.id))
 		if err != nil {
-			continue // deleted, or hidden from reads
+			if errors.Is(err, storage.ErrNotFound) {
+				continue
+			} // deleted, or hidden from reads
+			return nil, searchReadFailure(err)
 		}
 		if len(types) > 0 && !types[edge.Type] {
 			continue
 		}
 		if opts.RelationshipWhere != nil {
-			var start, end *storage.Node
-			if node, err := s.engine.GetNode(edge.StartNode); err == nil {
-				start = node
+			start, err := s.engine.GetNode(edge.StartNode)
+			if err != nil && !errors.Is(err, storage.ErrNotFound) {
+				return nil, searchReadFailure(err)
 			}
-			if node, err := s.engine.GetNode(edge.EndNode); err == nil {
-				end = node
+			end, err := s.engine.GetNode(edge.EndNode)
+			if err != nil && !errors.Is(err, storage.ErrNotFound) {
+				return nil, searchReadFailure(err)
 			}
 			if !opts.RelationshipWhere(edge, start, end) {
 				continue

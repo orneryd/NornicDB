@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -68,6 +69,10 @@ func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelin
 		if current, err := e.getQueryNode(store, id); err == nil && current != nil {
 			staleNodes[id] = current
 		} else {
+			if err != nil && !errors.Is(err, storage.ErrNotFound) {
+				recordExpressionFailure(ctx, err)
+				return
+			}
 			delete(staleNodes, id)
 		}
 	}
@@ -75,6 +80,10 @@ func (e *StorageExecutor) refreshRowEntities(ctx context.Context, rows []pipelin
 		if current, err := store.GetEdge(id); err == nil && current != nil {
 			staleEdges[id] = current
 		} else {
+			if err != nil && !errors.Is(err, storage.ErrNotFound) {
+				recordExpressionFailure(ctx, err)
+				return
+			}
 			delete(staleEdges, id)
 		}
 	}

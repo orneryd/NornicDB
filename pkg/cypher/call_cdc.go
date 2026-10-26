@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"hash/fnv"
@@ -139,7 +140,7 @@ func (e *StorageExecutor) callDbCdcEarliest() (*ExecuteResult, error) {
 // last id as the next from). An identifier older than the earliest retained
 // change is Neo4j's InvalidIdentifier error, one past the last committed
 // change its FutureIdentifier error.
-func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbCdcQuery(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	capture, database, err := e.changeCapture()
 	if err != nil {
 		return nil, err
@@ -190,7 +191,13 @@ func (e *StorageExecutor) callDbCdcQuery(args []interface{}) (*ExecuteResult, er
 	// once, until the limit is reached or the events end.
 	const page = 1000
 	for position := from; !hasLimit || int64(len(result.Rows)) < limit; {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		events, err := capture.ChangeEvents(database, position.commitSeq, position.seq, page)
+		if err == nil {
+			err = ctx.Err()
+		}
 		if err != nil {
 			return nil, localizedStatusError("Neo.DatabaseError.ChangeDataCapture.ScanFailure", "ScanFailure",
 				localization.CypherSpecializedCallsCDCScanFailed(err))

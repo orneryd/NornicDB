@@ -44,6 +44,15 @@ type MemoryEngine struct {
 	*BadgerEngine
 }
 
+// GetInnerEngine identifies the physical in-memory Badger store for the common
+// wrapper cursor. Logical reads and exact mutation still use MemoryEngine.
+func (m *MemoryEngine) GetInnerEngine() Engine {
+	if m == nil {
+		return nil
+	}
+	return m.BadgerEngine
+}
+
 // NewMemoryEngine creates a new in-memory storage engine for testing.
 // It uses BadgerDB's in-memory mode internally.
 //

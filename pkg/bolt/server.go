@@ -413,11 +413,12 @@ type QueryResult struct {
 }
 
 type resultStream struct {
-	result   *QueryResult
-	delivery *resultstream.Delivery
-	index    int
-	isWrite  bool
-	database string
+	entitySource *boltEntityDatabaseResolver
+	result       *QueryResult
+	delivery     *resultstream.Delivery
+	index        int
+	isWrite      bool
+	database     string
 	// lazy produces the rows after result's when the statement is still
 	// running (#939); nil once it has finished.
 	lazy *lazyResult
@@ -1574,6 +1575,7 @@ type Session struct {
 	rawTransactionExecutor          bool
 
 	// Query result state (for streaming with PULL)
+	lastEntitySource      *boltEntityDatabaseResolver
 	lastResult            *QueryResult
 	lastResultMemoryLease *memory.Lease
 	resultMemoryLeases    map[int64]*memory.Lease
@@ -2274,4 +2276,10 @@ func (s *Server) bindStatementCacheIndex() {
 			}
 		}
 	})
+}
+
+// FunctionStorage exposes this adapter's existing issued execution view to
+// result identity projection, including explicit transaction membership.
+func (a *boltQueryExecutorAdapter) FunctionStorage(database string) (storage.Engine, error) {
+	return a.executor.FunctionStorage(database)
 }

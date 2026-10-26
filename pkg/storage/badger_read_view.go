@@ -21,13 +21,14 @@ const (
 // for materializers with no user callbacks; it permits current body-cache reads,
 // validated as one group, with a strict snapshot retry if a cache changes.
 type readViewOptions struct {
-	ctx       context.Context // admission only; never retained as a view lifetime
-	scopeKind readScopeKind
-	nodeIDs   []NodeID
-	longLived bool
-	scope     string
-	cached    func(*WriteBehindBuffer) (bool, error)
-	current   *bool
+	ctx        context.Context // admission only; never retained as a view lifetime
+	scopeKind  readScopeKind
+	nodeIDs    []NodeID
+	captureTxn func(*badger.Txn, *WriteBehindBuffer) error
+	longLived  bool
+	scope      string
+	cached     func(*WriteBehindBuffer) (bool, error)
+	current    *bool
 }
 
 type badgerReadView struct {
@@ -102,6 +103,15 @@ func (b *BadgerEngine) captureReadView(capture func(*WriteBehindBuffer), options
 			overlay = nil
 		}
 		capture(overlay)
+	}
+	if opts.captureTxn != nil {
+		if err := opts.captureTxn(txn, w); err != nil {
+			if opts.longLived {
+				b.txnWG.Done()
+			}
+			view.Close()
+			return nil, err
+		}
 	}
 	if opts.longLived {
 		b.txnWG.Done()

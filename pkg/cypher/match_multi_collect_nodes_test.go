@@ -4,6 +4,7 @@ import (
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -22,6 +23,8 @@ type collectNodesLabelProbeEngine struct {
 	labelIDs            []storage.NodeID
 	projectedNodes      []*storage.Node
 	projectedProperties []string
+	projectedErr        error
+	projectedAttempts   int
 }
 
 type collectNodesIDProbeEngine struct {
@@ -77,6 +80,10 @@ func (e *collectNodesLabelProbeEngine) ForEachNodeIDByLabel(label string, visit 
 }
 
 func (e *collectNodesLabelProbeEngine) StreamNodesByLabelProjected(_ string, properties []string, visit func(*storage.Node) error) error {
+	e.projectedAttempts++
+	if e.projectedErr != nil {
+		return e.projectedErr
+	}
 	if e.projectedNodes == nil {
 		return storage.ErrNotImplemented
 	}
@@ -118,11 +125,17 @@ func TestPipelineFilteredCountReducesProjectedLabelStream(t *testing.T) {
 func TestPipelineFilteredCount_PropagatesProjectedReaderError(t *testing.T) {
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
-	probe := &collectNodesLabelProbeEngine{Engine: base}
-	result, err := NewStorageExecutor(probe).Execute(context.Background(),
+	failure := errors.New("projected count read failed")
+	probe := &collectNodesLabelProbeEngine{Engine: base, projectedErr: failure}
+	exec := NewStorageExecutor(probe)
+	probe.labelCalls = 0
+	result, err := exec.Execute(context.Background(),
 		"MATCH (person:Person) WHERE person.age > 30 RETURN count(person) AS count", nil)
-	require.ErrorIs(t, err, storage.ErrNotImplemented)
+	require.ErrorIs(t, err, failure)
 	require.Nil(t, result)
+	require.Equal(t, 1, probe.projectedAttempts)
+	require.Zero(t, probe.labelCalls)
+	require.Zero(t, probe.streamCalls)
 }
 
 func TestCollectNodesWithStreaming_LabelLimitPrefersLabelLookup(t *testing.T) {
@@ -206,12 +219,50 @@ func TestMatchLimitStopsProjectedLabelStreamAfterRequestedRows(t *testing.T) {
 func TestCollectNodesWithStreaming_PropagatesProjectedReaderError(t *testing.T) {
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
-	probe := &collectNodesLabelProbeEngine{Engine: base, labelIDs: []storage.NodeID{"nornic:one"}}
+	failure := errors.New("projected node read failed")
+	probe := &collectNodesLabelProbeEngine{Engine: base, labelIDs: []storage.NodeID{"nornic:one"}, projectedErr: failure}
 	exec := NewStorageExecutor(probe)
+	probe.labelCalls = 0
 	nodes, err := exec.collectNodesWithStreaming(context.Background(), []string{"Person"}, nil, "n", "", 1)
-	require.ErrorIs(t, err, storage.ErrNotImplemented)
+	require.ErrorIs(t, err, failure)
 	require.Nil(t, nodes)
 	require.Equal(t, 0, probe.labelLookupCalls)
+	require.Equal(t, 1, probe.projectedAttempts)
+	require.Zero(t, probe.labelCalls)
+	require.Zero(t, probe.streamCalls)
+}
+
+func TestCollectNodesWithStreaming_ProjectedRefusalUsesLabelLookup(t *testing.T) {
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+	t.Cleanup(func() { _ = base.Close() })
+	_, err := base.CreateNode(&storage.Node{ID: "nornic:one", Labels: []string{"Person"}})
+	require.NoError(t, err)
+	probe := &collectNodesLabelProbeEngine{Engine: base, labelIDs: []storage.NodeID{"nornic:one"}}
+	exec := NewStorageExecutor(probe)
+	probe.labelCalls = 0
+	nodes, err := exec.collectNodesWithStreaming(context.Background(), []string{"Person"}, nil, "n", "", 1)
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.Equal(t, storage.NodeID("nornic:one"), nodes[0].ID)
+	require.Equal(t, 1, probe.projectedAttempts)
+	require.Equal(t, 1, probe.labelLookupCalls)
+	require.Zero(t, probe.labelCalls)
+	require.Zero(t, probe.streamCalls)
+}
+
+func TestCollectNodesWithStreaming_ProjectedRefusalPropagatesOrdinaryError(t *testing.T) {
+	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+	t.Cleanup(func() { _ = base.Close() })
+	probe := &collectNodesLabelProbeEngine{Engine: base}
+	exec := NewStorageExecutor(probe)
+	probe.labelCalls = 0
+	nodes, err := exec.collectNodesWithStreaming(context.Background(), []string{"Person"}, nil, "n", "", -1)
+	require.ErrorIs(t, err, assert.AnError)
+	require.Nil(t, nodes)
+	require.Equal(t, 1, probe.projectedAttempts)
+	require.Equal(t, 1, probe.streamCalls)
+	require.Zero(t, probe.labelLookupCalls)
+	require.Zero(t, probe.labelCalls)
 }
 
 func TestCollectNodesWithStreaming_PropagatesLabelLookupReadError(t *testing.T) {

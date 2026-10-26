@@ -44,7 +44,7 @@ type SnapshotVisitor interface {
 // WriteSnapshot writes lossless NDS2 v2 entity frames using streaming enumeration.
 // Its existing lightweight route does not fetch separately stored embeddings.
 func WriteSnapshot(ctx context.Context, engine Engine, writer io.Writer, options SnapshotOptions) error {
-	_, ok := engine.(StreamingEngine)
+	ok := HasReadCapability[StreamingEngine](engine)
 	if !ok {
 		return ErrStreamingSnapshotUnsupported
 	}

@@ -89,7 +89,17 @@ type bufferedCommit struct {
 
 // CommitBuffer is one generation of buffered committed writes. It is
 // append-only while active and read-only while draining.
+// bufferedEntityID keeps node/edge provenance distinct even for equal IDs.
+type bufferedEntityID struct {
+	kind bufferedEntityKind
+	id   string
+}
+
 type CommitBuffer struct {
+	// versions is read provenance folded by the EXISTING generation owner.
+	// It stores only the issued ACK version, never another body or write order.
+	versions map[bufferedEntityID]MVCCVersion
+
 	readScopes map[string]struct{}
 	commits    []bufferedCommit
 
@@ -201,6 +211,23 @@ func (b *CommitBuffer) Commits() []bufferedCommit {
 func (b *CommitBuffer) AddCommit(c bufferedCommit) {
 	b.commits = append(b.commits, c)
 	for _, op := range c.ops {
+		switch op.Type {
+		case OpCreateNode, OpUpdateNode:
+			if op.Node != nil {
+				b.recordEntityVersion(bufferedNodeEntity, string(op.Node.ID), c.version)
+			}
+		case OpDeleteNode:
+			b.recordEntityVersion(bufferedNodeEntity, string(op.NodeID), c.version)
+			for _, id := range op.DeletedEdgeIDs {
+				b.recordEntityVersion(bufferedEdgeEntity, string(id), c.version)
+			}
+		case OpCreateEdge, OpUpdateEdge:
+			if op.Edge != nil {
+				b.recordEntityVersion(bufferedEdgeEntity, string(op.Edge.ID), c.version)
+			}
+		case OpDeleteEdge:
+			b.recordEntityVersion(bufferedEdgeEntity, string(op.EdgeID), c.version)
+		}
 		visitOperationTotalCounts(op, b.totalCounts.add)
 		switch op.Type {
 		case OpCreateNode, OpUpdateNode:
@@ -311,6 +338,7 @@ func (b *CommitBuffer) addNode(n *Node) {
 	if _, exists := b.nodes[n.ID]; !exists {
 		b.totalCounts.add(string(n.ID), false, 1)
 	}
+	delete(b.versions, bufferedEntityID{bufferedNodeEntity, string(n.ID)})
 	copyNode := *n
 	b.clearEntityDeletion(bufferedNodeEntity, string(n.ID))
 	b.nodes[n.ID] = &copyNode
@@ -337,6 +365,7 @@ func (b *CommitBuffer) addEdge(e *Edge) {
 	if _, exists := b.edges[e.ID]; !exists {
 		b.totalCounts.add(string(e.ID), true, 1)
 	}
+	delete(b.versions, bufferedEntityID{bufferedEdgeEntity, string(e.ID)})
 	copyEdge := *e
 	b.clearEntityDeletion(bufferedEdgeEntity, string(e.ID))
 	b.edges[e.ID] = &copyEdge
@@ -369,6 +398,8 @@ func (b *CommitBuffer) addDelete(key string) {
 	if key == "" {
 		return
 	}
+	delete(b.versions, bufferedEntityID{bufferedNodeEntity, key})
+	delete(b.versions, bufferedEntityID{bufferedEdgeEntity, key})
 	b.deletes[key] = bufferedNodeEntity | bufferedEdgeEntity
 	b.order = append(b.order, bufferedMutation{kind: bufferedOpDelete, id: key})
 }
@@ -1626,4 +1657,19 @@ func (w *WriteBehindBuffer) setDispatch(dispatch func()) {
 	w.mu.Lock()
 	w.dispatch = dispatch
 	w.mu.Unlock()
+}
+
+func (b *CommitBuffer) recordEntityVersion(kind bufferedEntityKind, id string, version MVCCVersion) {
+	if id == "" {
+		return
+	}
+	key := bufferedEntityID{kind, id}
+	if version.IsZero() {
+		delete(b.versions, key)
+		return
+	}
+	if b.versions == nil {
+		b.versions = make(map[bufferedEntityID]MVCCVersion)
+	}
+	b.versions[key] = version
 }

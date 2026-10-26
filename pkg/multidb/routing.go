@@ -5,6 +5,7 @@
 package multidb
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/orneryd/nornicdb/internal/labelrouting"
@@ -57,7 +58,7 @@ func NewLabelRouting() *LabelRouting {
 func (r *LabelRouting) SetLabelRouting(label string, constituents []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.labelMap.Set(label, constituents)
+	r.labelMap.Set(label, slices.Clone(constituents))
 }
 
 // RouteQuery routes a query based on labels.

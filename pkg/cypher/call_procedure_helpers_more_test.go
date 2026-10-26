@@ -102,12 +102,16 @@ func TestCallDbHelpers_ErrorAndNilSchemaBranches(t *testing.T) {
 	execNodesErr := NewStorageExecutor(&allNodesErrEngine{MemoryEngine: newTestMemoryEngine(t), err: nodesErr})
 	_, err := execNodesErr.callDbLabels()
 	require.ErrorIs(t, err, nodesErr)
-	require.Equal(t, 0, execNodesErr.countLabels())
+	labels, labelErr := execNodesErr.countLabels()
+	require.Zero(t, labels)
+	require.Error(t, labelErr)
 
 	execEdgesErr := NewStorageExecutor(&allEdgesErrEngine{MemoryEngine: newTestMemoryEngine(t), err: edgesErr})
 	_, err = execEdgesErr.callDbRelationshipTypes()
 	require.ErrorIs(t, err, edgesErr)
-	require.Equal(t, 0, execEdgesErr.countRelTypes())
+	types, typeErr := execEdgesErr.countRelTypes()
+	require.Zero(t, types)
+	require.Error(t, typeErr)
 
 	execNilSchema := NewStorageExecutor(&callNilSchemaEngine{MemoryEngine: newTestMemoryEngine(t)})
 	res, err := execNilSchema.callDbConstraints()

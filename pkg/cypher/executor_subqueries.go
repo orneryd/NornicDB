@@ -271,7 +271,7 @@ func (e *StorageExecutor) seedNodesFromOuterMatch(ctx context.Context, outerPart
 				}
 				// Indexed IN-list path for batched correlated lookups.
 				if params := getParamsFromContext(ctx); params != nil {
-					if nodes, ok, err := e.tryCollectNodesFromPropertyIndexIn(np, whereClause, params); ok || err != nil {
+					if nodes, ok, err := e.tryCollectNodesFromPropertyIndexIn(ctx, np, whereClause, params); ok || err != nil {
 						return nodes, err
 					}
 				}
@@ -359,11 +359,19 @@ func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, va
 				seedNodes = append(seedNodes, v)
 			}
 		case map[string]interface{}:
-			if n := e.seedNodeFromMap(v); n != nil {
+			n, err := e.seedNodeFromMap(v)
+			if err != nil {
+				return nil, err
+			}
+			if n != nil {
 				seedNodes = append(seedNodes, n)
 			}
 		case string:
-			if n := e.seedNodeFromIDString(v); n != nil {
+			n, err := e.seedNodeFromIDString(v)
+			if err != nil {
+				return nil, err
+			}
+			if n != nil {
 				seedNodes = append(seedNodes, n)
 			}
 		case []interface{}:
@@ -375,11 +383,19 @@ func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, va
 						seedNodes = append(seedNodes, wrapped)
 					}
 				case map[string]interface{}:
-					if n := e.seedNodeFromMap(wrapped); n != nil {
+					n, err := e.seedNodeFromMap(wrapped)
+					if err != nil {
+						return nil, err
+					}
+					if n != nil {
 						seedNodes = append(seedNodes, n)
 					}
 				case string:
-					if n := e.seedNodeFromIDString(wrapped); n != nil {
+					n, err := e.seedNodeFromIDString(wrapped)
+					if err != nil {
+						return nil, err
+					}
+					if n != nil {
 						seedNodes = append(seedNodes, n)
 					}
 				}
@@ -389,36 +405,48 @@ func (e *StorageExecutor) extractSeedNodesFromResult(outerRes *ExecuteResult, va
 	return seedNodes, nil
 }
 
-func (e *StorageExecutor) seedNodeFromMap(m map[string]interface{}) *storage.Node {
+func (e *StorageExecutor) seedNodeFromMap(m map[string]interface{}) (*storage.Node, error) {
 	for _, key := range []string{"_nodeId", "id", "_id", "elementId"} {
 		if raw, ok := m[key]; ok {
 			if id, ok := raw.(string); ok && id != "" {
-				if n := e.seedNodeFromIDString(id); n != nil {
-					return n
+				n, err := e.seedNodeFromIDString(id)
+				if err != nil {
+					return nil, err
+				}
+				if n != nil {
+					return n, nil
 				}
 			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
-func (e *StorageExecutor) seedNodeFromIDString(id string) *storage.Node {
+func (e *StorageExecutor) seedNodeFromIDString(id string) (*storage.Node, error) {
 	id = strings.TrimSpace(id)
 	if id == "" {
-		return nil
+		return nil, nil
 	}
 	// Direct NodeID lookup first.
-	if n, err := e.getQueryNode(e.storage, storage.NodeID(id)); err == nil && n != nil {
-		return n
+	n, err := e.getQueryNode(e.storage, storage.NodeID(id))
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return nil, err
+	}
+	if n != nil {
+		return n, nil
 	}
 	// Handle elementId-style values: "<prefix>:<db>:<id>" -> "<id>"
 	if last := strings.LastIndex(id, ":"); last >= 0 && last+1 < len(id) {
 		idTail := id[last+1:]
-		if n, err := e.getQueryNode(e.storage, storage.NodeID(idTail)); err == nil && n != nil {
-			return n
+		n, err := e.getQueryNode(e.storage, storage.NodeID(idTail))
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, err
+		}
+		if n != nil {
+			return n, nil
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // parseCallSubquery is the compatibility adapter for body/plan consumers. The

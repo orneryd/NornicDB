@@ -182,7 +182,7 @@ func NewDatabaseManager(ctx context.Context, inner storage.Engine, config *Confi
 	// DatabaseManager requires an un-namespaced base engine. It creates NamespacedEngines
 	// per database. Passing a NamespacedEngine here would double-prefix IDs and can
 	// leak system metadata into the default database (e.g., "nornic:system:...").
-	if _, ok := inner.(*storage.NamespacedEngine); ok {
+	if _, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](inner); ok {
 		return nil, fmt.Errorf("multidb: NewDatabaseManager requires base storage (non-namespaced); pass db.GetBaseStorageForManager()")
 	}
 	// Ensure callers can't accidentally make the system database the default.
@@ -229,7 +229,7 @@ func NewDatabaseManager(ctx context.Context, inner storage.Engine, config *Confi
 	// to create/migrate metadata. Standby nodes should start quickly and serve
 	// reads/UI while replication catches them up.
 	readOnly := false
-	if leader, ok := inner.(interface{ IsLeader() bool }); ok && !leader.IsLeader() {
+	if leader, ok := storage.MetadataCapabilityForEngine[interface{ IsLeader() bool }](inner); ok && !leader.IsLeader() {
 		readOnly = true
 	}
 
@@ -356,7 +356,7 @@ func (m *DatabaseManager) cleanupLeakedSystemNodes() {
 		candidateIDs := make(map[storage.NodeID]struct{})
 		scanFailed := false
 		for _, prefix := range candidatePrefixes {
-			err := engine.StreamNodesByPrefix(context.Background(), prefix, func(node *storage.Node) error {
+			err := engine.StreamNodesWithOptions(context.Background(), storage.StreamNodesOptions{Prefix: prefix, WithEmbeddings: true, ApplyDecayFilter: true}, func(node *storage.Node) error {
 				if isLeak(node) {
 					candidateIDs[node.ID] = struct{}{}
 				}

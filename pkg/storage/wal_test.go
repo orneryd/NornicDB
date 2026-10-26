@@ -3131,8 +3131,10 @@ func TestWALEngine_HelperDelegatesAndFallbacks(t *testing.T) {
 		noIterBase := newTestMemoryEngine(t)
 		t.Cleanup(func() { _ = noIterBase.Close() })
 		noIter := newWALEngine(t, &exportableOnlyEngine{Engine: noIterBase})
-		err = noIter.IterateNodes(func(node *Node) bool { return true })
-		require.ErrorContains(t, err, "does not support IterateNodes")
+		fallbackVisits := 0
+		err = noIter.IterateNodes(func(node *Node) bool { fallbackVisits++; return true })
+		require.NoError(t, err, "an absent optional iterator uses the ordinary view's AllNodes read")
+		require.Zero(t, fallbackVisits)
 		assert.Nil(t, noIter.FindNodeNeedingEmbedding())
 		assert.Equal(t, 0, noIter.RefreshPendingEmbeddingsIndex())
 		assert.Equal(t, 0, noIter.PendingEmbeddingsCount())

@@ -183,7 +183,7 @@ func (e *StorageExecutor) systemStorage() (storage.Engine, error) {
 // the transaction's database before executing any administration command.
 func (e *StorageExecutor) privilegeStorage(writes bool) (storage.Engine, error) {
 	if e.txContext != nil && e.txContext.active {
-		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+		if wrapper, ok := e.nativeMemberFor(e.storage); ok {
 			return wrapper, nil
 		}
 		if wrapper := e.txContext.storageWrapper; wrapper != nil {

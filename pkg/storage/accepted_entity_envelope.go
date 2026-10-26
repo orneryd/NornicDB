@@ -113,31 +113,41 @@ const (
 // BeginEntityTransaction obtains one native frame through the actual wrapper
 // chain and binds its durability mode before exposing it to a caller.
 func BeginEntityTransaction(engine Engine, mode EntityCommitMode) (*BadgerTransaction, error) {
+	ctx := context.Background()
+
 	if !mode.valid() {
 		return nil, ErrInvalidData
 	}
-	visited := map[Engine]bool{}
-	for engine != nil && !visited[engine] {
-		visited[engine] = true
-		if starter, ok := engine.(interface {
-			BeginTransaction() (*BadgerTransaction, error)
-		}); ok {
-			tx, err := starter.BeginTransaction()
-			if err != nil {
-				return nil, err
-			}
-			tx.mu.Lock()
-			tx.commitMode = mode
-			tx.mu.Unlock()
-			return tx, nil
-		}
-		wrapper, ok := engine.(EngineUnwrapper)
-		if !ok {
-			break
-		}
-		engine = wrapper.GetInnerEngine()
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-	return nil, errors.New("entity transaction needs a native transactional engine")
+	var starter interface {
+		BeginTransaction() (*BadgerTransaction, error)
+	}
+	VisitPhysicalEngineOwners(engine, func(owner Engine) bool {
+		if ctx.Err() != nil {
+			return false
+		}
+		var found bool
+		starter, found = OwnedCapability[interface {
+			BeginTransaction() (*BadgerTransaction, error)
+		}](owner)
+		return !found
+	})
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if starter == nil {
+		return nil, errors.New("entity transaction needs a native transactional engine")
+	}
+	tx, err := starter.BeginTransaction()
+	if err != nil {
+		return nil, err
+	}
+	tx.mu.Lock()
+	tx.commitMode = mode
+	tx.mu.Unlock()
+	return tx, nil
 }
 
 // ApplyAcceptedEntityTransaction waits for the full accepted apply, including

@@ -230,7 +230,7 @@ func (ed *EdgeDecay) scanAndDecay(ctx context.Context) (scanned, decayed, delete
 	startTime := time.Now()
 
 	// Get all edges (we need an iterator ideally, but for now use AllEdges if available)
-	exporter, ok := ed.storage.(storage.ExportableEngine)
+	exporter, ok := ed.storage, ed.storage != nil
 	if !ok {
 		return 0, 0, 0, fmt.Errorf("storage does not support edge export")
 	}

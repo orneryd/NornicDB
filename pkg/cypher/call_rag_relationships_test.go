@@ -48,9 +48,11 @@ func TestCallDbRetrieveRelationships(t *testing.T) {
 
 	// An endpoint no longer visible is null.
 	require.NoError(t, store.DeleteNode(relationship.EndNode))
-	require.Nil(t, exec.relationshipSearchResult(&search.SearchResponse{Results: []search.SearchResult{{
+	projected, projectionErr := exec.relationshipSearchResult(&search.SearchResponse{Results: []search.SearchResult{{
 		Relationship: relationship,
-	}}}).Rows[0][2])
+	}}})
+	require.NoError(t, projectionErr)
+	require.Nil(t, projected.Rows[0][2])
 
 	_, err = exec.Execute(ctx, "CALL db.retrieveRelationships({query: 'zephyrine', n: 5})", nil)
 	require.ErrorContains(t, err, "can't be continued")

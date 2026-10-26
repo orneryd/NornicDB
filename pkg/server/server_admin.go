@@ -35,11 +35,20 @@ func (s *Server) handleAdminStats(w http.ResponseWriter, r *http.Request) {
 
 		storage, err := s.dbManager.GetStorage(dbName)
 		if err != nil {
-			continue
+			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+			return
 		}
 
-		nodeCount, _ := storage.NodeCount()
-		edgeCount, _ := storage.EdgeCount()
+		nodeCount, err := storage.NodeCount()
+		if err != nil {
+			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+			return
+		}
+		edgeCount, err := storage.EdgeCount()
+		if err != nil {
+			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+			return
+		}
 
 		totalNodeCount += nodeCount
 		totalEdgeCount += edgeCount

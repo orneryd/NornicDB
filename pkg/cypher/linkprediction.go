@@ -63,6 +63,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 
 	"github.com/orneryd/nornicdb/pkg/linkpredict"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -301,12 +302,21 @@ func (e *StorageExecutor) callGdsLinkPredictionPredict(ctx context.Context, args
 	// embeddings, every chunk, each named embedding with its namesake
 	// (#1186). The source's embeddings are read once.
 	var sourceEmbeddings map[string][][]float32
-	if sourceNode, err := config.identityStore.GetNode(config.SourceNode); err == nil {
-		sourceEmbeddings = nodeEmbeddingGroups(sourceNode)
+	sourceNode, err := config.identityStore.GetNode(config.SourceNode)
+	if err != nil && !errors.Is(err, storage.ErrNotFound) {
+		return nil, err
 	}
+	sourceEmbeddings = nodeEmbeddingGroups(sourceNode)
 	scorer.SetSemanticScorer(func(ctx context.Context, source, target storage.NodeID) float64 {
+		if getExpressionFailure(ctx) != nil {
+			return 0
+		}
 		targetNode, err := config.identityStore.GetNode(target)
-		if err != nil || source != config.SourceNode {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			recordExpressionFailure(ctx, err)
+			return 0
+		}
+		if targetNode == nil || source != config.SourceNode {
 			return 0.0
 		}
 		return linkpredict.BestCosineSimilarity(sourceEmbeddings, nodeEmbeddingGroups(targetNode))
@@ -354,7 +364,9 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		if err != nil {
 			return nil, nil, err
 		}
-		config.bindIdentity(e.storage, projection)
+		if err := config.bindIdentity(e.storage, projection); err != nil {
+			return nil, nil, err
+		}
 		if missing := missingNames(config.RelationshipTypes, projection.Types); len(missing) > 0 {
 			return nil, nil, localizedError(localization.CypherGraphProceduresRelationshipTypesNotInGraph(gdsNameList(missing), gdsNameList(projection.Types)), nil)
 		}
@@ -386,7 +398,9 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 		degree = func(node storage.NodeID) int { return len(relationships[node]) }
 	} else {
 		view := identityGraphEngine(e.storage, e.graphIdentityScope)
-		config.bindIdentity(view, nil)
+		if err := config.bindIdentity(view, nil); err != nil {
+			return nil, nil, err
+		}
 		build := linkpredict.DefaultBuildConfig()
 		build.RelationshipTypes = config.RelationshipTypes
 		built, err := linkpredict.BuildGraphFromEngineOptimized(ctx, view, build)
@@ -401,7 +415,12 @@ func (e *StorageExecutor) linkPredictionGraph(ctx context.Context, config *linkP
 				return count
 			}
 			seen := make(map[storage.EdgeID]struct{})
-			for _, edge := range reader.getNodeEdges(node) {
+			edges, err := reader.getNodeEdges(node)
+			if err != nil {
+				recordExpressionFailure(ctx, err)
+				return 0
+			}
+			for _, edge := range edges {
 				if config.RelationshipTypes == nil || containsString(config.RelationshipTypes, edge.Type) {
 					seen[edge.ID] = struct{}{}
 				}

@@ -1305,7 +1305,7 @@ type RestorableEngine interface {
 }
 
 func (db *DB) rebuildTemporalIndexesNoLock(ctx context.Context) error {
-	if maint, ok := db.baseStorage.(storage.TemporalMaintenanceEngine); ok {
+	if maint, ok := storage.OwnedCapability[storage.TemporalMaintenanceEngine](db.baseStorage); ok {
 		return maint.RebuildTemporalIndexes(ctx)
 	}
 	return nil
@@ -1330,7 +1330,7 @@ func (db *DB) PruneTemporalHistory(ctx context.Context, opts storage.TemporalPru
 	if db.closed {
 		return 0, ErrClosed
 	}
-	if maint, ok := db.baseStorage.(storage.TemporalMaintenanceEngine); ok {
+	if maint, ok := storage.OwnedCapability[storage.TemporalMaintenanceEngine](db.baseStorage); ok {
 		return maint.PruneTemporalHistory(ctx, opts)
 	}
 	return 0, nil
@@ -1344,7 +1344,7 @@ func (db *DB) RebuildMVCCHeads(ctx context.Context) error {
 	if db.closed {
 		return ErrClosed
 	}
-	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
+	if maint, ok := storage.OwnedCapability[storage.MVCCMaintenanceEngine](db.baseStorage); ok {
 		return maint.RebuildMVCCHeads(ctx)
 	}
 	return nil
@@ -1358,7 +1358,7 @@ func (db *DB) PruneMVCCVersions(ctx context.Context, opts storage.MVCCPruneOptio
 	if db.closed {
 		return 0, ErrClosed
 	}
-	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
+	if maint, ok := storage.OwnedCapability[storage.MVCCMaintenanceEngine](db.baseStorage); ok {
 		return maint.PruneMVCCVersions(ctx, opts)
 	}
 	return 0, nil
@@ -1372,7 +1372,7 @@ func (db *DB) LifecycleStatus() (map[string]interface{}, error) {
 	if db.closed {
 		return nil, ErrClosed
 	}
-	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
+	if lce, ok := storage.ViewMetadataForEngine[storage.MVCCLifecycleEngine](db.baseStorage); ok {
 		return lce.LifecycleStatus(), nil
 	}
 	return map[string]interface{}{"enabled": false}, nil
@@ -1386,7 +1386,7 @@ func (db *DB) TriggerLifecyclePrune(ctx context.Context) error {
 	if db.closed {
 		return ErrClosed
 	}
-	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
+	if lce, ok := storage.OwnedCapability[storage.MVCCLifecycleEngine](db.baseStorage); ok {
 		return lce.TriggerPruneNow(ctx)
 	}
 	return nil
@@ -1400,7 +1400,7 @@ func (db *DB) PauseLifecycle() error {
 	if db.closed {
 		return ErrClosed
 	}
-	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
+	if lce, ok := storage.OwnedCapability[storage.MVCCLifecycleEngine](db.baseStorage); ok {
 		lce.PauseLifecycle()
 	}
 	return nil
@@ -1414,7 +1414,7 @@ func (db *DB) ResumeLifecycle() error {
 	if db.closed {
 		return ErrClosed
 	}
-	if lce, ok := db.baseStorage.(storage.MVCCLifecycleEngine); ok {
+	if lce, ok := storage.OwnedCapability[storage.MVCCLifecycleEngine](db.baseStorage); ok {
 		lce.ResumeLifecycle()
 	}
 	return nil
@@ -1432,7 +1432,7 @@ func (db *DB) Backup(ctx context.Context, path string) error {
 	}
 
 	// Check if storage engine supports backup
-	if backupable, ok := db.storage.(BackupableEngine); ok {
+	if backupable, ok := storage.OwnedCapability[BackupableEngine](db.storage); ok {
 		if err := backupable.Backup(path); err == nil {
 			return nil
 		} else if !errors.Is(err, storage.ErrNotImplemented) {
@@ -1489,7 +1489,7 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 		db.mu.RUnlock()
 		return ErrClosed
 	}
-	restorable, supportsNativeRestore := db.storage.(RestorableEngine)
+	restorable, supportsNativeRestore := storage.OwnedCapability[RestorableEngine](db.storage)
 	embedQueue := db.embedQueue
 	db.mu.RUnlock()
 
@@ -1530,7 +1530,7 @@ func (db *DB) Restore(ctx context.Context, path string) error {
 				db.mu.Unlock()
 				return localizedError(localization.NornicDBCoreRestoreTemporalIndexesFailed(err), err)
 			}
-			if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
+			if maint, ok := storage.OwnedCapability[storage.MVCCMaintenanceEngine](db.baseStorage); ok {
 				if err := maint.RebuildMVCCHeads(ctx); err != nil {
 					db.mu.Unlock()
 					return localizedError(localization.NornicDBCoreRestoreMVCCHeadsFailed(err), err)
@@ -1594,7 +1594,7 @@ legacyJSONRestore:
 		db.mu.Unlock()
 		return localizedError(localization.NornicDBCoreRestoreTemporalIndexesFailed(err), err)
 	}
-	if maint, ok := db.baseStorage.(storage.MVCCMaintenanceEngine); ok {
+	if maint, ok := storage.OwnedCapability[storage.MVCCMaintenanceEngine](db.baseStorage); ok {
 		if err := maint.RebuildMVCCHeads(ctx); err != nil {
 			db.mu.Unlock()
 			return localizedError(localization.NornicDBCoreRestoreMVCCHeadsFailed(err), err)

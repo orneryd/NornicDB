@@ -61,7 +61,12 @@ func checkSnapshotTranscoder(t *testing.T, engine *BadgerEngine, edge *Edge, str
 	if strip != "" {
 		ids = NewNamespacedEngine(engine, strings.TrimSuffix(strip, ":"))
 	}
-	fast, err := transcoder.writeBody(engine, edge.ID, body, ids, func(kind byte, value any) error { return frames.write(kind, value, defaultSnapshotRecordSize) })
+	var fast bool
+	err = engine.withReadView(nil, func(txn *badger.Txn) error {
+		var err error
+		fast, err = transcoder.writeBody(engine, embeddingRecordReader{txn: txn}, edge.ID, body, ids, func(kind byte, value any) error { return frames.write(kind, value, defaultSnapshotRecordSize) })
+		return err
+	})
 	require.NoError(t, err)
 	if !fast {
 		require.Zero(t, got.Len(), "fallback must not emit a partial frame")

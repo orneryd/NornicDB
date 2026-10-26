@@ -83,6 +83,8 @@ const (
 	MessageStorageValidationPropertyTypeRequired            MessageID = "storage.validation.property_type_required"
 	MessageStorageValidationNodeUniqueInTransaction         MessageID = "storage.validation.node_unique_in_transaction"
 	MessageStorageValidationNodeUniqueExisting              MessageID = "storage.validation.node_unique_existing"
+	MessageStorageValidationNodeUniqueConflict              MessageID = "storage.validation.node_unique_conflict"
+	MessageStorageValidationNodeKeyConflict                 MessageID = "storage.validation.node_key_conflict"
 	MessageStorageValidationNodeUniqueConcurrent            MessageID = "storage.validation.node_unique_concurrent"
 	MessageStorageValidationNodeKeyNull                     MessageID = "storage.validation.node_key_null"
 	MessageStorageValidationNodeKeyInTransaction            MessageID = "storage.validation.node_key_in_transaction"
@@ -356,6 +358,17 @@ func StorageValidationNodeUniqueInTransaction(property string, value any) Messag
 }
 func StorageValidationNodeUniqueExisting(property string, value any, nodeID string) Message {
 	return storageValidationMessage(MessageStorageValidationNodeUniqueExisting, fmt.Sprintf("Node with %s=%v already exists (nodeID: %s)", property, value, nodeID), map[string]any{"Property": property, "Value": value, "NodeID": nodeID})
+}
+
+// StorageValidationNodeUniqueConflict describes the caller's attempted value,
+// without identifying the physical holder, which may be invisible to the caller.
+func StorageValidationNodeUniqueConflict(property string, value any) Message {
+	return storageValidationMessage(MessageStorageValidationNodeUniqueConflict, fmt.Sprintf("Node with %s=%v already exists", property, value), map[string]any{"Property": property, "Value": value})
+}
+
+// StorageValidationNodeKeyConflict is the tuple form of the mutation rejection.
+func StorageValidationNodeKeyConflict(properties, values any) Message {
+	return storageValidationMessage(MessageStorageValidationNodeKeyConflict, fmt.Sprintf("Node with key %v=%v already exists", properties, values), map[string]any{"Properties": properties, "Values": values})
 }
 func StorageValidationNodeUniqueConcurrent(property string, value any) Message {
 	return storageValidationMessage(MessageStorageValidationNodeUniqueConcurrent, fmt.Sprintf("Node with %s=%v already exists (claimed by concurrent commit)", property, value), map[string]any{"Property": property, "Value": value})

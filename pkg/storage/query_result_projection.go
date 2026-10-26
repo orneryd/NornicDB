@@ -18,7 +18,7 @@ type QueryResultProjection struct {
 // query owners should use BeginQueryResultProjection instead.
 // For example, visible := NewQueryResultProjection(engine).Node(node).
 func NewQueryResultProjection(engine Engine) QueryResultProjection {
-	be, _ := UnwrapEngine(engine).(*BadgerEngine)
+	be, _ := OwnedCapability[*BadgerEngine](UnwrapEngine(engine))
 	if be == nil || !be.IsDecayEnabled() {
 		return QueryResultProjection{}
 	}

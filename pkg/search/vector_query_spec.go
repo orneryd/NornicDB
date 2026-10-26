@@ -335,23 +335,22 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 	var supplement []vectorQueryScoredNode
 	supplementReady := false
 
-	var postProcessErr error
 	seenOrphans := make(map[string]bool)
-	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, queryEmbedding, resolved, nil, func(candidates []indexResult) []indexResult {
-		if postProcessErr != nil {
-			return nil
-		}
+	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, queryEmbedding, resolved, nil, func(candidates []indexResult) ([]indexResult, error) {
 		// Candidate discovery activates a pending PQ model after collection
 		// growth. Score supplements afterwards, once, using that same policy.
 		if !supplementReady && spec.Property != "" {
-			supplement, postProcessErr = s.propertyVectorNodeScores(ctx, normalizedQuery, spec.Label, spec.Property, quantizedIndex)
-			if postProcessErr != nil {
-				return nil
+			var supplementErr error
+			supplement, supplementErr = s.propertyVectorNodeScores(ctx, normalizedQuery, spec.Label, spec.Property, quantizedIndex)
+			if supplementErr != nil {
+				return nil, supplementErr
 			}
 			supplementReady = true
 		}
 		processed, processErr := s.scoreVectorQueryCandidates(ctx, normalizedQuery, spec, vectorName, candidates, supplement, quantizedIndex)
-		postProcessErr = processErr
+		if processErr != nil {
+			return nil, processErr
+		}
 		// Filtering here, inside the widening loop, lets a selective Where
 		// widen the search until it has the top K it admits.
 		return s.filterByTypeAndProperties(ctx, processed, resolved, seenOrphans)
@@ -361,9 +360,6 @@ func (s *Service) vectorQueryNodesIndexedWithOptions(ctx context.Context, queryE
 			return nil, nil
 		}
 		return nil, err
-	}
-	if postProcessErr != nil {
-		return nil, postProcessErr
 	}
 
 	hits := make([]VectorQueryHit, 0, min(len(results), spec.Limit))
@@ -738,8 +734,11 @@ func (s *Service) vectorQueryNodesExact(ctx context.Context, queryEmbedding []fl
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
-			node, err := s.getNodeWithoutEmbeddings(storage.NodeID(candidate.id))
-			if err != nil || !opts.Where(node) {
+			node, err := s.readSearchNode(ctx, storage.NodeID(candidate.id), nil)
+			if err != nil {
+				return nil, err
+			}
+			if node == nil || !opts.Where(node) {
 				continue
 			}
 			admitted = append(admitted, candidate)

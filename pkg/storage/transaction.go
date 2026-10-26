@@ -30,6 +30,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -116,29 +117,66 @@ type Transaction = BadgerTransaction
 // copyNode creates a deep copy of a node.
 // Used by transactions to preserve state for rollback.
 func copyNode(node *Node) *Node {
-	nodeCopy := copyNodeWithoutEmbeddings(node)
-	if nodeCopy == nil {
-		return nil
+	out, _ := copyNodeWithContext(nil, node)
+	return out
+}
+
+// copyNodeWithContext extends the transaction copy owner for cancellable stored
+// materialization. A nil context retains the ordinary copy's unchecked path.
+func copyNodeWithContext(ctx context.Context, node *Node) (*Node, error) {
+	nodeCopy, err := copyNodeWithoutEmbeddingsWithContext(ctx, node)
+	if err != nil || nodeCopy == nil {
+		return nil, err
 	}
 
 	if len(node.ChunkEmbeddings) > 0 {
 		nodeCopy.ChunkEmbeddings = make([][]float32, len(node.ChunkEmbeddings))
 		for i, emb := range node.ChunkEmbeddings {
-			nodeCopy.ChunkEmbeddings[i] = make([]float32, len(emb))
-			copy(nodeCopy.ChunkEmbeddings[i], emb)
+			nodeCopy.ChunkEmbeddings[i], err = copyVectorWithContext(ctx, emb)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
 	if node.NamedEmbeddings != nil {
 		nodeCopy.NamedEmbeddings = make(map[string][]float32, len(node.NamedEmbeddings))
 		for name, emb := range node.NamedEmbeddings {
-			embCopy := make([]float32, len(emb))
-			copy(embCopy, emb)
+			embCopy, err := copyVectorWithContext(ctx, emb)
+			if err != nil {
+				return nil, err
+			}
 			nodeCopy.NamedEmbeddings[name] = embCopy
 		}
 	}
 
-	return nodeCopy
+	return nodeCopy, copyContextError(ctx)
+}
+
+func copyContextError(ctx context.Context) error {
+	if ctx == nil {
+		return nil
+	}
+	return ctx.Err()
+}
+
+func copyVectorWithContext(ctx context.Context, vector []float32) ([]float32, error) {
+	if err := copyContextError(ctx); err != nil {
+		return nil, err
+	}
+	out := make([]float32, len(vector))
+	if ctx == nil {
+		copy(out, vector)
+		return out, nil
+	}
+	for start := 0; start < len(vector); start += 1024 {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		end := min(start+1024, len(vector))
+		copy(out[start:end], vector[start:end])
+	}
+	return out, nil
 }
 
 // copyNodeForCaller is a copy of a node the transaction keeps in its snapshot
@@ -159,8 +197,16 @@ func copyNodeForCaller(node *Node) *Node {
 }
 
 func copyNodeWithoutEmbeddings(node *Node) *Node {
+	out, _ := copyNodeWithoutEmbeddingsWithContext(nil, node)
+	return out
+}
+
+func copyNodeWithoutEmbeddingsWithContext(ctx context.Context, node *Node) (*Node, error) {
+	if err := copyContextError(ctx); err != nil {
+		return nil, err
+	}
 	if node == nil {
-		return nil
+		return nil, nil
 	}
 
 	nodeCopy := &Node{
@@ -177,11 +223,23 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 		EmbeddingsStoredSeparately: node.EmbeddingsStoredSeparately,
 		VisibilitySuppressed:       node.VisibilitySuppressed,
 	}
-	nodeCopy.Labels = append(nodeCopy.Labels, node.Labels...)
+	if ctx == nil {
+		nodeCopy.Labels = append(nodeCopy.Labels, node.Labels...)
+	} else {
+		for _, label := range node.Labels {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			nodeCopy.Labels = append(nodeCopy.Labels, label)
+		}
+	}
 
 	if node.Properties != nil {
 		nodeCopy.Properties = make(map[string]interface{}, len(node.Properties))
 		for k, v := range node.Properties {
+			if err := copyContextError(ctx); err != nil {
+				return nil, err
+			}
 			nodeCopy.Properties[k] = v
 		}
 	}
@@ -189,18 +247,29 @@ func copyNodeWithoutEmbeddings(node *Node) *Node {
 	if node.EmbedMeta != nil {
 		nodeCopy.EmbedMeta = make(map[string]any, len(node.EmbedMeta))
 		for k, v := range node.EmbedMeta {
+			if err := copyContextError(ctx); err != nil {
+				return nil, err
+			}
 			nodeCopy.EmbedMeta[k] = v
 		}
 	}
 
-	return nodeCopy
+	return nodeCopy, copyContextError(ctx)
 }
 
 // copyEdge creates a deep copy of an edge.
 // Used by transactions to preserve state for rollback.
 func copyEdge(edge *Edge) *Edge {
+	out, _ := copyEdgeWithContext(nil, edge)
+	return out
+}
+
+func copyEdgeWithContext(ctx context.Context, edge *Edge) (*Edge, error) {
+	if err := copyContextError(ctx); err != nil {
+		return nil, err
+	}
 	if edge == nil {
-		return nil
+		return nil, nil
 	}
 
 	edgeCopy := &Edge{
@@ -219,11 +288,14 @@ func copyEdge(edge *Edge) *Edge {
 	if edge.Properties != nil {
 		edgeCopy.Properties = make(map[string]interface{})
 		for k, v := range edge.Properties {
+			if err := copyContextError(ctx); err != nil {
+				return nil, err
+			}
 			edgeCopy.Properties[k] = v
 		}
 	}
 
-	return edgeCopy
+	return edgeCopy, copyContextError(ctx)
 }
 
 // CopyNode is the exported version of copyNode for use by other packages.

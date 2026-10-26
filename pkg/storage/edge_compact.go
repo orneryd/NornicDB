@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
@@ -181,6 +182,13 @@ type compactEdgeProjection struct {
 // decodeEdgeCompactV2 parses a V2 compact body and resolves tokenized
 // property keys via the per-namespace dictionary.
 func (b *BadgerEngine) decodeEdgeCompactV2(namespace string, data []byte, projection ...compactEdgeProjection) (*Edge, uint64, uint64, error) {
+	return b.decodeEdgeCompactV2WithContext(nil, namespace, data, projection...)
+}
+
+func (b *BadgerEngine) decodeEdgeCompactV2WithContext(ctx context.Context, namespace string, data []byte, projection ...compactEdgeProjection) (*Edge, uint64, uint64, error) {
+	if err := copyContextError(ctx); err != nil {
+		return nil, 0, 0, err
+	}
 	edge := new(Edge)
 	startNum, endNum, offset, err := decodeEdgeCompactHeaderInto(data, edgeFormatCompactV2, edge)
 	if err != nil {
@@ -199,7 +207,7 @@ func (b *BadgerEngine) decodeEdgeCompactV2(namespace string, data []byte, projec
 		}
 	}
 	if offset < len(data) {
-		props, err = b.decodeTokenizedPropertiesProjected(namespace, data[offset:], include)
+		props, err = b.decodeTokenizedPropertiesProjectedWithContext(ctx, namespace, data[offset:], include)
 		if err != nil {
 			return nil, 0, 0, fmt.Errorf("compact edge v2: %w", err)
 		}

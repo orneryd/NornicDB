@@ -1,9 +1,8 @@
 package storage
 
 import (
-	"go/ast"
-	"go/parser"
-	"go/token"
+	"github.com/orneryd/nornicdb/internal/workcensus"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -14,111 +13,53 @@ import (
 // The deterministic selector tests prove the capture contract. This guard
 // ensures its public consumers keep using that owner as new read paths arrive.
 func TestSnapshotOverlayPublicReadsReachCapture(t *testing.T) {
-	files, err := filepath.Glob("*.go")
+	const pkg = "github.com/orneryd/nornicdb/pkg/storage"
+	inv, err := workcensus.Extract(workcensus.Config{
+		Dir: "../..", Patterns: []string{"./pkg/storage"}, BuildFlags: []string{"-tags=noui,nolocalllm"},
+		Packages: []string{pkg}, IncludeProgram: true,
+		Selectors: []workcensus.Selector{{Kind: "buffer access", Node: "call", Reachability: "all", Packages: []string{pkg}, NameContains: []string{"Overlay", "GetNode", "GetEdge", "LookupNode", "LookupEdge", "NodeDeleted", "EdgeDeleted"}}},
+	})
 	require.NoError(t, err)
-	calls := map[string][]string{}
-	for _, name := range files {
-		if strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
-		require.NoError(t, err)
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			var receiver string
-			if fn.Recv != nil {
-				recv := fn.Recv.List[0]
-				ptr, ok := recv.Type.(*ast.StarExpr)
-				if !ok {
-					continue
-				}
-				typ, ok := ptr.X.(*ast.Ident)
-				if !ok || typ.Name != "BadgerEngine" {
-					continue
-				}
-				receiver = recv.Names[0].Name
-			} else if fn.Name.Name == "readAdjacency" {
-				// The shared dispatcher calls the native reader only after an
-				// actual *BadgerEngine assertion. Follow that bound receiver,
-				// not arbitrary optional providers with similar method names.
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					assign, ok := n.(*ast.AssignStmt)
-					if !ok || len(assign.Rhs) != 1 || len(assign.Lhs) == 0 {
-						return true
-					}
-					assertion, ok := assign.Rhs[0].(*ast.TypeAssertExpr)
-					if !ok {
-						return true
-					}
-					ptr, ok := assertion.Type.(*ast.StarExpr)
-					if !ok {
-						return true
-					}
-					typ, ok := ptr.X.(*ast.Ident)
-					if !ok || typ.Name != "BadgerEngine" {
-						return true
-					}
-					if name, ok := assign.Lhs[0].(*ast.Ident); ok {
-						receiver = name.Name
-					}
-					return true
-				})
-				require.NotEmpty(t, receiver, "shared adjacency route must bind its native engine")
-			} else {
-				continue
-			}
-			calls[fn.Name.Name] = nil
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if direct, ok := call.Fun.(*ast.Ident); ok && direct.Name == "readAdjacency" {
-					calls[fn.Name.Name] = append(calls[fn.Name.Name], direct.Name)
-				}
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				if id, ok := sel.X.(*ast.Ident); ok && id.Name == receiver {
-					calls[fn.Name.Name] = append(calls[fn.Name.Name], sel.Sel.Name)
-				}
-				if owner, ok := sel.X.(*ast.SelectorExpr); ok && owner.Sel.Name == "writeBehind" {
-					for _, forbidden := range []string{"Overlay", "GetNode", "GetEdge", "LookupNode", "LookupEdge", "NodeDeleted", "EdgeDeleted"} {
-						if strings.Contains(sel.Sel.Name, forbidden) {
-							t.Errorf("%s.%s bypasses capture with writeBehind.%s", name, fn.Name.Name, sel.Sel.Name)
-						}
-					}
-				}
-				return true
-			})
+	// Domain policy stays here; source loading and call/method/closure
+	// reachability come from the same engine as the production work census.
+	for _, member := range inv.Members {
+		if strings.Contains(member.Owner, ".BadgerEngine).") && strings.Contains(member.Receiver, ".writeBehind") {
+			t.Errorf("%s bypasses capture: %s", member.Owner, member.Code)
 		}
 	}
-	readers := []string{"GetNode", "GetNodeProjected", "GetNodeWithoutEmbeddings", "GetEdge", "BatchGetNodes", "BatchGetNodesWithoutEmbeddings", "HasLabelBatch", "RelationshipEndpointVisible", "GetNodesByLabelInScope", "GetFirstNodeByLabelInScope", "ForEachNodeIDByLabelInScope", "AllNodes", "AllEdges", "GetEdgesByType", "GetOutgoingEdges", "GetIncomingEdges", "GetAdjacentEdges", "OutgoingEdgeHeaders", "IncomingEdgeHeaders", "GetEdgesBetween", "GetEdgeBetween", "MatchEdgesBetween", "StreamNodesWithOptions", "StreamNodesByLabelProjectedInScope", "StreamEdges", "StreamEdgesByTypeInScope", "IterateNodes", "StreamNodeChunks", "GetNodeEmbeddingMeta"}
-	if _, ok := calls["GetQueryNode"]; ok {
-		readers = append(readers, "GetQueryNode")
-	}
+	readers := []string{"CheckIDDictionary", "ReadStored", "GetStoredNode", "GetStoredEdge", "GetQueryNode", "GetNode", "GetNodeProjected", "GetNodeWithoutEmbeddings", "GetEdge", "BatchGetNodes", "BatchGetNodesWithoutEmbeddings", "HasLabelBatch", "RelationshipEndpointVisible", "GetNodesByLabelInScope", "GetFirstNodeByLabelInScope", "ForEachNodeIDByLabelInScope", "AllNodes", "AllEdges", "GetEdgesByType", "GetOutgoingEdges", "GetIncomingEdges", "GetAdjacentEdges", "OutgoingEdgeHeaders", "IncomingEdgeHeaders", "GetEdgesBetween", "GetEdgeBetween", "MatchEdgesBetween", "StreamNodesWithOptions", "StreamNodesByLabelProjectedInScope", "StreamEdges", "StreamEdgesByTypeInScope", "IterateNodes", "StreamNodeChunks", "GetNodeEmbeddingMeta"}
 	for _, reader := range readers {
-		seen := map[string]bool{}
-		var reaches func(string) bool
-		reaches = func(name string) bool {
-			if name == "captureReadView" {
-				return true
-			}
-			if seen[name] {
-				return false
-			}
-			seen[name] = true
-			for _, callee := range calls[name] {
-				if reaches(callee) {
-					return true
-				}
-			}
-			return false
-		}
-		require.True(t, reaches(reader), "%s must reach the shared snapshot/overlay capture", reader)
+		population, err := inv.Program.ReachableFrom([]workcensus.Root{{Package: pkg, Name: reader, Receiver: "BadgerEngine", Required: true}})
+		require.NoError(t, err)
+		require.True(t, population.Contains(workcensus.Root{Package: pkg, Name: "captureReadView", Receiver: "BadgerEngine"}), "%s must reach the shared snapshot/overlay capture", reader)
 	}
+}
+
+// This domain control uses the parent's already-loaded call graph. Removing
+// the capture from a real method/closure must remove public-root reachability;
+// no private parser, native-call approximation or display-name walk intervenes.
+func TestSnapshotOverlayCaptureRemovalControl(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module github.com/orneryd/nornicdb\ngo 1.26.0\n"), 0644))
+	path := filepath.Join(root, "pkg", "storage", "native.go")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0755))
+	source := []byte(`package storage
+type BadgerEngine struct{}
+func(b *BadgerEngine)captureReadView(){}
+func(b *BadgerEngine)ReadStored(){func(){b.captureReadView()}()}
+func(*BadgerEngine)Unnamed(){}
+`)
+	require.NoError(t, os.WriteFile(path, source, 0644))
+	const pkg = "github.com/orneryd/nornicdb/pkg/storage"
+	config := workcensus.Config{Dir: root, Patterns: []string{"./pkg/storage"}, IncludeProgram: true, Selectors: []workcensus.Selector{{Kind: "capture call", Node: "call", Reachability: "all"}}}
+	check := func(config workcensus.Config) bool {
+		inventory, err := workcensus.Extract(config)
+		require.NoError(t, err)
+		population, err := inventory.Program.ReachableFrom([]workcensus.Root{{Package: pkg, Name: "ReadStored", Receiver: "BadgerEngine", Required: true}})
+		require.NoError(t, err)
+		return population.Contains(workcensus.Root{Package: pkg, Name: "captureReadView", Receiver: "BadgerEngine"})
+	}
+	require.True(t, check(config))
+	config.Overlay = map[string][]byte{path: []byte(strings.Replace(string(source), "func(){b.captureReadView()}()", "func(){}()", 1))}
+	require.False(t, check(config), "the same public-root capture oracle must reject the omitted owner call")
 }

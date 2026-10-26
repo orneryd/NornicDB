@@ -386,11 +386,11 @@ func (b *BadgerEngine) collectAuthoritativeLabelCounts() (map[string]int64, erro
 				continue
 			}
 			if err := it.Item().Value(func(val []byte) error {
-				node, decodeErr := b.decodeNode(namespace, val)
+				labels, decodeErr := decodeStoredNodeLabels(val)
 				if decodeErr != nil {
 					return fmt.Errorf("decode node %q for label counts: %w", nodeID, decodeErr)
 				}
-				for _, label := range uniqueLabels(node.Labels) {
+				for _, label := range uniqueLabels(labels) {
 					counts[namespace+"\x00"+label]++
 				}
 				return nil

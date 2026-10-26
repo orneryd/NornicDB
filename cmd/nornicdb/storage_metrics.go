@@ -23,7 +23,7 @@ import (
 // not terminate at a BadgerEngine (e.g. MemoryEngine in tests, or a
 // future engine implementation).
 func unwrapBadgerEngine(engine storage.Engine) *storage.BadgerEngine {
-	badger, ok := storage.UnwrapEngine(engine).(*storage.BadgerEngine)
+	badger, ok := storage.OwnedCapability[*storage.BadgerEngine](storage.UnwrapEngine(engine))
 	if !ok {
 		return nil
 	}

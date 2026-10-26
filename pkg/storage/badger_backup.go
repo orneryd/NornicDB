@@ -176,14 +176,14 @@ func (b *BadgerEngine) restartIndexBackfills() error {
 }
 
 func backupEngine(engine Engine, path string) error {
-	if backupable, ok := engine.(interface{ Backup(string) error }); ok {
+	if backupable, ok := OwnedCapability[interface{ Backup(string) error }](engine); ok {
 		return backupable.Backup(path)
 	}
 	return ErrNotImplemented
 }
 
 func restoreEngine(engine Engine, path string) error {
-	if restorable, ok := engine.(interface{ Restore(string) error }); ok {
+	if restorable, ok := OwnedCapability[interface{ Restore(string) error }](engine); ok {
 		return restorable.Restore(path)
 	}
 	return ErrNotImplemented

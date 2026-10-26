@@ -61,7 +61,7 @@ func TestMigration_LegacyDataMigration(t *testing.T) {
 	defer manager.Close()
 
 	// Step 3: Verify migration completed
-	assert.True(t, manager.isMigrationComplete(), "Migration should be marked as complete")
+	assert.True(t, foundationMigrationCompleteForTest(t, manager), "Migration should be marked as complete")
 
 	// Step 4: Verify old data is accessible through default database
 	store, err := manager.GetDefaultStorage()
@@ -117,7 +117,7 @@ func TestMigration_NoUnprefixedData(t *testing.T) {
 	defer manager.Close()
 
 	// Migration should be marked as complete (nothing to migrate)
-	assert.True(t, manager.isMigrationComplete(), "Migration should be marked as complete")
+	assert.True(t, foundationMigrationCompleteForTest(t, manager), "Migration should be marked as complete")
 
 	// Create new data through namespaced engine (already prefixed)
 	store, err := manager.GetDefaultStorage()
@@ -179,7 +179,7 @@ func TestMigration_MixedData(t *testing.T) {
 	defer manager.Close()
 
 	// Migration should complete
-	assert.True(t, manager.isMigrationComplete())
+	assert.True(t, foundationMigrationCompleteForTest(t, manager))
 
 	// Verify both nodes are accessible
 	store, err := manager.GetDefaultStorage()
@@ -348,7 +348,7 @@ func TestMigration_CustomDefaultDatabase(t *testing.T) {
 	defer manager.Close()
 
 	// Verify migration completed
-	assert.True(t, manager.isMigrationComplete())
+	assert.True(t, foundationMigrationCompleteForTest(t, manager))
 
 	// Verify data is accessible through custom default database
 	store, err := manager.GetStorage("customdb")
@@ -378,7 +378,7 @@ func TestMigration_NodePropertiesRemainUserOwned(t *testing.T) {
 			require.NoError(t, err)
 			defer manager.Close()
 			if legacy {
-				assert.True(t, manager.isMigrationComplete())
+				assert.True(t, foundationMigrationCompleteForTest(t, manager))
 			}
 			store, err := manager.GetStorage("nornic")
 			require.NoError(t, err)
@@ -407,13 +407,16 @@ func runMigrationVisibility(t *testing.T, seed *storage.Node, readID string, pro
 
 	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
-	assert.True(t, manager.isMigrationComplete())
+	defer manager.Close()
+
+	// Verify migration completed
+	assert.True(t, foundationMigrationCompleteForTest(t, manager))
 
 	if restart {
 		manager2, err := NewDatabaseManager(t.Context(), inner, nil)
 		require.NoError(t, err)
 		defer manager2.Close()
-		assert.True(t, manager2.isMigrationComplete(), "Migration should already be complete")
+		assert.True(t, foundationMigrationCompleteForTest(t, manager2), "Migration should already be complete")
 		manager = manager2
 	} else {
 		defer manager.Close()
@@ -425,4 +428,13 @@ func runMigrationVisibility(t *testing.T, seed *storage.Node, readID string, pro
 	require.NoError(t, err)
 	assert.Equal(t, readID, string(retrieved.ID))
 	assert.Equal(t, want, retrieved.Properties[prop])
+}
+
+// Author: Lane #1644 (Codex). The private status reader now carries failures;
+// existing migration value assertions also require a successful status read.
+func foundationMigrationCompleteForTest(t *testing.T, manager *DatabaseManager) bool {
+	t.Helper()
+	complete, err := manager.isMigrationComplete()
+	require.NoError(t, err)
+	return complete
 }

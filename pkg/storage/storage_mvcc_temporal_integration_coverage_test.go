@@ -100,6 +100,6 @@ func TestStorage_MVCCTemporal_IntegrationCoverageScenario(t *testing.T) {
 	_ = tx4.checkNodeWriteConflict("test:a")
 	_ = tx4.checkEdgeCreateConflict("test:e1")
 	_ = tx4.checkEdgeWriteConflict("test:e1")
-	_ = tx4.checkEdgeEndpointConflicts(&Edge{ID: "test:new", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS"})
+	_ = checkEndpointConflictForTest(tx4, &Edge{ID: "test:new", StartNode: "test:a", EndNode: "test:b", Type: "KNOWS"})
 	_ = tx4.Rollback()
 }

@@ -14,6 +14,7 @@ import (
 func (e *StorageExecutor) checkPeriodicTransactionScope(ctx context.Context, procedure string) error {
 	_, distributed := fabric.FabricTransactionFromContext(ctx)
 	coordinatorOwned := storage.CoordinatorOwnsTransaction(ctx)
+	coordinatorOwned = coordinatorOwned || e.storageMembership().Kind == storage.MembershipCoordinator
 	if e.txContext != nil {
 		_, composite := e.txContext.tx.(*fabric.FabricTransaction)
 		coordinatorOwned = coordinatorOwned || e.txContext.coordinatorOwned || composite
@@ -36,12 +37,11 @@ func (e *StorageExecutor) executePeriodicBatch(ctx context.Context, procedure st
 	if e.txContext != nil && e.txContext.active {
 		return run(ctx, e)
 	}
+	if binding := e.storageMembership(); binding.Status == storage.MembershipBound && (binding.Kind == storage.MembershipNativeExplicit || binding.Kind == storage.MembershipStoreTransaction) {
+		return run(ctx, e)
+	}
 	store := e.storage
-	for {
-		wrapper, ok := store.(*transactionStorageWrapper)
-		if !ok {
-			break
-		}
+	if wrapper, ok := storage.OwnedCapability[*transactionStorageWrapper](e.storageMembership().Adapter); ok {
 		store = wrapper.underlying
 	}
 	batch := e.cloneForStorage(store)
@@ -61,7 +61,7 @@ func (e *StorageExecutor) executePeriodicBatch(ctx context.Context, procedure st
 	}
 	// The implicit wrapper is still the same rollback owner. Its staged outer
 	// writes stay pending while the next clause reads the committed batch too.
-	if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+	if wrapper, ok := storage.OwnedCapability[*transactionStorageWrapper](e.storageMembership().Adapter); ok {
 		if err := wrapper.tx.ResumeAfterIndependentCommit(); err != nil {
 			recordExpressionFailure(callerContext, err)
 			return nil, err

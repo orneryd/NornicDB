@@ -20,36 +20,29 @@ type EntityCommitRoute struct {
 // A journal wrapper is a routing boundary even before it exposes the capability:
 // discovering an inner native engine must never bypass that wrapper's journal.
 func EntityCommitSubmitterFor(engine Engine) (EntityCommitRoute, bool) {
-	for engine != nil {
-		if submitter, ok := engine.(EntityCommitSubmitter); ok {
+	var route EntityCommitRoute
+	found := false
+	VisitPhysicalEngineOwners(engine, func(owner Engine) bool {
+		if submitter, ok := OwnedCapability[EntityCommitSubmitter](owner); ok {
 			native := false
-			switch engine.(type) {
+			switch owner.(type) {
 			case *BadgerEngine, *MemoryEngine:
 				native = true
 			}
-			route := EntityCommitRoute{Submitter: submitter, RequiresSubmission: !native}
-			if gate, ok := engine.(EntityCommitAdmissionGate); ok {
+			route = EntityCommitRoute{Submitter: submitter, RequiresSubmission: !native}
+			if gate, ok := OwnedCapability[EntityCommitAdmissionGate](owner); ok {
 				route.CheckAdmission = gate.CheckEntityCommitAdmission
 			}
-			if forwarder, ok := engine.(EntityDirectForwarder); ok {
+			if forwarder, ok := OwnedCapability[EntityDirectForwarder](owner); ok {
 				route.ForwardDirect = forwarder.ForwardEntityChanges
 			}
-			return route, true
+			found = true
+			return false
 		}
-		if _, journalBoundary := engine.(*WALEngine); journalBoundary {
-			return EntityCommitRoute{}, false
-		}
-		inner, ok := engine.(EngineUnwrapper)
-		if !ok {
-			return EntityCommitRoute{}, false
-		}
-		next := inner.GetInnerEngine()
-		if next == engine {
-			return EntityCommitRoute{}, false
-		}
-		engine = next
-	}
-	return EntityCommitRoute{}, false
+		_, journalBoundary := OwnedCapability[*WALEngine](owner)
+		return !journalBoundary
+	})
+	return route, found
 }
 
 // SubmitEntityCommit owns a prepared native commit when no outer replication or

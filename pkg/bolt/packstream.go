@@ -800,18 +800,40 @@ func encodePathInto(dst []byte, pathNodes []*storage.Node, pathRels []*storage.E
 // version. Bolt 5.0+ node/relationship structures carry their element id as
 // the final field (#745); Bolt 4.x structures keep the three/five-field
 // shapes those drivers parse.
-type boltEntityDatabaseResolver func(storage.NodeID, storage.EdgeID) string
+// This adapter carries serialization failures while the recursive PackStream
+// encoder builds bytes. It holds no snapshot or lease of its own.
+type boltEntityDatabaseResolver struct {
+	resolve func(storage.NodeID, storage.EdgeID) (string, error)
+	err     error
+}
 
-func recordEntityDatabase(dbName string, nodeID storage.NodeID, edgeID storage.EdgeID, resolvers []boltEntityDatabaseResolver) string {
+// Immutable marker: this result was bound and needs no fallback lookup.
+var noEntityDatabaseResolver = &boltEntityDatabaseResolver{}
+
+type entityProjectionError struct{ err error }
+
+func (e *entityProjectionError) Error() string { return e.err.Error() }
+func (e *entityProjectionError) Unwrap() error { return e.err }
+
+func recordEntityDatabase(dbName string, nodeID storage.NodeID, edgeID storage.EdgeID, resolvers []*boltEntityDatabaseResolver) string {
 	if len(resolvers) > 0 && resolvers[0] != nil {
-		if resolved := resolvers[0](nodeID, edgeID); resolved != "" {
+		resolver := resolvers[0]
+		if resolver.err != nil || resolver.resolve == nil {
+			return dbName
+		}
+		resolved, err := resolver.resolve(nodeID, edgeID)
+		if err != nil {
+			resolver.err = err
+			return dbName
+		}
+		if resolved != "" {
 			return resolved
 		}
 	}
 	return dbName
 }
 
-func encodeRecordListInto(dst []byte, items []any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+func encodeRecordListInto(dst []byte, items []any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...*boltEntityDatabaseResolver) []byte {
 	if len(items) == 0 {
 		return append(dst, 0x90)
 	}
@@ -825,7 +847,7 @@ func encodeRecordListInto(dst []byte, items []any, useUTCDateTimeStructs, bolt5 
 
 // encodeRecordValueInto encodes one record value. Under Bolt 5.0 entities
 // carry their element id; everything else uses the shared 4.x encoder.
-func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...*boltEntityDatabaseResolver) []byte {
 	if !bolt5 {
 		return encodePackStreamValueIntoWithUTC(dst, v, useUTCDateTimeStructs)
 	}
@@ -834,8 +856,14 @@ func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool,
 		if val == nil {
 			return append(dst, 0xC0)
 		}
+		if val.Database != "" {
+			return encodeStorageNodeV5Into(dst, val, val.Database)
+		}
 		return encodeStorageNodeV5Into(dst, val, recordEntityDatabase(dbName, val.ID, "", resolvers))
 	case storage.Node:
+		if val.Database != "" {
+			return encodeStorageNodeV5Into(dst, &val, val.Database)
+		}
 		return encodeStorageNodeV5Into(dst, &val, recordEntityDatabase(dbName, val.ID, "", resolvers))
 	case *storage.Edge:
 		if val == nil {
@@ -901,7 +929,7 @@ func encodeRecordValueInto(dst []byte, v any, useUTCDateTimeStructs, bolt5 bool,
 // map get their element-id structures; Bolt 4.x keeps the shared legacy
 // encoder. The _pathResult sentinel key is always dropped (the shared 4.x
 // behavior).
-func encodeRecordMapInto(dst []byte, m map[string]any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+func encodeRecordMapInto(dst []byte, m map[string]any, useUTCDateTimeStructs, bolt5 bool, dbName string, resolvers ...*boltEntityDatabaseResolver) []byte {
 	m = storage.PublicRemoteMap(m)
 	if len(m) == 0 {
 		return append(dst, 0xA0)
@@ -954,7 +982,11 @@ func encodeStorageNodeV5Into(dst []byte, node *storage.Node, dbName string) []by
 // structure (id, start, end, type, properties, element_id,
 // start_node_element_id, end_node_element_id). It reuses the 4.x field
 // encoding and upgrades the struct marker before appending the element ids.
-func encodeStorageEdgeV5Into(dst []byte, edge *storage.Edge, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+func encodeStorageEdgeV5Into(dst []byte, edge *storage.Edge, dbName string, resolvers ...*boltEntityDatabaseResolver) []byte {
+	if edge.Database != "" {
+		dbName = edge.Database
+		resolvers = nil
+	}
 	start := len(dst)
 	dst = encodeStorageEdgeIntoWithUTC(dst, edge, true)
 	if start+1 < len(dst) {
@@ -983,7 +1015,7 @@ func encodeNodeV5Into(dst []byte, nodeId any, labels any, nodeMap map[string]any
 
 // encodePathV5Into encodes a path whose nodes and unbound relationships carry
 // Bolt 5.0 element ids (B4 72 unbound relationships).
-func encodePathV5Into(dst []byte, pathNodes []*storage.Node, pathRels []*storage.Edge, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+func encodePathV5Into(dst []byte, pathNodes []*storage.Node, pathRels []*storage.Edge, dbName string, resolvers ...*boltEntityDatabaseResolver) []byte {
 	dst = append(dst, 0xB3, 0x50)
 	if len(pathNodes) == 0 {
 		dst = append(dst, 0x90, 0x90, 0x90)
@@ -1033,14 +1065,18 @@ func encodeUnboundRelationshipV5Into(dst []byte, rel *unboundRelationship, dbNam
 
 // encodeUnboundRelationshipListV5Into encodes a list of Bolt 5.0 unbound
 // relationships (path field 2).
-func encodeUnboundRelationshipListV5Into(dst []byte, rels []unboundRelationship, dbName string, resolvers ...boltEntityDatabaseResolver) []byte {
+func encodeUnboundRelationshipListV5Into(dst []byte, rels []unboundRelationship, dbName string, resolvers ...*boltEntityDatabaseResolver) []byte {
 	if len(rels) == 0 {
 		return append(dst, 0x90)
 	}
 	size := len(rels)
 	dst = appendPackStreamListHeader(dst, size)
 	for i := range rels {
-		dst = encodeUnboundRelationshipV5Into(dst, &rels[i], recordEntityDatabase(dbName, "", rels[i].id, resolvers))
+		source := rels[i].database
+		if source == "" {
+			source = recordEntityDatabase(dbName, "", rels[i].id, resolvers)
+		}
+		dst = encodeUnboundRelationshipV5Into(dst, &rels[i], source)
 	}
 	return dst
 }

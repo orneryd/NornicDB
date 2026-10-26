@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"time"
@@ -1060,8 +1061,11 @@ func encodeEmbedding(emb []float32) ([]byte, error) {
 
 // decodeEmbedding deserializes a single embedding chunk.
 func decodeEmbedding(data []byte) ([]float32, error) {
+	return decodeEmbeddingWithContext(nil, data)
+}
+func decodeEmbeddingWithContext(ctx context.Context, data []byte) ([]float32, error) {
 	var emb []float32
-	if err := decodeValue(data, &emb); err != nil {
+	if err := decodeValueWithContext(ctx, data, &emb); err != nil {
 		return nil, err
 	}
 	return emb, nil
@@ -1123,16 +1127,19 @@ func (b *BadgerEngine) decodeNode(namespace string, data []byte) (*Node, error) 
 // properties (all of them when include is nil). A scan that tests properties
 // before keeping a node uses projectedNodeDecoder instead (#857).
 func (b *BadgerEngine) decodeNodeProjected(namespace string, data []byte, include map[string]struct{}) (*Node, error) {
+	return b.decodeNodeProjectedWithContext(nil, namespace, data, include)
+}
+func (b *BadgerEngine) decodeNodeProjectedWithContext(ctx context.Context, namespace string, data []byte, include map[string]struct{}) (*Node, error) {
 	envelope, err := SplitNodeEnvelope(data)
 	if err != nil {
 		return nil, err
 	}
-	props, err := b.decodeTokenizedPropertiesProjected(namespace, envelope.properties, include)
+	props, err := b.decodeTokenizedPropertiesProjectedWithContext(ctx, namespace, envelope.properties, include)
 	if err != nil {
 		return nil, err
 	}
 	node := &Node{}
-	if err := decodeValue(envelope.metadata, node); err != nil {
+	if err := decodeValueWithContext(ctx, envelope.metadata, node); err != nil {
 		return nil, err
 	}
 	node.Properties = props
@@ -1248,6 +1255,7 @@ func (b *BadgerEngine) loadEmbeddingChunks(txn *badger.Txn, node *Node, nodeID N
 // Appending into dst preserves the
 // existing sharded-vector allocation behavior without reader closures.
 type embeddingRecordReader struct {
+	ctx           context.Context
 	txn           *badger.Txn
 	commit        *bufferedCommit
 	stagedWrites  map[string][]byte
@@ -1260,6 +1268,11 @@ type embeddingRecord struct {
 }
 
 func (r embeddingRecordReader) record(key []byte) (embeddingRecord, error) {
+	if r.ctx != nil {
+		if err := r.ctx.Err(); err != nil {
+			return embeddingRecord{}, err
+		}
+	}
 	writes, deletes := r.stagedWrites, r.stagedDeletes
 	if r.commit != nil {
 		writes, deletes = r.commit.writes, r.commit.deletes
@@ -1314,7 +1327,7 @@ func loadEmbeddingChunksFrom(read embeddingRecordReader, node *Node, nodeID Node
 			return fmt.Errorf("failed to get embedding chunk %d: %w", i, err)
 		}
 
-		emb, err := decodeEmbedding(embData)
+		emb, err := decodeEmbeddingWithContext(read.ctx, embData)
 		if err != nil {
 			partCount, sharded := parseEmbeddingShardMarker(embData)
 			if !sharded {
@@ -1328,7 +1341,7 @@ func loadEmbeddingChunksFrom(read embeddingRecordReader, node *Node, nodeID Node
 					return fmt.Errorf("failed to get embedding chunk %d part %d: %w", i, part, getErr)
 				}
 			}
-			emb, err = decodeEmbedding(assembled)
+			emb, err = decodeEmbeddingWithContext(read.ctx, assembled)
 			if err != nil {
 				return fmt.Errorf("failed to decode sharded embedding chunk %d: %w", i, err)
 			}

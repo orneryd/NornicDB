@@ -28,9 +28,9 @@ func TestSearchWhereAdmitsCandidates(t *testing.T) {
 		}
 		return out
 	}
-	require.Equal(t, []string{"nornic:a", "nornic:c"}, ids(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Where: current}, map[string]bool{})))
-	require.Equal(t, []string{"nornic:a"}, ids(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: []string{"Doc"}, Where: current}, map[string]bool{})))
-	require.Equal(t, []string{"nornic:a", "nornic:c"}, ids(svc.filterByProperties(ctx, results, &SearchOptions{Where: current}, map[string]bool{})))
+	require.Equal(t, []string{"nornic:a", "nornic:c"}, ids(mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Where: current}, map[string]bool{}))))
+	require.Equal(t, []string{"nornic:a"}, ids(mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: []string{"Doc"}, Where: current}, map[string]bool{}))))
+	require.Equal(t, []string{"nornic:a", "nornic:c"}, ids(mustSearchRead[[]indexResult](t)(svc.filterByProperties(ctx, results, &SearchOptions{Where: current}, map[string]bool{}))))
 
 	require.NoError(t, svc.BuildIndexes(ctx))
 	search := func(where func(*storage.Node) bool) []string {

@@ -59,7 +59,7 @@ func (e *StorageExecutor) callDbTemporalAssertNoOverlap(ctx context.Context, arg
 		return nil, err
 	}
 
-	nodes, err := temporalNodesByLabel(e.storage, label, snapshotVersion, hasSnapshot)
+	nodes, err := temporalNodesByLabel(ctx, e.storage, label, snapshotVersion, hasSnapshot)
 	if err != nil {
 		return nil, localizedError(localization.CypherSpecializedCallsTemporalReadNodesFailed(label, err), err)
 	}
@@ -129,8 +129,10 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 		return nil, err
 	}
 
-	if temporalLookup, ok := e.storage.(storage.TemporalLookupEngine); ok && !hasSnapshot {
-		node, err := temporalLookup.GetTemporalNodeAsOf(label, keyProp, keyValue, validFromProp, validToProp, asOf)
+	if !hasSnapshot {
+		node, err := storage.ReadWithCapability(e.storage, func(reader storage.TemporalLookupEngine) (*storage.Node, error) {
+			return storage.TemporalNodeAsOfWithContext(ctx, reader, label, keyProp, keyValue, validFromProp, validToProp, asOf)
+		}, func() (*storage.Node, error) { return nil, nil })
 		if err != nil {
 			return nil, localizedError(localization.CypherSpecializedCallsTemporalLookupFailed(label, err), err)
 		}
@@ -142,7 +144,7 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 		}
 	}
 
-	nodes, err := temporalNodesByLabel(e.storage, label, snapshotVersion, hasSnapshot)
+	nodes, err := temporalNodesByLabel(ctx, e.storage, label, snapshotVersion, hasSnapshot)
 	if err != nil {
 		return nil, localizedError(localization.CypherSpecializedCallsTemporalReadNodesFailed(label, err), err)
 	}
@@ -245,14 +247,13 @@ func coerceUint64Arg(val interface{}, name string) (uint64, error) {
 	return 0, localizedError(localization.CypherSpecializedCallsUnsignedValid(name), nil)
 }
 
-func temporalNodesByLabel(engine storage.Engine, label string, version storage.MVCCVersion, hasSnapshot bool) ([]*storage.Node, error) {
+func temporalNodesByLabel(ctx context.Context, engine storage.Engine, label string, version storage.MVCCVersion, hasSnapshot bool) ([]*storage.Node, error) {
 	if !hasSnapshot {
 		return engine.GetNodesByLabel(label)
 	}
-	if provider, ok := engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return provider.GetNodesByLabelVisibleAt(label, version)
-	}
-	return nil, storage.ErrNotImplemented
+	return storage.ReadWithCapability(engine, func(reader storage.MVCCIndexedVisibilityEngine) ([]*storage.Node, error) {
+		return storage.GetNodesByLabelVisibleAtWithContext(ctx, reader, label, version)
+	}, nil)
 }
 
 func valuesEqual(a, b interface{}) bool {

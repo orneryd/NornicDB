@@ -6,6 +6,7 @@ package storagefault
 
 import (
 	"context"
+	"reflect"
 	"sync/atomic"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -35,6 +36,7 @@ type ReadEngine interface {
 type ReadFailureEngine struct {
 	ReadEngine
 	storage.StoredEntityReader
+	namespace func() string
 	failure   error
 	operation atomic.Value // ReadOperation, initialized before publication
 }
@@ -43,6 +45,9 @@ type ReadFailureEngine struct {
 // capability. The caller retains ownership of the real engine's lifetime.
 func NewReadFailureEngine(engine ReadEngine, stored storage.StoredEntityReader, failure error) *ReadFailureEngine {
 	fixture := &ReadFailureEngine{ReadEngine: engine, StoredEntityReader: stored, failure: failure}
+	if provider, ok := storage.ViewMetadataForEngine[interface{ Namespace() string }](engine); ok {
+		fixture.namespace = provider.Namespace
+	}
 	fixture.operation.Store(ReadOperation(""))
 	return fixture
 }
@@ -56,13 +61,13 @@ func (e *ReadFailureEngine) GetStoredNode(id storage.NodeID) (*storage.Node, err
 	if e.operation.Load() == NodeRead {
 		return nil, e.failure
 	}
-	return e.StoredEntityReader.GetStoredNode(id)
+	return storage.ReadWithCapability(e.StoredEntityReader, func(reader storage.StoredEntityReader) (*storage.Node, error) { return reader.GetStoredNode(id) }, nil)
 }
 func (e *ReadFailureEngine) GetStoredEdge(id storage.EdgeID) (*storage.Edge, error) {
 	if e.operation.Load() == EdgeRead {
 		return nil, e.failure
 	}
-	return e.StoredEntityReader.GetStoredEdge(id)
+	return storage.ReadWithCapability(e.StoredEntityReader, func(reader storage.StoredEntityReader) (*storage.Edge, error) { return reader.GetStoredEdge(id) }, nil)
 }
 func (e *ReadFailureEngine) NodeCount() (int64, error) {
 	if e.operation.Load() == NodeCountRead {
@@ -80,19 +85,21 @@ func (e *ReadFailureEngine) NodeCountByPrefix(prefix string) (int64, error) {
 	if e.operation.Load() == NodeCountRead {
 		return 0, e.failure
 	}
-	return e.ReadEngine.NodeCountByPrefix(prefix)
+	return storage.ReadWithCapability(e.ReadEngine, func(reader storage.PrefixStatsEngine) (int64, error) { return reader.NodeCountByPrefix(prefix) }, nil)
 }
 func (e *ReadFailureEngine) EdgeCountByPrefix(prefix string) (int64, error) {
 	if e.operation.Load() == EdgeCountRead {
 		return 0, e.failure
 	}
-	return e.ReadEngine.EdgeCountByPrefix(prefix)
+	return storage.ReadWithCapability(e.ReadEngine, func(reader storage.PrefixStatsEngine) (int64, error) { return reader.EdgeCountByPrefix(prefix) }, nil)
 }
 func (e *ReadFailureEngine) StreamNodes(ctx context.Context, visit func(*storage.Node) error) error {
 	if e.operation.Load() == NodeStreamRead {
 		return e.failure
 	}
-	return e.ReadEngine.StreamNodes(ctx, visit)
+	return storage.VisitWithCapability(e.ReadEngine, func(reader storage.StreamingEngine, deliver func(*storage.Node) error) error {
+		return reader.StreamNodes(ctx, deliver)
+	}, nil, visit)
 }
 func (e *ReadFailureEngine) StreamNodesWithOptions(ctx context.Context, opts storage.StreamNodesOptions, visit func(*storage.Node) error) error {
 	if e.operation.Load() == NodeStreamRead {
@@ -121,4 +128,46 @@ func (e *ReadFailureEngine) WithStoredEntityRead(kind storage.StoredEntityReadKi
 		return e.failure
 	}
 	return read()
+}
+
+// Fault injection is an issued data view, not transparent discovery. Membership
+// and managed commit references remain the original real engine's owners.
+func (e *ReadFailureEngine) CapabilityOwnerSource(_ storage.OwnerPolicy) (storage.Engine, bool) {
+	return e.ReadEngine, true
+}
+func (*ReadFailureEngine) ReadCapabilitySource() (storage.Engine, bool) { return nil, false }
+
+var readFailureEngineReadPolicy = storage.BoundaryReadPolicy{
+	{Methods: "ReadStored StoredReadPolicy Namespace", Disposition: storage.CapabilityOwned, Scope: "Fact and namespace reads retain the issued fault view; mandatory read failures propagate before any body fallback."},
+	{Methods: "GetStoredNode GetStoredEdge GetStoredOutgoingEdges GetStoredIncomingEdges GetStoredNodesByLabel StreamStoredNodesByLabelProjected StreamStoredEdgesByType NodeCountByPrefix EdgeCountByPrefix StreamNodes StreamEdges StreamNodeChunks GetInnerEngine", Disposition: storage.CapabilityOwned, Scope: "Existing fixture methods retain selected fault interception and the real read source."},
+	{Methods: "SetFailure WithStoredEntityRead", Disposition: storage.CapabilityRefused, Scope: "Exact fixture control/read continuation, never a data-read discovery grant."},
+}
+
+func (*ReadFailureEngine) ReadCapabilityPolicy() storage.BoundaryReadPolicy {
+	return readFailureEngineReadPolicy.Copy()
+}
+func (*ReadFailureEngine) ReadCapabilityScoped(request reflect.Type) bool {
+	return readFailureEngineReadPolicy.Scoped(request)
+}
+func (e *ReadFailureEngine) Namespace() string {
+	if e.namespace != nil {
+		return e.namespace()
+	}
+	return ""
+}
+func (*ReadFailureEngine) EngineCapabilityPolicy() storage.EngineBoundaryPolicy {
+	return storage.EngineBoundaryPolicy{Kind: storage.EngineView, ReadState: storage.BindingOwned, Membership: storage.BindingDelegated, Controller: storage.BindingDelegated, PendingActions: storage.BindingDelegated, SchemaPublication: storage.BindingDelegated, ReadLease: storage.BindingDelegated, StatementMode: storage.BindingDelegated, Identity: storage.BindingDelegated, Enforcement: storage.BindingDelegated, CompoundDependencies: storage.BindingDelegated, SameVersionFallback: storage.BindingDelegated, Delivery: storage.BindingDelegated, ExactEffects: storage.BindingOwned, FullRead: storage.BindingOwned, ObservedNode: storage.BindingRefused, ObservedEdge: storage.BindingRefused}
+}
+func (e *ReadFailureEngine) StoredReadPolicy() storage.StoredReadPolicy {
+	return storage.StoredReadPolicyForEngine(e.ReadEngine)
+}
+func (e *ReadFailureEngine) ReadStored(ctx context.Context, r storage.StoredReadRequest) (storage.StoredReadResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	operation := e.operation.Load()
+	if operation == NodeRead && (len(r.Nodes) > 0 || len(r.Edges) > 0 || len(r.Adjacency) > 0) || operation == EdgeRead && (len(r.Edges) > 0 || len(r.Adjacency) > 0) {
+		return nil, e.failure
+	}
+	return storage.ReadStored(ctx, e.ReadEngine, r)
 }

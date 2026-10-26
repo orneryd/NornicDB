@@ -192,7 +192,7 @@ func (e *ReplicatedEngine) ForwardEntityChanges(ctx context.Context, ops []stora
 	if ctx != nil && ctx.Err() != nil {
 		return ctx.Err()
 	}
-	forward := *e
+	forward := NewReplicatedEngine(e.Engine, e.replicator, e.timeout)
 	if ctx != nil {
 		if deadline, ok := ctx.Deadline(); ok {
 			remaining := time.Until(deadline)

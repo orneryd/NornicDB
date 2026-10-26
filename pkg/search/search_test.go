@@ -1134,11 +1134,11 @@ func TestSearchFilterByTypeBranches(t *testing.T) {
 	}
 
 	// Empty type filter returns input as-is.
-	same := svc.filterByType(context.Background(), in, nil, nil)
+	same := mustSearchRead[[]indexResult](t)(svc.filterByType(context.Background(), in, nil, nil))
 	require.Equal(t, in, same)
 
 	seenOrphans := map[string]bool{}
-	filtered := svc.filterByType(context.Background(), in, []string{"person"}, seenOrphans)
+	filtered := mustSearchRead[[]indexResult](t)(svc.filterByType(context.Background(), in, []string{"person"}, seenOrphans))
 	require.Len(t, filtered, 2)
 	require.Equal(t, "n1", filtered[0].ID)
 	require.Equal(t, "n2", filtered[1].ID)
@@ -1182,7 +1182,7 @@ func TestSearchEnrichResultsBranches(t *testing.T) {
 		}
 
 		seenOrphans := map[string]bool{}
-		out := svc.enrichResults(context.Background(), input, &SearchOptions{Limit: 3}, seenOrphans, hitMatchQuery{})
+		out := mustSearchRead[[]SearchResult](t)(svc.enrichResults(context.Background(), input, &SearchOptions{Limit: 3}, seenOrphans, hitMatchQuery{}))
 		require.Len(t, out, 2)
 
 		require.Equal(t, "e1", out[0].ID)
@@ -1197,7 +1197,7 @@ func TestSearchEnrichResultsBranches(t *testing.T) {
 		require.True(t, seenOrphans["missing"])
 
 		// limit branch: only the first input item should be considered.
-		limited := svc.enrichResults(context.Background(), input, &SearchOptions{Limit: 1}, map[string]bool{}, hitMatchQuery{})
+		limited := mustSearchRead[[]SearchResult](t)(svc.enrichResults(context.Background(), input, &SearchOptions{Limit: 1}, map[string]bool{}, hitMatchQuery{}))
 		require.Len(t, limited, 1)
 		require.Equal(t, "e1", limited[0].ID)
 	})
@@ -3604,11 +3604,11 @@ func TestService_LastWriteTimeAndTypeFilter(t *testing.T) {
 	require.NoError(t, err)
 
 	candidates := []SearchCandidate{{ID: "alpha", Score: 0.9}, {ID: "beta", Score: 0.8}, {ID: "missing", Score: 0.7}}
-	filtered := svc.filterCandidatesByType(context.Background(), candidates, []string{"doc"}, map[string]bool{})
+	filtered := mustSearchRead[[]SearchCandidate](t)(svc.filterCandidatesByType(context.Background(), candidates, []string{"doc"}, map[string]bool{}))
 	require.Len(t, filtered, 1)
 	assert.Equal(t, "alpha", filtered[0].ID)
 
-	unfiltered := svc.filterCandidatesByType(context.Background(), candidates, nil, map[string]bool{})
+	unfiltered := mustSearchRead[[]SearchCandidate](t)(svc.filterCandidatesByType(context.Background(), candidates, nil, map[string]bool{}))
 	require.Len(t, unfiltered, len(candidates))
 
 	// Namespaced engine does not expose LastWriteTime -> zero value.

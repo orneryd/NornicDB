@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"slices"
@@ -20,8 +21,14 @@ import (
 
 // callDbInfo returns database information - Neo4j db.info()
 func (e *StorageExecutor) callDbInfo(ctx context.Context) (*ExecuteResult, error) {
-	nodeCount, _ := e.storage.NodeCount()
-	edgeCount, _ := e.storage.EdgeCount()
+	nodeCount, err := e.storage.NodeCount()
+	if err != nil {
+		return nil, err
+	}
+	edgeCount, err := e.storage.EdgeCount()
+	if err != nil {
+		return nil, err
+	}
 	name := e.currentDatabaseName()
 	if selected := GetUseDatabaseFromContext(ctx); selected != "" {
 		name = selected
@@ -621,6 +628,9 @@ func (e *StorageExecutor) callDbIndexVectorQueryRelationshipsInput(ctx context.C
 		}
 		for _, hit := range hits {
 			edge, err := e.storage.GetEdge(storage.EdgeID(hit.ID))
+			if err != nil && !errors.Is(err, storage.ErrNotFound) {
+				return nil, err
+			}
 			if err != nil {
 				continue
 			}
@@ -998,7 +1008,7 @@ func (e *StorageExecutor) callTxSetMetadata(ctx context.Context, arguments []int
 		if !supported {
 			return nil, localizedError(localization.CypherProceduresMetadataTransactionUnsupported(), nil)
 		}
-	} else if wrapper, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
+	} else if wrapper, ok := e.nativeMemberFor(e.getStorage(ctx)); ok {
 		tx = wrapper.tx
 	}
 	if tx == nil {

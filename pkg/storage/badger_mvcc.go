@@ -1178,7 +1178,13 @@ func (b *BadgerEngine) BatchGetNodesLatestVisible(ids []NodeID) (map[NodeID]*Nod
 	result := make(map[NodeID]*Node, len(ids))
 	for _, id := range ids {
 		node, err := b.GetNodeLatestVisible(id)
-		if err == nil && node != nil {
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if node != nil {
 			result[id] = node
 		}
 	}
