@@ -313,7 +313,7 @@ func TestPendingCandidatesRestartAfterMarkerBeforeHint(t *testing.T) {
 	txn, readTs, err := e.db.beginTxn(true)
 	require.NoError(t, err)
 	require.NoError(t, e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID))
-	require.NoError(t, e.db.commit(context.Background(), txn, nil))
+	require.NoError(t, e.db.commit(context.Background(), txn, standalonePublication, nil))
 	txn.Discard()
 	e.db.endRead(readTs)
 	require.NoError(t, e.db.syncIfPersistent())

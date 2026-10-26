@@ -108,7 +108,10 @@ func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 // entities; those stay the trailing variadic argument, so a literal entity
 // list at the call site remains the static proof that the write is ordered.
 type updateRequest struct {
-	ctx      context.Context
+	ctx context.Context
+	// parent is the reader publication of the write this commit follows; nil
+	// makes it a write of its own.
+	parent   *readerPublication
 	scope    cacheWriteScope
 	metadata bool
 }
@@ -135,7 +138,7 @@ func (b *BadgerEngine) withUpdate(request updateRequest, fn func(txn *badger.Txn
 		defer order.release()
 	}
 	scope, metadata := request.scope, request.metadata
-	return b.commitEngineWrite(ctx, func(cw *commitWriter) error {
+	return b.commitEngineWriteIn(ctx, request.parent, func(cw *commitWriter) error {
 		cw.declaredCache, cw.metadata = &scope, metadata
 		return cw.writeOnce(fn)
 	})
@@ -162,6 +165,10 @@ func (b *BadgerEngine) withPublishingUpdate(ctx context.Context, fn func(*badger
 	})
 }
 
+// engineWriteOptions holds no reader publication: the writer keeps the
+// publication it commits under, so a publication held here would take these
+// options, and the lifecycle a caller passes, to the heap with it. A follow-up
+// commit names its parent's publication as commitEngineWriteIn's argument.
 type engineWriteOptions struct {
 	units     []func(*badger.Txn) error
 	lifecycle *lifecycleWrite
@@ -176,6 +183,12 @@ type engineWriteOptions struct {
 // counter high-water marks are persisted after the commit, in a separate
 // transaction, so concurrent writers never conflict on the shared keys.
 func (b *BadgerEngine) commitEngineWrite(ctx context.Context, write func(cw *commitWriter) error, options ...engineWriteOptions) error {
+	return b.commitEngineWriteIn(ctx, nil, write, options...)
+}
+
+// commitEngineWriteIn is commitEngineWrite for a follow-up commit of the write
+// whose reader publication is parent; a nil parent makes it a write of its own.
+func (b *BadgerEngine) commitEngineWriteIn(ctx context.Context, parent *readerPublication, write func(cw *commitWriter) error, options ...engineWriteOptions) error {
 	var option engineWriteOptions
 	if len(options) > 0 {
 		option = options[0]
@@ -189,6 +202,7 @@ func (b *BadgerEngine) commitEngineWrite(ctx context.Context, write func(cw *com
 	}
 	defer b.txnWG.Done()
 	var nodeMax, edgeMax uint64
+	var writer *commitWriter
 	err = recoverBadgerClosedPanic(func() error {
 		var txn *badger.Txn
 		var readTs uint64
@@ -204,6 +218,10 @@ func (b *BadgerEngine) commitEngineWrite(ctx context.Context, write func(cw *com
 		defer db.endRead(readTs)
 		cw := b.newCommitWriter(ctx, db, txn)
 		defer cw.discard()
+		if parent != nil {
+			cw.pub = parent
+		}
+		writer = cw
 		fail := func(err error) error {
 			b.idDict.discardTxnCounters(cw.txn)
 			b.propKeyDict.discardTxnCounters(cw.txn)
@@ -233,9 +251,12 @@ func (b *BadgerEngine) commitEngineWrite(ctx context.Context, write func(cw *com
 		b.idDict.markTxnCommitted(committing)
 		return nil
 	})
+	if writer != nil {
+		defer writer.closePublication()
+	}
 	if err == nil {
 		runCommitTailHook()
-		b.idDict.persistCounters(db, nodeMax, edgeMax)
+		b.idDict.persistCounters(db, writer.pub, nodeMax, edgeMax)
 	}
 	return err
 }

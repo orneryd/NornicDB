@@ -59,8 +59,7 @@ func (e *StorageExecutor) callDbRerank(ctx context.Context, args []interface{}) 
 
 	svc := e.search()
 	if svc == nil {
-		svc = search.NewService(e.storage, search.DefaultVectorDimensions, nil)
-		svc = e.keepUnmanagedSearchService(svc)
+		svc = e.newUnmanagedSearchService(search.DefaultVectorDimensions)
 	}
 	reranked, err := svc.RerankCandidates(ctx, query, candidates, opts)
 	if err != nil {
@@ -299,8 +298,7 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 			if len(queryEmbedding) > 0 {
 				dims = len(queryEmbedding)
 			}
-			svc = search.NewService(e.storage, dims, nil)
-			svc = e.keepUnmanagedSearchService(svc)
+			svc = e.newUnmanagedSearchService(dims)
 		}
 		return svc
 	}

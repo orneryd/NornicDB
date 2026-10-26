@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -561,14 +562,17 @@ func (d *idDictionary) edgePendingWriter(id EdgeID) (*txnCounterState, bool) {
 // transaction's conflict-detection set. Best effort: the in-memory
 // nextNode/nextEdge atomics are authoritative for the engine's lifetime;
 // a crash between commit and persistence loses at most the unflushed
-// window of allocated numIDs, reconciled at next engine open.
-func (d *idDictionary) persistCounters(db badgerKV, nodeMax, edgeMax uint64) {
+// window of allocated numIDs, reconciled at next engine open. The commit is
+// in reader publication p, the write whose counters these are.
+func (d *idDictionary) persistCounters(db badgerKV, p *readerPublication, nodeMax, edgeMax uint64) {
 	if db == nil || (nodeMax == 0 && edgeMax == 0) {
 		return
 	}
 	update := db.Update
 	if managed, ok := db.(*managedBadgerDB); ok {
-		update = managed.updateMetadata
+		update = func(fn func(*badger.Txn) error) error {
+			return managed.updateMetadataIn(context.Background(), p, fn)
+		}
 	}
 	_ = update(func(txn *badger.Txn) error {
 		if nodeMax > 0 {

@@ -88,4 +88,9 @@ func (r *algorithmRelationshipReader) SubscribeEvents(handlers storage.EventHand
 	return storage.SubscribeEvents(r.Engine, handlers)
 }
 
+// EventNotificationsSettled forwards the filtered engine's report.
+func (r *algorithmRelationshipReader) EventNotificationsSettled() bool {
+	return storage.EventNotificationsSettled(r.Engine)
+}
+
 var _ storage.EventSubscriber = (*algorithmRelationshipReader)(nil)

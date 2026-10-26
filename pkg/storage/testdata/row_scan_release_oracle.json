@@ -1,0 +1,109 @@
+{
+ "clean": {
+  "AllEdges": {
+   "err": "",
+   "rows": [
+    "test:e1=committed",
+    "test:e2=buffered",
+    "test:e3=committed",
+    "test:e9=buffered"
+   ]
+  },
+  "AllNodes": {
+   "err": "",
+   "rows": [
+    "test:n1=committed",
+    "test:n2=buffered",
+    "test:n3=committed",
+    "test:n4=committed",
+    "test:n9=buffered"
+   ]
+  },
+  "Snapshot.IterateNodes": {
+   "err": "",
+   "rows": [
+    "test:n1=committed",
+    "test:n2=buffered",
+    "test:n3=committed",
+    "test:n4=committed",
+    "test:n9=buffered"
+   ]
+  },
+  "Snapshot.StreamEdges": {
+   "err": "",
+   "rows": [
+    "test:e1=committed",
+    "test:e2=buffered",
+    "test:e3=committed",
+    "test:e9=buffered"
+   ]
+  },
+  "StreamEdges": {
+   "err": "",
+   "rows": [
+    "test:e1=committed",
+    "test:e2=buffered",
+    "test:e3=committed",
+    "test:e9=buffered"
+   ]
+  },
+  "StreamNodes": {
+   "err": "",
+   "rows": [
+    "test:n1=committed",
+    "test:n2=buffered",
+    "test:n3=committed",
+    "test:n4=committed",
+    "test:n9=buffered"
+   ]
+  }
+ },
+ "corrupt": {
+  "AllEdges": {
+   "err": "edge body has unexpected format byte 0xff; expected V2 (0x03)",
+   "rows": []
+  },
+  "AllNodes": {
+   "err": "node body has unexpected format byte 0xff; expected V2 (0x10)",
+   "rows": []
+  },
+  "Snapshot.IterateNodes": {
+   "err": "",
+   "rows": [
+    "test:n1=committed",
+    "test:n2=buffered",
+    "test:n3=committed",
+    "test:n4=committed",
+    "test:n9=buffered"
+   ]
+  },
+  "Snapshot.StreamEdges": {
+   "err": "",
+   "rows": [
+    "test:e1=committed",
+    "test:e2=buffered",
+    "test:e3=committed",
+    "test:e9=buffered"
+   ]
+  },
+  "StreamEdges": {
+   "err": "",
+   "rows": [
+    "test:e1=committed",
+    "test:e2=buffered",
+    "test:e3=committed",
+    "test:e9=buffered"
+   ]
+  },
+  "StreamNodes": {
+   "err": "",
+   "rows": [
+    "test:n1=committed",
+    "test:n2=buffered",
+    "test:n3=committed",
+    "test:n4=committed",
+    "test:n9=buffered"
+   ]
+  }
+ }
+}

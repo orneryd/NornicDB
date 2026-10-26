@@ -85,7 +85,7 @@ func TestClearPendingKeepsEntriesWrittenSince(t *testing.T) {
 	require.NoError(t, err)
 	d.flushTxnCounters(first)
 	written := d.takeTxnCommitting(first)
-	require.NoError(t, engine.db.commit(context.Background(), first, nil))
+	require.NoError(t, engine.db.commit(context.Background(), first, standalonePublication, nil))
 
 	// Reissue the same name as a distinct generation before completing the
 	// first commit's publication. A mere adopter of the original generation

@@ -1236,6 +1236,12 @@ func (e *StorageExecutor) keepUnmanagedSearchService(svc *search.Service) *searc
 	return bound
 }
 
+// newUnmanagedSearchService creates the service of a procedure whose executor had
+// none and keeps it (keepUnmanagedSearchService), returning the service to use.
+func (e *StorageExecutor) newUnmanagedSearchService(dimensions int) *search.Service {
+	return e.keepUnmanagedSearchService(search.NewService(e.storage, dimensions, nil))
+}
+
 // shareSearchFor gives target the search of database: the resolver, for the
 // named database, when this executor resolves; otherwise this executor's
 // service, as before resolvers.

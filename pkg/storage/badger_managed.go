@@ -1,3 +1,5 @@
+// Author of captured-reader publication proof: Codex implementation lane, 2026-10-27.
+// Author of reader publications: #1683 lane (Claude), 2026-10-30 (NOR-148).
 package storage
 
 import (
@@ -99,7 +101,7 @@ func (m *managedBadgerDB) recoverInterruptedLargeCommit() error {
 	if err != nil {
 		return err
 	}
-	return m.rollbackSince(item.Version())
+	return m.rollbackSince(item.Version(), standalonePublication)
 }
 
 // View runs fn in a read-only transaction at the published timestamp.
@@ -137,14 +139,7 @@ func (m *managedBadgerDB) updateHeld(fn func(txn *badger.Txn) error) error {
 	if m.DB.IsClosed() {
 		return badger.ErrDBClosed
 	}
-	readTs := m.oracle.beginReadHeld()
-	defer m.oracle.endRead(readTs)
-	txn := m.DB.NewTransactionAt(readTs, true)
-	defer txn.Discard()
-	if err := fn(txn); err != nil {
-		return err
-	}
-	return m.commit(context.Background(), txn, nil)
+	return m.updateAt(context.Background(), m.oracle.beginReadHeld(), standalonePublication, fn, nil)
 }
 
 // heldViewer is viewHeld for the loaders that take a badgerViewer.
@@ -153,24 +148,29 @@ type heldViewer struct{ db *managedBadgerDB }
 func (v heldViewer) View(fn func(txn *badger.Txn) error) error { return v.db.viewHeld(fn) }
 
 // Update runs fn in a read-write transaction at the published timestamp and
-// commits it as one ordinary commit. Badger's per-batch size limit applies.
+// commits it as one ordinary commit, its own reader publication. Badger's
+// per-batch size limit applies.
 func (m *managedBadgerDB) Update(fn func(txn *badger.Txn) error) error {
-	return m.update(context.Background(), fn, nil)
+	return m.update(context.Background(), standalonePublication, fn, nil)
 }
 
 // updateMetadata is the metadata-only adapter for badgerKV's callback shape.
-// idDictionary.persistCounters selects this method value instead of db.Update
-// so managed counter writes publish metadata scope rather than invalidating
-// entity caches. Request-bearing callers use updateMetadataContext directly.
+// Request-bearing callers use updateMetadataContext directly.
 func (m *managedBadgerDB) updateMetadata(fn func(txn *badger.Txn) error) error {
 	return m.updateMetadataContext(context.Background(), fn)
 }
 
 func (m *managedBadgerDB) updateMetadataContext(ctx context.Context, fn func(txn *badger.Txn) error) error {
-	return m.update(ctx, fn, &commitPublication{metadata: true})
+	return m.updateMetadataIn(ctx, standalonePublication, fn)
 }
 
-func (m *managedBadgerDB) update(ctx context.Context, fn func(txn *badger.Txn) error, publication *commitPublication) error {
+// updateMetadataIn is a metadata-only commit in reader publication p: a write's
+// follow-up commit passes the write's own publication.
+func (m *managedBadgerDB) updateMetadataIn(ctx context.Context, p *readerPublication, fn func(txn *badger.Txn) error) error {
+	return m.update(ctx, p, fn, &commitPublication{metadata: true})
+}
+
+func (m *managedBadgerDB) update(ctx context.Context, p *readerPublication, fn func(txn *badger.Txn) error, publication *commitPublication) error {
 	if m.DB.IsClosed() {
 		return badger.ErrDBClosed
 	}
@@ -178,13 +178,20 @@ func (m *managedBadgerDB) update(ctx context.Context, fn func(txn *badger.Txn) e
 	if err != nil {
 		return err
 	}
+	return m.updateAt(ctx, readTs, p, fn, publication)
+}
+
+// updateAt runs fn in a read-write transaction at readTs, an open read the
+// caller registered and updateAt ends, and commits it as one ordinary commit
+// in reader publication p.
+func (m *managedBadgerDB) updateAt(ctx context.Context, readTs uint64, p *readerPublication, fn func(txn *badger.Txn) error, publication *commitPublication) error {
 	defer m.oracle.endRead(readTs)
 	txn := m.DB.NewTransactionAt(readTs, true)
 	defer txn.Discard()
 	if err := fn(txn); err != nil {
 		return err
 	}
-	return m.commit(ctx, txn, publication)
+	return m.commit(ctx, txn, p, publication)
 }
 
 // beginTxn opens a transaction at the published timestamp and registers the
@@ -211,18 +218,19 @@ func (m *managedBadgerDB) endRead(readTs uint64) {
 	m.oracle.endRead(readTs)
 }
 
-// commit commits txn as one ordinary commit: it takes the next timestamp
-// under the shared commit gate, writes, and waits until the published
-// timestamp covers the write so the caller reads its own write afterwards.
-func (m *managedBadgerDB) commit(ctx context.Context, txn *badger.Txn, publication *commitPublication) error {
-	ts, err := m.commitShared(ctx, txn, publication)
+// commit commits txn as one ordinary commit in reader publication p: it
+// takes the next timestamp under the shared commit gate, writes, and waits
+// until the published timestamp covers the write so the caller reads its own
+// write afterwards.
+func (m *managedBadgerDB) commit(ctx context.Context, txn *badger.Txn, p *readerPublication, publication *commitPublication) error {
+	ts, err := m.commitShared(ctx, txn, p, publication)
 	if err != nil {
 		return err
 	}
 	return m.oracle.waitPublished(nil, ts)
 }
 
-func (m *managedBadgerDB) commitShared(ctx context.Context, txn *badger.Txn, publish *commitPublication) (uint64, error) {
+func (m *managedBadgerDB) commitShared(ctx context.Context, txn *badger.Txn, p *readerPublication, publish *commitPublication) (uint64, error) {
 	if err := m.commitGate.RLockContext(ctx); err != nil {
 		return 0, err
 	}
@@ -236,9 +244,9 @@ func (m *managedBadgerDB) commitShared(ctx context.Context, txn *badger.Txn, pub
 	var ts uint64
 	var err error
 	if publish != nil && publish.owner != nil {
-		ts, err = m.oracle.assign(publish.owner.reserveNotification)
+		ts, err = m.oracle.assign(p, publish.owner.reserveNotification)
 	} else {
-		ts, err = m.oracle.assign()
+		ts, err = m.oracle.assign(p)
 	}
 	if err != nil {
 		return 0, err
@@ -309,16 +317,7 @@ func (m *managedBadgerDB) DropPrefix(ctx context.Context, options prefixDropOpti
 				return err
 			}
 		}
-		if err := m.commitGate.LockContext(ctx); err != nil {
-			return err
-		}
-		defer m.commitGate.Unlock()
-		ts, err := m.oracle.assign()
-		if err != nil {
-			return err
-		}
-		defer m.oracle.finish(ts)
-		return m.durableAction(ts, cacheWriteScope{known: options.metadata}, WithPublicationDecision(ctx, nil), func() error { return m.DB.DropPrefix(prefixes...) })
+		return m.exclusiveBoundary(ctx, cacheWriteScope{known: options.metadata}, func() error { return m.DB.DropPrefix(prefixes...) }, nil)
 	}
 	if options.engine != nil {
 		return recoverBadgerClosedPanic(drop)
@@ -330,16 +329,31 @@ func (m *managedBadgerDB) DropPrefix(ctx context.Context, options prefixDropOpti
 // ordinary writes. Restore may load older versions, but cannot revive a proof
 // from the store it replaced.
 func (m *managedBadgerDB) DropAll(ctx context.Context) error {
+	return m.exclusiveBoundary(ctx, cacheWriteScope{}, m.DB.DropAll, nil)
+}
+
+// exclusiveBoundary runs op, which writes to Badger outside a transaction,
+// as its own reader publication: it holds the commit gate exclusively so no
+// commit overlaps op, and op runs under one assigned timestamp through the
+// durable action owner. then, when not nil, runs after a successful op with the
+// gate still held. The caller must not hold the gate.
+func (m *managedBadgerDB) exclusiveBoundary(ctx context.Context, scope cacheWriteScope, op func() error, then func()) error {
 	if err := m.commitGate.LockContext(ctx); err != nil {
 		return err
 	}
 	defer m.commitGate.Unlock()
-	ts, err := m.oracle.assign()
+	ts, err := m.oracle.assign(standalonePublication)
 	if err != nil {
 		return err
 	}
 	defer m.oracle.finish(ts)
-	return m.durableAction(ts, cacheWriteScope{}, WithPublicationDecision(ctx, nil), m.DB.DropAll)
+	if err := m.durableAction(ts, scope, WithPublicationDecision(ctx, nil), op); err != nil {
+		return err
+	}
+	if then != nil {
+		then()
+	}
+	return nil
 }
 
 // NewTransaction is not available on the managed handle: a transaction must
@@ -377,20 +391,9 @@ func (m *managedBadgerDB) Backup(w io.Writer, since uint64) (uint64, error) {
 // original versions, so the oracle moves past the highest one and publishes
 // it; the load holds the commit gate exclusively so no commit overlaps.
 func (m *managedBadgerDB) Load(ctx context.Context, r io.Reader, maxPendingWrites int) error {
-	if err := m.commitGate.LockContext(ctx); err != nil {
-		return err
-	}
-	defer m.commitGate.Unlock()
-	ts, err := m.oracle.assign()
-	if err != nil {
-		return err
-	}
-	defer m.oracle.finish(ts)
-	if err := m.durableAction(ts, cacheWriteScope{}, WithPublicationDecision(ctx, nil), func() error { return m.DB.Load(r, maxPendingWrites) }); err != nil {
-		return err
-	}
-	m.oracle.advanceTo(m.DB.MaxVersion())
-	return nil
+	return m.exclusiveBoundary(ctx, cacheWriteScope{}, func() error { return m.DB.Load(r, maxPendingWrites) }, func() {
+		m.oracle.advanceTo(m.DB.MaxVersion())
+	})
 }
 
 // batchWriter is the one place that splits writes into Badger batches. Writes
@@ -458,15 +461,15 @@ func (w *batchWriter) discard() {
 	}
 }
 
+// commitBatch commits a maintenance batch as an ordinary commit.
+func (m *managedBadgerDB) commitBatch(txn *badger.Txn) error {
+	return m.commit(context.Background(), txn, standalonePublication, nil)
+}
+
 // openBatch opens a maintenance batch. Its writes are blind (it reads
 // nothing), so its read timestamp needs no registration.
 func (m *managedBadgerDB) openBatch() *badger.Txn {
 	return m.DB.NewTransactionAt(m.oracle.published.Load(), true)
-}
-
-// commitBatch commits a maintenance batch as an ordinary commit.
-func (m *managedBadgerDB) commitBatch(txn *badger.Txn) error {
-	return m.commit(context.Background(), txn, nil)
 }
 
 // NewWriteBatch returns a batched writer for bulk maintenance writes (index
@@ -495,7 +498,7 @@ type managedWriteBatch struct {
 func (wb *managedWriteBatch) openBatch() *badger.Txn { return wb.db.openBatch() }
 func (wb *managedWriteBatch) commitBatch(txn *badger.Txn) error {
 	scope := wb.projection.scope()
-	err := wb.db.commit(wb.ctx, txn, &commitPublication{cacheScope: &scope, metadata: true})
+	err := wb.db.commit(wb.ctx, txn, standalonePublication, &commitPublication{cacheScope: &scope, metadata: true})
 	wb.projection = physicalCacheProjection{}
 	return err
 }
@@ -541,20 +544,23 @@ type largeCommit struct {
 	lastTs uint64
 	// batches counts the batches written, the intent record excluded.
 	batches int
+	// p is the write's reader publication: the intent, every batch and a
+	// rollback are all in it.
+	p *readerPublication
 }
 
 // beginLargeCommitContext takes the commit gate exclusively and durably
-// records the intent of a large commit.
-func (m *managedBadgerDB) beginLargeCommitContext(ctx context.Context, onAssign ...func()) (*largeCommit, error) {
+// records the intent of a large commit in reader publication p.
+func (m *managedBadgerDB) beginLargeCommitContext(ctx context.Context, p *readerPublication, onAssign ...func()) (*largeCommit, error) {
 	if err := m.commitGate.LockContext(ctx); err != nil {
 		return nil, err
 	}
-	intentTs, err := m.oracle.assign(onAssign...)
+	intentTs, err := m.oracle.assign(p, onAssign...)
 	if err != nil {
 		m.commitGate.Unlock()
 		return nil, err
 	}
-	lc := &largeCommit{db: m, ctx: ctx, intentTs: intentTs, lastTs: intentTs}
+	lc := &largeCommit{db: m, ctx: ctx, intentTs: intentTs, lastTs: intentTs, p: p}
 	txn := m.DB.NewTransactionAt(intentTs-1, true)
 	defer txn.Discard()
 	var val [8]byte
@@ -586,7 +592,7 @@ func (lc *largeCommit) openBatch() *badger.Txn {
 // commitBatch writes txn as the next batch of the large commit. A conflict
 // on the first batch comes back as badger.ErrConflict.
 func (lc *largeCommit) commitBatch(txn *badger.Txn) error {
-	ts, err := lc.db.oracle.assign()
+	ts, err := lc.db.oracle.assign(lc.p)
 	if err != nil {
 		return err
 	}
@@ -654,7 +660,7 @@ func (lc *largeCommit) finish(w *batchWriter, publication ...*commitPublication)
 // timestamp, at which none of the batches are visible.
 func (lc *largeCommit) abort() error {
 	// A closed DB panics inside Badger; the gate must be released either way.
-	if err := recoverBadgerClosedPanic(func() error { return lc.db.rollbackSince(lc.intentTs) }); err != nil {
+	if err := recoverBadgerClosedPanic(func() error { return lc.db.rollbackSince(lc.intentTs, lc.p) }); err != nil {
 		lc.db.oracle.fail(err)
 		lc.db.commitGate.Unlock()
 		return err
@@ -670,9 +676,9 @@ func (lc *largeCommit) release() {
 
 // rollbackSince restores every key that has a version newer than sinceTs to
 // its value at sinceTs, and deletes the large-commit intent, all at one new
-// timestamp. Only a large commit writes after its intent while it holds the
-// commit gate (and no one writes at open), so this undoes exactly that
-// commit. It is idempotent: a crash part-way leaves the intent, and repeating
+// timestamp in reader publication p. Only a large commit writes after its
+// intent while it holds the commit gate (and no one writes at open), so this
+// undoes exactly that commit. It is idempotent: a crash part-way leaves the intent, and repeating
 // the rollback restores the same values.
 //
 // Property-key dictionary entries are not rolled back. A token belongs to
@@ -680,8 +686,8 @@ func (lc *largeCommit) release() {
 // the dictionary keeps it when the commit that allocated it fails, so its
 // persisted copy must stay too; an unused token is harmless (see
 // propertyKeyDictionary).
-func (m *managedBadgerDB) rollbackSince(sinceTs uint64) error {
-	restoreTs, err := m.oracle.assign()
+func (m *managedBadgerDB) rollbackSince(sinceTs uint64, p *readerPublication) error {
+	restoreTs, err := m.oracle.assign(p)
 	if err != nil {
 		return err
 	}
@@ -770,14 +776,21 @@ type commitOracle struct {
 	// commit has finished; reads use it.
 	published atomic.Uint64
 
-	mu        sync.Mutex
-	changed   sync.Cond     // broadcast when published advances or the oracle fails
-	wake      chan struct{} // the same owner notification, selectable by cancellable preparation
-	nextTs    uint64
-	inflight  map[uint64]struct{}
-	readers   map[uint64]int
-	discardTs uint64
-	failed    error
+	mu       sync.Mutex
+	changed  sync.Cond     // broadcast when published advances or the oracle fails
+	wake     chan struct{} // the same owner notification, selectable by cancellable preparation
+	nextTs   uint64
+	inflight map[uint64]*readerPublication
+	// open holds the reader publications with an assigned timestamp that
+	// are not yet counted (closePublication).
+	open map[*readerPublication]struct{}
+	// The highest timestamps of the last two counted reader publications,
+	// not another revision counter or a commit journal. They prove whether
+	// one reader publication separates two views.
+	readerLatest, readerPrevious uint64
+	readers                      map[uint64]int
+	discardTs                    uint64
+	failed                       error
 	// readsHeld turns new reads away while Restore replaces the store
 	// (holdReads); changed is broadcast when the last open read ends.
 	readsHeld bool
@@ -787,9 +800,11 @@ type commitOracle struct {
 
 func newCommitOracle(maxVersion uint64) *commitOracle {
 	o := &commitOracle{
-		nextTs:   maxVersion + 1,
-		inflight: make(map[uint64]struct{}),
-		readers:  make(map[uint64]int),
+		nextTs:       maxVersion + 1,
+		inflight:     make(map[uint64]*readerPublication),
+		open:         make(map[*readerPublication]struct{}),
+		readerLatest: maxVersion,
+		readers:      make(map[uint64]int),
 	}
 	o.changed.L = &o.mu
 	o.published.Store(maxVersion)
@@ -868,16 +883,50 @@ func (o *commitOracle) releaseReads() {
 	o.mu.Unlock()
 }
 
-// assign returns the next commit timestamp, unfinished until finish.
-func (o *commitOracle) assign(onAssign ...func()) (uint64, error) {
+// readerPublication is one step readers can observe: every commit timestamp
+// of one logical write. A write's commit writer holds it (commitWriter.own)
+// and closes it once the write and its follow-up commits are done
+// (closePublication); the oracle then counts it once, at its highest
+// timestamp. standalonePublication is the publication of a commit that is no
+// part of a write: each of its timestamps counts alone.
+type readerPublication struct {
+	standalone bool
+	closed     bool
+	// pending counts the assigned timestamps not yet finished.
+	pending      int32
+	minTs, maxTs uint64
+}
+
+// standalonePublication counts each of its commits as its own reader
+// publication: maintenance, recovery, restore and every commit outside a
+// write's commit writer.
+var standalonePublication = &readerPublication{standalone: true}
+
+// assign returns the next commit timestamp, unfinished until finish, as a
+// timestamp of reader publication p.
+func (o *commitOracle) assign(p *readerPublication, onAssign ...func()) (uint64, error) {
+	if p == nil {
+		panic("storage: commit timestamp without a reader publication")
+	}
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.failed != nil {
 		return 0, o.failed
 	}
+	if p.closed && !p.standalone {
+		panic("storage: commit timestamp for a closed reader publication")
+	}
 	ts := o.nextTs
 	o.nextTs++
-	o.inflight[ts] = struct{}{}
+	o.inflight[ts] = p
+	if !p.standalone {
+		if p.minTs == 0 {
+			p.minTs = ts
+			o.open[p] = struct{}{}
+		}
+		p.maxTs = ts
+		p.pending++
+	}
 	for _, reserve := range onAssign {
 		reserve()
 	}
@@ -885,9 +934,18 @@ func (o *commitOracle) assign(onAssign ...func()) (uint64, error) {
 }
 
 // finish marks ts written (or abandoned) and advances published as far as
-// every lower timestamp is finished.
+// every lower timestamp is finished. The last timestamp of a closed reader
+// publication counts it.
 func (o *commitOracle) finish(ts uint64) {
 	o.mu.Lock()
+	switch p := o.inflight[ts]; {
+	case p == nil:
+	case p.standalone:
+		o.countPublicationLocked(ts)
+	default:
+		p.pending--
+		o.settlePublicationLocked(p)
+	}
 	delete(o.inflight, ts)
 	published := o.nextTs - 1
 	for pending := range o.inflight {
@@ -900,6 +958,60 @@ func (o *commitOracle) finish(ts uint64) {
 		o.broadcastLocked()
 	}
 	o.mu.Unlock()
+}
+
+// closePublication ends write publication p: it takes no further timestamp,
+// and it is counted once its last timestamp finishes. A publication that was
+// never assigned a timestamp counts nothing.
+func (o *commitOracle) closePublication(p *readerPublication) {
+	o.mu.Lock()
+	p.closed = true
+	o.settlePublicationLocked(p)
+	o.mu.Unlock()
+}
+
+// settlePublicationLocked counts write publication p once: when it is closed,
+// its last timestamp has finished, and it was assigned one (it is open).
+func (o *commitOracle) settlePublicationLocked(p *readerPublication) {
+	if !p.closed || p.pending != 0 {
+		return
+	}
+	if _, ok := o.open[p]; ok {
+		delete(o.open, p)
+		o.countPublicationLocked(p.maxTs)
+	}
+}
+
+// countPublicationLocked records a counted reader publication whose highest
+// timestamp is ts. Publications can be counted out of timestamp order; one
+// counted below the latest only moves readerPrevious, so a view captured at
+// the latest is not taken to be one publication behind.
+func (o *commitOracle) countPublicationLocked(ts uint64) {
+	if ts > o.readerLatest {
+		o.readerPrevious, o.readerLatest = o.readerLatest, ts
+	} else if ts > o.readerPrevious && ts < o.readerLatest {
+		o.readerPrevious = ts
+	}
+}
+
+// readableLocked reports that the published state can be read as current: no
+// maintenance holds reads and the oracle has not failed.
+func (o *commitOracle) readableLocked() bool { return !o.readsHeld && o.failed == nil }
+
+// readerPairCurrentLocked reports whether the reader pair describes exactly
+// what a read at the published timestamp sees: every counted publication is
+// visible, and no publication that is not counted yet is partly visible.
+func (o *commitOracle) readerPairCurrentLocked() bool {
+	published := o.published.Load()
+	if o.readerLatest > published {
+		return false
+	}
+	for p := range o.open {
+		if p.minTs <= published {
+			return false
+		}
+	}
+	return true
 }
 
 // advanceTo moves the oracle past ts (restored data) and publishes it.

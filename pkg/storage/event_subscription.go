@@ -25,8 +25,55 @@ type EventHandlers struct {
 // it; every wrapper forwards it to the engine it wraps (compile-time checked
 // in wrapper_capabilities.go and in the wrapper's own package), so a
 // subscription reaches the publisher through any configuration of wrappers.
+// The settled report belongs to the same contract: a subscriber can use its
+// events as a baseline only through it, so a wrapper that forwards one
+// forwards both.
 type EventSubscriber interface {
 	SubscribeEvents(handlers EventHandlers) error
+	EventNotificationsSettled() bool
+}
+
+// EventNotificationsSettled reports whether every previously visible mutation
+// has finished delivering its events. An unsupported engine returns false.
+// Consumers may establish a new revision/event baseline only at such a point,
+// and must sample the graph revision again after sampling their event counter.
+// It never waits for callbacks, which may themselves be waiting on the reader.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func EventNotificationsSettled(engine Engine) bool {
+	subscriber, ok := engine.(EventSubscriber)
+	return ok && subscriber.EventNotificationsSettled()
+}
+
+// EventNotificationsSettled observes the canonical notification queue. Native
+// synchronous commits reserve their queue entry before publishing graph data.
+// Buffered commits acknowledge data before their per-operation events exist;
+// those cannot certify this baseline and conservatively return false.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func (b *BadgerEngine) EventNotificationsSettled() bool {
+	if b.writeBehindEnabled() {
+		return false
+	}
+	b.notificationMu.Lock()
+	defer b.notificationMu.Unlock()
+	return b.notificationHead == nil && !b.notificationDraining
+}
+
+// EventNotificationsSettled forwards the existing publisher's metadata.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func (n *NamespacedEngine) EventNotificationsSettled() bool {
+	return EventNotificationsSettled(n.inner)
+}
+
+// EventNotificationsSettled forwards the existing publisher's metadata.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func (w *WALEngine) EventNotificationsSettled() bool {
+	return EventNotificationsSettled(w.engine)
+}
+
+// EventNotificationsSettled forwards the existing publisher's metadata.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func (t *TracedEngine) EventNotificationsSettled() bool {
+	return EventNotificationsSettled(t.Engine)
 }
 
 // SubscribeEvents subscribes handlers to engine, or reports that it cannot
@@ -34,7 +81,7 @@ type EventSubscriber interface {
 // does not forward the capability is an error, not a silent gap.
 func SubscribeEvents(engine Engine, handlers EventHandlers) error {
 	subscriber, ok := engine.(EventSubscriber)
-	if !ok || subscriber == nil {
+	if !ok {
 		return ErrEventSubscriptionUnsupported
 	}
 	return subscriber.SubscribeEvents(handlers)

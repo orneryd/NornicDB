@@ -167,6 +167,22 @@ func (b *BadgerEngine) rebuildSecondaryIndexesForV2() (v1ToV2IndexStats, error) 
 	return stats, nil
 }
 
+// migrationBatches pages a v1->v2 index rebuild over the rows under prefix:
+// each round collects, from the cursor on, up to batchSize undecoded bodies
+// with collect (in one read view); drivePages applies and continues. what names
+// the rows in a collect error.
+func (b *BadgerEngine) migrationBatches(prefix byte, batchSize int, what string, collect func(txn *badger.Txn, start []byte, page *scanPage[migrationItem]) error, apply func(batch []migrationItem) error) error {
+	return drivePages([]byte{prefix}, func(start []byte) ([]migrationItem, []byte, bool, error) {
+		page := newScanPage[migrationItem](batchSize)
+		if err := b.withView(func(txn *badger.Txn) error {
+			return collect(txn, start, page)
+		}); err != nil {
+			return nil, nil, false, fmt.Errorf("scan %s for index rebuild: %w", what, err)
+		}
+		return page.items, page.last, page.reachedEnd, nil
+	}, apply)
+}
+
 // rebuildLabelIndexForV2 walks every node body and emits one
 // labelIndexKey per (node, label) pair. Uses cursor-based pagination
 // (not the body-format-byte skip used by the body-rewrite pass) since
@@ -175,41 +191,16 @@ func (b *BadgerEngine) rebuildLabelIndexForV2(stats *v1ToV2IndexStats) error {
 	const progressEvery = 25_000
 	const batchSize = migrationV1ToV2BatchSize
 	lastLogged := 0
-	var cursor []byte
-
-	for {
-		var batch []migrationItem
-		err := b.withView(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
-			defer it.Close()
-			start := cursor
-			if len(start) == 0 {
-				start = []byte{prefixNode}
-			}
-			batch = batch[:0]
-			for it.Seek(start); it.ValidForPrefix([]byte{prefixNode}); it.Next() {
-				if len(batch) >= batchSize {
-					return nil
-				}
-				item := it.Item()
-				val, vErr := item.ValueCopy(nil)
-				if vErr != nil {
-					return vErr
-				}
-				if len(val) == 0 {
-					continue
-				}
-				batch = append(batch, migrationItem{key: item.KeyCopy(nil), value: val})
-			}
-			return nil
-		})
-		if err != nil {
-			return fmt.Errorf("scan nodes for index rebuild: %w", err)
-		}
-		if len(batch) == 0 {
-			return nil
-		}
-		err = b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	return b.migrationBatches(prefixNode, batchSize, "nodes", func(txn *badger.Txn, start []byte, page *scanPage[migrationItem]) error {
+		// The engine's node-row scan hands each stored body over
+		// undecoded; the write pass below decodes it.
+		rows := nodeRowScan{scope: allRows(), overlay: noOverlay[NodeID](), decode: decodeErrorsFail, visibility: scanStored,
+			body: func(id NodeID, val []byte) (bool, error) {
+				return addMigrationBody(page, id, val, nodeKey)
+			}}
+		return b.streamNodeRowsFrom(context.Background(), txn, start, rows, StreamNodesOptions{}, func(*Node) error { return nil })
+	}, func(batch []migrationItem) error {
+		err := b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			for _, item := range batch {
 				nodeID := NodeID(string(item.key[1:]))
 				namespace, _, ok := ParseDatabasePrefix(string(nodeID))
@@ -242,15 +233,8 @@ func (b *BadgerEngine) rebuildLabelIndexForV2(stats *v1ToV2IndexStats) error {
 			)
 			lastLogged = stats.labels
 		}
-		// Advance cursor past the last key we just processed.
-		last := batch[len(batch)-1].key
-		cursor = make([]byte, len(last)+1)
-		copy(cursor, last)
-		cursor[len(last)] = 0x00
-		if len(batch) < batchSize {
-			return nil
-		}
-	}
+		return nil
+	})
 }
 
 // rebuildEdgeIndexesForV2 walks every edge body and emits outgoing,
@@ -260,44 +244,17 @@ func (b *BadgerEngine) rebuildEdgeIndexesForV2(stats *v1ToV2IndexStats) error {
 	const progressEvery = 25_000
 	const batchSize = migrationV1ToV2BatchSize
 	lastLogged := 0
-	var cursor []byte
-
-	for {
-		var batch []migrationItem
-		err := b.withView(func(txn *badger.Txn) error {
-			it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEdge}))
-			defer it.Close()
-			start := cursor
-			if len(start) == 0 {
-				start = []byte{prefixEdge}
-			}
-			batch = batch[:0]
-			for it.Seek(start); it.ValidForPrefix([]byte{prefixEdge}); it.Next() {
-				if len(batch) >= batchSize {
-					return nil
-				}
-				item := it.Item()
-				val, vErr := item.ValueCopy(nil)
-				if vErr != nil {
-					return vErr
-				}
-				if len(val) == 0 {
-					// Empty edge bodies aren't decodable; the body-rewrite
-					// pass also skips them. Leave them on disk; index
-					// rebuild has nothing to emit for them.
-					continue
-				}
-				batch = append(batch, migrationItem{key: item.KeyCopy(nil), value: val})
-			}
-			return nil
-		})
-		if err != nil {
-			return fmt.Errorf("scan edges for index rebuild: %w", err)
-		}
-		if len(batch) == 0 {
-			return nil
-		}
-		err = b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
+	return b.migrationBatches(prefixEdge, batchSize, "edges", func(txn *badger.Txn, start []byte, page *scanPage[migrationItem]) error {
+		// The engine's relationship-row scan hands each stored body over
+		// undecoded; the write pass below decodes it.
+		scan := edgeRowScan{scope: allRows(), overlay: noOverlay[EdgeID](), decode: decodeErrorsFail, visibility: scanStored,
+			body: func(id EdgeID, val []byte) (bool, error) {
+				return addMigrationBody(page, id, val, edgeKey)
+			}}
+		_, err := b.scanEdgeRowsFrom(context.Background(), txn, start, scan, func(*Edge) error { return nil })
+		return err
+	}, func(batch []migrationItem) error {
+		err := b.withUpdate(updateRequest{}, func(txn *badger.Txn) error {
 			for _, item := range batch {
 				edgeID := EdgeID(string(item.key[1:]))
 				edge, err := b.decodeEdgeBodyByID(item.value, edgeID)
@@ -349,14 +306,8 @@ func (b *BadgerEngine) rebuildEdgeIndexesForV2(stats *v1ToV2IndexStats) error {
 			)
 			lastLogged = stats.outgoing
 		}
-		last := batch[len(batch)-1].key
-		cursor = make([]byte, len(last)+1)
-		copy(cursor, last)
-		cursor[len(last)] = 0x00
-		if len(batch) < batchSize {
-			return nil
-		}
-	}
+		return nil
+	})
 }
 
 // compactAfterMigration synchronously compacts the LSM tree and runs
@@ -529,6 +480,19 @@ func migrateV1ToV2Bodies[M v1ToV2BodyKind](b *BadgerEngine, label string) (v1ToV
 type migrationItem struct {
 	key   []byte
 	value []byte
+}
+
+// addMigrationBody is the body hook of both index-rebuild scans: it copies
+// row id's stored body into page, keyed by key(id); the page ends the scan once
+// it is full. Empty bodies aren't decodable; the body-rewrite
+// pass also skips them. They stay on disk; index rebuild has nothing to emit
+// for them.
+func addMigrationBody[ID any](page *scanPage[migrationItem], id ID, val []byte, key func(ID) []byte) (bool, error) {
+	if len(val) == 0 {
+		return true, nil
+	}
+	rowKey := key(id)
+	return true, page.add(migrationItem{key: rowKey, value: append([]byte(nil), val...)}, rowKey)
 }
 
 // collectBatch scans up to limit records under prefix that do NOT

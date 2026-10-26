@@ -278,7 +278,7 @@ func (tx *BadgerTransaction) commitBufferedLocked() error {
 // and must not re-enter it), and through ordinary commits otherwise,
 // mirroring the sync commit path's finish.
 func (b *BadgerEngine) persistReplayTxnCounters(cw *commitWriter, drain propKeyTxnDrain) error {
-	var to batchTarget = metadataBatches{db: b.db}
+	var to batchTarget = metadataBatches{db: b.db, p: cw.pub}
 	if cw.large != nil {
 		to = cw.large
 	}
@@ -327,6 +327,8 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	txn := b.db.DB.NewTransactionAt(b.db.oracle.published.Load(), true)
 	// Accepted replay retains the release's explicitly detached context.
 	cw := b.newCommitWriter(nil, b.db, txn)
+	defer cw.closePublication()
+	pub := cw.pub
 	recovered := false
 	for _, commit := range commits {
 		if commit.recovered {
@@ -564,10 +566,10 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 
 	// Commit tail: durability bookkeeping, derived counts, caches, callbacks.
 	for ns := range versions {
-		b.persistMVCCSequence(ns)
+		b.persistMVCCSequence(ns, pub)
 	}
 	if anyCounters {
-		b.idDict.persistCounters(b.db, maxNode, maxEdge)
+		b.idDict.persistCounters(b.db, pub, maxNode, maxEdge)
 	}
 	// Apply the generation's merged count deltas in ONE metadata transaction
 	// instead of three separate Badger commits while holding the count
@@ -598,7 +600,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 						"subsystem", "storage", "error", tierErr)
 				}
 			}
-			if tierErr := b.applyEdgeTypeLabelCountDeltasLocked(edgeTypeLabelDeltas); tierErr != nil {
+			if tierErr := b.applyEdgeTypeLabelCountDeltasLocked(pub, edgeTypeLabelDeltas); tierErr != nil {
 				if repairErr := b.rebuildAuthoritativeEdgeTypeCountsLocked(); repairErr != nil && b.log != nil {
 					b.log.Error("write-behind replay: (label, type) count delta apply and repair failed",
 						"subsystem", "storage", "update_error", tierErr, "repair_error", repairErr)

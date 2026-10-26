@@ -1,3 +1,4 @@
+// Author: Codex implementation lane, 2026-10-27 (NOR-148 snapshot reader contract).
 package multidb
 
 import (
@@ -634,6 +635,8 @@ func (t *sizeTrackingEngine) OpenReadSnapshot(ctx context.Context) (storage.Read
 	return storage.OpenReadSnapshot(ctx, t.Engine)
 }
 
+func (t *sizeTrackingEngine) OwnsSnapshotReader(issued storage.Engine) bool { return issued == t }
+
 var _ storage.ReadSnapshotter = (*sizeTrackingEngine)(nil)
 var _ storage.EventSubscriber = (*sizeTrackingEngine)(nil)
 
@@ -641,6 +644,17 @@ var _ storage.EventSubscriber = (*sizeTrackingEngine)(nil)
 func (t *sizeTrackingEngine) SubscribeEvents(handlers storage.EventHandlers) error {
 	return storage.SubscribeEvents(t.Engine, handlers)
 }
+
+// EventNotificationsSettled forwards the tracked engine's report.
+func (t *sizeTrackingEngine) EventNotificationsSettled() bool {
+	return storage.EventNotificationsSettled(t.Engine)
+}
+
+// EventViewInner returns the tracked engine: accounting changes no event,
+// entity ID or committed read.
+func (t *sizeTrackingEngine) EventViewInner() storage.Engine { return t.Engine }
+
+var _ storage.EventViewForwarder = (*sizeTrackingEngine)(nil)
 
 func (t *sizeTrackingEngine) initializeManagedUsage(ctx context.Context) error {
 	if t.runtimeErr != nil {

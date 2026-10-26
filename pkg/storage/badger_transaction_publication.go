@@ -293,7 +293,11 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	acceptedRelease := tx.commitReleaseAcceptedAuthority
 	// A prepared command's accepted continuation deliberately cleared this
 	// context. Its acceptance owner already made the semantic decision.
+	// The commit, its batches and its follow-up commits below are one reader
+	// publication, the writer's own, closed when the commit returns.
 	cw := tx.engine.newCommitWriter(tx.commitCtx, tx.badgerDB, tx.badgerTx)
+	defer cw.closePublication()
+	pub := cw.pub
 	logicalID := tx.ID
 	if tx.commitLogicalID != "" {
 		logicalID = tx.commitLogicalID
@@ -421,7 +425,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// successful user commit into an apparent rollback — rebuild from the
 	// committed edge-type index immediately; startup verification remains
 	// the final recovery boundary.
-	if err := tx.engine.applyEdgeTypeLabelCountDeltasLocked(tx.pendingEdgeTypeLabelCountDeltas); err != nil {
+	if err := tx.engine.applyEdgeTypeLabelCountDeltasLocked(pub, tx.pendingEdgeTypeLabelCountDeltas); err != nil {
 		if repairErr := tx.engine.rebuildAuthoritativeEdgeTypeCountsLocked(); repairErr != nil {
 			tx.engine.log.Error("failed to repair derived (label, type) counts after transaction commit",
 				"subsystem", "transaction",
@@ -445,9 +449,9 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// conflict-detection set. Concurrent commits in the same namespace
 	// must not race on these writes — see allocateMVCCVersion's doc.
 	if tx.namespace != "" && !tx.CommitVersion.IsZero() {
-		tx.engine.persistMVCCSequence(tx.namespace)
+		tx.engine.persistMVCCSequence(tx.namespace, pub)
 	}
-	tx.engine.idDict.persistCounters(tx.engine.db, idCounterNodeMax, idCounterEdgeMax)
+	tx.engine.idDict.persistCounters(tx.engine.db, pub, idCounterNodeMax, idCounterEdgeMax)
 
 	// Cache, index, unique-value and logical revision publication completed in
 	// the writer's ordered memory-only stage. Durable follow-ups remain above;

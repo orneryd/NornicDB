@@ -354,15 +354,7 @@ func (n *NamespacedEngine) StreamStoredNodesByLabelProjected(label string, prope
 // StreamStoredEdgesByType is StreamEdgesByType's stored read
 // (StoredEntityReader).
 func (n *NamespacedEngine) StreamStoredEdgesByType(ctx context.Context, edgeType string, visit func(*Edge) error) error {
-	if visit == nil {
-		return ErrInvalidData
-	}
-	return streamStoredEdgesByTypeInScope(ctx, n.inner, n.nodeScope(), edgeType, func(edge *Edge) error {
-		if edge == nil || !n.hasEdgePrefix(edge.ID) {
-			return nil
-		}
-		return visit(n.toUserEdge(edge))
-	})
+	return n.streamEdgesOfType(ctx, edgeType, visit, streamStoredEdgesByTypeInScope)
 }
 
 // toUserEdgesInNamespace keeps the edges of this database, unprefixed.

@@ -1352,8 +1352,10 @@ func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, co
 // participate in the user transaction's conflict-detection set. Best
 // effort: a failure is logged at debug level rather than failing the
 // commit, since the in-memory counter is authoritative and any lost
-// persistence window is reconciled at next engine open.
-func (b *BadgerEngine) persistMVCCSequence(namespace string) {
+// persistence window is reconciled at next engine open. The commit is in
+// reader publication p: the write that advanced the sequence, or
+// standalonePublication.
+func (b *BadgerEngine) persistMVCCSequence(namespace string, p *readerPublication) {
 	if namespace == "" {
 		return
 	}
@@ -1368,7 +1370,7 @@ func (b *BadgerEngine) persistMVCCSequence(namespace string) {
 	encodedSeq := make([]byte, 8)
 	binary.BigEndian.PutUint64(encodedSeq, seq)
 	persistKey := state.persistKey
-	_ = b.db.updateMetadataContext(context.Background(), func(txn *badger.Txn) error {
+	_ = b.db.updateMetadataIn(context.Background(), p, func(txn *badger.Txn) error {
 		return txn.Set(persistKey, encodedSeq)
 	})
 }

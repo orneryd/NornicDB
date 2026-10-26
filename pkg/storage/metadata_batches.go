@@ -12,11 +12,12 @@ import (
 type metadataBatches struct {
 	db  *managedBadgerDB
 	ctx context.Context
+	p   *readerPublication
 }
 
 func (target metadataBatches) openBatch() *badger.Txn { return target.db.openBatch() }
 func (target metadataBatches) commitBatch(txn *badger.Txn) error {
-	ts, err := target.db.commitShared(target.ctx, txn, &commitPublication{metadata: true})
+	ts, err := target.db.commitShared(target.ctx, txn, target.p, &commitPublication{metadata: true})
 	if err != nil {
 		return err
 	}

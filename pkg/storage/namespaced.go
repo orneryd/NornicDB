@@ -302,18 +302,10 @@ func (n *NamespacedEngine) UpdateNode(updateRequest NodeUpdateRequest) error {
 }
 
 func (n *NamespacedEngine) DeleteNode(id NodeID) error {
-	prefixedID := n.PrefixNodeID(id)
-
-	// Delete the node (this will remove it from pending embeddings index)
-	err := n.inner.DeleteNode(prefixedID)
-
-	// Remove from pending embeddings index (with namespace prefix)
-	// ALL node IDs in the index must be prefixed
-	if mgr, ok := n.inner.(interface{ MarkNodeEmbedded(NodeID) }); ok {
-		mgr.MarkNodeEmbedded(prefixedID)
-	}
-
-	return err
+	// The inner delete removes the node's pending-embedding marker in its own
+	// commit; a second commit to retire it again would only separate this
+	// delete into two publications.
+	return n.inner.DeleteNode(n.PrefixNodeID(id))
 }
 
 // ============================================================================
@@ -918,12 +910,7 @@ func (n *NamespacedEngine) StreamNodesByPrefixWithoutEmbeddings(ctx context.Cont
 // StreamEdges streams edges in the namespace.
 func (n *NamespacedEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) error) error {
 	if streamer, ok := n.inner.(StreamingEngine); ok {
-		return streamer.StreamEdges(ctx, func(edge *Edge) error {
-			if n.hasEdgePrefix(edge.ID) {
-				return fn(n.toUserEdge(edge))
-			}
-			return nil // Skip edges not in our namespace
-		})
+		return streamer.StreamEdges(ctx, n.userEdges(fn))
 	}
 	// Fallback to AllEdges
 	edges, err := n.AllEdges()
@@ -1218,10 +1205,10 @@ func (n *NamespacedEngine) streamNamespaceNodesProjected(label string, propertie
 		return ErrInvalidData
 	}
 	deliver := func(node *Node) error {
-		if node == nil || !n.hasNodePrefix(node.ID) {
-			return nil
+		if user := n.userNode(node); user != nil {
+			return visit(user)
 		}
-		return visit(n.toUserNode(node, nodeUserView{}))
+		return nil
 	}
 	if stored {
 		return streamStoredNodesByLabelProjectedInScope(n.inner, n.nodeScope(), label, properties, deliver)

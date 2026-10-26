@@ -1,3 +1,4 @@
+// Author of the reader publication: #1683 lane (Claude), 2026-10-30 (NOR-148).
 package storage
 
 import (
@@ -26,6 +27,12 @@ import (
 // property-key tokens are made durable before the first batch that can
 // reference them (ordinary commit: one separate commit before it; large
 // commit: a batch of their own ahead of each batch).
+//
+// Every timestamp the commit takes is in the write's reader publication pub:
+// the writer's own, embedded so it costs no allocation, which the caller
+// closes (closePublication) after the write's follow-up commits; or, for a
+// follow-up commit, the publication of the write it follows. One write is one
+// step for readers however many batches and commits it takes.
 type commitWriter struct {
 	ctx            context.Context
 	durableVersion uint64
@@ -37,6 +44,8 @@ type commitWriter struct {
 	stored         *storedEntityCommit
 	publishKeys    []any
 	notification   *commitNotification
+	pub            *readerPublication
+	own            readerPublication
 	batchWriter
 	engine              *BadgerEngine
 	embeddingOutcome    *Node
@@ -55,8 +64,18 @@ type commitWriter struct {
 
 func (b *BadgerEngine) newCommitWriter(ctx context.Context, db *managedBadgerDB, txn *badger.Txn) *commitWriter {
 	cw := &commitWriter{ctx: ctx, engine: b, db: db}
+	cw.pub = &cw.own
 	cw.batchWriter = batchWriter{txn: txn, to: cw}
 	return cw
+}
+
+// closePublication closes the writer's own reader publication once the write
+// and its follow-up commits are done. A follow-up writer leaves the
+// publication it adopted to the write that owns it.
+func (cw *commitWriter) closePublication() {
+	if cw.pub == &cw.own {
+		cw.db.oracle.closePublication(cw.pub)
+	}
 }
 
 // commitBatch writes a full batch as the next batch of the large commit,
@@ -69,7 +88,7 @@ func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
 				return err
 			}
 		}
-		lc, err := cw.db.beginLargeCommitContext(cw.ctx, cw.reserveNotification)
+		lc, err := cw.db.beginLargeCommitContext(cw.ctx, cw.pub, cw.reserveNotification)
 		if err != nil {
 			return err
 		}
@@ -112,7 +131,7 @@ func (cw *commitWriter) finish() error {
 	cw.collectPendingEmbeddingAdds(cw.txn)
 	if cw.large == nil {
 		dict := cw.engine.propKeyDict
-		if err := dict.persistTxnCounters(metadataBatches{db: cw.db, ctx: cw.ctx}, dict.flushTxnCounters(cw.txn)); err != nil {
+		if err := dict.persistTxnCounters(metadataBatches{db: cw.db, ctx: cw.ctx, p: cw.pub}, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
 		if err := cw.commitOutcome(); err != nil {
@@ -150,7 +169,7 @@ func (cw *commitWriter) abort() error {
 var errPersistingTokens = errors.New("persisting property key dictionary")
 
 func (cw *commitWriter) commitOutcomeBatch() (uint64, error) {
-	return cw.db.commitShared(cw.ctx, cw.txn, cw.publication())
+	return cw.db.commitShared(cw.ctx, cw.txn, cw.pub, cw.publication())
 }
 
 // publication is the memory-only delta associated with this physical commit.
