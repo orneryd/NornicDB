@@ -18,33 +18,45 @@ import (
 // shapes of TestSolR12GuardBypasses are fixtures of
 // TestClusterGenerationOwnerAllowList.
 
-// r12MoveWithinCluster saves the generation, then moves the first member of
-// cluster 0 to a new position that stays in cluster 0; it returns the save
-// path, the member's vector ID and its new vector.
-func r12MoveWithinCluster(t *testing.T, f *cgFixture) (string, string, []float32) {
+// moveClusterMember updates the first sorted member through the public write
+// path. A same-cluster move changes its coordinates without changing its owner;
+// a cross-cluster move uses the destination's published centroid.
+func moveClusterMember(t *testing.T, f *cgFixture, from, to int) (string, []float32) {
 	t.Helper()
-	ids := f.svc.clusterGen.routing.MemberIDs(0)
+	ids := f.svc.clusterIndex.GetClusterMemberIDsForCluster(from)
 	sort.Strings(ids)
+	require.NotEmpty(t, ids)
+	require.NotEmpty(t, f.svc.clusterIndex.GetClusterMemberIDsForCluster(to))
 	id := ids[0]
-	path := filepath.Join(t.TempDir(), "hnsw")
-	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
-	old, _ := f.svc.getVectorLookup()(id)
-	topic := 0
-	for d := range old {
-		if old[d] > old[topic] {
-			topic = d
+	routing := f.svc.clusterIndex.PublishedClustering()
+	require.NotNil(t, routing)
+	centroids := routing.Centroids()
+	require.GreaterOrEqual(t, to, 0)
+	require.Less(t, to, len(centroids))
+	vec := append([]float32(nil), centroids[to]...)
+	if from == to {
+		old, found := f.svc.getVectorLookup()(id)
+		require.True(t, found)
+		require.NotEmpty(t, old)
+		topic := 0
+		for d := range old {
+			if old[d] > old[topic] {
+				topic = d
+			}
 		}
+		vec = []float32{0.55, 0.55, 0.55, 0.55}
+		vec[topic] = 1
 	}
-	vec := []float32{0.55, 0.55, 0.55, 0.55}
-	vec[topic] = 1
+	require.NotEmpty(t, vec)
+	require.Equal(t, to, routing.NearestClusters(vec, 1)[0])
 	node, err := f.engine.GetNode(storage.NodeID(vectorOwnerForTest(t, id)))
 	require.NoError(t, err)
 	node.ChunkEmbeddings = [][]float32{vec}
 	require.NoError(t, f.write(node))
-	require.Equal(t, 0, f.svc.clusterGen.routing.NearestClusters(vec, 1)[0])
-	cid, _ := f.svc.clusterGen.routing.ClusterOf(id)
-	require.Equal(t, 0, cid, "the move stays within cluster 0")
-	return path, id, vec
+	cid, found := f.svc.clusterIndex.ClusterOf(id)
+	require.True(t, found)
+	require.Equal(t, to, cid)
+	return id, vec
 }
 
 // r12StoredCode is the graph's quantized code for id and the code its
@@ -75,7 +87,9 @@ func r12StoredCode(t *testing.T, f *cgFixture, id string) (stored, canonical []b
 func TestClusterGenerationRestoreRefreshesRetainedCoordinates(t *testing.T) {
 	f := newCGFixture(t, 20, false)
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
-	path, id, vec := r12MoveWithinCluster(t, f)
+	path := filepath.Join(t.TempDir(), "hnsw")
+	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
+	id, vec := moveClusterMember(t, f, 0, 0)
 	before, err := f.svc.VectorQueryNodesWithOptions(context.Background(), vec, VectorQuerySpec{Limit: 1}, nil)
 	require.NoError(t, err)
 	require.Len(t, before, 1)
@@ -97,7 +111,9 @@ func TestClusterGenerationRestoreRefreshesRetainedCoordinates(t *testing.T) {
 // so a restore costs only the changed members.
 func TestClusterGenerationRestoreKeepsUnchangedMembers(t *testing.T) {
 	f := newCGFixture(t, 20, false)
-	path, id, _ := r12MoveWithinCluster(t, f)
+	path := filepath.Join(t.TempDir(), "hnsw")
+	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
+	id, _ := moveClusterMember(t, f, 0, 0)
 	saved, err := readIVFHNSWManifest(ivfHNSWDir(path))
 	require.NoError(t, err)
 	savedGraph, err := saved.loadCluster(0, f.svc.getVectorLookup())

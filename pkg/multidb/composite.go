@@ -324,7 +324,7 @@ func (m *DatabaseManager) ListCompositeDatabases() []*DatabaseInfo {
 	var result []*DatabaseInfo
 	for _, info := range m.databases {
 		if info.Type == "composite" {
-			result = append(result, cloneDatabaseInfo(info))
+			result = append(result, cloneDatabaseInfo(info, m.pendingDrops[info.Name]))
 		}
 	}
 	return result

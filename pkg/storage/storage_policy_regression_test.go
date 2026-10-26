@@ -65,9 +65,9 @@ func TestRelationshipVersionDecayUsesUpdatedTime(t *testing.T) {
 	now := time.Now()
 	old := now.Add(-72 * time.Hour)
 	edge := &Edge{ID: "test:e", StartNode: "test:a", EndNode: "test:b", Type: "LINKS", CreatedAt: old, UpdatedAt: now}
-	require.False(t, eng.filterEdgeByDecay(edge, now.UnixNano()), "recently updated edge remains visible")
+	require.False(t, eng.filterEntityByDecay(visibleRead, edge, now.UnixNano()), "recently updated edge remains visible")
 	edge.UpdatedAt = old
-	require.True(t, eng.filterEdgeByDecay(edge, now.UnixNano()), "stale update is suppressed")
+	require.True(t, eng.filterEntityByDecay(visibleRead, edge, now.UnixNano()), "stale update is suppressed")
 }
 
 func TestNamespacedEdgesPreserveSuppressionFlag(t *testing.T) {

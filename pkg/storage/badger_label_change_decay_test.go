@@ -83,7 +83,7 @@ func TestLabelChange_TargetedToUntargeted_RescoresAndUnsuppresses(t *testing.T) 
 
 	// Step 3: the rescore must clear suppression. Without rebind,
 	// the persisted VisibilitySuppressed flag would still be true
-	// and filterNodeByDecay short-circuits → not-found.
+	// and filterEntityByDecay short-circuits → not-found.
 	got, err := eng.GetNode("test:n1")
 	require.NoError(t, err,
 		"rebind: relabeling away from a suppressing binding must un-suppress on next read")
@@ -175,7 +175,7 @@ func TestLabelChange_TargetedToTargeted_StaysSuppressed(t *testing.T) {
 // in the round-trip.
 //
 // Without label-change rescore, the rewritten node carries the stale
-// "true" flag forever and filterNodeByDecay short-circuits to suppress
+// "true" flag forever and filterEntityByDecay short-circuits to suppress
 // on every future read — even though the new labels don't bind to any
 // suppressing profile. That's the actual bug the user is asking about.
 func TestLabelChange_ReadModifyWrite_TargetedToUntargeted_RescoresOnUpdate(t *testing.T) {

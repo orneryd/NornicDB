@@ -29,291 +29,216 @@ func (m *mockEntityMeta) GetEntityMeta(entityID string) (EntityMeta, error) {
 	}, nil
 }
 
-type mockAccessMetaStore struct {
-	entries map[string]*AccessMetaEntry
+// suppressionCase is one entity configuration for the property-suppression
+// contract: which binding applies, how old the entity is, which properties it
+// has, and how the persisted overflow/callback state must look afterwards.
+type suppressionCase struct {
+	// name is the subtest name, matching the original per-test suffix.
+	name string
+	// suffix is the fixture-local entity id the case flushes; the persisted id
+	// is "testns:"+suffix, as the original per-case tests asserted.
+	suffix string
+	bundle *DecayProfileBundle
+	bind   *DecayProfileBinding
+	meta   mockEntityMeta
+	// installSuppression is false for the case that exercises a flusher with no
+	// property-suppression wiring at all.
+	installSuppression bool
+	// preSeed, when non-nil, installs a stored entry before the flush.
+	preSeed func(entityID string) *AccessMetaEntry
+	// verify asserts the persisted marker/callback state after the flush.
+	verify func(t *testing.T, entry *AccessMetaEntry, f *accessFlusherFixture)
 }
 
-func (m *mockAccessMetaStore) GetAccessMeta(entityID string) (*AccessMetaEntry, error) {
-	return m.entries[entityID], nil
-}
+// bioMarker asserts that "bio" carries a present, nil-valued suppression
+// marker. The nil value is the persisted suppression encoding, so the check
+// covers both the key and its representation.
+func bioMarker(t *testing.T, entry *AccessMetaEntry, context string) {
+	t.Helper()
 
-func (m *mockAccessMetaStore) PutAccessMeta(entityID string, entry *AccessMetaEntry) error {
-	m.entries[entityID] = entry
-	return nil
-}
-
-func TestFlusherPropertySuppression_WriteNilOnDecay(t *testing.T) {
-	acc := NewAccessAccumulator(true, 0)
-	store := &mockAccessMetaStore{entries: make(map[string]*AccessMetaEntry)}
-	flusher := NewAccessFlusher(acc, store, time.Hour)
-
-	bundle := &DecayProfileBundle{
-		Name:                "bio_decay",
-		Scope:               ScopeNode,
-		Function:            DecayFunctionExponential,
-		HalfLifeSeconds:     3600,
-		VisibilityThreshold: 0.10,
-		ScoreFrom:           ScoreFromCreated,
-		Enabled:             true,
-		DecayEnabled:        true,
+	value, ok := suppressionMarker(entry, "bio")
+	if !ok {
+		t.Errorf("expected _suppress:bio marker %s", context)
+		return
 	}
-	binding := &DecayProfileBinding{
-		Name:         "bind_bio",
-		ProfileRef:   "bio_decay",
-		TargetLabels: []string{"Person"},
-		PropertyRules: []DecayProfilePropertyRule{
-			{PropertyPath: "bio", HalfLifeSeconds: 1800},
-		},
-	}
-
-	bt, err := BuildBindingTable(
-		map[string]*DecayProfileBundle{bundle.Name: bundle},
-		map[string]*DecayProfileBinding{binding.Name: binding},
-		nil, nil,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	scorer := NewScorer(NewResolver(bt, nil), true)
-	createdAt := time.Now().Add(-720 * time.Hour).UnixNano()
-	meta := &mockEntityMeta{
-		labels:    []string{"Person"},
-		propKeys:  []string{"name", "bio"},
-		createdAt: createdAt,
-		versionAt: createdAt,
-	}
-
-	flusher.SetPropertySuppression(
-		func(ns string) *Scorer { return scorer },
-		meta,
-		nil,
-	)
-
-	acc.IncrementAccess("testns:p1")
-	flusher.Flush()
-
-	entry := store.entries["testns:p1"]
-	if entry == nil {
-		t.Fatal("expected entry after flush")
-	}
-
-	// "bio" has a 30-min half-life, node is 30 days old — deeply decayed.
-	if _, ok := entry.Overflow["_suppress:bio"]; !ok {
-		t.Error("expected _suppress:bio marker in overflow")
-	}
-
-	// "name" uses parent node rule (1hr half-life), 30 days old — also decayed.
-	if _, ok := entry.Overflow["_suppress:name"]; !ok {
-		t.Error("expected _suppress:name marker for old node")
+	if value != nil {
+		t.Errorf("expected _suppress:bio marker to be nil-valued %s, got %#v", context, value)
 	}
 }
 
-func TestFlusherPropertySuppression_NoSuppressionWhenRecent(t *testing.T) {
-	acc := NewAccessAccumulator(true, 0)
-	store := &mockAccessMetaStore{entries: make(map[string]*AccessMetaEntry)}
-	flusher := NewAccessFlusher(acc, store, time.Hour)
+// TestFlusherPropertySuppression covers the property-level suppression contract
+// of the access flusher: decayed properties get a nil-valued "_suppress:<prop>"
+// marker, recent properties stay unmarked, a change in suppression state
+// invokes embedInvalidate exactly once for the entity, and restoring a property
+// removes its marker.
+//
+// Every case shares the scoring fixture (accumulator/store/flusher/binding
+// table/entity meta/callback recorder) from accessFlusherFixture and differs
+// only in its decay binding, entity age, property keys and expected marker
+// state.
+func TestFlusherPropertySuppression(t *testing.T) {
+	// 30 days is past every half-life below; 5 minutes is within every one.
+	oldEntity := time.Now().Add(-720 * time.Hour).UnixNano()
+	recentEntity := time.Now().Add(-5 * time.Minute).UnixNano()
 
-	bundle := &DecayProfileBundle{
-		Name:                "recent_decay",
-		Scope:               ScopeNode,
-		Function:            DecayFunctionExponential,
-		HalfLifeSeconds:     3600,
-		VisibilityThreshold: 0.10,
-		ScoreFrom:           ScoreFromCreated,
-		Enabled:             true,
-		DecayEnabled:        true,
-	}
-	binding := &DecayProfileBinding{
-		Name:         "bind_recent",
-		ProfileRef:   "recent_decay",
-		TargetLabels: []string{"Person"},
-		PropertyRules: []DecayProfilePropertyRule{
-			{PropertyPath: "bio", HalfLifeSeconds: 3600},
-		},
-	}
-
-	bt, err := BuildBindingTable(
-		map[string]*DecayProfileBundle{bundle.Name: bundle},
-		map[string]*DecayProfileBinding{binding.Name: binding},
-		nil, nil,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	scorer := NewScorer(NewResolver(bt, nil), true)
-	createdAt := time.Now().Add(-5 * time.Minute).UnixNano()
-	meta := &mockEntityMeta{
-		labels:    []string{"Person"},
-		propKeys:  []string{"name", "bio"},
-		createdAt: createdAt,
-		versionAt: createdAt,
-	}
-
-	flusher.SetPropertySuppression(
-		func(ns string) *Scorer { return scorer },
-		meta,
-		nil,
-	)
-
-	acc.IncrementAccess("testns:p2")
-	flusher.Flush()
-
-	entry := store.entries["testns:p2"]
-	if entry == nil {
-		t.Fatal("expected entry after flush")
-	}
-
-	for k := range entry.Overflow {
-		if len(k) > 10 && k[:10] == "_suppress:" {
-			t.Errorf("unexpected suppression marker: %s", k)
+	// personNodeDecay builds the node-scope exponential decay bundle/binding
+	// pair the cases share; profile name, binding name and property rules are
+	// the only per-case inputs.
+	personNodeDecay := func(profile, bindingName string, rules ...DecayProfilePropertyRule) (*DecayProfileBundle, *DecayProfileBinding) {
+		bundle := &DecayProfileBundle{
+			Name:                profile,
+			Scope:               ScopeNode,
+			Function:            DecayFunctionExponential,
+			HalfLifeSeconds:     3600,
+			VisibilityThreshold: 0.10,
+			ScoreFrom:           ScoreFromCreated,
+			Enabled:             true,
+			DecayEnabled:        true,
 		}
-	}
-}
-
-func TestFlusherPropertySuppression_EmbedInvalidateOnChange(t *testing.T) {
-	acc := NewAccessAccumulator(true, 0)
-	store := &mockAccessMetaStore{entries: make(map[string]*AccessMetaEntry)}
-	flusher := NewAccessFlusher(acc, store, time.Hour)
-
-	bundle := &DecayProfileBundle{
-		Name:                "embed_decay",
-		Scope:               ScopeNode,
-		Function:            DecayFunctionExponential,
-		HalfLifeSeconds:     3600,
-		VisibilityThreshold: 0.10,
-		ScoreFrom:           ScoreFromCreated,
-		Enabled:             true,
-		DecayEnabled:        true,
-	}
-	binding := &DecayProfileBinding{
-		Name:         "bind_embed",
-		ProfileRef:   "embed_decay",
-		TargetLabels: []string{"Person"},
-		PropertyRules: []DecayProfilePropertyRule{
-			{PropertyPath: "bio", HalfLifeSeconds: 1800},
-		},
-	}
-
-	bt, err := BuildBindingTable(
-		map[string]*DecayProfileBundle{bundle.Name: bundle},
-		map[string]*DecayProfileBinding{binding.Name: binding},
-		nil, nil,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	scorer := NewScorer(NewResolver(bt, nil), true)
-	createdAt := time.Now().Add(-720 * time.Hour).UnixNano()
-	meta := &mockEntityMeta{
-		labels:    []string{"Person"},
-		propKeys:  []string{"bio"},
-		createdAt: createdAt,
-		versionAt: createdAt,
-	}
-
-	var invalidated []string
-	flusher.SetPropertySuppression(
-		func(ns string) *Scorer { return scorer },
-		meta,
-		func(entityID string) { invalidated = append(invalidated, entityID) },
-	)
-
-	acc.IncrementAccess("testns:p3")
-	flusher.Flush()
-
-	if len(invalidated) != 1 || invalidated[0] != "testns:p3" {
-		t.Errorf("expected embedInvalidate called once for testns:p3, got %v", invalidated)
-	}
-}
-
-func TestFlusherPropertySuppression_NoCallbackWhenNoScorerFunc(t *testing.T) {
-	acc := NewAccessAccumulator(true, 0)
-	store := &mockAccessMetaStore{entries: make(map[string]*AccessMetaEntry)}
-	flusher := NewAccessFlusher(acc, store, time.Hour)
-
-	acc.IncrementAccess("testns:p4")
-	flusher.Flush()
-
-	entry := store.entries["testns:p4"]
-	if entry == nil {
-		t.Fatal("expected entry after flush")
-	}
-
-	for k := range entry.Overflow {
-		if len(k) > 10 && k[:10] == "_suppress:" {
-			t.Errorf("unexpected suppression marker without scorer: %s", k)
+		binding := &DecayProfileBinding{
+			Name:          bindingName,
+			ProfileRef:    profile,
+			TargetLabels:  []string{"Person"},
+			PropertyRules: rules,
 		}
+		return bundle, binding
 	}
-}
-
-func TestFlusherPropertySuppression_RestorationRemovesMarker(t *testing.T) {
-	acc := NewAccessAccumulator(true, 0)
-	store := &mockAccessMetaStore{entries: make(map[string]*AccessMetaEntry)}
-	flusher := NewAccessFlusher(acc, store, time.Hour)
-
-	bundle := &DecayProfileBundle{
-		Name:                "restore_decay",
-		Scope:               ScopeNode,
-		Function:            DecayFunctionExponential,
-		HalfLifeSeconds:     3600,
-		VisibilityThreshold: 0.10,
-		ScoreFrom:           ScoreFromCreated,
-		Enabled:             true,
-		DecayEnabled:        true,
+	bioHalfLife := func(seconds int64) []DecayProfilePropertyRule {
+		return []DecayProfilePropertyRule{{PropertyPath: "bio", HalfLifeSeconds: seconds}}
 	}
-	binding := &DecayProfileBinding{
-		Name:         "bind_restore",
-		ProfileRef:   "restore_decay",
-		TargetLabels: []string{"Person"},
-		PropertyRules: []DecayProfilePropertyRule{
-			{PropertyPath: "bio", HalfLifeSeconds: 3600},
+
+	bioDecayBundle, bioDecayBinding := personNodeDecay("bio_decay", "bind_bio", bioHalfLife(1800)...)
+	recentBundle, recentBinding := personNodeDecay("recent_decay", "bind_recent", bioHalfLife(3600)...)
+	embedBundle, embedBinding := personNodeDecay("embed_decay", "bind_embed", bioHalfLife(1800)...)
+	restoreBundle, restoreBinding := personNodeDecay("restore_decay", "bind_restore", bioHalfLife(3600)...)
+
+	cases := []suppressionCase{
+		{
+			// "bio" has a 30-min half-life and "name" falls back to the 1hr
+			// parent node rule; on a 30-day-old node both are deeply decayed.
+			name:               "WriteNilOnDecay",
+			suffix:             "p1",
+			bundle:             bioDecayBundle,
+			bind:               bioDecayBinding,
+			meta:               mockEntityMeta{labels: []string{"Person"}, propKeys: []string{"name", "bio"}, createdAt: oldEntity, versionAt: oldEntity},
+			installSuppression: true,
+			verify: func(t *testing.T, entry *AccessMetaEntry, f *accessFlusherFixture) {
+				t.Helper()
+
+				bioMarker(t, entry, "in overflow")
+
+				value, ok := suppressionMarker(entry, "name")
+				if !ok {
+					t.Error("expected _suppress:name marker for old node")
+				} else if value != nil {
+					t.Errorf("expected _suppress:name marker to be nil-valued, got %#v", value)
+				}
+			},
+		},
+		{
+			// A 5-minute-old node is inside every half-life above, so neither
+			// property may be suppressed.
+			name:               "NoSuppressionWhenRecent",
+			suffix:             "p2",
+			bundle:             recentBundle,
+			bind:               recentBinding,
+			meta:               mockEntityMeta{labels: []string{"Person"}, propKeys: []string{"name", "bio"}, createdAt: recentEntity, versionAt: recentEntity},
+			installSuppression: true,
+			verify: func(t *testing.T, entry *AccessMetaEntry, f *accessFlusherFixture) {
+				t.Helper()
+
+				if keys := suppressionMarkerKeys(entry); len(keys) != 0 {
+					t.Errorf("unexpected suppression marker(s): %v", keys)
+				}
+			},
+		},
+		{
+			// Newly suppressing "bio" is a suppression-state change, so the
+			// re-embedding callback fires exactly once for this entity.
+			name:               "EmbedInvalidateOnChange",
+			suffix:             "p3",
+			bundle:             embedBundle,
+			bind:               embedBinding,
+			meta:               mockEntityMeta{labels: []string{"Person"}, propKeys: []string{"bio"}, createdAt: oldEntity, versionAt: oldEntity},
+			installSuppression: true,
+			verify: func(t *testing.T, entry *AccessMetaEntry, f *accessFlusherFixture) {
+				t.Helper()
+
+				bioMarker(t, entry, "as the suppression change that triggers invalidation")
+				want := f.entityID("p3")
+				if len(f.invalidated) != 1 || f.invalidated[0] != want {
+					t.Errorf("expected embedInvalidate called once for %s, got %v", want, f.invalidated)
+				}
+			},
+		},
+		{
+			// Retained from the original family: with no scorer function wired,
+			// the flusher still persists access metadata but records neither
+			// suppression markers nor invalidation callbacks.
+			name:   "NoCallbackWhenNoScorerFunc",
+			suffix: "p4",
+			bundle: &DecayProfileBundle{Name: "unused_decay", Scope: ScopeNode, Enabled: true},
+			bind: &DecayProfileBinding{
+				Name:         "bind_unused",
+				ProfileRef:   "unused_decay",
+				TargetLabels: []string{"Person"},
+			},
+			installSuppression: false,
+			verify: func(t *testing.T, entry *AccessMetaEntry, f *accessFlusherFixture) {
+				t.Helper()
+
+				if keys := suppressionMarkerKeys(entry); len(keys) != 0 {
+					t.Errorf("unexpected suppression marker without scorer: %v", keys)
+				}
+				if len(f.invalidated) != 0 {
+					t.Errorf("expected no embedInvalidate calls without scorer, got %v", f.invalidated)
+				}
+			},
+		},
+		{
+			// The stored entry arrives already suppressed; on a recent entity the
+			// property is no longer eligible, so the marker must be removed and
+			// the restoration must invalidate the embedding once.
+			name:               "RestorationRemovesMarker",
+			suffix:             "p5",
+			bundle:             restoreBundle,
+			bind:               restoreBinding,
+			meta:               mockEntityMeta{labels: []string{"Person"}, propKeys: []string{"bio"}, createdAt: recentEntity, versionAt: recentEntity},
+			installSuppression: true,
+			preSeed: func(entityID string) *AccessMetaEntry {
+				return &AccessMetaEntry{
+					TargetID:    entityID,
+					TargetScope: ScopeNode,
+					Overflow:    map[string]interface{}{"_suppress:bio": nil},
+				}
+			},
+			verify: func(t *testing.T, entry *AccessMetaEntry, f *accessFlusherFixture) {
+				t.Helper()
+
+				if _, ok := suppressionMarker(entry, "bio"); ok {
+					t.Error("expected _suppress:bio marker to be removed after restoration")
+				}
+				want := f.entityID("p5")
+				if len(f.invalidated) != 1 || f.invalidated[0] != want {
+					t.Errorf("expected embedInvalidate on restoration for %s, got %v", want, f.invalidated)
+				}
+			},
 		},
 	}
 
-	bt, err := BuildBindingTable(
-		map[string]*DecayProfileBundle{bundle.Name: bundle},
-		map[string]*DecayProfileBinding{binding.Name: binding},
-		nil, nil,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAccessFlusherFixture(t, tc.bundle, tc.bind, nil, &tc.meta)
+			if tc.preSeed != nil {
+				f.store.entries[f.entityID(tc.suffix)] = tc.preSeed(f.entityID(tc.suffix))
+			}
+			if tc.installSuppression {
+				f.install()
+			}
 
-	scorer := NewScorer(NewResolver(bt, nil), true)
-	recentCreatedAt := time.Now().Add(-5 * time.Minute).UnixNano()
-	meta := &mockEntityMeta{
-		labels:    []string{"Person"},
-		propKeys:  []string{"bio"},
-		createdAt: recentCreatedAt,
-		versionAt: recentCreatedAt,
-	}
-
-	var invalidated []string
-	flusher.SetPropertySuppression(
-		func(ns string) *Scorer { return scorer },
-		meta,
-		func(entityID string) { invalidated = append(invalidated, entityID) },
-	)
-
-	// Pre-seed the entry with a suppression marker.
-	store.entries["testns:p5"] = &AccessMetaEntry{
-		TargetID:    "testns:p5",
-		TargetScope: ScopeNode,
-		Overflow:    map[string]interface{}{"_suppress:bio": nil},
-	}
-
-	acc.IncrementAccess("testns:p5")
-	flusher.Flush()
-
-	entry := store.entries["testns:p5"]
-	if _, ok := entry.Overflow["_suppress:bio"]; ok {
-		t.Error("expected _suppress:bio marker to be removed after restoration")
-	}
-
-	if len(invalidated) != 1 || invalidated[0] != "testns:p5" {
-		t.Errorf("expected embedInvalidate on restoration, got %v", invalidated)
+			f.flushAccesses(tc.suffix)
+			tc.verify(t, f.entryFor(t, tc.suffix), f)
+		})
 	}
 }
