@@ -85,7 +85,7 @@ func (e *StorageExecutor) evaluateRowArithmeticValues(operator byte, left, right
 // rowValueProgram keeps the decisions it makes about a text and calls it
 // for the forms it doesn't compile.
 func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	expr = strings.TrimSpace(expr)
+	expr = trimQueryTrivia(expr)
 	if expr == "" {
 		return nil, false, nil
 	}
@@ -634,30 +634,22 @@ func (e *StorageExecutor) evaluateRowValueText(expr string, values map[string]in
 	// A whole qualified call (text.locate(…)) is a function call, not a
 	// property of its first name, even when a variable has that name, as in
 	// Neo4j.
-	if dot := topLevelSymbolIndex(expr, "."); dot > 0 && !isQualifiedFunctionCall(expr) {
-		for {
-			next := topLevelSymbolIndex(expr[dot+1:], ".")
-			if next < 0 {
-				break
-			}
-			dot += next + 1
-		}
-		if endpoint := endpointPropertyNode(strings.TrimSpace(expr[:dot]), strings.TrimSpace(expr[dot+1:])); endpoint != nil {
+	if receiver, chain, subscript, postfix := staticPostfixSplit(expr); postfix && !subscript {
+		if endpoint := endpointPropertyNode(receiver, chain); endpoint != nil {
 			return endpoint.eval(e, values, nil)
 		}
-		base, ok, err := e.evaluateRowValue(strings.TrimSpace(expr[:dot]), values)
+		base, ok, err := e.evaluateRowValue(receiver, values)
 		if err != nil {
 			return nil, false, err
 		}
 		if ok {
-			chain := strings.TrimSpace(expr[dot+1:])
-			value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), chain)
-			if !ok {
+			value, resolved := evaluateRowPropertyChain(e.queryVisibleValue(base), chain)
+			if !resolved {
 				if err := rowPropertyChainTypeError(base, chain); err != nil {
 					return nil, false, err
 				}
 			}
-			return value, ok, nil
+			return value, resolved, nil
 		}
 	}
 	return e.rowValueFallback(expr, values)
@@ -723,10 +715,7 @@ func splitRowArithmeticTier(expr, operators string) (left, right string, operato
 }
 
 func rowArithmeticSignIsUnary(expr string, index int) bool {
-	previous := index - 1
-	for previous >= 0 && isASCIIWhitespace(expr[previous]) {
-		previous--
-	}
+	previous := queryGapStart(expr, index) - 1
 	if previous < 0 {
 		return true
 	}
@@ -1171,22 +1160,8 @@ func evaluateRowPropertyChain(value interface{}, chain string) (interface{}, boo
 // isQualifiedFunctionCall reports whether expr is one call of a qualified
 // function name: name.name… followed by an argument list that ends expr.
 func isQualifiedFunctionCall(expr string) bool {
-	_, end, ok := scanSymbolicName(expr, 0)
-	if !ok {
-		return false
-	}
-	segments := 0
-	for end < len(expr) && expr[end] == '.' {
-		_, next, ok := scanSymbolicName(expr, end+1)
-		if !ok {
-			return false
-		}
-		end, segments = next, segments+1
-	}
-	for end < len(expr) && isASCIIWhitespace(expr[end]) {
-		end++
-	}
-	return segments > 0 && end < len(expr) && expr[end] == '(' && findMatchingParen(expr, end) == len(expr)-1
+	name, _, ok := parseFunctionCallWS(expr)
+	return ok && strings.Contains(name, ".")
 }
 
 // rowPropertyChainTypeError is the TypeError of a property chain that
@@ -1278,18 +1253,12 @@ func nextRowPropertySeparator(chain string, start int) int {
 }
 
 func stripEnclosingExpressionParentheses(expr string) (string, bool) {
-	return stripEnclosingRowDelimiter(expr, '(', ')')
+	return parenthesizedFunctionExpression(expr)
 }
 
-// stripEnclosingRowDelimiter returns the inside of expr when expr is one
-// open … close group: its first delimiter closes at its end, matched by
-// findMatchingDelimiter (quoted text, escaped quotes and comments skipped).
-// For '[' it is isListLiteral.
+// stripEnclosingRowDelimiter delegates the whole-expression wrapper decision.
 func stripEnclosingRowDelimiter(expr string, open, close byte) (string, bool) {
-	if len(expr) < 2 || expr[0] != open || expr[len(expr)-1] != close || findMatchingDelimiter(expr, 0, rune(open), rune(close)) != len(expr)-1 {
-		return "", false
-	}
-	return strings.TrimSpace(expr[1 : len(expr)-1]), true
+	return lexicalEnclosedGroup(expr, open, close)
 }
 func rowSubscriptIndex(value interface{}) (int, bool) {
 	// Out-of-bounds integer magnitudes clamp before a native-int conversion;
@@ -1816,6 +1785,10 @@ func isRelationshipPatternOperand(expression string) bool {
 // literal.
 func containsRelationshipPattern(expression string) bool {
 	for i := 0; i < len(expression); i++ {
+		if end := queryCommentEnd(expression, i); end >= 0 {
+			i = end - 1
+			continue
+		}
 		if end, quoted := skipCypherLexicalToken(expression, i); quoted {
 			i = end - 1
 			continue

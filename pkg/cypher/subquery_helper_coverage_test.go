@@ -80,16 +80,6 @@ func TestCallSubqueryHelpers_WithParsingAndNullGuards(t *testing.T) {
 	_, _, ok = splitLeadingWhereNullGuard("WHERE a IS NULL")
 	require.False(t, ok)
 
-	pass, handled := evalWhereNullGuard("((a IS NULL))", map[string]interface{}{})
-	require.True(t, handled)
-	require.True(t, pass)
-
-	pass, handled = evalWhereNullGuard("a IS NOT NULL", map[string]interface{}{"a": 1})
-	require.True(t, handled)
-	require.True(t, pass)
-
-	_, handled = evalWhereNullGuard("a = 1", map[string]interface{}{"a": 1})
-	require.False(t, handled)
 }
 
 func TestCallSubqueryHelpers_CorrelationAndTopLevelSplits(t *testing.T) {

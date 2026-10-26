@@ -637,89 +637,34 @@ func (e *StorageExecutor) isSingleNodePattern(pattern string) bool {
 }
 
 func (e *StorageExecutor) splitNodePatterns(pattern string) []string {
+	// Node patterns are parenthesized graph elements, not arbitrary comma
+	// arguments: bare text must not become a node, and relationship chains
+	// still contain separate nodes. The lexical group walk reads the
+	// top-level groups without rescanning their quotes, comments, properties
+	// or nested function arguments. A $(e) dynamic label's group is no node.
 	var patterns []string
-	var current strings.Builder
-	depth := 0
-	braceDepth := 0
-
-	for i := 0; i < len(pattern); i++ {
-		c := pattern[i]
-		if isCypherQuoteByte(c) {
-			end := skipCypherQuotedText(pattern, i, c)
-			if depth > 0 {
-				current.WriteString(pattern[i:end])
+	dynamic := false
+	node := -1
+	lexicalGroupWalk(pattern, 0, func(kind lexicalTokenKind, start, _, depth, opened int) bool {
+		switch {
+		case kind == lexicalEnd:
+			if node >= 0 {
+				patterns = append(patterns, pattern[node:])
 			}
-			i = end - 1
-			continue
+		case opened >= 0 && opened == node:
+			patterns = append(patterns, pattern[node:start+1])
+			node = -1
+		case depth != 0 || kind != lexicalPunctuation:
+		case pattern[start] == '(':
+			if !dynamic {
+				node = start
+			}
+			dynamic = false
+		case pattern[start] != '[' && pattern[start] != '{':
+			dynamic = dynamic || dynamicLabelStartsAt(pattern, start)
 		}
-		if c == '/' {
-			if end := queryCommentEnd(pattern, i); end >= 0 {
-				if depth > 0 {
-					current.WriteString(pattern[i:end])
-				}
-				i = end - 1
-				continue
-			}
-		}
-		if c == '$' && dynamicLabelStartsAt(pattern, i) {
-			// $(e): a dynamic label's or type's expression, not a node.
-			if end := findMatchingDelimiter(pattern, i+strings.IndexByte(pattern[i:], '('), '(', ')'); end >= 0 {
-				if depth > 0 {
-					current.WriteString(pattern[i : end+1])
-				}
-				i = end
-				continue
-			}
-		}
-		switch c {
-		case '{':
-			if depth > 0 {
-				braceDepth++
-				current.WriteByte(c)
-			}
-		case '}':
-			if depth > 0 {
-				if braceDepth > 0 {
-					braceDepth--
-				}
-				current.WriteByte(c)
-			}
-		case '(':
-			if braceDepth == 0 {
-				depth++
-				current.WriteByte(c)
-			} else {
-				current.WriteByte(c)
-			}
-		case ')':
-			if braceDepth == 0 {
-				depth--
-				current.WriteByte(c)
-				if depth == 0 {
-					patterns = append(patterns, current.String())
-					current.Reset()
-				}
-			} else {
-				current.WriteByte(c)
-			}
-		case ',':
-			if depth == 0 {
-				// Skip comma between patterns
-				continue
-			}
-			current.WriteByte(c)
-		default:
-			if depth > 0 {
-				current.WriteByte(c)
-			}
-		}
-	}
-
-	// Handle any remaining content
-	if current.Len() > 0 {
-		patterns = append(patterns, current.String())
-	}
-
+		return true
+	})
 	return patterns
 }
 
@@ -1450,14 +1395,14 @@ func (e *StorageExecutor) resolveNodeFromIDEqualityTerm(
 	// LHS must be id(var) or elementId(var).
 	kind := ""
 	varName := ""
-	lowerLeft := lowerASCII(left)
+	functionName, _, _ := parseFunctionCallWS(left)
 	switch {
-	case strings.HasPrefix(lowerLeft, "id(") && strings.HasSuffix(left, ")"):
+	case strings.EqualFold(functionName, "id"):
 		kind = "id"
-		varName = strings.TrimSpace(left[3 : len(left)-1])
-	case strings.HasPrefix(lowerLeft, "elementid(") && strings.HasSuffix(left, ")"):
+		varName = singleFunctionArgument(left)
+	case strings.EqualFold(functionName, "elementId"):
 		kind = "elementId"
-		varName = strings.TrimSpace(left[10 : len(left)-1])
+		varName = singleFunctionArgument(left)
 	default:
 		return "", nil
 	}

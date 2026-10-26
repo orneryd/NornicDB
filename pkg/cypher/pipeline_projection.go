@@ -428,12 +428,15 @@ func respellAggregateCalls(text string, spellings map[string]string) string {
 // calls with one key are one expression. call is a call semanticAggregateCalls
 // found: a name, then its parenthesized arguments.
 func aggregateCallKey(call string) string {
-	open := strings.IndexByte(call, '(')
-	arguments := strings.TrimSpace(call[open+1:])
+	name, inner, ok := parseFunctionCallWS(call)
+	if !ok {
+		return call
+	}
+	arguments := strings.TrimSpace(StripComments(inner)) + ")"
 	if len(arguments) > len("DISTINCT") && strings.EqualFold(arguments[:len("DISTINCT")], "DISTINCT") && !isIdentByte(arguments[len("DISTINCT")]) {
 		arguments = "DISTINCT " + arguments[len("DISTINCT"):]
 	}
-	return upperASCII(strings.TrimSpace(call[:open])) + "(" + stripExpressionWhitespace(arguments)
+	return upperASCII(name) + "(" + stripExpressionWhitespace(arguments)
 }
 
 // stripExpressionWhitespace removes the whitespace outside quoted text, but
@@ -583,16 +586,11 @@ func deduplicatePipelineRowsWithScopes(memory *memoryScope, rows, scopes []pipel
 // parsePipelineAggregate recognizes the standard Cypher aggregate functions
 // and separates their input expression from an optional DISTINCT modifier.
 func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool) {
-	// An aggregate is a function call: without a parenthesis there is none.
-	if strings.IndexByte(expr, '(') < 0 || !isAggregateFunc(expr) {
+	if !isAggregateFunc(expr) {
 		return "", "", false, false
 	}
-	open := strings.Index(expr, "(")
-	if open < 0 {
-		return "", "", false, false
-	}
-	name = lowerASCII(strings.TrimSpace(expr[:open]))
-	inner = strings.TrimSpace(extractFuncInner(expr))
+	name, inner, _ = parseFunctionCallWS(expr)
+	name, inner = lowerASCII(name), trimQueryTrivia(inner)
 	inner, distinct = cutDistinctArgument(inner)
 	if inner == "" {
 		return "", "", false, false
@@ -601,10 +599,7 @@ func parsePipelineAggregate(expr string) (name, inner string, distinct, ok bool)
 }
 
 func pipelineExpressionContainsAggregate(expr string) bool {
-	if strings.IndexByte(expr, '(') < 0 {
-		return false
-	}
-	return len(findAggregateSpans(strings.TrimSpace(expr))) > 0
+	return hasLexicalAggregate(strings.TrimSpace(expr))
 }
 
 func (e *StorageExecutor) evaluatePipelineAggregateExpression(rows []pipelineRow, expr string) (interface{}, bool) {
@@ -1106,9 +1101,8 @@ func projectFromRow(row pipelineRow, expr string) (interface{}, bool) {
 	if val, ok := row[expr]; ok {
 		return val, true
 	}
-	upperExpr := upperASCII(expr)
-	if strings.HasPrefix(upperExpr, "SIZE(") && strings.HasSuffix(expr, ")") {
-		value, ok := projectFromRow(row, strings.TrimSpace(expr[len("size("):len(expr)-1]))
+	if name, _, ok := parseFunctionCallWS(expr); ok && strings.EqualFold(name, "size") {
+		value, ok := projectFromRow(row, singleFunctionArgument(expr))
 		if !ok {
 			return nil, false
 		}

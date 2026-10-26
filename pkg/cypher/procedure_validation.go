@@ -31,7 +31,7 @@ func extractProcedureInvocationArguments(ctx context.Context, spec ProcedureSpec
 	if err := validateProcedureCallArguments(callCypher); err != nil {
 		return nil, err
 	}
-	if strings.Index(callCypher, "(") >= 0 {
+	if call, ok := firstProcedureCall(callCypher); ok && call.open >= 0 {
 		args, err := extractCallArguments(callCypher)
 		if err != nil {
 			return nil, err
@@ -97,7 +97,8 @@ func (e *StorageExecutor) extractBoundProcedureInvocationArguments(ctx context.C
 }
 
 func validateProcedureArgumentPassingMode(ctx context.Context, spec ProcedureSpec, callCypher string, hasTail bool) error {
-	if len(spec.Params) == 0 || strings.Contains(callCypher, "(") {
+	call, explicit := firstProcedureCall(callCypher)
+	if len(spec.Params) == 0 || explicit && call.open >= 0 {
 		return nil
 	}
 	if parseYieldClause(ctx, callCypher) == nil && !hasTail {
@@ -389,21 +390,16 @@ func isFloatProcedureValue(value interface{}) bool {
 }
 
 func procedureCallContainsAggregation(callCypher string) bool {
-	open := strings.Index(callCypher, "(")
-	if open < 0 {
+	call, ok := firstProcedureCall(callCypher)
+	if !ok || call.open < 0 {
 		return false
 	}
-	close := findMatchingCallParen(callCypher, open)
+	close := call.close(callCypher)
 	if close < 0 {
 		return false
 	}
-	body := callCypher[open+1 : close]
-	for _, name := range []string{"count", "sum", "avg", "min", "max", "collect", "stdev", "stdevp", "percentilecont", "percentiledisc"} {
-		if findKeywordIndexInContext(body, name) >= 0 && strings.Contains(lowerASCII(body), name+"(") {
-			return true
-		}
-	}
-	return false
+	v := expressionLexicalView{call.syntax.facts, syntaxSpan{call.open + 1, close}}
+	return hasLexicalAggregate(v.text(), v)
 }
 
 // unknownProcedureError is the shared planning/execution terminal for a missing procedure.

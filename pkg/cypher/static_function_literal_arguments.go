@@ -15,7 +15,7 @@ import (
 //   - point() with a map literal whose keys don't describe a point (neither x
 //     and y nor latitude and longitude); a map value is checked when it runs
 //     (newPointFromMap).
-func checkStaticLiteralArguments(function string, arguments []string) error {
+func checkStaticLiteralArguments(function string, arguments []string, views ...expressionLexicalView) error {
 	switch {
 	case strings.EqualFold(function, "percentileCont") || strings.EqualFold(function, "percentileDisc"):
 		if len(arguments) < 2 {
@@ -47,11 +47,11 @@ func checkStaticLiteralArguments(function string, arguments []string) error {
 			case "longitude":
 				longitude = true
 			}
-		})
+		}, views...)
 		if !isMap || x && y || latitude && longitude {
 			return nil
 		}
-		keys, _ := staticMapLiteralKeys(arguments[0])
+		keys, _ := staticMapLiteralKeys(arguments[0], views...)
 		quoted := make([]string, 0, len(keys))
 		for key := range keys {
 			quoted = append(quoted, "'"+key+"'")
@@ -65,9 +65,9 @@ func checkStaticLiteralArguments(function string, arguments []string) error {
 
 // staticMapLiteralKeys returns the keys of a map literal ({x: 1, `y`: 2});
 // isMap is false for any other expression.
-func staticMapLiteralKeys(expression string) (keys map[string]bool, isMap bool) {
+func staticMapLiteralKeys(expression string, views ...expressionLexicalView) (keys map[string]bool, isMap bool) {
 	keys = make(map[string]bool)
-	if !visitStaticMapLiteralKeys(expression, func(key string) { keys[key] = true }) {
+	if !visitStaticMapLiteralKeys(expression, func(key string) { keys[key] = true }, views...) {
 		return nil, false
 	}
 	return keys, true
@@ -78,13 +78,13 @@ func staticMapLiteralKeys(expression string) (keys map[string]bool, isMap bool) 
 // reports false for any other expression, whose keys visit may have seen in
 // part. point() checks the keys of a map literal argument (newPointFromMap
 // reads x and y or latitude and longitude).
-func visitStaticMapLiteralKeys(expression string, visit func(key string)) bool {
+func visitStaticMapLiteralKeys(expression string, visit func(key string), views ...expressionLexicalView) bool {
 	expression = strings.TrimSpace(expression)
-	if !strings.HasPrefix(expression, "{") || findMatchingDelimiter(expression, 0, '{', '}') != len(expression)-1 {
+	v := borrowedExpressionView(expression, views)
+	if _, enclosed := v.enclosed('{', '}'); !enclosed {
 		return false
 	}
-	var buffer [8]string
-	for _, entry := range appendTopLevelComma(buffer[:0], expression[1:len(expression)-1]) {
+	for _, entry := range v.splitComma(expression[1 : len(expression)-1]) {
 		colon := findTopLevelMapKeyValueSeparator(entry)
 		if colon < 0 {
 			return false

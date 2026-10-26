@@ -193,21 +193,26 @@ func (binding *localBinding) declare(name string, at, sourceStart, sourceEnd int
 // and where each is in scope (localVariableShadowsAt) both come from it, so
 // x IN[…], x /* … */ IN … and p = (…) read alike everywhere.
 func localBindingAt(text string, open int) (localBinding, bool) {
+	calls := newCallCursor(text)
+	return localBindingAtWith(text, open, &calls)
+}
+
+// localBindingAtWith is localBindingAt for a walk that asks at ascending
+// offsets: one call cursor names the binding functions for the whole walk.
+func localBindingAtWith(text string, open int, calls *callCursor) (localBinding, bool) {
 	var binding localBinding
 	list := text[open] == '[' // else the '(' of a call: callers pass only these
 	function := ""
 	if !list {
-		if function = bindingFunctionBeforeParen(text, open); function == "" {
+		if function = bindingFunctionName(calls.callOpenedAt(open)); function == "" {
 			return binding, false
 		}
 	}
 	closing := func() int {
-		closeBy := ')'
-		if list {
-			closeBy = ']'
-		}
-		if close := findMatchingDelimiter(text, open, rune(text[open]), closeBy); close >= 0 {
-			return close
+		if group, ok := calls.view.group(open); ok {
+			if close := calls.facts.groups[group].close; close >= 0 {
+				return close - calls.view.span.start
+			}
 		}
 		return len(text)
 	}
@@ -216,7 +221,8 @@ func localBindingAt(text string, open int) (localBinding, bool) {
 		if binding.close == len(text) {
 			return binding, false
 		}
-		form, ok := parseReduceForm(function, text[open+1:binding.close])
+		inner := calls.view.slice(open+1, binding.close)
+		form, ok := parseReduceForm(function, inner.text(), inner)
 		if !ok {
 			return binding, false
 		}
@@ -336,8 +342,8 @@ func localScopeStart(text string, from, close int, pipe, where bool) int {
 // property accesses, subquery patterns; withoutLocalVariables), the
 // reference scanners and the writing of a row's values into an expression
 // (localOccurrences).
-func localVariableShadowsAt(text string, operand int, name string) bool {
-	_, _, ok := localBindingOf(text, operand, name)
+func localVariableShadowsAt(text string, operand int, name string, views ...expressionLexicalView) bool {
+	_, _, ok := localBindingOf(text, operand, name, views...)
 	return ok
 }
 
@@ -346,15 +352,16 @@ func localVariableShadowsAt(text string, operand int, name string) bool {
 // name among its declarations. A '[' or '(' whose first declared name isn't
 // name (and isn't a reduce, which declares two) is passed over without
 // being read whole.
-func localBindingOf(text string, operand int, name string) (localBinding, int, bool) {
+func localBindingOf(text string, operand int, name string, views ...expressionLexicalView) (localBinding, int, bool) {
 	var found localBinding
 	foundIndex, ok := 0, false
+	calls := newCallCursor(text, views...)
 	for open := 0; open < operand; {
 		if !localBindingStepReads(text[open]) {
 			open++
 			continue
 		}
-		next, binding, bound := localBindingStep(text, open, name)
+		next, binding, bound := localBindingStep(text, open, name, &calls)
 		open = next
 		for index := 0; bound && index < binding.count; index++ {
 			if binding.names[index] == name && (binding.declared[index] == operand || binding.scope <= operand && operand < binding.close) {
@@ -380,7 +387,7 @@ func localBindingStepReads(c byte) bool {
 // declared name isn't name (and isn't a reduce, which declares two) is
 // passed over without being read whole. It is called only at a byte
 // localBindingStepReads reads.
-func localBindingStep(text string, open int, name string) (int, localBinding, bool) {
+func localBindingStep(text string, open int, name string, calls *callCursor) (int, localBinding, bool) {
 	switch cypherLexicalByte(text[open]) {
 	case cypherQuoteClass:
 		return skipCypherQuotedText(text, open, text[open]), localBinding{}, false
@@ -393,11 +400,11 @@ func localBindingStep(text string, open int, name string) (int, localBinding, bo
 	// text[open] is '[' or '(': the walks step over the bytes
 	// localBindingStepReads doesn't read themselves.
 	if declared, _, named := scanIdentifierToken(text, queryGapEnd(text, open+1)); !named || declared != name {
-		if text[open] != '(' || !isReduceFormFunction(bindingFunctionBeforeParen(text, open)) {
+		if text[open] != '(' || !isReduceFormFunction(bindingFunctionName(calls.callOpenedAt(open))) {
 			return open + 1, localBinding{}, false
 		}
 	}
-	binding, bound := localBindingAt(text, open)
+	binding, bound := localBindingAtWith(text, open, calls)
 	return open + 1, binding, bound
 }
 
@@ -465,20 +472,19 @@ func withLocalTypes(scope staticTypeScope, text string, at int) staticTypeScope 
 // open at text[open] when it binds variables of its own (all / any / none /
 // single / filter, reduce / allReduce), as written; "" for any other.
 func bindingFunctionBeforeParen(text string, open int) string {
-	end := open
-	for end > 0 && isWhitespace(text[end-1]) {
-		end--
-	}
-	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
-		start--
-	}
-	if start == end || start > 0 && isIdentByte(text[start-1]) {
+	calls := newCallCursor(text)
+	return bindingFunctionName(calls.callOpenedAt(open))
+}
+
+// bindingFunctionName is bindingFunctionBeforeParen for the call a
+// parenthesis opens, as a call cursor or the retained facts read it.
+func bindingFunctionName(call functionCallSpan, ok bool) string {
+	if !ok {
 		return ""
 	}
-	switch strings.ToLower(text[start:end]) {
+	switch call.normalized {
 	case "any", "all", "none", "single", "filter", "reduce", "allreduce":
-		return text[start:end]
+		return call.name
 	default:
 		return ""
 	}
@@ -509,9 +515,11 @@ type localOccurrences struct {
 	input, name string
 	bound       bool
 	walked      int
-	scopes      [8]localOccurrenceScope
-	open        int
-	more        []localOccurrenceScope
+	// calls names the binding functions along the walk of input.
+	calls  callCursor
+	scopes [8]localOccurrenceScope
+	open   int
+	more   []localOccurrenceScope
 }
 
 // localOccurrenceScope is where one binding's local is read: at its
@@ -531,6 +539,7 @@ func (occurrences *localOccurrences) keeps(input, name string, at int) bool {
 	if input != occurrences.input || name != occurrences.name || at < occurrences.walked {
 		occurrences.input, occurrences.name, occurrences.walked = input, name, 0
 		occurrences.open, occurrences.more = 0, occurrences.more[:0]
+		occurrences.calls = newCallCursor(input)
 		occurrences.bound = occurrences.binds(name)
 	}
 	if !occurrences.bound {
@@ -541,7 +550,7 @@ func (occurrences *localOccurrences) keeps(input, name string, at int) bool {
 			occurrences.walked++
 			continue
 		}
-		next, binding, bound := localBindingStep(input, occurrences.walked, name)
+		next, binding, bound := localBindingStep(input, occurrences.walked, name, &occurrences.calls)
 		occurrences.walked = next
 		for index := 0; bound && index < binding.count; index++ {
 			if binding.names[index] == name {
@@ -674,53 +683,56 @@ func staticListOperand(cypher string, start int, params map[string]interface{}) 
 	if start >= len(cypher) {
 		return start, "", ""
 	}
-	switch c := cypher[start]; {
-	case c == '$':
-		end = start + 1
-		for end < len(cypher) && isIdentByte(cypher[end]) {
-			end++
+	facts := readExpressionLexicalFacts(cypher)
+	tokenIndex, ok := facts.at[start]
+	if !ok {
+		return start, "", ""
+	}
+	token := facts.tokens[tokenIndex]
+	end = token.end
+	if cypher[start] == '$' {
+		next := token.next
+		if next < 0 || facts.tokens[next].kind != lexicalName {
+			return end, "", ""
 		}
-		name := cypher[start+1 : end]
+		name := facts.tokens[next].name
+		end = facts.tokens[next].end
 		value, bound := params[name]
-		if name == "" || !bound || value == nil || isCypherListParameter(value) {
+		if !bound || value == nil || isCypherListParameter(value) {
 			return end, "", ""
 		}
 		typeName = cypherTypeName(value)
 		if typeName == "Map" {
-			// A map parameter can stand for a node or relationship.
 			typeName = "Map, Node or Relationship"
 		}
 		return end, typeName, name
-	case isCypherStringQuoteByte(c):
-		end = start + 1
-		for end < len(cypher) && (cypher[end] != c || isBackslashEscaped(cypher, end)) {
-			end++
-		}
-		end++
-	case c == '{':
-		close := findMatchingDelimiter(cypher, start, '{', '}')
-		if close < 0 {
-			return start, "", ""
-		}
-		end = close + 1
-	default:
-		end = start
-		for end < len(cypher) && (isIdentByte(cypher[end]) || cypher[end] == '.' || cypher[end] == '-' && end == start) {
-			end++
-		}
-		// A whole call ([x IN vector(…) | x], 1 IN size(l)) is the operand.
-		if c != '-' && c != '.' && (c < '0' || c > '9') {
-			if open := queryGapEnd(cypher, end); open < len(cypher) && cypher[open] == '(' {
-				if close := findMatchingParen(cypher, open); close > open {
-					end = close + 1
-				}
-			}
-		}
 	}
+	if token.call >= 0 {
+		call := facts.calls[token.call]
+		if close := call.close(cypher); close >= 0 {
+			end = close + 1
+		}
+	} else if cypher[start] == '{' || cypher[start] == '[' || cypher[start] == '(' {
+		if close := facts.groups[token.group].close; close >= 0 {
+			end = close + 1
+		}
+	} else if token.kind != lexicalQuoted {
+		// Literal/name extent is a span of already classified tokens. Property
+		// chains are read from the same forward receiver events as row evaluation.
+		for next := token.next; next >= 0; next = facts.tokens[next].next {
+			t := facts.tokens[next]
+			if t.start != end || !(t.kind == lexicalName || t.kind == lexicalPunctuation && (isDigitByte(cypher[t.start]) || cypher[t.start] == '.' || cypher[t.start] == '-' && end == start)) {
+				break
+			}
+			end = t.end
+		}
+		end = max(end, facts.propertyEnd[start])
+	}
+
 	// The operator check types the operand (a variable or a property is
 	// known per row); a list position rejects a type with no list or null
 	// alternative.
-	operand := (staticTypeScope{}).operandOf(cypher[start:end])
+	operand := (staticTypeScope{}).operandOfView(expressionLexicalView{facts, syntaxSpan{start, end}})
 	if operand.typeName() == "" || !operand.excludes(isListTypeName) {
 		return end, "", ""
 	}

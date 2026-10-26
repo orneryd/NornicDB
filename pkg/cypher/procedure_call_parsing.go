@@ -10,21 +10,14 @@ import (
 // extractCallArguments parses top-level CALL arguments as interface{} literals.
 // It supports numbers, booleans, null, quoted strings, and leaves complex values as raw strings.
 func extractCallArguments(cypher string) ([]interface{}, error) {
-	open := strings.Index(cypher, "(")
-	if open == -1 {
+	call, found := firstProcedureCall(cypher)
+	if !found || call.open < 0 {
 		return nil, nil
 	}
-	close := findMatchingCallParen(cypher, open)
-	if close == -1 || close < open {
+	if call.close(cypher) < 0 {
 		return nil, nil
 	}
-
-	body := strings.TrimSpace(cypher[open+1 : close])
-	if body == "" {
-		return []interface{}{}, nil
-	}
-
-	parts := splitTopLevelComma(body)
+	parts := call.arguments(nil)
 	args := make([]interface{}, 0, len(parts))
 	for _, p := range parts {
 		v, err := parseProcedureArgLiteral(strings.TrimSpace(p))
@@ -37,7 +30,12 @@ func extractCallArguments(cypher string) ([]interface{}, error) {
 }
 
 func findMatchingCallParen(s string, open int) int {
-	return findMatchingDelimiter(s, open, '(', ')')
+	for _, group := range readFunctionSyntax(s).groups {
+		if group.open == open {
+			return group.close
+		}
+	}
+	return -1
 }
 
 func parseProcedureArgLiteral(s string) (interface{}, error) {

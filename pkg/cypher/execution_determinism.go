@@ -93,15 +93,15 @@ func compileExecutionPolicy(ctx context.Context, text string, depth int) *execut
 		if volatility == functionStable {
 			return nil
 		}
-		close := findMatchingCallParen(text, open)
-		if close < 0 {
+		// open is the call's own opening: only an unclosed group has no
+		// arguments to read.
+		args, closed := lexicalGroupArguments(nil, text, open, false)
+		if !closed {
 			return errNonDeterministicExecution
 		}
-		body := strings.TrimSpace(text[open+1 : close])
-		if body == "" {
+		if len(args) == 0 {
 			return errNonDeterministicExecution
 		}
-		args := splitTopLevelComma(body)
 		if volatility == functionTemporalTruncation && len(args) < 2 {
 			return errNonDeterministicExecution
 		}

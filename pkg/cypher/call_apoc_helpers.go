@@ -11,7 +11,10 @@ import (
 
 // findMatchingParen finds the index of the closing parenthesis matching the one at startIdx.
 func (e *StorageExecutor) findMatchingParen(s string, startIdx int) int {
-	return findMatchingDelimiter(s, startIdx, '(', ')')
+	if startIdx < 0 || startIdx >= len(s) || s[startIdx] != '(' {
+		return -1
+	}
+	return syntaxGroupClose(s, startIdx)
 }
 
 // findMatchingBrace finds the index of the closing brace matching the one at startIdx.

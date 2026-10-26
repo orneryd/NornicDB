@@ -174,7 +174,6 @@ func TestListLiteralReadersUseIsListLiteral(t *testing.T) {
 	// Brackets that are no list literal.
 	allowed := map[string]string{
 		"traversal.go readRelationshipPattern": "a relationship bracket [r:TYPE {props}]",
-		"list_literal.go isListLiteral":        "the owner: its last-character check only rejects before matching",
 	}
 	files, err := filepath.Glob("*.go")
 	require.NoError(t, err)

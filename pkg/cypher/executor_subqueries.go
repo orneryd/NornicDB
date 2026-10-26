@@ -892,13 +892,9 @@ func isPatternVariableAt(text string, index, length int) bool {
 // wordBefore is the identifier that ends right before index (spaces
 // skipped), "" when another character comes first.
 func wordBefore(text string, index int) string {
-	end := index
-	for end > 0 && isASCIISpace(text[end-1]) {
-		end--
-	}
-	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
-		start--
+	kind, start, end := lexicalPreviousToken(text, index)
+	if kind != lexicalName {
+		return ""
 	}
 	return text[start:end]
 }
@@ -911,30 +907,24 @@ func isPatternClauseKeyword(word string) bool {
 
 // precededByAS reports whether the word at index follows the keyword AS.
 func precededByAS(text string, index int) bool {
-	end := index
-	for end > 0 && isASCIISpace(text[end-1]) {
-		end--
-	}
-	return end >= 3 && equalFoldASCII(text[end-2:end], "AS") && !isIdentByte(text[end-3])
+	kind, start, end := lexicalPreviousToken(text, index)
+	return kind == lexicalName && equalFoldASCII(text[start:end], "AS")
 }
 
 // previousNonSpace is the last non-space byte before index, 0 at the start.
 func previousNonSpace(text string, index int) byte {
-	for index > 0 {
-		index--
-		if !isASCIISpace(text[index]) {
-			return text[index]
-		}
+	_, _, end := lexicalPreviousToken(text, index)
+	if end > 0 {
+		return text[end-1]
 	}
 	return 0
 }
 
 // nextNonSpace is the first non-space byte at or after index, 0 at the end.
 func nextNonSpace(text string, index int) byte {
-	for ; index < len(text); index++ {
-		if !isASCIISpace(text[index]) {
-			return text[index]
-		}
+	index = queryGapEnd(text, index)
+	if index < len(text) {
+		return text[index]
 	}
 	return 0
 }
@@ -1057,44 +1047,6 @@ func splitLeadingWhereNullGuard(query string) (whereExpr string, rest string, ok
 		return "", "", false
 	}
 	return whereExpr, rest, true
-}
-
-// evalWhereNullGuard evaluates narrow guard expressions used in correlated UNION
-// write branches:
-//
-//	<var> IS NULL
-//	<var> IS NOT NULL
-//
-// Returns (pass, handled). handled=false means expression is outside this narrow
-// supported subset and caller should use the generic path.
-func evalWhereNullGuard(whereExpr string, vars map[string]interface{}) (pass bool, handled bool) {
-	expr := strings.TrimSpace(whereExpr)
-	// Accept optional wrapping parentheses.
-	for strings.HasPrefix(expr, "(") && strings.HasSuffix(expr, ")") {
-		inner := strings.TrimSpace(expr[1 : len(expr)-1])
-		if inner == expr {
-			break
-		}
-		expr = inner
-	}
-
-	// Case-insensitive single-variable null checks only.
-	// Examples:
-	//   t IS NULL
-	//   t IS NOT NULL
-	m := variableNullCheckPattern.FindStringSubmatch(expr)
-	if len(m) != 3 {
-		return false, false
-	}
-
-	varName := m[1]
-	_, exists := vars[varName]
-	isNull := !exists || vars[varName] == nil
-	isNot := strings.TrimSpace(upperASCII(m[2])) == "NOT"
-	if isNot {
-		return !isNull, true
-	}
-	return isNull, true
 }
 
 // parseTopLevelUnionBranches preserves whether a composition mixes UNION and
@@ -2113,6 +2065,4 @@ func selectTopKRowsForOrder(rows [][]interface{}, colIdx int, descending bool, k
 var (
 	// callPropertyAccessPattern is a variable.property reference in a CALL.
 	callPropertyAccessPattern = regexp.MustCompile(`(\w+)\.(\w+)`)
-	// variableNullCheckPattern is "variable IS [NOT] NULL".
-	variableNullCheckPattern = regexp.MustCompile(`(?i)^([A-Za-z_][A-Za-z0-9_]*)\s+IS\s+(NOT\s+)?NULL$`)
 )

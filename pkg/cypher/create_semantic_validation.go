@@ -452,7 +452,8 @@ func simpleCreatePropertyReference(expression string) (string, bool) {
 	}
 	// A qualified call can be followed by a property/subscript access. Its
 	// namespace is not a variable, as in the shared free-reference reader.
-	if _, call := qualifiedFunctionNameEnd(expression, next); call {
+	calls := newCallCursor(expression)
+	if _, call := calls.callAt(0); call {
 		return "", false
 	}
 	remainder := strings.TrimSpace(expression[next:])

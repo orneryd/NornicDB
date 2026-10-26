@@ -3,7 +3,6 @@ package cypher
 import (
 	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"strings"
 )
 
 // evaluateRowMathFunction evaluates scalar math functions for the converged
@@ -12,7 +11,8 @@ import (
 func (e *StorageExecutor) evaluateRowMathFunction(function, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {
 	name := lowerASCII(function)
 	// Nested calls may contain commas without adding arguments to this call.
-	if fn, single := singleValueFunctions[name]; single && (strings.IndexByte(argument, ',') < 0 || len(splitTopLevelComma(argument)) == 1) {
+	var argumentBuffer [8]string
+	if fn, single := singleValueFunctions[name]; single && len(appendTopLevelComma(argumentBuffer[:0], argument)) == 1 {
 		// The argument's value goes straight to the one implementation.
 		value, resolved, err := e.evaluateRowValue(argument, values)
 		if err != nil || !resolved {

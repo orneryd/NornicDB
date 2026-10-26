@@ -299,19 +299,25 @@ func subscriptReceiverError(base, index interface{}) error {
 // operators recordRowOperatorFailure may report: not a relationship pattern
 // ((a)-[:R]->(b)) or a map projection (n {.*, …}), whose - and * aren't
 // arithmetic.
-func isOperatorExpressionText(text string) bool {
+func isOperatorExpressionText(text string, views ...expressionLexicalView) bool {
 	text = strings.TrimSpace(text)
+	var v expressionLexicalView
+	if len(views) > 0 {
+		v = views[0]
+	} else {
+		v = expressionView(text)
+	}
 	// A list or map literal is a value, not an operator expression, even
 	// when its elements are.
-	if _, enclosed := stripEnclosingRowDelimiter(text, '[', ']'); enclosed {
+	if _, enclosed := v.enclosed('[', ']'); enclosed {
 		return false
 	}
-	if strings.HasPrefix(text, "{") && findMatchingDelimiter(text, 0, '{', '}') == len(text)-1 {
+	if _, enclosed := v.enclosed('{', '}'); enclosed {
 		return false
 	}
 	// -[1] is a unary minus of a list, not a relationship.
 	if strings.HasPrefix(text, "-") {
-		if _, enclosed := stripEnclosingRowDelimiter(strings.TrimSpace(text[1:]), '[', ']'); enclosed {
+		if _, enclosed := v.slice(1, len(text)).trim().enclosed('[', ']'); enclosed {
 			return true
 		}
 	}
@@ -324,20 +330,14 @@ func isOperatorExpressionText(text string) bool {
 	}
 	// A brace after a variable (n {k: 1}) is a map projection; after a
 	// keyword (t AND {a: 2}) it opens a map literal.
-	for brace := strings.IndexByte(text, '{'); brace > 0; {
-		before := strings.TrimSpace(text[:brace])
-		word := len(before)
-		for word > 0 && isIdentByte(before[word-1]) {
-			word--
+	for _, token := range v.tokens() {
+		at := token.start - v.span.start
+		if at > 0 && text[at] == '{' && token.kind == lexicalPunctuation && token.previous >= 0 {
+			previous := v.facts.tokens[token.previous]
+			if previous.kind == lexicalName && previous.role != expressionKeyword {
+				return false
+			}
 		}
-		if word < len(before) && !isCypherKeyword(before[word:]) {
-			return false
-		}
-		next := strings.IndexByte(text[brace+1:], '{')
-		if next < 0 {
-			break
-		}
-		brace += next + 1
 	}
 	return true
 }
@@ -346,25 +346,26 @@ func isOperatorExpressionText(text string) bool {
 // a parameter, a variable or property chain, a function call, a
 // parenthesised expression, a list or map literal, a unary minus of one of
 // those, or arithmetic over them.
-func isOperandExpressionText(text string) bool {
+func isOperandExpressionText(text string, views ...expressionLexicalView) bool {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return false
 	}
-	if _, enclosed := stripEnclosingRowDelimiter(text, '[', ']'); enclosed {
+	v := borrowedExpressionView(text, views)
+	if _, enclosed := v.enclosed('[', ']'); enclosed {
 		return true
 	}
-	if text[0] == '{' && findMatchingDelimiter(text, 0, '{', '}') == len(text)-1 {
+	if _, enclosed := v.enclosed('{', '}'); enclosed {
 		return true
 	}
-	if !isOperatorExpressionText(text) {
+	if !isOperatorExpressionText(text, v) {
 		return false
 	}
 	if _, literal := parseLiteralValueFromComputedRow(text); literal {
 		return true
 	}
 	if text[0] == '-' || text[0] == '+' {
-		return isOperandExpressionText(text[1:])
+		return isOperandExpressionText(text[1:], v)
 	}
 	if text[0] == '$' {
 		return simpleSemanticIdentifier(text[1:]) != ""
@@ -372,15 +373,15 @@ func isOperandExpressionText(text string) bool {
 	if _, _, chain := rowPropertyChainShape(text); simpleSemanticIdentifier(text) != "" || chain {
 		return true
 	}
-	if _, enclosed := stripEnclosingExpressionParentheses(text); enclosed {
+	if _, enclosed := v.enclosed('(', ')'); enclosed {
 		return true
 	}
-	if _, _, call := parseFunctionCallWS(text); call {
+	if _, _, call := v.call(); call {
 		return true
 	}
 	for _, tier := range []string{"+-", "*/%", "^"} {
 		if left, right, _, arithmetic := splitRowArithmeticTier(text, tier); arithmetic {
-			return isOperandExpressionText(left) && isOperandExpressionText(right)
+			return isOperandExpressionText(left, v) && isOperandExpressionText(right, v)
 		}
 	}
 	return false

@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -44,7 +45,7 @@ func BenchmarkFunctionLookupStaticCheck(b *testing.B) {
 func BenchmarkFunctionLookupFirstExecution(b *testing.B) {
 	for _, statement := range functionLookupStatements {
 		b.Run(statement.name, func(b *testing.B) {
-			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"))
+			exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 			ctx := context.Background()
 			b.ReportAllocs()
 			b.ResetTimer()
@@ -61,7 +62,7 @@ func BenchmarkFunctionLookupFirstExecution(b *testing.B) {
 // repeated statement (validation cached), which exercises the evaluators and
 // their argument splitting.
 func BenchmarkFunctionCallRows(b *testing.B) {
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"))
+	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(b), "test"), QueryCachePolicy{MaxEntries: 0, TTL: 0})
 	ctx := context.Background()
 	if _, err := exec.Execute(ctx, "UNWIND range(1, 1000) AS i CREATE (:FnRow {name: 'name ' + toString(i), n: i, d: date('2020-01-01') + duration({days: i % 300})})", nil); err != nil {
 		b.Fatal(err)
@@ -83,6 +84,44 @@ func BenchmarkFunctionCallRows(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				if _, err := exec.Execute(ctx, workload.query, nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
+// This statement exceeds the lexical retention bound. Both implementations
+// must enumerate every call without relying on a cached statement result.
+func BenchmarkFunctionSyntaxWholeQueryWalk(b *testing.B) {
+	query := "RETURN " + strings.Repeat("coalesce(/* don't split , */ null, custom.fn(1)),", 512) + "1"
+	count := 0
+	if err := forEachFunctionCall(query, func(_, _ string) error { count++; return nil }); err != nil || count != 1024 {
+		b.Fatalf("call inventory: count=%d error=%v", count, err)
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := forEachFunctionCall(query, func(_, _ string) error { return nil }); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// Exercise a whole-query consumer beyond the retention bound, so repeatedly
+// requesting a fresh lexical tree for each call cannot hide behind the cache.
+func BenchmarkFunctionSyntaxGraphRewrite(b *testing.B) {
+	for _, calls := range []int{2000, 4000} {
+		query := "/* prefix */ RETURN [" + strings.Repeat("head([null]):A,", calls) + "null] AS v"
+		b.Run(strconv.Itoa(calls), func(b *testing.B) {
+			rewritten, restore, err := desugarLabelExpressions(query, nil, false)
+			if err != nil || restore == nil || rewritten == query {
+				b.Fatalf("rewrite missing: %v", err)
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				if _, _, err := desugarLabelExpressions(query, nil, false); err != nil {
 					b.Fatal(err)
 				}
 			}

@@ -74,7 +74,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		cypher, _ = separateCypher25Parameters(cypher)
 	}
 	cypher, _ = desugarStandaloneOrderClauses(cypher)
-	cypher = strings.TrimSpace(cypher)
+	cypher = strings.TrimSpace(cypher[lexicalLeadingTriviaEnd(cypher):])
 	cypher = trimTrailingStatementDelimiters(cypher)
 	if err := e.validateStatementFraming(ctx, cypher); err != nil {
 		return nil, err

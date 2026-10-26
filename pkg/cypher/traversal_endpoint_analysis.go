@@ -94,101 +94,38 @@ func traversalVariablePropertiesRead(expression, variable string) bool {
 		return false
 	}
 	want := normalizeProjectionColumnName(variable)
-	for index := 0; index < len(expression); {
-		c := expression[index]
-		if isCypherStringQuoteByte(c) {
-			index = skipQuotedSemanticText(expression, index)
+	facts := readExpressionLexicalFacts(expression)
+	for _, token := range facts.tokens {
+		if token.kind != lexicalName || token.role == expressionParameter || token.role == expressionProperty || token.role == expressionMapKey || token.role == expressionKeyword || token.call >= 0 {
 			continue
 		}
-		if c == '$' {
-			_, next, ok := scanIdentifierToken(expression, index+1)
-			if ok {
-				index = next
-				continue
-			}
-			index++
+		if normalizeProjectionColumnName(token.name) != want {
 			continue
 		}
-		nameStart := index
-		name, next, ok := scanSymbolicName(expression, index)
-		if !ok {
-			index++
-			continue
+		if facts.byteAt(token.next) == '.' {
+			return true
 		}
-		// Mirror semanticExpressionReferences: a name right after '.' is a
-		// property key, and a name followed by '(' is a function name — neither
-		// is a variable reference.
-		before := nameStart
-		for before > 0 && isASCIIWhitespace(expression[before-1]) {
-			before--
-		}
-		cursor := next
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
-			cursor++
-		}
-		index = next
-		isPropertyKey := before > 0 && expression[before-1] == '.' && (before < 2 || expression[before-2] != '.')
-		isCallName := cursor < len(expression) && expression[cursor] == '('
-		if isPropertyKey || isCallName {
-			continue
-		}
-		if normalizeProjectionColumnName(name) != want {
-			continue
-		}
-		if cursor < len(expression) && expression[cursor] == '.' {
-			return true // v.x property access
-		}
-		if !traversalBareVariableInSafeCall(expression, nameStart) {
-			return true // bare v in value position, or inside a property-reading call
+		if !traversalBareVariableInSafeCall(expression, token.start) {
+			return true
 		}
 	}
 	return false
 }
 
-// traversalBareVariableInSafeCall reports whether the bare variable occurrence
-// starting at nameStart is the direct argument of a property-agnostic function:
-// fn(v) or fn(DISTINCT v).
+// Direct safe arguments use retained predecessor and call-opening context.
 func traversalBareVariableInSafeCall(expression string, nameStart int) bool {
-	pos := nameStart
-	for pos > 0 && isASCIIWhitespace(expression[pos-1]) {
-		pos--
-	}
-	if pos > 0 && expression[pos-1] == '(' {
-		return traversalCallNameIsSafe(expression, pos-1)
-	}
-	if pos >= len("DISTINCT") {
-		distinct := pos - len("DISTINCT")
-		if strings.EqualFold(expression[distinct:pos], "DISTINCT") {
-			p := distinct
-			for p > 0 && isASCIIWhitespace(expression[p-1]) {
-				p--
-			}
-			if p > 0 && expression[p-1] == '(' {
-				return traversalCallNameIsSafe(expression, p-1)
-			}
-		}
-	}
-	return false
-}
-
-// traversalCallNameIsSafe reports whether the function whose opening paren is
-// at openParen is property-agnostic for a node argument.
-func traversalCallNameIsSafe(expression string, openParen int) bool {
-	end := openParen
-	for end > 0 && isASCIIWhitespace(expression[end-1]) {
-		end--
-	}
-	start := end
-	for start > 0 {
-		b := expression[start-1]
-		if (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' {
-			start--
-			continue
-		}
-		break
-	}
-	if start == end {
+	facts := readExpressionLexicalFacts(expression)
+	i, ok := facts.at[nameStart]
+	if !ok {
 		return false
 	}
-	return traversalSafeArgumentFunctions[strings.ToLower(expression[start:end])]
+	previous := facts.tokens[i].previous
+	if previous >= 0 && strings.EqualFold(facts.tokens[previous].name, "DISTINCT") {
+		previous = facts.tokens[previous].previous
+	}
+	if facts.byteAt(previous) != '(' {
+		return false
+	}
+	token := facts.tokens[previous]
+	return token.call >= 0 && traversalSafeArgumentFunctions[facts.calls[token.call].normalized]
 }

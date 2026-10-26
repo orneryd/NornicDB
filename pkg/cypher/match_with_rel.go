@@ -164,7 +164,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context
 	}
 	if name, end, ok := scanSymbolicName(expr, 0); ok && end < len(expr) && expr[end] == '[' && strings.HasSuffix(expr, "]") {
 		if _, bound := values[normalizePropertyKey(name)]; bound {
-			return e.evaluateRowValueText(expr, values)
+			return nil, false, unresolvedExpressionError(expr)
 		}
 	}
 	if containsRelationshipPattern(expr) || startsWithRelationshipFragment(expr) {

@@ -259,7 +259,7 @@ func (n *rowRuntimeValueNode) eval(e *StorageExecutor, values map[string]interfa
 }
 
 func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo) {
-	expr = strings.TrimSpace(expr)
+	expr = trimQueryTrivia(expr)
 	if expr == "" {
 		return rowUnresolvedNode{}, rowValueInfo{pure: true, trivial: true}
 	}
@@ -429,15 +429,8 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 	if len(expr) > 1 && (expr[0] == '-' || expr[0] == '+') {
 		return rowTextValue(expr)
 	}
-	if dot := topLevelSymbolIndex(expr, "."); dot > 0 && !isQualifiedFunctionCall(expr) {
-		for {
-			next := topLevelSymbolIndex(expr[dot+1:], ".")
-			if next < 0 {
-				break
-			}
-			dot += next + 1
-		}
-		if endpoint := endpointPropertyNode(strings.TrimSpace(expr[:dot]), strings.TrimSpace(expr[dot+1:])); endpoint != nil {
+	if receiver, chain, subscript, postfix := staticPostfixSplit(expr); postfix && !subscript {
+		if endpoint := endpointPropertyNode(receiver, chain); endpoint != nil {
 			// A fixed endpoint of a row relationship is stable throughout a
 			// list predicate. Hoist its property read when the loop variable
 			// is unrelated; this also preserves the per-row endpoint cache.
@@ -446,10 +439,10 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 			}
 			return bound(expr, endpoint, impureRowValue())
 		}
-		base, info := c.part(strings.TrimSpace(expr[:dot]))
+		base, info := c.part(receiver)
 		parts, infos := []rowValueNode{base}, []rowValueInfo{info}
 		c.compose(info, parts, infos)
-		return bound(expr, &rowPropertyNode{text: expr, base: parts[0], chain: strings.TrimSpace(expr[dot+1:])}, info)
+		return bound(expr, &rowPropertyNode{text: expr, base: parts[0], chain: chain}, info)
 	}
 	if isValidIdentifier(expr) || len(expr) > 1 && expr[0] == '$' && isValidIdentifier(expr[1:]) {
 		// A row variable or parameter: bound in the row, or read by the

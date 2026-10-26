@@ -389,6 +389,14 @@ func (scope staticTypeScope) operandOf(expression string) staticOperand {
 	return operand
 }
 
+func (scope staticTypeScope) operandOfView(view expressionLexicalView) staticOperand {
+	operand, err := (staticOperatorChecker{scope: scope, view: view}).check(view.text())
+	if err != nil {
+		return staticOperand{}
+	}
+	return operand
+}
+
 // staticTextType is the static type the operator check derives for
 // expression with no variable or parameter facts: a literal's, a
 // constructor's, an operator's, a function call's; "" when it derives none.

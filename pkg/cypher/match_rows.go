@@ -10,14 +10,10 @@ import (
 )
 
 func (e *StorageExecutor) evaluateCoalesceInContext(expr string, nodeMap map[string]*storage.Node, edgeMap map[string]*storage.Edge, computedValues map[string]interface{}) interface{} {
-	// Extract arguments from COALESCE(arg1, arg2, ...)
-	innerStart := strings.Index(expr, "(")
-	innerEnd := strings.LastIndex(expr, ")")
-	if innerStart == -1 || innerEnd == -1 {
+	_, inner, ok := parseFunctionCallWS(expr)
+	if !ok {
 		return nil
 	}
-	inner := expr[innerStart+1 : innerEnd]
-
 	// Split arguments
 	args := e.splitFunctionArgs(inner)
 
@@ -83,9 +79,8 @@ func (e *StorageExecutor) evaluateSumArithmetic(expr string, nodes []*storage.No
 
 		// Evaluate this part
 		var value float64
-		upperPart := upperASCII(part)
 
-		if strings.HasPrefix(upperPart, "SUM(") {
+		if isFunctionCallWS(part, "sum") {
 			if agg := ParseAggregation(part); agg != nil && agg.Function == "SUM" && agg.Property != "" {
 				for _, node := range nodes {
 					if val, exists := node.Properties[agg.Property]; exists {
@@ -111,38 +106,28 @@ func (e *StorageExecutor) evaluateSumArithmetic(expr string, nodes []*storage.No
 }
 
 // splitArithmeticExpression splits an arithmetic expression by + and - operators
-// while respecting parentheses
+// while respecting quoted data, comments and nested expression groups.
 func splitArithmeticExpression(expr string) []string {
 	var parts []string
-	var current strings.Builder
-	depth := 0
-
-	for i, ch := range expr {
-		if ch == '(' {
-			depth++
-			current.WriteRune(ch)
-		} else if ch == ')' {
-			depth--
-			current.WriteRune(ch)
-		} else if depth == 0 && (ch == '+' || ch == '-') {
-			// Check if this is a unary minus (at start or after operator)
-			isUnary := i == 0 || (i > 0 && (expr[i-1] == '+' || expr[i-1] == '-' || expr[i-1] == '('))
-			if !isUnary {
-				if current.Len() > 0 {
-					parts = append(parts, current.String())
-					current.Reset()
-				}
-				parts = append(parts, string(ch))
-			} else {
-				current.WriteRune(ch)
-			}
-		} else {
-			current.WriteRune(ch)
+	from := 0
+	lexicalGroupWalk(expr, 0, func(kind lexicalTokenKind, at, _, depth, _ int) bool {
+		if kind != lexicalPunctuation || depth != 0 || expr[at] != '+' && expr[at] != '-' {
+			return true
 		}
-	}
-
-	if current.Len() > 0 {
-		parts = append(parts, current.String())
+		// Keep this adapter's unary-sign policy; the shared reader owns
+		// only which punctuation is code at the root of the expression.
+		if at == 0 || expr[at-1] == '+' || expr[at-1] == '-' || expr[at-1] == '(' {
+			return true
+		}
+		if from < at {
+			parts = append(parts, expr[from:at])
+		}
+		parts = append(parts, expr[at:at+1])
+		from = at + 1
+		return true
+	})
+	if from < len(expr) {
+		parts = append(parts, expr[from:])
 	}
 
 	return parts
@@ -597,29 +582,20 @@ func (e *StorageExecutor) compareOrderValues(a, b interface{}) int {
 	return compareValuesForSort(a, b)
 }
 
-// splitOutsideParens splits a string by delimiter, respecting parentheses
+// splitOutsideParens splits root punctuation outside quoted data, comments
+// and expression groups, preserving the caller's whitespace/empty-part policy.
 func splitOutsideParens(s string, delim rune) []string {
 	var parts []string
-	var current strings.Builder
-	depth := 0
-
-	for _, ch := range s {
-		if ch == '(' {
-			depth++
-		} else if ch == ')' {
-			depth--
+	from := 0
+	lexicalGroupWalk(s, 0, func(kind lexicalTokenKind, at, _, depth, _ int) bool {
+		if kind == lexicalPunctuation && depth == 0 && rune(s[at]) == delim {
+			parts = append(parts, s[from:at])
+			from = at + 1
 		}
-
-		if ch == delim && depth == 0 {
-			parts = append(parts, current.String())
-			current.Reset()
-		} else {
-			current.WriteRune(ch)
-		}
-	}
-
-	if current.Len() > 0 {
-		parts = append(parts, current.String())
+		return true
+	})
+	if from < len(s) {
+		parts = append(parts, s[from:])
 	}
 
 	return parts

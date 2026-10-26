@@ -28,7 +28,7 @@ func isAggregateFunc(expr string) bool {
 // containsAggregateFunc checks if expression contains any aggregate function
 // (handles expressions like SUM(a) + SUM(b))
 func containsAggregateFunc(expr string) bool {
-	return len(findAggregateSpans(expr)) > 0
+	return hasLexicalAggregate(expr)
 }
 
 // isAggregateFuncName checks if expr starts with a specific aggregate function (whitespace-tolerant)
@@ -39,16 +39,15 @@ func isAggregateFuncName(expr, funcName string) bool {
 // extractFuncInner extracts the inner expression from a function call (whitespace-tolerant)
 // e.g., "COUNT(n)" -> "n", "SUM (x.val)" -> "x.val", "collect({a:1})[..10]" -> "{a:1}"
 func extractFuncInner(expr string) string {
-	open := strings.IndexByte(expr, '(')
-	if open < 0 {
+	call, ok := lexicalCallAt(expr, queryGapEnd(expr, 0))
+	if !ok {
 		return ""
 	}
-	// The matching closing paren, not the last one: collect({…})[..10].
-	close := findMatchingParen(expr, open)
+	close := call.close(expr)
 	if close < 0 {
 		return ""
 	}
-	return strings.TrimSpace(expr[open+1 : close])
+	return call.syntax.render(syntaxSpan{call.open + 1, close})
 }
 
 // compareForSort compares two values for sorting, returns true if a < b

@@ -31,6 +31,15 @@ func (e *StorageExecutor) evaluateRowReduce(function, argument string, values ma
 		func(index int) (interface{}, bool, error) { return evaluate(plan.terms[index], scope) })
 }
 
-func rowTopLevelPipeIndex(expression string) int {
-	return findTopLevelOperator(expression, "|", false, true)
+func rowTopLevelPipeIndex(expression string, views ...expressionLexicalView) int {
+	v := borrowedExpressionView(expression, views)
+	tokens := v.tokens()
+	if len(tokens) > 0 {
+		for _, token := range tokens {
+			if token.kind == lexicalPunctuation && token.depth == tokens[0].depth && v.facts.text[token.start] == '|' {
+				return token.start - v.span.start
+			}
+		}
+	}
+	return -1
 }

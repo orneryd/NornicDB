@@ -275,10 +275,8 @@ func isOperatorWith(s string, pos int) bool {
 	case c == ')' || c == ']' || c == '}' || c == '\'' || c == '"' || c == '`':
 		return true
 	case isIdentByte(c):
-		end := i + 1
-		for i >= 0 && isIdentByte(s[i]) {
-			i--
-		}
+		_, start, end := lexicalPreviousToken(s, wordStart)
+		i = start - 1
 		if i >= 0 && s[i] == '.' {
 			return true // n.name STARTS WITH ...
 		}
@@ -372,10 +370,8 @@ func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
 	if !isIdentByte(s[i]) {
 		return false
 	}
-	wordEnd := i + 1
-	for i >= 0 && isIdentByte(s[i]) {
-		i--
-	}
+	_, previousStart, wordEnd := lexicalPreviousToken(s, pos)
+	i = previousStart - 1
 	if i >= 0 && s[i] == '.' {
 		return false // n.as SET …: the word is a property key
 	}
@@ -414,10 +410,8 @@ func wordIsName(s string, wordStart int) bool {
 	case ',', '(', '[', '+', '-', '*', '/', '%', '^', '=', '<', '>':
 		return !wordStartsExpression(s[wordStart:])
 	}
-	end := i + 1
-	for i >= 0 && isIdentByte(s[i]) {
-		i--
-	}
+	_, start, end := lexicalPreviousToken(s, wordStart)
+	i = start - 1
 	// The word before must be the keyword, not a name spelled the same
 	// (WITH 3 AS as WITH as RETURN as, WITH 3 AS with WITH with WHERE …).
 	switch word := s[i+1 : end]; {
@@ -505,11 +499,8 @@ var (
 // prevWordStart returns the start of the word that precedes pos (after
 // skipping whitespace), for a pos where prevWordEqualsIgnoreCase matched.
 func prevWordStart(s string, pos int) int {
-	i := lastLiveByte(s, pos)
-	for i >= 0 && isIdentByte(s[i]) {
-		i--
-	}
-	return i + 1
+	_, start, _ := lexicalPreviousToken(s, pos)
+	return start
 }
 
 // lastLiveByte returns the index of the last byte before pos that is live
@@ -535,64 +526,8 @@ func lastLiveByte(s string, pos int) int {
 	if pos <= 0 {
 		return -1
 	}
-	last := -1
-	inLineComment, inBlockComment := false, false
-	quote := byte(0)
-	for i := 0; i < pos && i < len(s); i++ {
-		c := s[i]
-		if inLineComment {
-			if c == '\n' || c == '\r' {
-				inLineComment = false
-			}
-			continue
-		}
-		if inBlockComment {
-			if c == '*' && i+1 < len(s) && s[i+1] == '/' {
-				inBlockComment = false
-				i++
-			}
-			continue
-		}
-		if quote != 0 {
-			if c == '\\' && quote != '`' && i+1 < len(s) {
-				i++
-				continue
-			}
-			if c == quote {
-				if i+1 < len(s) && s[i+1] == quote {
-					i++
-					continue
-				}
-				quote = 0
-				last = i // the closing quote ends the expression
-			}
-			continue
-		}
-		switch c {
-		case '\'', '"', '`':
-			quote = c
-			last = i
-			continue
-		case '/':
-			if i+1 < len(s) {
-				switch s[i+1] {
-				case '/':
-					inLineComment = true
-					i++
-					continue
-				case '*':
-					inBlockComment = true
-					i++
-					continue
-				}
-			}
-		}
-		if isASCIISpace(c) {
-			continue
-		}
-		last = i
-	}
-	return last
+	_, _, end := lexicalPreviousToken(s, pos)
+	return end - 1
 }
 
 // isExpressionBoundaryWord reports whether word is a keyword after which an
@@ -648,31 +583,13 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 		bracketDepth int
 		braceDepth   int
 
-		inSingleQuote  bool
-		inDoubleQuote  bool
-		inBacktick     bool
-		inLineComment  bool
-		inBlockComment bool
+		inSingleQuote bool
+		inDoubleQuote bool
+		inBacktick    bool
 	)
 
 	for i := from; i < len(s); i++ {
 		c := s[i]
-
-		if opts.SkipComments {
-			if inLineComment {
-				if c == '\n' || c == '\r' {
-					inLineComment = false
-				}
-				continue
-			}
-			if inBlockComment {
-				if c == '*' && i+1 < len(s) && s[i+1] == '/' {
-					inBlockComment = false
-					i++
-				}
-				continue
-			}
-		}
 
 		if opts.SkipStrings {
 			if inSingleQuote {
@@ -716,15 +633,9 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 			continue
 		}
 
-		if opts.SkipComments && c == '/' && i+1 < len(s) {
-			if s[i+1] == '/' {
-				inLineComment = true
-				i++
-				continue
-			}
-			if s[i+1] == '*' {
-				inBlockComment = true
-				i++
+		if opts.SkipComments && c == '/' {
+			if end := queryCommentEnd(s, i); end >= 0 {
+				i = end - 1
 				continue
 			}
 		}
@@ -847,29 +758,14 @@ func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
 		bracketDepth int
 		braceDepth   int
 
-		inSingleQuote  bool
-		inDoubleQuote  bool
-		inBacktick     bool
-		inLineComment  bool
-		inBlockComment bool
+		inSingleQuote bool
+		inDoubleQuote bool
+		inBacktick    bool
 	)
 
 	for i := from; i < len(s); i++ {
 		c := s[i]
 
-		if inLineComment {
-			if c == '\n' || c == '\r' {
-				inLineComment = false
-			}
-			continue
-		}
-		if inBlockComment {
-			if c == '*' && i+1 < len(s) && s[i+1] == '/' {
-				inBlockComment = false
-				i++
-			}
-			continue
-		}
 		if inSingleQuote {
 			if c == '\\' && i+1 < len(s) {
 				i++
@@ -908,18 +804,13 @@ func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
 			}
 			continue
 		}
-		if c == '/' && i+1 < len(s) {
-			if s[i+1] == '/' {
-				inLineComment = true
-				i++
-				continue
-			}
-			if s[i+1] == '*' {
-				inBlockComment = true
-				i++
+		if c == '/' {
+			if end := queryCommentEnd(s, i); end >= 0 {
+				i = end - 1
 				continue
 			}
 		}
+
 		if c == '\'' {
 			inSingleQuote = true
 			continue
@@ -1008,15 +899,12 @@ func keywordMatchAt(s string, pos int, keyword string, ks, ke int) (endPos int, 
 	for k < ke {
 		ck := keyword[k]
 		if isASCIISpace(ck) {
-			for k < ke && isASCIISpace(keyword[k]) {
-				k++
-			}
-			if j >= len(s) || !isASCIISpace(s[j]) {
+			k = queryGapEnd(keyword[:ke], k)
+			gap := queryGapEnd(s, j)
+			if gap == j {
 				return 0, false
 			}
-			for j < len(s) && isASCIISpace(s[j]) {
-				j++
-			}
+			j = gap
 			continue
 		}
 		if j >= len(s) {
@@ -1033,13 +921,10 @@ func keywordMatchAt(s string, pos int, keyword string, ks, ke int) (endPos int, 
 }
 
 func trimKeywordWSBounds(s string) (start, end int) {
-	start = 0
-	end = len(s)
-	for start < end && isASCIISpace(s[start]) {
-		start++
-	}
-	for end > start && isASCIISpace(s[end-1]) {
-		end--
+	start = queryGapEnd(s, 0)
+	end = queryGapStart(s, len(s))
+	if end < start {
+		end = start
 	}
 	return start, end
 }
@@ -1273,6 +1158,28 @@ func queryGapEnd(query string, index int) int {
 	return end
 }
 
+// queryGapStart consumes the last code-token end from the shared forward
+// reader. There is no reverse whitespace or comment implementation.
+func queryGapStart(query string, index int) int {
+	_, _, end := lexicalPreviousToken(query, index)
+	return end
+}
+
+// trimQueryTrivia removes surrounding whitespace and comments without changing
+// quoted data or expression offsets within the retained text. Evaluation must
+// accept trivia even when optional statement normalization is disabled.
+func trimQueryTrivia(text string) string {
+	text = strings.TrimSpace(text)
+	if strings.IndexByte(text, '/') < 0 {
+		return text
+	}
+	start, end := queryGapEnd(text, 0), queryGapStart(text, len(text))
+	if end < start {
+		end = start
+	}
+	return text[start:end]
+}
+
 // hasOwnStatementSyntax reports whether query is one of NornicDB's
 // statements with a syntax of its own, which canonicalizeQueryText leaves as
 // written but for its comments: the knowledge-policy DDL (CREATE / ALTER /
@@ -1321,17 +1228,7 @@ func hasOwnStatementSyntax(query string) bool {
 func leadingShellCommandsEnd(query string) int {
 	end := 0
 	for index := 0; ; {
-		for index < len(query) {
-			if commentEnd := queryCommentEnd(query, index); commentEnd >= 0 {
-				index = commentEnd
-				continue
-			}
-			if size := queryWhitespaceAt(query, index); size > 0 {
-				index += size
-				continue
-			}
-			break
-		}
+		index = queryGapEnd(query, index)
 		if index >= len(query) || query[index] != ':' {
 			return end
 		}
