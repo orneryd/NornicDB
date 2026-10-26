@@ -75,7 +75,7 @@ func (p QueryResultProjection) NodeProperties(node *Node) map[string]interface{}
 	out := make(map[string]interface{}, len(node.Properties))
 	id := NodeID(p.qualified(string(node.ID)))
 	for key, value := range node.Properties {
-		if !p.engine.filterNodePropertyByDecay(id, node.Labels, key, created, updated, p.now, !p.normalEvent) {
+		if !p.engine.filterEntityByDecay(readVisibility(p.normalEvent), &decayPropertyRead{id: string(id), labels: node.Labels, property: key, created: created, updated: updated}, p.now) {
 			out[key] = value
 		}
 	}
@@ -98,7 +98,7 @@ func (p QueryResultProjection) EdgeProperties(edge *Edge, selection ...[]string)
 	var out map[string]interface{}
 	id := EdgeID(p.qualified(string(edge.ID)))
 	include := func(key string, value interface{}) {
-		if p.engine != nil && p.engine.filterRelationshipPropertyByDecay(id, edge.Type, key, created, updated, p.now, !p.normalEvent) {
+		if p.engine != nil && p.engine.filterEntityByDecay(readVisibility(p.normalEvent), &decayPropertyRead{id: string(id), edgeType: edge.Type, property: key, created: created, updated: updated, isEdge: true}, p.now) {
 			return
 		}
 		if out == nil {

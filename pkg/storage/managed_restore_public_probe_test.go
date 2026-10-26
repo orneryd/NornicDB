@@ -57,7 +57,12 @@ func TestReview1406ManagedRestoreAfterDropFinalMetadata(t *testing.T) {
 					}
 					return nil
 				})
-				require.ErrorIs(t, manager.DropDatabase("victim"), sentinel)
+				// Native prefix deletion retains the catalog and its quota policy.
+				// A journaled catalog DROP is instead irrevocably admitted and
+				// remains offline across Restore (covered by the manager recovery
+				// matrix); it cannot serve as a live-catalog quota fixture.
+				_, _, dropErr := base.DeleteByPrefix("victim:")
+				require.ErrorIs(t, dropErr, sentinel)
 				require.Equal(t, 2, calls, "fault must follow atomic final metadata commit")
 				exists, err := storage.ReviewRawEntityExists(base, storage.StoredEntityNodeKind, "victim:old000")
 				require.NoError(t, err)

@@ -240,7 +240,7 @@ func (b *BadgerEngine) readEdgeBodyInTxn(txn *badger.Txn, id EdgeID, v readVisib
 	if edge == nil {
 		return nil, false, ErrNotFound
 	}
-	if b.hidesEdge(v, edge, DecayScoringTime()) {
+	if b.filterEntityByDecay(v, edge, DecayScoringTime()) {
 		return nil, false, ErrNotFound
 	}
 	return edge, true, nil

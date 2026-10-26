@@ -26,8 +26,6 @@ const (
 	// accessMetaWrite stores value for the entity and returns it with a nil
 	// error. It performs no read.
 	accessMetaWrite
-	// accessMetaScan selects all entity access state in the committed read owner.
-	accessMetaScan
 )
 
 // accessMetaInTxn is the one owner of the access-metadata keyspace: it reads
@@ -78,11 +76,6 @@ func hasAccessState(entry *knowledgepolicy.AccessMetaEntry) bool {
 		entry.LastMutatedAt != 0 || entry.MutationCount != 0 || len(entry.Overflow) != 0 || len(entry.KalmanFilters) != 0)
 }
 
-func (b *BadgerEngine) GetAccessMeta(entityID string) (*knowledgepolicy.AccessMetaEntry, error) {
-	result, err := b.readAccessMeta(entityID, accessMetaRead)
-	return result.entry, err
-}
-
 func (b *BadgerEngine) PutAccessMeta(entityID string, entry *knowledgepolicy.AccessMetaEntry) error {
 	target := entityID
 	if len(entityID) > 0 && entityID[0] == 0 {
@@ -127,22 +120,22 @@ func (b *BadgerEngine) DeleteAccessMeta(entityID string) error {
 	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(NodeID(target)))} }, nil)
 }
 
-func (b *BadgerEngine) ScanAccessMeta() ([]*knowledgepolicy.AccessMetaEntry, error) {
-	result, err := b.readAccessMeta("", accessMetaScan)
-	return result.entries, err
-}
+// ReadAccessMeta is the one implementation of committed access metadata reads
+// and their DROP admission. A point read returns the entry stored for the
+// request's entity ID; it retains work and tombstone entries. An all read
+// exposes only entity access state, skipping internal work keys, from one
+// captured transaction and a single iterator. The read mode is validated
+// before any read happens.
+func (b *BadgerEngine) ReadAccessMeta(request knowledgepolicy.AccessMetaReadRequest) (knowledgepolicy.AccessMetaReadResult, error) {
+	var result knowledgepolicy.AccessMetaReadResult
+	switch request.Mode {
+	case knowledgepolicy.AccessMetaReadPoint, knowledgepolicy.AccessMetaReadAll:
+	default:
+		return result, ErrInvalidData
+	}
 
-type accessMetaReadResult struct {
-	entry   *knowledgepolicy.AccessMetaEntry
-	entries []*knowledgepolicy.AccessMetaEntry
-}
-
-// readAccessMeta owns committed access metadata reads and their DROP admission.
-// Point reads retain work/tombstone entries; scans only expose entity access
-// state and skip internal work keys. Both read from one captured transaction.
-func (b *BadgerEngine) readAccessMeta(entityID string, mode accessMetaMode) (accessMetaReadResult, error) {
-	var result accessMetaReadResult
-	if mode == accessMetaScan {
+	entityID := request.EntityID
+	if request.Mode == knowledgepolicy.AccessMetaReadAll {
 		if err := b.pendingNamespaceConflict(""); err != nil {
 			return result, err
 		}
@@ -152,9 +145,9 @@ func (b *BadgerEngine) readAccessMeta(entityID string, mode accessMetaMode) (acc
 		}
 	}
 	err := b.withView(func(txn *badger.Txn) error {
-		if mode == accessMetaRead {
+		if request.Mode == knowledgepolicy.AccessMetaReadPoint {
 			var err error
-			result.entry, err = accessMetaInTxn(txn, entityID, accessMetaRead, nil)
+			result.Entry, err = accessMetaInTxn(txn, entityID, accessMetaRead, nil)
 			return err
 		}
 		opts := badgerIteratorOptions()
@@ -172,7 +165,7 @@ func (b *BadgerEngine) readAccessMeta(entityID string, mode accessMetaMode) (acc
 					return err
 				}
 				if hasAccessState(&entry) {
-					result.entries = append(result.entries, &entry)
+					result.Entries = append(result.Entries, &entry)
 				}
 				return nil
 			}); err != nil {
@@ -182,16 +175,19 @@ func (b *BadgerEngine) readAccessMeta(entityID string, mode accessMetaMode) (acc
 		return nil
 	})
 	if err != nil {
-		return accessMetaReadResult{}, err
+		return knowledgepolicy.AccessMetaReadResult{}, err
 	}
-	if entry := result.entry; entry != nil {
+	if request.Mode != knowledgepolicy.AccessMetaReadPoint {
+		return result, nil
+	}
+	if entry := result.Entry; entry != nil {
 		if entry.TargetID != "" && entry.TargetID != entityID {
 			if err := b.pendingPrefixConflict(entry.TargetID); err != nil {
-				return accessMetaReadResult{}, err
+				return knowledgepolicy.AccessMetaReadResult{}, err
 			}
 		}
 		if !hasAccessState(entry) && entry.DeindexWork == nil && !entry.IndexTombstone {
-			result.entry = nil
+			result.Entry = nil
 		}
 	}
 	return result, nil

@@ -11,12 +11,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// AccessMetaStore is the persistence interface for AccessMetaEntry.
-type AccessMetaStore interface {
-	GetAccessMeta(entityID string) (*AccessMetaEntry, error)
-	PutAccessMeta(entityID string, entry *AccessMetaEntry) error
-}
-
 // EntityMeta describes the storage metadata the flusher needs to resolve
 // access-time policy bindings and property visibility.
 type EntityMeta struct {
@@ -218,10 +212,11 @@ func (f *AccessFlusher) flush() {
 
 	now := time.Now().UnixNano()
 	for entityID, delta := range merged {
-		entry, err := f.store.GetAccessMeta(entityID)
+		result, err := f.store.ReadAccessMeta(AccessMetaReadRequest{Mode: AccessMetaReadPoint, EntityID: entityID})
 		if err != nil {
 			continue
 		}
+		entry := result.Entry
 		if entry == nil {
 			entry = &AccessMetaEntry{
 				TargetID:    entityID,

@@ -2,6 +2,8 @@ package knowledgepolicy
 
 import (
 	"context"
+	"fmt"
+	"sort"
 	"sync"
 	"testing"
 	"time"
@@ -16,15 +18,31 @@ func newMockStore() *mockStore {
 	return &mockStore{entries: make(map[string]*AccessMetaEntry)}
 }
 
-func (m *mockStore) GetAccessMeta(entityID string) (*AccessMetaEntry, error) {
+func (m *mockStore) ReadAccessMeta(request AccessMetaReadRequest) (AccessMetaReadResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	e := m.entries[entityID]
-	if e == nil {
-		return nil, nil
+	switch request.Mode {
+	case AccessMetaReadPoint:
+		e := m.entries[request.EntityID]
+		if e == nil {
+			return AccessMetaReadResult{}, nil
+		}
+		copy := *e
+		return AccessMetaReadResult{Entry: &copy}, nil
+	case AccessMetaReadAll:
+		ids := make([]string, 0, len(m.entries))
+		for id := range m.entries {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		entries := make([]*AccessMetaEntry, 0, len(ids))
+		for _, id := range ids {
+			copy := *m.entries[id]
+			entries = append(entries, &copy)
+		}
+		return AccessMetaReadResult{Entries: entries}, nil
 	}
-	copy := *e
-	return &copy, nil
+	return AccessMetaReadResult{}, fmt.Errorf("unsupported access meta read mode %d", request.Mode)
 }
 
 func (m *mockStore) PutAccessMeta(entityID string, entry *AccessMetaEntry) error {

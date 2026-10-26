@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Go access-metadata reads use `ReadAccessMeta(AccessMetaReadRequest)` with
+  `AccessMetaReadPoint` or `AccessMetaReadAll`. Migrate `GetAccessMeta` results
+  to `.Entry` and `ScanAccessMeta` results to `.Entries` on the typed result.
+
 - Transaction Go node updates use `UpdateGraphNode(node, policy)` with per-operation
   `ClientNodeEdits` or `StoredNodeImages`. Manual visibility uses
   `SetManualSuppression(kind, id, suppressed)` for nodes and relationships.
@@ -56,6 +60,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Keep typed relationship counts scoped through WAL, tracing, replication and
+  managed database views. Journal catalog DROP intent before deleting data;
+  retry or reopen completes interrupted cleanup without reopening an empty
+  database as live. Preserve accepted write outcomes when acknowledgement fails.
 
 - Keep a failed database DROP unavailable until durable cleanup completes, with
   recovery on retry, reopen and Restore. Refresh attached quota accounting before

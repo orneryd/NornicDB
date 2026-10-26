@@ -5,6 +5,7 @@ import (
 	"time"
 
 	badger "github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/knowledgepolicy"
 )
 
 func TestSchemaVersion_FreshDatabase(t *testing.T) {
@@ -87,10 +88,11 @@ func TestRunOnStartMigrations_AppliesWhenVersionZero(t *testing.T) {
 		t.Errorf("expected version %d after migration, got %d", storageVersionCurrent, v)
 	}
 
-	meta, err := eng.GetAccessMeta("nornic:legacy1")
+	metaResult, err := eng.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "nornic:legacy1"})
 	if err != nil {
 		t.Fatal(err)
 	}
+	meta := metaResult.Entry
 	if meta == nil {
 		t.Fatal("expected AccessMetaEntry after migration")
 	}
