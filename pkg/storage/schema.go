@@ -313,6 +313,7 @@ func (sm *SchemaManager) admitConstraintLocked(c Constraint, silentOnDuplicate b
 // applyConstraintLocked adds c, which admitConstraintLocked admitted, with
 // its owned index and unique-value tracking.
 func (sm *SchemaManager) applyConstraintLocked(c Constraint) {
+	c = cloneConstraint(c)
 	// An index-backed constraint owns an index of its own name, for nodes and
 	// relationships alike, as in Neo4j.
 	if c.OwnedIndex == "" && (c.Type == ConstraintUnique || c.Type == ConstraintNodeKey || c.Type == ConstraintRelationshipKey) {
@@ -902,7 +903,7 @@ func (sm *SchemaManager) AddCompositeIndex(name, label string, properties []stri
 	sm.compositeIndexes[name] = &CompositeIndex{
 		Name:        name,
 		Label:       label,
-		Properties:  properties,
+		Properties:  slices.Clone(properties),
 		values:      make(map[interface{}][]NodeID),
 		keysDirty:   true,
 		fullIndex:   make(map[string][]NodeID),
@@ -1276,8 +1277,8 @@ func (sm *SchemaManager) AddFulltextIndex(name string, labels, properties []stri
 
 	sm.fulltextIndexes[name] = &FulltextIndex{
 		Name:       name,
-		Labels:     labels,
-		Properties: properties,
+		Labels:     slices.Clone(labels),
+		Properties: slices.Clone(properties),
 	}
 
 	if sm.persist != nil {
@@ -1306,8 +1307,8 @@ func (sm *SchemaManager) AddFulltextRelationshipIndex(name string, relTypes, pro
 
 	sm.fulltextIndexes[name] = &FulltextIndex{
 		Name:              name,
-		RelationshipTypes: relTypes,
-		Properties:        properties,
+		RelationshipTypes: slices.Clone(relTypes),
+		Properties:        slices.Clone(properties),
 	}
 
 	if sm.persist != nil {

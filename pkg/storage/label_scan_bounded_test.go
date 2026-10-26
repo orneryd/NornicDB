@@ -22,7 +22,7 @@ func TestLabelScanLargeTailStaysStreaming(t *testing.T) {
 				visited++
 				if visited == labelScanPointLookups+1 {
 					// A streaming scan must not have decoded the final node yet.
-					eng.cacheStoreNode(&Node{ID: ids[count-1], Labels: []string{"Common"}, Properties: map[string]any{"i": int64(-1)}})
+					eng.cacheStoreNode(&Node{ID: ids[count-1], Labels: []string{"Common"}, Properties: map[string]any{"i": int64(-1)}}, eng.db.oracle.published.Load())
 				}
 				if visited == count {
 					require.Equal(t, int64(-1), node.Properties["i"])

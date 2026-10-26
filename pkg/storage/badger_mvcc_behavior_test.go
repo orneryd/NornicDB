@@ -252,7 +252,7 @@ func TestNodeBodyCacheExcludesEmbeddingsAndEvictsByBytes(t *testing.T) {
 			Labels:          []string{"Document"},
 			Properties:      map[string]any{"text": strings.Repeat("x", 500)},
 			ChunkEmbeddings: [][]float32{{1, 2, 3, 4}},
-		})
+		}, engine.db.oracle.published.Load())
 	}
 
 	engine.nodeBodyCacheMu.RLock()

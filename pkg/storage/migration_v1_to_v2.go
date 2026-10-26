@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"runtime"
@@ -152,7 +153,7 @@ func (b *BadgerEngine) rebuildSecondaryIndexesForV2() (v1ToV2IndexStats, error) 
 		if err := b.ensureOpen(false); err != nil {
 			return stats, fmt.Errorf("drop legacy prefix 0x%02x: %w", p, err)
 		}
-		if err := b.db.DropPrefix(prefixDropOptions{}, []byte{p}); err != nil {
+		if err := b.db.DropPrefix(context.Background(), prefixDropOptions{}, []byte{p}); err != nil {
 			return stats, fmt.Errorf("drop legacy prefix 0x%02x: %w", p, err)
 		}
 	}

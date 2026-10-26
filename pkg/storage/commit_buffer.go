@@ -12,6 +12,7 @@ package storage
 // lock, so they never wait for the flush.
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"sync"
@@ -561,8 +562,9 @@ func (w *WriteBehindBuffer) signal() {
 	}
 }
 
-// AppendNode appends a committed node write to the active generation.
+// AppendNode appends an owned copy of a committed node write to the active generation.
 func (w *WriteBehindBuffer) AppendNode(n *Node) {
+	n = copyNode(n)
 	w.mu.Lock()
 	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
 	if n != nil {
@@ -577,8 +579,9 @@ func (w *WriteBehindBuffer) AppendNode(n *Node) {
 	}
 }
 
-// AppendEdge appends a committed edge write to the active generation.
+// AppendEdge appends an owned copy of a committed edge write to the active generation.
 func (w *WriteBehindBuffer) AppendEdge(e *Edge) {
+	e = copyEdge(e)
 	w.mu.Lock()
 	w.readEpoch.Store((w.readEpoch.Load() + 2) | 1)
 	if e != nil {
@@ -993,6 +996,10 @@ func (w *WriteBehindBuffer) Flush() error {
 // (orderAfterBufferedCommits) holds the stripes of the caller's entities, so
 // no commit of theirs enters a later generation.
 func (w *WriteBehindBuffer) flush(dispatch, frontier bool) error {
+	return w.flushContext(nil, dispatch, frontier)
+}
+
+func (w *WriteBehindBuffer) flushContext(ctx context.Context, dispatch, frontier bool) error {
 	w.rotate()
 	w.signal()
 	var last *CommitBuffer
@@ -1009,7 +1016,18 @@ func (w *WriteBehindBuffer) flush(dispatch, frontier bool) error {
 	lastPending := -1
 	stalls := 0
 	for {
-		w.drainOne(dispatch, last)
+		if ctx != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if ctx == nil || ctx.Done() == nil {
+			w.drainOne(dispatch, last)
+		} else {
+			// A cancellable waiter never becomes the accepted replay
+			// owner. Wake the existing worker for the next generation;
+			// cancellation can leave this wait while that worker keeps
+			// the same claim, application and settlement lifetime.
+			w.signal()
+		}
 		w.mu.RLock()
 		pending := len(w.draining)
 		done := pending == 0 || (last != nil && !slices.Contains(w.draining, last))
@@ -1031,7 +1049,18 @@ func (w *WriteBehindBuffer) flush(dispatch, frontier bool) error {
 			// without an apply error, its absence is not completion.
 			stalls = 0
 		}
-		time.Sleep(time.Millisecond)
+		observeWriteAdmissionWait(w, ctx)
+		if ctx == nil {
+			time.Sleep(time.Millisecond)
+		} else {
+			timer := time.NewTimer(time.Millisecond)
+			select {
+			case <-timer.C:
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			}
+		}
 	}
 }
 

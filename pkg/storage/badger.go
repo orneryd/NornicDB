@@ -171,6 +171,7 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
+	durableCaches durableCacheState
 	// dropPrefixTailHook is nil in production and held under the lifecycle barrier.
 	dropPrefixTailHook    func(string) error
 	storedEntityObservers atomic.Pointer[storedEntityObserverRegistry]
@@ -208,7 +209,7 @@ type BadgerEngine struct {
 	// write that arrives after Close fails cleanly with ErrStorageClosed.
 	// Lock order: writeBarrier before mu; Close stops its background
 	// backfills before taking the barrier so they cannot wait on it.
-	writeBarrier sync.RWMutex
+	writeBarrier trackedRWMutex
 	// deleteCleanup counts deletes and runs the deleted-entry clean-up; nil
 	// for in-memory engines (see badger_delete_cleanup.go).
 	deleteCleanup    *deleteCleanup
@@ -288,6 +289,7 @@ type BadgerEngine struct {
 	// collectEdgesByIndexPrefix and invalidated on every edge mutation.
 	edgeCache         map[EdgeID]*Edge
 	edgeCacheVersions map[EdgeID]uint64 // physical record versions, guarded by edgeCacheMu
+	edgeCacheSources  map[EdgeID]uint64 // captured/committed read cuts, distinct from the body's item version
 	edgeCacheMu       sync.RWMutex
 	edgeCacheMaxItems int
 
@@ -351,7 +353,7 @@ type BadgerEngine struct {
 
 	retentionPolicy           RetentionPolicy
 	activeMVCCSnapshotReaders atomic.Int64
-	mvccPruneMu               sync.Mutex
+	mvccPruneMu               trackedRWMutex
 	mvccFloorKeysMu           sync.RWMutex
 	mvccFloorKeys             map[[9]byte]struct{}
 	lifecycleController       MVCCLifecycleController
@@ -425,7 +427,7 @@ type BadgerEngine struct {
 	// suppression.
 	suppressionEnds    map[string]struct{}
 	suppressionEnding  bool
-	suppressionWriteMu sync.Mutex
+	suppressionWriteMu trackedRWMutex
 
 	// labelCountWriteMu orders folds/rebuilds of the derived label counts
 	// against each other and keeps backup's count snapshot exclusive. Commit
@@ -436,7 +438,7 @@ type BadgerEngine struct {
 	// edgeTypeCountWriteMu is the edge-type analogue of labelCountWriteMu:
 	// it orders folds/rebuilds of the derived per-type counts (issue #638).
 	// Commit paths append unique delta keys instead of taking it.
-	edgeTypeCountWriteMu sync.RWMutex
+	edgeTypeCountWriteMu trackedRWMutex
 
 	// countDeltaSeq numbers derived-count delta keys uniquely within this
 	// engine lifetime. Folding at open removes every persisted delta before
@@ -1061,6 +1063,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	engine.incomingAdjCache = make(map[NodeID][]EdgeID, engine.adjCacheMaxNodes)
 	engine.namespaceNodeCounts = make(map[string]int64)
 	engine.namespaceEdgeCounts = make(map[string]int64)
+	db.cacheOwner = engine
 
 	engine.idDict = newIDDictionary()
 	engine.idDict.setFreelistTTL(opts.EngineOptions.IDFreelistTTL)
@@ -1227,6 +1230,7 @@ func (b *BadgerEngine) reopenForPostMigrationCompaction(badgerOpts badger.Option
 	// initializeMVCCSequence + initializeCounts read off b.db, so swap
 	// it before calling them.
 	b.db = newDB
+	newDB.cacheOwner = b
 	if err := b.initializeWALPropertyIdentity(newDB, false, false); err != nil {
 		newDB.Close()
 		return nil, err
@@ -1364,7 +1368,7 @@ func (b *BadgerEngine) persistMVCCSequence(namespace string) {
 	encodedSeq := make([]byte, 8)
 	binary.BigEndian.PutUint64(encodedSeq, seq)
 	persistKey := state.persistKey
-	_ = b.db.Update(func(txn *badger.Txn) error {
+	_ = b.db.updateMetadata(func(txn *badger.Txn) error {
 		return txn.Set(persistKey, encodedSeq)
 	})
 }
@@ -1424,7 +1428,7 @@ func accessSchemaVersionInTxn(txn *badger.Txn, operation schemaVersionAccess, va
 }
 
 func (b *BadgerEngine) writeSchemaVersion(version int) error {
-	return b.db.Update(func(txn *badger.Txn) error {
+	return b.db.updateMetadata(func(txn *badger.Txn) error {
 		_, err := accessSchemaVersionInTxn(txn, storeSchemaVersion, version)
 		return err
 	})

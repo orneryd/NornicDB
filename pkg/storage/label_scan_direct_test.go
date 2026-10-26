@@ -57,7 +57,7 @@ func TestStreamNodesByLabelProjectedReadsRemainingNodesInOnePass(t *testing.T) {
 	require.True(t, eng.labelCoversScope("", "Common"))
 	require.False(t, eng.labelCoversScope("", "Rare"))
 
-	eng.cacheStoreNode(&Node{ID: created[count-2], Labels: []string{"Common"}, Properties: map[string]any{"i": int64(-1)}})
+	eng.cacheStoreNode(&Node{ID: created[count-2], Labels: []string{"Common"}, Properties: map[string]any{"i": int64(-1)}}, eng.db.oracle.published.Load())
 	nodes := streamLabelNodes(t, eng, "test:", "Common", []string{"i"})
 	require.Len(t, nodes, count)
 	for index, node := range nodes {

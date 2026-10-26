@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"sync"
@@ -360,11 +361,11 @@ func (d *propertyKeyDictionary) flushTxnCounters(txn *badger.Txn) propKeyTxnDrai
 // persistTxnCounters writes the staged forward/reverse entries and
 // per-namespace counter keys out of the user transaction, as ordinary
 // commits of as many batches as they need.
-func (d *propertyKeyDictionary) persistTxnCounters(db *managedBadgerDB, drain propKeyTxnDrain) error {
+func (d *propertyKeyDictionary) persistTxnCounters(ctx context.Context, db *managedBadgerDB, drain propKeyTxnDrain) error {
 	if drain.empty() {
 		return nil
 	}
-	w := &batchWriter{to: db}
+	w := &batchWriter{to: metadataBatches{db: db, ctx: ctx}}
 	defer w.discard()
 	err := drain.writeTo(w)
 	if err == nil {

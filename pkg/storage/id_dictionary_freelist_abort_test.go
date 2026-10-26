@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"testing"
@@ -308,7 +309,7 @@ func TestNumericIDRejectedAdopterPreservesLiveWinner(t *testing.T) {
 			adopter.Discard()
 
 			b.idDict.flushTxnCounters(winner)
-			require.NoError(t, b.db.commit(winner))
+			require.NoError(t, b.db.commit(context.Background(), winner, nil))
 			b.idDict.markTxnCommitted(winner)
 			if kind == freelistKindNode {
 				num, ok := b.idDict.lookupNodeNumID("test:adopted")
@@ -352,7 +353,7 @@ func TestNumericIDCommittedWinnerSurvivesRejectedAdopter(t *testing.T) {
 			b.idDict.flushTxnCounters(adopter)
 			adopterState := b.idDict.takeTxnCommitting(adopter)
 			b.idDict.flushTxnCounters(winner)
-			require.NoError(t, b.db.commit(winner))
+			require.NoError(t, b.db.commit(context.Background(), winner, nil))
 			b.idDict.markTxnCommitted(winner)
 			b.idDict.abandonPending(adopterState)
 			var got uint64

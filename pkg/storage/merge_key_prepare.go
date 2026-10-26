@@ -44,7 +44,9 @@ func (tx *BadgerTransaction) prepareMergeNode(ctx context.Context, labels []stri
 	if tx.clientDetached.Load() {
 		return ErrTransactionClosed
 	}
-	tx.mu.Lock()
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	if tx.Status != TxStatusActive || tx.namespace == "" || tx.snapshotTx == nil {
 		tx.mu.Unlock()
 		return nil
@@ -54,7 +56,9 @@ func (tx *BadgerTransaction) prepareMergeNode(ctx context.Context, labels []stri
 	if err := engine.initializeManagedEntityNamespace(ctx, namespace); err != nil {
 		return err
 	}
-	tx.mu.Lock()
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	if tx.clientDetached.Load() {
 		tx.mu.Unlock()
 		return ErrTransactionClosed
@@ -64,7 +68,7 @@ func (tx *BadgerTransaction) prepareMergeNode(ctx context.Context, labels []stri
 		return nil
 	}
 	if tx.commitReleaseWrite == nil {
-		lease, err := engine.beginBarrierWrite(false, false)
+		lease, err := engine.beginBarrierWrite(ctx, false, false)
 		if err != nil {
 			tx.mu.Unlock()
 			return err
@@ -88,7 +92,9 @@ func (tx *BadgerTransaction) prepareMergeNode(ctx context.Context, labels []stri
 }
 
 func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schema *SchemaManager, namespace string, key mergeAdmissionKey, props map[string]interface{}, write bool) error {
-	tx.mu.Lock()
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	_, held := tx.mergeKeyReleases[key.lock]
 	active := tx.Status == TxStatusActive
 	tx.mu.Unlock()
@@ -107,7 +113,10 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 	if err != nil {
 		return err
 	}
-	tx.mu.Lock()
+	if err := tx.mu.LockContext(ctx); err != nil {
+		release()
+		return err
+	}
 	if _, held = tx.mergeKeyReleases[key.lock]; tx.Status != TxStatusActive || held {
 		tx.mu.Unlock()
 		release()
@@ -120,7 +129,7 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 	tx.mu.Unlock()
 	if nodeID, found, _ := tx.mergeAdmissionHolder(schema, namespace, key, props); found {
 		if write {
-			if err := tx.settleBufferedNode(nodeID); err != nil {
+			if err := tx.settleBufferedNode(ctx, nodeID); err != nil {
 				return err
 			}
 		}
@@ -139,18 +148,20 @@ func (tx *BadgerTransaction) prepareMergeAdmissionKey(ctx context.Context, schem
 // flush follows it. Any observed transaction with a pending buffered node
 // fails with ErrConflict, as catchUpToNode does. Without write-behind it
 // does nothing.
-func (tx *BadgerTransaction) settleBufferedNode(nodeID NodeID) error {
+func (tx *BadgerTransaction) settleBufferedNode(ctx context.Context, nodeID NodeID) error {
 	buffer := tx.engine.writeBehind
 	if buffer == nil {
 		return nil
 	}
 	_, pending, _ := buffer.GetNode(nodeID)
 	if pending {
-		if err := buffer.Flush(); err != nil {
+		if err := buffer.flushContext(ctx, true, false); err != nil {
 			return err
 		}
 	}
-	tx.mu.Lock()
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	defer tx.mu.Unlock()
 	if tx.Status != TxStatusActive {
 		return nil

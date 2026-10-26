@@ -63,7 +63,7 @@ func (b *BadgerEngine) SubmitEntityCommit(ctx context.Context, prepared *Prepare
 		return nil, ctx.Err()
 	}
 	receipt, resolve := NewCommitReceipt(settle)
-	if err := prepared.startCommit(func() { resolve.PublishPhysical(CommitOutcome{State: CommitApplied}) }); err != nil {
+	if err := prepared.startCommitContext(ctx, func() { resolve.PublishPhysical(CommitOutcome{State: CommitApplied}) }); err != nil {
 		return nil, err
 	}
 	go func() { <-prepared.finished; _ = resolve.Resolve(prepared.terminal) }()

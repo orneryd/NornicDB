@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"sync"
@@ -71,7 +72,7 @@ func TestReviewR2ConcurrentAllocation(t *testing.T) {
 		require.NoError(t, e)
 	}
 	for d := range drains {
-		require.NoError(t, dest.propKeyDict.persistTxnCounters(dest.db, d))
+		require.NoError(t, dest.propKeyDict.persistTxnCounters(context.Background(), dest.db, d))
 	}
 	assertPropertyDictionaryBijection(t, dest)
 	for i := 0; i < 160; i++ {

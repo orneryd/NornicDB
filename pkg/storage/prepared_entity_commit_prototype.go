@@ -19,11 +19,12 @@ type EntityCommitSubmitter interface {
 // command chooses physical commit or definite discard. Caller wait cancellation
 // is not a discard decision.
 type PreparedEntityCommit struct {
+	preparationCtx       context.Context
 	mode                 EntityCommitMode
 	markRecoveryPending  func()
 	hooksMu              sync.Mutex
 	appliedHooks         []func()
-	retainAuthority      func() (func(), error)
+	retainAuthority      func(context.Context) (func(), error)
 	engine               *BadgerEngine
 	terminal             CommitOutcome
 	afterPublication     func()
@@ -76,6 +77,17 @@ func (p *PreparedEntityCommit) Changes() []StoredEntityChange {
 	return changes
 }
 func (p *PreparedEntityCommit) startCommit(afterPublication func()) error {
+	return p.startCommitContext(p.preparationCtx, afterPublication)
+}
+
+func (p *PreparedEntityCommit) startCommitContext(ctx context.Context, afterPublication func()) error {
+	return DecidePublication(ctx, func() error { return p.acceptCommit(afterPublication) })
+}
+
+// acceptCommit is the release's existing local ownership handoff. An outer WAL
+// or replication owner submits its continuation with a detached context, so it
+// does not arbitrate acceptance a second time.
+func (p *PreparedEntityCommit) acceptCommit(afterPublication func()) error {
 	selected := false
 	p.once.Do(func() {
 		selected = true
@@ -122,7 +134,9 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		return nil, ErrInvalidID
 	}
 	applied, receiptErr := func() (bool, error) {
-		tx.mu.Lock()
+		if err := tx.mu.LockContext(ctx); err != nil {
+			return false, err
+		}
 		defer tx.mu.Unlock()
 		if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 			return false, err
@@ -153,7 +167,9 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 		return nil, receiptErr
 	}
 	if applied {
-		tx.mu.Lock()
+		if err := tx.mu.LockContext(ctx); err != nil {
+			return nil, err
+		}
 		namespace := tx.namespace
 		engine := tx.engine
 		mode := tx.commitMode
@@ -172,7 +188,9 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			return nil, err
 		}
 	}
-	tx.mu.Lock()
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return nil, err
+	}
 	if err := tx.ensureOperationAllowedLocked(transactionRead); err != nil {
 		tx.mu.Unlock()
 		return nil, err
@@ -202,10 +220,10 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 			}
 			nodes, edges, endpoints := tx.pendingEntityAuthorityKeysLocked()
 			schema, owner := tx.engine.GetSchemaForNamespace(tx.namespace), tx.ID
-			prepared = &PreparedEntityCommit{engine: tx.engine, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
+			prepared = &PreparedEntityCommit{preparationCtx: ctx, engine: tx.engine, mode: tx.commitMode, namespace: tx.namespace, logicalID: logicalID, operations: operations, changes: changes, decide: make(chan bool, 1), finished: finished}
 			tx.preparedEntityCommit = prepared
-			prepared.retainAuthority = func() (func(), error) {
-				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, entityCommitKeys(nodes, edges, endpoints))
+			prepared.retainAuthority = func(admission context.Context) (func(), error) {
+				releaseEntities, err := schema.acquireUniqueConstraintCommitLocks(admission, owner, entityCommitKeys(nodes, edges, endpoints))
 				if err != nil {
 					return nil, err
 				}
@@ -225,7 +243,7 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 						edgeImages = append(edgeImages, op.OldEdge)
 					}
 				}
-				releaseValues, err := schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, schema.appendConstraintValueKeys(nil, nodeImages, edgeImages))
+				releaseValues, err := schema.acquireUniqueConstraintCommitLocks(admission, owner, schema.appendConstraintValueKeys(nil, nodeImages, edgeImages))
 				if err != nil {
 					releaseEntities()
 					return nil, err
@@ -276,10 +294,16 @@ func (tx *BadgerTransaction) PrepareEntityCommit(ctx context.Context, request En
 // recovery-pending commands retain it after an inner native rollback.
 // The returned release is only for definite pre-record/log discard.
 func (p *PreparedEntityCommit) RetainAcceptedAuthority() (func(), error) {
+	return p.RetainAcceptedAuthorityWithContext(nil)
+}
+
+// RetainAcceptedAuthorityWithContext retains the same reentrant authority while
+// acceptance is still abortable. Accepted continuations use their own lifetime.
+func (p *PreparedEntityCommit) RetainAcceptedAuthorityWithContext(ctx context.Context) (func(), error) {
 	if p.retainAuthority == nil {
 		return func() {}, nil
 	}
-	release, err := p.retainAuthority()
+	release, err := p.retainAuthority(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -302,7 +326,7 @@ func (p *PreparedEntityCommit) MarkRecoveryPending() {
 // drainReleaseCallbacks retires a release set under its actual owner mutex,
 // then invokes every callback after unlocking. Prepared ownership deliberately
 // uses its own mutex: accepted publication must never wait on client tx.mu.
-func drainReleaseCallbacks[C []func() | map[uniqueConstraintLockKey]func()](mu *sync.Mutex, slot *C) {
+func drainReleaseCallbacks[C []func() | map[uniqueConstraintLockKey]func()](mu sync.Locker, slot *C) {
 	mu.Lock()
 	callbacks := *slot
 	var empty C

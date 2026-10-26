@@ -48,7 +48,7 @@ type WALEngine struct {
 	wal         *WAL
 	// mutationMu serializes auto-compaction snapshots against in-flight mutating
 	// operations to avoid WAL/engine state skew during snapshot truncation.
-	mutationMu sync.RWMutex
+	mutationMu trackedRWMutex
 
 	// Automatic snapshot and compaction
 	snapshotDir       string
@@ -288,6 +288,7 @@ func (w *WALEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 func NewWALEngine(engine Engine, wal *WAL) *WALEngine {
 	waitCtx, stopWait := context.WithCancel(context.Background())
 	w := &WALEngine{
+		mutationMu:    trackedRWMutex{crossGoroutine: true},
 		entityWaitCtx: waitCtx, stopEntityWait: stopWait,
 		engine: engine,
 		wal:    wal,

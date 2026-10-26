@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -25,12 +26,20 @@ func (b *BadgerEngine) ensureOpen(writing bool) error {
 // not touch Badger in that case). The closed check runs under the barrier so
 // a Close that has completed is always observed and a Close that has not
 // started yet cannot slip in between the check and the write.
-func (b *BadgerEngine) beginBarrierWrite(exclusive bool, publication bool) (writeBarrierLease, error) {
+func (b *BadgerEngine) beginBarrierWrite(ctx context.Context, exclusive bool, publication bool) (writeBarrierLease, error) {
+	return b.beginBarrierWriteContext(ctx, exclusive, publication)
+}
+
+func (b *BadgerEngine) beginBarrierWriteContext(ctx context.Context, exclusive bool, publication bool) (writeBarrierLease, error) {
 	lease := writeBarrierLease{engine: b, exclusive: exclusive}
+	var err error
 	if exclusive {
-		b.writeBarrier.Lock()
+		err = b.writeBarrier.LockContext(ctx)
 	} else {
-		b.writeBarrier.RLock()
+		err = b.writeBarrier.RLockContext(ctx)
+	}
+	if err != nil {
+		return writeBarrierLease{}, err
 	}
 	if err := b.ensureOpen(true); err != nil {
 		lease.release()
@@ -80,8 +89,8 @@ type orderedWrite struct {
 // buffer. finish, deferred before every other lock the write takes, delivers
 // the notifications of the write, and of the commits its drain replays, after
 // the write released every other lock (holdPublication).
-func (b *BadgerEngine) beginOrderedWrite() (orderedWrite, error) {
-	lease, err := b.beginBarrierWrite(false, true)
+func (b *BadgerEngine) beginOrderedWrite(ctx context.Context) (orderedWrite, error) {
+	lease, err := b.beginBarrierWrite(ctx, false, true)
 	return orderedWrite{b: lease.engine, held: lease.held}, err
 }
 
@@ -118,21 +127,38 @@ func (b *BadgerEngine) beginHelperTxn() (*managedBadgerDB, error) {
 // commitEngineWrite repeatable units. Optional entities acquire their write-behind order first;
 // their notifications are delivered only after that order is released.
 func (b *BadgerEngine) withUpdate(fn func(txn *badger.Txn) error, entities ...writtenEntities) error {
+	return b.withScopedUpdate(context.Background(), cacheWriteScope{}, false, fn, entities...)
+}
+
+// withMetadataUpdate declares that its read-based caller writes no body or
+// membership represented in the graph read caches. It uses the same writer.
+func (b *BadgerEngine) withMetadataUpdate(fn func(*badger.Txn) error, entities ...writtenEntities) error {
+	return b.withMetadataUpdateContext(context.Background(), fn, entities...)
+}
+
+func (b *BadgerEngine) withMetadataUpdateContext(ctx context.Context, fn func(*badger.Txn) error, entities ...writtenEntities) error {
+	return b.withScopedUpdate(ctx, cacheWriteScope{known: true}, true, fn, entities...)
+}
+
+func (b *BadgerEngine) withScopedUpdate(ctx context.Context, scope cacheWriteScope, metadata bool, fn func(*badger.Txn) error, entities ...writtenEntities) error {
 	if len(entities) > 0 && b.writeBehind != nil {
 		var order orderHold
-		if _, err := b.orderAfterBufferedCommits(&order, entities[0]); err != nil {
+		if _, err := b.orderAfterBufferedCommitsContext(ctx, &order, entities[0]); err != nil {
 			return err
 		}
 		defer b.drainCommitNotifications()
 		defer order.release()
 	}
-	return b.commitEngineWrite(func(cw *commitWriter) error { return cw.writeOnce(fn) })
+	return b.commitEngineWrite(ctx, func(cw *commitWriter) error {
+		cw.declaredCache, cw.metadata = &scope, metadata
+		return cw.writeOnce(fn)
+	})
 }
 
 // withPublishingUpdate binds a memory-only delta to the existing atomic writer.
 // keys reads the prior/written images captured by fn, after fn succeeds.
-func (b *BadgerEngine) withPublishingUpdate(fn func(*badger.Txn) error, publish func(), keys func() []any, notification *commitNotification, stages ...func(*commitWriter) error) error {
-	return b.commitEngineWrite(func(cw *commitWriter) error {
+func (b *BadgerEngine) withPublishingUpdate(ctx context.Context, fn func(*badger.Txn) error, publish func(*commitCacheImages), keys func() []any, notification *commitNotification, stages ...func(*commitWriter) error) error {
+	return b.commitEngineWrite(ctx, func(cw *commitWriter) error {
 		cw.notification = notification
 		if err := cw.writeOnce(fn); err != nil {
 			return err
@@ -163,7 +189,7 @@ type engineWriteOptions struct {
 // matching Neo4j's token-before-entity invariant), and the numeric-ID
 // counter high-water marks are persisted after the commit, in a separate
 // transaction, so concurrent writers never conflict on the shared keys.
-func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, options ...engineWriteOptions) error {
+func (b *BadgerEngine) commitEngineWrite(ctx context.Context, write func(cw *commitWriter) error, options ...engineWriteOptions) error {
 	var option engineWriteOptions
 	if len(options) > 0 {
 		option = options[0]
@@ -190,7 +216,7 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, opt
 			return err
 		}
 		defer db.endRead(readTs)
-		cw := b.newCommitWriter(db, txn)
+		cw := b.newCommitWriter(ctx, db, txn)
 		defer cw.discard()
 		fail := func(err error) error {
 			b.idDict.discardTxnCounters(cw.txn)

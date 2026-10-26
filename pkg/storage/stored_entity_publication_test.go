@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -182,9 +183,9 @@ func TestStoredEntityInitializationDrainsEarlierPublication(t *testing.T) {
 	data, _, err := b.encodeNode(txn, node)
 	require.NoError(t, err)
 	require.NoError(t, txn.Set(nodeKey(node.ID), data))
-	cw := b.newCommitWriter(b.db, txn)
+	cw := b.newCommitWriter(context.Background(), b.db, txn)
 	cw.publishKeys = []any{node.ID}
-	ts, err := b.db.commitShared(txn, cw.publication())
+	ts, err := b.db.commitShared(context.Background(), txn, cw.publication())
 	require.NoError(t, err)
 	require.Equal(t, 0, count, "physical commit has not run its registered publication")
 	require.NoError(t, b.InitializeStoredEntityObserver("test", initialize, nil))

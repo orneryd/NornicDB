@@ -14,7 +14,7 @@ import (
 // that same key only creates a redundant entry and retained key. The scan still
 // observes every old key, including obsolete shard parts and metadata.
 func (cw *commitWriter) replaceEmbeddingRange(id NodeID, embeddings [][]float32, metadata map[string]any, options ...embeddingKeyScanOptions) error {
-	cw.publishKeys = append(cw.publishKeys, id)
+	cw.publishKeys = append(cw.publishKeys, id, AffectedFact{NodeID: id})
 	var small [4]embeddingWriteKV
 	writes := small[:0]
 	layout := binary.AppendUvarint([]byte{1}, uint64(len(embeddings)))

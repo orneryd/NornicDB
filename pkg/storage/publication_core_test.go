@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync"
@@ -122,7 +123,7 @@ func TestPublicationCoreMetadataCommitDoesNotWaitOnStage(t *testing.T) {
 	})
 	go func() {
 		defer close(olderDone)
-		olderErr = b.withPublishingUpdate(func(txn *badger.Txn) error { return txn.Set([]byte("core:entity"), []byte("body")) }, func() { close(entered); <-release }, func() []any { return []any{NodeID("db:n")} }, nil)
+		olderErr = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error { return txn.Set([]byte("core:entity"), []byte("body")) }, func(*commitCacheImages) { close(entered); <-release }, func() []any { return []any{NodeID("db:n")} }, nil)
 	}()
 	if !awaitPublicationCore(t, entered, "older commit rendezvous") {
 		return
@@ -154,8 +155,8 @@ func TestPublicationCoreLargeCommitPublishesOnceAndAbortPublishesNothing(t *test
 				defer setLargeCommitBatchHook(func(int) error { return failure })()
 			}
 			var batches int
-			err := b.commitEngineWrite(func(cw *commitWriter) error {
-				cw.publish = func() { published.Add(1) }
+			err := b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
+				cw.publish = func(*commitCacheImages) { published.Add(1) }
 				cw.publishKeys = []any{NodeID("db:n")}
 				payload := make([]byte, 64)
 				for i := 0; i < 20000; i++ {
@@ -195,7 +196,7 @@ func TestPublicationCoreFailedCommitRetiresReservedNotification(t *testing.T) {
 	// Reserve through the same timestamp owner and then reject the physical
 	// write with a conflict. The caller completes its empty entry after abort.
 	require.NoError(t, b.withUpdate(func(txn *badger.Txn) error { return txn.Set([]byte("core:conflict"), []byte("A")) }))
-	err = b.commitEngineWrite(func(cw *commitWriter) error {
+	err = b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
 		cw.notification = n
 		_, e := cw.txn.Get([]byte("core:conflict"))
 		if e != nil {

@@ -2,10 +2,7 @@ package storage
 
 import (
 	"fmt"
-	"math"
 	"time"
-
-	"github.com/orneryd/nornicdb/pkg/convert"
 )
 
 // StoredNodeImage returns the image the storage codec gives node, a body the
@@ -246,50 +243,10 @@ func setEdgeImage(edge *Edge, properties map[string]any) {
 	edge.UpdatedAt = compactEdgeTime(edge.UpdatedAt)
 }
 
-// codecImageProperties returns properties as the property codec returns
-// them, when that is known without decoding: nil, strings, booleans and
-// floats keep their msgpack type, an integer reads as decodeStrictTypedValue
-// reads it (the canonical numeric-kind reader), and a nil map decodes as an empty one. Lists, maps, temporal and other values take
-// their stored representation only through a decode (decodeStrictTypedValue,
-// restoreStoredTemporalValue), so it reports false for them. The map is
-// properties itself unless a value changes.
+// codecImageProperties adapts the shared owned-property representation for
+// written images. The codec remains the owner of the envelope and wire format.
 func codecImageProperties(properties map[string]any) (map[string]any, bool) {
-	narrowed := false
-	for _, value := range properties {
-		switch value.(type) {
-		case nil, string, bool, int64, float32, float64:
-		case int, int8, int16, int32, uint, uint8, uint16, uint32, uint64:
-			narrowed = true
-		default:
-			return nil, false
-		}
-	}
-	if properties == nil {
-		return map[string]any{}, true
-	}
-	if !narrowed {
-		return properties, true
-	}
-	image := make(map[string]any, len(properties))
-	for key, value := range properties {
-		switch value.(type) {
-		case int, int8, int16, int32, uint, uint8, uint16, uint32, uint64:
-			number, _ := convert.ReadNumber(value)
-			if signed, ok := number.Signed(); ok {
-				image[key] = signed
-			} else {
-				unsigned, _ := number.Unsigned()
-				if unsigned > math.MaxInt64 {
-					image[key] = unsigned
-				} else {
-					image[key] = int64(unsigned)
-				}
-			}
-		default:
-			image[key] = value
-		}
-	}
-	return image, true
+	return ownPropertyMap(properties)
 }
 
 // envelopeTime is t as the node body envelope's msgpack time extension

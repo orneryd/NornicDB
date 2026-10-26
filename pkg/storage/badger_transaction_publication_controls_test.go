@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
@@ -76,7 +77,7 @@ func stageReservedPublication(t *testing.T, peer *BadgerTransaction) {
 
 func publishReservedPublication(t *testing.T, peer *BadgerTransaction) {
 	t.Helper()
-	require.NoError(t, peer.engine.db.commit(peer.badgerTx))
+	require.NoError(t, peer.engine.db.commit(context.Background(), peer.badgerTx, nil))
 	peer.mu.Lock()
 	peer.closeLocked(TxStatusCommitted, false, nil)
 	peer.mu.Unlock()

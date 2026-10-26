@@ -81,9 +81,9 @@ func (r *nativeAdjacencyReader) read(outgoing bool) (edges []*Edge, err error) {
 				}
 			}
 			if outgoing {
-				b.adjCacheStoreOutgoing(adjGen, nodeID, d.ids)
+				b.adjCacheStoreOutgoing(adjGen, nodeID, d.ids, txn.ReadTs())
 			} else {
-				b.adjCacheStoreIncoming(adjGen, nodeID, d.ids)
+				b.adjCacheStoreIncoming(adjGen, nodeID, d.ids, txn.ReadTs())
 			}
 		}
 		// Read cached IDs from this transaction, never a later body cache.

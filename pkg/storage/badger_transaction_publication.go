@@ -32,19 +32,14 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 			return err
 		}
 	}
-	tx.mu.Lock()
+	if err := tx.mu.LockContext(ctx); err != nil {
+		return err
+	}
 	tx.commitCtx = ctx
-	tx.mu.Unlock()
-	defer func() {
-		tx.mu.Lock()
-		tx.commitCtx = nil
-		tx.mu.Unlock()
-	}()
-
-	tx.mu.Lock()
 	var knowledgePolicyChanged func()
 	var notification, publication *commitNotification
 	defer func() {
+		tx.commitCtx = nil
 		tx.mu.Unlock()
 		if commitErr == nil && afterPublication != nil {
 			afterPublication()
@@ -80,7 +75,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		tx.releaseWriteBarrierLocked()
 	}
 	if tx.commitReleaseWrite == nil {
-		lease, writeErr := tx.engine.beginBarrierWrite(tx.schemaRuntime != nil, false)
+		lease, writeErr := tx.engine.beginBarrierWriteContext(ctx, tx.schemaRuntime != nil, false)
 		if writeErr != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return writeErr
@@ -157,7 +152,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 			edges = append(edges, edge)
 		}
 		valueKeys := schemaForValues.appendConstraintValueKeys(nil, nodes, edges)
-		releaseCommitLocks, err = schemaForValues.acquireUniqueConstraintCommitLocks(context.Background(), tx.ID, valueKeys)
+		releaseCommitLocks, err = schemaForValues.acquireUniqueConstraintCommitLocks(ctx, tx.ID, valueKeys)
 		if err != nil {
 			tx.closeLocked(TxStatusRolledBack, true, nil)
 			return err
@@ -227,7 +222,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// after the commits acknowledged before it (orderAfterBufferedCommits).
 	var order orderHold
 	if tx.engine.writeBehindEnabled() {
-		drained, err := tx.engine.orderAfterBufferedCommits(&order, operationEntities(tx.operations))
+		drained, err := tx.engine.orderAfterBufferedCommitsContext(tx.commitCtx, &order, operationEntities(tx.operations))
 		if err != nil {
 			return tx.abortCommitLocked(err)
 		}
@@ -290,7 +285,9 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 		}
 	}()
 	acceptedRelease := tx.commitReleaseAcceptedAuthority
-	cw := tx.engine.newCommitWriter(tx.badgerDB, tx.badgerTx)
+	// A prepared command's accepted continuation deliberately cleared this
+	// context. Its acceptance owner already made the semantic decision.
+	cw := tx.engine.newCommitWriter(tx.commitCtx, tx.badgerDB, tx.badgerTx)
 	logicalID := tx.ID
 	if tx.commitLogicalID != "" {
 		logicalID = tx.commitLogicalID
@@ -313,9 +310,9 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 			capturePublicationOperations(notification, operations)
 			cw.notification = notification
 		}
-		cw.publish = func() {
+		cw.publish = func(images *commitCacheImages) {
 			knowledgePolicyChanged = tx.publishKnowledgePolicySchemaLocked()
-			engine.publishCommitOperations(namespace, schema, operations, true, true)
+			engine.publishCommitOperations(namespace, schema, operations, true, true, images)
 			releaseEntityAuthority()
 			for _, release := range mergeReleases {
 				release()
@@ -367,7 +364,9 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// From here to the end of the tail the derived counts this commit
 	// changes stay locked; see acquireCommitPublicationLocked. A large
 	// commit acquired them before its first batch.
-	tx.acquireCommitPublicationLocked()
+	if err := tx.acquireCommitPublicationLocked(); err != nil {
+		return tx.abortCommitLocked(err)
+	}
 
 	// Commit Badger transaction (atomic!). A large commit writes its last
 	// batch and only then becomes visible, all at once.

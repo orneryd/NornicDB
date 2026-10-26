@@ -143,7 +143,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		require.NoError(t, err)
 
 		staleID := NodeID(prefixTestID("foreach-stale"))
-		b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Person", staleID)
+		b.labelCacheSetFirst(b.labelFirstCacheGen.current(), "Person", staleID, b.db.oracle.published.Load())
 
 		var visited []NodeID
 		err = b.ForEachNodeIDByLabel("Person", func(id NodeID) bool {
@@ -170,7 +170,7 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		b := createTestBadgerEngine(t)
 		cached := &Node{ID: NodeID(prefixTestID("batch-cached")), Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "cached"}}
 		stored := &Node{ID: NodeID(prefixTestID("batch-stored")), Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "stored"}}
-		b.cacheStoreNode(cached)
+		b.cacheStoreNode(cached, b.db.oracle.published.Load())
 		_, err := b.CreateNode(stored)
 		require.NoError(t, err)
 
@@ -190,8 +190,8 @@ func TestBadgerEngine_QueryHelpers_Extra(t *testing.T) {
 		b := createTestBadgerEngine(t)
 		n1 := &Node{ID: NodeID(prefixTestID("cache-only-1")), Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "one"}}
 		n2 := &Node{ID: NodeID(prefixTestID("cache-only-2")), Labels: []string{"Doc"}, Properties: map[string]interface{}{"name": "two"}}
-		b.cacheStoreNode(n1)
-		b.cacheStoreNode(n2)
+		b.cacheStoreNode(n1, b.db.oracle.published.Load())
+		b.cacheStoreNode(n2, b.db.oracle.published.Load())
 
 		result, err := b.BatchGetNodes([]NodeID{n1.ID, n2.ID})
 		require.NoError(t, err)

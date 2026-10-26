@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -153,7 +154,7 @@ func TestEmbeddingPublicationProofUnobservedPredecessor(t *testing.T) {
 	require.NoError(t, previous.Set([]byte("publication-proof-predecessor"), []byte("earlier writer")))
 	done := make(chan error, 1)
 	go func() {
-		done <- b.commitEngineWrite(func(cw *commitWriter) error {
+		done <- b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
 			cw.embeddingOutcome = node
 			return cw.writeOnce(func(txn *badger.Txn) error {
 				if err := b.checkEmbeddingSourceInTxn(txn, node); err != nil {
@@ -192,11 +193,11 @@ func TestEmbeddingPublicationProofMaintenanceBoundary(t *testing.T) {
 			require.True(t, proof.matches(b, node.ID, node.runtimeState().embeddingRevision))
 			switch operation {
 			case "drop_prefix":
-				require.NoError(t, b.db.DropPrefix(prefixDropOptions{}, nodeKey(node.ID)))
+				require.NoError(t, b.db.DropPrefix(context.Background(), prefixDropOptions{}, nodeKey(node.ID)))
 			case "drop_all":
-				require.NoError(t, b.db.DropAll())
+				require.NoError(t, b.db.DropAll(context.Background()))
 			case "load_older_versions":
-				require.NoError(t, b.db.Load(bytes.NewReader(backup.Bytes()), 1))
+				require.NoError(t, b.db.Load(context.Background(), bytes.NewReader(backup.Bytes()), 1))
 			}
 			require.False(t, proof.matches(b, node.ID, node.runtimeState().embeddingRevision), "bulk mutation invalidates the publication interval")
 			same, err := b.embeddingRevisionIsCurrent(node.ID, node.runtimeState().embeddingRevision, proof)

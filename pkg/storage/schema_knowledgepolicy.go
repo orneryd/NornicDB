@@ -110,6 +110,7 @@ func (sm *SchemaManager) CreateDecayProfileBinding(binding knowledgepolicy.Decay
 		return err
 	}
 
+	binding = cloneDecayProfileBinding(binding)
 	sort.Strings(binding.TargetLabels)
 	b := binding
 	sm.decayProfileBindings[b.Name] = &b
@@ -174,6 +175,7 @@ func (sm *SchemaManager) AlterDecayProfileBinding(name string, replacement knowl
 		return err
 	}
 
+	replacement = cloneDecayProfileBinding(replacement)
 	sort.Strings(replacement.TargetLabels)
 	sm.decayProfileBindings[name] = &replacement
 	return sm.finishKnowledgePolicyMutationLocked()
@@ -192,7 +194,7 @@ func (sm *SchemaManager) ShowDecayProfiles() ([]knowledgepolicy.DecayProfileBund
 
 	bindings := make([]knowledgepolicy.DecayProfileBinding, 0, len(sm.decayProfileBindings))
 	for _, b := range sm.decayProfileBindings {
-		bindings = append(bindings, *b)
+		bindings = append(bindings, cloneDecayProfileBinding(*b))
 	}
 	sort.Slice(bindings, func(i, j int) bool { return bindings[i].Name < bindings[j].Name })
 
@@ -282,6 +284,7 @@ func (sm *SchemaManager) CreatePromotionPolicy(policy knowledgepolicy.PromotionP
 		}
 	}
 
+	policy = clonePromotionPolicy(policy)
 	sort.Strings(policy.TargetLabels)
 	p := policy
 	sm.promotionPolicies[p.Name] = &p
@@ -377,6 +380,7 @@ func (sm *SchemaManager) AlterPromotionPolicyDefinition(name string, replacement
 
 	replacement.Name = name
 	replacement.Enabled = existing.Enabled
+	replacement = clonePromotionPolicy(replacement)
 	sort.Strings(replacement.TargetLabels)
 	sm.promotionPolicies[name] = &replacement
 	return sm.finishKnowledgePolicyMutationLocked()
@@ -409,7 +413,7 @@ func (sm *SchemaManager) ShowPromotionPolicies() []knowledgepolicy.PromotionPoli
 
 	policies := make([]knowledgepolicy.PromotionPolicyDef, 0, len(sm.promotionPolicies))
 	for _, p := range sm.promotionPolicies {
-		policies = append(policies, *p)
+		policies = append(policies, clonePromotionPolicy(*p))
 	}
 	sort.Slice(policies, func(i, j int) bool { return policies[i].Name < policies[j].Name })
 	return policies

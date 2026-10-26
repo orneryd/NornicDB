@@ -128,7 +128,7 @@ func MarkNewTemporalConstraintsForEngine(engine Engine, schema *SchemaManager, c
 		}
 		if err := func() error {
 
-			lifecycle, err := badgerEngine.beginMaintenanceWrite(engineScope(engine))
+			lifecycle, err := badgerEngine.beginMaintenanceWrite(context.Background(), engineScope(engine))
 			if err != nil {
 				return err
 			}
@@ -186,7 +186,7 @@ func (b *BadgerEngine) backfillTemporalIndexForLabel(engine Engine, label string
 	const chunk = 500
 	for start := 0; start < len(ids); start += chunk {
 		part := ids[start:min(start+chunk, len(ids))]
-		if err := b.withUpdate(func(txn *badger.Txn) error {
+		if err := b.withMetadataUpdate(func(txn *badger.Txn) error {
 			for _, id := range part {
 				node, err := b.loadNodeForTemporalTxn(txn, id, false)
 				if err != nil {

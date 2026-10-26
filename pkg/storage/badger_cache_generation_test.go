@@ -20,24 +20,24 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 	defer engine.Close()
 
 	gen := engine.nodeCacheGen.current()
-	engine.cacheStoreNode(&Node{ID: "gen:n", Properties: map[string]any{"v": int64(2)}})
-	engine.cacheFillNode(gen, &Node{ID: "gen:n", Properties: map[string]any{"v": int64(1)}}, nodeReadCacheFull)
+	engine.cacheStoreNode(&Node{ID: "gen:n", Properties: map[string]any{"v": int64(2)}}, engine.db.oracle.published.Load())
+	engine.cacheFillNode(gen, &Node{ID: "gen:n", Properties: map[string]any{"v": int64(1)}}, nodeReadCacheFull, engine.db.oracle.published.Load())
 	require.EqualValues(t, 2, engine.nodeCache["gen:n"].Properties["v"])
 	gen = engine.nodeCacheGen.current()
 	engine.cacheDeleteNode("gen:n", nodeCacheAllForms)
-	engine.cacheFillNode(gen, &Node{ID: "gen:n"}, nodeReadCacheFull)
+	engine.cacheFillNode(gen, &Node{ID: "gen:n"}, nodeReadCacheFull, engine.db.oracle.published.Load())
 	require.NotContains(t, engine.nodeCache, NodeID("gen:n"), "a deleted node isn't put back")
-	engine.cacheFillNode(engine.nodeCacheGen.current(), &Node{ID: "gen:n"}, nodeReadCacheFull)
+	engine.cacheFillNode(engine.nodeCacheGen.current(), &Node{ID: "gen:n"}, nodeReadCacheFull, engine.db.oracle.published.Load())
 	require.Contains(t, engine.nodeCache, NodeID("gen:n"), "a read that raced nothing fills")
-	engine.cacheFillNode(0, nil, nodeReadCacheFull)
+	engine.cacheFillNode(0, nil, nodeReadCacheFull, engine.db.oracle.published.Load())
 
 	gen = engine.edgeCacheGen.current()
 	engine.cacheDeleteEdge("gen:e")
-	engine.cacheFillEdge(gen, &Edge{ID: "gen:e"})
+	engine.cacheFillEdge(gen, &Edge{ID: "gen:e"}, engine.db.oracle.published.Load())
 	require.NotContains(t, engine.edgeCache, EdgeID("gen:e"))
-	engine.cacheFillEdge(engine.edgeCacheGen.current(), &Edge{ID: "gen:e"})
+	engine.cacheFillEdge(engine.edgeCacheGen.current(), &Edge{ID: "gen:e"}, engine.db.oracle.published.Load())
 	require.Contains(t, engine.edgeCache, EdgeID("gen:e"))
-	engine.cacheFillEdge(0, nil)
+	engine.cacheFillEdge(0, nil, engine.db.oracle.published.Load())
 
 	// A read through the adjacency cache fills the edge bodies it misses.
 	_, err = engine.CreateNode(&Node{ID: "gen:s"})
@@ -56,22 +56,22 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 
 	gen = engine.adjCacheGen.current()
 	engine.adjCacheInvalidateForEdge(&Edge{StartNode: "gen:a", EndNode: "gen:b"})
-	engine.adjCacheStoreOutgoing(gen, "gen:a", []EdgeID{"gen:e"})
-	engine.adjCacheStoreIncoming(gen, "gen:b", []EdgeID{"gen:e"})
+	engine.adjCacheStoreOutgoing(gen, "gen:a", []EdgeID{"gen:e"}, engine.db.oracle.published.Load())
+	engine.adjCacheStoreIncoming(gen, "gen:b", []EdgeID{"gen:e"}, engine.db.oracle.published.Load())
 	require.NotContains(t, engine.outgoingAdjCache, NodeID("gen:a"))
 	require.NotContains(t, engine.incomingAdjCache, NodeID("gen:b"))
 
 	gen = engine.labelFirstCacheGen.current()
 	engine.labelCacheInvalidateForNodeLabels([]string{"L"}, "gen:n")
-	engine.labelCacheSetFirst(gen, "L", "gen:n")
+	engine.labelCacheSetFirst(gen, "L", "gen:n", engine.db.oracle.published.Load())
 	require.NotContains(t, engine.labelFirstNodeCache, "L")
 	// A read that drops the stale first node it found keeps its generation
 	// only when nothing else wrote the cache meanwhile.
 	gen = engine.labelFirstCacheGen.current()
-	engine.labelCacheSetFirst(gen, "L", "gen:stale")
+	engine.labelCacheSetFirst(gen, "L", "gen:stale", engine.db.oracle.published.Load())
 	kept := engine.labelCacheDropStaleFirst(gen, "L", "gen:stale")
 	require.NotContains(t, engine.labelFirstNodeCache, "L")
-	engine.labelCacheSetFirst(kept, "L", "gen:n")
+	engine.labelCacheSetFirst(kept, "L", "gen:n", engine.db.oracle.published.Load())
 	require.Equal(t, NodeID("gen:n"), engine.labelFirstNodeCache["L"])
 	stale := engine.labelFirstCacheGen.current() - 1
 	require.Equal(t, stale, engine.labelCacheDropStaleFirst(stale, "L", "gen:other"), "another write since: stays stale")
@@ -80,7 +80,7 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 	_, err = engine.GetEdgesByType("T")
 	require.NoError(t, err)
 	require.Contains(t, engine.edgeTypeCache, "T")
-	engine.edgeTypeCacheFill(engine.edgeTypeCacheGen.current(), "retained", nil)
+	engine.edgeTypeCacheFill(engine.edgeTypeCacheGen.current(), "retained", nil, engine.db.oracle.published.Load())
 	gen = engine.edgeTypeCacheGen.current()
 	engine.InvalidateEdgeTypeCache("")
 	require.Equal(t, gen, engine.edgeTypeCacheGen.current(), "explicit empty type is not full invalidation")
@@ -90,7 +90,7 @@ func TestCacheFillsDropReadsThatRacedAWrite(t *testing.T) {
 	require.Contains(t, engine.edgeTypeCache, "retained", "scoped invalidation keeps other types")
 	gen = engine.edgeTypeCacheGen.current()
 	engine.InvalidateEdgeTypeCache()
-	engine.edgeTypeCacheFill(gen, "T", nil)
+	engine.edgeTypeCacheFill(gen, "T", nil, engine.db.oracle.published.Load())
 	require.NotContains(t, engine.edgeTypeCache, "T")
 }
 
@@ -153,7 +153,7 @@ func TestLabelScanReplacesFirstNodeThatLostTheLabel(t *testing.T) {
 	require.NoError(t, err)
 	_, err = engine.CreateNode(&Node{ID: "gen:person", Labels: []string{"Person"}})
 	require.NoError(t, err)
-	engine.labelCacheSetFirst(engine.labelFirstCacheGen.current(), "Person", "gen:other")
+	engine.labelCacheSetFirst(engine.labelFirstCacheGen.current(), "Person", "gen:other", engine.db.oracle.published.Load())
 
 	var visited []NodeID
 	require.NoError(t, engine.ForEachNodeIDByLabel("Person", func(id NodeID) bool {

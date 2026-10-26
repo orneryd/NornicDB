@@ -139,7 +139,7 @@ type changeCapture struct {
 // changeLog orders a database's capturing commits: a commit holds it from
 // before its writes until it ends, so commitSeq follows commit order.
 type changeLog struct {
-	mu     sync.Mutex
+	mu     trackedRWMutex
 	loaded bool
 	last   uint64 // the last committed commitSeq
 }
@@ -292,7 +292,9 @@ func (tx *BadgerTransaction) beginChangeCaptureLocked() error {
 		return nil
 	}
 	log := tx.engine.changeLogFor(tx.namespace)
-	log.mu.Lock()
+	if err := log.mu.LockContext(tx.commitCtx); err != nil {
+		return err
+	}
 	if !log.loaded {
 		_, last, err := tx.engine.ChangeBounds(tx.namespace)
 		if err != nil {
@@ -714,7 +716,7 @@ func (b *BadgerEngine) PruneChangeEvents(namespace string, cutoff time.Time) (in
 	}
 	for start := 0; start < len(expired); start += 1000 {
 		end := min(start+1000, len(expired))
-		if err := b.withUpdate(func(txn *badger.Txn) error {
+		if err := b.withMetadataUpdate(func(txn *badger.Txn) error {
 			for _, key := range expired[start:end] {
 				if err := txn.Delete(key); err != nil {
 					return err

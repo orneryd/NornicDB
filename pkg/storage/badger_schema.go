@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/jsontext"
 
@@ -127,7 +128,7 @@ func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefi
 		return fmt.Errorf("schema: marshal %q: %w", namespace, err)
 	}
 
-	return b.commitEngineWrite(func(cw *commitWriter) error {
+	return b.commitEngineWrite(context.Background(), func(cw *commitWriter) error {
 		cw.publishKeys = []any{namespaceWriteKey(namespace)}
 		return cw.writeOnce(func(txn *badger.Txn) error { return txn.Set(schemaKey(namespace), blob) })
 	})

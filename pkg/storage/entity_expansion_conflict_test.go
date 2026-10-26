@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/stretchr/testify/require"
@@ -24,7 +25,7 @@ func TestNativeCompleteFootprintWaitsBeforePublication(t *testing.T) {
 			if operation == "move" {
 				heldID, isEdge = "test:a", false
 			}
-			_, release, err := b.beginEntityWrite(heldID, isEdge, nil)
+			_, release, err := b.beginEntityWrite(context.Background(), heldID, isEdge, nil)
 			require.NoError(t, err)
 			var publications atomic.Int32
 			b.OnEdgeUpdated(func(*Edge) { publications.Add(1) })
@@ -171,7 +172,7 @@ func TestNativeCompleteFootprintWaitsForSuppressionCleanup(t *testing.T) {
 	b.suppressionEnding = true
 	b.manualSuppressionMu.Unlock()
 	require.NoError(t, b.DeleteEdge(edge.ID))
-	_, release, err := b.beginEntityWrite(string(edge.ID), true, nil)
+	_, release, err := b.beginEntityWrite(context.Background(), string(edge.ID), true, nil)
 	require.NoError(t, err)
 	waiting := make(chan struct{})
 	resume := make(chan struct{})

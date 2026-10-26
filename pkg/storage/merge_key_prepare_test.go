@@ -292,7 +292,7 @@ func TestPrepareMergeKeyEdgeBranches(t *testing.T) {
 func TestEngineWriteLockFailureIsReturned(t *testing.T) {
 	engine, _ := newMergeKeyTestEngine(t)
 	previous := lockEngineWriteKeys
-	lockEngineWriteKeys = func(*SchemaManager, *Node, string) (func(), error) { return nil, ErrDeadlock }
+	lockEngineWriteKeys = func(context.Context, *SchemaManager, *Node, string) (func(), error) { return nil, ErrDeadlock }
 	t.Cleanup(func() { lockEngineWriteKeys = previous })
 	node := &Node{ID: NodeID(prefixTestID("direct")), Labels: []string{"U"}, Properties: map[string]interface{}{"k": int64(20)}}
 	_, err := engine.CreateNode(node)

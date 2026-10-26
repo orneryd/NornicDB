@@ -43,7 +43,7 @@ type BadgerTransaction struct {
 	clientDetached                 atomic.Bool
 	commitLogicalID                string
 	commitReleaseAcceptedAuthority func()
-	mu                             sync.Mutex
+	mu                             trackedRWMutex
 
 	// writeAdmission decides whether the transaction may write, before its
 	// first write (SetWriteAdmission); nil once it admitted, or without one.
@@ -771,6 +771,9 @@ func (tx *BadgerTransaction) flushBufferedWrites(w *batchWriter) error {
 	// Apply deletes first (in case a key is both written and deleted, delete wins)
 	for keyStr := range tx.pendingDeletes {
 		key := []byte(keyStr)
+		if tx.commitW != nil {
+			tx.commitW.rawCache.add(tx.engine, key, tx.pendingWrites[keyStr])
+		}
 		if err := w.write(func(txn *badger.Txn) error { return txn.Delete(key) }); err != nil {
 			return fmt.Errorf("flushing delete for key %s: %w", keyStr, err)
 		}
@@ -783,6 +786,9 @@ func (tx *BadgerTransaction) flushBufferedWrites(w *batchWriter) error {
 			continue
 		}
 		key := []byte(keyStr)
+		if tx.commitW != nil {
+			tx.commitW.rawCache.add(tx.engine, key, tx.pendingWrites[keyStr])
+		}
 		if err := w.write(func(txn *badger.Txn) error {
 			return tx.engine.setKeyWithPendingHint(txn, key, value)
 		}); err != nil {
@@ -2991,6 +2997,7 @@ func (tx *BadgerTransaction) StagedMemoryBytes() int64 {
 			}
 		}
 		bytes += int64(cap(op.DeletedEdgeIDs)) * int64(unsafe.Sizeof(EdgeID("")))
+		bytes += estimateAffectedFactsBytes(op.DeletedEdgeFacts)
 		for _, id := range op.DeletedEdgeIDs {
 			bytes += int64(len(id))
 		}
@@ -3049,7 +3056,7 @@ func (tx *BadgerTransaction) SetMetadata(metadata map[string]interface{}) error 
 		tx.Metadata = make(map[string]interface{})
 	}
 	for k, v := range metadata {
-		tx.Metadata[k] = v
+		tx.Metadata[k] = ownedMetadataValue(v)
 	}
 
 	return nil
@@ -3062,7 +3069,7 @@ func (tx *BadgerTransaction) GetMetadata() map[string]interface{} {
 
 	result := make(map[string]interface{})
 	for k, v := range tx.Metadata {
-		result[k] = v
+		result[k] = ownedMetadataValue(v)
 	}
 	return result
 }

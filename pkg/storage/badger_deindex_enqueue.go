@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -19,7 +20,7 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 		return false, nil
 	}
 
-	write, releaseWrite, err := b.beginEntityWrite(entityID, isEdge, nil)
+	write, releaseWrite, err := b.beginEntityWrite(context.Background(), entityID, isEdge, nil)
 	if err != nil {
 		return false, err
 	}
@@ -35,7 +36,7 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 			entities = writtenEntities{edges: []EdgeID{EdgeID(entityID)}}
 		}
 		var order orderHold
-		_, err := b.orderAfterBufferedCommits(&order, entities)
+		_, err := b.orderAfterBufferedCommits(write.ctx, &order, entities)
 		if err != nil {
 			return false, err
 		}
@@ -45,9 +46,9 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 	var nodeChanged *Node
 	var edgeChanged *Edge
 	var ops []Operation
-	publish := func() {
-		if nodeChanged != nil {
-			b.cacheDeleteNode(NodeID(entityID), nodeCacheAllForms)
+	publish := func(images *commitCacheImages) {
+		if len(ops) != 0 {
+			images.acceptOperation(ops[0])
 		}
 		if edgeChanged != nil {
 			b.cacheOnEdgeUpdated(edgeChanged.Type, edgeChanged)
@@ -62,12 +63,9 @@ func (b *BadgerEngine) EnqueueDeindexIfSuppressed(entityID string, isEdge bool) 
 			ops = []Operation{{Type: OpUpdateEdge, Edge: edgeChanged}}
 		}
 		capturePublicationOperations(notification, ops)
-		if isEdge {
-			return []any{EdgeID(entityID)}
-		}
-		return []any{NodeID(entityID)}
+		return appendOperationPublicationKeys(nil, nil, ops)
 	}
-	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
+	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		mutation, err := b.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: entityID, isEdge: isEdge})
 		nodeChanged, edgeChanged = mutation.node, mutation.edge
 		if mutation.suppressed {

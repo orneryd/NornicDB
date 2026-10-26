@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -45,34 +46,7 @@ func compareValues(a, b interface{}) bool {
 }
 
 func numericConstraintValue(value interface{}) (float64, bool) {
-	switch v := value.(type) {
-	case int:
-		return float64(v), true
-	case int8:
-		return float64(v), true
-	case int16:
-		return float64(v), true
-	case int32:
-		return float64(v), true
-	case int64:
-		return float64(v), true
-	case uint:
-		return float64(v), true
-	case uint8:
-		return float64(v), true
-	case uint16:
-		return float64(v), true
-	case uint32:
-		return float64(v), true
-	case uint64:
-		return float64(v), true
-	case float32:
-		return float64(v), true
-	case float64:
-		return v, true
-	default:
-		return 0, false
-	}
+	return convert.NumericFloat64(value)
 }
 
 func (b *BadgerEngine) validateNodeConstraintsInTxn(txn *badger.Txn, node *Node, schema *SchemaManager, namespace string, excludeNodeID NodeID) error {

@@ -45,7 +45,7 @@ func TestBadgerEngine_MaterializeAdjEdges_CacheMissAndDecodeError(t *testing.T) 
 	require.NoError(t, engine.CreateEdge(e2))
 
 	// Force one cache hit path.
-	engine.cacheStoreEdge(e1)
+	engine.cacheStoreEdge(e1, engine.db.oracle.published.Load())
 
 	// Corrupt records fail the read; missing records are still skipped.
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {

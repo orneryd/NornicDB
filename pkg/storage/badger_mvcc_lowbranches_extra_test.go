@@ -90,7 +90,7 @@ func TestMVCC_RebuildAndBootstrap_ContextAndSkipBranches(t *testing.T) {
 	require.NoError(t, err)
 
 	// Existing head should trigger skip branch in applyNodeBootstrapBatch.
-	require.NoError(t, engine.applyNodeBootstrapBatch([]*Node{
+	require.NoError(t, engine.applyNodeBootstrapBatch(context.Background(), []*Node{
 		{ID: "test:b1", Labels: []string{"L"}},
 		nil,
 	}))

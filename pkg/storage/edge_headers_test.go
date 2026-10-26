@@ -233,7 +233,7 @@ func TestEdgeHeadersSkipUnresolvableEntries(t *testing.T) {
 				require.Error(t, fullErr)
 				reader = tx
 			} else {
-				eng.cacheStoreEdge(&Edge{ID: "test:cached", StartNode: "test:a", EndNode: "test:b", Type: "K"})
+				eng.cacheStoreEdge(&Edge{ID: "test:cached", StartNode: "test:a", EndNode: "test:b", Type: "K"}, eng.db.oracle.published.Load())
 			}
 			_, answered, err := reader.OutgoingEdgeHeaders("test:a")
 			require.Error(t, err)

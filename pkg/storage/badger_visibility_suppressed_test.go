@@ -199,7 +199,7 @@ func TestStreamNodesByLabelProjected_ScoresBeforeStaleVisibility(t *testing.T) {
 	}
 	_, err = eng.CreateNode(node)
 	require.NoError(t, err)
-	eng.cacheStoreNode(node)
+	eng.cacheStoreNode(node, eng.db.oracle.published.Load())
 
 	var visited []NodeID
 	err = eng.StreamNodesByLabelProjected("ReverseMemory", []string{"name"}, func(projected *Node) error {

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"expvar"
@@ -195,7 +196,7 @@ func TestPendingCandidatesLargeCommitPublication(t *testing.T) {
 					return txn.Set([]byte(fmt.Sprintf("pending-probe-%06d", i)), []byte(strings.Repeat("x", 256)))
 				}
 			}
-			err := e.commitEngineWrite(nil, engineWriteOptions{units: units})
+			err := e.commitEngineWrite(context.Background(), nil, engineWriteOptions{units: units})
 			require.Greater(t, batches, 1, "fixture must split into multiple atomic batches")
 			if fail {
 				require.ErrorIs(t, err, sentinel)
@@ -312,7 +313,7 @@ func TestPendingCandidatesRestartAfterMarkerBeforeHint(t *testing.T) {
 	txn, readTs, err := e.db.beginTxn(true)
 	require.NoError(t, err)
 	require.NoError(t, e.setPendingEmbeddingInTxn(txn, pendingCandidateNode(0).ID))
-	require.NoError(t, e.db.commit(txn))
+	require.NoError(t, e.db.commit(context.Background(), txn, nil))
 	txn.Discard()
 	e.db.endRead(readTs)
 	require.NoError(t, e.db.syncIfPersistent())

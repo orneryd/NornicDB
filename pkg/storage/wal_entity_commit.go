@@ -60,12 +60,15 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 	if ctx != nil && ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
-	releaseAuthority, err := prepared.RetainAcceptedAuthority()
+	releaseAuthority, err := prepared.RetainAcceptedAuthorityWithContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if releaseMutation == nil {
-		w.mutationMu.RLock()
+		if err := w.mutationMu.RLockContext(ctx); err != nil {
+			releaseAuthority()
+			return nil, err
+		}
 		var mutationOnce sync.Once
 		releaseMutation = func() { mutationOnce.Do(w.mutationMu.RUnlock) }
 	}
@@ -73,7 +76,11 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 	logicalID := prepared.LogicalID()
 	handle := NewAcceptedEntityCommitHandle(prepared)
 	// The existing WAL mutex joins registration to its closed admission cut.
-	w.wal.mu.Lock()
+	if err := w.wal.mu.LockContext(ctx); err != nil {
+		releaseMutation()
+		releaseAuthority()
+		return nil, err
+	}
 	if w.wal.closed.Load() {
 		w.wal.mu.Unlock()
 		releaseMutation()
@@ -98,10 +105,21 @@ func (w *WALEngine) submitEntityCommit(ctx context.Context, prepared *PreparedEn
 		prepared.Abort()
 		return existing.(*walAcceptedEntityCommit).receipt, nil
 	}
-	// Registration transfers the lease to the accepted receipt, including
-	// recovery-pending outcomes that outlive this call.
-	releaseMutation = nil
-	if err = w.wal.AppendWithDatabase(OpEntityCommit, walEntityCommitData{Payload: payload}, prepared.Namespace()); err != nil {
+	journalStarted := false
+	err = DecidePublication(ctx, func() error {
+		// Journal entry transfers the mutation lease to the accepted receipt.
+		releaseMutation = nil
+		journalStarted = true
+		return w.wal.AppendWithDatabase(OpEntityCommit, walEntityCommitData{Payload: payload}, prepared.Namespace())
+	})
+	if err != nil {
+		if !journalStarted {
+			w.pendingEntityCommits.Delete(logicalID)
+			handle.Retire()
+			releaseAcceptedMutation()
+			releaseAuthority()
+			return nil, err
+		}
 		handle.MarkRecoveryPending()
 		prepared.Abort()
 		_ = resolve.Resolve(CommitOutcome{State: CommitRecoveryPending, Err: err})

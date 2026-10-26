@@ -8,6 +8,7 @@ package storage
 // MATCH (n:Label) sees every pre-existing node again.
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
@@ -23,7 +24,7 @@ import (
 func wipeLabelIndexAndMarker(t *testing.T, eng *BadgerEngine, prefixes ...byte) {
 	t.Helper()
 	for _, prefix := range prefixes {
-		require.NoError(t, eng.db.DropPrefix(prefixDropOptions{}, []byte{prefix}))
+		require.NoError(t, eng.db.DropPrefix(context.Background(), prefixDropOptions{}, []byte{prefix}))
 	}
 	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
 		return txn.Delete(labelIndexReadyKey)

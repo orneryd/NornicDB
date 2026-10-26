@@ -110,7 +110,7 @@ func assertAcceptedStoredImage(t *testing.T, want, got any) {
 			require.True(t, timestamp.Equal(right.(time.Time)), "persisted timestamp %s", field.Name)
 			continue
 		}
-		require.True(t, reflect.DeepEqual(left, right), "persisted semantic field %s differs", field.Name)
+		require.True(t, reflect.DeepEqual(left, right), "persisted semantic field %s differs: source %#v, recovered %#v", field.Name, left, right)
 	}
 }
 

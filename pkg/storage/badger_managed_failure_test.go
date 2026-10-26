@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"errors"
@@ -202,7 +203,7 @@ func TestPropertyKeyDict_ManyNamesRefusedStayUnpersisted(t *testing.T) {
 	}
 	drain := engine.propKeyDict.flushTxnCounters(txn)
 	engine.db.oracle.fail(errors.New("disk gone"))
-	require.ErrorContains(t, engine.propKeyDict.persistTxnCounters(engine.db, drain), "refuses writes until restart")
+	require.ErrorContains(t, engine.propKeyDict.persistTxnCounters(context.Background(), engine.db, drain), "refuses writes until restart")
 	again := engine.db.DB.NewTransactionAt(engine.db.oracle.published.Load(), true)
 	defer again.Discard()
 	_, err = engine.propKeyDict.resolveOrAllocateInTxn(again, "test", "refused_0")
@@ -235,7 +236,7 @@ func TestManagedBadger_OpenFailsWhenRecoveryCannotWrite(t *testing.T) {
 	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
 	require.NoError(t, err)
 	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("a")) }))
-	lc, err := m.beginLargeCommit()
+	lc, err := m.beginLargeCommit(context.Background())
 	require.NoError(t, err)
 	batch := lc.openBatch()
 	require.NoError(t, batch.Set([]byte("k"), []byte("x")))
@@ -270,7 +271,7 @@ func TestManagedBadger_LargeCommitCannotStartOnReadOnlyStore(t *testing.T) {
 	m, err = fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts.WithReadOnly(true)))
 	require.NoError(t, err)
 	defer m.Close()
-	_, err = m.beginLargeCommit()
+	_, err = m.beginLargeCommit(context.Background())
 	require.ErrorContains(t, err, "rolling back")
 	require.Error(t, m.oracle.failure())
 	require.NoError(t, m.View(func(txn *badger.Txn) error {
@@ -300,7 +301,7 @@ func TestManagedBadger_UnregisteredAccessPanics(t *testing.T) {
 // stays usable afterwards; Cancel drops writes not yet flushed.
 func TestManagedWriteBatch_FlushKeepsWriterUsable(t *testing.T) {
 	engine := newTestEngine(t)
-	wb := engine.db.NewWriteBatch()
+	wb := engine.db.NewWriteBatch(context.Background())
 	require.NoError(t, wb.Set([]byte("wb-1"), []byte("a")))
 	require.NoError(t, wb.Flush())
 	require.NoError(t, wb.Set([]byte("wb-2"), []byte("b")))
@@ -320,7 +321,7 @@ func TestManagedWriteBatch_FlushKeepsWriterUsable(t *testing.T) {
 
 func TestManagedBadger_LoadRejectsInvalidBackup(t *testing.T) {
 	engine := newTestEngine(t)
-	require.Error(t, engine.db.Load(iotest.ErrReader(errors.New("read failed")), 1))
+	require.Error(t, engine.db.Load(context.Background(), iotest.ErrReader(errors.New("read failed")), 1))
 	_, err := engine.CreateNode(&Node{ID: "test:after-load", Labels: []string{"X"}})
 	require.NoError(t, err, "a failed load releases the commit gate")
 }
@@ -334,10 +335,10 @@ func TestCommitWriter_BeforeLargeRunsOnceWhenTheCommitTurnsLarge(t *testing.T) {
 		txn, readTs, err := engine.db.beginTxn(true)
 		require.NoError(t, err)
 		defer engine.db.endRead(readTs)
-		cw := engine.newCommitWriter(engine.db, txn)
+		cw := engine.newCommitWriter(context.Background(), engine.db, txn)
 		defer cw.discard()
 		calls := 0
-		cw.beforeLarge = func() { calls++ }
+		cw.beforeLarge = func() error { calls++; return nil }
 		value := []byte(strings.Repeat("x", 100))
 		for i := 0; i < n; i++ {
 			key := []byte(fmt.Sprintf("%s-%06d", prefix, i))

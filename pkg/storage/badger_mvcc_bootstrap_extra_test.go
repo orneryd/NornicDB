@@ -233,7 +233,7 @@ func TestApplyEdgeBootstrapBatch_SkipsExistingHead(t *testing.T) {
 		return err
 	}))
 
-	require.NoError(t, be.applyEdgeBootstrapBatch([]*Edge{edge}))
+	require.NoError(t, be.applyEdgeBootstrapBatch(context.Background(), []*Edge{edge}))
 
 	var after MVCCHead
 	require.NoError(t, be.db.View(func(txn *badger.Txn) error {
@@ -250,10 +250,10 @@ func TestApplyEdgeBootstrapBatch_NilAndEmpty(t *testing.T) {
 	t.Cleanup(func() { _ = be.Close() })
 
 	// Empty batch is a no-op.
-	require.NoError(t, be.applyEdgeBootstrapBatch(nil))
+	require.NoError(t, be.applyEdgeBootstrapBatch(context.Background(), nil))
 
 	// Batch containing a nil entry is also a no-op (skipped).
-	require.NoError(t, be.applyEdgeBootstrapBatch([]*Edge{nil}))
+	require.NoError(t, be.applyEdgeBootstrapBatch(context.Background(), []*Edge{nil}))
 }
 
 func TestBootstrapMVCCHeadsFromCurrentState_FullPath(t *testing.T) {

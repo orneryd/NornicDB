@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"sync"
@@ -106,7 +107,9 @@ func TestManagedDropPrefixHoldsCommitGate(t *testing.T) {
 
 	eng.db.commitGate.RLock()
 	dropped := make(chan error, 1)
-	go func() { dropped <- eng.db.DropPrefix(prefixDropOptions{}, deleteCleanupMarkerKey) }()
+	go func() {
+		dropped <- eng.db.DropPrefix(context.Background(), prefixDropOptions{}, deleteCleanupMarkerKey)
+	}()
 	select {
 	case err := <-dropped:
 		t.Fatalf("DropPrefix ran during a commit: %v", err)

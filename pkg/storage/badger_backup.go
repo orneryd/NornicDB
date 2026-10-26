@@ -4,6 +4,7 @@ package storage
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"os"
@@ -82,7 +83,7 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	b.stopIndexBackfill(startupLabelIndex)
 	defer func() { restoreErr = errors.Join(restoreErr, b.restartIndexBackfills()) }()
 
-	lifecycle, err := b.beginLifecycleWrite("")
+	lifecycle, err := b.beginLifecycleWrite(context.Background(), "")
 	if err != nil {
 		if errors.Is(err, ErrStorageClosed) {
 			return localizedError(localization.StorageClientStorageClosed(), ErrStorageClosed)
@@ -109,11 +110,11 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	}
 	defer db.oracle.releaseReads()
 
-	if err := db.DropAll(); err != nil {
+	if err := db.DropAll(context.Background()); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	b.InvalidatePendingEmbeddingsIndex()
-	if err := db.Load(bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
+	if err := db.Load(context.Background(), bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
 	// The restored derived-count deltas are folded, as open folds them:
@@ -208,6 +209,7 @@ func (b *BadgerEngine) invalidateCachesAfterRestore() {
 	b.edgeCacheGen.lockInvalidation(&b.edgeCacheMu)
 	b.edgeCache = make(map[EdgeID]*Edge, b.edgeCacheMaxItems)
 	b.edgeCacheVersions = nil
+	b.edgeCacheSources = nil
 	b.edgeCacheMu.Unlock()
 
 	b.adjCacheGen.lockInvalidation(&b.adjCacheMu)
@@ -239,7 +241,7 @@ func (b *BadgerEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, edgesD
 	// Every write acknowledged before the delete is applied first, no write
 	// runs during it, and a transaction open across it that writes under the
 	// prefix fails its commit (beginLifecycleWrite).
-	lifecycle, err := b.beginLifecycleWrite(prefix)
+	lifecycle, err := b.beginLifecycleWrite(context.Background(), prefix)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -376,7 +378,7 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 	// Bulk deletion bypasses per-node marker writes. Invalidate even on a
 	// partial drop failure so future claims rebuild from the durable index.
 	defer b.InvalidatePendingEmbeddingsIndex()
-	if err := b.db.DropPrefix(prefixDropOptions{}, dropPrefixes...); err != nil {
+	if err := b.db.DropPrefix(context.Background(), prefixDropOptions{}, dropPrefixes...); err != nil {
 		return 0, 0, nil, localizedError(localization.StorageClientDropPrefixFailed(prefixNode, err), err)
 	}
 	// A whole-namespace drop keeps admission fenced until its schema owner
@@ -413,7 +415,7 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 
 	deleteIndexEntriesBySuffixPrefix := func(indexPrefix byte) error {
 		indexKeyPrefix := []byte{indexPrefix}
-		wb := b.db.NewWriteBatch()
+		wb := b.db.NewWriteBatch(context.Background())
 		defer wb.Cancel()
 
 		const flushEvery = 50_000
@@ -589,7 +591,7 @@ func (b *BadgerEngine) deleteByPrefixHeld(prefix string, lifecycle *lifecycleWri
 }
 
 func (b *BadgerEngine) deleteNamespaceKeyFamilies(prefix []byte, namespace string, wholeNamespace bool, nodes, edges map[uint64]struct{}) error {
-	batch := b.db.NewWriteBatch()
+	batch := b.db.NewWriteBatch(context.Background())
 	defer batch.Cancel()
 	pending := 0
 	for _, family := range badgerKeyFamilies {

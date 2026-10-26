@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -145,14 +146,14 @@ func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id stri
 	if err := b.ensureOpen(false); err != nil {
 		return err
 	}
-	write, releaseWrite, err := b.beginEntityWrite(id, kind == manualSuppressionEdge, nil)
+	write, releaseWrite, err := b.beginEntityWrite(context.Background(), id, kind == manualSuppressionEdge, nil)
 	if err != nil {
 		return err
 	}
 	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
 	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
 	var ops []Operation
-	publish := func() {
+	publish := func(images *commitCacheImages) {
 		b.markManualSuppression(kind, id, suppressed)
 		b.dropSuppressionEnd(kind, id)
 		b.prepareCommitOperations(ops, false)
@@ -175,7 +176,7 @@ func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id stri
 			entities = writtenEntities{edges: []EdgeID{EdgeID(id)}}
 		}
 		var order orderHold
-		if _, err := b.orderAfterBufferedCommits(&order, entities); err != nil {
+		if _, err := b.orderAfterBufferedCommits(write.ctx, &order, entities); err != nil {
 			return err
 		}
 		defer order.release()
@@ -183,7 +184,7 @@ func (b *BadgerEngine) SetManualSuppression(entityKind StoredEntityKind, id stri
 	// Ordered with the end of a deleted entity's suppression
 	// (endSuppressions): this write supersedes a pending end of its key.
 	b.suppressionWriteMu.Lock()
-	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
+	err = b.withPublishingUpdate(write.ctx, func(txn *badger.Txn) error {
 		item, err := txn.Get(recordKey)
 		if err == badger.ErrKeyNotFound {
 			return ErrNotFound
@@ -256,7 +257,7 @@ func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) {
 			}
 		}
 		b.manualSuppressionMu.Unlock()
-		write, releaseWrite, err := b.beginEntityWrite(first[1:], first[0] == manualSuppressionEdge, inherited, entityWritePlan{batches: suppressionEndFootprints(ends)})
+		write, releaseWrite, err := b.beginEntityWrite(context.Background(), first[1:], first[0] == manualSuppressionEdge, inherited, entityWritePlan{batches: suppressionEndFootprints(ends)})
 		if err != nil {
 			b.manualSuppressionMu.Lock()
 			b.suppressionEnding = false
@@ -277,7 +278,7 @@ func (b *BadgerEngine) endSuppressions(inherited *entityWriteContext) {
 			units = append(units, func(txn *badger.Txn) error { return txn.Delete(stored) })
 		}
 		if len(units) > 0 {
-			err = b.commitEngineWrite(func(cw *commitWriter) error {
+			err = b.commitEngineWrite(write.ctx, func(cw *commitWriter) error {
 				for key := range ends {
 					if key[0] == manualSuppressionEdge {
 						cw.publishKeys = append(cw.publishKeys, EdgeID(key[1:]))

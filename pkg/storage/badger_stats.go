@@ -258,7 +258,7 @@ func (b *BadgerEngine) Close() error {
 	// The suppressions the deletes so far ended are deleted before the store
 	// closes (forgetManualSuppression).
 	b.writeBarrier.RLock()
-	b.endSuppressions(&entityWriteContext{engine: b, owner: newEngineWriteLockOwner()})
+	b.endSuppressions(&entityWriteContext{ctx: context.Background(), engine: b, owner: newEngineWriteLockOwner()})
 	b.writeBarrier.RUnlock()
 	// The MVCC lifecycle worker is stopped here for the same reason:
 	// StopLifecycle waits for the worker to exit, and the worker must not
@@ -338,6 +338,10 @@ func (b *BadgerEngine) releaseClosedStateLocked() {
 	b.edgeTypeCache = nil
 	b.edgeCache = nil
 	b.edgeCacheVersions = nil
+	b.edgeCacheSources = nil
+	b.durableCaches.mu.Lock()
+	b.durableCaches.advanceFloorLocked()
+	b.durableCaches.mu.Unlock()
 	b.outgoingAdjCache = nil
 	b.incomingAdjCache = nil
 	b.labelFirstNodeCache = nil
@@ -425,7 +429,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 		// prefix of stale markers larger than one batch must still make
 		// durable progress toward the live candidates behind it.
 		batchFull := false
-		err := b.withUpdate(func(txn *badger.Txn) error {
+		err := b.withMetadataUpdate(func(txn *badger.Txn) error {
 			for len(p.ids) > 0 && !batchFull {
 				nodeID := p.ids[0]
 				if _, err := txn.Get(pendingEmbedKey(nodeID)); err == badger.ErrKeyNotFound {
@@ -527,7 +531,7 @@ func (b *BadgerEngine) FindNodeNeedingEmbedding() *Node {
 // MarkNodeEmbedded removes a node from the pending embeddings index.
 // Call this after successfully embedding a node.
 func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
-	_ = b.withPublishingUpdate(func(txn *badger.Txn) error {
+	_ = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
 		return txn.Delete(pendingEmbedKey(nodeID))
 	}, nil, func() []any { return []any{namespaceWriteKey(namespaceForNodeID(nodeID))} }, nil)
 }
@@ -535,7 +539,7 @@ func (b *BadgerEngine) MarkNodeEmbedded(nodeID NodeID) {
 // AddToPendingEmbeddings adds a node to the pending embeddings index.
 // Call this when creating a node that needs embedding.
 func (b *BadgerEngine) AddToPendingEmbeddings(nodeID NodeID) {
-	_ = b.withPublishingUpdate(func(txn *badger.Txn) error {
+	_ = b.withPublishingUpdate(context.Background(), func(txn *badger.Txn) error {
 		item, err := txn.Get(nodeKey(nodeID))
 		if err == nil {
 			var node *Node
@@ -580,7 +584,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 
 	// First pass: Clean up stale entries in the pending index
 	// Remove entries for nodes that don't exist or already have embeddings
-	cleanupErr := b.withUpdate(func(txn *badger.Txn) error {
+	cleanupErr := b.withMetadataUpdate(func(txn *badger.Txn) error {
 		pendingPrefix := []byte{prefixPendingEmbed}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(pendingPrefix))
 		defer it.Close()
@@ -664,7 +668,7 @@ func (b *BadgerEngine) RefreshPendingEmbeddingsIndex() int {
 	}
 
 	// Second pass: Add missing nodes to the index
-	_ = b.withUpdate(func(txn *badger.Txn) error {
+	_ = b.withMetadataUpdate(func(txn *badger.Txn) error {
 		prefix := []byte{prefixNode}
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()

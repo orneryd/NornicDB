@@ -46,7 +46,9 @@ func (b *BadgerEngine) forEachStoredRecordInChunks(ctx context.Context, scan sto
 		}
 		counted := 0
 		var next []byte
-		err := b.withUpdate(func(txn *badger.Txn) error {
+		// These visitors rewrite secondary indexes and policy metadata. The
+		// stored bodies they read are inputs, not affected body/cache facts.
+		err := b.withScopedUpdate(ctx, cacheWriteScope{known: true}, true, func(txn *badger.Txn) error {
 			it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 			defer it.Close()
 			start := cursor
@@ -103,7 +105,7 @@ func (b *BadgerEngine) rebuildEdgeTypeIndex(ctx context.Context) (int, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := b.db.DropPrefix(prefixDropOptions{engine: b}, []byte{prefixEdgeTypeIndex}); err != nil {
+	if err := b.db.DropPrefix(ctx, prefixDropOptions{engine: b}, []byte{prefixEdgeTypeIndex}); err != nil {
 		return 0, fmt.Errorf("clear edge-type index before rebuild: %w", err)
 	}
 	scan := storedRecordScan{prefix: prefixEdge, batchSize: edgeTypeIndexRebuildBatchSize}

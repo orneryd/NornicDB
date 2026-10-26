@@ -36,7 +36,7 @@ func (b *BadgerEngine) readNodeItemInTxn(txn *badger.Txn, item *badger.Item, id 
 		if node == nil {
 			return nil, ErrNotFound
 		}
-		b.cacheStoreNodeBody(id, item.Version(), node)
+		b.cacheStoreNodeBody(id, item.Version(), node, txn.ReadTs())
 	}
 	switch hydrate {
 	case nodeItemBodyOnly:

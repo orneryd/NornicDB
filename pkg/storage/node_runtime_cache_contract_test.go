@@ -148,7 +148,7 @@ func TestNodeRuntimeCacheStorePreservesMetadataAndPolicy(t *testing.T) {
 	state.embeddingOwner = engine
 	state.embeddingOwnerID = "runtime:doc"
 	written := &Node{runtime: &state, ID: "runtime:doc", Labels: []string{"Doc"}, Properties: map[string]any{"v": int64(1)}}
-	engine.cacheStoreNode(written)
+	engine.cacheStoreNode(written, engine.db.oracle.published.Load())
 
 	engine.nodeCacheMu.RLock()
 	cached, ok := engine.nodeCache[written.ID]
@@ -199,7 +199,7 @@ func TestNodeRuntimeCacheFillFormsPreserveMetadataAndIdentity(t *testing.T) {
 				ChunkEmbeddings: [][]float32{{3, 4}},
 			}
 			engine.cacheDeleteNode(read.ID, nodeCacheAllForms)
-			engine.cacheFillNode(engine.nodeCacheGen.current(), read, mode)
+			engine.cacheFillNode(engine.nodeCacheGen.current(), read, mode, engine.db.oracle.published.Load())
 
 			var cached *Node
 			if mode == nodeReadCacheQuery {
@@ -233,7 +233,7 @@ func TestNodeRuntimeCacheFillFormsPreserveMetadataAndIdentity(t *testing.T) {
 	stale := &Node{runtime: &nodeRuntime{metadata: runtimeMetadataFull()}, ID: staleID, Labels: []string{"Doc"}}
 	staleGen := engine.nodeCacheGen.current()
 	require.NoError(t, engine.UpdateNode(NodeUpdateRequest{After: &Node{ID: staleID, Labels: []string{"Doc"}}}))
-	engine.cacheFillNode(staleGen, stale, nodeReadCacheFull)
+	engine.cacheFillNode(staleGen, stale, nodeReadCacheFull, engine.db.oracle.published.Load())
 	engine.nodeCacheMu.RLock()
 	cachedStale, ok := engine.nodeCache[staleID]
 	engine.nodeCacheMu.RUnlock()
@@ -258,7 +258,7 @@ func TestNodeRuntimeBodyCacheStoreLoadPreservesMetadataAndEvidence(t *testing.T)
 		ChunkEmbeddings: [][]float32{{1, 2, 3}},
 		EmbedMeta:       map[string]any{"chunk_count": 1},
 	}
-	engine.cacheStoreNodeBody(separate.ID, 123, separate)
+	engine.cacheStoreNodeBody(separate.ID, 123, separate, engine.db.oracle.published.Load())
 
 	engine.nodeBodyCacheMu.RLock()
 	entry, ok := engine.nodeBodyCache[separate.ID]
@@ -288,7 +288,7 @@ func TestNodeRuntimeBodyCacheStoreLoadPreservesMetadataAndEvidence(t *testing.T)
 	// Inline vectors cannot be reconstructed from separate keys: the body cache
 	// must refuse the lossy projection and leave no entry behind.
 	inline := &Node{ID: "runtime:inline", Labels: []string{"Doc"}, ChunkEmbeddings: [][]float32{{1}}}
-	engine.cacheStoreNodeBody(inline.ID, 1, inline)
+	engine.cacheStoreNodeBody(inline.ID, 1, inline, engine.db.oracle.published.Load())
 	engine.nodeBodyCacheMu.RLock()
 	_, cachedInline := engine.nodeBodyCache[inline.ID]
 	engine.nodeBodyCacheMu.RUnlock()

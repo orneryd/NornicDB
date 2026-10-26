@@ -108,7 +108,7 @@ func (b *BadgerEngine) collectNodeLabelCountsByPrefix(keyPrefix []byte) (int64, 
 }
 
 func (b *BadgerEngine) decrementLabelCounts(counts map[namespaceLabel]int64) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		for key, count := range counts {
 			if err := b.adjustLabelCountInTxn(txn, key.namespace, key.label, -count); err != nil {
 				return err
@@ -228,7 +228,7 @@ func (b *BadgerEngine) applyLabelCountDeltasLocked(deltas map[namespaceLabel]int
 	if len(deltas) == 0 {
 		return nil
 	}
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		for key, delta := range deltas {
 			if err := b.adjustLabelCountInTxn(txn, key.namespace, key.label, delta); err != nil {
 				return err
@@ -254,7 +254,7 @@ func (b *BadgerEngine) NodeCountByLabelInNamespace(namespace, label string) (int
 // index after dropping the pair's persisted base and deltas. The caller must
 // hold labelCountWriteMu.
 func (b *BadgerEngine) repairLabelCountLocked(namespace, label string) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		prefix := countDeltaPrefixFor(countDeltaKindLabel, namespace, label)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
@@ -417,7 +417,7 @@ func sameLabelCounts(actual, persisted map[string]int64) bool {
 }
 
 func (b *BadgerEngine) rebuildLabelCounts(counts map[string]int64) error {
-	return b.withUpdate(func(txn *badger.Txn) error {
+	return b.withMetadataUpdate(func(txn *badger.Txn) error {
 		prefix := labelCountPrefix()
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		for it.Rewind(); it.ValidForPrefix(prefix); it.Next() {
@@ -491,7 +491,13 @@ func (tx *BadgerTransaction) bufferAdjustNodeLabelCounts(namespace string, oldLa
 
 // namedCountMutex binds derived-count reads, repairs and folds to the same
 // family lock used by writers. The selected policy is local to each operation.
-func (b *BadgerEngine) namedCountMutex(kind byte) *sync.RWMutex {
+type namedCountLock interface {
+	sync.Locker
+	RLock()
+	RUnlock()
+}
+
+func (b *BadgerEngine) namedCountMutex(kind byte) namedCountLock {
 	if kind == countDeltaKindEdgeType {
 		return &b.edgeTypeCountWriteMu
 	}

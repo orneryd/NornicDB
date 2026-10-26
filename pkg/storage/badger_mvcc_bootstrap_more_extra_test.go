@@ -29,26 +29,26 @@ func TestBadgerEngine_MVCCBootstrapHelpersAndTxnVariants(t *testing.T) {
 	require.Len(t, nodeBatch1, 1)
 	require.False(t, nodeReachedEnd)
 	require.NotEmpty(t, nodeLast)
-	require.NoError(t, engine.applyNodeBootstrapBatch(nodeBatch1))
+	require.NoError(t, engine.applyNodeBootstrapBatch(context.Background(), nodeBatch1))
 
 	nodeBatch2, _, nodeReachedEnd2, err := engine.collectNodeBootstrapBatch(context.Background(), nextScanStart(nodeLast), 10)
 	require.NoError(t, err)
 	require.NotEmpty(t, nodeBatch2)
 	require.True(t, nodeReachedEnd2)
-	require.NoError(t, engine.applyNodeBootstrapBatch(nodeBatch2))
+	require.NoError(t, engine.applyNodeBootstrapBatch(context.Background(), nodeBatch2))
 
 	edgeBatch1, edgeLast, edgeReachedEnd, err := engine.collectEdgeBootstrapBatch(context.Background(), []byte{prefixEdge}, 1)
 	require.NoError(t, err)
 	require.Len(t, edgeBatch1, 1)
 	require.False(t, edgeReachedEnd)
 	require.NotEmpty(t, edgeLast)
-	require.NoError(t, engine.applyEdgeBootstrapBatch(edgeBatch1))
+	require.NoError(t, engine.applyEdgeBootstrapBatch(context.Background(), edgeBatch1))
 
 	edgeBatch2, _, edgeReachedEnd2, err := engine.collectEdgeBootstrapBatch(context.Background(), nextScanStart(edgeLast), 10)
 	require.NoError(t, err)
 	require.NotEmpty(t, edgeBatch2)
 	require.True(t, edgeReachedEnd2)
-	require.NoError(t, engine.applyEdgeBootstrapBatch(edgeBatch2))
+	require.NoError(t, engine.applyEdgeBootstrapBatch(context.Background(), edgeBatch2))
 
 	// Full bootstrap orchestration.
 	require.NoError(t, engine.clearBadgerPrefix(context.Background(), prefixMVCCNodeHead))
