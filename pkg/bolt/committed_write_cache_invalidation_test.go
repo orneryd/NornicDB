@@ -44,9 +44,6 @@ func TestBoltCommitInvalidatesSharedCachesOnlyAfterSuccessfulWrites(t *testing.T
 			session := newTestSession(&mockConn{}, executor)
 			session.baseExec = executor
 			session.inTransaction = true
-			if tc.outcome != commitCacheTestReadOnly {
-				session.txHasMerge = true
-			}
 			primeTestTransactionLifecycle(t, session)
 			require.NoError(t, session.handleCommit(nil))
 			if tc.outcome == commitCacheTestWrite {

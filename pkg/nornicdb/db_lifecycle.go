@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/memory"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -179,7 +180,7 @@ func (db *DB) closeInternal() error {
 		}
 	}
 	if len(errs) > 0 {
-		return localizedError(localization.NornicDBCoreCloseFailed(fmt.Sprint(errs)), errors.Join(errs...))
+		return localizedError(localization.NornicDBCoreCloseFailed(fmt.Sprint(errs)), compose.Outcomes(nil, errs...))
 	}
 	return nil
 }

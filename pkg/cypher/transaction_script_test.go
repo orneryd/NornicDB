@@ -1,3 +1,4 @@
+// Author: Codex, NOR-180 private rollback context signature migration,29October2026.
 package cypher
 
 import (
@@ -258,12 +259,12 @@ func TestTransactionStatementHandlers_AdditionalBranches(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown transaction type")
 
 	exec.txContext = &TransactionContext{tx: struct{}{}, active: true}
-	_, err = exec.handleRollback()
+	_, err = exec.handleRollback(context.Background(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unknown transaction type")
 
 	exec.txContext = nil
-	_, err = exec.handleRollback()
+	_, err = exec.handleRollback(context.Background(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no active transaction")
 }
@@ -367,7 +368,7 @@ func TestTransactionHandleRollback_ErrorBranchAfterClosedTx(t *testing.T) {
 	require.True(t, ok)
 	require.NoError(t, tx.Rollback())
 
-	_, err = exec.handleRollback()
+	_, err = exec.handleRollback(context.Background(), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rollback failed")
 	assert.Nil(t, exec.txContext)
@@ -384,7 +385,7 @@ func TestExecuteInTransaction_SuccessPath(t *testing.T) {
 	require.NotNil(t, exec.txContext)
 	defer func() {
 		if exec.txContext != nil {
-			_, _ = exec.handleRollback()
+			_, _ = exec.handleRollback(context.Background(), nil)
 		}
 	}()
 
@@ -406,7 +407,7 @@ func TestExecuteInTransaction_SuccessPath_NoNamespace(t *testing.T) {
 	require.NotNil(t, exec.txContext)
 	defer func() {
 		if exec.txContext != nil {
-			_, _ = exec.handleRollback()
+			_, _ = exec.handleRollback(context.Background(), nil)
 		}
 	}()
 

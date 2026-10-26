@@ -112,6 +112,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/embeddingutil"
 	"github.com/orneryd/nornicdb/pkg/envutil"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/gpu"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/math/vector"
@@ -2389,7 +2390,7 @@ func (s *Service) persistBaseIndexes() error {
 			s.logPrintf("📇 Persist: saving BM25 to %s...", ftPath)
 			if err := s.fulltext().SaveNoCopy(ftPath); err != nil {
 				s.logPrintf("⚠️ Background persist: failed to save BM25 index to %s: %v", ftPath, err)
-				persistErr = errors.Join(persistErr, fmt.Errorf("save BM25 index: %w", err))
+				persistErr = compose.Outcomes(persistErr, fmt.Errorf("save BM25 index: %w", err))
 			} else {
 				s.logPrintf("📇 Background persist: BM25 index saved to %s", ftPath)
 			}
@@ -2408,11 +2409,11 @@ func (s *Service) persistBaseIndexes() error {
 			}
 			s.logPrintf("📇 Persist: syncing %s.vec and saving %s.meta...", vPath, vPath)
 			if err := vfs.Sync(); err != nil {
-				persistErr = errors.Join(persistErr, fmt.Errorf("sync vector file store: %w", err))
+				persistErr = compose.Outcomes(persistErr, fmt.Errorf("sync vector file store: %w", err))
 			}
 			if err := vfs.Save(); err != nil {
 				s.logPrintf("⚠️ Background persist: failed to save vector file store to %s: %v", vPath, err)
-				persistErr = errors.Join(persistErr, fmt.Errorf("save vector file store: %w", err))
+				persistErr = compose.Outcomes(persistErr, fmt.Errorf("save vector file store: %w", err))
 			} else {
 				s.logPrintf("📇 Background persist: vector file store synced; meta saved to %s.meta", vPath)
 			}
@@ -3333,7 +3334,7 @@ func (s *Service) indexNodeAsLocked(node *storage.Node, skipFulltext bool, shoul
 		var chunkIDs []string
 		s.forEachNodeVectorEntry(node, expectedDim, func(item nodeVectorEntry) bool {
 			if err := s.addVectorLocked(item.key, item.vector); err != nil {
-				indexErr = errors.Join(indexErr, vectorInstallError(item.key, err))
+				indexErr = compose.Outcomes(indexErr, vectorInstallError(item.key, err))
 				if err == ErrDimensionMismatch {
 					s.logPrintf("⚠️ IndexNode %s %s: embedding dimension mismatch (got %d, expected %d)",
 						node.ID, item.entry.describe(), len(item.vector), expectedDim)

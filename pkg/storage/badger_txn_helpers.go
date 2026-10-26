@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
+
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
 
 // ensureOpen rejects a closed engine; write admission also rejects Close in progress.
@@ -196,7 +198,7 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, opt
 			b.idDict.discardTxnCounters(cw.txn)
 			b.propKeyDict.discardTxnCounters(cw.txn)
 			if abortErr := cw.abort(); abortErr != nil {
-				err = fmt.Errorf("%w (%w)", err, abortErr)
+				err = compose.Outcomes(err, abortErr)
 			}
 			return err
 		}
