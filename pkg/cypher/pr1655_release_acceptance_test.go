@@ -16,14 +16,17 @@ func TestPR1655ReleaseUniqueClaimConflict(t *testing.T) {
 		name       string
 		query      string
 		wantUnique bool
+		retryable  bool
 	}{
-		{"non_key_set", "UNWIND $items AS item MATCH (n:Doc {id: item.id}) SET n.summary_input = item.fingerprint", false},
-		{"same_key_set", "MATCH (n:Doc {id: 'original'}) SET n.id = 'original', n.summary_input = $fingerprint", false},
-		{"changed_key", "MATCH (n:Doc {id: 'original'}) SET n.id = 'claimed', n.summary_input = $fingerprint", true},
+		{"non_key_set", "UNWIND $items AS item MATCH (n:Doc {id: item.id}) SET n.summary_input = item.fingerprint", false, false},
+		{"same_key_set", "MATCH (n:Doc {id: 'original'}) SET n.id = 'original', n.summary_input = $fingerprint", false, false},
+		{"changed_key", "MATCH (n:Doc {id: 'original'}) SET n.id = 'claimed', n.summary_input = $fingerprint", true, false},
 		// Applying the constrained label after MERGE lets both explicit
 		// transactions stage a new key before either commits. Labelled MERGE
-		// admission can otherwise serialize this race before commit.
-		{"merge_create", "MERGE (n {id: 'claimed'}) SET n:Doc, n.summary_input = $fingerprint", true},
+		// admission can otherwise serialize this race before commit. A
+		// MERGE-only transaction that loses the race is retryable, as on every
+		// protocol (NOR-180), and its retry finds the winner's node.
+		{"merge_create", "MERGE (n {id: 'claimed'}) SET n:Doc, n.summary_input = $fingerprint", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
@@ -61,13 +64,26 @@ func TestPR1655ReleaseUniqueClaimConflict(t *testing.T) {
 			require.Equal(t, tc.wantUnique, errors.As(err, &violation), "commit error: %v", err)
 			if tc.wantUnique {
 				require.Equal(t, storage.ConstraintUnique, violation.Type)
-				code, _ := nornicerrors.Neo4jCommitStatus(err)
-				require.Equal(t, nornicerrors.ConstraintValidationFailed, code)
+				code, _ := nornicerrors.Neo4jStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err))
+				if !tc.retryable {
+					require.Equal(t, nornicerrors.ConstraintValidationFailed, code)
+					return
+				}
+				require.Equal(t, nornicerrors.TransientOutdated, code)
+				_, err = loser.Execute(ctx, "BEGIN", nil)
+				require.NoError(t, err)
+				_, err = loser.Execute(ctx, tc.query, map[string]interface{}{"fingerprint": "retry"})
+				require.NoError(t, err)
+				_, err = loser.Execute(ctx, "COMMIT", nil)
+				require.NoError(t, err)
+				result, err := setup.Execute(ctx, "MATCH (n:Doc {id: 'claimed'}) RETURN n.summary_input", nil)
+				require.NoError(t, err)
+				require.Equal(t, [][]interface{}{{"retry"}}, result.Rows)
 			} else {
 				require.ErrorIs(t, err, storage.ErrConflict)
 				require.Contains(t, err.Error(), "changed after transaction start")
 				require.NotContains(t, err.Error(), "constraint violation")
-				code, _ := nornicerrors.Neo4jCommitStatus(err)
+				code, _ := nornicerrors.Neo4jStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err))
 				require.Equal(t, nornicerrors.TransientOutdated, code)
 				_, err = loser.Execute(ctx, "BEGIN", nil)
 				require.NoError(t, err)
