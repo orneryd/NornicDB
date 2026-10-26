@@ -41,14 +41,14 @@ type logicalOperandEvaluator func(operand string) (value interface{}, ok bool, e
 
 // evaluateLogicalExpression evaluates expr when its top level is OR, XOR,
 // AND or NOT (logical reports whether it is), each operand through eval.
-func evaluateLogicalExpression(expr string, eval logicalOperandEvaluator) (value interface{}, logical, ok bool, err error) {
+func evaluateLogicalExpression(view braceView, eval func(braceView) (interface{}, bool, error)) (value interface{}, logical, ok bool, err error) {
 	var buffer [8]string
-	plan := planLogicalExpression(expr, buffer[:0])
+	plan := planLogicalExpression(view, buffer[:0])
 	if plan.kind == logicalNone {
 		return nil, false, false, nil
 	}
 	value, ok, err = plan.evaluate(func(index int) (interface{}, bool, error) {
-		return eval(plan.operands[index])
+		return eval(plan.operandView(view, index))
 	})
 	return value, true, ok, err
 }
@@ -73,46 +73,76 @@ const (
 type logicalPlan struct {
 	kind     logicalKind
 	operands []string
+	spans    []cyphertext.Span
 }
 
 // planLogicalExpression reads expr's top-level OR, XOR, AND or NOT,
 // simplified as Neo4j's planner does (see above); kind is logicalNone for
 // any other expression. operands are appended to buffer.
-func planLogicalExpression(expr string, buffer []string) logicalPlan {
+func planLogicalExpression(view braceView, buffer []string) logicalPlan {
+	expr := view.text()
 	if !mayBeLogicalExpression(expr) {
 		return logicalPlan{}
 	}
 	for _, operator := range [...]string{" OR ", " XOR ", " AND "} {
-		operands := appendLogicalOperands(buffer[:0], expr, operator)
-		if len(operands) == 0 {
+		spans := appendLogicalOperandSpans(nil, view, operator)
+		if len(spans) == 0 {
 			continue
 		}
+		operands := buffer[:0]
+		for _, span := range spans {
+			operands = append(operands, expr[span.Start:span.End])
+		}
+		kind, neutral := logicalXor, "false"
 		switch operator {
 		case " OR ":
-			return logicalPlan{kind: logicalOr, operands: simplifyLogicalChain(operands, "false")}
+			kind = logicalOr
 		case " AND ":
-			return logicalPlan{kind: logicalAnd, operands: simplifyLogicalChain(operands, "true")}
-		default:
-			// false drops out of an XOR.
-			kept := operands[:0]
-			for _, operand := range operands {
-				if !strings.EqualFold(logicalOperandKey(operand), "false") {
-					kept = append(kept, operand)
+			kind, neutral = logicalAnd, "true"
+		}
+		kept, selected := operands[:0], spans[:0]
+		for index, operand := range operands {
+			key := logicalOperandKey(operand)
+			if cyphertext.KeywordEnd(key, 0, neutral, cyphertext.CypherWord) == len(key) {
+				continue
+			}
+			repeated := false
+			if kind != logicalXor {
+				for _, earlier := range kept {
+					if logicalOperandKey(earlier) == key {
+						repeated = true
+						break
+					}
 				}
 			}
-			return logicalPlan{kind: logicalXor, operands: kept}
+			if !repeated {
+				kept = append(kept, operand)
+				selected = append(selected, spans[index])
+			}
 		}
+		if len(kept) == 0 && kind != logicalXor {
+			kept = append(kept, neutral)
+			selected = append(selected, cyphertext.Span{Start: -1, End: -1})
+		}
+		return logicalPlan{kind: kind, operands: kept, spans: selected}
 	}
-	operand, negated := logicalNotOperand(expr)
+	operand, negated := logicalNotOperandSpan(expr)
 	if !negated {
 		return logicalPlan{}
 	}
-	// NOT (NOT x) is x only when the inner NOT covers its whole operand:
-	// NOT (NOT a OR b) negates the OR, whose left operand is NOT a.
-	if inner, doubled := logicalNotOperand(operand); doubled && !hasTopLevelLogicalOperator(logicalOperandKey(operand)) {
-		return logicalPlan{kind: logicalNotNot, operands: append(buffer[:0], inner)}
+	text := expr[operand.Start:operand.End]
+	if inner, doubled := logicalNotOperandSpan(text); doubled && !hasTopLevelLogicalOperator(logicalOperandView(view.spanWindow(operand))) {
+		return logicalPlan{kind: logicalNotNot, operands: append(buffer[:0], text[inner.Start:inner.End]), spans: []cyphertext.Span{{Start: operand.Start + inner.Start, End: operand.Start + inner.End}}}
 	}
-	return logicalPlan{kind: logicalNot, operands: append(buffer[:0], operand)}
+	return logicalPlan{kind: logicalNot, operands: append(buffer[:0], text), spans: []cyphertext.Span{operand}}
+}
+
+func (plan logicalPlan) operandView(view braceView, index int) braceView {
+	span := plan.spans[index]
+	if span.Start < 0 {
+		return view.generated(plan.operands[index])
+	}
+	return view.spanWindow(span)
 }
 
 // evaluate evaluates the plan, operand i through eval(i); operands are
@@ -141,10 +171,10 @@ func (p logicalPlan) evaluate(eval func(index int) (interface{}, bool, error)) (
 
 // hasTopLevelLogicalOperator reports whether expr is an OR, XOR or AND
 // chain at its top level.
-func hasTopLevelLogicalOperator(expr string) bool {
+func hasTopLevelLogicalOperator(view braceView) bool {
 	var buffer [8]string
 	for _, operator := range [...]string{" OR ", " XOR ", " AND "} {
-		if len(appendLogicalOperands(buffer[:0], expr, operator)) > 0 {
+		if len(appendLogicalOperands(buffer[:0], view, operator)) > 0 {
 			return true
 		}
 	}
@@ -185,28 +215,40 @@ func mayBeLogicalExpression(expr string) bool {
 // a parenthesized chain of the same operator joins the chain. It works
 // through a stack of the parts still to split rather than recursing, so a
 // caller's buffer (operands) stays where the caller put it.
-func appendLogicalOperands(operands []string, expr, operator string) []string {
-	first, rest, found := splitByOperatorOutsideCase(expr, operator, true, true)
+func appendLogicalOperands(operands []string, view braceView, operator string) []string {
+	expr := view.text()
+	for _, span := range appendLogicalOperandSpans(nil, view, operator) {
+		operands = append(operands, expr[span.Start:span.End])
+	}
+	return operands
+}
+
+// The existing logical reader retains its split extents, including flattened
+// parenthesized chains, before a consumer creates any Source windows.
+func appendLogicalOperandSpans(operands []cyphertext.Span, view braceView, operator string) []cyphertext.Span {
+	expr := view.text()
+	first, rest, found := splitByOperatorOutsideCase(view, operator, true, true)
 	if !found {
 		return operands
 	}
-	var stackBuffer [8]string
-	pending := append(stackBuffer[:0], rest, first)
+	pending := []cyphertext.Span{{Start: len(expr) - len(rest), End: len(expr)}, {End: len(first)}}
 	for len(pending) > 0 {
-		text := strings.TrimSpace(pending[len(pending)-1])
+		span := cyphertext.TrimWhitespaceSpan(expr, pending[len(pending)-1])
 		pending = pending[:len(pending)-1]
-		if left, right, split := splitByOperatorOutsideCase(text, operator, true, true); split {
-			pending = append(pending, right, left)
+		text := expr[span.Start:span.End]
+		if left, right, split := splitByOperatorOutsideCase(view.spanWindow(span), operator, true, true); split {
+			pending = append(pending, cyphertext.Span{Start: span.End - len(right), End: span.End}, cyphertext.Span{Start: span.Start, End: span.Start + len(left)})
 			continue
 		}
 		if inner, enclosed := stripEnclosingExpressionParentheses(text); enclosed {
+			innerSpan := cyphertext.TrimWhitespaceSpan(expr, cyphertext.Span{Start: span.Start + 1, End: span.End - 1})
 			inner = strings.TrimSpace(inner)
-			if left, right, split := splitByOperatorOutsideCase(inner, operator, true, true); split {
-				pending = append(pending, right, left)
+			if left, right, split := splitByOperatorOutsideCase(view.spanWindow(innerSpan), operator, true, true); split {
+				pending = append(pending, cyphertext.Span{Start: innerSpan.End - len(right), End: innerSpan.End}, cyphertext.Span{Start: innerSpan.Start, End: innerSpan.Start + len(left)})
 				continue
 			}
 		}
-		operands = append(operands, text)
+		operands = append(operands, span)
 	}
 	return operands
 }
@@ -247,6 +289,18 @@ func logicalOperandKey(operand string) string {
 			return operand
 		}
 		operand = strings.TrimSpace(inner)
+	}
+}
+
+// logicalOperandView keeps the same parenthesis normalization as the key
+// reader while retaining the selected occurrence. Author: #1663 lane.
+func logicalOperandView(view braceView) braceView {
+	view = view.trim()
+	for {
+		if _, enclosed := stripEnclosingExpressionParentheses(view.text()); !enclosed {
+			return view
+		}
+		view = view.window(1, len(view.text())-1).trim()
 	}
 }
 
@@ -332,21 +386,39 @@ func evaluateLogicalXor(operands []string, eval func(index int) (interface{}, bo
 // NOT is also a valid variable name: when what follows can't start an
 // expression (not = 1, not.p, not IN l, not AS x), it is the variable (#907).
 func logicalNotOperand(expr string) (string, bool) {
-	expr = logicalOperandKey(expr)
-	if len(expr) <= len("NOT") || !strings.EqualFold(expr[:len("NOT")], "NOT") ||
-		!(cyphertext.IsWhitespaceAt(expr, len("NOT")) || expr[len("NOT")] == '(') {
+	span, ok := logicalNotOperandSpan(expr)
+	if !ok {
 		return "", false
 	}
-	operand := strings.TrimSpace(expr[len("NOT"):])
-	if operand == "" || strings.IndexByte("=<>!*/%^.|,)]}", operand[0]) >= 0 {
-		return "", false
+	return expr[span.Start:span.End], true
+}
+
+func logicalNotOperandSpan(expr string) (cyphertext.Span, bool) {
+	span := cyphertext.TrimWhitespaceSpan(expr, cyphertext.Span{End: len(expr)})
+	for {
+		text := expr[span.Start:span.End]
+		if _, enclosed := stripEnclosingExpressionParentheses(text); !enclosed {
+			break
+		}
+		span = cyphertext.TrimWhitespaceSpan(expr, cyphertext.Span{Start: span.Start + 1, End: span.End - 1})
+	}
+	text := expr[span.Start:span.End]
+	if len(text) <= len("NOT") || !(cyphertext.KeywordEnd(text, 0, "NOT", cyphertext.CypherWord) == len("NOT")) || !(cyphertext.IsWhitespaceAt(text, len("NOT")) || text[len("NOT")] == '(') {
+		return cyphertext.Span{}, false
+	}
+	span = cyphertext.TrimWhitespaceSpan(expr, cyphertext.Span{Start: span.Start + len("NOT"), End: span.End})
+	operand := expr[span.Start:span.End]
+	if operand == "" || syntaxByteInSet("=<>!*/%^.|,)]}", operand[0]) {
+		return cyphertext.Span{}, false
 	}
 	word, isWord := cyphertext.ScanIdentifier(operand, 0)
 	if isWord {
-		switch upperASCII(word.Value) {
-		case "AS", "AND", "OR", "XOR", "IN", "IS", "STARTS", "ENDS", "CONTAINS":
-			return "", false
+		next := word.End
+		for _, keyword := range []string{"AS", "AND", "OR", "XOR", "IN", "IS", "STARTS", "ENDS", "CONTAINS"} {
+			if cyphertext.KeywordEnd(operand, 0, keyword, cyphertext.CypherWord) == next {
+				return cyphertext.Span{}, false
+			}
 		}
 	}
-	return operand, true
+	return span, true
 }

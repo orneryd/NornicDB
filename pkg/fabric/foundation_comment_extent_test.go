@@ -24,7 +24,7 @@ func TestFoundationUseCommentExtents(t *testing.T) {
 				require.Equal(t, reference.UseClause, use)
 				require.Equal(t, rest, parsedRest)
 				if strings.Contains(graph, "(") {
-					require.Equal(t, []string{"$db"}, use.Args)
+					require.Equal(t, []string{"$db"}, useArgumentTexts(use.Arguments))
 				} else {
 					require.Equal(t, "nornic", use.Name)
 				}

@@ -21,7 +21,8 @@ func validateExpressionOperandCompleteness(expression string) error {
 	return nil
 }
 
-func validateExpressionLexicalTokens(text string) error {
+func validateExpressionLexicalTokens(view braceView) error {
+	text := view.text()
 	for index := 0; index < len(text); index++ {
 		if end, quoted := skipCypherLexicalToken(text, index); quoted {
 			index = end - 1
@@ -29,7 +30,7 @@ func validateExpressionLexicalTokens(text string) error {
 		}
 		character := text[index]
 		malformedOptional := matchKeywordAt(text, index, "OPTIONAL") &&
-			(index == 0 || !clauseKeywordUsedAsName(text, index, index+len("OPTIONAL"), "OPTIONAL")) &&
+			(index == 0 || !clauseKeywordUsedAsName(view, index, index+len("OPTIONAL"), "OPTIONAL")) &&
 			strings.HasPrefix(text[skipSpaces(text, index+len("OPTIONAL")):], "<tab>")
 		if character == '\\' || malformedOptional {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: invalid expression token")
@@ -190,8 +191,9 @@ func foldByte(b byte) int {
 // lastTopLevelClauseWord returns the last top-level clause keyword in s, or "".
 // Keywords inside quotes, comments or nested delimiters do not count; keywords
 // used as names (aliases, property keys) do not count either.
-func lastTopLevelClauseWord(s string) string {
-	parenDepth, bracketDepth, braceDepth := 0, 0, 0
+func lastTopLevelClauseWord(view braceView) string {
+	s := view.text()
+	parenDepth, bracketDepth := 0, 0
 	last := ""
 	mergeOwner := false
 	for i := 0; i < len(s); i++ {
@@ -200,33 +202,39 @@ func lastTopLevelClauseWord(s string) string {
 			continue
 		}
 		c := s[i]
-		switch c {
-		case '(':
+		switch {
+		case c == '(':
 			parenDepth++
 			continue
-		case ')':
+		case c == ')':
 			parenDepth--
 			continue
-		case '[':
+		case c == '[':
 			bracketDepth++
 			continue
-		case ']':
+		case c == ']':
 			bracketDepth--
 			continue
-		case '{':
-			braceDepth++
+		case cyphertext.IsOpenBrace(c):
+			span, complete, err := view.source.DelimiterSpan(i)
+			if err != nil {
+				panic(err)
+			}
+			if !complete {
+				return last
+			}
+			i = span.End - 1
 			continue
-		case '}':
-			braceDepth--
+		case cyphertext.IsCloseBrace(c):
 			continue
 		}
-		if parenDepth != 0 || bracketDepth != 0 || braceDepth != 0 {
+		if parenDepth != 0 || bracketDepth != 0 {
 			continue
 		}
 		if i > 0 && cyphertext.NamePartAt(s, i-1) {
 			continue
 		}
-		if mergeOwner && matchKeywordAt(s, i, "ON") && !caseOperandExpectedBefore(s, i) {
+		if mergeOwner && matchKeywordAt(s, i, "ON") && !caseOperandExpectedBefore(view, i) {
 			actionEnd, action := keywordSpanAt(s, i, "ON CREATE SET")
 			if !action {
 				actionEnd, action = keywordSpanAt(s, i, "ON MATCH SET")
@@ -240,7 +248,7 @@ func lastTopLevelClauseWord(s string) string {
 		for _, keywordIndex := range validatorKeywordFirst[foldByte(c)] {
 			keyword := validatorClauseKeywords[keywordIndex]
 			if matchKeywordAt(s, i, keyword) &&
-				!clauseKeywordUsedAsName(s, i, i+len(keyword), keyword) {
+				!clauseKeywordUsedAsName(view, i, i+len(keyword), keyword) {
 				// A WITH inside an expression is not a clause start:
 				// `x STARTS WITH 'a'`, `x ENDS WITH 'a'` and the type
 				// predicate `IS :: TIME WITH TIME ZONE`. A real WITH clause

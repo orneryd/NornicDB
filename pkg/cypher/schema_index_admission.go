@@ -7,16 +7,18 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) admitIndexCreation(query, name, kind, label string, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
-	return e.admitIndexCreationForTargets(query, name, kind, []string{label}, properties, entityType)
+func (e *StorageExecutor) admitIndexCreation(statement braceView, name, kind, label string, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
+	return e.admitIndexCreationForTargets(statement, name, kind, []string{label}, properties, entityType)
 }
 
-func (e *StorageExecutor) admitIndexCreationForTargets(query, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
-	return admitSchemaIndexCreation(e.storage.GetSchema(), query, name, kind, targets, properties, entityType)
+func (e *StorageExecutor) admitIndexCreationForTargets(statement braceView, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
+	guarded := keywordIndexFrom(statement.text(), "IF NOT EXISTS", 0, defaultKeywordScanOpts(statement)) >= 0
+	return admitSchemaIndexCreation(e.storage.GetSchema(), guarded, name, kind, targets, properties, entityType)
 }
 
-func admitSchemaIndexCreation(schema *storage.SchemaManager, query, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
-	guarded := keywordIndexFrom(query, "IF NOT EXISTS", 0, defaultKeywordScanOpts()) >= 0
+// admitSchemaIndexCreation decides a new index against the schema. guarded is
+// the statement's IF NOT EXISTS; a procedure-created index has none.
+func admitSchemaIndexCreation(schema *storage.SchemaManager, guarded bool, name, kind string, targets, properties []string, entityType storage.ConstraintEntityType) (bool, error) {
 	for _, constraint := range schema.GetAllConstraints() {
 		if constraint.Name != name {
 			continue

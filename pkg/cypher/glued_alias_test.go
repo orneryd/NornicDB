@@ -65,9 +65,9 @@ func TestAliasGluedToClosingBracket(t *testing.T) {
 		"RETURN 'a'AS s":     "RETURN 'a' AS s",
 		"RETURN [1][0]AS w ": "RETURN [1][0] AS w ",
 	} {
-		first, rewrite := canonicalizeQueryText(query)
+		first, rewrite := canonicalizeQueryText(originalBraceView(query))
 		require.Equal(t, want, first, query)
-		second, memoized := canonicalizeQueryText(query)
+		second, memoized := canonicalizeQueryText(originalBraceView(query))
 		require.Equal(t, want, second, query)
 		require.Same(t, rewrite, memoized, query)
 	}

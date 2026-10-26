@@ -11,6 +11,7 @@ import (
 )
 
 func (e *StorageExecutor) validateStatementFraming(ctx context.Context, cypher string) error {
+	view := statementBraceView(ctx, cypher)
 	multiple, unclosed := inspectOutsideStrings(cypher, ";")
 	if unclosed >= 0 {
 		return unclosedCommentError(cypher, unclosed, ModeNormal)
@@ -28,16 +29,16 @@ func (e *StorageExecutor) validateStatementFraming(ctx context.Context, cypher s
 		return executionModeConflictError()
 	}
 	// Only a statement with the word UNION in it can have UNION branches.
-	if findKeywordIndex(cypher, "UNION") < 0 || findKeywordIndex(cypher, "FINISH") < 0 {
+	if findKeywordIndex(view, "UNION") < 0 || findKeywordIndex(view, "FINISH") < 0 {
 		return nil
 	}
-	if branches, _, _, ok := parseTopLevelUnionBranches(ctx, cypher); ok && len(branches) > 1 {
+	if branches, _, _, ok := parseTopLevelUnionBranches(ctx, view); ok && len(branches) > 1 {
 		hasFinish, hasColumns := false, false
 		for _, branch := range branches {
 			_, finishes := readTrailingFinish(branch, stripPermittedFinish)
 			if finishes {
 				hasFinish = true
-			} else if e.statementProducesColumns(ctx, branch) {
+			} else if e.statementProducesColumns(withBraceView(ctx, branch), branch.text()) {
 				hasColumns = true
 			}
 		}
@@ -61,8 +62,9 @@ var cypherClauseStarts = [...]string{
 	"UNION", "CYPHER", "FINISH", "LET", "FILTER", "FOR", "WHEN",
 }
 
-// startsWithClauseKeyword reports whether a clause keyword, or a brace that
-// opens a query part ({ RETURN 1 } UNION …), starts s.
+// startsWithClauseKeyword ends the preamble before a clause token or opening
+// brace. This delimiter test makes no brace-role or admission decision; the
+// retained statement product owns those decisions after the prefix.
 func startsWithClauseKeyword(s string) bool {
 	if strings.HasPrefix(s, "{") {
 		return true
@@ -266,10 +268,11 @@ const (
 // readTrailingFinish recognizes one name-aware FINISH suffix. Validation can
 // detect every suffix; execution strips only those allowed after the preceding
 // top-level clause, leaving prohibited RETURN/FINISH forms for validation.
-func readTrailingFinish(cypher string, policy finishSuffixPolicy) (string, bool) {
+func readTrailingFinish(view braceView, policy finishSuffixPolicy) (braceView, bool) {
+	cypher := view.text()
 	last := lastLiveByte(cypher, len(cypher))
 	if last < 0 || !cyphertext.NamePartAt(cypher, last) {
-		return cypher, false
+		return view, false
 	}
 	end := last + 1
 	start := end
@@ -277,15 +280,15 @@ func readTrailingFinish(cypher string, policy finishSuffixPolicy) (string, bool)
 		start--
 	}
 	if !strings.EqualFold(cypher[start:end], "FINISH") {
-		return cypher, false
+		return view, false
 	}
-	remainder := strings.TrimSpace(cypher[:start])
+	remainder := view.window(0, start).trim()
 	// A FINISH with nothing before it is the whole statement, the clause.
-	if remainder != "" && clauseKeywordUsedAsName(cypher, start, end, "FINISH") {
-		return cypher, false
+	if !remainder.empty() && clauseKeywordUsedAsName(view, start, end, "FINISH") {
+		return view, false
 	}
 	if policy == stripPermittedFinish && finishProhibitedClauses[lastTopLevelClauseWord(remainder)] {
-		return cypher, false
+		return view, false
 	}
 	return remainder, true
 }
@@ -310,70 +313,42 @@ func endsInFinish(ctx context.Context, statement string) bool {
 
 // topLevelUnionCut returns the offset of the first top-level UNION keyword
 // (outside quotes, comments and nested delimiters), or -1.
-func topLevelUnionCut(s string) int {
-	parenDepth, bracketDepth, braceDepth := 0, 0, 0
-	for i := 0; i < len(s); i++ {
-		if end, quoted := skipCypherLexicalToken(s, i); quoted {
-			i = end - 1
-			continue
-		}
-		c := s[i]
-		switch c {
-		case '(':
-			parenDepth++
-		case ')':
-			parenDepth--
-		case '[':
-			bracketDepth++
-		case ']':
-			bracketDepth--
-		case '{':
-			braceDepth++
-		case '}':
-			braceDepth--
-		}
-		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 &&
-			matchKeywordAt(s, i, "UNION") {
-			return i
-		}
-	}
-	return -1
-}
+func topLevelUnionCut(view braceView) int { return topLevelKeywordIndex(view, "UNION") }
 
 // stripUnionBranchFinishes strips a trailing FINISH from each UNION branch of
 // the statement. If no branch ends in FINISH the text is unchanged.
-func stripUnionBranchFinishes(ctx context.Context, cypher string) (string, bool) {
-	cut := topLevelUnionCut(cypher)
+func stripUnionBranchFinishes(ctx context.Context, view braceView) (braceView, bool) {
+	view = view.trim()
+	cypher := view.text()
+	cut := topLevelUnionCut(view)
 	if cut < 0 {
-		return readTrailingFinish(cypher, stripPermittedFinish)
+		return readTrailingFinish(view, stripPermittedFinish)
 	}
-	before := strings.TrimSpace(cypher[:cut])
-	after := strings.TrimSpace(cypher[cut:])
-	// Consume UNION and an optional ALL.
+	before := view.window(0, cut).trim()
+	after := view.window(cut, len(cypher)).trim()
 	wordEnd := 0
-	for wordEnd < len(after) && !cyphertext.IsWhitespaceAt(after, wordEnd) {
+	for wordEnd < len(after.text()) && !cyphertext.IsWhitespaceAt(after.text(), wordEnd) {
 		wordEnd++
 	}
-	unionWord := after[:wordEnd]
-	tail := strings.TrimSpace(after[wordEnd:])
-	if nextWord, ok := firstWordUpper(tail); ok && nextWord == "ALL" {
+	unionWord := after.text()[:wordEnd]
+	tail := after.window(wordEnd, len(after.text())).trim()
+	if nextWord, ok := firstWordUpper(tail.text()); ok && nextWord == "ALL" {
 		unionWord += " ALL"
-		tail = strings.TrimSpace(tail[len("ALL"):])
+		tail = tail.window(len("ALL"), len(tail.text())).trim()
 	}
 	right, rightStripped := stripUnionBranchFinishes(ctx, tail)
 	left, leftStripped := readTrailingFinish(before, stripPermittedFinish)
 	if !leftStripped && !rightStripped {
-		return cypher, false
+		return view, false
 	}
-	if leftStripped && rightStripped && left == "" && right == "" {
-		if _, _, mixed, _ := parseTopLevelUnionBranches(ctx, cypher); !mixed {
-			return "", true
+	if leftStripped && rightStripped && left.empty() && right.empty() {
+		if _, _, mixed, _ := parseTopLevelUnionBranches(ctx, view); !mixed {
+			return view.window(0, 0), true
 		}
-		return cypher, false
+		return view, false
 	}
-	return strings.TrimSpace(left + " " + unionWord + " " + right), true
+	return view.assembleCode([]braceView{left, view.generated(" " + unionWord + " "), right}, "").trim(), true
 }
-
 func firstWordUpper(s string) (string, bool) {
 	i := 0
 	for i < len(s) && !cyphertext.IsWhitespaceAt(s, i) {

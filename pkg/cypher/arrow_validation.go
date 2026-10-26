@@ -66,7 +66,7 @@ func validatePlaceholderOperands(query string) error {
 			for before >= 0 && cyphertext.IsWhitespaceAt(query, before) {
 				before--
 			}
-			if before >= 0 && strings.IndexByte(":=,([{", query[before]) >= 0 {
+			if before >= 0 && syntaxByteInSet(":=,([{", query[before]) {
 				return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 					localization.CypherCoreInvalidInputExpectedExpression("<"))
 			}

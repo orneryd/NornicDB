@@ -27,8 +27,8 @@ func isAggregateFunc(expr string) bool {
 
 // containsAggregateFunc checks if expression contains any aggregate function
 // (handles expressions like SUM(a) + SUM(b))
-func containsAggregateFunc(expr string) bool {
-	return len(findAggregateSpans(expr)) > 0
+func containsAggregateFunc(view braceView) bool {
+	return len(findAggregateSpans(view)) > 0
 }
 
 // isAggregateFuncName checks if expr starts with a specific aggregate function (whitespace-tolerant)
@@ -95,11 +95,13 @@ func storageHasDecayFiltering(engine storage.Engine) bool {
 	return false
 }
 
-func extractMatchWhereClause(cypher string, whereIdx, returnIdx int) string {
+func extractMatchWhereClause(view braceView, whereIdx, returnIdx int) string {
+	cypher := view.text()
 	if whereIdx <= 0 || returnIdx <= whereIdx+5 || returnIdx > len(cypher) {
 		return ""
 	}
-	segment := cypher[whereIdx+5 : returnIdx]
+	segmentView := view.window(whereIdx+5, returnIdx)
+	segment := segmentView.text()
 	end := len(segment)
 	// Clause keywords inside a subquery expression's braces (COUNT { CALL (i)
 	// { … } RETURN o }) belong to it, not to the WHERE (#652).
@@ -117,17 +119,18 @@ func extractMatchWhereClause(cypher string, whereIdx, returnIdx int) string {
 		"SKIP",
 		"LIMIT",
 	} {
-		if idx := topLevelKeywordIndex(segment, kw); idx >= 0 && idx < end {
+		if idx := topLevelKeywordIndex(segmentView, kw); idx >= 0 && idx < end {
 			end = idx
 		}
 	}
 	return strings.TrimSpace(segment[:end])
 }
 
-func hasStandaloneWithClause(cypher string) bool {
+func hasStandaloneWithClause(view braceView) bool {
+	cypher := view.text()
 	searchStart := 0
 	for {
-		idx := topLevelKeywordIndex(cypher[searchStart:], "WITH")
+		idx := topLevelKeywordIndex(view.window(searchStart, len(cypher)), "WITH")
 		if idx < 0 {
 			return false
 		}
@@ -142,26 +145,28 @@ func hasStandaloneWithClause(cypher string) bool {
 	}
 }
 
-func extractMatchOrderByClause(cypher string, returnIdx int) string {
+func extractMatchOrderByClause(view braceView, returnIdx int) string {
+	cypher := view.text()
 	if returnIdx < 0 || returnIdx+6 > len(cypher) {
 		return ""
 	}
-	returnScope := strings.TrimSpace(cypher[returnIdx+6:])
+	returnScope := view.window(returnIdx+6, len(cypher)).trim()
 	orderIdx := findKeywordIndexInContext(returnScope, "ORDER")
 	if orderIdx == -1 {
 		return ""
 	}
-	orderPart := strings.TrimSpace(returnScope[orderIdx:])
-	if !strings.HasPrefix(upperASCII(orderPart), "ORDER BY") {
+	orderPart := returnScope.window(orderIdx, len(returnScope.text())).trim()
+	if !strings.HasPrefix(upperASCII(orderPart.text()), "ORDER BY") {
 		return ""
 	}
-	orderExpr := strings.TrimSpace(orderPart[len("ORDER BY"):])
+	orderView := afterWord(orderPart, "ORDER BY")
+	orderExpr := orderView.text()
 	if orderExpr == "" {
 		return ""
 	}
 	end := len(orderExpr)
 	for _, kw := range []string{"SKIP", "LIMIT"} {
-		if idx := findKeywordIndexInContext(orderExpr, kw); idx != -1 && idx < end {
+		if idx := findKeywordIndexInContext(orderView, kw); idx != -1 && idx < end {
 			end = idx
 		}
 	}
@@ -186,7 +191,7 @@ func (e *StorageExecutor) compareNodeOrderSpecs(a, b *storage.Node, specs []node
 
 // selectTopKNodesByOrder returns the first k nodes for simple ORDER BY expressions
 // without sorting the full node set. It supports any number of ORDER BY terms.
-func (e *StorageExecutor) selectTopKNodesByOrder(nodes []*storage.Node, variable, orderExpr string, k int) ([]*storage.Node, bool) {
+func (e *StorageExecutor) selectTopKNodesByOrder(nodes []*storage.Node, variable string, orderExpr braceView, k int) ([]*storage.Node, bool) {
 	if k <= 0 || len(nodes) <= k {
 		return nodes, false
 	}

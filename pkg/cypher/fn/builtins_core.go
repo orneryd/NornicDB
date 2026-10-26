@@ -13,16 +13,18 @@ import (
 
 func init() {
 	for _, name := range []string{"id", "elementid", "labels", "type"} {
-		Register(name, func(ctx Context, args []string) (interface{}, error) { return evaluateEntityScalar(ctx, name, args) })
+		RegisterInvocation(name, func(ctx InvocationContext, args []string) (interface{}, error) {
+			return evaluateEntityScalar(ctx, name, args)
+		})
 	}
-	Register("keys", evalKeys)
-	Register("properties", evalProperties)
-	Register("size", evalSize)
-	Register("tolower", evalToLower)
-	Register("toupper", evalToUpper)
-	Register("coalesce", evalCoalesce)
+	RegisterInvocation("keys", evalKeys)
+	RegisterInvocation("properties", evalProperties)
+	RegisterInvocation("size", evalSize)
+	RegisterInvocation("tolower", evalToLower)
+	RegisterInvocation("toupper", evalToUpper)
+	RegisterInvocation("coalesce", evalCoalesce)
 	for _, name := range []string{"file", "linenumber"} {
-		Register(name, func(ctx Context, args []string) (interface{}, error) {
+		RegisterInvocation(name, func(ctx InvocationContext, args []string) (interface{}, error) {
 			if argumentCount(args) != 0 {
 				return nil, &ParameterCountError{Function: name, TooMany: true}
 			}
@@ -147,7 +149,7 @@ func RelationshipType(value interface{}) (interface{}, error) {
 	return edge.Type, nil
 }
 
-func evalKeys(ctx Context, args []string) (interface{}, error) {
+func evalKeys(ctx InvocationContext, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, nil
 	}
@@ -160,7 +162,7 @@ func evalKeys(ctx Context, args []string) (interface{}, error) {
 		keys, _ := PropertyKeys(rel)
 		return keys, nil
 	}
-	value, _ := ctx.Eval(inner)
+	value, _ := ctx.Eval(0)
 	if keys, ok := PropertyKeys(value); ok {
 		return keys, nil
 	}
@@ -208,7 +210,7 @@ func PropertyKeys(value interface{}) ([]interface{}, bool) {
 	return keys, true
 }
 
-func evalProperties(ctx Context, args []string) (interface{}, error) {
+func evalProperties(ctx InvocationContext, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, nil
 	}
@@ -219,7 +221,7 @@ func evalProperties(ctx Context, args []string) (interface{}, error) {
 	if rel, ok := ctx.Rels[inner]; ok && rel != nil {
 		return EntityProperties(rel.Properties), nil
 	}
-	value, err := ctx.Eval(inner)
+	value, err := ctx.Eval(0)
 	value = RuntimeValue(value)
 	if err != nil {
 		return nil, err
@@ -240,11 +242,11 @@ func evalProperties(ctx Context, args []string) (interface{}, error) {
 	return nil, nil
 }
 
-func evalSize(ctx Context, args []string) (interface{}, error) {
+func evalSize(ctx InvocationContext, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return int64(0), nil
 	}
-	v, _ := ctx.Eval(args[0])
+	v, _ := ctx.Eval(0)
 	if v == nil {
 		return nil, nil
 	}
@@ -284,12 +286,12 @@ const sizeArgumentTypes = "String or List<T>"
 
 // evalToLower is toLower(string): a non-string is a type mismatch, as in
 // Neo4j (toLower(5) is not '5').
-func evalToLower(ctx Context, args []string) (interface{}, error) {
+func evalToLower(ctx InvocationContext, args []string) (interface{}, error) {
 	return evalStringCase(ctx, args, "toLower", lowerCaseText)
 }
 
 // evalToUpper is toUpper(string), as evalToLower.
-func evalToUpper(ctx Context, args []string) (interface{}, error) {
+func evalToUpper(ctx InvocationContext, args []string) (interface{}, error) {
 	return evalStringCase(ctx, args, "toUpper", upperCaseText)
 }
 
@@ -299,11 +301,11 @@ func evalToUpper(ctx Context, args []string) (interface{}, error) {
 func lowerCaseText(text string) string { return cases.Lower(language.Und).String(text) }
 func upperCaseText(text string) string { return cases.Upper(language.Und).String(text) }
 
-func evalStringCase(ctx Context, args []string, function string, convert func(string) string) (interface{}, error) {
+func evalStringCase(ctx InvocationContext, args []string, function string, convert func(string) string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, nil
 	}
-	v, err := ctx.Eval(args[0])
+	v, err := ctx.Eval(0)
 	if err != nil || v == nil {
 		return nil, err
 	}
@@ -314,9 +316,9 @@ func evalStringCase(ctx Context, args []string, function string, convert func(st
 	return convert(text), nil
 }
 
-func evalCoalesce(ctx Context, args []string) (interface{}, error) {
+func evalCoalesce(ctx InvocationContext, args []string) (interface{}, error) {
 	value, _, err := Coalesce(len(args), func(i int) (interface{}, bool, error) {
-		value, err := ctx.Eval(args[i])
+		value, err := ctx.Eval(i)
 		return value, true, err
 	})
 	return value, err
@@ -352,7 +354,7 @@ func Coalesce(n int, eval func(index int) (interface{}, bool, error)) (interface
 }
 
 // evaluateEntityScalar is the argument and binding owner for entity scalars.
-func evaluateEntityScalar(ctx Context, name string, args []string) (interface{}, error) {
+func evaluateEntityScalar(ctx InvocationContext, name string, args []string) (interface{}, error) {
 	if len(args) != 1 {
 		return nil, nil
 	}
@@ -371,7 +373,7 @@ func evaluateEntityScalar(ctx Context, name string, args []string) (interface{},
 	}
 	if !bound {
 		var err error
-		value, err = ctx.Eval(argument)
+		value, err = ctx.Eval(0)
 		if err != nil {
 			return nil, err
 		}
@@ -380,7 +382,7 @@ func evaluateEntityScalar(ctx Context, name string, args []string) (interface{},
 	case "id":
 		return entityID(value)
 	case "elementid":
-		return EntityElementID(ctx, value)
+		return EntityElementID(ctx.Context, value)
 	case "labels":
 		return Labels(value)
 	default:

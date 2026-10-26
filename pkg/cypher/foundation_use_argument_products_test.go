@@ -51,7 +51,7 @@ func TestFoundationUseArgumentSourceProducts(t *testing.T) {
 			t.Run("leading_grammar", func(t *testing.T) {
 				reference, err := cypherantlr.ReadUseReference(context.Background(), cyphertext.NewSource(context.Background(), query, cyphertext.RawSource))
 				require.NoError(t, err)
-				require.Equal(t, test.expressions, reference.Args)
+				require.Equal(t, test.expressions, useArgumentTexts(reference.Arguments))
 				requireUseArgumentProducts(t, reference, query, test.expressions)
 			})
 			t.Run("routing_reference", func(t *testing.T) {
@@ -99,6 +99,6 @@ func TestFoundationUseArgumentSourceProducts(t *testing.T) {
 		reference, err := cypherantlr.ReadUseReference(context.Background(), cyphertext.NewSource(context.Background(), "USE graph.byName() RETURN 1", cyphertext.RawSource))
 		require.NoError(t, err)
 		require.Equal(t, "graph.byName", reference.Function)
-		require.Empty(t, reference.Args)
+		require.Empty(t, reference.Arguments)
 	})
 }

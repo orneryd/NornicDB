@@ -43,14 +43,15 @@ type relationshipDeclaration struct {
 	lengthInvalid bool
 	// properties is the property map, from its { to the end, trimmed, or a
 	// trailing parameter ($props); "" when there is none.
-	properties string
+	properties   string
+	propertyView braceView
 }
 
 // relationshipDeclarationOf reads a relationship pattern's inside (the text
 // between [ and ]). Types are separated by | (or by a second colon, the
 // deprecated [:A|:B] form); empty items are skipped.
-func relationshipDeclarationOf(inner string) relationshipDeclaration {
-	declaration := relationshipDeclarationHead(inner)
+func relationshipDeclarationOf(view braceView) relationshipDeclaration {
+	declaration := relationshipDeclarationHead(view)
 	if !declaration.hasColon {
 		return declaration
 	}
@@ -83,12 +84,17 @@ func relationshipDeclarationOf(inner string) relationshipDeclaration {
 // relationshipDeclarationOf does, without the type list (types and
 // invalidType stay empty): the variable, the type text, the length and the
 // property map. MATCH's range check and variable-length variables read it.
-func relationshipDeclarationHead(inner string) relationshipDeclaration {
+func relationshipDeclarationHead(view braceView) relationshipDeclaration {
 	var declaration relationshipDeclaration
-	head := strings.TrimSpace(inner)
+	view = view.trim()
+	head := view.text()
 	masked := blankRelationshipExpressions(head)
-	if brace := strings.IndexByte(masked, '{'); brace >= 0 {
+	// The declaration grammar masks dynamic expressions. Its property extent
+	// is selected from the retained role records, never paired in the mask.
+	if property, found := view.patternProperty(masked); found {
+		brace := property.Start
 		declaration.properties = strings.TrimSpace(head[brace:])
+		declaration.propertyView = view.window(brace, len(head)).trim()
 		head, masked = head[:brace], masked[:brace]
 	}
 	declaration.lengthInvalid = relationshipLengthInvalid(masked)

@@ -169,7 +169,7 @@ func (e *StorageExecutor) callQueryStatistics(ctx context.Context, action string
 		var valid bool
 		configuration, valid = toStringAnyMap(arguments[1])
 		if expression, raw := arguments[1].(string); raw {
-			configuration, valid = toStringAnyMap(e.evaluateExpressionWithContext(ctx, expression, nil, nil))
+			configuration, valid = toStringAnyMap(e.evaluateProcedureText(ctx, expression))
 		}
 		if !valid {
 			return nil, newSemanticError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", "statistics configuration must be a MAP")
@@ -313,7 +313,8 @@ func (e *StorageExecutor) retrieveGraphStatistics(ctx context.Context, section s
 			edgeRows = append(edgeRows, map[string]interface{}{"relationshipType": relationship, "count": typeCounts[relationship]})
 		}
 		scoped := e.cloneWithStorage(store)
-		constraints, err := scoped.executeShowConstraints(ctx, "SHOW CONSTRAINTS YIELD *")
+		const listing = "SHOW CONSTRAINTS YIELD *"
+		constraints, err := scoped.executeShowConstraints(withBraceInputSource(ctx, listing), listing)
 		if err != nil {
 			return nil, err
 		}

@@ -172,14 +172,14 @@ func TestIssue863ShortestPathEvaluatorBranches(t *testing.T) {
 	a, b := res.Rows[0][0].(*storage.Node), res.Rows[0][1].(*storage.Node)
 	nodes := map[string]*storage.Node{"a": a, "b": b}
 
-	path, ok := exec.evaluateExpressionWithContext(ctx, "shortestPath((a)-[*]-(b))", nodes, nil).(map[string]interface{})
+	path, ok := exec.evaluateExpressionWithContext(ctx, expressionBraceView("shortestPath((a)-[*]-(b))"), nodes, nil).(map[string]interface{})
 	require.True(t, ok)
 	require.EqualValues(t, 1, path["length"])
 	failing := withExpressionFailureSlot(ctx)
-	require.Nil(t, exec.evaluateExpressionWithContext(failing, "shortestPath((a)-[*2..]-(b))", nodes, nil))
+	require.Nil(t, exec.evaluateExpressionWithContext(failing, expressionBraceView("shortestPath((a)-[*2..]-(b))"), nodes, nil))
 	require.ErrorContains(t, getExpressionFailure(failing), "minimal length")
 
-	m, ok, err := exec.parseShortestPathMatch(ctx, "p = shortestPath((a)-[*]-(b)) WHERE length(p) > 1")
+	m, ok, err := exec.parseShortestPathMatch(ctx, expressionBraceView("p = shortestPath((a)-[*]-(b)) WHERE length(p) > 1"))
 	require.NoError(t, err)
 	require.True(t, ok)
 	cancelled, cancel := context.WithCancel(ctx)
@@ -187,12 +187,12 @@ func TestIssue863ShortestPathEvaluatorBranches(t *testing.T) {
 	_, err = exec.shortestPathsBetween(cancelled, m, a, b, pipelineRow{"a": a, "b": b})
 	require.ErrorIs(t, err, context.Canceled)
 
-	_, err = exec.pipelineMatchRows(ctx, pipelineRow{}, "MATCH x")
+	_, err = exec.pipelineMatchRows(ctx, pipelineRow{}, originalBraceView("MATCH x"))
 	require.ErrorContains(t, err, "invalid path pattern")
-	m.others = []string{"x"}
+	m.others = originalBraceViews("x")
 	_, err = exec.pipelineApplyShortestPathMatch(ctx, []pipelineRow{{}}, m, false)
 	require.ErrorContains(t, err, "invalid path pattern")
 
 	unclosed := "RETURN shortestPath((a)-->(b)"
-	require.NoError(t, shortestPathExpressionError(unclosed, len("RETURN "), len("RETURN shortestPath"), len(unclosed)))
+	require.NoError(t, shortestPathExpressionError(originalBraceView(unclosed), len("RETURN "), len("RETURN shortestPath"), len(unclosed)))
 }

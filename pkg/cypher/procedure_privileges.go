@@ -25,27 +25,28 @@ type procedurePrivilegeCommand struct {
 // isProcedurePrivilegeCommand reports whether cypher is a GRANT or REVOKE of
 // procedure execution, the privilege statements NornicDB runs; every other
 // GRANT, REVOKE or DENY is unsupported.
-func isProcedurePrivilegeCommand(cypher string) bool {
-	_, ok, _ := parseProcedurePrivilegeCommand(cypher)
+func isProcedurePrivilegeCommand(view braceView) bool {
+	_, ok, _ := parseProcedurePrivilegeCommand(view)
 	return ok
 }
 
 // isPrivilegeAdministrationCommand reports whether cypher is a GRANT, REVOKE
 // or DENY, or a SHOW of privileges, which administrators alone may run.
-func isPrivilegeAdministrationCommand(cypher string) bool {
-	trimmed := strings.TrimSpace(cypher)
+func isPrivilegeAdministrationCommand(view braceView) bool {
+	view = view.trim()
+	trimmed := view.text()
 	return startsWithKeywordFold(trimmed, "GRANT") || startsWithKeywordFold(trimmed, "REVOKE") ||
-		startsWithKeywordFold(trimmed, "DENY") || isShowPrivilegesCommand(trimmed)
+		startsWithKeywordFold(trimmed, "DENY") || isShowPrivilegesCommand(view)
 }
 
 // isPrivilegeCommandShaped reports a GRANT, REVOKE or DENY shaped as a
 // privilege statement: GRANT / REVOKE ROLE[S] …, or one with an ON clause.
 // Another statement starting with these words is a syntax error.
-func isPrivilegeCommandShaped(cypher string) bool {
-	rest := strings.TrimSpace(cypher)
+func isPrivilegeCommandShaped(view braceView) bool {
+	rest := view.trim()
 	var keyword string
 	for _, candidate := range []string{"GRANT", "REVOKE", "DENY"} {
-		if startsWithKeywordFold(rest, candidate) {
+		if startsWithKeywordFold(rest.text(), candidate) {
 			keyword = candidate
 			break
 		}
@@ -53,8 +54,8 @@ func isPrivilegeCommandShaped(cypher string) bool {
 	if keyword == "" {
 		return false
 	}
-	rest = strings.TrimSpace(rest[len(keyword):])
-	if keyword != "DENY" && (startsWithKeywordFold(rest, "ROLE") || startsWithKeywordFold(rest, "ROLES")) {
+	rest = afterWord(rest, keyword)
+	if keyword != "DENY" && (startsWithKeywordFold(rest.text(), "ROLE") || startsWithKeywordFold(rest.text(), "ROLES")) {
 		return true
 	}
 	return findKeywordIndex(rest, "ON") > 0
@@ -67,38 +68,38 @@ func isPrivilegeCommandShaped(cypher string) bool {
 //
 // ok is false for any other statement; err is a statement of this shape
 // that is malformed.
-func parseProcedurePrivilegeCommand(cypher string) (procedurePrivilegeCommand, bool, error) {
+func parseProcedurePrivilegeCommand(view braceView) (procedurePrivilegeCommand, bool, error) {
 	var command procedurePrivilegeCommand
-	rest := strings.TrimSpace(cypher)
+	rest := view.trim()
 	switch {
-	case startsWithKeywordFold(rest, "GRANT"):
+	case startsWithKeywordFold(rest.text(), "GRANT"):
 		command.grant = true
-		rest = strings.TrimSpace(rest[len("GRANT"):])
-	case startsWithKeywordFold(rest, "REVOKE"):
-		rest = strings.TrimSpace(rest[len("REVOKE"):])
-		if startsWithKeywordFold(rest, "GRANT") {
-			rest = strings.TrimSpace(rest[len("GRANT"):])
+		rest = afterWord(rest, "GRANT")
+	case startsWithKeywordFold(rest.text(), "REVOKE"):
+		rest = afterWord(rest, "REVOKE")
+		if startsWithKeywordFold(rest.text(), "GRANT") {
+			rest = afterWord(rest, "GRANT")
 		}
 	default:
 		return command, false, nil
 	}
-	if startsWithKeywordFold(rest, "IMMUTABLE") {
+	if startsWithKeywordFold(rest.text(), "IMMUTABLE") {
 		command.immutable = true
-		rest = strings.TrimSpace(rest[len("IMMUTABLE"):])
+		rest = afterWord(rest, "IMMUTABLE")
 	}
-	if !startsWithKeywordFold(rest, "EXECUTE") {
+	if !startsWithKeywordFold(rest.text(), "EXECUTE") {
 		return command, false, nil
 	}
-	rest = strings.TrimSpace(rest[len("EXECUTE"):])
-	if startsWithKeywordFold(rest, "BOOSTED") {
+	rest = afterWord(rest, "EXECUTE")
+	if startsWithKeywordFold(rest.text(), "BOOSTED") {
 		command.boosted = true
-		rest = strings.TrimSpace(rest[len("BOOSTED"):])
+		rest = afterWord(rest, "BOOSTED")
 	}
 	switch {
-	case startsWithKeywordFold(rest, "PROCEDURES"):
-		rest = strings.TrimSpace(rest[len("PROCEDURES"):])
-	case startsWithKeywordFold(rest, "PROCEDURE"):
-		rest = strings.TrimSpace(rest[len("PROCEDURE"):])
+	case startsWithKeywordFold(rest.text(), "PROCEDURES"):
+		rest = afterWord(rest, "PROCEDURES")
+	case startsWithKeywordFold(rest.text(), "PROCEDURE"):
+		rest = afterWord(rest, "PROCEDURE")
 	default:
 		return command, false, nil
 	}
@@ -106,24 +107,24 @@ func parseProcedurePrivilegeCommand(cypher string) (procedurePrivilegeCommand, b
 	if on < 0 {
 		return command, true, procedurePrivilegeSyntaxError("expected ON DBMS")
 	}
-	for _, name := range splitTopLevelComma(rest[:on]) {
+	for _, name := range splitTopLevelComma(rest.window(0, on).text()) {
 		if name = unquoteProcedureGlob(strings.TrimSpace(name)); name != "" {
 			command.procedures = append(command.procedures, name)
 		}
 	}
-	rest = strings.TrimSpace(rest[on+len("ON"):])
-	if !startsWithKeywordFold(rest, "DBMS") {
+	rest = afterWord(rest.window(on, len(rest.text())), "ON")
+	if !startsWithKeywordFold(rest.text(), "DBMS") {
 		return command, true, procedurePrivilegeSyntaxError("procedure privileges are granted ON DBMS")
 	}
-	rest = strings.TrimSpace(rest[len("DBMS"):])
+	rest = afterWord(rest, "DBMS")
 	target := "TO"
 	if !command.grant {
 		target = "FROM"
 	}
-	if !startsWithKeywordFold(rest, target) {
+	if !startsWithKeywordFold(rest.text(), target) {
 		return command, true, procedurePrivilegeSyntaxError("expected " + target + " followed by a role")
 	}
-	for _, role := range splitTopLevelComma(strings.TrimSpace(rest[len(target):])) {
+	for _, role := range splitTopLevelComma(afterWord(rest, target).text()) {
 		role = strings.Trim(strings.TrimSpace(role), "`")
 		if role != "" {
 			command.roles = append(command.roles, role)
@@ -224,7 +225,7 @@ func authenticationDisabled(ctx context.Context) bool {
 //     IMMUTABLE, that names an immutable grant (Neo.ClientError.Security.Forbidden
 //     "Immutable privileges cannot be revoked."); nothing is changed then.
 func (e *StorageExecutor) executeProcedurePrivilegeCommand(ctx context.Context, cypher string) (*ExecuteResult, error) {
-	command, _, err := parseProcedurePrivilegeCommand(cypher)
+	command, _, err := parseProcedurePrivilegeCommand(statementBraceView(ctx, cypher))
 	if err != nil {
 		return nil, err
 	}
@@ -290,26 +291,26 @@ func (e *StorageExecutor) executeProcedurePrivilegeCommand(ctx context.Context, 
 
 // isShowPrivilegesCommand reports SHOW PRIVILEGES and SHOW ROLE[S] r[, …]
 // PRIVILEGES.
-func isShowPrivilegesCommand(cypher string) bool {
-	if startsWithKeywords(cypher, "SHOW", "PRIVILEGES") || startsWithKeywords(cypher, "SHOW", "PRIVILEGE") {
+func isShowPrivilegesCommand(view braceView) bool {
+	if startsWithKeywords(view, "SHOW", "PRIVILEGES") || startsWithKeywords(view, "SHOW", "PRIVILEGE") {
 		return true
 	}
-	if startsWithKeywords(cypher, "SHOW", "ROLES") || startsWithKeywords(cypher, "SHOW", "ROLE") {
-		return findKeywordIndex(showCommandHead(cypher), "PRIVILEGES") > 0 || findKeywordIndex(showCommandHead(cypher), "PRIVILEGE") > 0
+	if startsWithKeywords(view, "SHOW", "ROLES") || startsWithKeywords(view, "SHOW", "ROLE") {
+		head := showCommandHead(view)
+		return findKeywordIndex(head, "PRIVILEGES") > 0 || findKeywordIndex(head, "PRIVILEGE") > 0
 	}
 	return false
 }
 
 // showPrivilegeRoles are the roles SHOW ROLE r[, …] PRIVILEGES names; nil for
 // SHOW PRIVILEGES (every role).
-func showPrivilegeRoles(head string) []string {
-	rest := strings.TrimSpace(head)
-	rest = strings.TrimSpace(rest[len("SHOW"):])
+func showPrivilegeRoles(head braceView) []string {
+	rest := afterWord(head.trim(), "SHOW")
 	switch {
-	case startsWithKeywordFold(rest, "ROLES"):
-		rest = strings.TrimSpace(rest[len("ROLES"):])
-	case startsWithKeywordFold(rest, "ROLE"):
-		rest = strings.TrimSpace(rest[len("ROLE"):])
+	case startsWithKeywordFold(rest.text(), "ROLES"):
+		rest = afterWord(rest, "ROLES")
+	case startsWithKeywordFold(rest.text(), "ROLE"):
+		rest = afterWord(rest, "ROLE")
 	default:
 		return nil
 	}
@@ -321,7 +322,7 @@ func showPrivilegeRoles(head string) []string {
 		return nil
 	}
 	var roles []string
-	for _, role := range splitTopLevelComma(rest[:end]) {
+	for _, role := range splitTopLevelComma(rest.window(0, end).text()) {
 		if role = strings.Trim(strings.TrimSpace(role), "`"); role != "" {
 			roles = append(roles, auth.NormalizeRoleName(role))
 		}
@@ -341,7 +342,7 @@ func (e *StorageExecutor) executeShowPrivileges(ctx context.Context, head string
 		return nil, err
 	}
 	only := map[string]bool{}
-	for _, role := range showPrivilegeRoles(head) {
+	for _, role := range showPrivilegeRoles(statementBraceView(ctx, head)) {
 		only[role] = true
 	}
 	result := &ExecuteResult{Columns: []string{"access", "action", "resource", "graph", "segment", "role", "immutable"}, Rows: [][]interface{}{}}

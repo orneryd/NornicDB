@@ -69,7 +69,7 @@ func TestFoundationCommentExtentConsumers(t *testing.T) {
 			require.Equal(t, "STARTS", previousSignificantWord(before, len(before)))
 			query := "\ufeff // text" + ending + "CREATE DATABASE d"
 			require.Equal(t, strings.Index(query, "CREATE"), firstExecutableCypherOffset(query))
-			require.True(t, isAdminPermissionQuery(query))
+			require.True(t, isAdminPermissionQuery(originalBraceView(query)))
 			expression := "'value' STARTS // text" + ending + "WITH 'v'"
 			at := strings.Index(expression, "WITH")
 			require.True(t, isExpressionWith(expression, at, at+len("WITH")))

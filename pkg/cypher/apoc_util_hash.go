@@ -15,7 +15,7 @@ func init() {
 		"apoc.util.sha1":   util.SHA1,
 		"apoc.util.sha256": util.SHA256,
 	} {
-		cypherfn.Register(name, apocUtilHash(name, digest))
+		cypherfn.RegisterInvocation(name, apocUtilHash(name, digest))
 	}
 }
 
@@ -25,8 +25,8 @@ func init() {
 // that isn't a list digests its own string form (a NornicDB extension).
 // A null argument list fails as APOC's hexHash iteration does; null elements
 // within a supplied list contribute empty text recursively.
-func apocUtilHash(name string, digest func(interface{}) string) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+func apocUtilHash(name string, digest func(interface{}) string) cypherfn.InvocationFunc {
+	return func(ctx cypherfn.InvocationContext, args []string) (interface{}, error) {
 		if len(args) != 1 {
 			return nil, argumentCountError(name, "1", len(args))
 		}

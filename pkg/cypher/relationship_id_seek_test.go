@@ -45,12 +45,12 @@ func TestRelationshipIDSeekMatches(t *testing.T) {
 		require.Equal(t, want, result.Rows, query)
 	}
 
-	nodes, none, ok := exec.relationshipIDSeedNodes(ctx, "(a)-[r]->(b)", fmt.Sprintf("elementId(r) = '%v'", elementID))
+	nodes, none, ok := exec.relationshipIDSeedNodes(ctx, originalBraceView("(a)-[r]->(b)"), originalBraceView(fmt.Sprintf("elementId(r) = '%v'", elementID)))
 	require.True(t, ok)
 	require.False(t, none)
 	require.Len(t, nodes, 1, "the start node only")
-	_, _, ok = exec.relationshipIDSeedNodes(ctx, "(a)-[r*1..2]->(b)", fmt.Sprintf("elementId(r) = '%v'", elementID))
+	_, _, ok = exec.relationshipIDSeedNodes(ctx, originalBraceView("(a)-[r*1..2]->(b)"), originalBraceView(fmt.Sprintf("elementId(r) = '%v'", elementID)))
 	require.False(t, ok, "a variable-length pattern")
-	_, _, ok = exec.relationshipIDSeedNodes(ctx, "(a)-[r]->(b)", "r.id = 7")
+	_, _, ok = exec.relationshipIDSeedNodes(ctx, originalBraceView("(a)-[r]->(b)"), expressionBraceView("r.id = 7"))
 	require.False(t, ok)
 }

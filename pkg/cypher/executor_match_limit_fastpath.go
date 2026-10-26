@@ -16,7 +16,8 @@ import (
 //
 // It is intentionally strict to avoid semantic drift from full Cypher execution.
 func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, bool) {
-	trimmed := strings.TrimSpace(cypher)
+	view := statementBraceView(ctx, cypher).trim()
+	trimmed := view.text()
 	if !strings.HasPrefix(strings.TrimSpace(upperQuery), "MATCH") {
 		return nil, false
 	}
@@ -26,13 +27,13 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		"WHERE", "ORDER", "SKIP", "WITH", "UNWIND", "OPTIONAL MATCH", "CALL",
 		"CREATE", "MERGE", "DELETE", "DETACH DELETE", "SET", "REMOVE", "UNION",
 	} {
-		if findKeywordIndex(trimmed, kw) > 0 {
+		if findKeywordIndex(view, kw) > 0 {
 			return nil, false
 		}
 	}
 
-	returnIdx := findKeywordIndex(trimmed, "RETURN")
-	limitIdx := findKeywordIndex(trimmed, "LIMIT")
+	returnIdx := findKeywordIndex(view, "RETURN")
+	limitIdx := findKeywordIndex(view, "LIMIT")
 	if returnIdx <= 0 || limitIdx <= returnIdx {
 		return nil, false
 	}
@@ -43,13 +44,14 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		return nil, false
 	}
 
-	returnPart := strings.TrimSpace(trimmed[returnIdx+len("RETURN") : limitIdx])
+	returnPart := view.window(returnIdx+len("RETURN"), limitIdx).trim()
 	columnName, ok := parseSimpleReturnVariable(ctx, returnPart, varName)
 	if !ok {
 		return nil, false
 	}
 
-	limitExpression := StripComments(pipelinePaginationExpression(trimmed[returnIdx:], "LIMIT"))
+	limitExpression := pipelinePaginationExpression(view.window(returnIdx, len(trimmed)), "LIMIT")
+	limitExpression.source = astWithoutComments(limitExpression.source)
 	limit, ok := e.evaluatePipelinePagination(ctx, limitExpression, nil)
 	if !ok {
 		return nil, false
@@ -61,7 +63,7 @@ func (e *StorageExecutor) tryFastPathSimpleMatchReturnLimit(ctx context.Context,
 		return &ExecuteResult{Columns: []string{columnName}, Rows: rows, Stats: &QueryStats{}}, true
 	}
 
-	nodes, err := e.collectNodesWithStreaming(ctx, labels, nil, varName, "", limit)
+	nodes, err := e.collectNodesWithStreaming(ctx, labels, nil, varName, view.window(0, 0), limit)
 	if err != nil {
 		return nil, false
 	}
@@ -86,7 +88,7 @@ func parseSimpleMatchSingleNodePattern(pattern string) (string, []string, bool) 
 	if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") {
 		return "", nil, false
 	}
-	if strings.Contains(pattern, "-") || strings.Contains(pattern, "{") || strings.Contains(pattern, ",") {
+	if strings.Contains(pattern, "-") || (firstLiveBrace(pattern) >= 0) || len(splitTopLevelComma(pattern)) > 1 {
 		return "", nil, false
 	}
 
@@ -102,8 +104,8 @@ func parseSimpleMatchSingleNodePattern(pattern string) (string, []string, bool) 
 	return varName, labels, true
 }
 
-func parseSimpleReturnVariable(ctx context.Context, returnPart string, varName string) (string, bool) {
-	plan := returnProjectionPlanFor(ctx, "RETURN "+strings.TrimSpace(returnPart))
+func parseSimpleReturnVariable(ctx context.Context, returnPart braceView, varName string) (string, bool) {
+	plan := returnProjectionPlanFor(ctx, returnPart.trim().wrap("RETURN ", ""))
 	if !plan.valid || plan.star || plan.distinct || plan.hasAggregate || plan.modifiers != "" || len(plan.projections) != 1 || plan.columns[0] == "" {
 		return "", false
 	}

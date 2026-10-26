@@ -889,7 +889,7 @@ func TestParseYieldClause(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := parseYieldClause(t.Context(), tt.cypher)
+			result := parseYieldClause(t.Context(), originalBraceView(tt.cypher))
 			if tt.expected == nil {
 				assert.Nil(t, result)
 				return

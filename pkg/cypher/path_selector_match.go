@@ -28,30 +28,32 @@ type pathSelector struct {
 // selector, the selector's predicate (the pattern's own predicates) and the
 // clause's WHERE conjuncts. ok is false when where doesn't start with a
 // selector.
-func splitPathSelectorTerm(where string) (*pathSelector, string, []string, bool) {
+func splitPathSelectorTerm(view braceView) (*pathSelector, braceView, []braceView, bool) {
+	where := view.text()
 	if len(where) < len(pathSelectorFunction) || !equalFoldASCII(where[:len(pathSelectorFunction)], pathSelectorFunction) {
-		return nil, "", nil, false
+		return nil, braceView{}, nil, false
 	}
-	terms := splitTopLevelAndConjuncts(where)
-	call := strings.TrimSpace(terms[0])
+	terms := splitTopLevelAndConjuncts(view)
+	callView := terms[0].trim()
+	call := callView.text()
 	open := strings.IndexByte(call, '(')
 	if open < 0 || findMatchingParen(call, open) != len(call)-1 {
-		return nil, "", nil, false
+		return nil, braceView{}, nil, false
 	}
-	args := splitTopLevelComma(call[open+1 : len(call)-1])
+	args := callView.window(open+1, len(call)-1).commaViews()
 	if len(args) < 5 {
-		return nil, "", nil, false
+		return nil, braceView{}, nil, false
 	}
-	unquote := func(text string) string { return strings.Trim(strings.TrimSpace(text), "'") }
+	unquote := func(view braceView) string { return strings.Trim(strings.TrimSpace(view.text()), "'") }
 	selector := &pathSelector{
 		shortest: unquote(args[0]) == "SHORTEST",
-		count:    strings.TrimSpace(args[1]),
-		groups:   strings.TrimSpace(args[2]) == "true",
+		count:    args[1].trim().text(),
+		groups:   args[2].trim().text() == "true",
 		acyclic:  unquote(args[3]) == "ACYCLIC",
 	}
-	predicate := strings.TrimSpace(strings.Join(args[4:], ","))
-	if strings.EqualFold(predicate, "true") {
-		predicate = ""
+	predicate := view.assembleCode(args[4:], ",").trim()
+	if strings.EqualFold(predicate.text(), "true") {
+		predicate = view.window(0, 0)
 	}
 	return selector, predicate, terms[1:], true
 }
@@ -61,11 +63,11 @@ func splitPathSelectorTerm(where string) (*pathSelector, string, []string, bool)
 // search (path_selector_search.go). The pattern's own predicates constrain
 // the paths to select from; the clause's WHERE conjuncts that read only the
 // endpoints select the pairs, and the others filter the selected paths.
-func (e *StorageExecutor) parseSelectedPathMatch(pattern, pathVariable string, others []string, selector *pathSelector, predicate string, terms []string) (*shortestPathMatch, bool, error) {
+func (e *StorageExecutor) parseSelectedPathMatch(pattern braceView, pathVariable string, others []braceView, selector *pathSelector, predicate braceView, terms []braceView) (*shortestPathMatch, bool, error) {
 	return e.parseSelectedPathMatchContext(context.Background(), pattern, pathVariable, others, selector, predicate, terms)
 }
 
-func (e *StorageExecutor) parseSelectedPathMatchContext(ctx context.Context, pattern, pathVariable string, others []string, selector *pathSelector, predicate string, terms []string) (*shortestPathMatch, bool, error) {
+func (e *StorageExecutor) parseSelectedPathMatchContext(ctx context.Context, pattern braceView, pathVariable string, others []braceView, selector *pathSelector, predicate braceView, terms []braceView) (*shortestPathMatch, bool, error) {
 	if len(others) > 0 || pathVariable == "" {
 		// The statement rewrite names the path and allows no other pattern
 		// (path_selector.go); a hand-written selector call may do neither.
@@ -92,7 +94,7 @@ func (e *StorageExecutor) parseSelectedPathMatchContext(ctx context.Context, pat
 		plan:          plan,
 		startVariable: plan.start.variable,
 		endVariable:   plan.end.variable,
-		postWhere:     strings.Join(filters, " AND "),
+		postWhere:     braceView{syntax: pattern.syntax, source: pattern.source.OriginalView()}.assembleCode(filters, " AND "),
 	}, true, nil
 }
 
@@ -113,7 +115,7 @@ func (e *StorageExecutor) pipelineApplySelectedPathMatch(ctx context.Context, ro
 		}
 		found := 0
 		for _, bound := range selected {
-			if m.postWhere != "" && !e.evaluateWithWhereCondition(ctx, m.postWhere, map[string]interface{}(bound)) {
+			if !m.postWhere.empty() && !e.evaluateWithWhereCondition(ctx, m.postWhere, map[string]interface{}(bound)) {
 				if err := getExpressionFailure(ctx); err != nil {
 					return nil, err
 				}
@@ -169,7 +171,7 @@ func pathSelectorCountLiteral(text string) interface{} {
 		return true
 	case strings.HasPrefix(text, "["):
 		return []interface{}{}
-	case strings.HasPrefix(text, "{"):
+	case startsBrace(text):
 		return map[string]interface{}{}
 	}
 	return text

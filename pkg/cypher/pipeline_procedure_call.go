@@ -13,16 +13,17 @@ func pipelineProcedureCallsAreClauses(ctx context.Context, cypher string) bool {
 		return false
 	}
 	ensureBuiltInProceduresRegistered()
-	for _, position := range findAllTopLevelPipelineKeywordPositions(cypher, "CALL") {
+	view := statementBraceView(ctx, cypher)
+	for _, position := range findAllTopLevelPipelineKeywordPositions(view, "CALL") {
 		procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, cypher[position:]))
 		if found && procedure.Spec.Mode != ProcedureModeRead && !procedure.Spec.writes() && procedure.Spec.Mode != ProcedureModeDBMS && !(procedure.User && procedure.Spec.Mode == "") {
 			return false
 		}
 	}
-	topLevel := len(findAllTopLevelPipelineKeywordPositions(cypher, "CALL"))
+	topLevel := len(findAllTopLevelPipelineKeywordPositions(view, "CALL"))
 	total := 0
 	for offset := 0; offset < len(cypher); {
-		index := findKeywordIndex(cypher[offset:], "CALL")
+		index := findKeywordIndex(view.window(offset, len(cypher)), "CALL")
 		if index < 0 {
 			break
 		}
@@ -43,12 +44,14 @@ func pipelineProcedureCallsAreClauses(ctx context.Context, cypher string) bool {
 //
 // Void calls without YIELD preserve input rows; non-void calls require YIELD.
 // Explicit arguments are evaluated as typed values in the canonical invocation.
-func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows []pipelineRow, clause string, totals *QueryStats) ([]pipelineRow, []string, bool, error) {
-	yieldIndex := findKeywordIndexInContext(clause, "YIELD")
-	invocation := strings.TrimSpace(clause)
+func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows []pipelineRow, clauseView braceView, totals *QueryStats) ([]pipelineRow, []string, bool, error) {
+	clause := clauseView.text()
+	yieldIndex := findKeywordIndexInContext(clauseView, "YIELD")
+	invocationView := clauseView.trim()
 	if yieldIndex >= 0 {
-		invocation = strings.TrimSpace(clause[:yieldIndex])
+		invocationView = clauseView.window(0, yieldIndex).trim()
 	}
+	invocation := invocationView.text()
 	procedure, found := globalProcedureRegistry.Get(extractProcedureName(ctx, invocation))
 	if !found {
 		return nil, nil, true, newSemanticError("Neo.ClientError.Procedure.ProcedureNotFound", "ProcedureNotFound", "There is no procedure with the name "+extractProcedureName(ctx, invocation)+" registered")
@@ -56,24 +59,24 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 	if yieldIndex < 0 && len(procedure.Spec.Returns) > 0 {
 		return nil, nil, true, newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", "procedure calls inside a query must name results explicitly using YIELD")
 	}
-	if err := validateProcedureCallArguments(invocation); err != nil {
+	if err := validateProcedureCallArguments(invocationView); err != nil {
 		return nil, nil, true, err
 	}
-	yieldBody := ""
+	yieldBody := clauseView.window(0, 0)
 	if yieldIndex >= 0 {
-		yieldBody = strings.TrimSpace(clause[yieldIndex+len("YIELD"):])
+		yieldBody = clauseView.window(yieldIndex+len("YIELD"), len(clause)).trim()
 	}
-	where := ""
+	where := clauseView.window(0, 0)
 	if whereIndex := topLevelKeywordIndex(yieldBody, "WHERE"); whereIndex >= 0 {
-		where = strings.TrimSpace(yieldBody[whereIndex+len("WHERE"):])
-		yieldBody = strings.TrimSpace(yieldBody[:whereIndex])
+		where = yieldBody.window(whereIndex+len("WHERE"), len(yieldBody.text())).trim()
+		yieldBody = yieldBody.window(0, whereIndex).trim()
 	}
-	yieldText := ""
+	callView := invocationView.wrap("", " ")
 	if yieldIndex >= 0 {
-		yieldText = "YIELD " + yieldBody
+		callView = clauseView.assembleCode([]braceView{invocationView, yieldBody.wrap("YIELD ", "")}, " ")
 	}
 
-	arguments := explicitProcedureArgumentTexts(ctx, invocation)
+	arguments := explicitProcedureArgumentViews(ctx, invocationView)
 	if arguments != nil {
 		if err := validateProcedureArgumentCount(procedure.Spec, len(arguments)); err != nil {
 			return nil, nil, true, err
@@ -89,7 +92,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 
 	var yielded []string
 	if yieldIndex >= 0 {
-		yield := parseYieldClause(ctx, clause)
+		yield := parseYieldClause(ctx, clauseView)
 		if err := validateProcedureYieldBindings(yield, true); err != nil {
 			return nil, nil, true, err
 		}
@@ -118,7 +121,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 		result := shared
 		if result == nil {
 			var err error
-			result, err = e.executeProcedureCall(withValueBindings(ctx, row), invocation+" "+yieldText, true)
+			result, err = e.executeProcedureCall(withBraceView(withValueBindings(ctx, row), callView), callView.text(), true)
 			if err != nil {
 				return nil, nil, true, err
 			}
@@ -153,7 +156,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 			}
 			extended = append(extended, next)
 		}
-		if where != "" {
+		if !where.empty() {
 			extended = e.filterPipelineRows(ctx, extended, where)
 		}
 		out = append(out, extended...)
@@ -163,7 +166,7 @@ func (e *StorageExecutor) pipelineApplyProcedureCall(ctx context.Context, rows [
 
 // argumentUsesRowVariable reports whether a procedure argument refers to a
 // variable bound in the row (parameters are already substituted).
-func argumentUsesRowVariable(argument string, row pipelineRow) bool {
+func argumentUsesRowVariable(argument braceView, row pipelineRow) bool {
 	for _, reference := range semanticExpressionReferences(argument) {
 		base := strings.SplitN(reference, ".", 2)[0]
 		if _, bound := row[base]; bound {

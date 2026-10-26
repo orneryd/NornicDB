@@ -26,7 +26,7 @@ func TestLexicalUnicodeBoundaryScanners(t *testing.T) {
 	for _, gap := range lexicalWhitespaceCorpus {
 		t.Run(fmt.Sprintf("U%04X", gap), func(t *testing.T) {
 			space := string(gap)
-			require.Equal(t, "RETURN café", normalizePipelineWhitespace("RETURN"+space+"café"))
+			require.Equal(t, "RETURN café", normalizePipelineWhitespace(originalBraceView("RETURN"+space+"café")))
 			require.Equal(t, "25", cypherGrammarVersion("CYPHER"+space+"25"+space+"runtime=slotted"+space+"RETURN 1"))
 			query := "RETURN" + space + "abs" + space + "(-1)" + space + "AS" + space + "café"
 			functions, err := usePropertyFunctions(query)
@@ -38,8 +38,8 @@ func TestLexicalUnicodeBoundaryScanners(t *testing.T) {
 			for _, keyword := range []string{"RETURN", "ORDER BY", "IS NOT NULL"} {
 				spelling := strings.ReplaceAll(keyword, " ", space)
 				text := "café" + space + spelling + space + "x"
-				require.Equal(t, len("café"+space), keywordIndexFrom(text, keyword, 0, defaultKeywordScanOpts()))
-				require.Negative(t, keywordIndexFrom("café"+spelling+"界", keyword, 0, defaultKeywordScanOpts()))
+				require.Equal(t, len("café"+space), keywordIndexFrom(text, keyword, 0, defaultKeywordScanOpts(acceptedBraceView(text))))
+				require.Negative(t, keywordIndexFrom("café"+spelling+"界", keyword, 0, defaultKeywordScanOpts(acceptedBraceView("café"+spelling+"界"))))
 			}
 			var names []string
 			cyphertext.ParameterReferences("a$b"+space+"$café"+space+"$0", func(name string, _, _ int) { names = append(names, name) })
@@ -141,7 +141,7 @@ func TestUseOwnerGeneratedCacheDependencies(t *testing.T) {
 			exec.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 			require.NoError(t, exec.UseDatabaseStatementCaches(manager, "nornic"))
 			const live = "RETURN 91 AS live"
-			require.NoError(t, exec.validateSyntax(t.Context(), live, false, syntaxStatement))
+			require.NoError(t, exec.validateSyntax(t.Context(), originalBraceView(live), false, syntaxStatement))
 			for _, gap := range lexicalWhitespaceCorpus {
 				for _, graph := range []string{"", "GRAPH" + string(gap)} {
 					for _, wrapper := range []string{"%s RETURN 1", "CALL { %s RETURN 1 AS x } RETURN x", "%s RETURN 1 UNION ALL %s RETURN 1"} {
@@ -155,7 +155,7 @@ func TestUseOwnerGeneratedCacheDependencies(t *testing.T) {
 						scopes, valid := exec.cacheDependencyScopes(query)
 						require.True(t, valid)
 						require.True(t, containsStatementScope(scopes, scope), "selection identity absent for U%04X", gap)
-						require.NoError(t, exec.validateSyntax(t.Context(), query, false, syntaxStatement))
+						require.NoError(t, exec.validateSyntax(t.Context(), originalBraceView(query), false, syntaxStatement))
 						exec.cachedUpperQuery(query)
 						require.NotZero(t, exec.cachedSyntaxVerdict(query))
 						exec.ensureUpperQueryCache().mu.RLock()
@@ -192,7 +192,7 @@ func TestUseOwnerGeneratedCacheDependencies(t *testing.T) {
 						require.NoError(t, err)
 						require.NotSame(t, scope, fresh)
 						require.Zero(t, exec.cachedSyntaxVerdict(query))
-						require.NoError(t, exec.validateSyntax(t.Context(), query, false, syntaxStatement))
+						require.NoError(t, exec.validateSyntax(t.Context(), originalBraceView(query), false, syntaxStatement))
 						scopes, valid = exec.cacheDependencyScopes(query)
 						require.True(t, valid)
 						require.True(t, containsStatementScope(scopes, fresh))

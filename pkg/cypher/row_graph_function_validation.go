@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -70,7 +69,7 @@ type rowFunctionArgumentFailure struct{ err error }
 // the other evaluator reports them. The flags are (handled, resolved): a
 // registry miss never evaluates arguments; an unresolved registered call must
 // never be retried as another function implementation.
-func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, values map[string]interface{}) (value interface{}, handled, resolved bool, err error) {
+func (e *StorageExecutor) evaluateRowGraphFunction(function string, argument braceView, values map[string]interface{}) (value interface{}, handled, resolved bool, err error) {
 	defer func() {
 		if aborted := recover(); aborted != nil {
 			failure, ok := aborted.(rowFunctionArgumentFailure)
@@ -83,11 +82,8 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 			}
 		}
 	}()
-	var args []string
-	if strings.TrimSpace(argument) != "" {
-		args = splitTopLevelComma(argument)
-	}
-	fnCtx := e.registryFunctionContext(rowStatementContextOrBackground(values), func(expression string) (interface{}, error) {
+	args := argument.commaViews()
+	fnCtx := e.registryFunctionContext(rowStatementContextOrBackground(values), args, func(expression braceView) (interface{}, error) {
 		value, resolved, err := e.evaluateRowValue(expression, values)
 		if err != nil {
 			panic(rowFunctionArgumentFailure{err})
@@ -102,7 +98,7 @@ func (e *StorageExecutor) evaluateRowGraphFunction(function, argument string, va
 	if version, bound := values[cypher25RowKey].(bool); bound {
 		fnCtx.Cypher25 = version
 	}
-	value, found, err := cypherfn.EvaluateFunction(function, args, fnCtx)
+	value, found, err := cypherfn.EvaluateInvocation(function, functionArgumentTexts(args), fnCtx)
 	if !found {
 		return nil, false, false, nil
 	}

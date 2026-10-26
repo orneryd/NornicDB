@@ -49,7 +49,7 @@ func TestSharedDelimiterSectionsUseCypherQuoting(t *testing.T) {
 			require.Equal(t, test.inside, inside)
 			require.Equal(t, "tail", rest)
 			require.Equal(t, len(test.inside)+1, cyphertext.FindMatchingDelimiter(test.text, 0, test.open, test.close, cyphertext.OpeningDelimiter))
-			callInside, callRest, callOK := parseCallTailDelimited("  "+test.text, byte(test.open), byte(test.close))
+			callInside, callRest, callOK := parseCallTailDelimited(originalBraceView("  "+test.text), byte(test.open), byte(test.close))
 			require.True(t, callOK)
 			require.Equal(t, test.inside, callInside)
 			require.Equal(t, rest, callRest)

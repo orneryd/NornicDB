@@ -62,9 +62,9 @@ func TestRowSubscriptReceiverStartBraces(t *testing.T) {
 		"COUNT { MATCH (n) }[0]": "COUNT { MATCH (n) }",
 	} {
 		open := closingBracketGroupStart(expression)
-		start := rowSubscriptReceiverStart(expression, open)
+		start := rowSubscriptReceiverStart(originalBraceView(expression), open)
 		require.GreaterOrEqual(t, start, 0, expression)
 		require.Equal(t, want, expression[start:open], expression)
 	}
-	require.Equal(t, -1, rowSubscriptReceiverStart("b: true}[k]", len("b: true}")))
+	require.Equal(t, -1, rowSubscriptReceiverStart(expressionBraceView("b: true}[k]"), len("b: true}")))
 }

@@ -4,14 +4,13 @@ import (
 	"context"
 	"github.com/orneryd/nornicdb/pkg/math/angle"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	ctx context.Context,
-	expr string,
+	view braceView,
 	lowerExpr string,
 	nodes map[string]*storage.Node,
 	rels map[string]*storage.Edge,
@@ -20,13 +19,15 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	allPathNodes []*storage.Node,
 	pathLength int,
 ) interface{} {
+	expr := view.text()
+	ctx = withBraceView(ctx, view)
 	// ========================================
 	// Trigonometric Functions
 	// ========================================
 
 	// sin(x) - sine of x (radians)
 	if matchFuncStartAndSuffix(expr, "sin") {
-		inner := extractFuncArgs(expr, "sin")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Sin(f)
@@ -36,7 +37,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// cos(x) - cosine of x (radians)
 	if matchFuncStartAndSuffix(expr, "cos") {
-		inner := extractFuncArgs(expr, "cos")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Cos(f)
@@ -46,7 +47,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// tan(x) - tangent of x (radians)
 	if matchFuncStartAndSuffix(expr, "tan") {
-		inner := extractFuncArgs(expr, "tan")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Tan(f)
@@ -56,7 +57,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// cot(x) - cotangent of x (radians)
 	if matchFuncStartAndSuffix(expr, "cot") {
-		inner := extractFuncArgs(expr, "cot")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return 1.0 / math.Tan(f)
@@ -66,7 +67,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// asin(x) - arc sine
 	if matchFuncStartAndSuffix(expr, "asin") {
-		inner := extractFuncArgs(expr, "asin")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Asin(f)
@@ -76,7 +77,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// acos(x) - arc cosine
 	if matchFuncStartAndSuffix(expr, "acos") {
-		inner := extractFuncArgs(expr, "acos")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Acos(f)
@@ -86,7 +87,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// atan(x) - arc tangent
 	if matchFuncStartAndSuffix(expr, "atan") {
-		inner := extractFuncArgs(expr, "atan")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Atan(f)
@@ -96,11 +97,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// atan2(y, x) - arc tangent of y/x
 	if matchFuncStartAndSuffix(expr, "atan2") {
-		inner := extractFuncArgs(expr, "atan2")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			y, ok1 := toFloat64(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			x, ok2 := toFloat64(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			y, ok1 := toFloat64(e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			x, ok2 := toFloat64(e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			if ok1 && ok2 {
 				return math.Atan2(y, x)
 			}
@@ -114,7 +115,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// exp(x) - e^x
 	if matchFuncStartAndSuffix(expr, "exp") {
-		inner := extractFuncArgs(expr, "exp")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Exp(f)
@@ -124,7 +125,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// log(x) - natural logarithm
 	if matchFuncStartAndSuffix(expr, "log") {
-		inner := extractFuncArgs(expr, "log")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Log(f)
@@ -134,7 +135,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// log10(x) - base-10 logarithm
 	if matchFuncStartAndSuffix(expr, "log10") {
-		inner := extractFuncArgs(expr, "log10")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Log10(f)
@@ -144,7 +145,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// sqrt(x) - square root
 	if matchFuncStartAndSuffix(expr, "sqrt") {
-		inner := extractFuncArgs(expr, "sqrt")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Sqrt(f)
@@ -158,7 +159,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// degrees(radians) - convert radians to degrees
 	if matchFuncStartAndSuffix(expr, "degrees") {
-		inner := extractFuncArgs(expr, "degrees")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return angle.ToDegrees(f)
@@ -168,7 +169,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// haversin(x) - half of versine = (1 - cos(x))/2
 	if matchFuncStartAndSuffix(expr, "haversin") {
-		inner := extractFuncArgs(expr, "haversin")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return (1 - math.Cos(f)) / 2
@@ -178,7 +179,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// sinh(x) - hyperbolic sine (Neo4j 2025.06+)
 	if matchFuncStartAndSuffix(expr, "sinh") {
-		inner := extractFuncArgs(expr, "sinh")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Sinh(f)
@@ -188,7 +189,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// cosh(x) - hyperbolic cosine (Neo4j 2025.06+)
 	if matchFuncStartAndSuffix(expr, "cosh") {
-		inner := extractFuncArgs(expr, "cosh")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Cosh(f)
@@ -198,7 +199,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// tanh(x) - hyperbolic tangent (Neo4j 2025.06+)
 	if matchFuncStartAndSuffix(expr, "tanh") {
-		inner := extractFuncArgs(expr, "tanh")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return math.Tanh(f)
@@ -208,7 +209,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// coth(x) - hyperbolic cotangent (Neo4j 2025.06+)
 	if matchFuncStartAndSuffix(expr, "coth") {
-		inner := extractFuncArgs(expr, "coth")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			sinh := math.Sinh(f)
@@ -222,11 +223,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// power(base, exponent) - raise base to power of exponent
 	if matchFuncStartAndSuffix(expr, "power") {
-		inner := extractFuncArgs(expr, "power")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			base, ok1 := toFloat64(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			exp, ok2 := toFloat64(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			base, ok1 := toFloat64(e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			exp, ok2 := toFloat64(e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			if ok1 && ok2 {
 				return math.Pow(base, exp)
 			}
@@ -256,7 +257,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// reads them.
 	for _, function := range []string{"startnode", "endnode"} {
 		if matchFuncStartAndSuffix(expr, function) {
-			value := e.evaluateExpressionWithContextFull(ctx, extractFuncArgs(expr, function), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			value := e.evaluateExpressionWithContextFull(ctx, view.functionArguments().trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if getExpressionFailure(ctx) != nil {
 				return nil
 			}
@@ -271,10 +272,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// nodes(path) - return list of nodes in a path
 	if matchFuncStartAndSuffix(expr, "nodes") {
-		inner := extractFuncArgs(expr, "nodes")
+		inner := view.functionArguments().trim()
 		// First check if we have a full path by that variable name
 		if paths != nil {
-			if pathResult, ok := paths[inner]; ok && pathResult != nil {
+			if pathResult, ok := paths[inner.text()]; ok && pathResult != nil {
 				var result []interface{}
 				for _, node := range pathResult.Nodes {
 					result = append(result, node)
@@ -291,7 +292,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 			return result
 		}
 		// Fallback: return single node from node context
-		if node, ok := nodes[inner]; ok {
+		if node, ok := nodes[inner.text()]; ok {
 			return []interface{}{node}
 		}
 		// A path carried as a computed-row map (WITH p AS path).
@@ -312,10 +313,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// relationships(path) - return list of relationships in a path
 	if matchFuncStartAndSuffix(expr, "relationships") {
-		inner := extractFuncArgs(expr, "relationships")
+		inner := view.functionArguments().trim()
 		// First check if we have a full path by that variable name
 		if paths != nil {
-			if pathResult, ok := paths[inner]; ok && pathResult != nil {
+			if pathResult, ok := paths[inner.text()]; ok && pathResult != nil {
 				result := make([]interface{}, len(pathResult.Relationships))
 				for index, edge := range pathResult.Relationships {
 					result[index] = edge
@@ -332,7 +333,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 			return result
 		}
 		// Fallback: return single relationship from rel context
-		if rel, ok := rels[inner]; ok {
+		if rel, ok := rels[inner.text()]; ok {
 			return []interface{}{rel}
 		}
 		// A path carried as a computed-row map (WITH p AS path).
@@ -365,29 +366,29 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// percentileCont(expr, percentile) - continuous percentile
 	if matchFuncStartAndSuffix(expr, "percentilecont") {
-		inner := extractFuncArgs(expr, "percentilecont")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			// In single-row context, just return the value
-			return e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			return e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 		return nil
 	}
 
 	// percentileDisc(expr, percentile) - discrete percentile
 	if matchFuncStartAndSuffix(expr, "percentiledisc") {
-		inner := extractFuncArgs(expr, "percentiledisc")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			// In single-row context, just return the value
-			return e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			return e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 		return nil
 	}
 
 	// stDev(expr) - standard deviation
 	if matchFuncStartAndSuffix(expr, "stdev") {
-		inner := extractFuncArgs(expr, "stdev")
+		inner := view.functionArguments().trim()
 		// In single-row context, return 0
 		_ = inner
 		return float64(0)
@@ -395,7 +396,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// stDevP(expr) - population standard deviation
 	if matchFuncStartAndSuffix(expr, "stdevp") {
-		inner := extractFuncArgs(expr, "stdevp")
+		inner := view.functionArguments().trim()
 		// In single-row context, return 0
 		_ = inner
 		return float64(0)
@@ -409,9 +410,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	if matchFuncStartAndSuffix(expr, "reduce") || matchFuncStartAndSuffix(expr, "allreduce") {
 		var callFacts1 functionCallFacts
 		if isCall := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1); isCall && isReduceFormFunction(callFacts1.name) {
-			function, inner := callFacts1.name, callFacts1.inner
-
-			return e.evaluateReduceForm(ctx, function, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			function := callFacts1.name
+			return e.evaluateReduceForm(ctx, function, view.functionArguments(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 	}
 
@@ -421,9 +421,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// kalman.init() or kalman.init({processNoise: 0.1, measurementNoise: 88.0})
 	if matchFuncStartAndSuffix(expr, "kalman.init") {
-		inner := extractFuncArgs(expr, "kalman.init")
+		inner := view.functionArguments().trim()
 		var configMap map[string]interface{}
-		if inner != "" {
+		if inner.text() != "" {
 			val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if m, ok := val.(map[string]interface{}); ok {
 				configMap = m
@@ -434,14 +434,14 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// kalman.process(measurement, stateJson) or kalman.process(measurement, stateJson, target)
 	if matchFuncStartAndSuffix(expr, "kalman.process") {
-		inner := extractFuncArgs(expr, "kalman.process")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			measurement, _ := toFloat64(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			stateJSON, _ := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(string)
+			measurement, _ := toFloat64(e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			stateJSON, _ := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(string)
 			target := 0.0
 			if len(args) >= 3 {
-				target, _ = toFloat64(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+				target, _ = toFloat64(e.evaluateExpressionWithContextFull(ctx, args[2].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			}
 			return kalmanProcess(measurement, stateJSON, target)
 		}
@@ -450,11 +450,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// kalman.predict(stateJson, steps)
 	if matchFuncStartAndSuffix(expr, "kalman.predict") {
-		inner := extractFuncArgs(expr, "kalman.predict")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			stateJSON, _ := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(string)
-			steps, _ := toInt(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			stateJSON, _ := e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(string)
+			steps, _ := toInt(e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			return kalmanPredict(stateJSON, steps)
 		}
 		return nil
@@ -462,28 +462,28 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// kalman.state(stateJson) - get current state estimate
 	if matchFuncStartAndSuffix(expr, "kalman.state") {
-		inner := extractFuncArgs(expr, "kalman.state")
+		inner := view.functionArguments().trim()
 		stateJSON, _ := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(string)
 		return kalmanStateValue(stateJSON)
 	}
 
 	// kalman.reset(stateJson) - reset to initial values
 	if matchFuncStartAndSuffix(expr, "kalman.reset") {
-		inner := extractFuncArgs(expr, "kalman.reset")
+		inner := view.functionArguments().trim()
 		stateJSON, _ := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(string)
 		return kalmanReset(stateJSON)
 	}
 
 	// kalman.velocity.init() or kalman.velocity.init(initialPos, initialVel)
 	if matchFuncStartAndSuffix(expr, "kalman.velocity.init") {
-		inner := extractFuncArgs(expr, "kalman.velocity.init")
-		if inner == "" {
+		inner := view.functionArguments().trim()
+		if inner.text() == "" {
 			return kalmanVelocityInit(0, 0, false)
 		}
-		args := e.splitFunctionArgs(inner)
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			pos, _ := toFloat64(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			vel, _ := toFloat64(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			pos, _ := toFloat64(e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			vel, _ := toFloat64(e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			return kalmanVelocityInit(pos, vel, true)
 		}
 		return kalmanVelocityInit(0, 0, false)
@@ -491,11 +491,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// kalman.velocity.process(measurement, stateJson)
 	if matchFuncStartAndSuffix(expr, "kalman.velocity.process") {
-		inner := extractFuncArgs(expr, "kalman.velocity.process")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			measurement, _ := toFloat64(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			stateJSON, _ := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(string)
+			measurement, _ := toFloat64(e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			stateJSON, _ := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(string)
 			return kalmanVelocityProcess(measurement, stateJSON)
 		}
 		return nil
@@ -503,11 +503,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// kalman.velocity.predict(stateJson, steps)
 	if matchFuncStartAndSuffix(expr, "kalman.velocity.predict") {
-		inner := extractFuncArgs(expr, "kalman.velocity.predict")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			stateJSON, _ := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(string)
-			steps, _ := toInt(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			stateJSON, _ := e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(string)
+			steps, _ := toInt(e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			return kalmanVelocityPredict(stateJSON, steps)
 		}
 		return nil
@@ -515,9 +515,9 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// kalman.adaptive.init() or kalman.adaptive.init({trendThreshold: 0.1, ...})
 	if matchFuncStartAndSuffix(expr, "kalman.adaptive.init") {
-		inner := extractFuncArgs(expr, "kalman.adaptive.init")
+		inner := view.functionArguments().trim()
 		var configMap map[string]interface{}
-		if inner != "" {
+		if inner.text() != "" {
 			val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if m, ok := val.(map[string]interface{}); ok {
 				configMap = m
@@ -528,11 +528,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// kalman.adaptive.process(measurement, stateJson)
 	if matchFuncStartAndSuffix(expr, "kalman.adaptive.process") {
-		inner := extractFuncArgs(expr, "kalman.adaptive.process")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			measurement, _ := toFloat64(e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			stateJSON, _ := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(string)
+			measurement, _ := toFloat64(e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			stateJSON, _ := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(string)
 			return kalmanAdaptiveProcess(measurement, stateJSON)
 		}
 		return nil
@@ -551,7 +551,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point({x: val, y: val}) or point({latitude: val, longitude: val})
 	if matchFuncStartAndSuffix(expr, "point") {
-		inner := extractFuncArgs(expr, "point")
+		inner := view.functionArguments().trim()
 		var fields map[string]interface{}
 		switch value := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength).(type) {
 		case map[string]interface{}:
@@ -581,11 +581,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// distance(p1, p2) - Euclidean distance between two points
 	if matchFuncStartAndSuffix(expr, "distance") {
-		inner := extractFuncArgs(expr, "distance")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			p1 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			p2 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			p1 := e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			p2 := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if left, ok := pointValue(p1); ok {
 				if right, ok := pointValue(p2); ok {
 					if distance, ok := pointDistance(left, right); ok {
@@ -619,14 +619,14 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// withinBBox(point, lowerLeft, upperRight) - checks if point is within bounding box
 	if matchFuncStartAndSuffix(expr, "withinbbox") {
-		inner := extractFuncArgs(expr, "withinbbox")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) < 3 {
 			return false
 		}
-		point := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		lowerLeft := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		upperRight := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		point := e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		lowerLeft := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		upperRight := e.evaluateExpressionWithContextFull(ctx, args[2].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if target, ok := pointValue(point); ok {
 			low, lowOK := pointValue(lowerLeft)
 			high, highOK := pointValue(upperRight)
@@ -668,7 +668,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point.x(point) - get x coordinate
 	if matchFuncStartAndSuffix(expr, "point.x") {
-		inner := extractFuncArgs(expr, "point.x")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if m, ok := spatialMap(val); ok {
 			if x, ok := m["x"]; ok {
@@ -682,7 +682,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point.y(point) - get y coordinate
 	if matchFuncStartAndSuffix(expr, "point.y") {
-		inner := extractFuncArgs(expr, "point.y")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if m, ok := spatialMap(val); ok {
 			if y, ok := m["y"]; ok {
@@ -696,7 +696,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point.z(point) - get z coordinate (3D points)
 	if matchFuncStartAndSuffix(expr, "point.z") {
-		inner := extractFuncArgs(expr, "point.z")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if m, ok := spatialMap(val); ok {
 			if z, ok := m["z"]; ok {
@@ -710,7 +710,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point.latitude(point) - get latitude
 	if matchFuncStartAndSuffix(expr, "point.latitude") {
-		inner := extractFuncArgs(expr, "point.latitude")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if m, ok := spatialMap(val); ok {
 			if lat, ok := m["latitude"]; ok {
@@ -724,7 +724,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point.longitude(point) - get longitude
 	if matchFuncStartAndSuffix(expr, "point.longitude") {
-		inner := extractFuncArgs(expr, "point.longitude")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if m, ok := spatialMap(val); ok {
 			if lon, ok := m["longitude"]; ok {
@@ -738,7 +738,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point.srid(point) - get SRID (Spatial Reference System Identifier)
 	if matchFuncStartAndSuffix(expr, "point.srid") {
-		inner := extractFuncArgs(expr, "point.srid")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if m, ok := spatialMap(val); ok {
 			if srid, ok := m["srid"]; ok {
@@ -755,11 +755,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point.distance(p1, p2) - alias for distance(p1, p2)
 	if matchFuncStartAndSuffix(expr, "point.distance") {
-		inner := extractFuncArgs(expr, "point.distance")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			p1 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			p2 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			p1 := e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			p2 := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if left, ok := pointValue(p1); ok {
 				if right, ok := pointValue(p2); ok {
 					if distance, ok := pointDistance(left, right); ok {
@@ -795,7 +795,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// the box (pointWithinBBox). As in Neo4j, an argument that isn't a point
 	// (null, a map, a string, …) or points of different systems give null.
 	if matchFuncStartAndSuffix(expr, "point.withinbbox") {
-		args := e.splitFunctionArgs(extractFuncArgs(expr, "point.withinbbox"))
+		args := view.functionArguments().trim().commaViews()
 		if len(args) != 3 {
 			return nil
 		}
@@ -815,14 +815,14 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point.withinDistance(point, center, distance) - check if point is within distance of center
 	if matchFuncStartAndSuffix(expr, "point.withindistance") {
-		inner := extractFuncArgs(expr, "point.withindistance")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) < 3 {
 			return false
 		}
-		point := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		center := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		maxDist := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		point := e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		center := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		maxDist := e.evaluateExpressionWithContextFull(ctx, args[2].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 
 		pm, ok1 := spatialMap(point)
 		cm, ok2 := spatialMap(center)
@@ -851,7 +851,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point.height(point) - get height/altitude (alias for z coordinate)
 	if matchFuncStartAndSuffix(expr, "point.height") {
-		inner := extractFuncArgs(expr, "point.height")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if m, ok := spatialMap(val); ok {
 			// Try z first (3D Cartesian)
@@ -878,7 +878,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point.crs(point) - get Coordinate Reference System name
 	if matchFuncStartAndSuffix(expr, "point.crs") {
-		inner := extractFuncArgs(expr, "point.crs")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if m, ok := spatialMap(val); ok {
 			// Check if CRS is explicitly set
@@ -902,17 +902,17 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// polygon(points) - create a polygon geometry from a list of points
 	if matchFuncStartAndSuffix(expr, "polygon") {
-		inner := extractFuncArgs(expr, "polygon")
+		inner := view.functionArguments().trim()
 
 		// Check if inner is a list literal [...]
-		if isListLiteral(inner) {
+		if isListLiteral(inner.text()) {
 			// Parse and evaluate list elements manually
-			listContent := inner[1 : len(inner)-1]
-			pointExprs := e.splitFunctionArgs(listContent)
+			listContent := inner.window(1, len(inner.text())-1)
+			pointExprs := listContent.commaViews()
 
 			pointList := make([]interface{}, 0, len(pointExprs))
 			for _, pointExpr := range pointExprs {
-				evalPoint := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(pointExpr), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+				evalPoint := e.evaluateExpressionWithContextFull(ctx, pointExpr.trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 				pointList = append(pointList, evalPoint)
 			}
 
@@ -944,17 +944,17 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// lineString(points) - create a lineString geometry from a list of points
 	if matchFuncStartAndSuffix(expr, "linestring") {
-		inner := extractFuncArgs(expr, "linestring")
+		inner := view.functionArguments().trim()
 
 		// Check if inner is a list literal [...]
-		if isListLiteral(inner) {
+		if isListLiteral(inner.text()) {
 			// Parse and evaluate list elements manually
-			listContent := inner[1 : len(inner)-1]
-			pointExprs := e.splitFunctionArgs(listContent)
+			listContent := inner.window(1, len(inner.text())-1)
+			pointExprs := listContent.commaViews()
 
 			pointList := make([]interface{}, 0, len(pointExprs))
 			for _, pointExpr := range pointExprs {
-				evalPoint := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(pointExpr), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+				evalPoint := e.evaluateExpressionWithContextFull(ctx, pointExpr.trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 				pointList = append(pointList, evalPoint)
 			}
 
@@ -986,14 +986,14 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point.intersects(point, polygon) - check if point intersects with polygon
 	if matchFuncStartAndSuffix(expr, "point.intersects") {
-		inner := extractFuncArgs(expr, "point.intersects")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) < 2 {
 			return false
 		}
 
-		pointVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		polygonVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		pointVal := e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		polygonVal := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 
 		pm, ok1 := spatialMap(pointVal)
 		polygonMap, ok2 := polygonVal.(map[string]interface{})
@@ -1024,14 +1024,14 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 
 	// point.contains(polygon, point) - check if polygon contains point
 	if matchFuncStartAndSuffix(expr, "point.contains") {
-		inner := extractFuncArgs(expr, "point.contains")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) < 2 {
 			return false
 		}
 
-		polygonVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-		pointVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		polygonVal := e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		pointVal := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 
 		polygonMap, ok1 := polygonVal.(map[string]interface{})
 		pm, ok2 := spatialMap(pointVal)
@@ -1067,7 +1067,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// all / any / none / single(variable IN list WHERE predicate)
 	for _, function := range []string{"all", "any", "none", "single"} {
 		if matchFuncStartAndSuffix(expr, function) {
-			return e.evaluateQuantifierWithContext(ctx, function, extractFuncArgs(expr, function), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			return e.evaluateQuantifierWithContext(ctx, function, view.functionArguments().trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 	}
 
@@ -1081,7 +1081,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// evaluated as one.
 	for _, function := range []string{"filter", "extract"} {
 		if matchFuncStartAndSuffix(expr, function) {
-			comprehension := "[" + extractFuncArgs(expr, function) + "]"
+			comprehension := view.functionArguments().trim().wrap("[", "]")
 			if list, ok := cypherListValue(e.evaluateExpressionWithContextFull(ctx, comprehension, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)); ok {
 				return list
 			}
@@ -1092,22 +1092,23 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 	// [x IN list WHERE predicate | projection], each part but the list
 	// optional; parseListComprehension finds the parts at the top level, so a
 	// list literal holding a nested comprehension or reduce isn't one.
-	if inner, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
-		if varName, listExpr, condition, projection, comprehension := parseListComprehension(inner); comprehension {
-			return e.evaluateListComprehension(ctx, varName, listExpr, condition, projection, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	if _, enclosed := stripEnclosingRowDelimiter(expr, '[', ']'); enclosed {
+		innerView := view.window(1, len(expr)-1).trim()
+		if parts, comprehension := parseListComprehensionSpans(innerView); comprehension {
+			return e.evaluateListComprehension(ctx, parts.variable, innerView.spanWindow(parts.list), innerView.spanWindow(parts.predicate), innerView.spanWindow(parts.projection), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 	}
 
 	// ========================================
 	// CASE WHEN Expressions (must be before operators)
 	// ========================================
-	if isCaseExpression(expr) {
-		return e.evaluateCaseExpression(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	if isCaseExpression(view) {
+		return e.evaluateCaseExpression(ctx, view, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// ========================================
 
-	return e.evaluateExpressionWithContextFullOperators(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	return e.evaluateExpressionWithContextFullOperators(ctx, view, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 }
 
 // evaluateQuantifierWithContext evaluates the list predicate function
@@ -1117,11 +1118,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullMath(
 // is a list of that one value (coerceToUnwindItems). Semantic validation rejects
 // arguments of any other shape before evaluation; here they, and a list
 // expression this evaluator can't evaluate, are null.
-func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, function, inner string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
-	varName, listExpr, predicate, parsed := parseQuantifierArguments(inner)
+func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, function string, inner braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+	parts, parsed := parseQuantifierSpans(inner)
 	if !parsed {
 		return nil
 	}
+	varName, listExpr, predicate := parts.variable, inner.spanWindow(parts.list), inner.spanWindow(parts.predicate)
 	list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	if list == nil {
 		return nil
@@ -1163,7 +1165,7 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 	for name, value := range parameterRowValues(ctx) {
 		bindAbsent(name, value)
 	}
-	if needsRowStatementContext(predicate) {
+	if needsRowStatementContext(predicate.text()) {
 		bindAbsent(rowStatementContextKey, ctx)
 	}
 	value, _, err := rowQuantifierLoop(function, coerceToUnwindItems(list), func(item interface{}) { values[varName] = item }, func() (interface{}, bool, error) {
@@ -1176,7 +1178,7 @@ func (e *StorageExecutor) evaluateQuantifierWithContext(ctx context.Context, fun
 	return value
 }
 
-func (e *StorageExecutor) evaluateQuantifierPredicate(ctx context.Context, predicate string, values map[string]interface{}) (interface{}, bool) {
+func (e *StorageExecutor) evaluateQuantifierPredicate(ctx context.Context, predicate braceView, values map[string]interface{}) (interface{}, bool) {
 	return e.evaluateRowExpressionWithContext(ctx, predicate, values)
 }
 
@@ -1185,12 +1187,12 @@ func (e *StorageExecutor) evaluateQuantifierPredicate(ctx context.Context, predi
 // otherwise a value that isn't a list is a one-item list, and an item the
 // predicate doesn't hold for is left out. A relationship item's type(x) /
 // id(x) projection reads a relationship map's type / _edgeId as well.
-func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName, listExpr, condition, projection string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName string, listExpr, condition, projection braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
 	list := e.evaluateExpressionWithContextFull(ctx, listExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	if list == nil {
 		return nil
 	}
-	if condition == "" && projection == "" {
+	if condition.text() == "" && projection.text() == "" {
 		if texts, isTexts := list.([]string); isTexts {
 			items := make([]interface{}, len(texts))
 			for index, item := range texts {
@@ -1215,14 +1217,14 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 	values := valueBindingsLayer(ctx, 1)
 	itemCtx := withValueBindings(ctx, values)
 	var holds func() (bool, bool, error)
-	if condition != "" {
+	if condition.text() != "" {
 		holds = func() (bool, bool, error) {
 			value := e.evaluateExpressionWithContextFull(itemCtx, condition, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
 			return rowConditionHolds(value, true, getExpressionFailure(itemCtx))
 		}
 	}
 	var project func() (interface{}, bool, error)
-	if projection != "" {
+	if projection.text() != "" {
 		project = func() (interface{}, bool, error) {
 			value := e.evaluateExpressionWithContextFull(itemCtx, projection, boundNodes, boundRels, paths, allPathEdges, allPathNodes, pathLength)
 			return value, true, getExpressionFailure(itemCtx)
@@ -1240,13 +1242,13 @@ func (e *StorageExecutor) evaluateListComprehension(ctx context.Context, varName
 // evaluateReduceForm evaluates reduce and allReduce (parseReduceForm) in the
 // expression evaluator: a list that isn't one is a one-item list, and an
 // error is recorded on ctx, giving null.
-func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inner string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function string, inner braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
 	form, ok := parseReduceForm(function, inner)
 	if !ok {
 		return nil
 	}
-	acc := e.evaluateExpressionWithContextFull(ctx, form.initial, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-	list := e.evaluateExpressionWithContextFull(ctx, form.list, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	acc := e.evaluateExpressionWithContextFull(ctx, inner.spanWindow(form.initialSpan), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	list := e.evaluateExpressionWithContextFull(ctx, inner.spanWindow(form.listSpan), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	if list == nil {
 		return nil
 	}
@@ -1266,7 +1268,7 @@ func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inne
 	}
 	values := valueBindingsLayer(ctx, 2)
 	itemCtx := withValueBindings(ctx, values)
-	evaluate := func(expression string) func(accumulator, item interface{}) (interface{}, error) {
+	evaluate := func(expression braceView) func(accumulator, item interface{}) (interface{}, error) {
 		return func(accumulator, item interface{}) (interface{}, error) {
 			bindEvaluationValue(form.accumulator, accumulator, tempNodes, tempRels, values)
 			bindEvaluationValue(form.variable, item, tempNodes, tempRels, values)
@@ -1276,10 +1278,10 @@ func (e *StorageExecutor) evaluateReduceForm(ctx context.Context, function, inne
 	var appender *reduceAppender
 	if plan := form.appendPlan(); plan.usable(values) {
 		appender = &reduceAppender{plan: plan, term: func(index int, accumulator, item interface{}) (interface{}, error) {
-			return evaluate(plan.terms[index])(accumulator, item)
+			return evaluate(plan.views[index])(accumulator, item)
 		}}
 	}
-	result, err := runReduceForm(form, acc, items, evaluate(form.step), evaluate(form.predicate), appender)
+	result, err := runReduceForm(form, acc, items, evaluate(inner.spanWindow(form.stepSpan)), evaluate(inner.spanWindow(form.predicateSpan)), appender)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return nil

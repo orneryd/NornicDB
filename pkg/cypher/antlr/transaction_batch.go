@@ -2,7 +2,7 @@ package antlr
 
 import (
 	"context"
-	"strings"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -26,10 +26,12 @@ func (spec *TransactionBatch) ExpressionSyntax() (SyntaxNode, bool) {
 
 // CallClause is a compatibility view of an existing canonical CALL node.
 type CallClause struct {
-	Body           string
-	After          string
-	Batch          *TransactionBatch
-	PlacementError string
+	// Author: #1663 implementation lane. Extents come from the retained CALL grammar.
+	BodySpan, AfterSpan cyphertext.Span
+	Body                string
+	After               string
+	Batch               *TransactionBatch
+	PlacementError      string
 }
 
 // ReadCallClause is the standalone entry adapter. Statement consumers call
@@ -123,9 +125,11 @@ func DescribeCall(call SyntaxNode) CallClause {
 	_, bodyStart := open.Span()
 	bodyEnd, _ := close.Span()
 	_, end := call.Span()
-	result := CallClause{
-		Body:  strings.TrimSpace(call.data.view.Original[bodyStart:bodyEnd]),
-		After: strings.TrimSpace(call.data.view.Original[end:]),
+	bodySpan := cyphertext.TrimWhitespaceSpan(call.data.view.Original, cyphertext.Span{Start: bodyStart, End: bodyEnd})
+	afterSpan := cyphertext.TrimWhitespaceSpan(call.data.view.Original, cyphertext.Span{Start: end, End: len(call.data.view.Original)})
+	result := CallClause{BodySpan: bodySpan, AfterSpan: afterSpan,
+		Body:  call.data.view.Original[bodySpan.Start:bodySpan.End],
+		After: call.data.view.Original[afterSpan.Start:afterSpan.End],
 	}
 	batch := call.ChildRule(CypherParserRULE_transactionBatch)
 	if !batch.Valid() {

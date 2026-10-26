@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
+
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
@@ -311,6 +314,9 @@ func wrapPipelineIterator(ctx context.Context, it RowIterator, prefetch int) Row
 // (resolveExecGraph), preserves its catalog name for selection checks, joins the distributed
 // transaction, and merges the row's variables into the parameters.
 func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTransaction, f *FragmentExec, params map[string]interface{}) (Location, map[string]interface{}, context.Context, error) {
+	if f.Source != nil {
+		ctx = cyphertext.WithSourceView(ctx, f.Source)
+	}
 	recordBindings, _ := RecordBindingsFromContext(ctx)
 	execParams := params
 	if len(recordBindings) > 0 {
@@ -401,33 +407,33 @@ func lastAsIndexFold(s string) int {
 func splitTopLevelCSV(s string) []string {
 	var parts []string
 	start := 0
-	paren, bracket, brace := 0, 0, 0
+	paren, bracket, brace := 0, 0, cyphertext.BraceDepth(0)
 	for i := 0; i < len(s); i++ {
 		if next, quoted := cyphertext.SkipToken(s, i); quoted {
 			i = next - 1
 			continue
 		}
 		ch := s[i]
-		switch ch {
-		case '(':
+		switch {
+		case ch == '(':
 			paren++
-		case ')':
+		case ch == ')':
 			if paren > 0 {
 				paren--
 			}
-		case '[':
+		case ch == '[':
 			bracket++
-		case ']':
+		case ch == ']':
 			if bracket > 0 {
 				bracket--
 			}
-		case '{':
-			brace++
-		case '}':
+		case cyphertext.IsOpenBrace(ch):
+			brace.Open()
+		case cyphertext.IsCloseBrace(ch):
 			if brace > 0 {
-				brace--
+				brace.Close(false)
 			}
-		case ',':
+		case ch == ',':
 			if paren == 0 && bracket == 0 && brace == 0 {
 				parts = append(parts, s[start:i])
 				start = i + 1
@@ -497,7 +503,7 @@ func (e *FabricExecutor) executeApply(ctx context.Context, tx *FabricTransaction
 			return nil, fmt.Errorf("apply input failed: %w", err)
 		}
 		if !f.Projection && len(inputResult.Rows) <= fabricApplyInMemoryMaxRows {
-			if streamRes, handled := executeApplyInMemoryProjectionColumns(inputResult, execFrag.Query, e.executionProjection(ctx, execFrag.Query, inputResult.Columns).Names); handled {
+			if streamRes, handled := executeApplyInMemoryProjectionColumns(inputResult, execFrag.Source, e.executionProjection(ctx, execFrag.Query, inputResult.Columns).Names); handled {
 				return streamRes, nil
 			}
 		}
@@ -758,31 +764,31 @@ func firstToken(s string) (token string, rest string) {
 }
 
 func indexTopLevelKeyword(s string, keyword string) int {
-	paren, bracket, brace := 0, 0, 0
+	paren, bracket, brace := 0, 0, cyphertext.BraceDepth(0)
 	for i := 0; i < len(s); i++ {
 		if next, quoted := cyphertext.SkipToken(s, i); quoted {
 			i = next - 1
 			continue
 		}
 		ch := s[i]
-		switch ch {
-		case '(':
+		switch {
+		case ch == '(':
 			paren++
-		case ')':
+		case ch == ')':
 			if paren > 0 {
 				paren--
 			}
-		case '[':
+		case ch == '[':
 			bracket++
-		case ']':
+		case ch == ']':
 			if bracket > 0 {
 				bracket--
 			}
-		case '{':
-			brace++
-		case '}':
+		case cyphertext.IsOpenBrace(ch):
+			brace.Open()
+		case cyphertext.IsCloseBrace(ch):
 			if brace > 0 {
-				brace--
+				brace.Close(false)
 			}
 		}
 		if paren != 0 || bracket != 0 || brace != 0 {
@@ -814,36 +820,36 @@ func splitTopLevelAnd(whereClause string) []string {
 }
 
 func splitTopLevelEquality(expr string) (lhs, rhs string, ok bool) {
-	paren, bracket, brace := 0, 0, 0
+	paren, bracket, brace := 0, 0, cyphertext.BraceDepth(0)
 	for i := 0; i < len(expr); i++ {
 		if next, quoted := cyphertext.SkipToken(expr, i); quoted {
 			i = next - 1
 			continue
 		}
 		ch := expr[i]
-		switch ch {
-		case '(':
+		switch {
+		case ch == '(':
 			paren++
 			continue
-		case ')':
+		case ch == ')':
 			if paren > 0 {
 				paren--
 			}
 			continue
-		case '[':
+		case ch == '[':
 			bracket++
 			continue
-		case ']':
+		case ch == ']':
 			if bracket > 0 {
 				bracket--
 			}
 			continue
-		case '{':
-			brace++
+		case cyphertext.IsOpenBrace(ch):
+			brace.Open()
 			continue
-		case '}':
+		case cyphertext.IsCloseBrace(ch):
 			if brace > 0 {
-				brace--
+				brace.Close(false)
 			}
 			continue
 		}
@@ -981,13 +987,13 @@ func mergeBindings(parent, row map[string]interface{}) map[string]interface{} {
 	return out
 }
 
-var reWithCollectMapOnly = regexp.MustCompile(`(?is)^\s*WITH\s+collect\s*\(\s*\{([^}]*)\}\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+RETURN\s+([A-Za-z_][A-Za-z0-9_]*))?\s*;?\s*$`)
+var reWithCollectMapOnly = regexp.MustCompile(`(?is)^\s*WITH\s+collect\s*\(\s*(__source_map)\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)(?:\s+RETURN\s+([A-Za-z_][A-Za-z0-9_]*))?\s*;?\s*$`)
 
-var reWithCollectDistinctKeys = regexp.MustCompile(`(?is)^\s*WITH\s+collect\s*\(\s*\{([^}]*)\}\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+UNWIND\s+([A-Za-z_][A-Za-z0-9_]*)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+WITH\s+collect\s*\(\s*DISTINCT\s+([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+RETURN\s+([A-Za-z_][A-Za-z0-9_]*)\s*;?\s*$`)
+var reWithCollectDistinctKeys = regexp.MustCompile(`(?is)^\s*WITH\s+collect\s*\(\s*(__source_map)\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+UNWIND\s+([A-Za-z_][A-Za-z0-9_]*)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+WITH\s+collect\s*\(\s*DISTINCT\s+([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+RETURN\s+([A-Za-z_][A-Za-z0-9_]*)\s*;?\s*$`)
 
-var reWithCollectJoinFlat = regexp.MustCompile(`(?is)^\s*WITH\s+([A-Za-z_][A-Za-z0-9_]*)\s*,\s*collect\s*\(\s*\{([^}]*)\}\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+UNWIND\s+([A-Za-z_][A-Za-z0-9_]*)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+WITH\s+([A-Za-z_][A-Za-z0-9_]*)\s*,\s*\[\s*([A-Za-z_][A-Za-z0-9_]*)\s+IN\s+([A-Za-z_][A-Za-z0-9_]*)\s+WHERE\s+([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\]\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+UNWIND\s+([A-Za-z_][A-Za-z0-9_]*)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+RETURN\s+(.+?)\s*;?\s*$`)
+var reWithCollectJoinFlat = regexp.MustCompile(`(?is)^\s*WITH\s+([A-Za-z_][A-Za-z0-9_]*)\s*,\s*collect\s*\(\s*(__source_map)\s*\)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+UNWIND\s+([A-Za-z_][A-Za-z0-9_]*)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+WITH\s+([A-Za-z_][A-Za-z0-9_]*)\s*,\s*\[\s*([A-Za-z_][A-Za-z0-9_]*)\s+IN\s+([A-Za-z_][A-Za-z0-9_]*)\s+WHERE\s+([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([A-Za-z_][A-Za-z0-9_]*)\.([A-Za-z_][A-Za-z0-9_]*)\s*\]\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+UNWIND\s+([A-Za-z_][A-Za-z0-9_]*)\s+AS\s+([A-Za-z_][A-Za-z0-9_]*)\s+RETURN\s+(.+?)\s*;?\s*$`)
 
-func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query string, names resultmetadata.Names) (*ResultStream, bool) {
+func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, source *cyphertext.Source, names resultmetadata.Names) (*ResultStream, bool) {
 	if inputResult == nil {
 		return nil, false
 	}
@@ -996,6 +1002,7 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 	if columns == nil {
 		return nil, false
 	}
+	query, mapSource := recordedMapTemplate(source)
 	trimmed := strings.TrimSpace(query)
 	if trimmed == "" {
 		return nil, false
@@ -1059,7 +1066,6 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 	}
 
 	if m := reWithCollectDistinctKeys.FindStringSubmatch(trimmed); len(m) == 9 {
-		mapSpec := strings.TrimSpace(m[1])
 		rowsAlias := strings.TrimSpace(m[2])
 		unwindList := strings.TrimSpace(m[3])
 		unwindVar := strings.TrimSpace(m[4])
@@ -1070,7 +1076,7 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 		if !strings.EqualFold(rowsAlias, unwindList) || !strings.EqualFold(unwindVar, distinctVar) || !strings.EqualFold(keysAlias, returnAlias) {
 			return nil, false
 		}
-		rowMaps, ok := projectInputRowsAsMaps(inputResult, mapSpec)
+		rowMaps, ok := projectInputRowsAsMaps(inputResult, mapSource)
 		if !ok {
 			return nil, false
 		}
@@ -1091,13 +1097,12 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 	}
 
 	if m := reWithCollectMapOnly.FindStringSubmatch(trimmed); len(m) == 4 {
-		mapSpec := strings.TrimSpace(m[1])
 		rowsAlias := strings.TrimSpace(m[2])
 		returnAlias := strings.TrimSpace(m[3])
 		if returnAlias != "" && !strings.EqualFold(rowsAlias, returnAlias) {
 			return nil, false
 		}
-		rowMaps, ok := projectInputRowsAsMaps(inputResult, mapSpec)
+		rowMaps, ok := projectInputRowsAsMaps(inputResult, mapSource)
 		if !ok {
 			return nil, false
 		}
@@ -1116,7 +1121,7 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 	// UNWIND rows AS r
 	// WITH r, [g IN grouped WHERE g.k = r.textKey128][0] AS hit
 	// RETURN r.textKey AS textKey, r.textKey128 AS textKey128, coalesce(hit.texts, []) AS texts
-	if startsWithFold(trimmed, "WITH rows, collect({k: k, texts: texts}) AS grouped") &&
+	if startsWithFold(trimmed, "WITH rows, collect(__source_map) AS grouped") && recordedJoinMap(mapSource) &&
 		containsFold(trimmed, "UNWIND rows AS r") &&
 		strings.Contains(trimmed, "g.k = r.textKey128") &&
 		containsFold(trimmed, "COALESCE(hit.texts, []) AS texts") {
@@ -1131,7 +1136,7 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 	// WITH <r>, [g IN <grouped> WHERE g.<k1> = <r>.<k2>] AS <ms>
 	// UNWIND <ms> AS <m>
 	// RETURN <r>.<...> AS ..., <m>.<...> AS ...
-	if projected, ok := executeCollectedMapJoinFlatProjectionColumns(inputResult, trimmed, resultmetadata.Known(columns)); ok {
+	if projected, ok := executeCollectedMapJoinFlatProjectionColumns(inputResult, source, resultmetadata.Known(columns)); ok {
 		projected.Columns = columns
 		return projected, true
 	}
@@ -1147,31 +1152,31 @@ type simpleOrderSpec struct {
 func splitTopLevelResultModifiers(clause string) (projection string, modifiers string) {
 	projection = strings.TrimSpace(clause)
 	modifiers = ""
-	paren, bracket, brace := 0, 0, 0
+	paren, bracket, brace := 0, 0, cyphertext.BraceDepth(0)
 	for i := 0; i < len(clause); i++ {
 		if next, quoted := cyphertext.SkipToken(clause, i); quoted {
 			i = next - 1
 			continue
 		}
 		ch := clause[i]
-		switch ch {
-		case '(':
+		switch {
+		case ch == '(':
 			paren++
-		case ')':
+		case ch == ')':
 			if paren > 0 {
 				paren--
 			}
-		case '[':
+		case ch == '[':
 			bracket++
-		case ']':
+		case ch == ']':
 			if bracket > 0 {
 				bracket--
 			}
-		case '{':
-			brace++
-		case '}':
+		case cyphertext.IsOpenBrace(ch):
+			brace.Open()
+		case cyphertext.IsCloseBrace(ch):
 			if brace > 0 {
-				brace--
+				brace.Close(false)
 			}
 		}
 		if paren != 0 || bracket != 0 || brace != 0 {
@@ -1404,29 +1409,11 @@ func asComparableFloat(v interface{}) (float64, bool) {
 	}
 }
 
-func projectInputRowsAsMaps(input *ResultStream, mapSpec string) ([]map[string]interface{}, bool) {
+func projectInputRowsAsMaps(input *ResultStream, source *cyphertext.Source) ([]map[string]interface{}, bool) {
 	colIdx := buildColumnIndex(input.Columns)
-	entries := splitTopLevelCSV(mapSpec)
-	if len(entries) == 0 {
+	pairs, valid := recordedMapPairs(source)
+	if !valid || len(pairs) == 0 {
 		return nil, false
-	}
-	type kv struct {
-		key string
-		col string
-	}
-	pairs := make([]kv, 0, len(entries))
-	for _, e := range entries {
-		e = strings.TrimSpace(e)
-		colon := strings.Index(e, ":")
-		if colon <= 0 {
-			return nil, false
-		}
-		k := strings.TrimSpace(e[:colon])
-		v := strings.TrimSpace(e[colon+1:])
-		if !cyphertext.IsIdentifier(k) || !cyphertext.IsIdentifier(v) {
-			return nil, false
-		}
-		pairs = append(pairs, kv{key: k, col: v})
 	}
 
 	out := make([]map[string]interface{}, 0, len(input.Rows))
@@ -1440,6 +1427,87 @@ func projectInputRowsAsMaps(input *ResultStream, mapSpec string) ([]map[string]i
 		out = append(out, m)
 	}
 	return out, true
+}
+
+type recordedMapPair struct{ key, col string }
+
+func recordedJoinMap(source *cyphertext.Source) bool {
+	pairs, ok := recordedMapPairs(source)
+	return ok && len(pairs) == 2 && strings.EqualFold(pairs[0].key, "k") && strings.EqualFold(pairs[0].col, "k") && strings.EqualFold(pairs[1].key, "texts") && strings.EqualFold(pairs[1].col, "texts")
+}
+
+// recordedMapTemplate removes a retained map extent only from the strategy
+// recognizer's input. The recognizer never determines brace/entry boundaries.
+func recordedMapTemplate(source *cyphertext.Source) (string, *cyphertext.Source) {
+	if source == nil {
+		return "", nil
+	}
+	var selected cyphertext.Span
+	analysis := cypherantlr.OriginalBraceAnalysis(source, false, nil)
+	if analysis.Admission() != nil {
+		// An inadmissible statement has no map template; its admission error is
+		// the owner's, reported where the statement is admitted.
+		return source.Text, nil
+	}
+	for _, final := range analysis.Records() {
+		record := final.Lexical
+		if final.Role != cypherantlr.LiteralBrace && final.Role != cypherantlr.PatternPropertyBrace {
+			continue
+		}
+		spans, err := source.ProjectBrace(record)
+		if err != nil {
+			continue
+		}
+		for _, span := range spans {
+			if selected.End == 0 || span.Start < selected.Start {
+				selected = span
+			}
+		}
+	}
+	if selected.End == 0 {
+		return source.Text, nil
+	}
+	return source.Text[:selected.Start] + "__source_map" + source.Text[selected.End:], source.Window(selected.Start, selected.End)
+}
+
+func recordedMapPairs(source *cyphertext.Source) ([]recordedMapPair, bool) {
+	if source == nil {
+		return nil, false
+	}
+	analysis := cypherantlr.OriginalBraceAnalysis(source, false, nil)
+	if analysis.Admission() != nil {
+		// Malformed entries (a trailing comma, a key without a value) are the
+		// owner's syntax error; this reader declines them as release did.
+		return nil, false
+	}
+	final, found := analysis.At(source, 0)
+	if !found || final.Role != cypherantlr.LiteralBrace && final.Role != cypherantlr.PatternPropertyBrace {
+		return nil, false
+	}
+	var entries []cyphertext.BraceEntry
+	for _, original := range final.Lexical.Entries() {
+		projected, err := source.ProjectEntry(original)
+		if err != nil {
+			panic(err)
+		}
+		entries = append(entries, projected...)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Span.Start < entries[j].Span.Start })
+	var pairs []recordedMapPair
+	for _, entry := range entries {
+		if entry.Kind != cyphertext.KeyedBraceEntry {
+			return nil, false
+		}
+		value := source.Text[entry.Value.Start:entry.Value.End]
+		reader := cyphertext.NewReader(value, 0)
+		token, found := reader.Next()
+		_, extra := reader.Next()
+		if !found || extra || !cyphertext.BraceEntryName(value, token) {
+			return nil, false
+		}
+		pairs = append(pairs, recordedMapPair{key: cyphertext.SymbolicNameValue(source.Text[entry.Name.Start:entry.Name.End]), col: cyphertext.SymbolicNameValue(token.Text(value))})
+	}
+	return pairs, true
 }
 
 func executeRowsGroupedJoinProjection(input *ResultStream) *ResultStream {
@@ -1496,17 +1564,17 @@ func executeRowsGroupedJoinProjection(input *ResultStream) *ResultStream {
 	return out
 }
 
-func executeCollectedMapJoinFlatProjectionColumns(input *ResultStream, query string, names resultmetadata.Names) (*ResultStream, bool) {
+func executeCollectedMapJoinFlatProjectionColumns(input *ResultStream, source *cyphertext.Source, names resultmetadata.Names) (*ResultStream, bool) {
 	if input == nil || len(input.Rows) == 0 {
 		return nil, false
 	}
+	query, mapSource := recordedMapTemplate(source)
 	m := reWithCollectJoinFlat.FindStringSubmatch(query)
 	if len(m) != 17 {
 		return nil, false
 	}
 
 	rowsAlias := strings.TrimSpace(m[1])
-	mapSpec := strings.TrimSpace(m[2])
 	groupAlias := strings.TrimSpace(m[3])
 	unwindList := strings.TrimSpace(m[4])
 	rowVar := strings.TrimSpace(m[5])
@@ -1531,8 +1599,8 @@ func executeCollectedMapJoinFlatProjectionColumns(input *ResultStream, query str
 		return nil, false
 	}
 
-	collectPairs := splitTopLevelCSV(mapSpec)
-	if len(collectPairs) == 0 {
+	collectPairs, valid := recordedMapPairs(mapSource)
+	if !valid || len(collectPairs) == 0 {
 		return nil, false
 	}
 	type mapPair struct {
@@ -1542,13 +1610,7 @@ func executeCollectedMapJoinFlatProjectionColumns(input *ResultStream, query str
 	mapPairs := make([]mapPair, 0, len(collectPairs))
 	joinFieldExists := false
 	for _, p := range collectPairs {
-		p = strings.TrimSpace(p)
-		colon := strings.IndexByte(p, ':')
-		if colon <= 0 {
-			return nil, false
-		}
-		key := strings.TrimSpace(p[:colon])
-		src := strings.TrimSpace(p[colon+1:])
+		key, src := p.key, p.col
 		if !cyphertext.IsIdentifier(key) || !cyphertext.IsIdentifier(src) {
 			return nil, false
 		}
@@ -1734,7 +1796,15 @@ func (e *FabricExecutor) executeApplyAsPipeline(
 	if res != nil && len(res.Columns) == 1 && res.Columns[0] == rowVar {
 		// Fallback: when pipeline execution leaks the wrapper row map column,
 		// apply structural in-memory projection from the original inner query.
-		if projected, ok := executeCollectedMapJoinFlatProjectionColumns(inputResult, trimmed, e.executionProjection(ctx, trimmed, inputResult.Columns).Names); ok {
+		source := inner.Source
+		if source != nil {
+			if source.Text != inner.Query {
+				panic("fabric: projection lost its carried source view")
+			}
+			start := len(inner.Query) - len(strings.TrimLeftFunc(inner.Query, unicode.IsSpace))
+			source = source.Window(start, start+len(trimmed))
+		}
+		if projected, ok := executeCollectedMapJoinFlatProjectionColumns(inputResult, source, e.executionProjection(ctx, trimmed, inputResult.Columns).Names); ok {
 			return projected, true, nil
 		}
 		res.RowWrapper = true
@@ -1763,9 +1833,10 @@ func rewriteFragmentWithImports(fragment Fragment) Fragment {
 	switch f := fragment.(type) {
 	case *FragmentExec:
 		importCols := importColumnsFromFragment(f.Input)
-		if rewritten := rewriteLeadingWithImports(f.Query, importCols); rewritten != f.Query {
+		if rewritten := rewriteLeadingWithSourceImports(fragmentPlanningSource(f), importCols); rewritten != f.Query {
+			// The emitted text is new; it no longer is the retained Source.
 			copied := *f
-			copied.Query = rewritten
+			copied.Query, copied.Source, copied.sourceAnchor = rewritten, nil, nil
 			return &copied
 		}
 		return fragment
@@ -1792,9 +1863,10 @@ func rewriteFragmentWithRuntimeImports(fragment Fragment, runtimeCols []string) 
 	case *FragmentExec:
 		importCols := importColumnsFromFragment(f.Input)
 		merged := mergeImportColumns(runtimeCols, importCols)
-		if rewritten := rewriteLeadingWithImports(f.Query, merged); rewritten != f.Query {
+		if rewritten := rewriteLeadingWithSourceImports(fragmentPlanningSource(f), merged); rewritten != f.Query {
+			// The emitted text is new; it no longer is the retained Source.
 			copied := *f
-			copied.Query = rewritten
+			copied.Query, copied.Source, copied.sourceAnchor = rewritten, nil, nil
 			return &copied
 		}
 		return fragment
@@ -2013,7 +2085,8 @@ func dropResultColumns(res *ResultStream, columns []string) {
 	res.Columns = kept
 }
 
-func rewriteLeadingWithImports(query string, importCols []string) string {
+func rewriteLeadingWithSourceImports(source planningSource, importCols []string) string {
+	query := source.text()
 	if len(importCols) == 0 {
 		return query
 	}
@@ -2039,7 +2112,7 @@ func rewriteLeadingWithImports(query string, importCols []string) string {
 		return query
 	}
 
-	withEnd, ok := findLeadingWithClauseEnd(trimmed, nil)
+	withEnd, ok := findLeadingWithSourceClauseEnd(source.trim())
 	if !ok || withEnd <= 0 {
 		return query
 	}
@@ -2135,46 +2208,24 @@ func replaceStandaloneVar(s, ident, replacement string) string {
 	return b.String()
 }
 
-func findLeadingWithClauseEnd(query string, isName ClauseKeywordNameReader) (int, bool) {
+func findLeadingWithSourceClauseEnd(source planningSource) (int, bool) {
+	query := source.text()
 	if query == "" {
 		return 0, false
 	}
-	i := skipLeadingSpace(query, 0)
-	if !keywordAt(query, i, "WITH") {
+	at := skipLeadingSpace(query, 0)
+	if !keywordAt(query, at, "WITH") {
 		return 0, false
 	}
-	i += len("WITH")
-	i = skipLeadingSpace(query, i)
-	return nextTopLevelClause(query, i, isName), true
+	at = skipLeadingSpace(query, at+len("WITH"))
+	return nextTopLevelClause(source, at), true
 }
 
 // nextTopLevelClause returns the start of the first clause keyword at or
 // after from that is outside brackets, quoted text and comments, len(query)
 // if none.
-func nextTopLevelClause(query string, from int, isName ClauseKeywordNameReader) int {
-	depth := 0
-	for idx := from; idx < len(query); idx++ {
-		if next, quoted := cyphertext.SkipToken(query, idx); quoted {
-			idx = next - 1
-			continue
-		}
-		ch := query[idx]
-		switch ch {
-		case '(', '[', '{':
-			depth++
-			continue
-		case ')', ']', '}':
-			if depth > 0 {
-				depth--
-			}
-			continue
-		}
-
-		if depth == 0 && isCypherClauseStart(query, idx, isName) {
-			return idx
-		}
-	}
-	return len(query)
+func nextTopLevelClause(source planningSource, from int) int {
+	return source.nextTopLevel(from, func(at int) bool { return isCypherClauseStart(source, at) })
 }
 
 // projectionModifierAt reports whether a WITH or RETURN projection's WHERE,
@@ -2188,9 +2239,9 @@ func projectionModifierAt(query string, idx int) bool {
 	return false
 }
 
-func isCypherClauseStart(query string, idx int, isName ClauseKeywordNameReader) bool {
-	for _, kw := range clauseStartKeywords {
-		if clauseKeywordAt(query, idx, kw, isName) {
+func isCypherClauseStart(source planningSource, idx int) bool {
+	for _, keyword := range clauseStartKeywords {
+		if clauseKeywordAt(source, idx, keyword) {
 			return true
 		}
 	}

@@ -20,11 +20,11 @@ type shortestPathMatch struct {
 	findAll bool
 	// others are the clause's other comma-separated patterns, matched first
 	// one at a time; othersVariables are the variables they bind.
-	others          []string
+	others          []braceView
 	othersVariables []string
 	// startPattern and endPattern are the endpoint node patterns as written,
 	// with a generated variable for an anonymous endpoint.
-	startPattern, endPattern   string
+	startPattern, endPattern   braceView
 	startVariable, endVariable string
 	// pathVariable is the path's variable, or a generated one.
 	pathVariable string
@@ -32,49 +32,50 @@ type shortestPathMatch struct {
 	// endpointWhere selects the endpoints; pathWhere mentions the path or its
 	// relationship variable and constrains the search (Neo4j returns the
 	// shortest path that satisfies it): it is the plan's predicate.
-	endpointWhere, pathWhere string
+	endpointWhere, pathWhere braceView
 	// selector is the pattern's path selector (ANY, SHORTEST), nil for
 	// shortestPath and allShortestPaths (path_selector_match.go).
 	selector *pathSelector
 	// postWhere filters a selector's selected paths: the clause's WHERE
 	// conjuncts that read the path, its relationships or its inner nodes.
-	postWhere string
+	postWhere braceView
 	// pattern is a selected pattern; plan is the compiled search of a
 	// selected pattern or of a shortestPath pattern (path_selector_search.go).
-	pattern string
+	pattern braceView
 	plan    *selectedPathPlan
 }
 
 // parseShortestPathMatch reads the body of a MATCH clause (after MATCH or
 // OPTIONAL MATCH). ok is false when no comma-separated part of its pattern is
 // a shortestPath or allShortestPaths call.
-func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body string) (*shortestPathMatch, bool, error) {
-	if indexASCIIFold(body, "shortestpath") < 0 {
+func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body braceView) (*shortestPathMatch, bool, error) {
+	if indexASCIIFold(body.text(), "shortestpath") < 0 {
 		return nil, false, nil
 	}
-	pattern := strings.TrimSpace(body)
-	where := ""
+	pattern := body.trim()
+	where := pattern.window(0, 0)
 	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
-		where = strings.TrimSpace(pattern[index+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:index])
+		where = pattern.window(index+len("WHERE"), len(pattern.text())).trim()
+		pattern = pattern.window(0, index).trim()
 	}
-	var call, pathVariable string
-	var others []string
-	for _, part := range splitTopLevelComma(pattern) {
-		part = strings.TrimSpace(part)
-		variable := extractPathAssignmentVariable(part)
+	var call braceView
+	var pathVariable string
+	var others []braceView
+	for _, part := range pattern.commaViews() {
+		part = part.trim()
+		variable := extractPathAssignmentVariable(part.text())
 		candidate := part
 		if variable != "" {
-			candidate = strings.TrimSpace(part[strings.Index(part, "=")+1:])
+			candidate = part.window(strings.Index(part.text(), "=")+1, len(part.text())).trim()
 		}
-		if _, _, funcIdx, ok := extractShortestPathCall(candidate); call == "" && ok && funcIdx == 0 &&
-			findMatchingParen(candidate, strings.IndexByte(candidate, '(')) == len(candidate)-1 {
+		if _, _, funcIdx, ok := extractShortestPathCall(candidate); call.empty() && ok && funcIdx == 0 &&
+			findMatchingParen(candidate.text(), strings.IndexByte(candidate.text(), '(')) == len(candidate.text())-1 {
 			call, pathVariable = candidate, variable
 			continue
 		}
 		others = append(others, part)
 	}
-	if call == "" {
+	if call.empty() {
 		return nil, false, nil
 	}
 	funcName, inner, _, _ := extractShortestPathCall(call)
@@ -88,10 +89,10 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 	}
 	// Planning reads only endpoint syntax. Their property expressions belong
 	// to shortestPathEndpointPairs, after the incoming row is bound.
-	startHead, _ := splitNodePatternProperties(startPattern)
-	endHead, _ := splitNodePatternProperties(endPattern)
-	relationship := inner[len(startPattern) : len(inner)-len(endPattern)]
-	traversal := e.parseTraversalPatternStructure(ctx, "("+startHead+")"+relationship+"("+endHead+")")
+	startHead, _ := splitNodePatternSources(startPattern)
+	endHead, _ := splitNodePatternSources(endPattern)
+	relationship := inner.window(len(startPattern.text()), len(inner.text())-len(endPattern.text()))
+	traversal := e.parseTraversalPatternStructure(ctx, inner.assembleCode([]braceView{startHead.wrap("(", ")"), relationship, endHead.wrap("(", ")")}, ""))
 	if err := getExpressionFailure(ctx); err != nil {
 		return nil, true, err
 	}
@@ -114,32 +115,32 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 	}
 	if m.startVariable == "" {
 		m.startVariable = generatedVariablePrefix + "sp_start"
-		m.startPattern = "(" + m.startVariable + m.startPattern[1:]
+		m.startPattern = m.startPattern.window(1, len(m.startPattern.text())).wrap("("+m.startVariable, "")
 		traversal.StartNode.variable = m.startVariable
 	}
 	if m.endVariable == "" {
 		m.endVariable = generatedVariablePrefix + "sp_end"
-		m.endPattern = "(" + m.endVariable + m.endPattern[1:]
+		m.endPattern = m.endPattern.window(1, len(m.endPattern.text())).wrap("("+m.endVariable, "")
 		traversal.EndNode.variable = m.endVariable
 	}
 	if m.pathVariable == "" {
 		m.pathVariable = generatedVariablePrefix + "sp_path"
 	}
 	traversal.PathVariable = m.pathVariable
-	var endpointTerms, pathTerms []string
+	var endpointTerms, pathTerms []braceView
 	for _, term := range splitTopLevelAndConjuncts(where) {
-		if term = strings.TrimSpace(term); term == "" {
+		if term = term.trim(); term.empty() {
 			continue
 		}
 		relationship := traversal.Relationship.Variable
-		if referencesVariable(term, m.pathVariable) || (relationship != "" && referencesVariable(term, relationship)) {
+		if referencesVariable(term.text(), m.pathVariable) || (relationship != "" && referencesVariable(term.text(), relationship)) {
 			pathTerms = append(pathTerms, term)
 		} else {
 			endpointTerms = append(endpointTerms, term)
 		}
 	}
-	m.endpointWhere = strings.Join(endpointTerms, " AND ")
-	m.pathWhere = strings.Join(pathTerms, " AND ")
+	m.endpointWhere = body.assembleCode(endpointTerms, " AND ")
+	m.pathWhere = body.assembleCode(pathTerms, " AND ")
 	if m.plan, ok = shortestPathPlanContext(ctx, inner, startPattern, endPattern, m.startVariable, m.endVariable, m.pathVariable, m.pathWhere); !ok {
 		if ctx.Err() != nil {
 			return nil, true, ctx.Err()
@@ -155,10 +156,10 @@ func (e *StorageExecutor) parseShortestPathMatch(ctx context.Context, body strin
 // path search between its endpoints: the endpoints are matched first, so
 // the plan takes them as the bare variables, and predicate (the WHERE
 // conjuncts that read the path) constrains the paths selected from.
-func shortestPathPlanContext(ctx context.Context, pattern, startPattern, endPattern, startVariable, endVariable, pathVariable, predicate string) (*selectedPathPlan, bool) {
-	pattern = strings.TrimSpace(pattern)
-	relationship := pattern[len(startPattern) : len(pattern)-len(endPattern)]
-	plan, _, ok := compileSelectedPathPlanContext(ctx, "("+startVariable+")"+relationship+"("+endVariable+")", pathVariable, predicate, nil)
+func shortestPathPlanContext(ctx context.Context, pattern, startPattern, endPattern braceView, startVariable, endVariable, pathVariable string, predicate braceView) (*selectedPathPlan, bool) {
+	pattern = pattern.trim()
+	relationship := pattern.window(len(startPattern.text()), len(pattern.text())-len(endPattern.text()))
+	plan, _, ok := compileSelectedPathPlanContext(ctx, pattern.assembleCode([]braceView{pattern.generated("(" + startVariable + ")"), relationship, pattern.generated("(" + endVariable + ")")}, ""), pathVariable, predicate, nil)
 	return plan, ok
 }
 
@@ -167,7 +168,7 @@ func (m *shortestPathMatch) setOthersVariables() {
 	for _, part := range m.others {
 		m.othersVariables = append(m.othersVariables, extractNodeVariables(matchPatternStructure(part))...)
 		m.othersVariables = append(m.othersVariables, extractRelationshipVariables(matchPatternStructure(part))...)
-		if variable := extractPathAssignmentVariable(part); variable != "" {
+		if variable := extractPathAssignmentVariable(part.text()); variable != "" {
 			m.othersVariables = append(m.othersVariables, variable)
 		}
 	}
@@ -176,7 +177,8 @@ func (m *shortestPathMatch) setOthersVariables() {
 // shortestPathPatternError is Neo4j's SyntaxError for a shortestPath or
 // allShortestPaths pattern it doesn't support: a minimum length above 1, or
 // relationship properties (pattern is the call's argument).
-func shortestPathPatternError(funcName, pattern string, traversal *TraversalMatch) error {
+func shortestPathPatternError(funcName string, view braceView, traversal *TraversalMatch) error {
+	pattern := view.text()
 	if traversal.Relationship.MinHops > 1 {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShortestPathMinimalLength",
 			localization.CypherMatchingShortestPathMinimalLength(funcName))
@@ -188,9 +190,9 @@ func shortestPathPatternError(funcName, pattern string, traversal *TraversalMatc
 		properties := ""
 		if open := strings.IndexByte(pattern, '['); open >= 0 {
 			if close := findMatchingBracket(pattern, open); close > open {
-				relationship := pattern[open:close]
-				if brace := strings.IndexByte(relationship, '{'); brace >= 0 {
-					properties = strings.TrimSpace(relationship[brace:])
+				relationship := view.window(open, close)
+				if brace, _, _, found := relationship.firstBrace(); found {
+					properties = strings.TrimSpace(relationship.text()[brace:])
 				}
 			}
 		}
@@ -206,7 +208,8 @@ func shortestPathPatternError(funcName, pattern string, traversal *TraversalMatc
 // endpoints must be bound variables. The statement rewrite checks every
 // expression with it, so the statement fails whether or not a row reaches
 // the call.
-func shortestPathExpressionError(query string, wordStart, wordEnd, end int) error {
+func shortestPathExpressionError(view braceView, wordStart, wordEnd, end int) error {
+	query := view.text()
 	name := query[wordStart:wordEnd]
 	if !functionNameStartsAt(query, wordStart) {
 		return nil
@@ -226,12 +229,13 @@ func shortestPathExpressionError(query string, wordStart, wordEnd, end int) erro
 	if equalFoldASCII(name, "allShortestPaths") {
 		function = "allShortestPaths"
 	}
-	startPattern, endPattern, ok := shortestPathEndpointPatterns(query[open+1 : close])
+	startPattern, endPattern, ok := shortestPathEndpointPatterns(view.window(open+1, close))
 	if !ok {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathSingleRelationship",
 			localization.CypherMatchingShortestPathSingleRelationship(function))
 	}
-	for _, endpoint := range []string{startPattern, endPattern} {
+	for _, pattern := range []braceView{startPattern, endPattern} {
+		endpoint := pattern.text()
 		if _, _, named := scanSymbolicName(endpoint, skipASCIISpaces(endpoint, 1, len(endpoint))); !named {
 			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "ShortestPathUnboundNodes",
 				localization.CypherMatchingShortestPathUnboundNodes(function))
@@ -243,8 +247,9 @@ func shortestPathExpressionError(query string, wordStart, wordEnd, end int) erro
 // shortestPathEndpointPatterns splits (start)-[rel]-(end) into its two node
 // patterns; ok is false for any other shape (no relationship, or more than
 // one).
-func shortestPathEndpointPatterns(pattern string) (string, string, bool) {
-	pattern = strings.TrimSpace(pattern)
+func shortestPathEndpointPatterns(view braceView) (braceView, braceView, bool) {
+	view = view.trim()
+	pattern := view.text()
 	startEnd := -1
 	if strings.HasPrefix(pattern, "(") {
 		startEnd = findMatchingParen(pattern, 0)
@@ -257,9 +262,9 @@ func shortestPathEndpointPatterns(pattern string) (string, string, bool) {
 	}
 	endOpen := rest + strings.IndexByte(pattern[rest:], '(')
 	if startEnd < 0 || endOpen < rest || findMatchingParen(pattern, endOpen) != len(pattern)-1 {
-		return "", "", false
+		return braceView{}, braceView{}, false
 	}
-	return pattern[:startEnd+1], pattern[endOpen:], true
+	return view.window(0, startEnd+1), view.window(endOpen, len(pattern)), true
 }
 
 // pipelineApplyShortestPathMatch runs a shortestPath MATCH for each row. An
@@ -308,7 +313,7 @@ func (e *StorageExecutor) shortestPathBases(ctx context.Context, m *shortestPath
 	for _, part := range m.others {
 		var next []pipelineRow
 		for _, base := range bases {
-			matched, err := e.pipelineMatchRows(ctx, base, "MATCH "+part)
+			matched, err := e.pipelineMatchRows(ctx, base, part.wrap("MATCH ", ""))
 			if err != nil {
 				return nil, err
 			}
@@ -326,7 +331,7 @@ func (m *shortestPathMatch) unmatchedRow(row pipelineRow) pipelineRow {
 	if m.traversal != nil {
 		names = append(names, m.traversal.Relationship.Variable)
 	}
-	if m.pattern != "" {
+	if !m.pattern.empty() {
 		names = append(names, extractNodeVariables(matchPatternStructure(m.pattern))...)
 		names = append(names, extractRelationshipVariables(matchPatternStructure(m.pattern))...)
 	}
@@ -347,23 +352,28 @@ func (m *shortestPathMatch) unmatchedRow(row pipelineRow) pipelineRow {
 // binds to a node is taken from the row; the others are matched, with the
 // WHERE conjuncts that don't mention the path.
 func (e *StorageExecutor) shortestPathEndpointPairs(ctx context.Context, m *shortestPathMatch, row pipelineRow) ([]pipelineRow, error) {
-	var patterns []string
-	for _, endpoint := range [][2]string{{m.startPattern, m.startVariable}, {m.endPattern, m.endVariable}} {
-		node, bound := row[endpoint[1]].(*storage.Node)
-		if bound && node != nil && strings.TrimSpace(endpoint[0][1:len(endpoint[0])-1]) == endpoint[1] {
+	var patterns []braceView
+	for _, endpoint := range []struct {
+		pattern  braceView
+		variable string
+	}{{m.startPattern, m.startVariable}, {m.endPattern, m.endVariable}} {
+		node, bound := row[endpoint.variable].(*storage.Node)
+		text := endpoint.pattern.text()
+		if bound && node != nil && strings.TrimSpace(text[1:len(text)-1]) == endpoint.variable {
 			continue
 		}
-		patterns = append(patterns, endpoint[0])
+		patterns = append(patterns, endpoint.pattern)
 	}
 	if len(patterns) == 0 {
-		if m.endpointWhere != "" && !e.evaluateWithWhereCondition(ctx, m.endpointWhere, map[string]interface{}(row)) {
+		if !m.endpointWhere.empty() && !e.evaluateWithWhereCondition(ctx, m.endpointWhere, map[string]interface{}(row)) {
 			return nil, getExpressionFailure(ctx)
 		}
 		return []pipelineRow{row}, nil
 	}
-	clause := "MATCH " + strings.Join(patterns, ", ")
-	if m.endpointWhere != "" {
-		clause += " WHERE " + m.endpointWhere
+	base := braceView{syntax: m.startPattern.syntax, source: m.startPattern.source.OriginalView()}
+	clause := base.assembleCode(patterns, ", ").wrap("MATCH ", "")
+	if !m.endpointWhere.empty() {
+		clause = base.assembleCode([]braceView{clause, m.endpointWhere.wrap(" WHERE ", "")}, "")
 	}
 	return e.pipelineMatchRows(ctx, row, clause)
 }
@@ -371,10 +381,10 @@ func (e *StorageExecutor) shortestPathEndpointPairs(ctx context.Context, m *shor
 // pipelineMatchRows runs a MATCH clause for one row, for a step that
 // matches part of its own pattern; a clause shape the pipeline can't run is
 // an invalid pattern.
-func (e *StorageExecutor) pipelineMatchRows(ctx context.Context, row pipelineRow, clause string) ([]pipelineRow, error) {
+func (e *StorageExecutor) pipelineMatchRows(ctx context.Context, row pipelineRow, clause braceView) ([]pipelineRow, error) {
 	rows, handled, err := e.pipelineApplyMatch(ctx, []pipelineRow{row}, clause)
 	if err == nil && !handled {
-		err = localizedError(localization.CypherMatchingPathPatternInvalid(strings.TrimSpace(clause[len("MATCH"):])), nil)
+		err = localizedError(localization.CypherMatchingPathPatternInvalid(strings.TrimSpace(clause.text()[len("MATCH"):])), nil)
 	}
 	return rows, err
 }
@@ -414,16 +424,18 @@ func errBoundShortestRelationships(function string) error {
 // validateShortestCallBindings checks calls against the incoming semantic
 // scope. Subqueries are checked by their own scope walk, and selector calls
 // inserted by the rewrite have the selector's equality semantics instead.
-func validateShortestCallBindings(text string, scope matchSemanticScope) error {
+func validateShortestCallBindings(view braceView, scope matchSemanticScope) error {
+	text := view.text()
 	if indexASCIIFold(text, "shortestpath") < 0 {
 		return nil
 	}
-	if where := topLevelKeywordIndex(text, "WHERE"); where >= 0 {
-		if _, _, _, selected := splitPathSelectorTerm(strings.TrimSpace(text[where+len("WHERE"):])); selected {
+	if where := topLevelKeywordIndex(view, "WHERE"); where >= 0 {
+		if _, _, _, selected := splitPathSelectorTerm(view.window(where+len("WHERE"), len(text)).trim()); selected {
 			return nil
 		}
 	}
-	text = maskSubqueryBodies(text)
+	view = view.mask(maskSubqueryBodies(view))
+	text = view.text()
 	for at := 0; at < len(text); at++ {
 		if isCypherQuoteByte(text[at]) {
 			at = skipCypherQuotedText(text, at, text[at]) - 1
@@ -436,7 +448,7 @@ func validateShortestCallBindings(text string, scope matchSemanticScope) error {
 		end = cyphertext.NamePartEnd(text, end)
 		word := text[at:end]
 		if equalFoldASCII(word, "shortestPath") || equalFoldASCII(word, "allShortestPaths") {
-			_, pattern, index, ok := extractShortestPathCall(text[at:])
+			_, pattern, index, ok := extractShortestPathCall(view.window(at, len(text)))
 			if ok && index == 0 {
 				if items, ok := parsePathPatternItems(pattern, false); ok && len(items) == 3 && items[1].kind == pathPatternRelationship {
 					if items[0].variable != "" && items[0].variable == items[2].variable && items[1].min <= 1 {

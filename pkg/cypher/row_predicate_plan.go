@@ -264,6 +264,7 @@ const (
 type rowPredicatePart struct {
 	kind     rowPredicatePartKind
 	text     string
+	view     braceView
 	left     rowOperand
 	right    rowOperand
 	operator comparisonEvaluationHandler
@@ -301,22 +302,23 @@ func (part *rowPredicatePart) complete() bool {
 
 // rowPredicatePlans caches plans by predicate text; a nil plan (a predicate
 // with nothing to plan) is cached too.
-var rowPredicatePlans = newBoundedCache[string, *rowPredicatePlan](1024, boundedCacheStringShardIndex)
+var rowPredicatePlans = newBoundedCache[*cyphertext.Source, *rowPredicatePlan](1024, func(source *cyphertext.Source) int { return boundedCacheStringShardIndex(source.Text) })
 
 // planRowPredicate returns the plan of a predicate that has at least one
 // comparison or null test of simple operands, combined with AND / OR, and nil
 // for any other predicate (one with a subquery or braces, or nothing to plan).
-func planRowPredicate(expression string) *rowPredicatePlan {
-	if plan, cached := rowPredicatePlans.get(expression); cached {
+func planRowPredicate(view braceView) *rowPredicatePlan {
+	expression := view.text()
+	if plan, cached := rowPredicatePlans.get(view.source); cached {
 		return plan
 	}
 	var plan *rowPredicatePlan
-	if !strings.ContainsAny(expression, "{}") {
-		if root, planned := planRowPredicatePart(expression); planned {
+	if !containsSyntaxAny(expression, "{}") {
+		if root, planned := planRowPredicatePart(view); planned {
 			plan = &rowPredicatePlan{root: root, complete: root.complete()}
 		}
 	}
-	rowPredicatePlans.put(expression, plan)
+	rowPredicatePlans.put(view.source, plan)
 	return plan
 }
 
@@ -325,14 +327,15 @@ func planRowPredicate(expression string) *rowPredicatePlan {
 // top-level OR, then a top-level AND, then a comparison or null test of
 // simple operands. Anything else is text. planned reports whether the part,
 // or one below it, is not text.
-func planRowPredicatePart(text string) (rowPredicatePart, bool) {
-	text = strings.TrimSpace(text)
-	textPart := rowPredicatePart{kind: rowPredicateText, text: text}
+func planRowPredicatePart(view braceView) (rowPredicatePart, bool) {
+	view = view.trim()
+	text := view.text()
+	textPart := rowPredicatePart{kind: rowPredicateText, text: text, view: view}
 	if text == "" {
 		return textPart, false
 	}
-	if inner, ok := stripEnclosingExpressionParentheses(text); ok {
-		part, planned := planRowPredicatePart(inner)
+	if _, ok := stripEnclosingExpressionParentheses(text); ok {
+		part, planned := planRowPredicatePart(view.window(1, len(text)-1))
 		if !planned {
 			return textPart, false
 		}
@@ -341,38 +344,39 @@ func planRowPredicatePart(text string) (rowPredicatePart, bool) {
 	if _, _, ok := parseWithWhereLabelTest(text); ok {
 		return textPart, false
 	}
-	if _, _, split := splitByOperatorWithOptions(text, " XOR ", true, true); split {
+	if _, _, split := splitByOperatorWithOptions(view, " XOR ", true, true); split {
 		return textPart, false
 	}
 	for _, logical := range []struct {
 		operator string
 		kind     rowPredicatePartKind
 	}{{" OR ", rowPredicateOr}, {" AND ", rowPredicateAnd}} {
-		if _, _, split := splitByOperatorWithOptions(text, logical.operator, true, true); !split {
+		if _, _, split := splitByOperatorWithOptions(view, logical.operator, true, true); !split {
 			continue
 		}
-		node := rowPredicatePart{kind: logical.kind, text: text}
+		node := rowPredicatePart{kind: logical.kind, text: text, view: view}
 		planned := false
-		rest := text
+		rest := view
 		for {
 			left, right, split := splitByOperatorWithOptions(rest, logical.operator, true, true)
 			if !split {
-				left = rest
+				left = rest.text()
 			}
-			part, partPlanned := planRowPredicatePart(left)
+			part, partPlanned := planRowPredicatePart(rest.window(0, len(left)))
 			planned = planned || partPlanned
 			node.parts = append(node.parts, part)
 			if !split {
 				break
 			}
-			rest = right
+			rest = rest.window(len(rest.text())-len(right), len(rest.text()))
 		}
 		if !planned {
 			return textPart, false
 		}
 		return node, true
 	}
-	if leaf, ok := planRowPredicateLeaf(text); ok {
+	if leaf, ok := planRowPredicateLeaf(view); ok {
+		leaf.view = view
 		return leaf, true
 	}
 	return textPart, false
@@ -381,9 +385,10 @@ func planRowPredicatePart(text string) (rowPredicatePart, bool) {
 // planRowPredicateLeaf plans a comparison of two simple operands or a null test
 // of one. A shape one of evaluateRowPredicate's earlier branches handles (NOT,
 // EXISTS, IN, string operators, =~, labels, calls, lists, strings) isn't one.
-func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
+func planRowPredicateLeaf(view braceView) (rowPredicatePart, bool) {
+	text := view.text()
 	if !hasPrefixFoldASCII(text, "NOT ") && mayContainArithmetic(text) {
-		if scan, ok := scanComparisonChain(text); ok && scan.count == 1 {
+		if scan, ok := scanComparisonChain(view); ok && scan.count == 1 {
 			span := inlineOverflowAt(scan.inline[:], scan.overflow, 0)
 			operator := text[span.offset : span.offset+span.length]
 			if operator != "=~" {
@@ -403,7 +408,7 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 		keyword   string
 		predicate func(string, string) bool
 	}{{" STARTS WITH ", strings.HasPrefix}, {" ENDS WITH ", strings.HasSuffix}, {" CONTAINS ", strings.Contains}} {
-		if left, right, found := splitByOperatorWithOptions(text, operation.keyword, true, true); found {
+		if left, right, found := splitByOperatorWithOptions(view, operation.keyword, true, true); found {
 			leftOperand, leftOK := parseRowOperand(left, rowOperandSimple)
 			rightOperand, rightOK := parseRowOperand(right, rowOperandSimple)
 			if !leftOK || !rightOK {
@@ -413,7 +418,7 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 		}
 	}
 	if strings.ContainsAny(text, "'\"") {
-		return planRowStringComparison(text)
+		return planRowStringComparison(view)
 	}
 	if strings.ContainsAny(text, "()[]:`") || hasPrefixFoldASCII(text, "NOT ") {
 		return rowPredicatePart{}, false
@@ -424,7 +429,7 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 			return rowPredicatePart{}, false
 		}
 	}
-	if left, right, ok := splitByOperatorWithOptions(text, " IN ", true, true); ok {
+	if left, right, ok := splitByOperatorWithOptions(view, " IN ", true, true); ok {
 		needle, needleOK := parseRowOperand(left, rowOperandSimple)
 		haystack, haystackOK := parseRowOperand(right, rowOperandSimple)
 		if !needleOK || !haystackOK || needle.kind == rowOperandLiteral || haystack.kind == rowOperandLiteral {
@@ -444,7 +449,7 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 			return rowPredicatePart{kind: test.kind, text: text, left: operand}, true
 		}
 	}
-	operands, operators, ok := splitComparisonChain(text)
+	operands, operators, ok := splitComparisonChain(view)
 	if !ok || len(operands) != 2 || len(operators) != 1 {
 		return rowPredicatePart{}, false
 	}
@@ -511,8 +516,9 @@ func planRowLiteralListMembership(text string) (rowPredicatePart, bool) {
 // whole string literal, so nothing in it is predicate syntax, whatever it
 // contains; the other operand is a variable, parameter, property chain or
 // literal. Any other text with a quote in it isn't planned.
-func planRowStringComparison(text string) (rowPredicatePart, bool) {
-	operands, operators, ok := splitComparisonChain(text)
+func planRowStringComparison(view braceView) (rowPredicatePart, bool) {
+	text := view.text()
+	operands, operators, ok := splitComparisonChain(view)
 	if !ok || len(operands) != 2 || len(operators) != 1 {
 		return rowPredicatePart{}, false
 	}
@@ -621,7 +627,7 @@ func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPr
 	textValue := func() (interface{}, error) {
 		value, _, err := deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
 			values := rowValuesInExpressionContext(ctx, scope.materialize())
-			value, ok, err := e.evaluateRowValue(part.text, values)
+			value, ok, err := e.evaluateRowValue(part.view, values)
 			if err != nil {
 				recordExpressionFailure(ctx, err)
 				return nil
@@ -629,7 +635,7 @@ func (e *StorageExecutor) rowPredicatePartValue(ctx context.Context, part *rowPr
 			if ok {
 				return value
 			}
-			return e.evaluateRowPredicateText(ctx, part.text, values)
+			return e.evaluateRowPredicateText(ctx, part.view, values)
 		})
 		return value, err
 	}

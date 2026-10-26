@@ -15,7 +15,9 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context.Context, view braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+	expr := view.text()
+	ctx = withBraceView(ctx, view)
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil
@@ -42,24 +44,24 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		}
 		if allWrapped && depth == 0 {
 			// Strip outer parentheses and re-evaluate
-			return e.evaluateExpressionWithContextFull(ctx, expr[1:len(expr)-1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			return e.evaluateExpressionWithContextFull(ctx, view.window(1, len(expr)-1), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 	}
 
 	// ========================================
 	// Map Literals - handle { key: value, ... } patterns
 	// ========================================
-	if strings.HasPrefix(expr, "{") && strings.HasSuffix(expr, "}") {
-		return e.evaluateMapLiteralFull(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	if startsBrace(expr) && endsBrace(expr) {
+		return e.evaluateMapLiteralFull(ctx, view, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// ========================================
 	// CASE Expressions (must be checked first)
 	// ========================================
-	if isCaseExpression(expr) {
+	if isCaseExpression(view) {
 		// The path bindings reach the CASE's WHEN / THEN / ELSE expressions
 		// (CASE WHEN … THEN length(p) … END in a path WHERE, #699).
-		return e.evaluateCaseExpression(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+		return e.evaluateCaseExpression(ctx, view, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	lowerExpr := lowerASCII(expr)
@@ -70,7 +72,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// A plugin function overrides a built-in of the same name, so plugins
 	// are asked first, as the row evaluator does (#1163).
 	if call := inspectFunctionCall(expr, qualifiedFunctionCall, "", nil); call && strings.Contains(expr, ".") {
-		if result, handled := e.tryCallPluginFunction(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); handled {
+		if result, handled := e.tryCallPluginFunction(ctx, view, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); handled {
 			return result
 		}
 	}
@@ -80,21 +82,19 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	var callFacts1 functionCallFacts
 	if ok := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1); ok {
-		name, inner := callFacts1.name, callFacts1.inner
-
-		args := e.splitFunctionArgs(inner)
-		fnCtx := e.registryFunctionContext(ctx, func(argExpr string) (interface{}, error) {
-			return e.checkedPropertyExpression(ctx, argExpr, e.entityRowWithPaths(ctx, nodes, rels, paths))
+		name := callFacts1.name
+		args := view.functionArguments().trim().commaViews()
+		fnCtx := e.registryFunctionContext(ctx, args, func(argument braceView) (interface{}, error) {
+			value, err := e.checkedPropertyExpression(withBraceView(ctx, argument), argument, e.entityRowWithPaths(ctx, nodes, rels, paths))
+			if (strings.EqualFold(name, "properties") || strings.EqualFold(name, "keys")) && e.queryPropertyDecayEnabled() {
+				value = e.queryVisibleValue(value)
+			}
+			return value, err
 		})
 		fnCtx.Nodes = nodes
 		fnCtx.Rels = rels
 
 		if (strings.EqualFold(name, "properties") || strings.EqualFold(name, "keys")) && e.queryPropertyDecayEnabled() {
-			originalEval := fnCtx.Eval
-			fnCtx.Eval = func(expression string) (interface{}, error) {
-				value, err := originalEval(expression)
-				return e.queryVisibleValue(value), err
-			}
 			fnCtx.Nodes = make(map[string]*storage.Node, len(nodes))
 			for key, node := range nodes {
 				fnCtx.Nodes[key] = e.queryVisibleValue(node).(*storage.Node)
@@ -104,7 +104,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 				fnCtx.Rels[key] = e.queryVisibleValue(rel).(*storage.Edge)
 			}
 		}
-		if v, found, err := cypherfn.EvaluateFunction(name, args, fnCtx); found {
+		if v, found, err := cypherfn.EvaluateInvocation(name, functionArgumentTexts(args), fnCtx); found {
 			if err != nil {
 				functionEvaluationFailure(ctx, err)
 				return nil
@@ -129,11 +129,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// length(path) - same as size for compatibility, with special handling for paths
 	if matchFuncStartAndSuffix(expr, "length") {
-		inner := extractFuncArgs(expr, "length")
+		inner := view.functionArguments().trim()
 
 		// Check if this is a path variable - use the path length from context
 		if paths != nil {
-			if pathResult, ok := paths[inner]; ok && pathResult != nil {
+			if pathResult, ok := paths[inner.text()]; ok && pathResult != nil {
 				return int64(pathResult.Length)
 			}
 		}
@@ -141,7 +141,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		// For MATCH path = (a)-[*1..2]-(b), the path variable gives us the length
 		if pathLength > 0 {
 			// If pathLength is set and inner looks like a simple variable (no dots, no parens)
-			if !strings.Contains(inner, ".") && !strings.Contains(inner, "(") && !strings.Contains(inner, "[") {
+			if !strings.Contains(inner.text(), ".") && !strings.Contains(inner.text(), "(") && !strings.Contains(inner.text(), "[") {
 				// This might be a path variable reference, use stored pathLength
 				return int64(pathLength)
 			}
@@ -182,17 +182,17 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// exists(n.prop) - check if property exists; exists(pattern) - whether
 	// the pattern matches, as EXISTS { pattern } (#907)
 	if matchFuncStartAndSuffix(expr, "exists") {
-		inner := extractFuncArgs(expr, "exists")
-		if trimmed := strings.TrimSpace(inner); strings.HasPrefix(trimmed, "(") {
+		inner := view.functionArguments().trim()
+		if trimmed := inner.trim().text(); strings.HasPrefix(trimmed, "(") {
 			if chainEnd, chain := relationshipChainEnd(trimmed, 0, len(trimmed)); chain && chainEnd == len(trimmed) {
-				value, _ := e.evaluateRowSubqueryValue(ctx, "EXISTS", trimmed, entityRow(ctx, nodes, rels))
+				value, _ := e.evaluateRowSubqueryValue(ctx, "EXISTS", inner.trim(), entityRow(ctx, nodes, rels))
 				return value
 			}
 		}
 		// Check for property access
-		if dotIdx := strings.Index(inner, "."); dotIdx > 0 {
-			varName := inner[:dotIdx]
-			propName := inner[dotIdx+1:]
+		if dotIdx := strings.Index(inner.text(), "."); dotIdx > 0 {
+			varName := inner.text()[:dotIdx]
+			propName := inner.text()[dotIdx+1:]
 			if node, ok := nodes[varName]; ok {
 				_, exists := e.queryEntityProperties(node)[propName]
 				return exists
@@ -203,7 +203,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// head(list) - return first element
 	if matchFuncStartAndSuffix(expr, "head") {
-		inner := extractFuncArgs(expr, "head")
+		inner := view.functionArguments().trim()
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		result, err := evaluateListAccessFunction("head", innerVal)
 		if err != nil {
@@ -215,7 +215,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// last(list) - return last element
 	if matchFuncStartAndSuffix(expr, "last") {
-		inner := extractFuncArgs(expr, "last")
+		inner := view.functionArguments().trim()
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		result, err := evaluateListAccessFunction("last", innerVal)
 		if err != nil {
@@ -227,7 +227,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// tail(list) - return list without first element
 	if matchFuncStartAndSuffix(expr, "tail") {
-		inner := extractFuncArgs(expr, "tail")
+		inner := view.functionArguments().trim()
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if list, ok := cypherListValue(innerVal); ok && len(list) > 1 {
 			return list[1:]
@@ -237,7 +237,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// reverse(list) - return reversed list
 	if matchFuncStartAndSuffix(expr, "reverse") {
-		inner := extractFuncArgs(expr, "reverse")
+		inner := view.functionArguments().trim()
 		innerVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		result, err := evaluateListAccessFunction("reverse", innerVal)
 		if err != nil {
@@ -249,11 +249,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// range(start, end) or range(start, end, step)
 	if matchFuncStartAndSuffix(expr, "range") {
-		inner := extractFuncArgs(expr, "range")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		arguments := make([]interface{}, len(args))
 		for index, argument := range args {
-			arguments[index] = e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(argument), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			arguments[index] = e.evaluateExpressionWithContextFull(ctx, argument.trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		}
 		result, err := evaluateCypherRange(arguments)
 		if err != nil {
@@ -264,15 +264,15 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// slice(list, start, end) - get sublist from start to end (exclusive)
 	if matchFuncStartAndSuffix(expr, "slice") {
-		inner := extractFuncArgs(expr, "slice")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			listVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			startIdx, _ := strconv.ParseInt(strings.TrimSpace(args[1]), 10, 64)
+			listVal := e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			startIdx, _ := strconv.ParseInt(args[1].text(), 10, 64)
 			if list, ok := cypherListValue(listVal); ok {
 				endIdx := int64(len(list))
 				if len(args) >= 3 {
-					endIdx, _ = strconv.ParseInt(strings.TrimSpace(args[2]), 10, 64)
+					endIdx, _ = strconv.ParseInt(args[2].text(), 10, 64)
 				}
 				if startIdx < 0 {
 					startIdx = int64(len(list)) + startIdx
@@ -297,11 +297,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// indexOf(list, value) - get index of value in list, -1 if not found
 	if matchFuncStartAndSuffix(expr, "indexof") {
-		inner := extractFuncArgs(expr, "indexof")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) == 2 {
-			listVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			searchVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			listVal := e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			searchVal := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if list, ok := cypherListValue(listVal); ok {
 				for i, item := range list {
 					if e.compareEqual(item, searchVal) {
@@ -315,8 +315,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// degree(node) - total degree (in + out)
 	if matchFuncStartAndSuffix(expr, "degree") {
-		inner := extractFuncArgs(expr, "degree")
-		if node, ok := nodes[inner]; ok {
+		inner := view.functionArguments().trim()
+		if node, ok := nodes[inner.text()]; ok {
 			inDegree := e.storage.GetInDegree(node.ID)
 			outDegree := e.storage.GetOutDegree(node.ID)
 			return int64(inDegree + outDegree)
@@ -326,8 +326,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// inDegree(node) - incoming edges count
 	if matchFuncStartAndSuffix(expr, "indegree") {
-		inner := extractFuncArgs(expr, "indegree")
-		if node, ok := nodes[inner]; ok {
+		inner := view.functionArguments().trim()
+		if node, ok := nodes[inner.text()]; ok {
 			return int64(e.storage.GetInDegree(node.ID))
 		}
 		return int64(0)
@@ -335,8 +335,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// outDegree(node) - outgoing edges count
 	if matchFuncStartAndSuffix(expr, "outdegree") {
-		inner := extractFuncArgs(expr, "outdegree")
-		if node, ok := nodes[inner]; ok {
+		inner := view.functionArguments().trim()
+		if node, ok := nodes[inner.text()]; ok {
 			return int64(e.storage.GetOutDegree(node.ID))
 		}
 		return int64(0)
@@ -344,11 +344,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// hasLabels(node, labels) - check if node has all specified labels
 	if matchFuncStartAndSuffix(expr, "haslabels") {
-		inner := extractFuncArgs(expr, "haslabels")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			if node, ok := nodes[strings.TrimSpace(args[0])]; ok {
-				labelsVal := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			if node, ok := nodes[args[0].text()]; ok {
+				labelsVal := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 				if labels, ok := cypherListValue(labelsVal); ok {
 					for _, reqLabel := range labels {
 						labelStr, _ := reqLabel.(string)
@@ -394,31 +394,31 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// sum(expr) - in single row context, just returns the value
 	if matchFuncStartAndSuffix(expr, "sum") {
-		inner := extractFuncArgs(expr, "sum")
+		inner := view.functionArguments().trim()
 		return e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// avg(expr) - in single row context, just returns the value
 	if matchFuncStartAndSuffix(expr, "avg") {
-		inner := extractFuncArgs(expr, "avg")
+		inner := view.functionArguments().trim()
 		return e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// min(expr) - in single row context, just returns the value
 	if matchFuncStartAndSuffix(expr, "min") {
-		inner := extractFuncArgs(expr, "min")
+		inner := view.functionArguments().trim()
 		return e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// max(expr) - in single row context, just returns the value
 	if matchFuncStartAndSuffix(expr, "max") {
-		inner := extractFuncArgs(expr, "max")
+		inner := view.functionArguments().trim()
 		return e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 	}
 
 	// collect(expr) - in single row context, returns single-element list
 	if matchFuncStartAndSuffix(expr, "collect") {
-		inner := extractFuncArgs(expr, "collect")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if val == nil {
 			return []interface{}{}
@@ -428,12 +428,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// replace(string, search, replacement)
 	if matchFuncStartAndSuffix(expr, "replace") {
-		inner := extractFuncArgs(expr, "replace")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 3 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			search := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			repl := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			search := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			repl := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, args[2].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			return strings.ReplaceAll(str, search, repl)
 		}
 		return nil
@@ -441,11 +441,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// split(string, delimiter)
 	if matchFuncStartAndSuffix(expr, "split") {
-		inner := extractFuncArgs(expr, "split")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			delim := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			delim := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			parts := strings.Split(str, delim)
 			result := make([]interface{}, len(parts))
 			for i, p := range parts {
@@ -458,17 +458,17 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// lpad(string, length, padString) - left-pad string to specified length
 	if matchFuncStartAndSuffix(expr, "lpad") {
-		inner := extractFuncArgs(expr, "lpad")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			length, err := strconv.Atoi(strings.TrimSpace(args[1]))
+			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			length, err := strconv.Atoi(args[1].text())
 			if err != nil {
 				return nil
 			}
 			padStr := " " // default pad character is space
 			if len(args) >= 3 {
-				padStr = fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+				padStr = fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, args[2].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 				// Remove quotes if present
 				padStr = strings.Trim(padStr, "'\"")
 			}
@@ -488,17 +488,17 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// rpad(string, length, padString) - right-pad string to specified length
 	if matchFuncStartAndSuffix(expr, "rpad") {
-		inner := extractFuncArgs(expr, "rpad")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
-			length, err := strconv.Atoi(strings.TrimSpace(args[1]))
+			str := fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			length, err := strconv.Atoi(args[1].text())
 			if err != nil {
 				return nil
 			}
 			padStr := " " // default pad character is space
 			if len(args) >= 3 {
-				padStr = fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[2]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+				padStr = fmt.Sprintf("%v", e.evaluateExpressionWithContextFull(ctx, args[2].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 				// Remove quotes if present
 				padStr = strings.Trim(padStr, "'\"")
 			}
@@ -519,11 +519,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// Date/Time Functions (Neo4j compatible)
 	// ========================================
-	if value, handled, callErr := e.evaluateTemporalConstructor(ctx, func(argument string) (interface{}, bool, error) {
-		value := e.evaluateExpressionWithContextFull(ctx, argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	if value, handled, callErr := e.evaluateTemporalConstructor(ctx, func(argument braceView) (interface{}, bool, error) {
+		value := e.evaluateExpressionWithContextFull(withBraceView(ctx, argument), argument, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		err := getExpressionFailure(ctx)
 		return value, err == nil, err
-	}, expr); handled {
+	}, view); handled {
 		recordExpressionFailure(ctx, callErr)
 		return value
 	}
@@ -538,21 +538,21 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// the same value for every accessor (#1105).
 	var callFacts2 functionCallFacts
 	if ok := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts2); ok {
-		name, inner := callFacts2.name, callFacts2.inner
+		name := callFacts2.name
 
 		if kind, component, dotted := strings.Cut(lowerASCII(name), "."); dotted && (kind == "date" || kind == "datetime") && isTemporalComponent(component) {
-			value, _ := temporalComponent(component, e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
+			value, _ := temporalComponent(component, e.evaluateExpressionWithContextFull(ctx, view.functionArguments(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			return value
 		}
 	}
 
 	// date.truncate(unit, date) - truncate date to specified unit
 	if matchFuncStartAndSuffix(expr, "date.truncate") {
-		inner := extractFuncArgs(expr, "date.truncate")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			unit := strings.Trim(strings.TrimSpace(args[0]), "'\"")
-			val := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			unit := strings.Trim(args[0].text(), "'\"")
+			val := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if str, ok := val.(string); ok {
 				str = strings.Trim(str, "'\"")
 				if t, err := time.Parse("2006-01-02", str); err == nil {
@@ -582,11 +582,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// datetime.truncate(unit, datetime) - truncate datetime to specified unit
 	if matchFuncStartAndSuffix(expr, "datetime.truncate") {
-		inner := extractFuncArgs(expr, "datetime.truncate")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			unit := strings.Trim(strings.TrimSpace(args[0]), "'\"")
-			val := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			unit := strings.Trim(args[0].text(), "'\"")
+			val := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if str, ok := val.(string); ok {
 				str = strings.Trim(str, "'\"")
 				t := parseDateTime(str)
@@ -622,11 +622,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// time.truncate(unit, time) - truncate time to specified unit
 	if matchFuncStartAndSuffix(expr, "time.truncate") {
-		inner := extractFuncArgs(expr, "time.truncate")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			unit := strings.Trim(strings.TrimSpace(args[0]), "'\"")
-			val := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			unit := strings.Trim(args[0].text(), "'\"")
+			val := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			if str, ok := val.(string); ok {
 				str = strings.Trim(str, "'\"")
 				if t, err := time.Parse("15:04:05", str); err == nil {
@@ -646,7 +646,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// duration.inMonths(duration) - convert duration to months
 	if matchFuncStartAndSuffix(expr, "duration.inmonths") {
-		inner := extractFuncArgs(expr, "duration.inmonths")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if d, ok := val.(*CypherDuration); ok {
 			return d.Years*12 + d.Months
@@ -657,7 +657,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// duration() - create duration from ISO 8601 string (P1Y2M3DT4H5M6S)
 	// Returns a CypherDuration struct that can be used in arithmetic
 	if isFunctionCall(expr, "duration") {
-		inner := extractFuncArgs(expr, "duration")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if str, ok := val.(string); ok {
 			str = strings.Trim(str, "'\"")
@@ -672,11 +672,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// duration.between(d1, d2) - calculate duration between two dates/datetimes
 	if matchFuncStartAndSuffix(expr, "duration.between") {
-		inner := extractFuncArgs(expr, "duration.between")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
-			d1 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[0]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			d2 := e.evaluateExpressionWithContextFull(ctx, strings.TrimSpace(args[1]), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			d1 := e.evaluateExpressionWithContextFull(ctx, args[0].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+			d2 := e.evaluateExpressionWithContextFull(ctx, args[1].trim(), nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			return durationBetween(d1, d2)
 		}
 		return nil
@@ -684,7 +684,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// duration.inDays(duration) - convert duration to days
 	if matchFuncStartAndSuffix(expr, "duration.indays") {
-		inner := extractFuncArgs(expr, "duration.indays")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if d, ok := val.(*CypherDuration); ok {
 			return d.TotalDays()
@@ -694,7 +694,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// duration.inSeconds(duration) - convert duration to seconds
 	if matchFuncStartAndSuffix(expr, "duration.inseconds") {
-		inner := extractFuncArgs(expr, "duration.inseconds")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if d, ok := val.(*CypherDuration); ok {
 			return d.TotalSeconds()
@@ -708,7 +708,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// ceil(number)
 	if matchFuncStartAndSuffix(expr, "ceil") {
-		inner := extractFuncArgs(expr, "ceil")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return int64(f + 0.999999999)
@@ -718,7 +718,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// floor(number)
 	if matchFuncStartAndSuffix(expr, "floor") {
-		inner := extractFuncArgs(expr, "floor")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return int64(f)
@@ -728,7 +728,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// round(number)
 	if matchFuncStartAndSuffix(expr, "round") {
-		inner := extractFuncArgs(expr, "round")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		if f, ok := toFloat64(val); ok {
 			return int64(f + 0.5)
@@ -754,8 +754,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.text.join(list, separator) - Join list elements with separator
 	if isFunctionCall(expr, "apoc.text.join") {
-		inner := extractFuncArgs(expr, "apoc.text.join")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			sepVal := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -775,7 +775,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.flatten(list [, recursive]) (flattenList)
 	if isFunctionCall(expr, "apoc.coll.flatten") {
-		args := e.splitFunctionArgs(extractFuncArgs(expr, "apoc.coll.flatten"))
+		args := view.functionArguments().trim().commaViews()
 		if len(args) == 0 || len(args) > 2 {
 			return nil
 		}
@@ -786,53 +786,53 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.toSet(list) - Remove duplicates from list
 	if isFunctionCall(expr, "apoc.coll.toset") {
-		inner := extractFuncArgs(expr, "apoc.coll.toset")
+		inner := view.functionArguments().trim()
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollToSet(listVal)
 	}
 
 	// apoc.coll.sum(list) - Sum numeric values in list
 	if isFunctionCall(expr, "apoc.coll.sum") {
-		inner := extractFuncArgs(expr, "apoc.coll.sum")
+		inner := view.functionArguments().trim()
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollSum(listVal)
 	}
 
 	// apoc.coll.avg(list) - Average of numeric values in list
 	if isFunctionCall(expr, "apoc.coll.avg") {
-		inner := extractFuncArgs(expr, "apoc.coll.avg")
+		inner := view.functionArguments().trim()
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollAvg(listVal)
 	}
 
 	// apoc.coll.min(list) - Minimum value in list
 	if isFunctionCall(expr, "apoc.coll.min") {
-		inner := extractFuncArgs(expr, "apoc.coll.min")
+		inner := view.functionArguments().trim()
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollMin(listVal)
 	}
 
 	// apoc.coll.max(list) - Maximum value in list
 	if isFunctionCall(expr, "apoc.coll.max") {
-		inner := extractFuncArgs(expr, "apoc.coll.max")
+		inner := view.functionArguments().trim()
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollMax(listVal)
 	}
 
 	// apoc.coll.sort(list) - Sort list in ascending order
 	if isFunctionCall(expr, "apoc.coll.sort") {
-		inner := extractFuncArgs(expr, "apoc.coll.sort")
+		inner := view.functionArguments().trim()
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollSort(listVal)
 	}
 
 	// apoc.coll.sortNodes(nodes, property) - Sort nodes by property
 	if isFunctionCall(expr, "apoc.coll.sortnodes") {
-		inner := extractFuncArgs(expr, "apoc.coll.sortnodes")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
-			propName := strings.Trim(args[1], "'\"")
+			propName := strings.Trim(args[1].text(), "'\"")
 			return apocCollSortNodesByProperty(listVal, propName, func(value interface{}, property string) interface{} {
 				result, _ := rowPropertyValue(e.queryVisibleValue(value), property)
 				return result
@@ -843,15 +843,15 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.reverse(list) - Reverse a list
 	if isFunctionCall(expr, "apoc.coll.reverse") {
-		inner := extractFuncArgs(expr, "apoc.coll.reverse")
+		inner := view.functionArguments().trim()
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollReverse(listVal)
 	}
 
 	// apoc.coll.union(list1, list2) - Union of two lists (removes duplicates)
 	if isFunctionCall(expr, "apoc.coll.union") {
-		inner := extractFuncArgs(expr, "apoc.coll.union")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			list2 := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -862,8 +862,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.unionAll(list1, list2) - Union of two lists (keeps duplicates)
 	if isFunctionCall(expr, "apoc.coll.unionall") {
-		inner := extractFuncArgs(expr, "apoc.coll.unionall")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			list2 := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -874,8 +874,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.intersection(list1, list2) - Intersection of two lists
 	if isFunctionCall(expr, "apoc.coll.intersection") {
-		inner := extractFuncArgs(expr, "apoc.coll.intersection")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			list2 := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -886,8 +886,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.subtract(list1, list2) - Elements in list1 but not in list2
 	if isFunctionCall(expr, "apoc.coll.subtract") {
-		inner := extractFuncArgs(expr, "apoc.coll.subtract")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			list2 := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -898,8 +898,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.contains(list, value) - Check if list contains value
 	if isFunctionCall(expr, "apoc.coll.contains") {
-		inner := extractFuncArgs(expr, "apoc.coll.contains")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			value := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -910,8 +910,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.containsAll(list1, list2) - Check if list1 contains all elements of list2
 	if isFunctionCall(expr, "apoc.coll.containsall") {
-		inner := extractFuncArgs(expr, "apoc.coll.containsall")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			list2 := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -922,8 +922,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.containsAny(list1, list2) - Check if list1 contains any element of list2
 	if isFunctionCall(expr, "apoc.coll.containsany") {
-		inner := extractFuncArgs(expr, "apoc.coll.containsany")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			list2 := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -934,8 +934,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.indexOf(list, value) - Find index of value in list (-1 if not found)
 	if isFunctionCall(expr, "apoc.coll.indexof") {
-		inner := extractFuncArgs(expr, "apoc.coll.indexof")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			value := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -946,8 +946,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.split(list, value) - Split list at occurrences of value
 	if isFunctionCall(expr, "apoc.coll.split") {
-		inner := extractFuncArgs(expr, "apoc.coll.split")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			value := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -958,8 +958,8 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.partition(list, size) - Partition list into sublists of given size
 	if isFunctionCall(expr, "apoc.coll.partition") {
-		inner := extractFuncArgs(expr, "apoc.coll.partition")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			sizeVal := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -970,15 +970,15 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.pairs(list) - Create pairs from consecutive elements [[a,b], [b,c], ...]
 	if isFunctionCall(expr, "apoc.coll.pairs") {
-		inner := extractFuncArgs(expr, "apoc.coll.pairs")
+		inner := view.functionArguments().trim()
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollPairs(listVal)
 	}
 
 	// apoc.coll.zip(list1, list2) - Zip two lists into pairs [[a1,b1], [a2,b2], ...]
 	if isFunctionCall(expr, "apoc.coll.zip") {
-		inner := extractFuncArgs(expr, "apoc.coll.zip")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			list1 := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			list2 := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -989,15 +989,15 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.coll.frequencies(list) - Count frequency of each element
 	if isFunctionCall(expr, "apoc.coll.frequencies") {
-		inner := extractFuncArgs(expr, "apoc.coll.frequencies")
+		inner := view.functionArguments().trim()
 		listVal := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocCollFrequencies(listVal)
 	}
 
 	// apoc.coll.occurrences(list, value) - Count occurrences of value in list
 	if isFunctionCall(expr, "apoc.coll.occurrences") {
-		inner := extractFuncArgs(expr, "apoc.coll.occurrences")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			listVal := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			value := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1008,7 +1008,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.convert.toJson(value) - Convert value to JSON string
 	if isFunctionCall(expr, "apoc.convert.tojson") {
-		inner := extractFuncArgs(expr, "apoc.convert.tojson")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		text, ok := apocConvertToJSON(val)
 		if !ok {
@@ -1020,7 +1020,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// apoc.convert.fromJsonMap / fromJsonList(json) (apocConvertFromJSON)
 	for _, function := range [...]string{"apoc.convert.fromjsonmap", "apoc.convert.fromjsonlist"} {
 		if isFunctionCall(expr, function) {
-			inner := strings.TrimSpace(extractFuncArgs(expr, function))
+			inner := view.functionArguments().trim()
 			value := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			result, err := apocConvertFromJSON(function == "apoc.convert.fromjsonmap", value)
 			if err != nil {
@@ -1033,15 +1033,15 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 
 	// apoc.meta.type(value) - Get the Cypher type name of a value
 	if isFunctionCall(expr, "apoc.meta.type") {
-		inner := extractFuncArgs(expr, "apoc.meta.type")
+		inner := view.functionArguments().trim()
 		val := e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 		return apocValueTypeName(val)
 	}
 
 	// apoc.meta.isType(value, typeName) - Check if value is of given type
 	if isFunctionCall(expr, "apoc.meta.istype") {
-		inner := extractFuncArgs(expr, "apoc.meta.istype")
-		args := e.splitFunctionArgs(inner)
+		inner := view.functionArguments().trim()
+		args := inner.commaViews()
 		if len(args) >= 2 {
 			val := e.evaluateExpressionWithContextFull(ctx, args[0], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 			typeVal := e.evaluateExpressionWithContextFull(ctx, args[1], nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
@@ -1056,12 +1056,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 		return false
 	}
 
-	if v, ok := e.evaluateKnowledgePolicyFunction(ctx, expr, lowerExpr, nodes, rels); ok {
+	if v, ok := e.evaluateKnowledgePolicyFunction(ctx, view, lowerExpr, nodes, rels); ok {
 		return v
 	}
 
 	// Fall through to remaining evaluation logic.
-	return e.evaluateExpressionWithContextFullMath(ctx, expr, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
+	return e.evaluateExpressionWithContextFullMath(ctx, view, lowerExpr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength)
 }
 
 func randomCypherFloat() float64 {

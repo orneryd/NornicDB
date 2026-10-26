@@ -105,7 +105,7 @@ func TestStretchReadAnalysis(t *testing.T) {
 	require.True(t, chain.anyNode)
 
 	var types stretchTokens
-	addStretchPattern("(a)-[:`R S`]->(b)", &types, false)
+	addStretchPattern(originalBraceView("(a)-[:`R S`]->(b)"), &types, false)
 	require.True(t, types.anyRelationship)
 
 	// A read-only procedure only reads; an unknown one may write.
@@ -173,11 +173,11 @@ func TestStretchAnalysisEdgeBranches(t *testing.T) {
 
 	// A variable-length relationship reads its types without the length.
 	var pattern stretchTokens
-	addStretchPattern("(a)-[:R*1..3]->(b)", &pattern, false)
+	addStretchPattern(originalBraceView("(a)-[:R*1..3]->(b)"), &pattern, false)
 	require.Contains(t, pattern.types, "R")
 
 	// A map that doesn't close names no keys.
 	var keys stretchTokens
-	addStretchMapKeys("{k: 1", &keys)
+	addStretchMapKeys(expressionBraceView("{k: 1"), &keys)
 	require.Nil(t, keys.keys)
 }

@@ -19,20 +19,21 @@ const (
 // readRelationshipBracket owns both closed lookup and malformed-pattern
 // reporting. Validation retains the opening offset of an unclosed bracket;
 // execution readers receive no bracket until both delimiters are present.
-func readRelationshipBracket(text string, from int, policy relationshipBracketPolicy) (open, close int) {
+func readRelationshipBracket(view braceView, from int, policy relationshipBracketPolicy) (open, close int) {
+	text := view.text()
 	for index := from; index < len(text); index++ {
-		switch c := text[index]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := text[index]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			index = skipCypherQuotedText(text, index, c) - 1
-		case '/':
+		case (cypherLexicalByte(c)) == '/':
 			if end := queryCommentEnd(text, index); end >= 0 {
 				index = end - 1
 			}
-		case '{':
-			if end := cyphertext.FindMatchingDelimiter(text, index, '{', '}', cyphertext.OpeningDelimiter); end > index {
+		case cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			if end, complete := view.close(index); complete && end > index {
 				index = end
 			}
-		case '[':
+		case (cypherLexicalByte(c)) == '[':
 			previous := index - 1
 			for previous >= 0 && cyphertext.IsWhitespaceAt(text, previous) {
 				previous--
@@ -54,24 +55,25 @@ func readRelationshipBracket(text string, from int, policy relationshipBracketPo
 // (->, <-, -[ or ]-) outside string literals, quoted names and property maps; a
 // subquery expression in a property value ({k: COUNT { (a)-->() }}) is not
 // part of the pattern.
-func patternHasRelationship(pattern string) bool {
+func patternHasRelationship(view braceView) bool {
+	pattern := view.text()
 	for index := 0; index < len(pattern); index++ {
-		switch c := pattern[index]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := pattern[index]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			index = skipCypherQuotedText(pattern, index, c) - 1
-		case '/':
+		case (cypherLexicalByte(c)) == '/':
 			if end := queryCommentEnd(pattern, index); end >= 0 {
 				index = end - 1
 			}
-		case '{':
-			if end := cyphertext.FindMatchingDelimiter(pattern, index, '{', '}', cyphertext.OpeningDelimiter); end > index {
+		case cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			if end, complete := view.close(index); complete && end > index {
 				index = end
 			}
-		case '-':
+		case (cypherLexicalByte(c)) == '-':
 			if index+1 < len(pattern) && (pattern[index+1] == '>' || pattern[index+1] == '[') {
 				return true
 			}
-		case '<', ']':
+		case (cypherLexicalByte(c)) == '<', (cypherLexicalByte(c)) == ']':
 			if index+1 < len(pattern) && pattern[index+1] == '-' {
 				return true
 			}

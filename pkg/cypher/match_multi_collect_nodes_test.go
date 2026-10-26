@@ -153,7 +153,7 @@ func TestCollectNodesWithStreaming_LabelLimitPrefersLabelLookup(t *testing.T) {
 	}
 	exec := NewStorageExecutor(probe)
 
-	nodes, err := exec.collectNodesWithStreaming(context.Background(), []string{"SystemPrompt"}, nil, "n", "", 3)
+	nodes, err := exec.collectNodesWithStreaming(context.Background(), []string{"SystemPrompt"}, nil, "n", originalBraceView(""), 3)
 	require.NoError(t, err)
 	require.Len(t, nodes, 3)
 	assert.GreaterOrEqual(t, probe.labelLookupCalls, 1, "label-id lookup path must be used")
@@ -173,7 +173,7 @@ func TestCollectNodesWithStreaming_UsesLabelIndexedStreamForResidualFilters(t *t
 	probe.labelCalls = 0
 
 	nodes, err := exec.collectNodesWithStreaming(
-		context.Background(), []string{"Person"}, nil, "n", "n.age > 30", -1,
+		context.Background(), []string{"Person"}, nil, "n", expressionBraceView("n.age > 30"), -1,
 	)
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
@@ -208,7 +208,7 @@ func TestCollectNodesWithStreaming_PropagatesProjectedReaderError(t *testing.T) 
 	t.Cleanup(func() { _ = base.Close() })
 	probe := &collectNodesLabelProbeEngine{Engine: base, labelIDs: []storage.NodeID{"nornic:one"}}
 	exec := NewStorageExecutor(probe)
-	nodes, err := exec.collectNodesWithStreaming(context.Background(), []string{"Person"}, nil, "n", "", 1)
+	nodes, err := exec.collectNodesWithStreaming(context.Background(), []string{"Person"}, nil, "n", originalBraceView(""), 1)
 	require.ErrorIs(t, err, storage.ErrNotImplemented)
 	require.Nil(t, nodes)
 	require.Equal(t, 0, probe.labelLookupCalls)
@@ -221,7 +221,7 @@ func TestCollectNodesWithStreaming_PropagatesLabelLookupReadError(t *testing.T) 
 		Engine: base, labelIDs: []storage.NodeID{"nornic:missing"}, getNodeErr: assert.AnError,
 	}
 	nodes, err := NewStorageExecutor(probe).collectNodesWithStreaming(
-		context.Background(), []string{"Person"}, nil, "n", "", 1,
+		context.Background(), []string{"Person"}, nil, "n", originalBraceView(""), 1,
 	)
 	require.ErrorIs(t, err, assert.AnError)
 	require.Nil(t, nodes)

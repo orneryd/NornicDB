@@ -132,12 +132,12 @@ func TestRelationshipRangeReadersSkipPropertyMaps(t *testing.T) {
 		"(n)-[r:T*1..2->()":                   true,
 		"(n {k: ['a', 'b'][i]})-[r:T*2]->(m)": false,
 	} {
-		assert.Equal(t, invalid, invalidRelationshipPattern(pattern), pattern)
+		assert.Equal(t, invalid, invalidRelationshipPattern(originalBraceView(pattern)), pattern)
 	}
 	assert.Equal(t,
 		map[string]struct{}{"s": {}},
-		variableLengthRelationshipVariableSet("(n {k: [x * 2]})-[r:T {w: $ws[i * 2]}]->()-[s*2]->()"))
-	open, end := readRelationshipBracket("(a)-[r->(b)", 0, requireClosedRelationship)
+		variableLengthRelationshipVariableSet(originalBraceView("(n {k: [x * 2]})-[r:T {w: $ws[i * 2]}]->()-[s*2]->()")))
+	open, end := readRelationshipBracket(originalBraceView("(a)-[r->(b)"), 0, requireClosedRelationship)
 	assert.Equal(t, []int{-1, -1}, []int{open, end})
 }
 
@@ -183,11 +183,11 @@ func TestDynamicRelationshipTypeExpressionKeepsItsRange(t *testing.T) {
 		"(a)-[r:$({k: t}.k) {w: 1}]->(b)":   false,
 		"(a)-[r:$({k: t}.k)*2 {w: 1}]->(b)": false,
 	} {
-		assert.Equal(t, invalid, invalidRelationshipPattern(pattern), pattern)
+		assert.Equal(t, invalid, invalidRelationshipPattern(originalBraceView(pattern)), pattern)
 	}
 	assert.Equal(t,
 		map[string]struct{}{"r": {}},
-		variableLengthRelationshipVariableSet("(a)-[r:$({k: t}.k)*1..2]->(b)-[s:$(t * 2)]->(c)"))
+		variableLengthRelationshipVariableSet(originalBraceView("(a)-[r:$({k: t}.k)*1..2]->(b)-[s:$(t * 2)]->(c)")))
 }
 
 // TestDynamicRelationshipTypeExpressionInWrites pins CREATE and MERGE (with
@@ -255,7 +255,7 @@ func TestDynamicRelationshipTypeExpressionInWrites(t *testing.T) {
 		"r:$({k: t}.k)*1..2":         {variable: "r", typeText: "$({k: t}.k)", hasLength: true, length: "1..2"},
 		"r:$(t * 2)*2 {w: $ws[i*2]}": {variable: "r", typeText: "$(t * 2)", hasLength: true, length: "2", properties: "{w: $ws[i*2]}"},
 	} {
-		got := relationshipDeclarationOf(inner)
+		got := relationshipDeclarationOf(originalBraceView(inner))
 		assert.Equal(t, want, declared{got.variable, got.typeText, got.length, got.properties, got.hasLength}, inner)
 	}
 }

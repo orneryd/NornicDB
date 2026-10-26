@@ -103,17 +103,17 @@ func TestLocalScopeOwners(t *testing.T) {
 	require.Equal(t, map[string]struct{}{"x": {}, "p": {}, "a": {}, "y": {}}, expressionLocalBindings("[x IN[1] | x] + [p = (n)-->() | p] + reduce(a = 0, y IN l | a) + 'all(z IN l WHERE z)'"))
 
 	pattern := "shortestPath((s)((x)-[r:R WHERE r.id='r1']->(y))+(t))"
-	_, _, _, found := nextQuantifiedGroup(pattern, 0)
+	_, _, _, found := nextQuantifiedGroup(originalBraceView(pattern), 0)
 	require.False(t, found)
-	require.Len(t, quantifiedGroups(pattern), 1)
-	require.Equal(t, []string{"x x", "y"}, quantifiedGroups("((`x x`)-->(y))+")[0].nodes)
+	require.Len(t, quantifiedGroups(originalBraceView(pattern)), 1)
+	require.Equal(t, []string{"x x", "y"}, quantifiedGroups(originalBraceView("((`x x`)-->(y))+"))[0].nodes)
 
 	// The property-access check reads a local where it is bound.
 	types := map[string]string{"i": "Integer"}
-	require.NoError(t, checkExpressionPropertyAccesses(t.Context(), "all(i IN [{p: 1}] WHERE i.p = 1)", types, nil))
-	require.Error(t, checkExpressionPropertyAccesses(t.Context(), "i.p = 1 AND all(i IN [{p: 1}] WHERE i.p = 1)", types, nil))
-	require.NoError(t, checkExpressionPropertyAccesses(t.Context(), "[i IN [{p: 1}] | [(n)-->(m) | i.p]]", types, nil))
-	require.Error(t, checkExpressionPropertyAccesses(t.Context(), "[j IN [1] | [(n)-->(m) | i.p]]", types, nil))
+	require.NoError(t, checkExpressionPropertyAccesses(t.Context(), expressionBraceView("all(i IN [{p: 1}] WHERE i.p = 1)"), types, nil))
+	require.Error(t, checkExpressionPropertyAccesses(t.Context(), expressionBraceView("i.p = 1 AND all(i IN [{p: 1}] WHERE i.p = 1)"), types, nil))
+	require.NoError(t, checkExpressionPropertyAccesses(t.Context(), originalBraceView("[i IN [{p: 1}] | [(n)-->(m) | i.p]]"), types, nil))
+	require.Error(t, checkExpressionPropertyAccesses(t.Context(), originalBraceView("[j IN [1] | [(n)-->(m) | i.p]]"), types, nil))
 	require.Equal(t, types, newLocalReader("[i IN l | i]").withoutTypes(types, 0))
 }
 
@@ -168,14 +168,14 @@ func TestLocalScopeRound3(t *testing.T) {
 	})
 	scope := matchSemanticScope{"r": matchBindingRelationship}
 	text := "all(r IN [1] WHERE EXISTS { (r)-->() }) AND all(r IN [y] WHERE true)"
-	require.Equal(t, matchBindingValue, withLocalTypes(staticTypeScope{kinds: scope}, text, strings.Index(text, "EXISTS")).kinds["r"])
-	require.Equal(t, matchBindingPath, localBindingKind("[p = (a)-->(b) | p]", 17, "p", staticTypeScope{}))
-	require.Equal(t, matchBindingUnknown, localBindingKind("reduce(a = b, x IN l | a)", 23, "a", staticTypeScope{}))
-	require.Equal(t, matchBindingValue, localBindingKind("reduce(a = 0, x IN l | a)", 23, "a", staticTypeScope{}))
-	require.Equal(t, scope, withLocalTypes(staticTypeScope{kinds: scope}, "true", 0).kinds)
-	require.Equal(t, matchBindingUnknown, localBindingKind("x", 0, "x", staticTypeScope{}))
-	require.Equal(t, matchBindingUnknown, localBindingKind("[x IN| x]", 7, "x", staticTypeScope{}))
-	require.Equal(t, matchSemanticScope{"x": matchBindingValue}, withLocalTypes(staticTypeScope{}, "[x IN [1] | x]", 12).kinds)
+	require.Equal(t, matchBindingValue, withLocalTypes(staticTypeScope{kinds: scope}, originalBraceView(text), strings.Index(text, "EXISTS")).kinds["r"])
+	require.Equal(t, matchBindingPath, localBindingKind(originalBraceView("[p = (a)-->(b) | p]"), 17, "p", staticTypeScope{}))
+	require.Equal(t, matchBindingUnknown, localBindingKind(expressionBraceView("reduce(a = b, x IN l | a)"), 23, "a", staticTypeScope{}))
+	require.Equal(t, matchBindingValue, localBindingKind(expressionBraceView("reduce(a = 0, x IN l | a)"), 23, "a", staticTypeScope{}))
+	require.Equal(t, scope, withLocalTypes(staticTypeScope{kinds: scope}, expressionBraceView("true"), 0).kinds)
+	require.Equal(t, matchBindingUnknown, localBindingKind(expressionBraceView("x"), 0, "x", staticTypeScope{}))
+	require.Equal(t, matchBindingUnknown, localBindingKind(originalBraceView("[x IN| x]"), 7, "x", staticTypeScope{}))
+	require.Equal(t, matchSemanticScope{"x": matchBindingValue}, withLocalTypes(staticTypeScope{}, originalBraceView("[x IN [1] | x]"), 12).kinds)
 }
 
 // TestSubqueryBodiesWalkTheirOwnScope: an EXISTS / COUNT / COLLECT body and
@@ -215,7 +215,7 @@ func TestSubqueryBodiesWalkTheirOwnScope(t *testing.T) {
 			requireStatementCode(t, exec, query, "Neo.ClientError.Statement.SyntaxError")
 		}
 	})
-	require.Equal(t, "0             + CALL (x) {        }", maskNestedScopeBodies("COUNT { (n) } + CALL (x) { RETURN }"))
+	require.Equal(t, "0             + CALL (x) {        }", maskNestedScopeBodies(expressionBraceView("COUNT { (n) } + CALL (x) { RETURN }")))
 }
 
 // R3-6: the replacers' one walk of a text (localOccurrences.keeps) keeps
@@ -263,18 +263,18 @@ func TestLocalScopeRound4Edges(t *testing.T) {
 	local := localOccurrences{text: text}
 	require.Equal(t, "7 / 2 + [x IN l | x]", replaceIdentifierOutsideQuotesUnless(text, "x", "7", &local))
 
-	scope := withPatternComprehensionBindings(staticTypeScope{}, "[(a)-->(b) | b]", len("[(a)-->(b) | "))
+	scope := withPatternComprehensionBindings(staticTypeScope{}, originalBraceView("[(a)-->(b) | b]"), len("[(a)-->(b) | "))
 	require.True(t, scope.bound("a"))
 	require.True(t, scope.bound("b"))
 
-	require.Equal(t, "CALL db.labels() YIELD label", maskNestedScopeBodies("CALL db.labels() YIELD label"))
-	require.Equal(t, "CALL { RETURN 1", maskNestedScopeBodies("CALL { RETURN 1"))
+	require.Equal(t, "CALL db.labels() YIELD label", maskNestedScopeBodies(originalBraceView("CALL db.labels() YIELD label")))
+	require.Equal(t, "CALL { RETURN 1", maskNestedScopeBodies(originalBraceView("CALL { RETURN 1")))
 
-	_, _, ok, err := callSubqueryImports(t.Context(), "CALL db.labels()", typeScope{})
+	_, _, ok, err := callSubqueryImports(t.Context(), originalBraceView("CALL db.labels()"), typeScope{})
 	require.NoError(t, err)
 	require.False(t, ok)
 	exec := &StorageExecutor{}
-	returned, _, err := exec.callSubqueryReturnTypes(t.Context(), "CALL db.labels()", nil, typeScope{}, false)
+	returned, _, err := exec.callSubqueryReturnTypes(t.Context(), originalBraceView("CALL db.labels()"), nil, typeScope{}, false)
 	require.NoError(t, err)
 	require.Nil(t, returned)
 }

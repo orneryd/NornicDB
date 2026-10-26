@@ -6,31 +6,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSplitLegacyParamSyntax(t *testing.T) {
-	// Standard "key value" form.
-	k, v, ok := splitLegacyParamSyntax("key1 42")
-	require.True(t, ok)
-	require.Equal(t, "key1", k)
-	require.Equal(t, "42", v)
+// Author: #1663 implementation lane. The shorthand forms are read by the one
+// shell parameter producer (readShellParameterInput); release's legacy
+// splitter was a second reader of the same input.
+func TestShellParameterShorthandForms(t *testing.T) {
+	text := "key1 42"
+	input, err := readShellParameterInput(text)
+	require.NoError(t, err)
+	require.Equal(t, "key1", text[input.key.Start:input.key.End])
+	require.Equal(t, "42", text[input.value.Start:input.value.End])
 
-	// Colon separator after the key gets stripped.
-	k, v, ok = splitLegacyParamSyntax("key1: 42")
-	require.True(t, ok)
-	require.Equal(t, "key1:", k)
-	require.Equal(t, "42", v)
-
-	// Single field → not enough.
-	_, _, ok = splitLegacyParamSyntax("onlyone")
-	require.False(t, ok)
-
-	// Empty value (only the key is present after stripping colon).
-	_, _, ok = splitLegacyParamSyntax("key:")
-	require.False(t, ok)
-
-	// Quoted-key style with embedded quotes — normalizePropertyKey
-	// should strip them; if the key normalizes to empty, fail.
-	_, _, ok = splitLegacyParamSyntax(`"" 42`)
-	require.False(t, ok)
+	// Release emitted {key1:: 42} here, which failed; the producer rejects it.
+	for _, rejected := range []string{"key1: 42", "onlyone", "key:", `"" 42`} {
+		_, err := readShellParameterInput(rejected)
+		require.Error(t, err, rejected)
+	}
 }
 
 func TestNormalizeParamMap_Variants(t *testing.T) {
@@ -56,27 +46,4 @@ func TestNormalizeParamMap_Variants(t *testing.T) {
 	_, err = normalizeParamMap("not a map")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "must evaluate to a map")
-}
-
-func TestTopLevelColonIndex_BoundaryCases(t *testing.T) {
-	// Simple top-level colon.
-	require.Equal(t, 3, findTopLevelMapKeyValueSeparator("foo:bar"))
-
-	// Quotes hide a colon.
-	require.Equal(t, 5, findTopLevelMapKeyValueSeparator(`"a:b":c`))
-	require.Equal(t, 5, findTopLevelMapKeyValueSeparator(`'a:b':c`))
-
-	// Colon inside braces is hidden by depth tracking; the only
-	// top-level colon is the one outside the brace pair, at index 5.
-	require.Equal(t, 5, findTopLevelMapKeyValueSeparator("{a:b}: c"))
-
-	// Same for parens — only the colon at depth 0 (after the close
-	// paren) counts. Index 6 is the close-paren-then-colon position.
-	require.Equal(t, 6, findTopLevelMapKeyValueSeparator("(a: b): c"))
-
-	// No top-level colon → -1.
-	require.Equal(t, -1, findTopLevelMapKeyValueSeparator(`{"a":1}`))
-
-	// Single-quote-inside-double doesn't toggle inSingle.
-	require.Equal(t, 5, findTopLevelMapKeyValueSeparator(`"a'b":c`))
 }

@@ -64,8 +64,9 @@ func (command *preparedCompositeCommand) execute(ctx context.Context, e *Storage
 	}
 }
 
-func (e *StorageExecutor) prepareCompositeCommand(ctx context.Context, query string) (*preparedCompositeCommand, bool, error) {
-	_, body := parseExecutionMode(query)
+func (e *StorageExecutor) prepareCompositeCommand(ctx context.Context, view braceView) (*preparedCompositeCommand, bool, error) {
+	_, body := executionModeView(view)
+	ctx = withBraceView(ctx, body)
 	if startsWithKeywords(body, "CREATE", "COMPOSITE DATABASE") {
 		command, err := e.prepareCreateCompositeDatabase(ctx, body)
 		return command, true, err
@@ -77,13 +78,14 @@ func (e *StorageExecutor) prepareCompositeCommand(ctx context.Context, query str
 	return nil, false, nil
 }
 
-func (e *StorageExecutor) prepareCreateCompositeDatabase(ctx context.Context, cypher string) (_ *preparedCompositeCommand, retErr error) {
+func (e *StorageExecutor) prepareCreateCompositeDatabase(ctx context.Context, view braceView) (_ *preparedCompositeCommand, retErr error) {
+	cypher := view.text()
+	ctx = withBraceView(ctx, view)
 	ctx = withStatementCredentials(ctx, cypher)
 	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
-	cypher = cyphertext.SourceFor(ctx, cypher).Text
 
 	// Find "CREATE COMPOSITE DATABASE" keyword position
-	createIdx := findMultiWordKeywordIndex(cypher, "CREATE", "COMPOSITE DATABASE")
+	createIdx := findMultiWordKeywordIndex(view, "CREATE", "COMPOSITE DATABASE")
 	if createIdx == -1 {
 		return nil, localizedError(localization.CypherCompositeCreateInvalidSyntax(), nil)
 	}
@@ -155,7 +157,7 @@ func (e *StorageExecutor) prepareCreateCompositeDatabase(ctx context.Context, cy
 		}
 		idx := 0
 		for idx < len(tokens) {
-			ref, err := parseConstituentFromTokens(tokens, &idx, &adminCredentialReader{source: remaining, mapping: cyphertext.SourceFor(ctx, cypher), base: remainingStart, spans: spans, set: statementCredentials(ctx)})
+			ref, err := parseConstituentFromTokens(tokens, &idx, &adminCredentialReader{source: remaining, mapping: view.source, base: remainingStart, spans: spans, set: statementCredentials(ctx)})
 			if err != nil {
 				return nil, err
 			}
@@ -181,14 +183,15 @@ func (e *StorageExecutor) prepareCreateCompositeDatabase(ctx context.Context, cy
 	return &preparedCompositeCommand{database: dbName, action: compositeCreate, constituents: constituents}, nil
 }
 
-func (e *StorageExecutor) prepareAlterCompositeDatabase(ctx context.Context, cypher string) (_ *preparedCompositeCommand, retErr error) {
+func (e *StorageExecutor) prepareAlterCompositeDatabase(ctx context.Context, view braceView) (_ *preparedCompositeCommand, retErr error) {
+	cypher := view.text()
+	ctx = withBraceView(ctx, view)
 	ctx = withStatementCredentials(ctx, cypher)
 	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
-	cypher = cyphertext.SourceFor(ctx, cypher).Text
 
 	// Find "ALTER COMPOSITE DATABASE" keyword position
 	// First find "ALTER COMPOSITE", then check for "DATABASE"
-	alterIdx := findMultiWordKeywordIndex(cypher, "ALTER", "COMPOSITE")
+	alterIdx := findMultiWordKeywordIndex(view, "ALTER", "COMPOSITE")
 	if alterIdx == -1 {
 		return nil, localizedError(localization.CypherCompositeAlterInvalidSyntax(), nil)
 	}
@@ -265,7 +268,7 @@ func (e *StorageExecutor) prepareAlterCompositeDatabase(ctx context.Context, cyp
 	}
 	if len(tokens) >= 2 && equalFoldASCII(tokens[0], "ADD") && equalFoldASCII(tokens[1], "ALIAS") {
 		idx := 1
-		constituent, err := parseConstituentFromTokens(tokens, &idx, &adminCredentialReader{source: remaining, mapping: cyphertext.SourceFor(ctx, cypher), base: remainingStart, spans: spans, set: statementCredentials(ctx)})
+		constituent, err := parseConstituentFromTokens(tokens, &idx, &adminCredentialReader{source: remaining, mapping: view.source, base: remainingStart, spans: spans, set: statementCredentials(ctx)})
 		if err != nil {
 			return nil, err
 		}

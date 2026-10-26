@@ -192,9 +192,9 @@ func TestPathSelectorRewrite(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, pathPatternPrefix{start: 0, end: 17, kind: "SHORTEST", count: "3"}, prefix)
 
-	require.False(t, hasVariableLengthRelationship("(a {l: [1, 2]})-[r WHERE r.x * 2 > 1]->(b)", 0, len("(a {l: [1, 2]})-[r WHERE r.x * 2 > 1]->(b)")))
-	require.False(t, hasVariableLengthRelationship("(a)-[r", 0, len("(a)-[r")))
-	require.True(t, hasVariableLengthRelationship("(a)-['x', `y`]->(b)-[*2]->(c)", 0, len("(a)-['x', `y`]->(b)-[*2]->(c)")))
+	require.False(t, hasVariableLengthRelationship(originalBraceView("(a {l: [1, 2]})-[r WHERE r.x * 2 > 1]->(b)"), 0, len("(a {l: [1, 2]})-[r WHERE r.x * 2 > 1]->(b)")))
+	require.False(t, hasVariableLengthRelationship(originalBraceView("(a)-[r"), 0, len("(a)-[r")))
+	require.True(t, hasVariableLengthRelationship(originalBraceView("(a)-['x', `y`]->(b)-[*2]->(c)"), 0, len("(a)-['x', `y`]->(b)-[*2]->(c)")))
 }
 
 // The helpers of selected patterns read every form a value may take.
@@ -235,13 +235,13 @@ func TestPathSelectorHelpers(t *testing.T) {
 	_, err = pathSelectorCount(context.Background(), "-2")
 	require.ErrorContains(t, err, "got `-2`")
 
-	selector, predicate, terms, ok := splitPathSelectorTerm("__nornic_path_selector('ANY', 2, false, '', a.x = 1, 2) AND b.y = 1")
+	selector, predicate, terms, ok := splitPathSelectorTerm(expressionBraceView("__nornic_path_selector('ANY', 2, false, '', a.x = 1, 2) AND b.y = 1"))
 	require.True(t, ok)
 	require.Equal(t, &pathSelector{count: "2"}, selector)
 	require.Equal(t, "a.x = 1,2", predicate)
 	require.Equal(t, []string{"b.y = 1"}, terms)
 	for _, where := range []string{"", "a.x = 1", "__nornic_path_selector", "__nornic_path_selector('ANY', 2)", "__nornic_path_selector('ANY' AND x"} {
-		_, _, _, ok := splitPathSelectorTerm(where)
+		_, _, _, ok := splitPathSelectorTerm(originalBraceView(where))
 		require.False(t, ok, where)
 	}
 }

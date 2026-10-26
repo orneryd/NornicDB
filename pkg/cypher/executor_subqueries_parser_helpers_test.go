@@ -8,7 +8,7 @@ import (
 )
 
 func TestCallSubqueryStringParsers(t *testing.T) {
-	parts := splitTopLevelAndConjuncts("a = 1 AND b = 'x AND y' AND c = [1,2]")
+	parts := splitTopLevelAndConjuncts(expressionBraceView("a = 1 AND b = 'x AND y' AND c = [1,2]"))
 	require.Equal(t, []string{"a = 1", "b = 'x AND y'", "c = [1,2]"}, parts)
 
 	lhs, rhs, ok := splitTopLevelEqualityCallSubquery("a = b")
@@ -21,11 +21,11 @@ func TestCallSubqueryStringParsers(t *testing.T) {
 	_, _, ok = splitTopLevelEqualityCallSubquery("a")
 	require.False(t, ok)
 
-	idx := indexTopLevelKeywordCallSubquery("x = 'ORDER BY y' ORDER BY n.name", "ORDER BY")
+	idx := indexTopLevelKeywordCallSubquery(expressionBraceView("x = 'ORDER BY y' ORDER BY n.name"), "ORDER BY")
 	require.GreaterOrEqual(t, idx, 0)
 	require.Equal(t, "ORDER BY n.name", "x = 'ORDER BY y' ORDER BY n.name"[idx:])
 
-	idx = indexTopLevelKeywordCallSubquery("RETURN n", "ORDER BY")
+	idx = indexTopLevelKeywordCallSubquery(originalBraceView("RETURN n"), "ORDER BY")
 	require.Equal(t, -1, idx)
 }
 
@@ -38,19 +38,19 @@ func TestCallSubqueryIdentifierHelpers(t *testing.T) {
 }
 
 func TestSplitTopLevelResultModifiersCallSubquery(t *testing.T) {
-	proj, mods := splitTopLevelResultModifiersCallSubquery("n.name AS name ORDER BY name SKIP 1 LIMIT 2")
+	proj, mods := splitTopLevelResultModifiersCallSubquery(expressionBraceView("n.name AS name ORDER BY name SKIP 1 LIMIT 2"))
 	require.Equal(t, "n.name AS name", proj)
 	require.Equal(t, "ORDER BY name SKIP 1 LIMIT 2", mods)
 
-	proj, mods = splitTopLevelResultModifiersCallSubquery("n.name AS name")
+	proj, mods = splitTopLevelResultModifiersCallSubquery(expressionBraceView("n.name AS name"))
 	require.Equal(t, "n.name AS name", proj)
 	require.Empty(t, mods)
 }
 
 func TestCallSubqueryWriteAndIdentifierChecks(t *testing.T) {
-	require.True(t, callSubqueryQueryIsWrite("MATCH (n) CREATE (m)"))
-	require.True(t, callSubqueryQueryIsWrite("MATCH (n) SET n.x = 1"))
-	require.False(t, callSubqueryQueryIsWrite("MATCH (n) RETURN n"))
+	require.True(t, callSubqueryQueryIsWrite(originalBraceView("MATCH (n) CREATE (m)")))
+	require.True(t, callSubqueryQueryIsWrite(originalBraceView("MATCH (n) SET n.x = 1")))
+	require.False(t, callSubqueryQueryIsWrite(originalBraceView("MATCH (n) RETURN n")))
 
 	require.True(t, isSimpleIdentifier("name_1"))
 	require.True(t, isSimpleIdentifier("`quoted`"))
@@ -60,13 +60,13 @@ func TestCallSubqueryWriteAndIdentifierChecks(t *testing.T) {
 
 func TestCallSubqueryImportNullGuardTerm(t *testing.T) {
 	for _, term := range []string{"seed IS NOT NULL", "`seed` is not null"} {
-		got, ok := cyphertext.FilterImportConjuncts(term, "seed", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
+		got, ok := cyphertext.FilterImportConjuncts(term, "seed", cyphertext.IdentifierUnqualifiedFold, conjunctTexts)
 		require.True(t, ok)
 		require.Empty(t, got)
 	}
-	_, ok := cyphertext.FilterImportConjuncts("seed IS NULL", "seed", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
+	_, ok := cyphertext.FilterImportConjuncts("seed IS NULL", "seed", cyphertext.IdentifierUnqualifiedFold, conjunctTexts)
 	require.False(t, ok)
-	got, ok := cyphertext.FilterImportConjuncts("other IS NOT NULL", "seed", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
+	got, ok := cyphertext.FilterImportConjuncts("other IS NOT NULL", "seed", cyphertext.IdentifierUnqualifiedFold, conjunctTexts)
 	require.True(t, ok)
 	require.Equal(t, "other IS NOT NULL", got)
 }

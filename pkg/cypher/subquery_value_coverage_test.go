@@ -36,6 +36,6 @@ func TestSubqueryValueRemainingBranches(t *testing.T) {
 
 	require.False(t, containsIdentifierWord("xn", "n"))
 	require.True(t, containsIdentifierWord("x n", "n"))
-	require.False(t, patternHasRelationship("(a {s: 'x->y', t: \"<-\"})"))
-	require.True(t, patternHasRelationship("(a {s: 'x'})-->(b)"))
+	require.False(t, patternHasRelationship(originalBraceView("(a {s: 'x->y', t: \"<-\"})")))
+	require.True(t, patternHasRelationship(originalBraceView("(a {s: 'x'})-->(b)")))
 }

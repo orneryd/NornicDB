@@ -41,9 +41,9 @@ func TestParenthesisedPaths(t *testing.T) {
 	_, err := exec.Execute(ctx, "MATCH ((a)-->(b) WHERE a:A:B|C) RETURN 1", nil)
 	require.ErrorContains(t, err, "Mixing label expression symbols")
 
-	require.True(t, mayUseParenthesisedPath("MATCH ( (a)-[r]->(b)) RETURN 1"))
-	require.False(t, mayUseParenthesisedPath("MATCH (a) WHERE ((a.x > 1) AND (a.y < 2)) RETURN count((a))"))
-	require.False(t, mayUseParenthesisedPath("RETURN 1"))
+	require.True(t, mayUseParenthesisedPath(originalBraceView("MATCH ( (a)-[r]->(b)) RETURN 1")))
+	require.False(t, mayUseParenthesisedPath(originalBraceView("MATCH (a) WHERE ((a.x > 1) AND (a.y < 2)) RETURN count((a))")))
+	require.False(t, mayUseParenthesisedPath(originalBraceView("RETURN 1")))
 	rewrite := pathPrefixRewrite{}
 	text := "(a)-['x']->(b {k: [1]})"
 	require.NoError(t, (&labelExpressionRewriter{query: text}).plainParenthesisedPath(0, len(text), &rewrite))

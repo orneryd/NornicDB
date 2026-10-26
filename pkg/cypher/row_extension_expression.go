@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string, values map[string]interface{}) (value interface{}, matched bool, resolved bool, err error) {
+func (e *StorageExecutor) evaluateRowExtensionFunction(function string, argument braceView, values map[string]interface{}) (value interface{}, matched bool, resolved bool, err error) {
 	name := lowerASCII(function)
 	// An argument's error is the function's: eval keeps the first one, and it
 	// replaces whatever the function would return.
@@ -16,8 +16,8 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 			value, resolved, err = nil, false, argumentErr
 		}
 	}()
-	eval := func(expression string) (interface{}, bool) {
-		value, ok, err := e.evaluateRowValue(strings.TrimSpace(expression), values)
+	eval := func(expression braceView) (interface{}, bool) {
+		value, ok, err := e.evaluateRowValue(expression.trim(), values)
 		if err != nil {
 			if argumentErr == nil {
 				argumentErr = err
@@ -33,7 +33,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		if argsEvaluated {
 			return cachedArgs, true
 		}
-		parts := splitTopLevelComma(argument)
+		parts := argument.commaViews()
 		out := make([]interface{}, len(parts))
 		for index, part := range parts {
 			value, ok := eval(part)
@@ -63,7 +63,16 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		if !ok {
 			return nil, true, false, nil
 		}
-		value, matched, err := e.evaluateNativeAPOCFunction(rowStatementContextOrBackground(values), function, arguments)
+		value, matched, err := e.evaluateNativeAPOCFunction(rowStatementContextOrBackground(values), function, arguments, argument.commaViews(), func(expression braceView) (interface{}, error) {
+			value, resolved, err := e.evaluateRowValue(expression, values)
+			if err != nil {
+				return nil, err
+			}
+			if !resolved {
+				return nil, errRowArgumentUnresolved
+			}
+			return value, nil
+		})
 		return value, matched, err == nil, err
 	}
 	if value, matched, resolved, err := e.evaluateRowTemporalComponent(name, argument, values); matched {
@@ -71,12 +80,12 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 	}
 	switch name {
 	case "rand":
-		if strings.TrimSpace(argument) != "" {
+		if argument.trim().text() != "" {
 			return nil, true, false, nil
 		}
 		return randomCypherFloat(), true, true, nil
 	case "randomuuid":
-		if strings.TrimSpace(argument) != "" {
+		if argument.trim().text() != "" {
 			return nil, true, false, nil
 		}
 		return e.generateUUID(), true, true, nil
@@ -176,7 +185,7 @@ func (e *StorageExecutor) evaluateRowExtensionFunction(function, argument string
 		return strings.EqualFold(apocValueTypeName(values[0]), typeName), true, typeOK, nil
 	case "kalman.init", "kalman.adaptive.init":
 		var config map[string]interface{}
-		if strings.TrimSpace(argument) != "" {
+		if argument.trim().text() != "" {
 			value, ok := one()
 			if !ok {
 				return nil, true, false, nil
@@ -217,9 +226,9 @@ func padRowString(value string, length int, padding string, left bool) string {
 	return string(result)
 }
 
-func (e *StorageExecutor) evaluateRowTemporalComponent(name, argument string, values map[string]interface{}) (interface{}, bool, bool, error) {
+func (e *StorageExecutor) evaluateRowTemporalComponent(name string, argument braceView, values map[string]interface{}) (interface{}, bool, bool, error) {
 	if name == "timestamp" {
-		if strings.TrimSpace(argument) != "" {
+		if argument.trim().text() != "" {
 			return nil, true, false, nil
 		}
 		return time.Now().UnixMilli(), true, true, nil
@@ -235,7 +244,7 @@ func (e *StorageExecutor) evaluateRowTemporalComponent(name, argument string, va
 	if kind != "date" && kind != "datetime" {
 		return nil, false, false, nil
 	}
-	value, ok, err := e.evaluateRowValue(strings.TrimSpace(argument), values)
+	value, ok, err := e.evaluateRowValue(argument.trim(), values)
 	if err != nil {
 		return nil, true, false, err
 	}

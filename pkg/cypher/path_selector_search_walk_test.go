@@ -35,14 +35,14 @@ func TestSelectedPathSearchUniformWalks(t *testing.T) {
 		"(a)(()-[:T]->(:S))+(b)":               false,
 		"(a)(()-[:T]->()){0}(b)":               false,
 	} {
-		plan, _, ok := compileSelectedPathPlan(pattern, "p", "", nil)
+		plan, _, ok := compileSelectedPathPlan(originalBraceView(pattern), "p", originalBraceView(""), nil)
 		require.True(t, ok, pattern)
 		require.Equal(t, uniform, plan.forward.uniform != nil, pattern)
 	}
 
 	// Three optional repetitions take at most three steps; the search for a
 	// fourth meets a slot at a step it already failed from.
-	plan, _, ok := compileSelectedPathPlan("(a)(()-[:T]->()){0,1}(()-[:T]->()){0,1}(()-[:T]->()){0,1}(b)", "p", "", nil)
+	plan, _, ok := compileSelectedPathPlan(originalBraceView("(a)(()-[:T]->()){0,1}(()-[:T]->()){0,1}(()-[:T]->()){0,1}(b)"), "p", originalBraceView(""), nil)
 	require.True(t, ok)
 	_, ok = plan.forward.walkPath(nil, make([]pathSearchPathStep, 4))
 	require.False(t, ok)
@@ -73,7 +73,7 @@ func TestSelectedPathSearchUniformWalks(t *testing.T) {
 			return exec.bindSelectedPath(ctx, plan, plan.forward, false, pipelineRow{}, path)
 		}
 	}
-	plus, _, ok := compileSelectedPathPlan("(a)(()-[:T]->())+(b)", "p", "", nil)
+	plus, _, ok := compileSelectedPathPlan(originalBraceView("(a)(()-[:T]->())+(b)"), "p", originalBraceView(""), nil)
 	require.True(t, ok)
 	rows, ok := exec.newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(exec, plus))
 	require.True(t, ok)
@@ -83,7 +83,7 @@ func TestSelectedPathSearchUniformWalks(t *testing.T) {
 	_, ok = exec.newPathSearch(ctx, plus.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false,
 		func(pathSearchPath) (pipelineRow, bool) { return nil, false })
 	require.False(t, ok)
-	three, _, ok := compileSelectedPathPlan("(a)(()-[:T]->()){3}(b)", "p", "", nil)
+	three, _, ok := compileSelectedPathPlan(originalBraceView("(a)(()-[:T]->()){3}(b)"), "p", originalBraceView(""), nil)
 	require.True(t, ok)
 	_, ok = exec.newPathSearch(ctx, three.forward, pipelineRow{}, -1, s1).bindWalks(s1, s4, walk, false, bindFor(exec, three))
 	require.False(t, ok)

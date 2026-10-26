@@ -58,7 +58,7 @@ func executionClauseEffects(ctx context.Context, clause pipelineClause) (pipelin
 		// Effect-only callers need no resolved scope. They observe this retained
 		// syntax node; row execution has a separate mandatory binding admission.
 		var effects pipelineClauseEffects
-		clause.syntax.Walk(pipelineEffectVisitor(&effects))
+		clause.syntax.Walk(pipelineEffectVisitor(clause.grammarView, &effects))
 		return effects, ctx.Err()
 	}
 	return pipelineClauseEffectsFor(ctx, clause.text)

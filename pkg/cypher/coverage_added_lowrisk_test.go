@@ -27,13 +27,13 @@ func TestResolveRowPath_EmptyAndNoParams(t *testing.T) {
 }
 
 func TestExtractCreateVariableRefs_IgnoresEmptyPatternSegments(t *testing.T) {
-	vars := extractCreateVariableRefs("CREATE (a)-[:R]->(b), ")
+	vars := extractCreateVariableRefs(originalBraceView("CREATE (a)-[:R]->(b), "))
 	require.ElementsMatch(t, []string{"a", "b"}, vars)
 }
 
 func TestDatetimeFunction_PassthroughTypedDateTime(t *testing.T) {
 	exec := &StorageExecutor{}
-	out := exec.evaluateExpressionWithContext(context.Background(), "datetime(datetime())", nil, nil)
+	out := exec.evaluateExpressionWithContext(context.Background(), expressionBraceView("datetime(datetime())"), nil, nil)
 	_, ok := out.(CypherDateTime)
 	require.True(t, ok)
 }

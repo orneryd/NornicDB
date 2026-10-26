@@ -59,12 +59,12 @@ func (e *StorageExecutor) sharedChainedPipelineForTest(ctx context.Context, quer
 }
 
 func (e *StorageExecutor) sharedPathLiteralForTest(expression string) interface{} {
-	value, _ := e.evaluateRowExpressionWithContext(context.Background(), expression, nil)
+	value, _ := e.evaluateRowExpressionWithContext(context.Background(), originalBraceView(expression), nil)
 	return value
 }
 
 func (e *StorageExecutor) sharedPathComparisonForTest(left, right interface{}, operator string) bool {
-	return e.evaluateRowPredicate(context.Background(), "left "+operator+" right", map[string]interface{}{"left": left, "right": right})
+	return e.evaluateRowPredicate(context.Background(), originalBraceView("left "+operator+" right"), map[string]interface{}{"left": left, "right": right})
 }
 
 func (e *StorageExecutor) sharedTrailingRowsHandledForTest(ctx context.Context, query string, input, output *ExecuteResult) (*ExecuteResult, bool, error) {
@@ -151,7 +151,7 @@ func sharedSetAssignmentForTest(t testing.TB, entity interface{}, assignment unw
 	}
 	exec := NewStorageExecutor(store)
 	ctx := withExpressionFailureSlot(context.Background())
-	_, _, err := exec.pipelineApplySet(ctx, []pipelineRow{row}, clause)
+	_, _, err := exec.pipelineApplySet(ctx, []pipelineRow{row}, originalBraceView(clause))
 	if err == nil {
 		err = getExpressionFailure(ctx)
 	}
@@ -236,7 +236,7 @@ func (e *StorageExecutor) sharedAggregationRowsForTest(ctx context.Context, rows
 		projections = append(projections, projection)
 	}
 	ctx = withExpressionFailureSlot(ctx)
-	projected, handled := e.pipelineApplyReturn(ctx, rows, "RETURN "+strings.Join(projections, ", "))
+	projected, handled := e.pipelineApplyReturn(ctx, rows, originalBraceView("RETURN "+strings.Join(projections, ", ")))
 	if failure := getExpressionFailure(ctx); failure != nil {
 		return nil, failure
 	}
@@ -268,7 +268,7 @@ func (e *StorageExecutor) sharedCartesianAggregationForTest(ctx context.Context,
 }
 
 func (e *StorageExecutor) sharedFirstMatchForTest(ctx context.Context, pattern string) ([]binding, []relationshipBinding) {
-	rows, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, "MATCH "+pattern)
+	rows, _, err := e.pipelineApplyMatch(ctx, []pipelineRow{{}}, originalBraceView("MATCH "+pattern))
 	if err != nil {
 		panic(err)
 	}
@@ -327,8 +327,8 @@ func (e *StorageExecutor) sharedCreateBindingsForTest(ctx context.Context, query
 	split := parsePipelineClauses(ctx, query)
 	clauses, ok := split.clauses, split.ok
 	if !ok || len(clauses) == 0 || clauses[0].kind != pipelineClauseCreate {
-		if pattern := strings.TrimSpace(strings.TrimPrefix(query, "CREATE")); patternHasRelationship(pattern) {
-			if err := validateRelationshipMutation(pattern, createRelationshipMutation); err != nil {
+		if pattern := strings.TrimSpace(strings.TrimPrefix(query, "CREATE")); patternHasRelationship(originalBraceView(pattern)) {
+			if err := validateRelationshipMutation(originalBraceView(pattern), createRelationshipMutation); err != nil {
 				return nil, nil, nil, fmt.Errorf("invalid relationship pattern: %w", err)
 			}
 		}
@@ -353,7 +353,7 @@ func (e *StorageExecutor) sharedCreateBindingsForTest(ctx context.Context, query
 	}
 	result := created
 	if len(clauses) > 1 {
-		result, _ = e.pipelineApplyReturn(ctx, rows, clauses[1].text)
+		result, _ = e.pipelineApplyReturn(ctx, rows, originalBraceView(clauses[1].text))
 		result.Stats = created.Stats
 	}
 	return result, nodes, edges, getExpressionFailure(ctx)
@@ -1501,9 +1501,9 @@ func TestConvergedSetPipelineHelpers(t *testing.T) {
 	})
 
 	t.Run("whitespace normalization preserves quoted content", func(t *testing.T) {
-		require.Equal(t, "MATCH (n) SET n.text = 'a  b' RETURN n", normalizePipelineWhitespace("\nMATCH\t(n)  SET n.text = 'a  b'\rRETURN n\n"))
-		require.Equal(t, "RETURN `a``b`, \"c\\\"d\"", normalizePipelineWhitespace("RETURN\t`a``b`,\n\"c\\\"d\""))
-		require.Equal(t, "RETURN 1", normalizePipelineWhitespace("  RETURN 1  "))
+		require.Equal(t, "MATCH (n) SET n.text = 'a  b' RETURN n", normalizePipelineWhitespace(originalBraceView("\nMATCH\t(n)  SET n.text = 'a  b'\rRETURN n\n")))
+		require.Equal(t, "RETURN `a``b`, \"c\\\"d\"", normalizePipelineWhitespace(originalBraceView("RETURN\t`a``b`,\n\"c\\\"d\"")))
+		require.Equal(t, "RETURN 1", normalizePipelineWhitespace(originalBraceView("  RETURN 1  ")))
 	})
 
 	t.Run("assignment validation rejects malformed forms", func(t *testing.T) {
@@ -1519,9 +1519,9 @@ func TestConvergedSetPipelineHelpers(t *testing.T) {
 			{"node:1bad"},
 		}
 		for _, assignments := range invalid {
-			require.Error(t, validatePipelineSetAssignments(assignments), assignments)
+			require.Error(t, validatePipelineSetAssignments(originalBraceViews(assignments...)), assignments)
 		}
-		require.NoError(t, validatePipelineSetAssignments([]string{"node += properties", "node.value = 1", "node:Valid"}))
+		require.NoError(t, validatePipelineSetAssignments(originalBraceViews("node += properties", "node.value = 1", "node:Valid")))
 	})
 
 	t.Run("mutation operation describes failing assignment", func(t *testing.T) {

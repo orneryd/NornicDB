@@ -24,49 +24,49 @@ func TestTryCollectNodesFromIDEquality_Branches(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	nodes, used, err := exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "")
+	nodes, used, err := exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, originalBraceView(""))
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "id(n) == 'person-1'")
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) == 'person-1'"))
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "m"}, "id(n) = 'person-1'")
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "m"}, expressionBraceView("id(n) = 'person-1'"))
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "id(n) = 1")
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) = 1"))
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "id(n) = 'missing'")
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) = 'missing'"))
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "id(n) = 'person-1'")
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) = 'person-1'"))
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("person-1"), nodes[0].ID)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, "elementId(n) = '4:nornic:person-1'")
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("elementId(n) = '4:nornic:person-1'"))
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("person-1"), nodes[0].ID)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n", labels: []string{"Movie"}}, "id(n) = 'person-1'")
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n", labels: []string{"Movie"}}, expressionBraceView("id(n) = 'person-1'"))
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n", properties: map[string]interface{}{"role": "support"}}, "id(n) = 'person-1'")
+	nodes, used, err = exec.tryCollectNodesFromIDEquality(ctx, nodePatternInfo{variable: "n", properties: map[string]interface{}{"role": "support"}}, expressionBraceView("id(n) = 'person-1'"))
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
@@ -86,27 +86,27 @@ func TestTryCollectNodesFromIDEqualityParamAndCompound_Branches(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	nodes, used, err := exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, "id(n) = $id", nil)
+	nodes, used, err := exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) = $id"), nil)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, "id(n) = 'n1'", map[string]interface{}{"id": "n1"})
+	nodes, used, err = exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) = 'n1'"), map[string]interface{}{"id": "n1"})
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, "id(n) = $missing", map[string]interface{}{"id": "n1"})
+	nodes, used, err = exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) = $missing"), map[string]interface{}{"id": "n1"})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, "id(n) = $id", map[string]interface{}{"id": 10})
+	nodes, used, err = exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) = $id"), map[string]interface{}{"id": 10})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, "elementId(n) = $id", map[string]interface{}{"id": "4:nornic:n1"})
+	nodes, used, err = exec.tryCollectNodesFromIDEqualityParam(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("elementId(n) = $id"), map[string]interface{}{"id": "4:nornic:n1"})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Len(t, nodes, 1)
@@ -115,7 +115,7 @@ func TestTryCollectNodesFromIDEqualityParamAndCompound_Branches(t *testing.T) {
 	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(
 		ctx,
 		nodePatternInfo{variable: "n"},
-		"(id(n) = 'n1' OR id(n) = 'n2')",
+		originalBraceView("(id(n) = 'n1' OR id(n) = 'n2')"),
 		nil,
 	)
 	require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestTryCollectNodesFromIDEqualityParamAndCompound_Branches(t *testing.T) {
 	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(
 		ctx,
 		nodePatternInfo{variable: "n"},
-		"(n.k = 'v1' OR id(n) = 'n1')",
+		originalBraceView("(n.k = 'v1' OR id(n) = 'n1')"),
 		nil,
 	)
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestTryCollectNodesFromIDEqualityParamAndCompound_Branches(t *testing.T) {
 	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(
 		ctx,
 		nodePatternInfo{variable: "n", labels: []string{"Movie"}},
-		"(id(n) = 'n1' AND true)",
+		originalBraceView("(id(n) = 'n1' AND true)"),
 		nil,
 	)
 	require.NoError(t, err)
@@ -160,24 +160,24 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	nodes, used, err := exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", nil)
+	nodes, used, err := exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) IN $ids"), nil)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"other": []interface{}{"p1"}})
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) IN $ids"), map[string]interface{}{"other": []interface{}{"p1"}})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"ids": "p1"})
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) IN $ids"), map[string]interface{}{"ids": "p1"})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
 	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx,
 		nodePatternInfo{variable: "n", labels: []string{"Person"}, properties: map[string]interface{}{"kind": "human"}},
-		"elementId(n) IN $ids",
+		expressionBraceView("elementId(n) IN $ids"),
 		map[string]interface{}{"ids": []interface{}{"p1", "4:nornic:p2", "p1", "", 7}},
 	)
 	require.NoError(t, err)
@@ -188,7 +188,7 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 
 	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx,
 		nodePatternInfo{variable: "n", labels: []string{"Movie"}, properties: map[string]interface{}{"kind": "human"}},
-		"id(n) IN $ids",
+		expressionBraceView("id(n) IN $ids"),
 		map[string]interface{}{"ids": []interface{}{"p1", "m1"}},
 	)
 	require.NoError(t, err)
@@ -198,18 +198,18 @@ func TestTryCollectNodesFromIDInParam_AndIndexCandidateLabels(t *testing.T) {
 	// A constant list seeks too: a literal, as a substituted parameter
 	// arrives (#940); null selects nothing; a non-list is left to the
 	// evaluator.
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "(id(n) IN ['p2', 'm1', 'missing'])", nil)
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, originalBraceView("(id(n) IN ['p2', 'm1', 'missing'])"), nil)
 	require.NoError(t, err)
 	require.True(t, used)
 	require.ElementsMatch(t, []storage.NodeID{"p2", "m1"}, []storage.NodeID{nodes[0].ID, nodes[1].ID})
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN null", nil)
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) IN null"), nil)
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
-	_, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN 'p1'", nil)
+	_, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) IN 'p1'"), nil)
 	require.NoError(t, err)
 	require.False(t, used)
-	_, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN n.ids", nil)
+	_, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) IN n.ids"), nil)
 	require.NoError(t, err)
 	require.False(t, used, "a list read from the node itself isn't constant")
 

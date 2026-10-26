@@ -96,9 +96,9 @@ func TestSizeRejectsPathsAndPatternPredicates(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "size_argument_types"))
 	rows := []pipelineRow{{"p": map[string]interface{}{"_pathResult": PathResult{}}}}
 
-	err := exec.validatePipelineSizeArguments(t.Context(), rows, "RETURN size(p)", "RETURN")
+	err := exec.validatePipelineSizeArguments(t.Context(), rows, originalBraceView("RETURN size(p)"), "RETURN")
 	require.Error(t, err)
-	err = exec.validatePipelineSizeArguments(t.Context(), nil, "RETURN size((a)-->(b))", "RETURN")
+	err = exec.validatePipelineSizeArguments(t.Context(), nil, originalBraceView("RETURN size((a)-->(b))"), "RETURN")
 	require.Error(t, err)
 }
 

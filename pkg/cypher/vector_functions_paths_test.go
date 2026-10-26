@@ -47,35 +47,53 @@ func TestVectorAndUUIDFunctionPaths(t *testing.T) {
 		return values[expr], nil
 	}}
 	for name, run := range map[string]func() (interface{}, error){
-		"vector count":           func() (interface{}, error) { return fnVector(call, []string{"v", "i"}) },
-		"vector eval":            func() (interface{}, error) { return fnVector(call, []string{"fail", "i", "'INTEGER'"}) },
-		"vector dimension type":  func() (interface{}, error) { return fnVector(call, []string{"v", "s", "'INTEGER'"}) },
-		"vector dimension range": func() (interface{}, error) { return fnVector(call, []string{"v", "big", "'INTEGER'"}) },
-		"dimension count count":  func() (interface{}, error) { return fnVectorDimensionCount(call, nil) },
-		"dimension count eval":   func() (interface{}, error) { return fnVectorDimensionCount(call, []string{"fail"}) },
-		"dimension count type":   func() (interface{}, error) { return fnVectorDimensionCount(call, []string{"s"}) },
-		"distance count":         func() (interface{}, error) { return fnVectorDistance(call, []string{"v"}) },
-		"distance eval":          func() (interface{}, error) { return fnVectorDistance(call, []string{"fail", "v", "'COSINE'"}) },
-		"distance a":             func() (interface{}, error) { return fnVectorDistance(call, []string{"s", "v", "'COSINE'"}) },
-		"distance b":             func() (interface{}, error) { return fnVectorDistance(call, []string{"v", "s", "'COSINE'"}) },
-		"norm count":             func() (interface{}, error) { return fnVectorNorm(call, []string{"v"}) },
-		"norm eval":              func() (interface{}, error) { return fnVectorNorm(call, []string{"fail", "'EUCLIDEAN'"}) },
-		"norm type":              func() (interface{}, error) { return fnVectorNorm(call, []string{"s", "'EUCLIDEAN'"}) },
-		"uuid count":             func() (interface{}, error) { return fnUUID(call, []string{"i", "i", "i"}) },
-		"uuid eval":              func() (interface{}, error) { return fnUUID(call, []string{"fail"}) },
-		"uuid text type":         func() (interface{}, error) { return fnUUID(call, []string{"i"}) },
-		"uuid msb type":          func() (interface{}, error) { return fnUUID(call, []string{"s", "i"}) },
-		"uuid lsb type":          func() (interface{}, error) { return fnUUID(call, []string{"i", "s"}) },
-		"half count":             func() (interface{}, error) { return fnUUIDHalf(false)(call, nil) },
-		"half eval":              func() (interface{}, error) { return fnUUIDHalf(true)(call, []string{"fail"}) },
-		"half type":              func() (interface{}, error) { return fnUUIDHalf(false)(call, []string{"s"}) },
+		"vector count": func() (interface{}, error) { return invokeFunctionFixture(fnVector, call, []string{"v", "i"}) },
+		"vector eval": func() (interface{}, error) {
+			return invokeFunctionFixture(fnVector, call, []string{"fail", "i", "'INTEGER'"})
+		},
+		"vector dimension type": func() (interface{}, error) {
+			return invokeFunctionFixture(fnVector, call, []string{"v", "s", "'INTEGER'"})
+		},
+		"vector dimension range": func() (interface{}, error) {
+			return invokeFunctionFixture(fnVector, call, []string{"v", "big", "'INTEGER'"})
+		},
+		"dimension count count": func() (interface{}, error) { return invokeFunctionFixture(fnVectorDimensionCount, call, nil) },
+		"dimension count eval": func() (interface{}, error) {
+			return invokeFunctionFixture(fnVectorDimensionCount, call, []string{"fail"})
+		},
+		"dimension count type": func() (interface{}, error) { return invokeFunctionFixture(fnVectorDimensionCount, call, []string{"s"}) },
+		"distance count":       func() (interface{}, error) { return invokeFunctionFixture(fnVectorDistance, call, []string{"v"}) },
+		"distance eval": func() (interface{}, error) {
+			return invokeFunctionFixture(fnVectorDistance, call, []string{"fail", "v", "'COSINE'"})
+		},
+		"distance a": func() (interface{}, error) {
+			return invokeFunctionFixture(fnVectorDistance, call, []string{"s", "v", "'COSINE'"})
+		},
+		"distance b": func() (interface{}, error) {
+			return invokeFunctionFixture(fnVectorDistance, call, []string{"v", "s", "'COSINE'"})
+		},
+		"norm count": func() (interface{}, error) { return invokeFunctionFixture(fnVectorNorm, call, []string{"v"}) },
+		"norm eval": func() (interface{}, error) {
+			return invokeFunctionFixture(fnVectorNorm, call, []string{"fail", "'EUCLIDEAN'"})
+		},
+		"norm type": func() (interface{}, error) {
+			return invokeFunctionFixture(fnVectorNorm, call, []string{"s", "'EUCLIDEAN'"})
+		},
+		"uuid count":     func() (interface{}, error) { return invokeFunctionFixture(fnUUID, call, []string{"i", "i", "i"}) },
+		"uuid eval":      func() (interface{}, error) { return invokeFunctionFixture(fnUUID, call, []string{"fail"}) },
+		"uuid text type": func() (interface{}, error) { return invokeFunctionFixture(fnUUID, call, []string{"i"}) },
+		"uuid msb type":  func() (interface{}, error) { return invokeFunctionFixture(fnUUID, call, []string{"s", "i"}) },
+		"uuid lsb type":  func() (interface{}, error) { return invokeFunctionFixture(fnUUID, call, []string{"i", "s"}) },
+		"half count":     func() (interface{}, error) { return invokeFunctionFixture(fnUUIDHalf(false), call, nil) },
+		"half eval":      func() (interface{}, error) { return invokeFunctionFixture(fnUUIDHalf(true), call, []string{"fail"}) },
+		"half type":      func() (interface{}, error) { return invokeFunctionFixture(fnUUIDHalf(false), call, []string{"s"}) },
 	} {
 		_, err := run()
 		require.Error(t, err, name)
 	}
-	_, err := fnUUIDHalf(false)(call, []string{"s"})
+	_, err := invokeFunctionFixture(fnUUIDHalf(false), call, []string{"s"})
 	require.ErrorContains(t, err, "uuid.leastSignificantBits", "each half names itself")
-	count, err := fnVectorDimensionCount(cypherfn.Context{Eval: func(string) (interface{}, error) {
+	count, err := invokeFunctionFixture(fnVectorDimensionCount, cypherfn.Context{Eval: func(string) (interface{}, error) {
 		return &CypherVector{Type: VectorFloat32, Floats: []float64{1, 2, 3}}, nil
 	}}, []string{"p"})
 	require.NoError(t, err)

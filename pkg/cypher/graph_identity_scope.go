@@ -106,7 +106,7 @@ func (e *StorageExecutor) graphFunctionStorage(database string, fallback storage
 	return scope.engine, scope.err
 }
 
-func graphFunctionDatabase(ctx cypherfn.Context) string {
+func graphFunctionDatabase(ctx cypherfn.InvocationContext) string {
 	if ctx.Database != "" {
 		return ctx.Database
 	}
@@ -128,7 +128,7 @@ func (domain graphIdentityDomain) preserveQualifiers(left, right interface{}) bo
 	}
 	return domain.foreignQualifier(leftDatabase) || domain.foreignQualifier(rightDatabase)
 }
-func graphFunctionIdentityDomain(ctx cypherfn.Context, engine storage.Engine) graphIdentityDomain {
+func graphFunctionIdentityDomain(ctx cypherfn.InvocationContext, engine storage.Engine) graphIdentityDomain {
 	domain := graphIdentityDomain{engine: engine}
 	if executor, ok := ctx.Graphs.(*StorageExecutor); ok {
 		domain.scope = executor.graphIdentityScope

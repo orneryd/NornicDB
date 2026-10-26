@@ -6,6 +6,7 @@ package cypher
 // comments and bracket nesting tracked inline instead of by a lexer.
 
 import (
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"hash/maphash"
 	"strings"
 	"sync/atomic"
@@ -22,26 +23,18 @@ import (
 // not. A variable named distinct is a name, not the keyword, when what
 // follows it can't start an expression (distinctFollowsAsName, #894).
 // Without the keyword, text is returned trimmed.
-func cutDistinct(text string) (string, bool) {
-	text = strings.TrimSpace(text)
-	start, unfinished := cyphertext.GapEnd(text, 0)
-	if unfinished >= 0 {
-		return text, false
+func cutDistinct(view braceView) (braceView, bool) {
+	view = view.trim()
+	inner, modifier := view.argumentSource(cyphertext.DistinctArgumentModifier)
+	if modifier != cyphertext.DistinctArgumentModifier || inner.empty() {
+		return view, false
 	}
-	text = text[start:]
-	const keyword = "DISTINCT"
-	if len(text) <= len(keyword) || !strings.EqualFold(text[:len(keyword)], keyword) || cyphertext.NamePartAt(text, len(keyword)) {
-		return text, false
-	}
-	end, unfinished := cyphertext.GapEnd(text, len(keyword))
-	if unfinished >= 0 {
-		return text, false
-	}
-	rest := strings.TrimSpace(text[end:])
-	if rest == "" || distinctFollowsAsName(rest) {
-		return text, false
-	}
-	return rest, true
+	return inner, true
+}
+
+func cutDistinctArgument(view braceView) (braceView, bool) {
+	inner, modifier := view.argumentSource(cyphertext.DistinctArgumentModifier)
+	return inner, modifier == cyphertext.DistinctArgumentModifier
 }
 
 // distinctFollowsAsName reports whether rest, the text after a projection's
@@ -53,18 +46,19 @@ func cutDistinct(text string) (string, bool) {
 // a map), AND, OR, XOR, CONTAINS, AS, IS (not IS ::), or a clause
 // (startsWithClauseAfterDistinct: RETURN distinct ORDER BY distinct). Before
 // + - [ ( a number, IN, STARTS, ENDS or a name, distinct is the keyword.
-func distinctFollowsAsName(rest string) bool {
-	switch rest[0] {
-	case '.':
+func distinctFollowsAsName(view braceView) bool {
+	rest := view.text()
+	switch {
+	case rest[0] == '.':
 		return len(rest) == 1 || !isDigitByte(rest[1]) // RETURN DISTINCT .5
-	case ',', ':', '/', '%', '^', '=', '<', '>':
+	case rest[0] == ',', rest[0] == ':', rest[0] == '/', rest[0] == '%', rest[0] == '^', rest[0] == '=', rest[0] == '<', rest[0] == '>':
 		return true
-	case '*':
+	case rest[0] == '*':
 		after := strings.TrimSpace(rest[1:])
 		return after != "" && after[0] != ',' && !startsWithClauseAfterDistinct(after)
-	case '{':
-		after := strings.TrimSpace(rest[1:])
-		return after != "" && after[0] == '.'
+	case cyphertext.IsOpenBrace(rest[0]):
+		fact, found := view.at(0)
+		return found && fact.kind == projectionBrace
 	}
 	for _, word := range [...]string{"AS", "AND", "OR", "XOR", "CONTAINS"} {
 		if matchKeywordAt(rest, 0, word) {
@@ -147,8 +141,8 @@ func nameContinuesExpression(rest string) bool {
 
 // startsWithDistinct reports whether text starts with the DISTINCT keyword
 // (cutDistinct).
-func startsWithDistinct(text string) bool {
-	_, distinct := cutDistinct(text)
+func startsWithDistinct(view braceView) bool {
+	_, distinct := cutDistinct(view)
 	return distinct
 }
 
@@ -169,6 +163,9 @@ const (
 )
 
 type keywordScanOpts struct {
+	// Retained original input; construction reads no final contextual roles.
+	source *cyphertext.Source
+
 	SkipParens   bool
 	SkipBrackets bool
 	SkipBraces   bool
@@ -190,8 +187,9 @@ type keywordIndexCacheKey struct {
 // scan options.
 var defaultKeywordIndexCache = newBoundedCache[keywordIndexCacheKey, int](4096, keywordIndexCacheKeyShardIndex)
 
-func defaultKeywordScanOpts() keywordScanOpts {
+func defaultKeywordScanOpts(view braceView) keywordScanOpts {
 	return keywordScanOpts{
+		source:        view.source,
 		SkipParens:    true,
 		SkipBrackets:  true,
 		SkipBraces:    false,
@@ -202,8 +200,8 @@ func defaultKeywordScanOpts() keywordScanOpts {
 	}
 }
 
-func keywordIndex(s, keyword string) int {
-	return keywordIndexFrom(s, keyword, 0, defaultKeywordScanOpts())
+func keywordIndex(view braceView, keyword string) int {
+	return keywordIndexFrom(view.text(), keyword, 0, defaultKeywordScanOpts(view))
 }
 
 // topLevelKeywordIndex finds a keyword only at the "top level" of the query,
@@ -215,10 +213,10 @@ func keywordIndex(s, keyword string) int {
 // NOTE: General-purpose findKeywordIndex intentionally does NOT skip {} by default, because
 // braces are used for write operations (CREATE {...}) and CALL { ... } subqueries, and other
 // analyzers need to see keywords within those bodies.
-func topLevelKeywordIndex(s, keyword string) int {
-	opts := defaultKeywordScanOpts()
+func topLevelKeywordIndex(view braceView, keyword string) int {
+	opts := defaultKeywordScanOpts(view)
 	opts.SkipBraces = true
-	return keywordIndexFrom(s, keyword, 0, opts)
+	return keywordIndexFrom(view.text(), keyword, 0, opts)
 }
 
 // isWithKeyword reports whether a keyword search is for the WITH clause.
@@ -266,7 +264,7 @@ func isOperatorWith(s string, pos int) bool {
 		return false
 	}
 	switch c := s[i]; {
-	case c == ')' || c == ']' || c == '}' || c == '\'' || c == '"' || c == '`':
+	case c == ')' || c == ']' || cyphertext.IsCloseBrace(c) || c == '\'' || c == '"' || c == '`':
 		return true
 	case cyphertext.NamePartAt(s, i):
 		end := i + 1
@@ -301,11 +299,12 @@ func isOperatorWith(s string, pos int) bool {
 // another clause keyword (RETURN skip ORDER BY skip). Inside a CASE … END
 // block no clause can start, so a clause keyword there is a name wherever it
 // stands (CASE match WHEN 1 THEN match END; #1162).
-func clauseKeywordUsedAsName(s string, pos, end int, keyword string) bool {
+func clauseKeywordUsedAsName(view braceView, pos, end int, keyword string) bool {
+	s := view.text()
 	if !isNameableClauseKeyword(keyword) {
 		return false
 	}
-	return useGraphNameAt(s, pos) || clauseKeywordNamedByContext(s, pos, end, keyword) || insideCaseBlock(s, pos)
+	return useGraphNameAt(s, pos) || clauseKeywordNamedByContext(view, pos, end, keyword) || insideCaseBlock(view, pos)
 }
 
 // rawWordBefore is the identifier that ends at the last non-space byte
@@ -324,7 +323,8 @@ func rawWordBefore(s string, pos int) string {
 
 // clauseKeywordNamedByContext is clauseKeywordUsedAsName's reading of the
 // keyword's neighbours.
-func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
+func clauseKeywordNamedByContext(view braceView, pos, end int, keyword string) bool {
+	s := view.text()
 	i := lastLiveByte(s, pos)
 	if i >= 0 {
 		switch s[i] {
@@ -342,7 +342,7 @@ func clauseKeywordNamedByContext(s string, pos, end int, keyword string) bool {
 		case '+':
 			// ((a)-->(b))+ RETURN …: a quantified path pattern's + ends the
 			// pattern.
-			return !quantifiedGroupQuantifierAt(s, i)
+			return !quantifiedGroupQuantifierAt(view, i)
 		case '-', '^', '=', '<', '>', ',', '(', '[':
 			return true
 		}
@@ -597,8 +597,12 @@ func isExpressionBoundaryWord(word string) bool {
 // WITH of STARTS WITH / ENDS WITH is skipped (isOperatorWith, checked at each
 // match in both scan loops, so cached results already exclude it).
 func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
+	if opts.source == nil || opts.source.Text != s {
+		panic("cypher: keyword scan lost its retained source")
+	}
+	view := braceView{source: opts.source}
 	if isDefaultKeywordScanOpts(opts) {
-		return cachedKeywordIndexFromDefault(s, keyword, from)
+		return cachedKeywordIndexFromDefault(view, keyword, from)
 	}
 
 	ks, ke := trimKeywordWSBounds(keyword)
@@ -617,7 +621,6 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 	var (
 		parenDepth   int
 		bracketDepth int
-		braceDepth   int
 	)
 
 	for i := from; i < len(s); i++ {
@@ -634,30 +637,35 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 			continue
 		}
 
-		switch c {
-		case '(':
+		switch {
+		case c == '(':
 			parenDepth++
-		case ')':
+		case c == ')':
 			if parenDepth > 0 {
 				parenDepth--
 			}
-		case '[':
+		case c == '[':
 			bracketDepth++
-		case ']':
+		case c == ']':
 			if bracketDepth > 0 {
 				bracketDepth--
 			}
-		case '{':
-			braceDepth++
-		case '}':
-			if braceDepth > 0 {
-				braceDepth--
+		case cyphertext.IsOpenBrace(c):
+			if opts.SkipBraces {
+				span, complete, err := opts.source.DelimiterSpan(i)
+				if err != nil {
+					panic(err)
+				}
+				if !complete {
+					return -1
+				}
+				i = span.End - 1
+				continue
 			}
 		}
 
 		if (opts.SkipParens && parenDepth > 0) ||
-			(opts.SkipBrackets && bracketDepth > 0) ||
-			(opts.SkipBraces && braceDepth > 0) {
+			(opts.SkipBrackets && bracketDepth > 0) {
 			continue
 		}
 
@@ -679,7 +687,7 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 		if ke-ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
 			continue
 		}
-		if clauseKeywordUsedAsName(s, i, endPos, keyword) {
+		if clauseKeywordUsedAsName(view, i, endPos, keyword) {
 			continue
 		}
 		return i
@@ -688,18 +696,19 @@ func keywordIndexFrom(s, keyword string, from int, opts keywordScanOpts) int {
 	return -1
 }
 
-func cachedKeywordIndexFromDefault(s, keyword string, from int) int {
+func cachedKeywordIndexFromDefault(view braceView, keyword string, from int) int {
+	s := view.text()
 	key := keywordIndexCacheKey{s: s, keyword: keyword, from: from}
 	if idx, ok := defaultKeywordIndexCache.get(key); ok {
 		return idx
 	}
-	idx := keywordIndexFromDefault(s, keyword, from)
+	idx := keywordIndexFromDefault(view, keyword, from)
 	defaultKeywordIndexCache.put(key, idx)
 	return idx
 }
 
-func keywordIndexFromDefault(s, keyword string, from int) int {
-	return firstKeywordIndexFromDefault(s, from, keyword)
+func keywordIndexFromDefault(view braceView, keyword string, from int) int {
+	return firstKeywordIndexFromDefault(view, from, keyword)
 }
 
 // maxKeywordSet is the most keywords firstKeywordIndexFromDefault takes.
@@ -710,7 +719,8 @@ const maxKeywordSet = 16
 // same strings, comments, nesting and name rules), or -1. A set of clause
 // keywords is found in one scan rather than one scan per keyword. It takes
 // at most maxKeywordSet keywords.
-func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
+func firstKeywordIndexFromDefault(view braceView, from int, keywords ...string) int {
+	s := view.text()
 	if len(keywords) > maxKeywordSet {
 		panic("firstKeywordIndexFromDefault: more than maxKeywordSet keywords")
 	}
@@ -735,7 +745,6 @@ func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
 	var (
 		parenDepth   int
 		bracketDepth int
-		braceDepth   int
 	)
 
 	for i := from; i < len(s); i++ {
@@ -745,24 +754,18 @@ func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
 			continue
 		}
 
-		switch c {
-		case '(':
+		switch {
+		case c == '(':
 			parenDepth++
-		case ')':
+		case c == ')':
 			if parenDepth > 0 {
 				parenDepth--
 			}
-		case '[':
+		case c == '[':
 			bracketDepth++
-		case ']':
+		case c == ']':
 			if bracketDepth > 0 {
 				bracketDepth--
-			}
-		case '{':
-			braceDepth++
-		case '}':
-			if braceDepth > 0 {
-				braceDepth--
 			}
 		}
 
@@ -793,7 +796,7 @@ func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
 			if b.ke-b.ks == len("WITH") && isWithKeyword(keyword) && isOperatorWith(s, i) {
 				continue
 			}
-			if clauseKeywordUsedAsName(s, i, endPos, keyword) {
+			if clauseKeywordUsedAsName(view, i, endPos, keyword) {
 				continue
 			}
 			return i
@@ -804,7 +807,9 @@ func firstKeywordIndexFromDefault(s string, from int, keywords ...string) int {
 }
 
 func isDefaultKeywordScanOpts(opts keywordScanOpts) bool {
-	return opts.SkipParens &&
+	// The text key describes a complete accepted input, never an isolated view.
+	return opts.source != nil && opts.source == opts.source.OriginalView() &&
+		opts.SkipParens &&
 		opts.SkipBrackets &&
 		!opts.SkipBraces &&
 		opts.SkipStrings &&
@@ -893,43 +898,8 @@ func asciiUpper(b byte) byte {
 // bytes, its 'I' one), which shifted every later position and cut the text
 // in the wrong place (#748). Cypher's toUpper() on data keeps
 // strings.ToUpper.
-func upperASCII(text string) string {
-	for i := 0; i < len(text); i++ {
-		if c := text[i]; c >= 'a' && c <= 'z' {
-			// One allocation, as strings.ToUpper's ASCII path.
-			var out strings.Builder
-			out.Grow(len(text))
-			out.WriteString(text[:i])
-			for j := i; j < len(text); j++ {
-				out.WriteByte(asciiUpper(text[j]))
-			}
-			return out.String()
-		}
-	}
-	return text
-}
-
-// lowerASCII is upperASCII's lower-case counterpart: ASCII letters only, same
-// length and positions as the text ('İ' lower-cases to three bytes with
-// strings.ToLower). Cypher's toLower() on data keeps strings.ToLower.
-func lowerASCII(text string) string {
-	for i := 0; i < len(text); i++ {
-		if c := text[i]; c >= 'A' && c <= 'Z' {
-			var out strings.Builder
-			out.Grow(len(text))
-			out.WriteString(text[:i])
-			for j := i; j < len(text); j++ {
-				c := text[j]
-				if c >= 'A' && c <= 'Z' {
-					c += 'a' - 'A'
-				}
-				out.WriteByte(c)
-			}
-			return out.String()
-		}
-	}
-	return text
-}
+func upperASCII(text string) string { return cypherantlr.UpperASCII(text) }
+func lowerASCII(text string) string { return cypherantlr.LowerASCII(text) }
 
 // indexASCIIFold returns the first index at which the lower-case ASCII
 // substring occurs in text, compared case-insensitively, or -1. Zero
@@ -1005,6 +975,12 @@ type queryRewrite struct {
 
 	// Admission is a fact of exact source text, retained by its existing rewrite.
 	commentsAdmitted bool
+	// Copy relations are supplied by rewrite producers, never inferred by
+	// searching generated text for an equal source substring.
+	copies      []cyphertext.SourceCopy
+	projected   bool
+	constructed []braceConstruction
+	entries     []cyphertext.EntryDeclaration
 }
 
 // queryWhitespaceAt returns the length of the whitespace character at
@@ -1032,7 +1008,8 @@ func queryGapEnd(query string, index int) int {
 // settings and statements by lines; constraint contracts (CREATE CONSTRAINT
 // … REQUIRE { … }, one predicate per line); and CREATE [OR REPLACE]
 // PROCEDURE, which stores its body's text.
-func hasOwnStatementSyntax(query string) bool {
+func hasOwnStatementSyntax(view braceView) bool {
+	query := view.text()
 	var words [3]string
 	count := 0
 	for index := queryGapEnd(query, 0); index < len(query) && count < len(words); index = queryGapEnd(query, index) {
@@ -1051,8 +1028,8 @@ func hasOwnStatementSyntax(query string) bool {
 		return true
 	case strings.EqualFold(words[0], "CREATE") && strings.EqualFold(words[1], "CONSTRAINT"):
 		// A constraint contract: REQUIRE { one predicate per line }.
-		if require := keywordIndex(query, "REQUIRE"); require >= 0 {
-			if open := queryGapEnd(query, require+len("REQUIRE")); open < len(query) && query[open] == '{' {
+		if require := keywordIndex(view, "REQUIRE"); require >= 0 {
+			if open := queryGapEnd(query, require+len("REQUIRE")); open < len(query) && cyphertext.IsOpenBrace(query[open]) {
 				return true
 			}
 		}
@@ -1121,8 +1098,8 @@ func (m *canonicalRewriteMemo) slot(query string) *atomic.Pointer[queryRewrite] 
 // detection): its canonical form, whatever NORNICDB_CYPHER_QUERY_NORMALIZATION
 // says, so a comment or unusual spacing never changes them. A statement that
 // is canonical already is returned as is, without allocating.
-func classificationText(query string) string {
-	canonical, _ := canonicalizeQueryText(query)
+func classificationText(view braceView) string {
+	canonical, _ := canonicalizeQueryText(view)
 	return canonical
 }
 
@@ -1185,21 +1162,23 @@ func aliasKeywordAt(query string, at int, position aliasKeywordPosition) bool {
 // the rewrite that maps it back, or query and nil when it is canonical
 // already; it doesn't allocate then, nor for a formatted statement whose
 // rewrite is memoized (canonicalRewrites).
-func canonicalizeQueryText(query string) (string, *queryRewrite) {
+func canonicalizeQueryText(view braceView) (string, *queryRewrite) {
+	query := view.text()
 	if !queryMayNeedCanonicalRewrite(query) {
 		return query, nil
 	}
-	return scanCanonicalQueryText(query)
+	return scanCanonicalQueryText(view)
 }
 
 // scanCanonicalQueryText is canonicalizeQueryText's full scan, for a query
 // the quick check couldn't clear.
-func scanCanonicalQueryText(query string) (string, *queryRewrite) {
-	canonical, rewrite, _ := readCanonicalQueryText(query, false)
+func scanCanonicalQueryText(view braceView) (string, *queryRewrite) {
+	canonical, rewrite, _ := readCanonicalQueryText(view, false)
 	return canonical, rewrite
 }
 
-func readCanonicalQueryText(query string, admit bool) (string, *queryRewrite, error) {
+func readCanonicalQueryText(view braceView, admit bool) (string, *queryRewrite, error) {
+	query := view.text()
 	var (
 		rewrite  *queryRewrite
 		memoized *queryRewrite
@@ -1227,7 +1206,7 @@ func readCanonicalQueryText(query string, admit bool) (string, *queryRewrite, er
 	// a statement with its own syntax, or the leading shell command lines
 	// (:USE db, :param …), which end at their line breaks.
 	verbatimEnd := leadingShellCommandsEnd(query)
-	if hasOwnStatementSyntax(query[verbatimEnd:]) {
+	if hasOwnStatementSyntax(view.window(verbatimEnd, len(query))) {
 		verbatimEnd = len(query)
 	}
 	for index := 0; index < len(query); {
@@ -1360,9 +1339,9 @@ func inPatternClause(query string, index int) bool {
 				i = end
 				continue
 			}
-		case c == '{':
+		case cyphertext.IsOpenBrace(c):
 			frames = append(frames, frame{})
-		case c == '}':
+		case cyphertext.IsCloseBrace(c):
 			if len(frames) > 1 {
 				frames = frames[:len(frames)-1]
 			}

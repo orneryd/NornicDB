@@ -147,13 +147,13 @@ func TestRowPredicatePlanEdges(t *testing.T) {
 	_, bound := operand.resolve(map[string]interface{}{})
 	require.False(t, bound)
 
-	_, planned := planRowPredicatePart("  ")
+	_, planned := planRowPredicatePart(originalBraceView("  "))
 	require.False(t, planned)
-	require.Nil(t, planRowPredicate("a = 1 XOR b = 2"))
+	require.Nil(t, planRowPredicate(expressionBraceView("a = 1 XOR b = 2")))
 
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
-	plan := planRowPredicate("x IN list")
+	plan := planRowPredicate(expressionBraceView("x IN list"))
 	require.NotNil(t, plan)
 	require.True(t, exec.evaluateRowPredicatePlan(ctx, plan, map[string]interface{}{"x": int64(1), "list": []interface{}{int64(1)}}))
 	// The haystack isn't bound in the row: the part is evaluated as text.

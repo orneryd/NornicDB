@@ -55,7 +55,7 @@ func TestQuotedRestorationDetachesUnchangedContainers(t *testing.T) {
 
 func TestRestoredResultContainerOwnership(t *testing.T) {
 	t.Run("source fragments keep keys and unchanged nil containers", func(t *testing.T) {
-		_, rewrite := canonicalizeQueryText("EXPLAIN MATCH (n) WHERE n.x IS  NULL RETURN n")
+		_, rewrite := canonicalizeQueryText(originalBraceView("EXPLAIN MATCH (n) WHERE n.x IS  NULL RETURN n"))
 		require.NotNil(t, rewrite)
 		var nilMap map[string]any
 		var nilSlice []any
@@ -114,7 +114,7 @@ func TestRestoredResultContainerOwnership(t *testing.T) {
 var restorationBenchmarkResult *ExecuteResult
 
 func BenchmarkResultRestorationContainers(b *testing.B) {
-	_, rewrite := canonicalizeQueryText("EXPLAIN MATCH (n) WHERE n.x IS  NULL RETURN n")
+	_, rewrite := canonicalizeQueryText(originalBraceView("EXPLAIN MATCH (n) WHERE n.x IS  NULL RETURN n"))
 	_, names := canonicalizeQuotedVariablesWithBindings(b.Context(), "EXPLAIN WITH 1 AS `a b` RETURN `a b`", nil)
 	var internal string
 	for identifier := range names.internal {

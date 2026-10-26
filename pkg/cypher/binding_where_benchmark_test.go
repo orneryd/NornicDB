@@ -21,14 +21,14 @@ func BenchmarkFilterBindingsByWhere_CompiledJoin(b *testing.B) {
 	params := map[string]interface{}{"keys": []interface{}{"k1", "k2", "k3", "k4"}}
 	whereClause := "o.joinKey IN $keys AND t.joinKey = o.joinKey AND o.status IS NOT NULL AND t.status IS NOT NULL"
 	ctx := context.Background()
-	if got := len(exec.filterBindingsByWhere(ctx, bindings, whereClause, params)); got != 128 {
+	if got := len(exec.filterBindingsByWhere(ctx, bindings, originalBraceView(whereClause), params)); got != 128 {
 		b.Fatalf("expected 128 bindings, got %d", got)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = exec.filterBindingsByWhere(ctx, bindings, whereClause, params)
+		_ = exec.filterBindingsByWhere(ctx, bindings, originalBraceView(whereClause), params)
 	}
 	b.StopTimer()
 }
@@ -43,16 +43,16 @@ func BenchmarkFilterBindingsByWhere_SharedExpressionPlan(b *testing.B) {
 	}
 	whereClause := "size(n.name) + n.count >= 0"
 	ctx := context.Background()
-	if plan := planRowPredicate(whereClause); plan == nil || !plan.complete {
+	if plan := planRowPredicate(originalBraceView(whereClause)); plan == nil || !plan.complete {
 		b.Fatal("workload must use a complete shared expression plan")
 	}
-	if got := len(exec.filterBindingsByWhere(ctx, bindings, whereClause, nil)); got != len(bindings) {
+	if got := len(exec.filterBindingsByWhere(ctx, bindings, originalBraceView(whereClause), nil)); got != len(bindings) {
 		b.Fatalf("expected %d bindings, got %d", len(bindings), got)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = exec.filterBindingsByWhere(ctx, bindings, whereClause, nil)
+		_ = exec.filterBindingsByWhere(ctx, bindings, originalBraceView(whereClause), nil)
 	}
 	b.StopTimer()
 }
@@ -64,7 +64,7 @@ func BenchmarkBindingWherePipelineHandlers(b *testing.B) {
 				exec := &StorageExecutor{}
 				ctx := withExpressionFailureSlot(context.Background())
 				clause := "size(n.name) + n.count >= 0"
-				if plan := planRowPredicate(clause); plan == nil || !plan.complete {
+				if plan := planRowPredicate(originalBraceView(clause)); plan == nil || !plan.complete {
 					b.Fatal("workload must use a complete shared expression plan")
 				}
 				rows := make([]binding, count)
@@ -76,11 +76,11 @@ func BenchmarkBindingWherePipelineHandlers(b *testing.B) {
 				}
 				apply := func() int {
 					if handler == "binding" {
-						return len(exec.filterBindingsByWhere(ctx, rows, clause, nil))
+						return len(exec.filterBindingsByWhere(ctx, rows, originalBraceView(clause), nil))
 					}
 					accepted := 0
 					for _, row := range values {
-						keep, err := exec.evaluateWithWhere(ctx, clause, row)
+						keep, err := exec.evaluateWithWhere(ctx, originalBraceView(clause), row)
 						if err != nil {
 							b.Fatal(err)
 						}
@@ -116,13 +116,13 @@ func BenchmarkGh728ContextWhere(b *testing.B) {
 		{"parameters", "n.count + $offset >= $minimum"},
 	} {
 		b.Run(workload.name, func(b *testing.B) {
-			if !exec.evaluateWhereForContext(ctx, workload.clause, nodes) {
+			if !exec.evaluateWhereForContext(ctx, originalBraceView(workload.clause), nodes) {
 				b.Fatal("context predicate must accept the row")
 			}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
-				if !exec.evaluateWhereForContext(ctx, workload.clause, nodes) {
+				if !exec.evaluateWhereForContext(ctx, originalBraceView(workload.clause), nodes) {
 					b.Fatal("context predicate changed its result")
 				}
 			}
@@ -138,13 +138,13 @@ func BenchmarkGh728SharedComparisonHandlers(b *testing.B) {
 		"n":      &storage.Node{ID: "node", Properties: map[string]interface{}{"value": int64(3)}},
 		"$floor": int64(1), "$limit": int64(5),
 	}
-	if !exec.evaluateRowPredicate(ctx, clause, row) {
+	if !exec.evaluateRowPredicate(ctx, originalBraceView(clause), row) {
 		b.Fatal("comparison must accept the row")
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
-		if !exec.evaluateRowPredicate(ctx, clause, row) {
+		if !exec.evaluateRowPredicate(ctx, originalBraceView(clause), row) {
 			b.Fatal("comparison must accept the row")
 		}
 	}

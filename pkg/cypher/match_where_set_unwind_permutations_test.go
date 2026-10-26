@@ -532,19 +532,19 @@ func TestEvaluateWithWhereCondition_DirectBranches(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "exists IS NOT NULL", vals))
-	assert.False(t, exec.evaluateWithWhereCondition(ctx, "nilVal IS NOT NULL", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "nilVal IS NULL", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "missing IS NULL", vals))
+	assert.True(t, exec.evaluateWithWhereCondition(ctx, expressionBraceView("exists IS NOT NULL"), vals))
+	assert.False(t, exec.evaluateWithWhereCondition(ctx, expressionBraceView("nilVal IS NOT NULL"), vals))
+	assert.True(t, exec.evaluateWithWhereCondition(ctx, expressionBraceView("nilVal IS NULL"), vals))
+	assert.True(t, exec.evaluateWithWhereCondition(ctx, expressionBraceView("missing IS NULL"), vals))
 
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "n >= 10", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "n <= 10", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "n = 10", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "n != 11", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "n > 9", vals))
-	assert.True(t, exec.evaluateWithWhereCondition(ctx, "n < 11", vals))
+	assert.True(t, exec.evaluateWithWhereCondition(ctx, expressionBraceView("n >= 10"), vals))
+	assert.True(t, exec.evaluateWithWhereCondition(ctx, expressionBraceView("n <= 10"), vals))
+	assert.True(t, exec.evaluateWithWhereCondition(ctx, expressionBraceView("n = 10"), vals))
+	assert.True(t, exec.evaluateWithWhereCondition(ctx, expressionBraceView("n != 11"), vals))
+	assert.True(t, exec.evaluateWithWhereCondition(ctx, expressionBraceView("n > 9"), vals))
+	assert.True(t, exec.evaluateWithWhereCondition(ctx, expressionBraceView("n < 11"), vals))
 
 	// Unknown pattern defaults to pass-through.
-	assert.False(t, exec.evaluateWithWhereCondition(ctx, "totally_unknown_condition", vals),
+	assert.False(t, exec.evaluateWithWhereCondition(ctx, expressionBraceView("totally_unknown_condition"), vals),
 		"an unresolved predicate must not silently admit every row")
 }

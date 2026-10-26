@@ -95,7 +95,7 @@ func numericLiteralHasUnaryMinus(cypher string, numberStart int) bool {
 	if previous < 0 {
 		return true
 	}
-	if strings.ContainsRune("([{,:=<>+-*/%|&", rune(cypher[previous])) {
+	if syntaxByteInSet("([{,:=<>+-*/%|&", cypher[previous]) {
 		return true
 	}
 	if !cyphertext.NamePartAt(cypher, previous) {

@@ -46,20 +46,20 @@ func TestBuiltInApocResultsMatchAPOC(t *testing.T) {
 		result, err := exec.Execute(ctx, "RETURN "+expression+" AS v", nil)
 		require.NoError(t, err, expression)
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, expression)
-		require.Equal(t, want, exec.evaluateExpressionWithContext(ctx, expression, nil, nil), expression)
+		require.Equal(t, want, exec.evaluateExpressionWithContext(ctx, originalBraceView(expression), nil, nil), expression)
 	}
 	for expression, want := range map[string]interface{}{
 		"apoc.coll.flatten([[1, [2]], [3]])":       []interface{}{int64(1), []interface{}{int64(2)}, int64(3)},
 		"apoc.coll.flatten([[1, [2]], [3]], true)": []interface{}{int64(1), int64(2), int64(3)},
 	} {
-		value, ok, err := exec.evaluateRowValue(expression, nil)
+		value, ok, err := exec.evaluateRowValue(originalBraceView(expression), nil)
 		require.NoError(t, err, expression)
 		require.True(t, ok, expression)
 		require.Equal(t, want, value, expression)
 	}
-	_, ok, _ := exec.evaluateRowValue("apoc.coll.flatten([1], true, 3)", nil)
+	_, ok, _ := exec.evaluateRowValue(expressionBraceView("apoc.coll.flatten([1], true, 3)"), nil)
 	require.False(t, ok)
-	require.Nil(t, exec.evaluateExpressionWithContext(ctx, "apoc.coll.flatten([1], true, 3)", nil, nil))
+	require.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("apoc.coll.flatten([1], true, 3)"), nil, nil))
 }
 
 // apoc.cypher.runMany gives each statement's rows, numbered from 0, then a

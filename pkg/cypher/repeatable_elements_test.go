@@ -88,7 +88,7 @@ func TestStripRepeatableElements(t *testing.T) {
 		"(a)-->(b) WHERE __nornic_repeatable_elements() AND a.x = 1":   "(a)-->(b) WHERE a.x = 1",
 		"(a)-->(b) WHERE __nornic_repeatable_elements() and (a.x = 1)": "(a)-->(b) WHERE (a.x = 1)",
 	} {
-		stripped, ok := stripRepeatableElements(body)
+		stripped, ok := stripRepeatableElements(originalBraceView(body))
 		require.True(t, ok, body)
 		require.Equal(t, want, stripped, body)
 	}
@@ -100,7 +100,7 @@ func TestStripRepeatableElements(t *testing.T) {
 		"(a)-->(b) WHERE __nornic_repeatable_elements() ANDx",
 		"(a)-->(b) WHERE __nornic_repeatable_elements() OR a.x = 1",
 	} {
-		stripped, ok := stripRepeatableElements(body)
+		stripped, ok := stripRepeatableElements(originalBraceView(body))
 		require.False(t, ok, body)
 		require.Equal(t, body, stripped, body)
 	}
@@ -119,6 +119,6 @@ func TestStripRepeatableElements(t *testing.T) {
 		_, _, ok := matchModeAt(text, 0, len(text))
 		require.False(t, ok, text)
 	}
-	require.False(t, hasUnboundedRepetition("(a)-[r", 0, len("(a)-[r")))
-	require.False(t, hasUnboundedRepetition("(a {m: {k: 1}})-['x']->(b)", 0, len("(a {m: {k: 1}})-['x']->(b)")))
+	require.False(t, hasUnboundedRepetition(originalBraceView("(a)-[r"), 0, len("(a)-[r")))
+	require.False(t, hasUnboundedRepetition(originalBraceView("(a {m: {k: 1}})-['x']->(b)"), 0, len("(a {m: {k: 1}})-['x']->(b)")))
 }

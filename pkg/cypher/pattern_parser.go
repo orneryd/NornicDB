@@ -88,14 +88,14 @@ func containsReservedKeyword(s string) bool {
 //
 //	parseNodePattern(ctx, "(:Employee)")
 //	// Returns: {variable: "", labels: ["Employee"], properties: {}}
-func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern string) (nodePatternInfo, error) {
+func (e *StorageExecutor) parseNodePattern(ctx context.Context, pattern braceView) (nodePatternInfo, error) {
 	return readNodePattern(ctx, pattern, e.parsePropertyMap)
 }
 
-func readNodePattern(ctx context.Context, pattern string, properties patternPropertyReader) (nodePatternInfo, error) {
-	head, props := splitNodePatternProperties(pattern)
+func readNodePattern(ctx context.Context, pattern braceView, properties patternPropertyReader) (nodePatternInfo, error) {
+	head, props, present := pattern.nodeParts()
 	info := nodePatternInfo{labels: []string{}}
-	if props == "" {
+	if !present {
 		// No property span has no value phase, for either reader.
 		info.properties = make(map[string]interface{})
 	} else {
@@ -111,15 +111,22 @@ func readNodePattern(ctx context.Context, pattern string, properties patternProp
 
 // splitNodePatternProperties strips the outer parentheses of a node pattern
 // and splits it at the property map's '{' (outside backtick-quoted labels).
-func splitNodePatternProperties(pattern string) (head, props string) {
-	pattern = strings.TrimSpace(pattern)
-	if strings.HasPrefix(pattern, "(") && strings.HasSuffix(pattern, ")") {
-		pattern = pattern[1 : len(pattern)-1]
+func splitNodePatternProperties(view braceView) (head string, props braceView) {
+	headView, props := splitNodePatternSources(view)
+	return headView.text(), props
+}
+
+// Author: #1663 lane. One grammar extent producer for both derived names and
+// consumers that move the original node head into another emitted pattern.
+func splitNodePatternSources(view braceView) (head, props braceView) {
+	view = view.trim()
+	if strings.HasPrefix(view.text(), "(") && strings.HasSuffix(view.text(), ")") {
+		view = view.window(1, len(view.text())-1)
 	}
-	if braceIdx := indexByteOutsideBackticks(pattern, '{'); braceIdx >= 0 {
-		return pattern[:braceIdx], pattern[braceIdx:]
+	if span, found := view.patternProperty(blankRelationshipExpressions(view.text())); found {
+		return view.window(0, span.Start), view.window(span.Start, len(view.text()))
 	}
-	return pattern, ""
+	return view, view.window(0, 0)
 }
 
 // parseNodeHead parses "n:L1:`L 2`" into the variable and label names
@@ -150,11 +157,11 @@ func parseNodeHead(head string) (variable string, labels []string, labelErr erro
 //
 //	parseProperties("{tags: ['a', 'b'], active: true}")
 //	// Returns: {"tags": []interface{}{"a", "b"}, "active": true}
-func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr string) (map[string]interface{}, error) {
+func (e *StorageExecutor) parseProperties(ctx context.Context, propsStr braceView) (map[string]interface{}, error) {
 	return e.parsePropertyMap(ctx, propsStr, false)
 }
 
-func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr string, retainNull bool) (map[string]interface{}, error) {
+func (e *StorageExecutor) parsePropertyMap(ctx context.Context, propsStr braceView, retainNull bool) (map[string]interface{}, error) {
 	return e.materializePropertyMap(ctx, propsStr, e.fabricRecordBindings, retainNull, false)
 }
 
@@ -170,10 +177,6 @@ func normalizePropertyKey(key string) string {
 		}
 	}
 	return key
-}
-
-func findTopLevelMapKeyValueSeparator(pair string) int {
-	return findTopLevelOperator(pair, ":", false, true)
 }
 
 // parsePropertyValue parses a single property value string into the appropriate Go type.
@@ -202,12 +205,12 @@ func findTopLevelMapKeyValueSeparator(pair string) int {
 //	parsePropertyValue("30")       // int64(30)
 //	parsePropertyValue("true")     // true
 //	parsePropertyValue("[1, 2]")   // []interface{}{int64(1), int64(2)}
-func (e *StorageExecutor) parsePropertyValue(ctx context.Context, valueStr string) (interface{}, error) {
-	return e.checkedPropertyExpression(ctx, valueStr, e.fabricRecordBindings)
+func (e *StorageExecutor) parsePropertyValue(ctx context.Context, value braceView) (interface{}, error) {
+	return e.checkedPropertyExpression(ctx, value, e.fabricRecordBindings)
 }
 
-func (e *StorageExecutor) evaluateScalarPropertyExpression(ctx context.Context, expr string) (interface{}, bool) {
-	return e.evaluateRowExpressionWithContext(ctx, strings.TrimSpace(expr), e.fabricRecordBindings)
+func (e *StorageExecutor) evaluateScalarPropertyExpression(ctx context.Context, expr braceView) (interface{}, bool) {
+	return e.evaluateRowExpressionWithContext(ctx, expr.trim(), e.fabricRecordBindings)
 }
 
 func (e *StorageExecutor) evaluateArithmeticLookupResult(op byte, left interface{}, leftOK bool, right interface{}, rightOK bool) (interface{}, bool) {
@@ -250,16 +253,16 @@ type invalidPropertyValue struct {
 //	parseArrayValue("[1, 2, 3]")      // []interface{}{int64(1), int64(2), int64(3)}
 //	parseArrayValue("['a', 'b']")    // []interface{}{"a", "b"}
 //	parseArrayValue("[[1], [2]]")    // []interface{}{[]interface{}{1}, []interface{}{2}}
-func (e *StorageExecutor) parseArrayValue(ctx context.Context, arrayStr string) ([]interface{}, error) {
-	value, err := e.checkedPropertyExpression(ctx, arrayStr, e.fabricRecordBindings)
+func (e *StorageExecutor) parseArrayValue(ctx context.Context, array braceView) ([]interface{}, error) {
+	value, err := e.checkedPropertyExpression(ctx, array, e.fabricRecordBindings)
 	if err != nil {
 		return nil, err
 	}
-	array, ok := value.([]interface{})
+	values, ok := value.([]interface{})
 	if !ok {
-		return nil, unresolvedExpressionError(arrayStr)
+		return nil, unresolvedExpressionError(array.text())
 	}
-	return array, nil
+	return values, nil
 }
 
 // splitArrayElements splits array contents by comma, respecting nested structures and quotes.
@@ -349,7 +352,7 @@ func looksLikeFunctionCall(s string) bool {
 }
 
 // nodePatternStructure reads syntax only; it does not materialize property values.
-func nodePatternStructure(pattern string) nodePatternInfo {
+func nodePatternStructure(pattern braceView) nodePatternInfo {
 	head, _ := splitNodePatternProperties(pattern)
 	variable, labels, err := parseNodeHead(head)
 	return nodePatternInfo{variable: variable, labels: labels, labelErr: err}

@@ -23,7 +23,7 @@ func TestStaticMapKeysColdScaling(t *testing.T) {
 
 func TestPatternDetectionColdMapScaling(t *testing.T) {
 	assertColdMapScaling(t, func(query string) error {
-		require.False(t, hasPatternOrSubquery(query))
+		require.False(t, hasPatternOrSubquery(originalBraceView(query)))
 		return nil
 	})
 }

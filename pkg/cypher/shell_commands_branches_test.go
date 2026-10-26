@@ -63,13 +63,13 @@ func TestExecuteShellCommand_Errors(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	_, _, err := exec.executeShellCommand(ctx, "   ", "", nil)
+	_, _, err := exec.executeShellCommand(ctx, originalBraceView("   "), originalBraceView(""), nil)
 	require.EqualError(t, err, "empty command")
 
-	_, _, err = exec.executeShellCommand(ctx, ":use", "", nil)
+	_, _, err = exec.executeShellCommand(ctx, originalBraceView(":use"), originalBraceView(""), nil)
 	require.EqualError(t, err, ":use requires a database name")
 
-	_, _, err = exec.executeShellCommand(ctx, ":unknown thing", "", nil)
+	_, _, err = exec.executeShellCommand(ctx, originalBraceView(":unknown thing"), originalBraceView(""), nil)
 	require.EqualError(t, err, "unknown command: :unknown")
 }
 
@@ -102,16 +102,16 @@ func TestExecuteParamCommand_ErrorPaths(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	_, err := exec.executeParamCommand(ctx, "{}", nil)
+	_, err := exec.executeParamCommand(ctx, expressionBraceView("{}"), nil)
 	require.EqualError(t, err, "parameter expression must evaluate to a map")
 
-	_, err = exec.executeParamCommand(ctx, "{a}", nil)
+	_, err = exec.executeParamCommand(ctx, expressionBraceView("{a}"), nil)
 	require.ErrorContains(t, err, "invalid map entry")
 
-	_, err = exec.executeParamCommand(ctx, "{a: 1,, b: 2}", nil)
+	_, err = exec.executeParamCommand(ctx, expressionBraceView("{a: 1,, b: 2}"), nil)
 	require.EqualError(t, err, "empty map entry")
 
-	_, err = exec.executeParamCommand(ctx, "{a: missingVar}", nil)
+	_, err = exec.executeParamCommand(ctx, expressionBraceView("{a: missingVar}"), nil)
 	require.Error(t, err)
 	require.ErrorIs(t, err, nerrors.ErrExpressionEvaluationFailed)
 	require.ErrorContains(t, err, "unresolved expression")
@@ -121,21 +121,21 @@ func TestEvaluateParamMapExpression_ErrorPaths(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	_, err := exec.evaluateParamMapExpression(ctx, "notAMap", nil)
+	_, err := exec.evaluateParamMapExpression(ctx, expressionBraceView("notAMap"), nil)
 	require.EqualError(t, err, "parameter expression must evaluate to a map")
 
-	_, err = exec.evaluateParamMapExpression(ctx, "{badEntry}", nil)
+	_, err = exec.evaluateParamMapExpression(ctx, expressionBraceView("{badEntry}"), nil)
 	require.ErrorContains(t, err, "invalid map entry")
 
-	_, err = exec.evaluateParamMapExpression(ctx, "{\"\": 1}", nil)
+	_, err = exec.evaluateParamMapExpression(ctx, expressionBraceView("{\"\": 1}"), nil)
 	require.ErrorContains(t, err, "invalid map entry")
 
-	got, err := exec.evaluateParamMapExpression(ctx, "{a: 1 + 1, nested: {x: 1}}", nil)
+	got, err := exec.evaluateParamMapExpression(ctx, expressionBraceView("{a: 1 + 1, nested: {x: 1}}"), nil)
 	require.NoError(t, err)
 	require.EqualValues(t, int64(2), got["a"])
 	require.Equal(t, map[string]interface{}{"x": int64(1)}, got["nested"])
 
-	_, err = exec.evaluateParamMapExpression(ctx, "{a: missingVar}", nil)
+	_, err = exec.evaluateParamMapExpression(ctx, expressionBraceView("{a: missingVar}"), nil)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, nerrors.ErrExpressionEvaluationFailed))
 }

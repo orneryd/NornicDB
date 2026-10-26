@@ -3,7 +3,6 @@ package cypher
 import (
 	"context"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/fabric"
@@ -28,6 +27,7 @@ import (
 // data statement (ForbiddenDueToTransactionType), in auto-commit as in an
 // explicit transaction.
 func (e *StorageExecutor) executeUserStatement(ctx context.Context, statement string, params map[string]interface{}) (result *ExecuteResult, err error) {
+	ctx = withBraceInputSource(ctx, statement)
 	if totals, ok := ctx.Value(procedureStatementStatsKey{}).(*procedureStatementStats); ok && totals != nil {
 		// Every nested procedure installs its own invocation collector. Its
 		// completed summary enters this collector only through this result.
@@ -81,6 +81,11 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		defer func() { result, retErr = (resultRestoration{source: normalized}).restore(result, retErr, nil) }()
 	}
 	cypher = source.Text
+	// Admit accepted source before structural rewrites can erase brace entries.
+	ctx, _, braceErr := admitBraceSyntax(ctx, source)
+	if braceErr != nil {
+		return nil, braceErr
+	}
 	if config.IsCypherQueryNormalizationEnabled() {
 		var err error
 		var rewrite *queryRewrite
@@ -104,7 +109,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 			ctx = withSourceRewrite(ctx, rewrite)
 		}
 	}
-	if canonical, rewrite := desugarStandaloneOrderClauses(cypher); rewrite != nil {
+	if canonical, rewrite := desugarStandaloneOrderClauseView(statementBraceView(ctx, cypher)); rewrite != nil {
 		cypher = canonical
 		ctx = withSourceRewrite(ctx, rewrite)
 	}
@@ -113,8 +118,10 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		return nil, err
 	}
 	finishTerminated := false
-	if stripped, ok := stripUnionBranchFinishes(ctx, cypher); ok {
-		cypher = strings.TrimSpace(stripped)
+	if stripped, ok := stripUnionBranchFinishes(ctx, statementBraceView(ctx, cypher)); ok {
+		stripped = stripped.trim()
+		ctx = withBraceView(ctx, stripped)
+		cypher = stripped.text()
 		finishTerminated = true
 		ctx = withFinishedStatement(ctx, cypher)
 	}
@@ -130,7 +137,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		}()
 	}
 
-	if use, remaining, hasUse, err := parseUseClause(ctx, cypher, false, cyphertext.AcceptedSource); hasUse || err != nil {
+	if use, remaining, hasUse, err := parseUseClauseView(ctx, statementBraceView(ctx, cypher), false); hasUse || err != nil {
 		if err != nil {
 			return nil, err
 		}
@@ -159,19 +166,20 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 
 	// Local fragments own their lowering and restore generated names before
 	// returning to Fabric or their containing expression.
-	desugared, labelRewrite, err := desugarLabelExpressions(cypher, params, cypherVersionFromContext(ctx) == "25")
+	desugared, labelRewrite, err := desugarLabelExpressionView(statementBraceView(ctx, cypher), params, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil, err
 	}
 	if labelRewrite != nil {
 		cypher = desugared
+		ctx = withSourceRewrite(ctx, labelRewrite)
 		defer func() {
 			result, retErr = (resultRestoration{source: labelRewrite}).restore(withoutGeneratedColumns(result), retErr, nil)
 		}()
 	}
 
 	// Basic syntax validation to preserve existing error behavior.
-	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
+	if err := e.validateSyntax(ctx, statementBraceView(ctx, cypher), cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
 		return nil, err
 	}
 	if err := e.validateTransactionalCalls(ctx, cypher, nil); err != nil {
@@ -234,7 +242,7 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 	if err := validateStaticPropertyAccessParameters(ctx, cypher, params); err != nil {
 		return err
 	}
-	if err := validateStaticFunctionParameters(cypher, params, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := validateStaticFunctionParameters(statementBraceView(ctx, cypher), params, cypherVersionFromContext(ctx) == "25"); err != nil {
 		return err
 	}
 	// A transactional CALL commits independently before later runtime
@@ -245,5 +253,5 @@ func (e *StorageExecutor) validateBoundParameterExpressions(ctx context.Context,
 			return err
 		}
 	}
-	return validateListOperands(cypher, params)
+	return validateListOperands(statementBraceView(ctx, cypher), params)
 }

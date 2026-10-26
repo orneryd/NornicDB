@@ -24,65 +24,65 @@ func TestEvaluateExpression_FunctionUtilityBranches(t *testing.T) {
 	ctx := context.Background()
 
 	// toStringList
-	assert.Equal(t, []interface{}{"a", nil, "1"}, exec.evaluateExpressionWithContext(ctx, "toStringList(n.list)", nodes, nil))
-	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, "toStringList(n.name)", nodes, nil))
+	assert.Equal(t, []interface{}{"a", nil, "1"}, exec.evaluateExpressionWithContext(ctx, expressionBraceView("toStringList(n.list)"), nodes, nil))
+	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("toStringList(n.name)"), nodes, nil))
 
 	// valueType
-	assert.Equal(t, "NULL", exec.evaluateExpressionWithContext(ctx, "valueType(null)", nodes, nil))
-	assert.Equal(t, "BOOLEAN NOT NULL", exec.evaluateExpressionWithContext(ctx, "valueType(true)", nodes, nil))
-	assert.Equal(t, "INTEGER NOT NULL", exec.evaluateExpressionWithContext(ctx, "valueType(1)", nodes, nil))
-	assert.Equal(t, "FLOAT NOT NULL", exec.evaluateExpressionWithContext(ctx, "valueType(1.5)", nodes, nil))
-	assert.Equal(t, "STRING NOT NULL", exec.evaluateExpressionWithContext(ctx, "valueType('x')", nodes, nil))
-	assert.Equal(t, "LIST<INTEGER NOT NULL> NOT NULL", exec.evaluateExpressionWithContext(ctx, "valueType([1,2])", nodes, nil))
-	assert.Equal(t, "MAP NOT NULL", exec.evaluateExpressionWithContext(ctx, "valueType({a:1})", nodes, nil))
+	assert.Equal(t, "NULL", exec.evaluateExpressionWithContext(ctx, expressionBraceView("valueType(null)"), nodes, nil))
+	assert.Equal(t, "BOOLEAN NOT NULL", exec.evaluateExpressionWithContext(ctx, expressionBraceView("valueType(true)"), nodes, nil))
+	assert.Equal(t, "INTEGER NOT NULL", exec.evaluateExpressionWithContext(ctx, expressionBraceView("valueType(1)"), nodes, nil))
+	assert.Equal(t, "FLOAT NOT NULL", exec.evaluateExpressionWithContext(ctx, expressionBraceView("valueType(1.5)"), nodes, nil))
+	assert.Equal(t, "STRING NOT NULL", exec.evaluateExpressionWithContext(ctx, expressionBraceView("valueType('x')"), nodes, nil))
+	assert.Equal(t, "LIST<INTEGER NOT NULL> NOT NULL", exec.evaluateExpressionWithContext(ctx, expressionBraceView("valueType([1,2])"), nodes, nil))
+	assert.Equal(t, "MAP NOT NULL", exec.evaluateExpressionWithContext(ctx, expressionBraceView("valueType({a:1})"), nodes, nil))
 
 	// aggregation passthrough in expression context
-	assert.EqualValues(t, 7, exec.evaluateExpressionWithContext(ctx, "sum(7)", nodes, nil))
-	assert.EqualValues(t, 8, exec.evaluateExpressionWithContext(ctx, "avg(8)", nodes, nil))
-	assert.EqualValues(t, 9, exec.evaluateExpressionWithContext(ctx, "min(9)", nodes, nil))
-	assert.EqualValues(t, 10, exec.evaluateExpressionWithContext(ctx, "max(10)", nodes, nil))
-	assert.Equal(t, []interface{}{}, exec.evaluateExpressionWithContext(ctx, "collect(null)", nodes, nil))
-	assert.Equal(t, []interface{}{int64(1)}, exec.evaluateExpressionWithContext(ctx, "collect(1)", nodes, nil))
+	assert.EqualValues(t, 7, exec.evaluateExpressionWithContext(ctx, expressionBraceView("sum(7)"), nodes, nil))
+	assert.EqualValues(t, 8, exec.evaluateExpressionWithContext(ctx, expressionBraceView("avg(8)"), nodes, nil))
+	assert.EqualValues(t, 9, exec.evaluateExpressionWithContext(ctx, expressionBraceView("min(9)"), nodes, nil))
+	assert.EqualValues(t, 10, exec.evaluateExpressionWithContext(ctx, expressionBraceView("max(10)"), nodes, nil))
+	assert.Equal(t, []interface{}{}, exec.evaluateExpressionWithContext(ctx, expressionBraceView("collect(null)"), nodes, nil))
+	assert.Equal(t, []interface{}{int64(1)}, exec.evaluateExpressionWithContext(ctx, expressionBraceView("collect(1)"), nodes, nil))
 
 	// aliases
-	assert.Equal(t, "alice", exec.evaluateExpressionWithContext(ctx, "lower('ALICE')", nodes, nil))
-	assert.Equal(t, "ALICE", exec.evaluateExpressionWithContext(ctx, "upper('alice')", nodes, nil))
-	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, "lower(1)", nodes, nil))
-	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, "upper(1)", nodes, nil))
+	assert.Equal(t, "alice", exec.evaluateExpressionWithContext(ctx, expressionBraceView("lower('ALICE')"), nodes, nil))
+	assert.Equal(t, "ALICE", exec.evaluateExpressionWithContext(ctx, expressionBraceView("upper('alice')"), nodes, nil))
+	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("lower(1)"), nodes, nil))
+	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("upper(1)"), nodes, nil))
 
 	// trim family
-	assert.Equal(t, "Alice", exec.evaluateExpressionWithContext(ctx, "trim(n.name)", nodes, nil))
-	assert.Equal(t, "Alice  ", exec.evaluateExpressionWithContext(ctx, "ltrim(n.name)", nodes, nil))
-	assert.Equal(t, "  Alice", exec.evaluateExpressionWithContext(ctx, "rtrim(n.name)", nodes, nil))
-	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, "trim(42)", nodes, nil))
+	assert.Equal(t, "Alice", exec.evaluateExpressionWithContext(ctx, expressionBraceView("trim(n.name)"), nodes, nil))
+	assert.Equal(t, "Alice  ", exec.evaluateExpressionWithContext(ctx, expressionBraceView("ltrim(n.name)"), nodes, nil))
+	assert.Equal(t, "  Alice", exec.evaluateExpressionWithContext(ctx, expressionBraceView("rtrim(n.name)"), nodes, nil))
+	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("trim(42)"), nodes, nil))
 
 	// replace / split
-	assert.Equal(t, "a-c", exec.evaluateExpressionWithContext(ctx, "replace('a-b','b','c')", nodes, nil))
-	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, "replace('a','b')", nodes, nil))
-	splitVal := exec.evaluateExpressionWithContext(ctx, "split('a,b,c',',')", nodes, nil)
+	assert.Equal(t, "a-c", exec.evaluateExpressionWithContext(ctx, expressionBraceView("replace('a-b','b','c')"), nodes, nil))
+	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("replace('a','b')"), nodes, nil))
+	splitVal := exec.evaluateExpressionWithContext(ctx, expressionBraceView("split('a,b,c',',')"), nodes, nil)
 	splitList, ok := splitVal.([]interface{})
 	require.True(t, ok)
 	assert.Equal(t, []interface{}{"a", "b", "c"}, splitList)
-	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, "split('abc')", nodes, nil))
+	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("split('abc')"), nodes, nil))
 
 	// substring / left / right
-	assert.Equal(t, "bc", exec.evaluateExpressionWithContext(ctx, "substring('abcd',1,2)", nodes, nil))
-	assert.Equal(t, "", exec.evaluateExpressionWithContext(ctx, "substring('abcd',99)", nodes, nil))
-	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, "substring('abcd')", nodes, nil))
-	assert.Equal(t, "ab", exec.evaluateExpressionWithContext(ctx, "left('abcd',2)", nodes, nil))
-	assert.Equal(t, "abcd", exec.evaluateExpressionWithContext(ctx, "left('abcd',99)", nodes, nil))
-	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, "left('abcd')", nodes, nil))
-	assert.Equal(t, "cd", exec.evaluateExpressionWithContext(ctx, "right('abcd',2)", nodes, nil))
-	assert.Equal(t, "abcd", exec.evaluateExpressionWithContext(ctx, "right('abcd',99)", nodes, nil))
-	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, "right('abcd')", nodes, nil))
+	assert.Equal(t, "bc", exec.evaluateExpressionWithContext(ctx, expressionBraceView("substring('abcd',1,2)"), nodes, nil))
+	assert.Equal(t, "", exec.evaluateExpressionWithContext(ctx, expressionBraceView("substring('abcd',99)"), nodes, nil))
+	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("substring('abcd')"), nodes, nil))
+	assert.Equal(t, "ab", exec.evaluateExpressionWithContext(ctx, expressionBraceView("left('abcd',2)"), nodes, nil))
+	assert.Equal(t, "abcd", exec.evaluateExpressionWithContext(ctx, expressionBraceView("left('abcd',99)"), nodes, nil))
+	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("left('abcd')"), nodes, nil))
+	assert.Equal(t, "cd", exec.evaluateExpressionWithContext(ctx, expressionBraceView("right('abcd',2)"), nodes, nil))
+	assert.Equal(t, "abcd", exec.evaluateExpressionWithContext(ctx, expressionBraceView("right('abcd',99)"), nodes, nil))
+	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("right('abcd')"), nodes, nil))
 
 	// lpad / rpad
-	assert.Equal(t, "  ab", exec.evaluateExpressionWithContext(ctx, "lpad('ab',4)", nodes, nil))
-	assert.Equal(t, "xxab", exec.evaluateExpressionWithContext(ctx, "lpad('ab',4,'x')", nodes, nil))
-	assert.Equal(t, "ab  ", exec.evaluateExpressionWithContext(ctx, "rpad('ab',4)", nodes, nil))
-	assert.Equal(t, "abxx", exec.evaluateExpressionWithContext(ctx, "rpad('ab',4,'x')", nodes, nil))
-	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, "lpad('ab','bad')", nodes, nil))
-	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, "rpad('ab','bad')", nodes, nil))
+	assert.Equal(t, "  ab", exec.evaluateExpressionWithContext(ctx, expressionBraceView("lpad('ab',4)"), nodes, nil))
+	assert.Equal(t, "xxab", exec.evaluateExpressionWithContext(ctx, expressionBraceView("lpad('ab',4,'x')"), nodes, nil))
+	assert.Equal(t, "ab  ", exec.evaluateExpressionWithContext(ctx, expressionBraceView("rpad('ab',4)"), nodes, nil))
+	assert.Equal(t, "abxx", exec.evaluateExpressionWithContext(ctx, expressionBraceView("rpad('ab',4,'x')"), nodes, nil))
+	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("lpad('ab','bad')"), nodes, nil))
+	assert.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("rpad('ab','bad')"), nodes, nil))
 }
 
 func TestEvaluateExpression_FullFunctionAdvancedBranches(t *testing.T) {
@@ -107,11 +107,11 @@ func TestEvaluateExpression_FullFunctionAdvancedBranches(t *testing.T) {
 
 	// Parenthesized stripping + CASE.
 	assert.Equal(t, "adult", exec.evaluateExpressionWithContextFullFunctions(ctx,
-		"(CASE WHEN n.age > 18 THEN 'adult' ELSE 'minor' END)",
+		originalBraceView("(CASE WHEN n.age > 18 THEN 'adult' ELSE 'minor' END)"),
 		nodes, nil, nil, nil, nil, 0,
 	))
 	assert.Equal(t, "adult", exec.evaluateExpressionWithContext(ctx,
-		"CASE\nWHEN n.age > 18 THEN 'adult' ELSE 'minor'\nEND",
+		expressionBraceView("CASE\nWHEN n.age > 18 THEN 'adult' ELSE 'minor'\nEND"),
 		nodes, nil,
 	))
 
@@ -135,7 +135,7 @@ func TestEvaluateExpression_FullFunctionAdvancedBranches(t *testing.T) {
 
 	// Ensure list concatenation is not misdetected as indexing.
 	concatVal := exec.evaluateExpressionWithContextFullFunctions(ctx,
-		"n.nums + [40]",
+		expressionBraceView("n.nums + [40]"),
 		nodes, nil, nil, nil, nil, 0,
 	)
 	concatList, ok := concatVal.([]interface{})
@@ -144,7 +144,7 @@ func TestEvaluateExpression_FullFunctionAdvancedBranches(t *testing.T) {
 
 	// Map literal evaluation.
 	m := exec.evaluateExpressionWithContextFullFunctions(ctx,
-		"{person: n.name, ok: n.alive, tags: ['x','y']}",
+		expressionBraceView("{person: n.name, ok: n.alive, tags: ['x','y']}"),
 		nodes, nil, nil, nil, nil, 0,
 	)
 	mm, ok := m.(map[string]interface{})
@@ -154,21 +154,21 @@ func TestEvaluateExpression_FullFunctionAdvancedBranches(t *testing.T) {
 
 	// length(pathVar) with explicit path map and pathLength fallback branch.
 	assert.EqualValues(t, int64(3), exec.evaluateExpressionWithContextFullFunctions(ctx,
-		"length(p)",
+		expressionBraceView("length(p)"),
 		nodes, nil, paths, nil, nil, 0,
 	))
 	assert.EqualValues(t, int64(5), exec.evaluateExpressionWithContextFullFunctions(ctx,
-		"length(anyPathVar)",
+		expressionBraceView("length(anyPathVar)"),
 		nodes, nil, nil, nil, nil, 5,
 	))
 
 	// exists(prop) branch.
 	assert.Equal(t, true, exec.evaluateExpressionWithContextFullFunctions(ctx,
-		"exists(n.name)",
+		expressionBraceView("exists(n.name)"),
 		nodes, nil, nil, nil, nil, 0,
 	))
 	assert.Equal(t, false, exec.evaluateExpressionWithContextFullFunctions(ctx,
-		"exists(n.missing)",
+		expressionBraceView("exists(n.missing)"),
 		nodes, nil, nil, nil, nil, 0,
 	))
 }
@@ -191,12 +191,12 @@ func BenchmarkEvaluateExpressionWithContext_HotPredicate(b *testing.B) {
 
 	// Prime one-time executor/query setup before measurement so the benchmark
 	// reflects steady-state repeated row evaluation, which is the hot path.
-	require.Equal(b, true, exec.evaluateExpressionWithContext(ctx, expr, nodes, nil))
+	require.Equal(b, true, exec.evaluateExpressionWithContext(ctx, originalBraceView(expr), nodes, nil))
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if exec.evaluateExpressionWithContext(ctx, expr, nodes, nil) != true {
+		if exec.evaluateExpressionWithContext(ctx, originalBraceView(expr), nodes, nil) != true {
 			b.Fatal("predicate should remain true")
 		}
 	}

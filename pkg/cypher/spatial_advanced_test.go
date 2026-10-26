@@ -21,7 +21,7 @@ func TestPolygonFunction(t *testing.T) {
 	])`
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	polygonMap, ok := result.(map[string]interface{})
 	if !ok {
@@ -48,7 +48,7 @@ func TestPolygonFunctionInvalid(t *testing.T) {
 
 	// Test with too few points (less than 3)
 	expr := `polygon([point({x: 0.0, y: 0.0}), point({x: 1.0, y: 1.0})])`
-	result := e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != nil {
 		t.Error("polygon with less than 3 points should return nil")
@@ -66,7 +66,7 @@ func TestLineStringFunction(t *testing.T) {
 	])`
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	lineMap, ok := result.(map[string]interface{})
 	if !ok {
@@ -94,7 +94,7 @@ func TestLineStringFunctionInvalid(t *testing.T) {
 	expr := `lineString([point({x: 0.0, y: 0.0})])`
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != nil {
 		t.Error("lineString with less than 2 points should return nil")
@@ -113,7 +113,7 @@ func TestPointIntersectsPolygon(t *testing.T) {
 	])`
 	ctx := context.Background()
 
-	polygon := e.evaluateExpressionWithContext(ctx, polygonExpr, nil, nil)
+	polygon := e.evaluateExpressionWithContext(ctx, originalBraceView(polygonExpr), nil, nil)
 
 	tests := []struct {
 		name     string
@@ -149,14 +149,14 @@ func TestPointIntersectsPolygon(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			point := e.evaluateExpressionWithContext(ctx, tt.point, nil, nil)
+			point := e.evaluateExpressionWithContext(ctx, originalBraceView(tt.point), nil, nil)
 
 			// Create a node with the polygon for testing
 			polygonMap := polygon.(map[string]interface{})
 			pointMap, _ := spatialMap(point)
 
 			// Build the point.intersects expression manually
-			result := e.evaluateExpressionWithContext(ctx, "", nil, nil)
+			result := e.evaluateExpressionWithContext(ctx, originalBraceView(""), nil, nil)
 
 			// Test using the helper function directly
 			points := extractPolygonPoints(polygonMap)
@@ -186,7 +186,7 @@ func TestPointIntersectsFunction(t *testing.T) {
 	)`
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != true {
 		t.Error("point.intersects should return true for point inside polygon")
@@ -202,7 +202,7 @@ func TestPointIntersectsFunction(t *testing.T) {
 			point({x: 0.0, y: 3.0})
 		])
 	)`
-	result = e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result = e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != false {
 		t.Error("point.intersects should return false for point outside polygon")
@@ -225,7 +225,7 @@ func TestPointContainsFunction(t *testing.T) {
 	)`
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != true {
 		t.Error("point.contains should return true for point inside polygon")
@@ -241,7 +241,7 @@ func TestPointContainsFunction(t *testing.T) {
 		]),
 		point({x: 5.0, y: 5.0})
 	)`
-	result = e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result = e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != false {
 		t.Error("point.contains should return false for point outside polygon")
@@ -264,7 +264,7 @@ func TestPointIntersectsWithLatLon(t *testing.T) {
 	)`
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != true {
 		t.Error("point.intersects should work with lat/lon coordinates")
@@ -286,7 +286,7 @@ func TestPointContainsWithLatLon(t *testing.T) {
 	)`
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != true {
 		t.Error("point.contains should work with lat/lon coordinates")
@@ -310,7 +310,7 @@ func TestComplexPolygonShape(t *testing.T) {
 	)`
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != false {
 		t.Error("point should be outside L-shaped polygon")
@@ -329,7 +329,7 @@ func TestComplexPolygonShape(t *testing.T) {
 		])
 	)`
 
-	result = e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result = e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != true {
 		t.Error("point should be inside L-shaped polygon")
@@ -350,7 +350,7 @@ func TestTrianglePolygon(t *testing.T) {
 	)`
 	ctx := context.Background()
 
-	result := e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != true {
 		t.Error("point should be inside triangle")
@@ -365,7 +365,7 @@ func TestTrianglePolygon(t *testing.T) {
 			point({x: 1.5, y: 2.0})
 		])
 	)`
-	result = e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result = e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != false {
 		t.Error("point should be outside triangle")
@@ -378,7 +378,7 @@ func TestEdgeCases(t *testing.T) {
 
 	// Test with invalid polygon (no points)
 	expr := `point.intersects(point({x: 1.0, y: 1.0}), polygon([]))`
-	result := e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result := e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != false {
 		t.Error("point.intersects should return false for empty polygon")
@@ -390,7 +390,7 @@ func TestEdgeCases(t *testing.T) {
 		point({x: 1.0, y: 0.0}),
 		point({x: 1.0, y: 1.0})
 	]))`
-	result = e.evaluateExpressionWithContext(ctx, expr, nil, nil)
+	result = e.evaluateExpressionWithContext(ctx, originalBraceView(expr), nil, nil)
 
 	if result != false {
 		t.Error("point.intersects should return false for invalid point format")

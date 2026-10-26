@@ -86,7 +86,7 @@ func BenchmarkRelationshipBracketLookup(b *testing.B) {
 		b.Run(text[:13], func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				open, close := readRelationshipBracket(text, 0, requireClosedRelationship)
+				open, close := readRelationshipBracket(originalBraceView(text), 0, requireClosedRelationship)
 				if open < 0 || close <= open {
 					b.Fatal("expected a closed relationship bracket")
 				}
@@ -111,7 +111,7 @@ func TestRelationshipBracketLookupPolicies(t *testing.T) {
 		{"(a) /* -[r]-> */ -->(b)", 0, -1, -1},
 	} {
 		for _, policy := range []relationshipBracketPolicy{requireClosedRelationship, reportUnclosedRelationship} {
-			open, close := readRelationshipBracket(tc.text, tc.from, policy)
+			open, close := readRelationshipBracket(originalBraceView(tc.text), tc.from, policy)
 			wantOpen := tc.open
 			if tc.close < 0 && policy == requireClosedRelationship {
 				wantOpen = -1

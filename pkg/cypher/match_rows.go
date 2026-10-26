@@ -9,20 +9,19 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) evaluateCoalesceInContext(expr string, nodeMap map[string]*storage.Node, edgeMap map[string]*storage.Edge, computedValues map[string]interface{}) interface{} {
+func (e *StorageExecutor) evaluateCoalesceInContext(view braceView, nodeMap map[string]*storage.Node, edgeMap map[string]*storage.Edge, computedValues map[string]interface{}) interface{} {
+	expr := view.text()
 	// Extract arguments from COALESCE(arg1, arg2, ...)
 	innerStart := strings.Index(expr, "(")
 	innerEnd := strings.LastIndex(expr, ")")
 	if innerStart == -1 || innerEnd == -1 {
 		return nil
 	}
-	inner := expr[innerStart+1 : innerEnd]
-
 	// Split arguments
-	args := e.splitFunctionArgs(inner)
+	args := view.window(innerStart+1, innerEnd).commaViews()
 
-	for _, arg := range args {
-		arg = strings.TrimSpace(arg)
+	for _, input := range args {
+		arg := input.trim().text()
 
 		// Check computed values
 		if val, ok := computedValues[arg]; ok && val != nil {
@@ -63,14 +62,14 @@ func (e *StorageExecutor) evaluateCoalesceInContext(expr string, nodeMap map[str
 	return nil
 }
 
-func (e *StorageExecutor) evaluateWithWhereCondition(ctx context.Context, whereClause string, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateWithWhereCondition(ctx context.Context, whereClause braceView, values map[string]interface{}) bool {
 	return e.evaluateRowPredicate(ctx, whereClause, values)
 }
 
 // evaluateMatchWhereCondition is the MATCH-clause entry into the shared row
 // predicate evaluator: every WHERE position evaluates identically — a
 // non-boolean value is a TypeError, null drops the row (#728).
-func (e *StorageExecutor) evaluateMatchWhereCondition(ctx context.Context, whereClause string, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateMatchWhereCondition(ctx context.Context, whereClause braceView, values map[string]interface{}) bool {
 	return e.evaluateMatchRowPredicate(ctx, whereClause, values)
 }
 
@@ -172,8 +171,10 @@ func withWhereIsLabelTest(whereClause string) bool {
 // Only tokens shaped exactly like an identifier followed by one or more
 // `:Label` segments are rewritten, and only outside string literals, so a colon
 // inside quoted text or a map literal is left alone.
-func substituteWithWhereLabelTests(whereClause string, values map[string]interface{}) string {
+func substituteWithWhereLabelTests(view braceView, values map[string]interface{}) braceView {
+	whereClause := view.text()
 	var out strings.Builder
+	var edits []cyphertext.SourceEdit
 	i := 0
 	for i < len(whereClause) {
 		if end, quoted := skipCypherLexicalToken(whereClause, i); quoted {
@@ -189,7 +190,7 @@ func substituteWithWhereLabelTests(whereClause string, values map[string]interfa
 		}
 		j := i
 		j = cyphertext.NamePartEnd(whereClause, j)
-		if j >= len(whereClause) || whereClause[j] != ':' {
+		if j >= len(whereClause) || whereClause[j] != ':' || view.syntax.product.MapKeyAt(view.source, cyphertext.Span{Start: i, End: j}) {
 			out.WriteString(whereClause[i:j])
 			i = j
 			continue
@@ -217,14 +218,19 @@ func substituteWithWhereLabelTests(whereClause string, values map[string]interfa
 		if len(parts) > 1 {
 			expr = &labelExpression{kind: labelExpressionAnd, operands: parts}
 		}
+		acceptedStart := out.Len()
 		if entityHasAllLabelsOrTypesPredicate(values[variable], expr) {
 			out.WriteString("true")
 		} else {
 			out.WriteString("false")
 		}
+		edits = append(edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: i, End: k}, Accepted: cyphertext.Span{Start: acceptedStart, End: out.Len()}})
 		i = k
 	}
-	return out.String()
+	if len(edits) == 0 {
+		return view
+	}
+	return braceView{syntax: view.syntax, source: view.source.RewriteWithCopies(out.String(), edits, nil)}
 }
 
 // withWhereValueContext splits the computed WITH values into the node and edge
@@ -247,8 +253,8 @@ func withWhereValueContext(values map[string]interface{}) (map[string]*storage.N
 
 // filterNodesByWhereClause filters nodes based on a WHERE clause condition.
 // Uses evaluateWhere for consistent condition evaluation.
-func (e *StorageExecutor) filterNodesByWhereClause(ctx context.Context, nodes []*storage.Node, whereClause, variable string) []*storage.Node {
-	if whereClause == "" {
+func (e *StorageExecutor) filterNodesByWhereClause(ctx context.Context, nodes []*storage.Node, whereClause braceView, variable string) []*storage.Node {
+	if whereClause.empty() {
 		return nodes
 	}
 
@@ -266,7 +272,7 @@ type orderSpec struct {
 
 // orderResultRows sorts result rows by the specified ORDER BY expression.
 // Supports multiple columns: "col1 ASC, col2 DESC"
-func (e *StorageExecutor) orderResultRows(rows [][]interface{}, columns []string, orderExpr string) [][]interface{} {
+func (e *StorageExecutor) orderResultRows(rows [][]interface{}, columns []string, orderExpr braceView) [][]interface{} {
 	if len(rows) <= 1 {
 		return rows
 	}
@@ -274,7 +280,7 @@ func (e *StorageExecutor) orderResultRows(rows [][]interface{}, columns []string
 	return e.orderRowsBySpecs(rows, e.parseOrderBySpecs(orderExpr, columns))
 }
 
-func (e *StorageExecutor) orderResultRowsForReturnItems(rows [][]interface{}, columns []string, returnItems []returnItem, orderExpr string) [][]interface{} {
+func (e *StorageExecutor) orderResultRowsForReturnItems(rows [][]interface{}, columns []string, returnItems []returnItem, orderExpr braceView) [][]interface{} {
 	if len(rows) <= 1 {
 		return rows
 	}
@@ -318,11 +324,11 @@ func (e *StorageExecutor) orderRowsBySpecs(rows [][]interface{}, orderSpecs []or
 }
 
 // parseOrderBySpecs parses "col1 ASC, col2 DESC" into orderSpec slice
-func (e *StorageExecutor) parseOrderBySpecs(orderExpr string, columns []string) []orderSpec {
+func (e *StorageExecutor) parseOrderBySpecs(orderExpr braceView, columns []string) []orderSpec {
 	return e.parseOrderBySpecsWithResolver(orderExpr, columns, nil)
 }
 
-func (e *StorageExecutor) parseOrderBySpecsWithResolver(orderExpr string, columns []string, resolveExpression func(colName string) int) []orderSpec {
+func (e *StorageExecutor) parseOrderBySpecsWithResolver(orderExpr braceView, columns []string, resolveExpression func(colName string) int) []orderSpec {
 	var specs []orderSpec
 
 	for _, term := range parseOrderByClause(orderExpr) {
@@ -337,13 +343,15 @@ func (e *StorageExecutor) parseOrderBySpecsWithResolver(orderExpr string, column
 		propPath := make([]string, 0)
 		if colIdx == -1 {
 			varName := colName
+			baseView := term.view.trim()
 			for {
-				base, property, ok := splitPostfixPropertyAccess(varName)
+				base, property, ok := splitPostfixPropertyAccess(baseView)
 				if !ok {
 					break
 				}
 				propPath = append(propPath, property)
 				varName = base
+				baseView = baseView.window(0, len(base)).trim()
 			}
 			for left, right := 0, len(propPath)-1; left < right; left, right = left+1, right-1 {
 				propPath[left], propPath[right] = propPath[right], propPath[left]

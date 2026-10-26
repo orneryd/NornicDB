@@ -14,7 +14,7 @@ func TestANTLRDiagnosticsRetainLocalizedIdentityThroughExecutor(t *testing.T) {
 	manager, err := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
 	query := "MATCH (n) WHERE n.password = 'private-diagnostic-literal' RETURN n @"
-	err = exec.validateSyntax(context.Background(), query, false, syntaxANTLRCore)
+	err = exec.validateSyntax(context.Background(), originalBraceView(query), false, syntaxANTLRCore)
 	require.Equal(t, "Neo.ClientError.Statement.SyntaxError", errorStatusCode(err))
 	var typed *localization.LocalizedError
 	require.ErrorAs(t, err, &typed)

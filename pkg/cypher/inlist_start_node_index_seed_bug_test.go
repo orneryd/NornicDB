@@ -252,7 +252,7 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 	nodePattern := nodePatternInfo{variable: "s", labels: []string{"CloudResource"}}
 
 	t.Run("empty clause", func(t *testing.T) {
-		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern, "   ", nil)
+		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern, originalBraceView("   "), nil)
 		require.NoError(t, err)
 		require.False(t, used)
 		require.Nil(t, nodes)
@@ -260,7 +260,7 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 
 	t.Run("simple param form", func(t *testing.T) {
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
-			"s.uid IN $u", map[string]interface{}{"u": []interface{}{"a1", "a2"}})
+			expressionBraceView("s.uid IN $u"), map[string]interface{}{"u": []interface{}{"a1", "a2"}})
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 2)
@@ -268,7 +268,7 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 
 	t.Run("simple literal form", func(t *testing.T) {
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
-			"s.uid IN ['a1', 'a3']", nil)
+			expressionBraceView("s.uid IN ['a1', 'a3']"), nil)
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 2)
@@ -276,7 +276,7 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 
 	t.Run("AND-conjunct param form", func(t *testing.T) {
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
-			"s.uid IN $u AND rel.evidence_source = $e",
+			expressionBraceView("s.uid IN $u AND rel.evidence_source = $e"),
 			map[string]interface{}{"u": []interface{}{"a1"}, "e": "reducer"})
 		require.NoError(t, err)
 		require.True(t, used)
@@ -285,7 +285,7 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 
 	t.Run("AND-conjunct literal form", func(t *testing.T) {
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
-			"rel.evidence_source = 'reducer' AND s.uid IN ['a2', 'a3']", nil)
+			expressionBraceView("rel.evidence_source = 'reducer' AND s.uid IN ['a2', 'a3']"), nil)
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 2)
@@ -293,7 +293,7 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 
 	t.Run("empty conjunct term is skipped", func(t *testing.T) {
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
-			"() AND s.uid IN ['a1']", nil)
+			originalBraceView("() AND s.uid IN ['a1']"), nil)
 		require.NoError(t, err)
 		require.True(t, used)
 		require.Len(t, nodes, 1)
@@ -301,7 +301,7 @@ func TestTryCollectNodesFromPropertyIndexInCompound(t *testing.T) {
 
 	t.Run("no recognized IN-list conjunct falls back", func(t *testing.T) {
 		nodes, used, err := exec.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern,
-			"s.uid = 'a1' AND rel.evidence_source = 'reducer'", nil)
+			expressionBraceView("s.uid = 'a1' AND rel.evidence_source = 'reducer'"), nil)
 		require.NoError(t, err)
 		require.False(t, used)
 		require.Nil(t, nodes)

@@ -50,7 +50,8 @@ type aggregateSpan struct {
 // each span, so aggregates nested inside another aggregate's arguments are
 // not reported separately. An EXISTS / COUNT / COLLECT { … } subquery's body
 // is skipped: its aggregates are the subquery's own (#907).
-func findAggregateSpans(expr string) []aggregateSpan {
+func findAggregateSpans(view braceView) []aggregateSpan {
+	expr := view.text()
 	// The first letters of the aggregates, and E (EXISTS { … }).
 	const prefixMask uint32 = 1<<('A'-'A') | 1<<('C'-'A') | 1<<('E'-'A') | 1<<('M'-'A') | 1<<('P'-'A') | 1<<('S'-'A')
 	var spans []aggregateSpan
@@ -103,7 +104,7 @@ func findAggregateSpans(expr string) []aggregateSpan {
 		// are the subquery's own. An aggregate call is read first: count(…)
 		// is not a subquery, and is then read once.
 		if folded == 'E' || folded == 'C' {
-			if end := subqueryExpressionEnd(expr, i); end > i {
+			if end := subqueryExpressionEnd(view, i); end > i {
 				i = end
 				continue
 			}
@@ -128,7 +129,7 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 	}
 	plan := &returnProjectionPlan{}
 	for _, item := range items {
-		plan.addProjection(item.expr, item.column())
+		plan.addProjection(item.view, item.column())
 	}
 	plan.valid = len(plan.projections) > 0
 	if result, ok := e.pipelineApplyReturnPlan(ctx, bindings, plan, pipelineRowsSource(bindings), false); ok {
@@ -142,7 +143,8 @@ func (e *StorageExecutor) aggregateTraversalOptionalRows(ctx context.Context, ro
 
 // subqueryExpressionEnd is the index after the EXISTS / COUNT / COLLECT
 // { … } subquery that starts at expr[i], or -1.
-func subqueryExpressionEnd(expr string, i int) int {
+func subqueryExpressionEnd(view braceView, i int) int {
+	expr := view.text()
 	// A subquery's keyword is followed by '{': any other word ends here,
 	// before the keyword comparisons.
 	end := i
@@ -150,8 +152,8 @@ func subqueryExpressionEnd(expr string, i int) int {
 	if open := skipSpaces(expr, end); end == i || open >= len(expr) || expr[open] != '{' {
 		return -1
 	}
-	if _, open, ok := subqueryExpressionKeywordAt(expr, i); ok {
-		if closing := cyphertext.FindMatchingDelimiter(expr, open, '{', '}', cyphertext.OpeningDelimiter); closing > open {
+	if _, open, ok := subqueryExpressionKeywordAt(view, i); ok {
+		if closing, complete := view.close(open); complete {
 			return closing + 1
 		}
 	}

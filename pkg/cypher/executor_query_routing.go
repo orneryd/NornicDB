@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -23,39 +24,40 @@ const (
 // isMetadataCommand keeps catalog execution and CREATE semantic admission on
 // one classifier. Schema creation is exempt from pattern validation but retains
 // its existing transactional execution route; catalog commands bypass it.
-func isMetadataCommand(cypher string, purpose metadataCommandPurpose) bool {
-	if startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE") ||
-		isCreateOrReplaceDatabaseQuery(cypher) ||
-		startsWithKeywords(cypher, "CREATE", "DATABASE") ||
-		startsWithKeywords(cypher, "CREATE", "ALIAS") ||
-		startsWithKeywords(cypher, "DROP", "COMPOSITE DATABASE") ||
-		startsWithKeywords(cypher, "DROP", "DATABASE") ||
-		startsWithKeywords(cypher, "DROP", "ALIAS") ||
-		startsWithKeywords(cypher, "SHOW", "DATABASES") ||
-		startsWithKeywords(cypher, "ALTER", "COMPOSITE DATABASE") ||
-		startsWithKeywords(cypher, "ALTER", "DATABASE") ||
-		isPrivilegeAdministrationCommand(cypher) {
+func isMetadataCommand(view braceView, purpose metadataCommandPurpose) bool {
+	cypher := view.text()
+	if startsWithKeywords(view, "CREATE", "COMPOSITE DATABASE") ||
+		isCreateOrReplaceDatabaseQuery(view) ||
+		startsWithKeywords(view, "CREATE", "DATABASE") ||
+		startsWithKeywords(view, "CREATE", "ALIAS") ||
+		startsWithKeywords(view, "DROP", "COMPOSITE DATABASE") ||
+		startsWithKeywords(view, "DROP", "DATABASE") ||
+		startsWithKeywords(view, "DROP", "ALIAS") ||
+		startsWithKeywords(view, "SHOW", "DATABASES") ||
+		startsWithKeywords(view, "ALTER", "COMPOSITE DATABASE") ||
+		startsWithKeywords(view, "ALTER", "DATABASE") ||
+		isPrivilegeAdministrationCommand(view) {
 		return true
 	}
 	if purpose != metadataCreateAdmission {
 		return false
 	}
 	return isCreateProcedureCommand(cypher) ||
-		startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") ||
-		startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") ||
-		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") ||
-		startsWithKeywords(cypher, "CREATE", "CONSTRAINT") ||
-		startsWithKeywords(cypher, "CREATE", "INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "RANGE INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "VECTOR INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "TEXT INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "POINT INDEX") ||
-		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX")
+		startsWithKeywords(view, "CREATE", "DECAY PROFILE") ||
+		startsWithKeywords(view, "CREATE", "PROMOTION PROFILE") ||
+		startsWithKeywords(view, "CREATE", "PROMOTION POLICY") ||
+		startsWithKeywords(view, "CREATE", "CONSTRAINT") ||
+		startsWithKeywords(view, "CREATE", "INDEX") ||
+		startsWithKeywords(view, "CREATE", "RANGE INDEX") ||
+		startsWithKeywords(view, "CREATE", "FULLTEXT INDEX") ||
+		startsWithKeywords(view, "CREATE", "VECTOR INDEX") ||
+		startsWithKeywords(view, "CREATE", "TEXT INDEX") ||
+		startsWithKeywords(view, "CREATE", "POINT INDEX") ||
+		startsWithKeywords(view, "CREATE", "LOOKUP INDEX")
 }
 
-func isShowConstraintContractsCommand(cypher string) bool {
-	return startsWithKeywords(cypher, "SHOW", "CONSTRAINT CONTRACTS")
+func isShowConstraintContractsCommand(view braceView) bool {
+	return startsWithKeywords(view, "SHOW", "CONSTRAINT CONTRACTS")
 }
 
 // topLevelUnion reports whether cypher composes complete single queries with
@@ -69,7 +71,7 @@ func topLevelUnion(ctx context.Context, cypher, upperQuery string) (unionAll, un
 	if !strings.Contains(upperQuery, "UNION") {
 		return false, false
 	}
-	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(ctx, cypher)
+	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(ctx, statementBraceView(ctx, cypher))
 	if !ok {
 		return false, false
 	}
@@ -84,6 +86,7 @@ func topLevelUnion(ctx context.Context, cypher, upperQuery string) (unionAll, un
 
 // executeWithoutTransaction executes query without transaction wrapping (original path).
 func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher string, upperQuery string) (result *ExecuteResult, err error) {
+	view := statementBraceView(ctx, cypher)
 	reveal := hasRevealCall(cypher)
 	if scope := e.executionReadScopeOf(); scope != nil {
 		if reveal && !scope.reveal {
@@ -100,7 +103,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	if scoped := e.withStatementPropertyViews(ctx, cypher); scoped != nil {
 		return scoped.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
-	if mayContainSubqueryExpression(cypher) && len(findSubqueryExpressions(cypher)) > 0 {
+	if mayContainSubqueryExpression(cypher) && len(findSubqueryExpressions(statementBraceView(ctx, cypher))) > 0 {
 		scope := &expressionStatsContext{Context: ctx}
 		ctx = scope
 		defer func() {
@@ -119,7 +122,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	// A top-level UNION composes complete single queries. Route it before any
 	// handler can consume the leading MATCH, RETURN, or UNWIND branch.
 	if unionAll, union := topLevelUnion(ctx, cypher, upperQuery); union {
-		return e.executeUnion(ctx, cypher, unionAll, nil)
+		return e.executeUnion(ctx, statementBraceView(ctx, cypher), unionAll, nil)
 	}
 	if result, handled, err := e.executeShowStatement(ctx, cypher); handled {
 		return result, err
@@ -150,7 +153,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	startsWithCreate := strings.HasPrefix(upperQuery, "CREATE")
 	startsWithMerge := strings.HasPrefix(upperQuery, "MERGE")
 
-	if startsWithMatch && topLevelKeywordIndex(cypher, "CALL") > 0 {
+	if startsWithMatch && topLevelKeywordIndex(view, "CALL") > 0 {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
@@ -161,19 +164,19 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	var mergeIdx, createIdx, withIdx, optionalMatchIdx int = -1, -1, -1, -1
 
 	if startsWithMatch {
-		mergeIdx = findKeywordIndex(cypher, "MERGE")
-		createIdx = findKeywordIndex(cypher, "CREATE")
-		optionalMatchIdx = findMultiWordKeywordIndex(cypher, "OPTIONAL", "MATCH")
+		mergeIdx = findKeywordIndex(view, "MERGE")
+		createIdx = findKeywordIndex(view, "CREATE")
+		optionalMatchIdx = findMultiWordKeywordIndex(view, "OPTIONAL", "MATCH")
 	} else if startsWithCreate {
 		if !isCreateProcedureCommand(cypher) &&
-			!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
-			!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
-			!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") {
+			!startsWithKeywords(view, "CREATE", "DECAY PROFILE") &&
+			!startsWithKeywords(view, "CREATE", "PROMOTION PROFILE") &&
+			!startsWithKeywords(view, "CREATE", "PROMOTION POLICY") {
 			if _, ok := canExecuteAsPipeline(ctx, cypher); ok {
 				return e.executeRequiredPipeline(ctx, cypher)
 			}
 		}
-		withIdx = findKeywordIndex(cypher, "WITH")
+		withIdx = findKeywordIndex(view, "WITH")
 	}
 
 	if startsWithMatch && mergeIdx > 0 {
@@ -190,46 +193,46 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
-	hasDelete := findKeywordIndex(cypher, "DELETE") >= 0
-	hasDetachDelete := containsKeywordOutsideStrings(cypher, "DETACH DELETE")
+	hasDelete := findKeywordIndex(view, "DELETE") >= 0
+	hasDetachDelete := containsKeywordOutsideStrings(view, "DETACH DELETE")
 	if hasDelete || hasDetachDelete {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
-	hasSet := containsKeywordOutsideStrings(cypher, "SET")
-	hasOnCreateSet := containsKeywordOutsideStrings(cypher, "ON CREATE SET")
-	hasOnMatchSet := containsKeywordOutsideStrings(cypher, "ON MATCH SET")
-	if startsWithMatch && hasSet && containsKeywordOutsideStrings(cypher, "REMOVE") {
+	hasSet := containsKeywordOutsideStrings(view, "SET")
+	hasOnCreateSet := containsKeywordOutsideStrings(view, "ON CREATE SET")
+	hasOnMatchSet := containsKeywordOutsideStrings(view, "ON MATCH SET")
+	if startsWithMatch && hasSet && containsKeywordOutsideStrings(view, "REMOVE") {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
-	if startsWithCreate && hasSet && containsKeywordOutsideStrings(cypher, "REMOVE") {
+	if startsWithCreate && hasSet && containsKeywordOutsideStrings(view, "REMOVE") {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 	if startsWithCreate && !isCreateProcedureCommand(cypher) && hasSet && !hasOnCreateSet && !hasOnMatchSet &&
-		!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
-		!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
-		!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") {
+		!startsWithKeywords(view, "CREATE", "DECAY PROFILE") &&
+		!startsWithKeywords(view, "CREATE", "PROMOTION PROFILE") &&
+		!startsWithKeywords(view, "CREATE", "PROMOTION POLICY") {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
-	if startsWithKeywords(cypher, "ALTER", "DATABASE") {
+	if startsWithKeywords(view, "ALTER", "DATABASE") {
 		return e.executeAlterDatabase(ctx, cypher)
 	}
 
 	if hasSet && !isCreateProcedureCommand(cypher) && !hasOnCreateSet && !hasOnMatchSet &&
-		!startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") &&
-		!startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") &&
-		!startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") &&
-		!startsWithKeywords(cypher, "ALTER", "DECAY PROFILE") &&
-		!startsWithKeywords(cypher, "ALTER", "PROMOTION PROFILE") &&
-		!startsWithKeywords(cypher, "ALTER", "PROMOTION POLICY") {
-		if startsWithMatch || findKeywordIndex(cypher, "SET") == 0 {
+		!startsWithKeywords(view, "CREATE", "DECAY PROFILE") &&
+		!startsWithKeywords(view, "CREATE", "PROMOTION PROFILE") &&
+		!startsWithKeywords(view, "CREATE", "PROMOTION POLICY") &&
+		!startsWithKeywords(view, "ALTER", "DECAY PROFILE") &&
+		!startsWithKeywords(view, "ALTER", "PROMOTION PROFILE") &&
+		!startsWithKeywords(view, "ALTER", "PROMOTION POLICY") {
+		if startsWithMatch || findKeywordIndex(view, "SET") == 0 {
 			return e.executeRequiredPipeline(ctx, cypher)
 		}
 	}
 
-	if containsKeywordOutsideStrings(cypher, "REMOVE") {
+	if containsKeywordOutsideStrings(view, "REMOVE") {
 		return e.executeRequiredPipeline(ctx, cypher)
 	}
 
@@ -243,39 +246,39 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	}
 
 	switch {
-	case isProcedurePrivilegeCommand(cypher):
+	case isProcedurePrivilegeCommand(view):
 		return e.executeProcedurePrivilegeCommand(ctx, cypher)
 	case startsWithKeywordFold(strings.TrimSpace(cypher), "GRANT"), startsWithKeywordFold(strings.TrimSpace(cypher), "REVOKE"),
 		startsWithKeywordFold(strings.TrimSpace(cypher), "DENY"):
 		// Only procedure execution privileges are supported.
-		return nil, unsupportedAdministrationCommandError(cypher)
+		return nil, unsupportedAdministrationCommandError(view)
 	case isCreateProcedureCommand(cypher):
 		return e.executeCreateProcedure(ctx, cypher)
-	case startsWithKeywords(cypher, "CREATE", "DECAY PROFILE"),
-		startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE"),
-		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY"):
+	case startsWithKeywords(view, "CREATE", "DECAY PROFILE"),
+		startsWithKeywords(view, "CREATE", "PROMOTION PROFILE"),
+		startsWithKeywords(view, "CREATE", "PROMOTION POLICY"):
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
-	case startsWithKeywords(cypher, "OPTIONAL", "MATCH"),
-		startsWithKeywords(cypher, "OPTIONAL", "CALL"):
+	case startsWithKeywords(view, "OPTIONAL", "MATCH"),
+		startsWithKeywords(view, "OPTIONAL", "CALL"):
 		return e.executeRequiredPipeline(ctx, cypher)
 	case startsWithMatch:
 		return e.executeRequiredPipeline(ctx, cypher)
-	case startsWithKeywords(cypher, "CREATE", "CONSTRAINT"),
-		startsWithKeywords(cypher, "CREATE", "RANGE INDEX"),
-		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX"),
-		startsWithKeywords(cypher, "CREATE", "VECTOR INDEX"),
-		startsWithKeywords(cypher, "CREATE", "TEXT INDEX"),
-		startsWithKeywords(cypher, "CREATE", "POINT INDEX"),
-		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX"),
-		findKeywordIndex(cypher, "CREATE INDEX") == 0:
+	case startsWithKeywords(view, "CREATE", "CONSTRAINT"),
+		startsWithKeywords(view, "CREATE", "RANGE INDEX"),
+		startsWithKeywords(view, "CREATE", "FULLTEXT INDEX"),
+		startsWithKeywords(view, "CREATE", "VECTOR INDEX"),
+		startsWithKeywords(view, "CREATE", "TEXT INDEX"),
+		startsWithKeywords(view, "CREATE", "POINT INDEX"),
+		startsWithKeywords(view, "CREATE", "LOOKUP INDEX"),
+		findKeywordIndex(view, "CREATE INDEX") == 0:
 		return e.executeSchemaCommand(ctx, cypher)
-	case startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE"):
+	case startsWithKeywords(view, "CREATE", "COMPOSITE DATABASE"):
 		return e.executeCompositeCommand(ctx, cypher, compositeCreateCommand)
-	case isCreateOrReplaceDatabaseQuery(cypher):
+	case isCreateOrReplaceDatabaseQuery(view):
 		return e.executeDatabaseCreate(ctx, cypher, replaceExistingDatabase)
-	case startsWithKeywords(cypher, "CREATE", "DATABASE"):
+	case startsWithKeywords(view, "CREATE", "DATABASE"):
 		return e.executeDatabaseCreate(ctx, cypher, createNewDatabase)
-	case startsWithKeywords(cypher, "CREATE", "ALIAS"):
+	case startsWithKeywords(view, "CREATE", "ALIAS"):
 		return e.executeCreateAlias(ctx, cypher)
 	case startsWithCreate:
 		return e.executeRequiredPipeline(ctx, cypher)
@@ -283,40 +286,40 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		return e.executeCall(ctx, cypher)
 	case startsWithKeywordFold(cypher, "RETURN"):
 		return e.executeReturn(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "COMPOSITE DATABASE"):
+	case startsWithKeywords(view, "DROP", "COMPOSITE DATABASE"):
 		return e.executeDatabaseDrop(ctx, cypher, dropCompositeDatabase)
-	case startsWithKeywords(cypher, "DROP", "DATABASE"):
+	case startsWithKeywords(view, "DROP", "DATABASE"):
 		return e.executeDatabaseDrop(ctx, cypher, dropStandardDatabase)
-	case startsWithKeywords(cypher, "DROP", "ALIAS"):
+	case startsWithKeywords(view, "DROP", "ALIAS"):
 		return e.executeDropAlias(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "CONSTRAINT"):
+	case startsWithKeywords(view, "DROP", "CONSTRAINT"):
 		return e.executeSchemaCommand(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "DECAY PROFILE"),
-		startsWithKeywords(cypher, "DROP", "PROMOTION PROFILE"),
-		startsWithKeywords(cypher, "DROP", "PROMOTION POLICY"):
+	case startsWithKeywords(view, "DROP", "DECAY PROFILE"),
+		startsWithKeywords(view, "DROP", "PROMOTION PROFILE"),
+		startsWithKeywords(view, "DROP", "PROMOTION POLICY"):
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	case isDropProcedureCommand(cypher):
 		return e.executeDropProcedure(ctx, cypher)
-	case startsWithKeywords(cypher, "DROP", "INDEX"):
+	case startsWithKeywords(view, "DROP", "INDEX"):
 		return e.executeSchemaCommand(ctx, cypher)
-	case isDropRoleCommand(cypher):
+	case isDropRoleCommand(view):
 		return nil, localizedStatusError("Neo.ClientError.Statement.UnsupportedAdministrationCommand", "UnsupportedAdministrationCommand",
 			localization.CypherAdminUnsupportedAdministrationCommand(strings.TrimSpace(cypher)))
-	case findKeywordIndex(cypher, "DROP") == 0:
+	case findKeywordIndex(view, "DROP") == 0:
 		return nil, newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid DROP clause: "+truncateQuery(cypher, 80))
 	case startsWithKeywordFold(cypher, "WITH"):
 		return e.executeRequiredPipeline(ctx, cypher)
 	case startsWithKeywordFold(cypher, "UNWIND"):
 		return e.executeRequiredPipeline(ctx, cypher)
-	case findKeywordIndex(cypher, "FOREACH") == 0:
+	case findKeywordIndex(view, "FOREACH") == 0:
 		return e.executeRequiredPipeline(ctx, cypher)
-	case findKeywordIndex(cypher, "LOAD CSV") == 0:
+	case findKeywordIndex(view, "LOAD CSV") == 0:
 		return e.executeLoadCSV(ctx, cypher)
-	case startsWithKeywords(cypher, "ALTER", "COMPOSITE DATABASE"):
+	case startsWithKeywords(view, "ALTER", "COMPOSITE DATABASE"):
 		return e.executeCompositeCommand(ctx, cypher, compositeAlterCommand)
-	case startsWithKeywords(cypher, "ALTER", "DECAY PROFILE"),
-		startsWithKeywords(cypher, "ALTER", "PROMOTION PROFILE"),
-		startsWithKeywords(cypher, "ALTER", "PROMOTION POLICY"):
+	case startsWithKeywords(view, "ALTER", "DECAY PROFILE"),
+		startsWithKeywords(view, "ALTER", "PROMOTION PROFILE"),
+		startsWithKeywords(view, "ALTER", "PROMOTION POLICY"):
 		return e.executeKnowledgePolicyDDL(ctx, cypher)
 	default:
 		// Terminal chokepoint of the converged router: a statement that passed
@@ -369,16 +372,17 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		return nil, localizedError(localization.CypherTransactionsReturnClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 
-	body := strings.TrimSpace(cypher[returnIdx+len("RETURN"):])
+	view := statementBraceView(ctx, cypher)
+	body := view.window(returnIdx+len("RETURN"), len(cypher)).trim()
 	items := body
 	if cut := firstTopLevelModifierIndex(items); cut >= 0 {
-		items = strings.TrimSpace(items[:cut])
+		items = items.window(0, cut).trim()
 	}
 	items, _ = cutDistinct(items)
-	parts := splitTopLevelComma(items)
+	parts := items.commaViews()
 	for index, part := range parts {
 		// Same alias parsing as every projection (readProjectionItemSource).
-		part = readProjectionItemSource(ctx, strings.TrimSpace(part), projectionAdmitted).expression
+		part = readProjectionItemSource(ctx, part.trim(), projectionAdmitted).view
 		parts[index] = part
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
 			return nil, err
@@ -399,16 +403,16 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 		}
 	}
 
-	if result, ok := e.pipelineApplyReturn(ctx, []pipelineRow{row}, "RETURN "+body); ok {
+	if result, ok := e.pipelineApplyReturn(ctx, []pipelineRow{row}, body.wrap("RETURN ", "")); ok {
 		return result, nil
 	}
 	if failure := getExpressionFailure(ctx); failure != nil {
 		return nil, failure
 	}
-	unparsed := body
+	unparsed := body.text()
 	for _, part := range parts {
 		if _, defined := e.evaluateRowExpressionWithContext(ctx, part, row); !defined {
-			unparsed = part
+			unparsed = part.text()
 			break
 		}
 	}
@@ -418,14 +422,15 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 // firstTopLevelModifierIndex is the position of a projection's first
 // top-level ORDER BY, SKIP or LIMIT, or -1. The shared RETURN projection and
 // standalone RETURN both use it.
-func firstTopLevelModifierIndex(clause string) int {
+func firstTopLevelModifierIndex(view braceView) int {
+	clause := view.text()
 	cut := -1
 	for _, kw := range []string{"ORDER BY", "SKIP", "LIMIT"} {
 		// The keyword scan is costly; most projections have no modifier.
 		if !containsFold(clause, kw[:4]) {
 			continue
 		}
-		if idx := topLevelKeywordIndex(clause, kw); idx >= 0 && (cut == -1 || idx < cut) {
+		if idx := topLevelKeywordIndex(view, kw); idx >= 0 && (cut == -1 || idx < cut) {
 			cut = idx
 		}
 	}
@@ -452,7 +457,9 @@ const (
 // validateSyntax is the sole syntax-validation pipeline. Statement admission
 // uses the configured parser and shared checks; core modes preserve the isolated
 // native benchmark and ANTLR diagnostic contracts. cypher25 selects scope rules.
-func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cypher25 bool, mode syntaxValidationMode) error {
+func (e *StorageExecutor) validateSyntax(ctx context.Context, view braceView, cypher25 bool, mode syntaxValidationMode) error {
+	cypher := view.text()
+	ctx = withBraceView(ctx, view)
 	if mode == syntaxNativeCore && e.hasCachedValidSyntax(cypher, syntaxValidNornic) {
 		return nil
 	}
@@ -473,7 +480,7 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 		if err := validateUnicodeOperators(cypher); err != nil {
 			return err
 		}
-		if err := validateStaticMapKeys(cypher); err != nil {
+		if err := view.admission(); err != nil {
 			return err
 		}
 		if err := validateNumericLiterals(cypher); err != nil {
@@ -488,7 +495,7 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 	}
 
 	var parserError error
-	if validator == syntaxValidANTLR && !isNornicExtensionStatement(cypher) {
+	if validator == syntaxValidANTLR && !isNornicExtensionStatement(view) {
 		if mode == syntaxStatement {
 			// Execution admits the canonical statement product, just as the
 			// native readers do. ValidateContext's API-specific diagnostic
@@ -536,12 +543,12 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 		if explainProfileConflict(cypher) {
 			return executionModeConflictError()
 		}
-		if _, ok := readTrailingFinish(cypher, detectFinishSuffix); ok {
+		if _, ok := readTrailingFinish(view, detectFinishSuffix); ok {
 			// FINISH can't follow RETURN, as in Neo4j; every valid trailing
 			// FINISH was stripped before validation.
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "RETURN can only be used at the end of the query")
 		}
-		if !hasValidStartKeyword(cypher) {
+		if !hasValidStartKeyword(view) {
 			// Neo4j reports an unrecognized statement as a syntax error; classify
 			// the localized terminal so Bolt carries the proper status code.
 			return &classifiedCypherError{
@@ -550,17 +557,16 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 				detail: "UnexpectedSyntax",
 			}
 		}
-		if err := validateLeadingNodePatternTransition(cypher); err != nil {
+		if err := validateLeadingNodePatternTransition(view); err != nil {
 			return err
 		}
 
-		if isGraphQueryStatement(cypher) && hasAdjacentOperands(cypher) {
+		if isGraphQueryStatement(view) && hasAdjacentOperands(cypher) {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: an expression is followed by another expression without an operator")
 		}
 
 		parenCount := 0
 		bracketCount := 0
-		braceCount := 0
 
 		for i := 0; i < len(cypher); i++ {
 			c := cypher[i]
@@ -610,13 +616,9 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 				bracketCount++
 			case ']':
 				bracketCount--
-			case '{':
-				braceCount++
-			case '}':
-				braceCount--
 			}
 
-			if parenCount < 0 || bracketCount < 0 || braceCount < 0 {
+			if parenCount < 0 || bracketCount < 0 {
 				return newSemanticError(
 					"Neo.ClientError.Statement.SyntaxError",
 					"UnexpectedSyntax",
@@ -631,7 +633,8 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 		if bracketCount != 0 {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced square brackets")
 		}
-		if braceCount != 0 {
+		// Brace balance is the brace owner's lexical fact for this statement.
+		if len(view.source.BraceFacts().Unmatched()) != 0 {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced curly braces")
 		}
 		e.markCachedValidSyntax(original, syntaxValidNornic)
@@ -641,7 +644,7 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 		if err := e.validateMatchSemanticScopes(ctx, cypher, cypher25); err != nil {
 			return err
 		}
-		if err := validateKnownFunctions(cypher); err != nil {
+		if err := validateKnownFunctions(statementBraceView(ctx, cypher)); err != nil {
 			return err
 		}
 		err := syntaxAdmissionError(ctx, cypher, AcceptedSource, parserError)
@@ -660,26 +663,28 @@ func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cyp
 // limits (ALTER DATABASE … SET LIMIT, SHOW LIMITS), and the database options
 // the grammar doesn't model yet (CREATE DATABASE … OPTIONS, ALTER DATABASE …
 // SET / REMOVE OPTION, #937).
-func isNornicExtensionStatement(cypher string) bool {
+func isNornicExtensionStatement(view braceView) bool {
+	cypher := view.text()
 	// EXPLAIN / PROFILE of one is one too, so both parsers treat EXPLAIN
 	// GRANT … as the default parser does.
-	_, cypher = parseExecutionMode(cypher)
-	cypher = strings.TrimSpace(cypher)
+	_, view = executionModeView(view)
+	view = view.trim()
+	cypher = view.text()
 	return isKnowledgePolicyDDLStatement(cypher) || isCreateProcedureCommand(cypher) || isDropProcedureCommand(cypher) ||
-		isPrivilegeAdministrationCommand(cypher) || isDropRoleCommand(cypher) ||
-		startsWithKeywords(cypher, "SHOW", "LIMITS") ||
-		(startsWithKeywords(cypher, "ALTER", "DATABASE") && (findKeywordIndex(cypher, "SET LIMIT") >= 0 ||
-			findKeywordIndex(cypher, "SET OPTION") >= 0 || findKeywordIndex(cypher, "REMOVE OPTION") >= 0)) ||
-		((startsWithKeywords(cypher, "CREATE", "DATABASE") || startsWithKeywords(cypher, "CREATE", "OR")) &&
-			findKeywordIndex(cypher, "DATABASE") >= 0 && findKeywordIndex(cypher, "OPTIONS") >= 0)
+		isPrivilegeAdministrationCommand(view) || isDropRoleCommand(view) ||
+		startsWithKeywords(view, "SHOW", "LIMITS") ||
+		(startsWithKeywords(view, "ALTER", "DATABASE") && (findKeywordIndex(view, "SET LIMIT") >= 0 ||
+			findKeywordIndex(view, "SET OPTION") >= 0 || findKeywordIndex(view, "REMOVE OPTION") >= 0)) ||
+		((startsWithKeywords(view, "CREATE", "DATABASE") || startsWithKeywords(view, "CREATE", "OR")) &&
+			findKeywordIndex(view, "DATABASE") >= 0 && findKeywordIndex(view, "OPTIONS") >= 0)
 }
 
 // isDropRoleCommand reports DROP ROLE, which Neo4j parses and Neo4j
 // Community refuses as an unsupported administration command; NornicDB
 // does the same on both parsers. Roles are deleted through the HTTP role
 // API, whose owner also updates the server's loaded role caches.
-func isDropRoleCommand(cypher string) bool {
-	return startsWithKeywords(cypher, "DROP", "ROLE")
+func isDropRoleCommand(view braceView) bool {
+	return startsWithKeywords(view, "DROP", "ROLE")
 }
 
 // hasAdjacentOperands reports two operands with no operator between them,
@@ -773,15 +778,7 @@ func isSyntaxBoundaryKeyword(word string) bool {
 // n.name CONTAINS 'x', STARTS WITH $p, CASE 'a' WHEN 'a' THEN 1 ELSE 2,
 // ORDER BY 1, LOAD CSV FROM 'url' ... FIELDTERMINATOR ';', IN TRANSACTIONS
 // OF 10 ROWS, USING PERIODIC COMMIT 500, SHORTEST 2, ...).
-var literalLeadingKeywords = map[string]struct{}{
-	"RETURN": {}, "WITH": {}, "WHERE": {}, "AND": {}, "OR": {}, "XOR": {}, "NOT": {},
-	"IN": {}, "IS": {}, "CASE": {}, "WHEN": {}, "THEN": {}, "ELSE": {}, "CONTAINS": {},
-	"SKIP": {}, "LIMIT": {}, "UNWIND": {}, "FROM": {}, "FIELDTERMINATOR": {}, "OF": {},
-	"DISTINCT": {}, "BY": {}, "YIELD": {}, "SHORTEST": {}, "ANY": {}, "ALL": {},
-	"COMMIT": {}, "USE": {}, "OFFSET": {}, "DELETE": {},
-	// trim([LEADING | TRAILING | BOTH] 'x' FROM s)
-	"BOTH": {}, "LEADING": {}, "TRAILING": {},
-}
+var literalLeadingKeywords = cypherantlr.LiteralLeadingKeywords
 
 // bareWordBeforeLiteral reports whether the word cypher[start:end] (not a
 // property name) is followed by a string or number literal and
@@ -823,7 +820,8 @@ func bareWordBeforeLiteral(cypher string, start, end int) bool {
 // RETURN, UNWIND, MERGE, CALL, FOREACH, LOAD CSV, UNION or USE, or with
 // CREATE followed by a pattern ("CREATE (" or "CREATE p = "). CREATE INDEX /
 // CONSTRAINT / DATABASE / USER and the other CREATE ... definitions are not.
-func isGraphQueryStatement(cypher string) bool {
+func isGraphQueryStatement(view braceView) bool {
+	cypher := view.text()
 	query := strings.TrimSpace(cypher)
 	for _, prefix := range []string{"EXPLAIN", "PROFILE"} {
 		if matchKeywordAt(query, 0, prefix) {
@@ -846,8 +844,9 @@ func isGraphQueryStatement(cypher string) bool {
 	return ok && name.Value != "" && strings.HasPrefix(strings.TrimSpace(rest[name.End:]), "=")
 }
 
-func validateLeadingNodePatternTransition(cypher string) error {
-	query := strings.TrimSpace(cypher)
+func validateLeadingNodePatternTransition(view braceView) error {
+	view = view.trim()
+	query := view.text()
 	keyword := ""
 	if matchKeywordAt(query, 0, "MATCH") {
 		keyword = "MATCH"
@@ -860,7 +859,7 @@ func validateLeadingNodePatternTransition(cypher string) error {
 	if open >= len(query) || query[open] != '(' {
 		return nil
 	}
-	if groupOpen, _, _, grouped := nextQuantifiedGroup(query, open); grouped && groupOpen == open {
+	if groupOpen, _, _, grouped := nextQuantifiedGroup(view, open); grouped && groupOpen == open {
 		// A pattern may start with a quantified path pattern: ((x)-->(y))+.
 		return nil
 	}
@@ -868,12 +867,13 @@ func validateLeadingNodePatternTransition(cypher string) error {
 	if close < 0 {
 		return nil
 	}
-	remaining := strings.TrimSpace(query[close+1:])
+	remainingView := view.window(close+1, len(query)).trim()
+	remaining := remainingView.text()
 	if remaining == "" || remaining[0] == ',' || remaining[0] == '-' || remaining[0] == '<' || remaining[0] == ';' {
 		return nil
 	}
 	// A quantified path pattern follows its node directly: (a)((x)-->(y))+.
-	if open, _, _, ok := nextQuantifiedGroup(remaining, 0); ok && open == 0 && keyword == "MATCH" {
+	if open, _, _, ok := nextQuantifiedGroup(remainingView, 0); ok && open == 0 && keyword == "MATCH" {
 		return nil
 	}
 	for _, allowed := range []string{"WHERE", "USING", "RETURN", "WITH", "MATCH", "OPTIONAL", "CREATE", "MERGE", "SET", "REMOVE", "DELETE", "UNWIND", "CALL", "FOREACH", "ORDER", "SKIP", "LIMIT", "UNION", "LET", "FILTER", "FOR"} {
@@ -893,13 +893,14 @@ var validSyntaxStarts = [...]string{
 	"PROFILE", "ALTER", "USE", "BEGIN", "COMMIT", "ROLLBACK", "TERMINATE", "LET", "FILTER", "FOR",
 }
 
-func hasValidStartKeyword(cypher string) bool {
+func hasValidStartKeyword(view braceView) bool {
+	cypher := view.text()
 	for _, start := range validSyntaxStarts {
 		if startsWithKeywordFold(cypher, start) {
 			return true
 		}
 	}
-	return isPrivilegeCommandShaped(cypher)
+	return isPrivilegeCommandShaped(view)
 }
 
 // ensureSyntaxValidationCache lazily installs the syntax-validation cache
@@ -1030,6 +1031,7 @@ func unsupportedOptionalMatchShapeError(cypher string) error {
 // a SHOW command's YIELD may be followed by any clause (CALL { … }, DELETE,
 // SET, …), and the command still runs as a SHOW (#907).
 func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher string) (*ExecuteResult, bool, error) {
+	view := statementBraceView(ctx, cypher)
 	// Every statement passes here: one prefix test spares the others the
 	// command checks below.
 	if !hasPrefixFold(cypher, "SHOW") && !hasPrefixFold(cypher, "TERMINATE") {
@@ -1044,77 +1046,77 @@ func (e *StorageExecutor) executeShowStatement(ctx context.Context, cypher strin
 		return result, true, err
 	}
 	switch {
-	case startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "FULLTEXT INDEX"),
-		startsWithKeywords(cypher, "SHOW", "RANGE INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "RANGE INDEX"),
-		startsWithKeywords(cypher, "SHOW", "VECTOR INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "VECTOR INDEX"),
-		startsWithKeywords(cypher, "SHOW", "LOOKUP INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "LOOKUP INDEX"):
+	case startsWithKeywords(view, "SHOW", "FULLTEXT INDEXES"),
+		startsWithKeywords(view, "SHOW", "FULLTEXT INDEX"),
+		startsWithKeywords(view, "SHOW", "RANGE INDEXES"),
+		startsWithKeywords(view, "SHOW", "RANGE INDEX"),
+		startsWithKeywords(view, "SHOW", "VECTOR INDEXES"),
+		startsWithKeywords(view, "SHOW", "VECTOR INDEX"),
+		startsWithKeywords(view, "SHOW", "LOOKUP INDEXES"),
+		startsWithKeywords(view, "SHOW", "LOOKUP INDEX"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "INDEXES"),
-		startsWithKeywords(cypher, "SHOW", "INDEX"):
+	case startsWithKeywords(view, "SHOW", "INDEXES"),
+		startsWithKeywords(view, "SHOW", "INDEX"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowIndexes)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "DECAY PROFILES"),
-		startsWithKeywords(cypher, "SHOW", "PROMOTION PROFILES"),
-		startsWithKeywords(cypher, "SHOW", "PROMOTION POLICIES"):
+	case startsWithKeywords(view, "SHOW", "DECAY PROFILES"),
+		startsWithKeywords(view, "SHOW", "PROMOTION PROFILES"),
+		startsWithKeywords(view, "SHOW", "PROMOTION POLICIES"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeKnowledgePolicyDDL)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "PROCEDURES"):
+	case startsWithKeywords(view, "SHOW", "PROCEDURES"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowProcedures)
 		return result, true, err
-	case findKeywordIndex(cypher, "SHOW FUNCTIONS") == 0:
+	case findKeywordIndex(view, "SHOW FUNCTIONS") == 0:
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowFunctions)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "COMPOSITE DATABASES"):
+	case startsWithKeywords(view, "SHOW", "COMPOSITE DATABASES"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowCompositeDatabases)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "CONSTITUENTS"):
+	case startsWithKeywords(view, "SHOW", "CONSTITUENTS"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowConstituents)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "DEFAULT DATABASE"),
-		startsWithKeywords(cypher, "SHOW", "HOME DATABASE"):
+	case startsWithKeywords(view, "SHOW", "DEFAULT DATABASE"),
+		startsWithKeywords(view, "SHOW", "HOME DATABASE"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDefaultDatabase)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "USERS"),
-		startsWithKeywords(cypher, "SHOW", "CURRENT USER"):
+	case startsWithKeywords(view, "SHOW", "USERS"),
+		startsWithKeywords(view, "SHOW", "CURRENT USER"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowUsers)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "TRANSACTIONS"),
-		startsWithKeywords(cypher, "SHOW", "TRANSACTION"):
+	case startsWithKeywords(view, "SHOW", "TRANSACTIONS"),
+		startsWithKeywords(view, "SHOW", "TRANSACTION"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowTransactions)
 		return result, true, err
-	case startsWithKeywords(cypher, "TERMINATE", "TRANSACTIONS"),
-		startsWithKeywords(cypher, "TERMINATE", "TRANSACTION"):
+	case startsWithKeywords(view, "TERMINATE", "TRANSACTIONS"),
+		startsWithKeywords(view, "TERMINATE", "TRANSACTION"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeTerminateTransactions)
 		return result, true, err
-	case isShowPrivilegesCommand(cypher):
+	case isShowPrivilegesCommand(view):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowPrivileges)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "ROLES"),
-		startsWithKeywords(cypher, "SHOW", "ROLE"),
-		startsWithKeywords(cypher, "SHOW", "PRIVILEGES"),
-		startsWithKeywords(cypher, "SHOW", "USER"),
-		startsWithKeywords(cypher, "SHOW", "SERVERS"),
-		startsWithKeywords(cypher, "SHOW", "SERVER"):
-		return nil, true, unsupportedAdministrationCommandError(cypher)
-	case startsWithKeywords(cypher, "SHOW", "DATABASES"):
+	case startsWithKeywords(view, "SHOW", "ROLES"),
+		startsWithKeywords(view, "SHOW", "ROLE"),
+		startsWithKeywords(view, "SHOW", "PRIVILEGES"),
+		startsWithKeywords(view, "SHOW", "USER"),
+		startsWithKeywords(view, "SHOW", "SERVERS"),
+		startsWithKeywords(view, "SHOW", "SERVER"):
+		return nil, true, unsupportedAdministrationCommandError(view)
+	case startsWithKeywords(view, "SHOW", "DATABASES"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDatabases)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "DATABASE"):
+	case startsWithKeywords(view, "SHOW", "DATABASE"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowDatabase)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "ALIASES"):
+	case startsWithKeywords(view, "SHOW", "ALIASES"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowAliases)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "SETTINGS"),
-		startsWithKeywords(cypher, "SHOW", "SETTING"):
+	case startsWithKeywords(view, "SHOW", "SETTINGS"),
+		startsWithKeywords(view, "SHOW", "SETTING"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowSettings)
 		return result, true, err
-	case startsWithKeywords(cypher, "SHOW", "LIMITS"):
+	case startsWithKeywords(view, "SHOW", "LIMITS"):
 		result, err := e.executeShowWithTail(ctx, cypher, e.executeShowLimits)
 		return result, true, err
 	}

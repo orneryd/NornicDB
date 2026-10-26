@@ -18,13 +18,13 @@ import (
 // Neo4j's ArgumentErrors.
 
 func init() {
-	cypherfn.Register("vector.similarity.cosine", fnVectorSimilarity("cosine", vector.Neo4jCosineVectorValid[float64], vector.Neo4jCosineSimilarity[float64]))
-	cypherfn.Register("vector.similarity.euclidean", fnVectorSimilarity("euclidean", vector.Neo4jEuclideanVectorValid[float64], vector.Neo4jEuclideanSimilarity[float64]))
+	cypherfn.RegisterInvocation("vector.similarity.cosine", fnVectorSimilarity("cosine", vector.Neo4jCosineVectorValid[float64], vector.Neo4jCosineSimilarity[float64]))
+	cypherfn.RegisterInvocation("vector.similarity.euclidean", fnVectorSimilarity("euclidean", vector.Neo4jEuclideanVectorValid[float64], vector.Neo4jEuclideanSimilarity[float64]))
 }
 
 // fnVectorSimilarity checks a, then b, then their dimensions, as Neo4j does.
-func fnVectorSimilarity(function string, valid func([]float64) bool, similarity func(a, b []float64) (float64, bool)) cypherfn.Func {
-	return func(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnVectorSimilarity(function string, valid func([]float64) bool, similarity func(a, b []float64) (float64, bool)) cypherfn.InvocationFunc {
+	return func(ctx cypherfn.InvocationContext, args []string) (interface{}, error) {
 		if len(args) != 2 {
 			return nil, argumentCountError("vector.similarity."+function, "2", len(args))
 		}

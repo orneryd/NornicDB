@@ -7,11 +7,11 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node, variable, whereClause string) []*storage.Node {
+func (e *StorageExecutor) filterNodes(ctx context.Context, nodes []*storage.Node, variable string, whereClause braceView) []*storage.Node {
 	return parallelFilterNodes(nodes, e.compileNodeWhereFilter(ctx, variable, whereClause))
 }
 
-func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, whereClause string) (func(*storage.Node) bool, bool) {
+func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable string, whereClause braceView) (func(*storage.Node) bool, bool) {
 	plan := planRowPredicate(whereClause)
 	if plan == nil || !plan.complete {
 		return nil, false
@@ -29,7 +29,7 @@ func (e *StorageExecutor) getCompiledSimpleWhere(ctx context.Context, variable, 
 	}, true
 }
 
-func (e *StorageExecutor) compileNodeWhereFilter(ctx context.Context, variable, whereClause string) func(*storage.Node) bool {
+func (e *StorageExecutor) compileNodeWhereFilter(ctx context.Context, variable string, whereClause braceView) func(*storage.Node) bool {
 	if compiled, ok := e.getCompiledSimpleWhere(ctx, variable, whereClause); ok {
 		return compiled
 	}
@@ -41,8 +41,8 @@ func (e *StorageExecutor) compileNodeWhereFilter(ctx context.Context, variable, 
 // evaluateWhere reports whether a single-node WHERE clause holds, i.e. is
 // known true under Cypher's three-valued logic (null and false both drop the
 // row).
-func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node, variable, whereClause string) bool {
-	if strings.TrimSpace(whereClause) == "" {
+func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node, variable string, whereClause braceView) bool {
+	if whereClause.empty() {
 		return true
 	}
 	values := pipelineNodeRow(ctx, variable, node)
@@ -64,7 +64,7 @@ func (e *StorageExecutor) evaluateWhere(ctx context.Context, node *storage.Node,
 // end (null when not visible) and node as null, with the statement's
 // parameters and the calling row's variables, as evaluateWhere binds them for
 // a node candidate.
-func (e *StorageExecutor) compileRelationshipWhereFilter(ctx context.Context, whereClause string) func(*storage.Edge, *storage.Node, *storage.Node) bool {
+func (e *StorageExecutor) compileRelationshipWhereFilter(ctx context.Context, whereClause braceView) func(*storage.Edge, *storage.Node, *storage.Node) bool {
 	return func(edge *storage.Edge, start, end *storage.Node) bool {
 		values := pipelineNodeRow(ctx, "node", nil)
 		for name, value := range e.fabricRecordBindings {
@@ -119,14 +119,14 @@ func containsFold(s, sub string) bool {
 // evaluateWhereAsBoolean evaluates a WHERE expression (e.g. size(n.content) > 10000, exists(n.prop))
 // using the expression evaluator and returns a boolean. Used when evaluateWhere does not handle
 // the condition as id(), elementId(), or variable.property.
-func (e *StorageExecutor) evaluateWhereAsBoolean(ctx context.Context, whereClause, variable string, node *storage.Node) bool {
+func (e *StorageExecutor) evaluateWhereAsBoolean(ctx context.Context, whereClause braceView, variable string, node *storage.Node) bool {
 	nodes := map[string]*storage.Node{variable: node}
 	result := e.evaluateExpressionWithContext(ctx, whereClause, nodes, nil)
-	return predicateValueIsTrue(ctx, result, whereClause)
+	return predicateValueIsTrue(ctx, result, whereClause.text())
 }
 
 // parseValue extracts the actual value from a Cypher literal
-func (e *StorageExecutor) parseValue(ctx context.Context, s string) (interface{}, error) {
+func (e *StorageExecutor) parseValue(ctx context.Context, s braceView) (interface{}, error) {
 	return e.checkedPropertyExpression(ctx, s, e.fabricRecordBindings)
 }
 
@@ -140,7 +140,7 @@ func cloneStringAnyMap(src map[string]interface{}) map[string]interface{} {
 
 func (e *StorageExecutor) resolveReturnItem(ctx context.Context, item returnItem, variable string, node *storage.Node) interface{} {
 	row := e.mergeBindingRow(ctx, map[string]*storage.Node{variable: node}, nil)
-	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, "RETURN "+item.expr)
+	projected, err := e.projectMergeReturn(ctx, []pipelineRow{row}, item.view.wrap("RETURN ", ""))
 	if err != nil || len(projected.Rows) == 0 || len(projected.Rows[0]) == 0 {
 		return nil
 	}

@@ -53,7 +53,7 @@ func TestRemotePathContextReadersUseSharedParts(t *testing.T) {
 		want interface{}
 	}{{"length(p)", int64(1)}, {"nodes(p)", []interface{}{a, b}}, {"relationships(p)", []interface{}{r}}} {
 		t.Run(tc.expr, func(t *testing.T) {
-			require.Equal(t, tc.want, e.evaluateExpressionFromValuesContext(context.Background(), tc.expr, map[string]interface{}{"p": path}))
+			require.Equal(t, tc.want, e.evaluateExpressionFromValuesContext(context.Background(), originalBraceView(tc.expr), map[string]interface{}{"p": path}))
 		})
 	}
 }

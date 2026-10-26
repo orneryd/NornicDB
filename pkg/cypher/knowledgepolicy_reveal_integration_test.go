@@ -16,7 +16,7 @@ func TestRevealDispatcher_DecayScoreNotIntercepted(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, "decayScore(n)", "decayscore(n)", nodes, rels)
+	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, expressionBraceView("decayScore(n)"), "decayscore(n)", nodes, rels)
 	if !handled {
 		t.Error("decayScore(n) should be handled by knowledgepolicy dispatcher")
 	}
@@ -33,7 +33,7 @@ func TestRevealDispatcher_DecayWithScoreNamedIdentifierHandled(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, "decay(scoreNode)", "decay(scorenode)", nodes, rels)
+	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, expressionBraceView("decay(scoreNode)"), "decay(scorenode)", nodes, rels)
 	if !handled {
 		t.Fatal("decay(scoreNode) should be handled by knowledgepolicy dispatcher")
 	}
@@ -50,7 +50,7 @@ func TestRevealDispatcher_PolicyHandled(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, "policy(n)", "policy(n)", nodes, rels)
+	v, handled := exec.evaluateKnowledgePolicyFunction(ctx, expressionBraceView("policy(n)"), "policy(n)", nodes, rels)
 	if !handled {
 		t.Error("policy(n) should be handled by knowledgepolicy dispatcher")
 	}

@@ -25,10 +25,10 @@ func TestPerRowRound4PredicateAllocationBudget(t *testing.T) {
 		{"toLower(x) = 'a' OR EXISTS { MATCH (n) }", 12},
 	} {
 		for range 10 {
-			require.True(t, exec.evaluateRowPredicate(ctx, tc.expression, row))
+			require.True(t, exec.evaluateRowPredicate(ctx, originalBraceView(tc.expression), row))
 			require.NoError(t, getExpressionFailure(ctx))
 		}
-		allocations := testing.AllocsPerRun(100, func() { require.True(t, exec.evaluateRowPredicate(ctx, tc.expression, row)) })
+		allocations := testing.AllocsPerRun(100, func() { require.True(t, exec.evaluateRowPredicate(ctx, originalBraceView(tc.expression), row)) })
 		t.Logf("%s: %g allocations per row; baseline limit %g", tc.expression, allocations, tc.maximum)
 		if allocations > tc.maximum {
 			t.Errorf("%s: got %g allocations, maximum %g", tc.expression, allocations, tc.maximum)

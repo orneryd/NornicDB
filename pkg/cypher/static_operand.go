@@ -384,8 +384,8 @@ func (operand staticOperand) reversedOperand() staticOperand {
 // reads a type through it and decides through fits or excludes. Each call
 // types the expression in this scope only, so the same text in another
 // scope (a shadowing WITH, another UNION branch) is typed by that scope.
-func (scope staticTypeScope) operandOf(expression string) staticOperand {
-	operand, err := (staticOperatorChecker{scope: scope}).check(strings.TrimSpace(expression))
+func (scope staticTypeScope) operandOf(view braceView) staticOperand {
+	operand, err := (staticOperatorChecker{scope: scope}).check(view.trim())
 	if err != nil {
 		return staticOperand{}
 	}
@@ -396,8 +396,8 @@ func (scope staticTypeScope) operandOf(expression string) staticOperand {
 // expression with no variable or parameter facts: a literal's, a
 // constructor's, an operator's, a function call's; "" when it derives none.
 // A reader without a scope reads an expression's type here.
-func staticTextType(expression string) string {
-	return (staticTypeScope{}).operandOf(expression).typeName()
+func staticTextType(view braceView) string {
+	return (staticTypeScope{}).operandOf(view).typeName()
 }
 
 type staticLiteralPolicy uint8
@@ -410,15 +410,18 @@ const (
 // staticLiteralType owns literal-head admission for both operator leaves and
 // literal-led SET sources. Only the latter unwraps parentheses and delegates
 // compound expression typing back to the canonical static operand checker.
-func staticLiteralType(expression string, policy staticLiteralPolicy) string {
+func staticLiteralType(view braceView, policy staticLiteralPolicy) string {
+	view = view.trim()
+	expression := view.text()
 	if policy == literalLedExpression {
 		expression = strings.TrimSpace(expression)
 		for {
-			inner, ok := stripEnclosingExpressionParentheses(expression)
+			_, ok := stripEnclosingExpressionParentheses(expression)
 			if !ok {
 				break
 			}
-			expression = strings.TrimSpace(inner)
+			view = view.window(1, len(expression)-1).trim()
+			expression = view.text()
 		}
 	}
 	if expression == "" || expression[0] == '$' {
@@ -428,7 +431,7 @@ func staticLiteralType(expression string, policy staticLiteralPolicy) string {
 		return ""
 	}
 	if policy == literalLedExpression {
-		return staticTextType(expression)
+		return staticTextType(view)
 	}
 	value, literal := parseLiteralScalarForPipeline(expression)
 	if !literal {

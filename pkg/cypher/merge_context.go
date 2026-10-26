@@ -175,18 +175,19 @@ func propertyIndexMissIsAuthoritative(value interface{}) bool {
 	return false
 }
 
-func splitTopLevelOrTerms(expr string) []string {
-	expr = strings.TrimSpace(expr)
+func splitTopLevelOrTerms(view braceView) []braceView {
+	view = view.trim()
+	expr := view.text()
 	if expr == "" {
 		return nil
 	}
-	orIdx := findTopLevelKeyword(expr, " OR ")
+	orIdx := findTopLevelKeyword(view, " OR ")
 	if orIdx < 0 {
-		return []string{expr}
+		return []braceView{view}
 	}
-	left := strings.TrimSpace(expr[:orIdx])
-	right := strings.TrimSpace(expr[orIdx+4:])
-	out := make([]string, 0, 4)
+	left := view.window(0, orIdx).trim()
+	right := view.window(orIdx+4, len(expr)).trim()
+	out := make([]braceView, 0, 4)
 	out = append(out, splitTopLevelOrTerms(left)...)
 	out = append(out, splitTopLevelOrTerms(right)...)
 	return out
@@ -231,13 +232,10 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 	}
 	store := e.getStorage(ctx)
 
-	mergePattern := strings.TrimSpace(cypher)
-	if startsWithKeywordFold(mergePattern, "MERGE") {
-		mergePattern = pipelineClauseBody(mergePattern, "MERGE")
-	}
+	mergePattern := statementBraceView(ctx, cypher).clauseBody("MERGE")
 
 	// A relationship pattern: (a)-[r:TYPE]->(b)
-	if containsRelationshipPattern(mergePattern) {
+	if containsRelationshipPattern(mergePattern.text()) {
 		parsedPattern, err := e.parseMergeRelationshipPattern(ctx, mergePattern, nodeContext, relContext)
 		if err != nil {
 			return nil, err
@@ -409,16 +407,16 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 // the parser leaves as its own text and that reads a bound variable's
 // property (a.id) is evaluated against the bound entities. Null values remain
 // in the map so the shared MERGE validator rejects them before matching.
-func (e *StorageExecutor) parseMergeProperties(ctx context.Context, propsText string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (map[string]interface{}, error) {
+func (e *StorageExecutor) parseMergeProperties(ctx context.Context, propsText braceView, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (map[string]interface{}, error) {
 	return e.materializePropertyMap(ctx, propsText, entityRow(ctx, nodeContext, relContext), true, false)
 }
 
 // parseMergeNodePattern is parseMergePattern with the property map read by
 // parseMergeProperties.
-func (e *StorageExecutor) parseMergeNodePattern(ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (string, []string, map[string]interface{}, error) {
-	pattern = strings.TrimSpace(pattern)
-	if !strings.HasPrefix(pattern, "(") || !strings.HasSuffix(pattern, ")") {
-		return "", nil, nil, localizedError(localization.CypherResidualMergePatternInvalid(pattern), nil)
+func (e *StorageExecutor) parseMergeNodePattern(ctx context.Context, pattern braceView, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (string, []string, map[string]interface{}, error) {
+	pattern = pattern.trim()
+	if !strings.HasPrefix(pattern.text(), "(") || !strings.HasSuffix(pattern.text(), ")") {
+		return "", nil, nil, localizedError(localization.CypherResidualMergePatternInvalid(pattern.text()), nil)
 	}
 	head, props := splitNodePatternProperties(pattern)
 	variable, labels, labelErr := parseNodeHead(head)
@@ -436,7 +434,7 @@ func (e *StorageExecutor) parseMergeNodePattern(ctx context.Context, pattern str
 // several SET clauses (a SET b). It returns the number of properties written
 // by Neo4j's properties_set rule (setWrites), or an error for a value Cypher
 // cannot store (replacing with a non-map, a map or entity as a property value).
-func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context, edge *storage.Edge, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
+func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context, edge *storage.Edge, varName string, setClause braceView, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
 	if edge == nil || varName == "" {
 		return 0, nil
 	}
@@ -448,16 +446,17 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 
 	writes := setWrites{known: propertyKeyLookup(e.getStorage(ctx))}
 	var run setPropertyRun
-	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
+	for segment, next, ok := nextChainedSetView(setClause, 0); ok; segment, next, ok = nextChainedSetView(setClause, next) {
 		run.applyToRelationship(edge, &writes)
 		writes.endRun()
-		for _, assignment := range splitSetAssignments(segment) {
-			assignment = strings.TrimSpace(assignment)
-			if assignment == "" {
+		for _, assignment := range segment.commaPartViews(true) {
+			assignment = assignment.trim()
+			if assignment.empty() {
 				continue
 			}
 
-			target, propName, operator, right := splitSetAssignment(assignment)
+			item := readSetAssignment(assignment)
+			target, propName, operator, right := item.target, item.property, item.operator, item.right
 			if target != varName || propName == "" {
 				run.applyToRelationship(edge, &writes)
 				writes.endRun()
@@ -493,7 +492,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 				}
 				run.add(propName, value)
 			case operator == "[]=":
-				key, err := e.dynamicPropertyKeyOf(ctx, propName, nodeContext, fullRelContext, false)
+				key, err := e.dynamicPropertyKeyOf(ctx, item.key, nodeContext, fullRelContext, false)
 				if err != nil {
 					return writes.count, err
 				}
@@ -522,7 +521,7 @@ func (e *StorageExecutor) applySetToRelationshipWithContext(ctx context.Context,
 // properties_set rule (setWrites), or an error for a value Cypher cannot
 // store (replacing with a non-map, a map or entity as a property value);
 // assignments are validated statically by validatePipelineSetAssignments.
-func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *storage.Node, varName string, setClause string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
+func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *storage.Node, varName string, setClause braceView, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (int, error) {
 	// Add current node to context for self-references
 	fullContext := make(map[string]*storage.Node)
 	for k, v := range nodeContext {
@@ -532,7 +531,7 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 
 	writes := setWrites{known: propertyKeyLookup(e.getStorage(ctx))}
 	var run setPropertyRun
-	for segment, next, ok := nextChainedSetClause(setClause, 0); ok; segment, next, ok = nextChainedSetClause(setClause, next) {
+	for segment, next, ok := nextChainedSetView(setClause, 0); ok; segment, next, ok = nextChainedSetView(setClause, next) {
 		writes.endRun()
 		if err := e.applyNodeSetClause(ctx, node, varName, segment, fullContext, relContext, &writes, &run); err != nil {
 			return writes.count, err
@@ -543,12 +542,11 @@ func (e *StorageExecutor) applySetToNodeWithContext(ctx context.Context, node *s
 
 // applyNodeSetClause applies the assignments of one SET clause that target
 // varName to node (applySetToNodeWithContext), recording what they write.
-func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.Node, varName string, setClause string, fullContext map[string]*storage.Node, relContext map[string]*storage.Edge, writes *setWrites, run *setPropertyRun) error {
+func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.Node, varName string, setClause braceView, fullContext map[string]*storage.Node, relContext map[string]*storage.Edge, writes *setWrites, run *setPropertyRun) error {
 	defer run.applyToNode(node, writes)
-	for _, assignment := range splitSetAssignments(setClause) {
-		assignment = strings.TrimSpace(assignment)
-
-		target, propName, operator, right := splitSetAssignment(assignment)
+	for _, assignment := range setClause.commaPartViews(true) {
+		item := readSetAssignment(assignment)
+		target, propName, operator, right := item.target, item.property, item.operator, item.right
 		if target != varName || propName == "" {
 			run.applyToNode(node, writes)
 			writes.endRun()
@@ -584,7 +582,7 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 				}
 			}
 		case operator == "[]=":
-			key, err := e.dynamicPropertyKeyOf(ctx, propName, fullContext, relContext, false)
+			key, err := e.dynamicPropertyKeyOf(ctx, item.key, fullContext, relContext, false)
 			if err != nil {
 				return err
 			}
@@ -610,7 +608,7 @@ func (e *StorageExecutor) applyNodeSetClause(ctx context.Context, node *storage.
 // setPropertyValue evaluates the right-hand side of SET x.p = <expr>. A direct
 // $param keeps its declared Go type. A map, entity or nested list is rejected
 // with a TypeError, as in Neo4j (storablePropertyValue).
-func (e *StorageExecutor) setPropertyValue(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
+func (e *StorageExecutor) setPropertyValue(ctx context.Context, expr braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
 	value, err := e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
 	if err != nil {
 		return nil, err
@@ -626,7 +624,7 @@ func (e *StorageExecutor) setPropertyValue(ctx context.Context, expr string, nod
 // store. Both operators evaluate their source through the checked boundary;
 // every SET route (pipeline, MERGE actions, FOREACH, the UNWIND
 // batch routes) calls this.
-func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (map[string]interface{}, error) {
+func (e *StorageExecutor) setSourceMap(ctx context.Context, expr braceView, operator string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (map[string]interface{}, error) {
 	value, err := e.evaluateSetExpressionWithContext(ctx, expr, nodes, rels)
 	if err != nil {
 		return nil, err
@@ -634,7 +632,7 @@ func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator strin
 	return setPropertyMapValue(value, operator)
 }
 
-// splitSetAssignment splits one SET assignment into its target variable,
+// readSetAssignment splits one SET assignment into its target variable,
 // property (for x.p = v), operator ("=", "+=" or ":" for labels) and
 // right-hand side. The operator is the first top-level "=" (preceded by "+"
 // for +=), so "=" or "+=" inside a value string, or inside a dynamic key's
@@ -646,39 +644,53 @@ func (e *StorageExecutor) setSourceMap(ctx context.Context, expr, operator strin
 // evaluated (dynamicPropertyKeyOf), so readers that need the name treat the
 // item as writing any key. x[expr] += v is not Cypher. Unrecognized text
 // yields an empty operator.
-func splitSetAssignment(assignment string) (target, property, operator, right string) {
-	assignment = strings.TrimSpace(assignment)
-	eq := findTopLevelOperator(assignment, "=", false, true)
-	if colon := findTopLevelOperator(assignment, ":", false, true); colon > 0 && (eq < 0 || colon < eq) {
+// Author: #1663 implementation lane. readSetAssignment is the one SET item
+// grammar. Every view it returns is a window of the item it read.
+type setAssignmentSource struct {
+	target, property, operator string
+	targetView, right, key     braceView
+}
+
+// rightText is the assigned value's text, trimmed.
+func (item setAssignmentSource) rightText() string { return strings.TrimSpace(item.right.text()) }
+
+func readSetAssignment(view braceView) setAssignmentSource {
+	view = view.trim()
+	assignment := view.text()
+	eq := findTopLevelSymbol(assignment, "=", false, true)
+	if colon := findTopLevelSymbol(assignment, ":", false, true); colon > 0 && (eq < 0 || colon < eq) {
 		// Label form x:L1:L2 / x:$(expr); a dynamic label expression may
 		// itself contain "=".
-		if target := strings.TrimSpace(assignment[:colon]); cyphertext.IsIdentifier(target) {
-			return target, "", ":", strings.TrimSpace(assignment[colon+1:])
+		if targetView := view.window(0, colon).trim(); cyphertext.IsIdentifier(targetView.text()) {
+			return setAssignmentSource{target: targetView.text(), operator: ":", targetView: targetView, right: view.window(colon+1, len(assignment))}
 		}
 	}
 	if eq < 0 {
-		return "", "", "", ""
+		return setAssignmentSource{}
 	}
-	left := assignment[:eq]
-	operator = "="
+	leftEnd, operator := eq, "="
 	if eq > 0 && assignment[eq-1] == '+' {
-		left = assignment[:eq-1]
-		operator = "+="
+		leftEnd, operator = eq-1, "+="
 	}
-	right = strings.TrimSpace(assignment[eq+1:])
-	if receiver, key, subscript, ok := staticPostfixSplit(strings.TrimSpace(left)); ok && subscript {
-		key = strings.TrimSpace(key)
-		if operator == "+=" || key == "" {
-			return "", "", "", ""
+	left := view.window(0, leftEnd).trim()
+	right := view.window(eq+1, len(assignment))
+	if receiver, key, subscript, ok := staticPostfixSplit(left.text()); ok && subscript {
+		end := len(left.text()) - 1
+		keyView := left.window(end-len(key), end)
+		if operator == "+=" || strings.TrimSpace(key) == "" {
+			return setAssignmentSource{}
 		}
-		variable, _, _ := parseSetAssignmentTarget(receiver)
-		return variable, key, "[]=", right
+		receiverView := left.window(0, len(receiver))
+		var span cyphertext.Span
+		variable, _, _ := parseSetAssignmentTargetExtent(receiverView, &span)
+		return setAssignmentSource{target: variable, property: strings.TrimSpace(key), operator: "[]=", targetView: receiverView.spanWindow(span), right: right, key: keyView}
 	}
-	target, property, hasProperty := parseSetAssignmentTarget(left)
+	var span cyphertext.Span
+	target, property, hasProperty := parseSetAssignmentTargetExtent(left, &span)
 	if operator == "+=" && hasProperty {
-		return "", "", "", ""
+		return setAssignmentSource{}
 	}
-	return target, property, operator, right
+	return setAssignmentSource{target: target, property: property, operator: operator, targetView: left.spanWindow(span), right: right}
 }
 
 // requireSetParameter reports a SET value that is a bare $name parameter not
@@ -751,7 +763,8 @@ func setPropertyMapValue(value interface{}, operator string) (map[string]interfa
 // constructor's ArgumentError, a division by zero) is returned: it is the
 // statement's error, which a check of the value it left (null is not a map,
 // a list may not hold null) must not replace.
-func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
+func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, view braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, error) {
+	expr := view.text()
 	if err := requireSetParameter(ctx, expr); err != nil {
 		return nil, err
 	}
@@ -761,7 +774,7 @@ func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, 
 	if value, resolved := resolveValueReference(ctx, expr, rowPath); resolved {
 		return checkedPropertyResult(ctx, expr, value, true, nil)
 	}
-	return e.checkedPropertyExpression(ctx, expr, entityRow(ctx, nodes, rels))
+	return e.checkedPropertyExpression(ctx, view, entityRow(ctx, nodes, rels))
 }
 
 // mergeBindingRow is the row a MERGE's RETURN reads: the values bound in
@@ -804,13 +817,13 @@ func (e *StorageExecutor) mergeBindingRow(ctx context.Context, nodes map[string]
 // shared RETURN projection (pipelineApplyReturn), so DISTINCT, aggregation,
 // ORDER BY, SKIP and LIMIT apply over all the statement's rows (#640).
 // returnClause starts with RETURN.
-func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelineRow, returnClause string) (*ExecuteResult, error) {
+func (e *StorageExecutor) projectMergeReturn(ctx context.Context, rows []pipelineRow, returnClause braceView) (*ExecuteResult, error) {
 	return e.projectMergeReturnSource(ctx, rows, returnClause, pipelineRowsSource(rows))
 }
 
-func (e *StorageExecutor) projectMergeReturnSource(ctx context.Context, rows []pipelineRow, returnClause string, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
-	returnClause = strings.TrimSpace(returnClause)
-	return e.projectMergeReturnPlan(ctx, rows, returnClause, returnProjectionPlanFor(ctx, returnClause), source, preparedGroups...)
+func (e *StorageExecutor) projectMergeReturnSource(ctx context.Context, rows []pipelineRow, returnClause braceView, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {
+	returnClause = returnClause.trim()
+	return e.projectMergeReturnPlan(ctx, rows, returnClause.text(), returnProjectionPlanFor(ctx, returnClause), source, preparedGroups...)
 }
 
 func (e *StorageExecutor) projectMergeReturnPlan(ctx context.Context, rows []pipelineRow, returnClause string, plan *returnProjectionPlan, source pipelineRowSource, preparedGroups ...[]*pipelineAggregateGroup) (*ExecuteResult, error) {

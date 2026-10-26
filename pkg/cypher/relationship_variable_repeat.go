@@ -38,7 +38,7 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, 
 	q := r.query
 	if indexASCIIFold(q[start:end], "shortestpath") >= 0 {
 		scope := matchSemanticScope{}
-		for _, part := range splitTopLevelComma(q[start:end]) {
+		for _, part := range r.braceView.window(start, end).commaViews() {
 			if err := validateShortestCallBindings(part, scope); err != nil {
 				return nil, err
 			}
@@ -50,26 +50,26 @@ func (r *labelExpressionRewriter) repeatedRelationshipVariables(start, end int, 
 	places := make(map[string][]relationshipPlace)
 	var order []string
 	for i := start; i < end; i++ {
-		switch c := q[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := q[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
-		case '{':
-			if close := cyphertext.FindMatchingDelimiter(q[:end], i, '{', '}', cyphertext.OpeningDelimiter); close > i {
+		case cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			if close, found := r.braceView.close(i); found && close > i && close < end {
 				i = close
 			}
-		case '[':
+		case (cypherLexicalByte(c)) == '[':
 			close := cyphertext.FindMatchingDelimiter(q[:end], i, '[', ']', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil, nil
 			}
 			name, nameEnd, ok := relationshipVariableAt(q[:close], i)
 			if ok && relationshipBracketAt(q, start, i) {
-				_, _, quantified := quantifierAfterArrow(q, close, end)
+				_, _, quantified := quantifierAfterArrow(r.braceView, close, end)
 				inner := close
-				if where := elementWhereIndex(q, i, close); where >= 0 {
+				if where := elementWhereIndex(r.braceView, i, close); where >= 0 {
 					inner = where
 				}
-				if brace := indexOutsideQuotes(q[i+1:inner], '{'); brace >= 0 {
+				if brace, _, _, found := r.braceView.window(i+1, inner).firstBrace(); found {
 					inner = i + 1 + brace
 				}
 				list := quantified || indexOutsideQuotes(q[i+1:inner], '*') >= 0

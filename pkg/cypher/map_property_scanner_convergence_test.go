@@ -88,16 +88,19 @@ func TestPropertyScannerQuotingMatrixInternalReaders(t *testing.T) {
 	for _, tc := range mapQuotationCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			var keys []string
-			require.True(t, visitStaticMapLiteralKeys(tc.text, func(key string) { keys = append(keys, key) }))
+			require.True(t, visitStaticMapLiteralKeys(originalBraceView(tc.text), func(key string) { keys = append(keys, key) }))
 			require.Equal(t, []string{tc.key, "keep", "tail"}, keys)
 
-			parts := splitTopLevelComma(strings.TrimSpace(tc.text[1 : len(tc.text)-1]))
-			require.Len(t, parts, 3)
-			require.Greater(t, findTopLevelMapKeyValueSeparator(parts[0]), 0)
+			// The one entry owner reads the key separator and admits the quoted key.
+			entries, valid := originalBraceView(tc.text).keyedEntries()
+			require.True(t, valid)
+			require.Len(t, entries, 3)
+			require.Greater(t, entries[0].record.SeparatorSpans().Colon.Start, 0)
 			quotedKey := "`" + strings.ReplaceAll(tc.key, "`", "``") + "`"
-			require.True(t, validMapLiteralKey(quotedKey))
+			_, quotedValid := originalBraceView("{" + quotedKey + ": 1}").keyedEntries()
+			require.True(t, quotedValid)
 
-			_, _, _, ok := parseCallTailSinglePropertyMap(tc.text + " tail")
+			_, _, _, ok := parseCallTailSinglePropertyMap(originalBraceView(tc.text + " tail"))
 			require.False(t, ok, "restricted single-property CALL fast path must decline a multi-entry map")
 		})
 	}

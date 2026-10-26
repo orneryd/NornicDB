@@ -11,12 +11,13 @@ import (
 // pipelineTraversalSource feeds fixed-length relationship MATCH rows directly
 // to the next operator. In particular, aggregation and Bolt projection must
 // not first collect a graph-sized PathResult or binding-map slice.
-func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pipelineRowSource, clause string, hint pipelineMatchPhysicalHint) (pipelineRowSource, bool, error) {
+func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pipelineRowSource, clause braceView, hint pipelineMatchPhysicalHint) (pipelineRowSource, bool, error) {
+	ctx = withBraceView(ctx, clause)
 	if materialize, _ := ctx.Value(traversalMaterializeKey{}).(bool); materialize {
 		return nil, false, nil
 	}
 	// Keep the existing bounded/top-k physical operators for LIMIT and ORDER.
-	if hint.readTail == nil || hint.orderExpr != "" || hint.earlyLimit >= 0 {
+	if hint.readTail == nil || !hint.orderExpr.empty() || hint.earlyLimit >= 0 {
 		return nil, false, nil
 	}
 	for _, tail := range hint.readTail {
@@ -24,12 +25,15 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 			return nil, false, nil
 		}
 	}
-	pattern := pipelineClauseBody(clause, "MATCH")
-	where := ""
-	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
-		where = strings.TrimSpace(pattern[index+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:index])
+	patternView := clause.clauseBody("MATCH")
+	pattern := patternView.text()
+	whereView := patternView.window(0, 0)
+	if index := topLevelKeywordIndex(patternView, "WHERE"); index >= 0 {
+		whereView = patternView.window(index+len("WHERE"), len(pattern)).trim()
+		patternView = patternView.window(0, index).trim()
+		pattern = patternView.text()
 	}
+	where := whereView.text()
 	if !containsRelationshipPattern(pattern) || len(splitTopLevelComma(pattern)) != 1 {
 		return nil, false, nil
 	}
@@ -38,7 +42,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	}
 	// Admission has no input row. Inspect syntax through the shared reader;
 	// the scan planner retains the existing property-seeded access paths.
-	shape := e.parseTraversalPatternStructure(ctx, pattern)
+	shape := e.parseTraversalPatternStructure(ctx, patternView)
 	if shape == nil || shape.IsChained || shape.Relationship.VariableLength || shape.Relationship.MinHops != 1 || shape.Relationship.MaxHops != 1 {
 		return nil, false, nil
 	}
@@ -52,7 +56,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 		return nil, false, nil
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
-	predicate := prepareRowPredicate(where)
+	predicate := prepareRowPredicate(whereView)
 	store := e.getStorage(ctx)
 	endpoints := e.newRelationshipEndpointReader(store)
 	return func(yield func(pipelineRow) bool) bool {
@@ -62,7 +66,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 		completed := input(func(row pipelineRow) bool {
 			// Validate the common MATCH contract before choosing either a scan
 			// or its runtime seeded continuation, as the materializing dispatcher does.
-			if err := validateBoundPatternNodes([]pipelineRow{row}, pattern); err != nil {
+			if err := validateBoundPatternNodes([]pipelineRow{row}, patternView); err != nil {
 				recordExpressionFailure(ctx, err)
 				valid = false
 				return false
@@ -83,15 +87,15 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 				return true
 			}
 			rowCtx := withValueBindings(ctx, row)
-			match := e.parseTraversalPattern(rowCtx, pattern)
+			match := e.parseTraversalPattern(rowCtx, patternView)
 			if match == nil {
 				valid = false
 				return false
 			}
 			match.PathVariable = pathVariable
-			match.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(match, where, hint.readTail)
-			startProperties := traversalSourceProperties(match.StartNode, where, hint.readTail, pathVariable)
-			endProperties := traversalSourceProperties(match.EndNode, where, hint.readTail, pathVariable)
+			match.UnusedPropertyVariables = e.traversalUnusedPropertyVariablesForTail(match, whereView, hint.readTail)
+			startProperties := traversalSourceProperties(match.StartNode, whereView, hint.readTail, pathVariable)
+			endProperties := traversalSourceProperties(match.EndNode, whereView, hint.readTail, pathVariable)
 			// Only metadata-only nodes enter this fixed-size cache; arbitrary
 			// property bodies are never retained between rows.
 			headers := make(map[storage.NodeID]*storage.Node)
@@ -183,7 +187,7 @@ func (e *StorageExecutor) pipelineTraversalSource(ctx context.Context, input pip
 	}, true, nil
 }
 
-func traversalSourceProperties(node nodePatternInfo, where string, tail []string, pathVariable string) []string {
+func traversalSourceProperties(node nodePatternInfo, where braceView, tail []braceView, pathVariable string) []string {
 	if pathVariable != "" {
 		return nil
 	}
@@ -192,7 +196,7 @@ func traversalSourceProperties(node nodePatternInfo, where string, tail []string
 		return properties
 	}
 	for _, text := range tail {
-		if !traversalVariablePropertiesRead(text, node.variable) {
+		if !traversalVariablePropertiesRead(text.text(), node.variable) {
 			continue
 		}
 		used := pipelineNodePredicateProperties(node.variable, text, nil)

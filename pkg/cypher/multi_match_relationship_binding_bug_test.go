@@ -488,16 +488,16 @@ func TestResolveBindingExprUnboundVariable(t *testing.T) {
 	rels := map[string]*storage.Edge{"rel": {ID: "e1", Properties: map[string]interface{}{"kind": "reducer"}}}
 
 	t.Run("elementId on an unbound variable resolves to nil", func(t *testing.T) {
-		require.Nil(t, exec.resolveBindingExpr(ctx, "elementId(ghost)", b, rels))
+		require.Nil(t, exec.resolveBindingExpr(ctx, expressionBraceView("elementId(ghost)"), b, rels))
 	})
 	t.Run("property access on an unbound variable resolves to nil", func(t *testing.T) {
-		require.Nil(t, exec.resolveBindingExpr(ctx, "ghost.prop", b, rels))
+		require.Nil(t, exec.resolveBindingExpr(ctx, expressionBraceView("ghost.prop"), b, rels))
 	})
 	t.Run("elementId still resolves for a real relationship binding", func(t *testing.T) {
-		require.Equal(t, "5:relseed:e1", exec.resolveBindingExpr(ctx, "elementId(rel)", b, rels))
+		require.Equal(t, "5:relseed:e1", exec.resolveBindingExpr(ctx, expressionBraceView("elementId(rel)"), b, rels))
 	})
 	t.Run("property access still resolves for a real relationship binding", func(t *testing.T) {
-		require.Equal(t, "reducer", exec.resolveBindingExpr(ctx, "rel.kind", b, rels))
+		require.Equal(t, "reducer", exec.resolveBindingExpr(ctx, expressionBraceView("rel.kind"), b, rels))
 	})
 	t.Run("resolveBindingItem with an empty expression resolves to nil", func(t *testing.T) {
 		require.Nil(t, exec.resolveBindingItem(ctx, returnItem{expr: "  "}, b, rels))

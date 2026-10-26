@@ -63,6 +63,6 @@ func TestCaseKeywordAtReadsEndAfterAnOperand(t *testing.T) {
 			}
 		}
 		require.GreaterOrEqual(t, index, 0, text)
-		require.Equal(t, keyword, caseKeywordAt(text, index, "END"), text)
+		require.Equal(t, keyword, caseKeywordAt(originalBraceView(text), index, "END"), text)
 	}
 }

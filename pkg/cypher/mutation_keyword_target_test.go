@@ -78,31 +78,31 @@ func TestKeywordNamedMutationTargetsPublic(t *testing.T) {
 func TestKeywordSetAssignmentBodyAndUnaryRoles(t *testing.T) {
 	for _, gap := range []string{" ", "/*c*/", " //c\n"} {
 		body := "set" + gap + "+= {v:7}"
-		require.Equal(t, body, collapseChainedSetClauses(body))
-		require.Equal(t, body+", set.x=8", collapseChainedSetClauses(body+" SET set.x=8"))
+		require.Equal(t, body, collapseChainedSetClauses(originalBraceView(body)))
+		require.Equal(t, body+", set.x=8", collapseChainedSetClauses(originalBraceView(body+" SET set.x=8")))
 	}
 	for _, text := range []string{"RETURN +3", "RETURN -3", "SET +3", "SET -3", "set + /*c*/= {v:7}"} {
 		end := strings.IndexByte(text, ' ')
-		require.False(t, clauseKeywordNamedByContext(text, 0, end, text[:end]), text)
+		require.False(t, clauseKeywordNamedByContext(originalBraceView(text), 0, end, text[:end]), text)
 	}
 	for _, text := range []string{"set += {v:7}", "return += {v:7}", "where += {v:7}"} {
 		end := strings.IndexByte(text, ' ')
-		require.True(t, clauseKeywordNamedByContext(text, 0, end, text[:end]), text)
+		require.True(t, clauseKeywordNamedByContext(originalBraceView(text), 0, end, text[:end]), text)
 	}
 	require.Zero(t, testing.AllocsPerRun(100, func() {
-		if !clauseKeywordNamedByContext("set += {v:7}", 0, 3, "SET") {
+		if !clauseKeywordNamedByContext(originalBraceView("set += {v:7}"), 0, 3, "SET") {
 			panic("lost target")
 		}
 	}))
 }
 func TestElementPredicateSpansPreserveWhereBindings(t *testing.T) {
 	for _, pattern := range []string{"(where {v:7})", "(`where` {v:7})", "(n {where:7})", "(n {v:'WHERE'})", "()", "( )", "(n:Label)", "(n:Label WHERE n.v=1", "[where:LINK {v:7}]", "[`where`:LINK {v:7}]"} {
-		require.Empty(t, elementPredicateSpans(pattern, 0, len(pattern)), pattern)
+		require.Empty(t, elementPredicateSpans(originalBraceView(pattern), 0, len(pattern)), pattern)
 	}
 	for _, pattern := range []string{"(n WHERE n.v>0)", "(:Label WHERE x>0)", "[:LINK WHERE x>0]", "(n   WHERE n.v>0)", "(where WHERE where.v>0)", "(`where` WHERE `where`.v>0)", "[r:LINK WHERE r.v>0]", "[where:LINK WHERE where.v>0]"} {
 		want := strings.LastIndex(pattern, "WHERE")
-		require.Equal(t, [][2]int{{want, len(pattern) - 1}}, elementPredicateSpans(pattern, 0, len(pattern)), pattern)
-		structure := matchPatternStructure(pattern)
+		require.Equal(t, [][2]int{{want, len(pattern) - 1}}, elementPredicateSpans(originalBraceView(pattern), 0, len(pattern)), pattern)
+		structure := matchPatternStructure(originalBraceView(pattern)).text()
 		require.Equal(t, len(pattern), len(structure))
 		require.Equal(t, pattern[:want], structure[:want])
 		require.Equal(t, pattern[len(pattern)-1:], structure[len(structure)-1:])
@@ -110,8 +110,8 @@ func TestElementPredicateSpansPreserveWhereBindings(t *testing.T) {
 	pattern := "prefix (where WHERE where.v>0) suffix"
 	open := strings.IndexByte(pattern, '(')
 	close := strings.IndexByte(pattern, ')')
-	require.Equal(t, [][2]int{{strings.Index(pattern, "WHERE"), close}}, elementPredicateSpans(pattern, open, close+1))
+	require.Equal(t, [][2]int{{strings.Index(pattern, "WHERE"), close}}, elementPredicateSpans(originalBraceView(pattern), open, close+1))
 	scope := matchSemanticScope{}
-	addMatchPatternBindingKinds(scope, "CREATE (where {v:7})")
+	addMatchPatternBindingKinds(scope, originalBraceView("CREATE (where {v:7})"))
 	require.Equal(t, matchBindingNode, scope["where"])
 }

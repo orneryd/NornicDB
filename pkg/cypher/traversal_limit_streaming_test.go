@@ -59,7 +59,7 @@ func TestTraversalLimitStopsStreamingStartNodes(t *testing.T) {
 	txStore := &transactionStorageWrapper{tx: tx, underlying: store, namespace: "traversal", separator: ":"}
 	txProbe := &projectedTraversalCountingEngine{Engine: txStore}
 	txResult, err := NewStorageExecutor(txProbe).executeMatchWithRelationshipsWithPathSeeded(
-		context.Background(), "(a:Person)-[:KNOWS]->(b:Person)", "",
+		context.Background(), originalBraceView("(a:Person)-[:KNOWS]->(b:Person)"), originalBraceView(""),
 		[]returnItem{{expr: "a.name"}, {expr: "b.name"}}, nil, nil, "", nil, 2,
 	)
 	require.NoError(t, err)

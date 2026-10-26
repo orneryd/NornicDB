@@ -39,6 +39,7 @@ type createEdgeTemplate struct {
 
 // pipelineCreateTemplate is a CREATE clause parsed once per clause text.
 type pipelineCreateTemplate struct {
+	view   braceView
 	usable bool
 	nodes  []createNodeTemplate
 	edges  []createEdgeTemplate
@@ -52,33 +53,44 @@ var pipelineCreateTemplates = newBoundedCache[string, *pipelineCreateTemplate](5
 // property-map body. Anything else (path assignments, inline endpoint
 // definitions, parameter maps, dynamic labels/types, multiple types) makes
 // the template unusable and the general route stays authoritative.
-func (e *StorageExecutor) pipelineCreateTemplateFor(clause string) *pipelineCreateTemplate {
-	if template, ok := pipelineCreateTemplates.get(clause); ok {
-		return template
+func (e *StorageExecutor) pipelineCreateTemplateFor(clause braceView) *pipelineCreateTemplate {
+	body := clause.clauseBody("CREATE")
+	if template, ok := pipelineCreateTemplates.get(clause.text()); ok {
+		copy := *template
+		copy.nodes = append([]createNodeTemplate(nil), template.nodes...)
+		copy.edges = append([]createEdgeTemplate(nil), template.edges...)
+		for i := range copy.nodes {
+			copy.nodes[i].properties = rebasePropertyExpressions(copy.nodes[i].properties, template.view, body)
+		}
+		for i := range copy.edges {
+			copy.edges[i].properties = rebasePropertyExpressions(copy.edges[i].properties, template.view, body)
+		}
+		copy.view = body
+		return &copy
 	}
-	template := e.buildPipelineCreateTemplate(pipelineClauseBody(clause, "CREATE"))
-	pipelineCreateTemplates.put(clause, template)
+	template := e.buildPipelineCreateTemplate(body)
+	pipelineCreateTemplates.put(clause.text(), template)
 	return template
 }
 
 // buildPipelineCreateTemplate parses one CREATE pattern body into node and
 // edge templates. usable=false on any unsupported shape.
-func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string) *pipelineCreateTemplate {
-	template := &pipelineCreateTemplate{}
-	fragments := splitTopLevelComma(pattern)
+func (e *StorageExecutor) buildPipelineCreateTemplate(pattern braceView) *pipelineCreateTemplate {
+	template := &pipelineCreateTemplate{view: pattern}
+	fragments := pattern.commaViews()
 	for _, raw := range fragments {
-		fragment := strings.TrimSpace(raw)
-		if fragment == "" {
+		fragment := raw.trim()
+		if fragment.empty() {
 			continue
 		}
 		pathVar, body := parseCreatePathAssignment(fragment)
 		if pathVar != "" {
 			return template
 		}
-		if !strings.HasPrefix(body, "(") || !strings.HasSuffix(strings.TrimSpace(body), ")") {
+		if !strings.HasPrefix(body.text(), "(") || !strings.HasSuffix(strings.TrimSpace(body.text()), ")") {
 			return template
 		}
-		if strings.Contains(body, "-[") || strings.Contains(body, "]-") {
+		if strings.Contains(body.text(), "-[") || strings.Contains(body.text(), "]-") {
 			edges, ok := e.parseCreateEdgeTemplates(body)
 			if !ok {
 				return template
@@ -103,7 +115,7 @@ func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string) *pipelineC
 		for _, expression := range node.properties {
 			keys[expression.key] = nil
 		}
-		if err := validateCreatePropertyKeys("", keys); err != nil {
+		if err := validateCreatePropertyKeys(pattern.window(0, 0), keys); err != nil {
 			return template
 		}
 	}
@@ -112,7 +124,7 @@ func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string) *pipelineC
 		for _, expression := range edge.properties {
 			keys[expression.key] = nil
 		}
-		if err := validateCreatePropertyKeys("", keys); err != nil {
+		if err := validateCreatePropertyKeys(pattern.window(0, 0), keys); err != nil {
 			return template
 		}
 	}
@@ -122,9 +134,9 @@ func (e *StorageExecutor) buildPipelineCreateTemplate(pattern string) *pipelineC
 
 // parseCreateNodeTemplate parses one `(v:Label {exprs})` node pattern. ok is
 // false for a parameter map or an unresolvable property-map split.
-func (e *StorageExecutor) parseCreateNodeTemplate(body string) (createNodeTemplate, bool) {
+func (e *StorageExecutor) parseCreateNodeTemplate(body braceView) (createNodeTemplate, bool) {
 	head, props := splitNodePatternProperties(body)
-	if props == "" {
+	if props.empty() {
 		// A parameter map form (($props), (n $props)) is row-independent in
 		// the general route but not covered here.
 		return createNodeTemplate{}, false
@@ -149,23 +161,23 @@ func (e *StorageExecutor) parseCreateNodeTemplate(body string) (createNodeTempla
 // template per link. ok is false for inline endpoint definitions, parameter
 // maps, variable-length patterns, dynamic or multi types, or a chain with an
 // unrecognized remainder.
-func (e *StorageExecutor) parseCreateEdgeTemplates(body string) ([]createEdgeTemplate, bool) {
+func (e *StorageExecutor) parseCreateEdgeTemplates(body braceView) ([]createEdgeTemplate, bool) {
 	_, current := parseCreatePathAssignment(body)
 	var out []createEdgeTemplate
-	for current != "" {
+	for !current.empty() {
 		sourceContent, relStr, targetContent, isReverse, remainder, err := e.parseCreateRelPatternWithVars(current)
 		if err != nil {
 			return nil, false
 		}
-		sourceVar, ok := bareEndpointVariable("(" + sourceContent + ")")
+		sourceVar, ok := bareEndpointVariable("(" + sourceContent.text() + ")")
 		if !ok {
 			return nil, false
 		}
-		targetVar, ok := bareEndpointVariable("(" + targetContent + ")")
+		targetVar, ok := bareEndpointVariable("(" + targetContent.text() + ")")
 		if !ok {
 			return nil, false
 		}
-		if rest, _, parameter := splitPatternParameterMap(relStr); parameter {
+		if rest, _, parameter := splitPatternParameterMap(relStr.text()); parameter {
 			_ = rest
 			return nil, false
 		}
@@ -183,7 +195,7 @@ func (e *StorageExecutor) parseCreateEdgeTemplates(body string) ([]createEdgeTem
 		var expressions []pipelinePropertyExpression
 		if declaration.properties != "" {
 			var ok bool
-			expressions, ok = e.pipelinePropertyExpressions(declaration.properties)
+			expressions, ok = e.pipelinePropertyExpressions(declaration.propertyView)
 			if !ok {
 				return nil, false
 			}
@@ -196,11 +208,11 @@ func (e *StorageExecutor) parseCreateEdgeTemplates(body string) ([]createEdgeTem
 			isReverse:  isReverse,
 			properties: expressions,
 		})
-		if remainder == "" {
+		if remainder.empty() {
 			return out, true
 		}
-		if strings.HasPrefix(remainder, "-[") || strings.HasPrefix(remainder, "<-[") {
-			current = "(" + targetContent + ")" + remainder
+		if strings.HasPrefix(remainder.text(), "-[") || strings.HasPrefix(remainder.text(), "<-[") {
+			current = current.assembleCode([]braceView{targetContent.wrap("(", ")"), remainder}, "")
 			continue
 		}
 		return nil, false

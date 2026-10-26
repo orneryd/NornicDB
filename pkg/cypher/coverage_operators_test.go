@@ -52,12 +52,12 @@ func TestGh728TopLevelOperatorUsesSharedQuoteScanner(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			require.Equal(t, test.want, findTopLevelOperator(test.expr, test.op, test.fold, test.brackets))
+			require.Equal(t, test.want, findTopLevelOperator(originalBraceView(test.expr), test.op, test.fold, test.brackets))
 		})
 	}
 	t.Run("empty operator", func(t *testing.T) {
 		require.NotPanics(t, func() {
-			require.Equal(t, -1, findTopLevelOperator("", "", false, true))
+			require.Equal(t, -1, findTopLevelOperator(originalBraceView(""), "", false, true))
 		})
 	})
 }
@@ -146,7 +146,7 @@ func BenchmarkTopLevelOperatorPipelineScan(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for iteration := 0; iteration < b.N; iteration++ {
-				if got := findTopLevelOperator(workload.expr, workload.op, true, true); got != want {
+				if got := findTopLevelOperator(originalBraceView(workload.expr), workload.op, true, true); got != want {
 					b.Fatalf("expected byte %d, got %d", want, got)
 				}
 			}
@@ -168,15 +168,15 @@ func freshExecutorForOperators(t *testing.T) *StorageExecutor {
 func TestHasLogicalOperator_TopLevelAndQuoteAndParenIsolation(t *testing.T) {
 	e := freshExecutorForOperators(t)
 
-	require.True(t, e.hasLogicalOperator("a = 1 AND b = 2", " AND "))
-	require.True(t, e.hasLogicalOperator("a = 1 OR b = 2", " OR "))
-	require.False(t, e.hasLogicalOperator("name CONTAINS 'AND ME'", " AND "),
+	require.True(t, e.hasLogicalOperator(expressionBraceView("a = 1 AND b = 2"), " AND "))
+	require.True(t, e.hasLogicalOperator(expressionBraceView("a = 1 OR b = 2"), " OR "))
+	require.False(t, e.hasLogicalOperator(expressionBraceView("name CONTAINS 'AND ME'"), " AND "),
 		"AND inside single quotes must not register")
-	require.False(t, e.hasLogicalOperator(`name = "AND IT WAS"`, " AND "),
+	require.False(t, e.hasLogicalOperator(expressionBraceView(`name = "AND IT WAS"`), " AND "),
 		"AND inside double quotes must not register")
-	require.False(t, e.hasLogicalOperator("(a AND b) OR c", " AND "),
+	require.False(t, e.hasLogicalOperator(originalBraceView("(a AND b) OR c"), " AND "),
 		"AND inside parens is not top-level")
-	require.False(t, e.hasLogicalOperator("a = 1", " AND "),
+	require.False(t, e.hasLogicalOperator(expressionBraceView("a = 1"), " AND "),
 		"missing operator returns false")
 }
 
@@ -266,15 +266,15 @@ func TestHasArithmeticOperator_AllVariants(t *testing.T) {
 
 func TestSplitByOperator_FoundAndNotFound(t *testing.T) {
 	e := freshExecutorForOperators(t)
-	out := e.splitByOperator("a + b", " + ")
+	out := e.splitByOperator(expressionBraceView("a + b"), " + ")
 	require.Equal(t, []string{"a", "b"}, out)
-	out = e.splitByOperator("'a + b' + c", " + ")
+	out = e.splitByOperator(expressionBraceView("'a + b' + c"), " + ")
 	require.Equal(t, []string{"'a + b'", "c"}, out)
-	out = e.splitByOperator("(a + b) + c", " + ")
+	out = e.splitByOperator(originalBraceView("(a + b) + c"), " + ")
 	require.Equal(t, []string{"(a + b)", "c"}, out)
 
 	// Not found → returns the entire expr unchanged.
-	out = e.splitByOperator("a b c", " + ")
+	out = e.splitByOperator(expressionBraceView("a b c"), " + ")
 	require.Equal(t, []string{"a b c"}, out)
 }
 
@@ -285,12 +285,12 @@ func TestSplitByOperator_FoundAndNotFound(t *testing.T) {
 
 func TestHasStringPredicate(t *testing.T) {
 	e := freshExecutorForOperators(t)
-	require.True(t, e.hasStringPredicate("n.name CONTAINS 'foo'", " CONTAINS "))
-	require.True(t, e.hasStringPredicate("n.name STARTS WITH 'pre'", " STARTS WITH "))
-	require.True(t, e.hasStringPredicate("n.name ENDS WITH 'suf'", " ENDS WITH "))
-	require.False(t, e.hasStringPredicate("'CONTAINS' = name", " CONTAINS "),
+	require.True(t, e.hasStringPredicate(expressionBraceView("n.name CONTAINS 'foo'"), " CONTAINS "))
+	require.True(t, e.hasStringPredicate(expressionBraceView("n.name STARTS WITH 'pre'"), " STARTS WITH "))
+	require.True(t, e.hasStringPredicate(expressionBraceView("n.name ENDS WITH 'suf'"), " ENDS WITH "))
+	require.False(t, e.hasStringPredicate(expressionBraceView("'CONTAINS' = name"), " CONTAINS "),
 		"CONTAINS inside quotes must not register")
-	require.False(t, e.hasStringPredicate("n.name STARTS WITHTH 'pre'", " STARTS WITH "),
+	require.False(t, e.hasStringPredicate(expressionBraceView("n.name STARTS WITHTH 'pre'"), " STARTS WITH "),
 		"longer trailing operator should not match")
 }
 
@@ -476,7 +476,7 @@ func TestResolveCosineQueryVector_AllNonEmbedderArms(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("float32 slice literal as []", func(t *testing.T) {
-		got, ok := e.resolveCosineQueryVector(ctx, "[0.1, 0.2, 0.3]")
+		got, ok := e.resolveCosineQueryVector(ctx, originalBraceView("[0.1, 0.2, 0.3]"))
 		require.True(t, ok)
 		require.Len(t, got, 3)
 		// Values should match within float32 precision.
@@ -484,19 +484,19 @@ func TestResolveCosineQueryVector_AllNonEmbedderArms(t *testing.T) {
 	})
 
 	t.Run("empty literal vector returns empty,false", func(t *testing.T) {
-		got, ok := e.resolveCosineQueryVector(ctx, "[]")
+		got, ok := e.resolveCosineQueryVector(ctx, originalBraceView("[]"))
 		require.False(t, ok)
 		require.Empty(t, got)
 	})
 
 	t.Run("empty string returns nil,false (no embedder)", func(t *testing.T) {
-		got, ok := e.resolveCosineQueryVector(ctx, `""`)
+		got, ok := e.resolveCosineQueryVector(ctx, expressionBraceView(`""`))
 		require.False(t, ok)
 		require.Nil(t, got)
 	})
 
 	t.Run("non-empty string with no embedder returns nil,false", func(t *testing.T) {
-		got, ok := e.resolveCosineQueryVector(ctx, `"some query text"`)
+		got, ok := e.resolveCosineQueryVector(ctx, expressionBraceView(`"some query text"`))
 		require.False(t, ok)
 		require.Nil(t, got)
 	})
@@ -511,13 +511,13 @@ func TestBuildNegatedCosineQueryExpr(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("empty resolved vector returns false", func(t *testing.T) {
-		got, ok := e.buildNegatedCosineQueryExpr(ctx, `""`)
+		got, ok := e.buildNegatedCosineQueryExpr(ctx, expressionBraceView(`""`))
 		require.False(t, ok)
 		require.Empty(t, got)
 	})
 
 	t.Run("populated vector emits negated literal", func(t *testing.T) {
-		got, ok := e.buildNegatedCosineQueryExpr(ctx, "[0.1, -0.2, 0.3]")
+		got, ok := e.buildNegatedCosineQueryExpr(ctx, originalBraceView("[0.1, -0.2, 0.3]"))
 		require.True(t, ok)
 		// formatInlineFloat32Vector emits "[a,b,c]" with shortest float form.
 		require.True(t, strings.HasPrefix(got, "["))
@@ -534,7 +534,7 @@ func TestBuildNegatedCosineQueryExpr(t *testing.T) {
 func TestPR1632SymbolicOperatorSourceWidth(t *testing.T) {
 	e := freshExecutorForOperators(t)
 	for _, expression := range []string{"x :: INTEGER", "x   :: INTEGER", "x    ::    INTEGER", "x   IS  ::  INTEGER"} {
-		value, ok, err := e.evaluateRowValue(expression, map[string]interface{}{"x": int64(1)})
+		value, ok, err := e.evaluateRowValue(originalBraceView(expression), map[string]interface{}{"x": int64(1)})
 		require.NoError(t, err, expression)
 		require.True(t, ok, expression)
 		require.Equal(t, true, value, expression)

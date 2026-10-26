@@ -37,7 +37,7 @@ RETURN count(o) AS linked
 		map[string]interface{}{"textKey": "b"},
 	}
 
-	res, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+	res, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, originalBraceView(rest))
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.Equal(t, []string{"linked"}, res.Columns)
@@ -50,7 +50,7 @@ RETURN count(o) AS linked
 	require.EqualValues(t, 4, verify.Rows[0][0])
 
 	// Re-running the same batch should not create duplicates.
-	res2, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+	res2, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, originalBraceView(rest))
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.EqualValues(t, 2, res2.Rows[0][0])
@@ -82,7 +82,7 @@ RETURN count(o) AS linked
 		map[string]interface{}{"root_id": string(rootID), "prefix": "k"},
 	}
 
-	res, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, rest)
+	res, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, originalBraceView(rest))
 	require.NoError(t, err)
 	require.True(t, supported)
 	require.EqualValues(t, 1, res.Rows[0][0])
@@ -94,11 +94,11 @@ func TestExecuteUnwindFixedChainLinkBatch_RejectsUnsupportedShapes(t *testing.T)
 	ctx := context.Background()
 	items := []interface{}{map[string]interface{}{"textKey": "a"}}
 
-	_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, "MATCH (o:OriginalText {textKey: row.textKey})")
+	_, supported, err := exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, originalBraceView("MATCH (o:OriginalText {textKey: row.textKey})"))
 	require.NoError(t, err)
 	require.False(t, supported)
 
-	_, supported, err = exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, "MATCH (o:OriginalText {textKey: row.textKey}) RETURN count(x) AS c")
+	_, supported, err = exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, originalBraceView("MATCH (o:OriginalText {textKey: row.textKey}) RETURN count(x) AS c"))
 	require.NoError(t, err)
 	require.False(t, supported)
 
@@ -111,7 +111,7 @@ MERGE (o)-[:NEXT]->(h1)
 MERGE (h1)-[:NEXT]->(h3)
 RETURN count(o) AS linked
 `
-	_, supported, err = exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, restNonContig)
+	_, supported, err = exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, originalBraceView(restNonContig))
 	require.NoError(t, err)
 	require.False(t, supported)
 
@@ -122,7 +122,7 @@ MATCH (h1:Hop {hopId: row.textKey + ':1'})
 MERGE (o)-[:NEXT]->(h1)
 RETURN count(o) AS linked
 `
-	_, supported, err = exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, restWrongVar)
+	_, supported, err = exec.executeUnwindFixedChainLinkBatch(ctx, "row", items, originalBraceView(restWrongVar))
 	require.NoError(t, err)
 	require.False(t, supported)
 }

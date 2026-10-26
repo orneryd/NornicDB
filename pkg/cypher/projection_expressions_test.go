@@ -23,7 +23,7 @@ func TestProjectionExpressions(t *testing.T) {
 		{"WITH n", "RETURN", nil},
 		{"RET", "RETURN", nil},
 	} {
-		require.Equal(t, tc.want, projectionExpressions(t.Context(), tc.clause, tc.keyword), "%s / %s", tc.keyword, tc.clause)
+		require.Equal(t, tc.want, projectionExpressions(t.Context(), originalBraceView(tc.clause), tc.keyword), "%s / %s", tc.keyword, tc.clause)
 	}
 }
 

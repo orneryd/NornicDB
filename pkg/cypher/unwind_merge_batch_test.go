@@ -57,14 +57,14 @@ RETURN keys
 // TestParseUnwindMergeChainPattern_NamedRelationshipSet verifies that the
 // generalized UNWIND MERGE parser keeps relationship variables and assignments.
 func TestParseUnwindMergeChainPattern_NamedRelationshipSet(t *testing.T) {
-	plan := parseUnwindMergeChainPattern(t.Context(), `
+	plan := parseUnwindMergeChainPattern(t.Context(), originalBraceView(`
 MATCH (f:File {path: $file_path})
 MERGE (n:Function {uid: row.entity_id})
 SET n += row.props
 MERGE (f)-[rel:CONTAINS]->(n)
 SET rel.evidence_source = 'projector/canonical',
     rel.generation_id = row.generation_id
-`)
+`))
 
 	require.True(t, plan.supported)
 	require.Len(t, plan.steps, 3)

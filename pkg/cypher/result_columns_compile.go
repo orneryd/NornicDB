@@ -14,6 +14,7 @@ import (
 // again from rewritten fragments, and an effect-cache hit cannot bypass binding.
 type boundCompilation struct {
 	owner       *projectionCompilation
+	view        braceView
 	events      map[int]*boundEvent
 	current     *boundBranch
 	clause      *boundClause
@@ -60,7 +61,7 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 	if compiler.cypher25 {
 		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
 	}
-	if command, supported, err := compiler.executor.prepareCompositeCommand(ctx, compiler.source); supported {
+	if command, supported, err := compiler.executor.prepareCompositeCommand(ctx, statementBraceView(ctx, compiler.source)); supported {
 		if err != nil {
 			return programFailure(resultmetadata.ReasonUnsupportedSyntax, 0, err)
 		}
@@ -82,7 +83,7 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 		return programFailure(resultmetadata.ReasonParserDecline, 0, nil)
 	}
 	start, end := query.Span()
-	if _, command, failure := parseProcedurePrivilegeCommand(compiler.source[start:end]); command {
+	if _, command, failure := parseProcedurePrivilegeCommand(statementBraceView(ctx, compiler.source).window(start, end)); command {
 		if failure != nil {
 			return programFailure(resultmetadata.ReasonUnsupportedSyntax, start, failure)
 		}
@@ -94,14 +95,14 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 	// owner. EXPLAIN reads that declaration without enumerating users.
 	show := query.ChildRule(cypherantlr.CypherParserRULE_showCommand)
 	if show.Valid() && !show.ChildRule(cypherantlr.CypherParserRULE_showTail).Valid() &&
-		(startsWithKeywords(show.Code(), "SHOW", "USERS") || startsWithKeywords(show.Code(), "SHOW", "CURRENT USER")) {
+		(startsWithKeywords(statementBraceView(ctx, compiler.source).code(show), "SHOW", "USERS") || startsWithKeywords(statementBraceView(ctx, compiler.source).code(show), "SHOW", "CURRENT USER")) {
 		names := resultmetadata.Known(showUsersColumns)
 		scope := projectionScope(names)
 		statement := resultmetadata.Statement{Start: start, End: end, Incoming: projectionScope(incoming), Retained: projectionScope(retained), After: scope, Columns: resultmetadata.KnownColumns(showUsersColumns), Clauses: []resultmetadata.Clause{{Kind: resultmetadata.ClauseOther, Start: start, End: end, Before: projectionScope(incoming), After: scope}}}
 		return &projectedScopeFacts{after: names, outputs: names, statement: &statement}
 	}
-	compilation := &boundCompilation{owner: compiler, events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
-	body := compilation.prepareBody(ctx, queryBodyFromSyntax(query), query, start, end)
+	compilation := &boundCompilation{owner: compiler, view: statementBraceView(ctx, compiler.source), events: map[int]*boundEvent{}, product: &boundStatementProgram{syntax: syntax, projections: map[int]*returnProjectionPlan{}, effects: map[int]pipelineClauseEffects{}, scalars: map[int]scalarExpressionSyntax{}}, locals: map[localIdentityKey]statementBindingID{}, clauses: map[int]queryBodyClause{}, localSyntax: map[int][]syntaxLocalBinding{}}
+	body := compilation.prepareBody(ctx, queryBodyFromSyntax(compilation.view, query), query, start, end)
 	body.incoming, body.retained = incoming, retained
 	body.incomingIDs = map[string]statementBindingID{}
 	input := projectedNameMap(incoming)
@@ -124,7 +125,7 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 	if ctx.Err() != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, start, ctx.Err())
 	}
-	pipelineClauseEffectCache.put("\x00"+compiler.source, effects)
+	pipelineClauseEffectCache.put(clauseEffectSourceKey{compilation.view.source, cypherantlr.StatementEntry, compiler.cypher25}, effects)
 	body.program.bound = compilation.product
 	return body.program
 }
@@ -223,7 +224,7 @@ func (compilation *boundCompilation) prepareUse(ctx context.Context, branch *bou
 		start, end := node.Span()
 		reference := node.UseReference(nil)
 		if reference.Function == "" && strings.EqualFold(reference.Name, "system") {
-			if err := systemDatabaseStatementError(ctx, strings.TrimSpace(compilation.owner.source[end:branch.shape.end])); err != nil {
+			if err := systemDatabaseStatementError(ctx, compilation.view.window(end, branch.shape.end).trim()); err != nil {
 				compilation.fail(resultmetadata.ReasonUnsupportedSyntax, start, err)
 				return
 			}
@@ -278,10 +279,10 @@ func (compilation *boundCompilation) prepareClause(ctx context.Context, branch *
 	if source.kind == pipelineClauseCallSubquery {
 		node := source.syntax.ChildRule(cypherantlr.CypherParserRULE_subqueryBody)
 		start, end, _ := callClauseBody(ctx, source)
-		clause.body = compilation.prepareBody(ctx, queryBodyFromSyntax(node), node, start, end)
+		clause.body = compilation.prepareBody(ctx, queryBodyFromSyntax(compilation.view, node), node, start, end)
 	}
 	if source.kind == pipelineClauseForeach {
-		clause.body = compilation.prepareBody(ctx, queryBodyFromSyntax(source.syntax), source.syntax, source.start, source.end)
+		clause.body = compilation.prepareBody(ctx, queryBodyFromSyntax(compilation.view, source.syntax), source.syntax, source.start, source.end)
 	}
 	// Expression subqueries have an isolated projected scope. Their names do
 	// not leak out of the expression, but every input read must still bind.
@@ -297,7 +298,7 @@ func (compilation *boundCompilation) prepareClause(ctx context.Context, branch *
 		default:
 			return nil
 		}
-		shape, bodyNode, found := queryExpressionBody(node)
+		shape, bodyNode, found := queryExpressionBody(compilation.view, node)
 		if !found {
 			return nil
 		}
@@ -357,7 +358,7 @@ func (compilation *boundCompilation) enterClause(clause *boundClause) {
 		if source.kind == pipelineClauseWith {
 			clause.step.Kind = resultmetadata.ClauseWith
 		}
-		plan := projectionPlanFromSyntax(source.syntax, func(expression cypherantlr.SyntaxNode) {
+		plan := projectionPlanFromSyntax(compilation.view, source.syntax, func(expression cypherantlr.SyntaxNode) {
 			clause.projectionSyntax = append(clause.projectionSyntax, expression)
 		})
 		if !plan.valid {
@@ -473,7 +474,7 @@ func (compilation *boundCompilation) leaveClause(clause *boundClause) {
 	if clause.source.kind == pipelineClauseCall {
 		node := clause.source.syntax
 		proc, found := globalProcedureRegistry.Get(node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName())
-		yield := yieldFromSyntax(node)
+		yield := yieldFromSyntax(compilation.view, node)
 		if found && proc.Spec.ResultSchemas != nil && (yield == nil || yield.yieldAll) {
 			clause.branch.columns = resultmetadata.KnownColumnAlternatives(proc.Spec.ResultSchemas())
 		}
@@ -557,7 +558,7 @@ func (compilation *boundCompilation) callImports(clause *boundClause) {
 			for _, clause := range branch.shape.clauses {
 				nodes = append(nodes, clause.syntax)
 			}
-			implicit = append(implicit, implicitSyntaxImports(before, nodes...)...)
+			implicit = append(implicit, implicitSyntaxImports(compilation.view, before, nodes...)...)
 		}
 		imports = append(imports, implicit...)
 	}
@@ -588,10 +589,10 @@ func (compilation *boundCompilation) callImports(clause *boundClause) {
 // Implicit imports are an existing extension. The canonical expression slots
 // supply candidate dependencies; grammar-owned declarations never import a row
 // value under a name that this body declares for itself.
-func implicitSyntaxImports(outer map[string]struct{}, bodies ...cypherantlr.SyntaxNode) []string {
+func implicitSyntaxImports(view braceView, outer map[string]struct{}, bodies ...cypherantlr.SyntaxNode) []string {
 	referenced, declared := map[string]bool{}, map[string]bool{}
 	if len(bodies) > 0 && bodies[0].Rule() == cypherantlr.CypherParserRULE_withSt {
-		for _, name := range importingWithNode(bodies[0]) {
+		for _, name := range importingWithNode(view, bodies[0]) {
 			if name == "*" {
 				return nil
 			}
@@ -641,8 +642,8 @@ func (compilation *boundCompilation) procedure(clause *boundClause) {
 	node := clause.source.syntax
 	name := node.ChildRule(cypherantlr.CypherParserRULE_invocationName).QualifiedName()
 	_, found := globalProcedureRegistry.Get(name)
-	yield := yieldFromSyntax(node)
-	outputs := projectedProcedureNodeNames(node)
+	yield := yieldFromSyntax(compilation.view, node)
+	outputs := projectedProcedureNodeNames(compilation.view, node)
 	if !found {
 		if !clause.branch.graph.selected {
 			compilation.fail(resultmetadata.ReasonUnknownProcedure, clause.source.start, unknownProcedureError(name))

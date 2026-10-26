@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -38,46 +39,8 @@ func (q relationshipQuantifier) length() string {
 
 // relationshipQuantifierAt reads a quantifier at query[at] (before end): +,
 // *, {n}, {m,n}, {m,} or {,n}.
-func relationshipQuantifierAt(query string, at, end int) (relationshipQuantifier, bool) {
-	if at >= end {
-		return relationshipQuantifier{}, false
-	}
-	switch query[at] {
-	case '+':
-		return relationshipQuantifier{min: 1, max: -1, end: at + 1}, true
-	case '*':
-		return relationshipQuantifier{min: 0, max: -1, end: at + 1}, true
-	case '{':
-	default:
-		return relationshipQuantifier{}, false
-	}
-	close := strings.IndexByte(query[at:end], '}')
-	if close < 0 {
-		return relationshipQuantifier{}, false
-	}
-	close += at
-	bound := func(text string, missing int) (int, bool) {
-		if text = strings.TrimSpace(text); text == "" {
-			return missing, true
-		}
-		value, err := strconv.Atoi(text)
-		return value, err == nil && value >= 0
-	}
-	inner := query[at+1 : close]
-	lower, upper, ranged := strings.Cut(inner, ",")
-	if !ranged {
-		n, ok := bound(lower, -1)
-		if !ok || n < 0 {
-			return relationshipQuantifier{}, false
-		}
-		return relationshipQuantifier{min: n, max: n, end: close + 1}, true
-	}
-	min, minOK := bound(lower, 0)
-	max, maxOK := bound(upper, -1)
-	if !minOK || !maxOK {
-		return relationshipQuantifier{}, false
-	}
-	return relationshipQuantifier{min: min, max: max, end: close + 1}, true
+func relationshipQuantifierAt(view braceView, at, end int) (relationshipQuantifier, bool) {
+	return braceQuantifierAt(view, at, end)
 }
 
 // arrowRunEnd returns the end of the run of arrow characters (-, <, >) that
@@ -91,9 +54,10 @@ func arrowRunEnd(query string, i, end int) int {
 
 // quantifierAfterArrow returns the quantifier after the arrow that follows a
 // relationship's bracket (query[close] is ']').
-func quantifierAfterArrow(query string, close, end int) (relationshipQuantifier, int, bool) {
+func quantifierAfterArrow(view braceView, close, end int) (relationshipQuantifier, int, bool) {
+	query := view.text()
 	at := skipASCIISpaces(query, arrowRunEnd(query, close+1, end), end)
-	quantifier, ok := relationshipQuantifierAt(query, at, end)
+	quantifier, ok := relationshipQuantifierAt(view, at, end)
 	return quantifier, at, ok
 }
 
@@ -109,10 +73,10 @@ func (r *labelExpressionRewriter) quantifiedRelationship(open, close, at int, qu
 	}
 	q := r.query
 	insert := close
-	if where := elementWhereIndex(q, open, close); where >= 0 {
+	if where := elementWhereIndex(r.braceView, open, close); where >= 0 {
 		insert = where
 	}
-	if brace := indexOutsideQuotes(q[open+1:insert], '{'); brace >= 0 {
+	if brace := firstLiveBrace(q[open+1 : insert]); brace >= 0 {
 		insert = open + 1 + brace
 	}
 	if indexOutsideQuotes(q[open+1:insert], '*') >= 0 {
@@ -199,10 +163,10 @@ func indexOutsideQuotes(s string, c byte) int {
 // answers false for one.
 func mayUseRelationshipQuantifier(query string) bool {
 	for i := 0; i < len(query); i++ {
-		switch c := query[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := query[i]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			i = skipCypherQuotedText(query, i, c) - 1
-		case '{', '+', '*':
+		case cyphertext.IsOpenBrace(cypherLexicalByte(c)), (cypherLexicalByte(c)) == '+', (cypherLexicalByte(c)) == '*':
 			j := trimRightIndex(query, 0, i)
 			if j > 0 && (query[j-1] == '-' || query[j-1] == '>') {
 				return true

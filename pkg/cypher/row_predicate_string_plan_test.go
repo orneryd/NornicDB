@@ -61,12 +61,12 @@ func TestRowPredicateStringComparisonIsPlanned(t *testing.T) {
 		"n.name STARTS WITH 'B' OR n.name ENDS WITH 'a'",
 		"unbound STARTS WITH 'A'",
 	} {
-		plan := planRowPredicate(predicate)
+		plan := planRowPredicate(originalBraceView(predicate))
 		require.NotNil(t, plan, predicate)
 		require.True(t, plan.complete, predicate)
-		want := exec.evaluateRowPredicateText(ctx, predicate, row)
+		want := exec.evaluateRowPredicateText(ctx, originalBraceView(predicate), row)
 		require.Equal(t, want, exec.evaluateRowPredicatePlan(ctx, plan, row), predicate)
-		require.Equal(t, want, exec.evaluateRowPredicate(ctx, predicate, row), predicate)
+		require.Equal(t, want, exec.evaluateRowPredicate(ctx, originalBraceView(predicate), row), predicate)
 	}
 
 	for _, predicate := range []string{
@@ -78,7 +78,7 @@ func TestRowPredicateStringComparisonIsPlanned(t *testing.T) {
 		"toUpper(n.name) STARTS WITH 'A'",
 		"n.name STARTS WITH toUpper('a')",
 	} {
-		plan := planRowPredicate(predicate)
+		plan := planRowPredicate(originalBraceView(predicate))
 		require.True(t, plan == nil || !plan.complete, predicate)
 	}
 }
@@ -124,7 +124,7 @@ func TestUnwindMatchWhereBuildsRowsOnlyForMatches(t *testing.T) {
 	_, err := exec.Execute(ctx, "CREATE (:P {k: 'a', v: 1}), (:P {k: 'b', v: 2})", nil)
 	require.NoError(t, err)
 	matched, handled, err := exec.pipelineApplyInitialNodeMatch(ctx,
-		[]pipelineRow{{"id": "b"}, {"id": "missing"}}, "MATCH p = (n:P) WHERE n.k = id AND p IS NOT NULL", pipelineMatchPhysicalHint{})
+		[]pipelineRow{{"id": "b"}, {"id": "missing"}}, originalBraceView("MATCH p = (n:P) WHERE n.k = id AND p IS NOT NULL"), pipelineMatchPhysicalHint{})
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Len(t, matched, 1)
@@ -184,12 +184,12 @@ func TestRowPredicateLiteralListMembershipIsPlanned(t *testing.T) {
 		"n.name IN ['Bob'] OR n.n IN [3]",
 		"(n.name IN ['Ada'])",
 	} {
-		plan := planRowPredicate(predicate)
+		plan := planRowPredicate(originalBraceView(predicate))
 		require.NotNil(t, plan, predicate)
 		require.True(t, plan.complete, predicate)
-		want := exec.evaluateRowPredicateText(ctx, predicate, row)
+		want := exec.evaluateRowPredicateText(ctx, originalBraceView(predicate), row)
 		require.Equal(t, want, exec.evaluateRowPredicatePlan(ctx, plan, row), predicate)
-		require.Equal(t, want, exec.evaluateRowPredicate(ctx, predicate, row), predicate)
+		require.Equal(t, want, exec.evaluateRowPredicate(ctx, originalBraceView(predicate), row), predicate)
 	}
 
 	for _, predicate := range []string{
@@ -204,7 +204,7 @@ func TestRowPredicateLiteralListMembershipIsPlanned(t *testing.T) {
 		"toUpper(n.name) IN ['ADA']",
 		"n.name IN n.names[0..1]",
 	} {
-		plan := planRowPredicate(predicate)
+		plan := planRowPredicate(originalBraceView(predicate))
 		require.True(t, plan == nil || !plan.complete, predicate)
 	}
 }

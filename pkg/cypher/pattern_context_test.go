@@ -27,7 +27,7 @@ func TestPatternBindingKeywordContext(t *testing.T) {
 		{"comment opaque", "MATCH p = (n) // CALL { }\nRETURN n", "CALL", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			positions := findAllTopLevelPipelineKeywordPositions(tc.query, tc.keyword)
+			positions := findAllTopLevelPipelineKeywordPositions(originalBraceView(tc.query), tc.keyword)
 			if tc.wantActual {
 				require.Equal(t, []int{strings.Index(tc.query, " CALL") + 1}, positions)
 			} else {
@@ -37,7 +37,7 @@ func TestPatternBindingKeywordContext(t *testing.T) {
 	}
 	query := "MATCH call = (n) RETURN n"
 	var got bool
-	allocations := testing.AllocsPerRun(1000, func() { got = clauseKeywordUsedAsName(query, 6, 10, "CALL") })
+	allocations := testing.AllocsPerRun(1000, func() { got = clauseKeywordUsedAsName(originalBraceView(query), 6, 10, "CALL") })
 	require.True(t, got)
 	require.Zero(t, allocations, "pattern-name boundary predicate must retain its allocation contract")
 }

@@ -163,7 +163,7 @@ func requireTraversalOperatorRows(t *testing.T, exec *StorageExecutor, pattern, 
 	sort.Strings(want)
 	for _, where := range []string{"", "true"} {
 		ctx := withExpressionFailureSlot(context.Background())
-		result, err := exec.executeMatchWithRelationshipsWithPathSeeded(ctx, pattern, where, exec.parseReturnItems(t.Context(), returns), nil, nil, "", nil, -1)
+		result, err := exec.executeMatchWithRelationshipsWithPathSeeded(ctx, originalBraceView(pattern), originalBraceView(where), exec.parseReturnItems(t.Context(), originalBraceView(returns)), nil, nil, "", nil, -1)
 		require.NoError(t, err, "%s WHERE %q RETURN %s", pattern, where, returns)
 		require.Equal(t, want, traversalAggregateRowKeys(result.Rows), "%s WHERE %q RETURN %s", pattern, where, returns)
 	}
@@ -204,8 +204,8 @@ func TestTraversalOperatorAggregatesThroughRowPipeline(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE (:SOwner {g: 's'})-[:SAGG {x: 'text'}]->(:SValue {y: 'text'})", nil)
 	require.NoError(t, err)
 	for _, where := range []string{"", "true"} {
-		_, err := exec.executeMatchWithRelationshipsWithPathSeeded(withExpressionFailureSlot(ctx), "(q:SOwner)-[r:SAGG]->(p:SValue)", where,
-			exec.parseReturnItems(t.Context(), "q.g, sum(r.x)"), nil, nil, "", nil, -1)
+		_, err := exec.executeMatchWithRelationshipsWithPathSeeded(withExpressionFailureSlot(ctx), originalBraceView("(q:SOwner)-[r:SAGG]->(p:SValue)"), originalBraceView(where),
+			exec.parseReturnItems(t.Context(), expressionBraceView("q.g, sum(r.x)")), nil, nil, "", nil, -1)
 		require.Error(t, err, "WHERE %q", where)
 		code, _ := nornicerrors.Neo4jStatus(err)
 		require.Equal(t, "Neo.ClientError.Statement.TypeError", code, "WHERE %q", where)

@@ -251,16 +251,16 @@ func TestAPOCNativeCheckedOwnerErrors(t *testing.T) {
 		{"apoc.temporal.format", []interface{}{nil}},
 		{"apoc.temporal.format", []interface{}{int64(1), int64(1)}},
 	} {
-		_, handled, err := e.evaluateNativeAPOCFunction(ctx, tc.name, tc.args)
+		_, handled, err := e.evaluateNativeAPOCFunction(ctx, tc.name, tc.args, nil, nil)
 		require.True(t, handled)
 		require.Error(t, err, tc.name)
 	}
 	cancelCtx, cancel := context.WithCancel(ctx)
 	cancel()
-	_, handled, err := e.evaluateNativeAPOCFunction(cancelCtx, "apoc.node.id", []interface{}{nil})
+	_, handled, err := e.evaluateNativeAPOCFunction(cancelCtx, "apoc.node.id", []interface{}{nil}, nil, nil)
 	require.True(t, handled)
 	require.ErrorIs(t, err, context.Canceled)
-	_, handled, err = e.evaluateNativeAPOCFunction(ctx, "unregistered", nil)
+	_, handled, err = e.evaluateNativeAPOCFunction(ctx, "unregistered", nil, nil, nil)
 	require.False(t, handled)
 	require.NoError(t, err)
 	// Native Go time values must use the same formatter as parsed temporal

@@ -71,7 +71,7 @@ func TestCreateSingleNodeNamedPathPlanningIdentity(t *testing.T) {
 	defer plan.release()
 	nodes := map[string]*storage.Node{}
 	edges := map[string]*storage.Edge{}
-	paths, err := e.planCreatePatterns(t.Context(), "p=(n:SingleNodePath), q=(a:PathStart)-[r:LINK]->(b:PathEnd)", nodes, edges, plan)
+	paths, err := e.planCreatePatterns(t.Context(), expressionBraceView("p=(n:SingleNodePath), q=(a:PathStart)-[r:LINK]->(b:PathEnd)"), nodes, edges, plan)
 	require.NoError(t, err)
 	require.Len(t, plan.nodes, 3)
 	require.Len(t, plan.edges, 1)
@@ -125,7 +125,7 @@ func TestCreateUnnamedNodeRetainsNoPathBinding(t *testing.T) {
 	plan := acquireCreatePlan()
 	defer plan.release()
 	nodes := map[string]*storage.Node{}
-	paths, err := e.planCreatePatterns(t.Context(), "(n:UnnamedControl)", nodes, map[string]*storage.Edge{}, plan)
+	paths, err := e.planCreatePatterns(t.Context(), originalBraceView("(n:UnnamedControl)"), nodes, map[string]*storage.Edge{}, plan)
 	require.NoError(t, err)
 	require.Nil(t, paths)
 	require.Len(t, plan.nodes, 1)

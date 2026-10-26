@@ -38,7 +38,7 @@ func TestMapProjectionBoundaryPolicies(t *testing.T) {
 			if tc.binding != "" {
 				scope = &staticTypeScope{values: map[string]string{tc.binding: "Map"}}
 			}
-			name, items, ok := mapProjectionSplit(tc.text, tc.policy, scope)
+			name, items, ok := mapProjectionSplit(originalBraceView(tc.text), tc.policy, scope)
 			require.Equal(t, tc.ok, ok)
 			require.Equal(t, tc.name, name)
 			require.Equal(t, tc.items, items)

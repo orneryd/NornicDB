@@ -31,9 +31,9 @@ func TestGh728CompiledComparisonHandlersPreserveUnknown(t *testing.T) {
 	} {
 		t.Run(test.clause, func(t *testing.T) {
 			ctx := withExpressionFailureSlot(context.Background())
-			predicate, supported := exec.tryCompileBindingWhere(ctx, test.clause)
+			predicate, supported := exec.tryCompileBindingWhere(ctx, originalBraceView(test.clause))
 			require.True(t, supported)
-			assert.Equal(t, test.want, exec.evaluateRowPredicate(ctx, test.clause, map[string]interface{}{"n": node}))
+			assert.Equal(t, test.want, exec.evaluateRowPredicate(ctx, originalBraceView(test.clause), map[string]interface{}{"n": node}))
 			assert.Equal(t, test.want, predicate(binding{"n": node}, nil))
 			require.NoError(t, getExpressionFailure(ctx))
 		})
@@ -71,19 +71,19 @@ func TestGh728ComparisonHandlerAdmission(t *testing.T) {
 	exec := &StorageExecutor{}
 	for _, clause := range []string{"", "n.x >", "> n.x", "n.x ?? n.y", "n.x + 1 = 1", "n.x = n.y + 1"} {
 		t.Run(clause, func(t *testing.T) {
-			predicate, supported := exec.compileBindingComparisonTruth(clause)
+			predicate, supported := exec.compileBindingComparisonTruth(originalBraceView(clause))
 			require.False(t, supported)
 			require.Nil(t, predicate)
 		})
 	}
-	predicate, supported := exec.compileBindingComparisonTruth("n.present = m.missing")
+	predicate, supported := exec.compileBindingComparisonTruth(expressionBraceView("n.present = m.missing"))
 	require.True(t, supported)
 	assert.Equal(t, truthUnknown, predicate(binding{"n": &storage.Node{Properties: map[string]interface{}{"present": int64(1)}}}, nil))
 }
 
 func TestGh728SharedArithmeticPredicatePlan(t *testing.T) {
 	clause := "size(n.name) + n.count >= 0"
-	plan := planRowPredicate(clause)
+	plan := planRowPredicate(originalBraceView(clause))
 	require.NotNil(t, plan)
 	require.True(t, plan.complete)
 	for _, test := range []struct {
@@ -102,7 +102,7 @@ func TestGh728SharedArithmeticPredicatePlan(t *testing.T) {
 			ctx := withExpressionFailureSlot(context.Background())
 			row := map[string]interface{}{"n": &storage.Node{ID: "node", Properties: test.properties}}
 			exec := &StorageExecutor{}
-			assert.Equal(t, test.want, exec.evaluateRowPredicate(ctx, clause, row))
+			assert.Equal(t, test.want, exec.evaluateRowPredicate(ctx, originalBraceView(clause), row))
 			failure := getExpressionFailure(ctx)
 			if test.code == "" {
 				require.NoError(t, failure)
@@ -123,10 +123,10 @@ func TestGh728SharedArithmeticPredicateZeroAllocations(t *testing.T) {
 			row := map[string]interface{}{"n": &storage.Node{ID: "node", Properties: map[string]interface{}{
 				"name": strings.Repeat("x", length), "count": int64(4096),
 			}}}
-			require.True(t, exec.evaluateRowPredicate(ctx, clause, row))
+			require.True(t, exec.evaluateRowPredicate(ctx, originalBraceView(clause), row))
 			accepted := true
 			allocations := testing.AllocsPerRun(100, func() {
-				accepted = accepted && exec.evaluateRowPredicate(ctx, clause, row)
+				accepted = accepted && exec.evaluateRowPredicate(ctx, originalBraceView(clause), row)
 			})
 			require.True(t, accepted)
 			require.Zero(t, allocations)
@@ -152,7 +152,7 @@ func TestGh728ContextWherePreservesSharedTruth(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := withExpressionFailureSlot(withQueryParams(context.Background(), map[string]interface{}{"offset": int64(1), "expected": int64(2)}))
-			require.Equal(t, test.want, exec.evaluateWhereForContext(ctx, test.clause, nodes))
+			require.Equal(t, test.want, exec.evaluateWhereForContext(ctx, originalBraceView(test.clause), nodes))
 			failure := getExpressionFailure(ctx)
 			if test.code == "" {
 				require.NoError(t, failure)
@@ -171,12 +171,12 @@ func TestGh728ContextWherePropertyNamesZeroAllocations(t *testing.T) {
 	for _, name := range []string{"count", "collect", "exists"} {
 		t.Run(name, func(t *testing.T) {
 			clause := "n." + name + " >= 0"
-			plan := planRowPredicate(clause)
+			plan := planRowPredicate(originalBraceView(clause))
 			require.NotNil(t, plan)
 			require.True(t, plan.complete)
-			require.True(t, exec.evaluateWhereForContext(ctx, clause, nodes))
+			require.True(t, exec.evaluateWhereForContext(ctx, originalBraceView(clause), nodes))
 			require.Zero(t, testing.AllocsPerRun(100, func() {
-				if !exec.evaluateWhereForContext(ctx, clause, nodes) {
+				if !exec.evaluateWhereForContext(ctx, originalBraceView(clause), nodes) {
 					t.Fatal("property name must not be mistaken for a function")
 				}
 			}))
@@ -191,7 +191,7 @@ func TestGh728BindingFilterPreservesQuotedWhitespace(t *testing.T) {
 			name := "first" + separator + "second"
 			row := binding{"n": &storage.Node{ID: "node", Properties: map[string]interface{}{"name": name}}}
 			clause := "n.name + '' = '" + name + "'"
-			require.Len(t, exec.filterBindingsByWhere(context.Background(), []binding{row}, clause, nil), 1)
+			require.Len(t, exec.filterBindingsByWhere(context.Background(), []binding{row}, originalBraceView(clause), nil), 1)
 		})
 	}
 }
@@ -211,11 +211,11 @@ func TestGh728WhereNormalizationPreservesQuotedText(t *testing.T) {
 		{"unterminated quote", "n.name = 'a\tb", "n.name = 'a\tb"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			require.Equal(t, test.expected, normalizeBindingWhereClause(test.clause))
+			require.Equal(t, test.expected, normalizeBindingWhereClause(originalBraceView(test.clause)))
 		})
 	}
 	require.Zero(t, testing.AllocsPerRun(100, func() {
-		if normalizeBindingWhereClause("n.name = $name") != "n.name = $name" {
+		if normalizeBindingWhereClause(expressionBraceView("n.name = $name")).text() != "n.name = $name" {
 			t.Fatal("normalization changed plain predicate")
 		}
 	}))
@@ -247,16 +247,16 @@ func TestGh728BindingWhereUsesSharedTypedPredicate(t *testing.T) {
 				var got bool
 				switch route {
 				case "direct":
-					got = exec.evaluateBindingWhere(ctx, row, test.clause, test.params)
+					got = exec.evaluateBindingWhere(ctx, row, originalBraceView(test.clause), test.params)
 				case "compiled":
-					got = exec.getCompiledBindingWhere(ctx, test.clause)(row, test.params)
+					got = exec.getCompiledBindingWhere(ctx, originalBraceView(test.clause))(row, test.params)
 				case "shared":
 					values := parameterRowsOf(test.params, false)
 					values["a"] = row["a"]
-					got = exec.evaluateMatchRowPredicate(withQueryParams(ctx, test.params), test.clause, values)
+					got = exec.evaluateMatchRowPredicate(withQueryParams(ctx, test.params), originalBraceView(test.clause), values)
 				case "with":
 					var err error
-					got, err = exec.evaluateWithWhere(withQueryParams(ctx, test.params), test.clause, map[string]interface{}{"a": row["a"]})
+					got, err = exec.evaluateWithWhere(withQueryParams(ctx, test.params), originalBraceView(test.clause), map[string]interface{}{"a": row["a"]})
 					if test.code != "" {
 						require.Error(t, err)
 						require.True(t, strings.HasPrefix(statusText(err), test.code), statusText(err))
@@ -323,7 +323,7 @@ func TestGh728RelationshipFilterKeepsTypedBindings(t *testing.T) {
 	rels := relationshipBinding{"r": edge}
 	for _, clause := range []string{"r.age = 41", "type(r) = 'LINK'", "type(r) = 'LINK' AND r.age + 1 = 42"} {
 		t.Run(clause, func(t *testing.T) {
-			selected, selectedRels := exec.filterBindingsByWhereWithRels(ctx, []binding{nodes}, []relationshipBinding{rels}, clause, nil)
+			selected, selectedRels := exec.filterBindingsByWhereWithRels(ctx, []binding{nodes}, []relationshipBinding{rels}, originalBraceView(clause), nil)
 			require.Len(t, selected, 1)
 			require.Len(t, selectedRels, 1)
 			require.Same(t, edge, selectedRels[0]["r"])
@@ -338,7 +338,7 @@ func TestGh728BindingFilterAdmissionAndParameterOwnership(t *testing.T) {
 	require.NoError(t, err)
 	row := binding{"a": created.Rows[0][0].(*storage.Node), "b": created.Rows[0][1].(*storage.Node)}
 	for _, clause := range []string{"a.age = 30", "(a)-[:LINK]->(b)"} {
-		predicate := exec.newBindingFilterPredicate(ctx, clause, nil)
+		predicate := exec.newBindingFilterPredicate(ctx, originalBraceView(clause), nil)
 		if clause == "a.age = 30" {
 			require.NotNil(t, predicate.plan)
 		} else {
@@ -347,7 +347,7 @@ func TestGh728BindingFilterAdmissionAndParameterOwnership(t *testing.T) {
 		require.True(t, predicate.matches(row, nil))
 	}
 	params := map[string]interface{}{"offset": int64(1), "expected": int64(31)}
-	predicate := exec.newBindingFilterPredicate(ctx, "a.age + $offset = $expected", params)
+	predicate := exec.newBindingFilterPredicate(ctx, expressionBraceView("a.age + $offset = $expected"), params)
 	require.NotNil(t, predicate.plan)
 	require.True(t, predicate.matches(row, params))
 	require.False(t, predicate.matches(binding{"a": row["b"]}, params))
@@ -364,11 +364,11 @@ func TestGh728SharedMembershipObservesParameterChanges(t *testing.T) {
 	keys := []interface{}{"first"}
 	params := map[string]interface{}{"keys": keys}
 	clause := "n.key IN $keys"
-	require.Len(t, exec.filterBindingsByWhere(context.Background(), []binding{row}, clause, params), 1)
+	require.Len(t, exec.filterBindingsByWhere(context.Background(), []binding{row}, originalBraceView(clause), params), 1)
 	keys[0] = "second"
-	require.Empty(t, exec.filterBindingsByWhere(context.Background(), []binding{row}, clause, params))
+	require.Empty(t, exec.filterBindingsByWhere(context.Background(), []binding{row}, originalBraceView(clause), params))
 	keys[0] = "first"
-	require.Len(t, exec.filterBindingsByWhere(context.Background(), []binding{row}, clause, params), 1)
+	require.Len(t, exec.filterBindingsByWhere(context.Background(), []binding{row}, originalBraceView(clause), params), 1)
 }
 
 func TestGh728SharedWithArithmeticParametersZeroAllocations(t *testing.T) {
@@ -377,11 +377,11 @@ func TestGh728SharedWithArithmeticParametersZeroAllocations(t *testing.T) {
 	ctx := withExpressionFailureSlot(withQueryParams(context.Background(), params))
 	values := map[string]interface{}{"n": &storage.Node{ID: "node", Properties: map[string]interface{}{"count": int64(1024)}}}
 	clause := "n.count + $offset >= $minimum"
-	accepted, err := exec.evaluateWithWhere(ctx, clause, values)
+	accepted, err := exec.evaluateWithWhere(ctx, originalBraceView(clause), values)
 	require.NoError(t, err)
 	require.True(t, accepted)
 	require.Zero(t, testing.AllocsPerRun(100, func() {
-		accepted, err := exec.evaluateWithWhere(ctx, clause, values)
+		accepted, err := exec.evaluateWithWhere(ctx, originalBraceView(clause), values)
 		if err != nil || !accepted {
 			t.Fatal("shared parameterized arithmetic must accept the row")
 		}
@@ -394,7 +394,7 @@ func TestGh728SharedPreparedMembershipZeroAllocations(t *testing.T) {
 	exec := &StorageExecutor{}
 	row := binding{"n": &storage.Node{ID: "node", Properties: map[string]interface{}{"key": "first"}}}
 	params := map[string]interface{}{"keys": []interface{}{"first", nil}}
-	predicate := exec.newBindingFilterPredicate(context.Background(), "n.key IN $keys", params)
+	predicate := exec.newBindingFilterPredicate(context.Background(), expressionBraceView("n.key IN $keys"), params)
 	require.True(t, predicate.matches(row, params))
 	require.Zero(t, testing.AllocsPerRun(100, func() {
 		if !predicate.matches(row, params) {
@@ -415,7 +415,7 @@ func TestGh728SharedMembershipConcurrentParameterScopes(t *testing.T) {
 			keys := []interface{}{key}
 			params := map[string]interface{}{"keys": keys}
 			for iteration := 0; iteration < 16; iteration++ {
-				predicate := exec.newBindingFilterPredicate(context.Background(), "n.key IN $keys", params)
+				predicate := exec.newBindingFilterPredicate(context.Background(), expressionBraceView("n.key IN $keys"), params)
 				keys[0] = "changed"
 				if !predicate.matches(row, params) {
 					t.Error("another invocation changed a prepared index")
@@ -444,7 +444,7 @@ func TestGh728BindingFilterScopesAreInvocationLocal(t *testing.T) {
 		go func() {
 			defer workers.Done()
 			for iteration := 0; iteration < 16; iteration++ {
-				selected := exec.filterBindingsByWhere(ctx, rows, "n.age + $offset = $expected", params)
+				selected := exec.filterBindingsByWhere(ctx, rows, expressionBraceView("n.age + $offset = $expected"), params)
 				if len(selected) != 1 || selected[0]["n"] != rows[0]["n"] {
 					t.Errorf("unexpected filtered rows: %v", selected)
 					return
@@ -469,35 +469,35 @@ func TestCompiledBindingWhere_SupportedAndFallback(t *testing.T) {
 	params := map[string]interface{}{"statuses": []interface{}{"active", "pending"}, "prefix": "al"}
 
 	ctx := context.Background()
-	assert.True(t, exec.evaluateBindingWhere(ctx, bindingRow, "a.status IN $statuses", params))
-	assert.True(t, exec.evaluateBindingWhere(ctx, bindingRow, "b.age > a.age", params))
-	assert.True(t, exec.evaluateBindingWhere(ctx, bindingRow, "a.name STARTS WITH $prefix", params))
-	assert.True(t, exec.evaluateBindingWhere(ctx, bindingRow, "a.name IS NOT NULL", nil))
-	assert.True(t, exec.evaluateBindingWhere(ctx, bindingRow, "a.missing IS NULL", nil))
+	assert.True(t, exec.evaluateBindingWhere(ctx, bindingRow, expressionBraceView("a.status IN $statuses"), params))
+	assert.True(t, exec.evaluateBindingWhere(ctx, bindingRow, expressionBraceView("b.age > a.age"), params))
+	assert.True(t, exec.evaluateBindingWhere(ctx, bindingRow, expressionBraceView("a.name STARTS WITH $prefix"), params))
+	assert.True(t, exec.evaluateBindingWhere(ctx, bindingRow, expressionBraceView("a.name IS NOT NULL"), nil))
+	assert.True(t, exec.evaluateBindingWhere(ctx, bindingRow, expressionBraceView("a.missing IS NULL"), nil))
 
-	compiled := exec.getCompiledBindingWhere(ctx, "a.status IN $statuses AND b.age > a.age AND a.name STARTS WITH $prefix")
+	compiled := exec.getCompiledBindingWhere(ctx, expressionBraceView("a.status IN $statuses AND b.age > a.age AND a.name STARTS WITH $prefix"))
 	require.NotNil(t, compiled)
 	assert.True(t, compiled(bindingRow, params))
 
-	compiled = exec.getCompiledBindingWhere(ctx, "a.name IS NOT NULL")
+	compiled = exec.getCompiledBindingWhere(ctx, expressionBraceView("a.name IS NOT NULL"))
 	require.NotNil(t, compiled)
 	assert.True(t, compiled(bindingRow, nil))
 
-	compiled = exec.getCompiledBindingWhere(ctx, "a.missing IS NULL")
+	compiled = exec.getCompiledBindingWhere(ctx, expressionBraceView("a.missing IS NULL"))
 	require.NotNil(t, compiled)
 	assert.True(t, compiled(bindingRow, nil))
-	supported, ok := exec.getCompiledBindingWhereIfSupported(ctx, "a.status IN $statuses AND b.status = a.status AND a.name IS NOT NULL AND b.name IS NOT NULL")
+	supported, ok := exec.getCompiledBindingWhereIfSupported(ctx, expressionBraceView("a.status IN $statuses AND b.status = a.status AND a.name IS NOT NULL AND b.name IS NOT NULL"))
 	require.True(t, ok)
 	assert.True(t, supported(binding{
 		"a": &storage.Node{ID: "n1", Properties: map[string]interface{}{"status": "active", "name": "alice"}},
 		"b": &storage.Node{ID: "n2", Properties: map[string]interface{}{"status": "active", "name": "bob"}},
 	}, params))
 
-	compiled = exec.getCompiledBindingWhere(ctx, "a = b")
+	compiled = exec.getCompiledBindingWhere(ctx, expressionBraceView("a = b"))
 	require.NotNil(t, compiled)
 	assert.False(t, compiled(bindingRow, nil))
 	assert.True(t, compiled(binding{"a": bindingRow["a"], "b": bindingRow["a"]}, nil))
-	assert.True(t, exec.evaluateBindingWhere(ctx, bindingRow, "size(a.name) > 0", nil))
+	assert.True(t, exec.evaluateBindingWhere(ctx, bindingRow, expressionBraceView("size(a.name) > 0"), nil))
 }
 
 func TestCompiledBindingWhere_UnsupportedFallsBackCompliantly(t *testing.T) {
@@ -506,11 +506,11 @@ func TestCompiledBindingWhere_UnsupportedFallsBackCompliantly(t *testing.T) {
 		"a": &storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "alice"}},
 	}
 	ctx := context.Background()
-	compiled := exec.getCompiledBindingWhere(ctx, "a.name")
+	compiled := exec.getCompiledBindingWhere(ctx, expressionBraceView("a.name"))
 	require.NotNil(t, compiled)
 	assert.False(t, compiled(bindingRow, nil))
-	assert.False(t, exec.evaluateBindingWhere(ctx, bindingRow, "a.missing", nil))
-	assert.False(t, exec.evaluateBindingWhere(ctx, bindingRow, "a.name", nil))
+	assert.False(t, exec.evaluateBindingWhere(ctx, bindingRow, expressionBraceView("a.missing"), nil))
+	assert.False(t, exec.evaluateBindingWhere(ctx, bindingRow, expressionBraceView("a.name"), nil))
 }
 
 func TestBindingWhereStringPredicateFallsBackForExpressionOperand(t *testing.T) {
@@ -520,7 +520,7 @@ func TestBindingWhereStringPredicateFallsBackForExpressionOperand(t *testing.T) 
 		"n": &storage.Node{ID: "n1", Properties: map[string]interface{}{"name": "alice"}},
 	}
 
-	assert.True(t, exec.evaluateBindingWhereGeneric(ctx, row, "toUpper(n.name) STARTS WITH 'AL'", nil))
+	assert.True(t, exec.evaluateBindingWhereGeneric(ctx, row, expressionBraceView("toUpper(n.name) STARTS WITH 'AL'"), nil))
 }
 
 func TestCompiledBindingWhere_NodeOrderingUsesNumericComparisonForNumericIDs(t *testing.T) {

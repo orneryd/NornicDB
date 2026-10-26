@@ -419,7 +419,7 @@ func (e *StorageExecutor) extractVarName(pattern string) string {
 //
 //	extractLabels("(n)")
 //	// Returns: []
-func (e *StorageExecutor) extractLabels(pattern string) []string {
+func (e *StorageExecutor) extractLabels(pattern braceView) []string {
 	head, _ := splitNodePatternProperties(pattern)
 	_, labels, _ := parseNodeHead(head)
 	return labels

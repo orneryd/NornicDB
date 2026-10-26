@@ -19,12 +19,16 @@ import (
 // pipelineApplyDelete collects every entity target before validation and
 // mutation, preserving statement atomicity while retaining input rows for
 // subsequent WITH and RETURN clauses.
-func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clause string) (*QueryStats, bool, error) {
-	targets, detach, ok := deleteClauseTargets(clause)
-	if !ok || len(targets) == 0 {
+func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clause braceView) (*QueryStats, bool, error) {
+	targetViews, detach, ok := deleteClauseTargets(clause)
+	if !ok || len(targetViews) == 0 {
 		return nil, false, nil
 	}
-	for _, expression := range targets {
+	targets := make([]string, len(targetViews))
+	for index, target := range targetViews {
+		targets[index] = target.text()
+	}
+	for index, expression := range targets {
 		if hasTopLevelDeleteLabelQualifier(expression) {
 			return nil, true, newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
@@ -32,7 +36,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 				"DELETE accepts nodes, relationships, and paths, not labels or relationship types",
 			)
 		}
-		references := expressionFreeVariables(expression)
+		references := expressionFreeVariables(targetViews[index])
 		for _, name := range references {
 			if _, bound := scope[name]; !bound {
 				return nil, true, deleteUndefinedVariableError(name)
@@ -43,7 +47,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 		if len(references) > 0 {
 			continue
 		}
-		if value, evaluated, err := e.evaluateRowValue(strings.TrimSpace(expression), pipelineRow{}); err != nil {
+		if value, evaluated, err := e.evaluateRowValue(targetViews[index], pipelineRow{}); err != nil {
 			return nil, true, err
 		} else if evaluated && !isDeleteTargetValue(value) {
 			return nil, true, newSemanticError(
@@ -59,8 +63,8 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 			return nil, true, err
 		}
 		values := make([]interface{}, 0, len(targets))
-		for _, expression := range targets {
-			value, ok, err := e.evaluateRowValue(strings.TrimSpace(expression), row)
+		for index, expression := range targets {
+			value, ok, err := e.evaluateRowValue(targetViews[index], row)
 			if err != nil {
 				return nil, true, err
 			}
@@ -152,24 +156,25 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 // pipelineApplySet mutates entities already bound in each pipeline row. Scalar
 // and map bindings are attached as typed context values so assignments such as
 // SET target = row retain their original Go/Cypher types.
-func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineRow, clause string) (*QueryStats, bool, error) {
+func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineRow, clause braceView) (*QueryStats, bool, error) {
 	// body may chain SET clauses (SET a SET b); the applicators keep their
 	// boundaries, which properties_set depends on (setWrites).
-	body := strings.TrimSpace(clause[len("SET"):])
-	assignments := splitSetAssignments(collapseChainedSetClauses(body))
-	if body == "" || len(assignments) == 0 {
+	body := clause.clauseBody("SET")
+	sourceAssignments := setAssignmentViews(body)
+	assignments := functionArgumentTexts(sourceAssignments)
+	if body.empty() || len(assignments) == 0 {
 		return nil, false, nil
 	}
 
 	store := e.getStorage(ctx)
 	stats := &QueryStats{}
-	if err := validatePipelineSetAssignments(assignments); err != nil {
+	if err := validatePipelineSetAssignments(sourceAssignments); err != nil {
 		return nil, true, err
 	}
-	simpleTarget, simpleProperty, simpleExpression, simplePropertyAssignment := pipelineSimplePropertyAssignment(assignments)
-	targets := pipelineSetTargetVariables(assignments)
+	simpleTarget, simpleProperty, simpleExpression, simplePropertyAssignment := pipelineSimplePropertyAssignment(sourceAssignments)
+	targets := pipelineSetTargetVariables(sourceAssignments)
 	var runBuffer [4]setRun
-	runs := appendSetClauseRuns(runBuffer[:0], body, assignments)
+	runs := appendSetClauseRuns(runBuffer[:0], body)
 	var stateBuffer [4]setEntityState
 	wrapSetError := func(state setEntityState, err error) error {
 		return fmt.Errorf("SET %s: %w", pipelineSetOperation(state.variable, assignments), err)
@@ -243,13 +248,14 @@ func (e *StorageExecutor) pipelineApplySet(ctx context.Context, rows []pipelineR
 
 // pipelineSimplePropertyAssignment recognizes the single x.p = <expr> SET
 // (the common case) so pipelineApplySet can skip re-splitting per row.
-func pipelineSimplePropertyAssignment(assignments []string) (target, property, expression string, ok bool) {
+func pipelineSimplePropertyAssignment(assignments []braceView) (target, property string, expression braceView, ok bool) {
 	if len(assignments) != 1 {
-		return "", "", "", false
+		return "", "", braceView{}, false
 	}
-	target, property, operator, expression := splitSetAssignment(assignments[0])
-	if operator != "=" || property == "" || expression == "" {
-		return "", "", "", false
+	item := readSetAssignment(assignments[0])
+	target, property, operator, expression := item.target, item.property, item.operator, item.right
+	if operator != "=" || property == "" || expression.empty() {
+		return "", "", braceView{}, false
 	}
 	return target, property, expression, true
 }
@@ -260,14 +266,16 @@ func pipelineSimplePropertyAssignment(assignments []string) (target, property, e
 // target, a non-empty right-hand side, a parseable inline map for += and a
 // valid label chain (setLabelChainItems). The source type of x = and x += is checked after the
 // variables (setSourceTypeError, validateSetClauseScope). Forms are split by
-// splitSetAssignment, the splitter the applicators use.
-func validatePipelineSetAssignments(assignments []string) error {
+// readSetAssignment, the splitter the applicators use.
+func validatePipelineSetAssignments(assignments []braceView) error {
 	for _, raw := range assignments {
-		assignment := strings.TrimSpace(raw)
+		raw = raw.trim()
+		assignment := raw.text()
 		if assignment == "" {
 			return localizedError(localization.CypherMutationsSetAssignmentRequired(), nil)
 		}
-		target, _, operator, right := splitSetAssignment(assignment)
+		item := readSetAssignment(raw)
+		target, operator, right := item.target, item.operator, item.right.text()
 		if operator == "" || !cyphertext.IsIdentifier(target) || right == "" {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid SET assignment: "+assignment)
 		}
@@ -276,15 +284,15 @@ func validatePipelineSetAssignments(assignments []string) error {
 		}
 		switch operator {
 		case "+=":
-			if strings.HasPrefix(right, "{") {
-				if _, err := parseSetMergeMapExpressionsStrict(right); err != nil {
+			if startsBrace(right) {
+				if _, err := parseSetMergeMapExpressionsStrict(item.right); err != nil {
 					return localizedError(localization.CypherMutationsSetMergeParseFailed(err), err)
 				}
 			}
 		case ":":
 			// Static labels are checked here; a $(expr) item's value is read
 			// at run time (chainLabelNames).
-			if _, err := setLabelChainItems(right); err != nil {
+			if _, err := setLabelChainItems(item.right); err != nil {
 				return err
 			}
 		}
@@ -323,12 +331,13 @@ func addedLabelCount(before, after []string) int {
 }
 
 // pipelineSetTargetVariables lists the variables a SET clause writes, in
-// first-appearance order, using the shared splitSetAssignment.
-func pipelineSetTargetVariables(assignments []string) []string {
+// first-appearance order, using the shared readSetAssignment.
+func pipelineSetTargetVariables(assignments []braceView) []string {
 	seen := make(map[string]struct{})
 	var targets []string
 	for _, assignment := range assignments {
-		target, _, operator, _ := splitSetAssignment(assignment)
+		item := readSetAssignment(assignment)
+		target, operator := item.target, item.operator
 		if operator == "" || !cyphertext.IsIdentifier(target) {
 			continue
 		}
@@ -406,14 +415,14 @@ func (e *StorageExecutor) tryExecutePipelineCreatePlan(ctx context.Context, clau
 	}
 	for index := end; index < len(clauses); index++ {
 		if clauses[index].kind == pipelineClauseSet {
-			stats, _, err := e.pipelineApplySet(ctx, rows, clauses[index].text)
+			stats, _, err := e.pipelineApplySet(ctx, rows, clauses[index].input(ctx))
 			if err != nil {
 				return nil, true, err
 			}
 			addQueryStats(result.Stats, stats)
 			continue
 		}
-		projected, err := e.projectMergeReturn(ctx, rows, originalClauses[index].text)
+		projected, err := e.projectMergeReturn(ctx, rows, originalClauses[index].input(ctx))
 		if err != nil {
 			return nil, true, err
 		}
@@ -476,8 +485,8 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 	}
 	for _, clause := range clauses {
 		rowCtx := withValueBindings(ctx, newRow)
-		pattern := pipelineClauseBody(clause.text, "CREATE")
-		dynamic := hasDynamicToken(pattern)
+		pattern := clause.view.clauseBody("CREATE")
+		dynamic := hasDynamicToken(pattern.text())
 		if dynamic {
 			// Labels and types whose values depend on the row.
 			resolved, err := e.resolveRowDynamicTokens(rowCtx, pattern, nodes, edges)
@@ -494,7 +503,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 			// template is parsed from the clause text, so a clause with
 			// row-dependent dynamic labels or types keeps the general route,
 			// which plans the resolved pattern instead.
-			if template := e.pipelineCreateTemplateFor(clause.text); template != nil && template.usable {
+			if template := e.pipelineCreateTemplateFor(clause.view); template != nil && template.usable {
 				var err error
 				paths, planned, err = template.plan(ctx, e, newRow, nodes, edges, plan)
 				if err != nil {
@@ -531,20 +540,20 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 // pipelineApplyMerge executes one MERGE per input row while retaining the row
 // bindings for subsequent clauses. This preserves Cypher's row-at-a-time
 // mutation semantics after UNWIND/WITH without duplicating MERGE behavior.
-func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, error) {
-	if body := strings.TrimSpace(clause); hasDynamicToken(body) && startsWithKeywordFold(body, "MERGE") {
-		if actions := splitMergeClauseActions(pipelineClauseBody(body, "MERGE"), nil); hasDynamicToken(actions.pattern) {
+func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelineRow, clause braceView) ([]pipelineRow, *QueryStats, error) {
+	if body := clause.trim(); hasDynamicToken(body.text()) && startsWithKeywordFold(body.text(), "MERGE") {
+		if actions := readMergeSourceActions(body); hasDynamicToken(actions.pattern.text()) {
 			pattern := actions.pattern
 			stats := &QueryStats{}
 			out := make([]pipelineRow, 0, len(rows))
-			at := strings.Index(clause, pattern)
 			for _, row := range rows {
 				rowCtx, nodes, rels := e.pipelineRowWriteContext(ctx, row)
 				resolved, err := e.resolveRowDynamicTokens(rowCtx, pattern, nodes, rels)
 				if err != nil {
 					return nil, nil, err
 				}
-				produced, rowStats, err := e.pipelineApplyMerge(ctx, []pipelineRow{row}, clause[:at]+resolved+clause[at+len(pattern):])
+				resolvedClause := clause.assembleCode([]braceView{actions.before, resolved, actions.after}, "")
+				produced, rowStats, err := e.pipelineApplyMerge(rowCtx, []pipelineRow{row}, resolvedClause)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -566,13 +575,13 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 	template := e.pipelineMergeTemplateFor(clause)
 	// The clause's pattern and actions (each action clause a SET of its own,
 	// in order) are the same for every row.
-	clauseBody := strings.TrimSpace(clause)
-	isMerge := startsWithKeywordFold(clauseBody, "MERGE")
-	var clausePattern, onCreateSet, onMatchSet string
+	clauseBody := clause.trim()
+	isMerge := startsWithKeywordFold(clauseBody.text(), "MERGE")
+	clausePattern, onCreateSet, onMatchSet := clause.window(0, 0), clause.window(0, 0), clause.window(0, 0)
 	multiRelationship := false
 	if isMerge {
-		parts := splitMergeClauseActions(pipelineClauseBody(clauseBody, "MERGE"), nil)
-		clausePattern, onCreateSet, onMatchSet = parts.pattern, parts.onCreate.setText(), parts.onMatch.setText()
+		parts := readMergeSourceActions(clauseBody)
+		clausePattern, onCreateSet, onMatchSet = parts.pattern, clause.assembleCode(parts.onCreate, " "), clause.assembleCode(parts.onMatch, " ")
 		multiRelationship = e.isMultiRelationshipPattern(clausePattern)
 	}
 	// Templates contain syntax only; row values stay in each prepared context.
@@ -585,15 +594,15 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		ctx := withValueBindings(ctx, row)
 		preparedPattern := clausePattern
 		rowTemplate := template
-		if isMerge && (!containsRelationshipPattern(clausePattern) || template.usable && pipelineBoundMergeEndpoints(template, row)) {
+		if isMerge && (!containsRelationshipPattern(clausePattern.text()) || template.usable && pipelineBoundMergeEndpoints(template, row)) {
 			var prepareErr error
 			ctx, preparedPattern, prepareErr = e.bindPatternProperties(ctx, clausePattern, row)
 			if prepareErr != nil {
 				return nil, nil, prepareErr
 			}
 			if template.usable {
-				if preparedPattern != templatePattern {
-					preparedTemplate = e.pipelineMergeTemplateFor("MERGE " + preparedPattern)
+				if preparedPattern.source != templatePattern.source {
+					preparedTemplate = e.pipelineMergeTemplateFor(preparedPattern.wrap("MERGE ", ""))
 					templatePattern = preparedPattern
 				}
 				rowTemplate = preparedTemplate
@@ -688,9 +697,9 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				if parseErr != nil {
 					return nil, nil, parseErr
 				}
-			} else if nodePathVariable = extractPathAssignmentVariable(mergePattern); nodePathVariable != "" {
-				mergePattern = strings.TrimSpace(mergePattern[strings.Index(mergePattern, "=")+1:])
-				nodePathBinding = e.extractVarName(mergePattern)
+			} else if nodePathVariable = extractPathAssignmentVariable(mergePattern.text()); nodePathVariable != "" {
+				mergePattern = mergePattern.window(strings.Index(mergePattern.text(), "=")+1, len(mergePattern.text())).trim()
+				nodePathBinding = e.extractVarName(mergePattern.text())
 			}
 		}
 		if relationshipPattern == nil {
@@ -750,7 +759,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				}
 				if len(matches) > 0 {
 					matchedRows := e.mergeRelationshipRows(row, nodeContext, relContext, relationshipPattern, startNode, endNode, matches)
-					if onMatchSet != "" {
+					if !onMatchSet.empty() {
 						// It can change identity values.
 						identities.reset()
 					}
@@ -764,7 +773,8 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		}
 		boundEndpoints := relationshipPattern != nil &&
 			nodeContext[relationshipPattern.startVariable] != nil && nodeContext[relationshipPattern.endVariable] != nil
-		merged, err := e.executeMergeWithContext(ctx, "MERGE "+mergePattern, nodeContext, relContext)
+		mergeView := mergePattern.wrap("MERGE ", "")
+		merged, err := e.executeMergeWithContext(withBraceView(ctx, mergeView), mergeView.text(), nodeContext, relContext)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -825,7 +835,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 						// A hidden candidate is a binding for this MERGE row only,
 						// never a visible relationship match for a later row.
 						identities.reset()
-					} else if onCreateSet == "" {
+					} else if onCreateSet.empty() {
 						identities.created(created)
 					} else {
 						identities.reset()
@@ -846,7 +856,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		if produced == nil {
 			produced = []pipelineRow{newRow}
 		}
-		if actions != "" {
+		if !actions.empty() {
 			// It can change identity values.
 			identities.reset()
 		}
@@ -889,7 +899,7 @@ func (e *StorageExecutor) mergeRelationshipRows(row pipelineRow, nodeContext map
 // containsRemoveClauseAnywhere reports a REMOVE keyword outside strings,
 // including one nested in a FOREACH body or subquery.
 func containsRemoveClauseAnywhere(cypher string) bool {
-	opts := defaultKeywordScanOpts()
+	opts := defaultKeywordScanOpts(inputBraceView(context.Background(), cypher, cyphertext.AcceptedSource))
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	return keywordIndexFrom(cypher, "REMOVE", 0, opts) >= 0
@@ -899,14 +909,14 @@ func (e *StorageExecutor) pipelineApplyForeach(ctx context.Context, rows []pipel
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	body := queryBodyFromSyntax(clause.syntax)
+	body := queryBodyFromSyntax(clause.grammarView, clause.syntax)
 	if body.status != queryBodyRead || body.foreach == nil {
 		return nil, invalidForeachError()
 	}
 	update := body.foreach
 	stats := &QueryStats{}
 	for _, row := range rows {
-		items, ok := e.evaluateListForPipelineWithContext(ctx, update.listExpression, row)
+		items, ok := e.evaluateListForPipelineWithContext(ctx, update.listView, row)
 		if !ok {
 			return nil, invalidForeachError()
 		}
@@ -963,13 +973,12 @@ func setSourceTypeError(property, operator string, source staticOperand) error {
 // check, validateStaticPropertyAccessParameters). Literal sources are checked
 // with each item's scope check (validateSetClauseScope), in item order, as
 // Neo4j reports them.
-func setClauseSourceTypeError(clause string, types map[string]string, params map[string]interface{}) error {
-	body := strings.TrimSpace(clause)
-	if startsWithKeywordFold(body, "SET") {
-		body = body[len("SET"):]
-	}
-	for _, assignment := range splitSetAssignments(body) {
-		_, property, operator, source := splitSetAssignment(assignment)
+func setClauseSourceTypeError(clause braceView, types map[string]string, params map[string]interface{}) error {
+	body := clause.clauseBody("SET")
+	for _, assignmentView := range body.commaViews() {
+		assignmentView = assignmentView.trim()
+		item := readSetAssignment(assignmentView)
+		property, operator, source := item.property, item.operator, item.right
 		if staticLiteralType(source, literalLedExpression) != "" {
 			continue
 		}

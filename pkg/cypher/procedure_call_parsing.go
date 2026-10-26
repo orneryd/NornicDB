@@ -65,7 +65,7 @@ func parseProcedureArgLiteral(s string) (interface{}, error) {
 	// Keep placeholders and complex structures as raw strings for procedure handlers.
 	if strings.HasPrefix(s, "$") ||
 		strings.HasPrefix(s, "[") ||
-		strings.HasPrefix(s, "{") ||
+		startsBrace(s) ||
 		strings.Contains(s, ".") && !looksNumeric(s) {
 		return s, nil
 	}

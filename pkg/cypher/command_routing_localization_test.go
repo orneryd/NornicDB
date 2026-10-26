@@ -24,7 +24,7 @@ func TestCypherCommandRoutingErrorsHaveTypedIdentity(t *testing.T) {
 	exec := &StorageExecutor{}
 
 	t.Run("shell command", func(t *testing.T) {
-		_, _, err := exec.executeShellCommand(context.Background(), ":broken", "", nil)
+		_, _, err := exec.executeShellCommand(context.Background(), originalBraceView(":broken"), originalBraceView(""), nil)
 		localizedErr := requireCypherCommandRoutingLocalizedError(t, err, localization.MessageCypherCommandRoutingUnknownCommand, "unknown command: :broken")
 		require.Equal(t, ":broken", localizedErr.Message.Data["Command"])
 	})

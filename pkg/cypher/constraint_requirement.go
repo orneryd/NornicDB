@@ -20,20 +20,25 @@ var constraintRequirementSpelling = regexp.MustCompile(`(?is)^(.*?)\s+IS\s+(?:(N
 // RELATIONSHIP KEY`. An entity that isn't the pattern's is Neo4j's
 // SyntaxError ('IS NODE KEY' does not allow relationship patterns). Any
 // other statement is returned as it is.
-func (e *StorageExecutor) canonicalConstraintRequirement(cypher string) (string, error) {
-	_, patternSpan, requireExpr, err := e.parseCreateConstraintForRequireHead(cypher)
+func (e *StorageExecutor) canonicalConstraintRequirement(view braceView) (braceView, error) {
+	_, patternSpan, requireExpr, err := e.parseCreateConstraintForRequireHead(view)
 	if err != nil {
-		return cypher, nil
+		return view, nil
 	}
-	match := constraintRequirementSpelling.FindStringSubmatch(requireExpr)
-	if match == nil {
-		return cypher, nil
+	indices := constraintRequirementSpelling.FindStringSubmatchIndex(requireExpr.text())
+	if indices == nil {
+		return view, nil
 	}
 	_, _, relationship, err := parseCreateIndexForPattern(patternSpan)
 	if err != nil {
-		return cypher, nil
+		return view, nil
 	}
-	properties, entity, kind := strings.TrimSpace(match[1]), strings.ToUpper(match[2]), strings.ToUpper(match[3])
+	properties := requireExpr.window(indices[2], indices[3]).trim()
+	entity := ""
+	if indices[4] >= 0 {
+		entity = strings.ToUpper(requireExpr.text()[indices[4]:indices[5]])
+	}
+	kind := strings.ToUpper(requireExpr.text()[indices[6]:indices[7]])
 	if entity == "REL" {
 		entity = "RELATIONSHIP"
 	}
@@ -42,19 +47,26 @@ func (e *StorageExecutor) canonicalConstraintRequirement(cypher string) (string,
 		if relationship {
 			pattern = "relationship"
 		}
-		return "", localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidConstraintPattern",
+		return braceView{}, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidConstraintPattern",
 			localization.CypherSchemaConstraintEntityMismatch("IS "+entity+" "+kind, pattern))
 	}
-	canonical := properties + " IS UNIQUE"
+	canonical := properties.wrap("", " IS UNIQUE")
 	switch {
 	case kind == "KEY" && relationship:
-		canonical = properties + " IS RELATIONSHIP KEY"
+		canonical = properties.wrap("", " IS RELATIONSHIP KEY")
 	case kind == "KEY":
-		if !strings.HasPrefix(properties, "(") {
-			properties = "(" + properties + ")"
+		if !strings.HasPrefix(properties.text(), "(") {
+			properties = properties.wrap("(", ")")
 		}
-		canonical = properties + " IS NODE KEY"
+		canonical = properties.wrap("", " IS NODE KEY")
 	}
-	start := strings.Index(cypher, requireExpr)
-	return cypher[:start] + canonical + cypher[start+len(requireExpr):], nil
+	relations, relationErr := requireExpr.source.CopyRelationsFrom(view.source)
+	if relationErr != nil {
+		panic(relationErr)
+	}
+	if len(relations) != 1 || relations[0].Accepted.Start != 0 || relations[0].Accepted.End != len(requireExpr.text()) {
+		panic("cypher: requirement grammar lost its input extent")
+	}
+	span := relations[0].Original
+	return view.assembleCode([]braceView{view.window(0, span.Start), canonical, view.window(span.End, len(view.text()))}, ""), nil
 }

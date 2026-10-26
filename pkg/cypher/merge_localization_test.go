@@ -23,7 +23,7 @@ func requireCypherMergeLocalizedError(t *testing.T, err error, messageID localiz
 func TestCypherMergeLocalizedErrorsHaveTypedIdentityAndExactEnglish(t *testing.T) {
 	exec := &StorageExecutor{}
 
-	_, err := exec.parseSetMergeMapLiteralStrict(context.Background(), "broken")
+	_, err := exec.parseSetMergeMapLiteralStrict(context.Background(), expressionBraceView("broken"))
 	requireCypherMergeLocalizedError(t, err, localization.MessageCypherMergeMapLiteralEnclosureRequired, "map literal must be enclosed in { ... }")
 }
 

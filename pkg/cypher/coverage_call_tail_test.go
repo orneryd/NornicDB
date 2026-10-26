@@ -41,7 +41,7 @@ func TestCallTailRelationshipReusesEndpointsWithinExecution(t *testing.T) {
 	exec := NewStorageExecutor(counted)
 	seed := &ExecuteResult{Columns: []string{"relationship"}, Rows: [][]interface{}{{edge}, {edge}}}
 	result, handled, err := exec.tryExecuteCallTailRelationshipMatchProjection(context.Background(), seed,
-		"MATCH (a:CT)-[r:CTR {name: relationship.name}]->(b:CT) WITH a, r, b RETURN a.name AS name", nil)
+		originalBraceView("MATCH (a:CT)-[r:CTR {name: relationship.name}]->(b:CT) WITH a, r, b RETURN a.name AS name"), nil)
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Equal(t, [][]interface{}{{"Alice"}, {"Alice"}}, result.Rows)
@@ -127,9 +127,9 @@ func TestCallTailCachedPlansResolveCurrentPagination(t *testing.T) {
 				var handled bool
 				var err error
 				if tc.relationship {
-					result, handled, err = exec.tryExecuteCallTailRelationshipMatchProjection(ctx, tc.seed, tc.tail, nil)
+					result, handled, err = exec.tryExecuteCallTailRelationshipMatchProjection(ctx, tc.seed, originalBraceView(tc.tail), nil)
 				} else {
-					result, handled, err = exec.tryExecuteCallTailProjectionFilter(ctx, tc.seed, tc.tail, nil)
+					result, handled, err = exec.tryExecuteCallTailProjectionFilter(ctx, tc.seed, originalBraceView(tc.tail), nil)
 				}
 				require.NoError(t, err)
 				wanted, integer := limit.(int64)
@@ -150,7 +150,7 @@ func TestCallTailCachedPlansResolveCurrentPagination(t *testing.T) {
 					require.Equal(t, []interface{}{name}, row)
 				}
 				if tc.relationship {
-					result, handled, err = exec.tryExecuteCallTailProjectionFilter(ctx, tc.seed, tc.tail, nil)
+					result, handled, err = exec.tryExecuteCallTailProjectionFilter(ctx, tc.seed, originalBraceView(tc.tail), nil)
 					require.NoError(t, err)
 					require.False(t, handled)
 					require.Nil(t, result)

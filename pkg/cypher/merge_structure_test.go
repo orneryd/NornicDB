@@ -81,19 +81,20 @@ func TestMergeStructureMatchesNeo4j(t *testing.T) {
 }
 
 func TestSplitMergeClauseActions(t *testing.T) {
-	parts := splitMergeClauseActions("(m:Q {s: 'ON MATCH SET'}) ON  CREATE   SET m.a = 1 ON MATCH SET m.b = 2, m.c = 3 ON CREATE SET m.d = 4", nil)
+	parts := splitMergeClauseActions(originalBraceView("(m:Q {s: 'ON MATCH SET'}) ON  CREATE   SET m.a = 1 ON MATCH SET m.b = 2, m.c = 3 ON CREATE SET m.d = 4"), nil)
 	require.Equal(t, "(m:Q {s: 'ON MATCH SET'})", parts.pattern)
 	require.Equal(t, 2, parts.onCreate.len())
-	require.Equal(t, "m.d = 4", parts.onCreate.assignments(1))
-	require.Equal(t, "SET m.a = 1 SET m.d = 4", parts.onCreate.setText())
-	require.Equal(t, "SET m.b = 2, m.c = 3", parts.onMatch.setText())
-	require.Equal(t, "", mergeActionClauses{}.setText())
-	require.Equal(t, []string{"m.b = 2", "m.c = 3"}, mergeActionAssignments(parts.onMatch))
-	require.Equal(t, mergeClauseActions{pattern: "(n)"}, splitMergeClauseActions(" (n) ", nil))
+	actions := readMergeSourceActions(originalBraceView("MERGE (m:Q {s: 'ON MATCH SET'}) ON  CREATE   SET m.a = 1 ON MATCH SET m.b = 2, m.c = 3 ON CREATE SET m.d = 4"))
+	require.Equal(t, []string{"m.a = 1", "m.d = 4"}, viewTexts(mergeSourceActionAssignments(actions.onCreate)))
+	require.Equal(t, []string{"SET m.a = 1", "SET m.d = 4"}, viewTexts(actions.onCreate))
+	require.Equal(t, []string{"SET m.b = 2, m.c = 3"}, viewTexts(actions.onMatch))
+	require.Equal(t, []string{"m.b = 2", "m.c = 3"}, viewTexts(mergeSourceActionAssignments(actions.onMatch)))
+	require.Equal(t, mergeClauseActions{pattern: "(n)"}, splitMergeClauseActions(originalBraceView(" (n) "), nil))
 	// More actions than the stack buffer holds.
-	many := splitMergeClauseActions("(n) ON MATCH SET n.a = 1 ON MATCH SET n.b = 2 ON MATCH SET n.c = 3 ON MATCH SET n.d = 4 ON MATCH SET n.e = 5 ON MATCH SET n.f = 6 ON MATCH SET n.g = 7 ON MATCH SET n.h = 8 ON MATCH SET n.i = 9", nil)
+	many := splitMergeClauseActions(originalBraceView("(n) ON MATCH SET n.a = 1 ON MATCH SET n.b = 2 ON MATCH SET n.c = 3 ON MATCH SET n.d = 4 ON MATCH SET n.e = 5 ON MATCH SET n.f = 6 ON MATCH SET n.g = 7 ON MATCH SET n.h = 8 ON MATCH SET n.i = 9"), nil)
 	require.Equal(t, 9, many.onMatch.len())
-	require.Equal(t, "n.i = 9", many.onMatch.assignments(8))
+	manyActions := readMergeSourceActions(originalBraceView("MERGE (n) ON MATCH SET n.a = 1 ON MATCH SET n.b = 2 ON MATCH SET n.c = 3 ON MATCH SET n.d = 4 ON MATCH SET n.e = 5 ON MATCH SET n.f = 6 ON MATCH SET n.g = 7 ON MATCH SET n.h = 8 ON MATCH SET n.i = 9"))
+	require.Equal(t, "n.i = 9", mergeSourceActionAssignments(manyActions.onMatch)[8].text())
 	require.Equal(t, "SET n.c = 3", inlineOverflowAt(many.onMatch.inline[:], many.onMatch.overflow, 2))
 }
 
@@ -132,15 +133,15 @@ func TestMergePathSegmentsMatchNeo4j(t *testing.T) {
 }
 
 func TestMergePathHelpers(t *testing.T) {
-	require.Equal(t, []string{"(a)-[:R]->(b {l: [1]})", "(b {l: [1]})<-[:S]-(c)"}, mergePathSegments("p = (a)-[:R]->(b {l: [1]})<-[:S]-(c)"))
-	require.Nil(t, mergePathSegments("(a)-[:R]->(b"))
-	require.Nil(t, mergePathSegments("(a)-[:R->(b)"))
-	require.Nil(t, mergePathSegments("(a)"))
-	require.Equal(t, "(a)-[:R]->(b)-[:S]->(c)", directedMergePath("(a)-[:R]-(b)-[:S]-(c)"))
-	require.Equal(t, "(a)<-[:R]-(b)-[:`S]`]->(c {k: '-('})", directedMergePath("(a)<-[:R]-(b)-[:`S]`]-(c {k: '-('})"))
-	require.Equal(t, "(a)-[:R]->(b)", directedMergePath("(a)-[:R]->(b)"))
-	require.Equal(t, "(a)-[:R", directedMergePath("(a)-[:R"))
+	require.Equal(t, []string{"(a)-[:R]->(b {l: [1]})", "(b {l: [1]})<-[:S]-(c)"}, mergePathSegments(expressionBraceView("p = (a)-[:R]->(b {l: [1]})<-[:S]-(c)")))
+	require.Nil(t, mergePathSegments(originalBraceView("(a)-[:R]->(b")))
+	require.Nil(t, mergePathSegments(originalBraceView("(a)-[:R->(b)")))
+	require.Nil(t, mergePathSegments(originalBraceView("(a)")))
+	require.Equal(t, "(a)-[:R]->(b)-[:S]->(c)", directedMergePath(originalBraceView("(a)-[:R]-(b)-[:S]-(c)")).text())
+	require.Equal(t, "(a)<-[:R]-(b)-[:`S]`]->(c {k: '-('})", directedMergePath(originalBraceView("(a)<-[:R]-(b)-[:`S]`]-(c {k: '-('})")).text())
+	require.Equal(t, "(a)-[:R]->(b)", directedMergePath(originalBraceView("(a)-[:R]->(b)")).text())
+	require.Equal(t, "(a)-[:R", directedMergePath(originalBraceView("(a)-[:R")).text())
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	require.False(t, exec.isMultiRelationshipPattern("(a)-[:R]->(b)"))
-	require.True(t, exec.isMultiRelationshipPattern("(a)-[:R]->(b)-[:S]-(c)"))
+	require.False(t, exec.isMultiRelationshipPattern(originalBraceView("(a)-[:R]->(b)")))
+	require.True(t, exec.isMultiRelationshipPattern(originalBraceView("(a)-[:R]->(b)-[:S]-(c)")))
 }

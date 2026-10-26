@@ -112,7 +112,7 @@ func TestPropertyMaterializationCheckedResults(t *testing.T) {
 		for _, compiled := range []bool{false, true} {
 			rowValueProgramsDisabled.Store(!compiled)
 			for i := 0; i < 3; i++ {
-				value, err := e.checkedPropertyExpression(context.Background(), expr, row)
+				value, err := e.checkedPropertyExpression(context.Background(), originalBraceView(expr), row)
 				require.Error(t, err, expr)
 				require.Nil(t, value, expr)
 			}
@@ -121,7 +121,7 @@ func TestPropertyMaterializationCheckedResults(t *testing.T) {
 	rowValueProgramsDisabled.Store(false)
 	nullEntities := entityRow(context.Background(), map[string]*storage.Node{"optionalNode": nil}, map[string]*storage.Edge{"optionalRel": nil})
 	for _, expr := range []string{"optionalNode", "optionalNode.x", "optionalRel", "optionalRel.x"} {
-		value, err := e.checkedPropertyExpression(context.Background(), expr, nullEntities)
+		value, err := e.checkedPropertyExpression(context.Background(), originalBraceView(expr), nullEntities)
 		require.NoError(t, err, expr)
 		require.Nil(t, value, expr)
 	}
@@ -134,7 +134,7 @@ func TestPropertyMaterializationCheckedResults(t *testing.T) {
 		{"coalesce(7, properties(v))", int64(7)},
 		{"date(null)", nil}, {"datetime(null)", nil}, {"duration(null)", nil},
 	} {
-		value, err := e.checkedPropertyExpression(context.Background(), tc.expr, row)
+		value, err := e.checkedPropertyExpression(context.Background(), originalBraceView(tc.expr), row)
 		require.NoError(t, err, tc.expr)
 		require.Equal(t, tc.want, value, tc.expr)
 	}
@@ -159,14 +159,14 @@ func TestPropertyMaterializationSharedReaders(t *testing.T) {
 	}
 	for _, expr := range []string{"[1.0,2.0]", "$vector"} {
 		evalCtx := withExpressionFailureSlot(withParams(ctx, map[string]interface{}{"vector": []float32{1, 2}}))
-		vector, ok := e.resolveCosineQueryVector(evalCtx, expr)
+		vector, ok := e.resolveCosineQueryVector(evalCtx, originalBraceView(expr))
 		require.True(t, ok)
 		require.Equal(t, []float32{1, 2}, vector)
 		require.NoError(t, getExpressionFailure(evalCtx))
 	}
 	for _, expr := range []string{"unknown_vector()", "unbound.value", "properties(1)"} {
 		evalCtx := withExpressionFailureSlot(ctx)
-		_, ok := e.resolveCosineQueryVector(evalCtx, expr)
+		_, ok := e.resolveCosineQueryVector(evalCtx, originalBraceView(expr))
 		require.False(t, ok)
 		require.Error(t, getExpressionFailure(evalCtx), expr)
 	}

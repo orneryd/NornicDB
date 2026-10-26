@@ -229,7 +229,7 @@ func (e *StorageExecutor) executeShowConstraints(ctx context.Context, cypher str
 	if isCompositeRoot(e.storage) {
 		return nil, localizedError(localization.CypherResidualCompositeShowTargetRequired("SHOW CONSTRAINTS"), nil)
 	}
-	if isShowConstraintContractsCommand(cypher) {
+	if isShowConstraintContractsCommand(statementBraceView(ctx, cypher)) {
 		return e.executeShowConstraintContracts(ctx)
 	}
 	cypher25 := cypherVersionFromContext(ctx) == "25"
@@ -359,17 +359,27 @@ func showStringList(value interface{}) []string {
 // showTailKeywords start the part of a SHOW command after the command itself.
 var showTailKeywords = []string{"YIELD", "WHERE", "RETURN", "ORDER BY", "SKIP", "LIMIT"}
 
+// showStatementView is a SHOW statement without surrounding whitespace and
+// one trailing semicolon.
+func showStatementView(view braceView) braceView {
+	view = view.trim()
+	if strings.HasSuffix(view.text(), ";") {
+		view = view.window(0, len(view.text())-1).trim()
+	}
+	return view
+}
+
 // showCommandHead returns the SHOW command without its YIELD / WHERE /
 // RETURN / ORDER BY / SKIP / LIMIT tail, which applyShowTail handles.
-func showCommandHead(cypher string) string {
-	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
-	end := len(query)
+func showCommandHead(view braceView) braceView {
+	view = showStatementView(view)
+	end := len(view.text())
 	for _, keyword := range showTailKeywords {
-		if index := findKeywordIndexInContext(query, keyword); index >= 0 && index < end {
+		if index := findKeywordIndexInContext(view, keyword); index >= 0 && index < end {
 			end = index
 		}
 	}
-	return strings.TrimSpace(query[:end])
+	return view.window(0, end).trim()
 }
 
 // executeShowWithTail runs a SHOW command: run lists every row of the command
@@ -377,12 +387,14 @@ func showCommandHead(cypher string) string {
 // Every SHOW command goes through it, so YIELD, WHERE, RETURN, aggregation,
 // ORDER BY and SKIP / LIMIT behave the same for all of them.
 func (e *StorageExecutor) executeShowWithTail(ctx context.Context, cypher string, run func(context.Context, string) (*ExecuteResult, error)) (*ExecuteResult, error) {
-	result, err := run(ctx, showCommandHead(cypher))
+	view := showStatementView(statementBraceView(ctx, cypher))
+	head := showCommandHead(view)
+	result, err := run(withBraceView(ctx, head), head.text())
 	if err != nil {
 		return nil, err
 	}
 	sortShowRowsByName(result)
-	return e.applyShowTail(ctx, cypher, result, showDefaultColumns(result))
+	return e.applyShowTail(ctx, view, result, showDefaultColumns(result))
 }
 
 // sortShowRowsByName orders a SHOW listing by its name column, as Neo4j lists
@@ -502,16 +514,18 @@ func projectShowColumns(result *ExecuteResult, columns []string) *ExecuteResult 
 // same row operators as every other clause. Any other form (RETURN after a
 // WHERE without YIELD, a WHERE before YIELD's ORDER BY, a non-literal YIELD
 // SKIP / LIMIT) is a SyntaxError, as in Neo4j.
-func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, result *ExecuteResult, defaults []string) (*ExecuteResult, error) {
-	query := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(cypher), ";"))
-	head := showCommandHead(query)
+func (e *StorageExecutor) applyShowTail(ctx context.Context, statement braceView, result *ExecuteResult, defaults []string) (*ExecuteResult, error) {
+	statement = showStatementView(statement)
+	query := statement.text()
+	head := showCommandHead(statement).text()
 	if len(head) == len(query) {
 		if defaults != nil {
 			return projectShowColumns(result, defaults), nil
 		}
 		return result, nil
 	}
-	tail := strings.TrimSpace(query[len(head):])
+	tailView := statement.window(len(head), len(query)).trim()
+	tail := tailView.text()
 	invalid := func() error {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidShowClause",
 			localization.CypherAdminShowClauseInvalid())
@@ -520,40 +534,43 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		if !startsWithKeywordFold(tail, "WHERE") {
 			return nil, invalid()
 		}
-		where := strings.TrimSpace(tail[len("WHERE"):])
+		where := tailView.window(len("WHERE"), len(tail)).trim()
 		for _, keyword := range []string{"RETURN", "ORDER BY", "SKIP", "LIMIT", "WITH", "YIELD"} {
 			if topLevelKeywordIndex(where, keyword) >= 0 {
 				return nil, invalid()
 			}
 		}
-		tail = "YIELD * WHERE " + where
+		tailView = where.wrap("YIELD * WHERE ", "")
+		tail = tailView.text()
 		if defaults != nil {
 			result = projectShowColumns(result, defaults)
 		}
 	}
-	body := strings.TrimSpace(tail[len("YIELD"):])
+	bodyView := tailView.window(len("YIELD"), len(tail)).trim()
 	// A clause after YIELD's items and segments continues the query over the
 	// yielded columns (Cypher 25 composition).
-	continuation := ""
-	if start := showContinuationStart(body); start >= 0 {
-		continuation = strings.TrimSpace(body[start:])
-		body = strings.TrimSpace(body[:start])
+	continuationView := bodyView.window(0, 0)
+	if start := showContinuationStart(bodyView.text()); start >= 0 {
+		continuationView = bodyView.window(start, len(bodyView.text())).trim()
+		bodyView = bodyView.window(0, start).trim()
 	}
+	continuation := continuationView.text()
+	body := bodyView.text()
 
 	// Segment boundaries, in the only order Neo4j accepts.
 	segments := []string{"ORDER BY", "SKIP", "LIMIT", "WHERE", "RETURN"}
 	positions := make([]int, len(segments))
 	itemsEnd := len(body)
 	for i, keyword := range segments {
-		positions[i] = topLevelKeywordIndex(body, keyword)
+		positions[i] = topLevelKeywordIndex(bodyView, keyword)
 		if positions[i] >= 0 && positions[i] < itemsEnd {
 			itemsEnd = positions[i]
 		}
 	}
 	returnIndex := positions[4]
-	head4 := body
+	head4 := bodyView
 	if returnIndex >= 0 {
-		head4 = body[:returnIndex]
+		head4 = bodyView.window(0, returnIndex)
 	}
 	for _, keyword := range []string{"WITH", "MATCH", "UNWIND", "CALL", "CREATE", "MERGE", "SET", "DELETE", "REMOVE", "FOREACH", "OPTIONAL MATCH"} {
 		if topLevelKeywordIndex(head4, keyword) >= 0 {
@@ -571,19 +588,20 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		}
 		last = position
 	}
-	segmentText := func(i int) string {
+	segmentView := func(i int) braceView {
 		start := topLevelKeywordIndex(head4, segments[i])
 		if start < 0 {
-			return ""
+			return head4.window(0, 0)
 		}
-		end := len(head4)
+		end := len(head4.text())
 		for j := 0; j < 4; j++ {
 			if position := topLevelKeywordIndex(head4, segments[j]); position > start && position < end {
 				end = position
 			}
 		}
-		return strings.TrimSpace(head4[start+len(segments[i]) : end])
+		return head4.window(start+len(segments[i]), end).trim()
 	}
+	segmentText := func(i int) string { return segmentView(i).text() }
 	for _, i := range []int{1, 2} {
 		if value := segmentText(i); value != "" && !strings.HasPrefix(value, "$") {
 			if integer, literal := parseLiteralValueFromComputedRow(value); !literal {
@@ -594,8 +612,9 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		}
 	}
 
-	items := strings.TrimSpace(body[:itemsEnd])
-	yield := parseYieldClause(ctx, "CALL show() YIELD "+items)
+	itemsView := bodyView.window(0, itemsEnd).trim()
+	items := itemsView.text()
+	yield := parseYieldClause(ctx, itemsView.wrap("CALL show() YIELD ", ""))
 	if yield == nil || items == "" || continuation != "" && yield.yieldAll {
 		return nil, invalid()
 	}
@@ -636,28 +655,29 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 		}
 	}
 
-	var clauses strings.Builder
-	paging := ""
+	var clauses []cyphertext.SourcePiece
+	var paging []cyphertext.SourcePiece
 	for i, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if value := segmentText(i); value != "" {
-			paging += " " + keyword + " " + value
+		if value := segmentView(i); value.text() != "" {
+			paging = append(paging, generatedPiece(" "+keyword+" "), value.piece())
 		}
 	}
-	if paging != "" {
-		clauses.WriteString("WITH *" + paging + " ")
+	if len(paging) > 0 {
+		clauses = append(append(append(clauses, generatedPiece("WITH *")), paging...), generatedPiece(" "))
 	}
-	if where := segmentText(3); where != "" {
+	if whereView := segmentView(3); whereView.text() != "" {
 		types := map[string]string{"name": "String"}
 		for _, item := range yield.items {
 			if types[item.name] != "" {
 				types[item.column()] = types[item.name]
 			}
 		}
-		clause := pipelineClause{kind: pipelineClauseWith, text: "WITH * WHERE " + where}
-		if err := e.validateStaticOperatorTypes(ctx, clause, staticTypeScope{values: types, cypher25: cypherVersionFromContext(ctx) == "25"}, nil, getParamsFromContext(ctx)); err != nil {
+		clauseView := whereView.wrap("WITH * WHERE ", "")
+		clause := pipelineClause{kind: pipelineClauseWith, text: clauseView.text(), view: clauseView}
+		if err := e.validateStaticOperatorTypes(withBraceView(ctx, clauseView), clause, staticTypeScope{values: types, cypher25: cypherVersionFromContext(ctx) == "25"}, nil, getParamsFromContext(ctx)); err != nil {
 			return nil, nornicerrors.MarkCompileTime(err)
 		}
-		clauses.WriteString("WITH * WHERE " + where + " ")
+		clauses = append(clauses, generatedPiece("WITH * WHERE "), whereView.piece(), generatedPiece(" "))
 	}
 	quoted := make([]string, len(outputs))
 	for i, column := range outputs {
@@ -668,24 +688,25 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	}
 	// The RETURN, or the clauses that continue the query, see only the
 	// yielded columns, as in Neo4j.
-	after := continuation
-	if after == "" && returnIndex >= 0 {
-		after = showReturnStarAsYielded(strings.TrimSpace(body[returnIndex:]), strings.Join(quoted, ", "))
+	after := continuationView
+	if continuation == "" && returnIndex >= 0 {
+		after = showReturnStarAsYielded(bodyView.window(returnIndex, len(body)).trim(), strings.Join(quoted, ", "))
 	}
-	if after != "" {
-		if err := e.validateSemanticScopes(ctx, showYieldedScopeStatement(outputs)+" "+after); err != nil {
+	if after.text() != "" {
+		scope := statement.assemble(generatedPiece(showYieldedScopeStatement(outputs)+" "), after.piece())
+		if err := e.validateSemanticScopes(withBraceView(ctx, scope), scope.text()); err != nil {
 			return nil, err
 		}
 	}
 	switch {
 	case continuation != "":
-		clauses.WriteString("WITH " + strings.Join(quoted, ", ") + " " + continuation)
+		clauses = append(clauses, generatedPiece("WITH "+strings.Join(quoted, ", ")+" "), continuationView.piece())
 	case returnIndex >= 0:
-		clauses.WriteString(showReturnStarAsYielded(strings.TrimSpace(body[returnIndex:]), strings.Join(quoted, ", ")))
+		clauses = append(clauses, after.piece())
 	default:
-		clauses.WriteString("RETURN " + strings.Join(quoted, ", "))
+		clauses = append(clauses, generatedPiece("RETURN "+strings.Join(quoted, ", ")))
 	}
-	return e.executeCallTail(ctx, projected, clauses.String())
+	return e.executeCallTail(ctx, projected, statement.assemble(clauses...))
 }
 
 // showYieldedScopeStatement binds a SHOW command's yielded columns, for
@@ -726,17 +747,17 @@ func showContinuationStart(body string) int {
 // order. The SHOW's rows also carry the columns it didn't yield, for its
 // WHERE and ORDER BY, but RETURN * means the yielded ones, in the order
 // they were yielded, as in Neo4j.
-func showReturnStarAsYielded(returnClause, yielded string) string {
-	rest := strings.TrimSpace(returnClause[len("RETURN"):])
+func showReturnStarAsYielded(returnClause braceView, yielded string) braceView {
+	rest := returnClause.window(len("RETURN"), len(returnClause.text())).trim()
 	prefix := "RETURN "
 	if body, distinct := cutDistinct(rest); distinct {
 		rest = body
 		prefix = "RETURN DISTINCT "
 	}
-	if !strings.HasPrefix(rest, "*") {
+	if !strings.HasPrefix(rest.text(), "*") {
 		return returnClause
 	}
-	return prefix + yielded + rest[1:]
+	return returnClause.assemble(generatedPiece(prefix+yielded), rest.window(1, len(rest.text())).piece())
 }
 
 func (e *StorageExecutor) executeShowConstraintContracts(ctx context.Context) (*ExecuteResult, error) {
@@ -1134,7 +1155,8 @@ const (
 func (e *StorageExecutor) executeDatabaseCreate(ctx context.Context, cypher string, mode databaseCreateMode) (result *ExecuteResult, retErr error) {
 	ctx = withStatementCredentials(ctx, cypher)
 	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
-	cypher = cyphertext.SourceFor(ctx, cypher).Text
+	view := statementBraceView(ctx, cypher)
+	cypher = view.text()
 	if mode == createNewDatabase {
 		e.logEvent(slog.LevelDebug, localization.CypherCreateDatabaseInvokedEvent(len(cypher)))
 	}
@@ -1146,7 +1168,7 @@ func (e *StorageExecutor) executeDatabaseCreate(ctx context.Context, cypher stri
 		header = "OR REPLACE DATABASE"
 		first, second = "OR", "REPLACE"
 	}
-	at := findMultiWordKeywordIndex(cypher, first, second)
+	at := findMultiWordKeywordIndex(view, first, second)
 	if at < 0 {
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
 	}
@@ -1171,8 +1193,9 @@ func (e *StorageExecutor) executeDatabaseCreate(ctx context.Context, cypher stri
 		if err != nil {
 			return nil, err
 		}
-		rawDBName = strings.TrimSpace(cypher[startPos:])
-		if clause := findMultiWordKeywordIndex(rawDBName, "IF", "NOT"); clause >= 0 {
+		rawDBNameView := view.window(startPos, len(cypher)).trim()
+		rawDBName = rawDBNameView.text()
+		if clause := findMultiWordKeywordIndex(rawDBNameView, "IF", "NOT"); clause >= 0 {
 			clauseEnd := keywordEndAt(rawDBName, clause, "IF NOT EXISTS")
 			if clauseEnd > clause {
 				if strings.TrimSpace(rawDBName[clauseEnd:]) != "" {
@@ -1234,13 +1257,14 @@ func (e *StorageExecutor) executeDatabaseCreate(ctx context.Context, cypher stri
 func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
 	ctx = withStatementCredentials(ctx, cypher)
 	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
-	cypher = cyphertext.SourceFor(ctx, cypher).Text
+	view := statementBraceView(ctx, cypher)
+	cypher = view.text()
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE ALIAS"), nil)
 	}
 
 	// Find "CREATE ALIAS" keyword position
-	createAliasIdx := findMultiWordKeywordIndex(cypher, "CREATE", "ALIAS")
+	createAliasIdx := findMultiWordKeywordIndex(view, "CREATE", "ALIAS")
 	if createAliasIdx == -1 {
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE ALIAS"), nil)
 	}
@@ -1263,7 +1287,7 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 	}
 
 	// Find "FOR DATABASE" to separate alias name from database name
-	forIdx := findMultiWordKeywordIndex(cypher[startPos:], "FOR", "DATABASE")
+	forIdx := findMultiWordKeywordIndex(view.window(startPos, len(cypher)), "FOR", "DATABASE")
 	if forIdx == -1 {
 		return nil, localizedError(localization.CypherAdminTermExpected("CREATE ALIAS", "FOR DATABASE"), nil)
 	}
@@ -1529,13 +1553,14 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
 	ctx = withStatementCredentials(ctx, cypher)
 	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
-	cypher = cyphertext.SourceFor(ctx, cypher).Text
+	view := statementBraceView(ctx, cypher)
+	cypher = view.text()
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("ALTER DATABASE"), nil)
 	}
 
 	// Find "ALTER DATABASE" keyword position
-	alterDbIdx := findMultiWordKeywordIndex(cypher, "ALTER", "DATABASE")
+	alterDbIdx := findMultiWordKeywordIndex(view, "ALTER", "DATABASE")
 	if alterDbIdx == -1 {
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("ALTER DATABASE"), nil)
 	}
@@ -1559,7 +1584,7 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 	}
 
 	// Find "SET LIMIT" keyword
-	setLimitIdx := findMultiWordKeywordIndex(cypher[startPos:], "SET", "LIMIT")
+	setLimitIdx := findMultiWordKeywordIndex(view.window(startPos, len(cypher)), "SET", "LIMIT")
 	if setLimitIdx == -1 {
 		return nil, localizedError(localization.CypherAdminClauseExpected("ALTER DATABASE", "SET LIMIT"), nil)
 	}
@@ -1754,13 +1779,14 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
 	ctx = withStatementCredentials(ctx, cypher)
 	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
-	cypher = cyphertext.SourceFor(ctx, cypher).Text
+	view := statementBraceView(ctx, cypher)
+	cypher = view.text()
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("SHOW LIMITS"), nil)
 	}
 
 	// Find "SHOW LIMITS" keyword position
-	showLimitsIdx := findMultiWordKeywordIndex(cypher, "SHOW", "LIMITS")
+	showLimitsIdx := findMultiWordKeywordIndex(view, "SHOW", "LIMITS")
 	if showLimitsIdx == -1 {
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("SHOW LIMITS"), nil)
 	}
@@ -1781,7 +1807,7 @@ func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) 
 	}
 
 	// Check for "FOR DATABASE" clause
-	forDbIdx := findMultiWordKeywordIndex(cypher[startPos:], "FOR", "DATABASE")
+	forDbIdx := findMultiWordKeywordIndex(view.window(startPos, len(cypher)), "FOR", "DATABASE")
 	if forDbIdx == -1 {
 		return nil, localizedError(localization.CypherAdminClauseExpected("SHOW LIMITS", "FOR DATABASE"), nil)
 	}

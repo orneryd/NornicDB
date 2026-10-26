@@ -8,7 +8,7 @@ import (
 
 type paginationExpression struct {
 	keyword string
-	value   string
+	value   braceView
 }
 
 // extractPaginationExpressions consumes the same semantic effect owner as
@@ -30,7 +30,7 @@ func extractPaginationExpressions(ctx context.Context, cypher string) []paginati
 // procedure call's YIELD share it.
 func (e *StorageExecutor) validateStaticPaginationExpressions(ctx context.Context, expressions ...paginationExpression) error {
 	for _, pagination := range expressions {
-		keyword, expression := pagination.keyword, pagination.value
+		keyword, expression := pagination.keyword, pagination.value.text()
 		if expression == "" {
 			return paginationCompileTypeError(keyword, nil)
 		}
@@ -46,7 +46,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(ctx context.Contex
 		if shape.forbidden {
 			return paginationCompileTypeError(keyword, expression)
 		}
-		if paginationExpressionUsesRowVariable(expression) {
+		if paginationExpressionUsesRowVariable(pagination.value) {
 			return newSemanticError(
 				"Neo.ClientError.Statement.SyntaxError",
 				"NonConstantExpression",
@@ -56,7 +56,7 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(ctx context.Contex
 		if strings.Contains(expression, "$") {
 			continue
 		}
-		value, evaluated, err := e.evaluateRowValue(expression, pipelineRow{})
+		value, evaluated, err := e.evaluateRowValue(pagination.value, pipelineRow{})
 		if err != nil {
 			return err
 		}
@@ -76,8 +76,8 @@ func (e *StorageExecutor) validateStaticPaginationExpressions(ctx context.Contex
 
 // validateRuntimePaginationClause checks only the projection operator opening
 // now. Nested subqueries and later clauses keep their own runtime boundary.
-func (e *StorageExecutor) validateRuntimePaginationClause(ctx context.Context, clause string) error {
-	if !strings.Contains(clause, "$") {
+func (e *StorageExecutor) validateRuntimePaginationClause(ctx context.Context, clause braceView) error {
+	if !strings.Contains(clause.text(), "$") {
 		return nil
 	}
 	for _, keyword := range []string{"SKIP", "LIMIT"} {
@@ -92,7 +92,7 @@ func (e *StorageExecutor) validateRuntimePaginationClause(ctx context.Context, c
 
 func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Context, expressions ...paginationExpression) error {
 	for _, pagination := range expressions {
-		if !strings.Contains(pagination.value, "$") {
+		if !strings.Contains(pagination.value.text(), "$") {
 			continue
 		}
 		params := getParamsFromContext(ctx)
@@ -124,7 +124,7 @@ func (e *StorageExecutor) validateRuntimePaginationExpressions(ctx context.Conte
 // keys, function names and variables the expression binds itself (list
 // comprehensions, reduce) are not variables; expressionFreeVariables is the
 // one scanner that knows them (#829).
-func paginationExpressionUsesRowVariable(expression string) bool {
+func paginationExpressionUsesRowVariable(expression braceView) bool {
 	return len(expressionFreeVariables(expression)) > 0
 }
 

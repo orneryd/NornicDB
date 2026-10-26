@@ -113,12 +113,12 @@ func TestRelationshipQuantifierAt(t *testing.T) {
 		"{3}": {min: 3, max: 3, end: 3}, "{ 1 , 4 }": {min: 1, max: 4, end: 9},
 		"{2,}": {min: 2, max: -1, end: 4}, "{,5}": {min: 0, max: 5, end: 4},
 	} {
-		got, ok := relationshipQuantifierAt(text, 0, len(text))
+		got, ok := relationshipQuantifierAt(originalBraceView(text), 0, len(text))
 		require.True(t, ok, text)
 		require.Equal(t, want, got, text)
 	}
 	for _, text := range []string{"", "(", "{", "{1", "{}", "{x}", "{-1}", "{1,x}", "{x,1}", "{w: 1}"} {
-		_, ok := relationshipQuantifierAt(text, 0, len(text))
+		_, ok := relationshipQuantifierAt(originalBraceView(text), 0, len(text))
 		require.False(t, ok, text)
 	}
 }

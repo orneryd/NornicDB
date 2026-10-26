@@ -179,7 +179,7 @@ func TestStreamedNodeMatchSourceFailures(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	template := exec.pipelineNodeMatchTemplateFor("MATCH (n:Item)")
+	template := exec.pipelineNodeMatchTemplateFor(originalBraceView("MATCH (n:Item)"))
 	source := exec.pipelineStreamedNodeMatchSource(withExpressionFailureSlot(ctx), pipelineRowsSource([]pipelineRow{{}}), template, pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, streamScan: true})
 	yielded := 0
 	require.False(t, source(func(pipelineRow) bool { yielded++; return true }))

@@ -22,35 +22,42 @@ import (
 
 // caseWhenClause represents a single WHEN ... THEN clause in a CASE expression.
 type caseWhenClause struct {
-	condition string // WHEN condition (for searched CASE)
-	value     string // WHEN value (for simple CASE)
-	result    string // THEN result
+	condition                 string // WHEN condition (for searched CASE)
+	value                     string // WHEN value (for simple CASE)
+	result                    string // THEN result
+	conditionSpan, resultSpan cyphertext.Span
 }
 
 // caseExpression represents a parsed CASE expression.
 type caseExpression struct {
-	isSimple       bool             // true for simple CASE, false for searched CASE
-	testExpression string           // expression to test (simple CASE only)
-	whenClauses    []caseWhenClause // list of WHEN clauses
-	elseResult     string           // ELSE result (optional)
+	isSimple           bool             // true for simple CASE, false for searched CASE
+	testExpression     string           // expression to test (simple CASE only)
+	whenClauses        []caseWhenClause // list of WHEN clauses
+	elseResult         string           // ELSE result (optional)
+	testSpan, elseSpan cyphertext.Span
 }
 
 // isCaseExpression checks if an expression is a CASE expression.
-func isCaseExpression(expr string) bool {
+func isCaseExpression(view braceView) bool {
+	expr := view.text()
+
 	trimmed := strings.TrimSpace(expr)
-	return hasPrefixFoldASCII(trimmed, "CASE") && hasSuffixFoldASCII(trimmed, "END") && leadingCaseExpressionEnd(trimmed) == len(trimmed)
+	return hasPrefixFoldASCII(trimmed, "CASE") && hasSuffixFoldASCII(trimmed, "END") && leadingCaseExpressionEnd(view.trim()) == len(trimmed)
 }
 
 // leadingCaseExpressionEnd returns the exclusive end of a leading CASE ... END
 // expression, including nested CASE expressions. A trailing operator or
 // postfix expression is deliberately excluded so callers can treat CASE as an
 // atomic operand without allowing operators inside WHEN predicates to escape.
-func leadingCaseExpressionEnd(expr string) int {
-	expr = strings.TrimSpace(expr)
+func leadingCaseExpressionEnd(view braceView) int {
+	expr := view.text()
+
+	view = view.trim()
+	expr = view.text()
 	// The first identifier token must be CASE itself; a CASE keyword nested
 	// inside a compound expression (acc + CASE … END) is not a leading CASE.
 	firstWord, firstOK := cyphertext.ScanIdentifier(expr, 0)
-	if !firstOK || !strings.EqualFold(firstWord.Value, "case") {
+	if !firstOK || cyphertext.KeywordEnd(expr, 0, "CASE", cyphertext.CypherWord) != firstWord.End {
 		return -1
 	}
 	depth := 1
@@ -65,9 +72,9 @@ func leadingCaseExpressionEnd(expr string) int {
 			continue
 		}
 		switch {
-		case strings.EqualFold(word.Value, "case") && caseKeywordAt(expr, index, "CASE"):
+		case caseKeywordAt(view, index, "CASE"):
 			depth++
-		case strings.EqualFold(word.Value, "end") && depth > 0 && caseKeywordAt(expr, index, "END"):
+		case depth > 0 && caseKeywordAt(view, index, "END"):
 			depth--
 			if depth == 0 {
 				return word.End
@@ -80,8 +87,11 @@ func leadingCaseExpressionEnd(expr string) int {
 
 // parseCaseExpression parses a CASE expression into its components.
 // Supports both searched and simple CASE expressions.
-func parseCaseExpression(expr string) (*caseExpression, error) {
-	expr = strings.TrimSpace(expr)
+func parseCaseExpression(view braceView) (*caseExpression, error) {
+	expr := view.text()
+
+	view = view.trim()
+	expr = view.text()
 	upper := upperASCII(expr)
 
 	// Remove CASE and END keywords
@@ -97,7 +107,7 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 	// case is the test; #1162); indices are content's.
 	contentStart := 4 + len(inner) - len(strings.TrimLeftFunc(inner, cyphertext.IsWhitespace))
 	findAtLevel := func(from int, keyword string) int {
-		index := findCaseKeywordAtLevel(expr, contentStart+from, keyword)
+		index := findCaseKeywordAtLevel(view, contentStart+from, keyword)
 		if index < 0 || index >= contentStart+len(content) {
 			return -1
 		}
@@ -121,6 +131,7 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 		// Simple CASE: CASE expression WHEN value THEN result ...
 		ce.isSimple = true
 		ce.testExpression = beforeFirstWhen
+		ce.testSpan = cyphertext.Span{Start: contentStart, End: contentStart + firstWhenIdx}
 	}
 
 	for cursor := firstWhenIdx; cursor < len(content); {
@@ -145,7 +156,9 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 		if condition == "" || result == "" {
 			return nil, localizedError(localization.CypherCoreCaseThenRequired(content[cursor:]), nil)
 		}
-		clause := caseWhenClause{result: result}
+		clause := caseWhenClause{result: result,
+			conditionSpan: cyphertext.Span{Start: contentStart + conditionStart, End: contentStart + thenIndex},
+			resultSpan:    cyphertext.Span{Start: contentStart + resultStart, End: contentStart + resultEnd}}
 		if ce.isSimple {
 			clause.value = condition
 		} else {
@@ -158,6 +171,7 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 		}
 		if next == nextElse {
 			ce.elseResult = strings.TrimSpace(content[nextElse+len("ELSE"):])
+			ce.elseSpan = cyphertext.Span{Start: contentStart + nextElse + len("ELSE"), End: contentStart + len(content)}
 			break
 		}
 		cursor = nextWhen
@@ -172,36 +186,38 @@ func parseCaseExpression(expr string) (*caseExpression, error) {
 
 // findCaseKeywordAtLevel finds a CASE grammar keyword while ignoring quoted
 // text, nested delimiters, and complete nested CASE ... END expressions.
-func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
-	parenDepth, bracketDepth, braceDepth, caseDepth := 0, 0, 0, 0
+func findCaseKeywordAtLevel(view braceView, start int, keyword string) int {
+	expression := view.text()
+
+	parenDepth, bracketDepth, braceDepth, caseDepth := 0, 0, cyphertext.BraceDepth(0), 0
 	for index := start; index < len(expression); {
 		if isCypherQuoteByte(expression[index]) {
 			index = skipCypherQuotedText(expression, index, expression[index])
 			continue
 		}
-		switch expression[index] {
-		case '(':
+		switch {
+		case expression[index] == '(':
 			parenDepth++
 			index++
 			continue
-		case ')':
+		case expression[index] == ')':
 			parenDepth--
 			index++
 			continue
-		case '[':
+		case expression[index] == '[':
 			bracketDepth++
 			index++
 			continue
-		case ']':
+		case expression[index] == ']':
 			bracketDepth--
 			index++
 			continue
-		case '{':
-			braceDepth++
+		case cyphertext.IsOpenBrace(expression[index]):
+			braceDepth.Open()
 			index++
 			continue
-		case '}':
-			braceDepth--
+		case cyphertext.IsCloseBrace(expression[index]):
+			braceDepth.Close(false)
 			index++
 			continue
 		}
@@ -211,12 +227,12 @@ func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 		}
 		end := index + 1
 		end = cyphertext.NamePartEnd(expression, end)
-		word := expression[index:end]
-		if caseKeywordAt(expression, index, "CASE") {
+
+		if caseKeywordAt(view, index, "CASE") {
 			caseDepth++
-		} else if caseDepth > 0 && caseKeywordAt(expression, index, "END") {
+		} else if caseDepth > 0 && caseKeywordAt(view, index, "END") {
 			caseDepth--
-		} else if caseDepth == 0 && strings.EqualFold(word, keyword) && caseKeywordAt(expression, index, keyword) {
+		} else if caseDepth == 0 && caseKeywordAt(view, index, keyword) {
 			return index
 		}
 		index = end
@@ -232,14 +248,16 @@ func findCaseKeywordAtLevel(expression string, start int, keyword string) int {
 // operand stands (ELSE end.id END, THEN then, WHEN case.id = 1; see
 // caseOperandExpectedBefore). Every scanner of the CASE grammar reads its
 // keywords through it.
-func caseKeywordAt(s string, i int, keyword string) bool {
-	return caseKeywordAtMode(s, i, keyword, true)
+func caseKeywordAt(view braceView, i int, keyword string) bool {
+	return caseKeywordAtMode(view, i, keyword, true)
 }
 
 // caseKeywordAtMode can use the non-balancing prefix reader when the closure
 // budget itself scans keywords, avoiding recursive balance scans.
-func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool {
-	if !matchKeywordAt(s, i, keyword) {
+func caseKeywordAtMode(view braceView, i int, keyword string, balancePrefix bool) bool {
+	s := view.text()
+
+	if !(cyphertext.KeywordEnd(s, i, keyword, cyphertext.CypherWord) == i+len(keyword)) {
 		return false
 	}
 	if i > 0 {
@@ -249,7 +267,7 @@ func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool
 		case ':':
 			// A label or type (n:End); a map value written without a space
 			// ({a:CASE … END}) is an expression like any other.
-			if !colonIsMapKeySeparator(s, i-1) {
+			if !colonIsMapKeySeparator(view, i-1) {
 				return false
 			}
 		}
@@ -258,7 +276,7 @@ func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool
 	case "END":
 		// END follows a complete operand; where one is expected the word is
 		// a variable (ELSE end.id END).
-		if caseOperandExpectedBeforeMode(s, i, balancePrefix) {
+		if caseOperandExpectedBeforeMode(view, i, balancePrefix) {
 			return false
 		}
 	case "THEN", "ELSE":
@@ -266,10 +284,10 @@ func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool
 		// as text of its own: at its start the word is a keyword unless it
 		// is a simple CASE's test (then WHEN 1 …).
 		if !caseHasPreviousToken(s, i) {
-			if caseWordRoleAt(s, i+len(keyword), caseTestContinuation, false) {
+			if caseWordRoleAt(view, i+len(keyword), caseTestContinuation, false) {
 				return false
 			}
-		} else if caseOperandExpectedBeforeMode(s, i, balancePrefix) {
+		} else if caseOperandExpectedBeforeMode(view, i, balancePrefix) {
 			return false
 		}
 	case "WHEN":
@@ -278,10 +296,10 @@ func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool
 		// variable only when what follows continues an operand (CASE when
 		// WHEN 1, CASE when.id WHEN 1).
 		if !caseHasPreviousToken(s, i) || casePreviousWordIn(s, i, "case") {
-			if caseWordRoleAt(s, i+len(keyword), caseTestContinuation, false) {
+			if caseWordRoleAt(view, i+len(keyword), caseTestContinuation, false) {
 				return false
 			}
-		} else if caseOperandExpectedBeforeMode(s, i, balancePrefix) {
+		} else if caseOperandExpectedBeforeMode(view, i, balancePrefix) {
 			return false
 		}
 	case "CASE":
@@ -291,8 +309,8 @@ func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool
 		// gives (WITH 1 AS case RETURN case), and right after CASE it is a
 		// simple CASE's test when a nested CASE would leave the outer one
 		// without its END (CASE case WHEN 1 THEN case END; #1162).
-		if caseWordRoleAt(s, i+len(keyword), caseNamedVariable, false) || casePreviousWordIn(s, i, "as") ||
-			(casePreviousWordIn(s, i, "case") && caseNestedLacksEnd(s, i, balancePrefix)) {
+		if caseWordRoleAt(view, i+len(keyword), caseNamedVariable, false) || casePreviousWordIn(s, i, "as") ||
+			(casePreviousWordIn(s, i, "case") && caseNestedLacksEnd(view, i, balancePrefix)) {
 			return false
 		}
 	}
@@ -308,11 +326,13 @@ func caseKeywordAtMode(s string, i int, keyword string, balancePrefix bool) bool
 // an operator, or after a keyword that takes an operand (WHEN, THEN, ELSE, AND,
 // IN, AS, …). END always follows a complete operand, so a word end there is a
 // variable, as Neo4j reads ELSE end.id END and ELSE end END.id.
-func caseOperandExpectedBefore(s string, i int) bool {
-	return caseOperandExpectedBeforeMode(s, i, true)
+func caseOperandExpectedBefore(view braceView, i int) bool {
+	return caseOperandExpectedBeforeMode(view, i, true)
 }
 
-func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
+func caseOperandExpectedBeforeMode(view braceView, i int, balancePrefix bool) bool {
+	s := view.text()
+
 	j := i - 1
 	for j >= 0 && cyphertext.IsWhitespaceAt(s, j) {
 		j--
@@ -338,7 +358,7 @@ func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
 		if s[j] == ':' && (j == 0 || s[j-1] != ':') {
 			return true // a map value follows its key's colon ({end: end})
 		}
-		return strings.IndexByte("([{,=<>+-*/%^|", s[j]) >= 0
+		return syntaxByteInSet("([{,=<>+-*/%^|", s[j])
 	}
 	start := j
 	for start > 0 && cyphertext.NamePartAt(s, start-1) {
@@ -351,13 +371,13 @@ func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
 	switch {
 	// A constant keyword preserves the contextual CASE decision without copying source.
 	case equalFoldASCII(word, "case"):
-		return caseKeywordAtMode(s, start, "CASE", balancePrefix)
+		return caseKeywordAtMode(view, start, "CASE", balancePrefix)
 	case equalFoldASCII(word, "when"):
-		return caseKeywordAtMode(s, start, "WHEN", balancePrefix)
+		return caseKeywordAtMode(view, start, "WHEN", balancePrefix)
 	case equalFoldASCII(word, "then"):
-		return caseKeywordAtMode(s, start, "THEN", balancePrefix)
+		return caseKeywordAtMode(view, start, "THEN", balancePrefix)
 	case equalFoldASCII(word, "else"):
-		return caseKeywordAtMode(s, start, "ELSE", balancePrefix)
+		return caseKeywordAtMode(view, start, "ELSE", balancePrefix)
 	case equalFoldASCII(word, "with"), equalFoldASCII(word, "where"), equalFoldASCII(word, "return"):
 		if equalFoldASCII(word, "with") && casePreviousWordIn(s, start, "starts", "ends") {
 			return true // STARTS WITH, ENDS WITH
@@ -366,18 +386,18 @@ func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
 		// an operand is expected, or as a CASE body's test (where WHEN 1 …),
 		// the word is a variable that completes one.
 		if !caseHasPreviousToken(s, start) {
-			return !caseWordRoleAt(s, j+1, caseTestContinuation, false)
+			return !caseWordRoleAt(view, j+1, caseTestContinuation, false)
 		}
-		return !caseOperandExpectedBeforeMode(s, start, balancePrefix)
+		return !caseOperandExpectedBeforeMode(view, start, balancePrefix)
 	case equalFoldASCII(word, "and"), equalFoldASCII(word, "or"), equalFoldASCII(word, "xor"), equalFoldASCII(word, "in"), equalFoldASCII(word, "contains"), equalFoldASCII(word, "as"):
 		// Infix keywords follow a complete operand. Where one is expected,
 		// or at the start of a CASE body read on its own (and WHEN 1 …), the
 		// word is a variable that completes one.
-		return caseHasPreviousToken(s, start) && !caseOperandExpectedBeforeMode(s, start, balancePrefix)
+		return caseHasPreviousToken(s, start) && !caseOperandExpectedBeforeMode(view, start, balancePrefix)
 	case equalFoldASCII(word, "not"), equalFoldASCII(word, "distinct"):
 		// Prefix keywords stand where an operand is expected, as a variable
 		// does: the word is the keyword unless what follows ends an operand.
-		return !caseWordRoleAt(s, j+1, casePrefixVariable, balancePrefix)
+		return !caseWordRoleAt(view, j+1, casePrefixVariable, balancePrefix)
 	}
 	return false
 }
@@ -389,10 +409,10 @@ func caseOperandExpectedBeforeMode(s string, i int, balancePrefix bool) bool {
 func caseTypeParameterCloses(s string, j int) bool {
 	depth := 0
 	for k := j; k >= 0; k-- {
-		switch s[k] {
-		case '>':
+		switch {
+		case s[k] == '>':
 			depth++
-		case '<':
+		case s[k] == '<':
 			depth--
 			if depth == 0 {
 				end := k
@@ -409,7 +429,7 @@ func caseTypeParameterCloses(s string, j int) bool {
 				}
 				return false
 			}
-		case '(', ')', '[', ']', '{', '}':
+		case s[k] == '(', s[k] == ')', s[k] == '[', s[k] == ']', cyphertext.IsOpenBrace(s[k]), cyphertext.IsCloseBrace(s[k]):
 			if depth == 1 {
 				return false // not inside one type's brackets
 			}
@@ -448,29 +468,31 @@ func caseHasPreviousToken(s string, i int) bool {
 // reading it as a nested CASE leaves the outer CASE without an END before
 // the enclosing bracket or the text ends: CASE case WHEN 1 THEN case END has
 // one END, a nested CASE CASE WHEN … END WHEN … END two.
-func caseNestedLacksEnd(s string, i int, balancePrefix bool) bool {
+func caseNestedLacksEnd(view braceView, i int, balancePrefix bool) bool {
+	s := view.text()
+
 	open, depth := 2, 0
 	for j := i + len("CASE"); j < len(s); j++ {
-		switch c := s[j]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
+		switch c := s[j]; {
+		case (cypherLexicalByte(c)) == cypherQuoteClass:
 			j = skipCypherQuotedText(s, j, c) - 1
 			continue
-		case '(', '[', '{':
-			depth++
+		case (cypherLexicalByte(c)) == '(', (cypherLexicalByte(c)) == '[', cyphertext.IsOpenBrace(cypherLexicalByte(c)):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(c), false)
 			continue
-		case ')', ']', '}':
+		case (cypherLexicalByte(c)) == ')', (cypherLexicalByte(c)) == ']', cyphertext.IsCloseBrace(cypherLexicalByte(c)):
 			if depth == 0 {
 				return open > 0
 			}
-			depth--
+			depth = cyphertext.AdvanceDelimiterDepth(depth, cypherLexicalByte(c), false)
 			continue
 		}
 		if depth != 0 || !cyphertext.NameStartAt(s, j) || cyphertext.NamePartAt(s, j-1) {
 			continue
 		}
-		if caseKeywordAtMode(s, j, "CASE", balancePrefix) {
+		if caseKeywordAtMode(view, j, "CASE", balancePrefix) {
 			open++
-		} else if caseKeywordAtMode(s, j, "END", balancePrefix) {
+		} else if caseKeywordAtMode(view, j, "END", balancePrefix) {
 			if open--; open == 0 {
 				return false
 			}
@@ -519,7 +541,8 @@ const (
 
 // caseWordRoleAt owns the shared following-word boundary and contextual role
 // decision. balancePrefix applies only to a NOT/DISTINCT variable's closing END.
-func caseWordRoleAt(s string, i int, role caseWordRole, balancePrefix bool) bool {
+func caseWordRoleAt(view braceView, i int, role caseWordRole, balancePrefix bool) bool {
+	s := view.text()
 	start := i
 	for i < len(s) && cyphertext.IsWhitespaceAt(s, i) {
 		i++
@@ -531,14 +554,14 @@ func caseWordRoleAt(s string, i int, role caseWordRole, balancePrefix bool) bool
 			return false
 		}
 		if i < len(s) && cyphertext.NameStartAt(s, i) {
-			return !caseWordRoleAt(s, i+len(word), caseTestContinuation, false)
+			return !caseWordRoleAt(view, i+len(word), caseTestContinuation, false)
 		}
 		return true
 	case casePrefixVariable:
 		if i >= len(s) || !cyphertext.NameStartAt(s, i) {
 			return i >= len(s)
 		}
-		if equalFoldASCII(word, "end") && (strings.TrimSpace(s[i+len(word):]) == "" || balancePrefix && casePrefixEndRequired(s, i)) {
+		if equalFoldASCII(word, "end") && (strings.TrimSpace(s[i+len(word):]) == "" || balancePrefix && casePrefixEndRequired(view, i)) {
 			return true
 		}
 		if matchKeywordAt(s, queryGapEnd(s, i+len(word)), "WHEN") {
@@ -588,7 +611,9 @@ type caseBlockSpan struct {
 // evaluated with the scope, not for the row. It returns nil (no allocation)
 // when there are no such blocks. A keyword preceded by a dot is a property
 // access, not a CASE keyword.
-func caseBlockSpans(expr string) []caseBlockSpan {
+func caseBlockSpans(view braceView) []caseBlockSpan {
+	expr := view.text()
+
 	var spans []caseBlockSpan
 	stack := make([]int, 0, 2)
 	var delimiters []bool // open ( [ {: true when it opens a scope
@@ -599,15 +624,15 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 			continue
 		}
 		ch := expr[i]
-		switch ch {
-		case '(', '[', '{':
-			scope := caseVariableScopeOpensAt(expr, i)
+		switch {
+		case ch == '(', ch == '[', cyphertext.IsOpenBrace(ch):
+			scope := caseVariableScopeOpensAt(view, i)
 			delimiters = append(delimiters, scope)
 			if scope {
 				scopes++
 			}
 			continue
-		case ')', ']', '}':
+		case ch == ')', ch == ']', cyphertext.IsCloseBrace(ch):
 			if n := len(delimiters); n > 0 {
 				if delimiters[n-1] {
 					scopes--
@@ -620,11 +645,11 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 			continue
 		}
 		{
-			if (ch == 'C' || ch == 'c') && caseKeywordAt(expr, i, "CASE") {
+			if (ch == 'C' || ch == 'c') && caseKeywordAt(view, i, "CASE") {
 				stack = append(stack, i)
 				continue
 			}
-			if (ch == 'E' || ch == 'e') && caseKeywordAt(expr, i, "END") && len(stack) > 0 {
+			if (ch == 'E' || ch == 'e') && caseKeywordAt(view, i, "END") && len(stack) > 0 {
 				start := stack[len(stack)-1]
 				stack = stack[:len(stack)-1]
 				if len(stack) == 0 {
@@ -641,8 +666,10 @@ func caseBlockSpans(expr string) []caseBlockSpan {
 // [x IN …], [p = (a)-->(b) | …], reduce / allReduce / all / any / none /
 // single / filter), an unnamed pattern comprehension [(a)-->(b) | …], or
 // the { … } of an EXISTS, COUNT, COLLECT or CALL subquery.
-func caseVariableScopeOpensAt(expr string, open int) bool {
-	if expr[open] != '{' {
+func caseVariableScopeOpensAt(view braceView, open int) bool {
+	expr := view.text()
+
+	if !cyphertext.IsOpenBrace(expr[open]) {
 		if _, ok := localBindingAt(expr, open); ok {
 			return true
 		}
@@ -654,33 +681,22 @@ func caseVariableScopeOpensAt(expr string, open int) bool {
 	case '(':
 		return false
 	default: // {
-		end := open
-		for end > 0 && cyphertext.IsWhitespaceAt(expr, end-1) {
-			end--
-		}
-		start := end
-		for start > 0 && cyphertext.NamePartAt(expr, start-1) {
-			start--
-		}
-		if start == end || start > 0 && expr[start-1] == '.' {
-			return false
-		}
-		name := lowerASCII(expr[start:end])
-		return name == "exists" || name == "count" || name == "collect" || name == "call"
+		return view.isBody(open)
 	}
 }
 
 // evaluateCaseExpression evaluates a CASE expression and returns the result.
-func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
-	parsed, err := parseCaseExpression(expr)
+func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, view braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult, allPathEdges []*storage.Edge, allPathNodes []*storage.Node, pathLength int) interface{} {
+	parsed, err := parseCaseExpression(view)
 	if err != nil {
 		return nil
 	}
-	value, _, err := runCaseExpression(parsed, cypherVersionFromContext(ctx) == "25", func(part caseValuePart, _ int, text string) (interface{}, bool, error) {
+	value, _, err := runCaseExpression(parsed, cypherVersionFromContext(ctx) == "25", func(part caseValuePart, index int, text string) (interface{}, bool, error) {
+		partView := view.spanWindow(parsed.partSpan(part, index))
 		if part == caseWhen && !parsed.isSimple {
-			return e.conditionValue(ctx, text, nodes, rels), true, nil
+			return e.conditionValue(ctx, partView, nodes, rels), true, nil
 		}
-		return e.evaluateExpressionWithContextFull(ctx, text, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), true, nil
+		return e.evaluateExpressionWithContextFull(ctx, partView, nodes, rels, paths, allPathEdges, allPathNodes, pathLength), true, nil
 	})
 	if err != nil {
 		recordExpressionFailure(ctx, err)
@@ -691,8 +707,8 @@ func (e *StorageExecutor) evaluateCaseExpression(ctx context.Context, expr strin
 // evaluateCondition reports whether a CASE WHEN (or WITH … WHERE) condition
 // holds: its value read as a predicate (cypherPredicateTruth), so a
 // non-predicate value is a TypeError, recorded on ctx (#907).
-func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
-	truth, err := cypherPredicateTruth(e.conditionValue(ctx, condition, nodes, rels))
+func (e *StorageExecutor) evaluateCondition(ctx context.Context, view braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge) bool {
+	truth, err := cypherPredicateTruth(e.conditionValue(ctx, view, nodes, rels))
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false
@@ -703,11 +719,13 @@ func (e *StorageExecutor) evaluateCondition(ctx context.Context, condition strin
 // conditionValue is the value of a condition (evaluateCondition): OR, XOR,
 // AND and NOT as everywhere (evaluateLogicalExpression), then the
 // predicates conditions read directly, then any other expression.
-func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
-	condition = strings.TrimSpace(condition)
+func (e *StorageExecutor) conditionValue(ctx context.Context, view braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
+	view = view.trim()
+	condition := view.text()
+	ctx = withBraceView(ctx, view)
 	upper := upperASCII(condition)
 
-	if value, logical, _, err := evaluateLogicalExpression(condition, func(operand string) (interface{}, bool, error) {
+	if value, logical, _, err := evaluateLogicalExpression(view, func(operand braceView) (interface{}, bool, error) {
 		return deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
 			return e.conditionValue(ctx, operand, nodes, rels)
 		})
@@ -719,16 +737,16 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 		return value
 	}
 
-	resolveComparisonOperand := func(operand string) interface{} {
+	resolveComparisonOperand := func(operand braceView) interface{} {
 		return e.evaluateExpressionWithContext(ctx, operand, nodes, rels)
 	}
 	// IN and NOT IN are unknown for a null in the list (x IN [1, null]).
 	if indexASCIIFold(condition, " in ") >= 0 {
-		if truth, ok := inPredicateTruth(condition, resolveComparisonOperand); ok {
+		if truth, ok := inPredicateTruth(view, resolveComparisonOperand); ok {
 			return truth.value()
 		}
 	}
-	if result, matched, _, err := evaluateComparisonChain(condition, func(operand string) (interface{}, bool, error) {
+	if result, matched, _, err := evaluateComparisonChain(view, func(operand braceView) (interface{}, bool, error) {
 		return deferredExpressionValue(ctx, func(ctx context.Context) interface{} {
 			return e.evaluateExpressionWithContext(ctx, operand, nodes, rels)
 		})
@@ -742,12 +760,12 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 
 	// Handle IS NULL / IS NOT NULL
 	if strings.HasSuffix(upper, " IS NULL") {
-		expr := strings.TrimSpace(condition[:len(condition)-8])
+		expr := view.window(0, len(condition)-8)
 		val := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
 		return nullEvaluationHandler(false).evaluate(val)
 	}
 	if strings.HasSuffix(upper, " IS NOT NULL") {
-		expr := strings.TrimSpace(condition[:len(condition)-12])
+		expr := view.window(0, len(condition)-12)
 		val := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
 		return nullEvaluationHandler(true).evaluate(val)
 	}
@@ -758,8 +776,8 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 	}{
 		{" STARTS WITH ", strings.HasPrefix}, {" ENDS WITH ", strings.HasSuffix}, {" CONTAINS ", strings.Contains},
 	} {
-		if left, right, ok := splitByOperatorOutsideCase(condition, p.operator, true, true); ok {
-			return rowStringPredicateValue(e.evaluateExpressionWithContext(ctx, left, nodes, rels), e.evaluateExpressionWithContext(ctx, right, nodes, rels), p.match)
+		if left, right, ok := splitByOperatorOutsideCase(view, p.operator, true, true); ok {
+			return rowStringPredicateValue(e.evaluateExpressionWithContext(ctx, view.window(0, len(left)), nodes, rels), e.evaluateExpressionWithContext(ctx, view.window(len(condition)-len(right), len(condition)), nodes, rels), p.match)
 		}
 	}
 
@@ -773,13 +791,15 @@ func (e *StorageExecutor) conditionValue(ctx context.Context, condition string, 
 		}
 	}
 
-	return e.evaluateExpressionWithContext(ctx, condition, nodes, rels)
+	return e.evaluateExpressionWithContext(ctx, view, nodes, rels)
 }
 
 // findTopLevelKeyword finds a keyword at the top level (not inside parentheses or strings)
 // Returns the byte index in the original string, or -1 if not found.
 // Properly handles UTF-8 encoded strings with multi-byte characters.
-func findTopLevelKeyword(s, keyword string) int {
+func findTopLevelKeyword(view braceView, keyword string) int {
+	s := view.text()
+
 	if len(keyword) == 0 || len(s) < len(keyword) {
 		return -1
 	}
@@ -790,25 +810,25 @@ func findTopLevelKeyword(s, keyword string) int {
 			continue
 		}
 		ch := s[i]
-		switch ch {
-		case '(', '[', '{':
-			depth++
+		switch {
+		case ch == '(', ch == '[', cyphertext.IsOpenBrace(ch):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, ch, false)
 			continue
-		case ')', ']', '}':
+		case ch == ')', ch == ']', cyphertext.IsCloseBrace(ch):
 			if depth > 0 {
-				depth--
+				depth = cyphertext.AdvanceDelimiterDepth(depth, ch, false)
 			}
 			continue
-		case 'C', 'c':
+		case ch == 'C', ch == 'c':
 			// CASE … END nests like parentheses: the AND / OR / comparison
 			// of a WHEN condition is not a top-level operator (#699).
-			if caseKeywordAt(s, i, "CASE") {
+			if caseKeywordAt(view, i, "CASE") {
 				depth++
 				i += len("CASE") - 1
 				continue
 			}
-		case 'E', 'e':
-			if depth > 0 && caseKeywordAt(s, i, "END") {
+		case ch == 'E', ch == 'e':
+			if depth > 0 && caseKeywordAt(view, i, "END") {
 				depth--
 				i += len("END") - 1
 				continue

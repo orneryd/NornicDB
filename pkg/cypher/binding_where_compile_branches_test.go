@@ -17,52 +17,52 @@ func TestBindingWhereCompileAndEvaluate_Branches(t *testing.T) {
 	bind := binding{"a": a, "b": b}
 	params := map[string]interface{}{"pname": "Ali", "ages": []interface{}{int64(30), int64(50)}, "nid": "20"}
 
-	pred := exec.getCompiledBindingWhere(ctx, "a.name STARTS WITH $pname")
+	pred := exec.getCompiledBindingWhere(ctx, expressionBraceView("a.name STARTS WITH $pname"))
 	require.True(t, pred(bind, params))
 
-	pred = exec.getCompiledBindingWhere(ctx, "a.name ENDS WITH 'ce'")
+	pred = exec.getCompiledBindingWhere(ctx, expressionBraceView("a.name ENDS WITH 'ce'"))
 	require.True(t, pred(bind, params))
 
-	pred = exec.getCompiledBindingWhere(ctx, "a.name CONTAINS 'li'")
+	pred = exec.getCompiledBindingWhere(ctx, expressionBraceView("a.name CONTAINS 'li'"))
 	require.True(t, pred(bind, params))
 
-	pred = exec.getCompiledBindingWhere(ctx, "a.tag IS NULL")
+	pred = exec.getCompiledBindingWhere(ctx, expressionBraceView("a.tag IS NULL"))
 	require.True(t, pred(bind, params))
-	pred = exec.getCompiledBindingWhere(ctx, "a.tag IS NOT NULL")
+	pred = exec.getCompiledBindingWhere(ctx, expressionBraceView("a.tag IS NOT NULL"))
 	require.False(t, pred(bind, params))
 
-	pred = exec.getCompiledBindingWhere(ctx, "a.age IN [30, 31]")
+	pred = exec.getCompiledBindingWhere(ctx, expressionBraceView("a.age IN [30, 31]"))
 	require.True(t, pred(bind, params))
-	pred = exec.getCompiledBindingWhere(ctx, "a.age NOT IN [30, 31]")
+	pred = exec.getCompiledBindingWhere(ctx, expressionBraceView("a.age NOT IN [30, 31]"))
 	require.False(t, pred(bind, params))
-	pred = exec.getCompiledBindingWhere(ctx, "a.age IN $ages")
+	pred = exec.getCompiledBindingWhere(ctx, expressionBraceView("a.age IN $ages"))
 	require.True(t, pred(bind, params))
 
-	pred = exec.getCompiledBindingWhere(ctx, "a.age >= 30 AND a.age < 31")
+	pred = exec.getCompiledBindingWhere(ctx, expressionBraceView("a.age >= 30 AND a.age < 31"))
 	require.True(t, pred(bind, params))
-	pred = exec.getCompiledBindingWhere(ctx, "NOT (a.age < 30)")
+	pred = exec.getCompiledBindingWhere(ctx, expressionBraceView("NOT (a.age < 30)"))
 	require.True(t, pred(bind, params))
-	pred = exec.getCompiledBindingWhere(ctx, "a = b OR a.age = 30")
+	pred = exec.getCompiledBindingWhere(ctx, expressionBraceView("a = b OR a.age = 30"))
 	require.True(t, pred(bind, params))
-	pred = exec.getCompiledBindingWhere(ctx, "a <> b")
+	pred = exec.getCompiledBindingWhere(ctx, expressionBraceView("a <> b"))
 	require.True(t, pred(bind, params))
 
-	pred = exec.getCompiledBindingWhere(ctx, "id(a) = $nid")
+	pred = exec.getCompiledBindingWhere(ctx, expressionBraceView("id(a) = $nid"))
 	require.False(t, pred(bind, params))
 
 	// generic fallback path
-	require.True(t, exec.evaluateBindingWhereGeneric(ctx, bind, "a.age = 30", params))
-	require.True(t, exec.evaluateBindingWhereGeneric(ctx, bind, "a.name CONTAINS 'li'", params))
-	require.False(t, exec.evaluateBindingWhereGeneric(ctx, bind, "a.age > 31", params))
+	require.True(t, exec.evaluateBindingWhereGeneric(ctx, bind, expressionBraceView("a.age = 30"), params))
+	require.True(t, exec.evaluateBindingWhereGeneric(ctx, bind, expressionBraceView("a.name CONTAINS 'li'"), params))
+	require.False(t, exec.evaluateBindingWhereGeneric(ctx, bind, expressionBraceView("a.age > 31"), params))
 
-	v, ok := exec.resolveBindingFallbackValueWithOk(ctx, "$pname", bind, params)
+	v, ok := exec.resolveBindingFallbackValueWithOk(ctx, expressionBraceView("$pname"), bind, params)
 	require.True(t, ok)
 	require.Equal(t, "Ali", v)
-	_, ok = exec.resolveBindingFallbackValueWithOk(ctx, "$missing", bind, params)
+	_, ok = exec.resolveBindingFallbackValueWithOk(ctx, expressionBraceView("$missing"), bind, params)
 	require.False(t, ok)
 
-	require.True(t, exec.evaluateBindingExpressionAsBoolean(ctx, bind, "1 = 1", nil))
-	require.False(t, exec.evaluateBindingExpressionAsBoolean(ctx, bind, "42", nil))
+	require.True(t, exec.evaluateBindingExpressionAsBoolean(ctx, bind, expressionBraceView("1 = 1"), nil))
+	require.False(t, exec.evaluateBindingExpressionAsBoolean(ctx, bind, expressionBraceView("42"), nil))
 
 	require.True(t, exec.compareNodeIDs("10", "2", ">"))
 	require.True(t, exec.compareNodeIDs("b", "a", ">"))
@@ -107,9 +107,9 @@ func TestBindingWhereResolverAndLiteralListHelpers(t *testing.T) {
 	}, []interface{}{"x", []interface{}{1}})
 	require.True(t, pred.predicate()(bind, nil))
 
-	require.True(t, normalizeBindingWhereClause("a\nAND\tb") == "a AND b")
-	p1 := exec.getCompiledBindingWhere(ctx, "a.age = 1")
-	p2 := exec.getCompiledBindingWhere(ctx, "a.age = 1")
+	require.True(t, normalizeBindingWhereClause(expressionBraceView("a\nAND\tb")).text() == "a AND b")
+	p1 := exec.getCompiledBindingWhere(ctx, expressionBraceView("a.age = 1"))
+	p2 := exec.getCompiledBindingWhere(ctx, expressionBraceView("a.age = 1"))
 	require.NotNil(t, p1)
 	require.NotNil(t, p2)
 }

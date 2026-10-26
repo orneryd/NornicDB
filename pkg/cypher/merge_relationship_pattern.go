@@ -29,8 +29,8 @@ type mergeRelationshipPattern struct {
 	// endContent and relProps are the end node's and the relationship's
 	// text: a map that reads the pattern's own variables is read again once
 	// they are bound (executeMergeWithContext).
-	endContent string
-	relProps   string
+	endContent braceView
+	relProps   braceView
 }
 
 // mergeRelationshipShape is a relationship MERGE pattern's text split into
@@ -38,42 +38,45 @@ type mergeRelationshipPattern struct {
 type mergeRelationshipShape struct {
 	pathVariable string
 	direction    mergeRelationshipDirection
-	startContent string
-	endContent   string
+	startContent braceView
+	endContent   braceView
 	relVariable  string
 	relType      string
-	relProps     string
+	relProps     braceView
 }
 
 // parseMergeRelationshipShape converts every supported relationship
 // direction into one shape. It deliberately reuses the CREATE relationship
 // parser so delimiter, quoted-string, and nested-list handling cannot
 // diverge.
-func (e *StorageExecutor) parseMergeRelationshipShape(pattern string) (*mergeRelationshipShape, error) {
+func (e *StorageExecutor) parseMergeRelationshipShape(view braceView) (*mergeRelationshipShape, error) {
 	shape := &mergeRelationshipShape{}
-	pattern = strings.TrimSpace(pattern)
+	view = view.trim()
+	pattern := view.text()
 	if shape.pathVariable = extractPathAssignmentVariable(pattern); shape.pathVariable != "" {
-		pattern = strings.TrimSpace(pattern[strings.Index(pattern, "=")+1:])
+		view = view.window(strings.Index(pattern, "=")+1, len(pattern)).trim()
+		pattern = view.text()
 	}
 
-	openBracket, closeBracket := readRelationshipBracket(pattern, 0, requireClosedRelationship)
+	openBracket, closeBracket := readRelationshipBracket(view, 0, requireClosedRelationship)
 	if openBracket < 0 || closeBracket < 0 {
 		return nil, localizedError(localization.CypherMutationsRelationshipPatternUnmatchedBracket(), nil)
 	}
 
-	normalized := pattern
+	normalized := view
 	afterRelationship := strings.TrimSpace(pattern[closeBracket+1:])
 	incoming := strings.HasSuffix(strings.TrimSpace(pattern[:openBracket]), "<-")
 	if !incoming && strings.HasPrefix(afterRelationship, "-(") {
 		shape.direction = mergeRelationshipUndirected
-		normalized = pattern[:closeBracket+1] + "->" + strings.TrimSpace(afterRelationship[1:])
+		target := view.window(len(pattern)-len(afterRelationship)+1, len(pattern)).trim()
+		normalized = view.assembleCode([]braceView{view.window(0, closeBracket+1).wrap("", "->"), target}, "")
 	}
 
 	startContent, relationshipContent, endContent, reverse, remainder, err := e.parseCreateRelPatternWithVars(normalized)
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(remainder) != "" {
+	if !remainder.empty() {
 		return nil, localizedError(localization.CypherMutationsRelationshipPropertiesInvalid(), nil)
 	}
 	if shape.direction != mergeRelationshipUndirected {
@@ -94,7 +97,7 @@ func (e *StorageExecutor) parseMergeRelationshipShape(pattern string) (*mergeRel
 // parseMergeRelationshipPattern parses a relationship MERGE pattern's text
 // with its property maps read against the bound nodes and relationships
 // (parseMergeProperties).
-func (e *StorageExecutor) parseMergeRelationshipPattern(ctx context.Context, pattern string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*mergeRelationshipPattern, error) {
+func (e *StorageExecutor) parseMergeRelationshipPattern(ctx context.Context, pattern braceView, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (*mergeRelationshipPattern, error) {
 	shape, err := e.parseMergeRelationshipShape(pattern)
 	if err != nil {
 		return nil, err
@@ -121,8 +124,8 @@ func (e *StorageExecutor) parseMergeRelationshipPattern(ctx context.Context, pat
 
 // parseMergeEndpointPattern parses an endpoint of a relationship MERGE
 // ("a:L {k: v}") with its properties read by parseMergeProperties.
-func (e *StorageExecutor) parseMergeEndpointPattern(ctx context.Context, content string, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (nodePatternInfo, error) {
-	head, props := splitNodePatternProperties("(" + content + ")")
+func (e *StorageExecutor) parseMergeEndpointPattern(ctx context.Context, content braceView, nodeContext map[string]*storage.Node, relContext map[string]*storage.Edge) (nodePatternInfo, error) {
+	head, props := splitNodePatternProperties(content.wrap("(", ")"))
 	info := nodePatternInfo{}
 	info.variable, info.labels, info.labelErr = parseNodeHead(head)
 	var err error

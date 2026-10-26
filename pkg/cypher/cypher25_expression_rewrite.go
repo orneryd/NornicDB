@@ -1,9 +1,9 @@
 package cypher
 
 import (
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -28,8 +28,8 @@ import (
 // client's text.
 
 func init() {
-	cypherfn.Register(interpolateFunction, fnInterpolate)
-	cypherfn.Register(mapFromPairsFunction, fnMapFromPairs)
+	cypherfn.RegisterInvocation(interpolateFunction, fnInterpolate)
+	cypherfn.RegisterInvocation(mapFromPairsFunction, fnMapFromPairs)
 }
 
 // interpolateFunction converts an interpolated value to its text.
@@ -43,11 +43,13 @@ const mapFromPairsFunction = "__nornic_map_from_pairs"
 // the result with each pass's rewrite, in order (restore them in reverse).
 // cypher25 is the statement's version, which decides where RETURN ALL
 // begins (projectionAllEdits).
-func desugarCypher25Expressions(query string, cypher25 bool) (string, []*queryRewrite, error) {
+
+func desugarCypher25ExpressionView(view braceView, cypher25 bool) (string, []*queryRewrite, error) {
+	query := view.text()
 	var rewrites []*queryRewrite
-	projectionAll := func(query string) ([]labelRewriteEdit, error) { return projectionAllEdits(query, cypher25) }
-	for _, pass := range []func(string) ([]labelRewriteEdit, error){interpolationEdits, mapComprehensionEdits, projectionAll, groupByEdits} {
-		edits, err := pass(query)
+	projectionAll := func(view braceView) ([]labelRewriteEdit, error) { return projectionAllEdits(view, cypher25) }
+	for _, pass := range []func(braceView) ([]labelRewriteEdit, error){interpolationViewEdits, mapComprehensionViewEdits, projectionAll, groupByEdits} {
+		edits, err := pass(view)
 		if err != nil {
 			return query, nil, err
 		}
@@ -57,6 +59,8 @@ func desugarCypher25Expressions(query string, cypher25 bool) (string, []*queryRe
 		var rewrite *queryRewrite
 		query, rewrite = applyLabelRewriteEdits(query, edits, true)
 		rewrites = append(rewrites, rewrite)
+		source := sourceRewriteView(view.source, rewrite)
+		view.source = source
 	}
 	return query, rewrites, nil
 }
@@ -68,7 +72,8 @@ func desugarCypher25Expressions(query string, cypher25 bool) (string, []*queryRe
 // expression (RETURN all + 1 is RETURN ALL +1, all[0] is ALL [0]), as in
 // Neo4j 2026.09; a Cypher 5 statement reads them as the variable all
 // (Neo4j 5.26).
-func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error) {
+func projectionAllEdits(view braceView, cypher25 bool) ([]labelRewriteEdit, error) {
+	query := view.text()
 	if indexASCIIFold(query, "all") < 0 {
 		return nil, nil
 	}
@@ -96,7 +101,7 @@ func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error)
 		// In Cypher 5, a complete binding clause ends WITH's all projection.
 		// Cypher 25 retains its ALL modifier before keyword-shaped subscripts.
 		if !cypher25 && equalFoldASCII(word, "WITH") {
-			if _, clause := splitUnwindBody(query[next:]); clause {
+			if _, clause := splitUnwindBody(view.window(next, len(query))); clause {
 				return
 			}
 		}
@@ -106,7 +111,7 @@ func projectionAllEdits(query string, cypher25 bool) ([]labelRewriteEdit, error)
 		}
 		if query[next] == '(' {
 			if close := findMatchingParen(query, next); close > 0 {
-				if _, _, _, _, comprehension := parseListComprehension(query[next+1 : close]); comprehension {
+				if _, _, _, _, comprehension := parseListComprehension(view.window(next+1, close)); comprehension {
 					return // all(x IN list WHERE …), the list predicate
 				}
 			}
@@ -194,7 +199,9 @@ func forEachQueryWord(query string, visit func(start, end int)) {
 
 // interpolationEdits rewrites each s"…" / s'…' string as the concatenation
 // of its parts.
-func interpolationEdits(query string) ([]labelRewriteEdit, error) {
+
+func interpolationViewEdits(view braceView) ([]labelRewriteEdit, error) {
+	query := view.text()
 	var edits []labelRewriteEdit
 	for i := 0; i < len(query); i++ {
 		c := query[i]
@@ -203,11 +210,11 @@ func interpolationEdits(query string) ([]labelRewriteEdit, error) {
 			i = skipCypherQuotedText(query, i, c) - 1
 		case isCypherStringQuoteByte(c):
 			if i > 0 && query[i-1]|0x20 == 's' && (i == 1 || !cyphertext.NamePartAt(query, i-2) && query[i-2] != '.' && query[i-2] != '$') {
-				text, end, err := interpolatedStringText(query, i)
+				value, end, err := interpolatedStringRewrite(view, i)
 				if err != nil {
 					return nil, err
 				}
-				edits = append(edits, labelRewriteEdit{start: i - 1, end: end, text: text})
+				edits = append(edits, labelRewriteEdit{start: i - 1, end: end, text: value.text, copies: value.copies, constructed: value.constructed, entries: value.entries})
 				i = end - 1
 				continue
 			}
@@ -223,23 +230,19 @@ func interpolationEdits(query string) ([]labelRewriteEdit, error) {
 
 // interpolatedStringText reads the interpolated string whose quote is at
 // query[open]: the expression it stands for and the index after it.
-func interpolatedStringText(query string, open int) (string, int, error) {
+
+func interpolatedStringRewrite(view braceView, open int) (rewritePredicate, int, error) {
+	query := view.text()
 	delimiter := query[open]
-	end, closed := cyphertext.ScanInterpolatedText(query, open, func(at int) int { return interpolationEnd(query, at) })
-	var out, literal strings.Builder
-	parts := 0
+	end, closed := view.stringEnd(open)
+	var literal strings.Builder
+	var parts []rewritePredicate
 	flush := func() {
-		if parts > 0 {
-			out.WriteString(" + ")
-		}
-		out.WriteByte(delimiter)
-		out.WriteString(literal.String())
-		out.WriteByte(delimiter)
+		parts = append(parts, generatedPredicate(string(delimiter)+literal.String()+string(delimiter)))
 		literal.Reset()
-		parts++
 	}
-	syntaxError := func(message localization.Message) (string, int, error) {
-		return "", 0, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", message)
+	syntaxError := func(message localization.Message) (rewritePredicate, int, error) {
+		return rewritePredicate{}, 0, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", message)
 	}
 	if !closed {
 		return syntaxError(localization.CypherCoreInvalidInput(string(delimiter)))
@@ -248,68 +251,54 @@ func interpolatedStringText(query string, open int) (string, int, error) {
 		c := query[i]
 		switch {
 		case c == '\\' && i+1 < len(query):
-			if query[i+1] == '{' || query[i+1] == '}' {
+			if cyphertext.IsOpenBrace(query[i+1]) || cyphertext.IsCloseBrace(query[i+1]) {
 				literal.WriteByte(query[i+1])
 			} else {
 				literal.WriteString(query[i : i+2])
 			}
 			i++
-		case c == '}':
+		case cyphertext.IsCloseBrace(c):
 			return syntaxError(localization.CypherCoreInvalidInput("}"))
-		case c == '{':
-			close := interpolationEnd(query, i)
-			if close < 0 {
+		case cyphertext.IsOpenBrace(c):
+			close, known := view.interpolationEnd(i)
+			if !known {
 				return syntaxError(localization.CypherCoreInvalidInput("{"))
 			}
-			expression := strings.TrimSpace(query[i+1 : close])
-			if expression == "" {
+			span := cyphertext.TrimWhitespaceSpan(query, cyphertext.Span{Start: i + 1, End: close})
+			if span.Start == span.End {
 				return syntaxError(localization.CypherCoreInvalidInputExpectedExpression("}"))
 			}
-			// An interpolated string inside the expression.
-			edits, err := interpolationEdits(expression)
+			edits, err := interpolationViewEdits(view.window(span.Start, span.End))
 			if err != nil {
-				return "", 0, err
+				return rewritePredicate{}, 0, err
 			}
-			if len(edits) > 0 {
-				expression, _ = applyLabelRewriteEdits(expression, edits, true)
+			text, rewrite := applyLabelRewriteEdits(query[span.Start:span.End], edits, true)
+			value := rewritePredicate{text: text, copies: rewrite.copies, constructed: rewrite.constructed, entries: rewrite.entries}
+			for index := range value.copies {
+				value.copies[index].Original.Start += span.Start
+				value.copies[index].Original.End += span.Start
 			}
 			flush()
-			out.WriteString(" + " + interpolateFunction + "(" + expression + ")")
+			parts = append(parts, wrapRewritePredicate(interpolateFunction+"(", value, ")"))
 			i = close
 		default:
 			literal.WriteByte(c)
 		}
 	}
-	if parts == 0 || literal.Len() > 0 {
+	if len(parts) == 0 || literal.Len() > 0 {
 		flush()
 	}
-	return "(" + out.String() + ")", end, nil
+	return wrapRewritePredicate("(", joinRewritePredicates(parts, " + "), ")"), end, nil
 }
 
 // interpolationEnd is the index of the } that closes the interpolation
 // opened at query[open], -1 when none does: braces nest, and quoted text
 // (an inner interpolated string included) is skipped.
-func interpolationEnd(query string, open int) int {
-	depth := 0
-	for i := open; i < len(query); i++ {
-		switch c := query[i]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
-			i = skipCypherQuotedText(query, i, c) - 1
-		case '{':
-			depth++
-		case '}':
-			if depth--; depth == 0 {
-				return i
-			}
-		}
-	}
-	return -1
-}
 
 // fnInterpolate is an interpolated value as text: a string, boolean, number,
 // temporal value or duration as toString writes it; null for null; any other
 // value is Neo4j's TypeError.
-func fnInterpolate(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnInterpolate(ctx cypherfn.InvocationContext, args []string) (interface{}, error) {
 	values, err := evalArgs(ctx, args)
 	if err != nil || len(values) != 1 || values[0] == nil {
 		return nil, err
@@ -328,7 +317,7 @@ func fnInterpolate(ctx cypherfn.Context, args []string) (interface{}, error) {
 // fnMapFromPairs is the map a map comprehension builds from its [key, value]
 // pairs, as Neo4j does: a later key replaces an earlier one, a null value is
 // kept, and a key that isn't a string is a TypeError.
-func fnMapFromPairs(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnMapFromPairs(ctx cypherfn.InvocationContext, args []string) (interface{}, error) {
 	values, err := evalArgs(ctx, args)
 	if err != nil || len(values) != 1 || values[0] == nil {
 		return nil, err
@@ -351,78 +340,94 @@ func fnMapFromPairs(ctx cypherfn.Context, args []string) (interface{}, error) {
 }
 
 // mapComprehensionEdits rewrites each {k: v IN map [WHERE p] | key: value}.
-func mapComprehensionEdits(query string) ([]labelRewriteEdit, error) {
+func mapComprehensionViewEdits(view braceView) ([]labelRewriteEdit, error) {
+	query := view.text()
 	if !strings.Contains(query, "|") {
 		return nil, nil
 	}
 	var edits []labelRewriteEdit
-	for i := 0; i < len(query); i++ {
-		c := query[i]
-		switch {
-		case isCypherQuoteByte(c):
-			i = skipCypherQuotedText(query, i, c) - 1
-		case c == '{':
-			close := cyphertext.FindMatchingDelimiter(query, i, '{', '}', cyphertext.OpeningDelimiter)
-			if close < 0 {
-				return edits, nil
-			}
-			if text, ok := mapComprehensionText(query[i+1 : close]); ok {
-				edits = append(edits, labelRewriteEdit{start: i, end: close + 1, text: text})
-				i = close
-			}
+	reader := cyphertext.NewReader(query, 0)
+	for token, ok := reader.Next(); ok; token, ok = reader.Next() {
+		if !token.Is(query, "{") {
+			continue
+		}
+		fact, found := view.at(token.Start)
+		if !found || fact.kind != literalBrace {
+			continue
+		}
+		close, found := view.close(token.Start)
+		if !found {
+			continue
+		}
+		if value, ok := mapComprehensionRewrite(view, token.End, close); ok {
+			edits = append(edits, labelRewriteEdit{start: token.Start, end: close + 1, text: value.text, copies: value.copies, constructed: value.constructed, entries: value.entries})
+			reader.Seek(close + 1)
 		}
 	}
 	return edits, nil
 }
 
-// mapComprehensionText is the expression a map comprehension's body (the
-// text between its braces) stands for; ok is false when body isn't one. A
-// map comprehension inside its parts is rewritten too. Each key binds k, and
-// a one-item comprehension over its value binds v:
-//
-//	__nornic_map_from_pairs([k IN keys(m) WHERE any(v IN [m[k]] WHERE p) |
-//	    [v IN [m[k]] | [key, value]][0]])
-func mapComprehensionText(body string) (string, bool) {
+// The comprehension grammar owns its bindings and expression semantics. Its
+// parts retain exact windows of the original brace product through copying.
+func mapComprehensionRewrite(view braceView, start, close int) (rewritePredicate, bool) {
+	query := view.text()
+	body := query[start:close]
 	key, ok := cyphertext.ScanIdentifier(body, skipASCIISpaces(body, 0, len(body)))
 	colon := skipASCIISpaces(body, key.End, len(body))
 	if !ok || colon >= len(body) || body[colon] != ':' {
-		return "", false
+		return rewritePredicate{}, false
 	}
 	value, ok := cyphertext.ScanIdentifier(body, skipASCIISpaces(body, colon+1, len(body)))
 	in := skipASCIISpaces(body, value.End, len(body))
 	if !ok || !matchKeywordAt(body, in, "IN") {
-		return "", false
+		return rewritePredicate{}, false
 	}
-	rest := body[in+2:]
+	restStart := start + in + 2
+	rest := query[restStart:close]
 	bar := rowTopLevelPipeIndex(rest)
 	if bar < 0 {
-		return "", false
+		return rewritePredicate{}, false
 	}
-	source, predicate := strings.TrimSpace(rest[:bar]), ""
-	if where := topLevelKeywordIndex(source, "WHERE"); where >= 0 {
-		source, predicate = strings.TrimSpace(source[:where]), strings.TrimSpace(source[where+len("WHERE"):])
+	sourceSpan := cyphertext.TrimWhitespaceSpan(query, cyphertext.Span{Start: restStart, End: restStart + bar})
+	predicateSpan := cyphertext.Span{}
+	if where := topLevelKeywordIndex(view.window(sourceSpan.Start, sourceSpan.End), "WHERE"); where >= 0 {
+		predicateSpan = cyphertext.TrimWhitespaceSpan(query, cyphertext.Span{Start: sourceSpan.Start + where + len("WHERE"), End: sourceSpan.End})
+		sourceSpan = cyphertext.TrimWhitespaceSpan(query, cyphertext.Span{Start: sourceSpan.Start, End: sourceSpan.Start + where})
 	}
-	projection := rest[bar+1:]
+	projectionStart := restStart + bar + 1
+	projection := query[projectionStart:close]
 	keyEnd := topLevelByteIndex(projection, 0, len(projection), ':')
-	if source == "" || keyEnd < 0 {
-		return "", false
+	if sourceSpan.Start == sourceSpan.End || keyEnd < 0 {
+		return rewritePredicate{}, false
 	}
-	keyExpression, valueExpression := strings.TrimSpace(projection[:keyEnd]), strings.TrimSpace(projection[keyEnd+1:])
-	if keyExpression == "" || valueExpression == "" {
-		return "", false
+	keySpan := cyphertext.TrimWhitespaceSpan(query, cyphertext.Span{Start: projectionStart, End: projectionStart + keyEnd})
+	valueSpan := cyphertext.TrimWhitespaceSpan(query, cyphertext.Span{Start: projectionStart + keyEnd + 1, End: close})
+	if keySpan.Start == keySpan.End || valueSpan.Start == valueSpan.End {
+		return rewritePredicate{}, false
 	}
-	// Map comprehensions nested in the parts.
-	for _, part := range []*string{&source, &predicate, &keyExpression, &valueExpression} {
-		if edits, _ := mapComprehensionEdits(*part); len(edits) > 0 {
-			*part, _ = applyLabelRewriteEdits(*part, edits, true)
+	part := func(span cyphertext.Span) rewritePredicate {
+		if span.Start == span.End {
+			return rewritePredicate{}
 		}
+		window := view.window(span.Start, span.End)
+		edits, _ := mapComprehensionViewEdits(window)
+		text, rewrite := applyLabelRewriteEdits(window.text(), edits, true)
+		result := rewritePredicate{text: text, copies: rewrite.copies, constructed: rewrite.constructed, entries: rewrite.entries}
+		for index := range result.copies {
+			result.copies[index].Original.Start += span.Start
+			result.copies[index].Original.End += span.Start
+		}
+		return result
 	}
+	source, predicate, keyExpression, valueExpression := part(sourceSpan), part(predicateSpan), part(keySpan), part(valueSpan)
 	keyName, valueName := labelExpressionNameText(key.Value), labelExpressionNameText(value.Value)
-	entry := "[(" + source + ")[" + keyName + "]]"
-	filter := ""
-	if predicate != "" {
-		filter = " WHERE any(" + valueName + " IN " + entry + " WHERE " + predicate + ")"
+	entry := wrapRewritePredicate("[(", source, ")["+keyName+"]]")
+	filter := rewritePredicate{}
+	if predicate.text != "" {
+		filter = joinRewritePredicates([]rewritePredicate{generatedPredicate(" WHERE any(" + valueName + " IN "), entry, generatedPredicate(" WHERE "), predicate, generatedPredicate(")")}, "")
 	}
-	return "CASE WHEN (" + source + ") IS NULL THEN null ELSE " + mapFromPairsFunction + "([" + keyName + " IN keys(" + source + ")" + filter +
-		" | [" + valueName + " IN " + entry + " | [" + keyExpression + ", " + valueExpression + "]][0]]) END", true
+	return joinRewritePredicates([]rewritePredicate{
+		generatedPredicate("CASE WHEN ("), source, generatedPredicate(") IS NULL THEN null ELSE " + mapFromPairsFunction + "([" + keyName + " IN keys("), source, generatedPredicate(")"), filter,
+		generatedPredicate(" | [" + valueName + " IN "), entry, generatedPredicate(" | ["), keyExpression, generatedPredicate(", "), valueExpression, generatedPredicate("]][0]]) END"),
+	}, ""), true
 }

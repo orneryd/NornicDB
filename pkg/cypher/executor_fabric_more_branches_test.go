@@ -19,9 +19,9 @@ func TestFabricHelpers_MoreRewriteAndKeywordBranches(t *testing.T) {
 	require.Equal(t, "USE shard RETURN $x", stripLeadingWithImportsForFabricRecord("WITH x USE shard RETURN x", map[string]interface{}{"x": 1}))
 
 	// findLeadingWithEndLocal branches
-	require.Equal(t, -1, findLeadingWithEndLocal("WITH x + 1"))
-	require.Greater(t, findLeadingWithEndLocal("WITH x, y MATCH (n) RETURN n"), 0)
-	require.Greater(t, findLeadingWithEndLocal("WITH apoc.map.fromPairs([[1,2]]) RETURN 1"), 0)
+	require.Equal(t, -1, findLeadingWithEndLocal(originalBraceView("WITH x + 1")))
+	require.Greater(t, findLeadingWithEndLocal(originalBraceView("WITH x, y MATCH (n) RETURN n")), 0)
+	require.Greater(t, findLeadingWithEndLocal(originalBraceView("WITH apoc.map.fromPairs([[1,2]]) RETURN 1")), 0)
 	for _, query := range []string{
 		"WITH x OPTIONAL MATCH (n) RETURN n",
 		"WITH x WHERE x IS NOT NULL RETURN x",
@@ -35,14 +35,14 @@ func TestFabricHelpers_MoreRewriteAndKeywordBranches(t *testing.T) {
 		"WITH x DELETE x",
 		"WITH x DETACH DELETE x",
 	} {
-		require.Greater(t, findLeadingWithEndLocal(query), 0)
+		require.Greater(t, findLeadingWithEndLocal(originalBraceView(query)), 0)
 	}
-	require.Greater(t, findLeadingWithEndLocal("WITH 'MATCH' AS x RETURN x"), 0)
-	require.Greater(t, findLeadingWithEndLocal("WITH \"MATCH\" AS x RETURN x"), 0)
-	require.Greater(t, findLeadingWithEndLocal("WITH `MATCH` AS x RETURN x"), 0)
-	require.Greater(t, findLeadingWithEndLocal("WITH [1, 2, 3] AS xs MATCH (n) RETURN n"), 0)
-	require.Greater(t, findLeadingWithEndLocal("WITH {k: 1} AS m MATCH (n) RETURN n"), 0)
-	require.Equal(t, -1, findLeadingWithEndLocal("WITH 'unterminated"))
+	require.Greater(t, findLeadingWithEndLocal(originalBraceView("WITH 'MATCH' AS x RETURN x")), 0)
+	require.Greater(t, findLeadingWithEndLocal(originalBraceView("WITH \"MATCH\" AS x RETURN x")), 0)
+	require.Greater(t, findLeadingWithEndLocal(originalBraceView("WITH `MATCH` AS x RETURN x")), 0)
+	require.Greater(t, findLeadingWithEndLocal(originalBraceView("WITH [1, 2, 3] AS xs MATCH (n) RETURN n")), 0)
+	require.Greater(t, findLeadingWithEndLocal(originalBraceView("WITH {k: 1} AS m MATCH (n) RETURN n")), 0)
+	require.Equal(t, -1, findLeadingWithEndLocal(originalBraceView("WITH 'unterminated")))
 
 	// The canonical comma reader handles nesting, strings and quoted names.
 	parts := splitTopLevelComma("a, apoc.map.fromPairs([[1,2],[3,4]]), 'x,y', `q,r`, b")

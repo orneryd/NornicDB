@@ -511,12 +511,12 @@ func TestListLiteralsAndComprehensions(t *testing.T) {
 		require.NoError(t, err, query)
 		require.Equal(t, want, result.Rows[0][0], query)
 	}
-	require.Equal(t, []interface{}{int64(1), int64(2)}, exec.evaluateExpressionWithContextFull(ctx, "[coalesce(null, 1), 2]", nil, nil, nil, nil, nil, 0))
-	require.Nil(t, exec.evaluateExpressionWithContextFull(ctx, "[x IN null | x]", nil, nil, nil, nil, nil, 0))
-	require.Equal(t, int64(5), exec.evaluateExpressionWithContextFull(ctx, "[x IN 5]", nil, nil, nil, nil, nil, 0))
-	require.Equal(t, []interface{}{"a"}, exec.evaluateExpressionWithContextFull(ctx, "[x IN ['a', 'b'] WHERE x = 'a']", nil, nil, nil, nil, nil, 0))
-	require.Equal(t, []interface{}{int64(10)}, exec.evaluateExpressionWithContextFull(ctx, "[x IN 5 | x * 2]", nil, nil, nil, nil, nil, 0))
+	require.Equal(t, []interface{}{int64(1), int64(2)}, exec.evaluateExpressionWithContextFull(ctx, originalBraceView("[coalesce(null, 1), 2]"), nil, nil, nil, nil, nil, 0))
+	require.Nil(t, exec.evaluateExpressionWithContextFull(ctx, originalBraceView("[x IN null | x]"), nil, nil, nil, nil, nil, 0))
+	require.Equal(t, int64(5), exec.evaluateExpressionWithContextFull(ctx, originalBraceView("[x IN 5]"), nil, nil, nil, nil, nil, 0))
+	require.Equal(t, []interface{}{"a"}, exec.evaluateExpressionWithContextFull(ctx, originalBraceView("[x IN ['a', 'b'] WHERE x = 'a']"), nil, nil, nil, nil, nil, 0))
+	require.Equal(t, []interface{}{int64(10)}, exec.evaluateExpressionWithContextFull(ctx, originalBraceView("[x IN 5 | x * 2]"), nil, nil, nil, nil, nil, 0))
 	failureCtx := withExpressionFailureSlot(ctx)
-	_ = exec.evaluateExpressionWithContextFull(failureCtx, "[r IN [{type: 'R'}] | type(r)]", nil, nil, nil, nil, nil, 0)
+	_ = exec.evaluateExpressionWithContextFull(failureCtx, originalBraceView("[r IN [{type: 'R'}] | type(r)]"), nil, nil, nil, nil, nil, 0)
 	require.Error(t, getExpressionFailure(failureCtx), "ordinary maps are not relationships")
 }

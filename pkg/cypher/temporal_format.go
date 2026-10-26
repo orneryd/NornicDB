@@ -16,14 +16,14 @@ import (
 // first argument is NornicDB's printf extension, format(template, values…),
 // which Neo4j rejects as a type mismatch.
 func init() {
-	cypherfn.Register("format", fnFormat)
+	cypherfn.RegisterInvocation("format", fnFormat)
 }
 
 // temporalFormatTypes is the type mismatch text of a format() value that
 // isn't temporal.
 const temporalFormatTypes = "Duration, Date, Time, LocalTime, LocalDateTime or DateTime"
 
-func fnFormat(ctx cypherfn.Context, args []string) (interface{}, error) {
+func fnFormat(ctx cypherfn.InvocationContext, args []string) (interface{}, error) {
 	if len(args) == 0 {
 		return nil, functionParameterCountError("format", false)
 	}

@@ -11,7 +11,7 @@ import (
 // pipelineApplyInitialTraversalMatch adapts the shared streaming traversal
 // operators to pipeline rows. It returns graph entities as bindings so every
 // later WITH, mutation, and RETURN clause continues through the same executor.
-func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context, rows []pipelineRow, clause braceView, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
 	if source, supported, err := e.pipelineTraversalSource(ctx, pipelineRowsSource(rows), clause, hint); supported || err != nil {
 		if err != nil {
 			return nil, true, err
@@ -24,15 +24,18 @@ func (e *StorageExecutor) pipelineApplyInitialTraversalMatch(ctx context.Context
 
 // pipelineApplySeededTraversalMatch retains the existing selective access
 // owners when a streaming input reveals a bound endpoint at execution time.
-func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context, rows []pipelineRow, clause string, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context, rows []pipelineRow, clause braceView, hint pipelineMatchPhysicalHint) ([]pipelineRow, bool, error) {
+	ctx = withBraceView(ctx, clause)
 	if len(rows) == 0 {
 		return rows, true, nil
 	}
-	pattern := strings.TrimSpace(clause[len("MATCH"):])
-	whereClause := ""
-	if whereIndex := topLevelKeywordIndex(pattern, "WHERE"); whereIndex >= 0 {
-		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:whereIndex])
+	patternView := clause.window(len("MATCH"), len(clause.text())).trim()
+	pattern := patternView.text()
+	whereClause := patternView.window(0, 0)
+	if whereIndex := topLevelKeywordIndex(patternView, "WHERE"); whereIndex >= 0 {
+		whereClause = normalizePipelineWhitespace(patternView.window(whereIndex+len("WHERE"), len(pattern)))
+		patternView = patternView.window(0, whereIndex).trim()
+		pattern = patternView.text()
 	}
 	if !containsRelationshipPattern(pattern) {
 		return nil, false, nil
@@ -46,10 +49,10 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 	}
 
 	variables := make([]string, 0)
-	for _, variable := range extractNodeVariables(matchPatternStructure(pattern)) {
+	for _, variable := range extractNodeVariables(matchPatternStructure(patternView)) {
 		variables = appendUniquePipelineBinding(variables, variable)
 	}
-	for _, variable := range extractRelationshipVariables(matchPatternStructure(pattern)) {
+	for _, variable := range extractRelationshipVariables(matchPatternStructure(patternView)) {
 		variables = appendUniquePipelineBinding(variables, variable)
 	}
 	pathVariable := extractPathAssignmentVariable(pattern)
@@ -59,29 +62,29 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 	const anonymousBinding = "__nornic_pipeline_traversal"
 	returnItems := make([]returnItem, 0, len(variables)+1)
 	for _, variable := range variables {
-		returnItems = append(returnItems, returnItem{expr: variable, alias: variable})
+		returnItems = append(returnItems, returnItem{expr: variable, alias: variable, view: clause.generated(variable)})
 	}
 	if len(returnItems) == 0 {
-		returnItems = append(returnItems, returnItem{expr: "1", alias: anonymousBinding})
+		returnItems = append(returnItems, returnItem{expr: "1", alias: anonymousBinding, view: clause.generated("1")})
 	}
 
 	store := e.getStorage(ctx)
 	out := make([]pipelineRow, 0, len(rows))
 	for _, row := range rows {
-		rowCtx, materializedPattern, prepareErr := e.bindPatternProperties(withValueBindings(ctx, row), pattern, row)
+		rowCtx, materializedPattern, prepareErr := e.bindPatternProperties(withValueBindings(ctx, row), patternView, row)
 		if prepareErr != nil {
 			return nil, true, prepareErr
 		}
 		materializedWhere := whereClause
 		physicalWhere, residualWhere := pipelineTraversalPredicates(materializedWhere, row, variables)
 		rowHint := hint
-		if physicalWhere != materializedWhere || pipelinePatternJoinsOuterBinding(row, variables) {
+		if physicalWhere.text() != materializedWhere.text() || pipelinePatternJoinsOuterBinding(row, variables) {
 			rowHint = pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1}
 		}
 		var result *ExecuteResult
 		var handled bool
 		var err error
-		if rowHint.limit > 0 && rowHint.orderExpr != "" {
+		if rowHint.limit > 0 && !rowHint.orderExpr.empty() {
 			result, handled, err = e.tryExecuteTraversalSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit, traversalStartSeed)
 			if err == nil && !handled {
 				result, handled, err = e.tryExecuteTraversalSeedOrderLimit(rowCtx, materializedPattern, physicalWhere, returnItems, pathVariable, rowHint.orderExpr, rowHint.limit, traversalEndSeed)
@@ -97,7 +100,7 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 				// properties on that endpoint, so this row matches nothing.
 				continue
 			}
-			if len(rows) == 1 && whereClause == "" && len(startSeedNodes) == 1 && len(endSeedNodes) == 1 && hint.earlyLimit >= 0 && e.boundTraversalLimitSafe(rowCtx, materializedPattern, row, variables) {
+			if len(rows) == 1 && whereClause.empty() && len(startSeedNodes) == 1 && len(endSeedNodes) == 1 && hint.earlyLimit >= 0 && e.boundTraversalLimitSafe(rowCtx, materializedPattern, row, variables) {
 				rowHint.earlyLimit = hint.earlyLimit
 				rowHint.readTail = hint.readTail
 			}
@@ -119,7 +122,7 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 		e.normalizeSetMatchRowsToNodes(result, store)
 		e.normalizeSetMatchRowsToEdges(result, store)
 		var rowWhere *preparedRowPredicate
-		if residualWhere != "" {
+		if !residualWhere.empty() {
 			rowWhere = prepareRowPredicate(residualWhere)
 		}
 		for _, resultRow := range result.Rows {
@@ -147,26 +150,26 @@ func (e *StorageExecutor) pipelineApplySeededTraversalMatch(ctx context.Context,
 	return out, true, nil
 }
 
-func pipelineTraversalPushdownPredicate(whereClause string, row pipelineRow, localVariables []string) string {
+func pipelineTraversalPushdownPredicate(whereClause braceView, row pipelineRow, localVariables []string) braceView {
 	pushdown, _ := pipelineTraversalPredicates(whereClause, row, localVariables)
 	return pushdown
 }
 
 // Each WHERE conjunct runs once: at traversal or after the outer-row join.
-func pipelineTraversalPredicates(whereClause string, row pipelineRow, localVariables []string) (string, string) {
-	if strings.TrimSpace(whereClause) == "" {
-		return "", ""
+func pipelineTraversalPredicates(whereClause braceView, row pipelineRow, localVariables []string) (braceView, braceView) {
+	if whereClause.trim().empty() {
+		return whereClause, whereClause
 	}
 	local := make(map[string]struct{}, len(localVariables))
 	for _, variable := range localVariables {
 		local[variable] = struct{}{}
 	}
 	terms := splitTopLevelAndConjuncts(whereClause)
-	pushable := make([]string, 0, len(terms))
-	residual := make([]string, 0, len(terms))
+	pushable := make([]braceView, 0, len(terms))
+	residual := make([]braceView, 0, len(terms))
 	for _, term := range terms {
-		term = strings.TrimSpace(term)
-		if term == "" {
+		term = term.trim()
+		if term.empty() {
 			continue
 		}
 		dependsOnOuterBinding := false
@@ -174,7 +177,7 @@ func pipelineTraversalPredicates(whereClause string, row pipelineRow, localVaria
 			if _, isLocal := local[name]; isLocal || strings.HasPrefix(name, "$") {
 				continue
 			}
-			if referencesVariable(term, name) {
+			if referencesVariable(term.text(), name) {
 				dependsOnOuterBinding = true
 				break
 			}
@@ -185,7 +188,7 @@ func pipelineTraversalPredicates(whereClause string, row pipelineRow, localVaria
 			residual = append(residual, term)
 		}
 	}
-	return strings.Join(pushable, " AND "), strings.Join(residual, " AND ")
+	return whereClause.assembleCode(pushable, " AND "), whereClause.assembleCode(residual, " AND ")
 }
 
 func pipelinePatternJoinsOuterBinding(row pipelineRow, variables []string) bool {
@@ -210,7 +213,7 @@ func pipelinePatternJoinsOuterBinding(row pipelineRow, variables []string) bool 
 // labels and inline properties for that endpoint, so they are checked here:
 // every label must be present and every inline property must match. When the
 // bound node fails them, rejected is true and the row matches nothing.
-func (e *StorageExecutor) pipelineTraversalSeedNodes(ctx context.Context, pattern string, row pipelineRow) (startSeedNodes, endSeedNodes []*storage.Node, rejected bool) {
+func (e *StorageExecutor) pipelineTraversalSeedNodes(ctx context.Context, pattern braceView, row pipelineRow) (startSeedNodes, endSeedNodes []*storage.Node, rejected bool) {
 	matches := e.parseTraversalPattern(ctx, pattern)
 	if matches == nil {
 		return nil, nil, false
@@ -249,7 +252,7 @@ func pipelineBoundNode(row pipelineRow, variable string) (*storage.Node, bool) {
 
 // boundTraversalLimitSafe admits a cap only when both endpoint identities are
 // already checked by the traversal and no other outer binding can reject a path.
-func (e *StorageExecutor) boundTraversalLimitSafe(ctx context.Context, pattern string, row pipelineRow, variables []string) bool {
+func (e *StorageExecutor) boundTraversalLimitSafe(ctx context.Context, pattern braceView, row pipelineRow, variables []string) bool {
 	match := e.parseTraversalPatternStructure(ctx, pattern)
 	if match == nil || match.IsChained {
 		return false
@@ -266,63 +269,65 @@ func (e *StorageExecutor) pipelineMatchHint(ctx context.Context, remaining []pip
 	hint := pipelineMatchPhysicalHint{limit: -1, earlyLimit: -1, readTail: pipelineReadOnlyTail(remaining)}
 	if len(remaining) > 0 && remaining[0].kind == pipelineClauseWith {
 		clause := remaining[0].text
-		if topLevelKeywordIndex(clause, "WHERE") >= 0 {
+		clauseView := remaining[0].input(ctx)
+		if topLevelKeywordIndex(clauseView, "WHERE") >= 0 {
 			return hint
 		}
 		end := len(clause)
 		for _, keyword := range []string{"SKIP", "LIMIT"} {
-			if index := topLevelKeywordIndex(clause, keyword); index >= 0 && index < end {
+			if index := topLevelKeywordIndex(clauseView, keyword); index >= 0 && index < end {
 				end = index
 			}
 		}
-		if _, local := parsePipelineRowWith(ctx, clause[:end]); !local {
+		if _, local := parsePipelineRowWith(ctx, clauseView.window(0, end)); !local {
 			return hint
 		}
-		limit, hasLimit := e.parseIntModifier(ctx, clause, "LIMIT")
-		skip, _ := e.parseIntModifier(ctx, clause, "SKIP")
+		limit, hasLimit := e.parseIntModifier(ctx, clauseView, "LIMIT")
+		skip, _ := e.parseIntModifier(ctx, clauseView, "SKIP")
 		if !hasLimit || limit <= 0 || skip < 0 || skip > int(^uint(0)>>1)-limit {
 			return hint
 		}
 		hint.limit, hint.earlyLimit = skip+limit, skip+limit
 		return hint
 	}
-	var terminalReturn string
+	var terminalReturn braceView
 	for index, clause := range remaining {
 		if clause.kind != pipelineClauseReturn || index != len(remaining)-1 {
 			return hint
 		}
-		terminalReturn = clause.text
+		terminalReturn = clause.view
 	}
-	if terminalReturn == "" {
+	if terminalReturn.empty() {
 		return hint
 	}
-	body := strings.TrimSpace(terminalReturn[len("RETURN"):])
-	if _, distinct := cutDistinct(body); distinct {
+	bodyView := terminalReturn.window(len("RETURN"), len(terminalReturn.text())).trim()
+	body := bodyView.text()
+	if _, distinct := cutDistinct(bodyView); distinct {
 		return hint
 	}
-	for _, item := range e.parseReturnItems(ctx, body) {
-		if pipelineExpressionContainsAggregate(item.expr) {
+	for _, item := range e.parseReturnItems(ctx, bodyView) {
+		if pipelineExpressionContainsAggregate(item.view) {
 			return hint
 		}
 	}
-	skip, hasSkip := e.parseIntModifier(ctx, body, "SKIP")
+	skip, hasSkip := e.parseIntModifier(ctx, bodyView, "SKIP")
 	if hasSkip && skip != 0 {
 		return hint
 	}
-	limit, hasLimit := e.parseIntModifier(ctx, body, "LIMIT")
+	limit, hasLimit := e.parseIntModifier(ctx, bodyView, "LIMIT")
 	if !hasLimit || limit < 0 {
 		return hint
 	}
 	hint.limit = limit
-	if orderIndex := topLevelKeywordIndex(body, "ORDER BY"); orderIndex >= 0 {
-		orderExpr := strings.TrimSpace(body[orderIndex+len("ORDER BY"):])
-		end := len(orderExpr)
+	if orderIndex := topLevelKeywordIndex(bodyView, "ORDER BY"); orderIndex >= 0 {
+		orderExpr := bodyView.window(orderIndex+len("ORDER BY"), len(body)).trim()
+		end := len(orderExpr.text())
 		for _, keyword := range []string{"SKIP", "LIMIT"} {
 			if index := topLevelKeywordIndex(orderExpr, keyword); index >= 0 && index < end {
 				end = index
 			}
 		}
-		hint.orderExpr = strings.TrimSpace(orderExpr[:end])
+		hint.orderExpr = orderExpr.window(0, end).trim()
 	} else {
 		hint.earlyLimit = limit
 	}

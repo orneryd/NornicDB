@@ -4,13 +4,13 @@ import "context"
 
 // patternPropertyReader chooses the phase of the shared pattern reader.
 // Execution supplies parsePropertyMap; inspection reads only property keys.
-type patternPropertyReader func(context.Context, string, bool) (map[string]interface{}, error)
+type patternPropertyReader func(context.Context, braceView, bool) (map[string]interface{}, error)
 
 // patternPropertyKeys preserves property presence for access planning without
 // evaluating any expression. Its nil placeholders are syntax, never values
 // that may be used to match stored properties.
-func patternPropertyKeys(_ context.Context, text string, _ bool) (map[string]interface{}, error) {
-	expressions, err := parsePropertyExpressions(text)
+func patternPropertyKeys(_ context.Context, view braceView, _ bool) (map[string]interface{}, error) {
+	expressions, err := parsePropertyExpressions(view)
 	if err != nil {
 		return nil, err
 	}

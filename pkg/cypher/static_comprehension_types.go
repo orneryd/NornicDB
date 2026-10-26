@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"maps"
 	"strings"
 )
@@ -13,27 +14,28 @@ import (
 // Both passes read the scope's texts through the scope's own results
 // (checked), so an argument the signature check types is not typed again by
 // the operator check, nor its nested scopes.
-func (checker staticOperatorChecker) checkScoped(text string) (staticOperand, error) {
+func (checker staticOperatorChecker) checkScoped(view braceView) (staticOperand, error) {
 	if checker.checked == nil {
-		checker.checked = make(map[string]staticCheckResult)
+		checker.checked = make(map[*cyphertext.Source]staticCheckResult)
 	}
 	// The signature check types without parameter values (operandOf).
 	typer := staticOperatorChecker{scope: checker.scope, checked: checker.checked}
 	if checker.params != nil {
-		typer.checked = make(map[string]staticCheckResult)
+		typer.checked = make(map[*cyphertext.Source]staticCheckResult)
 	}
-	if err := validateStaticFunctionVariablesTyped(text, func() staticTypeScope { return checker.scope }, typer.argumentType); err != nil {
+	if err := validateStaticFunctionVariablesTyped(view, func() staticTypeScope { return checker.scope }, typer.argumentType); err != nil {
 		return staticOperand{}, err
 	}
-	return checker.check(text)
+	return checker.check(view)
 }
 
 // argumentType is staticExpressionType through the checker's results.
-func (checker staticOperatorChecker) argumentType(scope staticTypeScope, expression string) string {
+func (checker staticOperatorChecker) argumentType(scope staticTypeScope, view braceView) string {
+	expression := view.text()
 	if len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
-		return propertyAccessExpressionType(expression, scope.values, scope.params)
+		return propertyAccessExpressionType(view, scope.values, scope.params)
 	}
-	operand, err := checker.check(expression)
+	operand, err := checker.check(view)
 	if err != nil {
 		return ""
 	}
@@ -42,7 +44,7 @@ func (checker staticOperatorChecker) argumentType(scope staticTypeScope, express
 
 // checkListComprehension validates the source before execution and checks the
 // body with the iterator's element type, shadowing any outer binding.
-func (checker staticOperatorChecker) checkListComprehension(variable, list, predicate, projection string) (staticOperand, error) {
+func (checker staticOperatorChecker) checkListComprehension(variable string, list, predicate, projection braceView) (staticOperand, error) {
 	source, err := checker.check(list)
 	if err != nil {
 		return staticOperand{}, err
@@ -56,12 +58,12 @@ func (checker staticOperatorChecker) checkListComprehension(variable, list, pred
 	nested.scope.complete = checker.scope.complete
 	nested.scope.params = checker.scope.params
 	var element staticOperand
-	for index, expression := range []string{predicate, projection} {
+	for index, expression := range []braceView{predicate, projection} {
 		operand, err := nested.checkScoped(expression)
 		if err != nil {
 			return staticOperand{}, err
 		}
-		if index == 0 && predicate != "" {
+		if index == 0 && predicate.text() != "" {
 			if err := requireBooleanOperand(operand); err != nil {
 				return staticOperand{}, err
 			}
@@ -70,7 +72,7 @@ func (checker staticOperatorChecker) checkListComprehension(variable, list, pred
 			element = operand
 		}
 	}
-	if projection == "" {
+	if projection.text() == "" {
 		// A filter is its source's list type, or a list.
 		if composable(source) && source.list() {
 			return source, nil
@@ -86,13 +88,14 @@ func (checker staticOperatorChecker) checkListComprehension(variable, list, pred
 // checkPatternComprehension types [pattern WHERE predicate | projection]:
 // the pattern binds its variables, the predicate must be a boolean, and the
 // result is a list of the projection's type.
-func (checker staticOperatorChecker) checkPatternComprehension(pattern, projection string) (staticOperand, error) {
-	predicate := ""
-	if where := topLevelKeywordIndex(pattern, "WHERE"); where >= 0 {
-		pattern, predicate = strings.TrimSpace(pattern[:where]), strings.TrimSpace(pattern[where+len("WHERE"):])
+func (checker staticOperatorChecker) checkPatternComprehension(patternView, projection braceView) (staticOperand, error) {
+	predicate := patternView.window(0, 0)
+	if where := topLevelKeywordIndex(patternView, "WHERE"); where >= 0 {
+		predicate = patternView.window(where+len("WHERE"), len(patternView.text())).trim()
+		patternView = patternView.window(0, where).trim()
 	}
 	bindings := make(matchSemanticScope)
-	addMatchPatternBindingKinds(bindings, pattern)
+	addMatchPatternBindingKinds(bindings, patternView)
 	nested := checker
 	nested.checked = nil // the pattern's bindings make another scope
 	nested.scope.kinds = maps.Clone(checker.scope.kinds)
@@ -119,7 +122,7 @@ func (checker staticOperatorChecker) checkPatternComprehension(pattern, projecti
 			delete(nested.scope.members, name)
 		}
 	}
-	if predicate != "" {
+	if predicate.text() != "" {
 		operand, err := nested.checkScoped(predicate)
 		if err != nil {
 			return staticOperand{}, err
@@ -140,15 +143,15 @@ func (checker staticOperatorChecker) checkPatternComprehension(pattern, projecti
 
 // checkReduceTypes binds the source element and initial accumulator once, then
 // validates the step with the same local function-argument owner as comprehensions.
-func (checker staticOperatorChecker) checkReduceTypes(form reduceForm) (staticOperand, error) {
-	source, err := checker.check(form.list)
+func (checker staticOperatorChecker) checkReduceTypes(arguments braceView, form reduceForm) (staticOperand, error) {
+	source, err := checker.check(arguments.spanWindow(form.listSpan))
 	if err != nil {
 		return staticOperand{}, err
 	}
 	if source.excludes(isListTypeName) {
 		return staticOperand{}, operandMismatch(source, "List<T>")
 	}
-	initial, err := checker.check(form.initial)
+	initial, err := checker.check(arguments.spanWindow(form.initialSpan))
 	if err != nil {
 		return staticOperand{}, err
 	}
@@ -159,8 +162,8 @@ func (checker staticOperatorChecker) checkReduceTypes(form reduceForm) (staticOp
 	nested.scope.complete = checker.scope.complete
 	nested.scope.params = checker.scope.params
 	var step staticOperand
-	for index, text := range []string{form.step, form.predicate} {
-		if text == "" {
+	for index, text := range []braceView{arguments.spanWindow(form.stepSpan), arguments.spanWindow(form.predicateSpan)} {
+		if text.text() == "" {
 			continue
 		}
 		operand, err := nested.checkScoped(text)

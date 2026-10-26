@@ -37,16 +37,17 @@ func referencesVariable(query, name string) bool {
 // A value that isn't a list is one element (coerceToUnwindItems).
 //
 // Returns nil if the expression can't be evaluated.
-func evaluateListForPipeline(expr string, row pipelineRow) []interface{} {
-	items, _ := evaluateStaticListForPipeline(expr, row)
+func evaluateListForPipeline(view braceView, row pipelineRow) []interface{} {
+	items, _ := evaluateStaticListForPipeline(view, row)
 	return items
 }
 
 // evaluateStaticListForPipeline evaluates an UNWIND list that is a row
 // variable, a property of one, or a literal list, without the row evaluator.
 // Its value is coerced as UNWIND coerces any value (coerceToUnwindItems).
-func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{}, bool) {
-	expr = strings.TrimSpace(expr)
+func evaluateStaticListForPipeline(view braceView, row pipelineRow) ([]interface{}, bool) {
+	view = view.trim()
+	expr := view.text()
 	// Bare variable.
 	if val, ok := row[expr]; ok {
 		return coerceToUnwindItems(val), true
@@ -70,7 +71,7 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 	// as a value. Without plumbing a full parser here we only accept the
 	// `[...]` form and split top-level items.
 	if isListLiteral(expr) {
-		parsed, ok := parseLiteralValueForPipeline(expr)
+		parsed, ok := parseLiteralValueForPipeline(view)
 		if !ok {
 			return nil, false
 		}
@@ -79,14 +80,15 @@ func evaluateStaticListForPipeline(expr string, row pipelineRow) ([]interface{},
 	return nil, false
 }
 
-func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context, expr string, row pipelineRow) ([]interface{}, bool) {
-	if inner, wrapped := stripEnclosingExpressionParentheses(strings.TrimSpace(expr)); wrapped {
-		expr = inner
+func (e *StorageExecutor) evaluateListForPipelineWithContext(ctx context.Context, view braceView, row pipelineRow) ([]interface{}, bool) {
+	view = view.trim()
+	if _, wrapped := stripEnclosingExpressionParentheses(view.text()); wrapped {
+		view = view.window(1, len(view.text())-1).trim()
 	}
-	if items, ok := evaluateStaticListForPipeline(expr, row); ok {
+	if items, ok := evaluateStaticListForPipeline(view, row); ok {
 		return items, true
 	}
-	value, err := e.checkedPropertyExpression(ctx, expr, row)
+	value, err := e.checkedPropertyExpression(withBraceView(ctx, view), view, row)
 	if err != nil {
 		return nil, false
 	}
@@ -98,62 +100,53 @@ func toAnySlice(v interface{}) []interface{} {
 	return items
 }
 
-func parseLiteralMapForPipeline(s string) map[string]interface{} {
-	s = strings.TrimSpace(s)
-	if !strings.HasPrefix(s, "{") || !strings.HasSuffix(s, "}") {
+func parseLiteralMapForPipeline(view braceView) map[string]interface{} {
+	entries, valid := view.keyedEntries()
+	if !valid {
 		return nil
 	}
-	expressions, err := parsePropertyExpressions(s)
-	if err != nil {
-		return nil
-	}
-	out := make(map[string]interface{}, len(expressions))
-	for _, expression := range expressions {
-		value, literal := parseLiteralValueForPipeline(expression.expr)
+	out := make(map[string]interface{}, len(entries))
+	for _, entry := range entries {
+		value, literal := parseLiteralValueForPipeline(entry.value)
 		if !literal {
 			return nil
 		}
-		out[expression.key] = value
+		out[entry.key()] = value
 	}
 	return out
 }
-func parseLiteralListForPipeline(s string) ([]interface{}, bool) {
-	s = strings.TrimSpace(s)
-	if !isListLiteral(s) {
+func parseLiteralListForPipeline(view braceView) ([]interface{}, bool) {
+	view = view.trim()
+	if !isListLiteral(view.text()) {
 		return nil, false
 	}
-	inner := strings.TrimSpace(s[1 : len(s)-1])
-	if inner == "" {
+	inner := view.window(1, len(view.text())-1).trim()
+	if inner.empty() {
 		return []interface{}{}, true
 	}
-	parts := splitTopLevelComma(inner)
-	out := make([]interface{}, 0, len(parts))
-	for _, part := range parts {
-		v, ok := parseLiteralValueForPipeline(part)
+	var out []interface{}
+	for _, part := range inner.commaViews() {
+		value, ok := parseLiteralValueForPipeline(part)
 		if !ok {
 			return nil, false
 		}
-		out = append(out, v)
+		out = append(out, value)
 	}
 	return out, true
 }
-
-func parseLiteralValueForPipeline(s string) (interface{}, bool) {
-	s = strings.TrimSpace(s)
-	if s == "" {
+func parseLiteralValueForPipeline(view braceView) (interface{}, bool) {
+	view = view.trim()
+	if view.empty() {
 		return nil, false
 	}
-	if strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}") {
-		m := parseLiteralMapForPipeline(s)
-		if m == nil {
-			return nil, false
-		}
-		return m, true
+	if _, found := view.at(0); found {
+		value := parseLiteralMapForPipeline(view)
+		return value, value != nil
 	}
-	if isListLiteral(s) {
-		return parseLiteralListForPipeline(s)
+	if isListLiteral(view.text()) {
+		return parseLiteralListForPipeline(view)
 	}
-	return parseLiteralScalarForPipeline(s)
+	return parseLiteralScalarForPipeline(view.text())
 }
 
 func parseLiteralScalarForPipeline(s string) (interface{}, bool) {

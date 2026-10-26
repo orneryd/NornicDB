@@ -368,9 +368,10 @@ func staticArgumentMismatch(argument staticArgumentType, typeName string) error 
 // argument of a function in staticFunctionArguments. A DISTINCT before an aggregate's
 // argument is not part of it, and trim([LEADING | TRAILING | BOTH]
 // [characters] FROM source) checks its characters and source (trimFromArguments).
-func forEachStaticFunctionArgument(text string, check func(argument staticArgumentType, expression string, at int) error) error {
+func forEachStaticFunctionArgument(view braceView, check func(argument staticArgumentType, expression braceView, at int) error) error {
 	// A type after :: or TYPED is no call (x IS :: VECTOR(3)).
-	text = maskTypePredicateTypes(text)
+	view = view.mask(maskTypePredicateTypes(view.text()))
+	text := view.text()
 	for index := 0; index < len(text); {
 		switch cypherStringLexicalByte(text[index]) {
 		case cypherStringQuoteClass:
@@ -411,7 +412,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			continue
 		}
 		if isReduceFormFunction(name.Value) {
-			if err := checkReduceForm(name.Value, text, open, check); err != nil {
+			if err := checkReduceForm(name.Value, view, open, check); err != nil {
 				return err
 			}
 			index = open + 1
@@ -427,13 +428,11 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		if closing < 0 {
 			return nil
 		}
-		inner := strings.TrimSpace(text[open+1 : closing])
-		argumentSource := cyphertext.ReadFunctionArgumentSource(inner, cyphertext.AllArgumentModifier|cyphertext.DistinctArgumentModifier, distinctFollowsAsName)
-		inner = inner[argumentSource.Arguments.Start:argumentSource.Arguments.End]
+		innerView, _ := view.window(open+1, closing).argumentSource(cyphertext.AllArgumentModifier | cyphertext.DistinctArgumentModifier)
 		if strings.EqualFold(name.Value, "trim") {
-			if parameters, fromForm := trimFromArguments(inner); fromForm {
+			if parameters, fromForm := trimFromArgumentSpans(innerView); fromForm {
 				for _, expression := range parameters {
-					if err := check(arguments[0], expression, open+1); err != nil {
+					if err := check(arguments[0], innerView.spanWindow(expression), open+1); err != nil {
 						return err
 					}
 				}
@@ -441,8 +440,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 				continue
 			}
 		}
-		var buffer [8]string
-		expressions := appendTopLevelComma(buffer[:0], inner)
+		expressions := innerView.commaViews()
 		if counted {
 			if err := checkFunctionArity(name.Value, arity, len(expressions)); err != nil {
 				return err
@@ -503,25 +501,25 @@ func precededByTypeAnnotation(text string, index int) bool {
 	return false
 }
 
-// trimFromArguments reads trim's FROM form, trim([LEADING | TRAILING |
-// BOTH] [characters] FROM source), and returns its STRING arguments: the
-// characters when given, and the source. fromForm is false for trim(source).
-func trimFromArguments(inner string) (arguments []string, fromForm bool) {
-	from := topLevelKeywordIndex(inner, "FROM")
+// trimFromArgumentSpans returns the retained extents of trim's FROM form.
+func trimFromArgumentSpans(view braceView) ([]cyphertext.Span, bool) {
+	inner := view.text()
+	from := topLevelKeywordIndex(view, "FROM")
 	if from < 0 {
 		return nil, false
 	}
-	spec := strings.TrimSpace(inner[:from])
+	spec := cyphertext.TrimWhitespaceSpan(inner, cyphertext.Span{End: from})
 	for _, mode := range []string{"LEADING", "TRAILING", "BOTH"} {
-		if startsWithKeywordFold(spec, mode) {
-			spec = strings.TrimSpace(spec[len(mode):])
+		if startsWithKeywordFold(inner[spec.Start:spec.End], mode) {
+			spec = cyphertext.TrimWhitespaceSpan(inner, cyphertext.Span{Start: spec.Start + len(mode), End: spec.End})
 			break
 		}
 	}
-	if spec != "" {
-		arguments = append(arguments, spec)
+	var spans []cyphertext.Span
+	if spec.End > spec.Start {
+		spans = append(spans, spec)
 	}
-	return append(arguments, strings.TrimSpace(inner[from+len("FROM"):])), true
+	return append(spans, cyphertext.Span{Start: from + len("FROM"), End: len(inner)}), true
 }
 
 // validateStaticFunctionArguments rejects a function called with a literal
@@ -529,8 +527,8 @@ func trimFromArguments(inner string) (arguments []string, fromForm bool) {
 // keys([1]), length(1 + 1), …) anywhere in the statement: projections, WHERE,
 // CASE, ORDER BY, SET values, pattern properties and subquery bodies.
 // Variables are checked clause by clause (validateStaticFunctionVariables).
-func validateStaticFunctionArguments(cypher string, cypher25 bool) error {
-	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string, _ int) error {
+func validateStaticFunctionArguments(view braceView, cypher25 bool) error {
+	return forEachStaticFunctionArgument(view, func(argument staticArgumentType, expression braceView, _ int) error {
 		argument = argument.inVersion(cypher25)
 		typeName := staticTextType(expression)
 		if !argument.accepts(typeName) {
@@ -549,7 +547,7 @@ const staticFormatTemporalTypes = "Duration, Date, Time, LocalTime, LocalDateTim
 // temporal the pattern is a string (format(1, 'yyyy') and
 // format(date(…), 1) are Neo4j's compile-time type mismatch). The printf
 // form's values aren't checked.
-func staticFormatArguments(expressions []string) []staticArgumentType {
+func staticFormatArguments(expressions []braceView) []staticArgumentType {
 	value := staticTypeChoices(staticFormatTemporalTypes + " or String")
 	arguments := []staticArgumentType{{expected: staticFormatTemporalTypes, options: value}}
 	if len(expressions) == 2 {
@@ -570,19 +568,20 @@ func staticFormatArguments(expressions []string) []staticArgumentType {
 // the function's TypeError. It scans the statement only when a parameter
 // follows an opening parenthesis or a comma, so parameterized statements on
 // hot paths cost one byte scan.
-func validateStaticFunctionParameters(cypher string, params map[string]interface{}, cypher25 bool) error {
+func validateStaticFunctionParameters(view braceView, params map[string]interface{}, cypher25 bool) error {
+	cypher := view.text()
 	if len(params) == 0 || !parameterMayBeFunctionArgument(cypher) {
 		return nil
 	}
 	var unwound map[string]string
 	if strings.IndexByte(cypher, '[') >= 0 {
-		unwound = unwindParameterBindings(cypher)
+		unwound = unwindParameterBindings(view)
 	}
-	return forEachStaticFunctionArgument(cypher, func(argument staticArgumentType, expression string, _ int) error {
+	return forEachStaticFunctionArgument(view, func(argument staticArgumentType, input braceView, _ int) error {
 		// A Cypher 25 statement's arguments are checked as Neo4j 2026.09
 		// checks them (toString takes any value there).
 		argument = argument.inVersion(cypher25)
-		expression = strings.TrimSpace(expression)
+		expression := input.trim().text()
 		if parameter, bound := unwound[expression]; bound {
 			// UNWIND [$s] AS x binds x to $s's value, typed as Neo4j
 			// types it: radians(x) for s = 'xy' is a type mismatch.
@@ -613,16 +612,18 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 // list binds (UNWIND [$s] AS x) to the parameter's name, when the statement
 // binds that name nowhere else (no second AS x), so a later binding can't be
 // taken for it.
-func unwindParameterBindings(cypher string) map[string]string {
+func unwindParameterBindings(view braceView) map[string]string {
+	cypher := view.text()
 	var bindings map[string]string
 	for start := 0; ; {
-		index := findKeywordIndexInContext(cypher[start:], "UNWIND")
+		index := findKeywordIndexInContext(view.window(start, len(cypher)), "UNWIND")
 		if index < 0 {
 			return bindings
 		}
-		body := cypher[start+index+len("UNWIND"):]
+		bodyView := view.window(start+index+len("UNWIND"), len(cypher))
+		body := bodyView.text()
 		start += index + len("UNWIND")
-		as := findKeywordIndexInContext(body, "AS")
+		as := findKeywordIndexInContext(bodyView, "AS")
 		if as < 0 {
 			continue
 		}
@@ -756,11 +757,12 @@ func staticMemberAccessBase(expression string) (string, bool) {
 // staticExpressionType is the static type of expression in scope, the
 // operator check's (operandOf); a parameter read with the run's values is
 // the parameter's (propertyAccessExpressionType).
-func (scope staticTypeScope) staticExpressionType(expression string) string {
+func (scope staticTypeScope) staticExpressionType(view braceView) string {
+	expression := view.text()
 	if len(scope.params) > 0 && strings.HasPrefix(strings.TrimSpace(expression), "$") {
-		return propertyAccessExpressionType(expression, scope.values, scope.params)
+		return propertyAccessExpressionType(view, scope.values, scope.params)
 	}
-	return scope.operandOf(expression).typeName()
+	return scope.operandOf(view).typeName()
 }
 
 // validateStaticFunctionVariables rejects a function called with a variable
@@ -769,14 +771,14 @@ func (scope staticTypeScope) staticExpressionType(expression string) string {
 // one clause. A variable the clause binds itself (a list comprehension,
 // reduce, any / all / none / single) shadows the scope where it is bound
 // (localVariableShadowsAt) and is not checked there.
-func validateStaticFunctionVariables(text string, scope staticTypeScope) error {
-	return validateStaticFunctionVariablesIn(text, func() staticTypeScope { return scope })
+func validateStaticFunctionVariables(view braceView, scope staticTypeScope) error {
+	return validateStaticFunctionVariablesIn(view, func() staticTypeScope { return scope })
 }
 
 // validateStaticFunctionVariablesIn is validateStaticFunctionVariables with
 // the scope built only when a function has a variable argument.
-func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeScope) error {
-	return validateStaticFunctionVariablesTyped(text, scopeOf, staticTypeScope.staticExpressionType)
+func validateStaticFunctionVariablesIn(view braceView, scopeOf func() staticTypeScope) error {
+	return validateStaticFunctionVariablesTyped(view, scopeOf, staticTypeScope.staticExpressionType)
 }
 
 // validateStaticFunctionVariablesTyped is validateStaticFunctionVariablesIn
@@ -788,19 +790,22 @@ func validateStaticFunctionVariablesIn(text string, scopeOf func() staticTypeSco
 // variable, and the construct's own check (checkScoped) types the argument
 // with it. Typing it here as well typed every nested construct once for each
 // enclosing scope, which grew exponentially with the nesting depth (NOR-150).
-func validateStaticFunctionVariablesTyped(text string, scopeOf func() staticTypeScope, typeOf func(staticTypeScope, string) string) error {
+func validateStaticFunctionVariablesTyped(view braceView, scopeOf func() staticTypeScope, typeOf func(staticTypeScope, braceView) string) error {
+	text := view.text()
 	var scope *staticTypeScope
 	var locals map[string]struct{}
-	return forEachStaticFunctionArgument(text, func(argument staticArgumentType, expression string, at int) error {
+	return forEachStaticFunctionArgument(view, func(argument staticArgumentType, input braceView, at int) error {
+		input = input.trim()
 		for {
 			// abs((d)) reads d (abs(( (d))) after checkedWithoutUnaryPlus
 			// blanks a unary plus).
-			inner, enclosed := stripEnclosingExpressionParentheses(strings.TrimSpace(expression))
+			_, enclosed := stripEnclosingExpressionParentheses(input.text())
 			if !enclosed {
 				break
 			}
-			expression = inner
+			input = input.window(1, len(input.text())-1).trim()
 		}
+		expression := input.text()
 		variable := simpleSemanticIdentifier(expression)
 		base, property := entityPropertyRead(expression)
 		// A call is typed by the operator check like any other argument
@@ -826,7 +831,7 @@ func validateStaticFunctionVariablesTyped(text string, scopeOf func() staticType
 		if locals == nil {
 			locals = expressionLocalBindings(text)
 		}
-		for _, reference := range semanticExpressionReferences(expression) {
+		for _, reference := range semanticExpressionReferences(input) {
 			if dot := strings.IndexByte(reference, '.'); dot > 0 {
 				reference = reference[:dot]
 			}
@@ -841,7 +846,7 @@ func validateStaticFunctionVariablesTyped(text string, scopeOf func() staticType
 		// entity or a map (labels(n.x), id(n.x), point(n.x) are Neo4j's
 		// compile-time SyntaxError); another base's member has the type the
 		// scope knows for it (a Cypher 25 map's), or none.
-		typeName := typeOf(*scope, expression)
+		typeName := typeOf(*scope, input)
 		if typeName == "" || argument.accepts(typeName) {
 			return nil
 		}
@@ -871,20 +876,21 @@ func entityPropertyRead(expression string) (string, bool) {
 // call whose parentheses open at open: the call must have the function's
 // form (parseReduceForm), a list of a known type must be a list, and an
 // allReduce predicate of a known type a boolean.
-func checkReduceForm(function, text string, open int, check func(staticArgumentType, string, int) error) error {
+func checkReduceForm(function string, view braceView, open int, check func(staticArgumentType, braceView, int) error) error {
+	text := view.text()
 	closing := cyphertext.FindMatchingDelimiter(text, open, '(', ')', cyphertext.OpeningDelimiter)
 	if closing < 0 {
 		return nil
 	}
-	form, ok := parseReduceForm(function, text[open+1:closing])
+	form, ok := parseReduceForm(function, view.window(open+1, closing))
 	if !ok {
 		entry := reduceFormEntries[lowerASCII(function)]
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherCoreReduceFormInvalidSyntax(entry.name, entry.signature))
 	}
-	if err := check(staticArgumentType{expected: "List<T>", options: []string{"List<T>"}}, form.list, open+1); err != nil || !form.all {
+	if err := check(staticArgumentType{expected: "List<T>", options: []string{"List<T>"}}, view.window(open+1, closing).spanWindow(form.listSpan), open+1+form.listSpan.Start); err != nil || !form.all {
 		return err
 	}
-	return check(staticArgumentType{expected: "Boolean", options: []string{"Boolean"}}, form.predicate, closing) // inside the scope of acc and the element
+	return check(staticArgumentType{expected: "Boolean", options: []string{"Boolean"}}, view.window(open+1, closing).spanWindow(form.predicateSpan), closing) // inside the scope of acc and the element
 }
 
 // reduceFormEntries are the catalog entries of reduce and allReduce, by

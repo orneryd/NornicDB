@@ -23,7 +23,7 @@ func TestPatternMapsAreConstant(t *testing.T) {
 		"(n {id: 1}) WHERE n.s = '(r {'": true,
 		"(n {id: r.prop":                 false,
 	} {
-		require.Equal(t, want, patternMapsAreConstant(pattern), pattern)
+		require.Equal(t, want, patternMapsAreConstant(originalBraceView(pattern)), pattern)
 	}
 }
 
@@ -33,7 +33,7 @@ func TestPatternMapsAreConstant(t *testing.T) {
 func TestChainVariablesBindEntities(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "chainvars"))
 	ctx := context.Background()
-	matches := exec.parseTraversalPattern(ctx, "(n)-[r:R]->(m)")
+	matches := exec.parseTraversalPattern(ctx, originalBraceView("(n)-[r:R]->(m)"))
 	require.NotNil(t, matches)
 	node, edge := &storage.Node{ID: "n1"}, &storage.Edge{ID: "e1"}
 	require.True(t, chainVariablesBindEntities(matches, map[string]interface{}{"n": node}))

@@ -132,7 +132,7 @@ func TestParseUseClauseDynamicGraphRefs(t *testing.T) {
 	require.True(t, hasUse)
 	require.True(t, use.IsDynamic())
 	require.Equal(t, "graph.byName", use.Function)
-	require.Equal(t, []string{"'translations.tr'"}, use.Args)
+	require.Equal(t, []string{"'translations.tr'"}, useArgumentTexts(use.Arguments))
 	require.Equal(t, `graph.byName("translations.tr")`, use.Text())
 	require.Equal(t, "RETURN 1 AS one", rem)
 

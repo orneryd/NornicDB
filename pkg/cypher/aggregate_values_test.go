@@ -107,10 +107,10 @@ func TestParallelAggregateSumMergesPartials(t *testing.T) {
 	clause := "RETURN a.key AS key, sum(a.value) AS total ORDER BY key"
 	for _, workers := range []int{1, 4} {
 		ctx := withExpressionFailureSlot(context.Background())
-		groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(t.Context(), clause), workers)
+		groups, handled, err := exec.tryCartesianAggregatePartitions(ctx, patterns, returnProjectionPlanFor(t.Context(), originalBraceView(clause)), workers)
 		require.True(t, handled)
 		require.NoError(t, err)
-		result, err := exec.projectMergeReturnSource(ctx, nil, clause, nil, groups)
+		result, err := exec.projectMergeReturnSource(ctx, nil, originalBraceView(clause), nil, groups)
 		require.NoError(t, err)
 		require.Equal(t, [][]interface{}{{"j", int64(80000)}, {"k", int64(120000)}}, result.Rows, workers)
 	}

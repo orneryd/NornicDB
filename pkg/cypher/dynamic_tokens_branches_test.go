@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -32,70 +33,70 @@ func TestDynamicTokenBranches(t *testing.T) {
 
 	// A parameter that wasn't supplied, in every reader of a dynamic token.
 	withParams := withParams(ctx, map[string]interface{}{"other": 1})
-	_, err = exec.dynamicTokenValue(withParams, "$missing", nil, nil)
+	_, err = exec.dynamicTokenValue(withParams, expressionBraceView("$missing"), nil, nil)
 	require.Error(t, err)
 	_, err = exec.chainLabelNames(withParams, []labelChainItem{{expression: "$missing"}}, nil, nil)
 	require.Error(t, err)
-	_, err = exec.dynamicPropertyKeyOf(withParams, "$missing", nil, nil, false)
+	_, err = exec.dynamicPropertyKeyOf(withParams, expressionBraceView("$missing"), nil, nil, false)
 	require.Error(t, err)
-	_, err = exec.resolveRowDynamicTokens(withParams, "(n:$($missing))", nil, nil)
+	_, err = exec.resolveRowDynamicTokens(withParams, originalBraceView("(n:$($missing))"), nil, nil)
 	require.Error(t, err)
-	_, err = exec.resolveRowDynamicTokens(ctx, "(n:$(null))", nil, nil)
+	_, err = exec.resolveRowDynamicTokens(ctx, originalBraceView("(n:$(null))"), nil, nil)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
 
 	// The pattern resolver leaves quoted text, parameters and unbalanced text.
-	resolved, err := exec.resolveRowDynamicTokens(ctx, "(`n`:$('A') $props)-[:$('R')]->(m:X)", nil, nil)
+	resolved, err := exec.resolveRowDynamicTokens(ctx, originalBraceView("(`n`:$('A') $props)-[:$('R')]->(m:X)"), nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "(`n`:A $props)-[:R]->(m:X)", resolved)
-	resolved, err = exec.resolveRowDynamicTokens(ctx, "(n:$('A')", nil, nil)
+	resolved, err = exec.resolveRowDynamicTokens(ctx, originalBraceView("(n:$('A')"), nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "(n:A", resolved)
-	resolved, err = exec.resolveRowDynamicTokens(ctx, "(n:$(", nil, nil)
+	resolved, err = exec.resolveRowDynamicTokens(ctx, originalBraceView("(n:$("), nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "(n:$(", resolved)
-	resolved, err = exec.resolveRowDynamicTokens(ctx, "(n:Fixed: $([]))", nil, nil)
+	resolved, err = exec.resolveRowDynamicTokens(ctx, originalBraceView("(n:Fixed: $([]))"), nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "(n:Fixed)", resolved)
-	resolved, err = exec.resolveRowDynamicTokens(ctx, "(n {k: 1})", nil, nil)
+	resolved, err = exec.resolveRowDynamicTokens(ctx, originalBraceView("(n {k: 1})"), nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, "(n {k: 1})", resolved)
 
 	// A label item on a relationship, where its kind isn't known statically.
-	_, err = exec.applySetToRelationshipWithContext(ctx, edge, "r", "r:$('X')", nil, nil)
+	_, err = exec.applySetToRelationshipWithContext(ctx, edge, "r", expressionBraceView("r:$('X')"), nil, nil)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	_, err = exec.applySetToRelationshipWithContext(ctx, edge, "r", "r[$missing] = 1", nil, nil)
+	_, err = exec.applySetToRelationshipWithContext(ctx, edge, "r", expressionBraceView("r[$missing] = 1"), nil, nil)
 	require.Error(t, err)
-	_, err = exec.applySetToRelationshipWithContext(ctx, edge, "r", "r['k'] = {a: 1}", nil, nil)
+	_, err = exec.applySetToRelationshipWithContext(ctx, edge, "r", expressionBraceView("r['k'] = {a: 1}"), nil, nil)
 	require.Error(t, err)
-	_, err = exec.applySetToNodeWithContext(ctx, node, "n", "n:$(1)", nil, nil)
+	_, err = exec.applySetToNodeWithContext(ctx, node, "n", expressionBraceView("n:$(1)"), nil, nil)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	_, err = exec.applySetToNodeWithContext(ctx, node, "n", "n:Bad Label", nil, nil)
+	_, err = exec.applySetToNodeWithContext(ctx, node, "n", expressionBraceView("n:Bad Label"), nil, nil)
 	require.Error(t, err)
-	_, err = exec.applySetToNodeWithContext(ctx, node, "n", "n['k'] = {a: 1}", nil, nil)
+	_, err = exec.applySetToNodeWithContext(ctx, node, "n", expressionBraceView("n['k'] = {a: 1}"), nil, nil)
 	require.Error(t, err)
 	result := &ExecuteResult{Stats: &QueryStats{}}
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, "REMOVE r:$('X')", result)
+	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, originalBraceView("REMOVE r:$('X')"), result)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, "REMOVE r[null]", result)
+	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, originalBraceView("REMOVE r[null]"), result)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n:$(null)", result)
+	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, originalBraceView("REMOVE n:$(null)"), result)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n[null]", result)
+	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, originalBraceView("REMOVE n[null]"), result)
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": (*storage.Node)(nil), "r": (*storage.Edge)(nil)}}, "REMOVE n.k, r.k", result)
+	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": (*storage.Node)(nil), "r": (*storage.Edge)(nil)}}, originalBraceView("REMOVE n.k, r.k"), result)
 	require.NoError(t, err)
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n:", result)
+	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, originalBraceView("REMOVE n:"), result)
 	require.Error(t, err)
-	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n", result)
+	err = exec.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, originalBraceView("REMOVE n"), result)
 	require.Error(t, err)
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	err = exec.pipelineApplyRemove(cancelled, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
+	err = exec.pipelineApplyRemove(cancelled, []pipelineRow{{"n": node}}, originalBraceView("REMOVE n.k"), result)
 	require.ErrorIs(t, err, context.Canceled)
-	items, err := parseRemoveItems("n.a, , n:A")
+	items, err := parseRemoveItems(expressionBraceView("n.a, , n:A"))
 	require.NoError(t, err)
 	require.Len(t, items, 2)
-	_, err = parseRemoveItems("n[ ]")
+	_, err = parseRemoveItems(expressionBraceView("n[ ]"))
 	require.Error(t, err)
 
 	// The internal label test: its arguments, an evaluation error, a value
@@ -108,17 +109,17 @@ func TestDynamicTokenBranches(t *testing.T) {
 			return values[expr], nil
 		}}
 	}
-	_, err = fnDynamicLabelTest(fnContext(nil, nil), []string{"n"})
+	_, err = invokeFunctionFixture(fnDynamicLabelTest, fnContext(nil, nil), []string{"n"})
 	require.Error(t, err)
-	_, err = fnDynamicLabelTest(fnContext(nil, context.Canceled), []string{"n", "l", "a"})
+	_, err = invokeFunctionFixture(fnDynamicLabelTest, fnContext(nil, context.Canceled), []string{"n", "l", "a"})
 	require.ErrorIs(t, err, context.Canceled)
-	value, err := fnDynamicLabelTest(fnContext(map[string]interface{}{"l": "A", "a": false}, nil), []string{"n", "l", "a"})
+	value, err := invokeFunctionFixture(fnDynamicLabelTest, fnContext(map[string]interface{}{"l": "A", "a": false}, nil), []string{"n", "l", "a"})
 	require.NoError(t, err)
 	require.Nil(t, value)
-	value, err = fnDynamicLabelTest(fnContext(map[string]interface{}{"n": edge, "l": "DBR", "a": false}, nil), []string{"n", "l", "a"})
+	value, err = invokeFunctionFixture(fnDynamicLabelTest, fnContext(map[string]interface{}{"n": edge, "l": "DBR", "a": false}, nil), []string{"n", "l", "a"})
 	require.NoError(t, err)
 	require.Equal(t, true, value)
-	_, err = fnDynamicLabelTest(fnContext(map[string]interface{}{"n": node, "l": int64(1), "a": false}, nil), []string{"n", "l", "a"})
+	_, err = invokeFunctionFixture(fnDynamicLabelTest, fnContext(map[string]interface{}{"n": node, "l": int64(1), "a": false}, nil), []string{"n", "l", "a"})
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
 
 	// Static checks: MERGE actions, REMOVE label items on a relationship, a
@@ -147,15 +148,15 @@ func TestDynamicTokenBranches(t *testing.T) {
 
 	// The label-chain reader: malformed dynamic items.
 	for _, chain := range []string{"$(x", "$(x) y", "`A` y", "A:$()"} {
-		_, err := setLabelChainItems(chain)
+		_, err := setLabelChainItems(originalBraceView(chain))
 		require.Error(t, err, chain)
 	}
-	items2, err := setLabelChainItems("A: $(x) :B")
+	items2, err := setLabelChainItems(expressionBraceView("A: $(x) :B"))
 	require.NoError(t, err)
 	require.Equal(t, []labelChainItem{{name: "A"}, {expression: "x"}, {name: "B"}}, items2)
 
 	// Readers of the new item forms.
-	readText := deletedEntityReadText(pipelineClause{kind: pipelineClauseSet, text: "SET n[m.k] = m.v, n:$(m.l), n:Fixed"})
+	readText := deletedEntityReadText(t.Context(), pipelineClause{kind: pipelineClauseSet, text: "SET n[m.k] = m.v, n:$(m.l), n:Fixed", view: originalBraceView("SET n[m.k] = m.v, n:$(m.l), n:Fixed")})
 	require.Contains(t, readText, "m.k")
 	require.Contains(t, readText, "m.v")
 	require.Contains(t, readText, "$(m.l)")
@@ -174,10 +175,10 @@ func TestDynamicTokenBranches(t *testing.T) {
 	// Label expressions: the predicate of %, a nested term's error.
 	require.Equal(t, "n:%", (&labelExpression{kind: labelExpressionAny}).predicate("n"))
 	negated := &labelExpression{kind: labelExpressionNot, operands: []*labelExpression{{kind: labelExpressionDynamic, expression: "x"}}}
-	_, _, err = negated.resolveDynamic(func(string) (interface{}, bool, error) { return nil, true, nil })
+	_, _, err = negated.resolveDynamic(func(cyphertext.Span) (interface{}, bool, error) { return nil, true, nil })
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
 	r := &labelExpressionRewriter{query: "n:$(x)", writeItems: true}
-	value2, constant, err := r.resolveConstant("$1")
+	value2, constant, err := r.resolveConstant(expressionBraceView("$1"))
 	require.NoError(t, err)
 	require.False(t, constant)
 	require.Nil(t, value2)
@@ -204,26 +205,26 @@ func TestDynamicTokenBranches(t *testing.T) {
 	// The scope checks, called directly as the MERGE validator calls them.
 	scope2 := newSemanticBindingScope()
 	scope2.bind("n")
-	require.Error(t, exec.validateSetClauseScope(scope2, "SET n[1 +] = 1"))
-	require.Error(t, exec.validateSetClauseScope(scope2, "SET n:$(missing)"))
-	require.Error(t, exec.validateSetClauseScope(scope2, "SET n:$()"))
-	require.Error(t, validateRemoveClauseScope(scope2, "REMOVE n"))
-	require.Error(t, validateRemoveClauseScope(scope2, "REMOVE n[missing]"))
-	require.Error(t, validateRemoveClauseScope(scope2, "REMOVE n:$(missing)"))
-	require.Error(t, validateRemoveClauseScope(scope2, "REMOVE m.p"))
-	require.NoError(t, validateRemoveClauseScope(scope2, "REMOVE n:$('A'), n['k'], n.p"))
+	require.Error(t, exec.validateSetClauseScope(scope2, originalBraceView("SET n[1 +] = 1")))
+	require.Error(t, exec.validateSetClauseScope(scope2, originalBraceView("SET n:$(missing)")))
+	require.Error(t, exec.validateSetClauseScope(scope2, originalBraceView("SET n:$()")))
+	require.Error(t, validateRemoveClauseScope(scope2, originalBraceView("REMOVE n")))
+	require.Error(t, validateRemoveClauseScope(scope2, originalBraceView("REMOVE n[missing]")))
+	require.Error(t, validateRemoveClauseScope(scope2, originalBraceView("REMOVE n:$(missing)")))
+	require.Error(t, validateRemoveClauseScope(scope2, originalBraceView("REMOVE m.p")))
+	require.NoError(t, validateRemoveClauseScope(scope2, originalBraceView("REMOVE n:$('A'), n['k'], n.p")))
 
 	requireCode(t, staticWriteTokenError(pipelineClause{kind: pipelineClauseMerge, text: "MERGE (n:A) ON CREATE SET n[1] = 1"}, scope), "Neo.ClientError.Statement.SyntaxError")
-	_, _, err = exec.pipelineApplyMerge(cancelled, []pipelineRow{{"l": "L"}}, "MERGE (n:$(l) {k: 1})")
+	_, _, err = exec.pipelineApplyMerge(cancelled, []pipelineRow{{"l": "L"}}, originalBraceView("MERGE (n:$(l) {k: 1})"))
 	require.ErrorIs(t, err, context.Canceled)
-	_, _, err = exec.pipelineApplyMerge(ctx, []pipelineRow{{"l": int64(1)}}, "MERGE (n:$(l) {k: 1})")
+	_, _, err = exec.pipelineApplyMerge(ctx, []pipelineRow{{"l": int64(1)}}, originalBraceView("MERGE (n:$(l) {k: 1})"))
 	requireCode(t, err, "Neo.ClientError.Statement.TypeError")
 
 	// Removing an absent property is a no-op even when the store rejects writes.
 	failing := NewStorageExecutor(&updateErrorEngine{Engine: store, nodeErr: context.DeadlineExceeded, edgeErr: context.DeadlineExceeded})
-	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
+	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, originalBraceView("REMOVE n.k"), result)
 	require.NoError(t, err)
-	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, "REMOVE r.k", result)
+	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, originalBraceView("REMOVE r.k"), result)
 	require.NoError(t, err)
 
 	// Seed real persisted properties so REMOVE must write and report rejection.
@@ -238,8 +239,8 @@ func TestDynamicTokenBranches(t *testing.T) {
 	}
 	edge.Properties["k"] = int64(1)
 	require.NoError(t, store.UpdateEdge(edge))
-	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, "REMOVE n.k", result)
+	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"n": node}}, originalBraceView("REMOVE n.k"), result)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, "REMOVE r.k", result)
+	err = failing.pipelineApplyRemove(ctx, []pipelineRow{{"r": edge}}, originalBraceView("REMOVE r.k"), result)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 }

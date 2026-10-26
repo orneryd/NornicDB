@@ -9,6 +9,8 @@
 // mapped to Go idioms and wired into NornicDB's existing storage and multidb layers.
 package fabric
 
+import "github.com/orneryd/nornicdb/internal/cyphertext"
+
 // Fragment is a sealed interface representing a node in the query plan tree
 // produced by decomposing a Cypher statement at USE-clause boundaries.
 //
@@ -69,6 +71,11 @@ type FragmentExec struct {
 	// Query is the Cypher query string to execute against the target graph.
 	Query string
 
+	// Source retains this exact fragment's relation to the submitted statement.
+	// The private anchor makes the relation reusable by the existing plan cache.
+	Source       *cyphertext.Source
+	sourceAnchor *cyphertext.Source
+
 	// GraphName identifies the target graph (e.g. "nornic.tr").
 	// For dotted names, the part before the dot is the composite database
 	// and the part after the dot is the constituent alias.
@@ -78,6 +85,9 @@ type FragmentExec struct {
 	// graph.byElementId(…)), resolved each time the fragment runs from the
 	// statement's parameters and the input row; GraphName is then empty.
 	Graph *UseClause
+	// GraphArguments windows the USE grammar's argument extents in its actual
+	// producer Source, before planning removes the selector from Query.
+	GraphArguments []*cyphertext.Source
 
 	// Scope is the composite database whose constituents a dynamic graph
 	// reference may name.

@@ -400,7 +400,7 @@ func TestNullPropertyProjectionReturnsNull(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]interface{}{{nil}}, result.Rows)
 
-	value := exec.resolveReturnExprFromVarMap(ctx, "r.id", map[string]interface{}{}, "", "", nil, nil)
+	value := exec.resolveReturnExprFromVarMap(ctx, expressionBraceView("r.id"), map[string]interface{}{}, "", "", nil, nil)
 	require.Nil(t, value)
 }
 

@@ -1,10 +1,48 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strconv"
 	"strings"
 )
+
+// topLevelCommaSpans retains the grammar extents before expression consumers
+// project Source windows. It does not read map entries or classify braces.
+func topLevelCommaSpans(input string) []cyphertext.Span {
+	return commaPartSpans(input, false)
+}
+
+// commaPartSpans is the one expression-list extent producer. Leading and
+// interior empty items are preserved; only the final-empty policy differs.
+// Comment presentation is supplied by the existing comment rewrite owner.
+// Author: #1663 implementation lane.
+func commaPartSpans(input string, keepEmpty bool) []cyphertext.Span {
+	var spans []cyphertext.Span
+	visitCommaPartSpans(input, keepEmpty, func(span cyphertext.Span) { spans = append(spans, span) })
+	return spans
+}
+
+func visitCommaPartSpans(input string, keepEmpty bool, visit func(cyphertext.Span)) {
+	if strings.TrimSpace(input) == "" {
+		return
+	}
+	for start := 0; ; {
+		comma := findTopLevelSymbol(input[start:], ",", false, true)
+		end := len(input)
+		if comma >= 0 {
+			end = start + comma
+		}
+		span := cyphertext.TrimWhitespaceSpan(input, cyphertext.Span{Start: start, End: end})
+		if comma >= 0 || span.End > span.Start || keepEmpty {
+			visit(span)
+		}
+		if comma < 0 {
+			return
+		}
+		start = end + 1
+	}
+}
 
 // splitTopLevelComma splits a comma-separated string while respecting nested
 // (), [], {} groups and quoted strings. The parts are trimmed substrings of
@@ -41,20 +79,10 @@ func appendTopLevelCommaParts(parts []string, input string, keepEmpty bool) []st
 	if strings.Contains(input, "/") {
 		input = StripComments(input)
 	}
-	if strings.TrimSpace(input) == "" {
-		return parts
-	}
-	for {
-		comma := findTopLevelOperator(input, ",", false, true)
-		if comma < 0 {
-			if last := strings.TrimSpace(input); last != "" || keepEmpty {
-				parts = append(parts, last)
-			}
-			return parts
-		}
-		parts = append(parts, strings.TrimSpace(input[:comma]))
-		input = input[comma+1:]
-	}
+	visitCommaPartSpans(input, keepEmpty, func(span cyphertext.Span) {
+		parts = append(parts, input[span.Start:span.End])
+	})
+	return parts
 }
 
 func firstPresent(m map[string]interface{}, keys ...string) interface{} {

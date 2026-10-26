@@ -71,8 +71,28 @@ func withSourceRewrite(ctx context.Context, rewrite *queryRewrite) context.Conte
 	if rewrite == nil {
 		return ctx
 	}
-	source := cyphertext.SourceFor(ctx, rewrite.Original)
-	return cyphertext.WithSourceView(ctx, source.Rewrite(rewrite.Text, rewrite.Edits))
+	source, found := cyphertext.SourceView(ctx)
+	if !found || source.Text != rewrite.Original {
+		panic("cypher: rewrite producer lost its carried Source")
+	}
+	return cyphertext.WithSourceView(ctx, sourceRewriteView(source, rewrite))
+}
+
+// sourceRewriteView retains TJ's SourceEdit representation and composes the
+// producer's opt-in copies and typed declarations in the canonical mapper.
+func sourceRewriteView(source *cyphertext.Source, rewrite *queryRewrite) *cyphertext.Source {
+	var view *cyphertext.Source
+	if rewrite.projected {
+		view = source.RewriteWithCopies(rewrite.Text, rewrite.Edits, rewrite.copies)
+	} else {
+		view = source.Rewrite(rewrite.Text, rewrite.Edits)
+	}
+	view = sourceWithBraceConstructions(view, rewrite.constructed)
+	declared, err := view.WithEntryDeclarations(rewrite.entries)
+	if err != nil {
+		panic(err)
+	}
+	return declared
 }
 
 type sourceTrimPolicy uint8
@@ -97,7 +117,10 @@ func sourceWhitespaceExtent(text string) (start, end int) {
 }
 
 func trimSourceText(ctx context.Context, text string, policy sourceTrimPolicy) (context.Context, string) {
-	source := cyphertext.SourceFor(ctx, text)
+	source, found := cyphertext.SourceView(ctx)
+	if !found || source.Text != text {
+		panic("cypher: trim producer lost its carried Source")
+	}
 	start, end := sourceWhitespaceExtent(text)
 	trimmed := text[start:end]
 	if policy == trimSourceTerminator {

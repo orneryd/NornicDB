@@ -132,7 +132,7 @@ func TestGroupByRewriteEdges(t *testing.T) {
 		require.NoError(t, err, query)
 		require.ElementsMatch(t, want, result.Rows, query)
 	}
-	edits, err := groupByEdits("MATCH (n) GROUP BY n")
+	edits, err := groupByEdits(originalBraceView("MATCH (n) GROUP BY n"))
 	require.NoError(t, err)
 	require.Empty(t, edits, "a GROUP BY with no RETURN or WITH before it is left to the parser")
 }

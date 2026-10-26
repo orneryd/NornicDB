@@ -322,9 +322,9 @@ func (e *StorageExecutor) executeCompositeCommand(ctx context.Context, cypher st
 	var err error
 	switch family {
 	case compositeCreateCommand:
-		command, err = e.prepareCreateCompositeDatabase(ctx, cypher)
+		command, err = e.prepareCreateCompositeDatabase(ctx, statementBraceView(ctx, cypher))
 	case compositeAlterCommand:
-		command, err = e.prepareAlterCompositeDatabase(ctx, cypher)
+		command, err = e.prepareAlterCompositeDatabase(ctx, statementBraceView(ctx, cypher))
 	}
 	if err != nil {
 		return nil, err

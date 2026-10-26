@@ -15,7 +15,7 @@ import (
 // every node. The traversal still checks the whole pattern and WHERE from
 // each start node. none is true when no such relationship can match (it
 // doesn't exist, or has another type); ok is false for any other shape.
-func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, whereClause string) (nodes []*storage.Node, none, ok bool) {
+func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, whereClause braceView) (nodes []*storage.Node, none, ok bool) {
 	variable, lookupID, empty, ok := e.idEqualityLookup(ctx, whereClause, "5")
 	if !ok {
 		return nil, false, false

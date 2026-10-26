@@ -363,7 +363,7 @@ func TestMatchUsesPropertyIndexForInParamList(t *testing.T) {
 	lookup := eng.GetSchema().PropertyIndexLookup("MongoDocument", "translationId", "src-a")
 	require.NotEmpty(t, lookup)
 	nodePattern := nodePatternInfo{variable: "n", labels: []string{"MongoDocument"}}
-	nodes, used, idxErr := exec.tryCollectNodesFromPropertyIndexIn(nodePattern, "n.translationId IN $keys", map[string]interface{}{"keys": []interface{}{"src-a", "src-c"}})
+	nodes, used, idxErr := exec.tryCollectNodesFromPropertyIndexIn(nodePattern, expressionBraceView("n.translationId IN $keys"), map[string]interface{}{"keys": []interface{}{"src-a", "src-c"}})
 	require.NoError(t, idxErr)
 	require.True(t, used)
 	require.Len(t, nodes, 2)
@@ -432,7 +432,7 @@ func TestMatchUsesPropertyIndexForOrInParamList_NoScan(t *testing.T) {
 
 func TestParseSimpleIndexedInParam(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
-	prop, vals, ok := exec.parseSimpleIndexedInParam("n", "n.translationId IN $keys", map[string]interface{}{
+	prop, vals, ok := exec.parseSimpleIndexedInParam("n", expressionBraceView("n.translationId IN $keys"), map[string]interface{}{
 		"keys": []interface{}{"src-a", "src-c"},
 	})
 	require.True(t, ok)
@@ -444,7 +444,7 @@ func TestParseSimpleIndexedInLiteral(t *testing.T) {
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	ctx := context.Background()
 
-	prop, vals, ok := exec.parseSimpleIndexedInLiteral(ctx, "n", "n.translationId IN ['src-a','src-c']")
+	prop, vals, ok := exec.parseSimpleIndexedInLiteral(ctx, "n", expressionBraceView("n.translationId IN ['src-a','src-c']"))
 	require.True(t, ok)
 	require.Equal(t, "translationId", prop)
 	require.Len(t, vals, 2)

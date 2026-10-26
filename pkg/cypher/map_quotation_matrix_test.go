@@ -50,19 +50,19 @@ func TestMapQuotationConsumers(t *testing.T) {
 						var err error
 						switch consumer {
 						case "context":
-							got = e.evaluateMapLiteralFull(ctx, tc.text, nil, nil, nil, nil, nil, 0)
+							got = e.evaluateMapLiteralFull(ctx, originalBraceView(tc.text), nil, nil, nil, nil, nil, 0)
 							err = getExpressionFailure(ctx)
 						case "property-map":
-							got, err = e.materializePropertyMap(ctx, tc.text, nil, true, false)
+							got, err = e.materializePropertyMap(ctx, originalBraceView(tc.text), nil, true, false)
 						case "set-strict":
-							got, err = e.parseSetMergeMapLiteralStrict(ctx, tc.text)
+							got, err = e.parseSetMergeMapLiteralStrict(ctx, originalBraceView(tc.text))
 						case "set-expressions":
 							var expressions map[string]string
-							expressions, err = parseSetMergeMapExpressionsStrict(tc.text)
+							expressions, err = parseSetMergeMapExpressionsStrict(originalBraceView(tc.text))
 							result := make(map[string]interface{}, len(expressions))
 							for key, expression := range expressions {
 								var value interface{}
-								value, err = e.checkedPropertyExpression(ctx, expression, nil)
+								value, err = e.checkedPropertyExpression(ctx, originalBraceView(expression), nil)
 								if err != nil {
 									break
 								}
@@ -70,42 +70,42 @@ func TestMapQuotationConsumers(t *testing.T) {
 							}
 							got = result
 						case "set-list":
-							assignments := splitSetAssignments("n = " + tc.text + ", n.keep = 8")
+							assignments := setAssignmentViews(originalBraceView("n = " + tc.text + ", n.keep = 8"))
 							require.Len(t, assignments, 2)
-							target, property, operator, expression := splitSetAssignment(assignments[0])
-							require.Equal(t, "n", target)
-							require.Empty(t, property)
-							require.Equal(t, "=", operator)
-							got, err = e.checkedPropertyExpression(ctx, expression, nil)
+							item := readSetAssignment(assignments[0])
+							require.Equal(t, "n", item.target)
+							require.Empty(t, item.property)
+							require.Equal(t, "=", item.operator)
+							got, err = e.checkedPropertyExpression(ctx, item.right.trim(), nil)
 						case "syntax-plan":
 							var plan []pipelinePropertyExpression
-							plan, err = parsePropertyExpressions(tc.text)
+							plan, err = parsePropertyExpressions(originalBraceView(tc.text))
 							if err == nil {
 								got, err = e.materializePropertyExpressions(ctx, plan, nil, true, false)
 							}
 						case "pattern-template":
-							plan, matched := e.pipelinePropertyExpressions(tc.text)
+							plan, matched := e.pipelinePropertyExpressions(originalBraceView(tc.text))
 							require.True(t, matched)
 							got, err = e.evaluatePipelineProperties(ctx, plan, nil)
 						case "literal-plan":
-							got = parseLiteralMapForPipeline(tc.text)
+							got = parseLiteralMapForPipeline(originalBraceView(tc.text))
 							if !strings.Contains(tc.name, "/value0/") && !strings.Contains(tc.name, "/value1/") {
 								require.Nil(t, got, "non-literal syntax declines before evaluation")
 								continue
 							}
 						case "row":
 							var resolved bool
-							got, resolved, err = e.evaluateRowValue(tc.text, nil)
+							got, resolved, err = e.evaluateRowValue(originalBraceView(tc.text), nil)
 							require.True(t, resolved)
 						case "compiled":
 							compiler := rowValueCompiler{}
-							root, _ := compiler.compile(tc.text)
+							root, _ := compiler.compile(originalBraceView(tc.text))
 							var resolved bool
 							got, resolved, err = root.eval(e, nil, nil)
 							require.True(t, resolved)
 						case "map-projection":
 							var resolved bool
-							got, resolved, err = e.evaluateRowValue("base"+tc.text, map[string]interface{}{"base": map[string]interface{}{}})
+							got, resolved, err = e.evaluateRowValue(originalBraceView("base"+tc.text), map[string]interface{}{"base": map[string]interface{}{}})
 							require.True(t, resolved)
 						}
 						require.NoError(t, err, tc.text)
@@ -166,7 +166,7 @@ func TestMapQuotationFallbackIsBounded(t *testing.T) {
 	e := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, expr := range []string{"[1][0]]", "['escaped\\' quote'][0]]"} {
 		ctx := withExpressionFailureSlot(context.Background())
-		value, err := e.checkedPropertyExpression(ctx, expr, nil)
+		value, err := e.checkedPropertyExpression(ctx, originalBraceView(expr), nil)
 		require.Error(t, err, expr)
 		require.Nil(t, value)
 		require.Error(t, getExpressionFailure(ctx), expr)

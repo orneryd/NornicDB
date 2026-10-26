@@ -980,13 +980,13 @@ MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t)
 WHERE o.pagePath STARTS WITH $pagePath
 RETURN count(t) AS c
 `, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
-	t.Logf("normalized stageD: %s", normalizeMultiMatchWhereClauses(`
+	t.Logf("normalized stageD: %s", normalizeMultiMatchWhereClauses(originalBraceView(`
 MATCH (t:TranslatedText)
 WHERE t.language = $language AND t.isReviewed = false
 MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t)
 WHERE o.pagePath STARTS WITH $pagePath
 RETURN count(t) AS c
-`))
+`)).text())
 	nodeO, _ := store.GetNode("orig-list-1")
 	nodeT, _ := store.GetNode("tr-list-1")
 	require.NotNil(t, nodeO)
@@ -994,33 +994,33 @@ RETURN count(t) AS c
 	require.True(t, exec.evaluateBindingWhere(ctx, binding{
 		"o": nodeO,
 		"t": nodeT,
-	}, "t.language = $language AND t.isReviewed = false AND o.pagePath STARTS WITH $pagePath", map[string]interface{}{"language": "es", "pagePath": "/benefits"}))
+	}, expressionBraceView("t.language = $language AND t.isReviewed = false AND o.pagePath STARTS WITH $pagePath"), map[string]interface{}{"language": "es", "pagePath": "/benefits"}))
 	require.True(t, exec.evaluateBindingWhere(ctx, binding{
 		"o": nodeO,
 		"t": nodeT,
-	}, "t.language = 'es' AND t.isReviewed = false AND o.pagePath STARTS WITH '/benefits'", nil))
-	normalized := normalizeMultiMatchWhereClauses(`
+	}, expressionBraceView("t.language = 'es' AND t.isReviewed = false AND o.pagePath STARTS WITH '/benefits'"), nil))
+	normalized := normalizeMultiMatchWhereClauses(originalBraceView(`
 MATCH (t:TranslatedText)
 WHERE t.language = $language AND t.isReviewed = false
 MATCH (o:OriginalText)-[:TRANSLATES_TO]->(t)
 WHERE o.pagePath STARTS WITH $pagePath
 RETURN count(t) AS c
-`)
+`))
 	returnIdx := findKeywordIndex(normalized, "RETURN")
 	whereIdx := lastKeywordIndexBefore(normalized, "WHERE", returnIdx)
 	matchClauses := splitMatchClauses(normalized, whereIdx, returnIdx)
 	require.Len(t, matchClauses, 2)
-	bindings, relBindings := exec.sharedFirstMatchForTest(context.Background(), matchClauses[0])
+	bindings, relBindings := exec.sharedFirstMatchForTest(context.Background(), matchClauses[0].text())
 	require.NotEmpty(t, bindings)
-	bindings, _ = exec.executeChainedMatch(context.Background(), matchClauses[1], bindings, relBindings)
+	bindings, _ = exec.executeChainedMatch(context.Background(), originalBraceView(matchClauses[1].text()), bindings, relBindings)
 	require.NotEmpty(t, bindings)
 	require.NotNil(t, bindings[0]["o"], "chained match must bind o variable")
 	require.NotNil(t, bindings[0]["t"], "chained match must preserve t variable")
-	rawWhere := strings.TrimSpace(normalized[whereIdx+5 : returnIdx])
-	filteredBindings := exec.filterBindingsByWhere(ctx, bindings, rawWhere, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
+	rawWhere := strings.TrimSpace(normalized.text()[whereIdx+5 : returnIdx])
+	filteredBindings := exec.filterBindingsByWhere(ctx, bindings, originalBraceView(rawWhere), map[string]interface{}{"language": "es", "pagePath": "/benefits"})
 	require.NotEmpty(t, filteredBindings, "combined where predicate should keep matching binding")
 	directCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
-	directRes, directErr := exec.Execute(directCtx, normalized, getParamsFromContext(directCtx))
+	directRes, directErr := exec.Execute(directCtx, normalized.text(), getParamsFromContext(directCtx))
 	require.NoError(t, directErr)
 	require.NotNil(t, directRes)
 	require.Len(t, directRes.Rows, 1, "direct executeMultiMatch should preserve matching row")
@@ -1029,7 +1029,7 @@ RETURN count(t) AS c
 	// writes values into the statement text, so the statement still needs its
 	// parameter map. Without one, Neo4j 5.26.30 and NornicDB both report
 	// ParameterMissing for both names, in order of first appearance.
-	substituted := exec.substituteParams(normalized, map[string]interface{}{"language": "es", "pagePath": "/benefits"})
+	substituted := exec.substituteParams(normalized.text(), map[string]interface{}{"language": "es", "pagePath": "/benefits"})
 	require.Equal(t, normalized, substituted)
 	_, missingErr := exec.Execute(ctx, substituted, nil)
 	require.ErrorContains(t, missingErr, "Neo.ClientError.Statement.ParameterMissing: Expected parameter(s): language, pagePath")
@@ -1073,12 +1073,12 @@ RETURN elementId(t) AS translationId,
        o.trackingId AS trackingId
 ORDER BY t.createdAt DESC
 LIMIT 30`
-	t.Logf("normalized full shape: %s", normalizeMultiMatchWhereClauses(shape))
+	t.Logf("normalized full shape: %s", normalizeMultiMatchWhereClauses(originalBraceView(shape)).text())
 	shapeDirectCtx := context.WithValue(ctx, paramsKey, map[string]interface{}{
 		"language": "es",
 		"pagePath": "/benefits",
 	})
-	shapeDirectRes, shapeDirectErr := exec.Execute(shapeDirectCtx, normalizeMultiMatchWhereClauses(shape), getParamsFromContext(shapeDirectCtx))
+	shapeDirectRes, shapeDirectErr := exec.Execute(shapeDirectCtx, normalizeMultiMatchWhereClauses(originalBraceView(shape)).text(), getParamsFromContext(shapeDirectCtx))
 	require.NoError(t, shapeDirectErr)
 	require.NotNil(t, shapeDirectRes)
 	require.Len(t, shapeDirectRes.Rows, 1, "direct executeMultiMatch should return row for full shape")

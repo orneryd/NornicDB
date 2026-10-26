@@ -26,14 +26,26 @@ func parseLeadingUseClause(ctx context.Context, cypher string, stage cyphertext.
 // Neo4j's SyntaxError. inSubquery is true for a CALL { } body.
 func parseUseClause(ctx context.Context, cypher string, inSubquery bool, stage cyphertext.SourceStage) (fabric.UseClause, string, bool, error) {
 	clause, remaining, hasUse, err := fabric.ParseUseClause(ctx, cypher, inSubquery, stage)
+	return clause, remaining, hasUse, useClauseAdmissionError(err)
+}
+
+func parseUseClauseView(ctx context.Context, view braceView, inSubquery bool) (fabric.UseClause, braceView, bool, error) {
+	reference, remaining, hasUse, err := fabric.ReadUseClauseSource(withBraceView(ctx, view), view.source, inSubquery)
+	if !hasUse || err != nil {
+		return reference.UseClause, view, hasUse, useClauseAdmissionError(err)
+	}
+	return reference.UseClause, braceView{source: remaining, syntax: view.syntax}, true, nil
+}
+
+func useClauseAdmissionError(err error) error {
 	if err == nil {
-		return clause, remaining, hasUse, nil
+		return nil
 	}
 	var syntaxErr *fabric.UseSyntaxError
 	if errors.As(err, &syntaxErr) {
 		err = localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", syntaxErr.Message)
 	}
-	return clause, remaining, hasUse, err
+	return err
 }
 
 // useClauseReferenceEnd is where the graph reference of the USE clause
@@ -62,7 +74,7 @@ func (e *StorageExecutor) dynamicUseError(clause fabric.UseClause) error {
 // CompositeGraphs lists the graphs of the composite database this executor
 // runs on, as qualified names (composite.alias, sorted), for graph.names();
 // composite is false for any other database. The executor is the function
-// contexts' GraphCatalog (cypherfn.Context.Graphs).
+// contexts' GraphCatalog (cypherfn.InvocationContext.Graphs).
 func (e *StorageExecutor) CompositeGraphs() (graphs []string, composite bool) {
 	if !e.sessionIsComposite() {
 		return nil, false
@@ -236,8 +248,9 @@ func (e *StorageExecutor) inTransaction(ctx context.Context) bool {
 // selects a database with USE goes through useDatabase: a top-level
 // statement, a statement a procedure runs (nested, run with executeInternal
 // so it stays in the caller's execution) and a CALL { USE … } body.
-func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query string, params map[string]interface{}, nested bool) (*ExecuteResult, error) {
-	scopedExec, ctx, err := e.useDatabase(ctx, db, query)
+func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db string, view braceView, params map[string]interface{}, nested bool) (*ExecuteResult, error) {
+	query := view.text()
+	scopedExec, ctx, err := e.useDatabase(ctx, db, view)
 	if err != nil {
 		return nil, err
 	}
@@ -266,7 +279,9 @@ func (e *StorageExecutor) executeOnDatabase(ctx context.Context, db, query strin
 // database runs only what its statement policy allows, and a statement of a
 // transaction (explicit, or the one the statement is nested in) stays on
 // that transaction's database. It returns db's executor and ctx scoped to db.
-func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*StorageExecutor, context.Context, error) {
+func (e *StorageExecutor) useDatabase(ctx context.Context, db string, view braceView) (*StorageExecutor, context.Context, error) {
+	query := view.text()
+	ctx = withBraceView(ctx, view)
 	if err := e.authorizeSelectedDatabase(ctx, db, query); err != nil {
 		return nil, ctx, err
 	}
@@ -275,7 +290,7 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 		return nil, ctx, err
 	}
 	if strings.EqualFold(resolvedDB, "system") {
-		if err := systemDatabaseStatementError(ctx, query); err != nil {
+		if err := systemDatabaseStatementError(ctx, view); err != nil {
 			return nil, ctx, err
 		}
 	}
@@ -309,25 +324,28 @@ func (e *StorageExecutor) useDatabase(ctx context.Context, db, query string) (*S
 // of the system database's records (systemProcedureScope). This is the one
 // policy, applied on every route: the request's or session's database, USE,
 // a statement a procedure runs, and CALL { USE … }.
-func systemDatabaseStatementError(ctx context.Context, query string) error {
-	_, query = parseExecutionMode(query)
-	query = strings.TrimSpace(query)
+func systemDatabaseStatementError(ctx context.Context, view braceView) error {
+	_, view = executionModeView(view)
+	view = view.trim()
+	query := view.text()
+	ctx = withBraceView(ctx, view)
 	// A SHOW command runs, and its tail is held to Neo4j's rules for it
 	// (systemShowTailError).
 	if startsWithKeywordFold(query, "SHOW") {
-		return systemShowTailError(query)
+		return systemShowTailError(view)
 	}
 	// Transaction control (BEGIN, COMMIT, ROLLBACK) is no statement on a
 	// graph; a BEGIN … COMMIT script is its statement.
-	if isMetadataCommand(query, metadataCatalogExecution) || bareTransactionCommand(query) != "" {
+	if isMetadataCommand(view, metadataCatalogExecution) || bareTransactionCommand(query) != "" {
 		return nil
 	}
 	if startsWithKeywordFold(query, "BEGIN") && transactionScriptShape(query) {
 		body, _ := stripBeginTransactionPrefix(query)
+		bodyStart := len(query) - len(body)
 		if statement, _, ok := splitTransactionScriptTailAction(body); ok {
 			body = statement
 		}
-		return systemDatabaseStatementError(ctx, body)
+		return systemDatabaseStatementError(ctx, view.window(bodyStart, bodyStart+len(body)))
 	}
 	notRecognised := localizedStatusError("Neo.ClientError.Statement.SemanticError", "SemanticError",
 		localization.CypherAdminSystemProcedureUnsupported(query))
@@ -341,12 +359,12 @@ func systemDatabaseStatementError(ctx context.Context, query string) error {
 	if requirements.Write || requirements.Schema || queryKeywords(query)["MATCH"] {
 		return graphAccess
 	}
-	if StatementDatabase("", query) == "system" || startsWithKeywordFold(query, "TERMINATE") || isNornicExtensionStatement(query) {
+	if StatementDatabase("", query) == "system" || startsWithKeywordFold(query, "TERMINATE") || isNornicExtensionStatement(view) {
 		return nil
 	}
 	if startsWithKeywordFold(query, "CALL") {
 		if _, procedureCall := procedureNameAt(query, len("CALL")); procedureCall {
-			if expressionReadsGraphText(query) {
+			if graphReadingExpressionView(view) != "" {
 				return graphAccess
 			}
 			return nil
@@ -366,9 +384,11 @@ func systemDatabaseStatementError(ctx context.Context, query string) error {
 // user database a SHOW tail is not limited this way (the Cypher 25 clauses
 // after YIELD and graph-reading expressions run there, as Neo4j runs the
 // expressions).
-func systemShowTailError(query string) error {
-	query = strings.TrimSpace(strings.TrimSuffix(query, ";"))
-	tail := strings.TrimSpace(query[len(showCommandHead(query)):])
+func systemShowTailError(view braceView) error {
+	view = showStatementView(view)
+	query := view.text()
+	tailView := view.window(len(showCommandHead(view).text()), len(query)).trim()
+	tail := tailView.text()
 	if tail == "" {
 		return nil
 	}
@@ -383,7 +403,7 @@ func systemShowTailError(query string) error {
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 			localization.CypherAdminShowClauseUnexpected(clause[:end]))
 	}
-	switch kind := graphReadingExpression(tail); kind {
+	switch kind := graphReadingExpressionView(tailView); kind {
 	case "":
 		return nil
 	case "COUNT", "EXISTS", "COLLECT":
@@ -409,7 +429,7 @@ func (e *StorageExecutor) systemDatabaseWriteError(ctx context.Context, query st
 	if !strings.EqualFold(database, "system") {
 		return nil
 	}
-	return systemDatabaseStatementError(ctx, query)
+	return systemDatabaseStatementError(ctx, statementBraceView(ctx, query))
 }
 
 // resolveCompositeStorage resolves USE <composite> to a CompositeEngine-backed executor.

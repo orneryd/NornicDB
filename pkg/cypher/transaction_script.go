@@ -124,6 +124,8 @@ func (e *StorageExecutor) executeSimpleTransactionScript(ctx context.Context, qu
 }
 
 func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Context, scriptBody string) (*ExecuteResult, error) {
+	script := statementBraceView(ctx, scriptBody)
+	scriptBody = script.text()
 	upper := upperASCII(scriptBody)
 	caseIdx := strings.Index(upper, "CASE")
 	if caseIdx <= 0 {
@@ -136,8 +138,10 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	if len(matches) != 3 {
 		return nil, localizedError(localization.CypherTransactionsCaseSyntaxInvalid(), nil)
 	}
-	conditionExpr := strings.TrimSpace(matches[1])
-	returnExpr := strings.TrimSpace(matches[2])
+	// The condition is evaluated in the script's own statement view.
+	at := txCaseRollbackPattern.FindStringSubmatchIndex(caseBlock)
+	conditionExpr := script.window(caseIdx+at[2], caseIdx+at[3]).trim()
+	returnView := script.window(caseIdx+at[4], caseIdx+at[5]).trim()
 
 	if _, err := e.handleBegin(); err != nil {
 		return nil, err
@@ -165,7 +169,7 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 		return e.handleRollback()
 	}
 
-	projected, err := e.projectTransactionReturn(ctx, callResult, returnExpr)
+	projected, err := e.projectTransactionReturn(ctx, callResult, returnView)
 	if err != nil {
 		return nil, e.abortTransaction(ctx, err)
 	}
@@ -176,15 +180,16 @@ func (e *StorageExecutor) executeCaseRollbackTransactionScript(ctx context.Conte
 	return projected, nil
 }
 
-func (e *StorageExecutor) projectTransactionReturn(ctx context.Context, input *ExecuteResult, returnExpr string) (*ExecuteResult, error) {
+func (e *StorageExecutor) projectTransactionReturn(ctx context.Context, input *ExecuteResult, returnExpr braceView) (*ExecuteResult, error) {
 	rows := make([]pipelineRow, 0, len(input.Rows))
 	for _, row := range input.Rows {
 		rows = append(rows, pipelineRow(buildRowValueMap(input.Columns, row)))
 	}
-	if strings.TrimSpace(returnExpr) == "" {
-		returnExpr = "*"
+	clause := returnExpr.wrap("RETURN ", "")
+	if strings.TrimSpace(returnExpr.text()) == "" {
+		clause = returnExpr.generated("RETURN *")
 	}
-	projected, err := e.projectMergeReturn(ctx, rows, "RETURN "+returnExpr)
+	projected, err := e.projectMergeReturn(ctx, rows, clause)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +224,7 @@ func buildRowValueMap(cols []string, row []interface{}) map[string]interface{} {
 	return out
 }
 
-func (e *StorageExecutor) evaluateConditionExpression(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (bool, error) {
+func (e *StorageExecutor) evaluateConditionExpression(ctx context.Context, expr braceView, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (bool, error) {
 	v := e.evaluateExpressionWithContext(ctx, expr, nodes, rels)
 	switch b := v.(type) {
 	case bool:

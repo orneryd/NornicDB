@@ -28,20 +28,41 @@ type UseReference struct {
 }
 
 func ReadUseReference(ctx context.Context, source *cyphertext.Source) (UseReference, error) {
+	view, err := readUseReference(ctx, source, false)
+	return view.Reference, err
+}
+
+// UseReferenceView carries projections of the grammar's argument records into
+// the actual supplied Source. Reference retains its original-span contract.
+type UseReferenceView struct {
+	Reference UseReference
+	Arguments []*cyphertext.Source
+}
+
+func ReadUseReferenceView(ctx context.Context, source *cyphertext.Source) (UseReferenceView, error) {
+	return readUseReference(ctx, source, true)
+}
+
+func readUseReference(ctx context.Context, source *cyphertext.Source, retainViews bool) (UseReferenceView, error) {
 	if source.Err != nil {
-		return UseReference{}, source.Err
+		return UseReferenceView{}, source.Err
 	}
 	syntax, err := ParseSyntax(ctx, source.Text, UseEntry, false, AcceptedSource)
 	if err != nil {
 		if syntax.Valid() && syntax.data.useError != nil {
-			return UseReference{}, syntax.data.useError
+			return UseReferenceView{}, syntax.data.useError
 		}
-		return UseReference{}, err
+		return UseReferenceView{}, err
 	}
-	return syntax.Root().UseReference(source), nil
+	return syntax.Root().useReference(source, retainViews), nil
 }
 
 func (node SyntaxNode) UseReference(source *cyphertext.Source) UseReference {
+	return node.useReference(source, false).Reference
+}
+
+func (node SyntaxNode) useReference(source *cyphertext.Source, retainViews bool) UseReferenceView {
+	var windows []*cyphertext.Source
 	_, end := node.Span()
 	reference := UseReference{End: end, AcceptedEnd: node.data.nodes[node.id].end}
 	if source != nil {
@@ -52,7 +73,7 @@ func (node SyntaxNode) UseReference(source *cyphertext.Source) UseReference {
 	args := node.ChildRule(CypherParserRULE_useGraphArguments)
 	if !args.Valid() {
 		reference.Name = name
-		return reference
+		return UseReferenceView{Reference: reference}
 	}
 	reference.Function = name
 	start, finish := args.Span()
@@ -67,13 +88,16 @@ func (node SyntaxNode) UseReference(source *cyphertext.Source) UseReference {
 	}
 	argumentSource := cyphertext.ReadFunctionArgumentSource(body, cyphertext.AllArgumentModifier|cyphertext.DistinctArgumentModifier, nil)
 	if argumentSource.Modifier != cyphertext.NoArgumentModifier && argumentSource.Arguments.Start == argumentSource.Arguments.End {
-		return reference
+		return UseReferenceView{Reference: reference}
 	}
 	chain := args.ChildRule(CypherParserRULE_expressionChain)
 	if chain.Valid() {
 		for i := 0; i < chain.ChildCount(); i++ {
 			child := chain.Child(i)
 			if child.Rule() == CypherParserRULE_expression {
+				if retainViews {
+					windows = append(windows, child.CodeSource(source))
+				}
 				text := child.Text()
 				start, end := child.Span()
 				argumentSpan := cyphertext.Span{Start: start, End: end}
@@ -90,7 +114,7 @@ func (node SyntaxNode) UseReference(source *cyphertext.Source) UseReference {
 			}
 		}
 	}
-	return reference
+	return UseReferenceView{Reference: reference, Arguments: windows}
 }
 
 // useGraphKeyword is the sole contextual GRAPH decision, invoked by the shared

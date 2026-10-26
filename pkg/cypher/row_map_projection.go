@@ -29,40 +29,42 @@ const (
 	mapProjectionStatic
 )
 
-// mapProjectionSplit owns the common variable{items} boundary. Runtime keeps
-// the submitted variable spelling and trims items; static analysis resolves the
-// symbolic name and admits a keyword name only when its supplied scope binds it.
-func mapProjectionSplit(expression string, policy mapProjectionPolicy, scope *staticTypeScope) (variable, items string, ok bool) {
+// mapProjectionSplit retains TJ's runtime/static name policy. The final brace
+// product supplies the syntax and entry boundaries in the carried occurrence.
+func mapProjectionSplit(view braceView, policy mapProjectionPolicy, scope *staticTypeScope) (variable braceView, items []recordedMapEntry, ok bool) {
 	if policy == mapProjectionRuntime {
-		expression = strings.TrimSpace(expression)
+		view = view.trim()
 	}
-	open := strings.IndexByte(expression, '{')
-	if open <= 0 || cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter) != len(expression)-1 {
-		return "", "", false
+	variable, items, ok = view.projectionView()
+	if !ok {
+		return braceView{}, nil, false
 	}
-	variable = strings.TrimSpace(expression[:open])
+	name := strings.TrimSpace(variable.text())
 	if policy == mapProjectionRuntime {
-		if !cyphertext.IsIdentifier(variable) && !isBacktickQuotedName(variable) || precedingSubqueryExpressionKeyword(expression, open) {
-			return "", "", false
+		if !cyphertext.IsIdentifier(name) && !isBacktickQuotedName(name) {
+			return braceView{}, nil, false
 		}
 	} else {
-		variable = simpleSemanticIdentifier(variable)
-		_, subqueryName := staticSubqueryExpressionTypes[upperASCII(variable)]
-		if variable == "" || isCypherKeyword(variable) && !subqueryName && !(scope != nil && scope.bound(variable)) || isSubqueryBrace(expression, open) {
-			return "", "", false
+		name = simpleSemanticIdentifier(name)
+		_, subqueryName := staticSubqueryExpressionTypes[upperASCII(name)]
+		if name == "" || isCypherKeyword(name) && !subqueryName && !(scope != nil && scope.bound(name)) {
+			return braceView{}, nil, false
 		}
-	}
-	items = expression[open+1 : len(expression)-1]
-	if policy == mapProjectionRuntime {
-		items = strings.TrimSpace(items)
 	}
 	return variable, items, true
 }
 
-func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map[string]interface{}) (interface{}, bool, bool, error) {
-	variable, inner, projection := mapProjectionSplit(expression, mapProjectionRuntime, nil)
+func rowMapProjectionSplit(view braceView) (braceView, []recordedMapEntry, bool) {
+	return mapProjectionSplit(view, mapProjectionRuntime, nil)
+}
+
+func (e *StorageExecutor) evaluateRowMapProjection(view braceView, values map[string]interface{}) (interface{}, bool, bool, error) {
+	variable, entries, projection := mapProjectionSplit(view, mapProjectionRuntime, nil)
 	if !projection {
 		return nil, false, false, nil
+	}
+	if err := view.admission(); err != nil {
+		return nil, true, false, err
 	}
 	base, resolved, err := e.evaluateRowValue(variable, values)
 	if err != nil {
@@ -83,13 +85,15 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 		return nil, true, false, propertyAccessTypeError(base)
 	}
 	result := make(map[string]interface{})
-	if inner == "" {
+	if len(entries) == 0 {
 		return result, true, true, nil
 	}
-	for _, rawItem := range splitTopLevelComma(inner) {
-		item := strings.TrimSpace(rawItem)
-		switch {
-		case item == ".*":
+	// Entries use the brace syntax owner's entry grammar, as the statement's
+	// syntax check does: trivia between their tokens changes nothing.
+	for _, item := range entries {
+		kind, name, value := item.record.Kind, item.name, item.value
+		switch kind {
+		case wildcardBraceEntry:
 			if temporal {
 				return nil, true, false, localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType",
 					localization.CypherCoreMapProjectionCoercion(formatCypherValueString(base)))
@@ -97,11 +101,8 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 			for name, value := range properties {
 				result[name] = value
 			}
-		case strings.HasPrefix(item, "."):
-			name, selector := mapProjectionPropertySelector(item)
-			if !selector {
-				return nil, true, false, nil
-			}
+		case propertyBraceEntry:
+			name = normalizePropertyKey(name)
 			if !temporal {
 				result[name] = properties[name]
 				continue
@@ -111,44 +112,27 @@ func (e *StorageExecutor) evaluateRowMapProjection(expression string, values map
 				return nil, true, false, temporalNoSuchFieldError(name)
 			}
 			result[name] = value
-		default:
-			separator := findTopLevelMapKeyValueSeparator(item)
-			if separator > 0 {
-				name := normalizePropertyKey(strings.TrimSpace(item[:separator]))
-				value, ok, err := e.evaluateRowValue(strings.TrimSpace(item[separator+1:]), values)
-				if err != nil {
-					return nil, true, false, err
-				}
-				if !ok {
-					return nil, true, false, nil
-				}
-				result[name] = value
-				continue
+		case keyedBraceEntry:
+			evaluated, ok, err := e.evaluateRowValue(value, values)
+			if err != nil {
+				return nil, true, false, err
 			}
-			if !cyphertext.IsIdentifier(item) && !isBacktickQuotedName(item) {
-				return nil, true, false, nil
-			}
-			value, ok := values[normalizePropertyKey(item)]
 			if !ok {
 				return nil, true, false, nil
 			}
-			result[normalizePropertyKey(item)] = cypherfn.RuntimeValue(value)
+			result[normalizePropertyKey(name)] = evaluated
+		case variableBraceEntry:
+			key := normalizePropertyKey(name)
+			bound, ok := values[key]
+			if !ok {
+				return nil, true, false, nil
+			}
+			result[key] = cypherfn.RuntimeValue(bound)
+		default:
+			return nil, true, false, nil
 		}
 	}
 	return result, true, true, nil
-}
-
-// mapProjectionPropertySelector reads a map projection's property selector,
-// .name or .`quoted name`, and returns the property key (unquoted).
-func mapProjectionPropertySelector(item string) (string, bool) {
-	name := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(item), "."))
-	switch {
-	case cyphertext.IsIdentifier(name):
-		return name, true
-	case isBacktickQuotedName(name):
-		return normalizePropertyKey(name), true
-	}
-	return "", false
 }
 
 // rowProjectionProperties returns the properties of a node, relationship or

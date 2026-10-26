@@ -194,7 +194,8 @@ func (e *StorageExecutor) cacheDependencyScopes(query string) ([]*multidb.Statem
 	if !ok {
 		return scopes, statementScopesValid(scopes)
 	}
-	opts := defaultKeywordScanOpts()
+	// The answer is cached by text, so it reads the text as a new input.
+	opts := defaultKeywordScanOpts(inputBraceView(context.Background(), query, cyphertext.AcceptedSource))
 	opts.SkipParens, opts.SkipBrackets = false, false
 	for from := 0; ; {
 		at := useKeywordIndexFrom(query, from, opts)

@@ -34,14 +34,15 @@ func TestReadQueryBodyExpressionWindows(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var got []body
 			var kinds []pipelineClauseKind
-			require.NoError(t, forEachQueryBody(t.Context(), tc.source, queryBodyContainerKeywords[:], func(container string, start, end int) error {
+			require.NoError(t, forEachQueryBody(t.Context(), originalBraceView(tc.source), queryBodyContainerKeywords[:], func(container string, bodyView braceView) error {
+				start, end := testBodyWindow(bodyView)
 				require.Greater(t, start, 0)
 				require.Less(t, end, len(tc.source))
 				require.Equal(t, byte('{'), tc.source[start-1])
 				require.Equal(t, byte('}'), tc.source[end])
 				got = append(got, body{container, tc.source[start:end]})
 				if tc.firstKinds != nil {
-					shape := readQueryBody(t.Context(), tc.source, start, end)
+					shape := readQueryBody(t.Context(), originalBraceView(tc.source), start, end)
 					require.Equal(t, queryBodyRead, shape.status, tc.source[start:end])
 					require.Len(t, shape.branches, 1)
 					require.NotEmpty(t, shape.branches[0].clauses)
@@ -59,19 +60,20 @@ func TestReadQueryBodyExpressionWindows(t *testing.T) {
 					wantSelected = append(wantSelected, item)
 				}
 			}
-			require.NoError(t, forEachQueryBody(t.Context(), tc.source, []string{"COLLECT"}, func(container string, start, end int) error {
+			require.NoError(t, forEachQueryBody(t.Context(), originalBraceView(tc.source), []string{"COLLECT"}, func(container string, bodyView braceView) error {
+				start, end := testBodyWindow(bodyView)
 				selected = append(selected, body{container, tc.source[start:end]})
 				return nil
 			}))
 			require.Equal(t, wantSelected, selected)
 			stop := errors.New("stop structural validation")
 			visits := 0
-			err := forEachQueryBody(t.Context(), tc.source, queryBodyContainerKeywords[:], func(string, int, int) error { visits++; return stop })
+			err := forEachQueryBody(t.Context(), originalBraceView(tc.source), queryBodyContainerKeywords[:], func(string, braceView) error { visits++; return stop })
 			require.ErrorIs(t, err, stop)
 			require.Equal(t, 1, visits, "a rule error must stop the traversal")
 		})
 	}
-	require.NoError(t, forEachQueryBody(t.Context(), "RETURN 1", queryBodyContainerKeywords[:], func(string, int, int) error {
+	require.NoError(t, forEachQueryBody(t.Context(), originalBraceView("RETURN 1"), queryBodyContainerKeywords[:], func(string, braceView) error {
 		t.Fatal("a statement without braces has no query bodies")
 		return nil
 	}))

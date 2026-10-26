@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -219,25 +220,25 @@ func TestMatchMergeSetHonorsWithWindow(t *testing.T) {
 func TestReturnProjectionPlanIsParsedOncePerText(t *testing.T) {
 	exec, ctx := newMergeReturnRouteExecutor(t)
 	clause := "RETURN 1 AS one, 'x' AS two ORDER BY one LIMIT 1"
-	first, ok := exec.pipelineApplyReturn(ctx, []pipelineRow{{}}, clause)
+	first, ok := exec.pipelineApplyReturn(ctx, []pipelineRow{{}}, originalBraceView(clause))
 	require.True(t, ok)
 	require.Equal(t, []string{"one", "two"}, first.Columns)
 	first.Columns[0] = "changed"
-	require.Same(t, returnProjectionPlanFor(t.Context(), clause), returnProjectionPlanFor(t.Context(), clause))
+	require.Same(t, returnProjectionPlanFor(t.Context(), originalBraceView(clause)), returnProjectionPlanFor(t.Context(), originalBraceView(clause)))
 
-	second, ok := exec.pipelineApplyReturn(ctx, []pipelineRow{{}}, clause)
+	second, ok := exec.pipelineApplyReturn(ctx, []pipelineRow{{}}, originalBraceView(clause))
 	require.True(t, ok)
 	require.Equal(t, []string{"one", "two"}, second.Columns)
 	require.Equal(t, [][]interface{}{{int64(1), "x"}}, second.Rows)
 
-	require.False(t, returnProjectionPlanFor(t.Context(), "RETURN ").valid)
+	require.False(t, returnProjectionPlanFor(t.Context(), originalBraceView("RETURN ")).valid)
 
 	returnProjectionPlans.Lock()
 	for index := len(returnProjectionPlans.plans); index < returnProjectionPlanLimit; index++ {
-		returnProjectionPlans.plans[fmt.Sprintf("RETURN %d", index)] = &returnProjectionPlan{}
+		returnProjectionPlans.plans[cyphertext.NormalizeSource(fmt.Sprintf("RETURN %d", index))] = &returnProjectionPlan{}
 	}
 	returnProjectionPlans.Unlock()
-	returnProjectionPlanFor(t.Context(), "RETURN 'after the limit'")
+	returnProjectionPlanFor(t.Context(), originalBraceView("RETURN 'after the limit'"))
 	returnProjectionPlans.RLock()
 	size := len(returnProjectionPlans.plans)
 	returnProjectionPlans.RUnlock()

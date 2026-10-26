@@ -197,8 +197,8 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 		return map[string]error{"baseline": err}
 	}
 	for i := 0; i < statement.uses; i++ {
-		for _, argument := range owner.Args {
-			functions, err := usePropertyFunctions(argument)
+		for _, argument := range owner.Arguments {
+			functions, err := usePropertyFunctions(argument.Text)
 			if err != nil {
 				return map[string]error{"owner": err}
 			}
@@ -214,8 +214,8 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 	}
 	cacheQuery, _ := desugarStandaloneOrderClauses(input("cache"))
 	wantCache := compileExecutionPolicy(ctx, body, 0).cacheable
-	for _, argument := range owner.Args {
-		wantCache = wantCache && compileExecutionPolicy(ctx, "RETURN "+argument, 0).cacheable
+	for _, argument := range owner.Arguments {
+		wantCache = wantCache && compileExecutionPolicy(ctx, "RETURN "+argument.Text, 0).cacheable
 	}
 	check("cache", compileExecutionPolicy(ctx, cacheQuery, 0).cacheable, wantCache)
 	policy := cachedExecutionPolicy(ctx, cacheQuery)
@@ -280,7 +280,7 @@ func (f *usePropertyFixture) check(ctx context.Context, statement usePropertySta
 			case *fabric.FragmentExec:
 				visit(node.Input)
 				if node.Graph != nil {
-					if node.Graph.Function != owner.Function || !reflect.DeepEqual(node.Graph.Args, owner.Args) {
+					if node.Graph.Function != owner.Function || !reflect.DeepEqual(useArgumentTexts(node.Graph.Arguments), useArgumentTexts(owner.Arguments)) {
 						issues["routing"] = fmt.Errorf("dynamic target disagrees with owner: %#v", node.Graph)
 					}
 					selected++

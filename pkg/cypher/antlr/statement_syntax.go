@@ -496,6 +496,33 @@ func (node SyntaxNode) TokenRange() (int, int) {
 // Code removes comments using the retained lexer channels, preserving gaps
 // between tokens. It never scans quotes, splits an item list or lexes again.
 func (node SyntaxNode) Code() string {
+	return node.code(nil)
+}
+
+// CodeSource carries the existing retained-channel comment projection through
+// the canonical Source owner. The supplied view is the grammar's actual input;
+// expression bytes outside removed comments remain exact copies.
+func (node SyntaxNode) CodeSource(source *cyphertext.Source) *cyphertext.Source {
+	if source.Text != node.data.source {
+		panic("antlr: CodeSource requires the carried grammar input")
+	}
+	// The grammar arena stores accepted coordinates; Span is the legacy
+	// original-coordinate presentation. Slice the carried accepted Source and
+	// let its sole mapper retain the original relation. Author: #1663 lane.
+	item := node.data.nodes[node.id]
+	start, end := item.start, item.end
+	view := source.Window(start, end)
+	var edits []cyphertext.SourceEdit
+	code := node.code(func(original, accepted cyphertext.Span) {
+		edits = append(edits, cyphertext.SourceEdit{Original: original, Accepted: accepted})
+	})
+	if len(edits) == 0 {
+		return view
+	}
+	return view.RewriteWithCopies(code, edits, nil)
+}
+
+func (node SyntaxNode) code(record func(original, accepted cyphertext.Span)) string {
 	item := node.data.nodes[node.id]
 	start, end := item.start, item.end
 	first, after := node.TokenRange()
@@ -507,7 +534,11 @@ func (node SyntaxNode) Code() string {
 			continue
 		}
 		builder.WriteString(node.data.source[last:token.start])
+		accepted := builder.Len()
 		builder.WriteByte(' ')
+		if record != nil {
+			record(cyphertext.Span{Start: token.start - start, End: token.end - start}, cyphertext.Span{Start: accepted, End: accepted + 1})
+		}
 		last = token.end
 	}
 	if last == start {

@@ -7,7 +7,7 @@ import (
 )
 
 func TestRemotePropertiesWithoutMapAreEmpty(t *testing.T) {
-	value, err := evalProperties(Context{Eval: func(string) (interface{}, error) {
+	value, err := evalProperties(InvocationContext{Eval: func(int) (interface{}, error) {
 		return storage.RemoteEntityValue{"elementId": "n", "labels": []interface{}{}}, nil
 	}}, []string{"n"})
 	require.NoError(t, err)
@@ -16,7 +16,7 @@ func TestRemotePropertiesWithoutMapAreEmpty(t *testing.T) {
 
 func TestRemotePathSizeUsesPathMeaning(t *testing.T) {
 	for _, path := range []storage.RemotePathValue{nil, {storage.RemoteEntityValue{"elementId": "n"}}} {
-		value, err := evalSize(Context{Eval: func(string) (interface{}, error) { return path, nil }}, []string{"p"})
+		value, err := evalSize(InvocationContext{Eval: func(int) (interface{}, error) { return path, nil }}, []string{"p"})
 		if path == nil {
 			require.NoError(t, err)
 			require.Nil(t, value)

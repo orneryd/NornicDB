@@ -21,13 +21,17 @@ type projectionItemSource struct {
 	expression, alias       string
 	rawExpression, rawAlias string
 	as                      int
+	view                    braceView
+	valid                   bool
 }
 
 // readProjectionItemSource owns alias selection products at both actual stages.
 // Pre-rewrite grouping retains its permissive last-word/source-spelling policy;
 // admitted consumers use the retained grammar AS and execution projection names.
-func readProjectionItemSource(ctx context.Context, item string, stage projectionSourceStage) projectionItemSource {
-	out := projectionItemSource{as: -1}
+func readProjectionItemSource(ctx context.Context, itemView braceView, stage projectionSourceStage) projectionItemSource {
+	item := itemView.text()
+	var wrapper braceView
+	out := projectionItemSource{as: -1, view: itemView.window(0, 0)}
 	var clause cypherantlr.SyntaxNode
 	if stage == projectionBeforeRewrite {
 		trimmed := strings.TrimSpace(item)
@@ -40,7 +44,8 @@ func readProjectionItemSource(ctx context.Context, item string, stage projection
 	} else {
 		const prefix = "RETURN "
 		var ok bool
-		clause, ok = canonicalQueryClause(ctx, prefix+item)
+		wrapper = itemView.wrap(prefix, "")
+		clause, ok = canonicalQueryClause(ctx, wrapper)
 		if !ok {
 			return out
 		}
@@ -70,13 +75,20 @@ func readProjectionItemSource(ctx context.Context, item string, stage projection
 				out.alias = name.Value
 			}
 		}
+		out.view = itemView
+		if out.as >= 0 {
+			out.view = itemView.window(0, out.as).trim()
+		}
+		out.valid = true
 		return out
 	}
-	plan := projectionPlanFromSyntax(clause)
+	plan := projectionPlanFromSyntax(wrapper, clause)
 	if plan.valid && plan.star && len(plan.starItems) == 0 {
 		out.expression, out.alias = "*", "*"
+		out.view, out.valid = itemView.trim(), true
 	} else if plan.valid && !plan.star && len(plan.projections) == 1 {
 		out.expression, out.alias = plan.projections[0].expr, plan.projections[0].alias
+		out.view, out.valid = plan.projections[0].view, true
 	}
 	return out
 }

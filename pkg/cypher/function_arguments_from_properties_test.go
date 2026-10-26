@@ -362,7 +362,7 @@ func TestFunctionArgumentsFromProperties(t *testing.T) {
 }
 
 func TestUnwindParameterBindings(t *testing.T) {
-	require.Equal(t, map[string]string{"x": "p"}, unwindParameterBindings("UNWIND [$p] AS x RETURN x"))
+	require.Equal(t, map[string]string{"x": "p"}, unwindParameterBindings(originalBraceView("UNWIND [$p] AS x RETURN x")))
 	for _, cypher := range []string{
 		"UNWIND $p",                                 // no AS
 		"UNWIND $p AS x RETURN x",                   // not a list
@@ -370,6 +370,6 @@ func TestUnwindParameterBindings(t *testing.T) {
 		"UNWIND [$p, $q] AS x RETURN x",             // two parameters
 		"UNWIND [$p] AS x UNWIND [1] AS x RETURN x", // bound twice
 	} {
-		require.Nil(t, unwindParameterBindings(cypher), cypher)
+		require.Nil(t, unwindParameterBindings(originalBraceView(cypher)), cypher)
 	}
 }

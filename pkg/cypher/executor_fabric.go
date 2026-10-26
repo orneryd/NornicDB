@@ -6,12 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/catalogadapter"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
@@ -41,7 +41,7 @@ func (e *StorageExecutor) shouldUseFabricPlanner(ctx context.Context, cypher str
 	// Word presence alone is insufficient (e.g., "USE" inside string payloads).
 	// This lexical admission keeps ordinary statements on their single parse;
 	// Fabric reads the statement's structure only once it is engaged.
-	opts := defaultKeywordScanOpts()
+	opts := defaultKeywordScanOpts(statementBraceView(ctx, cypher))
 	searchFrom := 0
 	for {
 		useIdx := useKeywordIndexFrom(cypher, searchFrom, opts)
@@ -251,7 +251,7 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 		return nil, useErr
 	}
 	if len(stream.Columns) == 0 && !isSchemaCommandStatement(command) {
-		columns, err := e.ResultColumns(ctx, cypher, e.resultIncomingScope(), cypherVersionFromContext(ctx) == "25", AcceptedSource)
+		columns, err := e.resultColumns(ctx, statementBraceView(ctx, cypher), e.resultIncomingScope(), cypherVersionFromContext(ctx) == "25")
 		if err != nil {
 			return nil, err
 		}
@@ -466,17 +466,18 @@ var fabricUnionContract = fabric.UnionContract{
 // rewritten; the planner and remote participants keep the names as written.
 // Diagnostics are mapped back to those names.
 func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cypher string, params map[string]interface{}) error {
-	statement := fabricSingleGraphStatement(ctx, cypher)
+	ctx, statement := fabricSingleGraphView(ctx, cypher)
 	canonical, names := canonicalizeQuotedVariablesWithBindings(ctx, statement, nil)
 	if names != nil {
 		ctx = withQuotedVariableNames(ctx, names)
 		params = names.parameterValues(params)
 	}
-	desugared, _, err := desugarLabelExpressions(canonical, params, cypherVersionFromContext(ctx) == "25")
+	desugared, rewrite, err := desugarLabelExpressionView(retainedBraceView(ctx, canonical), params, cypherVersionFromContext(ctx) == "25")
+	ctx = withSourceRewrite(ctx, rewrite)
 	if err == nil {
 		err = e.validateSemanticScopes(ctx, desugared)
 	}
-	parseItems := func(text string) []returnItem { return e.parseReturnItems(ctx, text) }
+	parseItems := func(view braceView) []returnItem { return e.parseReturnItems(ctx, view) }
 	_, err = (resultRestoration{names: names}).restore(nil, err, parseItems)
 	return err
 }
@@ -486,33 +487,41 @@ func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cyph
 // variable scopes are checked, as Neo4j checks a composite statement's, before
 // any part of it plans or runs. A statement the planner can't read is checked
 // as it is, and planning reports the error.
-func fabricSingleGraphStatement(ctx context.Context, cypher string) string {
+func fabricSingleGraphView(ctx context.Context, cypher string) (context.Context, string) {
 	planner := fabric.NewFabricPlanner(nil)
-	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
-	planner.SetCallImportReader(func(scope string, scoped bool, body string) ([]string, error) {
-		return callSubqueryImportedVariables(ctx, scope, scoped, body)
+	planner.SetPolicyBoundaryReader(readPolicyKeywordBoundary)
+	planner.SetClauseKeywordSourceNameReader(func(source *cyphertext.Source, pos, end int, keyword string) bool {
+		return clauseKeywordUsedAsName(sourceBraceView(source), pos, end, keyword)
 	})
-	statement, err := planner.SingleGraphStatement(ctx, cypher, cyphertext.AcceptedSource)
+	planner.SetCallImportSourceReader(func(scope string, scoped bool, body *cyphertext.Source) ([]string, error) {
+		return callSubqueryImportedVariables(ctx, scope, scoped, sourceBraceView(body))
+	})
+	view := statementBraceView(ctx, cypher)
+	statement, err := planner.SingleGraphSource(ctx, view.source)
 	if err != nil {
-		return cypher
+		return ctx, cypher
 	}
-	return statement
+	return cyphertext.WithSourceView(ctx, statement), statement.Text
 }
 
 func (e *StorageExecutor) planFabricQuery(ctx context.Context, catalog *fabric.Catalog, cypher, sessionDB string) (fabric.Fragment, error) {
 	if e.fabricPlanCache != nil {
 		if cached, found := e.fabricPlanCache.Get(cypher, sessionDB); found && cached != nil {
-			return cached, nil
+			return fabric.BindPlanSource(cached, statementBraceView(ctx, cypher).source), nil
 		}
 	}
 
 	planner := fabric.NewFabricPlanner(catalog)
+	planner.SetPolicyBoundaryReader(readPolicyKeywordBoundary)
 	// A name spelled UNION, OPTIONAL or RETURN is read as ordinary statements read it.
-	planner.SetClauseKeywordNameReader(clauseKeywordUsedAsName)
-	planner.SetCallImportReader(func(scope string, scoped bool, body string) ([]string, error) {
-		return callSubqueryImportedVariables(ctx, scope, scoped, body)
+	planner.SetClauseKeywordSourceNameReader(func(source *cyphertext.Source, pos, end int, keyword string) bool {
+		return clauseKeywordUsedAsName(sourceBraceView(source), pos, end, keyword)
 	})
-	fragment, err := planner.Plan(ctx, cypher, sessionDB, cyphertext.AcceptedSource)
+	planner.SetCallImportSourceReader(func(scope string, scoped bool, body *cyphertext.Source) ([]string, error) {
+		return callSubqueryImportedVariables(ctx, scope, scoped, sourceBraceView(body))
+	})
+	view := statementBraceView(ctx, cypher)
+	fragment, err := planner.PlanSource(ctx, view.source, sessionDB)
 	if err != nil {
 		return nil, err
 	}
@@ -600,7 +609,7 @@ func (e *StorageExecutor) normalizeFabricRowWrapper(ctx context.Context, cypher 
 	if stream == nil || !stream.RowWrapper || len(stream.Columns) != 1 || len(stream.Rows) == 0 {
 		return nil
 	}
-	inferred, err := e.ResultColumns(ctx, cypher, e.resultIncomingScope(), cypherGrammarVersion(cypher) == "25", AcceptedSource)
+	inferred, err := e.resultColumns(ctx, statementBraceView(ctx, cypher), e.resultIncomingScope(), cypherGrammarVersion(cypher) == "25")
 	if err != nil {
 		return err
 	}
@@ -778,6 +787,9 @@ func (c *cypherFabricExecutor) localShardTxExecutors() map[string]*StorageExecut
 }
 
 func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, bool, error) {
+	// A Fabric fragment is a statement at this boundary: admit it once and
+	// carry it, so every reader below shares one Source lineage.
+	ctx = withBraceView(ctx, statementBraceView(ctx, query))
 	clauses, supported := canExecuteAsPipeline(ctx, query)
 	if !supported || containsRelationshipPattern(query) {
 		return nil, nil, false, nil
@@ -788,7 +800,7 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 		}
 	}
 	keywords := queryKeywords(query)
-	if statementAccessesGraphText(query) || keywords["STARTNODE"] || keywords["ENDNODE"] {
+	if statementAccessesGraphView(statementBraceView(ctx, query)) || keywords["STARTNODE"] || keywords["ENDNODE"] {
 		return nil, nil, false, nil
 	}
 	engine := c.base.storage
@@ -803,6 +815,7 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 
 func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbName string, engine storage.Engine, query string, params map[string]interface{}, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	ctx = WithAuthToken(ctx, c.authToken)
+	ctx = withBraceView(ctx, statementBraceView(ctx, query))
 	var exec *StorageExecutor
 	statement := c.statementFor(ctx, c.fabricTransaction())
 	if statement.tx != nil {
@@ -847,7 +860,7 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	defer func() { exec.graphIdentityScope = previousIdentityScope }()
 	// Local fragments bypass implicit execution's decision. Classify this
 	// fragment itself: writes and procedures must retain full node reads.
-	exec.readOnlyQueryNodes = exec.readsQueryNodesWithoutVectors(exec.analyzer.Analyze(ctx, query))
+	exec.readOnlyQueryNodes = exec.readsQueryNodesWithoutVectors(exec.analyzer.analyzeView(ctx, statementBraceView(ctx, query)))
 	query, names := canonicalizeQuotedVariablesWithBindings(ctx, query, recordBindings)
 	if names != nil {
 		params = names.parameterValues(params)
@@ -857,14 +870,15 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	previousBindings := exec.fabricRecordBindings
 	exec.fabricRecordBindings = recordBindings
 	defer func() { exec.fabricRecordBindings = previousBindings }()
-	parseReturnItems := func(text string) []returnItem { return exec.parseReturnItems(ctx, text) }
+	parseReturnItems := func(view braceView) []returnItem { return exec.parseReturnItems(ctx, view) }
 	// Fragment imports are installed before the engine's shared compile-time
 	// scope/type owner runs. As at the composite entry, this validation copy
 	// must desugar label expressions first. executeInternal owns rewriting the
 	// actual local execution and restoring its result to the fragment source.
-	scopeQuery, _, scopeErr := desugarLabelExpressions(query, params, cypherVersionFromContext(ctx) == "25")
+	scopeQuery, scopeRewrite, scopeErr := desugarLabelExpressionView(statementBraceView(ctx, query), params, cypherVersionFromContext(ctx) == "25")
+	scopeCtx := withSourceRewrite(ctx, scopeRewrite)
 	if scopeErr == nil {
-		scopeErr = exec.validateMatchSemanticScopes(ctx, scopeQuery, cypherVersionFromContext(ctx) == "25")
+		scopeErr = exec.validateMatchSemanticScopes(scopeCtx, scopeQuery, cypherVersionFromContext(ctx) == "25")
 	}
 	if scopeErr != nil {
 		_, scopeErr = (resultRestoration{names: names}).restore(nil, scopeErr, parseReturnItems)
@@ -872,11 +886,11 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	}
 	var result *ExecuteResult
 	var err error
-	if stripped, embedding := stripWithEmbeddingSuffix(query); embedding || statementHasEmbeddingCandidate(ctx, query) {
+	if stripped, embedding := stripWithEmbeddingSuffix(statementBraceView(ctx, query)); embedding || statementHasEmbeddingCandidate(ctx, query) {
 		// Inline embeddings use the normal mutation/transaction owner. Internal
 		// fragment execution alone deliberately does not start an implicit tx.
 		result, err = exec.executeWithImplicitTransactionCallback(ctx, query, upperASCII(query), func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
-			return txExec.executeInternal(txCtx, stripped, params)
+			return txExec.executeInternal(withBraceView(txCtx, stripped), stripped.text(), params)
 		})
 	} else {
 		result, err = exec.executeInternal(ctx, query, params)
@@ -902,7 +916,8 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 	if !strings.HasPrefix(upperASCII(trimmed), "WITH ") {
 		return query
 	}
-	withEnd := findLeadingWithEndLocal(trimmed)
+	// A fabric record query arrives as a new statement at this boundary.
+	withEnd := findLeadingWithEndLocal(inputBraceView(context.Background(), trimmed, cyphertext.AcceptedSource))
 	if withEnd <= 0 || withEnd >= len(trimmed) {
 		return query
 	}
@@ -943,18 +958,19 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 	return rewritten
 }
 
-func findLeadingWithEndLocal(query string) int {
+func findLeadingWithEndLocal(view braceView) int {
+	query := view.text()
 	const prefix = "WITH "
 	if len(query) <= len(prefix) {
 		return -1
 	}
-	body := query[len(prefix):]
+	bodyView := view.window(len(prefix), len(query))
 	end := -1
 	for _, keyword := range [...]string{
 		"MATCH", "OPTIONAL MATCH", "RETURN", "WHERE", "USE", "WITH", "CALL",
 		"CREATE", "MERGE", "UNWIND", "SET", "DELETE", "DETACH DELETE",
 	} {
-		if index := topLevelKeywordIndex(body, keyword); index >= 0 && (end < 0 || index < end) {
+		if index := topLevelKeywordIndex(bodyView, keyword); index >= 0 && (end < 0 || index < end) {
 			end = index
 		}
 	}
@@ -1044,20 +1060,14 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 // evaluateGraphArguments evaluates a dynamic graph reference's arguments
 // (USE graph.byName(g)) for Fabric: values holds the statement's
 // parameters and the current row's variables.
-func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
+func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []*cyphertext.Source, values map[string]interface{}) ([]string, error) {
+	ctx = withQueryParams(ctx, values)
 	out := make([]string, len(expressions))
-	for i, expression := range expressions {
-		query, names := canonicalizeQuotedVariablesWithBindings(ctx, "RETURN "+expression, values)
-		bindings, params := values, values
-		if names != nil {
-			bindings, params = names.bindingValues(values), names.parameterValues(values)
-		}
-		projected := strings.TrimSpace(query)
-		if len(projected) <= len("RETURN") || !strings.EqualFold(projected[:len("RETURN")], "RETURN") {
-			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-				localization.CypherCommandRoutingGraphFunctionArgumentInvalid(expression))
-		}
-		value, ok := e.evaluateRowExpressionWithContext(withQueryParams(ctx, params), strings.TrimSpace(projected[len("RETURN"):]), pipelineRow(bindings))
+	for i, source := range expressions {
+		expression := source.Text
+		argumentView := sourceBraceView(source)
+		argumentCtx := withBraceView(ctx, argumentView)
+		value, ok := e.evaluateRowExpressionWithContext(argumentCtx, argumentView, pipelineRow(values))
 		if !ok {
 			if err, undefined := undefinedVariableError(expression); undefined {
 				return nil, err
@@ -1099,11 +1109,11 @@ func fabricGraphReferenceError(err error) error {
 }
 
 func (e *cypherFabricExecutor) CachedResultColumns(ctx context.Context, query string, incoming []string) resultmetadata.Names {
-	return e.base.CachedResultColumns(ctx, query, incoming)
+	return e.base.cachedResultColumns(ctx, statementBraceView(ctx, query), incoming)
 }
 
 func (e *cypherFabricExecutor) ResultProjection(ctx context.Context, query string, incoming []string, stage SourceStage) resultmetadata.Projection {
-	return e.base.ResultProjection(ctx, query, incoming, stage)
+	return e.base.resultProjection(ctx, statementBraceView(ctx, query), incoming)
 }
 
 // fabricTransaction is the coordinator's participant/lifetime owner on both

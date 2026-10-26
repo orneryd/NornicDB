@@ -138,7 +138,7 @@ func TestBuildCombinationsUsingWhereJoin_Branches(t *testing.T) {
 			{variable: "b", nodes: []*storage.Node{{ID: "b1", Properties: map[string]interface{}{"id": "x"}}}},
 			{variable: "c", nodes: []*storage.Node{{ID: "c1", Properties: map[string]interface{}{"id": "z"}}}},
 		},
-		"a.id = b.id",
+		expressionBraceView("a.id = b.id"),
 	)
 	require.True(t, ok)
 	require.Len(t, single, 1)
@@ -171,7 +171,7 @@ func TestBuildCombinationsUsingWhereJoin_Branches(t *testing.T) {
 				},
 			},
 		},
-		"a.id = b.id",
+		expressionBraceView("a.id = b.id"),
 	)
 	require.True(t, ok)
 	require.Len(t, joined, 1)

@@ -13,10 +13,10 @@ func TestASTBuilderDirectHelperCoverage(t *testing.T) {
 
 	t.Run("canonical clause scanner skips embedded and quoted keywords", func(t *testing.T) {
 		s := "XMATCH MATCH1 MATCH RETURN"
-		assert.Equal(t, 14, keywordIndexFrom(s, "MATCH", 0, defaultKeywordScanOpts()))
-		assert.Equal(t, 7, keywordIndexFrom("MATCH1 MATCH", "MATCH", 0, defaultKeywordScanOpts()))
-		assert.Equal(t, -1, keywordIndexFrom("XMATCH", "MATCH", 0, defaultKeywordScanOpts()))
-		assert.Equal(t, -1, keywordIndexFrom("RETURNING", "RETURN", 0, defaultKeywordScanOpts()))
+		assert.Equal(t, 14, keywordIndexFrom(s, "MATCH", 0, defaultKeywordScanOpts(acceptedBraceView(s))))
+		assert.Equal(t, 7, keywordIndexFrom("MATCH1 MATCH", "MATCH", 0, defaultKeywordScanOpts(acceptedBraceView("MATCH1 MATCH"))))
+		assert.Equal(t, -1, keywordIndexFrom("XMATCH", "MATCH", 0, defaultKeywordScanOpts(acceptedBraceView("XMATCH"))))
+		assert.Equal(t, -1, keywordIndexFrom("RETURNING", "RETURN", 0, defaultKeywordScanOpts(acceptedBraceView("RETURNING"))))
 	})
 
 	t.Run("quoted clause names retain their complete RETURN projection", func(t *testing.T) {
@@ -172,13 +172,14 @@ func TestASTBuilderDirectHelperCoverage(t *testing.T) {
 		assert.Equal(t, ASTExprList, expr.Map["nested"].Type)
 
 		expr = builder.parseExpression(cyphertext.NormalizeSource(`{broken, ok: 1}`))
-		assert.Equal(t, ASTExprMap, expr.Type)
-		assert.Len(t, expr.Map, 1)
-		assert.Equal(t, ASTExprLiteral, expr.Map["ok"].Type)
+		// Malformed entries must decline the map shape, rather than
+		// materializing only the valid siblings.
+		assert.NotEqual(t, ASTExprMap, expr.Type)
+		assert.Nil(t, expr.Map)
 
 		expr = builder.parseExpression(cyphertext.NormalizeSource(`{first: 1, , second: 2}`))
-		assert.Equal(t, ASTExprMap, expr.Type)
-		assert.Len(t, expr.Map, 2)
+		assert.NotEqual(t, ASTExprMap, expr.Type)
+		assert.Nil(t, expr.Map)
 
 		expr = builder.parseExpression(cyphertext.NormalizeSource(`"hello"`))
 		assert.Equal(t, ASTExprLiteral, expr.Type)

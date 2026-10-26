@@ -30,7 +30,7 @@ func TestEvaluateWithWhere_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, edge)
 
-	ok, err := exec.evaluateWithWhere(ctx, "age = 42", map[string]interface{}{
+	ok, err := exec.evaluateWithWhere(ctx, expressionBraceView("age = 42"), map[string]interface{}{
 		"n":   node,
 		"r":   edge,
 		"age": int64(42),
@@ -38,16 +38,16 @@ func TestEvaluateWithWhere_Branches(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	ok, err = exec.evaluateWithWhere(ctx, "n.name = 'Alice'", map[string]interface{}{"n": node})
+	ok, err = exec.evaluateWithWhere(ctx, expressionBraceView("n.name = 'Alice'"), map[string]interface{}{"n": node})
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	ok, err = exec.evaluateWithWhere(ctx, "n.name", map[string]interface{}{"n": node})
+	ok, err = exec.evaluateWithWhere(ctx, expressionBraceView("n.name"), map[string]interface{}{"n": node})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expected Boolean")
 	require.False(t, ok)
 
-	ok, err = exec.evaluateWithWhere(ctx, "   ", map[string]interface{}{"n": node})
+	ok, err = exec.evaluateWithWhere(ctx, originalBraceView("   "), map[string]interface{}{"n": node})
 	require.NoError(t, err)
 	require.True(t, ok)
 }
@@ -152,7 +152,7 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 
 	nodes, ok, err := exec.collectDeleteWithLimitCandidates(
 		ctx,
-		"MATCH (n:Person) WHERE n.name = $name",
+		originalBraceView("MATCH (n:Person) WHERE n.name = $name"),
 		"n",
 		10,
 		map[string]interface{}{"name": "alice"},
@@ -164,7 +164,7 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 
 	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
 		ctx,
-		"MATCH (n:Person) WHERE n.tag IN $tags",
+		originalBraceView("MATCH (n:Person) WHERE n.tag IN $tags"),
 		"n",
 		10,
 		map[string]interface{}{"tags": []interface{}{"x"}},
@@ -175,7 +175,7 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 
 	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
 		ctx,
-		"MATCH (n:Person) WHERE n.tag IN $tags",
+		originalBraceView("MATCH (n:Person) WHERE n.tag IN $tags"),
 		"n",
 		10,
 		map[string]interface{}{},
@@ -186,7 +186,7 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 
 	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
 		ctx,
-		"MATCH (n:Person) WHERE n.name <> 'alice'",
+		originalBraceView("MATCH (n:Person) WHERE n.name <> 'alice'"),
 		"n",
 		10,
 		nil,
@@ -197,7 +197,7 @@ func TestCollectDeleteWithLimitCandidates_Branches(t *testing.T) {
 
 	nodes, ok, err = exec.collectDeleteWithLimitCandidates(
 		ctx,
-		"MATCH (:Person) WHERE n.name = 'alice'",
+		originalBraceView("MATCH (:Person) WHERE n.name = 'alice'"),
 		"n",
 		10,
 		nil,
@@ -284,22 +284,22 @@ func TestCallAndClauseHelpers_Branches(t *testing.T) {
 	abEdge, err := store.GetEdge("ab")
 	require.NoError(t, err)
 
-	require.Equal(t, "MATCH (n) RETURN n", buildCallTailPredicateInjection(" MATCH (n) RETURN n ", nil))
+	require.Equal(t, "MATCH (n) RETURN n", buildCallTailPredicateInjection(originalBraceView(" MATCH (n) RETURN n "), nil))
 	require.Equal(t,
 		"MATCH (n) WHERE n.id = '1' AND x = 1 RETURN n",
-		buildCallTailPredicateInjection("MATCH (n) WHERE n.id = '1' RETURN n", []string{"x = 1"}),
+		buildCallTailPredicateInjection(originalBraceView("MATCH (n) WHERE n.id = '1' RETURN n"), []string{"x = 1"}),
 	)
 	require.Equal(t,
 		"MATCH (n) WHERE x = 1 RETURN n",
-		buildCallTailPredicateInjection("MATCH (n) RETURN n", []string{"x = 1"}),
+		buildCallTailPredicateInjection(originalBraceView("MATCH (n) RETURN n"), []string{"x = 1"}),
 	)
 
 	varMap := map[string]interface{}{"s": aNode}
-	require.Equal(t, "B", exec.resolveReturnExprFromVarMap(ctx, "t.name", varMap, "t", "r", &storage.Node{ID: "t", Properties: map[string]interface{}{"name": "B"}}, abEdge))
-	require.EqualValues(t, 5, exec.resolveReturnExprFromVarMap(ctx, "r.w", varMap, "t", "r", nil, abEdge))
-	require.Equal(t, "A", exec.resolveReturnExprFromVarMap(ctx, "s.name", varMap, "t", "r", nil, nil))
-	require.Equal(t, aNode, exec.resolveReturnExprFromVarMap(ctx, "s", varMap, "t", "r", nil, nil))
-	require.EqualValues(t, 7, exec.resolveReturnExprFromVarMap(ctx, "7", varMap, "t", "r", nil, nil))
+	require.Equal(t, "B", exec.resolveReturnExprFromVarMap(ctx, expressionBraceView("t.name"), varMap, "t", "r", &storage.Node{ID: "t", Properties: map[string]interface{}{"name": "B"}}, abEdge))
+	require.EqualValues(t, 5, exec.resolveReturnExprFromVarMap(ctx, expressionBraceView("r.w"), varMap, "t", "r", nil, abEdge))
+	require.Equal(t, "A", exec.resolveReturnExprFromVarMap(ctx, expressionBraceView("s.name"), varMap, "t", "r", nil, nil))
+	require.Equal(t, aNode, exec.resolveReturnExprFromVarMap(ctx, expressionBraceView("s"), varMap, "t", "r", nil, nil))
+	require.EqualValues(t, 7, exec.resolveReturnExprFromVarMap(ctx, expressionBraceView("7"), varMap, "t", "r", nil, nil))
 
 	replaced := replaceIdentifierOutsideQuotes(`row + row.name + "row" + 'row' + `+"`row`"+` + {row: 1}`, "row", "$row")
 	require.Equal(t, `$row + $row.name + "row" + 'row' + `+"`row`"+` + {row: 1}`, replaced)
@@ -325,7 +325,7 @@ func TestMergeAndMutationHelpers_Branches(t *testing.T) {
 		ctxWithParams,
 		edge,
 		"r",
-		"r += $m, r.tags = $p, r.owner = n.name, other.k = 1",
+		expressionBraceView("r += $m, r.tags = $p, r.owner = n.name, other.k = 1"),
 		nodeCtx,
 		relCtx,
 	)
@@ -366,11 +366,11 @@ func TestSubqueryHelperBranches(t *testing.T) {
 	_, _, ok = splitTopLevelEqualityCallSubquery("x")
 	require.False(t, ok)
 
-	idx := indexTopLevelKeywordCallSubquery(`x = "RETURN y" RETURN x`, "RETURN")
+	idx := indexTopLevelKeywordCallSubquery(expressionBraceView(`x = "RETURN y" RETURN x`), "RETURN")
 	require.Equal(t, 15, idx)
 
 	cache := map[string]map[string]interface{}{"s1": {"x": "cached"}}
-	val, found, err := exec.resolveCorrelatedImportValue(ctx, "MATCH (seed:Seed)", "seed", "s1", "x", cache)
+	val, found, err := exec.resolveCorrelatedImportValue(ctx, originalBraceView("MATCH (seed:Seed)"), "seed", "s1", "x", cache)
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "cached", val)
@@ -381,7 +381,7 @@ func TestSubqueryHelperBranches(t *testing.T) {
 	cache = map[string]map[string]interface{}{}
 	val, found, err = exec.resolveCorrelatedImportValue(
 		ctx,
-		"MATCH (seed:Seed {v:'vv'}) WITH seed, seed.v AS x",
+		originalBraceView("MATCH (seed:Seed {v:'vv'}) WITH seed, seed.v AS x"),
 		"seed",
 		"s1",
 		"x",
@@ -392,7 +392,7 @@ func TestSubqueryHelperBranches(t *testing.T) {
 	require.Equal(t, "vv", val)
 	require.Equal(t, "vv", cache["s1"]["x"])
 
-	_, _, err = exec.resolveCorrelatedImportValue(ctx, "MATCH (", "seed", "s1", "x", nil)
+	_, _, err = exec.resolveCorrelatedImportValue(ctx, originalBraceView("MATCH ("), "seed", "s1", "x", nil)
 	require.Error(t, err)
 }
 
@@ -403,37 +403,37 @@ func TestLowerCoverageHelpers_Branches(t *testing.T) {
 	ctx := context.Background()
 
 	// match_multi helpers
-	require.EqualValues(t, int64(5), exec.resolveWhereValue(ctx, "$v", map[string]interface{}{"v": int64(5)}))
-	require.Equal(t, "x", exec.resolveWhereValue(ctx, "'x'", nil))
+	require.EqualValues(t, int64(5), exec.resolveWhereValue(ctx, expressionBraceView("$v"), map[string]interface{}{"v": int64(5)}))
+	require.Equal(t, "x", exec.resolveWhereValue(ctx, expressionBraceView("'x'"), nil))
 	for _, value := range []interface{}{nil, "abc", 1, int64(2), 3.5, true} {
 		require.Equal(t, cypherValueKey(value, cypherEquivalenceContract), cypherValueKey(value, cypherValueEqualityContract))
 	}
 
 	// binding_where_compile helpers
-	pred, ok := exec.compileBindingNullPredicate("n.missing IS NULL", " IS NULL", false)
+	pred, ok := exec.compileBindingNullPredicate(expressionBraceView("n.missing IS NULL"), " IS NULL", false)
 	require.True(t, ok)
 	require.True(t, pred(binding{"n": {ID: "n1", Properties: map[string]interface{}{"name": "a"}}}, nil))
 
-	pred, ok = exec.compileBindingNullPredicate("n.name IS NOT NULL", " IS NOT NULL", true)
+	pred, ok = exec.compileBindingNullPredicate(expressionBraceView("n.name IS NOT NULL"), " IS NOT NULL", true)
 	require.True(t, ok)
 	require.True(t, pred(binding{"n": {ID: "n1", Properties: map[string]interface{}{"name": "a"}}}, nil))
 
-	val, ok := exec.resolveBindingFallbackValueWithOk(ctx, "$plain", nil, map[string]interface{}{"plain": "p"})
+	val, ok := exec.resolveBindingFallbackValueWithOk(ctx, expressionBraceView("$plain"), nil, map[string]interface{}{"plain": "p"})
 	require.True(t, ok)
 	require.Equal(t, "p", val)
-	val, ok = exec.resolveBindingFallbackValueWithOk(ctx, "1 + 2", nil, nil)
+	val, ok = exec.resolveBindingFallbackValueWithOk(ctx, expressionBraceView("1 + 2"), nil, nil)
 	require.True(t, ok)
 	require.EqualValues(t, int64(3), val)
 
 	// match_with_rel helpers
-	require.True(t, exec.evaluateConditionFromValues("x = 1 AND y IS NOT NULL", map[string]interface{}{"x": int64(1), "y": "ok"}))
-	require.True(t, exec.evaluateConditionFromValues("x = 1 OR y = 2", map[string]interface{}{"x": int64(9), "y": int64(2)}))
-	require.False(t, exec.evaluateConditionFromValues("NOT x = 1", map[string]interface{}{"x": int64(1)}))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("x = 1 AND y IS NOT NULL"), map[string]interface{}{"x": int64(1), "y": "ok"}))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("x = 1 OR y = 2"), map[string]interface{}{"x": int64(9), "y": int64(2)}))
+	require.False(t, exec.evaluateConditionFromValues(expressionBraceView("NOT x = 1"), map[string]interface{}{"x": int64(1)}))
 	// Undefined identifiers evaluate to Cypher null in the shared evaluator
 	// (legacy clone returned the raw text, which broke IS NULL semantics).
-	require.True(t, exec.evaluateConditionFromValues("missing IS NULL", map[string]interface{}{}))
-	require.False(t, exec.evaluateConditionFromValues("missing IS NOT NULL", map[string]interface{}{}))
-	require.True(t, exec.evaluateConditionFromValues("x <> 2", map[string]interface{}{"x": int64(1)}))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("missing IS NULL"), map[string]interface{}{}))
+	require.False(t, exec.evaluateConditionFromValues(expressionBraceView("missing IS NOT NULL"), map[string]interface{}{}))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("x <> 2"), map[string]interface{}{"x": int64(1)}))
 	lit, litOK := parseLiteralValueFromComputedRow(`"hello"`)
 	require.True(t, litOK)
 	require.Equal(t, "hello", lit)
@@ -485,7 +485,7 @@ func TestResolveCorrelatedImportValue_OptionalFallbackBranch(t *testing.T) {
 	require.NoError(t, err)
 
 	outerPart := "MATCH (seed:Seed) WHERE seed.name = 'none' OPTIONAL MATCH (seed)-[:REL]->(t:Target) WITH seed, t"
-	val, found, err := exec.resolveCorrelatedImportValue(ctx, outerPart, "seed", "seed-1", "t", map[string]map[string]interface{}{})
+	val, found, err := exec.resolveCorrelatedImportValue(ctx, originalBraceView(outerPart), "seed", "seed-1", "t", map[string]map[string]interface{}{})
 	require.NoError(t, err)
 	require.True(t, found)
 	switch target := val.(type) {
@@ -516,7 +516,7 @@ func TestResolveCorrelatedImportValue_DoesNotLeakSingleMismatchedRow(t *testing.
 	// This outer query yields exactly one row for seed-b. Asking for seed-a must
 	// not return seed-b's imported value.
 	outerPart := "MATCH (seed:Seed {id:'seed-b'}) OPTIONAL MATCH (seed)-[:REL]->(t:Target) WITH seed, t"
-	val, found, err := exec.resolveCorrelatedImportValue(ctx, outerPart, "seed", "seed-a", "t", nil)
+	val, found, err := exec.resolveCorrelatedImportValue(ctx, originalBraceView(outerPart), "seed", "seed-a", "t", nil)
 	require.NoError(t, err)
 	require.False(t, found)
 	require.Nil(t, val)

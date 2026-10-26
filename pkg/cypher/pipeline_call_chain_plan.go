@@ -29,10 +29,10 @@ func (e *StorageExecutor) planPipelineCallChain(ctx context.Context, clauses []p
 		if !effects.materializes && (effects.skip != "" || effects.limit != "") {
 			var pagination []paginationExpression
 			if effects.skip != "" {
-				pagination = append(pagination, paginationExpression{keyword: "SKIP", value: effects.skip})
+				pagination = append(pagination, paginationExpression{keyword: "SKIP", value: effects.skipView})
 			}
 			if effects.limit != "" {
-				pagination = append(pagination, paginationExpression{keyword: "LIMIT", value: effects.limit})
+				pagination = append(pagination, paginationExpression{keyword: "LIMIT", value: effects.limitView})
 			}
 			plan.operators = append(plan.operators, plannedCallChainOperator{index: index, pagination: pagination})
 		}

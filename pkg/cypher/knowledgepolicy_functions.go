@@ -13,7 +13,8 @@ import (
 
 // evaluateKnowledgePolicyFunction owns recognition, source selection and
 // result projection for policy(), decay() and decayScore().
-func (e *StorageExecutor) evaluateKnowledgePolicyFunction(ctx context.Context, expr, lowerExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
+func (e *StorageExecutor) evaluateKnowledgePolicyFunction(ctx context.Context, view braceView, lowerExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
+	expr := view.text()
 	handled := false
 	for _, name := range []string{"decayScore", "decayscore", "decay", "policy"} {
 		if matchFuncStartAndSuffix(expr, name) {
@@ -27,7 +28,7 @@ func (e *StorageExecutor) evaluateKnowledgePolicyFunction(ctx context.Context, e
 
 	originalName, _, _ := strings.Cut(expr, "(")
 	name := strings.ToLower(strings.TrimSpace(originalName))
-	args := e.splitFunctionArgs(extractFuncArgs(expr, strings.TrimSpace(originalName)))
+	args := view.trim().functionArguments().commaViews()
 	disabled := func(reason string) interface{} {
 		if name == "policy" {
 			return minimalPolicyMap("")
@@ -40,7 +41,7 @@ func (e *StorageExecutor) evaluateKnowledgePolicyFunction(ctx context.Context, e
 	if len(args) == 0 {
 		return disabled(localization.CypherKnowledgePolicyReasonNoEntityArgument().Fallback), true
 	}
-	ent, ok := e.resolveEntityForDecay(ctx, args[0], nodes, rels)
+	ent, ok := e.resolveEntityForDecay(ctx, args[0].text(), nodes, rels)
 	if !ok {
 		return disabled(localization.CypherKnowledgePolicyReasonEntityNotFound().Fallback), true
 	}
@@ -223,7 +224,7 @@ func minimalPolicyMap(entityID string) map[string]interface{} {
 // map literal and extracts the "property" key. Returns an error for unknown keys.
 func validateDecayOptions(
 	ctx context.Context,
-	optExpr string,
+	optExpr braceView,
 	nodes map[string]*storage.Node,
 	rels map[string]*storage.Edge,
 	e *StorageExecutor,

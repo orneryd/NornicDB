@@ -23,13 +23,13 @@ func TestIndexedEqualityResolvesBoundRowValues(t *testing.T) {
 		{"n.k = row.props.key", int64(9007199254740993)},
 	} {
 		t.Run(test.predicate, func(t *testing.T) {
-			property, value, admitted := executor.parseSimpleIndexedEquality(ctx, "n", test.predicate)
+			property, value, admitted := executor.parseSimpleIndexedEquality(ctx, "n", originalBraceView(test.predicate))
 			require.True(t, admitted)
 			require.Equal(t, "k", property)
 			require.Equal(t, test.want, value)
 		})
 	}
-	_, _, admitted := executor.parseSimpleIndexedEquality(ctx, "n", "n.k = n.other")
+	_, _, admitted := executor.parseSimpleIndexedEquality(ctx, "n", expressionBraceView("n.k = n.other"))
 	require.False(t, admitted)
 }
 
@@ -59,63 +59,63 @@ func TestMatchIndexSeek_ParserAdditionalBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "seek_parser_more_cov"))
 	ctx := context.Background()
 
-	prop, val, ok := exec.parseSimpleIndexedEquality(ctx, "n", "")
+	prop, val, ok := exec.parseSimpleIndexedEquality(ctx, "n", originalBraceView(""))
 	require.False(t, ok)
 	require.Empty(t, prop)
 	require.Nil(t, val)
 
-	_, _, ok = exec.parseSimpleIndexedEquality(ctx, "n", "n.a >= 1")
+	_, _, ok = exec.parseSimpleIndexedEquality(ctx, "n", expressionBraceView("n.a >= 1"))
 	require.False(t, ok)
-	_, _, ok = exec.parseSimpleIndexedEquality(ctx, "n", "n.a IN [1]")
+	_, _, ok = exec.parseSimpleIndexedEquality(ctx, "n", expressionBraceView("n.a IN [1]"))
 	require.False(t, ok)
-	_, _, ok = exec.parseSimpleIndexedEquality(ctx, "n", "n.a IS NOT NULL")
+	_, _, ok = exec.parseSimpleIndexedEquality(ctx, "n", expressionBraceView("n.a IS NOT NULL"))
 	require.False(t, ok)
 
-	prop, val, ok = exec.parseSimpleIndexedEquality(ctx, "n", "n.a = 'x'")
+	prop, val, ok = exec.parseSimpleIndexedEquality(ctx, "n", expressionBraceView("n.a = 'x'"))
 	require.True(t, ok)
 	require.Equal(t, "a", prop)
 	require.Equal(t, "x", val)
 
-	prop, val, ok = exec.parseSimpleIndexedEquality(ctx, "n", "'x' = n.a")
+	prop, val, ok = exec.parseSimpleIndexedEquality(ctx, "n", expressionBraceView("'x' = n.a"))
 	require.True(t, ok)
 	require.Equal(t, "a", prop)
 	require.Equal(t, "x", val)
 
-	prop, vals, ok := exec.parseSimpleIndexedInParam("n", "n.k IN $keys", map[string]interface{}{"keys": []interface{}{"a", "a", nil, "b"}})
+	prop, vals, ok := exec.parseSimpleIndexedInParam("n", expressionBraceView("n.k IN $keys"), map[string]interface{}{"keys": []interface{}{"a", "a", nil, "b"}})
 	require.True(t, ok)
 	require.Equal(t, "k", prop)
 	require.Equal(t, []interface{}{"a", "b"}, vals)
 
-	_, _, ok = exec.parseSimpleIndexedInParam("n", "n.k IN keys", map[string]interface{}{"keys": []interface{}{"a"}})
+	_, _, ok = exec.parseSimpleIndexedInParam("n", expressionBraceView("n.k IN keys"), map[string]interface{}{"keys": []interface{}{"a"}})
 	require.False(t, ok)
-	_, _, ok = exec.parseSimpleIndexedInParam("n", "n.k IN $missing", map[string]interface{}{"keys": []interface{}{"a"}})
+	_, _, ok = exec.parseSimpleIndexedInParam("n", expressionBraceView("n.k IN $missing"), map[string]interface{}{"keys": []interface{}{"a"}})
 	require.False(t, ok)
-	_, _, ok = exec.parseSimpleIndexedInParam("n", "n.k IN $keys", map[string]interface{}{"keys": nil})
+	_, _, ok = exec.parseSimpleIndexedInParam("n", expressionBraceView("n.k IN $keys"), map[string]interface{}{"keys": nil})
 	require.False(t, ok)
-	_, _, ok = exec.parseSimpleIndexedInParam("n", "n.k IN $keys AND n.x = 1", map[string]interface{}{"keys": []interface{}{"a"}})
+	_, _, ok = exec.parseSimpleIndexedInParam("n", expressionBraceView("n.k IN $keys AND n.x = 1"), map[string]interface{}{"keys": []interface{}{"a"}})
 	require.False(t, ok)
 
-	prop, vals, ok = exec.parseSimpleIndexedInLiteral(ctx, "n", "n.k IN ['a','a',null,'b']")
+	prop, vals, ok = exec.parseSimpleIndexedInLiteral(ctx, "n", expressionBraceView("n.k IN ['a','a',null,'b']"))
 	require.True(t, ok)
 	require.Equal(t, "k", prop)
 	require.Equal(t, []interface{}{"a", "b"}, vals)
 
-	_, _, ok = exec.parseSimpleIndexedInLiteral(ctx, "n", "n.k IN 'a'")
+	_, _, ok = exec.parseSimpleIndexedInLiteral(ctx, "n", expressionBraceView("n.k IN 'a'"))
 	require.False(t, ok)
-	_, _, ok = exec.parseSimpleIndexedInLiteral(ctx, "n", "n.k IN ['a'] OR n.x = 1")
+	_, _, ok = exec.parseSimpleIndexedInLiteral(ctx, "n", expressionBraceView("n.k IN ['a'] OR n.x = 1"))
 	require.False(t, ok)
 
-	p, ok := exec.parseSimpleIndexedIsNotNull("n", "n.k IS NOT NULL")
+	p, ok := exec.parseSimpleIndexedIsNotNull("n", expressionBraceView("n.k IS NOT NULL"))
 	require.True(t, ok)
 	require.Equal(t, "k", p)
 
-	_, ok = exec.parseSimpleIndexedIsNotNull("n", "n.k IS NOT NULL AND n.x IS NOT NULL")
+	_, ok = exec.parseSimpleIndexedIsNotNull("n", expressionBraceView("n.k IS NOT NULL AND n.x IS NOT NULL"))
 	require.False(t, ok)
-	_, ok = exec.parseSimpleIndexedIsNotNull("n", "n.k IS NOT NULL AND n.x > 1")
+	_, ok = exec.parseSimpleIndexedIsNotNull("n", expressionBraceView("n.k IS NOT NULL AND n.x > 1"))
 	require.False(t, ok)
 
 	require.Equal(t, "x", unwrapOuterParens("(((x)))"))
-	require.Equal(t, []string{"a=1", "b='x AND y'", "c=2"}, splitTopLevelAndConjuncts("a=1 AND b='x AND y' AND c=2"))
+	require.Equal(t, []string{"a=1", "b='x AND y'", "c=2"}, splitTopLevelAndConjuncts(expressionBraceView("a=1 AND b='x AND y' AND c=2")))
 }
 
 func TestMatchIndexSeek_IDEqualityCompoundAndIDInAdditionalBranches(t *testing.T) {
@@ -134,23 +134,23 @@ func TestMatchIndexSeek_IDEqualityCompoundAndIDInAdditionalBranches(t *testing.T
 
 	// The value side `'n1' OR` is no constant: the seek leaves the predicate
 	// to the row filter instead of looking up its text (#844).
-	nodes, used, err := exec.tryCollectNodesFromIDEqualityCompound(ctx, nodePatternInfo{variable: "n"}, "(id(n) = 'n1' OR )", nil)
+	nodes, used, err := exec.tryCollectNodesFromIDEqualityCompound(ctx, nodePatternInfo{variable: "n"}, originalBraceView("(id(n) = 'n1' OR )"), nil)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(ctx, nodePatternInfo{variable: "n"}, "(id(n) = 'n1' AND elementId(n) = '4:nornic:n2')", nil)
+	nodes, used, err = exec.tryCollectNodesFromIDEqualityCompound(ctx, nodePatternInfo{variable: "n"}, originalBraceView("(id(n) = 'n1' AND elementId(n) = '4:nornic:n2')"), nil)
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Len(t, nodes, 1)
 	require.Equal(t, storage.NodeID("n1"), nodes[0].ID)
 
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids OR n.k='v1'", map[string]interface{}{"ids": []interface{}{"n1"}})
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) IN $ids OR n.k='v1'"), map[string]interface{}{"ids": []interface{}{"n1"}})
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, "id(n) IN $ids", map[string]interface{}{"ids": []interface{}{nil, 7, "", "n2"}})
+	nodes, used, err = exec.tryCollectNodesFromIDIn(ctx, nodePatternInfo{variable: "n"}, expressionBraceView("id(n) IN $ids"), map[string]interface{}{"ids": []interface{}{nil, 7, "", "n2"}})
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Len(t, nodes, 1)

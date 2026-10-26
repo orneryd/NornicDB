@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"sync/atomic"
 )
@@ -16,24 +17,24 @@ var rowPredicateProgramsDisabled atomic.Bool
 
 var rowPredicateSeen = &rowPredicateProgram{}
 
-var rowPredicatePrograms = newBoundedCache[string, *rowPredicateProgram](4096, boundedCacheStringShardIndex)
+var rowPredicatePrograms = newBoundedCache[*cyphertext.Source, *rowPredicateProgram](4096, func(source *cyphertext.Source) int { return boundedCacheStringShardIndex(source.Text) })
 
 // rowPredicateProgramFor returns expression's program, or nil when it is to
 // be read from the text this time.
-func rowPredicateProgramFor(expression string) *rowPredicateProgram {
+func rowPredicateProgramFor(view braceView) *rowPredicateProgram {
 	if rowPredicateProgramsDisabled.Load() || rowValueProgramsDisabled.Load() {
 		return nil
 	}
-	program, cached := rowPredicatePrograms.get(expression)
+	program, cached := rowPredicatePrograms.get(view.source)
 	if !cached {
-		rowPredicatePrograms.put(expression, rowPredicateSeen)
+		rowPredicatePrograms.put(view.source, rowPredicateSeen)
 		return nil
 	}
 	if program != rowPredicateSeen {
 		return program
 	}
-	program = compileRowPredicateProgram(expression)
-	rowPredicatePrograms.put(expression, program)
+	program = compileRowPredicateProgram(view)
+	rowPredicatePrograms.put(view.source, program)
 	return program
 }
 
@@ -47,12 +48,13 @@ type rowPredicateNode interface {
 	holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool
 }
 
-func compileRowPredicateProgram(expression string) *rowPredicateProgram {
+func compileRowPredicateProgram(view braceView) *rowPredicateProgram {
+	expression := view.text()
 	p := &rowPredicateProgram{expression: expression, statementContext: rowPredicateNeedsStatementContext(expression)}
-	if mayContainCaseKeyword(expression) && len(caseBlockSpans(expression)) > 0 {
-		p.root = &rowPredicateStrictNode{text: expression, value: compileRowPredicateValue(expression), arithmetic: predicateIsArithmetic(expression)}
+	if mayContainCaseKeyword(expression) && len(caseBlockSpans(view)) > 0 {
+		p.root = &rowPredicateStrictNode{text: expression, view: view, value: compileRowPredicateValue(view), arithmetic: predicateIsArithmetic(expression)}
 	} else {
-		p.root = compileRowPredicateParts(expression)
+		p.root = compileRowPredicateParts(view)
 	}
 	return p
 }
@@ -73,12 +75,12 @@ func (p *rowPredicateProgram) holds(e *StorageExecutor, ctx context.Context, val
 // every row: that lookup hashes the whole text, which for a long predicate
 // cost more than evaluating it.
 type preparedRowPredicate struct {
-	expression string
+	expression braceView
 	plan       *rowPredicatePlan
 	program    *rowPredicateProgram
 }
 
-func prepareRowPredicate(expression string) *preparedRowPredicate {
+func prepareRowPredicate(expression braceView) *preparedRowPredicate {
 	return &preparedRowPredicate{expression: expression}
 }
 
@@ -92,131 +94,137 @@ func (p *preparedRowPredicate) holds(e *StorageExecutor, ctx context.Context, va
 	held := e.evaluateRowPredicate(ctx, p.expression, values)
 	// The evaluation decided how the next row is evaluated: from the
 	// predicate's complete plan, or once it is compiled, from its program.
-	if plan, cached := rowPredicatePlans.get(p.expression); cached && plan != nil && plan.complete {
+	if plan, cached := rowPredicatePlans.get(p.expression.source); cached && plan != nil && plan.complete {
 		p.plan = plan
-	} else if program, cached := rowPredicatePrograms.get(p.expression); cached && program != rowPredicateSeen && !rowPredicateProgramsDisabled.Load() && !rowValueProgramsDisabled.Load() {
+	} else if program, cached := rowPredicatePrograms.get(p.expression.source); cached && program != rowPredicateSeen && !rowPredicateProgramsDisabled.Load() && !rowValueProgramsDisabled.Load() {
 		p.program = program
 	}
 	return held
 }
 
-func compileRowPredicateValue(expr string) rowValueNode {
+func compileRowPredicateValue(view braceView) rowValueNode {
 	compiler := rowValueCompiler{}
-	node, _ := compiler.compile(expr)
+	node, _ := compiler.compile(view)
 	return node
 }
 
 // compileRowPredicateParts compiles a predicate as evaluateRowPredicateParts
 // evaluates it.
-func compileRowPredicateParts(expr string) rowPredicateNode {
-	expr = strings.TrimSpace(expr)
+func compileRowPredicateParts(view braceView) rowPredicateNode {
+	view = view.trim()
+	expr := view.text()
 	if expr == "" {
 		return rowPredicateConstNode(false)
 	}
-	if inner, ok := stripEnclosingExpressionParentheses(expr); ok {
-		return compileRowPredicateParts(inner)
+	if _, ok := stripEnclosingExpressionParentheses(expr); ok {
+		return compileRowPredicateParts(view.window(1, len(expr)-1))
 	}
-	if mayContainArithmetic(expr) && rowPredicateIsStrictLogical(expr) && !containsRelationshipPattern(expr) {
-		return &rowPredicateStrictNode{text: expr, value: compileRowPredicateValue(expr), arithmetic: predicateIsArithmetic(expr)}
+	if mayContainArithmetic(expr) && rowPredicateIsStrictLogical(view) && !containsRelationshipPattern(expr) {
+		return &rowPredicateStrictNode{text: expr, view: view, value: compileRowPredicateValue(view), arithmetic: predicateIsArithmetic(expr)}
 	}
-	return compileRowPredicateFromSubqueries(expr)
+	return compileRowPredicateFromSubqueries(view)
 }
 
 // compileRowPredicateFromSubqueries compiles a predicate as
 // evaluateRowPredicatePartsFromSubqueries evaluates it.
-func compileRowPredicateFromSubqueries(expr string) rowPredicateNode {
-	if plan := planRowSubqueries(expr); plan != nil && !plan.logical {
-		return &rowPredicatePartsTextNode{text: expr}
+func compileRowPredicateFromSubqueries(view braceView) rowPredicateNode {
+	view = view.trim()
+	expr := view.text()
+	if plan := planRowSubqueries(view); plan != nil && !plan.logical {
+		return &rowPredicatePartsTextNode{view: view}
 	}
 	if variable, labels, ok := parseWithWhereLabelTest(expr); ok {
 		return &rowPredicateLabelNode{variable: variable, labels: labels}
 	}
-	if plan := planRowPredicate(expr); plan != nil {
+	if plan := planRowPredicate(view); plan != nil {
 		return &rowPredicatePlanNode{plan: plan}
 	}
 	var buffer [8]string
-	if plan := planLogicalExpression(expr, buffer[:0]); plan.kind != logicalNone {
+	if plan := planLogicalExpression(view, buffer[:0]); plan.kind != logicalNone {
 		plan.operands = append([]string(nil), plan.operands...)
 		node := &rowPredicateLogicalNode{plan: plan, arithmetic: predicateIsArithmetic(expr)}
-		for _, operand := range plan.operands {
-			node.operands = append(node.operands, compileRowPredicateOperand(operand))
+		for index := range plan.operands {
+			node.operands = append(node.operands, compileRowPredicateOperand(plan.operandView(view, index)))
 		}
 		return node
 	}
-	return compileRowPredicateLeaf(expr)
+	return compileRowPredicateLeaf(view)
 }
 
 // compileRowPredicateLeaf compiles a predicate without a top-level logical
 // operator, as evaluateRowPredicateTextFromSubqueries evaluates it.
-func compileRowPredicateLeaf(expr string) rowPredicateNode {
-	if plan := planRowSubqueries(expr); plan != nil {
-		return &rowPredicateLeafTextNode{text: expr}
+func compileRowPredicateLeaf(view braceView) rowPredicateNode {
+	view = view.trim()
+	expr := view.text()
+	if plan := planRowSubqueries(view); plan != nil {
+		return &rowPredicateLeafTextNode{view: view}
 	}
 	if isRelationshipPatternOperand(expr) {
-		return &rowPredicateLeafTextNode{text: expr}
+		return &rowPredicateLeafTextNode{view: view}
 	}
 	for _, predicate := range []struct {
 		operator string
 		match    func(string, string) bool
 	}{{" STARTS WITH ", strings.HasPrefix}, {" ENDS WITH ", strings.HasSuffix}, {" CONTAINS ", strings.Contains}} {
-		if left, right, ok := splitByOperatorOutsideCase(expr, predicate.operator, true, true); ok {
-			return &rowPredicateStringNode{left: compileRowPredicateOperand(left), right: compileRowPredicateOperand(right), match: predicate.match}
+		if left, right, ok := splitByOperatorOutsideCase(view, predicate.operator, true, true); ok {
+			return &rowPredicateStringNode{left: compileRowPredicateOperand(view.window(0, len(left))), right: compileRowPredicateOperand(view.window(len(expr)-len(right), len(expr))), match: predicate.match}
 		}
 	}
-	if _, _, ok := splitByOperatorOutsideCase(expr, "=~", false, true); ok {
-		return &rowPredicateLeafTextNode{text: expr}
+	if _, _, ok := splitByOperatorOutsideCase(view, "=~", false, true); ok {
+		return &rowPredicateLeafTextNode{view: view}
 	}
 	for _, membership := range []struct {
 		operator string
 		negated  bool
 	}{{" NOT IN ", true}, {" IN ", false}} {
-		if left, right, ok := splitByOperatorOutsideCase(expr, membership.operator, true, true); ok {
-			return &rowPredicateMembershipNode{needle: compileRowPredicateValue(left), haystack: compileRowPredicateValue(right), identity: isRowIdentityExpression(left), negated: membership.negated}
+		if left, right, ok := splitByOperatorOutsideCase(view, membership.operator, true, true); ok {
+			return &rowPredicateMembershipNode{needle: compileRowPredicateValue(view.window(0, len(left))), haystack: compileRowPredicateValue(view.window(len(expr)-len(right), len(expr))), identity: isRowIdentityExpression(left), negated: membership.negated}
 		}
 	}
-	if _, _, _, isTypePredicate, _ := splitTypePredicate(expr); isTypePredicate {
-		return &rowPredicateLeafTextNode{text: expr}
+	if _, _, _, isTypePredicate, _ := splitTypePredicate(view); isTypePredicate {
+		return &rowPredicateLeafTextNode{view: view}
 	}
 	if _, _, _, isNormalization := splitNormalizationPredicate(expr); isNormalization {
-		return &rowPredicateLeafTextNode{text: expr}
+		return &rowPredicateLeafTextNode{view: view}
 	}
 	for _, operator := range []string{" IS NOT NULL", " IS NULL"} {
 		if hasSuffixFoldASCII(expr, operator) {
-			return &rowPredicateNullNode{operand: compileRowPredicateOperand(strings.TrimSpace(expr[:len(expr)-len(operator)])), isNull: operator == " IS NULL"}
+			return &rowPredicateNullNode{operand: compileRowPredicateOperand(view.window(0, len(expr)-len(operator))), isNull: operator == " IS NULL"}
 		}
 	}
-	if scan, comparison := scanComparisonChain(expr); comparison {
+	if scan, comparison := scanComparisonChain(view); comparison {
 		node := &rowPredicateComparisonNode{text: expr, scan: scan, normalizeIdentity: comparisonChainHasIdentity(expr, &scan)}
 		for i := 0; i <= scan.count; i++ {
-			operand := scan.operand(expr, i)
-			node.operands = append(node.operands, compileRowPredicateOperand(operand))
+			node.operands = append(node.operands, compileRowPredicateOperand(view.spanWindow(scan.operandSpan(len(expr), i))))
 		}
 		return node
 	}
-	return &rowPredicateValueNode{operand: compileRowPredicateOperand(expr), arithmetic: predicateIsArithmetic(expr)}
+	return &rowPredicateValueNode{operand: compileRowPredicateOperand(view), arithmetic: predicateIsArithmetic(expr)}
 }
 
 // rowPredicateOperand is an operand of a predicate, resolved as
 // rowPredicateOperand resolves it.
 type rowPredicateOperand struct {
 	text           string
+	view           braceView
 	pattern        bool
 	recordsFailure bool
 	value          rowValueNode
 }
 
-func compileRowPredicateOperand(text string) rowPredicateOperand {
+func compileRowPredicateOperand(view braceView) rowPredicateOperand {
+	text := view.text()
 	pattern := isRelationshipPatternOperand(text)
-	o := rowPredicateOperand{text: text, pattern: pattern, recordsFailure: pattern || rowOperandRecordsFailure(text)}
+	o := rowPredicateOperand{text: text, view: view, pattern: pattern, recordsFailure: pattern || rowOperandRecordsFailure(text)}
 	if !pattern {
-		o.value = compileRowPredicateValue(text)
+		o.value = compileRowPredicateValue(view)
 	}
 	return o
 }
 
 func (o *rowPredicateOperand) evaluate(e *StorageExecutor, ctx context.Context, values map[string]interface{}) (interface{}, bool, error) {
 	if o.pattern {
-		value, ok := e.rowPredicateOperand(ctx, o.text, values)
+		value, ok := e.rowPredicateOperand(ctx, o.view, values)
 		return value, ok, getExpressionFailure(ctx)
 	}
 	return o.value.eval(e, values, nil)
@@ -234,7 +242,7 @@ func (o *rowPredicateOperand) resolve(e *StorageExecutor, ctx context.Context, v
 // Only context-writing operands need an isolated error slot and row scope.
 // Value programs return errors explicitly, so the deciding common operand
 // can go directly to the logical/comparison fold without these allocations.
-func (e *StorageExecutor) evaluateRowLogicalPredicateOperand(ctx context.Context, text string, values map[string]interface{}, recordsFailure bool,
+func (e *StorageExecutor) evaluateRowLogicalPredicateOperand(ctx context.Context, view braceView, values map[string]interface{}, recordsFailure bool,
 	resolve func(context.Context, map[string]interface{}) (interface{}, bool, error), predicateFallback bool) (interface{}, bool, error) {
 	if !recordsFailure {
 		value, ok, err := resolve(ctx, values)
@@ -248,7 +256,7 @@ func (e *StorageExecutor) evaluateRowLogicalPredicateOperand(ctx context.Context
 		if ok || err != nil || !predicateFallback {
 			return value, ok, err
 		}
-		return e.evaluateRowPredicateParts(ctx, text, scope), true, nil
+		return e.evaluateRowPredicateParts(ctx, view, scope), true, nil
 	})
 }
 
@@ -263,6 +271,7 @@ func (n rowPredicateConstNode) holds(*StorageExecutor, context.Context, map[stri
 // continues on the text path.
 type rowPredicateStrictNode struct {
 	text       string
+	view       braceView
 	value      rowValueNode
 	arithmetic bool
 }
@@ -276,19 +285,19 @@ func (n *rowPredicateStrictNode) holds(e *StorageExecutor, ctx context.Context, 
 	if evaluated {
 		return predicateValueHolds(ctx, value, n.arithmetic)
 	}
-	return e.evaluateRowPredicatePartsFromSubqueries(ctx, n.text, values)
+	return e.evaluateRowPredicatePartsFromSubqueries(ctx, n.view, values)
 }
 
-type rowPredicatePartsTextNode struct{ text string }
+type rowPredicatePartsTextNode struct{ view braceView }
 
 func (n *rowPredicatePartsTextNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	return e.evaluateRowPredicatePartsFromSubqueries(ctx, n.text, values)
+	return e.evaluateRowPredicatePartsFromSubqueries(ctx, n.view, values)
 }
 
-type rowPredicateLeafTextNode struct{ text string }
+type rowPredicateLeafTextNode struct{ view braceView }
 
 func (n *rowPredicateLeafTextNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
-	return e.evaluateRowPredicateTextFromSubqueries(ctx, n.text, values)
+	return e.evaluateRowPredicateTextFromSubqueries(ctx, n.view, values)
 }
 
 type rowPredicateLabelNode struct {
@@ -319,7 +328,7 @@ type rowPredicateLogicalNode struct {
 func (n *rowPredicateLogicalNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
 	value, ok, err := n.plan.evaluate(func(index int) (interface{}, bool, error) {
 		o := &n.operands[index]
-		return e.evaluateRowLogicalPredicateOperand(ctx, o.text, values, o.recordsFailure, func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
+		return e.evaluateRowLogicalPredicateOperand(ctx, o.view, values, o.recordsFailure, func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
 			return o.evaluate(e, ctx, scope)
 		}, true)
 	})
@@ -385,7 +394,7 @@ type rowPredicateComparisonNode struct {
 func (n *rowPredicateComparisonNode) holds(e *StorageExecutor, ctx context.Context, values map[string]interface{}) bool {
 	result, resolved, err := evaluateScannedComparisonChain(n.text, &n.scan, n.normalizeIdentity, func(index int, _ string) (interface{}, bool, error) {
 		o := &n.operands[index]
-		return e.evaluateRowLogicalPredicateOperand(ctx, o.text, values, o.recordsFailure, func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
+		return e.evaluateRowLogicalPredicateOperand(ctx, o.view, values, o.recordsFailure, func(ctx context.Context, scope map[string]interface{}) (interface{}, bool, error) {
 			return o.evaluate(e, ctx, scope)
 		}, false)
 	}, compareCypherPredicateValue, cypherVersionFromContext(ctx) == "25", e.graphIdentityDomain())

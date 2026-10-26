@@ -42,18 +42,18 @@ func TestAllDistinctImportRetainsProjectedVariable(t *testing.T) {
 func TestProjectionAllRetainsFollowingClause(t *testing.T) {
 	for _, source := range []string{"WITH all USE comp.one RETURN all", "WITH all CALL { WITH all RETURN all AS k } RETURN k", "WITH all CREATE (n) RETURN all", "WITH all MATCH (n) RETURN all", "WITH all WITH all RETURN all", "WITH all SET n.v=all RETURN all", "WITH all REMOVE n.v RETURN all"} {
 		for _, v25 := range []bool{false, true} {
-			edits, err := projectionAllEdits(source, v25)
+			edits, err := projectionAllEdits(originalBraceView(source), v25)
 			require.NoError(t, err)
 			require.Empty(t, edits, source)
 		}
 	}
 	for _, source := range []string{"WITH 7 AS call RETURN ALL call", "WITH 7 AS create RETURN ALL create", "RETURN ALL 7"} {
-		edits, err := projectionAllEdits(source, false)
+		edits, err := projectionAllEdits(originalBraceView(source), false)
 		require.NoError(t, err)
 		require.NotEmpty(t, edits, source)
 	}
 	for _, v25 := range []bool{false, true} {
-		edits, err := projectionAllEdits("RETURN ALL [1,2]", v25)
+		edits, err := projectionAllEdits(originalBraceView("RETURN ALL [1,2]"), v25)
 		require.NoError(t, err)
 		if v25 {
 			require.NotEmpty(t, edits)
@@ -74,7 +74,7 @@ func TestProjectionAllClauseTriviaAndOperatorPolicy(t *testing.T) {
 			text := tc.word + gap + tc.tail
 			require.True(t, startsWithClauseAfterName(text), text)
 			require.False(t, startsProjectedExpression(text, 0), text)
-			edits, err := projectionAllEdits("WITH all "+text, false)
+			edits, err := projectionAllEdits(originalBraceView("WITH all "+text), false)
 			require.NoError(t, err)
 			require.Empty(t, edits, text)
 		}
@@ -83,7 +83,7 @@ func TestProjectionAllClauseTriviaAndOperatorPolicy(t *testing.T) {
 		require.False(t, startsWithClauseAfterName(text), text)
 	}
 	for _, source := range []string{"WITH 7 AS all WITH all USE/*c*/comp.one RETURN all", "WITH 7 AS all WITH all USE //c\ncomp.one RETURN all"} {
-		edits, err := projectionAllEdits(source, false)
+		edits, err := projectionAllEdits(originalBraceView(source), false)
 		require.NoError(t, err)
 		require.Empty(t, edits, source)
 	}

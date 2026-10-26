@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -13,16 +14,16 @@ import (
 // read other variables. Because WHERE keeps a row only when every conjunct is
 // true, filtering each variable's candidates by own[v] and the combinations
 // by rest gives the rows the whole clause gives.
-func splitWhereByVariable(where string, variables []string) (own map[string]string, rest string) {
+func splitWhereByVariable(where braceView, variables []string) (own map[string]braceView, rest braceView) {
 	known := make(map[string]bool, len(variables))
 	for _, variable := range variables {
 		known[variable] = true
 	}
-	parts := make(map[string][]string, len(variables))
-	var others []string
+	parts := make(map[string][]braceView, len(variables))
+	var others []braceView
 	for _, conjunct := range splitTopLevelAndConjuncts(where) {
-		conjunct = strings.TrimSpace(conjunct)
-		if conjunct == "" {
+		conjunct = conjunct.trim()
+		if conjunct.empty() {
 			continue
 		}
 		if variable, ok := singleFreeVariable(conjunct); ok && known[variable] {
@@ -31,17 +32,17 @@ func splitWhereByVariable(where string, variables []string) (own map[string]stri
 		}
 		others = append(others, conjunct)
 	}
-	own = make(map[string]string, len(parts))
+	own = make(map[string]braceView, len(parts))
 	for variable, conjuncts := range parts {
-		own[variable] = joinWhereConjuncts(conjuncts)
+		own[variable] = joinWhereConjuncts(where, conjuncts)
 	}
-	return own, joinWhereConjuncts(others)
+	return own, joinWhereConjuncts(where, others)
 }
 
 // singleFreeVariable returns the one variable conjunct reads
 // (expressionFreeVariables), or false when it reads none or several, or holds
 // a pattern or subquery (hasPatternOrSubquery).
-func singleFreeVariable(conjunct string) (string, bool) {
+func singleFreeVariable(conjunct braceView) (string, bool) {
 	if hasPatternOrSubquery(conjunct) {
 		return "", false
 	}
@@ -57,35 +58,39 @@ func singleFreeVariable(conjunct string) (string, bool) {
 
 // joinWhereConjuncts joins conjuncts into one WHERE expression, each in
 // parentheses so an OR inside one stays inside it.
-func joinWhereConjuncts(conjuncts []string) string {
+func joinWhereConjuncts(input braceView, conjuncts []braceView) braceView {
 	switch len(conjuncts) {
 	case 0:
-		return ""
+		return input.window(0, 0)
 	case 1:
 		return conjuncts[0]
 	}
-	return "(" + strings.Join(conjuncts, ") AND (") + ")"
+	parts := make([]braceView, len(conjuncts))
+	for index, conjunct := range conjuncts {
+		parts[index] = conjunct.wrap("(", ")")
+	}
+	return input.assembleCode(parts, " AND ")
 }
 
 // hasPatternOrSubquery reports whether expression holds, outside string
 // literals and quoted names, a relationship pattern (->, <-, -[, ]-, )-, --)
 // or a braced subquery (EXISTS { … }, COUNT { … }, COLLECT { … }). It errs
 // towards true: a - -1 or id(a)-1 count as a pattern.
-func hasPatternOrSubquery(expression string) bool {
-	braces := newSubqueryBraceScanner(expression, 0)
+func hasPatternOrSubquery(view braceView) bool {
+	expression := view.text()
 	for index := 0; index < len(expression); index++ {
-		switch character := expression[index]; cypherLexicalByte(character) {
-		case cypherQuoteClass:
+		switch character := expression[index]; {
+		case (cypherLexicalByte(character)) == cypherQuoteClass:
 			index = skipQuotedSemanticText(expression, index) - 1
-		case '-':
+		case (cypherLexicalByte(character)) == '-':
 			if index+1 < len(expression) && strings.IndexByte("->[", expression[index+1]) >= 0 {
 				return true
 			}
 			if index > 0 && strings.IndexByte(")]<", expression[index-1]) >= 0 {
 				return true
 			}
-		case '{':
-			if braces.at(index) {
+		case cyphertext.IsOpenBrace(cypherLexicalByte(character)):
+			if view.isBody(index) {
 				return true
 			}
 		}

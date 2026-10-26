@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"context"
@@ -345,8 +344,10 @@ func TestKnowledgePolicyApplyFormattingRoundTrips(t *testing.T) {
 			{PropertyPath: "confidence", ProfileRef: "decay_slow", HalfLifeSeconds: 14400, ScoreFloor: 0.4, Order: 1},
 		},
 	}
-	var parsedBinding knowledgepolicy.DecayProfileBinding
-	require.NoError(t, parseBindingApplyBlock(formatDecayBindingApply(binding), &parsedBinding))
+	// The APPLY body round-trips through the public policy DDL owner.
+	bindingCommand, _, err := ParseKnowledgePolicyDDL(t.Context(), "CREATE DECAY PROFILE binding FOR (n:Fact) APPLY { "+formatDecayBindingApply(binding)+" }", RawSource)
+	require.NoError(t, err)
+	parsedBinding := bindingCommand.(*CreateDecayProfileBindingCmd).Binding
 	assert.Equal(t, binding.ProfileRef, parsedBinding.ProfileRef)
 	assert.Equal(t, binding.HalfLifeSeconds, parsedBinding.HalfLifeSeconds)
 	assert.Equal(t, binding.ScoreFloor, parsedBinding.ScoreFloor)
@@ -370,8 +371,9 @@ func TestKnowledgePolicyApplyFormattingRoundTrips(t *testing.T) {
 			{Predicate: "n.accessCount >= 5", ProfileRef: "boost", Order: 0},
 		},
 	}
-	var parsedPolicy knowledgepolicy.PromotionPolicyDef
-	require.NoError(t, parsePolicyApplyBlock(policyDDLSource{Source: cyphertext.NewSource(t.Context(), formatPromotionPolicyApply(policy), cyphertext.RawSource), original: true}, &parsedPolicy))
+	policyCommand, _, err := ParseKnowledgePolicyDDL(t.Context(), "CREATE PROMOTION POLICY policy FOR (n:Fact) APPLY { "+formatPromotionPolicyApply(policy)+" }", RawSource)
+	require.NoError(t, err)
+	parsedPolicy := policyCommand.(*CreatePromotionPolicyCmd).Policy
 	assert.Equal(t, policy.OnAccess, parsedPolicy.OnAccess)
 	assert.Equal(t, policy.WhenClauses, parsedPolicy.WhenClauses)
 }

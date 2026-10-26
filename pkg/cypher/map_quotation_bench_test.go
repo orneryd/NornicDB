@@ -14,7 +14,7 @@ func BenchmarkTopLevelAndConjunctsEscapedString(b *testing.B) {
 	const expression = `n.text = 'O\'Reilly AND Sons' AND n.id = 1`
 	b.ReportAllocs()
 	for index := 0; index < b.N; index++ {
-		if len(splitTopLevelAndConjuncts(expression)) == 0 {
+		if len(splitTopLevelAndConjuncts(originalBraceView(expression))) == 0 {
 			b.Fatal("missing conjuncts")
 		}
 	}
@@ -28,7 +28,7 @@ func BenchmarkMapTextConsumers(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			e := NewStorageExecutor(newTestMemoryEngine(b))
 			ctx := withExpressionFailureSlot(context.Background())
-			if _, err := parsePropertyExpressions(text); err != nil {
+			if _, err := parsePropertyExpressions(originalBraceView(text)); err != nil {
 				b.Fatal(err)
 			}
 			b.ReportAllocs()
@@ -37,14 +37,14 @@ func BenchmarkMapTextConsumers(b *testing.B) {
 				var err error
 				switch name {
 				case "context":
-					e.evaluateMapLiteralFull(ctx, text, nil, nil, nil, nil, nil, 0)
+					e.evaluateMapLiteralFull(ctx, originalBraceView(text), nil, nil, nil, nil, nil, 0)
 					err = getExpressionFailure(ctx)
 				case "strict":
-					_, err = e.parseSetMergeMapLiteralStrict(ctx, text)
+					_, err = e.parseSetMergeMapLiteralStrict(ctx, originalBraceView(text))
 				case "syntax":
-					err = validateMapLiteralSyntax(text)
+					err = validateMapLiteralSyntax(originalBraceView(text))
 				case "cached_plan":
-					_, err = parsePropertyExpressions(text)
+					_, err = parsePropertyExpressions(originalBraceView(text))
 				}
 				if err != nil {
 					b.Fatal(err)

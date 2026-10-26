@@ -20,7 +20,7 @@ func TestUnwindOriginalSourceViews(t *testing.T) {
 		{"UNWIND/*list*/ as AS/*alias*/ x RETURN x", "as", "x RETURN x", "x", "RETURN x"},
 	} {
 		t.Run(tc.q, func(t *testing.T) {
-			p, ok := splitUnwindBody(tc.q)
+			p, ok := splitUnwindBody(originalBraceView(tc.q))
 			require.True(t, ok)
 			require.Equal(t, tc.expr, p.expression)
 			require.Equal(t, tc.tail, p.aliasTail)
@@ -31,7 +31,7 @@ func TestUnwindOriginalSourceViews(t *testing.T) {
 	for _, q := range []string{"UNWIND as AS x RETURN x", "UNWIND [7] AS x RETURN x", "UNWIND [7] AS `a``b` RETURN 1", "UNWIND [7] AS `日本` RETURN 1", "UNWIND CASE WHEN true THEN as ELSE [] END AS x RETURN x"} {
 		var p unwindBodySource
 		var ok bool
-		require.Zero(t, testing.AllocsPerRun(100, func() { p, ok = splitUnwindBody(q) }))
+		require.Zero(t, testing.AllocsPerRun(100, func() { p, ok = splitUnwindBody(originalBraceView(q)) }))
 		require.True(t, ok)
 		require.NotEmpty(t, p.variableWritten)
 	}

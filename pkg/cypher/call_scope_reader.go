@@ -12,6 +12,7 @@ type callSubqueryScopeClause struct {
 	names      []string
 	scoped     bool
 	text       string
+	textSpan   cyphertext.Span
 	bodyOffset int
 	invalid    bool
 }
@@ -21,13 +22,14 @@ type callSubqueryScopeClause struct {
 // list means all outer variables, and a non-nil empty list means CALL ().
 // text and bodyOffset let validation use the same parsed clause. Legacy
 // importing-WITH and implicit imports are resolved by their existing owners.
-func readCallSubqueryScope(ctx context.Context, source string) callSubqueryScopeClause {
+func readCallSubqueryScope(ctx context.Context, view braceView) callSubqueryScopeClause {
+	source := view.text()
 	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	invalidScope := err != nil
 	if invalidScope && ctx.Err() == nil {
 		// Refine only an existing grammar rejection. Procedure arguments and
 		// a later syntax error do not constitute a malformed import scope.
-		invalidScope = malformedCallScopeError(ctx, source) != nil
+		invalidScope = malformedCallScopeError(ctx, view) != nil
 	}
 	if !syntax.Valid() {
 		return callSubqueryScopeClause{invalid: invalidScope}
@@ -52,8 +54,9 @@ func readCallSubqueryScope(ctx context.Context, source string) callSubqueryScope
 // malformedCallScopeError refines a grammar rejection using CALL's canonical
 // scope reader. Only a parenthesized scope followed by a subquery body qualifies;
 // procedure arguments and quoted/comment text cannot supply a scope clause.
-func malformedCallScopeError(ctx context.Context, source string) error {
-	opts := defaultKeywordScanOpts()
+func malformedCallScopeError(ctx context.Context, view braceView) error {
+	source := view.text()
+	opts := defaultKeywordScanOpts(view)
 	opts.SkipParens, opts.SkipBrackets = false, false
 	for from := 0; from < len(source); {
 		if err := ctx.Err(); err != nil {

@@ -25,7 +25,7 @@ func TestApocConvertToJSONKeepsHTMLCharacters(t *testing.T) {
 		require.NoError(t, err, query)
 		require.Equal(t, [][]interface{}{{want}}, result.Rows, query)
 	}
-	require.Equal(t, `["a<b&c>"]`, exec.evaluateExpressionWithContext(ctx, "apoc.convert.toJson(['a<b&c>'])", nil, nil))
+	require.Equal(t, `["a<b&c>"]`, exec.evaluateExpressionWithContext(ctx, expressionBraceView("apoc.convert.toJson(['a<b&c>'])"), nil, nil))
 
 	// U+2028 and U+2029 as themselves, controls escaped, an escaped
 	// backslash before the text u2028 left alone.

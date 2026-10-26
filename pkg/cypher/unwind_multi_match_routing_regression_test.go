@@ -105,7 +105,7 @@ RETURN count(*) AS c
 
 func TestNormalizeMultiMatchWhereClauses(t *testing.T) {
 	in := "MATCH (o:OriginalText) WHERE o.joinKey = joinKey MATCH (t:TranslatedText) WHERE t.joinKey = joinKey RETURN count(*) AS c"
-	got := normalizeMultiMatchWhereClauses(in)
+	got := normalizeMultiMatchWhereClauses(originalBraceView(in))
 	require.Equal(
 		t,
 		"MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey = joinKey AND t.joinKey = joinKey RETURN count(*) AS c",
@@ -115,7 +115,7 @@ func TestNormalizeMultiMatchWhereClauses(t *testing.T) {
 
 func TestNormalizeMultiMatchWhereClauses_SingleWhereBetweenMatches(t *testing.T) {
 	in := "MATCH (o:OriginalText) WHERE o.joinKey = joinKey MATCH (t:TranslatedText) RETURN count(*) AS c"
-	got := normalizeMultiMatchWhereClauses(in)
+	got := normalizeMultiMatchWhereClauses(originalBraceView(in))
 	require.Equal(
 		t,
 		"MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey = joinKey RETURN count(*) AS c",
@@ -338,15 +338,15 @@ RETURN count(*) AS c
 
 func TestRewriteUnwindCorrelationToIn(t *testing.T) {
 	in := "MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey = joinKey AND t.joinKey = joinKey CREATE (o)-[:TRANSLATES_TO]->(t) RETURN count(*) AS c"
-	got, ok := rewriteUnwindCorrelationToIn(in, "joinKey", "__unwind_items")
+	got, ok := rewriteUnwindCorrelationToIn(originalBraceView(in), "joinKey", "__unwind_items")
 	require.True(t, ok)
-	require.True(t, regexp.MustCompile(`o\.joinKey\s+IN\s+\$__unwind_items`).MatchString(got))
-	require.True(t, regexp.MustCompile(`t\.joinKey\s*=\s*o\.joinKey`).MatchString(got))
+	require.True(t, regexp.MustCompile(`o\.joinKey\s+IN\s+\$__unwind_items`).MatchString(got.text()))
+	require.True(t, regexp.MustCompile(`t\.joinKey\s*=\s*o\.joinKey`).MatchString(got.text()))
 }
 
 func TestRewriteTopLevelMultiMatchToCartesianMatch(t *testing.T) {
 	in := "MATCH (o:OriginalText) MATCH (t:TranslatedText) WHERE o.joinKey IN $__unwind_items AND t.joinKey = o.joinKey RETURN count(*) AS c"
-	got := rewriteTopLevelMultiMatchToCartesianMatch(in)
+	got := rewriteTopLevelMultiMatchToCartesianMatch(originalBraceView(in))
 	require.Equal(
 		t,
 		"MATCH (o:OriginalText), (t:TranslatedText) WHERE o.joinKey IN $__unwind_items AND t.joinKey = o.joinKey RETURN count(*) AS c",

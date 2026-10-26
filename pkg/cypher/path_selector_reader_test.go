@@ -76,7 +76,7 @@ func TestShortestFunctionCancellationAndBoundErrors(t *testing.T) {
 	source, target := r.Rows[0][0].(*storage.Node), r.Rows[0][1].(*storage.Node)
 	for budget := 1; budget <= 128; budget++ {
 		canceled := newCheckpointContext(budget, nil)
-		_, _, err := e.evaluateShortestPathValue(canceled, "shortestPath", "(a)-[:T*1..3]->(b)", map[string]*storage.Node{"a": source, "b": target})
+		_, _, err := e.evaluateShortestPathValue(canceled, "shortestPath", originalBraceView("(a)-[:T*1..3]->(b)"), map[string]*storage.Node{"a": source, "b": target})
 		if canceled.Context.Err() != nil {
 			require.ErrorIs(t, err, context.Canceled)
 		} else {
@@ -84,7 +84,7 @@ func TestShortestFunctionCancellationAndBoundErrors(t *testing.T) {
 		}
 		canceled.cancel()
 		canceled = newCheckpointContext(budget, nil)
-		_, _, err = e.parseShortestPathMatch(canceled, "p = shortestPath((a)-[:T*1..3]->(b))")
+		_, _, err = e.parseShortestPathMatch(canceled, expressionBraceView("p = shortestPath((a)-[:T*1..3]->(b))"))
 		if canceled.Context.Err() != nil {
 			require.ErrorIs(t, err, context.Canceled)
 		} else {
@@ -92,8 +92,8 @@ func TestShortestFunctionCancellationAndBoundErrors(t *testing.T) {
 		}
 		canceled.cancel()
 	}
-	traversal := e.parseTraversalPattern(ctx, "(a)-[r:T*]->(b)")
-	plan, _, ok := compileSelectedPathPlan("(a)-[r:T*]->(b)", "p", "", nil)
+	traversal := e.parseTraversalPattern(ctx, originalBraceView("(a)-[r:T*]->(b)"))
+	plan, _, ok := compileSelectedPathPlan(originalBraceView("(a)-[r:T*]->(b)"), "p", originalBraceView(""), nil)
 	require.True(t, ok)
 	for _, all := range []bool{false, true} {
 		_, err := e.shortestPathsBetween(ctx, &shortestPathMatch{findAll: all, traversal: traversal, plan: plan}, source, target, pipelineRow{"r": []interface{}{}})
@@ -101,7 +101,7 @@ func TestShortestFunctionCancellationAndBoundErrors(t *testing.T) {
 	}
 	traversal.EndNode.variable = traversal.StartNode.variable
 	traversal.Relationship.MinHops = 0
-	require.Equal(t, statusText(errShortestCommonEndpoints()), statusText(shortestPathPatternError("shortestPath", "(a)-[:T*0..]->(a)", traversal)))
-	require.NoError(t, validateShortestCallBindings("MATCH (a) RETURN a", nil))
-	require.NoError(t, validateShortestCallBindings("MATCH p = shortestPath((a)-[:T*]->(b)) WHERE "+pathSelectorFunction+"('SHORTEST',1,false,'WALK',true)", nil))
+	require.Equal(t, statusText(errShortestCommonEndpoints()), statusText(shortestPathPatternError("shortestPath", originalBraceView("(a)-[:T*0..]->(a)"), traversal)))
+	require.NoError(t, validateShortestCallBindings(originalBraceView("MATCH (a) RETURN a"), nil))
+	require.NoError(t, validateShortestCallBindings(originalBraceView("MATCH p = shortestPath((a)-[:T*]->(b)) WHERE "+pathSelectorFunction+"('SHORTEST',1,false,'WALK',true)"), nil))
 }

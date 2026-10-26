@@ -94,7 +94,7 @@ func TestReviewedNestedExpressionErrors(t *testing.T) {
 		"allReduce(a=0,x IN [1]|a+x,1)",
 	} {
 		t.Run(expression, func(t *testing.T) {
-			_, err := (staticOperatorChecker{scope: staticTypeScope{cypher25: true}}).check(expression)
+			_, err := (staticOperatorChecker{scope: staticTypeScope{cypher25: true}}).check(originalBraceView(expression))
 			require.Error(t, err)
 			var classified interface{ BoltErrorCode() string }
 			require.True(t, errors.As(err, &classified))

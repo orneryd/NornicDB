@@ -41,7 +41,7 @@ func TestAggregateArgumentTypesMatchNeo4j(t *testing.T) {
 	require.Equal(t, [][]interface{}{{int64(2020)}}, result.Rows)
 	// UNWIND binds a list literal's element type, the operator check's.
 	element := func(list string) string {
-		return listElementOperand(typeScope{}, staticTypeScope{}, list).typeName()
+		return listElementOperand(typeScope{}, staticTypeScope{}, originalBraceView(list)).typeName()
 	}
 	require.Equal(t, "Date", element("[date('2020-01-01'), date('2021-01-01')]"))
 	require.Empty(t, element("[1, date('2020-01-01')]"))

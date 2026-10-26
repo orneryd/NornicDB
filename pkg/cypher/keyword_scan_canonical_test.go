@@ -33,7 +33,7 @@ func TestCanonicalizeQueryText(t *testing.T) {
 		"CREATE PROMOTION POLICY p FOR (n:L) {\n  ON ACCESS {\n    SET n.a = 1 // one\n    SET n.b = 2\n  }\n}": "CREATE PROMOTION POLICY p FOR (n:L) {\n  ON ACCESS {\n    SET n.a = 1 \n    SET n.b = 2\n  }\n}",
 		"CREATE  PROCEDURE p() AS /* x */ {\n  RETURN 1\n}":                                                     "CREATE  PROCEDURE p() AS   {\n  RETURN 1\n}",
 	} {
-		got, _ := canonicalizeQueryText(input)
+		got, _ := canonicalizeQueryText(originalBraceView(input))
 		require.Equal(t, want, got, "%q", input)
 	}
 }
@@ -47,10 +47,10 @@ func TestCanonicalizeQueryTextAllocationFree(t *testing.T) {
 		"MERGE (n:K {id: 1}) ON CREATE SET n.c = true ON MATCH SET n.m = true",
 		"MATCH (ü:Straße) RETURN ü.größe AS g",
 	} {
-		got, rewrite := canonicalizeQueryText(query)
+		got, rewrite := canonicalizeQueryText(originalBraceView(query))
 		require.Equal(t, query, got)
 		require.Nil(t, rewrite)
-		require.Zero(t, testing.AllocsPerRun(100, func() { _, _ = canonicalizeQueryText(query) }), query)
+		require.Zero(t, testing.AllocsPerRun(100, func() { _, _ = canonicalizeQueryText(originalBraceView(query)) }), query)
 	}
 }
 
@@ -60,25 +60,25 @@ func TestCanonicalizeQueryTextAllocationFree(t *testing.T) {
 // rewritten every time.
 func TestCanonicalizeQueryTextMemoizesRewrites(t *testing.T) {
 	query := "MATCH (p:Product)\n\tOPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order)\n\tRETURN p.productName, count(o) AS c // total\n"
-	canonical, first := canonicalizeQueryText(query)
+	canonical, first := canonicalizeQueryText(originalBraceView(query))
 	require.NotNil(t, first)
 	require.Equal(t, "MATCH (p:Product) OPTIONAL MATCH (p)<-[r:ORDERS]-(o:Order) RETURN p.productName, count(o) AS c ", canonical)
-	again, second := canonicalizeQueryText(query)
+	again, second := canonicalizeQueryText(originalBraceView(query))
 	require.Same(t, first, second)
 	require.Equal(t, canonical, again)
-	require.Zero(t, testing.AllocsPerRun(100, func() { _, _ = canonicalizeQueryText(query) }))
+	require.Zero(t, testing.AllocsPerRun(100, func() { _, _ = canonicalizeQueryText(originalBraceView(query)) }))
 
 	// Other text: its own rewrite, whatever slot it hashes to.
 	for i := 0; i < 600; i++ {
 		other := fmt.Sprintf("RETURN  %d AS n", i)
-		got, rewrite := canonicalizeQueryText(other)
+		got, rewrite := canonicalizeQueryText(originalBraceView(other))
 		require.Equal(t, fmt.Sprintf("RETURN %d AS n", i), got)
 		require.Equal(t, other, rewrite.Original)
 	}
 
 	long := "RETURN  '" + strings.Repeat("x", canonicalRewriteMemoMaxLen) + "' AS s"
-	_, longFirst := canonicalizeQueryText(long)
-	_, longSecond := canonicalizeQueryText(long)
+	_, longFirst := canonicalizeQueryText(originalBraceView(long))
+	_, longSecond := canonicalizeQueryText(originalBraceView(long))
 	require.NotSame(t, longFirst, longSecond)
 	require.Equal(t, longFirst.Text, longSecond.Text)
 }
@@ -200,8 +200,8 @@ func TestKeywordScanLineCommentsEndAtCR(t *testing.T) {
 	for _, lineEnding := range []string{"\r", "\n", "\r\n"} {
 		query := "RETURN 1 // WITH 2" + lineEnding + "WITH 3 AS x RETURN x"
 		want := strings.Index(query, "WITH 3")
-		require.Equal(t, want, keywordIndexFrom(query, "WITH", 0, defaultKeywordScanOpts()), "%q default", lineEnding)
-		opts := defaultKeywordScanOpts()
+		require.Equal(t, want, keywordIndexFrom(query, "WITH", 0, defaultKeywordScanOpts(acceptedBraceView(query))), "%q default", lineEnding)
+		opts := defaultKeywordScanOpts(acceptedBraceView(query))
 		opts.SkipParens = false
 		require.Equal(t, want, keywordIndexFrom(query, "WITH", 0, opts), "%q general", lineEnding)
 	}
@@ -240,7 +240,7 @@ func BenchmarkCanonicalizeQueryText(b *testing.B) {
 		b.Run(name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				_, _ = canonicalizeQueryText(query)
+				_, _ = canonicalizeQueryText(originalBraceView(query))
 			}
 		})
 	}
@@ -251,7 +251,7 @@ func BenchmarkCanonicalizeQueryText(b *testing.B) {
 // indentation runs the canonical text collapses.
 func TestCanonicalQueryRestoresParserPosition(t *testing.T) {
 	original := "MATCH (n)\r\n  WHERE n.x =\r\n  RETURN n"
-	canonical, rewrite := canonicalizeQueryText(original)
+	canonical, rewrite := canonicalizeQueryText(originalBraceView(original))
 	require.NotNil(t, rewrite)
 	require.Equal(t, "MATCH (n) WHERE n.x = RETURN n", canonical)
 	column := strings.Index(canonical, "RETURN")
@@ -262,7 +262,7 @@ func TestCanonicalQueryRestoresParserPosition(t *testing.T) {
 	require.Equal(t, "Invalid input: line 9:0 x", restored)
 
 	crOnly := "MATCH (n)\r  WHERE n.x =\r  RETURN n"
-	canonical, rewrite = canonicalizeQueryText(crOnly)
+	canonical, rewrite = canonicalizeQueryText(originalBraceView(crOnly))
 	require.NotNil(t, rewrite)
 	require.Equal(t, "MATCH (n) WHERE n.x = RETURN n", canonical)
 	column = strings.Index(canonical, "RETURN")
@@ -276,7 +276,7 @@ func TestCanonicalQueryRestoresParserPosition(t *testing.T) {
 // client's text.
 func TestQueryRewriteRestoresPlansAndMessages(t *testing.T) {
 	original := "EXPLAIN MATCH (n)\n  WHERE n.x IS  NULL\nRETURN n"
-	canonical, rewrite := canonicalizeQueryText(original)
+	canonical, rewrite := canonicalizeQueryText(originalBraceView(original))
 	require.Equal(t, "EXPLAIN MATCH (n) WHERE n.x IS NULL RETURN n", canonical)
 
 	result := &ExecuteResult{
@@ -300,7 +300,7 @@ func TestQueryRewriteRestoresPlansAndMessages(t *testing.T) {
 	require.Equal(t, "nothing to map", restoredMessage)
 
 	// A plain statement's rows are data: never rewritten.
-	_, plain := canonicalizeQueryText("RETURN  'n.x IS NULL' AS s")
+	_, plain := canonicalizeQueryText(originalBraceView("RETURN  'n.x IS NULL' AS s"))
 	data := &ExecuteResult{Columns: []string{"s"}, Rows: [][]interface{}{{"RETURN 'n.x IS NULL' AS s"}}}
 	kept, err := (resultRestoration{source: plain}).restore(data, nil, nil)
 	require.NoError(t, err)
@@ -323,7 +323,7 @@ func TestOwnStatementSyntax(t *testing.T) {
 		"SHOW RETENTION BINDINGS",
 		"CREATE CONSTRAINT c FOR (n:L) REQUIRE {\n n.a IS UNIQUE\n}",
 	} {
-		require.True(t, hasOwnStatementSyntax(query), query)
+		require.True(t, hasOwnStatementSyntax(originalBraceView(query)), query)
 	}
 	for _, query := range []string{
 		"CREATE CONSTRAINT c FOR (n:L) REQUIRE n.a IS UNIQUE",
@@ -331,9 +331,9 @@ func TestOwnStatementSyntax(t *testing.T) {
 		"MATCH (n) RETURN n",
 		"123",
 	} {
-		require.False(t, hasOwnStatementSyntax(query), query)
+		require.False(t, hasOwnStatementSyntax(originalBraceView(query)), query)
 	}
-	got, _ := canonicalizeQueryText("CREATE DECAY PROFILE d FOR (n:L) {\n  HALF LIFE 10 /* a\n b */\n  FLOOR 0.1 // note\n}")
+	got, _ := canonicalizeQueryText(originalBraceView("CREATE DECAY PROFILE d FOR (n:L) {\n  HALF LIFE 10 /* a\n b */\n  FLOOR 0.1 // note\n}"))
 	require.Equal(t, "CREATE DECAY PROFILE d FOR (n:L) {\n  HALF LIFE 10  \n\n  FLOOR 0.1 \n}", got)
 
 	require.Equal(t, 0, leadingShellCommandsEnd("MATCH (n) RETURN n"))
@@ -343,11 +343,11 @@ func TestOwnStatementSyntax(t *testing.T) {
 	require.Equal(t, len(":USE db\r:param x => 1\r"), leadingShellCommandsEnd(":USE db\r:param x => 1\rRETURN 1"))
 	require.Equal(t, len(":use a\n  :param x => 1\n"), leadingShellCommandsEnd(":use a\n  :param x => 1\nRETURN  1"))
 	require.Equal(t, len(":USE db"), leadingShellCommandsEnd(":USE db"))
-	got, _ = canonicalizeQueryText(":USE  db\nRETURN   1")
+	got, _ = canonicalizeQueryText(originalBraceView(":USE  db\nRETURN   1"))
 	require.Equal(t, ":USE  db\nRETURN 1", got)
-	got, _ = canonicalizeQueryText(":USE  db\rRETURN   1")
+	got, _ = canonicalizeQueryText(originalBraceView(":USE  db\rRETURN   1"))
 	require.Equal(t, ":USE  db\rRETURN 1", got)
-	got, _ = canonicalizeQueryText(":USE  db\r\nRETURN   1")
+	got, _ = canonicalizeQueryText(originalBraceView(":USE  db\r\nRETURN   1"))
 	require.Equal(t, ":USE  db\r\nRETURN 1", got)
 }
 
@@ -363,12 +363,12 @@ func TestQueryMayNeedCanonicalRewriteIsExact(t *testing.T) {
 			b.WriteString(pieces[rng.Intn(len(pieces))])
 		}
 		query := b.String()
-		canonical, rewrite := scanCanonicalQueryText(query)
+		canonical, rewrite := scanCanonicalQueryText(originalBraceView(query))
 		if !queryMayNeedCanonicalRewrite(query) {
 			require.Nil(t, rewrite, "%q", query)
 			require.Equal(t, query, canonical, "%q", query)
 		}
-		gotCanonical, gotRewrite := canonicalizeQueryText(query)
+		gotCanonical, gotRewrite := canonicalizeQueryText(originalBraceView(query))
 		require.Equal(t, canonical, gotCanonical, "%q", query)
 		require.Equal(t, rewrite == nil, gotRewrite == nil, "%q", query)
 	}

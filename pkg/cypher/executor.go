@@ -150,15 +150,15 @@ const (
 func hasSubqueryPattern(ctx context.Context, query string, pattern string) bool {
 	switch pattern {
 	case existsSubqueryRe:
-		return hasKeywordFollowedByBrace(query, "EXISTS")
+		return hasKeywordFollowedByBraceView(statementBraceView(ctx, query), "EXISTS")
 	case notExistsSubqueryRe:
-		return hasNotExistsFollowedByBrace(query)
+		return hasNotExistsFollowedByBraceView(statementBraceView(ctx, query))
 	case countSubqueryRe:
-		return hasKeywordFollowedByBrace(query, "COUNT")
+		return hasKeywordFollowedByBraceView(statementBraceView(ctx, query), "COUNT")
 	case callSubqueryRe:
 		return hasCallSubqueryPattern(ctx, query)
 	case collectSubqueryRe:
-		return hasKeywordFollowedByBrace(query, "COLLECT")
+		return hasKeywordFollowedByBraceView(statementBraceView(ctx, query), "COLLECT")
 	}
 	return false
 }
@@ -199,40 +199,37 @@ func firstTopLevelCallSubquery(ctx context.Context, query string) int {
 // callSubqueryAt reports whether a CALL { } or scoped CALL (vars) { }
 // subquery clause starts at offset i of query.
 func callSubqueryAt(ctx context.Context, query string, i int) bool {
-	if !matchKeywordAt(query, i, "CALL") || clauseKeywordUsedAsName(query, i, i+len("CALL"), "CALL") {
+	view := statementBraceView(ctx, query)
+	if !matchKeywordAt(query, i, "CALL") || clauseKeywordUsedAsName(view, i, i+len("CALL"), "CALL") {
 		return false
 	}
 	// Classification consumes the same CALL frame as scope and execution.
 	// In particular, comments before or after imports are query trivia.
-	body := i + readCallSubqueryScope(ctx, query[i:]).bodyOffset
-	return body < len(query) && query[body] == '{'
+	body := i + readCallSubqueryScope(ctx, view.window(i, len(query))).bodyOffset
+	if body >= len(query) || !cyphertext.IsOpenBrace(query[body]) {
+		return false
+	}
+	fact, found := view.at(body)
+	return found && fact.kind == subqueryBrace
 }
 
-func hasNotExistsFollowedByBrace(query string) bool {
-	for i := 0; i < len(query); i++ {
-		if !matchKeywordAt(query, i, "NOT") {
-			continue
-		}
-		j := skipSpaces(query, i+3)
-		if !matchKeywordAt(query, j, "EXISTS") {
-			continue
-		}
-		k := skipSpaces(query, j+6)
-		if k < len(query) && query[k] == '{' {
+func hasNotExistsFollowedByBraceView(view braceView) bool {
+	query := view.text()
+	scanner := newBraceFactScanner(view, 0)
+	for token, ok := scanner.next(); ok; token, ok = scanner.next() {
+		if token.Is(query, "{") && scanner.Last.Body &&
+			scanner.Prior.Keyword(query, "EXISTS") && scanner.Earlier.Keyword(query, "NOT") {
 			return true
 		}
 	}
 	return false
 }
 
-func hasKeywordFollowedByBrace(query, keyword string) bool {
-	kwLen := len(keyword)
-	for i := 0; i < len(query); i++ {
-		if !matchKeywordAt(query, i, keyword) {
-			continue
-		}
-		j := skipSpaces(query, i+kwLen)
-		if j < len(query) && query[j] == '{' {
+func hasKeywordFollowedByBraceView(view braceView, keyword string) bool {
+	query := view.text()
+	scanner := newBraceFactScanner(view, 0)
+	for token, ok := scanner.next(); ok; token, ok = scanner.next() {
+		if token.Is(query, "{") && scanner.Last.Body && scanner.Prior.Keyword(query, keyword) {
 			return true
 		}
 	}
@@ -1475,7 +1472,7 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 		return statementExec.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 	// Check if this is a write operation using cached analysis
-	info := e.analyzer.Analyze(ctx, cypher)
+	info := e.analyzer.analyzeView(ctx, statementBraceView(ctx, cypher))
 	needsTransaction, err := statementNeedsTransaction(ctx, cypher)
 	if err != nil {
 		return nil, err
@@ -1515,20 +1512,23 @@ func statementNeedsTransaction(ctx context.Context, cypher string) (bool, error)
 // clients own any replay decision because NornicDB does not know whether a
 // conflict is recoverable for the application.
 func (e *StorageExecutor) executeWithImplicitTransaction(ctx context.Context, cypher string, upperQuery string) (*ExecuteResult, error) {
+	executionView := statementBraceView(ctx, cypher)
 	executionCypher, executionUpperQuery := cypher, upperQuery
-	if parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher); inlineEmbeddingEnabled {
-		executionCypher = parsedCypher
-		executionUpperQuery = upperASCII(parsedCypher)
+	if parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(executionView); inlineEmbeddingEnabled {
+		executionView = parsedCypher
+		executionCypher = parsedCypher.text()
+		executionUpperQuery = upperASCII(executionCypher)
 	}
 	return e.executeWithImplicitTransactionCallback(ctx, cypher, upperQuery, func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
-		return txExec.executeWithoutTransaction(txCtx, executionCypher, executionUpperQuery)
+		return txExec.executeWithoutTransaction(withBraceView(txCtx, executionView), executionCypher, executionUpperQuery)
 	})
 }
 
 func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Context, cypher string, upperQuery string, execute func(context.Context, *StorageExecutor) (*ExecuteResult, error)) (result *ExecuteResult, retErr error) {
-	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
+	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(statementBraceView(ctx, cypher))
 	if inlineEmbeddingEnabled {
-		cypher = parsedCypher
+		ctx = withBraceView(ctx, parsedCypher)
+		cypher = parsedCypher.text()
 		upperQuery = upperASCII(cypher)
 	}
 
@@ -1740,7 +1740,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendWithDatabaseReturningSeq(storage.OpTxAbort, storage.WALTxData{TxID: txID, Reason: err.Error()}, dbName)
 		}
-		if info := e.analyzer.Analyze(ctx, cypher); IsRetrySafeMergeCommitQuery(info) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
+		if info := e.analyzer.analyzeView(ctx, statementBraceView(ctx, cypher)); retrySafeMergeCommitView(info, statementBraceView(ctx, cypher)) && MergeUniqueConflictIsRetrySafe([]CommitStatement{{Query: cypher, Params: getParamsFromContext(ctx)}}, err) {
 			err = nornicerrors.MarkMergeCommitTimeUniqueConflict(err)
 		}
 		// Wire contract: substring "commit failed" is matched by downstream Bolt classifiers.
@@ -1874,10 +1874,11 @@ func (e *StorageExecutor) applyInlineEmbeddingMutations(ctx context.Context, ids
 // stripWithEmbeddingSuffix removes the WITH EMBEDDING execution option where
 // it ends the statement (or its UNION branch). A nonterminal WITH EMBEDDING is
 // a projection candidate that the scope compiler and pipeline frame resolve.
-func stripWithEmbeddingSuffix(cypher string) (string, bool) {
+func stripWithEmbeddingSuffix(view braceView) (braceView, bool) {
+	cypher := view.text()
 	idx, embeddingStart := -1, -1
 	for from := 0; from < len(cypher); {
-		at := keywordIndexFrom(cypher, "WITH", from, defaultKeywordScanOpts())
+		at := keywordIndexFrom(cypher, "WITH", from, defaultKeywordScanOpts(view))
 		if at < 0 {
 			break
 		}
@@ -1889,20 +1890,20 @@ func stripWithEmbeddingSuffix(cypher string) (string, bool) {
 		from = at + len("WITH")
 	}
 	if idx < 0 {
-		return cypher, false
+		return view, false
 	}
-	before := strings.TrimSpace(cypher[:idx])
-	after := strings.TrimSpace(cypher[embeddingStart+len("EMBEDDING"):])
-	if before == "" {
-		return cypher, false
+	before := view.window(0, idx).trim()
+	after := view.window(embeddingStart+len("EMBEDDING"), len(cypher)).trim()
+	if before.empty() {
+		return view, false
 	}
-	if after == "" {
+	if after.empty() {
 		return before, true
 	}
-	if !startsWithKeywordFold(after, "UNION") {
-		return cypher, false
+	if !startsWithKeywordFold(after.text(), "UNION") {
+		return view, false
 	}
-	return strings.TrimSpace(before + " " + after), true
+	return view.assembleCode([]braceView{before, after}, " "), true
 }
 
 func maxInt(a, b int) int {
@@ -2025,8 +2026,9 @@ func statementAccessesGraph(info *QueryInfo) bool {
 // direction is safe by construction: a false positive only forces the caller
 // to target a constituent (and pass its authorization), while a false
 // negative would read denied data.
-func statementAccessesGraphText(cypher string) bool {
-	opts := defaultKeywordScanOpts()
+func statementAccessesGraphView(view braceView) bool {
+	cypher := view.text()
+	opts := defaultKeywordScanOpts(view)
 	for _, keyword := range []string{
 		"MATCH", "OPTIONAL MATCH", "CREATE", "MERGE", "DELETE", "DETACH DELETE",
 		"SET", "REMOVE", "FOREACH", "LOAD CSV", "CALL", "SHOW", "CREATE INDEX",
@@ -2037,17 +2039,13 @@ func statementAccessesGraphText(cypher string) bool {
 			return true
 		}
 	}
-	return expressionReadsGraphText(cypher)
+	return graphReadingExpressionView(view) != ""
 }
 
 // expressionReadsGraphText reports whether cypher holds an expression that
 // reads the graph (graphReadingExpression). statementAccessesGraphText,
 // statementReadsGraphText and the system database's statement policy read
 // expressions through it.
-func expressionReadsGraphText(cypher string) bool {
-	return graphReadingExpression(cypher) != ""
-}
-
 // Kinds of graph-reading expression graphReadingExpression reports.
 const (
 	graphReadingPatternComprehension = "pattern comprehension"
@@ -2064,8 +2062,9 @@ const (
 // allShortestPaths graphReadingPattern; and a bare relationship pattern
 // ((a)-->() in an expression) graphReadingPatternPredicate, reported only
 // when there is nothing else. Clause patterns, literals and comments don't count.
-func graphReadingExpression(cypher string) string {
-	opts := defaultKeywordScanOpts()
+func graphReadingExpressionView(view braceView) string {
+	cypher := view.text()
+	opts := defaultKeywordScanOpts(view)
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	opts.SkipBraces = false
@@ -2077,7 +2076,7 @@ func graphReadingExpression(cypher string) string {
 			}
 			end := index + len(keyword)
 			open := queryGapEnd(cypher, end)
-			if open < len(cypher) && cypher[open] == '{' {
+			if fact, found := view.at(open); found && fact.kind == subqueryBrace {
 				return keyword
 			}
 			// EXISTS((n)-->(m)): a pattern between the parentheses.
@@ -2140,8 +2139,9 @@ func graphReadingExpression(cypher string) string {
 // creates, and sets, removes or deletes what it created, reads nothing:
 // QueryPermissionRequirements then needs write but not read, as Neo4j lets
 // a principal with WRITE but no READ privilege run CREATE.
-func statementReadsGraphText(cypher string) bool {
-	opts := defaultKeywordScanOpts()
+func statementReadsGraphView(view braceView) bool {
+	cypher := view.text()
+	opts := defaultKeywordScanOpts(view)
 	opts.SkipParens = false
 	opts.SkipBrackets = false
 	opts.SkipBraces = false
@@ -2160,7 +2160,7 @@ func statementReadsGraphText(cypher string) bool {
 			return true
 		}
 	}
-	return expressionReadsGraphText(cypher)
+	return graphReadingExpressionView(view) != ""
 }
 
 // statementParametersError is Neo4j's ParameterMissing for a statement that

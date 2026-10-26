@@ -15,7 +15,7 @@ import (
 // * or a plain variable reference (WITH x, `y z`). Comments are whitespace
 // here, so query normalization doesn't change what a subquery imports. A
 // scope clause item that is not a variable is an error (callScopeClauseVariables).
-func callSubqueryImportedVariables(ctx context.Context, scope string, scoped bool, body string) ([]string, error) {
+func callSubqueryImportedVariables(ctx context.Context, scope string, scoped bool, body braceView) ([]string, error) {
 	if scoped {
 		return callScopeClauseVariables(ctx, scope)
 	}
@@ -46,8 +46,8 @@ func callScopeClauseVariables(ctx context.Context, list string) ([]string, error
 	return scope.names, nil
 }
 
-func importingWithVariables(ctx context.Context, source string) []string {
-	body := readQueryBody(ctx, source, 0, len(source))
+func importingWithVariables(ctx context.Context, source braceView) []string {
+	body := readQueryBody(ctx, source, 0, len(source.text()))
 	if len(body.branches) == 0 {
 		return nil
 	}
@@ -58,11 +58,11 @@ func importingWithSyntax(branch queryBodyBranch) []string {
 	if len(branch.clauses) == 0 || branch.clauses[0].kind != pipelineClauseWith {
 		return nil
 	}
-	return importingWithNode(branch.clauses[0].syntax)
+	return importingWithNode(branch.grammarView, branch.clauses[0].syntax)
 }
 
-func importingWithNode(node cypherantlr.SyntaxNode) []string {
-	plan := projectionPlanFromSyntax(node)
+func importingWithNode(view braceView, node cypherantlr.SyntaxNode) []string {
+	plan := projectionPlanFromSyntax(view, node)
 	var names []string
 	if plan.star {
 		names = append(names, "*")

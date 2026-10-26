@@ -24,7 +24,7 @@ import (
 type subqueryExpression struct {
 	kind       string // EXISTS, COUNT or COLLECT
 	start, end int    // expression text [start, end)
-	body       string
+	body       braceView
 }
 
 var subqueryExpressionKeywords = [...]string{"EXISTS", "COUNT", "COLLECT"}
@@ -33,7 +33,7 @@ var subqueryExpressionKeywords = [...]string{"EXISTS", "COUNT", "COLLECT"}
 // every expression: a subquery expression needs a brace and one of the
 // keywords.
 func mayContainSubqueryExpression(expr string) bool {
-	if strings.IndexByte(expr, '{') < 0 {
+	if firstLiveBrace(expr) < 0 {
 		return false
 	}
 	for _, keyword := range subqueryExpressionKeywords {
@@ -46,27 +46,28 @@ func mayContainSubqueryExpression(expr string) bool {
 
 // findSubqueryExpressions returns the outermost subquery expressions in expr,
 // outside string literals and quoted names.
-func findSubqueryExpressions(expr string) []subqueryExpression {
+func findSubqueryExpressions(view braceView) []subqueryExpression {
+	expr := view.text()
 	var found []subqueryExpression
 	for i := 0; i < len(expr); {
 		if end, skipped := skipCypherLexicalToken(expr, i); skipped {
 			i = end
 			continue
 		}
-		keyword, open, isSubquery := subqueryExpressionKeywordAt(expr, i)
+		keyword, open, isSubquery := subqueryExpressionKeywordAt(view, i)
 		if !isSubquery {
 			i++
 			continue
 		}
-		closing := cyphertext.FindMatchingDelimiter(expr, open, '{', '}', cyphertext.OpeningDelimiter)
-		if closing < 0 {
+		closing, complete := view.close(open)
+		if !complete {
 			return found
 		}
 		found = append(found, subqueryExpression{
 			kind:  keyword,
 			start: i,
 			end:   closing + 1,
-			body:  strings.TrimSpace(expr[open+1 : closing]),
+			body:  view.window(open+1, closing).trim(),
 		})
 		i = closing + 1
 	}
@@ -76,13 +77,20 @@ func findSubqueryExpressions(expr string) []subqueryExpression {
 // subqueryExpressionKeywordAt reports whether an EXISTS / COUNT / COLLECT
 // subquery expression starts at expr[i]: the keyword, then its body's '{'
 // (at open). It is the one reader of where a subquery expression starts.
-func subqueryExpressionKeywordAt(expr string, i int) (keyword string, open int, ok bool) {
-	for _, keyword := range subqueryExpressionKeywords {
-		if !matchKeywordAt(expr, i, keyword) {
+func subqueryExpressionKeywordAt(view braceView, i int) (keyword string, open int, ok bool) {
+	for _, fact := range view.syntax.braceFacts() {
+		if fact.bodyKeyword == "" {
 			continue
 		}
-		if open := queryGapEnd(expr, i+len(keyword)); open < len(expr) && expr[open] == '{' && subqueryExpressionKeywordBeforeBrace(expr, i, i+len(keyword), open) {
-			return keyword, open, true
+		for _, span := range view.source.ProjectFrom(fact.source, fact.introducer) {
+			if span.Start != i {
+				continue
+			}
+			open := queryGapEnd(view.text(), span.End)
+			original, found := view.at(open)
+			if found && original.record.Open == fact.record.Open && original.source == fact.source && original.kind == subqueryBrace {
+				return fact.bodyKeyword, open, true
+			}
 		}
 	}
 	return "", 0, false
@@ -90,11 +98,12 @@ func subqueryExpressionKeywordAt(expr string, i int) (keyword string, open int, 
 
 // nestedSubqueryExpressions returns the subquery expressions of expr when
 // there is at least one and expr isn't a single subquery expression.
-func nestedSubqueryExpressions(expr string) []subqueryExpression {
+func nestedSubqueryExpressions(view braceView) []subqueryExpression {
+	expr := view.text()
 	if !mayContainSubqueryExpression(expr) {
 		return nil
 	}
-	found := findSubqueryExpressions(expr)
+	found := findSubqueryExpressions(view)
 	if len(found) == 0 || (len(found) == 1 && found[0].start == 0 && found[0].end == len(expr)) {
 		return nil
 	}
@@ -103,12 +112,13 @@ func nestedSubqueryExpressions(expr string) []subqueryExpression {
 
 // standaloneSubqueryExpression returns expr's subquery expression when expr is
 // exactly one EXISTS / COUNT / COLLECT { … }.
-func standaloneSubqueryExpression(expr string) (subqueryExpression, bool) {
-	expr = strings.TrimSpace(expr)
+func standaloneSubqueryExpression(view braceView) (subqueryExpression, bool) {
+	view = view.trim()
+	expr := view.text()
 	if !mayContainSubqueryExpression(expr) {
 		return subqueryExpression{}, false
 	}
-	found := findSubqueryExpressions(expr)
+	found := findSubqueryExpressions(view)
 	if len(found) != 1 || found[0].start != 0 || found[0].end != len(expr) {
 		return subqueryExpression{}, false
 	}
@@ -124,7 +134,7 @@ func standaloneSubqueryExpression(expr string) (subqueryExpression, bool) {
 type rowSubqueryPlan struct {
 	found     []subqueryExpression
 	names     []string
-	rewritten string
+	rewritten braceView
 	logical   bool
 	// integerComparison is set when the rewritten predicate is exactly
 	// __subquery_value_0 <op> <integer literal> (COUNT { … } > 1): the
@@ -164,41 +174,40 @@ func (c *integerComparison) holds(value int64) bool {
 // rowSubqueryPlans caches row subquery plans by expression text: an
 // expression is planned once, not once per row. A nil plan (no subquery in a
 // larger expression) is cached too.
-var rowSubqueryPlans = newBoundedCache[string, *rowSubqueryPlan](1024, boundedCacheStringShardIndex)
+var rowSubqueryPlans = newBoundedCache[*cyphertext.Source, *rowSubqueryPlan](1024, func(source *cyphertext.Source) int { return boundedCacheStringShardIndex(source.Text) })
 
 // planRowSubqueries returns expr's plan when it holds subquery expressions
 // inside a larger expression (nestedSubqueryExpressions), and nil otherwise.
-func planRowSubqueries(expr string) *rowSubqueryPlan {
+func planRowSubqueries(view braceView) *rowSubqueryPlan {
+	expr := view.text()
 	if !mayContainSubqueryExpression(expr) {
 		return nil
 	}
-	plan, cached := rowSubqueryPlans.get(expr)
+	plan, cached := rowSubqueryPlans.get(view.source)
 	if cached {
 		return plan
 	}
-	if found := nestedSubqueryExpressions(expr); found != nil {
+	if found := nestedSubqueryExpressions(view); found != nil {
 		plan = &rowSubqueryPlan{found: found, names: make([]string, len(found))}
-		var rewritten strings.Builder
-		cursor := 0
-		for index, subquery := range found {
+		plan.rewritten = view
+		for index := range found {
 			plan.names[index] = "__subquery_value_" + strconv.Itoa(index)
-			rewritten.WriteString(expr[cursor:subquery.start])
-			rewritten.WriteString(plan.names[index])
-			cursor = subquery.end
 		}
-		rewritten.WriteString(expr[cursor:])
-		plan.rewritten = rewritten.String()
+		for index := len(found) - 1; index >= 0; index-- {
+			subquery := found[index]
+			plan.rewritten = plan.rewritten.replace(subquery.start, subquery.end, plan.names[index])
+		}
 		for _, operator := range []string{" AND ", " OR ", " XOR "} {
 			if _, _, split := splitByOperatorWithOptions(plan.rewritten, operator, true, true); split {
 				plan.logical = true
 				break
 			}
 		}
-		if !plan.logical && len(found) == 1 && strings.HasPrefix(plan.rewritten, plan.names[0]) {
-			plan.integerComparison, _ = parseIntegerComparison(plan.rewritten[len(plan.names[0]):])
+		if !plan.logical && len(found) == 1 && strings.HasPrefix(plan.rewritten.text(), plan.names[0]) {
+			plan.integerComparison, _ = parseIntegerComparison(plan.rewritten.text()[len(plan.names[0]):])
 		}
 	}
-	rowSubqueryPlans.put(expr, plan)
+	rowSubqueryPlans.put(view.source, plan)
 	return plan
 }
 
@@ -223,7 +232,8 @@ func (e *StorageExecutor) correlatedSubqueryExecutor(ctx context.Context, values
 // rowSubqueryAtom reads an expression that is one EXISTS / COUNT / COLLECT
 // { … } subquery: its keyword and the position of its {. The one reader of
 // the form, for evaluateRowSubqueryAtom and the compiled row programs.
-func rowSubqueryAtom(expr string) (kind string, open int, ok bool) {
+func rowSubqueryAtom(view braceView) (kind string, open int, ok bool) {
+	expr := view.text()
 	if expr == "" {
 		return "", 0, false
 	}
@@ -232,8 +242,9 @@ func rowSubqueryAtom(expr string) (kind string, open int, ok bool) {
 	default:
 		return "", 0, false
 	}
-	kind, open, ok = subqueryExpressionKeywordAt(expr, 0)
-	if !ok || cyphertext.FindMatchingDelimiter(expr, open, '{', '}', cyphertext.OpeningDelimiter) != len(expr)-1 {
+	kind, open, ok = subqueryExpressionKeywordAt(view, 0)
+	close, complete := view.close(open)
+	if !ok || !complete || close != len(expr)-1 {
 		return "", 0, false
 	}
 	return kind, open, true
@@ -246,8 +257,8 @@ func rowSubqueryAtom(expr string) (kind string, open int, ok bool) {
 // recursion, so it sees the variables bound at that point (a quantifier's, a
 // comprehension's, reduce's). matched is false for any other expression and
 // when the row carries no statement context.
-func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	kind, open, ok := rowSubqueryAtom(expr)
+func (e *StorageExecutor) evaluateRowSubqueryAtom(view braceView, values map[string]interface{}) (interface{}, bool, error) {
+	kind, open, ok := rowSubqueryAtom(view)
 	if !ok {
 		return nil, false, nil
 	}
@@ -255,7 +266,7 @@ func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string
 	if ctx == nil {
 		return nil, false, nil
 	}
-	value, resolved, err := e.rowSubqueryValue(ctx, kind, strings.TrimSpace(expr[open+1:len(expr)-1]), values)
+	value, resolved, err := e.rowSubqueryValue(ctx, kind, view.window(open+1, len(view.text())-1).trim(), values)
 	if err != nil {
 		return nil, true, err
 	}
@@ -269,7 +280,7 @@ func (e *StorageExecutor) evaluateRowSubqueryAtom(expr string, values map[string
 // row, correlated with the row's values: EXISTS is whether the body has a row,
 // COUNT how many rows it has, COLLECT the list of its single returned column.
 // A body that is only a pattern is matched as MATCH <pattern>.
-func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool) {
+func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind string, body braceView, values map[string]interface{}) (interface{}, bool) {
 	value, ok, err := e.rowSubqueryValue(ctx, kind, body, values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
@@ -282,45 +293,50 @@ func (e *StorageExecutor) evaluateRowSubqueryValue(ctx context.Context, kind, bo
 // instead of recording it. It is the one evaluator of EXISTS / COUNT /
 // COLLECT subqueries: the body runs as a pipeline, so its WHERE, ORDER BY,
 // SKIP / LIMIT and RETURN all apply.
-func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind, body string, values map[string]interface{}) (interface{}, bool, error) {
-	body = strings.TrimSpace(body)
+func (e *StorageExecutor) rowSubqueryValue(ctx context.Context, kind string, bodyView braceView, values map[string]interface{}) (interface{}, bool, error) {
+	bodyView = bodyView.trim()
+	body := bodyView.text()
+	ctx = withBraceView(ctx, bodyView)
 	if body == "" {
 		return nil, false, nil
 	}
 	// EXISTS is whether the body has a row and COUNT how many: one
 	// evaluation, so a body gives EXISTS and COUNT the same rows.
 	if kind == "EXISTS" || kind == "COUNT" {
-		if count, ok := e.boundNodeLookupCount(ctx, body, values, kind == "EXISTS"); ok {
+		if count, ok := e.boundNodeLookupCount(ctx, bodyView, values, kind == "EXISTS"); ok {
 			return rowCountValue(kind, count), true, nil
 		}
 		if count, ok := e.boundDegreeCount(ctx, body, values); ok {
 			return rowCountValue(kind, count), true, nil
 		}
-		if count, ok := e.boundChainCount(ctx, body, values, kind == "EXISTS"); ok {
+		if count, ok := e.boundChainCount(ctx, bodyView, values, kind == "EXISTS"); ok {
 			return rowCountValue(kind, count), true, nil
 		}
 	}
 	if cypherVersionFromContext(ctx) != "25" {
-		grouped, err := cypher5ImportGrouping(body, values)
+		grouped, err := cypher5ImportGrouping(bodyView, values)
 		if err != nil {
 			return nil, false, err
 		}
-		body = grouped
+		bodyView = grouped
+		body = bodyView.text()
 	}
-	query := strings.TrimSpace(body)
+	queryView := bodyView.trim()
+	query := queryView.text()
 	patternOnly := strings.HasPrefix(query, "(")
 	if patternOnly {
-		query = "MATCH " + query
+		queryView = queryView.wrap("MATCH ", "")
+		query = queryView.text()
 	}
-	if topLevelKeywordIndex(query, "RETURN") < 0 {
+	if topLevelKeywordIndex(queryView, "RETURN") < 0 {
 		switch kind {
 		case "COUNT":
-			query += " RETURN 1 AS __count"
+			queryView = queryView.wrap("", " RETURN 1 AS __count")
 		case "EXISTS":
-			query += " RETURN 1 AS __exists LIMIT 1"
+			queryView = queryView.wrap("", " RETURN 1 AS __exists LIMIT 1")
 		}
 	}
-	result, err := e.runCorrelatedSubquery(ctx, query, values)
+	result, err := e.runCorrelatedSubquery(withBraceView(ctx, queryView), queryView, values)
 	if err != nil {
 		return nil, false, err
 	}
@@ -360,7 +376,9 @@ func rowCountValue(kind string, rows int64) interface{} {
 // values bound when the pipeline declines the body (a CALL subquery or a
 // procedure call in it, …). EXISTS, COUNT and COLLECT all run their bodies
 // here, so a body gives the same rows whichever of them wraps it.
-func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, view braceView, values map[string]interface{}) (*ExecuteResult, error) {
+	query := view.text()
+	ctx = withBraceView(ctx, view)
 	// Correlated expression imports remain visible across a WITH horizon. The
 	// existing context masks them when a nested CALL selects its own imports.
 	// Without a WITH there is no dropping horizon and the row already owns them.
@@ -389,16 +407,16 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 	}
 	// A UNION body: each branch runs for the row, and the shared UNION
 	// combiner (executeUnion) joins them, as for a top-level UNION.
-	if _, unionAll, _, union := parseTopLevelUnionBranches(ctx, query); union {
-		return e.executeUnion(ctx, query, unionAll, func(branch string) (*ExecuteResult, error) {
-			return e.runCorrelatedSubquery(ctx, branch, values)
+	if _, unionAll, _, union := parseTopLevelUnionBranches(ctx, view); union {
+		return e.executeUnion(ctx, view, unionAll, func(branchCtx context.Context, branch string) (*ExecuteResult, error) {
+			return e.runCorrelatedSubquery(branchCtx, statementBraceView(branchCtx, branch), values)
 		})
 	}
 	outcome := e.correlatedSubqueryExecutor(ctx, values).executePipeline(ctx, query)
 	if outcome.terminal() {
 		return outcome.result, outcome.err
 	}
-	return e.executeCorrelatedSubqueryBody(ctx, query, values)
+	return e.executeCorrelatedSubqueryBody(ctx, statementBraceView(ctx, query), values)
 }
 
 // executeCorrelatedSubqueryBody runs a subquery body through the full
@@ -406,7 +424,8 @@ func (e *StorageExecutor) runCorrelatedSubquery(ctx context.Context, query strin
 // correlated subquery's imports: a node as MATCH (v) WHERE id(v) = $p, a
 // relationship as MATCH ()-[v]->() WHERE id(v) = $p, any other value as
 // WITH $p AS v. Row parameters stay available.
-func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, query string, values map[string]interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, view braceView, values map[string]interface{}) (*ExecuteResult, error) {
+	query := view.text()
 	params := make(map[string]interface{}, len(values))
 	for name, value := range getParamsFromContext(ctx) {
 		params[name] = value
@@ -449,7 +468,8 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 	if len(carried) > 0 {
 		prefix.WriteString("WITH " + strings.Join(carried, ", ") + " ")
 	}
-	return e.executeInternal(ctx, prefix.String()+query, params)
+	wrapped := view.wrap(prefix.String(), "")
+	return e.executeInternal(withBraceView(ctx, wrapped), wrapped.text(), params)
 }
 
 // boundNodeLookupCount counts the rows of a body that is one labelled node
@@ -464,8 +484,12 @@ func (e *StorageExecutor) executeCorrelatedSubqueryBody(ctx context.Context, que
 // every row; ok is false for any other body, a value of the map the row
 // can't resolve, and under a temporal viewport. Execution failures are
 // recorded and handled: callers must not retry a failed read as a new plan.
-func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
-	shape := clauseAnalysisFor(ctx, clauseAnalysisBoundNode, body, func(text string) boundNodeShape { return parseBoundNodeShape(ctx, text) })
+func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body braceView, values map[string]interface{}, first bool) (int64, bool) {
+	shape, cached := boundNodeShapes.get(body.source)
+	if !cached {
+		shape = parseBoundNodeShape(ctx, body)
+		boundNodeShapes.put(body.source, shape)
+	}
 	if !shape.ok {
 		return 0, false
 	}
@@ -490,7 +514,7 @@ func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string,
 		properties[key] = normalizePropValue(value)
 	}
 	pattern := nodePatternInfo{variable: shape.variable, labels: shape.labels, properties: properties}
-	nodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, pattern, "", pipelineMatchPhysicalHint{})
+	nodes, _, err := e.collectPipelineInitialNodeCandidates(ctx, pattern, body.window(0, 0), pipelineMatchPhysicalHint{})
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return 0, true
@@ -519,7 +543,7 @@ func (e *StorageExecutor) boundNodeLookupCount(ctx context.Context, body string,
 		if !mergeNodeHasLabels(node, pattern.labels) || !e.nodeMatchesProps(node, pattern.properties) {
 			continue
 		}
-		if shape.where != "" {
+		if !shape.where.empty() {
 			if row == nil {
 				row = make(map[string]interface{}, len(values)+1)
 				for name, value := range values {
@@ -548,57 +572,53 @@ type boundNodeShape struct {
 	variable string
 	labels   []string
 	keys     []string
-	values   []string
-	where    string
+	values   []braceView
+	where    braceView
 	ok       bool
 }
 
-func parseBoundNodeShape(ctx context.Context, body string) boundNodeShape {
-	pattern := strings.TrimSpace(body)
-	if hasPrefixFold(pattern, "MATCH ") {
-		pattern = strings.TrimSpace(pattern[len("MATCH"):])
-	}
-	if clauses, ok := splitPipelineClauses(ctx, "MATCH "+pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+var boundNodeShapes = newBoundedCache[*cyphertext.Source, boundNodeShape](1024, func(source *cyphertext.Source) int { return boundedCacheStringShardIndex(source.Text) })
+
+func parseBoundNodeShape(ctx context.Context, body braceView) boundNodeShape {
+	patternView := body.clauseBody("MATCH")
+	pattern := patternView.text()
+	wrapped := patternView.wrap("MATCH ", "")
+	if clauses, ok := splitPipelineClauses(withBraceView(ctx, wrapped), wrapped.text()); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
 		return boundNodeShape{}
 	}
-	where := ""
-	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
-		where = strings.TrimSpace(pattern[index+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:index])
+	where := patternView.window(0, 0)
+	if index := topLevelKeywordIndex(patternView, "WHERE"); index >= 0 {
+		where = patternView.window(index+len("WHERE"), len(pattern)).trim()
+		patternView = patternView.window(0, index).trim()
+		pattern = patternView.text()
 	}
 	if !strings.HasPrefix(pattern, "(") || findMatchingParen(pattern, 0) != len(pattern)-1 || containsRelationshipPattern(pattern) ||
-		extractPathAssignmentVariable(pattern) != "" || indexASCIIFold(body, "shortestpath") >= 0 || indexASCIIFold(body, repeatableElementsFunction) >= 0 {
+		extractPathAssignmentVariable(pattern) != "" || indexASCIIFold(body.text(), "shortestpath") >= 0 || indexASCIIFold(body.text(), repeatableElementsFunction) >= 0 {
 		return boundNodeShape{}
 	}
-	head, props := splitNodePatternProperties(pattern)
+	head, props, hasProperties := patternView.nodeParts()
 	// Plain labels only: a label expression, a dynamic label or an inline
 	// WHERE is the pipeline's.
-	if props == "" || strings.ContainsAny(head, "|&!%$()") || indexASCIIFold(head, "WHERE") >= 0 || indexASCIIFold(head, " IS ") >= 0 {
+	if !hasProperties || strings.ContainsAny(head, "|&!%$()") || indexASCIIFold(head, "WHERE") >= 0 || indexASCIIFold(head, " IS ") >= 0 {
 		return boundNodeShape{}
 	}
 	variable, labels, labelErr := parseNodeHead(head)
 	if labelErr != nil || len(labels) == 0 {
 		return boundNodeShape{}
 	}
-	inner, enclosed := stripEnclosingRowDelimiter(strings.TrimSpace(props), '{', '}')
-	if !enclosed || strings.TrimSpace(inner) == "" {
+	entries, valid := props.keyedEntries()
+	if !valid || len(entries) == 0 {
 		return boundNodeShape{}
 	}
 	shape := boundNodeShape{variable: variable, labels: labels, where: where, ok: true}
 	seen := map[string]bool{}
-	for _, pair := range splitTopLevelComma(inner) {
-		separator := findTopLevelMapKeyValueSeparator(pair)
-		if separator <= 0 {
+	for _, entry := range entries {
+		if seen[entry.key()] {
 			return boundNodeShape{}
 		}
-		key := normalizePropertyKey(strings.TrimSpace(pair[:separator]))
-		value := strings.TrimSpace(pair[separator+1:])
-		if key == "" || value == "" || seen[key] {
-			return boundNodeShape{}
-		}
-		seen[key] = true
-		shape.keys = append(shape.keys, key)
-		shape.values = append(shape.values, value)
+		seen[entry.key()] = true
+		shape.keys = append(shape.keys, entry.key())
+		shape.values = append(shape.values, entry.value)
 	}
 	return shape
 }
@@ -611,29 +631,29 @@ func parseBoundNodeShape(ctx context.Context, body string) boundNodeShape {
 // the correlated pipeline evaluates: a pattern list, a body reading a value
 // of the row that isn't a node or relationship, a property map reading the
 // row, a shortest path, or no bound start node.
-func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, values map[string]interface{}, first bool) (int64, bool) {
-	pattern := strings.TrimSpace(body)
-	if hasPrefixFold(pattern, "MATCH ") {
-		pattern = strings.TrimSpace(pattern[len("MATCH"):])
-	}
+func (e *StorageExecutor) boundChainCount(ctx context.Context, body braceView, values map[string]interface{}, first bool) (int64, bool) {
+	patternView := body.clauseBody("MATCH")
+	pattern := patternView.text()
 	// One MATCH clause, its WHERE included: a RETURN or any other clause is
 	// the kernel's or the pipeline's.
-	if clauses, ok := splitPipelineClauses(ctx, "MATCH "+pattern); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
+	wrapped := patternView.wrap("MATCH ", "")
+	if clauses, ok := splitPipelineClauses(withBraceView(ctx, wrapped), wrapped.text()); !ok || len(clauses) != 1 || clauses[0].kind != pipelineClauseMatch {
 		return 0, false
 	}
-	where := ""
-	if index := topLevelKeywordIndex(pattern, "WHERE"); index >= 0 {
-		where = strings.TrimSpace(pattern[index+len("WHERE"):])
-		pattern = strings.TrimSpace(pattern[:index])
+	where := patternView.window(0, 0)
+	if index := topLevelKeywordIndex(patternView, "WHERE"); index >= 0 {
+		where = patternView.window(index+len("WHERE"), len(pattern)).trim()
+		patternView = patternView.window(0, index).trim()
+		pattern = patternView.text()
 	}
 	// A match mode or path selector (REPEATABLE ELEMENTS, ANY SHORTEST)
 	// precedes the pattern; only the pipeline's MATCH runs those.
 	if !strings.HasPrefix(pattern, "(") || len(splitTopLevelComma(pattern)) != 1 || !containsRelationshipPattern(pattern) ||
-		extractPathAssignmentVariable(pattern) != "" || !patternMapsAreConstant(pattern) ||
-		indexASCIIFold(body, "shortestpath") >= 0 || indexASCIIFold(body, repeatableElementsFunction) >= 0 {
+		extractPathAssignmentVariable(pattern) != "" || !patternMapsAreConstant(patternView) ||
+		indexASCIIFold(body.text(), "shortestpath") >= 0 || indexASCIIFold(body.text(), repeatableElementsFunction) >= 0 {
 		return 0, false
 	}
-	matches := e.parseTraversalPattern(ctx, pattern)
+	matches := e.parseTraversalPattern(withBraceView(ctx, patternView), patternView)
 	if matches == nil || !chainVariablesBindEntities(matches, values) {
 		return 0, false
 	}
@@ -669,7 +689,7 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 		if !correlated {
 			continue
 		}
-		if where != "" {
+		if !where.empty() {
 			// The WHERE sees the row's values with the path's bindings.
 			row := make(map[string]interface{}, len(values)+len(inner.nodes)+len(inner.rels))
 			for name, value := range values {
@@ -698,52 +718,31 @@ func (e *StorageExecutor) boundChainCount(ctx context.Context, body string, valu
 // ((n {id: 1}), ()-[:R {k: $k}]->()): boundChainCount's traversal matches
 // those maps only. A map value that reads a variable ((n {id: r.prop}),
 // (n {id: i + 1})) goes to the kernel or the pipeline, which evaluate it.
-func patternMapsAreConstant(pattern string) bool {
+func patternMapsAreConstant(pattern braceView) bool {
 	// With no map delimiter there is no value phase to classify. Keep this
 	// common admission case out of the syntax-plan cache entirely.
-	if !strings.Contains(pattern, "{") {
+	if !(firstLiveBrace(pattern.text()) >= 0) {
 		return true
 	}
-	if constant, cached := patternMapsConstant.get(pattern); cached {
+	if constant, cached := patternMapsConstant.get(pattern.source); cached {
 		return constant
 	}
 	constant := patternMapsAreConstantText(pattern)
-	patternMapsConstant.put(pattern, constant)
+	patternMapsConstant.put(pattern.source, constant)
 	return constant
 }
 
 // patternMapsConstant caches patternMapsAreConstant by pattern text: a
 // pattern is read once, not once per row.
-var patternMapsConstant = newBoundedCache[string, bool](1024, boundedCacheStringShardIndex)
+var patternMapsConstant = newBoundedCache[*cyphertext.Source, bool](1024, func(source *cyphertext.Source) int { return boundedCacheStringShardIndex(source.Text) })
 
-func patternMapsAreConstantText(pattern string) bool {
-	depth := 0
-	for index := 0; index < len(pattern); index++ {
-		switch c := pattern[index]; cypherLexicalByte(c) {
-		case cypherQuoteClass:
-			index = skipCypherQuotedText(pattern, index, c) - 1
-		case '(', '[':
-			depth++
-		case ')', ']':
-			depth--
-		case '{':
-			if depth <= 0 {
-				continue
-			}
-			close := cyphertext.FindMatchingDelimiter(pattern, index, '{', '}', cyphertext.OpeningDelimiter)
-			if close < 0 {
-				return false
-			}
-			for _, pair := range splitTopLevelComma(pattern[index+1 : close]) {
-				separator := findTopLevelMapKeyValueSeparator(pair)
-				if separator <= 0 || !isConstantMapValue(pair[separator+1:]) {
-					return false
-				}
-			}
-			index = close
-		}
+func patternMapsAreConstantText(pattern braceView) bool {
+	constant := true
+	entries, valid := pattern.patternEntryViews()
+	for _, entry := range entries {
+		constant = constant && isConstantMapValue(entry.value.text())
 	}
-	return true
+	return valid && constant
 }
 
 // isConstantMapValue reports a property map value that is a literal or a
@@ -912,7 +911,7 @@ func parseBoundDegreeShape(body string) boundDegreeShape {
 
 func parseBoundDegreeShapeText(body string) boundDegreeShape {
 	trimmed := strings.TrimSpace(body)
-	if len(trimmed) == 0 || strings.ContainsAny(trimmed, "{*,") {
+	if len(trimmed) == 0 || containsSyntaxAny(trimmed, "{*,") {
 		return boundDegreeShape{}
 	}
 	match := boundDegreePattern.FindStringSubmatch(trimmed)

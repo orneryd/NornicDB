@@ -1,7 +1,22 @@
 package cypher
 
+import "github.com/orneryd/nornicdb/internal/cyphertext"
+
 // caseValuePart identifies an already parsed (and possibly compiled) CASE part.
 type caseValuePart uint8
+
+func (parsed *caseExpression) partSpan(part caseValuePart, index int) cyphertext.Span {
+	switch part {
+	case caseTest:
+		return parsed.testSpan
+	case caseWhen:
+		return parsed.whenClauses[index].conditionSpan
+	case caseResult:
+		return parsed.whenClauses[index].resultSpan
+	default:
+		return parsed.elseSpan
+	}
+}
 
 const (
 	caseTest caseValuePart = iota

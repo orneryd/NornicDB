@@ -31,7 +31,7 @@ func TestAdmittedProjectionPrefixPreservesFragmentNames(t *testing.T) {
 		require.True(t, startsWithKeywordFold(kw+"/* c */ as", kw))
 		require.Zero(t, testing.AllocsPerRun(100, func() { _ = startsWithKeywordFold(kw+" as", kw) }))
 	}
-	require.Equal(t, -1, findKeywordIndex("with AS alias", "WITH"))
+	require.Equal(t, -1, findKeywordIndex(originalBraceView("with AS alias"), "WITH"))
 	e := newFabricCallRowsExecutor(t)
 	_, err := e.Execute(t.Context(), "CALL as()", nil)
 	requireStatusCode(t, err, "Neo.ClientError.Procedure.ProcedureNotFound")

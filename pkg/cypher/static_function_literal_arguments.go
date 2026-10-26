@@ -1,7 +1,6 @@
 package cypher
 
 import (
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
 
@@ -16,13 +15,13 @@ import (
 //   - point() with a map literal whose keys don't describe a point (neither x
 //     and y nor latitude and longitude); a map value is checked when it runs
 //     (newPointFromMap).
-func checkStaticLiteralArguments(function string, arguments []string) error {
+func checkStaticLiteralArguments(function string, arguments []braceView) error {
 	switch {
 	case strings.EqualFold(function, "percentileCont") || strings.EqualFold(function, "percentileDisc"):
 		if len(arguments) < 2 {
 			return nil
 		}
-		text := strings.TrimSpace(arguments[1])
+		text := arguments[1].trim().text()
 		value, literal := parseLiteralValueFromComputedRow(text)
 		number, numeric := toFloat64(value)
 		// A null literal is no percentile either (Neo4j 5.26: "Invalid
@@ -66,7 +65,7 @@ func checkStaticLiteralArguments(function string, arguments []string) error {
 
 // staticMapLiteralKeys returns the keys of a map literal ({x: 1, `y`: 2});
 // isMap is false for any other expression.
-func staticMapLiteralKeys(expression string) (keys map[string]bool, isMap bool) {
+func staticMapLiteralKeys(expression braceView) (keys map[string]bool, isMap bool) {
 	keys = make(map[string]bool)
 	if !visitStaticMapLiteralKeys(expression, func(key string) { keys[key] = true }) {
 		return nil, false
@@ -79,22 +78,12 @@ func staticMapLiteralKeys(expression string) (keys map[string]bool, isMap bool) 
 // reports false for any other expression, whose keys visit may have seen in
 // part. point() checks the keys of a map literal argument (newPointFromMap
 // reads x and y or latitude and longitude).
-func visitStaticMapLiteralKeys(expression string, visit func(key string)) bool {
-	expression = strings.TrimSpace(expression)
-	if !strings.HasPrefix(expression, "{") || cyphertext.FindMatchingDelimiter(expression, 0, '{', '}', cyphertext.OpeningDelimiter) != len(expression)-1 {
-		return false
-	}
-	var buffer [8]string
-	for _, entry := range appendTopLevelComma(buffer[:0], expression[1:len(expression)-1]) {
-		colon := findTopLevelMapKeyValueSeparator(entry)
-		if colon < 0 {
-			return false
+func visitStaticMapLiteralKeys(view braceView, visit func(key string)) bool {
+	entries, valid := view.keyedEntries()
+	if valid {
+		for _, entry := range entries {
+			visit(entry.key())
 		}
-		key, valid := isOneSymbolicName(entry[:colon])
-		if !valid {
-			return false
-		}
-		visit(key)
 	}
-	return true
+	return valid
 }

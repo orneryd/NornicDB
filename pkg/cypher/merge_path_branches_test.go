@@ -126,11 +126,11 @@ func TestMergePathFailures(t *testing.T) {
 	}
 
 	// Text the SET applier or the shape reader can't run, and a cancelled match.
-	require.Error(t, exec.applyMergeActions(ctx, nil, "SET", &QueryStats{}))
-	_, _, _, err = exec.pipelineMergePath(ctx, pipelineRow{}, "(a)-[:R]->(b) x-[:S]->(c)", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	require.Error(t, exec.applyMergeActions(ctx, nil, originalBraceView("SET"), &QueryStats{}))
+	_, _, _, err = exec.pipelineMergePath(ctx, pipelineRow{}, originalBraceView("(a)-[:R]->(b) x-[:S]->(c)"), map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.Error(t, err)
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
-	_, _, _, err = exec.pipelineMergePath(cancelled, pipelineRow{}, "(a:MA)-[:R]->(b:MB)-[:S]->(c:MC)", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	_, _, _, err = exec.pipelineMergePath(cancelled, pipelineRow{}, originalBraceView("(a:MA)-[:R]->(b:MB)-[:S]->(c:MC)"), map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.Error(t, err)
 }

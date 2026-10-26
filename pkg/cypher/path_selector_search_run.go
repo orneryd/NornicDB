@@ -192,7 +192,7 @@ func (s *pathSearch) transitionHolds(t *pathSearchTransition, edge *storage.Edge
 }
 
 // predicatesHold evaluates predicates with variable bound to value.
-func (s *pathSearch) predicatesHold(variable string, value interface{}, predicates []string) bool {
+func (s *pathSearch) predicatesHold(variable string, value interface{}, predicates []braceView) bool {
 	if len(predicates) == 0 {
 		return true
 	}

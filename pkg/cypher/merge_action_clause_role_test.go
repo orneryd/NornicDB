@@ -15,14 +15,14 @@ func TestMergeActionDanglingClauseRoles(t *testing.T) {
 		"MERGE (n) ON/*c*/MATCH //c\nSET n.x=1 ON CREATE SET n.y=2",
 		"MERGE (n) ON CREATE SET n.x=1 ON MATCH SET n.y=2",
 	} {
-		require.Equal(t, "SET", lastTopLevelClauseWord(text), text)
+		require.Equal(t, "SET", lastTopLevelClauseWord(originalBraceView(text)), text)
 		require.Zero(t, testing.AllocsPerRun(100, func() {
-			if lastTopLevelClauseWord(text) != "SET" {
+			if lastTopLevelClauseWord(originalBraceView(text)) != "SET" {
 				panic("MERGE action role")
 			}
 		}), text)
 	}
-	require.Equal(t, "MATCH", lastTopLevelClauseWord("MERGE (n) ON MATCH SET n.x=1 MATCH (m)"))
+	require.Equal(t, "MATCH", lastTopLevelClauseWord(originalBraceView("MERGE (n) ON MATCH SET n.x=1 MATCH (m)")))
 	prior := config.GetParserType()
 	defer config.SetParserType(prior)
 	for _, parser := range []string{"nornic", "antlr"} {

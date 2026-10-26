@@ -2301,20 +2301,20 @@ func TestLowLevelHelpers_AdditionalCoverage(t *testing.T) {
 	// createPatternsInScope: the shared CREATE core
 	nodes := map[string]*storage.Node{}
 	created := &ExecuteResult{Stats: &QueryStats{}}
-	_, err := exec.planCreatePatterns(ctx, "(:Person {name:'x'})", nodes, map[string]*storage.Edge{}, nil, created)
+	_, err := exec.planCreatePatterns(ctx, originalBraceView("(:Person {name:'x'})"), nodes, map[string]*storage.Edge{}, nil, created)
 	require.NoError(t, err)
 	assert.Equal(t, 1, created.Stats.NodesCreated)
 	assert.Empty(t, nodes, "an anonymous node binds no variable")
 
-	_, err = exec.planCreatePatterns(ctx, "(n:123Bad)", nodes, map[string]*storage.Edge{}, nil, created)
+	_, err = exec.planCreatePatterns(ctx, originalBraceView("(n:123Bad)"), nodes, map[string]*storage.Edge{}, nil, created)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid label name")
 
-	_, err = exec.planCreatePatterns(ctx, "(n:Person {1bad: 1})", nodes, map[string]*storage.Edge{}, nil, created)
+	_, err = exec.planCreatePatterns(ctx, originalBraceView("(n:Person {1bad: 1})"), nodes, map[string]*storage.Edge{}, nil, created)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "map literal keys must be valid symbolic names")
 
-	_, err = exec.planCreatePatterns(ctx, "(n:Person)", nodes, map[string]*storage.Edge{}, nil, created)
+	_, err = exec.planCreatePatterns(ctx, originalBraceView("(n:Person)"), nodes, map[string]*storage.Edge{}, nil, created)
 	require.NoError(t, err)
 	require.NotNil(t, nodes["n"])
 	require.NotNil(t, nodes["n"].Properties) // initialized for empty-property create
@@ -2374,12 +2374,12 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	edgeVars := map[string]*storage.Edge{}
 	result := &ExecuteResult{Stats: &QueryStats{}}
 
-	_, err := exec.planCreatePatterns(ctx, "(a:Person {name:'alice'})", nodeVars, edgeVars, nil, result)
+	_, err := exec.planCreatePatterns(ctx, originalBraceView("(a:Person {name:'alice'})"), nodeVars, edgeVars, nil, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "a")
 	assert.Equal(t, 1, result.Stats.NodesCreated)
 
-	_, err = exec.planCreatePatterns(ctx, "(a)-[r:KNOWS {since: 2020}]->(b:Person {name:'bob'})", nodeVars, edgeVars, nil, result)
+	_, err = exec.planCreatePatterns(ctx, originalBraceView("(a)-[r:KNOWS {since: 2020}]->(b:Person {name:'bob'})"), nodeVars, edgeVars, nil, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "b")
 	require.Contains(t, edgeVars, "r")
@@ -2387,7 +2387,7 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	assert.Equal(t, int64(2020), edgeVars["r"].Properties["since"])
 
 	// Reverse arrow branch: created edge should start at inline node c and end at a.
-	_, err = exec.planCreatePatterns(ctx, "(a)<-[rb:BACK]-(c:Person {name:'carol'})", nodeVars, edgeVars, nil, result)
+	_, err = exec.planCreatePatterns(ctx, originalBraceView("(a)<-[rb:BACK]-(c:Person {name:'carol'})"), nodeVars, edgeVars, nil, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "c")
 	require.Contains(t, edgeVars, "rb")
@@ -2395,11 +2395,11 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	assert.Equal(t, nodeVars["a"].ID, edgeVars["rb"].EndNode)
 
 	// Invalid relationship shape.
-	_, err = exec.planCreatePatterns(ctx, "(a)-[:BROKEN](b)", nodeVars, edgeVars, nil, result)
+	_, err = exec.planCreatePatterns(ctx, originalBraceView("(a)-[:BROKEN](b)"), nodeVars, edgeVars, nil, result)
 	require.Error(t, err)
 
 	// An endpoint variable not in scope is a new node (Neo4j CREATE semantics).
-	_, err = exec.planCreatePatterns(ctx, "(missing)-[:REL]->(a)", nodeVars, edgeVars, nil, result)
+	_, err = exec.planCreatePatterns(ctx, originalBraceView("(missing)-[:REL]->(a)"), nodeVars, edgeVars, nil, result)
 	require.NoError(t, err)
 	require.Contains(t, nodeVars, "missing")
 
@@ -2411,7 +2411,7 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	for name, edge := range edgeVars {
 		row[name] = edge
 	}
-	stats, handled, err := exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET a += {score: 5, active: true}")
+	stats, handled, err := exec.pipelineApplySet(ctx, []pipelineRow{row}, originalBraceView("SET a += {score: 5, active: true}"))
 	require.NoError(t, err)
 	require.True(t, handled)
 	assert.Equal(t, int64(5), nodeVars["a"].Properties["score"])
@@ -2421,24 +2421,24 @@ func TestCreateHelpers_ProcessRelationshipResolveAndSetMerge(t *testing.T) {
 	ctxWithParams := context.WithValue(ctx, paramsKey, map[string]interface{}{
 		"edgeProps": map[string]interface{}{"rank": int64(9)},
 	})
-	stats, _, err = exec.pipelineApplySet(ctxWithParams, []pipelineRow{row}, "SET r += $edgeProps")
+	stats, _, err = exec.pipelineApplySet(ctxWithParams, []pipelineRow{row}, originalBraceView("SET r += $edgeProps"))
 	require.NoError(t, err)
 	assert.Equal(t, int64(9), edgeVars["r"].Properties["rank"])
 	assert.Equal(t, 1, stats.PropertiesSet)
 
 	// Strict error branches.
-	_, _, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET a + {x:1}")
+	_, _, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, originalBraceView("SET a + {x:1}"))
 	require.Error(t, err)
 
-	_, _, err = exec.pipelineApplySet(context.WithValue(ctx, paramsKey, map[string]interface{}{"missing": int64(1)}), []pipelineRow{row}, "SET a += $missing")
+	_, _, err = exec.pipelineApplySet(context.WithValue(ctx, paramsKey, map[string]interface{}{"missing": int64(1)}), []pipelineRow{row}, originalBraceView("SET a += $missing"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "requires a map")
 
-	_, _, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET a += {broken")
+	_, _, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, originalBraceView("SET a += {broken"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse properties")
 
-	_, handled, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, "SET unknown += {x:1}")
+	_, handled, err = exec.pipelineApplySet(ctx, []pipelineRow{row}, originalBraceView("SET unknown += {x:1}"))
 	require.NoError(t, err)
 	assert.False(t, handled, "an unbound target is left to the caller")
 }
@@ -2447,49 +2447,49 @@ func TestCreateHelpers_ParsersAndValidators(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	ctx := context.Background()
 
-	require.NoError(t, exec.validateCreatePatternPropertyMap(ctx, "(n:Person {name:'ok'})"))
-	require.NoError(t, exec.validateCreatePatternPropertyMap(ctx, "(n:Person)"))
+	require.NoError(t, exec.validateCreatePatternPropertyMap(ctx, originalBraceView("(n:Person {name:'ok'})")))
+	require.NoError(t, exec.validateCreatePatternPropertyMap(ctx, originalBraceView("(n:Person)")))
 
-	err := exec.validateCreatePatternPropertyMap(ctx, "(n:Person {name:'x'")
+	err := exec.validateCreatePatternPropertyMap(ctx, originalBraceView("(n:Person {name:'x'"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid property map syntax")
 
-	err = exec.validateCreatePatternPropertyMap(ctx, "(n:Person {name})")
+	err = exec.validateCreatePatternPropertyMap(ctx, originalBraceView("(n:Person {name})"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid property map syntax")
 
-	pathVar, stripped := parseCreatePathAssignment("p = (a)-[:R]->(b)")
+	pathVar, stripped := parseCreatePathAssignment(expressionBraceView("p = (a)-[:R]->(b)"))
 	assert.Equal(t, "p", pathVar)
 	assert.Equal(t, "(a)-[:R]->(b)", stripped)
 
-	pathVar, stripped = parseCreatePathAssignment("1bad = (a)-[:R]->(b)")
+	pathVar, stripped = parseCreatePathAssignment(expressionBraceView("1bad = (a)-[:R]->(b)"))
 	assert.Equal(t, "", pathVar)
 	assert.Equal(t, "1bad = (a)-[:R]->(b)", stripped)
 
-	parts := exec.splitCreatePatterns("p=(a:A {txt:'x -> y'})-[r:REL]->(b:B), (c:C)")
+	parts := exec.splitCreatePatterns(expressionBraceView("p=(a:A {txt:'x -> y'})-[r:REL]->(b:B), (c:C)"))
 	require.Len(t, parts, 2)
-	assert.Equal(t, "p=(a:A {txt:'x -> y'})-[r:REL]->(b:B)", strings.TrimSpace(parts[0]))
-	assert.Equal(t, "(c:C)", strings.TrimSpace(parts[1]))
+	assert.Equal(t, "p=(a:A {txt:'x -> y'})-[r:REL]->(b:B)", strings.TrimSpace(parts[0].text()))
+	assert.Equal(t, "(c:C)", strings.TrimSpace(parts[1].text()))
 
-	nodes := exec.splitNodePatterns("(a:A {txt:'(x)' }), (b:B {v:1})")
+	nodes := exec.splitNodePatterns(originalBraceView("(a:A {txt:'(x)' }), (b:B {v:1})"))
 	require.Len(t, nodes, 2)
 	assert.Contains(t, nodes[0], "(a:A")
 	assert.Contains(t, nodes[1], "(b:B")
 
-	relType, relProps, _ := exec.parseRelationshipTypeAndProps(ctx, "r:KNOWS {since: 2021, note: 'x'}", nil)
+	relType, relProps, _ := exec.parseRelationshipTypeAndProps(ctx, expressionBraceView("r:KNOWS {since: 2021, note: 'x'}"), nil)
 	assert.Equal(t, "KNOWS", relType)
 	assert.Equal(t, int64(2021), relProps["since"])
 	assert.Equal(t, "x", relProps["note"])
 
-	relType, relProps, _ = exec.parseRelationshipTypeAndProps(ctx, "r", nil)
+	relType, relProps, _ = exec.parseRelationshipTypeAndProps(ctx, expressionBraceView("r"), nil)
 	assert.Equal(t, "", relType)
 	assert.Empty(t, relProps)
 
-	relType, relProps, _ = exec.parseRelationshipTypeAndProps(ctx, ":", nil)
+	relType, relProps, _ = exec.parseRelationshipTypeAndProps(ctx, originalBraceView(":"), nil)
 	assert.Equal(t, "", relType)
 	assert.Empty(t, relProps)
 
-	source, rel, target, reverse, remainder, err := exec.parseCreateRelPatternWithVars("(a)-[r:KNOWS]->(b)-[:NEXT]->(c)")
+	source, rel, target, reverse, remainder, err := exec.parseCreateRelPatternWithVars(originalBraceView("(a)-[r:KNOWS]->(b)-[:NEXT]->(c)"))
 	require.NoError(t, err)
 	assert.Equal(t, "a", source)
 	assert.Equal(t, "r:KNOWS", rel)
@@ -2497,7 +2497,7 @@ func TestCreateHelpers_ParsersAndValidators(t *testing.T) {
 	assert.False(t, reverse)
 	assert.Equal(t, "-[:NEXT]->(c)", remainder)
 
-	source, rel, target, reverse, remainder, err = exec.parseCreateRelPatternWithVars("(a)<-[r:BACK]-(b)")
+	source, rel, target, reverse, remainder, err = exec.parseCreateRelPatternWithVars(originalBraceView("(a)<-[r:BACK]-(b)"))
 	require.NoError(t, err)
 	assert.Equal(t, "a", source)
 	assert.Equal(t, "r:BACK", rel)
@@ -2505,15 +2505,15 @@ func TestCreateHelpers_ParsersAndValidators(t *testing.T) {
 	assert.True(t, reverse)
 	assert.Equal(t, "", remainder)
 
-	_, _, _, _, _, err = exec.parseCreateRelPatternWithVars("a)-[r:REL]->(b)")
+	_, _, _, _, _, err = exec.parseCreateRelPatternWithVars(expressionBraceView("a)-[r:REL]->(b)"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must start with (")
 
-	_, _, _, _, _, err = exec.parseCreateRelPatternWithVars("(a)-[r:REL->(b)")
+	_, _, _, _, _, err = exec.parseCreateRelPatternWithVars(originalBraceView("(a)-[r:REL->(b)"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unmatched bracket")
 
-	_, _, _, _, _, err = exec.parseCreateRelPatternWithVars("(a)-[r:REL]-(b)")
+	_, _, _, _, _, err = exec.parseCreateRelPatternWithVars(originalBraceView("(a)-[r:REL]-(b)"))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "expected ->(")
 }
@@ -2530,26 +2530,26 @@ func TestCreateHelpers_ResolveOrCreateAndMultipleCreates(t *testing.T) {
 	edgeVars := map[string]*storage.Edge{}
 
 	// An endpoint variable not in scope is a new node (Neo4j CREATE semantics).
-	missing, err := exec.planCreateEndpoint(ctx, "missingVar", nodeVars, edgeVars, &plan)
+	missing, err := exec.planCreateEndpoint(ctx, expressionBraceView("missingVar"), nodeVars, edgeVars, &plan)
 	require.NoError(t, err)
 	require.NotNil(t, missing)
 	require.Contains(t, nodeVars, "missingVar")
 	assert.Len(t, plan.nodes, 1)
 
-	n, err := exec.planCreateEndpoint(ctx, "x:Node {id:'x1'}", nodeVars, edgeVars, &plan)
+	n, err := exec.planCreateEndpoint(ctx, expressionBraceView("x:Node {id:'x1'}"), nodeVars, edgeVars, &plan)
 	require.NoError(t, err)
 	require.NotNil(t, n)
 	require.Contains(t, nodeVars, "x")
 	assert.Len(t, plan.nodes, 2)
 
 	// Existing variable returns same node without creating a new one.
-	same, err := exec.planCreateEndpoint(ctx, "x:Node {id:'different'}", nodeVars, edgeVars, &plan)
+	same, err := exec.planCreateEndpoint(ctx, expressionBraceView("x:Node {id:'different'}"), nodeVars, edgeVars, &plan)
 	require.NoError(t, err)
 	assert.Equal(t, n.ID, same.ID)
 	assert.Len(t, plan.nodes, 2)
 
 	// Inline node without variable is created but not added to nodeVars.
-	inline, err := exec.planCreateEndpoint(ctx, ":Leaf {k:1}", nodeVars, edgeVars, &plan)
+	inline, err := exec.planCreateEndpoint(ctx, originalBraceView(":Leaf {k:1}"), nodeVars, edgeVars, &plan)
 	require.NoError(t, err)
 	require.NotNil(t, inline)
 	assert.Len(t, plan.nodes, 3)

@@ -145,10 +145,10 @@ func TestDeletedEntityReadsAfterWithMatchNeo4j(t *testing.T) {
 }
 
 func TestDeletedEntityReadTextAndIteration(t *testing.T) {
-	require.Equal(t, "n.p\n1\n", deletedEntityReadText(pipelineClause{kind: pipelineClauseSet, text: "SET n.q = n.p, m += 1, n:L"}))
-	require.Empty(t, deletedEntityReadText(pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n.p"}))
-	require.Empty(t, deletedEntityReadText(pipelineClause{kind: pipelineClauseDelete, text: "DELETE n"}))
-	require.Equal(t, "RETURN n.p", deletedEntityReadText(pipelineClause{kind: pipelineClauseReturn, text: "RETURN n.p"}))
+	require.Equal(t, "n.p\n1\n", deletedEntityReadText(t.Context(), pipelineClause{kind: pipelineClauseSet, text: "SET n.q = n.p, m += 1, n:L", view: originalBraceView("SET n.q = n.p, m += 1, n:L")}))
+	require.Empty(t, deletedEntityReadText(t.Context(), pipelineClause{kind: pipelineClauseRemove, text: "REMOVE n.p", view: originalBraceView("REMOVE n.p")}))
+	require.Empty(t, deletedEntityReadText(t.Context(), pipelineClause{kind: pipelineClauseDelete, text: "DELETE n", view: originalBraceView("DELETE n")}))
+	require.Equal(t, "RETURN n.p", deletedEntityReadText(t.Context(), pipelineClause{kind: pipelineClauseReturn, text: "RETURN n.p", view: originalBraceView("RETURN n.p")}))
 	require.Equal(t, "xs", iterationSourceVariable("RETURN [x IN xs | x.p]", "x"))
 	require.Equal(t, "ys", iterationSourceVariable("RETURN 'x IN zs', any(x  in ys WHERE x.p > 1)", "x"))
 	require.Empty(t, iterationSourceVariable("RETURN x.p, xin", "x"))
@@ -262,13 +262,13 @@ func TestDeletedEntityEdgeCases(t *testing.T) {
 	require.False(t, deleted.holdsDeleted([]interface{}{int64(1)}, false))
 	require.Empty(t, iterationSourceVariable("RETURN x", "x"))
 
-	targets, detach, ok := deleteClauseTargets("REMOVE n.p")
+	targets, detach, ok := deleteClauseTargets(originalBraceView("REMOVE n.p"))
 	require.False(t, ok)
 	require.False(t, detach)
 	require.Nil(t, targets)
 	for _, separator := range []string{" ", "  ", "\n", "\t", " /* UNION CALL RETURN WITH USE */ ", " // UNION CALL USE\n"} {
 		t.Run(separator, func(t *testing.T) {
-			targets, detach, ok := deleteClauseTargets("DETACH" + separator + "DELETE a, b")
+			targets, detach, ok := deleteClauseTargets(originalBraceView("DETACH" + separator + "DELETE a, b"))
 			require.True(t, ok)
 			require.True(t, detach)
 			require.Equal(t, []string{"a", "b"}, targets)
@@ -284,7 +284,7 @@ func TestDeletedEntityEdgeCases(t *testing.T) {
 	result, err := exec.Execute(ctx, "MATCH (n:Lone) RETURN n", nil)
 	require.NoError(t, err)
 	rows := []pipelineRow{{"n": result.Rows[0][0]}}
-	_, handled, err := exec.pipelineApplyDelete(ctx, rows, map[string]struct{}{"n": {}}, "DELETE n")
+	_, handled, err := exec.pipelineApplyDelete(ctx, rows, map[string]struct{}{"n": {}}, originalBraceView("DELETE n"))
 	require.NoError(t, err)
 	require.True(t, handled)
 	require.Empty(t, rows[0]["n"].(*storage.Node).Properties)

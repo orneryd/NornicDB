@@ -43,11 +43,12 @@ func (bindings executionBindings) lookup(name string) (any, bool) {
 	return nil, false
 }
 
-func compileExecutionInput(text string, depth int) (executionInputValue, bool) {
+func compileExecutionInput(view braceView, depth int) (executionInputValue, bool) {
 	if depth >= 16 {
 		return executionInputValue{}, false
 	}
-	text = strings.TrimSpace(text)
+	view = view.trim()
+	text := view.text()
 	if strings.HasPrefix(text, "$") {
 		var direct string
 		scanParameterReferences(text, func(dollar, start, end int) {
@@ -68,34 +69,24 @@ func compileExecutionInput(text string, depth int) (executionInputValue, bool) {
 	if value, literal := parseLiteralValueFromComputedRow(text); literal {
 		return executionInputValue{literal: value}, true
 	}
-	if strings.HasPrefix(text, "{") && cyphertext.FindMatchingDelimiter(text, 0, '{', '}', cyphertext.OpeningDelimiter) == len(text)-1 {
+	if entries, valid := view.keyedEntries(); valid {
 		result := executionInputValue{entries: []executionInputEntry{}}
-		if strings.TrimSpace(text[1:len(text)-1]) != "" {
-			for _, entry := range splitTopLevelComma(text[1 : len(text)-1]) {
-				colon := findTopLevelMapKeyValueSeparator(entry)
-				if colon < 0 {
-					return executionInputValue{}, false
-				}
-				key := strings.TrimSpace(entry[:colon])
-				if isWholeCypherQuotedString(key) {
-					key, _ = cyphertext.DecodeString(key, cyphertext.AcceptedSource)
-				} else {
-					key = symbolicNameValue(key)
-				}
-				value, known := compileExecutionInput(entry[colon+1:], depth+1)
-				if !known {
-					return executionInputValue{}, false
-				}
-				result.bound = result.bound || value.bound
-				result.entries = append(result.entries, executionInputEntry{key, value})
-			}
+		known := true
+		for _, entry := range entries {
+			value, compiled := compileExecutionInput(entry.value, depth+1)
+			known = known && compiled
+			result.bound = result.bound || value.bound
+			result.entries = append(result.entries, executionInputEntry{entry.key(), value})
+		}
+		if !known {
+			return executionInputValue{}, false
 		}
 		return foldExecutionInput(result), true
 	}
 	if strings.HasPrefix(text, "[") && cyphertext.FindMatchingDelimiter(text, 0, '[', ']', cyphertext.OpeningDelimiter) == len(text)-1 {
 		result := executionInputValue{items: []executionInputValue{}}
 		if strings.TrimSpace(text[1:len(text)-1]) != "" {
-			for _, item := range splitTopLevelComma(text[1 : len(text)-1]) {
+			for _, item := range view.window(1, len(text)-1).commaViews() {
 				value, known := compileExecutionInput(item, depth+1)
 				if !known {
 					return executionInputValue{}, false
@@ -177,12 +168,4 @@ func (input *executionInputValue) resolve(bindings executionBindings) (any, bool
 		value[i] = resolved
 	}
 	return value, true
-}
-
-func resolveExecutionInput(ctx context.Context, text string, depth int) (any, bool) {
-	value, known := compileExecutionInput(text, depth)
-	if !known {
-		return nil, false
-	}
-	return value.resolve(newExecutionBindings(ctx))
 }

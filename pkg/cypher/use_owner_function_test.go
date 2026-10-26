@@ -33,7 +33,7 @@ func TestUseOwnerFunctionInventory(t *testing.T) {
 					return nil
 				}))
 				require.Equal(t, append(append([]string{}, test.want...), "abs"), got)
-				require.NoError(t, validateKnownFunctions(query))
+				require.NoError(t, validateKnownFunctions(originalBraceView(query)))
 			})
 		}
 		query := "CALL { " + selector + "graph.byName(toLower('CMP.A')) RETURN abs(-1) AS n } RETURN n"
@@ -43,7 +43,7 @@ func TestUseOwnerFunctionInventory(t *testing.T) {
 			return nil
 		}))
 		require.Equal(t, []string{"tolower", "abs"}, got)
-		requireSemanticDetail(t, validateKnownFunctions(selector+"graph.byName(noSuchSelectorArgument()) RETURN 1"), "UnknownFunction")
+		requireSemanticDetail(t, validateKnownFunctions(originalBraceView(selector+"graph.byName(noSuchSelectorArgument()) RETURN 1")), "UnknownFunction")
 	}
 	var got []string
 	require.NoError(t, forEachFunctionCall("CALL db.labels(toString(1)) YIELD label RETURN size(label)", func(_, normalized string) error {

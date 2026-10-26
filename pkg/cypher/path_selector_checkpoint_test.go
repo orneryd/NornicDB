@@ -39,7 +39,7 @@ func TestSelectedPathCompilationCancellationCheckpoints(t *testing.T) {
 	pattern := "(a)((x)-[r:T]->(y) WHERE x.id <= y.id){2,1000000}(()-[:T]->()){0,3}(b)"
 	for budget := 1; budget <= 256; budget++ {
 		ctx := newCheckpointContext(budget, nil)
-		plan, _, ok := buildSelectedPathPlanContext(ctx, pattern, "p", "", nil)
+		plan, _, ok := buildSelectedPathPlanContext(ctx, originalBraceView(pattern), "p", originalBraceView(""), nil)
 		if ctx.Context.Err() != nil {
 			require.False(t, ok)
 			require.Nil(t, plan)
@@ -48,13 +48,13 @@ func TestSelectedPathCompilationCancellationCheckpoints(t *testing.T) {
 		}
 		ctx.cancel()
 		ctx = newCheckpointContext(budget, nil)
-		_, _, ok = compileSelectedPathPlanContext(ctx, pattern, fmt.Sprintf("p%d", budget), "", nil)
+		_, _, ok = compileSelectedPathPlanContext(ctx, originalBraceView(pattern), fmt.Sprintf("p%d", budget), originalBraceView(""), nil)
 		if ctx.Context.Err() != nil {
 			require.False(t, ok)
 		}
 		ctx.cancel()
 		ctx = newCheckpointContext(budget, nil)
-		_, _, err := e.parseSelectedPathMatchContext(ctx, pattern, "p", nil, &pathSelector{}, "", nil)
+		_, _, err := e.parseSelectedPathMatchContext(ctx, originalBraceView(pattern), "p", nil, &pathSelector{}, originalBraceView(""), nil)
 		if ctx.Context.Err() != nil {
 			require.ErrorIs(t, err, context.Canceled)
 		}
@@ -62,9 +62,9 @@ func TestSelectedPathCompilationCancellationCheckpoints(t *testing.T) {
 	}
 	canceled, stop := context.WithCancel(context.Background())
 	stop()
-	_, ok := parsePathPatternItemsContext(canceled, pattern, false)
+	_, ok := parsePathPatternItemsContext(canceled, originalBraceView(pattern), false)
 	require.False(t, ok)
-	_, _, ok = buildSelectedPathPlanContext(canceled, pattern, "p", "", nil)
+	_, _, ok = buildSelectedPathPlanContext(canceled, originalBraceView(pattern), "p", originalBraceView(""), nil)
 	require.False(t, ok)
 	a := &pathSearchAutomaton{ctx: context.Background(), slots: []pathSearchSlot{{empty: []int{0}}}}
 	require.Len(t, a.chainsFrom(0, nil), 1)
@@ -76,7 +76,7 @@ func TestSelectedPathCancellationWorkCheckpoints(t *testing.T) {
 	source, target := result.Rows[0][0].(*storage.Node), result.Rows[0][1].(*storage.Node)
 	patterns := []string{"(a)-[:T*]-(b)", "(a)-[:T*]->(b)", "(a)-[:T]->(x)-[:T]->(b)", "(a)((x)-[r:T]->(y) WHERE x.id <= y.id){1,3}(b)", "(a)(()-[:T]->()){2,3}(()-[:T]->()){0,2}(b)"}
 	for _, pattern := range patterns {
-		plan, _, ok := compileSelectedPathPlan(pattern, "p", "", nil)
+		plan, _, ok := compileSelectedPathPlan(originalBraceView(pattern), "p", originalBraceView(""), nil)
 		require.True(t, ok)
 		for _, mode := range []string{"pair", "one", "run", "forward", "backward", "trace"} {
 			for budget := 1; budget <= 200; budget++ {
@@ -140,7 +140,7 @@ func TestSelectedPathBindingCancellationCheckpoints(t *testing.T) {
 	require.NoError(t, err)
 	source, target := r.Rows[0][0].(*storage.Node), r.Rows[0][1].(*storage.Node)
 	for _, pattern := range []string{"(a)-[r:T*]->(b)", "(a)((x)-[r:T]->(y) WHERE x.id <= y.id)+(b)"} {
-		plan, _, ok := compileSelectedPathPlan(pattern, "p", "", nil)
+		plan, _, ok := compileSelectedPathPlan(originalBraceView(pattern), "p", originalBraceView(""), nil)
 		require.True(t, ok)
 		var paths []pathSearchPath
 		s := e.newPathSearch(base, plan.forward, pipelineRow{}, 4, source)
@@ -178,7 +178,7 @@ func TestSelectedPathBindingCancellationCheckpoints(t *testing.T) {
 }
 func TestSelectedPathUniformEligibilityAndTrailFallback(t *testing.T) {
 	for _, pattern := range []string{"(a)(()-[:T]->()-[:U]->())+(b)", "(a)(()-[:T|U]->()-[:T]->())+(b)"} {
-		plan, _, ok := compileSelectedPathPlan(pattern, "p", "", nil)
+		plan, _, ok := compileSelectedPathPlan(originalBraceView(pattern), "p", originalBraceView(""), nil)
 		require.True(t, ok)
 		require.Nil(t, plan.forward.uniform)
 	}
@@ -190,7 +190,7 @@ func TestSelectedPathUniformEligibilityAndTrailFallback(t *testing.T) {
 	r, err := e.Execute(ctx, "MATCH (a:S {id:1}) RETURN a", nil)
 	require.NoError(t, err)
 	source := r.Rows[0][0].(*storage.Node)
-	plan, _, ok := compileSelectedPathPlan("(a)-[:T]-(x)-[:T]-(b)", "p", "", nil)
+	plan, _, ok := compileSelectedPathPlan(originalBraceView("(a)-[:T]-(x)-[:T]-(b)"), "p", originalBraceView(""), nil)
 	require.True(t, ok)
 	for _, repeat := range []bool{false, true} {
 		searchCtx := ctx
@@ -216,7 +216,7 @@ func TestSelectedPathZeroCounterGuard(t *testing.T) {
 	r, err := e.Execute(ctx, "MATCH (a:S {id:1}) RETURN a", nil)
 	require.NoError(t, err)
 	source := r.Rows[0][0].(*storage.Node)
-	plan, _, ok := compileSelectedPathPlan("(a)(()-[:T]->()){0,1}(b)", "p", "", nil)
+	plan, _, ok := compileSelectedPathPlan(originalBraceView("(a)(()-[:T]->()){0,1}(b)"), "p", originalBraceView(""), nil)
 	require.True(t, ok)
 	// A zero budget also holds when a counted body remains in the automaton.
 	a := *plan.forward

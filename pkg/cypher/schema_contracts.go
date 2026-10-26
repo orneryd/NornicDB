@@ -3,9 +3,9 @@ package cypher
 import (
 	"context"
 	"fmt"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -15,7 +15,7 @@ type parsedCreateConstraintContractDDL struct {
 	entityType  storage.ConstraintEntityType
 	variable    string
 	labelOrType string
-	body        string
+	body        braceView
 }
 
 func parseConstraintContractForClause(forClause string) (entityType storage.ConstraintEntityType, variable string, labelOrType string, ok bool) {
@@ -66,24 +66,25 @@ func parseConstraintContractForClause(forClause string) (entityType storage.Cons
 	return storage.ConstraintEntityNode, variable, labelOrType, true
 }
 
-func parseCurlySection(s string) (inside string, rest string, ok bool) {
-	s = strings.TrimSpace(s)
-	if s == "" || s[0] != '{' {
-		return "", s, false
+func parseCurlySection(view braceView) (inside, rest braceView, ok bool) {
+	view = view.trim()
+	if view.empty() || !cyphertext.IsOpenBrace(view.text()[0]) {
+		return braceView{}, view, false
 	}
-	closing := cyphertext.FindMatchingDelimiter(s, 0, '{', '}', cyphertext.OpeningDelimiter)
-	if closing < 0 {
-		return "", s, false
+	closing, complete := view.close(0)
+	if !complete {
+		return braceView{}, view, false
 	}
-	return s[1:closing], strings.TrimSpace(s[closing+1:]), true
+	return view.window(1, closing), view.window(closing+1, len(view.text())).trim(), true
 }
 
-func (e *StorageExecutor) parseCreateConstraintContractDDL(cypher string) (parsedCreateConstraintContractDDL, error) {
-	q := strings.TrimSpace(cypher)
+func (e *StorageExecutor) parseCreateConstraintContractDDL(view braceView) (parsedCreateConstraintContractDDL, error) {
+	qView := view.trim()
+	q := qView.text()
 	if q == "" {
 		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaEmptyStatement(), nil)
 	}
-	prefixPos := keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts())
+	prefixPos := keywordIndexFrom(q, "CREATE CONSTRAINT", 0, defaultKeywordScanOpts(qView))
 	if prefixPos != 0 {
 		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
@@ -91,7 +92,7 @@ func (e *StorageExecutor) parseCreateConstraintContractDDL(cypher string) (parse
 	if !ok {
 		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("prefix"), nil)
 	}
-	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts())
+	forPos := keywordIndexFrom(q, "FOR", prefixEnd, defaultKeywordScanOpts(qView))
 	if forPos < 0 {
 		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaMissingKeyword("FOR"), nil)
 	}
@@ -99,7 +100,7 @@ func (e *StorageExecutor) parseCreateConstraintContractDDL(cypher string) (parse
 	if !ok {
 		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("FOR"), nil)
 	}
-	reqPos := keywordIndexFrom(q, "REQUIRE", forEnd, defaultKeywordScanOpts())
+	reqPos := keywordIndexFrom(q, "REQUIRE", forEnd, defaultKeywordScanOpts(qView))
 	if reqPos < 0 {
 		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaMissingKeyword("REQUIRE"), nil)
 	}
@@ -108,7 +109,7 @@ func (e *StorageExecutor) parseCreateConstraintContractDDL(cypher string) (parse
 		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaInvalidKeyword("REQUIRE"), nil)
 	}
 
-	name, err := parseOptionalDDLName(q[prefixEnd:forPos])
+	name, err := parseOptionalDDLName(qView.window(prefixEnd, forPos))
 	if err != nil {
 		return parsedCreateConstraintContractDDL{}, err
 	}
@@ -118,8 +119,8 @@ func (e *StorageExecutor) parseCreateConstraintContractDDL(cypher string) (parse
 		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaInvalidPattern("FOR"), nil)
 	}
 
-	body, tail, ok := parseCurlySection(q[reqEnd:])
-	if !ok || tail != "" {
+	body, tail, ok := parseCurlySection(qView.window(reqEnd, len(q)))
+	if !ok || !tail.empty() {
 		return parsedCreateConstraintContractDDL{}, localizedError(localization.CypherSchemaInvalidClause("REQUIRE block"), nil)
 	}
 
@@ -136,14 +137,15 @@ func (e *StorageExecutor) parseCreateConstraintContractDDL(cypher string) (parse
 }
 
 func (e *StorageExecutor) executeCreateConstraintContract(ctx context.Context, cypher string, ifNotExists bool) (*ExecuteResult, bool, error) {
-	parsed, err := e.parseCreateConstraintContractDDL(cypher)
+	view := statementBraceView(ctx, cypher)
+	parsed, err := e.parseCreateConstraintContractDDL(view)
 	if err != nil {
 		return nil, false, nil
 	}
 	return e.createConstraintContractForTarget(ctx, cypher, parsed.name, parsed.entityType, parsed.variable, parsed.labelOrType, parsed.body, ifNotExists)
 }
 
-func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context, definition, name string, entityType storage.ConstraintEntityType, variable, labelOrType, body string, ifNotExists bool) (*ExecuteResult, bool, error) {
+func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context, definition, name string, entityType storage.ConstraintEntityType, variable, labelOrType string, body braceView, ifNotExists bool) (*ExecuteResult, bool, error) {
 	entriesRaw, err := splitConstraintContractEntries(body)
 	if err != nil {
 		return nil, true, err
@@ -230,94 +232,86 @@ func (e *StorageExecutor) createConstraintContractForTarget(ctx context.Context,
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, true, nil
 }
 
-func splitConstraintContractEntries(body string) ([]string, error) {
-	entries := make([]string, 0)
-	var current strings.Builder
-	braceDepth := 0
-	bracketDepth := 0
-	parenDepth := 0
-
-	flush := func() {
-		entry := strings.TrimSpace(current.String())
-		if entry != "" {
+func splitConstraintContractEntries(view braceView) ([]braceView, error) {
+	body := view.text()
+	var entries []braceView
+	start, brackets, parens := 0, 0, 0
+	appendEntry := func(end int) {
+		entry := view.window(start, end).trim()
+		if !entry.empty() {
 			entries = append(entries, entry)
 		}
-		current.Reset()
 	}
-
-	for index := 0; index < len(body); index++ {
-		if end, skipped := skipCypherLexicalToken(body, index); skipped {
-			current.WriteString(body[index:end])
-			index = end - 1
+	for at := 0; at < len(body); at++ {
+		if end, opaque := skipCypherLexicalToken(body, at); opaque {
+			at = end - 1
 			continue
 		}
-		ch := body[index]
-		switch {
-		case ch == '{':
-			braceDepth++
-			current.WriteByte(ch)
-		case ch == '}':
-			if braceDepth == 0 {
+		switch body[at] {
+		case '{':
+			close, complete := view.close(at)
+			if !complete {
 				return nil, localizedError(localization.CypherSchemaMalformedRequireBlock(), nil)
 			}
-			braceDepth--
-			current.WriteByte(ch)
-		case ch == '[':
-			bracketDepth++
-			current.WriteByte(ch)
-		case ch == ']':
-			if bracketDepth > 0 {
-				bracketDepth--
+			at = close
+		case '}':
+			return nil, localizedError(localization.CypherSchemaMalformedRequireBlock(), nil)
+		case '[':
+			brackets++
+		case ']':
+			if brackets > 0 {
+				brackets--
 			}
-			current.WriteByte(ch)
-		case ch == '(':
-			parenDepth++
-			current.WriteByte(ch)
-		case ch == ')':
-			if parenDepth > 0 {
-				parenDepth--
+		case '(':
+			parens++
+		case ')':
+			if parens > 0 {
+				parens--
 			}
-			current.WriteByte(ch)
-		case ch == '\n' || ch == ';':
-			if braceDepth == 0 && bracketDepth == 0 && parenDepth == 0 {
-				flush()
-				continue
+		case '\n', ';':
+			if brackets == 0 && parens == 0 {
+				appendEntry(at)
+				start = at + 1
 			}
-			current.WriteByte(ch)
-		default:
-			current.WriteByte(ch)
 		}
 	}
-	if braceDepth != 0 || bracketDepth != 0 || parenDepth != 0 {
+	if brackets != 0 || parens != 0 {
 		return nil, localizedError(localization.CypherSchemaMalformedRequireBlock(), nil)
 	}
-	flush()
+	appendEntry(len(body))
 	return entries, nil
 }
 
-func isNestedConstraintContractEntry(entryText string) bool {
-	trimmed := strings.TrimSpace(entryText)
-	if !matchKeywordAt(trimmed, 0, "FOR") {
+func isNestedConstraintContractEntry(view braceView) bool {
+	view = view.trim()
+	if !matchKeywordAt(view.text(), 0, "FOR") {
 		return false
 	}
-	return hasKeywordFollowedByBrace(trimmed, "REQUIRE")
+	require := keywordIndex(view, "REQUIRE")
+	if require < 0 {
+		return false
+	}
+	opening := queryGapEnd(view.text(), require+len("REQUIRE"))
+	_, found := view.at(opening)
+	return found
 }
 
 func nestedConstraintContractEntryError(entryText string) error {
 	return localizedError(localization.CypherSchemaNestedContractEntryUnsupported(strings.TrimSpace(entryText)), nil)
 }
 
-func (e *StorageExecutor) parseConstraintContractEntry(rawEntry, variable string, entityType storage.ConstraintEntityType, labelOrType, contractName string, index int) (storage.ConstraintContractEntry, *storage.Constraint, *storage.PropertyTypeConstraint, error) {
-	entryText := strings.TrimSpace(rawEntry)
-	if isNestedConstraintContractEntry(entryText) {
+func (e *StorageExecutor) parseConstraintContractEntry(rawEntry braceView, variable string, entityType storage.ConstraintEntityType, labelOrType, contractName string, index int) (storage.ConstraintContractEntry, *storage.Constraint, *storage.PropertyTypeConstraint, error) {
+	entryView := rawEntry.trim()
+	entryText := entryView.text()
+	if isNestedConstraintContractEntry(entryView) {
 		return storage.ConstraintContractEntry{}, nil, nil, nestedConstraintContractEntryError(entryText)
 	}
 
 	entryName := storage.ConstraintContractEntryName(contractName, index)
-	if compiledConstraint, contractEntry, ok, err := e.parseConstraintContractPrimitive(entryText, variable, entityType, labelOrType, entryName); ok || err != nil {
+	if compiledConstraint, contractEntry, ok, err := e.parseConstraintContractPrimitive(entryView, variable, entityType, labelOrType, entryName); ok || err != nil {
 		return contractEntry, compiledConstraint, nil, err
 	}
-	if compiledType, contractEntry, ok, err := e.parseConstraintContractPropertyType(entryText, variable, entityType, labelOrType, entryName); ok || err != nil {
+	if compiledType, contractEntry, ok, err := e.parseConstraintContractPropertyType(entryView, variable, entityType, labelOrType, entryName); ok || err != nil {
 		return contractEntry, nil, compiledType, err
 	}
 
@@ -328,8 +322,10 @@ func (e *StorageExecutor) parseConstraintContractEntry(rawEntry, variable string
 	return storage.ConstraintContractEntry{Kind: kind, Expression: entryText}, nil, nil, nil
 }
 
-func (e *StorageExecutor) parseConstraintContractPrimitive(entryText, variable string, entityType storage.ConstraintEntityType, labelOrType, entryName string) (*storage.Constraint, storage.ConstraintContractEntry, bool, error) {
-	if kind, property, ok := parseConstraintPredicate(entryText); ok {
+func (e *StorageExecutor) parseConstraintContractPrimitive(view braceView, variable string, entityType storage.ConstraintEntityType, labelOrType, entryName string) (*storage.Constraint, storage.ConstraintContractEntry, bool, error) {
+	view = view.trim()
+	entryText := view.text()
+	if kind, property, ok := parseConstraintPredicate(view); ok {
 		if kind == "unique" {
 			constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintUnique, EntityType: entityType, Label: labelOrType, Properties: []string{property}}
 			primitiveKind := storage.ConstraintContractKindPrimitiveNode
@@ -349,14 +345,14 @@ func (e *StorageExecutor) parseConstraintContractPrimitive(entryText, variable s
 	}
 
 	if entityType == storage.ConstraintEntityNode {
-		if properties, ok := e.parseNodeKeyPropertyList(entryText); ok {
+		if properties, ok := e.parseNodeKeyPropertyList(view); ok {
 			if len(properties) == 0 {
 				return nil, storage.ConstraintContractEntry{}, true, localizedError(localization.CypherSchemaConstraintPropertiesRequired("NODE KEY"), nil)
 			}
 			constraint := &storage.Constraint{Name: entryName, Type: storage.ConstraintNodeKey, EntityType: entityType, Label: labelOrType, Properties: properties}
 			return constraint, storage.ConstraintContractEntry{Kind: storage.ConstraintContractKindPrimitiveNode, PrimitiveType: string(storage.ConstraintNodeKey), Properties: properties, Expression: entryText}, true, nil
 		}
-		if properties, ok := e.parseTemporalConstraintPredicate(entryText); ok {
+		if properties, ok := e.parseTemporalConstraintPredicate(view); ok {
 			if len(properties) < 3 {
 				return nil, storage.ConstraintContractEntry{}, true, localizedError(localization.CypherSchemaTemporalNodeArityRequired(), nil)
 			}
@@ -368,8 +364,9 @@ func (e *StorageExecutor) parseConstraintContractPrimitive(entryText, variable s
 	if entityType == storage.ConstraintEntityRelationship {
 		inside, rest, ok := extractParenSection(strings.TrimSpace(entryText))
 		if ok {
-			rest = strings.TrimSpace(rest)
-			if idx := keywordIndexFrom(rest, "IS RELATIONSHIP KEY", 0, defaultKeywordScanOpts()); idx == 0 {
+			restView := view.window(len(view.text())-len(rest), len(view.text())).trim()
+			rest = restView.text()
+			if idx := keywordIndexFrom(rest, "IS RELATIONSHIP KEY", 0, defaultKeywordScanOpts(restView)); idx == 0 {
 				end, spanOK := keywordSpanAt(rest, 0, "IS RELATIONSHIP KEY")
 				if spanOK && strings.TrimSpace(rest[end:]) == "" {
 					properties := e.parseConstraintProperties(inside)
@@ -386,8 +383,10 @@ func (e *StorageExecutor) parseConstraintContractPrimitive(entryText, variable s
 	return nil, storage.ConstraintContractEntry{}, false, nil
 }
 
-func (e *StorageExecutor) parseConstraintContractPropertyType(entryText, variable string, entityType storage.ConstraintEntityType, labelOrType, entryName string) (*storage.PropertyTypeConstraint, storage.ConstraintContractEntry, bool, error) {
-	property, typeName, ok := parseConstraintTypePredicate(entryText)
+func (e *StorageExecutor) parseConstraintContractPropertyType(view braceView, variable string, entityType storage.ConstraintEntityType, labelOrType, entryName string) (*storage.PropertyTypeConstraint, storage.ConstraintContractEntry, bool, error) {
+	view = view.trim()
+	entryText := view.text()
+	property, typeName, ok := parseConstraintTypePredicate(view)
 	if !ok {
 		return nil, storage.ConstraintContractEntry{}, false, nil
 	}

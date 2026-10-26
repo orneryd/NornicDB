@@ -65,15 +65,15 @@ func TestPipelineMinMaxUseCypherAggregateValueOrder(t *testing.T) {
 		{"x": []interface{}{int64(2)}},
 		{"x": []interface{}{int64(2), int64(1)}},
 	}
-	maximum, ok := executor.evaluatePipelineAggregate(rows, "max", "x", false)
+	maximum, ok := executor.evaluatePipelineAggregate(rows, "max", expressionBraceView("x"), false)
 	require.True(t, ok)
 	require.Equal(t, []interface{}{int64(2), int64(1)}, maximum)
 
 	mixed := []pipelineRow{{"x": int64(1)}, {"x": "a"}, {"x": []interface{}{int64(1), int64(2)}}, {"x": 0.2}, {"x": "b"}}
-	maximum, ok = executor.evaluatePipelineAggregate(mixed, "max", "x", false)
+	maximum, ok = executor.evaluatePipelineAggregate(mixed, "max", expressionBraceView("x"), false)
 	require.True(t, ok)
 	require.Equal(t, int64(1), maximum)
-	minimum, ok := executor.evaluatePipelineAggregate(mixed, "min", "x", false)
+	minimum, ok := executor.evaluatePipelineAggregate(mixed, "min", expressionBraceView("x"), false)
 	require.True(t, ok)
 	require.Equal(t, []interface{}{int64(1), int64(2)}, minimum)
 }

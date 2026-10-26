@@ -22,28 +22,28 @@ func TestSeedNodesFromOuterMatch_IDAndIndexPaths(t *testing.T) {
 	_, err = exec.Execute(ctx, "CREATE INDEX seed_ext_idx IF NOT EXISTS FOR (n:Seed) ON (n.ext)", nil)
 	require.NoError(t, err)
 
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (n) WHERE id(n) = 'n1'", "n")
+	nodes, err := exec.seedNodesFromOuterMatch(ctx, originalBraceView("MATCH (n) WHERE id(n) = 'n1'"), "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, n1ID, nodes[0].ID)
 
 	ctxWithIDs := withParams(ctx, map[string]interface{}{"ids": []interface{}{string(n1ID), string(n2ID)}})
-	nodes, err = exec.seedNodesFromOuterMatch(ctxWithIDs, "MATCH (n:Seed) WHERE id(n) IN $ids", "n")
+	nodes, err = exec.seedNodesFromOuterMatch(ctxWithIDs, originalBraceView("MATCH (n:Seed) WHERE id(n) IN $ids"), "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 
 	ctxWithExts := withParams(ctx, map[string]interface{}{"exts": []interface{}{"e1", "e2"}})
-	nodes, err = exec.seedNodesFromOuterMatch(ctxWithExts, "MATCH (n:Seed) WHERE n.ext IN $exts", "n")
+	nodes, err = exec.seedNodesFromOuterMatch(ctxWithExts, originalBraceView("MATCH (n:Seed) WHERE n.ext IN $exts"), "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 2)
 
-	nodes, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Seed) WHERE n.ext = 'e2'", "n")
+	nodes, err = exec.seedNodesFromOuterMatch(ctx, originalBraceView("MATCH (n:Seed) WHERE n.ext = 'e2'"), "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, n2ID, nodes[0].ID)
 
 	// WHERE clause with trailing pipeline keywords must not pollute fast-path predicate parsing.
-	nodes, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Seed) WHERE n.ext = 'e1' ORDER BY n.ext", "n")
+	nodes, err = exec.seedNodesFromOuterMatch(ctx, originalBraceView("MATCH (n:Seed) WHERE n.ext = 'e1' ORDER BY n.ext"), "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, n1ID, nodes[0].ID)
@@ -59,18 +59,18 @@ func TestSeedNodesFromOuterMatch_NonIndexableWhereFallbacks(t *testing.T) {
 	require.NoError(t, err)
 
 	// Non-indexable expression should execute via generic path and still return deterministic rows.
-	nodes, err := exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Seed) WHERE coalesce(n.score, 0) > 15", "n")
+	nodes, err := exec.seedNodesFromOuterMatch(ctx, originalBraceView("MATCH (n:Seed) WHERE coalesce(n.score, 0) > 15"), "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, "e2", nodes[0].Properties["ext"])
 
-	nodes, err = exec.seedNodesFromOuterMatch(ctx, "MATCH (n:Seed) RETURN n ORDER BY n.score DESC LIMIT 1", "n")
+	nodes, err = exec.seedNodesFromOuterMatch(ctx, originalBraceView("MATCH (n:Seed) RETURN n ORDER BY n.score DESC LIMIT 1"), "n")
 	require.NoError(t, err)
 	require.Len(t, nodes, 1)
 	require.Equal(t, "e2", nodes[0].Properties["ext"])
 
 	// Mismatched correlated variable in fallback projection should surface explicit error.
-	_, err = exec.seedNodesFromOuterMatch(context.Background(), "MATCH (n:Seed) RETURN n", "missing")
+	_, err = exec.seedNodesFromOuterMatch(context.Background(), originalBraceView("MATCH (n:Seed) RETURN n"), "missing")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "outer MATCH did not project correlated variable")
 }

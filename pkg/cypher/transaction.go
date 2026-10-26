@@ -491,9 +491,10 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 		return e.executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 
-	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(cypher)
+	parsedCypher, inlineEmbeddingEnabled := stripWithEmbeddingSuffix(statementBraceView(ctx, cypher))
 	if inlineEmbeddingEnabled {
-		cypher = parsedCypher
+		ctx = withBraceView(ctx, parsedCypher)
+		cypher = parsedCypher.text()
 		upperQuery = upperASCII(cypher)
 	}
 
@@ -581,8 +582,8 @@ func (e *StorageExecutor) transactionStorageFor(tx *storage.BadgerTransaction) *
 	return wrapper
 }
 
-func looksLikeWriteQuery(cypher string) bool {
-	upper := upperASCII(classificationText(cypher))
+func looksLikeWriteQuery(view braceView) bool {
+	upper := upperASCII(classificationText(view))
 	return strings.Contains(upper, "CREATE") ||
 		strings.Contains(upper, "MERGE") ||
 		strings.Contains(upper, "DELETE") ||

@@ -370,7 +370,7 @@ func TestRelationshipChainEnd(t *testing.T) {
 }
 
 func TestUnwindLookupReadsRewrittenLabelAlternatives(t *testing.T) {
-	variable, labels, _, anyLabel, ok := parseUnwindNodePatternClauseInternal("MATCH (v {uid: row.id}) WHERE v:A|B", "MATCH", true)
+	variable, labels, _, anyLabel, ok := parseUnwindNodePatternClauseInternal(originalBraceView("MATCH (v {uid: row.id}) WHERE v:A|B"), "MATCH", true)
 	require.True(t, ok)
 	require.Equal(t, "v", variable)
 	require.Equal(t, []string{"A", "B"}, labels)
@@ -388,7 +388,7 @@ func TestUnwindLookupReadsRewrittenLabelAlternatives(t *testing.T) {
 		{"MATCH (v {uid: row.id}) WHERE v:A&B", true},
 		{"MATCH (v {uid: row.id}) WHERE v:A|", true},
 	} {
-		_, _, _, _, ok := parseUnwindNodePatternClauseInternal(tc.clause, "MATCH", tc.alternatives)
+		_, _, _, _, ok := parseUnwindNodePatternClauseInternal(originalBraceView(tc.clause), "MATCH", tc.alternatives)
 		require.False(t, ok, tc.clause)
 	}
 }
@@ -401,8 +401,8 @@ func TestLabelExpressionsInInternalStatementsAndCase(t *testing.T) {
 	require.Contains(t, err.Error(), "Mixing label expression symbols")
 
 	rels := map[string]*storage.Edge{"r": {Type: "S"}}
-	require.True(t, exec.evaluateCondition(ctx, "r:R|S", nil, rels))
-	require.False(t, exec.evaluateCondition(ctx, "r:!S", nil, rels))
+	require.True(t, exec.evaluateCondition(ctx, expressionBraceView("r:R|S"), nil, rels))
+	require.False(t, exec.evaluateCondition(ctx, expressionBraceView("r:!S"), nil, rels))
 	nodes := map[string]*storage.Node{"n": {Labels: []string{"A"}}}
-	require.True(t, exec.evaluateCondition(ctx, "n:A&!B", nodes, nil))
+	require.True(t, exec.evaluateCondition(ctx, expressionBraceView("n:A&!B"), nodes, nil))
 }

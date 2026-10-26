@@ -100,7 +100,7 @@ func visitedQueryBodyContainers(t *testing.T, containers []string, queries []str
 	t.Helper()
 	visited := map[string]bool{}
 	for _, query := range queries {
-		require.NoError(t, forEachQueryBody(t.Context(), query, containers, func(container string, _, _ int) error {
+		require.NoError(t, forEachQueryBody(t.Context(), originalBraceView(query), containers, func(container string, _ braceView) error {
 			visited[container] = true
 			return nil
 		}))
@@ -160,10 +160,10 @@ func TestQueryBodyContainersMatchGrammar(t *testing.T) {
 			require.True(t, known, "rule %s names unknown witness %q", rule, witness)
 			bad := strings.ReplaceAll(template, "@X@", "CALL { RETURN 1 AS b }")
 			good := strings.ReplaceAll(template, "@X@", "CALL { RETURN 1 AS b } RETURN 1 AS c")
-			err := validateQueryBodyComposition(t.Context(), bad)
+			err := validateQueryBodyComposition(t.Context(), originalBraceView(bad))
 			require.Error(t, err, "%s (%s): %s", rule, witness, bad)
 			require.Contains(t, err.Error(), "Query cannot conclude with CALL", bad)
-			require.NoError(t, validateQueryBodyComposition(t.Context(), good), "%s (%s): %s", rule, witness, good)
+			require.NoError(t, validateQueryBodyComposition(t.Context(), originalBraceView(good)), "%s (%s): %s", rule, witness, good)
 		}
 	})
 }

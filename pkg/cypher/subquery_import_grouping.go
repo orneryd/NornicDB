@@ -51,9 +51,10 @@ func cypherVersionFromContext(ctx context.Context) string {
 //     aggregates is Neo4j 5's implicit-grouping error (RETURN count(*) + g).
 //
 // Cypher 25 aggregates over the body's rows alone, as the body runs.
-func cypher5ImportGrouping(body string, imports map[string]interface{}) (string, error) {
-	if len(imports) == 0 || !containsAggregateFunc(body) {
-		return body, nil
+func cypher5ImportGrouping(view braceView, imports map[string]interface{}) (braceView, error) {
+	body := view.text()
+	if len(imports) == 0 || !containsAggregateFunc(view) {
+		return view, nil
 	}
 	words := projectionWords(body)
 	type insertion struct {
@@ -76,25 +77,25 @@ func cypher5ImportGrouping(body string, imports map[string]interface{}) (string,
 				break
 			}
 		}
-		items := splitTopLevelComma(body[itemsStart:itemsEnd])
+		items := view.window(itemsStart, itemsEnd).commaViews()
 		aggregating := false
 		projected := map[string]bool{}
 		for _, item := range items {
 			itemSource := readProjectionItemSource(context.Background(), item, projectionBeforeRewrite)
-			expression, alias := itemSource.expression, itemSource.alias
+			alias := itemSource.alias
 			projected[alias] = true
-			spans := findAggregateSpans(expression)
+			spans := findAggregateSpans(itemSource.view)
 			if len(spans) == 0 {
 				continue
 			}
 			aggregating = true
-			outside := expression
+			outside := itemSource.view.text()
 			for i := len(spans) - 1; i >= 0; i-- {
 				outside = outside[:spans[i].start] + " " + outside[spans[i].end:]
 			}
 			for _, name := range expressionVariables(outside) {
 				if _, imported := imports[name]; imported {
-					return "", localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
+					return braceView{}, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
 						localization.CypherCoreGroupByImplicitGroupingKey(name))
 				}
 			}
@@ -113,7 +114,7 @@ func cypher5ImportGrouping(body string, imports map[string]interface{}) (string,
 		}
 	}
 	for i := len(insertions) - 1; i >= 0; i-- {
-		body = body[:insertions[i].at] + insertions[i].text + body[insertions[i].at:]
+		view = view.replace(insertions[i].at, insertions[i].at, insertions[i].text)
 	}
-	return body, nil
+	return view, nil
 }

@@ -17,8 +17,9 @@ import (
 // horizon before execution. This is deliberately independent of row count:
 // an undefined variable is a compile-time error even when MATCH yields no rows.
 func (e *StorageExecutor) validateSetSemanticScopes(ctx context.Context, cypher string, imports ...string) error {
-	if !containsKeywordOutsideStrings(cypher, "SET") && !containsKeywordOutsideStrings(cypher, "REMOVE") &&
-		!containsKeywordOutsideStrings(cypher, "DELETE") && !containsKeywordOutsideStrings(cypher, "FOREACH") {
+	statement := statementBraceView(ctx, cypher)
+	if !containsKeywordOutsideStrings(statement, "SET") && !containsKeywordOutsideStrings(statement, "REMOVE") &&
+		!containsKeywordOutsideStrings(statement, "DELETE") && !containsKeywordOutsideStrings(statement, "FOREACH") {
 		return nil
 	}
 	clauses, ok := splitPipelineClauses(ctx, cypher)
@@ -32,37 +33,37 @@ func (e *StorageExecutor) validateMutationClauseScopes(ctx context.Context, clau
 	for _, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch, pipelineClauseMerge, pipelineClauseCreate:
-			for _, name := range extractNodeVariables(clause.text) {
+			for _, name := range extractNodeVariables(clause.view) {
 				scope.bind(name)
 			}
-			for _, name := range extractRelationshipVariables(clause.text) {
+			for _, name := range extractRelationshipVariables(clause.view) {
 				scope.bind(name)
 			}
 			// Path variables (p = (…)), with the pipeline's own binder.
 			patternBindings := make(map[string]struct{})
-			addPipelinePatternBindings(ctx, e, patternBindings, clause.text, pipelineClauseKeyword(clause.kind))
+			addPipelinePatternBindings(ctx, e, patternBindings, clause, pipelineClauseKeyword(clause.kind))
 			for name := range patternBindings {
 				scope.bind(name)
 			}
 		case pipelineClauseWith:
-			scope = projectedBindingScope(ctx, scope, clause.text)
+			scope = projectedBindingScope(ctx, scope, clause.view)
 			for _, name := range imports {
 				scope.bind(name)
 			}
 		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text); err != nil {
+			if err := bindPipelineLet(scope, clause.view); err != nil {
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
+			if alias := unwindBindingName(clause.view); alias != "" {
 				scope.bind(alias)
 			}
 		case pipelineClauseSet:
-			if err := e.validateSetClauseScope(scope, clause.text); err != nil {
+			if err := e.validateSetClauseScope(scope, clause.view); err != nil {
 				return err
 			}
 		case pipelineClauseForeach:
-			body := queryBodyFromSyntax(clause.syntax)
+			body := queryBodyFromSyntax(clause.input(ctx), clause.syntax)
 			if body.status != queryBodyRead || body.foreach == nil {
 				return invalidForeachError()
 			}
@@ -75,11 +76,11 @@ func (e *StorageExecutor) validateMutationClauseScopes(ctx context.Context, clau
 				return err
 			}
 		case pipelineClauseRemove:
-			if err := validateRemoveClauseScope(scope, clause.text); err != nil {
+			if err := validateRemoveClauseScope(scope, clause.view); err != nil {
 				return err
 			}
 		case pipelineClauseDelete:
-			if err := validateDeleteClauseScope(scope, clause.text); err != nil {
+			if err := validateDeleteClauseScope(scope, clause.input(ctx)); err != nil {
 				return err
 			}
 		}
@@ -105,8 +106,8 @@ func pipelineClauseKeyword(kind pipelineClauseKind) string {
 // m:$(e)) whose variable is not bound, as SET does and as Neo4j does
 // ("Variable `m` not defined"), and checks the expressions of its dynamic
 // keys and labels like a SET value's (validateWriteExpressionScope).
-func validateRemoveClauseScope(scope *semanticBindingScope, clause string) error {
-	items, err := parseRemoveItems(strings.TrimSpace(clause[len("REMOVE"):]))
+func validateRemoveClauseScope(scope *semanticBindingScope, clause braceView) error {
+	items, err := parseRemoveItems(clause.clauseBody("REMOVE"))
 	if err != nil {
 		return err
 	}
@@ -114,13 +115,13 @@ func validateRemoveClauseScope(scope *semanticBindingScope, clause string) error
 		if !scope.contains(item.variable) {
 			return createUndefinedVariableError(item.variable)
 		}
-		expressions := make([]string, 0, len(item.labels)+1)
+		expressions := make([]braceView, 0, len(item.labels)+1)
 		if item.key != "" {
-			expressions = append(expressions, item.key)
+			expressions = append(expressions, item.keyView)
 		}
 		for _, label := range item.labels {
 			if label.expression != "" {
-				expressions = append(expressions, label.expression)
+				expressions = append(expressions, label.view)
 			}
 		}
 		for _, expression := range expressions {
@@ -135,9 +136,10 @@ func validateRemoveClauseScope(scope *semanticBindingScope, clause string) error
 // validateDeleteClauseScope rejects a DELETE target whose root variable is not
 // bound (deleteExpressionRootIdentifier), with the error the pipeline DELETE
 // step raises at run time, so a subquery body is checked before it runs.
-func validateDeleteClauseScope(scope *semanticBindingScope, clause string) error {
+func validateDeleteClauseScope(scope *semanticBindingScope, clause braceView) error {
 	targets, _, _ := deleteClauseTargets(clause)
-	for _, expression := range targets {
+	for _, target := range targets {
+		expression := target.text()
 		if word, ok := trailingWordAfterOperand(expression); ok {
 			// One expression per target: DETACH DELETE n COMMIT is Neo4j
 			// 5.26.30's "Invalid input 'COMMIT'"; the root variable was
@@ -166,11 +168,11 @@ func trailingWordAfterOperand(expression string) (string, bool) {
 			i = skipCypherQuotedText(expression, i, c)
 			operandEnded = depth == 0
 			continue
-		case c == '(' || c == '[' || c == '{':
-			depth++
+		case c == '(' || c == '[' || cyphertext.IsOpenBrace(c):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, c, false)
 			operandEnded = false
-		case c == ')' || c == ']' || c == '}':
-			depth--
+		case c == ')' || c == ']' || cyphertext.IsCloseBrace(c):
+			depth = cyphertext.AdvanceDelimiterDepth(depth, c, false)
 			operandEnded = depth == 0
 		case cyphertext.IsWhitespaceAt(expression, i):
 		case depth == 0 && cyphertext.NameStartAt(expression, i):
@@ -208,15 +210,15 @@ func isExpressionOperatorWord(word string) bool {
 // deleteClauseTargets splits a [DETACH] DELETE clause into its target
 // expressions, for every check and the pipeline step that read them. ok is
 // false for text that isn't a DELETE clause.
-func deleteClauseTargets(clause string) (targets []string, detach, ok bool) {
-	body := strings.TrimSpace(clause)
-	if startsWithKeywordFold(body, "DETACH") {
-		detach, body = true, body[queryGapEnd(body, len("DETACH")):]
+func deleteClauseTargets(clause braceView) (targets []braceView, detach, ok bool) {
+	body := clause.trim()
+	if startsWithKeywordFold(body.text(), "DETACH") {
+		detach, body = true, body.window(queryGapEnd(body.text(), len("DETACH")), len(body.text()))
 	}
-	if !startsWithKeywordFold(body, "DELETE") {
+	if !startsWithKeywordFold(body.text(), "DELETE") {
 		return nil, false, false
 	}
-	return splitTopLevelComma(strings.TrimSpace(body[len("DELETE"):])), detach, true
+	return afterWord(body, "DELETE").commaViews(), detach, true
 }
 
 // deleteUndefinedVariableError is the error for a DELETE target that refers to
@@ -233,14 +235,15 @@ func deleteUndefinedVariableError(expression string) error {
 // shared by every route (MATCH, CREATE, MERGE, pipeline, fast paths): the
 // assignment shapes (validatePipelineSetAssignments), bound target and value
 // variables, and known functions in the assigned values.
-func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, clause string) error {
-	body := strings.TrimSpace(clause[len("SET"):])
-	assignments := splitSetAssignments(body)
+func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, clause braceView) error {
+	body := clause.clauseBody("SET")
+	assignments := setAssignmentViews(body)
 	if err := validatePipelineSetAssignments(assignments); err != nil {
 		return err
 	}
 	for _, assignment := range assignments {
-		target, property, operator, expression := splitSetAssignment(assignment)
+		item := readSetAssignment(assignment)
+		target, property, operator, expression := item.target, item.property, item.operator, item.right
 		if operator == ":" {
 			// Label assignment `n:Label[:Label2]`: the variable before the
 			// first colon must be bound, as for a property assignment, and so
@@ -254,7 +257,7 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 				if item.expression == "" {
 					continue
 				}
-				if err := validateWriteExpressionScope(item.expression, scope); err != nil {
+				if err := validateWriteExpressionScope(item.view, scope); err != nil {
 					return err
 				}
 			}
@@ -268,7 +271,7 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 		}
 		if operator == "[]=" {
 			// x[key] = v: the key is an expression too.
-			if err := validateWriteExpressionScope(property, scope); err != nil {
+			if err := validateWriteExpressionScope(item.key, scope); err != nil {
 				return err
 			}
 		}
@@ -288,8 +291,8 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 // validateWriteExpressionScope checks an expression a SET or REMOVE item
 // evaluates (a value, a dynamic key or label): complete operands and bound
 // variables. Its functions are checked with the statement's.
-func validateWriteExpressionScope(expression string, scope *semanticBindingScope) error {
-	if err := validateExpressionOperandCompleteness(expression); err != nil {
+func validateWriteExpressionScope(expression braceView, scope *semanticBindingScope) error {
+	if err := validateExpressionOperandCompleteness(expression.text()); err != nil {
 		return err
 	}
 	if missing := firstUndefinedSetExpressionVariable(expression, scope); missing != "" {
@@ -298,7 +301,7 @@ func validateWriteExpressionScope(expression string, scope *semanticBindingScope
 	return nil
 }
 
-func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindingScope) string {
+func firstUndefinedSetExpressionVariable(expression braceView, scope *semanticBindingScope) string {
 	for _, name := range expressionFreeVariables(expression) {
 		if _, exists := scope.names[name]; !exists {
 			return name
@@ -313,12 +316,12 @@ func firstUndefinedSetExpressionVariable(expression string, scope *semanticBindi
 // or names the expression binds itself (list comprehension iterators, reduce /
 // all / any / none / single).
 // It is the one reference scanner for the static SET and CREATE checks.
-func expressionFreeVariables(expression string) []string {
-	expression = maskTypePredicateTypes(maskPathFunctionCalls(expression))
+func expressionFreeVariables(view braceView) []string {
+	view = view.mask(maskTypePredicateTypes(maskPathFunctionCalls(view.text())))
+	expression := view.text()
 	// Both maskers blank in place: offsets are the expression's.
 	locals := newLocalReader(expression)
 	var names []string
-	delimiters := make([]byte, 0, 8)
 	for index := 0; index < len(expression); {
 		if end := queryGapEnd(expression, index); end > index {
 			index = end
@@ -327,11 +330,14 @@ func expressionFreeVariables(expression string) []string {
 		character := expression[index]
 		if character == '[' {
 			if closing := findMatchingBracket(expression, index); closing >= 0 {
-				if pattern, projection, comprehension := splitPatternComprehension(expression[index : closing+1]); comprehension {
+				comprehensionView := view.window(index, closing+1)
+				if patternSpan, projectionSpan, comprehension := splitPatternComprehensionSpans(comprehensionView); comprehension {
+					pattern := comprehensionView.spanWindow(patternSpan)
+					projection := comprehensionView.spanWindow(projectionSpan)
 					bindings := make(matchSemanticScope)
 					addMatchPatternBindingKinds(bindings, pattern)
 					if where := topLevelKeywordIndex(pattern, "WHERE"); where >= 0 {
-						projection += ", " + pattern[where+len("WHERE"):]
+						projection = comprehensionView.assembleCode([]braceView{projection, pattern.window(where+len("WHERE"), len(pattern.text()))}, ", ")
 					}
 					for _, reference := range expressionFreeVariables(projection) {
 						if _, bound := bindings[reference]; bound {
@@ -357,7 +363,7 @@ func expressionFreeVariables(expression string) []string {
 			// are not allowed to introduce new variables").
 			if chainEnd, chain := relationshipChainEnd(expression, index, len(expression)); chain {
 				bindings := make(matchSemanticScope)
-				addMatchPatternBindingKinds(bindings, expression[index:chainEnd])
+				addMatchPatternBindingKinds(bindings, view.window(index, chainEnd))
 				references := make([]string, 0, len(bindings))
 				for reference := range bindings {
 					references = append(references, reference)
@@ -370,14 +376,6 @@ func expressionFreeVariables(expression string) []string {
 				}
 				index = chainEnd
 				continue
-			}
-		}
-		switch character {
-		case '(', '[', '{':
-			delimiters = append(delimiters, character)
-		case ')', ']', '}':
-			if len(delimiters) > 0 {
-				delimiters = delimiters[:len(delimiters)-1]
 			}
 		}
 		name, ok := cyphertext.ScanIdentifier(expression, index)
@@ -395,10 +393,14 @@ func expressionFreeVariables(expression string) []string {
 		if following == '(' && (upper == "TRIM" || upper == "NORMALIZE") {
 			open := skipSpaces(expression, name.End)
 			if closing := findMatchingParen(expression, open); closing >= 0 {
-				inner := expression[open+1 : closing]
-				parameters, grammar := trimFromArguments(inner)
+				inner := view.window(open+1, closing)
+				spans, grammar := trimFromArgumentSpans(inner)
+				parameters := make([]braceView, 0, len(spans))
+				for _, span := range spans {
+					parameters = append(parameters, inner.spanWindow(span).trim())
+				}
 				if upper == "NORMALIZE" {
-					parameters = splitTopLevelComma(inner)
+					parameters = inner.commaViews()
 					grammar = false
 					if len(parameters) == 2 {
 						parameters, grammar = parameters[:1], true
@@ -418,31 +420,30 @@ func expressionFreeVariables(expression string) []string {
 			}
 		}
 		if functionEnd, call := qualifiedFunctionNameEnd(expression, name.End); call {
-			delimiters = append(delimiters, '(')
 			index = functionEnd + 1
 			continue
 		}
 		// A subquery expression (EXISTS / COUNT / COLLECT { … }) binds its own
 		// variables and sees the outer ones; its body isn't an expression.
-		if _, open, subquery := subqueryExpressionKeywordAt(expression, index); subquery {
-			if closing := cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter); closing > name.End {
+		if _, open, subquery := subqueryExpressionKeywordAt(view, index); subquery {
+			if closing, found := view.close(open); found && closing > name.End {
 				index = closing + 1
 				continue
 			}
 		}
-		mapKey := following == ':' && len(delimiters) > 0 && delimiters[len(delimiters)-1] == '{' && (previous == '{' || previous == ',')
+		mapKey := view.syntax.product.MapKeyAt(view.source, cyphertext.Span{Start: index, End: name.End})
 		// x IS NFC NORMALIZED: the normal form names a form, not a variable.
 		normalForm := false
 		switch upper {
 		case "NFC", "NFD", "NFKC", "NFKD":
 			form, word := cyphertext.ScanIdentifier(expression, skipSpaces(expression, name.End))
-			normalForm = word && strings.EqualFold(form.Value, "NORMALIZED")
+			normalForm = word && cyphertext.KeywordEnd(expression, form.Start, "NORMALIZED", cyphertext.CypherWord) == form.End
 		}
 		keyword := setExpressionKeyword(upper)
 		// END is also a legal variable, notably the operand in NOT end +
 		// another CASE. Preserve the full expression when asking the CASE
 		// grammar owner, before evaluation splits it into atomic operands.
-		if upper == "END" && !caseKeywordAt(expression, index, "END") {
+		if upper == "END" && !caseKeywordAt(view, index, "END") {
 			keyword = false
 		}
 		if previous != '$' && previous != '.' && following != '(' && !mapKey && !normalForm && !keyword {

@@ -9,7 +9,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable, orderExpr string) []*storage.Node {
+func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable string, orderExpr braceView) []*storage.Node {
 	if len(nodes) <= 1 {
 		return nodes
 	}
@@ -31,7 +31,7 @@ func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable, orderExpr 
 }
 
 // parseNodeOrderSpecs parses "n.value ASC, n.name DESC" for node sorting
-func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) ([]nodeOrderSpec, bool) {
+func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr braceView, variable string) ([]nodeOrderSpec, bool) {
 	terms := parseOrderByClause(orderExpr)
 	if len(terms) == 0 || variable == "" {
 		return nil, false
@@ -42,7 +42,7 @@ func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) ([]nod
 		// Node sorting is safe only for direct properties of the matched
 		// variable. Aliases and computed expressions must be sorted after
 		// projection, when their values actually exist.
-		base, propName, ok := splitPostfixPropertyAccess(term.column)
+		base, propName, ok := splitPostfixPropertyAccess(term.view)
 		if !ok || base != variable {
 			return nil, false
 		}
@@ -57,7 +57,7 @@ func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) ([]nod
 // predicate evaluator: the post-WITH WHERE position evaluates identically to
 // every other WHERE position (null drops the row, AND/OR precedence and IS
 // NULL forms come from the one owner) instead of a local text splitter.
-func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereClause string, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereClause braceView, values map[string]interface{}) bool {
 	return e.evaluateRowPredicate(ctx, whereClause, values)
 }
 
@@ -71,7 +71,7 @@ func (e *StorageExecutor) evaluateWhereOnComputedRow(ctx context.Context, whereC
 //
 // The result reader preserves resolution separately from the value. This
 // compatibility wrapper records an unsuccessful evaluation as a statement error.
-func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[string]interface{}) interface{} {
+func (e *StorageExecutor) evaluateExpressionFromValues(expr braceView, values map[string]interface{}) interface{} {
 	return e.evaluateExpressionFromValuesContext(rowStatementContextOrBackground(values), expr, values)
 }
 
@@ -89,7 +89,8 @@ const (
 // argument error), which the shared evaluator records as the statement error
 // rather than returning it; the row evaluator reports the expression as
 // unresolved and evaluateRowExpressionWithContext records err.
-func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}, policy rowFallbackPolicy) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateRowFallback(view braceView, values map[string]interface{}, policy rowFallbackPolicy) (interface{}, bool, error) {
+	expr := view.text()
 	if policy == rowFallbackValue {
 		if err := scalarExpressionEvaluationError(expr, values); err != nil {
 			return nil, false, err
@@ -113,7 +114,7 @@ func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]int
 			return nil, false, nil
 		}
 	}
-	parent := rowStatementContextOrBackground(values)
+	parent := withBraceView(rowStatementContextOrBackground(values), view)
 	state, _ := parent.Value(rowFallbackExpressionKey{}).(rowFallbackState)
 	if state.depth >= maxRowFallbackDepth {
 		_, err := checkedPropertyResult(parent, expr, nil, false, unresolvedExpressionError(expr))
@@ -124,24 +125,26 @@ func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]int
 	if rowIsCypher25(values) {
 		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
 	}
-	return e.evaluateExpressionFromValuesResult(ctx, expr, values)
+	return e.evaluateExpressionFromValuesResult(ctx, view, values)
 }
 
 // evaluateExpressionFromValuesContext is evaluateExpressionFromValues with
 // the evaluation context: expression failures are recorded on ctx.
-func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Context, expr string, values map[string]interface{}) interface{} {
+func (e *StorageExecutor) evaluateExpressionFromValuesContext(ctx context.Context, expr braceView, values map[string]interface{}) interface{} {
 	ctx = withExpressionFailureSlot(ctx)
 	value, resolved, err := e.evaluateExpressionFromValuesResult(ctx, expr, values)
-	value, err = checkedPropertyResult(ctx, expr, value, resolved, err)
+	value, err = checkedPropertyResult(ctx, expr.text(), value, resolved, err)
 	recordExpressionFailure(ctx, err)
 	return value
 }
 
 // Legacy and row callers share an explicit result, never source text as a value.
 // Pattern syntax can be unhandled; it is not a scalar value or successful NULL.
-func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context, expr string, values map[string]interface{}) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context, view braceView, values map[string]interface{}) (interface{}, bool, error) {
 	ctx = withExpressionFailureSlot(ctx)
-	expr = strings.TrimSpace(expr)
+	view = view.trim()
+	ctx = withBraceView(ctx, view)
+	expr := view.text()
 	if expr == "" {
 		return nil, false, nil
 	}
@@ -168,7 +171,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context
 	}
 	if name, end, ok := scanSymbolicName(expr, 0); ok && end < len(expr) && expr[end] == '[' && strings.HasSuffix(expr, "]") {
 		if _, bound := values[normalizePropertyKey(name)]; bound {
-			return e.evaluateRowValueText(expr, values)
+			return e.evaluateRowValueText(view, values)
 		}
 	}
 	if containsRelationshipPattern(expr) || startsWithRelationshipFragment(expr) {
@@ -176,7 +179,7 @@ func (e *StorageExecutor) evaluateExpressionFromValuesResult(ctx context.Context
 	}
 	ctx = withValueBindings(ctx, values)
 	nodes, rels := entityScopesFromValues(values)
-	return e.evaluateContextExpressionResult(ctx, expr, nodes, rels)
+	return e.evaluateContextExpressionResult(ctx, view, nodes, rels)
 }
 
 // entityScopesFromValues extracts the *storage.Node and *storage.Edge entries of
@@ -209,7 +212,7 @@ func entityScopesFromValues(values map[string]interface{}) (map[string]*storage.
 	return nodes, rels
 }
 
-func (e *StorageExecutor) evaluateCaseExpressionFromValues(expr string, values map[string]interface{}) interface{} {
+func (e *StorageExecutor) evaluateCaseExpressionFromValues(expr braceView, values map[string]interface{}) interface{} {
 	// The shared CASE evaluator resolves non-entity variables through the
 	// context value bindings, so the values scope is passed the same way as
 	// every other scope instead of using a parallel evaluator.
@@ -220,7 +223,7 @@ func (e *StorageExecutor) evaluateCaseExpressionFromValues(expr string, values m
 // values scope. It delegates to the shared condition evaluator with the values
 // carried as context bindings, mirroring how the main expression evaluator
 // resolves non-entity variables.
-func (e *StorageExecutor) evaluateConditionFromValues(condition string, values map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateConditionFromValues(condition braceView, values map[string]interface{}) bool {
 	return e.evaluateCondition(withValueBindings(context.Background(), values), condition, nil, nil)
 }
 
@@ -229,8 +232,8 @@ func parseLiteralValueFromComputedRow(expr string) (interface{}, bool) {
 }
 
 // evaluateMapLiteralFromValues evaluates a map literal using computed values
-func (e *StorageExecutor) evaluateMapLiteralFromValues(ctx context.Context, expr string, values map[string]interface{}) (map[string]interface{}, error) {
-	return e.materializePropertyMap(ctx, expr, values, true, true)
+func (e *StorageExecutor) evaluateMapLiteralFromValues(ctx context.Context, view braceView, values map[string]interface{}) (map[string]interface{}, error) {
+	return e.materializePropertyMap(ctx, view, values, true, true)
 }
 
 // executeMatchWithClause handles MATCH ... WHERE ... WITH ... RETURN queries

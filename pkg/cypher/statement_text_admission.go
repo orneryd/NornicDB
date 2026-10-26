@@ -2,9 +2,9 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -89,7 +89,7 @@ func normalizeQueryText(ctx context.Context, query string) (string, *queryRewrit
 	if !queryMayNeedCanonicalRewrite(query) {
 		return query, nil, nil
 	}
-	canonical, rewrite, err := readCanonicalQueryText(query, true)
+	canonical, rewrite, err := readCanonicalQueryText(statementBraceView(ctx, query), true)
 	if err == nil && rewrite != nil && strings.TrimSpace(canonical) == "" {
 		err = emptyStatementError()
 	}

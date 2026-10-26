@@ -38,7 +38,7 @@ func BenchmarkStretchMapKeyAdmission(b *testing.B) {
 				b.ReportAllocs()
 				for i := 0; i < b.N; i++ {
 					var tokens stretchTokens
-					addStretchMapKeys(text, &tokens)
+					addStretchMapKeys(originalBraceView(text), &tokens)
 					if len(tokens.keys) == 0 {
 						b.Fatal("no keys")
 					}
@@ -58,7 +58,7 @@ func BenchmarkStretchMapKeyAdmission(b *testing.B) {
 						text = fmt.Sprintf("{`odd key`: {inner:%d},plain:m.source}", serial)
 					}
 					var tokens stretchTokens
-					addStretchMapKeys(text, &tokens)
+					addStretchMapKeys(originalBraceView(text), &tokens)
 					if len(tokens.keys) == 0 {
 						b.Fatal("no keys")
 					}
@@ -79,7 +79,7 @@ func BenchmarkPatternPropertyAdmission(b *testing.B) {
 				}
 				row := map[string]interface{}{"v": int64(1)}
 				pattern := "(n:BindingConvergence {id:v})"
-				if _, _, err := e.bindPatternProperties(ctx, pattern, row); err != nil {
+				if _, _, err := e.bindPatternProperties(ctx, originalBraceView(pattern), row); err != nil {
 					b.Fatal(err)
 				}
 				b.ReportAllocs()
@@ -89,7 +89,7 @@ func BenchmarkPatternPropertyAdmission(b *testing.B) {
 					if mode == "cold" {
 						text = fmt.Sprintf("(n:BindingConvergence%d {id:v})", i)
 					}
-					if _, _, err := e.bindPatternProperties(ctx, text, row); err != nil {
+					if _, _, err := e.bindPatternProperties(ctx, originalBraceView(text), row); err != nil {
 						b.Fatal(err)
 					}
 				}

@@ -76,12 +76,12 @@ func TestUnwindRewrittenOperatorsPreserveExecutionErrors(t *testing.T) {
 			ctx := context.Background()
 			_, err := exec.Execute(ctx, "CREATE (:UnwindError {id: 1})", nil)
 			require.NoError(t, err)
-			plan := topLevelUnwindPlan{variable: "row", items: []interface{}{int64(1)}, remainder: fixture.remainder}
+			plan := topLevelUnwindPlan{variable: "row", items: []interface{}{int64(1)}, remainder: originalBraceView(fixture.remainder)}
 			rewritten, ok := rewriteUnwindCorrelationToIn(plan.remainder, plan.variable, "__unwind_items")
 			require.True(t, ok)
-			_, expectedErr := exec.Execute(ctx, rewritten, map[string]interface{}{"__unwind_items": plan.items})
+			_, expectedErr := exec.Execute(ctx, rewritten.text(), map[string]interface{}{"__unwind_items": plan.items})
 			require.Error(t, expectedErr)
-			outcome := exec.executePipeline(withQueryParams(ctx, map[string]interface{}{"__unwind_items": plan.items}), rewritten)
+			outcome := exec.executePipeline(withQueryParams(ctx, map[string]interface{}{"__unwind_items": plan.items}), rewritten.text())
 			require.Error(t, outcome.err)
 			require.Equal(t, expectedErr.Error(), outcome.err.Error())
 			require.True(t, outcome.terminal())

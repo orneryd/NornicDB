@@ -48,12 +48,13 @@ func (w *mergeNodeWrites) add(variable string, renamed bool) {
 	w.variables[variable] = struct{}{}
 }
 
-func (w *mergeNodeWrites) addSetItems(items []string, renamed bool, except map[string]struct{}) {
-	for _, item := range items {
-		if strings.TrimSpace(item) == "" {
+func (w *mergeNodeWrites) addSetItems(items []braceView, renamed bool, except map[string]struct{}) {
+	for _, itemView := range items {
+		if strings.TrimSpace(itemView.text()) == "" {
 			continue
 		}
-		target, _, operator, _ := splitSetAssignment(item)
+		item := readSetAssignment(itemView)
+		target, operator := item.target, item.operator
 		if _, own := except[target]; own && target != "" {
 			continue
 		}
@@ -73,9 +74,9 @@ func withMergeNodeWrites(ctx context.Context, clauses []pipelineClause) context.
 	for _, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseSet:
-			writes.addSetItems(splitSetAssignments(pipelineClauseBody(clause.text, "SET")), renamed, nil)
+			writes.addSetItems(setAssignmentViews(clause.input(ctx).clauseBody("SET")), renamed, nil)
 		case pipelineClauseRemove:
-			items, err := parseRemoveItems(pipelineClauseBody(clause.text, "REMOVE"))
+			items, err := parseRemoveItems(clause.view.clauseBody("REMOVE"))
 			if err != nil {
 				writes.all = true
 				continue
@@ -84,16 +85,16 @@ func withMergeNodeWrites(ctx context.Context, clauses []pipelineClause) context.
 				writes.add(item.variable, renamed)
 			}
 		case pipelineClauseMerge:
-			actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
+			actions := readMergeSourceActions(clause.input(ctx))
 			bound := make(map[string]struct{})
-			eachPatternElement(actions.pattern, func(opener byte, element string) {
+			eachPatternElementSpan(actions.pattern.text(), func(opener byte, start, end int) {
 				if opener == '(' {
-					bound[nodePatternStructure(element[1:len(element)-1]).variable] = struct{}{}
+					bound[nodePatternStructure(actions.pattern.window(start+1, end-1)).variable] = struct{}{}
 				}
 			})
-			writes.addSetItems(mergeActionAssignments(actions.onMatch), renamed, nil)
+			writes.addSetItems(mergeSourceActionAssignments(actions.onMatch), renamed, nil)
 			// The MERGE that creates a node holds its key already.
-			writes.addSetItems(mergeActionAssignments(actions.onCreate), renamed, bound)
+			writes.addSetItems(mergeSourceActionAssignments(actions.onCreate), renamed, bound)
 		case pipelineClauseDelete:
 			body := pipelineClauseBody(pipelineClauseBody(clause.text, "DETACH"), "DELETE")
 			for _, item := range splitTopLevelComma(body) {
@@ -103,7 +104,7 @@ func withMergeNodeWrites(ctx context.Context, clauses []pipelineClause) context.
 				writes.add(item, renamed)
 			}
 		case pipelineClauseWith:
-			renamed = renamed || containsKeywordOutsideStrings(clause.text, "AS")
+			renamed = renamed || containsKeywordOutsideStrings(clause.input(ctx), "AS")
 		case pipelineClauseLet:
 			renamed = true
 		case pipelineClauseForeach, pipelineClauseCallSubquery:

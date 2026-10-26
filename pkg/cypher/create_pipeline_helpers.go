@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -77,30 +78,30 @@ func (e *StorageExecutor) validateSetAssignments(assignments []string) error {
 
 // extractCreateVariableRefs returns variable names used as simple refs in CREATE relationship patterns
 // (e.g. (o)-[:R]->(pharmacy) yields ["o", "pharmacy"]). Used to know which bindings the pipeline must return.
-func extractCreateVariableRefs(createPart string) []string {
+func extractCreateVariableRefs(createPart braceView) []string {
 	seen := make(map[string]bool)
 	exec := &StorageExecutor{}
-	createClauses := SplitByCreate(createPart)
+	createClauses := createPart.keywordParts("CREATE", keywordSplitCreate)
 	for _, clause := range createClauses {
-		clause = strings.TrimSpace(clause)
-		if clause == "" {
+		clause = clause.trim()
+		if clause.empty() {
 			continue
 		}
 		for _, pattern := range exec.splitCreatePatterns(clause) {
-			pattern = strings.TrimSpace(pattern)
-			if pattern == "" {
+			pattern = pattern.trim()
+			if pattern.empty() {
 				continue
 			}
 			_, pattern = parseCreatePathAssignment(pattern)
 			src, _, tgt, _, remainder, err := exec.parseCreateRelPatternWithVars(pattern)
-			if err != nil || strings.TrimSpace(remainder) != "" {
+			if err != nil || !remainder.trim().empty() {
 				continue
 			}
-			if isSimpleVariable(src) {
-				seen[src] = true
+			if isSimpleVariable(src.text()) {
+				seen[src.text()] = true
 			}
-			if isSimpleVariable(tgt) {
-				seen[tgt] = true
+			if isSimpleVariable(tgt.text()) {
+				seen[tgt.text()] = true
 			}
 		}
 	}
@@ -126,21 +127,31 @@ func sortNodesByProperty(nodes []*storage.Node, prop string) {
 }
 
 type createPatternSplit struct {
-	all           []string
-	nodes         []string
-	relationships []string
+	view          braceView
+	all           []braceView
+	nodes         []braceView
+	relationships []braceView
 }
 
 var createPatternSplits = newBoundedCache[string, createPatternSplit](4096, boundedCacheStringShardIndex)
 
-func (e *StorageExecutor) createPatternSplitFor(pattern string) createPatternSplit {
-	if split, cached := createPatternSplits.get(pattern); cached {
+func (e *StorageExecutor) createPatternSplitFor(pattern braceView) createPatternSplit {
+	if split, cached := createPatternSplits.get(pattern.text()); cached {
+		rebase := func(views []braceView) []braceView {
+			result := make([]braceView, len(views))
+			for i, part := range views {
+				result[i] = braceView{syntax: pattern.syntax, source: part.source.Rebase(split.view.source, pattern.source)}
+			}
+			return result
+		}
+		split.all, split.nodes, split.relationships = rebase(split.all), rebase(split.nodes), rebase(split.relationships)
+		split.view = pattern
 		return split
 	}
-	split := createPatternSplit{all: e.scanCreatePatterns(pattern)}
+	split := createPatternSplit{view: pattern, all: e.scanCreatePatterns(pattern)}
 	for _, fragment := range split.all {
-		fragment = strings.TrimSpace(fragment)
-		if fragment == "" {
+		fragment = fragment.trim()
+		if fragment.empty() {
 			continue
 		}
 		if patternHasRelationship(fragment) {
@@ -149,12 +160,12 @@ func (e *StorageExecutor) createPatternSplitFor(pattern string) createPatternSpl
 			split.nodes = append(split.nodes, fragment)
 		}
 	}
-	createPatternSplits.put(pattern, split)
+	createPatternSplits.put(pattern.text(), split)
 	return split
 }
 
 type createRelationshipSyntax struct {
-	source, relationship, target, remainder string
+	source, relationship, target, remainder cyphertext.Span
 	reverse                                 bool
 	err                                     error
 }
@@ -172,34 +183,36 @@ func getNodeProp(n *storage.Node, prop string) interface{} {
 // where varA and varB are variable references (not full node definitions)
 // Returns: sourceVar, relContent, targetVar, isReverse, remainder, error
 // remainder is any content after the target node (for chained patterns)
-func (e *StorageExecutor) parseCreateRelPatternWithVars(pattern string) (string, string, string, bool, string, error) {
-	pattern = strings.TrimSpace(pattern)
-	if plan, cached := createRelationshipSyntaxPlans.get(pattern); cached {
-		return plan.source, plan.relationship, plan.target, plan.reverse, plan.remainder, plan.err
+func (e *StorageExecutor) parseCreateRelPatternWithVars(view braceView) (braceView, braceView, braceView, bool, braceView, error) {
+	view = view.trim()
+	plan, cached := createRelationshipSyntaxPlans.get(view.text())
+	if !cached {
+		plan = e.scanCreateRelationshipSyntax(view.text())
+		createRelationshipSyntaxPlans.put(view.text(), plan)
 	}
-	source, relationship, target, reverse, remainder, err := e.scanCreateRelPatternWithVars(pattern)
-	createRelationshipSyntaxPlans.put(pattern, createRelationshipSyntax{source, relationship, target, remainder, reverse, err})
-	return source, relationship, target, reverse, remainder, err
+	return view.spanWindow(plan.source), view.spanWindow(plan.relationship), view.spanWindow(plan.target), plan.reverse, view.spanWindow(plan.remainder), plan.err
 }
 
-func (e *StorageExecutor) scanCreateRelPatternWithVars(pattern string) (string, string, string, bool, string, error) {
-	pattern = strings.TrimSpace(pattern)
+// The existing relationship grammar retains its extents under the exact text
+// cache key. Each invocation projects those extents into its carried input;
+// the cache never retains another statement's brace facts. Author: #1663 lane.
+func (e *StorageExecutor) scanCreateRelationshipSyntax(pattern string) createRelationshipSyntax {
 	findNodeEnd := findMatchingParen
 
 	// Find the first node: (varA)
 	if !strings.HasPrefix(pattern, "(") {
-		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternMustStartNode(), nil)
+		return createRelationshipSyntax{err: localizedError(localization.CypherMutationsRelationshipPatternMustStartNode(), nil)}
 	}
 
 	// Find end of first node
 	firstNodeEnd := findNodeEnd(pattern, 0)
 	if firstNodeEnd < 0 {
-		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternUnmatchedParen(), nil)
+		return createRelationshipSyntax{err: localizedError(localization.CypherMutationsRelationshipPatternUnmatchedParen(), nil)}
 	}
 
-	sourceVar := strings.TrimSpace(pattern[1:firstNodeEnd])
-	rest := pattern[firstNodeEnd+1:]
-	rest = strings.TrimSpace(rest) // Remove any whitespace before -[ or <-[
+	sourceVar := cyphertext.TrimWhitespaceSpan(pattern, cyphertext.Span{Start: 1, End: firstNodeEnd})
+	restSpan := cyphertext.TrimWhitespaceSpan(pattern, cyphertext.Span{Start: firstNodeEnd + 1, End: len(pattern)})
+	rest := pattern[restSpan.Start:restSpan.End]
 
 	// Detect direction and find relationship bracket
 	isReverse := false
@@ -211,28 +224,29 @@ func (e *StorageExecutor) scanCreateRelPatternWithVars(pattern string) (string, 
 		isReverse = true
 		relStart = 3 // Skip "<-["
 	} else {
-		return "", "", "", false, "", localizedError(localization.CypherResidualRelationshipConnectorExpected(rest[:min(20, len(rest))]), nil)
+		return createRelationshipSyntax{err: localizedError(localization.CypherResidualRelationshipConnectorExpected(rest[:min(20, len(rest))]), nil)}
 	}
 
 	// Find matching ] considering nested brackets in properties
 	relEnd := findMatchingBracket(rest, relStart-1)
 	if relEnd < 0 {
-		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternUnmatchedBracket(), nil)
+		return createRelationshipSyntax{err: localizedError(localization.CypherMutationsRelationshipPatternUnmatchedBracket(), nil)}
 	}
 
-	relContent := rest[relStart:relEnd]
-	afterRel := strings.TrimSpace(rest[relEnd+1:])
+	relContent := cyphertext.Span{Start: restSpan.Start + relStart, End: restSpan.Start + relEnd}
+	afterSpan := cyphertext.TrimWhitespaceSpan(pattern, cyphertext.Span{Start: restSpan.Start + relEnd + 1, End: restSpan.End})
+	afterRel := pattern[afterSpan.Start:afterSpan.End]
 
 	// Now find the second node
 	var secondNodeStart int
 	if isReverse {
 		if !strings.HasPrefix(afterRel, "-(") {
-			return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternForwardExpected(), nil)
+			return createRelationshipSyntax{err: localizedError(localization.CypherMutationsRelationshipPatternForwardExpected(), nil)}
 		}
 		secondNodeStart = 2
 	} else {
 		if !strings.HasPrefix(afterRel, "->(") {
-			return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternArrowExpected(), nil)
+			return createRelationshipSyntax{err: localizedError(localization.CypherMutationsRelationshipPatternArrowExpected(), nil)}
 		}
 		secondNodeStart = 3
 	}
@@ -240,11 +254,11 @@ func (e *StorageExecutor) scanCreateRelPatternWithVars(pattern string) (string, 
 	// Find end of second node
 	secondNodeEnd := findNodeEnd(afterRel, secondNodeStart-1)
 	if secondNodeEnd < 0 {
-		return "", "", "", false, "", localizedError(localization.CypherMutationsRelationshipPatternSecondUnmatched(), nil)
+		return createRelationshipSyntax{err: localizedError(localization.CypherMutationsRelationshipPatternSecondUnmatched(), nil)}
 	}
 
-	targetVar := strings.TrimSpace(afterRel[secondNodeStart:secondNodeEnd])
-	remainder := strings.TrimSpace(afterRel[secondNodeEnd+1:])
+	targetVar := cyphertext.TrimWhitespaceSpan(pattern, cyphertext.Span{Start: afterSpan.Start + secondNodeStart, End: afterSpan.Start + secondNodeEnd})
+	remainder := cyphertext.TrimWhitespaceSpan(pattern, cyphertext.Span{Start: afterSpan.Start + secondNodeEnd + 1, End: afterSpan.End})
 
-	return sourceVar, relContent, targetVar, isReverse, remainder, nil
+	return createRelationshipSyntax{source: sourceVar, relationship: relContent, target: targetVar, remainder: remainder, reverse: isReverse}
 }

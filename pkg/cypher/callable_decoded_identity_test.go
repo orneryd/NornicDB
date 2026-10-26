@@ -43,8 +43,8 @@ func testCallableDecodedIdentity(t *testing.T) {
 			r, err := e.Execute(context.Background(), "RETURN "+tc.expr+" AS v", nil)
 			require.NoError(t, err)
 			require.Equal(t, [][]interface{}{{tc.want}}, r.Rows)
-			require.Equal(t, tc.want, e.evaluateExpressionWithContext(context.Background(), tc.expr, nil, nil))
-			v, ok, err := e.evaluateRowValue(tc.expr, nil)
+			require.Equal(t, tc.want, e.evaluateExpressionWithContext(context.Background(), originalBraceView(tc.expr), nil, nil))
+			v, ok, err := e.evaluateRowValue(originalBraceView(tc.expr), nil)
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Equal(t, tc.want, v)
@@ -55,7 +55,7 @@ func testCallableDecodedIdentity(t *testing.T) {
 func TestCommentedQualifiedNativeBoundary(t *testing.T) {
 	text := "custom . /*c*/ range('ok')"
 	require.False(t, functionNameStartsAt(text, len("custom . /*c*/ ")))
-	require.Empty(t, namedFunctionArguments(text, "range"))
+	require.Empty(t, namedFunctionArgumentViews(originalBraceView(text), "range"))
 }
 
 func TestQuotedQualifiedUnknownFunction(t *testing.T) {
@@ -68,7 +68,7 @@ func TestQuotedQualifiedUnknownFunction(t *testing.T) {
 }
 
 func TestQuotedNamespaceStaticArguments(t *testing.T) {
-	err := forEachStaticFunctionArgument("`custom` . range('ok')", func(staticArgumentType, string, int) error { return nil })
+	err := forEachStaticFunctionArgument(expressionBraceView("`custom` . range('ok')"), func(staticArgumentType, braceView, int) error { return nil })
 	require.NoError(t, err)
-	require.Empty(t, semanticExpressionReferences("custom . /*c*/ range('ok')"))
+	require.Empty(t, semanticExpressionReferences(expressionBraceView("custom . /*c*/ range('ok')")))
 }

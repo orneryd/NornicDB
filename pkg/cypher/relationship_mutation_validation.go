@@ -16,12 +16,13 @@ const (
 // validateRelationshipMutation owns the declaration boundary for CREATE and
 // MERGE. CREATE additionally requires one explicit direction; MERGE permits
 // its existing undirected shape. Dynamic token cardinality is checked per row.
-func validateRelationshipMutation(pattern string, purpose relationshipMutationPurpose) error {
+func validateRelationshipMutation(view braceView, purpose relationshipMutationPurpose) error {
+	pattern := view.text()
 	clause, verb := "CREATE", "created"
 	if purpose == mergeRelationshipMutation {
 		clause, verb = "MERGE", "merged"
 	}
-	open, close := readRelationshipBracket(pattern, 0, requireClosedRelationship)
+	open, close := readRelationshipBracket(view, 0, requireClosedRelationship)
 	if open < 0 || close < 0 {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "NoSingleRelationshipType", clause+" relationships require exactly one relationship type")
 	}
@@ -32,7 +33,7 @@ func validateRelationshipMutation(pattern string, purpose relationshipMutationPu
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "RequiresDirectedRelationship", "CREATE relationships require exactly one direction")
 		}
 	}
-	content := pattern[open+1 : close]
+	content := view.window(open+1, close)
 	declaration := relationshipDeclarationOf(content)
 	if declaration.hasLength {
 		return newSemanticError(

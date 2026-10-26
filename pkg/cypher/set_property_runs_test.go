@@ -128,11 +128,11 @@ func TestMergeSetRunsInvalidValue(t *testing.T) {
 }
 
 func TestSetClauseRuns(t *testing.T) {
-	require.Equal(t, []setRun{{variable: "n", text: "n.a = 1, , n.b = 2"}}, appendSetClauseRuns(nil, "n.a = 1, , n.b = 2", nil))
+	require.Equal(t, []setRun{{variable: "n", text: "n.a = 1, , n.b = 2"}}, appendSetClauseRuns(nil, expressionBraceView("n.a = 1, , n.b = 2")))
 	require.Equal(t, []setRun{
 		{variable: "n", text: "n.a = 1, n.b = n.a"},
 		{variable: "m", text: "m.c = 2"},
 		{variable: "n", text: "n:L, n.d = 3"},
 		{variable: "n", text: "n.e = 4"},
-	}, appendSetClauseRuns(nil, "n.a = 1, n.b = n.a, m.c = 2, n:L, n.d = 3 SET n.e = 4", nil))
+	}, appendSetClauseRuns(nil, expressionBraceView("n.a = 1, n.b = n.a, m.c = 2, n:L, n.d = 3 SET n.e = 4")))
 }

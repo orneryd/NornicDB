@@ -26,16 +26,21 @@ func (scan *comparisonChainScan) append(span comparisonOperatorSpan) {
 }
 
 func (scan *comparisonChainScan) operand(expression string, index int) string {
+	span := scan.operandSpan(len(expression), index)
+	return strings.TrimSpace(expression[span.Start:span.End])
+}
+
+func (scan *comparisonChainScan) operandSpan(length, index int) cyphertext.Span {
 	start := 0
 	if index > 0 {
 		previous := inlineOverflowAt(scan.inline[:], scan.overflow, index-1)
 		start = previous.offset + previous.length
 	}
-	end := len(expression)
+	end := length
 	if index < scan.count {
 		end = inlineOverflowAt(scan.inline[:], scan.overflow, index).offset
 	}
-	return strings.TrimSpace(expression[start:end])
+	return cyphertext.Span{Start: start, End: end}
 }
 
 // evaluateComparisonChain evaluates every adjacent pair in a Cypher
@@ -44,18 +49,19 @@ func (scan *comparisonChainScan) operand(expression string, index int) string {
 // without duplicating expression work. cypher25 is the statement's version,
 // which decides how constant numbers compare (promoteConstantNumbers).
 func evaluateComparisonChain(
-	expression string,
-	resolve func(string) (interface{}, bool, error),
+	view braceView,
+	resolve func(braceView) (interface{}, bool, error),
 	compare func(interface{}, interface{}, string) interface{},
 	cypher25 bool,
 	domains ...graphIdentityDomain,
 ) (interface{}, bool, bool, error) {
-	scan, ok := scanComparisonChain(expression)
+	expression := view.text()
+	scan, ok := scanComparisonChain(view)
 	if !ok {
 		return nil, false, false, nil
 	}
-	value, resolved, err := evaluateScannedComparisonChain(expression, &scan, comparisonChainHasIdentity(expression, &scan), func(_ int, operand string) (interface{}, bool, error) {
-		return resolve(operand)
+	value, resolved, err := evaluateScannedComparisonChain(expression, &scan, comparisonChainHasIdentity(expression, &scan), func(index int, _ string) (interface{}, bool, error) {
+		return resolve(view.spanWindow(scan.operandSpan(len(expression), index)))
 	}, compare, cypher25, domains...)
 	return value, true, resolved, err
 }
@@ -137,8 +143,9 @@ func incomingArrowAt(expression string, index int) bool {
 		(expression[index+2] == '-' || expression[index+2] == '[')
 }
 
-func splitComparisonChain(expression string) ([]string, []string, bool) {
-	scan, ok := scanComparisonChain(expression)
+func splitComparisonChain(view braceView) ([]string, []string, bool) {
+	expression := view.text()
+	scan, ok := scanComparisonChain(view)
 	if !ok {
 		return nil, nil, false
 	}
@@ -153,7 +160,8 @@ func splitComparisonChain(expression string) ([]string, []string, bool) {
 	return operands, operators, true
 }
 
-func scanComparisonChain(expression string) (comparisonChainScan, bool) {
+func scanComparisonChain(view braceView) (comparisonChainScan, bool) {
+	expression := view.text()
 	if scan, ok, needsComplexScan := scanPlainComparisonChain(expression); !needsComplexScan {
 		return scan, ok
 	}
@@ -161,11 +169,12 @@ func scanComparisonChain(expression string) (comparisonChainScan, bool) {
 	// comparisons: the plain scan hands text with ':' or LIST< / ARRAY< /
 	// ANY< here, and this scan reads a copy of the same length with types
 	// blanked; operands are still cut from the caller's text.
-	expression = maskTypePredicateTypes(expression)
+	view = view.mask(maskTypePredicateTypes(expression))
+	expression = view.text()
 
 	var scan comparisonChainScan
 	operandStart := 0
-	parenDepth, bracketDepth, braceDepth, caseDepth := 0, 0, 0, 0
+	parenDepth, bracketDepth, braceDepth, caseDepth := 0, 0, cyphertext.BraceDepth(0), 0
 
 	for index := 0; index < len(expression); index++ {
 		if end, quoted := skipCypherLexicalToken(expression, index); quoted {
@@ -173,35 +182,35 @@ func scanComparisonChain(expression string) (comparisonChainScan, bool) {
 			continue
 		}
 		current := expression[index]
-		switch current {
-		case '(':
+		switch {
+		case current == '(':
 			parenDepth++
 			continue
-		case ')':
+		case current == ')':
 			parenDepth--
 			continue
-		case '[':
+		case current == '[':
 			bracketDepth++
 			continue
-		case ']':
+		case current == ']':
 			bracketDepth--
 			continue
-		case '{':
-			braceDepth++
+		case cyphertext.IsOpenBrace(current):
+			braceDepth.Open()
 			continue
-		case '}':
-			braceDepth--
+		case cyphertext.IsCloseBrace(current):
+			braceDepth.Close(false)
 			continue
-		case 'C', 'c':
+		case current == 'C', current == 'c':
 			// CASE … END nests like parentheses: the comparisons of its WHEN
 			// conditions are not the chain's (#699).
-			if caseKeywordAt(expression, index, "CASE") {
+			if caseKeywordAt(view, index, "CASE") {
 				caseDepth++
 				index += len("CASE") - 1
 				continue
 			}
-		case 'E', 'e':
-			if caseDepth > 0 && caseKeywordAt(expression, index, "END") {
+		case current == 'E', current == 'e':
+			if caseDepth > 0 && caseKeywordAt(view, index, "END") {
 				caseDepth--
 				index += len("END") - 1
 				continue
@@ -269,10 +278,10 @@ func scanPlainComparisonChain(expression string) (comparisonChainScan, bool, boo
 		if _, quoted := skipCypherLexicalToken(expression, index); quoted {
 			return comparisonChainScan{}, false, true
 		}
-		switch expression[index] {
-		case '(', ')', '[', ']', '{', '}', ':':
+		switch {
+		case expression[index] == '(', expression[index] == ')', expression[index] == '[', expression[index] == ']', cyphertext.IsOpenBrace(expression[index]), cyphertext.IsCloseBrace(expression[index]), expression[index] == ':':
 			return comparisonChainScan{}, false, true
-		case '/':
+		case expression[index] == '/':
 			if index+1 < len(expression) && (expression[index+1] == '/' || expression[index+1] == '*') {
 				return comparisonChainScan{}, false, true
 			}

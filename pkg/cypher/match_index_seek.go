@@ -19,9 +19,9 @@ import (
 // Otherwise ok is false and the predicate is left to the row filter. Reading
 // the value with the literal parser looked up a function call as its own
 // text and returned no rows (#844).
-func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr string) (value interface{}, ok bool) {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
+func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr braceView) (value interface{}, ok bool) {
+	expr = expr.trim()
+	if expr.empty() {
 		return nil, false
 	}
 	for _, variable := range expressionFreeVariables(expr) {
@@ -41,8 +41,9 @@ func (e *StorageExecutor) indexSeekConstant(ctx context.Context, expr string) (v
 // ID the value names (an element ID's payload; elementKind is "4" for nodes,
 // "5" for relationships). empty is true when the value is null, not a string
 // or blank, which matches nothing; ok is false for any other WHERE.
-func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, elementKind string) (variable, lookupID string, empty, ok bool) {
-	clause := strings.TrimSpace(whereClause)
+func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause braceView, elementKind string) (variable, lookupID string, empty, ok bool) {
+	view := whereClause.trim()
+	clause := view.text()
 	if clause == "" {
 		return "", "", false, false
 	}
@@ -86,7 +87,7 @@ func (e *StorageExecutor) idEqualityLookup(ctx context.Context, whereClause, ele
 		return "", "", false, false
 	}
 
-	rawVal, constant := e.indexSeekConstant(ctx, right)
+	rawVal, constant := e.indexSeekConstant(ctx, view.window(eqIdx+1, len(clause)))
 	if !constant {
 		return "", "", false, false
 	}
@@ -140,8 +141,8 @@ func (e *StorageExecutor) entitySeekLookup(value, kind, function string) (string
 //	MATCH (n[:Label]) WHERE elementId(n) = <element-id>
 //
 // via a direct node lookup instead of scanning all nodes.
-func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
-	varName, lookupID, empty, ok := e.idEqualityLookup(ctx, whereClause, "4")
+func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nodePattern nodePatternInfo, whereView braceView) ([]*storage.Node, bool, error) {
+	varName, lookupID, empty, ok := e.idEqualityLookup(ctx, whereView, "4")
 	if !ok || varName != nodePattern.variable {
 		return nil, false, nil
 	}
@@ -181,9 +182,10 @@ func (e *StorageExecutor) tryCollectNodesFromIDEquality(ctx context.Context, nod
 func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereView braceView,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
+	whereClause := whereView.text()
 	if params == nil || strings.TrimSpace(whereClause) == "" {
 		return nil, false, nil
 	}
@@ -298,27 +300,28 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityParam(
 func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereView braceView,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
-	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
+	clauseView := unwrapOuterView(whereView)
+	clause := clauseView.text()
 	if clause == "" {
 		return nil, false, nil
 	}
 
 	// 1) Simple clause (literal or param).
-	if nodes, used, err := e.tryCollectNodesFromIDEquality(ctx, nodePattern, clause); used || err != nil {
+	if nodes, used, err := e.tryCollectNodesFromIDEquality(ctx, nodePattern, clauseView); used || err != nil {
 		return nodes, used, err
 	}
-	if nodes, used, err := e.tryCollectNodesFromIDEqualityParam(ctx, nodePattern, clause, params); used || err != nil {
+	if nodes, used, err := e.tryCollectNodesFromIDEqualityParam(ctx, nodePattern, clauseView, params); used || err != nil {
 		return nodes, used, err
 	}
 
 	// 2) Conjunction: any recognized id-conjunct is safe to use as a pruning seek.
-	if findTopLevelKeyword(clause, " AND ") > 0 {
-		for _, raw := range splitTopLevelAndConjuncts(clause) {
-			term := unwrapOuterParens(strings.TrimSpace(raw))
-			if term == "" {
+	if findTopLevelKeyword(clauseView, " AND ") > 0 {
+		for _, raw := range splitTopLevelAndConjuncts(clauseView) {
+			term := unwrapOuterView(raw)
+			if term.empty() {
 				continue
 			}
 			if nodes, used, err := e.tryCollectNodesFromIDEquality(ctx, nodePattern, term); used || err != nil {
@@ -331,13 +334,13 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 	}
 
 	// 3) Disjunction: only safe when every branch is recognized as an ID seek.
-	orTerms := splitTopLevelOrTerms(clause)
+	orTerms := splitTopLevelOrTerms(clauseView)
 	if len(orTerms) > 1 {
 		merged := make([]*storage.Node, 0, len(orTerms))
 		seen := make(map[storage.NodeID]struct{}, len(orTerms))
 		for _, raw := range orTerms {
-			term := unwrapOuterParens(strings.TrimSpace(raw))
-			if term == "" {
+			term := unwrapOuterView(raw)
+			if term.empty() {
 				return nil, false, nil
 			}
 
@@ -381,15 +384,15 @@ func (e *StorageExecutor) tryCollectNodesFromIDEqualityCompound(
 //
 // It returns (nodes, true, nil) when index planning was used (including empty matches),
 // and (nil, false, nil) when the predicate is not eligible for index lookup.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, nodePattern nodePatternInfo, whereClause string) ([]*storage.Node, bool, error) {
-	return e.tryCollectNodesFromPropertyIndexAnyOf(ctx, nodePattern, whereClause, nil)
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndex(ctx context.Context, nodePattern nodePatternInfo, whereView braceView) ([]*storage.Node, bool, error) {
+	return e.tryCollectNodesFromPropertyIndexAnyOf(ctx, nodePattern, whereView, nil)
 }
 
 // tryCollectNodesFromPropertyIndexAnyOf is tryCollectNodesFromPropertyIndex
 // for a node that must carry one of anyOf (a WHERE label disjunction, #858;
 // nil when there is none): see seekCandidateLabels.
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Context, nodePattern nodePatternInfo, whereClause string, anyOf []string) ([]*storage.Node, bool, error) {
-	property, value, ok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, whereClause)
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Context, nodePattern nodePatternInfo, whereView braceView, anyOf []string) ([]*storage.Node, bool, error) {
+	property, value, ok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, whereView)
 	if !ok {
 		return nil, false, nil
 	}
@@ -451,21 +454,21 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 // batched correlated APPLY lookups.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexIn(
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereView braceView,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
-	return e.tryCollectNodesFromPropertyIndexInAnyOf(nodePattern, whereClause, params, nil)
+	return e.tryCollectNodesFromPropertyIndexInAnyOf(nodePattern, whereView, params, nil)
 }
 
 // tryCollectNodesFromPropertyIndexInAnyOf is tryCollectNodesFromPropertyIndexIn
 // for a node that must carry one of anyOf (see seekCandidateLabels).
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereView braceView,
 	params map[string]interface{},
 	anyOf []string,
 ) ([]*storage.Node, bool, error) {
-	property, listValues, ok := e.parseSimpleIndexedInParam(nodePattern.variable, whereClause, params)
+	property, listValues, ok := e.parseSimpleIndexedInParam(nodePattern.variable, whereView, params)
 	if !ok {
 		return nil, false, nil
 	}
@@ -517,9 +520,9 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereView braceView,
 ) ([]*storage.Node, bool, error) {
-	return e.tryCollectNodesFromPropertyIndexInLiteralAnyOf(ctx, nodePattern, whereClause, nil)
+	return e.tryCollectNodesFromPropertyIndexInLiteralAnyOf(ctx, nodePattern, whereView, nil)
 }
 
 // tryCollectNodesFromPropertyIndexInLiteralAnyOf is
@@ -528,10 +531,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteral(
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereView braceView,
 	anyOf []string,
 ) ([]*storage.Node, bool, error) {
-	property, listValues, ok := e.parseSimpleIndexedInLiteral(ctx, nodePattern.variable, whereClause)
+	property, listValues, ok := e.parseSimpleIndexedInLiteral(ctx, nodePattern.variable, whereView)
 	if !ok {
 		return nil, false, nil
 	}
@@ -595,19 +598,20 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereView braceView,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
-	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
+	clauseView := unwrapOuterView(whereView)
+	clause := clauseView.text()
 	if clause == "" {
 		return nil, false, nil
 	}
 
 	// 1) Simple clause (param or literal list).
-	if nodes, used, err := e.tryCollectNodesFromPropertyIndexIn(nodePattern, clause, params); used || err != nil {
+	if nodes, used, err := e.tryCollectNodesFromPropertyIndexIn(nodePattern, clauseView, params); used || err != nil {
 		return nodes, used, err
 	}
-	if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, nodePattern, clause); used || err != nil {
+	if nodes, used, err := e.tryCollectNodesFromPropertyIndexInLiteral(ctx, nodePattern, clauseView); used || err != nil {
 		return nodes, used, err
 	}
 
@@ -615,12 +619,12 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 	// pruning seek (see over-fetch-only argument in the doc comment above).
 	// A label disjunction among the conjuncts names the labels a match must
 	// carry, for a pattern without labels (#858).
-	if findTopLevelKeyword(clause, " AND ") > 0 {
-		conjuncts := splitTopLevelAndConjuncts(clause)
+	if findTopLevelKeyword(clauseView, " AND ") > 0 {
+		conjuncts := splitTopLevelAndConjuncts(clauseView)
 		anyOf := whereLabelDisjunctionConjunct(nodePattern.variable, conjuncts)
 		for _, raw := range conjuncts {
-			term := unwrapOuterParens(strings.TrimSpace(raw))
-			if term == "" {
+			term := unwrapOuterView(raw)
+			if term.empty() {
 				continue
 			}
 			if nodes, used, err := e.tryCollectNodesFromPropertyIndexInAnyOf(nodePattern, term, params, anyOf); used || err != nil {
@@ -652,15 +656,16 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInCompound(
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereView braceView,
 ) ([]*storage.Node, bool, error) {
-	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
+	clauseView := unwrapOuterView(whereView)
+	clause := clauseView.text()
 	if clause == "" {
 		return nil, false, nil
 	}
 
 	// 1) Simple clause (a lone equality, no conjunction).
-	if nodes, used, err := e.tryCollectNodesFromPropertyIndex(ctx, nodePattern, clause); used || err != nil {
+	if nodes, used, err := e.tryCollectNodesFromPropertyIndex(ctx, nodePattern, clauseView); used || err != nil {
 		return nodes, used, err
 	}
 
@@ -669,12 +674,12 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 	// comment above). A label disjunction among the conjuncts
 	// (n.id = $id AND (n:A OR n:B)) names the labels a match must carry, for
 	// a pattern without labels (#858).
-	if findTopLevelKeyword(clause, " AND ") > 0 {
-		conjuncts := splitTopLevelAndConjuncts(clause)
+	if findTopLevelKeyword(clauseView, " AND ") > 0 {
+		conjuncts := splitTopLevelAndConjuncts(clauseView)
 		anyOf := whereLabelDisjunctionConjunct(nodePattern.variable, conjuncts)
 		for _, raw := range conjuncts {
-			term := unwrapOuterParens(strings.TrimSpace(raw))
-			if term == "" {
+			term := unwrapOuterView(raw)
+			if term.empty() {
 				continue
 			}
 			if nodes, used, err := e.tryCollectNodesFromPropertyIndexAnyOf(ctx, nodePattern, term, anyOf); used || err != nil {
@@ -695,14 +700,15 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexEqualityCompound(
 // otherwise full-scan labels.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereView braceView,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
+	whereClause := whereView.text()
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" || params == nil {
 		return nil, false, nil
 	}
-	orIdx := findTopLevelKeyword(clause, " OR ")
+	orIdx := findTopLevelKeyword((whereView).trim(), " OR ")
 	if orIdx <= 0 {
 		return nil, false, nil
 	}
@@ -712,8 +718,8 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 		return nil, false, nil
 	}
 
-	lprop, lvals, lok := e.parseSimpleIndexedInParam(nodePattern.variable, left, params)
-	rprop, rvals, rok := e.parseSimpleIndexedInParam(nodePattern.variable, right, params)
+	lprop, lvals, lok := e.parseSimpleIndexedInParam(nodePattern.variable, (((whereView).trim()).window(0, orIdx)).trim(), params)
+	rprop, rvals, rok := e.parseSimpleIndexedInParam(nodePattern.variable, (((whereView).trim()).window(orIdx+4, len(clause))).trim(), params)
 	if !lok || !rok {
 		return nil, false, nil
 	}
@@ -794,14 +800,15 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereView braceView,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
+	whereClause := whereView.text()
 	clause := strings.TrimSpace(whereClause)
 	if clause == "" {
 		return nil, false, nil
 	}
-	orIdx := findTopLevelKeyword(clause, " OR ")
+	orIdx := findTopLevelKeyword((whereView).trim(), " OR ")
 	if orIdx <= 0 {
 		return nil, false, nil
 	}
@@ -812,8 +819,8 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 	}
 
 	// Try to parse each branch as a simple indexed equality predicate.
-	lprop, lval, lok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, left)
-	rprop, rval, rok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, right)
+	lprop, lval, lok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, (((whereView).trim()).window(0, orIdx)).trim())
+	rprop, rval, rok := e.parseSimpleIndexedEquality(ctx, nodePattern.variable, (((whereView).trim()).window(orIdx+4, len(clause))).trim())
 	if !lok || !rok {
 		return nil, false, nil
 	}
@@ -878,10 +885,11 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 func (e *StorageExecutor) tryCollectNodesFromIDIn(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereClause braceView,
 	params map[string]interface{},
 ) ([]*storage.Node, bool, error) {
-	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
+	view := unwrapOuterView(whereClause)
+	clause := view.text()
 	if clause == "" {
 		return nil, false, nil
 	}
@@ -929,7 +937,7 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 		}
 		list = toAnySlice(raw)
 	} else {
-		value, constant := e.indexSeekConstant(ctx, right)
+		value, constant := e.indexSeekConstant(ctx, view.window(inIdx+4, len(clause)))
 		if !constant {
 			return nil, false, nil
 		}
@@ -1026,8 +1034,8 @@ const (
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 	ctx context.Context,
 	nodePattern nodePatternInfo,
-	whereClause string,
-	orderExpr string,
+	whereView braceView,
+	orderExpr braceView,
 	limit int,
 	mode indexOrderMode,
 ) ([]*storage.Node, bool, error) {
@@ -1039,7 +1047,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 	// BY because it accepts the seek only when the two name the same property.
 	var whereProp string
 	if mode == indexOrderExplicitNotNull {
-		parsed, ok := e.parseSimpleIndexedIsNotNull(nodePattern.variable, whereClause)
+		parsed, ok := e.parseSimpleIndexedIsNotNull(nodePattern.variable, whereView)
 		if !ok {
 			return nil, false, nil
 		}
@@ -1067,8 +1075,8 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		// A WHERE that bounds the first sort property (n.t > $last, the keyset
 		// form n.t > $t OR (n.t = $t AND n.id > $id)) starts the index scan at
 		// the bound, and rules out rows where it is null (#939).
-		bounds = impliedPropertyBounds(nodePattern.variable, spec.propName, whereClause, getParamsFromContext(ctx))
-		primaryNonNull = bounds.HasLower || bounds.HasUpper || e.indexedOrderRequiresNonNull(nodePattern.variable, spec.propName, whereClause)
+		bounds = impliedPropertyBounds(nodePattern.variable, spec.propName, whereView, getParamsFromContext(ctx))
+		primaryNonNull = bounds.HasLower || bounds.HasUpper || e.indexedOrderRequiresNonNull(nodePattern.variable, spec.propName, whereView)
 		if spec.descending && !primaryNonNull {
 			return nil, false, nil
 		}
@@ -1087,7 +1095,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 	}
 	label := labels[0]
 
-	nodes, used, err := e.collectIndexedOrderWindow(ctx, nodePattern, whereClause, orderSpecs, label, limit, bounds)
+	nodes, used, err := e.collectIndexedOrderWindow(ctx, nodePattern, whereView, orderSpecs, label, limit, bounds)
 	if mode == indexOrderExplicitNotNull {
 		// The index holds every row the explicit IS NOT NULL WHERE admits, so
 		// a shorter window is already the complete answer.
@@ -1112,12 +1120,12 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 // from schema index entries, avoiding label scans.
 func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(
 	nodePattern nodePatternInfo,
-	whereClause string,
+	whereView braceView,
 ) ([]*storage.Node, bool, error) {
 	if len(nodePattern.labels) == 0 {
 		return nil, false, nil
 	}
-	property, ok := e.parseSimpleIndexedIsNotNull(nodePattern.variable, whereClause)
+	property, ok := e.parseSimpleIndexedIsNotNull(nodePattern.variable, whereView)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1228,7 +1236,7 @@ func seekCandidateHasLabels(node *storage.Node, patternLabels, anyOf []string) b
 
 // whereLabelDisjunctionConjunct returns the labels of the first conjunct that
 // is a label disjunction on variable (whereLabelDisjunction), or nil.
-func whereLabelDisjunctionConjunct(variable string, conjuncts []string) []string {
+func whereLabelDisjunctionConjunct(variable string, conjuncts []braceView) []string {
 	for _, conjunct := range conjuncts {
 		if labels, ok := whereLabelDisjunction(variable, conjunct); ok {
 			return labels
@@ -1241,14 +1249,14 @@ func whereLabelDisjunctionConjunct(variable string, conjuncts []string) []string
 // one of a set of labels: v:A, v:A OR v:B …, or the label expression v:A|B,
 // with labels plain or backtick-quoted. A conjunction of labels (v:A:B) or any
 // other term is not one.
-func whereLabelDisjunction(variable, term string) ([]string, bool) {
+func whereLabelDisjunction(variable string, term braceView) ([]string, bool) {
 	want, ok := isOneSymbolicName(variable)
 	if !ok {
 		return nil, false
 	}
 	var labels []string
-	for _, alternative := range splitTopLevelOrTerms(unwrapOuterParens(strings.TrimSpace(term))) {
-		alternative = unwrapOuterParens(strings.TrimSpace(alternative))
+	for _, branch := range splitTopLevelOrTerms(unwrapOuterView(term)) {
+		alternative := unwrapOuterView(branch).text()
 		written, end, ok := scanSymbolicName(alternative, 0)
 		if !ok || symbolicNameValue(written) != want {
 			return nil, false
@@ -1277,24 +1285,25 @@ func whereLabelDisjunction(variable, term string) ([]string, bool) {
 	return labels, len(labels) > 0
 }
 
-func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variable, whereClause string) (property string, value interface{}, ok bool) {
-	clause := unwrapOuterParens(whereClause)
+func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variable string, whereClause braceView) (property string, value interface{}, ok bool) {
+	view := unwrapOuterView(whereClause)
+	clause := view.text()
 	if clause == "" {
 		return "", nil, false
 	}
 
 	// Only simple predicates are index-eligible: a = 1 XOR true is not an
 	// equality with (1 XOR true).
-	if hasTopLevelLogicalOperator(clause) {
+	if hasTopLevelLogicalOperator(view) {
 		return "", nil, false
 	}
 	for _, kw := range []string{"NOT", " IN ", " IS ", "<>", "!=", ">=", "<=", ">", "<"} {
-		if topLevelKeywordIndex(clause, kw) >= 0 {
+		if topLevelKeywordIndex(view, kw) >= 0 {
 			return "", nil, false
 		}
 	}
 
-	scan, comparison := scanComparisonChain(clause)
+	scan, comparison := scanComparisonChain(view)
 	if !comparison || scan.count != 1 {
 		return "", nil, false
 	}
@@ -1309,48 +1318,76 @@ func (e *StorageExecutor) parseSimpleIndexedEquality(ctx context.Context, variab
 
 	prop, isLeftVarProp := parseVariableProperty(left, variable)
 	if isLeftVarProp {
-		value, constant := e.indexSeekConstant(ctx, right)
+		value, constant := e.indexSeekConstant(ctx, view.spanWindow(scan.operandSpan(len(clause), 1)))
 		return prop, value, constant
 	}
 	prop, isRightVarProp := parseVariableProperty(right, variable)
 	if isRightVarProp {
-		value, constant := e.indexSeekConstant(ctx, left)
+		value, constant := e.indexSeekConstant(ctx, view.spanWindow(scan.operandSpan(len(clause), 0)))
 		return prop, value, constant
 	}
 	return "", nil, false
 }
 
-func (e *StorageExecutor) parseSimpleIndexedInParam(variable, whereClause string, params map[string]interface{}) (property string, values []interface{}, ok bool) {
-	clause := strings.TrimSpace(whereClause)
+// simpleIndexedIn reads a standalone `variable.property IN right` predicate,
+// unwrapping redundant parentheses. It is the one reader for both seek forms.
+func simpleIndexedIn(variable string, whereClause braceView) (property string, right braceView, ok bool) {
+	view := whereClause.trim()
+	clause := view.text()
 	for strings.HasPrefix(clause, "(") && strings.HasSuffix(clause, ")") && len(clause) >= 2 {
 		inner := strings.TrimSpace(clause[1 : len(clause)-1])
 		if inner == clause {
 			break
 		}
-		clause = inner
+		view = view.window(1, len(clause)-1).trim()
+		clause = view.text()
 	}
 	if clause == "" {
-		return "", nil, false
+		return "", braceView{}, false
 	}
 	// Keep this optimization deterministic and safe: only simple standalone IN predicates.
 	if containsFold(clause, " AND ") || containsFold(clause, " OR ") {
-		return "", nil, false
+		return "", braceView{}, false
 	}
-	inIdx := keywordIndexFrom(clause, "IN", 0, defaultKeywordScanOpts())
+	inIdx := keywordIndexFrom(clause, "IN", 0, defaultKeywordScanOpts(view))
 	if inIdx <= 0 || inIdx >= len(clause)-2 {
-		return "", nil, false
+		return "", braceView{}, false
 	}
 	left := strings.TrimSpace(clause[:inIdx])
-	right := strings.TrimSpace(clause[inIdx+2:])
-	if !strings.HasPrefix(right, "$") {
+	right = view.window(inIdx+2, len(clause)).trim()
+	if left == "" || right.text() == "" {
+		return "", braceView{}, false
+	}
+	property, ok = parseVariableProperty(left, variable)
+	return property, right, ok
+}
+
+// distinctIndexSeekValues drops null and repeated seek values in list order.
+func distinctIndexSeekValues(list []interface{}) []interface{} {
+	out := make([]interface{}, 0, len(list))
+	seen := make(map[string]struct{}, len(list))
+	for _, v := range list {
+		if v == nil {
+			continue
+		}
+		k := fmt.Sprintf("%T:%v", v, v)
+		if _, dup := seen[k]; dup {
+			continue
+		}
+		seen[k] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+func (e *StorageExecutor) parseSimpleIndexedInParam(variable string, whereView braceView, params map[string]interface{}) (property string, values []interface{}, ok bool) {
+	parsedProp, rightView, ok := simpleIndexedIn(variable, whereView)
+	right := rightView.text()
+	if !ok || !strings.HasPrefix(right, "$") {
 		return "", nil, false
 	}
 	paramName := strings.TrimSpace(strings.TrimPrefix(right, "$"))
 	if paramName == "" || params == nil {
-		return "", nil, false
-	}
-	parsedProp, ok := parseVariableProperty(left, variable)
-	if !ok {
 		return "", nil, false
 	}
 	raw, exists := params[paramName]
@@ -1361,52 +1398,12 @@ func (e *StorageExecutor) parseSimpleIndexedInParam(variable, whereClause string
 	if len(list) == 0 {
 		return "", []interface{}{}, true
 	}
-	out := make([]interface{}, 0, len(list))
-	seen := make(map[string]struct{}, len(list))
-	for _, v := range list {
-		if v == nil {
-			continue
-		}
-		k := fmt.Sprintf("%T:%v", v, v)
-		if _, dup := seen[k]; dup {
-			continue
-		}
-		seen[k] = struct{}{}
-		out = append(out, v)
-	}
-	return parsedProp, out, true
+	return parsedProp, distinctIndexSeekValues(list), true
 }
 
-func (e *StorageExecutor) parseSimpleIndexedInLiteral(ctx context.Context, variable, whereClause string) (property string, values []interface{}, ok bool) {
-	clause := strings.TrimSpace(whereClause)
-	for strings.HasPrefix(clause, "(") && strings.HasSuffix(clause, ")") && len(clause) >= 2 {
-		inner := strings.TrimSpace(clause[1 : len(clause)-1])
-		if inner == clause {
-			break
-		}
-		clause = inner
-	}
-	if clause == "" {
-		return "", nil, false
-	}
-	// Keep this optimization deterministic and safe: only simple standalone IN predicates.
-	if containsFold(clause, " AND ") || containsFold(clause, " OR ") {
-		return "", nil, false
-	}
-	inIdx := keywordIndexFrom(clause, "IN", 0, defaultKeywordScanOpts())
-	if inIdx <= 0 || inIdx >= len(clause)-2 {
-		return "", nil, false
-	}
-	left := strings.TrimSpace(clause[:inIdx])
-	right := strings.TrimSpace(clause[inIdx+2:])
-	if left == "" || right == "" {
-		return "", nil, false
-	}
-	parsedProp, ok := parseVariableProperty(left, variable)
-	if !ok {
-		return "", nil, false
-	}
-	if !isListLiteral(right) {
+func (e *StorageExecutor) parseSimpleIndexedInLiteral(ctx context.Context, variable string, whereClause braceView) (property string, values []interface{}, ok bool) {
+	parsedProp, right, ok := simpleIndexedIn(variable, whereClause)
+	if !ok || !isListLiteral(right.text()) {
 		return "", nil, false
 	}
 	rawList, constant := e.indexSeekConstant(ctx, right)
@@ -1417,20 +1414,7 @@ func (e *StorageExecutor) parseSimpleIndexedInLiteral(ctx context.Context, varia
 	if len(list) == 0 {
 		return parsedProp, []interface{}{}, true
 	}
-	out := make([]interface{}, 0, len(list))
-	seen := make(map[string]struct{}, len(list))
-	for _, v := range list {
-		if v == nil {
-			continue
-		}
-		k := fmt.Sprintf("%T:%v", v, v)
-		if _, dup := seen[k]; dup {
-			continue
-		}
-		seen[k] = struct{}{}
-		out = append(out, v)
-	}
-	return parsedProp, out, true
+	return parsedProp, distinctIndexSeekValues(list), true
 }
 
 // coerceInterfaceList returns a parameter list's elements as Cypher values
@@ -1441,16 +1425,15 @@ func coerceInterfaceList(v interface{}) []interface{} {
 	return items
 }
 
-func (e *StorageExecutor) parseSimpleIndexedIsNotNull(variable, whereClause string) (property string, ok bool) {
-	clause := strings.TrimSpace(whereClause)
-	clause = unwrapOuterParens(clause)
-	if clause == "" {
+func (e *StorageExecutor) parseSimpleIndexedIsNotNull(variable string, whereView braceView) (property string, ok bool) {
+	view := unwrapOuterView(whereView)
+	if view.empty() {
 		return "", false
 	}
-	parts := splitTopLevelAndConjuncts(clause)
+	parts := splitTopLevelAndConjuncts(view)
 	targetProp := ""
 	for _, raw := range parts {
-		part := strings.TrimSpace(raw)
+		part := raw.trim().text()
 		if part == "" {
 			continue
 		}
@@ -1502,17 +1485,27 @@ func unwrapOuterParens(clause string) string {
 	return out
 }
 
+// Author: #1663 lane. Source counterpart of the existing whole-parenthesis
+// grammar; comments are removed through its canonical Source rewrite.
+func unwrapOuterView(view braceView) braceView {
+	if view.empty() {
+		return view
+	}
+	return logicalOperandView(view.withoutComments())
+}
+
 // splitTopLevelAndConjuncts splits a WHERE clause into its top-level AND
 // conjuncts. An AND inside a string, brackets or a CASE … END block (a WHEN
 // condition, #699) belongs to its operand. It is the one AND splitter of the
 // WHERE planners (index seek, cartesian and CREATE / MERGE filters, CALL
 // subquery correlation).
-func splitTopLevelAndConjuncts(clause string) []string {
-	if topLevelKeywordIndex(clause, "OR") >= 0 || topLevelKeywordIndex(clause, "XOR") >= 0 {
-		return []string{strings.TrimSpace(clause)}
+func splitTopLevelAndConjuncts(view braceView) []braceView {
+	clause := view.text()
+	if topLevelKeywordIndex(view, "OR") >= 0 || topLevelKeywordIndex(view, "XOR") >= 0 {
+		return []braceView{view.trim()}
 	}
-	paren, bracket, brace, caseDepth := 0, 0, 0, 0
-	parts := make([]string, 0, 2)
+	paren, bracket, brace, caseDepth := 0, 0, cyphertext.BraceDepth(0), 0
+	parts := make([]braceView, 0, 2)
 	start := 0
 	for i := 0; i < len(clause); i++ {
 		if end, skipped := skipCypherLexicalToken(clause, i); skipped {
@@ -1520,56 +1513,56 @@ func splitTopLevelAndConjuncts(clause string) []string {
 			continue
 		}
 		ch := clause[i]
-		switch ch {
-		case '(':
+		switch {
+		case ch == '(':
 			paren++
 			continue
-		case ')':
+		case ch == ')':
 			if paren > 0 {
 				paren--
 			}
 			continue
-		case '[':
+		case ch == '[':
 			bracket++
 			continue
-		case ']':
+		case ch == ']':
 			if bracket > 0 {
 				bracket--
 			}
 			continue
-		case '{':
-			brace++
+		case cyphertext.IsOpenBrace(ch):
+			brace.Open()
 			continue
-		case '}':
+		case cyphertext.IsCloseBrace(ch):
 			if brace > 0 {
-				brace--
+				brace.Close(false)
 			}
 			continue
-		case 'C', 'c':
-			if caseKeywordAt(clause, i, "CASE") {
+		case ch == 'C', ch == 'c':
+			if caseKeywordAt(view, i, "CASE") {
 				caseDepth++
 				i += len("CASE") - 1
 				continue
 			}
-		case 'E', 'e':
-			if caseDepth > 0 && caseKeywordAt(clause, i, "END") {
+		case ch == 'E', ch == 'e':
+			if caseDepth > 0 && caseKeywordAt(view, i, "END") {
 				caseDepth--
 				i += len("END") - 1
 				continue
 			}
 		}
-		if paren == 0 && bracket == 0 && brace == 0 && caseDepth == 0 && i+3 <= len(clause) && strings.EqualFold(clause[i:i+3], "AND") {
+		if paren == 0 && bracket == 0 && brace == 0 && caseDepth == 0 && cyphertext.KeywordEnd(clause, i, "AND", cyphertext.CypherWord) == i+3 {
 			prevOK := i == 0 || cyphertext.IsWhitespaceAt(clause, i-1) || clause[i-1] == '('
 			nextIdx := i + 3
 			nextOK := nextIdx >= len(clause) || cyphertext.IsWhitespaceAt(clause, nextIdx) || clause[nextIdx] == ')'
 			if prevOK && nextOK {
-				parts = append(parts, strings.TrimSpace(clause[start:i]))
+				parts = append(parts, view.window(start, i).trim())
 				start = nextIdx
 				i = nextIdx - 1
 			}
 		}
 	}
-	parts = append(parts, strings.TrimSpace(clause[start:]))
+	parts = append(parts, view.window(start, len(clause)).trim())
 	return parts
 }
 
@@ -1604,7 +1597,7 @@ func (e *StorageExecutor) tryEvaluateConstantBooleanConjunct(clause string) (val
 }
 
 func topLevelSymbolIndex(expr, sym string) int {
-	return findTopLevelOperator(expr, sym, false, true)
+	return findTopLevelSymbol(expr, sym, false, true)
 }
 
 func parseLiteralValue(raw string) (interface{}, bool) {
@@ -1662,7 +1655,7 @@ func parseVariableProperty(expr, variable string) (string, bool) {
 
 func topLevelEqualsIndex(clause string) int {
 	for offset := 0; offset < len(clause); {
-		index := findTopLevelOperator(clause[offset:], "=", false, true)
+		index := findTopLevelSymbol(clause[offset:], "=", false, true)
 		if index < 0 {
 			return -1
 		}
@@ -1845,11 +1838,11 @@ func (e *StorageExecutor) collectNodesFromIndexedProperty(
 // number or string literal or parameter (p.age > 30, 18 <= p.age < 65,
 // p.name >= $from AND p.name < $to). Only the bounds narrow the seed; the
 // caller still evaluates the whole WHERE on every candidate (#820).
-func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(nodePattern nodePatternInfo, whereClause string, params map[string]interface{}) ([]*storage.Node, bool, error) {
+func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(nodePattern nodePatternInfo, whereView braceView, params map[string]interface{}) ([]*storage.Node, bool, error) {
 	if len(nodePattern.labels) == 0 {
 		return nil, false, nil
 	}
-	property, bounds, ok := parseIndexedRangeBounds(nodePattern.variable, whereClause, params)
+	property, bounds, ok := parseIndexedRangeBounds(nodePattern.variable, whereView, params)
 	if !ok {
 		return nil, false, nil
 	}
@@ -1866,13 +1859,14 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(nodePattern node
 // parseIndexedRangeBounds finds, among the top-level AND conjuncts of a
 // WHERE, comparisons of variable.property with a literal or parameter, and
 // returns the bounds they place on the first such property.
-func parseIndexedRangeBounds(variable, whereClause string, params map[string]interface{}) (property string, bounds storage.PropertyIndexBounds, ok bool) {
-	clause := unwrapOuterParens(strings.TrimSpace(whereClause))
+func parseIndexedRangeBounds(variable string, whereView braceView, params map[string]interface{}) (property string, bounds storage.PropertyIndexBounds, ok bool) {
+	clauseView := unwrapOuterView(whereView)
+	clause := clauseView.text()
 	if clause == "" {
 		return "", bounds, false
 	}
-	for _, raw := range splitTopLevelAndConjuncts(clause) {
-		operands, operators, isChain := splitComparisonChain(unwrapOuterParens(strings.TrimSpace(raw)))
+	for _, raw := range splitTopLevelAndConjuncts(clauseView) {
+		operands, operators, isChain := splitComparisonChain(unwrapOuterView(raw))
 		if !isChain {
 			continue
 		}
@@ -1947,15 +1941,15 @@ func mirroredComparison(operator string) string {
 // reads and the filtered count (tryStreamPipelineFilteredNodeCount) both seed
 // from it, so a lookup that uses an index for rows uses it for count(*) too
 // (#820).
-func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereClause string, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
+func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Context, nodePattern nodePatternInfo, whereView braceView, hint pipelineMatchPhysicalHint) (nodes []*storage.Node, whereApplied bool, used bool, err error) {
 	params := getParamsFromContext(ctx)
-	if hint.limit > 0 && hint.orderExpr != "" {
+	if hint.limit > 0 && !hint.orderExpr.empty() {
 		orderedPlans := []func() ([]*storage.Node, bool, error){
 			func() ([]*storage.Node, bool, error) {
-				return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit, indexOrderExplicitNotNull)
+				return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereView, hint.orderExpr, hint.limit, indexOrderExplicitNotNull)
 			},
 			func() ([]*storage.Node, bool, error) {
-				return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereClause, hint.orderExpr, hint.limit, indexOrderGeneral)
+				return e.tryCollectNodesFromPropertyIndexOrderLimit(ctx, nodePattern, whereView, hint.orderExpr, hint.limit, indexOrderGeneral)
 			},
 		}
 		for _, plan := range orderedPlans {
@@ -1969,7 +1963,7 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 			}
 		}
 	}
-	if nodes, used, err := e.tryCollectNodesFromIDEqualityCompound(ctx, nodePattern, whereClause, params); err != nil || used {
+	if nodes, used, err := e.tryCollectNodesFromIDEqualityCompound(ctx, nodePattern, whereView, params); err != nil || used {
 		return nodes, false, used, err
 	}
 	// When an id IN list predicate is the whole WHERE, its seek returns
@@ -1978,13 +1972,13 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 	// every node against the whole list: CALL { … } IN TRANSACTIONS batches,
 	// which select their rows by id(n) IN $ids, were quadratic in the batch
 	// size (#703).
-	if nodes, used, err := e.tryCollectNodesFromIDIn(ctx, nodePattern, whereClause, params); err != nil || used {
+	if nodes, used, err := e.tryCollectNodesFromIDIn(ctx, nodePattern, whereView, params); err != nil || used {
 		return nodes, used, used, err
 	}
 	// An id IN list among AND conditions seeks the same way; the caller
 	// still evaluates the whole WHERE on the nodes it selects.
-	if findTopLevelKeyword(whereClause, " AND ") > 0 {
-		for _, conjunct := range splitTopLevelAndConjuncts(whereClause) {
+	if findTopLevelKeyword(whereView, " AND ") > 0 {
+		for _, conjunct := range splitTopLevelAndConjuncts(whereView) {
 			if nodes, used, err := e.tryCollectNodesFromIDIn(ctx, nodePattern, conjunct, params); err != nil || used {
 				return nodes, false, used, err
 			}
@@ -1996,16 +1990,16 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 		inList  bool
 	}{
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereClause, params)
+			return e.tryCollectNodesFromPropertyIndexInOrParam(nodePattern, whereView, params)
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexOrEquality(ctx, nodePattern, whereClause, params)
+			return e.tryCollectNodesFromPropertyIndexOrEquality(ctx, nodePattern, whereView, params)
 		}},
 		{inList: true, collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern, whereClause, params)
+			return e.tryCollectNodesFromPropertyIndexInCompound(ctx, nodePattern, whereView, params)
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, nodePattern, whereClause)
+			return e.tryCollectNodesFromPropertyIndexEqualityCompound(ctx, nodePattern, whereView)
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
 			// Inline pattern properties ({id: $id}) on an indexed property.
@@ -2025,10 +2019,10 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 			return labelled, true, nil
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexRange(nodePattern, whereClause, params)
+			return e.tryCollectNodesFromPropertyIndexRange(nodePattern, whereView, params)
 		}},
 		{collect: func() ([]*storage.Node, bool, error) {
-			return e.tryCollectNodesFromPropertyIndexNotNull(nodePattern, whereClause)
+			return e.tryCollectNodesFromPropertyIndexNotNull(nodePattern, whereView)
 		}},
 	}
 	for _, plan := range indexedPlans {
@@ -2047,7 +2041,7 @@ func (e *StorageExecutor) collectPipelineIndexedNodeCandidates(ctx context.Conte
 			// (quadratic in the list for a list that names every node).
 			// Checked only once the index answered, so a read that takes
 			// another route doesn't parse its WHERE for it.
-			exact := plan.inList && e.whereIsSimpleIndexedIn(ctx, nodePattern.variable, whereClause, params)
+			exact := plan.inList && e.whereIsSimpleIndexedIn(ctx, nodePattern.variable, whereView, params)
 			return nodes, exact, true, nil
 		}
 	}

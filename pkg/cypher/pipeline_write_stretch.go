@@ -2,7 +2,6 @@ package cypher
 
 import (
 	"context"
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -154,19 +153,20 @@ func analyzeStretchClause(ctx context.Context, clause pipelineClause, reads, wri
 // stands for any. For a pattern a clause writes (written), a node that is only
 // a variable ((a) in CREATE (a)-[:R]->(b)) is one bound before, not a node
 // the clause creates.
-func addStretchPattern(pattern string, tokens *stretchTokens, written bool) {
-	eachPatternElement(pattern, func(opener byte, element string) {
-		inner := element[1 : len(element)-1]
+func addStretchPattern(pattern braceView, tokens *stretchTokens, written bool) {
+	eachPatternElementSpan(pattern.text(), func(opener byte, start, end int) {
+		innerView := pattern.window(start+1, end-1)
+		inner := innerView.text()
 		head := inner
-		brace := indexByteOutsideBackticks(inner, '{')
-		if brace >= 0 {
+		brace, closing, _, present := innerView.firstBrace()
+		if present {
 			head = inner[:brace]
-			addStretchMapKeys(inner[brace:], tokens)
+			addStretchMapKeys(innerView.window(brace, closing+1), tokens)
 		}
 		if opener == '(' {
 			variable, chain, hasLabels := splitNodeHead(head)
 			if !hasLabels {
-				if written && brace < 0 && variable != "" {
+				if written && !present && variable != "" {
 					return
 				}
 				tokens.anyNode = true
@@ -215,22 +215,22 @@ func addStretchLabelChain(chain string, tokens *stretchTokens) {
 }
 
 // addStretchMapKeys records the keys of a "{k: v, …}" map.
-func addStretchMapKeys(text string, tokens *stretchTokens) {
-	end := cyphertext.FindMatchingDelimiter(text, 0, '{', '}', cyphertext.OpeningDelimiter)
-	if end < 0 {
+func addStretchMapKeys(view braceView, tokens *stretchTokens) {
+	entries, valid := view.keyedEntries()
+	if !valid {
 		return
 	}
-	// The pattern effect visitor supplies CST Code with comments removed.
-	_ = forEachMapEntry(text[:end+1], mapCodeText, func(key, _ string) {
-		tokens.add(&tokens.keys, key)
-	})
+	for _, entry := range entries {
+		tokens.add(&tokens.keys, entry.key())
+	}
 }
 
 // addStretchSetWrites projects the existing mutation item reader onto writes.
 // Expression reads are supplied exclusively by the shared grammar-tree walk.
-func addStretchSetWrites(list string, writes *stretchTokens) {
-	for _, item := range splitSetAssignments(list) {
-		_, property, operator, right := splitSetAssignment(item)
+func addStretchSetWrites(list braceView, writes *stretchTokens) {
+	for _, itemView := range setAssignmentViews(list) {
+		item := readSetAssignment(itemView)
+		property, operator, right := item.property, item.operator, item.rightText()
 		switch {
 		case operator == ":":
 			addStretchLabelChain(":"+right, writes)
@@ -244,7 +244,7 @@ func addStretchSetWrites(list string, writes *stretchTokens) {
 	}
 }
 
-func addStretchRemoveWrites(list string, writes *stretchTokens) {
+func addStretchRemoveWrites(list braceView, writes *stretchTokens) {
 	items, err := parseRemoveItems(list)
 	if err != nil {
 		writes.everything = true

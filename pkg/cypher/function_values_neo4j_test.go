@@ -81,7 +81,7 @@ func TestFunctionNullAndPointValues(t *testing.T) {
 	}
 	// The evaluator itself, below the compile-time argument count check:
 	// point.withinBBox with other than three arguments is null.
-	require.Nil(t, exec.evaluateExpressionWithContext(ctx, "point.withinBBox(point({x: 1, y: 1}), point({x: 0, y: 0}))", nil, nil))
+	require.Nil(t, exec.evaluateExpressionWithContext(ctx, expressionBraceView("point.withinBBox(point({x: 1, y: 1}), point({x: 0, y: 0}))"), nil, nil))
 }
 
 // TestTrimSpecificationForms pins trim(specification, [character,] original),

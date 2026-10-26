@@ -11,7 +11,7 @@ import (
 // evaluateCypherSubscript owns receiver/index evaluation order and subscript
 // value checks for row, compiled fallback and context evaluators. Even a null
 // receiver evaluates its index; an index error must not disappear into null.
-func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript string, evaluate func(string) (interface{}, bool, error)) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript braceView, evaluate func(braceView) (interface{}, bool, error)) (interface{}, bool, error) {
 	base, ok, err := evaluate(baseExpression)
 	if err != nil {
 		return nil, false, err
@@ -19,8 +19,8 @@ func (e *StorageExecutor) evaluateCypherSubscript(baseExpression, subscript stri
 	if !ok {
 		return nil, false, nil
 	}
-	if from, to, slice := staticSliceBounds(subscript); slice {
-		return evaluateCypherListSlice(base, strings.TrimSpace(from), strings.TrimSpace(to), evaluate)
+	if from, to, slice := staticSliceBounds(subscript.text()); slice {
+		return evaluateCypherListSlice(base, subscript.window(0, len(from)).trim(), subscript.window(len(subscript.text())-len(to), len(subscript.text())).trim(), evaluate)
 	}
 	indexValue, ok, err := evaluate(subscript)
 	if err != nil {
@@ -90,9 +90,9 @@ func listSubscriptIndexError(base, index interface{}) error {
 	return localizedStatusError("Neo.ClientError.Statement.TypeError", "InvalidArgumentType", message)
 }
 
-func evaluateCypherListSlice(base interface{}, lowerExpression, upperExpression string, evaluate func(string) (interface{}, bool, error)) (interface{}, bool, error) {
-	bound := func(expression string) (interface{}, bool, error) {
-		if expression == "" {
+func evaluateCypherListSlice(base interface{}, lowerExpression, upperExpression braceView, evaluate func(braceView) (interface{}, bool, error)) (interface{}, bool, error) {
+	bound := func(expression braceView) (interface{}, bool, error) {
+		if expression.text() == "" {
 			return nil, true, nil
 		}
 		return evaluate(expression)
@@ -107,7 +107,7 @@ func evaluateCypherListSlice(base interface{}, lowerExpression, upperExpression 
 	}
 	// Evaluate both bounds before null propagation so arithmetic failures
 	// remain visible, but a null slice needs no runtime bound-type check.
-	if base == nil || lowerExpression != "" && lower == nil || upperExpression != "" && upper == nil {
+	if base == nil || lowerExpression.text() != "" && lower == nil || upperExpression.text() != "" && upper == nil {
 		return nil, true, nil
 	}
 	for _, value := range []interface{}{lower, upper} {
@@ -115,6 +115,6 @@ func evaluateCypherListSlice(base interface{}, lowerExpression, upperExpression 
 			return nil, false, invalidSubscriptTypeError("list slice bound requires an INTEGER", value)
 		}
 	}
-	value, ok := cypherListSlice(base, lower, upper, lowerExpression != "", upperExpression != "")
+	value, ok := cypherListSlice(base, lower, upper, lowerExpression.text() != "", upperExpression.text() != "")
 	return value, ok, nil
 }

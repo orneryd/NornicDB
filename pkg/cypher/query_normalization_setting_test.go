@@ -27,9 +27,9 @@ func TestQueryNormalizationSettingKeepsClassification(t *testing.T) {
 		"// c\nSHOW TRANSACTIONS",
 		"MATCH (n)\nRETURN rand() AS r",
 	} {
-		canonical, _ := canonicalizeQueryText(statement)
+		canonical, _ := canonicalizeQueryText(originalBraceView(statement))
 		want := QueryPermissionRequirements(t.Context(), canonical, RawSource)
-		wantWrite := looksLikeWriteQuery(canonical)
+		wantWrite := looksLikeWriteQuery(originalBraceView(canonical))
 		wantCacheable := isCacheableReadQuery(canonical)
 		wantInfo := *analyzer.Analyze(t.Context(), canonical)
 		for _, enabled := range []bool{true, false} {
@@ -37,7 +37,7 @@ func TestQueryNormalizationSettingKeepsClassification(t *testing.T) {
 			config.SetCypherQueryNormalizationEnabled(enabled)
 			analyzer.ClearCache()
 			require.Equal(t, want, QueryPermissionRequirements(t.Context(), statement, RawSource), "%q enabled=%v", statement, enabled)
-			require.Equal(t, wantWrite, looksLikeWriteQuery(statement), "%q enabled=%v", statement, enabled)
+			require.Equal(t, wantWrite, looksLikeWriteQuery(originalBraceView(statement)), "%q enabled=%v", statement, enabled)
 			require.Equal(t, wantCacheable, isCacheableReadQuery(statement), "%q enabled=%v", statement, enabled)
 			info := analyzer.Analyze(t.Context(), statement)
 			require.Equal(t, wantInfo.IsWriteQuery, info.IsWriteQuery, "%q enabled=%v", statement, enabled)
@@ -47,10 +47,10 @@ func TestQueryNormalizationSettingKeepsClassification(t *testing.T) {
 	}
 	require.True(t, QueryPermissionRequirements(t.Context(), "/* c */ CREATE (n:X)", RawSource).Write)
 	require.False(t, QueryPermissionRequirements(t.Context(), "MATCH (n) // delete later\nRETURN n", RawSource).Write)
-	require.True(t, looksLikeWriteQuery("MATCH (n)\n\tSET\tn.x = 1"))
+	require.True(t, looksLikeWriteQuery(originalBraceView("MATCH (n)\n\tSET\tn.x = 1")))
 
 	canonical := "MATCH (n:Person {name: $name}) WHERE n.age > 30 RETURN n.name AS name"
-	require.Zero(t, testing.AllocsPerRun(100, func() { _ = classificationText(canonical) }))
+	require.Zero(t, testing.AllocsPerRun(100, func() { _ = classificationText(originalBraceView(canonical)) }))
 }
 
 // TestQueryNormalizationOffKeepsNormalizedStatements: with
@@ -89,7 +89,7 @@ func TestQueryNormalizationOffKeepsNormalizedStatements(t *testing.T) {
 		ctx := context.Background()
 		var out []outcome
 		for _, statement := range statements {
-			canonical, rewrite := canonicalizeQueryText(statement)
+			canonical, rewrite := canonicalizeQueryText(originalBraceView(statement))
 			require.Nil(t, rewrite, "the corpus is normalized: %q", statement)
 			require.Equal(t, statement, canonical)
 			result, err := exec.Execute(ctx, statement, nil)

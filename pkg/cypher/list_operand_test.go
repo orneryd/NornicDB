@@ -74,7 +74,7 @@ func TestSharedEvaluatorQuantifierListRule(t *testing.T) {
 	node := &storage.Node{ID: "n1", Properties: map[string]interface{}{"s": int64(5), "l": []interface{}{int64(1), int64(2)}}}
 	nodes := map[string]*storage.Node{"n": node}
 	eval := func(function, inner string) interface{} {
-		return exec.evaluateQuantifierWithContext(ctx, function, inner, nodes, nil, nil, nil, nil, 0)
+		return exec.evaluateQuantifierWithContext(ctx, function, originalBraceView(inner), nodes, nil, nil, nil, nil, 0)
 	}
 	assert.Equal(t, true, eval("all", "x IN n.s WHERE x > 1"))
 	assert.Equal(t, false, eval("none", "x IN n.s WHERE x > 1"))
@@ -89,11 +89,11 @@ func TestSharedEvaluatorQuantifierListRule(t *testing.T) {
 }
 
 func TestParseQuantifierArguments(t *testing.T) {
-	variable, list, predicate, ok := parseQuantifierArguments("x IN n.list WHERE x > 1")
+	variable, list, predicate, ok := parseQuantifierArguments(expressionBraceView("x IN n.list WHERE x > 1"))
 	require.True(t, ok)
 	assert.Equal(t, []string{"x", "n.list", "x > 1"}, []string{variable, list, predicate})
 	for _, inner := range []string{"x n.list WHERE x", "x IN n.list", " IN n.list WHERE x", "x IN  WHERE x", "x IN n.list WHERE "} {
-		_, _, _, ok := parseQuantifierArguments(inner)
+		_, _, _, ok := parseQuantifierArguments(originalBraceView(inner))
 		assert.False(t, ok, inner)
 	}
 }

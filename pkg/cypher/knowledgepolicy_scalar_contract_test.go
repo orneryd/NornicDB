@@ -42,7 +42,7 @@ func TestKnowledgePolicyScalarContracts(t *testing.T) {
 				require.NoError(t, engine.PutAccessMeta(id, &knowledgepolicy.AccessMetaEntry{TargetID: id, TargetScope: knowledgepolicy.ScopeNode, Fixed: knowledgepolicy.AccessMetaFixedFields{AccessCount: 42, LastAccessedAt: time.Now().Add(-time.Hour).UnixNano()}}))
 			}
 			node := makeNode(id, []string{tc.label}, tc.age)
-			value, handled := exec.evaluateKnowledgePolicyFunction(context.Background(), tc.expression, strings.ToLower(tc.expression), map[string]*storage.Node{"n": node}, nil)
+			value, handled := exec.evaluateKnowledgePolicyFunction(context.Background(), originalBraceView(tc.expression), strings.ToLower(tc.expression), map[string]*storage.Node{"n": node}, nil)
 			require.Equal(t, !tc.unhandled, handled)
 			if tc.unhandled {
 				return

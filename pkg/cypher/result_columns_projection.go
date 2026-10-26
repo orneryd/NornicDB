@@ -12,6 +12,7 @@ import (
 // aggregate is nested in a larger expression, aggregateExpr then being the
 // whole expression).
 type returnProjection struct {
+	view, aggregateView            braceView
 	expr                           string
 	variable                       string
 	direct                         bool
@@ -28,6 +29,7 @@ type returnProjection struct {
 // depends only on the clause text, so it is parsed once per text
 // (returnProjectionPlanFor). valid is false when the clause has no items.
 type returnProjectionPlan struct {
+	view  braceView
 	valid bool
 	star  bool
 	// starItems are the items after a leading * (RETURN *, x AS y, #883);
@@ -36,6 +38,7 @@ type returnProjectionPlan struct {
 	starProjections []returnProjection
 	distinct        bool
 	modifiers       string
+	modifiersView   braceView
 	projections     []returnProjection
 	columns         []string
 	hasAggregate    bool
@@ -47,12 +50,12 @@ type returnProjectionPlan struct {
 // unbounded distinct query texts.
 var returnProjectionPlans = struct {
 	sync.RWMutex
-	plans map[string]*returnProjectionPlan
-}{plans: make(map[string]*returnProjectionPlan)}
+	plans map[*cyphertext.Source]*returnProjectionPlan
+}{plans: make(map[*cyphertext.Source]*returnProjectionPlan)}
 
 const returnProjectionPlanLimit = 4096
 
-func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pipelineClause) *returnProjectionPlan {
+func returnProjectionPlanFor(ctx context.Context, clause braceView, retained ...pipelineClause) *returnProjectionPlan {
 	if len(retained) != 0 {
 		origin := retained[0]
 		program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram)
@@ -63,20 +66,20 @@ func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pip
 		if plan == nil || !plan.valid {
 			return nil
 		}
-		return plan
+		return plan.inView(origin.grammarView)
 	}
 	if ctx.Err() != nil {
 		return &returnProjectionPlan{}
 	}
 	returnProjectionPlans.RLock()
-	plan, cached := returnProjectionPlans.plans[clause]
+	plan, cached := returnProjectionPlans.plans[clause.source]
 	returnProjectionPlans.RUnlock()
 	if cached {
 		return plan
 	}
 	if plan = tryFlatReturnProjection(ctx, clause); plan == nil {
 		if node, ok := canonicalQueryClause(ctx, clause); ok {
-			plan = projectionPlanFromSyntax(node)
+			plan = projectionPlanFromSyntax(clause, node)
 		} else {
 			plan = &returnProjectionPlan{}
 		}
@@ -90,9 +93,9 @@ func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pip
 		return &returnProjectionPlan{}
 	}
 	if len(returnProjectionPlans.plans) >= returnProjectionPlanLimit {
-		returnProjectionPlans.plans = make(map[string]*returnProjectionPlan)
+		returnProjectionPlans.plans = make(map[*cyphertext.Source]*returnProjectionPlan)
 	}
-	returnProjectionPlans.plans[clause] = plan
+	returnProjectionPlans.plans[clause.source] = plan
 	returnProjectionPlans.Unlock()
 	return plan
 }
@@ -100,22 +103,26 @@ func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pip
 // tryFlatReturnProjection keeps ordinary scalar RETURN clauses on the short
 // scanner path. Nested expressions, quoted identifiers, strings, wildcards,
 // modifiers, and UNION clauses use the canonical syntax owner above.
-func tryFlatReturnProjection(ctx context.Context, clause string) *returnProjectionPlan {
-	clause = strings.TrimSpace(clause)
+func tryFlatReturnProjection(ctx context.Context, clauseView braceView) *returnProjectionPlan {
+	clause := strings.TrimSpace(clauseView.text())
 	const keyword = "RETURN"
 	if len(clause) <= len(keyword) || !strings.EqualFold(clause[:len(keyword)], keyword) || cyphertext.NamePartAt(clause, len(keyword)) {
 		return nil
 	}
-	body := clause[len(keyword):]
-	if strings.ContainsAny(body, "\x60()[]{}\r\n*'\"") || firstTopLevelModifierIndex(body) >= 0 || topLevelKeywordIndex(body, "UNION") >= 0 {
+	rawBodyView := clauseView.trim().window(len(keyword), len(clause))
+	body := rawBodyView.text()
+	if strings.ContainsAny(body, "\x60()[]{}\r\n*'\"") || firstTopLevelModifierIndex(rawBodyView) >= 0 || topLevelKeywordIndex(rawBodyView, "UNION") >= 0 {
 		return nil
 	}
-	plan := &returnProjectionPlan{}
-	body, plan.distinct = cutDistinct(pipelineClauseBody(clause, "RETURN"))
-	for _, rawItem := range splitTopLevelComma(body) {
-		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(rawItem), projectionAdmitted)
-		expr, alias := itemSource.expression, itemSource.alias
-		plan.addProjection(expr, alias)
+	plan := &returnProjectionPlan{view: clauseView}
+	bodyView, distinct := cutDistinct(clauseView.clauseBody("RETURN"))
+	plan.distinct = distinct
+	for _, rawItem := range bodyView.commaViews() {
+		item := readProjectionItemSource(ctx, rawItem, projectionAdmitted)
+		if !item.valid {
+			return nil
+		}
+		plan.addProjection(item.view, item.alias)
 	}
 	plan.valid = len(plan.projections) > 0
 	return plan
@@ -124,7 +131,7 @@ func tryFlatReturnProjection(ctx context.Context, clause string) *returnProjecti
 // withStarExpanded is the plan of RETURN *, items with the * written out
 // (starProjectionItems, #883).
 func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProjectionPlan {
-	expanded := &returnProjectionPlan{valid: plan.valid, distinct: plan.distinct, modifiers: plan.modifiers}
+	expanded := &returnProjectionPlan{view: plan.view, valid: plan.valid, distinct: plan.distinct, modifiers: plan.modifiers, modifiersView: plan.modifiersView}
 	named := make(map[string]bool, len(plan.starProjections))
 	for _, projection := range plan.starProjections {
 		named[projection.alias] = true
@@ -133,7 +140,7 @@ func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProj
 		if named[column] {
 			continue
 		}
-		expanded.addProjection(cyphertext.PrintIdentifier(column, cyphertext.IsIdentifier, cyphertext.AcceptedSource), column)
+		expanded.addProjection(plan.view.generated(cyphertext.PrintIdentifier(column, cyphertext.IsIdentifier, cyphertext.AcceptedSource)), column)
 		last := &expanded.projections[len(expanded.projections)-1]
 		last.variable = column
 		last.direct = true
@@ -151,30 +158,60 @@ func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProj
 // `RETURN *, items` (#883), as Neo4j orders the columns: each of columns, in
 // the given (name) order, as a variable item, except a column one of items
 // names (`RETURN *, a + 1 AS a` has the one column a), then items.
-func starProjectionItems(ctx context.Context, columns, items []string) []string {
+func starProjectionItems(ctx context.Context, source braceView, columns []string, items []braceView) []braceView {
 	named := make(map[string]bool, len(items))
 	for _, item := range items {
 		alias := readProjectionItemSource(ctx, item, projectionAdmitted).alias
 		named[alias] = true
 	}
-	out := make([]string, 0, len(columns)+len(items))
+	out := make([]braceView, 0, len(columns)+len(items))
 	for _, column := range columns {
 		if !named[column] {
 			variable := cyphertext.PrintIdentifier(column, cyphertext.IsIdentifier, cyphertext.AcceptedSource)
-			out = append(out, variable+" AS "+variable)
+			out = append(out, source.generated(variable+" AS "+variable))
 		}
 	}
 	return append(out, items...)
 }
 
-func (plan *returnProjectionPlan) addProjection(expr, alias string) {
-	aggregateName, aggregateExpr, distinct, isAggr := parsePipelineAggregate(expr)
-	if !isAggr && pipelineExpressionContainsAggregate(expr) {
+func (plan *returnProjectionPlan) inView(view braceView) *returnProjectionPlan {
+	if plan.view.source == view.source {
+		return plan
+	}
+	clone := *plan
+	project := func(input braceView) braceView {
+		if input.source == nil {
+			return input
+		}
+		return braceView{syntax: view.syntax, source: input.source.Rebase(plan.view.source, view.source)}
+	}
+	clone.view = view
+	clone.modifiersView = project(plan.modifiersView)
+	clone.projections = append([]returnProjection(nil), plan.projections...)
+	clone.starProjections = append([]returnProjection(nil), plan.starProjections...)
+	for _, items := range [][]returnProjection{clone.projections, clone.starProjections} {
+		for index := range items {
+			items[index].view = project(items[index].view)
+			items[index].aggregateView = project(items[index].aggregateView)
+		}
+	}
+	return &clone
+}
+
+func (plan *returnProjectionPlan) addProjection(view braceView, alias string) {
+	expr := view.text()
+	aggregateName, aggregateView, distinct, isAggr := parsePipelineAggregate(view)
+	aggregateExpr := ""
+	if isAggr {
+		aggregateExpr = aggregateView.text()
+	}
+	if !isAggr && pipelineExpressionContainsAggregate(view) {
 		isAggr = true
+		aggregateView = view
 		aggregateExpr = expr
 	}
 	plan.hasAggregate = plan.hasAggregate || isAggr
-	plan.projections = append(plan.projections, returnProjection{expr: expr, alias: alias, isAggr: isAggr, aggregateName: aggregateName, aggregateExpr: aggregateExpr, distinct: distinct})
+	plan.projections = append(plan.projections, returnProjection{view: view, aggregateView: aggregateView, expr: expr, alias: alias, isAggr: isAggr, aggregateName: aggregateName, aggregateExpr: aggregateExpr, distinct: distinct})
 	plan.columns = append(plan.columns, alias)
 }
 
@@ -182,7 +219,7 @@ func (plan *returnProjectionPlan) addProjection(expr, alias string) {
 // execution's projection plan, not another RETURN parser. The semantic walk
 // still uses nil for bare star and a star marker for mixed projections; the
 // execution header path expands wildcards through the complete statement owner.
-func pipelineReturnSourceColumns(ctx context.Context, clause string) []string {
+func pipelineReturnSourceColumns(ctx context.Context, clause braceView) []string {
 	plan := returnProjectionPlanFor(ctx, clause)
 	if !plan.valid {
 		return nil
@@ -196,6 +233,21 @@ func pipelineReturnSourceColumns(ctx context.Context, clause string) []string {
 	return append([]string{}, plan.columns...)
 }
 
+// projectionItemView is a transport adapter for the canonical projection item product.
+func projectionItemView(ctx context.Context, item braceView) (braceView, string, bool) {
+	product := readProjectionItemSource(ctx, item, projectionAdmitted)
+	return product.view, product.alias, product.valid
+}
+
+func parseProjectionExprAlias(ctx context.Context, item braceView) (string, string) {
+	product := readProjectionItemSource(ctx, item, projectionAdmitted)
+	return product.expression, product.alias
+}
+
+func projectionAliasIndex(ctx context.Context, item braceView) int {
+	return readProjectionItemSource(ctx, item, projectionAdmitted).as
+}
+
 // buildColumnsFromReturnItems builds column names from parsed return items
 func (e *StorageExecutor) buildColumnsFromReturnItems(items []returnItem) []string {
 	columns := make([]string, len(items))
@@ -206,18 +258,18 @@ func (e *StorageExecutor) buildColumnsFromReturnItems(items []returnItem) []stri
 }
 
 // parseYieldClause is execution's compatibility adapter of the canonical node.
-func parseYieldClause(ctx context.Context, source string) *yieldClause {
+func parseYieldClause(ctx context.Context, source braceView) *yieldClause {
 	clause, ok := canonicalQueryClause(ctx, source)
 	if !ok {
 		return nil
 	}
-	return yieldFromSyntax(clause)
+	return yieldFromSyntax(source, clause)
 }
 
 // callTailWithProjectionColumns consumes execution's WITH projection plan.
-func callTailWithProjectionColumns(ctx context.Context, withClause string) ([]string, bool) {
-	projection, _ := splitWithProjection(withClause)
-	plan := returnProjectionPlanFor(ctx, "RETURN "+pipelineClauseBody(projection, "WITH"))
+func callTailWithProjectionColumns(ctx context.Context, withClause braceView) ([]string, bool) {
+	projection, _ := projectionSemanticSourceAndTail(withClause, "WITH")
+	plan := returnProjectionPlanFor(ctx, projection.wrap("RETURN ", ""))
 	if !plan.valid || plan.star {
 		return nil, false
 	}
@@ -248,9 +300,9 @@ func projectionPlanScope(plan *returnProjectionPlan, previous map[string]struct{
 	return next
 }
 
-func pipelineProjectionScope(ctx context.Context, previous map[string]struct{}, clause string, imports pipelineRow) map[string]struct{} {
-	projection, _ := splitWithProjection(clause)
-	plan := returnProjectionPlanFor(ctx, "RETURN "+pipelineClauseBody(projection, "WITH"))
+func pipelineProjectionScope(ctx context.Context, previous map[string]struct{}, clause braceView, imports pipelineRow) map[string]struct{} {
+	projection, _ := projectionSemanticSourceAndTail(clause, "WITH")
+	plan := returnProjectionPlanFor(ctx, projection.wrap("RETURN ", ""))
 	next := projectionPlanScope(plan, previous)
 	if next == nil {
 		return nil
@@ -269,26 +321,33 @@ func pipelineProjectionScope(ctx context.Context, previous map[string]struct{}, 
 //
 // query is the canonical statement text supplied to pattern detection. The RETURN
 // offset is kept on its own so only the clause body below it is trimmed.
-func returnShapeItems(query string) []string {
-	returnAt := findKeywordIndex(query, "RETURN")
+func returnShapeItems(view braceView) []string {
+	query := view.text()
+	returnAt := findKeywordIndex(view, "RETURN")
 	if returnAt < 0 {
 		return nil
 	}
-	returnPart := strings.TrimSpace(query[returnAt+len("RETURN"):])
+	returnView := view.window(returnAt+len("RETURN"), len(query)).trim()
+	returnPart := returnView.text()
 
 	// Strip ORDER BY / SKIP / LIMIT.
 	end := len(returnPart)
 	for _, keyword := range []string{"ORDER BY", "SKIP", "LIMIT"} {
-		if idx := findKeywordIndex(returnPart, keyword); idx >= 0 && idx < end {
+		if idx := findKeywordIndex(returnView, keyword); idx >= 0 && idx < end {
 			end = idx
 		}
 	}
-	returnPart = strings.TrimSpace(returnPart[:end])
+	returnView = returnView.window(0, end).trim()
+	returnPart = returnView.text()
 	if returnPart == "" {
 		return nil
 	}
 
-	return splitTopLevelComma(returnPart)
+	var items []string
+	for _, item := range returnView.commaViews() {
+		items = append(items, item.text())
+	}
+	return items
 }
 
 // trimReturnItemAlias strips the established space-delimited "AS" alias from one RETURN item. The
@@ -303,15 +362,20 @@ func trimReturnItemAlias(item string) string {
 
 // restoreResultColumns preserves final RETURN spelling after quoted variables
 // have executed with internal identities. Parsed aliases are already decoded.
-func (names *quotedVariableNames) restoreResultColumns(result *ExecuteResult, parseItems func(string) []returnItem) {
-	if start, end, ok := finalReturnBody(names.Text); ok {
-		body, _ := cutDistinct(strings.TrimSpace(names.Text[start:end]))
-		if strings.HasPrefix(body, "*") && (len(body) == 1 || !cyphertext.NamePartAt(body, 1)) && topLevelKeywordIndex(body, "UNION") < 0 {
+func (names *quotedVariableNames) restoreResultColumns(result *ExecuteResult, parseItems func(braceView) []returnItem) {
+	if start, end, ok := finalReturnBody(names.canonicalView); ok {
+		canonicalView := names.canonicalView.window(start, end)
+		bodyView, _ := cutDistinct(canonicalView.trim())
+		body := bodyView.text()
+		if strings.HasPrefix(body, "*") && (len(body) == 1 || !cyphertext.NamePartAt(body, 1)) && topLevelKeywordIndex(bodyView, "UNION") < 0 {
 			sortColumnsByName(result)
 		} else {
-			originalText, _ := names.OriginalText(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExactBoundaries, func(text string) string { return names.restoreSourceText(text, quotedNamesOnly) })
-			items := parseItems(originalText)
-			canonicalItems := parseItems(names.Text[start:end])
+			originalSpan, mapped := names.OriginalSpan(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExactBoundaries)
+			if !mapped {
+				panic("cypher: RETURN presentation lost its original extent")
+			}
+			items := parseItems(names.originalView.spanWindow(originalSpan))
+			canonicalItems := parseItems(canonicalView)
 			if len(items) == len(result.Columns) && len(canonicalItems) == len(items) {
 				for index, item := range items {
 					if item.alias != strings.TrimSpace(item.expr) {

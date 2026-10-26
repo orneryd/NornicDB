@@ -61,7 +61,7 @@ func (cache *semanticValidationCache) add(query string) {
 // executor prevents optimized and general MERGE paths from accepting different
 // syntax or producing effects before a semantic failure.
 func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cypher string, cypher25 bool) error {
-	if findKeywordIndexInContext(cypher, "MERGE") < 0 {
+	if findKeywordIndexInContext(statementBraceView(ctx, cypher), "MERGE") < 0 {
 		return nil
 	}
 	// Literal-bearing MERGE statements share one compile verdict through the
@@ -92,21 +92,21 @@ func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cyphe
 	for _, clause := range clauses {
 		switch clause.kind {
 		case pipelineClauseMatch, pipelineClauseOptionalMatch:
-			addMergePatternBindings(scope, clause.text)
+			addMergePatternBindings(scope, clause.input(ctx))
 		case pipelineClauseCreate:
-			addMergePatternBindings(scope, clause.text)
+			addMergePatternBindings(scope, clause.input(ctx))
 		case pipelineClauseWith:
-			scope = projectedBindingScope(ctx, scope, clause.text)
+			scope = projectedBindingScope(ctx, scope, clause.view)
 		case pipelineClauseLet:
-			if err := bindPipelineLet(scope, clause.text); err != nil {
+			if err := bindPipelineLet(scope, clause.view); err != nil {
 				return err
 			}
 		case pipelineClauseUnwind:
-			if alias := unwindBindingName(clause.text); alias != "" {
+			if alias := unwindBindingName(clause.view); alias != "" {
 				scope.bind(alias)
 			}
 		case pipelineClauseMerge:
-			if err := e.validateMergeClause(scope, clause.text, cypher25); err != nil {
+			if err := e.validateMergeClause(scope, clause.view, cypher25); err != nil {
 				return err
 			}
 		}
@@ -118,11 +118,11 @@ func (e *StorageExecutor) validateMergeSemanticScopes(ctx context.Context, cyphe
 	return nil
 }
 
-func addMergePatternBindings(scope *semanticBindingScope, clause string) {
-	pattern := strings.TrimSpace(clause)
+func addMergePatternBindings(scope *semanticBindingScope, clause braceView) {
+	pattern := clause.trim()
 	for _, keyword := range []string{"OPTIONAL MATCH", "MATCH", "CREATE"} {
-		if startsWithKeywordFold(pattern, keyword) {
-			pattern = strings.TrimSpace(pattern[len(keyword):])
+		if startsWithKeywordFold(pattern.text(), keyword) {
+			pattern = afterWord(pattern, keyword)
 			break
 		}
 	}
@@ -132,7 +132,7 @@ func addMergePatternBindings(scope *semanticBindingScope, clause string) {
 	for _, name := range extractRelationshipVariables(pattern) {
 		scope.bind(name)
 	}
-	if name := extractPathAssignmentVariable(pattern); name != "" {
+	if name := extractPathAssignmentVariable(pattern.text()); name != "" {
 		scope.bind(name)
 	}
 }
@@ -140,10 +140,10 @@ func addMergePatternBindings(scope *semanticBindingScope, clause string) {
 // cypher25 adds Neo4j 2026.09's rule for a Cypher 25 statement: a property
 // value may not read a node or relationship the same MERGE creates
 // (MERGE (a {x: 1})-[:T]->(b {x: a.x})).
-func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause string, cypher25 bool) error {
+func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, clause braceView, cypher25 bool) error {
 	// Neo4j rejects EXISTS / COUNT / COLLECT { … } anywhere in a MERGE clause:
 	// its pattern, property maps and ON CREATE / ON MATCH SET actions.
-	if mayContainSubqueryExpression(clause) && len(findSubqueryExpressions(clause)) > 0 {
+	if mayContainSubqueryExpression(clause.text()) && len(findSubqueryExpressions(clause)) > 0 {
 		return newSemanticError(
 			"Neo.ClientError.Statement.SyntaxError",
 			"SubqueryInMerge",
@@ -151,7 +151,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		)
 	}
 	pattern := mergeClausePattern(clause)
-	if pattern == "" {
+	if pattern.empty() {
 		return nil
 	}
 	if mergePatternUsesParameterPredicate(pattern) {
@@ -185,7 +185,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		// Every relationship of a MERGE path (mergePathSegments).
 		segments := mergePathSegments(pattern)
 		if len(segments) < 2 {
-			segments = []string{pattern}
+			segments = []braceView{pattern}
 		}
 		for _, segment := range segments {
 			if err := validateRelationshipMutation(segment, mergeRelationshipMutation); err != nil {
@@ -194,7 +194,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 		}
 	}
 	for _, nodePattern := range e.splitNodePatterns(pattern) {
-		variable := createNodePatternVariable(nodePattern)
+		variable := createNodePatternVariable(nodePattern.text())
 		if variable == "" {
 			continue
 		}
@@ -209,7 +209,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 	for _, variable := range relationshipVariables {
 		scope.bind(variable)
 	}
-	if pathVariable := extractPathAssignmentVariable(pattern); pathVariable != "" {
+	if pathVariable := extractPathAssignmentVariable(pattern.text()); pathVariable != "" {
 		if scope.contains(pathVariable) {
 			return mergeVariableAlreadyBoundError(pathVariable)
 		}
@@ -229,11 +229,11 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 	return nil
 }
 
-func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope, clause string) error {
-	parts := splitMergeClauseActions(pipelineClauseBody(clause, "MERGE"), nil)
-	for _, clauses := range [...]mergeActionClauses{parts.onCreate, parts.onMatch} {
-		for index := 0; index < clauses.len(); index++ {
-			if err := e.validateSetClauseScope(scope, inlineOverflowAt(clauses.inline[:], clauses.overflow, index)); err != nil {
+func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope, clause braceView) error {
+	parts := readMergeSourceActions(clause)
+	for _, clauses := range [...][]braceView{parts.onCreate, parts.onMatch} {
+		for _, action := range clauses {
+			if err := e.validateSetClauseScope(scope, action); err != nil {
 				return err
 			}
 		}
@@ -241,25 +241,26 @@ func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope,
 	return nil
 }
 
-func mergeClausePattern(clause string) string {
-	return splitMergeClauseActions(pipelineClauseBody(clause, "MERGE"), nil).pattern
+func mergeClausePattern(clause braceView) braceView {
+	return readMergeSourceActions(clause).pattern
 }
 
-func mergePatternUsesParameterPredicate(pattern string) bool {
+func mergePatternUsesParameterPredicate(view braceView) bool {
+	pattern := view.text()
 	for index := 0; index < len(pattern); index++ {
 		character := pattern[index]
-		switch cypherLexicalByte(character) {
-		case cypherQuoteClass:
+		switch {
+		case (cypherLexicalByte(character)) == cypherQuoteClass:
 			index = skipCypherQuotedText(pattern, index, character) - 1
-		case '/':
+		case (cypherLexicalByte(character)) == '/':
 			if end := queryCommentEnd(pattern, index); end >= 0 {
 				index = end - 1
 			}
-		case '{':
-			if end := cyphertext.FindMatchingDelimiter(pattern, index, '{', '}', cyphertext.OpeningDelimiter); end > index {
+		case cyphertext.IsOpenBrace(cypherLexicalByte(character)):
+			if end, complete := view.close(index); complete && end > index {
 				index = end
 			}
-		case '$':
+		case (cypherLexicalByte(character)) == '$':
 			if dynamicLabelStartsAt(pattern, index) {
 				// A dynamic label or type ($(e), $all(e), $any(e)), not a
 				// parameter map.
@@ -277,24 +278,13 @@ func mergePatternUsesParameterPredicate(pattern string) bool {
 	return false
 }
 
-func (e *StorageExecutor) mergePatternContainsNullProperty(pattern string) bool {
-	for cursor := 0; cursor < len(pattern); cursor++ {
-		if pattern[cursor] != '{' {
-			continue
-		}
-		end := e.findMatchingBrace(pattern, cursor)
-		if end < 0 {
-			return false
-		}
-		for _, entry := range splitTopLevelComma(pattern[cursor+1 : end]) {
-			colon := findTopLevelMapKeyValueSeparator(entry)
-			if colon >= 0 && strings.EqualFold(strings.TrimSpace(entry[colon+1:]), "null") {
-				return true
-			}
-		}
-		cursor = end
+func (e *StorageExecutor) mergePatternContainsNullProperty(pattern braceView) bool {
+	containsNull := false
+	entries, _ := pattern.patternEntryViews()
+	for _, entry := range entries {
+		containsNull = containsNull || (cyphertext.KeywordEnd(entry.value.text(), 0, "null", cyphertext.CypherWord) == len(entry.value.text()))
 	}
-	return false
+	return containsNull
 }
 
 // validateMergePatternProperties rejects a MERGE pattern's property whose

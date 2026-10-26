@@ -15,10 +15,17 @@ func (e *StorageExecutor) ResultColumns(ctx context.Context, query string, incom
 	if source.Err != nil {
 		return nil, source.Err
 	}
-	query = source.Text
+	return e.resultColumns(ctx, sourceStatementView(source), incoming, cypher25)
+}
+
+func (e *StorageExecutor) resultColumns(ctx context.Context, view braceView, incoming resultmetadata.Scope, cypher25 bool) ([]string, error) {
+	if err := view.admission(); err != nil {
+		return nil, err
+	}
+	ctx = withBraceView(ctx, view)
 	var columns []string
 	var failure error
-	program := e.statementProjectionProgram(ctx, query, incoming, cypher25, nil)
+	program := e.statementProjectionProgram(ctx, view, incoming, cypher25, nil)
 	if !program.complete {
 		if program.err != nil {
 			return nil, program.err
@@ -61,7 +68,13 @@ func (e *StorageExecutor) StatementColumns(query string) []string {
 // StatementResultColumns is the strict public header view with this executor's
 // incoming record scope. Rewriters and transaction adapters preserve its error.
 func (e *StorageExecutor) StatementResultColumns(query string, stage SourceStage) ([]string, error) {
-	return e.ResultColumns(context.Background(), query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25", stage)
+	ctx := context.Background()
+	source := cyphertext.NewSource(ctx, query, stage)
+	if source.Err != nil {
+		return nil, source.Err
+	}
+	view := sourceStatementView(source)
+	return e.resultColumns(ctx, view, e.resultIncomingScope(), cypherGrammarVersion(view.text()) == "25")
 }
 
 // StatementResultColumnsContext is the public execution view, using the same
@@ -71,11 +84,18 @@ func (e *StorageExecutor) StatementResultColumnsContext(ctx context.Context, que
 	if source.Err != nil {
 		return nil, source.Err
 	}
-	query = source.Text
+	return e.statementResultColumns(ctx, sourceStatementView(source))
+}
+
+func (e *StorageExecutor) statementResultColumns(ctx context.Context, view braceView) ([]string, error) {
+	if err := view.admission(); err != nil {
+		return nil, err
+	}
+	ctx = withBraceView(ctx, view)
 	var columns []string
 	var failure error
-	cypher25 := cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25"
-	e.statementProjectionProgram(ctx, query, e.resultIncomingScope(), cypher25, e.participantSchemaForStatement(ctx, query)).facts.Visit(func(statement resultmetadata.Statement) {
+	cypher25 := cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(view.text()) == "25"
+	e.statementProjectionProgram(ctx, view, e.resultIncomingScope(), cypher25, e.participantSchemaForStatement(ctx, view.text())).facts.Visit(func(statement resultmetadata.Statement) {
 		statement.Columns.Visit(func(known []string) { columns = known }, func() { failure = unresolvedStatementError() })
 	}, func() { failure = unresolvedStatementError() }, func(reason resultmetadata.Unresolved) { failure = reason.Err })
 	return columns, failure
@@ -92,6 +112,15 @@ func knownResultColumns(names resultmetadata.Names) []string {
 // CachedResultColumns is a legacy cache-only hint for the Fabric consumers
 // being replaced by planned Facts. It never compiles or guesses a cold header.
 func (e *StorageExecutor) CachedResultColumns(ctx context.Context, query string, incoming []string) resultmetadata.Names {
+	return e.cachedResultColumnNames(ctx, query, incoming)
+}
+
+func (e *StorageExecutor) cachedResultColumns(ctx context.Context, view braceView, incoming []string) resultmetadata.Names {
+	return e.cachedResultColumnNames(ctx, view.text(), incoming)
+}
+
+// This owner only looks up names; it never constructs or classifies syntax.
+func (e *StorageExecutor) cachedResultColumnNames(ctx context.Context, query string, incoming []string) resultmetadata.Names {
 	cypher25 := cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25"
 	names := make(map[string]struct{}, len(incoming)+len(e.fabricRecordBindings))
 	for _, name := range incoming {
@@ -113,10 +142,10 @@ func (e *StorageExecutor) CachedResultColumns(ctx context.Context, query string,
 // clause readers. Ordinary UNION execution does not compile a scope program.
 func (e *StorageExecutor) statementProducesColumns(ctx context.Context, query string) bool {
 	start, end, _, ok := queryStatementWindow(ctx, query)
-	return ok && queryBodyProducesColumns(ctx, query, readQueryBody(ctx, query, start, end), false)
+	return ok && queryBodyProducesColumns(ctx, readQueryBody(ctx, statementBraceView(ctx, query), start, end), false)
 }
 
-func queryBodyProducesColumns(ctx context.Context, source string, body queryBody, directReturnsOnly bool) bool {
+func queryBodyProducesColumns(ctx context.Context, body queryBody, directReturnsOnly bool) bool {
 	for _, branch := range body.branches {
 		if branch.declined || branch.finished || len(branch.clauses) == 0 {
 			continue
@@ -130,7 +159,7 @@ func queryBodyProducesColumns(ctx context.Context, source string, body queryBody
 				continue
 			}
 			produced := false
-			projectedProcedureNames(ctx, last.text).Visit(func(names []string) { produced = len(names) > 0 }, func() { produced = false })
+			projectedProcedureNames(ctx, last.input(ctx)).Visit(func(names []string) { produced = len(names) > 0 }, func() { produced = false })
 			if produced {
 				return true
 			}
@@ -139,7 +168,7 @@ func queryBodyProducesColumns(ctx context.Context, source string, body queryBody
 				continue
 			}
 			start, end, ok := callClauseBody(ctx, last)
-			if ok && queryBodyProducesColumns(ctx, source, readQueryBody(ctx, source, start, end), false) {
+			if ok && queryBodyProducesColumns(ctx, readQueryBody(ctx, last.grammarView, start, end), false) {
 				return true
 			}
 		}
@@ -154,9 +183,16 @@ func (e *StorageExecutor) ResultProjection(ctx context.Context, query string, in
 	if source.Err != nil {
 		return resultmetadata.Projection{}
 	}
-	query = source.Text
+	return e.resultProjection(ctx, sourceStatementView(source), incoming)
+}
+
+func (e *StorageExecutor) resultProjection(ctx context.Context, view braceView, incoming []string) resultmetadata.Projection {
+	if view.admission() != nil {
+		return resultmetadata.Projection{}
+	}
+	ctx = withBraceView(ctx, view)
 	var projection resultmetadata.Projection
-	e.statementProjectionProgram(ctx, query, resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(query) == "25", nil).facts.Visit(func(statement resultmetadata.Statement) {
+	e.statementProjectionProgram(ctx, view, resultmetadata.KnownScope(incoming), cypherVersionFromContext(ctx) == "25" || cypherGrammarVersion(view.text()) == "25", nil).facts.Visit(func(statement resultmetadata.Statement) {
 		if len(statement.Branches) != 0 || len(statement.Clauses) == 0 {
 			return
 		}

@@ -76,7 +76,7 @@ func TestUnknownFunctionFailsInEveryClause(t *testing.T) {
 			// A graph a USE names is no call, its dots spaced or not, as the
 			// USE parser reads it.
 			for _, query := range []string{"USE graph.byName('x') RETURN 1", "USE graph . byName('x') RETURN 1"} {
-				require.NoError(t, validateKnownFunctions(query), query)
+				require.NoError(t, validateKnownFunctions(originalBraceView(query)), query)
 			}
 			// The statement's other semantic errors come first, as in Neo4j.
 			_, err := exec.Execute(ctx, "WITH 1 AS a RETURN nosuch(b)", nil)
@@ -96,9 +96,9 @@ func TestPluginFunctionPassesTheCheckInEveryClause(t *testing.T) {
 		return nil, false
 	}
 	t.Cleanup(func() { PluginFunctionLookup = previous })
-	err := validateKnownFunctions("UNWIND [1] AS x WITH x WHERE zzplugin.double(x) = 2 RETURN zzplugin.double(x)")
+	err := validateKnownFunctions(originalBraceView("UNWIND [1] AS x WITH x WHERE zzplugin.double(x) = 2 RETURN zzplugin.double(x)"))
 	require.NoError(t, err)
-	requireSemanticDetail(t, validateKnownFunctions("RETURN zzplugin.triple(1)"), "UnknownFunction")
+	requireSemanticDetail(t, validateKnownFunctions(originalBraceView("RETURN zzplugin.triple(1)")), "UnknownFunction")
 }
 
 // Under NORNICDB_PARSER=antlr, a statement the grammar rejects but NornicDB's
@@ -109,5 +109,5 @@ func TestUnknownFunctionBeforeANTLRParserError(t *testing.T) {
 	t.Cleanup(func() { config.SetParserType(previous) })
 	config.SetParserType(config.ParserTypeANTLR)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "unknown_function_antlr"))
-	requireSemanticDetail(t, exec.validateSyntax(context.Background(), "MATCH (n) RETURN nosuch(n) AS x LIMIT 1 OFFSET 1", true, syntaxStatement), "UnknownFunction")
+	requireSemanticDetail(t, exec.validateSyntax(context.Background(), originalBraceView("MATCH (n) RETURN nosuch(n) AS x LIMIT 1 OFFSET 1"), true, syntaxStatement), "UnknownFunction")
 }

@@ -42,53 +42,53 @@ func TestEvaluateExpressionFromValues_AdditionalBranches(t *testing.T) {
 		"nilVal":  nil,
 	}
 
-	require.Nil(t, exec.evaluateExpressionFromValues("", values))
-	require.Equal(t, "alice", exec.evaluateExpressionFromValues("n.name", values))
-	require.Equal(t, "T2", exec.evaluateExpressionFromValues("nodeMap.title", values))
-	require.Equal(t, int64(2), exec.evaluateExpressionFromValues("length(path)", values))
-	require.Equal(t, int64(3), exec.evaluateExpressionFromValues("size(xs)", values))
-	require.Equal(t, int64(4), exec.evaluateExpressionFromValues("size(asText)", values))
+	require.Nil(t, exec.evaluateExpressionFromValues(originalBraceView(""), values))
+	require.Equal(t, "alice", exec.evaluateExpressionFromValues(expressionBraceView("n.name"), values))
+	require.Equal(t, "T2", exec.evaluateExpressionFromValues(expressionBraceView("nodeMap.title"), values))
+	require.Equal(t, int64(2), exec.evaluateExpressionFromValues(expressionBraceView("length(path)"), values))
+	require.Equal(t, int64(3), exec.evaluateExpressionFromValues(expressionBraceView("size(xs)"), values))
+	require.Equal(t, int64(4), exec.evaluateExpressionFromValues(expressionBraceView("size(asText)"), values))
 	// size(null) is null: the legacy evaluator returned the length of the
 	// literal word "missing" (text-fallthrough), which broke size(null)
 	// semantics in computed rows.
-	require.Nil(t, exec.evaluateExpressionFromValues("size(missing)", values))
+	require.Nil(t, exec.evaluateExpressionFromValues(expressionBraceView("size(missing)"), values))
 
-	labels := exec.evaluateExpressionFromValues("labels(typedNode)", values).([]interface{})
+	labels := exec.evaluateExpressionFromValues(expressionBraceView("labels(typedNode)"), values).([]interface{})
 	require.Equal(t, []interface{}{"A", "B"}, labels)
 
-	relTypes := exec.evaluateExpressionFromValues("[r IN relationships(path) | type(r)]", values).([]interface{})
+	relTypes := exec.evaluateExpressionFromValues(originalBraceView("[r IN relationships(path) | type(r)]"), values).([]interface{})
 	require.Equal(t, []interface{}{"KNOWS"}, relTypes)
 
-	relList := exec.evaluateExpressionFromValues("relationships(path)", values).([]interface{})
+	relList := exec.evaluateExpressionFromValues(expressionBraceView("relationships(path)"), values).([]interface{})
 	require.Len(t, relList, 1)
 	rel := relList[0].(*storage.Edge)
 	require.Equal(t, "KNOWS", rel.Type)
 	require.Equal(t, "e1", string(rel.ID))
 
-	nodeList := exec.evaluateExpressionFromValues("nodes(path)", values).([]interface{})
+	nodeList := exec.evaluateExpressionFromValues(expressionBraceView("nodes(path)"), values).([]interface{})
 	require.Len(t, nodeList, 2)
 	require.Equal(t, "n1", string(nodeList[0].(*storage.Node).ID))
 	require.Equal(t, "bob", nodeList[1].(*storage.Node).Properties["name"])
 
-	require.Equal(t, "4:match_with_rel_eval_cov:n1", exec.evaluateExpressionFromValues("elementId(n)", values))
-	require.Equal(t, "map-id", exec.evaluateExpressionFromValues("id(typedNode)", values))
+	require.Equal(t, "4:match_with_rel_eval_cov:n1", exec.evaluateExpressionFromValues(expressionBraceView("elementId(n)"), values))
+	require.Equal(t, "map-id", exec.evaluateExpressionFromValues(expressionBraceView("id(typedNode)"), values))
 
-	mapLit := exec.evaluateExpressionFromValues("{name: n.name, cnt: size(xs)}", values).(map[string]interface{})
+	mapLit := exec.evaluateExpressionFromValues(expressionBraceView("{name: n.name, cnt: size(xs)}"), values).(map[string]interface{})
 	require.Equal(t, "alice", mapLit["name"])
 	require.Equal(t, int64(3), mapLit["cnt"])
 
-	dt := exec.evaluateExpressionFromValues("datetime(rowTime)", values)
+	dt := exec.evaluateExpressionFromValues(expressionBraceView("datetime(rowTime)"), values)
 	dtDateTime, ok := dt.(CypherDateTime)
 	require.True(t, ok, "expected CypherDateTime, got %T", dt)
 	require.Equal(t, "2026-03-20T20:22:20Z", dtDateTime.Time.UTC().Format(time.RFC3339))
-	require.Nil(t, exec.evaluateExpressionFromValues("datetime('not-a-time')", values))
+	require.Nil(t, exec.evaluateExpressionFromValues(expressionBraceView("datetime('not-a-time')"), values))
 
-	local, ok := exec.evaluateExpressionFromValues("localdatetime()", values).(CypherLocalDateTime)
+	local, ok := exec.evaluateExpressionFromValues(expressionBraceView("localdatetime()"), values).(CypherLocalDateTime)
 	require.True(t, ok, "expected CypherLocalDateTime")
 	require.False(t, local.Time.IsZero())
 
 	values["missing"] = nil
-	coalesced := exec.evaluateExpressionFromValues("coalesce(missing, n.name)", values)
+	coalesced := exec.evaluateExpressionFromValues(expressionBraceView("coalesce(missing, n.name)"), values)
 	require.Equal(t, "alice", coalesced)
 }
 
@@ -100,10 +100,10 @@ func TestEvaluateCaseExpressionFromValues_AdditionalBranches(t *testing.T) {
 		"n":      int64(2),
 	}
 
-	require.Equal(t, "hit", exec.evaluateCaseExpressionFromValues("CASE k WHEN 'v' THEN 'hit' ELSE 'miss' END", values))
-	require.Equal(t, "open", exec.evaluateCaseExpressionFromValues("CASE WHEN status = 'closed' THEN 'closed' ELSE 'open' END", values))
-	require.Equal(t, int64(2), exec.evaluateCaseExpressionFromValues("CASE WHEN n > 1 THEN 2 ELSE 0 END", values))
-	require.Nil(t, exec.evaluateCaseExpressionFromValues("CASE WHEN n < 0 THEN 2 END", values))
+	require.Equal(t, "hit", exec.evaluateCaseExpressionFromValues(expressionBraceView("CASE k WHEN 'v' THEN 'hit' ELSE 'miss' END"), values))
+	require.Equal(t, "open", exec.evaluateCaseExpressionFromValues(expressionBraceView("CASE WHEN status = 'closed' THEN 'closed' ELSE 'open' END"), values))
+	require.Equal(t, int64(2), exec.evaluateCaseExpressionFromValues(expressionBraceView("CASE WHEN n > 1 THEN 2 ELSE 0 END"), values))
+	require.Nil(t, exec.evaluateCaseExpressionFromValues(expressionBraceView("CASE WHEN n < 0 THEN 2 END"), values))
 }
 
 func TestParseLiteralValueFromComputedRow_AdditionalBranches(t *testing.T) {
@@ -143,18 +143,18 @@ func TestEvaluateConditionFromValues_AdditionalBranches(t *testing.T) {
 		"s": "x",
 	}
 
-	require.True(t, exec.evaluateConditionFromValues("a >= b", values))
-	require.True(t, exec.evaluateConditionFromValues("a > b", values))
-	require.True(t, exec.evaluateConditionFromValues("b <= a", values))
-	require.True(t, exec.evaluateConditionFromValues("b < a", values))
-	require.True(t, exec.evaluateConditionFromValues("s <> 'y'", values))
-	require.True(t, exec.evaluateConditionFromValues("NOT s = 'y'", values))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("a >= b"), values))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("a > b"), values))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("b <= a"), values))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("b < a"), values))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("s <> 'y'"), values))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("NOT s = 'y'"), values))
 	// Undefined identifiers evaluate to Cypher null in the shared evaluator
 	// (legacy clone returned the raw text, which broke IS NULL semantics).
-	require.True(t, exec.evaluateConditionFromValues("missing IS NULL", values))
-	require.False(t, exec.evaluateConditionFromValues("missing IS NOT NULL", values))
-	require.True(t, exec.evaluateConditionFromValues("a = 3 AND b = 2", values))
-	require.True(t, exec.evaluateConditionFromValues("a = 9 OR b = 2", values))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("missing IS NULL"), values))
+	require.False(t, exec.evaluateConditionFromValues(expressionBraceView("missing IS NOT NULL"), values))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("a = 3 AND b = 2"), values))
+	require.True(t, exec.evaluateConditionFromValues(expressionBraceView("a = 9 OR b = 2"), values))
 }
 
 func BenchmarkEvaluateConditionFromValues(b *testing.B) {
@@ -164,7 +164,7 @@ func BenchmarkEvaluateConditionFromValues(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		exec.evaluateConditionFromValues(conditions[i%len(conditions)], values)
+		exec.evaluateConditionFromValues(originalBraceView(conditions[i%len(conditions)]), values)
 	}
 }
 
@@ -178,7 +178,7 @@ func BenchmarkEvaluateCaseExpressionFromValues(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		exec.evaluateCaseExpressionFromValues(exprs[i%len(exprs)], values)
+		exec.evaluateCaseExpressionFromValues(originalBraceView(exprs[i%len(exprs)]), values)
 	}
 }
 
@@ -205,7 +205,7 @@ func BenchmarkEvaluateExpressionFromValues(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		exec.evaluateExpressionFromValues(exprs[i%len(exprs)], values)
+		exec.evaluateExpressionFromValues(originalBraceView(exprs[i%len(exprs)]), values)
 	}
 }
 
@@ -213,11 +213,11 @@ func TestEvaluateMapLiteralFromValues_AdditionalBranches(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_with_rel_map_cov"))
 	values := map[string]interface{}{"x": int64(1), "y": int64(2)}
 
-	require.Equal(t, map[string]interface{}{}, parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), "{}", values)))
-	_, parseErr := exec.evaluateMapLiteralFromValues(context.Background(), "{badpair}", values)
+	require.Equal(t, map[string]interface{}{}, parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), expressionBraceView("{}"), values)))
+	_, parseErr := exec.evaluateMapLiteralFromValues(context.Background(), expressionBraceView("{badpair}"), values)
 	require.Error(t, parseErr)
 
-	out := parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), "{a: x, b: {inner: y}}", values))
+	out := parsedTestValue(exec.evaluateMapLiteralFromValues(context.Background(), expressionBraceView("{a: x, b: {inner: y}}"), values))
 	require.Equal(t, int64(1), out["a"])
 	nested, ok := out["b"].(map[string]interface{})
 	require.True(t, ok)
@@ -227,5 +227,5 @@ func TestEvaluateMapLiteralFromValues_AdditionalBranches(t *testing.T) {
 func TestEvaluateExpressionFromValues_CoalesceParamContext(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "match_with_rel_coalesce_cov"))
 	ctx := withValueBindings(withParams(context.Background(), map[string]interface{}{"fallback": "z"}), map[string]interface{}{"missing": nil})
-	require.Equal(t, "z", exec.evaluateExpressionWithContext(ctx, "coalesce(missing, $fallback)", nil, nil))
+	require.Equal(t, "z", exec.evaluateExpressionWithContext(ctx, expressionBraceView("coalesce(missing, $fallback)"), nil, nil))
 }

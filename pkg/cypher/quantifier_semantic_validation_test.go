@@ -29,8 +29,8 @@ func TestQuantifierNumericPredicatesAcceptStaticNumericLists(t *testing.T) {
 }
 
 func TestQuantifierValidationIgnoresTextAndComments(t *testing.T) {
-	require.NoError(t, validateStaticQuantifierTypes("RETURN any(x IN ['a'] WHERE x /* gap */ IS NOT NULL) AS result"))
-	require.NoError(t, validateStaticQuantifierTypes("RETURN any(x IN ['a'] WHERE x = 'x * 2') AS result"))
+	require.NoError(t, validateStaticQuantifierTypes(originalBraceView("RETURN any(x IN ['a'] WHERE x /* gap */ IS NOT NULL) AS result")))
+	require.NoError(t, validateStaticQuantifierTypes(originalBraceView("RETURN any(x IN ['a'] WHERE x = 'x * 2') AS result")))
 	for _, query := range []string{
 		"RETURN any /* gap */ (x IN ['a'] WHERE x * 2 > 0) AS result",
 		"RETURN any(x IN /* gap */ ['a'] WHERE x * 2 > 0) AS result",
@@ -44,7 +44,7 @@ func TestQuantifierValidationIgnoresTextAndComments(t *testing.T) {
 		"RETURN any(x IN ['a'] /* ) */ WHERE x * 2 > 0) AS result",
 		"RETURN any(x IN ['a'] WHERE x /* ) */ * 2 > 0) AS result",
 	} {
-		require.ErrorContains(t, validateStaticQuantifierTypes(query), "numeric operator", query)
+		require.ErrorContains(t, validateStaticQuantifierTypes(originalBraceView(query)), "numeric operator", query)
 	}
 	exec, _ := newTestExecutor(t)
 	_, err := exec.Execute(context.Background(), "RETURN any /* gap */ (x IN ['a'] WHERE x * 2 > 0) AS result", nil)
@@ -87,7 +87,7 @@ func BenchmarkStaticQuantifierValidation(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for iteration := 0; iteration < b.N; iteration++ {
-				if err := validateStaticQuantifierTypes(tc.query); err != nil {
+				if err := validateStaticQuantifierTypes(originalBraceView(tc.query)); err != nil {
 					b.Fatal(err)
 				}
 			}

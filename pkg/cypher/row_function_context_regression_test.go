@@ -76,12 +76,12 @@ func TestRowFunctionContextBindingDoesNotEscapeEvaluation(t *testing.T) {
 	for _, database := range []string{"first_context", "second_context", "first_context"} {
 		ctx := withExpressionFailureSlot(context.WithValue(context.Background(), ctxKeyUseDatabase, database))
 		for range 3 {
-			value, ok := exec.evaluateRowExpressionWithContext(ctx, "[elementId(n)]", row)
+			value, ok := exec.evaluateRowExpressionWithContext(ctx, originalBraceView("[elementId(n)]"), row)
 			require.True(t, ok)
 			require.Equal(t, []interface{}{"4:" + database + ":n"}, value)
 			require.NotContains(t, row, rowStatementContextKey)
 			predicate := "head([elementId(n)]) STARTS WITH '4:" + database + ":'"
-			require.True(t, exec.evaluateRowPredicate(ctx, predicate, row))
+			require.True(t, exec.evaluateRowPredicate(ctx, originalBraceView(predicate), row))
 			require.NotContains(t, row, rowStatementContextKey)
 			require.NoError(t, getExpressionFailure(ctx))
 		}
@@ -91,16 +91,16 @@ func TestRowFunctionContextBindingDoesNotEscapeEvaluation(t *testing.T) {
 	outer := context.WithValue(context.Background(), ctxKeyUseDatabase, "outer_context")
 	row[rowStatementContextKey] = outer
 	inner := context.WithValue(context.Background(), ctxKeyUseDatabase, "inner_context")
-	value, ok := exec.evaluateRowExpressionWithContext(inner, "[elementId(n)]", row)
+	value, ok := exec.evaluateRowExpressionWithContext(inner, originalBraceView("[elementId(n)]"), row)
 	require.True(t, ok)
 	require.Equal(t, []interface{}{"4:outer_context:n"}, value)
 	require.Same(t, outer, row[rowStatementContextKey])
-	require.True(t, exec.evaluateRowPredicate(inner, "toLower(x) = 'a'", row))
+	require.True(t, exec.evaluateRowPredicate(inner, expressionBraceView("toLower(x) = 'a'"), row))
 	require.Same(t, outer, row[rowStatementContextKey])
 	delete(row, rowStatementContextKey)
 	// Error returns also release the temporary binding.
 	ctx := withExpressionFailureSlot(context.Background())
-	_, _ = exec.evaluateRowExpressionWithContext(ctx, "substring('abc', 0, -1)", row)
+	_, _ = exec.evaluateRowExpressionWithContext(ctx, expressionBraceView("substring('abc', 0, -1)"), row)
 	require.Error(t, getExpressionFailure(ctx))
 	require.NotContains(t, row, rowStatementContextKey)
 	require.Equal(t, pipelineRow{"n": &storage.Node{ID: "n"}, "x": "a"}, row)

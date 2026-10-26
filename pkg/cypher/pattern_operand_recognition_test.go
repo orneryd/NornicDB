@@ -108,11 +108,11 @@ func TestCompiledBindingWhereXor(t *testing.T) {
 		"a.age = 31 XOR b.age = 41": false,
 		"a.age = 30 XOR b.none = 1": false,
 	} {
-		truth, ok := exec.getCompiledBindingWhereTruthIfSupported(ctx, clause)
+		truth, ok := exec.getCompiledBindingWhereTruthIfSupported(ctx, originalBraceView(clause))
 		require.True(t, ok, clause)
 		require.Equal(t, want, truth(bind, nil) == truthTrue, clause)
 	}
-	truth, ok := exec.getCompiledBindingWhereTruthIfSupported(ctx, "a.age = 30 XOR b.none = 1")
+	truth, ok := exec.getCompiledBindingWhereTruthIfSupported(ctx, expressionBraceView("a.age = 30 XOR b.none = 1"))
 	require.True(t, ok)
 	require.Equal(t, truthUnknown, truth(bind, nil))
 	for clause, want := range map[string]bool{
@@ -120,15 +120,15 @@ func TestCompiledBindingWhereXor(t *testing.T) {
 		"a.age = 31 XOR (a)-[:XR]->(b)": true,
 		"a.age = 31 XOR (b)-[:XR]->(a)": false,
 	} {
-		predicate, ok := exec.tryCompileExecutorBindingWhere(ctx, clause)
+		predicate, ok := exec.tryCompileExecutorBindingWhere(ctx, originalBraceView(clause))
 		require.True(t, ok, clause)
 		require.Equal(t, want, predicate(bind, nil), clause)
 	}
 	// An XOR whose operand neither compiler supports isn't compiled; the
 	// generic evaluator answers it.
-	_, ok = exec.getCompiledBindingWhereTruthIfSupported(ctx, "a.age = 30 XOR (")
+	_, ok = exec.getCompiledBindingWhereTruthIfSupported(ctx, expressionBraceView("a.age = 30 XOR ("))
 	require.False(t, ok)
-	_, ok = exec.tryCompileExecutorBindingWhere(ctx, "a.age = 30 XOR (")
+	_, ok = exec.tryCompileExecutorBindingWhere(ctx, expressionBraceView("a.age = 30 XOR ("))
 	require.False(t, ok)
 }
 

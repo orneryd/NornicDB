@@ -437,22 +437,22 @@ MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'
 `
-	require.True(t, isSimpleBoundRelationshipDeleteMatchSegment(simple))
+	require.True(t, isSimpleBoundRelationshipDeleteMatchSegment(originalBraceView(simple)))
 
-	limited, limitN, ok := parseBoundRelationshipDeleteWithLimitSegment(simple+`
-WITH rel LIMIT 1`, "rel")
+	limited, limitN, ok := parseBoundRelationshipDeleteWithLimitSegment(originalBraceView(simple+`
+WITH rel LIMIT 1`), "rel")
 	require.True(t, ok)
 	require.Equal(t, 1, limitN)
 	require.Equal(t, strings.TrimSpace(simple), limited)
 
 	pseudo := strings.TrimSpace(simple) + " RETURN __delete_probe__"
-	returnIdx := findKeywordIndex(pseudo, "RETURN")
-	whereIdx := lastKeywordIndexBefore(pseudo, "WHERE", returnIdx)
-	clauses := splitMatchClauses(pseudo, whereIdx, returnIdx)
+	returnIdx := findKeywordIndex(originalBraceView(pseudo), "RETURN")
+	whereIdx := lastKeywordIndexBefore(originalBraceView(pseudo), "WHERE", returnIdx)
+	clauses := splitMatchClauses(originalBraceView(pseudo), whereIdx, returnIdx)
 	require.Len(t, clauses, 2)
-	sourcePattern := parsedTestValue(exec.parseNodePattern(context.Background(), clauses[0]))
+	sourcePattern := parsedTestValue(exec.parseNodePattern(context.Background(), originalBraceView(clauses[0].text())))
 	require.Equal(t, "source_repo", sourcePattern.variable)
-	relMatch := exec.parseTraversalPattern(context.Background(), clauses[1])
+	relMatch := exec.parseTraversalPattern(context.Background(), originalBraceView(clauses[1].text()))
 	require.NotNil(t, relMatch)
 	require.Equal(t, "source_repo", relMatch.StartNode.variable)
 	require.Equal(t, "rel", relMatch.Relationship.Variable)
@@ -483,11 +483,11 @@ MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'
 DELETE rel
 `
-	result, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, `
+	result, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, originalBraceView(`
 MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'
-`, cypher, "rel", false)
+`), cypher, "rel", false)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 1, result.Stats.RelationshipsDeleted)
@@ -623,12 +623,12 @@ CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target
 		require.NoError(t, err)
 	}
 
-	result, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, `
+	result, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx, originalBraceView(`
 MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPENDS_ON|DEPLOYS_FROM|USES_MODULE]->(:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'
 WITH rel LIMIT 1
-`, "", "rel", false)
+`), "", "rel", false)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 1, result.Stats.RelationshipsDeleted)
@@ -669,10 +669,10 @@ WHERE rel.evidence_source = 'resolver/cross-repo'
 DELETE rel
 `
 	trimmed := strings.TrimSpace(cypher)
-	require.Equal(t, 0, findKeywordIndex(trimmed, "MATCH"))
-	require.Equal(t, -1, findKeywordIndex(trimmed, "CREATE"))
-	require.Greater(t, findKeywordIndex(trimmed, "DELETE"), 0)
-	require.True(t, findKeywordIndex(trimmed, "DELETE") > 0)
+	require.Equal(t, 0, findKeywordIndex(originalBraceView(trimmed), "MATCH"))
+	require.Equal(t, -1, findKeywordIndex(originalBraceView(trimmed), "CREATE"))
+	require.Greater(t, findKeywordIndex(originalBraceView(trimmed), "DELETE"), 0)
+	require.True(t, findKeywordIndex(originalBraceView(trimmed), "DELETE") > 0)
 }
 
 func TestMatchPatternProperty_BoundRelationshipDeleteHonorsWithLimit(t *testing.T) {
@@ -751,11 +751,11 @@ CREATE (source)-[:DEPLOYS_FROM {evidence_source:'resolver/cross-repo'}]->(target
 	txCtx := context.WithValue(ctx, ctxKeyTxStorage, txWrapper)
 	txExec := exec.cloneWithStorage(txWrapper)
 
-	result, ok, err := txExec.tryExecuteBoundRelationshipDelete(txCtx, `
+	result, ok, err := txExec.tryExecuteBoundRelationshipDelete(txCtx, originalBraceView(`
 MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPLOYS_FROM]->(:Repository)
 WHERE rel.evidence_source = 'resolver/cross-repo'
-`, "", "rel", false)
+`), "", "rel", false)
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, 1, result.Stats.RelationshipsDeleted)
@@ -846,9 +846,9 @@ WHERE rel.evidence_source = 'resolver/cross-repo'
 DELETE rel
 `
 	result, ok, err := exec.tryExecuteBoundRelationshipDelete(ctx,
-		`MATCH (source_repo:Repository {id:'repository:source'})
+		originalBraceView(`MATCH (source_repo:Repository {id:'repository:source'})
 MATCH (source_repo)-[rel:DEPENDS_ON|DEPLOYS_FROM|USES_MODULE]->(:Repository)
-WHERE rel.evidence_source = 'resolver/cross-repo'`,
+WHERE rel.evidence_source = 'resolver/cross-repo'`),
 		cypher,
 		"rel",
 		false)

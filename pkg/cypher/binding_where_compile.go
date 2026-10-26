@@ -166,7 +166,7 @@ type bindingFilterPredicate struct {
 	queryParameters map[string]interface{}
 	executor        *StorageExecutor
 	ctx             context.Context
-	clause          string
+	clause          braceView
 	parameters      map[string]interface{}
 	values          map[string]interface{}
 }
@@ -204,7 +204,7 @@ func (predicate *bindingFilterPredicate) matchesRelationships(row binding, rels 
 
 // newBindingFilterPredicate owns scratch for one synchronous filter invocation.
 // Its returned frame must not be cached or shared across goroutines.
-func (e *StorageExecutor) newBindingFilterPredicate(ctx context.Context, whereClause string, params map[string]interface{}) bindingFilterPredicate {
+func (e *StorageExecutor) newBindingFilterPredicate(ctx context.Context, whereClause braceView, params map[string]interface{}) bindingFilterPredicate {
 	whereClause = normalizeBindingWhereClause(whereClause)
 	if plan := planRowPredicate(whereClause); plan != nil && plan.complete {
 		if params == nil {
@@ -228,13 +228,13 @@ func (e *StorageExecutor) newBindingFilterPredicate(ctx context.Context, whereCl
 	}
 }
 
-func (e *StorageExecutor) getCompiledBindingWhere(ctx context.Context, whereClause string) bindingWherePredicate {
+func (e *StorageExecutor) getCompiledBindingWhere(ctx context.Context, whereClause braceView) bindingWherePredicate {
 	key := normalizeBindingWhereClause(whereClause)
-	if predicate, ok := compiledBindingWhereCache.get(key); ok {
+	if predicate, ok := compiledBindingWhereCache.get(key.text()); ok {
 		return predicate
 	}
 	if predicate, ok := e.tryCompileBindingWhere(ctx, key); ok {
-		compiledBindingWhereCache.put(key, predicate)
+		compiledBindingWhereCache.put(key.text(), predicate)
 		return predicate
 	}
 	// Generic predicates may consult this executor's graph (for example, a
@@ -244,27 +244,27 @@ func (e *StorageExecutor) getCompiledBindingWhere(ctx context.Context, whereClau
 	return e.compileBindingWhere(ctx, key)
 }
 
-func normalizeBindingWhereClause(whereClause string) string {
-	return normalizePipelineWhitespace(whereClause)
-}
+// Author: #1663 implementation lane. The existing normalization emitter records
+// its exact output copies. Source remains the only mapper.
+func normalizeBindingWhereClause(view braceView) braceView { return normalizePipelineWhitespace(view) }
 
-func (e *StorageExecutor) compileBindingWhere(ctx context.Context, whereClause string) bindingWherePredicate {
+func (e *StorageExecutor) compileBindingWhere(ctx context.Context, whereClause braceView) bindingWherePredicate {
 	if predicate, ok := e.tryCompileBindingWhere(ctx, whereClause); ok {
 		return predicate
 	}
 	if predicate, ok := e.tryCompileExecutorBindingWhere(ctx, whereClause); ok {
 		return predicate
 	}
-	clause := strings.TrimSpace(whereClause)
+	view := whereClause.trim()
 	return func(b binding, params map[string]interface{}) bool {
-		return e.evaluateBindingWhereGeneric(ctx, b, clause, params)
+		return e.evaluateBindingWhereGeneric(ctx, b, view, params)
 	}
 }
 
 // tryCompileExecutorBindingWhere compiles predicates that depend on this
 // executor's graph. These closures intentionally remain executor-local and
 // therefore never enter compiledBindingWhereCache.
-func (e *StorageExecutor) tryCompileExecutorBindingWhere(ctx context.Context, whereClause string) (bindingWherePredicate, bool) {
+func (e *StorageExecutor) tryCompileExecutorBindingWhere(ctx context.Context, whereClause braceView) (bindingWherePredicate, bool) {
 	truth, ok := e.tryCompileExecutorBindingWhereTruth(ctx, whereClause)
 	if !ok {
 		return nil, false
@@ -272,86 +272,87 @@ func (e *StorageExecutor) tryCompileExecutorBindingWhere(ctx context.Context, wh
 	return truth.predicate(), true
 }
 
-func (e *StorageExecutor) tryCompileExecutorBindingWhereTruth(ctx context.Context, whereClause string) (bindingWhereTruth, bool) {
-	clause := strings.TrimSpace(whereClause)
-	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
-		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, clause[:orIdx])
-		right, rightOK := e.compileExecutorBindingWhereBranch(ctx, clause[orIdx+4:])
+func (e *StorageExecutor) tryCompileExecutorBindingWhereTruth(ctx context.Context, whereClause braceView) (bindingWhereTruth, bool) {
+	view := whereClause.trim()
+	clause := view.text()
+	if orIdx := findTopLevelKeyword(view, " OR "); orIdx > 0 {
+		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, view.window(0, orIdx))
+		right, rightOK := e.compileExecutorBindingWhereBranch(ctx, view.window(orIdx+4, len(clause)))
 		if !leftOK || !rightOK {
 			return nil, false
 		}
 		return orTruth(left, right), true
 	}
-	if xorIdx := findTopLevelKeyword(clause, " XOR "); xorIdx > 0 {
-		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, clause[:xorIdx])
-		right, rightOK := e.compileExecutorBindingWhereBranch(ctx, clause[xorIdx+5:])
+	if xorIdx := findTopLevelKeyword(view, " XOR "); xorIdx > 0 {
+		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, view.window(0, xorIdx))
+		right, rightOK := e.compileExecutorBindingWhereBranch(ctx, view.window(xorIdx+5, len(clause)))
 		if !leftOK || !rightOK {
 			return nil, false
 		}
 		return xorTruth(left, right), true
 	}
-	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
-		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, clause[:andIdx])
-		right, rightOK := e.compileExecutorBindingWhereBranch(ctx, clause[andIdx+5:])
+	if andIdx := findTopLevelKeyword(view, " AND "); andIdx > 0 {
+		left, leftOK := e.compileExecutorBindingWhereBranch(ctx, view.window(0, andIdx))
+		right, rightOK := e.compileExecutorBindingWhereBranch(ctx, view.window(andIdx+5, len(clause)))
 		if !leftOK || !rightOK {
 			return nil, false
 		}
 		return andTruth(left, right), true
 	}
 	if hasPrefixFold(clause, "NOT ") {
-		inner, ok := e.compileExecutorBindingWhereBranch(ctx, clause[4:])
+		inner, ok := e.compileExecutorBindingWhereBranch(ctx, view.window(4, len(clause)))
 		if !ok {
 			return nil, false
 		}
 		return notTruth(inner), true
 	}
-	match, ok := e.parseBoundRelationshipPatternStructure(ctx, clause)
+	match, ok := e.parseBoundRelationshipPatternStructure(withBraceView(ctx, view), view)
 	if !ok {
 		return nil, false
 	}
 	// Without property maps the structural match is already complete. Keep
 	// its parsed shape in this executor-local closure, just as before row
 	// property evaluation was deferred; no row value can enter this plan.
-	if !strings.Contains(clause, "{") {
+	if !(firstLiveBrace(clause) >= 0) {
 		return func(b binding, params map[string]interface{}) cypherTruth {
 			return truthOf(e.evaluateParsedBoundRelationshipPattern(withParams(ctx, params), match, b))
 		}, true
 	}
 	return func(b binding, params map[string]interface{}) cypherTruth {
 		rowCtx := withParams(ctx, params)
-		matched, _ := e.evaluateRowRelationshipPattern(rowCtx, clause, entityRow(rowCtx, map[string]*storage.Node(b), nil))
+		matched, _ := e.evaluateRowRelationshipPattern(withBraceView(rowCtx, view), view, entityRow(rowCtx, map[string]*storage.Node(b), nil))
 		return truthOf(matched)
 	}, true
 }
 
-func (e *StorageExecutor) compileExecutorBindingWhereBranch(ctx context.Context, clause string) (bindingWhereTruth, bool) {
-	clause = strings.TrimSpace(clause)
-	if truth, ok := e.tryCompileBindingWhereTruth(ctx, clause); ok {
+func (e *StorageExecutor) compileExecutorBindingWhereBranch(ctx context.Context, view braceView) (bindingWhereTruth, bool) {
+	view = view.trim()
+	if truth, ok := e.tryCompileBindingWhereTruth(ctx, view); ok {
 		return truth, true
 	}
-	return e.tryCompileExecutorBindingWhereTruth(ctx, clause)
+	return e.tryCompileExecutorBindingWhereTruth(ctx, view)
 }
 
-func (e *StorageExecutor) getCompiledBindingWhereIfSupported(ctx context.Context, whereClause string) (bindingWherePredicate, bool) {
+func (e *StorageExecutor) getCompiledBindingWhereIfSupported(ctx context.Context, whereClause braceView) (bindingWherePredicate, bool) {
 	key := normalizeBindingWhereClause(whereClause)
-	if predicate, ok := compiledSupportedBindingWhereCache.get(key); ok {
+	if predicate, ok := compiledSupportedBindingWhereCache.get(key.text()); ok {
 		return predicate, true
 	}
 	predicate, ok := e.tryCompileBindingWhere(ctx, key)
 	if ok {
-		compiledSupportedBindingWhereCache.put(key, predicate)
+		compiledSupportedBindingWhereCache.put(key.text(), predicate)
 	}
 	return predicate, ok
 }
 
-func (e *StorageExecutor) getCompiledBindingWhereTruthIfSupported(ctx context.Context, whereClause string) (bindingWhereTruth, bool) {
+func (e *StorageExecutor) getCompiledBindingWhereTruthIfSupported(ctx context.Context, whereClause braceView) (bindingWhereTruth, bool) {
 	key := normalizeBindingWhereClause(whereClause)
-	if truth, ok := compiledSupportedBindingWhereTruthCache.get(key); ok {
+	if truth, ok := compiledSupportedBindingWhereTruthCache.get(key.text()); ok {
 		return truth, true
 	}
 	truth, ok := e.tryCompileBindingWhereTruth(ctx, key)
 	if ok {
-		compiledSupportedBindingWhereTruthCache.put(key, truth)
+		compiledSupportedBindingWhereTruthCache.put(key.text(), truth)
 	}
 	return truth, ok
 }
@@ -359,7 +360,7 @@ func (e *StorageExecutor) getCompiledBindingWhereTruthIfSupported(ctx context.Co
 // tryCompileBindingWhere compiles a WHERE clause into a row predicate that is
 // true only when the clause is known true (Cypher three-valued logic: null and
 // false both drop the row).
-func (e *StorageExecutor) tryCompileBindingWhere(ctx context.Context, whereClause string) (bindingWherePredicate, bool) {
+func (e *StorageExecutor) tryCompileBindingWhere(ctx context.Context, whereClause braceView) (bindingWherePredicate, bool) {
 	plan, ok := e.compileBindingWherePlan(ctx, whereClause)
 	if !ok {
 		return nil, false
@@ -367,17 +368,18 @@ func (e *StorageExecutor) tryCompileBindingWhere(ctx context.Context, whereClaus
 	return plan.asPredicate(), true
 }
 
-func (e *StorageExecutor) compileBindingWherePlan(ctx context.Context, whereClause string) (bindingWherePlan, bool) {
-	clause := strings.TrimSpace(whereClause)
+func (e *StorageExecutor) compileBindingWherePlan(ctx context.Context, whereClause braceView) (bindingWherePlan, bool) {
+	view := whereClause.trim()
+	clause := view.text()
 	if clause == "" {
 		return bindingWherePlan{predicate: func(binding, map[string]interface{}) bool { return true }}, true
 	}
-	if inner, ok := stripEnclosingExpressionParentheses(clause); ok {
-		return e.compileBindingWherePlan(ctx, inner)
+	if _, ok := stripEnclosingExpressionParentheses(clause); ok {
+		return e.compileBindingWherePlan(ctx, view.window(1, len(clause)-1).trim())
 	}
-	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
-		left, leftOK := e.compileBindingWherePlan(ctx, clause[:orIdx])
-		right, rightOK := e.compileBindingWherePlan(ctx, clause[orIdx+4:])
+	if orIdx := findTopLevelKeyword(view, " OR "); orIdx > 0 {
+		left, leftOK := e.compileBindingWherePlan(ctx, view.window(0, orIdx))
+		right, rightOK := e.compileBindingWherePlan(ctx, view.window(orIdx+4, len(clause)))
 		if !leftOK || !rightOK {
 			return bindingWherePlan{}, false
 		}
@@ -396,9 +398,9 @@ func (e *StorageExecutor) compileBindingWherePlan(ctx context.Context, whereClau
 			})
 		}}, true
 	}
-	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
-		left, leftOK := e.compileBindingWherePlan(ctx, clause[:andIdx])
-		right, rightOK := e.compileBindingWherePlan(ctx, clause[andIdx+5:])
+	if andIdx := findTopLevelKeyword(view, " AND "); andIdx > 0 {
+		left, leftOK := e.compileBindingWherePlan(ctx, view.window(0, andIdx))
+		right, rightOK := e.compileBindingWherePlan(ctx, view.window(andIdx+5, len(clause)))
 		if !leftOK || !rightOK {
 			return bindingWherePlan{}, false
 		}
@@ -418,7 +420,7 @@ func (e *StorageExecutor) compileBindingWherePlan(ctx context.Context, whereClau
 		}}, true
 	}
 	if hasPrefixFold(clause, "NOT ") {
-		inner, ok := e.compileBindingWherePlan(ctx, clause[len("NOT "):])
+		inner, ok := e.compileBindingWherePlan(ctx, view.window(len("NOT "), len(clause)))
 		if !ok {
 			return bindingWherePlan{}, false
 		}
@@ -434,112 +436,114 @@ func (e *StorageExecutor) compileBindingWherePlan(ctx context.Context, whereClau
 		}}, true
 	}
 
-	if predicate, ok := e.compileBindingNullPredicate(clause, " IS NOT NULL", true); ok {
+	if predicate, ok := e.compileBindingNullPredicate(view, " IS NOT NULL", true); ok {
 		return bindingWherePlan{predicate: predicate}, true
 	}
-	if predicate, ok := e.compileBindingNullPredicate(clause, " IS NULL", false); ok {
+	if predicate, ok := e.compileBindingNullPredicate(view, " IS NULL", false); ok {
 		return bindingWherePlan{predicate: predicate}, true
 	}
-	if predicate, ok := e.compileBindingStringPredicate(clause, " STARTS WITH "); ok {
+	if predicate, ok := e.compileBindingStringPredicate(view, " STARTS WITH "); ok {
 		return bindingWherePlan{predicate: predicate}, true
 	}
-	if predicate, ok := e.compileBindingStringPredicate(clause, " ENDS WITH "); ok {
+	if predicate, ok := e.compileBindingStringPredicate(view, " ENDS WITH "); ok {
 		return bindingWherePlan{predicate: predicate}, true
 	}
-	if predicate, ok := e.compileBindingStringPredicate(clause, " CONTAINS "); ok {
+	if predicate, ok := e.compileBindingStringPredicate(view, " CONTAINS "); ok {
 		return bindingWherePlan{predicate: predicate}, true
 	}
-	if truth, ok := e.compileBindingInPredicate(clause, " IN ", false); ok {
+	if truth, ok := e.compileBindingInPredicate(view, " IN ", false); ok {
 		return bindingWherePlan{truth: truth}, true
 	}
-	if truth, ok := e.compileBindingInPredicate(clause, " NOT IN ", true); ok {
+	if truth, ok := e.compileBindingInPredicate(view, " NOT IN ", true); ok {
 		return bindingWherePlan{truth: truth}, true
 	}
-	if truth, ok := e.compileBindingComparisonTruth(clause); ok {
+	if truth, ok := e.compileBindingComparisonTruth(view); ok {
 		return bindingWherePlan{truth: truth}, true
 	}
 	return bindingWherePlan{}, false
 }
 
-func (e *StorageExecutor) tryCompileBindingWhereTruth(ctx context.Context, whereClause string) (bindingWhereTruth, bool) {
-	clause := strings.TrimSpace(whereClause)
+func (e *StorageExecutor) tryCompileBindingWhereTruth(ctx context.Context, whereClause braceView) (bindingWhereTruth, bool) {
+	view := whereClause.trim()
+	clause := view.text()
 	if clause == "" {
 		return func(binding, map[string]interface{}) cypherTruth { return truthTrue }, true
 	}
 
-	if orIdx := findTopLevelKeyword(clause, " OR "); orIdx > 0 {
-		left, okLeft := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[:orIdx])
-		right, okRight := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[orIdx+4:])
+	if orIdx := findTopLevelKeyword(view, " OR "); orIdx > 0 {
+		left, okLeft := e.getCompiledBindingWhereTruthIfSupported(ctx, view.window(0, orIdx))
+		right, okRight := e.getCompiledBindingWhereTruthIfSupported(ctx, view.window(orIdx+4, len(clause)))
 		if !okLeft || !okRight {
 			return nil, false
 		}
 		return orTruth(left, right), true
 	}
 	// XOR binds between OR and AND: a = 1 XOR true is (a = 1) XOR true.
-	if xorIdx := findTopLevelKeyword(clause, " XOR "); xorIdx > 0 {
-		left, okLeft := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[:xorIdx])
-		right, okRight := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[xorIdx+5:])
+	if xorIdx := findTopLevelKeyword(view, " XOR "); xorIdx > 0 {
+		left, okLeft := e.getCompiledBindingWhereTruthIfSupported(ctx, view.window(0, xorIdx))
+		right, okRight := e.getCompiledBindingWhereTruthIfSupported(ctx, view.window(xorIdx+5, len(clause)))
 		if !okLeft || !okRight {
 			return nil, false
 		}
 		return xorTruth(left, right), true
 	}
-	if andIdx := findTopLevelKeyword(clause, " AND "); andIdx > 0 {
-		left, okLeft := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[:andIdx])
-		right, okRight := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[andIdx+5:])
+	if andIdx := findTopLevelKeyword(view, " AND "); andIdx > 0 {
+		left, okLeft := e.getCompiledBindingWhereTruthIfSupported(ctx, view.window(0, andIdx))
+		right, okRight := e.getCompiledBindingWhereTruthIfSupported(ctx, view.window(andIdx+5, len(clause)))
 		if !okLeft || !okRight {
 			return nil, false
 		}
 		return andTruth(left, right), true
 	}
 	if hasPrefixFold(clause, "NOT ") {
-		inner, ok := e.getCompiledBindingWhereTruthIfSupported(ctx, clause[4:])
+		inner, ok := e.getCompiledBindingWhereTruthIfSupported(ctx, view.window(4, len(clause)))
 		if !ok {
 			return nil, false
 		}
 		return notTruth(inner), true
 	}
 
-	if predicate, ok := e.compileBindingNullPredicate(clause, " IS NOT NULL", true); ok {
+	if predicate, ok := e.compileBindingNullPredicate(view, " IS NOT NULL", true); ok {
 		return liftBindingPredicate(predicate), true
 	}
-	if predicate, ok := e.compileBindingNullPredicate(clause, " IS NULL", false); ok {
+	if predicate, ok := e.compileBindingNullPredicate(view, " IS NULL", false); ok {
 		return liftBindingPredicate(predicate), true
 	}
 
-	if truth, ok := e.compileBindingStringTruth(clause, " STARTS WITH "); ok {
+	if truth, ok := e.compileBindingStringTruth(view, " STARTS WITH "); ok {
 		return truth, true
 	}
-	if truth, ok := e.compileBindingStringTruth(clause, " ENDS WITH "); ok {
+	if truth, ok := e.compileBindingStringTruth(view, " ENDS WITH "); ok {
 		return truth, true
 	}
-	if truth, ok := e.compileBindingStringTruth(clause, " CONTAINS "); ok {
+	if truth, ok := e.compileBindingStringTruth(view, " CONTAINS "); ok {
 		return truth, true
 	}
-	if truth, ok := e.compileBindingInPredicate(clause, " IN ", false); ok {
+	if truth, ok := e.compileBindingInPredicate(view, " IN ", false); ok {
 		return truth, true
 	}
-	if truth, ok := e.compileBindingInPredicate(clause, " NOT IN ", true); ok {
+	if truth, ok := e.compileBindingInPredicate(view, " NOT IN ", true); ok {
 		return truth, true
 	}
 
-	if truth, ok := e.compileBindingComparisonTruth(clause); ok {
+	if truth, ok := e.compileBindingComparisonTruth(view); ok {
 		return truth, true
 	}
 
 	return nil, false
 }
 
-func (e *StorageExecutor) compileBindingStringPredicate(clause, op string) (bindingWherePredicate, bool) {
-	truth, ok := e.compileBindingStringTruth(clause, op)
+func (e *StorageExecutor) compileBindingStringPredicate(view braceView, op string) (bindingWherePredicate, bool) {
+	truth, ok := e.compileBindingStringTruth(view, op)
 	if !ok {
 		return nil, false
 	}
 	return func(b binding, params map[string]interface{}) bool { return truth(b, params) == truthTrue }, true
 }
 
-func (e *StorageExecutor) compileBindingStringTruth(clause, op string) (bindingWhereTruth, bool) {
-	idx := findTopLevelKeyword(clause, op)
+func (e *StorageExecutor) compileBindingStringTruth(view braceView, op string) (bindingWhereTruth, bool) {
+	clause := view.text()
+	idx := findTopLevelKeyword(view, op)
 	if idx <= 0 {
 		return nil, false
 	}
@@ -578,8 +582,9 @@ func (e *StorageExecutor) compileBindingStringTruth(clause, op string) (bindingW
 	}, true
 }
 
-func (e *StorageExecutor) compileBindingNullPredicate(clause, op string, expectNotNull bool) (bindingWherePredicate, bool) {
-	idx := findTopLevelKeyword(clause, op)
+func (e *StorageExecutor) compileBindingNullPredicate(view braceView, op string, expectNotNull bool) (bindingWherePredicate, bool) {
+	clause := view.text()
+	idx := findTopLevelKeyword(view, op)
 	if idx <= 0 {
 		return nil, false
 	}
@@ -598,9 +603,10 @@ func (e *StorageExecutor) compileBindingNullPredicate(clause, op string, expectN
 	}, true
 }
 
-func (e *StorageExecutor) compileBindingComparisonTruth(clause string) (bindingWhereTruth, bool) {
+func (e *StorageExecutor) compileBindingComparisonTruth(view braceView) (bindingWhereTruth, bool) {
+	clause := view.text()
 	for _, op := range []string{"<>", "!=", ">=", "<=", "=", ">", "<"} {
-		idx := findTopLevelKeyword(clause, op)
+		idx := findTopLevelKeyword(view, op)
 		if idx <= 0 {
 			continue
 		}
@@ -648,8 +654,8 @@ func (e *StorageExecutor) compileBindingComparisonTruth(clause string) (bindingW
 // `x NOT IN list` (negate=true) with Cypher's null rules: a null or unresolved
 // x, a null or non-list right-hand side, or a list that contains null and no
 // match all give truthUnknown, which negation leaves unknown.
-func (e *StorageExecutor) compileBindingInPredicate(clause, op string, negate bool) (bindingWhereTruth, bool) {
-	truth, ok := compileMembershipTruth(e, clause, op, negate, func(expression string) (func(binding, map[string]interface{}) (interface{}, bool), bool) {
+func (e *StorageExecutor) compileBindingInPredicate(view braceView, op string, negate bool) (bindingWhereTruth, bool) {
+	truth, ok := compileMembershipTruth(e, view, op, negate, func(expression string) (func(binding, map[string]interface{}) (interface{}, bool), bool) {
 		return e.compileBindingValueResolver(expression)
 	})
 	if !ok {
@@ -666,8 +672,9 @@ func (e *StorageExecutor) compileBindingInPredicate(clause, op string, negate bo
 // expression. Three-valued: an unresolved or null x, a null or non-list
 // right side, or a list holding null without a match give truthUnknown, which
 // negate leaves unknown.
-func compileMembershipTruth[R any](e *StorageExecutor, clause, op string, negate bool, resolve func(string) (func(R, map[string]interface{}) (interface{}, bool), bool)) (func(R, map[string]interface{}) cypherTruth, bool) {
-	idx := findTopLevelKeyword(clause, op)
+func compileMembershipTruth[R any](e *StorageExecutor, view braceView, op string, negate bool, resolve func(string) (func(R, map[string]interface{}) (interface{}, bool), bool)) (func(R, map[string]interface{}) cypherTruth, bool) {
+	clause := view.text()
+	idx := findTopLevelKeyword(view, op)
 	if idx <= 0 {
 		return nil, false
 	}
@@ -944,15 +951,15 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 	return nil, false
 }
 
-func (e *StorageExecutor) evaluateBindingWhereGeneric(ctx context.Context, b binding, whereClause string, params map[string]interface{}) bool {
-	clause := strings.TrimSpace(whereClause)
-	if clause == "" {
+func (e *StorageExecutor) evaluateBindingWhereGeneric(ctx context.Context, b binding, whereClause braceView, params map[string]interface{}) bool {
+	clause := whereClause.trim()
+	if clause.empty() {
 		return true
 	}
 	return e.evaluateBindingExpressionAsBoolean(ctx, b, clause, params)
 }
 
-func (e *StorageExecutor) resolveBindingFallbackValue(ctx context.Context, expr string, b binding, params map[string]interface{}) interface{} {
+func (e *StorageExecutor) resolveBindingFallbackValue(ctx context.Context, expr braceView, b binding, params map[string]interface{}) interface{} {
 	value, ok := e.resolveBindingFallbackValueWithOk(ctx, expr, b, params)
 	if !ok {
 		return nil
@@ -960,20 +967,20 @@ func (e *StorageExecutor) resolveBindingFallbackValue(ctx context.Context, expr 
 	return value
 }
 
-func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context, expr string, b binding, params map[string]interface{}) (interface{}, bool) {
-	resolver, ok := e.compileBindingValueResolver(expr)
+func (e *StorageExecutor) resolveBindingFallbackValueWithOk(ctx context.Context, expr braceView, b binding, params map[string]interface{}) (interface{}, bool) {
+	resolver, ok := e.compileBindingValueResolver(expr.text())
 	if ok {
 		return resolver(b, params)
 	}
 	if params != nil {
-		if value, exists := params[strings.TrimSpace(expr)]; exists {
+		if value, exists := params[strings.TrimSpace(expr.text())]; exists {
 			return value, true
 		}
 	}
 	return e.evaluateExpressionWithContext(withParams(ctx, params), expr, b, nil), true
 }
 
-func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context, b binding, expr string, params map[string]interface{}) bool {
+func (e *StorageExecutor) evaluateBindingExpressionAsBoolean(ctx context.Context, b binding, expr braceView, params map[string]interface{}) bool {
 	if params != nil && !sameParameterMap(getParamsFromContext(ctx), params) {
 		ctx = withQueryParams(ctx, params)
 	}

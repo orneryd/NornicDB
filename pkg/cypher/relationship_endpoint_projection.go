@@ -3,7 +3,6 @@ package cypher
 import (
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"slices"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
@@ -110,18 +109,20 @@ func (c *endpointPropertyCache) keep(key endpointPropertyKey, value interface{})
 // rowEndpointPropertyNode selects a property after endpoint visibility. Both the text evaluator and compiled value program use
 // this same reader and the ordinary endpoint existence/type contract.
 type rowEndpointPropertyNode struct {
-	argument, property string
-	end                bool
+	argument braceView
+	property string
+	end      bool
 }
 
-func endpointPropertyNode(base, property string) *rowEndpointPropertyNode {
+func endpointPropertyNode(base braceView, property string) *rowEndpointPropertyNode {
 	var callFacts1 functionCallFacts
-	call := inspectFunctionCall(base, qualifiedFunctionCall, "", &callFacts1)
-	function, argument := callFacts1.name, callFacts1.inner
+	call := inspectFunctionCall(base.text(), qualifiedFunctionCall, "", &callFacts1)
+	function := callFacts1.name
 	if !call || (!equalFoldASCII(function, "startNode") && !equalFoldASCII(function, "endNode")) || !cyphertext.IsIdentifier(property) {
 		return nil
 	}
-	return &rowEndpointPropertyNode{argument: strings.TrimSpace(argument), property: property, end: equalFoldASCII(function, "endNode")}
+	argument := base.window(callFacts1.arguments.Start, callFacts1.arguments.End).trim()
+	return &rowEndpointPropertyNode{argument: argument, property: property, end: equalFoldASCII(function, "endNode")}
 }
 
 func (n *rowEndpointPropertyNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {

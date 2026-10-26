@@ -12,44 +12,51 @@ import (
 // removeItem is one item of a REMOVE clause (parseRemoveItems): labels of a
 // node (n:A:$(expr)), a property (n.p), or a dynamic property key (n[expr]).
 type removeItem struct {
-	variable string
-	labels   []labelChainItem
-	property string
+	variable     string
+	variableView braceView
+	labels       []labelChainItem
+	property     string
 	// key is the expression of n[expr]; its value names the property at run
 	// time (dynamicPropertyKeyOf).
-	key string
+	key     string
+	keyView braceView
 }
 
 // parseRemoveItems splits a REMOVE body at its top-level commas into items.
 // Labels are read by the one label-chain reader (setLabelChainItems), so a
 // malformed chain is an error, as is text that is none of the item forms
 // (REMOVE n): Neo4j's SyntaxError.
-func parseRemoveItems(body string) ([]removeItem, error) {
-	parts := splitTopLevelComma(body)
+func parseRemoveItems(body braceView) ([]removeItem, error) {
+	parts := body.commaViews()
 	items := make([]removeItem, 0, len(parts))
 	for _, part := range parts {
-		item := strings.TrimSpace(part)
+		part = part.trim()
+		item := part.text()
 		if item == "" {
 			continue
 		}
 		if variable, chain, hasLabels := splitNodeHead(item); hasLabels && cyphertext.IsIdentifier(variable) {
-			labels, err := setLabelChainItems(chain)
+			labels, err := setLabelChainItems(part.window(len(item)-len(chain), len(item)))
 			if err != nil {
 				return nil, err
 			}
-			items = append(items, removeItem{variable: variable, labels: labels})
+			variableView := part.window(0, len(item)-len(chain)-1).trim()
+			items = append(items, removeItem{variable: variable, variableView: variableView, labels: labels})
 			continue
 		}
 		receiver, inner, subscript, ok := staticPostfixSplit(item)
 		variable := ""
 		if ok {
-			variable, _, _ = parseSetAssignmentTarget(receiver)
+			receiverView := part.window(0, len(receiver))
+			variable, _, _ = parseSetAssignmentTarget(receiverView)
 		}
 		if !cyphertext.IsIdentifier(variable) || (subscript && strings.TrimSpace(inner) == "") {
 			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherMutationsRemoveItemInvalid(item))
 		}
 		if subscript {
-			items = append(items, removeItem{variable: variable, key: strings.TrimSpace(inner)})
+			// staticPostfixSplit returns the last subscript's exact interior.
+			keyView := part.window(len(item)-len(inner)-1, len(item)-1).trim()
+			items = append(items, removeItem{variable: variable, key: keyView.text(), keyView: keyView})
 			continue
 		}
 		items = append(items, removeItem{variable: variable, property: normalizePropertyKey(inner)})
@@ -64,8 +71,8 @@ func parseRemoveItems(body string) ([]removeItem, error) {
 // relationship is a TypeError (labelTargetTypeError). A removed property
 // counts in properties_set when the entity had it, a removed label in
 // labels_removed.
-func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipelineRow, clause string, result *ExecuteResult) error {
-	items, err := parseRemoveItems(strings.TrimSpace(clause[len("REMOVE"):]))
+func (e *StorageExecutor) pipelineApplyRemove(ctx context.Context, rows []pipelineRow, clause braceView, result *ExecuteResult) error {
+	items, err := parseRemoveItems(clause.clauseBody("REMOVE"))
 	if err != nil {
 		return err
 	}
@@ -173,7 +180,7 @@ func (e *StorageExecutor) removeFromNode(ctx context.Context, store storage.Engi
 func (e *StorageExecutor) removeProperty(ctx context.Context, properties map[string]interface{}, item removeItem, nodes map[string]*storage.Node, rels map[string]*storage.Edge, stats *QueryStats) error {
 	name := item.property
 	if item.key != "" {
-		key, err := e.dynamicPropertyKeyOf(ctx, item.key, nodes, rels, true)
+		key, err := e.dynamicPropertyKeyOf(ctx, item.keyView, nodes, rels, true)
 		if err != nil {
 			return err
 		}

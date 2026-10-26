@@ -38,6 +38,12 @@ func eachChainLabel(chain string, visit func(name string, quoted bool)) bool {
 // unless a doubled backtick has to be unescaped, so scanning allocates
 // nothing for ordinary labels.
 func eachChainItem(chain string, visit func(text string, quoted, dynamic bool)) bool {
+	return eachChainItemSpan(chain, func(text string, quoted, dynamic bool, _ cyphertext.Span) { visit(text, quoted, dynamic) })
+}
+
+// The label grammar retains each dynamic argument's own extent in the same
+// pass. Name decoding and validation remain unchanged. Author: #1663 lane.
+func eachChainItemSpan(chain string, visit func(text string, quoted, dynamic bool, span cyphertext.Span)) bool {
 	for start := 0; ; {
 		index := start
 		for index < len(chain) && cyphertext.IsWhitespaceAt(chain, index) {
@@ -55,7 +61,8 @@ func eachChainItem(chain string, visit func(text string, quoted, dynamic bool)) 
 			if end < len(chain) && chain[end] != ':' {
 				return false
 			}
-			visit(strings.TrimSpace(chain[index+2:closing]), false, true)
+			span := cyphertext.TrimWhitespaceSpan(chain, cyphertext.Span{Start: index + 2, End: closing})
+			visit(chain[span.Start:span.End], false, true, span)
 			if end >= len(chain) {
 				return true
 			}
@@ -73,7 +80,7 @@ func eachChainItem(chain string, visit func(text string, quoted, dynamic bool)) 
 			if end < len(chain) && chain[end] != ':' {
 				return false
 			}
-			visit(name, true, false)
+			visit(name, true, false, cyphertext.Span{Start: index, End: end})
 			if end >= len(chain) {
 				return true
 			}
@@ -90,7 +97,7 @@ func eachChainItem(chain string, visit func(text string, quoted, dynamic bool)) 
 		if strings.IndexByte(segment, '`') >= 0 {
 			return false
 		}
-		visit(strings.TrimSpace(segment), false, false)
+		visit(strings.TrimSpace(segment), false, false, cyphertext.TrimWhitespaceSpan(chain, cyphertext.Span{Start: start, End: end}))
 		if end >= len(chain) {
 			return true
 		}
@@ -139,18 +146,20 @@ func parseLabelChain(chain string) ([]string, error) {
 type labelChainItem struct {
 	name       string
 	expression string
+	view       braceView
 }
 
 // setLabelChainItems parses and validates the label part of a SET
 // n:L1:`L 2`:$(expr) or REMOVE n:L1:$(expr) item into its items, in order.
 // An empty chain, an empty $(), or an invalid unquoted label is an error.
-func setLabelChainItems(chain string) ([]labelChainItem, error) {
+func setLabelChainItems(view braceView) ([]labelChainItem, error) {
+	chain := view.text()
 	items := make([]labelChainItem, 0, strings.Count(chain, ":")+1)
 	var labelErr error
-	wellFormed := eachChainItem(chain, func(text string, quoted, dynamic bool) {
+	wellFormed := eachChainItemSpan(chain, func(text string, quoted, dynamic bool, span cyphertext.Span) {
 		switch {
 		case dynamic:
-			items = append(items, labelChainItem{expression: text})
+			items = append(items, labelChainItem{expression: text, view: view.spanWindow(span)})
 			if text == "" && labelErr == nil {
 				labelErr = localizedError(localization.CypherMutationsInvalidLabelName("$()"), nil)
 			}

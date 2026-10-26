@@ -217,7 +217,7 @@ func TestTransactionScript_AdditionalBranches(t *testing.T) {
 	require.Error(t, err)
 
 	// evaluateConditionExpression non-boolean branch.
-	ok, err := exec.evaluateConditionExpression(ctx, "'x'", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	ok, err := exec.evaluateConditionExpression(ctx, expressionBraceView("'x'"), map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.Error(t, err)
 	assert.False(t, ok)
 }
@@ -457,13 +457,13 @@ func TestTransactionScript_ProjectAndConditionAdditionalBranches(t *testing.T) {
 	out, err := exec.projectTransactionReturn(ctx, &ExecuteResult{
 		Columns: []string{"x"},
 		Rows:    [][]interface{}{{1}},
-	}, "")
+	}, originalBraceView(""))
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotEmpty(t, out.Columns)
 
 	// evaluateConditionExpression nil branch.
-	ok, err := exec.evaluateConditionExpression(ctx, "", map[string]*storage.Node{}, map[string]*storage.Edge{})
+	ok, err := exec.evaluateConditionExpression(ctx, originalBraceView(""), map[string]*storage.Node{}, map[string]*storage.Edge{})
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
@@ -483,7 +483,7 @@ func TestTransactionProjectionCanonicalRowSet(t *testing.T) {
 		{"* ORDER BY value DESC LIMIT 1", []string{"value"}, [][]interface{}{{int64(3)}}},
 	} {
 		t.Run(test.projection, func(t *testing.T) {
-			result, err := exec.projectTransactionReturn(ctx, input, test.projection)
+			result, err := exec.projectTransactionReturn(ctx, input, originalBraceView(test.projection))
 			require.NoError(t, err)
 			require.Equal(t, test.columns, result.Columns)
 			require.Equal(t, test.rows, result.Rows)
@@ -535,7 +535,7 @@ CASE WHEN u.age < 18 THEN ROLLBACK ELSE RETURN u.id AS id, u.last_seen AS seen C
 	projected, err := exec.projectTransactionReturn(ctx, &ExecuteResult{
 		Columns: []string{"plain"},
 		Rows:    [][]interface{}{{int64(7)}},
-	}, "plain AS p")
+	}, expressionBraceView("plain AS p"))
 	require.NoError(t, err)
 	require.Equal(t, []string{"p"}, projected.Columns)
 	require.Len(t, projected.Rows, 1)

@@ -111,7 +111,7 @@ func TestGh713ProjectionSplittersShareQuotedLexing(t *testing.T) {
 func TestDeleteRouting_SimpleNode(t *testing.T) {
 	query := "MATCH (n:Person) DELETE n"
 
-	hasDelete := findKeywordIndex(query, "DELETE") > 0
+	hasDelete := findKeywordIndex(originalBraceView(query), "DELETE") > 0
 	if !hasDelete {
 		t.Errorf("DELETE routing failed for query: %s", query)
 	}
@@ -122,7 +122,7 @@ func TestDeleteRouting_WithProperty(t *testing.T) {
 	// The word 'ToDelete' is inside a string literal and should be ignored
 	query := "MATCH (n:Temp {name: 'ToDelete'}) DELETE n"
 
-	deleteIdx := findKeywordIndex(query, "DELETE")
+	deleteIdx := findKeywordIndex(originalBraceView(query), "DELETE")
 
 	// DELETE should be found OUTSIDE the string literal (after position 30)
 	if deleteIdx <= 30 {
@@ -140,7 +140,7 @@ func TestDeleteRouting_WithProperty(t *testing.T) {
 func TestDeleteRouting_Relationship(t *testing.T) {
 	query := "MATCH ()-[r:KNOWS]->() DELETE r"
 
-	hasDelete := findKeywordIndex(query, "DELETE") > 0
+	hasDelete := findKeywordIndex(originalBraceView(query), "DELETE") > 0
 	if !hasDelete {
 		t.Errorf("DELETE routing failed for relationship query: %s", query)
 	}
@@ -150,7 +150,7 @@ func TestDeleteRouting_Relationship(t *testing.T) {
 func TestDeleteRouting_DetachDelete(t *testing.T) {
 	query := "MATCH (n:Person) DETACH DELETE n"
 
-	hasDetachDelete := containsKeywordOutsideStrings(query, "DETACH DELETE")
+	hasDetachDelete := containsKeywordOutsideStrings(originalBraceView(query), "DETACH DELETE")
 	if !hasDetachDelete {
 		t.Errorf("DETACH DELETE routing failed for query: %s", query)
 	}
@@ -160,7 +160,7 @@ func TestDeleteRouting_DetachDelete(t *testing.T) {
 func TestDeleteRouting_MultipleVariables(t *testing.T) {
 	query := "MATCH (a)-[r]->(b) DELETE a, r, b"
 
-	hasDelete := findKeywordIndex(query, "DELETE") > 0
+	hasDelete := findKeywordIndex(originalBraceView(query), "DELETE") > 0
 	if !hasDelete {
 		t.Errorf("DELETE routing failed for multi-variable query: %s", query)
 	}
@@ -170,7 +170,7 @@ func TestDeleteRouting_MultipleVariables(t *testing.T) {
 func TestDeleteRouting_WithWhere(t *testing.T) {
 	query := "MATCH (n:Person) WHERE n.age > 100 DELETE n"
 
-	hasDelete := findKeywordIndex(query, "DELETE") > 0
+	hasDelete := findKeywordIndex(originalBraceView(query), "DELETE") > 0
 	if !hasDelete {
 		t.Errorf("DELETE routing failed for WHERE clause query: %s", query)
 	}
@@ -191,7 +191,7 @@ func TestDeleteRouting_NotConfusedByStringContent(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// The DELETE keyword for the actual delete operation should be found
 			// OUTSIDE any string literals
-			deleteIdx := findKeywordIndex(tc.query, "DELETE")
+			deleteIdx := findKeywordIndex(originalBraceView(tc.query), "DELETE")
 			if deleteIdx <= 0 {
 				t.Errorf("DELETE keyword not found in: %s", tc.query)
 			}
@@ -224,8 +224,8 @@ func TestExecuteWithoutTransaction_DeleteRouting(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			hasDelete := findKeywordIndex(tc.query, "DELETE") > 0
-			hasDetachDelete := containsKeywordOutsideStrings(tc.query, "DETACH DELETE")
+			hasDelete := findKeywordIndex(originalBraceView(tc.query), "DELETE") > 0
+			hasDetachDelete := containsKeywordOutsideStrings(originalBraceView(tc.query), "DETACH DELETE")
 
 			wouldRouteToDelete := hasDelete || hasDetachDelete
 

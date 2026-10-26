@@ -100,7 +100,7 @@ func TestParserBenchmarkReports(t *testing.T) {
 	}{
 		{"validate", "CYPHER VALIDATION BENCHMARK REPORT", "validate", [2]func(string) error{
 			func(query string) error {
-				return exec.validateSyntax(context.Background(), query, false, syntaxNativeCore)
+				return exec.validateSyntax(context.Background(), originalBraceView(query), false, syntaxNativeCore)
 			},
 			antlrparser.Validate,
 		}},

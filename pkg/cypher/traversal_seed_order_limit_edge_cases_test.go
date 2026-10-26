@@ -17,37 +17,37 @@ func TestTraversalSeedOrderLimit_EarlyExitGuards(t *testing.T) {
 
 	returnItems := []returnItem{{expr: "d.id"}}
 
-	res, used, err := exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems, "", "r.name ASC", 0, traversalEndSeed)
+	res, used, err := exec.tryExecuteTraversalSeedOrderLimit(ctx, originalBraceView("(d:Drawer)-[:IN_ROOM]->(r:Room)"), originalBraceView(""), returnItems, "", expressionBraceView("r.name ASC"), 0, traversalEndSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
 
-	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d)-[:IN_ROOM]->(r)", "", returnItems, "", "r.name ASC", 2, traversalEndSeed)
+	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, originalBraceView("(d)-[:IN_ROOM]->(r)"), originalBraceView(""), returnItems, "", expressionBraceView("r.name ASC"), 2, traversalEndSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
 
-	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "d.id = 'x'", returnItems, "", "r.name ASC", 2, traversalEndSeed)
+	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, originalBraceView("(d:Drawer)-[:IN_ROOM]->(r:Room)"), expressionBraceView("d.id = 'x'"), returnItems, "", expressionBraceView("r.name ASC"), 2, traversalEndSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
 
-	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "r.name IS NOT NULL", returnItems, "", "x.name ASC", 2, traversalEndSeed)
+	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, originalBraceView("(d:Drawer)-[:IN_ROOM]->(r:Room)"), expressionBraceView("r.name IS NOT NULL"), returnItems, "", expressionBraceView("x.name ASC"), 2, traversalEndSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
 
-	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems, "", "d.rank DESC", 0, traversalStartSeed)
+	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, originalBraceView("(d:Drawer)-[:IN_ROOM]->(r:Room)"), originalBraceView(""), returnItems, "", expressionBraceView("d.rank DESC"), 0, traversalStartSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
 
-	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems, "", "d.rank DESC", 2, traversalStartSeed)
+	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, originalBraceView("(:Drawer)-[:IN_ROOM]->(r:Room)"), originalBraceView(""), returnItems, "", expressionBraceView("d.rank DESC"), 2, traversalStartSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
 
-	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d:Drawer)-[:IN_ROOM]->(r:Room)", "", returnItems, "", "", 2, traversalStartSeed)
+	res, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, originalBraceView("(d:Drawer)-[:IN_ROOM]->(r:Room)"), originalBraceView(""), returnItems, "", originalBraceView(""), 2, traversalStartSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, res)
@@ -68,11 +68,11 @@ func TestTraversalEndSeedOrderLimit_IndexWindowDeclines(t *testing.T) {
 
 		res, used, err := exec.tryExecuteTraversalSeedOrderLimit(
 			ctx,
-			"(d:Drawer)-[:IN_ROOM]->(r:Room)",
-			"r.name = 'missing'",
+			originalBraceView("(d:Drawer)-[:IN_ROOM]->(r:Room)"),
+			expressionBraceView("r.name = 'missing'"),
 			[]returnItem{{expr: "d.id", alias: "did"}},
 			"",
-			"r.name ASC",
+			expressionBraceView("r.name ASC"),
 			2,
 			traversalEndSeed,
 		)
@@ -107,11 +107,11 @@ func TestTraversalEndSeedOrderLimit_IndexWindowDeclines(t *testing.T) {
 		// helper intentionally returns (nil,false,nil) to fall back to full execution.
 		res, used, err := exec.tryExecuteTraversalSeedOrderLimit(
 			ctx,
-			"(d:Drawer)-[:IN_ROOM]->(r:Room)",
-			"r.name IS NOT NULL",
+			originalBraceView("(d:Drawer)-[:IN_ROOM]->(r:Room)"),
+			expressionBraceView("r.name IS NOT NULL"),
 			[]returnItem{{expr: "d.id"}, {expr: "r.name"}},
 			"",
-			"r.name ASC",
+			expressionBraceView("r.name ASC"),
 			1,
 			traversalEndSeed,
 		)
@@ -127,7 +127,7 @@ func TestTraversalCollectStartSeedNodes_InputAndTruncateBranches(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	nodes, used, err := exec.tryCollectTraversalStartSeedOrderNodes(ctx, nodePatternInfo{}, "", "d.rank DESC", 2)
+	nodes, used, err := exec.tryCollectTraversalStartSeedOrderNodes(ctx, nodePatternInfo{}, originalBraceView(""), expressionBraceView("d.rank DESC"), 2)
 	require.NoError(t, err)
 	require.False(t, used)
 	require.Nil(t, nodes)
@@ -143,8 +143,8 @@ func TestTraversalCollectStartSeedNodes_InputAndTruncateBranches(t *testing.T) {
 	nodes, used, err = exec.tryCollectTraversalStartSeedOrderNodes(
 		ctx,
 		nodePatternInfo{variable: "d", labels: []string{"Drawer"}},
-		"d.rank IS NOT NULL",
-		"d.rank DESC",
+		expressionBraceView("d.rank IS NOT NULL"),
+		expressionBraceView("d.rank DESC"),
 		3,
 	)
 	require.NoError(t, err)
@@ -161,12 +161,12 @@ func TestTraversalStartPropertyScan_EmptyCandidateBranch(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	ctx := context.Background()
 
-	nodes, used, err := exec.tryCollectNodesFromStartPropertyScan(ctx, nodePatternInfo{variable: "n", labels: []string{"Missing"}}, "n.name = 'x'")
+	nodes, used, err := exec.tryCollectNodesFromStartPropertyScan(ctx, nodePatternInfo{variable: "n", labels: []string{"Missing"}}, expressionBraceView("n.name = 'x'"))
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)
 
-	nodes, used, err = exec.tryCollectNodesFromStartPropertyScan(ctx, nodePatternInfo{variable: "n", labels: []string{"Missing"}}, "n.name IS NOT NULL")
+	nodes, used, err = exec.tryCollectNodesFromStartPropertyScan(ctx, nodePatternInfo{variable: "n", labels: []string{"Missing"}}, expressionBraceView("n.name IS NOT NULL"))
 	require.NoError(t, err)
 	require.True(t, used)
 	require.Empty(t, nodes)

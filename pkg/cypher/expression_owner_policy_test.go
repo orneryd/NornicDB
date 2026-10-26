@@ -61,7 +61,7 @@ func TestExpressionAdmissionPolicyPopulations(t *testing.T) {
 		labels [2]string
 	}{
 		{name: "TestExpressionTextPolicyPopulations", labels: [2]string{"operator", "operand"}, accept: func(text string) (bool, bool) {
-			return expressionTextAccepted(text, expressionTextOperator), expressionTextAccepted(text, expressionTextOperand)
+			return expressionTextAccepted(originalBraceView(text), expressionTextOperator), expressionTextAccepted(originalBraceView(text), expressionTextOperand)
 		}, cases: []admissionCase{
 			{"", true, false}, {"[1+2]", false, true}, {"{k:1+2}", false, true}, {"-[1]", true, true}, {"- [1]", true, true},
 			{"(a)-[:R]->(b)", false, false}, {"n {.*, k:1}", false, false}, {"n {k:1}", false, false},

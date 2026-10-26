@@ -921,7 +921,7 @@ func TestParseReturnClauseBasic(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 
-			result, err := exec.projectMergeReturn(ctx, []pipelineRow{exec.mergeBindingRow(ctx, map[string]*storage.Node{tt.varName: node}, nil)}, "RETURN "+tt.returnClause)
+			result, err := exec.projectMergeReturn(ctx, []pipelineRow{exec.mergeBindingRow(ctx, map[string]*storage.Node{tt.varName: node}, nil)}, originalBraceView("RETURN "+tt.returnClause))
 			require.NoError(t, err)
 			require.Len(t, result.Rows, 1)
 			assert.Equal(t, tt.expectedCols, result.Columns)
@@ -966,7 +966,7 @@ func TestEvaluateExpression(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
-			result := exec.evaluateExpression(ctx, tt.expr, tt.varName, node)
+			result := exec.evaluateExpression(ctx, originalBraceView(tt.expr), tt.varName, node)
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -1137,7 +1137,7 @@ func TestExtractLabels(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := exec.extractLabels(tt.pattern)
+			result := exec.extractLabels(originalBraceView(tt.pattern))
 			assert.Equal(t, tt.expected, result)
 		})
 	}
@@ -1708,7 +1708,7 @@ func TestPropertyAccessInMatch(t *testing.T) {
 
 	// First, test parseReturnItems directly
 	returnClause := "n.order_id as order_id, n.amount as amount"
-	returnItems := exec.parseReturnItems(t.Context(), returnClause)
+	returnItems := exec.parseReturnItems(t.Context(), originalBraceView(returnClause))
 	t.Logf("parseReturnItems returned %d items for %q", len(returnItems), returnClause)
 	for i, item := range returnItems {
 		t.Logf("  Item %d: expr=%q, alias=%q", i, item.expr, item.alias)
@@ -1787,7 +1787,7 @@ func TestParseReturnItems_OrderByAfterAliasWithOrderPrefix(t *testing.T) {
 		{"textKey128, texts\nORDER BY textKey128", []string{"textKey128", "texts"}},
 	} {
 		t.Run(tc.clause, func(t *testing.T) {
-			items := exec.parseReturnItems(t.Context(), tc.clause)
+			items := exec.parseReturnItems(t.Context(), originalBraceView(tc.clause))
 			require.Len(t, items, len(tc.expressions))
 			for i, expression := range tc.expressions {
 				assert.Equal(t, expression, items[i].expr)
@@ -1812,7 +1812,7 @@ func TestProcessCallSubqueryReturn_OrderByOnNewline(t *testing.T) {
 
 	ctx := context.Background()
 
-	out, err := exec.executeCallTail(ctx, inner, "RETURN textKey128, texts\nORDER BY textKey128")
+	out, err := exec.executeCallTail(ctx, inner, originalBraceView("RETURN textKey128, texts\nORDER BY textKey128"))
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Len(t, out.Columns, 2)
@@ -1942,12 +1942,12 @@ func TestMatchMultiAndUnwindBranchCoverage(t *testing.T) {
 		"a": &storage.Node{ID: "p1", Properties: map[string]interface{}{"age": int64(30)}},
 		"b": &storage.Node{ID: "p2", Properties: map[string]interface{}{"age": int64(40)}},
 	}
-	assert.True(t, exec.evaluateBindingWhere(ctx, b, "a <> b AND a.age < b.age", nil))
-	assert.True(t, exec.evaluateBindingWhere(ctx, b, "NOT a.age > b.age", nil))
-	assert.False(t, exec.evaluateBindingWhere(ctx, b, "a.age > b.age OR a = b", nil))
-	assert.False(t, exec.evaluateBindingWhere(ctx, b, "a.name", nil))
-	assert.True(t, exec.evaluateWhereForContext(ctx, "a.age < b.age", map[string]*storage.Node{"a": b["a"], "b": b["b"]}))
-	assert.False(t, exec.evaluateWhereForContext(ctx, "a.name", map[string]*storage.Node{"a": b["a"]}))
+	assert.True(t, exec.evaluateBindingWhere(ctx, b, expressionBraceView("a <> b AND a.age < b.age"), nil))
+	assert.True(t, exec.evaluateBindingWhere(ctx, b, expressionBraceView("NOT a.age > b.age"), nil))
+	assert.False(t, exec.evaluateBindingWhere(ctx, b, expressionBraceView("a.age > b.age OR a = b"), nil))
+	assert.False(t, exec.evaluateBindingWhere(ctx, b, expressionBraceView("a.name"), nil))
+	assert.True(t, exec.evaluateWhereForContext(ctx, expressionBraceView("a.age < b.age"), map[string]*storage.Node{"a": b["a"], "b": b["b"]}))
+	assert.False(t, exec.evaluateWhereForContext(ctx, expressionBraceView("a.name"), map[string]*storage.Node{"a": b["a"]}))
 	assert.False(t, isSystemNode(nil))
 	assert.True(t, isSystemNode(&storage.Node{Labels: []string{"_meta"}}))
 	assert.False(t, isSystemNode(&storage.Node{Labels: []string{"Person"}}))
@@ -2427,22 +2427,22 @@ func TestEvaluateExpressionFromValues_Branches(t *testing.T) {
 		},
 	}
 
-	require.Equal(t, "alice", exec.evaluateExpressionFromValues("n.name", values))
-	require.Nil(t, exec.evaluateExpressionFromValues("m.title", values))
-	require.Equal(t, int64(2), exec.evaluateExpressionFromValues("length(path)", values))
-	require.Equal(t, int64(3), exec.evaluateExpressionFromValues("size(xs)", values))
-	require.Equal(t, int64(4), exec.evaluateExpressionFromValues("size('abcd')", values))
+	require.Equal(t, "alice", exec.evaluateExpressionFromValues(expressionBraceView("n.name"), values))
+	require.Nil(t, exec.evaluateExpressionFromValues(expressionBraceView("m.title"), values))
+	require.Equal(t, int64(2), exec.evaluateExpressionFromValues(expressionBraceView("length(path)"), values))
+	require.Equal(t, int64(3), exec.evaluateExpressionFromValues(expressionBraceView("size(xs)"), values))
+	require.Equal(t, int64(4), exec.evaluateExpressionFromValues(expressionBraceView("size('abcd')"), values))
 
-	labels := exec.evaluateExpressionFromValues("labels(n)", values)
+	labels := exec.evaluateExpressionFromValues(expressionBraceView("labels(n)"), values)
 	require.NotNil(t, labels)
 
-	rels := exec.evaluateExpressionFromValues("relationships(path)", values)
+	rels := exec.evaluateExpressionFromValues(expressionBraceView("relationships(path)"), values)
 	require.Len(t, rels.([]interface{}), 2)
 
-	listComp := exec.evaluateExpressionFromValues("[r IN relationships(path) | type(r)]", values)
+	listComp := exec.evaluateExpressionFromValues(originalBraceView("[r IN relationships(path) | type(r)]"), values)
 	require.Equal(t, []interface{}{"KNOWS", "WORKS_WITH"}, listComp)
 
-	mapLit := exec.evaluateExpressionFromValues("{name: n.name, relCount: size(relationships(path))}", values)
+	mapLit := exec.evaluateExpressionFromValues(expressionBraceView("{name: n.name, relCount: size(relationships(path))}"), values)
 	require.NotNil(t, mapLit)
 }
 
@@ -2507,12 +2507,12 @@ func TestEvaluateExpressionFromValues_MaterializesTemporalExpressions(t *testing
 		},
 	}
 
-	validFrom := exec.evaluateExpressionFromValues("datetime(row.valid_from_iso)", values)
+	validFrom := exec.evaluateExpressionFromValues(expressionBraceView("datetime(row.valid_from_iso)"), values)
 	validFromDateTime, ok := validFrom.(CypherDateTime)
 	require.True(t, ok, "expected CypherDateTime, got %T", validFrom)
 	require.Equal(t, "2026-03-20T20:22:20Z", validFromDateTime.Time.UTC().Format(time.RFC3339))
-	require.Nil(t, exec.evaluateExpressionFromValues("CASE WHEN row.valid_to_iso IS NULL THEN null ELSE datetime(row.valid_to_iso) END", values))
-	assertedAt := exec.evaluateExpressionFromValues("CASE WHEN row.asserted_at_iso IS NULL THEN null ELSE datetime(row.asserted_at_iso) END", values)
+	require.Nil(t, exec.evaluateExpressionFromValues(expressionBraceView("CASE WHEN row.valid_to_iso IS NULL THEN null ELSE datetime(row.valid_to_iso) END"), values))
+	assertedAt := exec.evaluateExpressionFromValues(expressionBraceView("CASE WHEN row.asserted_at_iso IS NULL THEN null ELSE datetime(row.asserted_at_iso) END"), values)
 	assertedAtDateTime, ok := assertedAt.(CypherDateTime)
 	require.True(t, ok, "expected CypherDateTime, got %T", assertedAt)
 	require.Equal(t, "2026-03-21T01:02:03Z", assertedAtDateTime.Time.UTC().Format(time.RFC3339))
@@ -2534,7 +2534,7 @@ func TestEvaluateCoalesceInContext_ResolvesComputedMapProperties(t *testing.T) {
 	require.Equal(
 		t,
 		"BackendRegex",
-		exec.evaluateCoalesceInContext("coalesce(row.name, row.path, row.file_path, row.entity_id)", nil, nil, values),
+		exec.evaluateCoalesceInContext(expressionBraceView("coalesce(row.name, row.path, row.file_path, row.entity_id)"), nil, nil, values),
 	)
 }
 

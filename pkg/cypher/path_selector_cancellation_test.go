@@ -30,7 +30,7 @@ func TestSelectedPathCancelledReconstruction(t *testing.T) {
 		}
 		previous = next
 	}
-	plan, _, ok := compileSelectedPathPlan("(a)-[:T*]->(b)", "p", "", nil)
+	plan, _, ok := compileSelectedPathPlan(originalBraceView("(a)-[:T*]->(b)"), "p", originalBraceView(""), nil)
 	if !ok {
 		t.Fatal("compile")
 	}
@@ -51,12 +51,12 @@ func TestSelectedPathCancelledReconstruction(t *testing.T) {
 
 func TestSelectedPathCancelledLevel(t *testing.T) {
 	e, c := newShortestSelectorExecutor(t)
-	ns, err := e.pipelineMatchRows(c, pipelineRow{}, "MATCH (a:S {id: 1})")
+	ns, err := e.pipelineMatchRows(c, pipelineRow{}, originalBraceView("MATCH (a:S {id: 1})"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := ns[0]["a"].(*storage.Node)
-	p, _, ok := compileSelectedPathPlan("(a)(()-[:T]->())+(b)", "p", "", nil)
+	p, _, ok := compileSelectedPathPlan(originalBraceView("(a)(()-[:T]->())+(b)"), "p", originalBraceView(""), nil)
 	if !ok {
 		t.Fatal("compile")
 	}

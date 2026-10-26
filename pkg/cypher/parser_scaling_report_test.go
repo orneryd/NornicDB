@@ -131,7 +131,7 @@ func parserOp(parser, mode string) func(q string) error {
 				clear(c.shards[i].cache)
 				c.shards[i].mu.Unlock()
 			}
-			return e.validateSyntax(context.Background(), q, false, syntaxNativeCore)
+			return e.validateSyntax(context.Background(), originalBraceView(q), false, syntaxNativeCore)
 		}
 	case "nornic/parse":
 		b := NewASTBuilder()

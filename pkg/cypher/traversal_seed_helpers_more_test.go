@@ -10,9 +10,9 @@ import (
 
 func TestTraversalSeedHelpers_WhereExtractionAndReverse(t *testing.T) {
 	where := "d.filed_at IS NOT NULL AND r.name = 'root' AND id(d) = 'x' AND elementId(d) = 'x2'"
-	seedOnly := (&StorageExecutor{}).extractTraversalSeedWhereClause(where, "d", "r")
+	seedOnly := (&StorageExecutor{}).extractTraversalSeedWhereClause(originalBraceView(where), "d", "r")
 	require.Equal(t, "d.filed_at IS NOT NULL AND id(d) = 'x' AND elementId(d) = 'x2'", seedOnly)
-	require.Equal(t, "", (&StorageExecutor{}).extractTraversalSeedWhereClause("", "d"))
+	require.Equal(t, "", (&StorageExecutor{}).extractTraversalSeedWhereClause(originalBraceView(""), "d"))
 
 	orig := &TraversalMatch{
 		StartNode:    nodePatternInfo{variable: "a", labels: []string{"A"}},
@@ -65,11 +65,11 @@ func TestTraversalStartSeedOrderLimit_Deterministic(t *testing.T) {
 	}
 	res, used, err := exec.tryExecuteTraversalSeedOrderLimit(
 		ctx,
-		"(d:Drawer)-[:IN_ROOM]->(r:Room)",
-		"d.filed_at IS NOT NULL",
+		originalBraceView("(d:Drawer)-[:IN_ROOM]->(r:Room)"),
+		expressionBraceView("d.filed_at IS NOT NULL"),
 		returnItems,
 		"",
-		"d.filed_at DESC",
+		expressionBraceView("d.filed_at DESC"),
 		2,
 		traversalStartSeed,
 	)
@@ -80,7 +80,7 @@ func TestTraversalStartSeedOrderLimit_Deterministic(t *testing.T) {
 	require.EqualValues(t, int64(100), res.Rows[0][1])
 	require.Equal(t, "d-1", res.Rows[1][0])
 
-	_, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, "(d)-[:IN_ROOM]->(r)", "", returnItems, "", "", 2, traversalStartSeed)
+	_, used, err = exec.tryExecuteTraversalSeedOrderLimit(ctx, originalBraceView("(d)-[:IN_ROOM]->(r)"), originalBraceView(""), returnItems, "", originalBraceView(""), 2, traversalStartSeed)
 	require.NoError(t, err)
 	require.False(t, used)
 }
@@ -116,11 +116,11 @@ func TestTraversalEndSeedOrderLimit_Deterministic(t *testing.T) {
 	returnItems := []returnItem{{expr: "d.drawer_id"}, {expr: "r.name"}}
 	res, used, err := exec.tryExecuteTraversalSeedOrderLimit(
 		ctx,
-		"(d:Drawer)-[:IN_ROOM]->(r:Room)",
-		"r.name IS NOT NULL",
+		originalBraceView("(d:Drawer)-[:IN_ROOM]->(r:Room)"),
+		expressionBraceView("r.name IS NOT NULL"),
 		returnItems,
 		"",
-		"r.name ASC",
+		expressionBraceView("r.name ASC"),
 		2,
 		traversalEndSeed,
 	)

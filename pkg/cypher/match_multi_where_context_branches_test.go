@@ -30,26 +30,26 @@ func TestEvaluateWhereForContext_Branches(t *testing.T) {
 	nodes["a"] = nA
 	nodes["b"] = nB
 
-	require.True(t, exec.evaluateWhereForContext(ctx, "", nodes))
-	require.False(t, exec.evaluateWhereForContext(ctx, "NOT a.age > 10", nodes))
-	require.True(t, exec.evaluateWhereForContext(ctx, "a.age > 20 AND b.age < 30", nodes))
-	require.True(t, exec.evaluateWhereForContext(ctx, "a.age < 20 OR b.age < 30", nodes))
+	require.True(t, exec.evaluateWhereForContext(ctx, originalBraceView(""), nodes))
+	require.False(t, exec.evaluateWhereForContext(ctx, expressionBraceView("NOT a.age > 10"), nodes))
+	require.True(t, exec.evaluateWhereForContext(ctx, expressionBraceView("a.age > 20 AND b.age < 30"), nodes))
+	require.True(t, exec.evaluateWhereForContext(ctx, expressionBraceView("a.age < 20 OR b.age < 30"), nodes))
 
 	// Single-variable clauses route through evaluateWhere.
-	require.True(t, exec.evaluateWhereForContext(ctx, "a.name = 'Ada'", nodes))
-	require.False(t, exec.evaluateWhereForContext(ctx, "a.name = 'Unknown'", nodes))
+	require.True(t, exec.evaluateWhereForContext(ctx, expressionBraceView("a.name = 'Ada'"), nodes))
+	require.False(t, exec.evaluateWhereForContext(ctx, expressionBraceView("a.name = 'Unknown'"), nodes))
 
 	// Relationship existence predicates across two bound variables.
-	require.True(t, exec.evaluateWhereForContext(ctx, "(a)-[:KNOWS]->(b)", nodes))
-	require.True(t, exec.evaluateWhereForContext(ctx, "(b)<-[:KNOWS]-(a)", nodes))
-	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:LIKES]->(b)", nodes))
+	require.True(t, exec.evaluateWhereForContext(ctx, originalBraceView("(a)-[:KNOWS]->(b)"), nodes))
+	require.True(t, exec.evaluateWhereForContext(ctx, originalBraceView("(b)<-[:KNOWS]-(a)"), nodes))
+	require.False(t, exec.evaluateWhereForContext(ctx, originalBraceView("(a)-[:LIKES]->(b)"), nodes))
 
 	// Missing node in a relationship predicate should return false.
-	require.False(t, exec.evaluateWhereForContext(ctx, "(a)-[:KNOWS]->(c)", nodes))
+	require.False(t, exec.evaluateWhereForContext(ctx, originalBraceView("(a)-[:KNOWS]->(c)"), nodes))
 
 	// Fallback expression evaluation branch.
-	require.True(t, exec.evaluateWhereForContext(ctx, "1 = 1", nodes))
-	require.False(t, exec.evaluateWhereForContext(ctx, "'x'", nodes))
+	require.True(t, exec.evaluateWhereForContext(ctx, expressionBraceView("1 = 1"), nodes))
+	require.False(t, exec.evaluateWhereForContext(ctx, expressionBraceView("'x'"), nodes))
 }
 
 func TestIsNumericLiteral_Branches(t *testing.T) {
