@@ -1,3 +1,4 @@
+// Author of the publication-tail annotation: #1683 lane (Claude), 2026-10-30.
 package storage
 
 import (
@@ -30,6 +31,9 @@ type commitWriter struct {
 	stored       *storedEntityCommit
 	publishKeys  []any
 	notification *commitNotification
+	// publicationTail marks a publication's derived-metadata tail commit
+	// (withPublicationTailUpdate): it writes only tail keys and changes no row.
+	publicationTail bool
 	batchWriter
 	engine              *BadgerEngine
 	embeddingOutcome    *Node
@@ -151,7 +155,7 @@ func (cw *commitWriter) abort() error {
 var errPersistingTokens = errors.New("persisting property key dictionary")
 
 func (cw *commitWriter) commitOutcomeBatch() (uint64, error) {
-	return cw.db.commitShared(cw.txn, cw.publication())
+	return cw.db.commitAt(cw.txn, cw.publication(), cw.publicationTail)
 }
 
 // publication is the memory-only delta associated with this physical commit.

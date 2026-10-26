@@ -543,7 +543,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 
 	// Commit tail: durability bookkeeping, derived counts, caches, callbacks.
 	for ns := range versions {
-		b.persistMVCCSequence(ns)
+		b.persistMVCCSequenceInTail(ns)
 	}
 	if anyCounters {
 		b.idDict.persistCounters(b.db, maxNode, maxEdge)
@@ -719,6 +719,11 @@ func (b *BadgerEngine) FlushWriteBehind() error {
 	}
 	return nil
 }
+
+// WriteBehindEnabled reports whether buffered publication can change scan
+// order as it drains, independently of visible graph mutation revisions.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func (b *BadgerEngine) WriteBehindEnabled() bool { return b.writeBehindEnabled() }
 
 // writeBehindEnabled reports whether the buffer is active.
 func (b *BadgerEngine) writeBehindEnabled() bool {

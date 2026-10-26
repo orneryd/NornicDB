@@ -300,18 +300,10 @@ func (n *NamespacedEngine) UpdateNode(node *Node) error {
 }
 
 func (n *NamespacedEngine) DeleteNode(id NodeID) error {
-	prefixedID := n.PrefixNodeID(id)
-
-	// Delete the node (this will remove it from pending embeddings index)
-	err := n.inner.DeleteNode(prefixedID)
-
-	// Remove from pending embeddings index (with namespace prefix)
-	// ALL node IDs in the index must be prefixed
-	if mgr, ok := n.inner.(interface{ MarkNodeEmbedded(NodeID) }); ok {
-		mgr.MarkNodeEmbedded(prefixedID)
-	}
-
-	return err
+	// The inner delete removes the node's pending-embedding marker in its own
+	// commit; a second commit to retire it again would only separate this
+	// delete into two publications.
+	return n.inner.DeleteNode(n.PrefixNodeID(id))
 }
 
 // ============================================================================

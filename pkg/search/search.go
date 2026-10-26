@@ -826,6 +826,9 @@ func estimateSearchResponseBytes(response *SearchResponse) int64 {
 //		log.Printf("Failed to index: %v", err)
 //	}
 type Service struct {
+	// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+	fulltextDocumentsOnce  sync.Once
+	fulltextDocuments      *fulltextDocumentOwner
 	engine                 storage.Engine
 	vectorIndex            *VectorIndex
 	vectorFileStore        *VectorFileStore // guarded by mu; snapshots retain a store whose methods check closure

@@ -1349,6 +1349,16 @@ func (b *BadgerEngine) allocateMVCCVersion(txn *badger.Txn, namespace string, co
 // commit, since the in-memory counter is authoritative and any lost
 // persistence window is reconciled at next engine open.
 func (b *BadgerEngine) persistMVCCSequence(namespace string) {
+	b.persistMVCCSequenceWith(b.db.updateKV, namespace)
+}
+
+// persistMVCCSequenceInTail persists the high-water mark as part of the
+// publication that advanced it (see updatePublicationTail).
+func (b *BadgerEngine) persistMVCCSequenceInTail(namespace string) {
+	b.persistMVCCSequenceWith(b.db.updatePublicationTail, namespace)
+}
+
+func (b *BadgerEngine) persistMVCCSequenceWith(update func(func(metadataKV) error) error, namespace string) {
 	if namespace == "" {
 		return
 	}
@@ -1363,8 +1373,8 @@ func (b *BadgerEngine) persistMVCCSequence(namespace string) {
 	encodedSeq := make([]byte, 8)
 	binary.BigEndian.PutUint64(encodedSeq, seq)
 	persistKey := state.persistKey
-	_ = b.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(persistKey, encodedSeq)
+	_ = update(func(w metadataKV) error {
+		return w.Set(persistKey, encodedSeq)
 	})
 }
 

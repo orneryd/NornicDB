@@ -424,7 +424,7 @@ func (tx *BadgerTransaction) PublishCommit(ctx context.Context, request CommitPu
 	// conflict-detection set. Concurrent commits in the same namespace
 	// must not race on these writes — see allocateMVCCVersion's doc.
 	if tx.namespace != "" && !tx.CommitVersion.IsZero() {
-		tx.engine.persistMVCCSequence(tx.namespace)
+		tx.engine.persistMVCCSequenceInTail(tx.namespace)
 	}
 	tx.engine.idDict.persistCounters(tx.engine.db, idCounterNodeMax, idCounterEdgeMax)
 

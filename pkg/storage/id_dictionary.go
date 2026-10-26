@@ -562,22 +562,23 @@ func (d *idDictionary) edgePendingWriter(id EdgeID) (*txnCounterState, bool) {
 // nextNode/nextEdge atomics are authoritative for the engine's lifetime;
 // a crash between commit and persistence loses at most the unflushed
 // window of allocated numIDs, reconciled at next engine open.
-func (d *idDictionary) persistCounters(db badgerKV, nodeMax, edgeMax uint64) {
+func (d *idDictionary) persistCounters(db *managedBadgerDB, nodeMax, edgeMax uint64) {
 	if db == nil || (nodeMax == 0 && edgeMax == 0) {
 		return
 	}
-	_ = db.Update(func(txn *badger.Txn) error {
+	// Every caller persists the counters of a publication that just committed.
+	_ = db.updatePublicationTail(func(w metadataKV) error {
 		if nodeMax > 0 {
 			var buf [8]byte
 			binary.BigEndian.PutUint64(buf[:], nodeMax)
-			if err := txn.Set(idCounterNodeKey, append([]byte(nil), buf[:]...)); err != nil {
+			if err := w.Set(idCounterNodeKey, append([]byte(nil), buf[:]...)); err != nil {
 				return err
 			}
 		}
 		if edgeMax > 0 {
 			var buf [8]byte
 			binary.BigEndian.PutUint64(buf[:], edgeMax)
-			if err := txn.Set(idCounterEdgeKey, append([]byte(nil), buf[:]...)); err != nil {
+			if err := w.Set(idCounterEdgeKey, append([]byte(nil), buf[:]...)); err != nil {
 				return err
 			}
 		}
