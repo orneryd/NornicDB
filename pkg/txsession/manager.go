@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/txphase"
@@ -87,7 +88,8 @@ func (m *Manager) Open(ctx context.Context, dbName string) (*Session, error) {
 	return m.OpenForOwner(ctx, dbName, "")
 }
 
-func (m *Manager) OpenForOwner(ctx context.Context, dbName string, owner string) (*Session, error) {
+func (m *Manager) OpenForOwner(ctx context.Context, dbName string, owner string) (_ *Session, retErr error) {
+	defer func() { retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, retErr) }()
 	if m.factory == nil {
 		return nil, fmt.Errorf("transaction manager factory is not configured")
 	}
@@ -104,7 +106,9 @@ func (m *Manager) OpenForOwner(ctx context.Context, dbName string, owner string)
 // session. For example, an HTTP transaction supplies its authenticated owner;
 // internal callers can supply "". Request-dependent remote credentials remain
 // on the supplied executor, while the manager owns transaction lifetime.
-func (m *Manager) OpenWithExecutorForOwner(ctx context.Context, dbName string, executor *cypher.StorageExecutor, owner string) (*Session, error) {
+func (m *Manager) OpenWithExecutorForOwner(ctx context.Context, dbName string, executor *cypher.StorageExecutor, owner string) (_ *Session, retErr error) {
+	// A failure to open is the transaction's BEGIN failure, classified here.
+	defer func() { retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalBegin, retErr) }()
 	if executor == nil {
 		return nil, fmt.Errorf("transaction executor is not available")
 	}
@@ -243,7 +247,10 @@ func (m *Manager) ExecuteInSession(ctx context.Context, session *Session, query 
 	return result, nil
 }
 
-func (m *Manager) CommitAndDelete(ctx context.Context, session *Session) (*cypher.ExecuteResult, error) {
+func (m *Manager) CommitAndDelete(ctx context.Context, session *Session) (_ *cypher.ExecuteResult, retErr error) {
+	// Every failure returned here is this COMMIT's outcome, classified here; a
+	// remembered statement failure keeps its own status.
+	defer func() { retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, retErr) }()
 	if session == nil {
 		return nil, fmt.Errorf("transaction session is not available")
 	}
@@ -256,7 +263,12 @@ func (m *Manager) CommitAndDelete(ctx context.Context, session *Session) (*cyphe
 	}
 	commitCtx, admissionErr := txphase.CommitContext(ctx)
 	if admissionErr != nil {
-		_, _ = m.endLocked(ctx, session, "ROLLBACK")
+		// Author: Codex, NOR-180. The existing terminal owner has already
+		// returned its outcome; keep it without changing admission or its wait.
+		_, cleanupErr := m.endLocked(ctx, session, "ROLLBACK")
+		if cleanupErr != nil {
+			return nil, nornicerrors.CombineTerminalOutcomes(admissionErr, cleanupErr)
+		}
 		return nil, admissionErr
 	}
 	result, err := m.endLocked(commitCtx, session, "COMMIT")
@@ -267,7 +279,8 @@ func (m *Manager) CommitAndDelete(ctx context.Context, session *Session) (*cyphe
 	return result, nil
 }
 
-func (m *Manager) RollbackAndDelete(ctx context.Context, session *Session) error {
+func (m *Manager) RollbackAndDelete(ctx context.Context, session *Session) (retErr error) {
+	defer func() { retErr = nornicerrors.TransactionControlFailure(nornicerrors.TerminalRollback, retErr) }()
 	if session == nil {
 		return fmt.Errorf("transaction session is not available")
 	}
