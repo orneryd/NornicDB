@@ -2,7 +2,6 @@ package search
 
 import (
 	"context"
-	"errors"
 	"math"
 	"reflect"
 	"runtime/debug"
@@ -12,6 +11,7 @@ import (
 	"sync/atomic"
 	"unsafe"
 
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -165,7 +165,7 @@ func (s *Service) endBuildWrites(ctx context.Context, buildErr error) error {
 	q.flagsQueued = false
 	q.mu.Unlock()
 	changed, err := s.applyBuildWrites(writes)
-	resultErr := errors.Join(buildErr, err)
+	resultErr := compose.Outcomes(buildErr, err)
 	resultErr = s.finishPopulationPersistence(ctx, resultErr, false, changed)
 	// A new build can claim the next sequence while the final batch applies.
 	// Check and publish under the same lock that claims its ownership.
@@ -541,7 +541,7 @@ func (s *Service) applyBuildWrites(writes []deferredIndexWrite) (changed bool, r
 		}
 		if err != nil {
 			s.population.state.Store(populationFailed)
-			resultErr = errors.Join(resultErr, write.replayError(err))
+			resultErr = compose.Outcomes(resultErr, write.replayError(err))
 		}
 	}
 	return len(writes) > 0, resultErr

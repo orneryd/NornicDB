@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/orneryd/nornicdb/apoc/registry"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 
 	"github.com/orneryd/nornicdb/apoc/agg"
 	"github.com/orneryd/nornicdb/apoc/algo"
@@ -236,7 +237,8 @@ func registerFunction(name, category string, function interface{}, description s
 func registerAllFunctions() error {
 	var registrationError error
 	register := func(name, category string, function interface{}, description string, examples []string) {
-		registrationError = errors.Join(registrationError, registerFunction(name, category, function, description, examples))
+		// One composition owner (Author: Claude, NOR-180 convergence of #1685).
+		registrationError = compose.Outcomes(registrationError, registerFunction(name, category, function, description, examples))
 	}
 	// ========================================
 	// Collection Functions (apoc.coll.*)

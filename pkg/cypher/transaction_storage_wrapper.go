@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -1163,11 +1164,11 @@ func (w *transactionStorageWrapper) WithStoreTransaction(ctx context.Context, mu
 func (w *transactionStorageWrapper) completeCommitActions() error {
 	actions := w.commitActions
 	w.commitActions = nil
-	var result error
-	for _, action := range actions {
-		result = errors.Join(result, action())
+	failures := make([]error, len(actions))
+	for i, action := range actions {
+		failures[i] = action()
 	}
-	return result
+	return nornicerrors.CombineTerminalOutcomes(nil, failures...)
 }
 
 // completeInlineEmbedding consumes this native owner's recorded mutations once.
