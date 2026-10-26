@@ -14,6 +14,7 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j/dbtype"
 	"github.com/orneryd/nornicdb/pkg/cypher"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
 
 // TransactionMode selects how the statement under test is sent through Bolt.
@@ -178,7 +179,7 @@ func graphSnapshotFromResults(nodesResult, relationshipsResult QueryResult) (Gra
 
 func (b *BoltBackend) executeAutocommit(ctx context.Context, query string, params map[string]any) (result QueryResult, err error) {
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: b.databaseName})
-	defer func() { err = errors.Join(err, session.Close(ctx)) }()
+	defer func() { err = compose.Outcomes(err, session.Close(ctx)) }()
 	cursor, err := session.Run(ctx, query, params)
 	if err != nil {
 		return QueryResult{}, classifyBoltError(err)
@@ -188,7 +189,7 @@ func (b *BoltBackend) executeAutocommit(ctx context.Context, query string, param
 
 func (b *BoltBackend) executeExplicit(ctx context.Context, query string, params map[string]any) (result QueryResult, err error) {
 	session := b.driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: b.databaseName})
-	defer func() { err = errors.Join(err, session.Close(ctx)) }()
+	defer func() { err = compose.Outcomes(err, session.Close(ctx)) }()
 	tx, err := session.BeginTransaction(ctx)
 	if err != nil {
 		return QueryResult{}, classifyBoltError(err)
@@ -196,7 +197,7 @@ func (b *BoltBackend) executeExplicit(ctx context.Context, query string, params 
 	committed := false
 	defer func() {
 		if !committed {
-			err = errors.Join(err, tx.Rollback(ctx))
+			err = compose.Outcomes(err, tx.Rollback(ctx))
 		}
 	}()
 	cursor, err := tx.Run(ctx, query, params)
