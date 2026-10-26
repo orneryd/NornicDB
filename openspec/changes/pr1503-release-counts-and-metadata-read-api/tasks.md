@@ -13,7 +13,7 @@ Keep T3 and #1679 outside this work. The full local verification gate is `make t
 - [x] Qualify affected reads/count/lifecycle workloads with matched measurements and CPU profiles.
 - [x] Run the enabled duplicate checker against the refreshed graph and resolve every finding.
 - [x] Run uncached `make test` on the integrated candidate and fix every failure.
-- [ ] Push a reviewable PR against release/v1.4.4 and update Linear with exact evidence.
+- [x] Push a reviewable PR against release/v1.4.4 and update Linear with exact evidence.
 
 #1406's final-source concurrent UNIQUE requalification remains tracked under NOR-37;
 this task does not claim it complete or transfer its other acceptance criteria.
@@ -43,3 +43,5 @@ uncached (`GOFLAGS=-count=1 make test`), including the retained census mutants.
 Checked source SHA-256: `5868553fb169a98c55e90209d8521d0d2ee754709774cdf52653b12704ba419c`.
 All production Go hashes remain identical to the measured candidate. Earlier failed
 and canceled runs remain preserved and are not counted as passing evidence.
+
+Published correction commit `694e166fc748cfbc53b823b429469e7477eed53f` to PR #1503, retargeted to release/v1.4.4, and marked ready for review. NOR-44 is Dev Complete / Urgent with current acceptance evidence; obsolete NOR-36 blocker removed. Public issue #1502 remains open until release-branch merge. This completion update changes documentation only.
