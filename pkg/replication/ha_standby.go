@@ -625,17 +625,19 @@ func (r *HAStandbyReplicator) promote(ctx context.Context) error {
 
 // Apply applies a command to storage.
 func (r *HAStandbyReplicator) Apply(cmd *Command, timeout time.Duration) error {
-	if r.closed.Load() {
-		return ErrClosed
-	}
-	if !r.started.Load() {
-		return ErrNotReady
+	if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
+		return err
 	}
 
 	if !r.isPrimary.Load() {
 		return ErrStandbyMode
 	}
 
+	if cmd != nil {
+		if handled, err := routeLeaderEntityCommand(r.storage, r, cmd, timeout); handled || err != nil {
+			return err
+		}
+	}
 	traceWrites := os.Getenv("NORNICDB_CLUSTER_TRACE_WRITES") != ""
 	start := time.Now()
 	if err := r.storage.ApplyCommand(cmd); err != nil {

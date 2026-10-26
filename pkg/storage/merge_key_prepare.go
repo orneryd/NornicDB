@@ -41,14 +41,44 @@ func (tx *BadgerTransaction) PrepareMergeNodeForWrite(ctx context.Context, label
 }
 
 func (tx *BadgerTransaction) prepareMergeNode(ctx context.Context, labels []string, props map[string]interface{}, write bool) error {
+	if tx.clientDetached.Load() {
+		return ErrTransactionClosed
+	}
 	tx.mu.Lock()
 	if tx.Status != TxStatusActive || tx.namespace == "" || tx.snapshotTx == nil {
 		tx.mu.Unlock()
 		return nil
 	}
-	namespace := tx.namespace
-	schema := tx.engine.GetSchemaForNamespace(namespace)
+	namespace, engine := tx.namespace, tx.engine
 	tx.mu.Unlock()
+	if err := engine.initializeManagedEntityNamespace(ctx, namespace); err != nil {
+		return err
+	}
+	tx.mu.Lock()
+	if tx.clientDetached.Load() {
+		tx.mu.Unlock()
+		return ErrTransactionClosed
+	}
+	if tx.Status != TxStatusActive {
+		tx.mu.Unlock()
+		return nil
+	}
+	if tx.commitReleaseWrite == nil {
+		lease, err := engine.beginBarrierWrite(false, false)
+		if err != nil {
+			tx.mu.Unlock()
+			return err
+		}
+		tx.commitReleaseWrite = lease.releaseCallback()
+	}
+	if err := engine.pendingNamespaceConflict(namespace); err != nil {
+		tx.releaseWriteBarrierLocked()
+		tx.mu.Unlock()
+		return err
+	}
+	schema := engine.GetSchemaForNamespace(namespace)
+	tx.mu.Unlock()
+
 	for _, key := range schema.uniqueMergeKeys(labels, props) {
 		if err := tx.prepareMergeAdmissionKey(ctx, schema, namespace, key, props, write); err != nil {
 			return err

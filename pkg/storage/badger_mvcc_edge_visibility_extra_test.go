@@ -109,7 +109,7 @@ func TestBadgerEngine_MVCCEdgeVisibility_HistoricalFallbackAndSuppressionBranche
 		}))
 
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-			_, err := engine.getEdgeVisibleAtInTxn(txn, edgeID, v1)
+			_, err := engine.getEdgeAtInTxn(txn, edgeID, v1, mvccEntityRead{visibility: visibleRead})
 			require.ErrorIs(t, err, ErrNotFound)
 			return nil
 		}))
@@ -138,7 +138,7 @@ func TestBadgerEngine_MVCCEdgeVisibility_HistoricalFallbackAndSuppressionBranche
 		}))
 
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-			edge, err := engine.getEdgeVisibleAtInTxn(txn, edgeID, v2.Version)
+			edge, err := engine.getEdgeAtInTxn(txn, edgeID, v2.Version, mvccEntityRead{visibility: visibleRead})
 			require.NoError(t, err)
 			require.EqualValues(t, 1, edge.Properties["w"])
 			return nil
@@ -160,7 +160,7 @@ func TestBadgerEngine_MVCCEdgeVisibility_HistoricalFallbackAndSuppressionBranche
 			return txn.Delete(edgeKey(edgeID))
 		}))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-			_, err := engine.getEdgeVisibleAtInTxn(txn, edgeID, v2.Version)
+			_, err := engine.getEdgeAtInTxn(txn, edgeID, v2.Version, mvccEntityRead{visibility: visibleRead})
 			require.ErrorIs(t, err, ErrNotFound)
 			return nil
 		}))

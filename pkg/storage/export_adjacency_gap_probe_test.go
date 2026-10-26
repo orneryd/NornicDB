@@ -50,10 +50,15 @@ func (b *BadgerEngine) GapProbeAcrossReplay(t *testing.T, run func() (int64, err
 		}
 	}()
 	replayed := make(chan error, 1)
+	beforeReplay := b.db.oracle.published.Load()
 	go func() { replayed <- b.replayWriteBehind(frontier) }()
-	for !frontier.countsApplied.Load() {
+	// Hold the query at cache publication until replay's physical commit is
+	// visible. Counts and adjacency now publish in the same ordered stage;
+	// waiting for counts while holding adjacency would block that stage on
+	// our own lock rather than exercise the read's captured replay boundary.
+	for b.db.oracle.published.Load() <= beforeReplay {
 		if time.Now().After(deadline) {
-			t.Fatal("replay did not publish committed data")
+			t.Fatal("replay did not publish its physical commit")
 		}
 		time.Sleep(time.Millisecond)
 	}

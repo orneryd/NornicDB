@@ -367,6 +367,10 @@ func (b *BadgerEngine) applyTemporalIndexesForNodeChangeInTxn(txn *badger.Txn, n
 }
 
 func (b *BadgerEngine) GetTemporalNodeAsOfInNamespace(namespace, label, keyProp string, keyValue interface{}, validFromProp, validToProp string, asOf time.Time) (*Node, error) {
+	if err := b.pendingNamespaceConflict(namespace); err != nil {
+		return nil, err
+	}
+
 	if err := b.ensureOpen(false); err != nil {
 		return nil, err
 	}
@@ -478,6 +482,10 @@ func (b *BadgerEngine) temporalListNodeAsOfInNamespace(namespace string, constra
 
 // IsCurrentTemporalNodeInNamespace reports whether the given temporal node is the live/current version.
 func (b *BadgerEngine) IsCurrentTemporalNodeInNamespace(namespace string, node *Node, asOf time.Time) (bool, error) {
+	if err := b.pendingNamespaceConflict(namespace); err != nil {
+		return false, err
+	}
+
 	if err := b.ensureOpen(false); err != nil {
 		return false, err
 	}

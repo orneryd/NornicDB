@@ -307,7 +307,7 @@ func TestBuildBaselineIsOneStoragePoint(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("nornic"))
-	require.NoError(t, tx.UpdateNode(storage.CopyNode(node)))
+	require.NoError(t, tx.UpdateGraphNode(storage.CopyNode(node), storage.ClientNodeEdits))
 	require.NoError(t, tx.UpdateEdge(storage.CopyEdge(edge)))
 	require.NoError(t, tx.Commit())
 	require.NoError(t, svc.IndexNode(node))

@@ -24,7 +24,7 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 	case *storage.Node:
 		id := value.ID
 		apply = func(engine storage.ManualSuppressionEngine) error {
-			if err := engine.SetNodeManuallySuppressed(id, suppressed); err != nil {
+			if err := engine.SetManualSuppression(storage.StoredEntityNodeKind, string(id), suppressed); err != nil {
 				return err
 			}
 			// Search drops a hidden node now rather than when a search can't
@@ -40,7 +40,7 @@ func (e *StorageExecutor) callKpSuppress(ctx context.Context, procedure string, 
 	case *storage.Edge:
 		id := value.ID
 		apply = func(engine storage.ManualSuppressionEngine) error {
-			if err := engine.SetEdgeManuallySuppressed(id, suppressed); err != nil {
+			if err := engine.SetManualSuppression(storage.StoredEntityEdgeKind, string(id), suppressed); err != nil {
 				return err
 			}
 			// As for a node: a hidden relationship leaves search now, so its

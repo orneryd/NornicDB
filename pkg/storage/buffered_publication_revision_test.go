@@ -41,7 +41,7 @@ func TestBufferedPublicationCallbacksKeepAcknowledgedRevision(t *testing.T) {
 		node, err := tx.GetNode("test:a")
 		require.NoError(t, err)
 		node.Properties["v"] = int64(2)
-		require.NoError(t, tx.UpdateNode(node))
+		require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 		edge, err := tx.GetEdge("test:e")
 		require.NoError(t, err)
 		edge.Properties["v"] = int64(2)
@@ -49,7 +49,7 @@ func TestBufferedPublicationCallbacksKeepAcknowledgedRevision(t *testing.T) {
 	})
 	write(func(tx *Transaction) {
 		require.NoError(t, tx.DeleteEdge("test:e"))
-		require.NoError(t, tx.DeleteNode("test:a"))
+		require.NoError(t, tx.DeleteGraphNode("test:a", CascadeEdges))
 	})
 	mu.Lock()
 	require.Equal(t, map[string]int{"node create": 2, "node update": 1, "node delete": 1, "edge create": 1, "edge update": 1, "edge delete": 1}, calls)

@@ -2,6 +2,7 @@ package replication
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"os"
@@ -16,37 +17,45 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func encodeNodeForTest(t *testing.T, node *storage.Node) []byte {
-	t.Helper()
-	data, err := encodeNodePayload(node)
-	require.NoError(t, err)
-	return data
-}
-
-func encodeEdgeForTest(t *testing.T, edge *storage.Edge) []byte {
-	t.Helper()
-	data, err := encodeEdgePayload(edge)
-	require.NoError(t, err)
-	return data
-}
-
-func encodeGobForTest(t *testing.T, v any) []byte {
-	t.Helper()
-	data, err := encodeGob(v)
-	require.NoError(t, err)
-	return data
-}
-
 // setupTestAdapter creates a StorageAdapter with a temporary WAL directory.
-func setupTestAdapter(t *testing.T) (*StorageAdapter, string) {
-	t.Helper()
-	baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+type adapterFixtureOptions struct {
+	backing    storage.Engine
+	standalone bool
+	timeout    time.Duration
+}
+type adapterFixture struct {
+	adapter *StorageAdapter
+	walDir  string
+	engine  *ReplicatedEngine
+}
 
-	engine := storage.NewNamespacedEngine(baseEngine, "test")
+func setupTestAdapter(t *testing.T, options ...adapterFixtureOptions) *adapterFixture {
+	t.Helper()
+	var option adapterFixtureOptions
+	if len(options) > 0 {
+		option = options[0]
+	}
+	backing := option.backing
+	if backing == nil {
+		native := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+		backing = storage.NewNamespacedEngine(native, "test")
+	}
 	walDir := filepath.Join(t.TempDir(), "wal")
-	adapter, err := NewStorageAdapterWithWAL(engine, walDir)
+	adapter, err := NewStorageAdapterWithWAL(backing, walDir)
 	require.NoError(t, err)
-	return adapter, walDir
+	t.Cleanup(func() { _ = adapter.Close() })
+	fixture := &adapterFixture{adapter: adapter, walDir: walDir}
+	if option.standalone {
+		config := DefaultConfig()
+		config.Mode = ModeStandalone
+		config.NodeID = "test-node"
+		replicator, err := NewReplicator(config, adapter)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = replicator.Shutdown() })
+		require.NoError(t, replicator.Start(context.Background()))
+		fixture.engine = NewReplicatedEngine(backing, replicator, option.timeout)
+	}
+	return fixture
 }
 
 func TestNewStorageAdapter(t *testing.T) {
@@ -58,7 +67,6 @@ func TestNewStorageAdapter(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, adapter)
 		assert.Equal(t, engine, adapter.Engine())
-		assert.NotNil(t, adapter.executor)
 		defer adapter.Close()
 	})
 
@@ -102,107 +110,14 @@ func TestNewStorageAdapter(t *testing.T) {
 	})
 }
 
-func TestStorageAdapter_LoadWALPosition(t *testing.T) {
-	t.Run("empty WAL starts at position 0", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
-		defer adapter.Close()
-
-		pos, err := adapter.GetWALPosition()
-		require.NoError(t, err)
-		assert.Equal(t, uint64(0), pos)
-	})
-
-	t.Run("recovers position from existing WAL", func(t *testing.T) {
-		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-
-		engine := storage.NewNamespacedEngine(baseEngine, "test")
-		walDir := filepath.Join(t.TempDir(), "wal_recovery")
-
-		// Create first adapter and write some commands
-		adapter1, err := NewStorageAdapterWithWAL(engine, walDir)
-		require.NoError(t, err)
-
-		// Apply some commands
-		for i := 0; i < 5; i++ {
-			node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("recovery-n%d", i)), Labels: []string{"Test"}}
-			data := encodeNodeForTest(t, node)
-			cmd := &Command{
-				Type:      CmdCreateNode,
-				Data:      data,
-				Timestamp: time.Now(),
-			}
-			err := adapter1.ApplyCommand(cmd)
-			require.NoError(t, err)
-		}
-
-		// Flush WAL to ensure all async writes complete
-		require.NoError(t, adapter1.FlushWAL())
-
-		pos1, err := adapter1.GetWALPosition()
-		require.NoError(t, err)
-		assert.Equal(t, uint64(5), pos1)
-		adapter1.Close()
-
-		// Create new adapter with same WAL directory - should recover position
-		adapter2, err := NewStorageAdapterWithWAL(engine, walDir)
-		require.NoError(t, err)
-		defer adapter2.Close()
-
-		pos2, err := adapter2.GetWALPosition()
-		require.NoError(t, err)
-		assert.Equal(t, uint64(5), pos2)
-
-		// Next command should be position 6
-		node := &storage.Node{ID: storage.NodeID("n2"), Labels: []string{"Test"}}
-		data := encodeNodeForTest(t, node)
-		cmd := &Command{
-			Type:      CmdCreateNode,
-			Data:      data,
-			Timestamp: time.Now(),
-		}
-		err = adapter2.ApplyCommand(cmd)
-		require.NoError(t, err)
-
-		// Flush WAL to ensure async write completes
-		require.NoError(t, adapter2.FlushWAL())
-
-		pos3, err := adapter2.GetWALPosition()
-		require.NoError(t, err)
-		assert.Equal(t, uint64(6), pos3)
-	})
-
-	t.Run("handles corrupted WAL gracefully", func(t *testing.T) {
-		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-
-		engine := storage.NewNamespacedEngine(baseEngine, "test")
-		walDir := filepath.Join(t.TempDir(), "corrupted_wal")
-
-		// Create WAL directory
-		require.NoError(t, os.MkdirAll(walDir, 0755))
-
-		// Write invalid data to WAL file
-		walPath := filepath.Join(walDir, "wal.log")
-		err := os.WriteFile(walPath, []byte("invalid json data"), 0644)
-		require.NoError(t, err)
-
-		// Should still create adapter (starts from position 0)
-		adapter, err := NewStorageAdapterWithWAL(engine, walDir)
-		require.NoError(t, err)
-		defer adapter.Close()
-
-		pos, err := adapter.GetWALPosition()
-		require.NoError(t, err)
-		assert.Equal(t, uint64(0), pos)
-	})
-}
-
 func TestStorageAdapter_ApplyCommand(t *testing.T) {
 	t.Run("writes to persistent WAL", func(t *testing.T) {
-		adapter, walDir := setupTestAdapter(t)
+		adapterState := setupTestAdapter(t)
+		adapter, walDir := adapterState.adapter, adapterState.walDir
 		defer adapter.Close()
 
 		node := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Test"}}
-		data := encodeNodeForTest(t, node)
+		data := fixtureowner.Encode(t, storage.EncodeNodePayload, node)
 		cmd := &Command{
 			Type:      CmdCreateNode,
 			Data:      data,
@@ -228,7 +143,7 @@ func TestStorageAdapter_ApplyCommand(t *testing.T) {
 	})
 
 	t.Run("rejects nil command", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		err := adapter.ApplyCommand(nil)
@@ -237,7 +152,7 @@ func TestStorageAdapter_ApplyCommand(t *testing.T) {
 	})
 
 	t.Run("all command types", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		tests := []struct {
@@ -247,51 +162,51 @@ func TestStorageAdapter_ApplyCommand(t *testing.T) {
 		}{
 			{"CreateNode", CmdCreateNode, func() []byte {
 				node := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Test"}}
-				return encodeNodeForTest(t, node)
+				return fixtureowner.Encode(t, storage.EncodeNodePayload, node)
 			}()},
 			{"UpdateNode", CmdUpdateNode, func() []byte {
 				node := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Updated"}}
-				return encodeNodeForTest(t, node)
+				return fixtureowner.Encode(t, storage.EncodeNodePayload, node)
 			}()},
-			{"DeleteNode", CmdDeleteNode, encodeGobForTest(t, struct {
+			{"DeleteNode", CmdDeleteNode, fixtureowner.Encode[any](t, storage.EncodeCommandPayload, struct {
 				NodeID string
 			}{NodeID: "n1"})},
 			{"CreateEdge", CmdCreateEdge, func() []byte {
 				edge := &storage.Edge{ID: storage.EdgeID("e1"), StartNode: storage.NodeID("n1"), EndNode: storage.NodeID("n2"), Type: "KNOWS"}
-				return encodeEdgeForTest(t, edge)
+				return fixtureowner.Encode(t, storage.EncodeEdgePayload, edge)
 			}()},
 			{"DeleteEdge", CmdDeleteEdge, func() []byte {
 				req := struct {
 					EdgeID string
 				}{EdgeID: "e1"}
-				return encodeGobForTest(t, req)
+				return fixtureowner.Encode[any](t, storage.EncodeCommandPayload, req)
 			}()},
-			{"SetProperty", CmdSetProperty, func() []byte {
+			{"SetProperty", cmdRetiredSetProperty, func() []byte {
 				req := struct {
 					NodeID string
 					Key    string
 					Value  interface{}
 				}{NodeID: "n1", Key: "name", Value: "Alice"}
-				return encodeGobForTest(t, req)
+				return fixtureowner.Encode[any](t, storage.EncodeCommandPayload, req)
 			}()},
-			{"BatchWrite", CmdBatchWrite, func() []byte {
-				nodeBytes := encodeNodeForTest(t, &storage.Node{ID: storage.NodeID("batch-n1")})
+			{"BatchWrite", cmdRetiredBatchWrite, func() []byte {
+				nodeBytes := fixtureowner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: storage.NodeID("batch-n1")})
 				batch := struct {
 					Nodes [][]byte
 					Edges [][]byte
 				}{
 					Nodes: [][]byte{nodeBytes},
 				}
-				return encodeGobForTest(t, batch)
+				return fixtureowner.Encode[any](t, storage.EncodeCommandPayload, batch)
 			}()},
-			{"Cypher", CmdCypher, func() []byte {
+			{"Cypher", cmdRetiredCypher, func() []byte {
 				cypherCmd := struct {
 					Query  string
 					Params map[string]interface{}
 				}{
 					Query: "CREATE (n:Person {name: 'Alice'})",
 				}
-				return encodeGobForTest(t, cypherCmd)
+				return fixtureowner.Encode[any](t, storage.EncodeCommandPayload, cypherCmd)
 			}()},
 		}
 
@@ -325,13 +240,17 @@ func TestStorageAdapter_ApplyCommand(t *testing.T) {
 				}
 
 				err := adapter.ApplyCommand(cmd)
-				require.NoError(t, err, "command type: %s", tt.name)
+				if isRetiredCommand(tt.cmdType) {
+					require.ErrorIs(t, err, ErrRetiredCommand)
+				} else {
+					require.NoError(t, err, "command type: %s", tt.name)
+				}
 			})
 		}
 	})
 
 	t.Run("unknown command type", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		// Use CmdVoteRequest which is a valid type but not handled in ApplyCommand
@@ -349,7 +268,7 @@ func TestStorageAdapter_ApplyCommand(t *testing.T) {
 
 func TestStorageAdapter_GetWALEntries(t *testing.T) {
 	t.Run("empty WAL returns empty entries", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		entries, err := adapter.GetWALEntries(0, 10)
@@ -358,13 +277,13 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 	})
 
 	t.Run("returns entries after position", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		// Apply multiple commands
 		for i := 0; i < 5; i++ {
 			node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Test"}}
-			data := encodeNodeForTest(t, node)
+			data := fixtureowner.Encode(t, storage.EncodeNodePayload, node)
 			cmd := &Command{
 				Type:      CmdCreateNode,
 				Data:      data,
@@ -386,13 +305,13 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 	})
 
 	t.Run("respects maxEntries limit", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		// Apply 10 commands
 		for i := 0; i < 10; i++ {
 			node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Test"}}
-			data := encodeNodeForTest(t, node)
+			data := fixtureowner.Encode(t, storage.EncodeNodePayload, node)
 			cmd := &Command{
 				Type:      CmdCreateNode,
 				Data:      data,
@@ -422,7 +341,7 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 
 		for i := 0; i < 3; i++ {
 			node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", i)), Labels: []string{"Test"}}
-			data := encodeNodeForTest(t, node)
+			data := fixtureowner.Encode(t, storage.EncodeNodePayload, node)
 			cmd := &Command{
 				Type:      CmdCreateNode,
 				Data:      data,
@@ -474,7 +393,7 @@ func TestStorageAdapter_GetWALEntries(t *testing.T) {
 
 func TestStorageAdapter_GetWALPosition(t *testing.T) {
 	t.Run("starts at position 0", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		pos, err := adapter.GetWALPosition()
@@ -483,12 +402,12 @@ func TestStorageAdapter_GetWALPosition(t *testing.T) {
 	})
 
 	t.Run("increments with each command", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		for i := uint64(1); i <= 5; i++ {
 			node := &storage.Node{ID: storage.NodeID("n" + string(rune(i))), Labels: []string{"Test"}}
-			data := encodeNodeForTest(t, node)
+			data := fixtureowner.Encode(t, storage.EncodeNodePayload, node)
 			cmd := &Command{
 				Type:      CmdCreateNode,
 				Data:      data,
@@ -505,11 +424,94 @@ func TestStorageAdapter_GetWALPosition(t *testing.T) {
 			assert.Equal(t, i, pos)
 		}
 	})
+
+	t.Run("recovers position from existing WAL", func(t *testing.T) {
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
+		walDir := filepath.Join(t.TempDir(), "wal_recovery")
+
+		// Create first adapter and write some commands
+		adapter1, err := NewStorageAdapterWithWAL(engine, walDir)
+		require.NoError(t, err)
+
+		// Apply some commands
+		for i := 0; i < 5; i++ {
+			node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("recovery-n%d", i)), Labels: []string{"Test"}}
+			data := fixtureowner.Encode(t, storage.EncodeNodePayload, node)
+			cmd := &Command{
+				Type:      CmdCreateNode,
+				Data:      data,
+				Timestamp: time.Now(),
+			}
+			err := adapter1.ApplyCommand(cmd)
+			require.NoError(t, err)
+		}
+
+		// Flush WAL to ensure all async writes complete
+		require.NoError(t, adapter1.FlushWAL())
+
+		pos1, err := adapter1.GetWALPosition()
+		require.NoError(t, err)
+		assert.Equal(t, uint64(5), pos1)
+		adapter1.Close()
+
+		// Create new adapter with same WAL directory - should recover position
+		adapter2, err := NewStorageAdapterWithWAL(engine, walDir)
+		require.NoError(t, err)
+		defer adapter2.Close()
+
+		pos2, err := adapter2.GetWALPosition()
+		require.NoError(t, err)
+		assert.Equal(t, uint64(5), pos2)
+
+		// Next command should be position 6
+		node := &storage.Node{ID: storage.NodeID("n2"), Labels: []string{"Test"}}
+		data := fixtureowner.Encode(t, storage.EncodeNodePayload, node)
+		cmd := &Command{
+			Type:      CmdCreateNode,
+			Data:      data,
+			Timestamp: time.Now(),
+		}
+		err = adapter2.ApplyCommand(cmd)
+		require.NoError(t, err)
+
+		// Flush WAL to ensure async write completes
+		require.NoError(t, adapter2.FlushWAL())
+
+		pos3, err := adapter2.GetWALPosition()
+		require.NoError(t, err)
+		assert.Equal(t, uint64(6), pos3)
+	})
+
+	t.Run("handles corrupted WAL gracefully", func(t *testing.T) {
+		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+
+		engine := storage.NewNamespacedEngine(baseEngine, "test")
+		walDir := filepath.Join(t.TempDir(), "corrupted_wal")
+
+		// Create WAL directory
+		require.NoError(t, os.MkdirAll(walDir, 0755))
+
+		// Write invalid data to WAL file
+		walPath := filepath.Join(walDir, "wal.log")
+		err := os.WriteFile(walPath, []byte("invalid json data"), 0644)
+		require.NoError(t, err)
+
+		// Should still create adapter (starts from position 0)
+		adapter, err := NewStorageAdapterWithWAL(engine, walDir)
+		require.NoError(t, err)
+		defer adapter.Close()
+
+		pos, err := adapter.GetWALPosition()
+		require.NoError(t, err)
+		assert.Equal(t, uint64(0), pos)
+	})
 }
 
-func TestStorageAdapter_ApplyCypher(t *testing.T) {
+func TestStorageAdapter_RetiredCypherAndSupportedQueries(t *testing.T) {
 	t.Run("executes Cypher query", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		cypherCmd := struct {
@@ -518,15 +520,16 @@ func TestStorageAdapter_ApplyCypher(t *testing.T) {
 		}{
 			Query: "CREATE (n:Person {name: 'Alice'})",
 		}
-		data := encodeGobForTest(t, cypherCmd)
+		data := fixtureowner.Encode[any](t, storage.EncodeCommandPayload, cypherCmd)
 
 		cmd := &Command{
-			Type:      CmdCypher,
+			Type:      cmdRetiredCypher,
 			Data:      data,
 			Timestamp: time.Now(),
 		}
 
-		err := adapter.ApplyCommand(cmd)
+		require.ErrorIs(t, adapter.ApplyCommand(cmd), ErrRetiredCommand)
+		_, err := cypher.NewStorageExecutor(adapter.engine).Execute(context.Background(), cypherCmd.Query, cypherCmd.Params)
 		require.NoError(t, err)
 
 		// Verify node was created - check all nodes since ID generation may vary
@@ -538,7 +541,7 @@ func TestStorageAdapter_ApplyCypher(t *testing.T) {
 	})
 
 	t.Run("executes Cypher with parameters", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		cypherCmd := struct {
@@ -551,20 +554,21 @@ func TestStorageAdapter_ApplyCypher(t *testing.T) {
 				"age":  30,
 			},
 		}
-		data := encodeGobForTest(t, cypherCmd)
+		data := fixtureowner.Encode[any](t, storage.EncodeCommandPayload, cypherCmd)
 
 		cmd := &Command{
-			Type:      CmdCypher,
+			Type:      cmdRetiredCypher,
 			Data:      data,
 			Timestamp: time.Now(),
 		}
 
-		err := adapter.ApplyCommand(cmd)
+		require.ErrorIs(t, adapter.ApplyCommand(cmd), ErrRetiredCommand)
+		_, err := cypher.NewStorageExecutor(adapter.engine).Execute(context.Background(), cypherCmd.Query, cypherCmd.Params)
 		require.NoError(t, err)
 	})
 
 	t.Run("rejects empty query", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		cypherCmd := struct {
@@ -572,71 +576,65 @@ func TestStorageAdapter_ApplyCypher(t *testing.T) {
 		}{
 			Query: "",
 		}
-		data := encodeGobForTest(t, cypherCmd)
+		data := fixtureowner.Encode[any](t, storage.EncodeCommandPayload, cypherCmd)
 
 		cmd := &Command{
-			Type:      CmdCypher,
+			Type:      cmdRetiredCypher,
 			Data:      data,
 			Timestamp: time.Now(),
 		}
 
 		err := adapter.ApplyCommand(cmd)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "cypher query is empty")
+		require.ErrorIs(t, err, ErrRetiredCommand)
 	})
 
 	t.Run("rejects invalid JSON", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		cmd := &Command{
-			Type:      CmdCypher,
+			Type:      cmdRetiredCypher,
 			Data:      []byte("invalid json"),
 			Timestamp: time.Now(),
 		}
 
 		err := adapter.ApplyCommand(cmd)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unmarshal cypher command")
+		require.ErrorIs(t, err, ErrRetiredCommand)
 	})
 }
 
 func TestStorageAdapter_Close(t *testing.T) {
-	t.Run("closes WAL successfully", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
-		err := adapter.Close()
-		require.NoError(t, err)
-	})
-
-	t.Run("can close multiple times", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
-		err := adapter.Close()
-		require.NoError(t, err)
-
-		// Second close should not error
-		err = adapter.Close()
-		require.NoError(t, err)
-	})
-}
-
-func TestStorageAdapter_SetExecutor(t *testing.T) {
-	t.Run("sets custom executor", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
-		defer adapter.Close()
-
-		baseEngine := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-
-		engine := storage.NewNamespacedEngine(baseEngine, "test")
-		executor := cypher.NewStorageExecutor(engine)
-
-		adapter.SetExecutor(executor)
-		assert.Equal(t, executor, adapter.executor)
-	})
+	for _, test := range []struct {
+		name          string
+		walAlreadyNil bool
+		closes        int
+	}{
+		{name: "closes WAL successfully", closes: 1},
+		{name: "can close multiple times", closes: 2},
+		{name: "WAL already nil", walAlreadyNil: true, closes: 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			adapter := setupTestAdapter(t).adapter
+			if test.walAlreadyNil {
+				adapter.walMu.Lock()
+				if adapter.wal != nil {
+					_ = adapter.wal.Close()
+					adapter.wal = nil
+				}
+				adapter.walMu.Unlock()
+			}
+			for range test.closes {
+				require.NoError(t, adapter.Close())
+			}
+		})
+	}
 }
 
 func TestStorageAdapter_ConcurrentAccess(t *testing.T) {
 	t.Run("concurrent ApplyCommand", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		var wg sync.WaitGroup
@@ -651,7 +649,7 @@ func TestStorageAdapter_ConcurrentAccess(t *testing.T) {
 					// Use unique node IDs to avoid conflicts
 					nodeID := storage.NodeID(fmt.Sprintf("n-%d-%d", id, j))
 					node := &storage.Node{ID: nodeID, Labels: []string{"Test"}}
-					data := encodeNodeForTest(t, node)
+					data := fixtureowner.Encode(t, storage.EncodeNodePayload, node)
 					cmd := &Command{
 						Type:      CmdCreateNode,
 						Data:      data,
@@ -675,13 +673,13 @@ func TestStorageAdapter_ConcurrentAccess(t *testing.T) {
 	})
 
 	t.Run("concurrent GetWALEntries", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		// Apply some commands first
 		for i := 0; i < 10; i++ {
 			node := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Test"}}
-			data := encodeNodeForTest(t, node)
+			data := fixtureowner.Encode(t, storage.EncodeNodePayload, node)
 			cmd := &Command{
 				Type:      CmdCreateNode,
 				Data:      data,
@@ -712,13 +710,13 @@ func TestStorageAdapter_ConcurrentAccess(t *testing.T) {
 
 func TestStorageAdapter_WriteSnapshot(t *testing.T) {
 	t.Run("writes snapshot with WAL position", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		// Apply some commands
 		for i := 0; i < 3; i++ {
 			node := &storage.Node{ID: storage.NodeID("n1"), Labels: []string{"Test"}}
-			data := encodeNodeForTest(t, node)
+			data := fixtureowner.Encode(t, storage.EncodeNodePayload, node)
 			cmd := &Command{
 				Type:      CmdCreateNode,
 				Data:      data,
@@ -739,7 +737,7 @@ func TestStorageAdapter_WriteSnapshot(t *testing.T) {
 			Nodes       []*storage.Node
 			Edges       []*storage.Edge
 		}
-		err = decodeGob(buf.Bytes(), &snapshot)
+		err = storage.DecodeCommandPayload(buf.Bytes(), &snapshot)
 		require.NoError(t, err)
 		assert.Equal(t, uint64(3), snapshot.WALPosition)
 	})
@@ -747,7 +745,7 @@ func TestStorageAdapter_WriteSnapshot(t *testing.T) {
 
 func TestStorageAdapter_RestoreSnapshot(t *testing.T) {
 	t.Run("restores snapshot and WAL position", func(t *testing.T) {
-		adapter, _ := setupTestAdapter(t)
+		adapter := setupTestAdapter(t).adapter
 		defer adapter.Close()
 
 		snapshot := struct {
@@ -761,7 +759,7 @@ func TestStorageAdapter_RestoreSnapshot(t *testing.T) {
 			},
 		}
 
-		data := encodeGobForTest(t, snapshot)
+		data := fixtureowner.Encode[any](t, storage.EncodeCommandPayload, snapshot)
 
 		reader := bytes.NewReader(data)
 		err := adapter.RestoreSnapshot(reader)

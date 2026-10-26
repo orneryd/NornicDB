@@ -32,7 +32,7 @@ func TestTransactionNodeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 	node, err := stale.GetNode(nodeID)
 	require.NoError(t, err)
 	node.Properties["writer"] = "stale"
-	require.NoError(t, stale.UpdateNode(node))
+	require.NoError(t, stale.UpdateGraphNode(node, ClientNodeEdits))
 	require.NoError(t, stale.SetMetadata(map[string]interface{}{"validation_publication_control": true}))
 	barrier.target = stale.ID
 	var release sync.Once
@@ -55,7 +55,7 @@ func TestTransactionNodeUpdatePreservesPostValidationPeerWrite(t *testing.T) {
 	peerNode, err := peer.GetNode(nodeID)
 	require.NoError(t, err)
 	peerNode.Properties["writer"] = "peer"
-	require.NoError(t, peer.UpdateNode(peerNode))
+	require.NoError(t, peer.UpdateGraphNode(peerNode, ClientNodeEdits))
 	require.NoError(t, peer.Commit())
 	unblock()
 

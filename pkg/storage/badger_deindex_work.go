@@ -17,7 +17,8 @@ func deindexWorkItemKey(workItemID string) []byte {
 
 func putDeindexWorkItemInTxn(txn *badger.Txn, item *DeindexWorkItem) error {
 	entry := &knowledgepolicy.AccessMetaEntry{TargetID: item.TargetID, TargetScope: knowledgepolicy.ScopeType(item.TargetScope), DeindexWork: item}
-	return putAccessMetaInTxn(txn, policyWorkMetaIDPrefix+item.WorkItemID, entry)
+	_, err := accessMetaInTxn(txn, policyWorkMetaIDPrefix+item.WorkItemID, accessMetaWrite, entry)
+	return err
 }
 
 func (b *BadgerEngine) PutDeindexWorkItem(item *DeindexWorkItem) error {
@@ -40,6 +41,10 @@ func (b *BadgerEngine) DeleteDeindexWorkItem(workItemID string) error {
 
 // ScanPendingDeindexWorkItems returns all work items with status "pending".
 func (b *BadgerEngine) ScanPendingDeindexWorkItems() ([]*DeindexWorkItem, error) {
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return nil, err
+	}
+
 	var items []*DeindexWorkItem
 	err := b.withView(func(txn *badger.Txn) error {
 		prefix := accessMetaKey(policyWorkMetaIDPrefix)

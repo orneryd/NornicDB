@@ -44,7 +44,7 @@ func TestSnapshotBufferedWALPropertyBindingsControl(t *testing.T) {
 	require.NoError(t, tx.SetNamespace("binding"))
 	require.NoError(t, tx.SetImplicit(true))
 	final := &Node{ID: "binding:a", Properties: map[string]any{"alpha": "after-alpha", "beta": "after-beta"}}
-	require.NoError(t, tx.UpdateNode(final))
+	require.NoError(t, tx.UpdateGraphNode(final, ClientNodeEdits))
 	finalEdge := copyEdge(initialEdge)
 	finalEdge.Properties = final.Properties
 	require.NoError(t, tx.UpdateEdge(finalEdge))

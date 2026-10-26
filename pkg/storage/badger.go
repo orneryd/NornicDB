@@ -171,6 +171,10 @@ const (
 //	}
 //	engine.CreateNode(node)
 type BadgerEngine struct {
+	// dropPrefixTailHook is nil in production and held under the lifecycle barrier.
+	dropPrefixTailHook    func(string) error
+	storedEntityObservers atomic.Pointer[storedEntityObserverRegistry]
+
 	db      *managedBadgerDB
 	mu      sync.RWMutex // Protects lifecycle state (e.g., Close) and any coarse-grained engine invariants
 	closed  bool
@@ -589,16 +593,6 @@ func (b *BadgerEngine) dispatchNamespaceReset(prefix string) {
 	}
 }
 
-// notifyNodeCreated calls the registered callbacks.
-func (b *BadgerEngine) notifyNodeCreated(node *Node) {
-	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
-	b.publishNodeCreated(node)
-}
-
-func (b *BadgerEngine) publishNodeCreated(node *Node) {
-	b.queueCommitOperations(nil, &Operation{Type: OpCreateNode, Node: node})
-}
-
 // dispatchNodeCreated publishes callbacks for an already visible graph mutation.
 func (b *BadgerEngine) dispatchNodeCreated(node *Node) {
 	b.callbackMu.RLock()
@@ -608,16 +602,6 @@ func (b *BadgerEngine) dispatchNodeCreated(node *Node) {
 	for _, callback := range callbacks {
 		callback(node)
 	}
-}
-
-// notifyNodeUpdated calls the registered callbacks.
-func (b *BadgerEngine) notifyNodeUpdated(node *Node) {
-	b.graphMutationVersions.changed(namespaceForNodeID(node.ID))
-	b.publishNodeUpdated(node)
-}
-
-func (b *BadgerEngine) publishNodeUpdated(node *Node) {
-	b.queueCommitOperations(nil, &Operation{Type: OpUpdateNode, Node: node})
 }
 
 // dispatchNodeUpdated publishes callbacks for an already visible graph mutation.
@@ -636,19 +620,6 @@ func (b *BadgerEngine) dispatchNodeUpdatedOutcome(node *Node, outcome bool) {
 	})
 }
 
-// notifyNodeDeleted calls the registered callbacks.
-func (b *BadgerEngine) notifyNodeDeleted(nodeID NodeID) {
-	b.graphMutationVersions.changed(namespaceForNodeID(nodeID))
-	b.publishNodeDeleted(nodeID)
-}
-
-// publishNodeDeleted publishes callbacks for an already visible graph mutation.
-func (b *BadgerEngine) publishNodeDeleted(nodeID NodeID) {
-	b.forgetManualSuppression(manualSuppressionNode, string(nodeID))
-	b.deleteCleanup.recordDelete()
-	b.queueCommitOperations(nil, &Operation{Type: OpDeleteNode, NodeID: nodeID})
-}
-
 func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
 	b.callbackMu.RLock()
 	callbacks := b.onNodeDeleted
@@ -657,16 +628,6 @@ func (b *BadgerEngine) dispatchNodeDeleted(nodeID NodeID) {
 	for _, callback := range callbacks {
 		callback(nodeID)
 	}
-}
-
-// notifyEdgeCreated calls the registered callbacks.
-func (b *BadgerEngine) notifyEdgeCreated(edge *Edge) {
-	b.graphMutationVersions.changed(namespaceForEdgeID(edge.ID))
-	b.publishEdgeCreated(edge)
-}
-
-func (b *BadgerEngine) publishEdgeCreated(edge *Edge) {
-	b.queueCommitOperations(nil, &Operation{Type: OpCreateEdge, Edge: edge})
 }
 
 // dispatchEdgeCreated publishes callbacks for an already visible graph mutation.
@@ -680,16 +641,6 @@ func (b *BadgerEngine) dispatchEdgeCreated(edge *Edge) {
 	}
 }
 
-// notifyEdgeUpdated calls the registered callbacks.
-func (b *BadgerEngine) notifyEdgeUpdated(edge *Edge) {
-	b.graphMutationVersions.changed(namespaceForEdgeID(edge.ID))
-	b.publishEdgeUpdated(edge)
-}
-
-func (b *BadgerEngine) publishEdgeUpdated(edge *Edge) {
-	b.queueCommitOperations(nil, &Operation{Type: OpUpdateEdge, Edge: edge})
-}
-
 // dispatchEdgeUpdated publishes callbacks for an already visible graph mutation.
 func (b *BadgerEngine) dispatchEdgeUpdated(edge *Edge) {
 	b.callbackMu.RLock()
@@ -699,18 +650,6 @@ func (b *BadgerEngine) dispatchEdgeUpdated(edge *Edge) {
 	for _, callback := range callbacks {
 		callback(edge)
 	}
-}
-
-// notifyEdgeDeleted calls the registered callbacks.
-func (b *BadgerEngine) notifyEdgeDeleted(edgeID EdgeID) {
-	b.graphMutationVersions.changed(namespaceForEdgeID(edgeID))
-	b.publishEdgeDeleted(edgeID)
-}
-
-func (b *BadgerEngine) publishEdgeDeleted(edgeID EdgeID) {
-	b.forgetManualSuppression(manualSuppressionEdge, string(edgeID))
-	b.deleteCleanup.recordDelete()
-	b.queueCommitOperations(nil, &Operation{Type: OpDeleteEdge, EdgeID: edgeID})
 }
 
 // dispatchEdgeDeleted publishes callbacks for an already visible graph mutation.
@@ -1134,16 +1073,20 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		return nil, fmt.Errorf("failed to load manual suppressions: %w", err)
 	}
 
+	if err := engine.initializeMVCCSequence(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to initialize mvcc sequence: %w", err)
+	}
+
+	if err := engine.recoverNamespaceDrops(nil); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("recover namespace DROP: %w", err)
+	}
 	// Initialize cached counts by scanning existing data (one-time cost)
 	// This enables O(1) stats lookups instead of O(N) scans on every request
 	if err := engine.initializeCounts(); err != nil {
 		db.Close() // Clean up on error
 		return nil, fmt.Errorf("failed to initialize counts: %w", err)
-	}
-
-	if err := engine.initializeMVCCSequence(); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("failed to initialize mvcc sequence: %w", err)
 	}
 
 	// Run migrations BEFORE loadPersistedSchemas. The schema loader's

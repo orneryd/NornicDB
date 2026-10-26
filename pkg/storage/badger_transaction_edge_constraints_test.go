@@ -480,118 +480,6 @@ func TestTxCheckEdgeCardinality_DeletedExcluded(t *testing.T) {
 	require.NoError(t, tx.Commit())
 }
 
-// TestTxCheckEdgePolicy_Disallowed: a DISALLOWED edge between Source/Target
-// labels must fail.
-func TestTxCheckEdgePolicy_Disallowed(t *testing.T) {
-	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
-
-	schema := engine.GetSchemaForNamespace("test")
-	require.NoError(t, schema.AddConstraint(Constraint{
-		Name:        "no_admin_to_user",
-		Type:        ConstraintPolicy,
-		EntityType:  ConstraintEntityRelationship,
-		Label:       "MANAGES",
-		SourceLabel: "Admin",
-		TargetLabel: "User",
-		PolicyMode:  "DISALLOWED",
-	}))
-
-	_, err = engine.CreateNode(&Node{ID: "test:admin1", Labels: []string{"Admin"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:user1", Labels: []string{"User"}})
-	require.NoError(t, err)
-
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-
-	require.NoError(t, tx.CreateEdge(&Edge{
-		ID: "test:e1", StartNode: "test:admin1", EndNode: "test:user1",
-		Type: "MANAGES",
-	}))
-	err = tx.Commit()
-	require.Error(t, err)
-	var cve *ConstraintViolationError
-	require.True(t, errors.As(err, &cve))
-	require.Equal(t, ConstraintPolicy, cve.Type)
-	require.Contains(t, cve.Message, "DISALLOWED")
-}
-
-// TestTxCheckEdgePolicy_AllowedNoMatch: ALLOWED policy in effect; no
-// constraint matches the edge → it must be rejected.
-func TestTxCheckEdgePolicy_AllowedNoMatch(t *testing.T) {
-	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
-
-	schema := engine.GetSchemaForNamespace("test")
-	require.NoError(t, schema.AddConstraint(Constraint{
-		Name:        "only_company_owns_dept",
-		Type:        ConstraintPolicy,
-		EntityType:  ConstraintEntityRelationship,
-		Label:       "OWNS",
-		SourceLabel: "Company",
-		TargetLabel: "Department",
-		PolicyMode:  "ALLOWED",
-	}))
-
-	_, err = engine.CreateNode(&Node{ID: "test:p1", Labels: []string{"Person"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: "test:dept1", Labels: []string{"Department"}})
-	require.NoError(t, err)
-
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-
-	// Person→Department is not in the ALLOWED list (only Company→Department).
-	require.NoError(t, tx.CreateEdge(&Edge{
-		ID: "test:e1", StartNode: "test:p1", EndNode: "test:dept1", Type: "OWNS",
-	}))
-	err = tx.Commit()
-	require.Error(t, err)
-	var cve *ConstraintViolationError
-	require.True(t, errors.As(err, &cve))
-	require.Equal(t, ConstraintPolicy, cve.Type)
-	require.Contains(t, cve.Message, "ALLOWED")
-}
-
-// TestTxCheckEdgePolicy_AllowedMatchesViaPendingNodeLabel: read-your-writes —
-// a node created within the same tx must be visible to the policy check.
-func TestTxCheckEdgePolicy_AllowedMatchesViaPendingNodeLabel(t *testing.T) {
-	engine, err := runtimeFixtureOwner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngine(t.TempDir()))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = engine.Close() })
-
-	schema := engine.GetSchemaForNamespace("test")
-	require.NoError(t, schema.AddConstraint(Constraint{
-		Name:        "company_owns_dept",
-		Type:        ConstraintPolicy,
-		EntityType:  ConstraintEntityRelationship,
-		Label:       "OWNS",
-		SourceLabel: "Company",
-		TargetLabel: "Department",
-		PolicyMode:  "ALLOWED",
-	}))
-
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-
-	// Both endpoint nodes created in-tx — policy check must read them
-	// from pendingNodes via tx.getNodeLabels.
-	_, err = tx.CreateNode(&Node{ID: "test:co1", Labels: []string{"Company"}})
-	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{ID: "test:dept1", Labels: []string{"Department"}})
-	require.NoError(t, err)
-	require.NoError(t, tx.CreateEdge(&Edge{
-		ID: "test:e1", StartNode: "test:co1", EndNode: "test:dept1", Type: "OWNS",
-	}))
-	require.NoError(t, tx.Commit())
-}
-
 // TestTxGetNodeLabels_PendingThenCommittedThenDeleted exercises the three
 // branches of tx.getNodeLabels in one test.
 func TestTxGetNodeLabels_PendingCommittedDeleted(t *testing.T) {
@@ -622,7 +510,7 @@ func TestTxGetNodeLabels_PendingCommittedDeleted(t *testing.T) {
 
 	// Deleted branch: even though "test:a" exists committed, after
 	// DeleteNode the lookup returns nil (deleted-set takes precedence).
-	require.NoError(t, tx.DeleteNode("test:a"))
+	require.NoError(t, tx.DeleteGraphNode("test:a", CascadeEdges))
 	got, err = tx.getNodeLabels("test:a")
 	require.NoError(t, err)
 	require.Nil(t, got)

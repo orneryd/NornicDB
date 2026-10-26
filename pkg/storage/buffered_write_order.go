@@ -271,23 +271,34 @@ func (w *WriteBehindBuffer) holdsEntities(e writtenEntities) bool {
 // orderHold is the write-order stripes a write holds exclusively
 // (orderAfterBufferedCommits), kept on the writer's stack.
 type orderHold struct {
+	writeRelease[bufferedOrderResources]
+}
+
+type bufferedOrderResources struct {
 	w       *WriteBehindBuffer
 	b       *BadgerEngine
 	e       writtenEntities
 	stripes orderStripeSet
 }
 
-// release releases the stripes h holds; it may be called again. The write
-// has committed by then, but its commit tail has not yet updated the caches:
-// the cached images of the entities it ordered are evicted first, so a write
-// ordered after it (from the unlock on) reads what it committed, not what was
-// cached before it (a node it deleted, adjacency without a relationship it
-// created).
-func (h *orderHold) release() {
-	if h.w != nil {
-		h.b.evictOrderedImages(h.e)
-		h.w.order.unlock(&h.stripes, true)
-		h.w = nil
+// writeRelease owns terminal write teardown. Resource types retain their own
+// idempotence mechanism: entity leases may release authority during publication,
+// while reusable stack-held buffer order is armed by its non-nil buffer.
+type writeRelease[T entityAuthorityResources | bufferedOrderResources] struct{ resources T }
+
+func (lease *writeRelease[T]) release() {
+	switch resource := any(&lease.resources).(type) {
+	case *entityAuthorityResources:
+		resource.once.Do(func() {
+			resource.releaseKeys()
+			resource.ordered.finish()
+		})
+	case *bufferedOrderResources:
+		if resource.w != nil {
+			resource.b.evictOrderedImages(resource.e)
+			resource.w.order.unlock(&resource.stripes, true)
+			resource.w = nil
+		}
 	}
 }
 
@@ -324,17 +335,17 @@ func (b *BadgerEngine) orderAfterBufferedCommits(h *orderHold, e writtenEntities
 	if w == nil {
 		return false, nil
 	}
-	h.stripes.entities(e)
-	h.b, h.e = b, e
-	w.order.lock(&h.stripes, true)
+	h.resources.stripes.entities(e)
+	h.resources.b, h.resources.e = b, e
+	w.order.lock(&h.resources.stripes, true)
 	if w.holdsEntities(e) {
 		if err := w.flush(false, true); err != nil {
-			w.order.unlock(&h.stripes, true)
+			w.order.unlock(&h.resources.stripes, true)
 			return false, err
 		}
 		drained = true
 	}
-	h.w = w
+	h.resources.w = w
 	return drained, nil
 }
 
@@ -492,6 +503,19 @@ func (b *BadgerEngine) beginMaintenanceWrite(scope []string) (lifecycleWrite, er
 	if err != nil {
 		return l, err
 	}
+	if len(scope) == 0 {
+		if err := b.pendingNamespaceConflict(""); err != nil {
+			l.finish()
+			return lifecycleWrite{}, err
+		}
+	} else {
+		for _, namespace := range scope {
+			if err := b.pendingNamespaceConflict(namespace); err != nil {
+				l.finish()
+				return lifecycleWrite{}, err
+			}
+		}
+	}
 	rewritten := ""
 	if len(scope) == 1 {
 		rewritten = scope[0] + ":"
@@ -522,9 +546,11 @@ func (l lifecycleWrite) finish() {
 // the lifecycle sequence its latest delete started at. lifecycleSeq advances
 // when a delete starts and again when it ends, so it is odd while one runs.
 type prefixDrops struct {
-	mu    sync.Mutex
-	seq   atomic.Uint64
-	start map[string]uint64
+	pendingCount atomic.Int64
+	pending      map[string]*namespaceDropIntent
+	mu           sync.Mutex
+	seq          atomic.Uint64
+	start        map[string]uint64
 }
 
 // startPrefixDrop starts a delete of prefix; the caller holds the write

@@ -40,9 +40,9 @@ func TestTransaction_WriteSkew_IsAllowedUnderSnapshotIsolation(t *testing.T) {
 	require.Equal(t, 2, count2)
 	require.Equal(t, 2, count3)
 
-	require.NoError(t, tx1.UpdateNode(&Node{ID: doctor1, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": false}}))
-	require.NoError(t, tx2.UpdateNode(&Node{ID: doctor2, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": false}}))
-	require.NoError(t, tx3.UpdateNode(&Node{ID: doctor1, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": false}}))
+	require.NoError(t, tx1.UpdateGraphNode(&Node{ID: doctor1, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": false}}, ClientNodeEdits))
+	require.NoError(t, tx2.UpdateGraphNode(&Node{ID: doctor2, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": false}}, ClientNodeEdits))
+	require.NoError(t, tx3.UpdateGraphNode(&Node{ID: doctor1, Labels: []string{"Doctor"}, Properties: map[string]interface{}{"on_call": false}}, ClientNodeEdits))
 
 	require.NoError(t, tx1.Commit())
 	require.NoError(t, tx2.Commit())
@@ -190,37 +190,64 @@ func TestTransaction_AllNodesRepeatabilityWithinSnapshot(t *testing.T) {
 	require.Len(t, fresh, 4)
 }
 
-func TestTransaction_CreateEdgeConflictsWithConcurrentNodeDelete(t *testing.T) {
-	engine := newTestMemoryEngine(t)
-	defer engine.Close()
-
-	start := NodeID(prefixTestID("edge-after-delete-start"))
-	target := NodeID(prefixTestID("edge-after-delete-target"))
-	_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{ID: target, Labels: []string{"Node"}})
-	require.NoError(t, err)
-
-	txCreateEdge, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	txDelete, err := engine.BeginTransaction()
-	require.NoError(t, err)
-
-	require.NoError(t, txCreateEdge.CreateEdge(&Edge{
-		ID:        EdgeID(prefixTestID("edge-created-before-delete-commit")),
-		StartNode: start,
-		EndNode:   target,
-		Type:      "LINKS",
-	}))
-	require.NoError(t, txDelete.DeleteNode(target))
-
-	require.NoError(t, txDelete.Commit())
-	require.ErrorIs(t, txCreateEdge.Commit(), ErrConflict)
-
-	_, err = engine.GetNode(target)
-	require.ErrorIs(t, err, ErrNotFound)
-	_, err = engine.GetEdge(EdgeID(prefixTestID("edge-created-before-delete-commit")))
-	require.ErrorIs(t, err, ErrNotFound)
+func TestTransaction_NodeDeleteAndEdgeCreateConflict(t *testing.T) {
+	for _, tc := range []struct {
+		name, start, target, edge string
+		deleteWins                bool
+	}{
+		{"CreateEdgeConflictsWithConcurrentNodeDelete", "edge-after-delete-start", "edge-after-delete-target", "edge-created-before-delete-commit", true},
+		{"DeleteNodeConflictsWithConcurrentEdgeCreate", "delete-node-start", "delete-node-target", "created-after-delete-snapshot", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newTestMemoryEngine(t)
+			defer engine.Close()
+			start := NodeID(prefixTestID(tc.start))
+			target := NodeID(prefixTestID(tc.target))
+			edgeID := EdgeID(prefixTestID(tc.edge))
+			_, err := engine.CreateNode(&Node{ID: start, Labels: []string{"Node"}})
+			require.NoError(t, err)
+			_, err = engine.CreateNode(&Node{ID: target, Labels: []string{"Node"}})
+			require.NoError(t, err)
+			// The transaction begun and staged first is the one that must lose.
+			first, err := engine.BeginTransaction()
+			require.NoError(t, err)
+			defer first.Rollback()
+			second, err := engine.BeginTransaction()
+			require.NoError(t, err)
+			defer second.Rollback()
+			txDelete, txCreateEdge := first, second
+			if tc.deleteWins {
+				txCreateEdge, txDelete = first, second
+			}
+			create := func() {
+				require.NoError(t, txCreateEdge.CreateEdge(&Edge{ID: edgeID, StartNode: start, EndNode: target, Type: "LINKS"}))
+			}
+			deleteNode := func() { require.NoError(t, txDelete.DeleteGraphNode(target, CascadeEdges)) }
+			if tc.deleteWins {
+				create()
+				deleteNode()
+			} else {
+				deleteNode()
+				create()
+			}
+			require.NoError(t, second.Commit())
+			require.ErrorIs(t, first.Commit(), ErrConflict)
+			node, err := engine.GetNode(target)
+			if tc.deleteWins {
+				require.ErrorIs(t, err, ErrNotFound)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, target, node.ID)
+			}
+			edge, err := engine.GetEdge(edgeID)
+			if tc.deleteWins {
+				require.ErrorIs(t, err, ErrNotFound)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, target, edge.EndNode)
+			}
+		})
+	}
 }
 
 func TestTransaction_AdjacencyRepeatabilityWithinSnapshot(t *testing.T) {
@@ -305,7 +332,7 @@ func TestTransaction_EdgeTraversalRemainsSnapshotConsistentAcrossConcurrentDelet
 	require.Equal(t, edgeID, beforeEdge.ID)
 	require.Equal(t, target, beforeNode.ID)
 
-	require.NoError(t, txDelete.DeleteNode(target))
+	require.NoError(t, txDelete.DeleteGraphNode(target, CascadeEdges))
 	require.NoError(t, txDelete.Commit())
 
 	afterEdge, err := txRead.getCommittedEdgeLocked(edgeID)
@@ -380,7 +407,7 @@ func BenchmarkTransaction_HighContentionAbortRate(b *testing.B) {
 			}
 			updated := copyNode(node)
 			updated.Properties["version"] = job
-			if err := tx.UpdateNode(updated); err != nil {
+			if err := tx.UpdateGraphNode(updated, ClientNodeEdits); err != nil {
 				select {
 				case errCh <- err:
 				default:

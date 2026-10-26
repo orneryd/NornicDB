@@ -1,5 +1,7 @@
 package storage
 
+import "strings"
+
 // Entity IDs are independently allocated: a node and an edge may have the
 // same string ID. The legacy AppendDelete API deliberately hides both kinds;
 // its mask lets a later write revive only its own kind.
@@ -100,12 +102,15 @@ func (w *WriteBehindBuffer) entityStateLocked(kind bufferedEntityKind, id string
 // visitEntityOverlayLocked resolves each candidate only once. Enumeration
 // remains label/type/adjacency scoped; pure deletions participate even when
 // their generation has no body or corresponding index entry.
-func (w *WriteBehindBuffer) visitEntityOverlayLocked(kind bufferedEntityKind, candidates func(*CommitBuffer, func(string)), visit func(string, bufferedEntityState)) {
+func (w *WriteBehindBuffer) visitEntityOverlayLocked(kind bufferedEntityKind, candidates func(*CommitBuffer, func(string)), visit func(string, bufferedEntityState), prefixes ...string) {
 	if w == nil {
 		return
 	}
 	seen := make(map[string]struct{})
 	emit := func(id string) {
+		if len(prefixes) > 0 && !strings.HasPrefix(id, prefixes[0]) {
+			return
+		}
 		if _, found := seen[id]; found {
 			return
 		}

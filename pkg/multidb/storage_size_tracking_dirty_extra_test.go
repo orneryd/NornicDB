@@ -4,27 +4,31 @@ import (
 	"context"
 	"errors"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/internal/testfixture/storagefault"
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
 
 type dirtyBranchEngine struct {
 	storage.Engine
-	failGetNode       bool
-	failGetEdge       bool
-	failUpdateNode    bool
-	failUpdateEdge    bool
-	failDeleteNode    bool
-	failDeleteEdge    bool
-	failOutgoingEdges bool
-	failIncomingEdges bool
-	badNodeOnGet      bool
-	badEdgeOnGet      bool
-	outgoingEdges     []*storage.Edge
-	incomingEdges     []*storage.Edge
+	nodeReadCalls, edgeReadCalls atomic.Int64
+	failGetNode                  bool
+	failGetEdge                  bool
+	failUpdateNode               bool
+	failUpdateEdge               bool
+	failDeleteNode               bool
+	failDeleteEdge               bool
+	failOutgoingEdges            bool
+	failIncomingEdges            bool
+	badNodeOnGet                 bool
+	badEdgeOnGet                 bool
+	outgoingEdges                []*storage.Edge
+	incomingEdges                []*storage.Edge
 }
 
 type storageSizingErrorEngine struct {
@@ -108,6 +112,7 @@ func (e *storageSizingErrorEngine) AllEdges() ([]*storage.Edge, error) {
 }
 
 func (e *dirtyBranchEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
+	e.nodeReadCalls.Add(1)
 	if e.failGetNode {
 		return nil, storage.ErrNotFound
 	}
@@ -118,6 +123,7 @@ func (e *dirtyBranchEngine) GetNode(id storage.NodeID) (*storage.Node, error) {
 }
 
 func (e *dirtyBranchEngine) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
+	e.edgeReadCalls.Add(1)
 	if e.failGetEdge {
 		return nil, storage.ErrNotFound
 	}
@@ -127,32 +133,65 @@ func (e *dirtyBranchEngine) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
 	return e.Engine.GetEdge(id)
 }
 
+func (e *dirtyBranchEngine) GetInnerEngine() storage.Engine  { return e.Engine }
+func (e *flipAfterGetEngine) GetInnerEngine() storage.Engine { return e.Engine }
+
+func (e *dirtyBranchEngine) WithEntityChange(op storage.Operation, apply func() error) error {
+	switch op.Type {
+	case storage.OpUpdateNode:
+		if e.failUpdateNode {
+			return errors.New("update node failed")
+		}
+	case storage.OpUpdateEdge:
+		if e.failUpdateEdge {
+			return errors.New("update edge failed")
+		}
+	case storage.OpDeleteNode:
+		if e.failDeleteNode {
+			return errors.New("delete node failed")
+		}
+	case storage.OpDeleteEdge:
+		if e.failDeleteEdge {
+			return errors.New("delete edge failed")
+		}
+	}
+	return apply()
+}
 func (e *dirtyBranchEngine) UpdateNode(node *storage.Node) error {
-	if e.failUpdateNode {
-		return errors.New("update node failed")
-	}
-	return e.Engine.UpdateNode(node)
+	return e.WithEntityChange(storage.Operation{Type: storage.OpUpdateNode, Node: node}, func() error { return e.Engine.UpdateNode(node) })
 }
-
-func (e *dirtyBranchEngine) DeleteNode(id storage.NodeID) error {
-	if e.failDeleteNode {
-		return errors.New("delete node failed")
-	}
-	return e.Engine.DeleteNode(id)
-}
-
 func (e *dirtyBranchEngine) UpdateEdge(edge *storage.Edge) error {
-	if e.failUpdateEdge {
-		return errors.New("update edge failed")
-	}
-	return e.Engine.UpdateEdge(edge)
+	return e.WithEntityChange(storage.Operation{Type: storage.OpUpdateEdge, Edge: edge}, func() error { return e.Engine.UpdateEdge(edge) })
+}
+func (e *dirtyBranchEngine) DeleteNode(id storage.NodeID) error {
+	return e.WithEntityChange(storage.Operation{Type: storage.OpDeleteNode, NodeID: id}, func() error { return e.Engine.DeleteNode(id) })
+}
+func (e *dirtyBranchEngine) DeleteEdge(id storage.EdgeID) error {
+	return e.WithEntityChange(storage.Operation{Type: storage.OpDeleteEdge, EdgeID: id}, func() error { return e.Engine.DeleteEdge(id) })
 }
 
-func (e *dirtyBranchEngine) DeleteEdge(id storage.EdgeID) error {
-	if e.failDeleteEdge {
-		return errors.New("delete edge failed")
-	}
-	return e.Engine.DeleteEdge(id)
+// Explicit stored-reader capabilities keep this fixture's legacy point and
+// adjacency overrides visible where those exact reader APIs are still used.
+func (e *dirtyBranchEngine) GetStoredNode(id storage.NodeID) (*storage.Node, error) {
+	return e.GetNode(id)
+}
+func (e *dirtyBranchEngine) GetStoredEdge(id storage.EdgeID) (*storage.Edge, error) {
+	return e.GetEdge(id)
+}
+func (e *dirtyBranchEngine) GetStoredOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+	return e.GetOutgoingEdges(id)
+}
+func (e *dirtyBranchEngine) GetStoredIncomingEdges(id storage.NodeID) ([]*storage.Edge, error) {
+	return e.GetIncomingEdges(id)
+}
+func (e *dirtyBranchEngine) GetStoredNodesByLabel(label string) ([]*storage.Node, error) {
+	return storage.GetStoredNodesByLabel(e.Engine, label)
+}
+func (e *dirtyBranchEngine) StreamStoredNodesByLabelProjected(label string, properties []string, visit func(*storage.Node) error) error {
+	return storage.StreamStoredNodesByLabelProjected(e.Engine, label, properties, visit)
+}
+func (e *dirtyBranchEngine) StreamStoredEdgesByType(ctx context.Context, kind string, visit func(*storage.Edge) error) error {
+	return storage.StreamStoredEdgesByType(ctx, e.Engine, kind, visit)
 }
 
 func (e *dirtyBranchEngine) GetOutgoingEdges(id storage.NodeID) ([]*storage.Edge, error) {
@@ -177,8 +216,7 @@ func (e *dirtyBranchEngine) GetIncomingEdges(id storage.NodeID) ([]*storage.Edge
 
 func TestSizeTrackingEngine_MarksDirtyWhenCreatedNodeCannotBeReadBack(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	inner := &dirtyBranchEngine{Engine: base, failGetNode: true}
 	wrapped := newSizeTrackingEngine(inner, manager, dbName)
 
@@ -190,8 +228,7 @@ func TestSizeTrackingEngine_MarksDirtyWhenCreatedNodeCannotBeReadBack(t *testing
 
 func TestSizeTrackingEngine_MarksDirtyWhenUpdatedNodeCannotBeSized(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	nodeID := storage.NodeID(dbName + ":dirty-update-node")
 	_, err := base.CreateNode(&storage.Node{ID: nodeID, Labels: []string{"Person"}})
 	require.NoError(t, err)
@@ -206,10 +243,9 @@ func TestSizeTrackingEngine_MarksDirtyWhenUpdatedNodeCannotBeSized(t *testing.T)
 	require.False(t, storageSizeInitialized(t, manager, dbName))
 }
 
-func TestSizeTrackingEngine_MarksDirtyWhenNodeReadBackCannotBeEncoded(t *testing.T) {
+func TestSizeTrackingEngine_NodePublicationIgnoresMalformedLatestReadback(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	inner := &dirtyBranchEngine{Engine: base, badNodeOnGet: true}
 	wrapped := newSizeTrackingEngine(inner, manager, dbName)
 
@@ -224,13 +260,17 @@ func TestSizeTrackingEngine_MarksDirtyWhenNodeReadBackCannotBeEncoded(t *testing
 	require.True(t, storageSizeInitialized(t, manager, dbName))
 	inner.badNodeOnGet = true
 	require.NoError(t, wrapped.UpdateNode(&storage.Node{ID: id, Labels: []string{"Person"}, Properties: map[string]interface{}{"name": "new"}}))
-	require.False(t, storageSizeInitialized(t, manager, dbName))
+	stored, err := base.GetStoredNode(id)
+	require.NoError(t, err)
+	require.Equal(t, "new", stored.Properties["name"])
+	require.True(t, storageSizeInitialized(t, manager, dbName))
+	assertPublicationUsage(t, manager, dbName, base)
+	require.Zero(t, inner.nodeReadCalls.Load(), "accounting never reads malformed latest bodies after publication")
 }
 
 func TestSizeTrackingEngine_MarksDirtyWhenCreatedEdgeCannotBeReadBack(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	idA, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":dirty-edge-a"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	idB, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":dirty-edge-b"), Labels: []string{"Person"}})
@@ -242,10 +282,9 @@ func TestSizeTrackingEngine_MarksDirtyWhenCreatedEdgeCannotBeReadBack(t *testing
 	require.False(t, storageSizeInitialized(t, manager, dbName))
 }
 
-func TestSizeTrackingEngine_MarksDirtyWhenEdgeReadBackCannotBeEncoded(t *testing.T) {
+func TestSizeTrackingEngine_EdgePublicationIgnoresMalformedLatestReadback(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	idA, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":bad-edge-a"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	idB, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":bad-edge-b"), Labels: []string{"Person"}})
@@ -262,20 +301,27 @@ func TestSizeTrackingEngine_MarksDirtyWhenEdgeReadBackCannotBeEncoded(t *testing
 	require.True(t, storageSizeInitialized(t, manager, dbName))
 	inner.badEdgeOnGet = true
 	require.NoError(t, wrapped.UpdateEdge(&storage.Edge{ID: edgeID, StartNode: idA, EndNode: idB, Type: "LIKES"}))
-	require.False(t, storageSizeInitialized(t, manager, dbName))
+	stored, err := base.GetStoredEdge(edgeID)
+	require.NoError(t, err)
+	require.Equal(t, "LIKES", stored.Type)
+	require.True(t, storageSizeInitialized(t, manager, dbName))
+	assertPublicationUsage(t, manager, dbName, base)
 
 	inner.badEdgeOnGet = false
 	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
 	require.True(t, storageSizeInitialized(t, manager, dbName))
 	inner.badEdgeOnGet = true
 	require.NoError(t, wrapped.DeleteEdge(edgeID))
-	require.False(t, storageSizeInitialized(t, manager, dbName))
+	_, err = base.GetStoredEdge(edgeID)
+	require.ErrorIs(t, err, storage.ErrNotFound)
+	require.True(t, storageSizeInitialized(t, manager, dbName))
+	assertPublicationUsage(t, manager, dbName, base)
+	require.Zero(t, inner.edgeReadCalls.Load(), "accounting never reads malformed latest bodies after publication")
 }
 
 func TestSizeTrackingEngine_DeleteNodeMarksDirtyWhenConnectedEdgesFail(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	idA, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":dirty-delete-a"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	idB, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":dirty-delete-b"), Labels: []string{"Person"}})
@@ -288,50 +334,60 @@ func TestSizeTrackingEngine_DeleteNodeMarksDirtyWhenConnectedEdgesFail(t *testin
 	require.False(t, storageSizeInitialized(t, manager, dbName))
 }
 
-func TestSizeTrackingEngine_ConnectedEdgeBytesReturnsIncomingError(t *testing.T) {
+func TestSizeTrackingEngine_ConnectedDeletionInitializationReturnsReadError(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	nodeID, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":incoming-error-node"), Labels: []string{"Person"}})
 	require.NoError(t, err)
-	inner := &dirtyBranchEngine{Engine: base, failIncomingEdges: true}
-	wrapper := newSizeTrackingEngine(inner, manager, dbName).(*sizeTrackingEngine)
-
-	_, err = wrapper.connectedEdgeBytes(nodeID)
-	require.ErrorContains(t, err, "get incoming edges")
+	assertManagedDeleteInitializationFailure(t, manager, dbName, base, nodeID, "get incoming edges")
 }
 
 func TestSizeTrackingEngineExposesInjectedQueryLimitChecker(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	checker := newDatabaseLimitCheckerWithLimits(manager, dbName, &Limits{})
+	require.NoError(t, manager.SetDatabaseLimits(dbName, &Limits{}))
+	manager.mu.Lock()
+	checker, err := manager.getOrCreateLimitCheckerLocked(dbName)
+	manager.mu.Unlock()
+	require.NoError(t, err)
 	wrapper := newSizeTrackingEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), manager, dbName, checker).(*sizeTrackingEngine)
 
 	require.Same(t, checker, wrapper.GetQueryLimitChecker())
 }
 
-func TestSizeTrackingEngineConnectedEdgeBytesDeduplicatesSelfLoop(t *testing.T) {
+func TestSizeTrackingEnginePublicationDeduplicatesSelfLoop(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	nodeID, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":loop-node"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	edge := &storage.Edge{ID: storage.EdgeID(dbName + ":self-loop"), StartNode: nodeID, EndNode: nodeID, Type: "LOOPS", Properties: map[string]interface{}{"weight": 1}}
 	require.NoError(t, base.CreateEdge(edge))
 	wrapper := newSizeTrackingEngine(base, manager, dbName).(*sizeTrackingEngine)
 
-	got, err := wrapper.connectedEdgeBytes(nodeID)
-	require.NoError(t, err)
 	stored, err := base.GetStoredEdge(edge.ID)
 	require.NoError(t, err)
 	want, err := calculateEdgeSize(stored)
 	require.NoError(t, err)
-	require.Equal(t, want, got)
+	delta, err := storageChangesUsage("", []storage.StoredEntityChange{{BeforeEdge: stored}}, true)
+	require.NoError(t, err)
+	require.Equal(t, want, -delta.edgeBytes)
+	require.EqualValues(t, -1, delta.edges)
+	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
+	require.NoError(t, wrapper.DeleteNode(nodeID))
+	total, nodeBytes, edgeBytes := manager.GetStorageSize(dbName)
+	require.Zero(t, total)
+	require.Zero(t, nodeBytes)
+	require.Zero(t, edgeBytes)
+	nodes, err := storage.NewNamespacedEngine(base, dbName).NodeCount()
+	require.NoError(t, err)
+	require.Zero(t, nodes)
+	edges, err := storage.NewNamespacedEngine(base, dbName).EdgeCount()
+	require.NoError(t, err)
+	require.Zero(t, edges)
 }
 
 func TestSizeTrackingEngineBulkOperationsStopOnFirstError(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	wrapper := newSizeTrackingEngine(base, manager, dbName).(*sizeTrackingEngine)
 
 	dupNode := storage.NodeID(dbName + ":bulk-dup-node")
@@ -358,8 +414,7 @@ func TestSizeTrackingEngineBulkOperationsStopOnFirstError(t *testing.T) {
 
 func TestSizeTrackingEngineLifecycleFallbacksOnPlainEngine(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	wrapper := newSizeTrackingEngine(base, manager, dbName).(*sizeTrackingEngine)
 
 	deregister := wrapper.RegisterSnapshotReader(storage.SnapshotReaderInfo{Namespace: dbName})
@@ -375,8 +430,7 @@ func TestSizeTrackingEngineLifecycleFallbacksOnPlainEngine(t *testing.T) {
 
 func TestSizeTrackingEngineLifecycleDelegatesWhenSupported(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	inner := &lifecycleDelegateEngine{Engine: base}
 	wrapper := newSizeTrackingEngine(inner, manager, dbName).(*sizeTrackingEngine)
 
@@ -396,6 +450,8 @@ func TestSizeTrackingEngineLifecycleDelegatesWhenSupported(t *testing.T) {
 	require.Equal(t, []storage.MVCCLifecycleDebtKey{{Namespace: "db", LogicalKey: "n1", DebtBytes: 3}}, wrapper.TopLifecycleDebtKeys(3))
 }
 
+// This fixture isolates optional stream forwarding on an independent store;
+// graph mutations below seed the backend directly and do not test accounting.
 func TestSizeTrackingEngineStreamingFallbackBranches(t *testing.T) {
 	manager, dbName := setupTestManager(t)
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
@@ -435,15 +491,12 @@ func TestSizeTrackingEngineStreamingFallbackBranches(t *testing.T) {
 	cancel()
 	require.ErrorIs(t, wrapper.StreamEdges(ctx, func(edge *storage.Edge) error { return nil }), context.Canceled)
 
-	plain.failOutgoingEdges = true
-	_, err = wrapper.connectedEdgeBytes(n1)
-	require.ErrorContains(t, err, "get outgoing edges")
+	assertManagedDeleteInitializationFailure(t, manager, dbName, base, n1, "get outgoing edges")
 }
 
 func TestSizeTrackingEngineMutationErrorBranches(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	nodeID, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":mut-node"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	otherID, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":mut-other"), Labels: []string{"Person"}})
@@ -474,10 +527,9 @@ func TestSizeTrackingEngineMutationErrorBranches(t *testing.T) {
 	inner.failDeleteNode = false
 }
 
-func TestSizeTrackingEngineConnectedEdgeBytesMalformedEdge(t *testing.T) {
+func TestSizeTrackingStoredPairFoldRejectsMalformedEdge(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	nodeID, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":bad-connected-node"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	otherID, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":bad-connected-other"), Labels: []string{"Person"}})
@@ -489,17 +541,20 @@ func TestSizeTrackingEngineConnectedEdgeBytesMalformedEdge(t *testing.T) {
 		Type:       "BAD",
 		Properties: map[string]interface{}{"bad": make(chan int)},
 	}
-	inner := &dirtyBranchEngine{Engine: base, outgoingEdges: []*storage.Edge{badEdge}, incomingEdges: []*storage.Edge{}}
-	wrapper := newSizeTrackingEngine(inner, manager, dbName).(*sizeTrackingEngine)
-
-	_, err = wrapper.connectedEdgeBytes(nodeID)
+	delta, err := storageChangesUsage("", []storage.StoredEntityChange{{BeforeEdge: badEdge}}, true)
 	require.Error(t, err)
+	require.Equal(t, storageUsage{}, delta)
+	nodes, err := storage.NewNamespacedEngine(base, dbName).NodeCount()
+	require.NoError(t, err)
+	require.EqualValues(t, 2, nodes)
+	edges, err := storage.NewNamespacedEngine(base, dbName).EdgeCount()
+	require.NoError(t, err)
+	require.Zero(t, edges)
 }
 
 func TestApplyStorageSizeDeltaClampsBelowZero(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
 
 	manager.applyStorageSizeDelta(dbName, -1_000_000, -1_000_000)
@@ -512,8 +567,7 @@ func TestApplyStorageSizeDeltaClampsBelowZero(t *testing.T) {
 
 func TestSizeTrackingEngineMutationsPropagateMissingDatabase(t *testing.T) {
 	manager, _ := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	wrapper := newSizeTrackingEngine(base, manager, "ghost_db")
 
 	_, err := wrapper.CreateNode(&storage.Node{ID: "ghost-node", Labels: []string{"Ghost"}})
@@ -525,10 +579,9 @@ func TestSizeTrackingEngineMutationsPropagateMissingDatabase(t *testing.T) {
 	require.ErrorIs(t, wrapper.DeleteEdge("ghost-edge"), ErrDatabaseNotFound)
 }
 
-func TestSizeTrackingEngineUpdateSecondReadMarksDirty(t *testing.T) {
+func TestSizeTrackingEngineUpdatesUsePublicationImages(t *testing.T) {
 	manager, dbName := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 	nodeID, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":second-read-node"), Labels: []string{"Person"}})
 	require.NoError(t, err)
 	otherID, err := base.CreateNode(&storage.Node{ID: storage.NodeID(dbName + ":second-read-other"), Labels: []string{"Person"}})
@@ -540,18 +593,27 @@ func TestSizeTrackingEngineUpdateSecondReadMarksDirty(t *testing.T) {
 	inner := &flipAfterGetEngine{Engine: base}
 	wrapper := newSizeTrackingEngine(inner, manager, dbName).(*sizeTrackingEngine)
 	require.NoError(t, wrapper.UpdateNode(&storage.Node{ID: nodeID, Labels: []string{"Person"}, Properties: map[string]interface{}{"v": 1}}))
-	require.False(t, storageSizeInitialized(t, manager, dbName))
+	storedNode, err := base.GetStoredNode(nodeID)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), storedNode.Properties["v"])
+	require.True(t, storageSizeInitialized(t, manager, dbName))
+	assertPublicationUsage(t, manager, dbName, base)
 
 	require.NoError(t, manager.ensureStorageSizeInitialized(dbName, base))
 	inner.edgeCalls = 0
 	require.NoError(t, wrapper.UpdateEdge(&storage.Edge{ID: edgeID, StartNode: nodeID, EndNode: otherID, Type: "LIKES"}))
-	require.False(t, storageSizeInitialized(t, manager, dbName))
+	storedEdge, err := base.GetStoredEdge(edgeID)
+	require.NoError(t, err)
+	require.Equal(t, "LIKES", storedEdge.Type)
+	require.True(t, storageSizeInitialized(t, manager, dbName))
+	assertPublicationUsage(t, manager, dbName, base)
+	require.Zero(t, inner.nodeCalls, "no second latest node read may affect published bytes")
+	require.Zero(t, inner.edgeCalls, "no second latest edge read may affect published bytes")
 }
 
 func TestDatabaseManagerCalculateStorageSizeFromEngineErrors(t *testing.T) {
 	manager, _ := setupTestManager(t)
-	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	t.Cleanup(func() { _ = base.Close() })
+	base := manager.inner.(*storage.MemoryEngine)
 
 	_, _, err := manager.calculateStorageSizeFromEngine(&storageSizingErrorEngine{Engine: base, nodesErr: errors.New("nodes unavailable")})
 	require.ErrorContains(t, err, "failed to get all nodes")
@@ -574,6 +636,7 @@ func storageSizeInitialized(t *testing.T, manager *DatabaseManager, dbName strin
 	info := manager.databases[dbName]
 	manager.mu.RUnlock()
 	require.NotNil(t, info)
+	info = info.accountingOwner()
 	info.sizeMu.RLock()
 	defer info.sizeMu.RUnlock()
 	return info.sizeInitialized
@@ -592,4 +655,61 @@ func (e *storageSizingErrorEngine) StreamNodesWithOptions(_ context.Context, _ s
 		}
 	}
 	return nil
+}
+
+func assertPublicationUsage(t *testing.T, manager *DatabaseManager, database string, base *storage.MemoryEngine) {
+	t.Helper()
+	nodes, edges, err := manager.calculateStorageSizeFromEngine(storage.NewNamespacedEngine(base, database))
+	require.NoError(t, err)
+	total, actualNodes, actualEdges := manager.GetStorageSize(database)
+	require.Equal(t, nodes, actualNodes)
+	require.Equal(t, edges, actualEdges)
+	require.Equal(t, nodes+edges, total)
+}
+
+// The retired direction-specific latest-reader helper is replaced by the
+// initial coherent relationship scan. Its read failure is before acceptance,
+// including the original empty-incoming population.
+func assertManagedDeleteInitializationFailure(t *testing.T, manager *DatabaseManager, database string, base *storage.MemoryEngine, nodeID storage.NodeID, message string) {
+	t.Helper()
+	before, err := base.GetStoredNode(nodeID)
+	require.NoError(t, err)
+	beforeNodes, err := base.NodeCount()
+	require.NoError(t, err)
+	beforeEdges, err := base.EdgeCount()
+	require.NoError(t, err)
+	injected := errors.New(message + ": relationship scan unavailable")
+	faults := storagefault.NewReadFailureEngine(base, base, injected)
+	require.NoError(t, manager.SetDatabaseLimits(database, &Limits{Storage: StorageLimits{MaxNodes: 100}}))
+	faults.SetFailure(storagefault.EdgeCountRead)
+	manager.mu.Lock()
+	checker, err := manager.getOrCreateLimitCheckerLocked(database)
+	manager.mu.Unlock()
+	require.NoError(t, err)
+	wrapper := newSizeTrackingEngine(faults, manager, database, checker).(*sizeTrackingEngine)
+	err = wrapper.DeleteNode(nodeID)
+	require.ErrorContains(t, err, message)
+	require.ErrorIs(t, err, injected)
+	require.True(t, nornicerrors.IsCommitRolledBack(err))
+	faults.SetFailure("")
+	after, err := base.GetStoredNode(nodeID)
+	require.NoError(t, err)
+	require.Equal(t, before.ID, after.ID)
+	require.Equal(t, before.Labels, after.Labels)
+	require.Equal(t, before.Properties, after.Properties)
+	require.True(t, before.CreatedAt.Equal(after.CreatedAt))
+	require.True(t, before.UpdatedAt.Equal(after.UpdatedAt))
+	nodes, err := base.NodeCount()
+	require.NoError(t, err)
+	require.Equal(t, beforeNodes, nodes)
+	edges, err := base.EdgeCount()
+	require.NoError(t, err)
+	require.Equal(t, beforeEdges, edges)
+	manager.mu.RLock()
+	info := manager.databases[database]
+	manager.mu.RUnlock()
+	info.sizeMu.RLock()
+	defer info.sizeMu.RUnlock()
+	require.Empty(t, info.pending)
+	require.Equal(t, reservedUsage{}, info.reserved)
 }

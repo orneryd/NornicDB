@@ -21,11 +21,19 @@ type flowAssumption struct {
 	selector selectorFact
 }
 
-// integerComparison is the common reader of the CFG's integer comparisons,
-// including the zero-length guards used by callback coverage.
-func integerComparison(value ssa.Value) (selectorFact, bool) {
+// conditionPredicate keeps the comparison and, for a type-assertion success
+// result, the assertion whose boolean is compared with true.
+type conditionPredicate struct {
+	selectorFact
+	assertion *ssa.TypeAssert
+}
+
+// readBranchCondition is the common predicate reader: it normalizes NOT for
+// integer comparisons and type-assertion success results. Consumers interpret
+// only their own predicate kind, so a boolean cannot grant integer coverage.
+func readBranchCondition(value ssa.Value) (conditionPredicate, bool) {
 	if neg, ok := value.(*ssa.UnOp); ok && neg.Op == token.NOT {
-		f, ok := integerComparison(neg.X)
+		f, ok := readBranchCondition(neg.X)
 		if !ok {
 			return f, false
 		}
@@ -47,9 +55,14 @@ func integerComparison(value ssa.Value) (selectorFact, bool) {
 		}
 		return f, true
 	}
+	if result, ok := value.(*ssa.Extract); ok && result.Index == 1 {
+		if assertion, ok := result.Tuple.(*ssa.TypeAssert); ok && assertion.CommaOk {
+			return conditionPredicate{selectorFact: selectorFact{result, 1, token.EQL}, assertion: assertion}, true
+		}
+	}
 	comparison, ok := value.(*ssa.BinOp)
 	if !ok {
-		return selectorFact{}, false
+		return conditionPredicate{}, false
 	}
 	subject := comparison.X
 	literal, ok := comparison.Y.(*ssa.Const)
@@ -69,17 +82,17 @@ func integerComparison(value ssa.Value) (selectorFact, bool) {
 		}
 	}
 	if !ok || literal.Value == nil || literal.Value.Kind() != constant.Int {
-		return selectorFact{}, false
+		return conditionPredicate{}, false
 	}
 	number, ok := constant.Int64Val(literal.Value)
 	if !ok {
-		return selectorFact{}, false
+		return conditionPredicate{}, false
 	}
 	switch op {
 	case token.EQL, token.NEQ, token.LSS, token.GTR, token.LEQ, token.GEQ:
-		return selectorFact{subject, number, op}, true
+		return conditionPredicate{selectorFact: selectorFact{subject, number, op}}, true
 	}
-	return selectorFact{}, false
+	return conditionPredicate{}, false
 }
 
 func compareInteger(value, number int64, op token.Token) bool {
@@ -101,8 +114,8 @@ func compareInteger(value, number int64, op token.Token) bool {
 }
 
 func conditionKnown(value ssa.Value, assumption flowAssumption) (bool, bool) {
-	test, ok := integerComparison(value)
-	if !ok {
+	test, ok := readBranchCondition(value)
+	if !ok || test.assertion != nil {
 		return false, false
 	}
 	if length, ok := test.value.(*ssa.Call); ok && assumption.nonEmpty != nil && test.number == 0 {
@@ -162,10 +175,11 @@ func blockSelectors(fn *ssa.Function, block, next *ssa.BasicBlock) []selectorFac
 		if side < 0 {
 			continue
 		}
-		fact, ok := integerComparison(branch.Cond)
-		if !ok {
+		predicate, ok := readBranchCondition(branch.Cond)
+		if !ok || predicate.assertion != nil {
 			continue
 		}
+		fact := predicate.selectorFact
 		if fact.op != token.EQL && fact.op != token.NEQ {
 			continue
 		}
@@ -281,33 +295,4 @@ func (q *acquirer) mutexField(value ssa.Value, assumption flowAssumption, depth 
 		found = true
 	}
 	return result
-}
-
-// selectedByteCases preserves each finite closed-world selector alternative as
-// its own key and lock proof. Unknown/external values remain pending/fail closed.
-func (a *analysis) selectedByteCases(shape keyShape, fn *ssa.Function) ([]keyShape, bool) {
-	selected := a.acq.selectedValues(fn)
-	for index, source := range shape.bytes {
-		if source.known || source.param < 0 || source.param >= len(fn.Params) {
-			continue
-		}
-		parameter := fn.Params[source.param]
-		if !selected[parameter] {
-			continue
-		}
-		values, why := a.k.byteVals(parameter, map[ssa.Value]bool{})
-		if why != "" || len(values) == 0 {
-			return nil, false
-		}
-		var out []keyShape
-		for _, value := range values {
-			next := shape
-			next.bytes = append([]byteSrc(nil), shape.bytes...)
-			next.bytes[index] = byteSrc{known: true, val: value, param: -1}
-			next.selectors = append(append([]selectorFact(nil), shape.selectors...), selectorFact{parameter, int64(value), token.EQL})
-			out = append(out, next)
-		}
-		return out, true
-	}
-	return nil, false
 }

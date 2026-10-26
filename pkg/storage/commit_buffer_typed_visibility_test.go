@@ -35,7 +35,7 @@ func TestWriteBehind_TypedNodeEdgeIdentityAPI(t *testing.T) {
 			require.NoError(t, err, "SETUP: persisted graph and public transaction reader")
 			require.Equal(t, edge.ID, before.ID)
 			t.Log("SETUP PASS: initial graph persisted; public tx.GetEdge accepts identity")
-			bufferedDeleteNode(t, b, node.ID)
+			bufferedWrite(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(node.ID, CascadeEdges) })
 			_, err = readEdge()
 			require.ErrorIs(t, err, ErrNotFound, "detach-delete initially hides edge")
 			bufferedCreate(t, b, &Node{ID: node.ID, Labels: node.Labels, Properties: map[string]any{"recreated": true}})

@@ -118,7 +118,10 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 					require.NoError(t, err)
 					entries, err := storage.ReadWALEntriesFromDir(walDir)
 					require.NoError(t, err)
-					result := storage.ReplayWALEntries(base, entries)
+					result := storage.ReplayResult{Errors: make([]storage.ReplayError, 0)}
+					for _, entry := range entries {
+						result.Record(entry, storage.ReplayWALEntry(base, entry))
+					}
 					require.Zero(t, result.Failed, "%s errors=%+v", result.Summary(), result.Errors)
 					manager, err := NewDatabaseManager(storage.NewWALEngine(base, wal), nil)
 					if err != nil {
@@ -153,7 +156,7 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 							require.NoError(t, tx.SetImplicit(true))
 							catalog, err := tx.GetNode(storage.NodeID("system:" + metadataNodeID))
 							require.NoError(t, err)
-							require.NoError(t, tx.UpdateNode(catalog))
+							require.NoError(t, tx.UpdateGraphNode(catalog, storage.ClientNodeEdits))
 							require.NoError(t, tx.Commit())
 						}
 						require.NoError(t, base.FlushWriteBehind())

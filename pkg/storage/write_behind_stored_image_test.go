@@ -60,9 +60,9 @@ func TestWriteBehindOverlayServesStoredImage(t *testing.T) {
 	rewrite, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, rewrite.SetImplicit(true))
-	require.NoError(t, rewrite.UpdateNode(&Node{ID: "test:a", Labels: []string{"A"}, Properties: properties()}))
+	require.NoError(t, rewrite.UpdateGraphNode(&Node{ID: "test:a", Labels: []string{"A"}, Properties: properties()}, ClientNodeEdits))
 	require.NoError(t, rewrite.UpdateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:big", Type: "LINK", Properties: properties()}))
-	require.NoError(t, rewrite.UpdateNode(&Node{ID: "test:plain", Labels: []string{"A"}, Properties: plain()}))
+	require.NoError(t, rewrite.UpdateGraphNode(&Node{ID: "test:plain", Labels: []string{"A"}, Properties: plain()}, ClientNodeEdits))
 	require.NoError(t, rewrite.Commit())
 
 	type image struct {
@@ -286,7 +286,7 @@ func TestWriteBehindOverlayKeepsSidecarEmbedding(t *testing.T) {
 	current, err := tx.GetNode(node.ID)
 	require.NoError(t, err)
 	current.Properties["tags"] = []any{"a", "b"}
-	require.NoError(t, tx.UpdateNode(current))
+	require.NoError(t, tx.UpdateGraphNode(current, ClientNodeEdits))
 	require.NoError(t, tx.Commit())
 
 	overlay, err := engine.GetNode(node.ID)

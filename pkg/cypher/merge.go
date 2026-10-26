@@ -345,12 +345,27 @@ func (e *StorageExecutor) findMergeNodesScanned(store storage.Engine, labels []s
 		}
 		return matches, false, nil
 	}
-	if lookup, ok := store.(storage.TransactionEqualityLookup); ok && len(labels) > 0 && len(props) > 0 {
+	lookup, hasEqualityLookup := store.(storage.TransactionEqualityLookup)
+	wrapper, transactional := store.(*transactionStorageWrapper)
+	if transactional {
+		lookup, hasEqualityLookup = wrapper.tx, true
+	}
+	if hasEqualityLookup && len(labels) > 0 && len(props) > 0 {
+		// Resolve the same native transaction owner used by property/composite
+		// lookups; namespace binding and user projection belong to this query.
+		if transactional && wrapper.namespace != "" {
+			if err := wrapper.tx.SetNamespace(wrapper.namespace); err != nil {
+				return nil, false, err
+			}
+		}
 		candidates, complete, lookupErr := lookup.LookupNodesByEquality(labels[0], props)
 		if lookupErr != nil {
 			return nil, false, lookupErr
 		}
 		if complete {
+			if transactional && wrapper.namespace != "" {
+				candidates = wrapper.toUserNamespacedNodes(candidates)
+			}
 			e.markMergeScanFallbackUsed()
 			for _, candidate := range candidates {
 				if mergeNodeMatches(candidate, labels, props) {

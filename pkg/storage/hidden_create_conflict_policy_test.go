@@ -118,9 +118,9 @@ func TestHiddenCreateConflictPolicy(t *testing.T) {
 				if buffered {
 					require.NoError(t, engine.FlushWriteBehind())
 				}
-				require.NoError(t, engine.SetNodeManuallySuppressed("test:hidden-node", true))
-				require.NoError(t, engine.SetEdgeManuallySuppressed("test:identical", true))
-				require.NoError(t, engine.SetEdgeManuallySuppressed("test:different", true))
+				require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:hidden-node", true))
+				require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:identical", true))
+				require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:different", true))
 
 				beforeIdentical, err := engine.GetStoredEdge("test:identical")
 				require.NoError(t, err)
@@ -287,7 +287,7 @@ func TestHiddenEdgeCreateUsesFinalTransactionImage(t *testing.T) {
 			if buffered {
 				require.NoError(t, engine.FlushWriteBehind())
 			}
-			require.NoError(t, engine.SetEdgeManuallySuppressed(stored.ID, true))
+			require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(stored.ID), true))
 			before, err := engine.GetStoredEdge(stored.ID)
 			require.NoError(t, err)
 			before = comparableStoredEdge(before)
@@ -391,7 +391,7 @@ func TestHiddenEdgeCandidateLifecycle(t *testing.T) {
 	}
 	stored := &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "same"}}
 	require.NoError(t, engine.CreateEdge(stored))
-	require.NoError(t, engine.SetEdgeManuallySuppressed(stored.ID, true))
+	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(stored.ID), true))
 	before, err := engine.GetStoredEdge(stored.ID)
 	require.NoError(t, err)
 	before = comparableStoredEdge(before)
@@ -448,7 +448,7 @@ func TestHiddenEdgeCandidateLifecycle(t *testing.T) {
 
 	t.Run("empty property sets are identical", func(t *testing.T) {
 		require.NoError(t, engine.CreateEdge(&Edge{ID: "test:empty", StartNode: "test:a", EndNode: "test:b", Type: "LINK"}))
-		require.NoError(t, engine.SetEdgeManuallySuppressed("test:empty", true))
+		require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:empty", true))
 		tx := begin()
 		require.NoError(t, tx.CreateEdge(&Edge{ID: "test:empty", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{}}))
 		require.NoError(t, tx.Commit())
@@ -471,8 +471,8 @@ func TestHiddenEdgeCandidateLifecycle(t *testing.T) {
 	t.Run("revealed predecessor is not a no-op", func(t *testing.T) {
 		tx := begin()
 		require.NoError(t, tx.CreateEdge(candidate("LINK")))
-		require.NoError(t, engine.SetEdgeManuallySuppressed(stored.ID, false))
-		t.Cleanup(func() { require.NoError(t, engine.SetEdgeManuallySuppressed(stored.ID, true)) })
+		require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(stored.ID), false))
+		t.Cleanup(func() { require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(stored.ID), true)) })
 		require.ErrorIs(t, tx.Commit(), ErrAlreadyExists)
 	})
 }
@@ -545,7 +545,7 @@ func TestHiddenEdgeIdentityUsesStoredValueRepresentation(t *testing.T) {
 					require.NoError(t, rewrite.UpdateEdge(edge(tc.same())))
 					require.NoError(t, rewrite.Commit())
 				}
-				require.NoError(t, engine.SetEdgeManuallySuppressed("test:r", true))
+				require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:r", true))
 				before, err := engine.GetStoredEdge("test:r")
 				require.NoError(t, err)
 				before = comparableStoredEdge(before)

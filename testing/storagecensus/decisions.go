@@ -4,6 +4,7 @@ import (
 	"go/token"
 	"go/types"
 	"sort"
+	"strings"
 
 	"golang.org/x/tools/go/ssa"
 )
@@ -26,7 +27,9 @@ type Decision struct {
 	Pos  string `json:"pos"`
 	// Gates is the write the branch decides: the instruction in Func and
 	// the path from it to the Badger write.
-	Gates string `json:"gates"`
+	Gates   string   `json:"gates"`
+	Owners  []string `json:"owners,omitempty"`
+	unowned bool
 }
 
 type decider struct {
@@ -69,6 +72,7 @@ func (a *analysis) decisions() []Decision {
 			}
 		}
 	}
+	proofs := a.bodyOwnerProofs()
 	var out []Decision
 	for _, fn := range a.p.funcs {
 		t := d.taint(fn)
@@ -80,8 +84,14 @@ func (a *analysis) decisions() []Decision {
 			if loopBound(b) {
 				continue // iterating over what a read returned decides nothing
 			}
-			if gate := d.gatesWrite(fn, b); gate != nil {
-				out = append(out, Decision{Func: a.p.funcName(fn), Pos: a.p.pos(iff.Cond.Pos()), Gates: a.bodyPath(fn, gate)})
+			if gates := d.gatedWrites(fn, b); len(gates) > 0 {
+				proof := d.branchOwnerProof(fn, b, proofs)
+				owners := make([]string, 0, len(proof.owners))
+				for owner := range proof.owners {
+					owners = append(owners, owner)
+				}
+				sort.Strings(owners)
+				out = append(out, Decision{Func: a.p.funcName(fn), Pos: a.p.pos(iff.Cond.Pos()), Gates: a.bodyPath(fn, gates[0]), Owners: owners, unowned: proof.unowned})
 			}
 		}
 	}
@@ -159,24 +169,30 @@ func (d *decider) instrWrites(fn *ssa.Function, ins ssa.Instruction) bool {
 	return d.a.bodyInstr(fn, ins)
 }
 
-// gatesWrite returns the instruction through which the branch at the end of
-// b decides a write: one successor reaches it, within the iteration, and the
-// other does not, and it leads to a write of an entity body or of
-// suppression state. It returns nil when the branch decides none.
-func (d *decider) gatesWrite(fn *ssa.Function, b *ssa.BasicBlock) ssa.Instruction {
+// gatedWrites returns every entity-body or suppression write instruction
+// reachable from only one successor within this iteration. The first is a
+// display representative; every instruction contributes to ownership proof.
+func (d *decider) gatedWrites(fn *ssa.Function, b *ssa.BasicBlock) []ssa.Instruction {
 	r0, r1 := reachable(b.Succs[0]), reachable(b.Succs[1])
+	var writes []ssa.Instruction
 	for _, blk := range fn.Blocks {
-		// A write both successors reach is not decided by the branch.
 		if r0[blk] == r1[blk] {
 			continue
 		}
 		for _, ins := range blk.Instrs {
 			if d.instrWrites(fn, ins) {
-				return ins
+				writes = append(writes, ins)
 			}
 		}
 	}
-	return nil
+	return writes
+}
+func (d *decider) branchOwnerProof(fn *ssa.Function, b *ssa.BasicBlock, proofs map[*ssa.Function]bodyOwnerProof) bodyOwnerProof {
+	proof := bodyOwnerProof{owners: map[string]bool{}}
+	for _, ins := range d.gatedWrites(fn, b) {
+		proof.merge(d.a.instructionOwnerProof(fn, ins, proofs))
+	}
+	return proof
 }
 
 // loopBound reports whether b is a loop header: the branch that ends it
@@ -222,9 +238,17 @@ func (d *decider) propagatesError(iff *ssa.If) bool {
 		return false
 	}
 	errv := cmp.X
+	nilComparison := false
 	if c, ok := cmp.X.(*ssa.Const); ok && c.IsNil() {
 		errv = cmp.Y
-	} else if c, ok := cmp.Y.(*ssa.Const); !ok || !c.IsNil() {
+		nilComparison = true
+	} else if c, ok := cmp.Y.(*ssa.Const); ok && c.IsNil() {
+		nilComparison = true
+	}
+	if !types.Identical(errv.Type(), types.Universe.Lookup("error").Type()) {
+		return false
+	}
+	if !nilComparison && !errorNonNilOnEntry(iff.Block(), errv) {
 		return false
 	}
 	switch errv.(type) {
@@ -233,17 +257,192 @@ func (d *decider) propagatesError(iff *ssa.If) bool {
 		return false
 	}
 	branch := iff.Block().Succs[0]
-	if cmp.Op == token.EQL {
-		branch = iff.Block().Succs[1]
+	if nilComparison {
+		if cmp.Op == token.EQL {
+			branch = iff.Block().Succs[1]
+		}
+		return returnsExactError(branch, errv)
 	}
+	return returnsExactError(branch, errv) || returnsExactError(iff.Block().Succs[1], errv)
+}
+
+// A filtered error return is not a hidden disposition only when a dominating
+// branch has excluded the successful nil result for this exact SSA error.
+func errorNonNilOnEntry(block *ssa.BasicBlock, errv ssa.Value) bool {
+	for _, guard := range block.Parent().Blocks {
+		if guard == block || !guard.Dominates(block) {
+			continue
+		}
+		branch, ok := guard.Instrs[len(guard.Instrs)-1].(*ssa.If)
+		if !ok {
+			continue
+		}
+		cmp, ok := branch.Cond.(*ssa.BinOp)
+		if !ok || (cmp.Op != token.NEQ && cmp.Op != token.EQL) {
+			continue
+		}
+		other := cmp.Y
+		if cmp.Y == errv {
+			other = cmp.X
+		} else if cmp.X != errv {
+			continue
+		}
+		nilValue, ok := other.(*ssa.Const)
+		if !ok || !nilValue.IsNil() {
+			continue
+		}
+		nonnil := guard.Succs[0]
+		if cmp.Op == token.EQL {
+			nonnil = guard.Succs[1]
+		}
+		if nonnil.Dominates(block) {
+			return true
+		}
+	}
+	return false
+}
+
+func returnsExactError(branch *ssa.BasicBlock, errv ssa.Value) bool {
 	ret, ok := branch.Instrs[len(branch.Instrs)-1].(*ssa.Return)
 	if !ok {
 		return false
 	}
 	for _, v := range ret.Results {
 		if v == errv {
+			// A direct return is propagation only when nothing in its branch
+			// mutates state or calls another effect before returning.
+			for _, ins := range branch.Instrs {
+				switch ins.(type) {
+				case *ssa.Return, *ssa.DebugRef:
+				default:
+					return false
+				}
+			}
+			return true
+		}
+		// A defer lowers even an unnamed error result to a local return cell.
+		// Accept only a nonescaping cell written with this exact error, then
+		// loaded after RunDefers; captured/named results remain fail-closed.
+		load, ok := v.(*ssa.UnOp)
+		if !ok || load.Op != token.MUL {
+			continue
+		}
+		cell, ok := load.X.(*ssa.Alloc)
+		if !ok || cell.Heap {
+			continue
+		}
+		safe := true
+		stored := false
+		for _, use := range *cell.Referrers() {
+			switch use := use.(type) {
+			case *ssa.Store:
+				if use.Addr != cell {
+					safe = false
+				}
+			case *ssa.UnOp:
+				if use.Op != token.MUL {
+					safe = false
+				}
+			case *ssa.DebugRef:
+			default:
+				safe = false
+			}
+		}
+		for _, ins := range branch.Instrs {
+			switch ins := ins.(type) {
+			case *ssa.Store:
+				if ins.Addr != cell || ins.Val != errv {
+					safe = false
+				} else {
+					stored = true
+				}
+			case *ssa.UnOp:
+				if ins.X != cell || ins.Op != token.MUL {
+					safe = false
+				}
+			case *ssa.RunDefers, *ssa.Return, *ssa.DebugRef:
+			default:
+				safe = false
+			}
+		}
+		if safe && stored {
 			return true
 		}
 	}
 	return false
+}
+
+// bodyOwnerProof retains every entity-body effect, not only the representative
+// shortest path printed in Gates. An incidental owned path cannot cover a
+// second, unowned write reached by the same decision.
+type bodyOwnerProof struct {
+	owners  map[string]bool
+	unowned bool
+}
+
+func (p *bodyOwnerProof) merge(other bodyOwnerProof) bool {
+	changed := false
+	if other.unowned && !p.unowned {
+		p.unowned = true
+		changed = true
+	}
+	for owner := range other.owners {
+		if !p.owners[owner] {
+			p.owners[owner] = true
+			changed = true
+		}
+	}
+	return changed
+}
+func (a *analysis) instructionOwnerProof(fn *ssa.Function, ins ssa.Instruction, proofs map[*ssa.Function]bodyOwnerProof) bodyOwnerProof {
+	p := bodyOwnerProof{owners: map[string]bool{}}
+	for _, chain := range a.bodyChains[ins] {
+		owner := decisionOwnerOnPath(Decision{Gates: strings.Join(chain, " -> ")})
+		if owner == "" {
+			p.unowned = true
+		} else {
+			p.owners[owner] = true
+		}
+	}
+	switch ins := ins.(type) {
+	case ssa.CallInstruction:
+		for _, callee := range a.callees(fn, ins) {
+			p.merge(proofs[callee])
+		}
+	case *ssa.MakeClosure:
+		p.merge(proofs[ins.Fn.(*ssa.Function)])
+	}
+	return p
+}
+func (a *analysis) bodyOwnerProofs() map[*ssa.Function]bodyOwnerProof {
+	proofs := map[*ssa.Function]bodyOwnerProof{}
+	for _, fn := range a.p.funcs {
+		proofs[fn] = bodyOwnerProof{owners: map[string]bool{}}
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, fn := range a.p.funcs {
+			if !a.bodyWriters[fn] {
+				continue
+			}
+			p := proofs[fn]
+			name := a.p.funcName(fn)
+			if decisionOwners[name] != "" {
+				if !p.owners[name] {
+					p.owners[name] = true
+					changed = true
+				}
+				continue
+			}
+			for _, b := range fn.Blocks {
+				for _, ins := range b.Instrs {
+					if p.merge(a.instructionOwnerProof(fn, ins, proofs)) {
+						changed = true
+					}
+				}
+			}
+			proofs[fn] = p
+		}
+	}
+	return proofs
 }

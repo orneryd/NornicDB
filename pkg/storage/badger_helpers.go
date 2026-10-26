@@ -1164,31 +1164,15 @@ func (b *BadgerEngine) decodeNodeEmbeddingState(txn *badger.Txn, data []byte, no
 	if err != nil {
 		return nil, err
 	}
-	return b.loadNodeEmbeddingState(txn, node, nodeID, vectors)
+	return b.loadNodeEmbeddingState(embeddingRecordReader{txn: txn}, node, nodeID, vectors)
 }
 
-// loadNodeEmbeddings hydrates separately stored chunk vectors into a decoded
-// node body. Keeping this separate lets the body cache retain only metadata and
-// properties while preserving full-node read semantics on cache hits.
-//
-// The worker's embedding sidecar (embeddingMetaKey) takes precedence over
-// body-inline embedding state when present and fresh: sidecar metadata
-// replaces EmbedMeta and chunk vectors are hydrated from the embedding key
-// space. A stale sidecar (the body changed after the embedding was generated)
-// is ignored, leaving the node embedding-free so the worker re-embeds the
-// new content.
-func (b *BadgerEngine) loadNodeEmbeddings(txn *badger.Txn, node *Node, nodeID NodeID) (*Node, error) {
-	return b.loadNodeEmbeddingState(txn, node, nodeID, true)
-}
-
-// loadNodeEmbeddingState is loadNodeEmbeddings; with vectors false it settles
-// the node's embedding metadata the same way (the fresh sidecar's, else the
-// body's) but reads no separately stored chunk vector, so the node reads as
-// an embedding-free read returns it: metadata kept (chunk_count counts the
-// stored chunks), ChunkEmbeddings unset, and EmbeddingsStoredSeparately
-// cleared exactly as the full read clears it.
-func (b *BadgerEngine) loadNodeEmbeddingState(txn *badger.Txn, node *Node, nodeID NodeID, vectors bool) (*Node, error) {
-	if sidecarMeta, fresh, err := b.freshEmbeddingSidecarMeta(txn, node, nodeID); err != nil {
+// loadNodeEmbeddingState settles fresh sidecar metadata against the caller's
+// pinned body. With vectors true it hydrates complete chunk payloads; false
+// preserves query metadata without fetching those payloads. Stale sidecars
+// remain ignored under the same source-body validation policy.
+func (b *BadgerEngine) loadNodeEmbeddingState(read embeddingRecordReader, node *Node, nodeID NodeID, vectors bool) (*Node, error) {
+	if sidecarMeta, fresh, err := b.freshEmbeddingSidecarMeta(read, node, nodeID); err != nil {
 		return nil, err
 	} else if fresh {
 		node.EmbedMeta = sidecarMeta
@@ -1200,7 +1184,7 @@ func (b *BadgerEngine) loadNodeEmbeddingState(txn *badger.Txn, node *Node, nodeI
 			}
 			return node, nil
 		}
-		if err := b.loadEmbeddingChunks(txn, node, nodeID, chunkCount); err != nil {
+		if err := loadEmbeddingChunksFrom(read, node, nodeID, chunkCount); err != nil {
 			return nil, err
 		}
 		return node, nil
@@ -1210,7 +1194,7 @@ func (b *BadgerEngine) loadNodeEmbeddingState(txn *badger.Txn, node *Node, nodeI
 	if node.EmbeddingsStoredSeparately {
 		if chunkCount := chunkCountFromMeta(node.EmbedMeta); chunkCount > 0 {
 			if vectors {
-				if err := b.loadEmbeddingChunks(txn, node, nodeID, chunkCount); err != nil {
+				if err := loadEmbeddingChunksFrom(read, node, nodeID, chunkCount); err != nil {
 					return nil, err
 				}
 			}
@@ -1269,32 +1253,55 @@ func (b *BadgerEngine) loadEmbeddingChunks(txn *badger.Txn, node *Node, nodeID N
 }
 
 // embeddingRecordReader uses the ordinary transaction directly for normal reads.
-// Only recovery supplies a commit overlay. Appending into dst preserves the
+// Recovery supplies a real commit overlay; prepared capture supplies its owned
+// staged maps while holding tx.mu. Neither constructs a synthetic WAL generation.
+// Appending into dst preserves the
 // existing sharded-vector allocation behavior without reader closures.
 type embeddingRecordReader struct {
-	txn    *badger.Txn
-	commit *bufferedCommit
+	txn           *badger.Txn
+	commit        *bufferedCommit
+	stagedWrites  map[string][]byte
+	stagedDeletes map[string]bool
 }
 
-func (r embeddingRecordReader) read(key, dst []byte) ([]byte, error) {
+type embeddingRecord struct {
+	item *badger.Item
+	data []byte
+}
+
+func (r embeddingRecordReader) record(key []byte) (embeddingRecord, error) {
+	writes, deletes := r.stagedWrites, r.stagedDeletes
 	if r.commit != nil {
-		if r.commit.deletes[string(key)] {
-			return nil, badger.ErrKeyNotFound
-		}
-		if data, ok := r.commit.writes[string(key)]; ok {
-			return append(dst, data...), nil
-		}
+		writes, deletes = r.commit.writes, r.commit.deletes
+	}
+	if deletes[string(key)] {
+		return embeddingRecord{}, badger.ErrKeyNotFound
+	}
+	if data, ok := writes[string(key)]; ok {
+		return embeddingRecord{data: data}, nil
 	}
 	item, err := r.txn.Get(key)
+	return embeddingRecord{item: item}, err
+}
+func (r embeddingRecord) value(visit func([]byte) error) error {
+	if r.item != nil {
+		return r.item.Value(visit)
+	}
+	return visit(r.data)
+}
+func (r embeddingRecordReader) value(key []byte, visit func([]byte) error) error {
+	record, err := r.record(key)
+	if err != nil {
+		return err
+	}
+	return record.value(visit)
+}
+func (r embeddingRecordReader) read(key, dst []byte) ([]byte, error) {
+	record, err := r.record(key)
 	if err != nil {
 		return nil, err
 	}
-	// ValueCopy replaces dst rather than appending. Preserve earlier shards
-	// when persisted and staged records share the same assembly buffer.
-	err = item.Value(func(value []byte) error {
-		dst = append(dst, value...)
-		return nil
-	})
+	err = record.value(func(value []byte) error { dst = append(dst, value...); return nil })
 	return dst, err
 }
 

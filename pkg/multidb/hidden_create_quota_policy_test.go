@@ -17,7 +17,7 @@ func TestHiddenNodeIDRemainsOccupiedAtAndBelowQuota(t *testing.T) {
 		ID: "hidden", Labels: []string{"Original"}, Properties: map[string]any{"value": int64(1)},
 	})
 	require.NoError(t, err)
-	require.NoError(t, base.SetNodeManuallySuppressed(storage.NodeID(db+":hidden"), true))
+	require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, string(db+":hidden"), true))
 	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(db)
 	require.Positive(t, beforeNodes)
 
@@ -63,7 +63,7 @@ func TestBulkRollbackDoesNotDeleteIdenticalHiddenEdgeNoOp(t *testing.T) {
 		ID: "hidden", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"key": "same"},
 	}
 	require.NoError(t, engine.CreateEdge(original))
-	require.NoError(t, base.SetEdgeManuallySuppressed(storage.EdgeID(db+":hidden"), true))
+	require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(db+":hidden"), true))
 	storedBefore := mustStoredEdge(t, engine, "hidden")
 	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(db)
 
@@ -96,7 +96,7 @@ func TestHiddenEdgeIDAtQuotaDefersToStorage(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(&storage.Edge{
 		ID: "hidden", StartNode: "a", EndNode: "b", Type: "LINK", Properties: map[string]any{"key": "same"},
 	}))
-	require.NoError(t, base.SetEdgeManuallySuppressed(storage.EdgeID(db+":hidden"), true))
+	require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(db+":hidden"), true))
 	storedBefore := mustStoredEdge(t, engine, "hidden")
 	beforeTotal, beforeNodes, beforeEdges := manager.GetStorageSize(db)
 	edgeCount, err := engine.EdgeCount()

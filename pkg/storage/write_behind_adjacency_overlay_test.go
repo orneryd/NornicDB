@@ -8,28 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// bufferedCreateEdge commits one edge creation that stays buffered (the test
-// engines use a one-hour interval so nothing flushes on its own).
-func bufferedCreateEdge(t *testing.T, engine *BadgerEngine, edge *Edge) {
-	t.Helper()
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.CreateEdge(edge))
-	require.NoError(t, tx.Commit())
-}
-
-func bufferedDeleteNode(t *testing.T, engine *BadgerEngine, id NodeID) {
-	t.Helper()
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.DeleteNode(id))
-	require.NoError(t, tx.Commit())
-}
-
 // adjacencySnapshot is the pre/post-flush observable state of one graph.
 type adjacencySnapshot struct {
 	totalEdges       int64
@@ -101,7 +79,7 @@ func TestWriteBehind_AdjacencyOverlayMatchesFlushedView(t *testing.T) {
 			EndNode:   end,
 			Type:      "Friend",
 		}
-		bufferedCreateEdge(t, engine, edges[i])
+		bufferedWrite(t, engine, func(tx *BadgerTransaction) error { return tx.CreateEdge(edges[i]) })
 	}
 	require.Greater(t, engine.writeBehind.PendingOps(), 0, "commits must stay buffered before flush")
 
@@ -144,7 +122,7 @@ func TestWriteBehind_MergeDoesNotDuplicateBufferedEdges(t *testing.T) {
 	bufferedCreate(t, engine, &Node{ID: "test:a", Labels: []string{"User"}})
 	bufferedCreate(t, engine, &Node{ID: "test:b", Labels: []string{"User"}})
 	edge := &Edge{ID: "test:ab", StartNode: "test:a", EndNode: "test:b", Type: "Friend"}
-	bufferedCreateEdge(t, engine, edge)
+	bufferedWrite(t, engine, func(tx *BadgerTransaction) error { return tx.CreateEdge(edge) })
 
 	// MERGE-equivalent: a second buffered statement must observe the first
 	// edge and skip the create.
@@ -174,12 +152,12 @@ func TestWriteBehind_DetachDeleteLeavesNoOrphans(t *testing.T) {
 		{ID: "test:ba", StartNode: "test:b", EndNode: "test:a", Type: "Friend"},
 		{ID: "test:ac", StartNode: "test:a", EndNode: "test:c", Type: "Friend"},
 	} {
-		bufferedCreateEdge(t, engine, e)
+		bufferedWrite(t, engine, func(tx *BadgerTransaction) error { return tx.CreateEdge(e) })
 	}
 	require.Equal(t, int64(3), mustEdgeCount(t, engine))
 
 	// DETACH DELETE of a while all three relationships are buffered.
-	bufferedDeleteNode(t, engine, "test:a")
+	bufferedWrite(t, engine, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("test:a", CascadeEdges) })
 
 	// Orphan check before any flush.
 	out, in, err := engine.GetAdjacentEdges("test:a")

@@ -14,13 +14,29 @@ import (
 var errStartupMaterialization = errors.New("startup must not materialize the full corpus")
 
 type startupStreamingEngine struct {
-	*storage.MemoryEngine
-	allNodesCalls      int
-	allEdgesCalls      int
-	nodeStreamCalls    int
-	edgeStreamCalls    int
-	prefixes           []string
-	prefixCallbackRuns int
+	storage.Engine
+	storage.StoredEntityReader
+	storage.ScopedStoredEntityReader
+	MemoryEngine                         *storage.MemoryEngine
+	allNodesCalls                        int
+	allEdgesCalls                        int
+	nodeStreamCalls                      int
+	edgeStreamCalls                      int
+	prefixes                             []string
+	prefixCallbackRuns                   int
+	snapshotNodeScans, snapshotEdgeScans int
+}
+
+func (e *startupStreamingEngine) GetInnerEngine() storage.Engine { return e.MemoryEngine }
+
+func (e *startupStreamingEngine) WithStoredEntityRead(kind storage.StoredEntityReadKind, _ string, read func() error) error {
+	switch kind {
+	case storage.StoredEntityNodeSnapshotScan:
+		e.snapshotNodeScans++
+	case storage.StoredEntityEdgeSnapshotScan:
+		e.snapshotEdgeScans++
+	}
+	return read()
 }
 
 func (e *startupStreamingEngine) AllNodes() ([]*storage.Node, error) {
@@ -142,6 +158,9 @@ func (e *startupStreamingEngine) StreamNodesWithOptions(ctx context.Context, opt
 // Regression: initially reported in #373.
 func TestStartupCleanupScansOnlyLeakedSystemNodePrefixes(t *testing.T) {
 	engine := &startupStreamingEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
+	engine.Engine = engine.MemoryEngine
+	engine.StoredEntityReader = engine.MemoryEngine
+	engine.ScopedStoredEntityReader = engine.MemoryEngine
 	t.Cleanup(func() { _ = engine.Close() })
 
 	nodes := []*storage.Node{
@@ -195,6 +214,9 @@ func TestStartupCleanupScansOnlyLeakedSystemNodePrefixes(t *testing.T) {
 
 func TestStorageSizeReconciliationStreamsEntities(t *testing.T) {
 	engine := &startupStreamingEngine{MemoryEngine: fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))}
+	engine.Engine = engine.MemoryEngine
+	engine.StoredEntityReader = engine.MemoryEngine
+	engine.ScopedStoredEntityReader = engine.MemoryEngine
 	t.Cleanup(func() { _ = engine.Close() })
 	node := &storage.Node{ID: "nornic:node", Labels: []string{"Application"}, Properties: map[string]interface{}{"payload": strings.Repeat("x", 4096)}}
 	edge := &storage.Edge{ID: "nornic:edge", StartNode: node.ID, EndNode: node.ID, Type: "SELF", Properties: map[string]interface{}{"weight": int64(1)}}
@@ -207,8 +229,8 @@ func TestStorageSizeReconciliationStreamsEntities(t *testing.T) {
 	wantEdgeSize, err := calculateEdgeSize(edge)
 	require.NoError(t, err)
 
-	checker := &databaseLimitChecker{}
-	nodeSize, edgeSize, err := checker.calculateCurrentStorageSize(engine)
+	manager := &DatabaseManager{}
+	nodeSize, edgeSize, err := manager.calculateStorageSizeFromEngine(engine)
 	require.NoError(t, err)
 	require.Equal(t, wantNodeSize, nodeSize)
 	require.Equal(t, wantEdgeSize, edgeSize)
@@ -233,6 +255,9 @@ func TestDatabaseManagerRestartDefersStorageSizeScan(t *testing.T) {
 	require.NoError(t, err)
 
 	engine := &startupStreamingEngine{MemoryEngine: base}
+	engine.Engine = engine.MemoryEngine
+	engine.StoredEntityReader = engine.MemoryEngine
+	engine.ScopedStoredEntityReader = engine.MemoryEngine
 	restarted, err := NewDatabaseManager(engine, nil)
 	require.NoError(t, err)
 	require.NotNil(t, restarted)
@@ -249,6 +274,9 @@ func TestWriteDoesNotForceDeferredStorageSizeScanWithoutByteLimit(t *testing.T) 
 	require.NoError(t, err)
 
 	engine := &startupStreamingEngine{MemoryEngine: base}
+	engine.Engine = engine.MemoryEngine
+	engine.StoredEntityReader = engine.MemoryEngine
+	engine.ScopedStoredEntityReader = engine.MemoryEngine
 	restarted, err := NewDatabaseManager(engine, nil)
 	require.NoError(t, err)
 	engine.prefixes = nil // Ignore the narrowly scoped leaked-metadata cleanup.
@@ -259,11 +287,15 @@ func TestWriteDoesNotForceDeferredStorageSizeScanWithoutByteLimit(t *testing.T) 
 	require.Zero(t, engine.nodeStreamCalls)
 	require.Zero(t, engine.edgeStreamCalls)
 	require.Empty(t, engine.prefixes)
+	require.Zero(t, engine.snapshotNodeScans)
+	require.Zero(t, engine.snapshotEdgeScans)
 
 	total, _, _ := restarted.GetStorageSize(restarted.DefaultDatabaseName())
 	require.Positive(t, total)
-	require.NotEmpty(t, engine.prefixes)
-	require.Equal(t, 1, engine.edgeStreamCalls)
+	require.Equal(t, 1, engine.snapshotNodeScans)
+	require.Equal(t, 1, engine.snapshotEdgeScans)
+	require.Zero(t, engine.allNodesCalls)
+	require.Zero(t, engine.allEdgesCalls)
 }
 
 // Storage sizing streams stored relationships (storage.StreamStoredEdgesByType

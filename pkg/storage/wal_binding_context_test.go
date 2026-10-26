@@ -89,7 +89,7 @@ func TestWALBindingContextMixedPrefixAndRestart(t *testing.T) {
 				if i == 0 {
 					_, err = tx.CreateNode(node)
 				} else {
-					err = tx.UpdateNode(node)
+					err = tx.UpdateGraphNode(node, ClientNodeEdits)
 				}
 				require.NoError(t, err)
 				require.NoError(t, tx.Commit())
@@ -166,7 +166,7 @@ func TestWALBindingContextRejectsUnknownSnapshotTokensAfterReopen(t *testing.T) 
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("unknown"))
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "unknown:a", Properties: map[string]any{"value": int64(1)}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "unknown:a", Properties: map[string]any{"value": int64(1)}}, ClientNodeEdits))
 	require.NoError(t, tx.Commit())
 	entries, err := ReadWALEntriesFromDir(capture.Config().Dir)
 	require.NoError(t, err)

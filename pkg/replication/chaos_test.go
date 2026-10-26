@@ -1113,28 +1113,6 @@ func TestSecurity_AuthenticationRequired(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// TestSecurity_EncryptionAtRest tests that WAL data can be encrypted.
-func TestSecurity_EncryptionAtRest(t *testing.T) {
-	// Verify sensitive data in WAL entries
-	sensitiveData := []byte("password=secret123")
-
-	entry := &WALEntry{
-		Position: 1,
-		Command: &Command{
-			Type: CmdSetProperty,
-			Data: sensitiveData,
-		},
-	}
-
-	// In production with encryption enabled:
-	// 1. Data would be encrypted before writing to WAL
-	// 2. Data would be decrypted when reading from WAL
-	// 3. Encryption key would be securely managed
-
-	// For now, verify entry structure is correct
-	assert.Equal(t, sensitiveData, entry.Command.Data)
-}
-
 // TestSecurity_SecureRandom tests that we use secure random for IDs.
 func TestSecurity_SecureRandom(t *testing.T) {
 	// Generate multiple IDs and ensure they're unique and unpredictable

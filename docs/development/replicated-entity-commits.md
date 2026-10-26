@@ -1,0 +1,100 @@
+# Replicated entity commits in v1.4.4
+
+Explicit entity write transactions commit on the current leader. A follower returns
+`NotALeader`; retry the complete transaction on the leader so its reads and writes
+share the correct snapshot. Ordinary direct writes retain follower forwarding.
+The leader prepares the mutation and checks its admission before recording it.
+
+Preparation preserves the originating write policy: direct writes retain native
+commit durability, implicit bulk writes retain configured write-behind eligibility
+even for a single item, and explicit transactions retain explicit commit durability.
+Receivers preserve that policy. WAL recovery physically applies already accepted
+writes without issuing another buffered acknowledgement or WAL record.
+
+Accepted work belongs to its commit coordinator. A caller cancellation or timeout
+does not prove rollback: the write can still apply. Pending work retains its quota
+reservation until application or a definite discard. Check the resulting data before
+issuing a new, non-idempotent request after an uncertain outcome.
+
+## Retired low-level replication commands
+
+The internal `CmdCypher`, `CmdSetProperty` and `CmdBatchWrite` entry points are
+removed. Their numeric wire slots remain reserved; historical commands in those
+slots fail explicitly instead of being interpreted as a different command or
+silently replayed. `StorageAdapter.SetExecutor` is removed with raw-query replay.
+
+Use the normal Cypher API over Bolt or HTTP for queries and property changes. For
+an atomic group of entity changes, use an explicit transaction through those APIs,
+or the Go transaction API and its prepared commit route. Do not submit raw query
+text or the retired batch payload directly to a replicator.
+
+Upgrade every cluster member before using the new atomic entity commit envelope.
+A node must understand the envelope and accepted semantic WAL record to replay
+those writes correctly. Do not downgrade a store containing those records to a
+version that cannot read them. Before upgrading an installation with outstanding
+retired raw-command records, drain them using the old version and verify its state;
+keep a backup. The new version does not automatically translate those records.
+
+## Custom Go storage adapters
+
+`NewDatabaseManager(storage.Engine, ...)` keeps its signature. An engine used for
+managed writes must expose `storage.ManagedEntityEngine`: native transactions,
+coherent stored-entity observation, commit submission, and the shared
+`storage.ManagedEntityRuntimeRegistry`. Native engines provide these capabilities.
+The registry keeps one accounting, reservation and limit-policy owner for each
+physical namespace across manager views.
+
+A transparent decorator implements `storage.EngineUnwrapper.GetInnerEngine()` to
+expose its actual backing engine. A decorator that applies write policy also
+implements `storage.EntityWriteBoundary.WithEntityChange`. It must reject the
+operation or invoke the supplied staging continuation exactly once, returning its
+result. It must not perform a separate write instead of that continuation.
+
+A read-policy decorator uses
+`storage.StoredEntityReadBoundary.WithStoredEntityRead` to wrap the supplied
+point-read or scan continuation exactly once. This preserves the transaction's
+actual snapshot; it must not substitute a later independent read.
+
+If required managed capabilities are absent, the requested entity mutation fails
+with a descriptive `storage.ErrInvalidData` before staging. Existing unlimited,
+uninitialized opaque-engine paths remain available; they do not supply the atomic
+managed-write contract merely by implementing `storage.Engine`.
+
+## Native image interpretation
+
+`BeginEntityTransaction(engine, mode)` binds the originating durability policy.
+Node updates use `tx.UpdateGraphNode(node, policy)`, replacing the transaction's
+`UpdateNode` entry point. `ClientNodeEdits` retains normal managed-embedding
+reconciliation; `StoredNodeImages` applies a complete authoritative stored image.
+The decoded accepted semantic coordinator selects the latter. Each operation
+supplies its policy, allowing a client edit and an authoritative image to share
+one transaction while preserving their different sidecar semantics. Both use
+one staging implementation. `Engine.UpdateNode` is unchanged.
+
+```go
+tx, err := storage.BeginEntityTransaction(engine, storage.CommitModeExplicit)
+if err != nil { return err }
+defer tx.Rollback()
+if err := tx.UpdateGraphNode(node, storage.ClientNodeEdits); err != nil { return err }
+return tx.Commit()
+```
+
+The redundant Go batch replay helper `ReplayWALEntries` is removed. Keep the
+single-entry `ReplayWALEntry` applier and accumulate its actual outcomes with
+`ReplayResult.Record`; see the [WAL migration example](../architecture/wal-property-bindings.md#go-batch-replay).
+
+## Namespace DROP and Restore accounting
+
+A whole-namespace DROP retains a durable cleanup intent until its intrinsic
+cleanup is complete. If cleanup fails, error-returning graph reads and writes for that namespace return
+`storage.ErrConflict`; global graph scans and counts also fail while they would
+include the unfinished namespace. Explicitly scoped reads and writes for other
+namespaces remain available. Retry the same DROP to finish cleanup. Opening the
+store or restoring a backup with an unfinished intent completes that cleanup before
+serving graph operations.
+
+Successful Restore invalidates initialized managed usage in attached managers.
+The next managed write reads actual restored usage before admission, preserving
+the namespace's configured limits and outstanding reservations. Size reporting
+retains its existing last-known-value contract until refreshed; it is not an
+admission snapshot.

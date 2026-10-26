@@ -719,6 +719,15 @@ func (b *BadgerEngine) EdgeCountByEndLabelInNamespace(namespace, label, edgeType
 // sumEdgeTypeLabelCountAcrossNamespaces sums one positional tier across every
 // namespace (O(#namespaces) point reads), or reads one explicitly supplied namespace.
 func (b *BadgerEngine) sumEdgeTypeLabelCountAcrossNamespaces(sub byte, label, edgeType string, namespace ...string) (int64, error) {
+	if err := b.pendingNamespaceConflict(func() string {
+		if len(namespace) > 0 {
+			return namespace[0]
+		}
+		return ""
+	}()); err != nil {
+		return 0, err
+	}
+
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}

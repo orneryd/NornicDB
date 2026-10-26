@@ -91,7 +91,7 @@ func rewriteAsVersion3(t *testing.T, engine *BadgerEngine) {
 				for index, key := range entry.IndexKeys {
 					entry.IndexKeys[index] = legacyLowerCaseKey(key)
 				}
-				if err := putAccessMetaInTxn(txn, string(e.key[len(accessMetaKey("")):]), &entry); err != nil {
+				if _, err := accessMetaInTxn(txn, string(e.key[len(accessMetaKey("")):]), accessMetaWrite, &entry); err != nil {
 					return err
 				}
 			default:

@@ -47,7 +47,7 @@ func TestDecaySuppressionRescoresTheNewestBufferedBody(t *testing.T) {
 		tx, err := engine.BeginTransaction()
 		require.NoError(t, err)
 		require.NoError(t, tx.SetImplicit(true))
-		require.NoError(t, tx.UpdateNode(&Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old}))
+		require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:n", Labels: []string{"Doc"}, Properties: map[string]any{"v": "x"}, CreatedAt: old, UpdatedAt: old}, ClientNodeEdits))
 		require.NoError(t, tx.Commit())
 		if flushFirst {
 			require.NoError(t, engine.FlushWriteBehind())
@@ -81,12 +81,12 @@ func TestDrainedTransactionKeepsItsNewPropertyKeys(t *testing.T) {
 	buffered, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, buffered.SetImplicit(true))
-	require.NoError(t, buffered.UpdateNode(&Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}))
+	require.NoError(t, buffered.UpdateGraphNode(&Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}, ClientNodeEdits))
 	require.NoError(t, buffered.Commit())
 
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:n", Properties: map[string]any{"v": "explicit", "first_seen_here": "kept"}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:n", Properties: map[string]any{"v": "explicit", "first_seen_here": "kept"}}, ClientNodeEdits))
 	require.NoError(t, tx.Commit())
 	require.NoError(t, engine.Close())
 
@@ -130,9 +130,9 @@ func TestOrderedWriteFailsWhenItsDrainFails(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:a", Properties: map[string]any{"v": "acknowledged"}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"v": "acknowledged"}}, ClientNodeEdits))
 	require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": "acknowledged"}}))
-	require.NoError(t, tx.DeleteNode("test:b"))
+	require.NoError(t, tx.DeleteGraphNode("test:b", CascadeEdges))
 	require.NoError(t, tx.Commit())
 
 	writes := map[string]func() error{
@@ -150,7 +150,7 @@ func TestOrderedWriteFailsWhenItsDrainFails(t *testing.T) {
 		"explicit tx commit": func() error {
 			tx, err := engine.BeginTransaction()
 			require.NoError(t, err)
-			if err := tx.UpdateNode(&Node{ID: "test:a", Properties: map[string]any{"v": "explicit"}}); err != nil {
+			if err := tx.UpdateGraphNode(&Node{ID: "test:a", Properties: map[string]any{"v": "explicit"}}, ClientNodeEdits); err != nil {
 				_ = tx.Rollback()
 				return err
 			}

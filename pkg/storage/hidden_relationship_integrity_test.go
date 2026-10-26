@@ -56,9 +56,9 @@ func setupHiddenGraph(t *testing.T, engine *BadgerEngine) {
 		// Suppression marks stored records.
 		require.NoError(t, engine.FlushWriteBehind())
 	}
-	require.NoError(t, engine.SetEdgeManuallySuppressed("test:e1", true))
-	require.NoError(t, engine.SetEdgeManuallySuppressed("test:e4", true))
-	require.NoError(t, engine.SetNodeManuallySuppressed("test:hiddenPeer", true))
+	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:e1", true))
+	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:e4", true))
+	require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:hiddenPeer", true))
 
 	for _, id := range []EdgeID{"test:e1", "test:e2", "test:e4"} {
 		_, err := engine.GetEdge(id)
@@ -154,7 +154,7 @@ func TestNodeDeleteRemovesHiddenRelationships(t *testing.T) {
 			setupHiddenGraph(t, engine)
 
 			err := deleteInTransaction(t, engine, func(tx *BadgerTransaction) error {
-				return tx.DeleteConnectedNode("test:lone")
+				return tx.DeleteGraphNode("test:lone", RejectConnected)
 			})
 			var connected *NodeStillConnectedError
 			require.ErrorAs(t, err, &connected, "a suppressed relationship still connects lone")
@@ -167,7 +167,7 @@ func TestNodeDeleteRemovesHiddenRelationships(t *testing.T) {
 				edges, err := tx.IncidentEdges("test:hub")
 				require.NoError(t, err)
 				require.Equal(t, []string{"test:e1", "test:e2", "test:e3"}, edgeIDLister(t)(edges, nil))
-				return tx.DeleteNode("test:hub")
+				return tx.DeleteGraphNode("test:hub", CascadeEdges)
 			}))
 			if writeBehind {
 				// Before the flush the buffered delete is what a transaction
@@ -206,7 +206,7 @@ func TestWriteBehindReplayRemovesHiddenRelationships(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.DeleteNode("test:hub"))
+	require.NoError(t, tx.DeleteGraphNode("test:hub", CascadeEdges))
 	require.NoError(t, tx.Commit())
 	require.True(t, tx.AcknowledgedBuffered())
 	crashClose(t, engine, wal)

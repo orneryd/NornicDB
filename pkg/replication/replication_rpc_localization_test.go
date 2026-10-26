@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/binary"
 	"errors"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"io"
 	"net"
 	"testing"
@@ -60,10 +61,9 @@ func TestReplicationRPCReturnedErrorsAreLocalized(t *testing.T) {
 		cause := errors.New("forced write failure")
 		netConn := &replicationRPCFailingConn{writeErr: cause}
 		connection := &ClusterConnection{
-			conn:        netConn,
-			writer:      bufio.NewWriter(netConn),
-			closeCh:     make(chan struct{}),
-			pendingRPCs: make(map[uint64]chan *ClusterMessage),
+			clusterLifecycle: clusterLifecycle[connectionResources]{closeCh: make(chan struct{}), resources: connectionResources{conn: netConn}},
+			writer:           bufio.NewWriter(netConn),
+			pendingRPCs:      make(map[uint64]chan *ClusterMessage),
 		}
 		connection.connected.Store(true)
 
@@ -81,7 +81,7 @@ func TestReplicationRPCReturnedErrorsAreLocalized(t *testing.T) {
 	t.Run("read validation", func(t *testing.T) {
 		var wire bytes.Buffer
 		require.NoError(t, binary.Write(&wire, binary.BigEndian, uint32(65)))
-		_, err := readClusterMessage(bufio.NewReader(&wire), 64)
+		err := transferClusterMessage(new(ClusterMessage), bufio.NewReader(&wire), nil, 64)
 		requireReplicationRPCError(t, err, "replication.rpc.message_too_large", "message too large: 65 > 64")
 	})
 }
@@ -111,12 +111,12 @@ func TestReplicationRPCCatalogRendering(t *testing.T) {
 }
 
 func TestReplicationRPCPrivateCodecGuardsRemainInternal(t *testing.T) {
-	_, nodeErr := encodeNodePayload(nil)
+	_, nodeErr := storage.EncodeNodePayload(nil)
 	require.EqualError(t, nodeErr, "nil node")
 	var nodeLocalizedErr *localization.LocalizedError
 	require.False(t, errors.As(nodeErr, &nodeLocalizedErr))
 
-	_, edgeErr := encodeEdgePayload(nil)
+	_, edgeErr := storage.EncodeEdgePayload(nil)
 	require.EqualError(t, edgeErr, "nil edge")
 	var edgeLocalizedErr *localization.LocalizedError
 	require.False(t, errors.As(edgeErr, &edgeLocalizedErr))

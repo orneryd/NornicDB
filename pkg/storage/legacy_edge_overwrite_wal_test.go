@@ -34,7 +34,7 @@ func TestHistoricalEdgeOverwriteWALKeepsCounts(t *testing.T) {
 	}
 	edge := &Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "INGEST"}
 	require.NoError(t, engine.CreateEdge(edge))
-	require.NoError(t, engine.SetEdgeManuallySuppressed(edge.ID, true))
+	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, string(edge.ID), true))
 
 	var raw []byte
 	require.NoError(t, engine.db.View(func(tx *badger.Txn) error {

@@ -75,9 +75,11 @@ var spaceClasses = map[string]string{
 	"prefixMVCCMetaEdgeTypeStartLabelCount": "derived-count",
 	"prefixMVCCMetaEdgeTypeEndLabelCount":   "derived-count",
 	"prefixMVCCMetaLargeCommitIntent":       "store-metadata",
-	"prefixMVCCMetaDeleteCleanupMarker":     "store-metadata",
-	"prefixMVCCMetaTemporalIndexFormat":     "store-metadata",
-	"prefixMVCCMetaManualSuppression":       "suppression",
+	// Durable namespace cleanup intent, written atomically by the commit owner.
+	"prefixMVCCMetaNamespaceDrop":       "store-metadata",
+	"prefixMVCCMetaDeleteCleanupMarker": "store-metadata",
+	"prefixMVCCMetaTemporalIndexFormat": "store-metadata",
+	"prefixMVCCMetaManualSuppression":   "suppression",
 	// A write of every metadata key space at once (a namespace's key
 	// families dropped together): it includes the ordered ones.
 	"prefixMVCCMeta":               "metadata-family",

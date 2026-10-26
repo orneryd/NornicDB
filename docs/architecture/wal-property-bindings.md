@@ -144,3 +144,22 @@ phi nodes and borrowed byte slices. Mutation cases are type-checked separately;
 thin owner calls and unrelated fields remain positive controls. The permitted
 functions are the transaction producer and the single codec/WAL-record owner,
 including its common copy-on-write payload transform and export boundary.
+
+## Go batch replay
+
+`ReplayWALEntry(engine, entry) error` is the canonical public entry applier.
+The former `ReplayWALEntries` convenience wrapper is removed in v1.4.4. Migrate
+Go batch callers to the same single-entry owner and the shared outcome collector:
+
+```go
+result := storage.ReplayResult{Errors: make([]storage.ReplayError, 0)}
+for _, entry := range entries {
+    result.Record(entry, storage.ReplayWALEntry(engine, entry))
+}
+```
+
+`Record` counts checkpoint markers and duplicate creates as expected skips.
+Other errors retain their original sequence, operation and cause in `Errors`;
+`HasCriticalErrors` remains true when any unexpected error occurred. Single-entry
+callers retain the original error-returning API. WAL encoding and HTTP/Bolt
+behavior are unchanged by this Go helper migration.

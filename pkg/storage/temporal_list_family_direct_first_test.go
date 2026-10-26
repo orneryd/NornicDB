@@ -31,7 +31,14 @@ func tlfCurrentLockState(sm *SchemaManager, waiter string) (waiting bool, held, 
 	} else {
 		waiting = sm.uniqueConstraintLockWaits[waiter] != nil
 	}
-	return waiting, len(sm.uniqueConstraintCommitLocks), len(sm.uniqueConstraintLockWaits)
+	// This fixture measures constraint-value serialization. Typed entity
+	// admission is a distinct domain with independent hold/reentry assertions.
+	for key := range sm.uniqueConstraintCommitLocks {
+		if key.entityKind == 0 {
+			held++
+		}
+	}
+	return waiting, held, len(sm.uniqueConstraintLockWaits)
 }
 
 // TestTemporalListFamilyTemporalCompositeListCommitLocksDirectFirst covers the

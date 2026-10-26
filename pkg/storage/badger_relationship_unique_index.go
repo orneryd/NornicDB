@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -160,46 +159,6 @@ func (b *BadgerEngine) resetRelationshipUniqueIndexes() {
 	set.entries = nil
 	set.active.Store(false)
 	set.mu.Unlock()
-}
-
-// lockRelationshipConstraintKeysOf shares the existing value-lock registry.
-// Its relationship prefix separates entity domains; locks cover validation,
-// primary-key commit and publication to the derived equality indexes.
-func (sm *SchemaManager) lockRelationshipConstraintKeysOf(owner string, edges ...*Edge) (func(), error) {
-	if sm == nil {
-		return func() {}, nil
-	}
-	var keys []uniqueConstraintLockKey
-	for _, edge := range edges {
-		if edge == nil || len(edge.Properties) == 0 {
-			continue
-		}
-		for _, c := range sm.GetConstraintsForLabels([]string{edge.Type}) {
-			if c.EffectiveEntityType() != ConstraintEntityRelationship || (c.Type != ConstraintUnique && c.Type != ConstraintRelationshipKey) {
-				continue
-			}
-			values, ok := relationshipConstraintValueKeys(c.Properties, edge.Properties, true)
-			if !ok || len(values) == 0 {
-				continue
-			}
-			var key interface{} = values[0]
-			if len(values) > 1 {
-				key = NewCompositeKey(values...).Hash
-			}
-			keys = append(keys, uniqueConstraintLockKey{label: "\x00relationship:" + edge.Type, property: relationshipPropertyKey(c.Properties), value: key})
-		}
-	}
-	if len(keys) == 0 {
-		return func() {}, nil
-	}
-	if owner == "" {
-		owner = newEngineWriteLockOwner()
-	}
-	return sm.acquireUniqueConstraintCommitLocks(context.Background(), owner, keys)
-}
-func (b *BadgerEngine) lockRelationshipConstraintEdge(edge *Edge) (func(), error) {
-	namespace, _, _ := ParseDatabasePrefix(string(edge.ID))
-	return b.GetSchemaForNamespace(namespace).lockRelationshipConstraintKeysOf("", edge)
 }
 
 func relationshipPropertyKey(properties []string) string {

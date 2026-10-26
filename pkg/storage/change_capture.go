@@ -214,6 +214,10 @@ func (b *BadgerEngine) changeLogFor(namespace string) *changeLog {
 // ChangeBounds returns the commitSeq of a database's earliest retained event
 // and of its last committed one; 0, 0 when it has none.
 func (b *BadgerEngine) ChangeBounds(namespace string) (earliest, last uint64, err error) {
+	if err := b.pendingNamespaceConflict(namespace); err != nil {
+		return 0, 0, err
+	}
+
 	prefix := changeEventPrefix(namespace)
 	err = b.withView(func(txn *badger.Txn) error {
 		opts := badgerIteratorOptions()
@@ -240,6 +244,10 @@ func (b *BadgerEngine) ChangeBounds(namespace string) (earliest, last uint64, er
 // ChangeEvents returns up to limit of a database's events after
 // (commitSeq, seq), in commit order; limit <= 0 is no limit.
 func (b *BadgerEngine) ChangeEvents(namespace string, commitSeq uint64, seq uint32, limit int) ([]ChangeEvent, error) {
+	if err := b.pendingNamespaceConflict(namespace); err != nil {
+		return nil, err
+	}
+
 	prefix := changeEventPrefix(namespace)
 	after := changeEventKey(namespace, commitSeq, seq)
 	var events []ChangeEvent

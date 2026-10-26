@@ -601,19 +601,12 @@ func (b *BadgerEngine) cacheOnNodeDeletedWithCounts(id NodeID, edgesDeleted int6
 	}
 }
 
-func (b *BadgerEngine) cacheOnNodeDeletedWithLabels(nodeID NodeID, labels []string, edgesDeleted int64) {
-	b.cacheOnNodeDeletedWithLabelsAndCounts(nodeID, labels, edgesDeleted, true)
-}
-
-func (b *BadgerEngine) cacheOnNodeDeletedWithLabelsAndCounts(nodeID NodeID, labels []string, edgesDeleted int64, publishCounts bool) {
+func (b *BadgerEngine) cacheOnNodeDeletedWithNodeAndCounts(nodeID NodeID, deleted *Node, edgesDeleted int64, publishCounts bool) {
 	b.cacheOnNodeDeletedWithCounts(nodeID, edgesDeleted, publishCounts)
-	b.labelCacheInvalidateForNodeLabels(labels, nodeID)
+	b.labelCacheInvalidateForNodeLabels(deleted.Labels, nodeID)
 
-	// Remove stale property-index entries. Without labels + properties of
-	// the deleted node we can't do targeted removal, so the narrower
-	// cacheOnNodeDeleted (without labels) leaves the index potentially
-	// dangling — callers MUST use this variant when property indexes exist.
-	b.maintainPropertyIndexesOnNodeDeletedWithLabels(nodeID, labels)
+	// The pre-delete snapshot survives cache eviction and invalidation.
+	b.maintainPropertyIndexesOnNodeDeletedWithNode(nodeID, deleted)
 }
 
 func (b *BadgerEngine) cacheOnEdgeCreated(edge *Edge) {

@@ -44,7 +44,7 @@ func TestEmbeddingRangeManifestOldWriterRoundTrip(t *testing.T) {
 			older, err := engine.GetNodeWithoutEmbeddings(body.ID)
 			require.NoError(t, err)
 			require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-				meta, fresh, err := engine.loadEmbeddingSidecar(txn, older, older.ID)
+				meta, fresh, err := engine.loadEmbeddingSidecar(embeddingRecordReader{txn: txn}, older, older.ID)
 				require.NoError(t, err)
 				require.True(t, fresh)
 				delete(meta, embeddingContentUpdatedAtKey)
@@ -91,7 +91,7 @@ func TestEmbeddingRangeManifestOldWriterRoundTrip(t *testing.T) {
 				retained.Properties["views"] = int64(1)
 				tx, err := engine.BeginTransaction()
 				require.NoError(t, err)
-				require.NoError(t, tx.UpdateNode(retained))
+				require.NoError(t, tx.UpdateGraphNode(retained, ClientNodeEdits))
 				require.NoError(t, tx.Commit())
 				saved, err := engine.GetNode(body.ID)
 				require.NoError(t, err)
@@ -237,6 +237,6 @@ func (b *BadgerEngine) persistSidecarBeforeManifest(node *Node) error {
 	b.cacheDeleteNode(node.ID, nodeCacheAllForms)
 	// Search indexes and listeners still need the updated node (mutation
 	// notification to the embedding queue keeps its own loop guard).
-	b.notifyNodeUpdated(node)
+	b.queueCommitOperations(nil, &Operation{Type: OpUpdateNode, Node: node}, notificationImmediate)
 	return nil
 }

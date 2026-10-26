@@ -33,7 +33,7 @@ func TestManagedEmbeddingSourceTransaction(t *testing.T) {
 		require.NoError(t, err)
 		n.Properties[key] = "new"
 		n.UpdatedAt = n.UpdatedAt.Add(time.Second)
-		require.NoError(t, tx.UpdateNode(n))
+		require.NoError(t, tx.UpdateGraphNode(n, ClientNodeEdits))
 		require.NoError(t, tx.Commit())
 	}
 	update("updatedAt")

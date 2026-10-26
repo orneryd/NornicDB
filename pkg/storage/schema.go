@@ -1589,7 +1589,7 @@ func (sm *SchemaManager) GetConstraintsForLabels(labels []string) []Constraint {
 			}
 		}
 	}
-	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	slices.SortFunc(result, func(a, b Constraint) int { return strings.Compare(a.Name, b.Name) })
 
 	return result
 }

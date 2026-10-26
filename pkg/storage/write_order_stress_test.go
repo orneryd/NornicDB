@@ -73,7 +73,7 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 				func(r *rand.Rand) error { return engine.BulkCreateEdges([]*Edge{edge(r)}) },
 				func(r *rand.Rand) error {
 					return inTx(true, func(tx *BadgerTransaction) error {
-						return upsertNodeInTransaction(tx, &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}})
+						return ApplyNodeUpdate(tx, &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}})
 					})
 				},
 				func(r *rand.Rand) error {
@@ -81,11 +81,11 @@ func stressWriteOrder(t *testing.T, countsChecked bool) {
 				},
 				func(r *rand.Rand) error {
 					return inTx(false, func(tx *BadgerTransaction) error {
-						return upsertNodeInTransaction(tx, &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}})
+						return ApplyNodeUpdate(tx, &Node{ID: node(r), Properties: map[string]any{"v": int64(r.Intn(100))}})
 					})
 				},
 				func(r *rand.Rand) error {
-					return inTx(false, func(tx *BadgerTransaction) error { return tx.DeleteNode(node(r)) })
+					return inTx(false, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(node(r), CascadeEdges) })
 				},
 				func(r *rand.Rand) error { return engine.FlushWriteBehind() },
 			}

@@ -22,7 +22,7 @@ func TestTransactionRelabelSkipsDeletedAndRewrittenRelationships(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.DeleteEdge("test:gone"))
 	require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:kept", StartNode: "test:a", EndNode: "test:c", Type: "R", Properties: map[string]interface{}{"v": int64(2)}}))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:a", Labels: []string{"person"}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Labels: []string{"person"}}, ClientNodeEdits))
 	require.NoError(t, tx.Commit())
 
 	for label, want := range map[string]int64{"person": 1, "Person": 0} {

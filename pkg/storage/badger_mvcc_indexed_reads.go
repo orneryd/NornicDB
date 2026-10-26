@@ -7,44 +7,13 @@ import (
 )
 
 func (b *BadgerEngine) GetNodeVisibleAt(id NodeID, version MVCCVersion) (*Node, error) {
-	return b.getNodeVisibleAtWithView(id, version, true, b.withView)
+	return readEntityAtWithView(b, id, version, mvccEntityRead{vectors: true, visibility: visibleRead}, b.withView, (*BadgerEngine).getNodeAtInTxn)
 }
 
-func (b *BadgerEngine) getNodeVisibleAtWithView(id NodeID, version MVCCVersion, vectors bool, view func(func(*badger.Txn) error) error) (*Node, error) {
-	return b.getNodeAtWithView(id, version, vectors, visibleRead, view)
-}
-
-// getNodeAtWithView is getNodeVisibleAtWithView through the visibility layer
-// when v applies it.
-func (b *BadgerEngine) getNodeAtWithView(id NodeID, version MVCCVersion, vectors bool, v readVisibility, view func(func(*badger.Txn) error) error) (*Node, error) {
-	deregister, err := b.beginMVCCSnapshotRead(version)
-	if err != nil {
-		return nil, err
-	}
-	defer deregister()
-	var node *Node
-	err = view(func(txn *badger.Txn) error {
-		var loadErr error
-		node, loadErr = b.getNodeAtInTxn(txn, id, version, vectors, v)
-		return loadErr
-	})
-	return node, err
-}
-
-// getNodeVisibleAtInTxn resolves one logical MVCC version using the supplied
-// physical Badger snapshot. Callers that scan an index in the same snapshot
-// use this helper to avoid opening nested views or scanning unrelated nodes.
-//
-// With vectors false the node reads as GetNodeWithoutEmbeddings returns it:
-// its embedding metadata is settled, but no separately stored chunk vector
-// is read (loadNodeEmbeddingState).
-func (b *BadgerEngine) getNodeVisibleAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, vectors bool) (*Node, error) {
-	return b.getNodeAtInTxn(txn, id, version, vectors, visibleRead)
-}
-
-// getNodeAtInTxn is getNodeVisibleAtInTxn through the visibility layer when v
-// applies it.
-func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, vectors bool, v readVisibility) (*Node, error) {
+// getNodeAtInTxn resolves logical visibility and hydration against the supplied
+// physical snapshot. Index callers retain that same pinned transaction.
+func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, policy mvccEntityRead) (*Node, error) {
+	vectors, v := policy.vectors, policy.visibility
 	head, err := b.loadNodeMVCCHeadInTxn(txn, id)
 	if err != nil {
 		return nil, err
@@ -56,9 +25,11 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 	if version.Compare(head.Version) >= 0 && !head.Tombstoned {
 		item, getErr := txn.Get(nodeKey(id))
 		if getErr == nil {
-			node, err := b.readNodeItemInTxn(txn, item, id, func(txn *badger.Txn, node *Node, id NodeID) (*Node, error) {
-				return b.loadNodeEmbeddingState(txn, node, id, vectors)
-			})
+			hydration := nodeItemQueryMetadata
+			if vectors {
+				hydration = nodeItemFullEmbeddings
+			}
+			node, err := b.readNodeItemInTxn(txn, item, id, hydration)
 			if err != nil {
 				return nil, err
 			}
@@ -107,27 +78,7 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 	return node, nil
 }
 
-// getNodeProjectedVisibleAtWithView is getNodeVisibleAtWithView for a
-// projected read: it decodes only the requested user properties (none when
-// properties is an empty non-nil slice) and never hydrates embedding vectors
-// or touches the body cache, so a traversal that needs only a node's labels
-// pays no property-decode or copy cost (#1110).
-func (b *BadgerEngine) getNodeProjectedVisibleAtWithView(id NodeID, version MVCCVersion, properties []string, view func(func(*badger.Txn) error) error) (*Node, error) {
-	deregister, err := b.beginMVCCSnapshotRead(version)
-	if err != nil {
-		return nil, err
-	}
-	defer deregister()
-	var node *Node
-	err = view(func(txn *badger.Txn) error {
-		var loadErr error
-		node, loadErr = b.getNodeProjectedVisibleAtInTxn(txn, id, version, properties)
-		return loadErr
-	})
-	return node, err
-}
-
-// getNodeProjectedVisibleAtInTxn is getNodeVisibleAtInTxn for a projected
+// getNodeProjectedVisibleAtInTxn is the MVCC node kernel for a projected
 // read. The visibility resolution (MVCC head) is identical; only the body
 // decode and embedding hydration are skipped.
 func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID, version MVCCVersion, properties []string) (*Node, error) {
@@ -209,6 +160,10 @@ func (b *BadgerEngine) GetNodesByLabelVisibleAtInScope(scope, label string, vers
 }
 
 func (b *BadgerEngine) getNodesByLabelVisibleAtWithView(scope, label string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Node, error) {
+	if err := b.pendingPrefixConflict(scope); err != nil {
+		return nil, err
+	}
+
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return nil, err
@@ -282,6 +237,10 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 	visit func(*Node) error,
 	queryRead ...bool,
 ) error {
+	if err := b.pendingPrefixConflict(scope); err != nil {
+		return err
+	}
+
 	queryNodes := len(queryRead) > 0 && queryRead[0]
 	if visit == nil {
 		return ErrInvalidData
@@ -297,7 +256,7 @@ func (b *BadgerEngine) streamNodesByLabelAtSnapshotWithView(
 		defer it.Close()
 		for it.Next() {
 			nodeID := it.NodeID()
-			node, getErr := b.getNodeAtInTxn(txn, nodeID, version, !queryNodes, v)
+			node, getErr := b.getNodeAtInTxn(txn, nodeID, version, mvccEntityRead{vectors: !queryNodes, visibility: v})
 			if getErr == ErrNotFound || getErr == ErrNotVisibleAtSnapshot {
 				continue
 			}
@@ -347,6 +306,10 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 	visit func(*Node) error,
 	queryRead ...bool,
 ) error {
+	if err := b.pendingPrefixConflict(scope); err != nil {
+		return err
+	}
+
 	queryNodes := len(queryRead) > 0 && queryRead[0]
 	if visit == nil {
 		return ErrInvalidData
@@ -366,7 +329,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 		// the decoded-body cache.
 		readItem := func(nodeID NodeID, item *badger.Item) (*Node, error) {
 			if queryNodes {
-				return b.readQueryNodeItemInTxn(txn, item, nodeID)
+				return b.readNodeItemInTxn(txn, item, nodeID, nodeItemQueryMetadata)
 			}
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
 		}
@@ -459,6 +422,10 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 }
 
 func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVersion) ([]*Edge, error) {
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return nil, err
+	}
+
 	deregister, err := b.beginMVCCSnapshotRead(version)
 	if err != nil {
 		return nil, err
@@ -466,7 +433,7 @@ func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVers
 	defer deregister()
 	var edges []*Edge
 	err = b.withView(func(txn *badger.Txn) error {
-		return b.iterateEdgesVisibleAtInTxn(txn, version, func(edge *Edge) error {
+		return b.iterateEdgesAtInTxn(txn, version, visibleRead, func(edge *Edge) error {
 			if edge == nil {
 				return nil
 			}
@@ -489,7 +456,7 @@ func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVers
 // bodies are never decoded.
 func (b *BadgerEngine) getEdgesByTypeVisibleAtSnapshotWithView(edgeType string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
 	edges := make([]*Edge, 0)
-	err := b.streamEdgesByTypeVisibleAtSnapshotWithView(context.Background(), "", edgeType, version, view, func(edge *Edge) error {
+	err := b.streamEdgesByTypeAtSnapshotWithView(context.Background(), "", edgeType, version, view, visibleRead, func(edge *Edge) error {
 		edges = append(edges, edge)
 		return nil
 	})
@@ -500,6 +467,14 @@ func (b *BadgerEngine) getEdgesByTypeVisibleAtSnapshotWithView(edgeType string, 
 }
 
 func (b *BadgerEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version MVCCVersion) ([]*Edge, error) {
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(endID)); err != nil {
+		return nil, err
+	}
+
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(startID)); err != nil {
+		return nil, err
+	}
+
 	if startID == "" || endID == "" {
 		return nil, ErrInvalidID
 	}
@@ -510,7 +485,7 @@ func (b *BadgerEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version M
 	defer deregister()
 	var edges []*Edge
 	err = b.withView(func(txn *badger.Txn) error {
-		return b.iterateEdgesVisibleAtInTxn(txn, version, func(edge *Edge) error {
+		return b.iterateEdgesAtInTxn(txn, version, visibleRead, func(edge *Edge) error {
 			if edge == nil {
 				return nil
 			}
@@ -527,6 +502,10 @@ func (b *BadgerEngine) GetEdgesBetweenVisibleAt(startID, endID NodeID, version M
 }
 
 func (b *BadgerEngine) IterateLatestVisibleNodes(yield func(*Node) error) error {
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return err
+	}
+
 	nodes, err := b.AllNodes()
 	if err != nil {
 		return err
@@ -540,6 +519,10 @@ func (b *BadgerEngine) IterateLatestVisibleNodes(yield func(*Node) error) error 
 }
 
 func (b *BadgerEngine) IterateLatestVisibleEdges(yield func(*Edge) error) error {
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return err
+	}
+
 	edges, err := b.AllEdges()
 	if err != nil {
 		return err

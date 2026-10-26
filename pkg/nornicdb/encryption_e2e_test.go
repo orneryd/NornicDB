@@ -2,6 +2,8 @@ package nornicdb
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/replication"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,28 +145,97 @@ func TestEncryptionOfPHIFields(t *testing.T) {
 }
 
 func TestEncryptionDataAtRest(t *testing.T) {
-	config := testEncryptionConfig("test-secure-password-12345!")
-
-	db, err := Open(t.TempDir(), config)
-	require.NoError(t, err)
-	defer db.Close()
-
-	ctx := context.Background()
-	sensitiveSSN := "123-45-6789"
-
-	node, err := db.CreateNode(ctx, []string{"Person"}, map[string]interface{}{
-		"name": "Jane Doe",
-		"ssn":  sensitiveSSN,
-	})
-	require.NoError(t, err)
-
-	// For full-database encryption we cannot inspect raw storage (Badger handles it).
-	// Instead, verify encryption is reported and data round-trips correctly.
-	assert.True(t, db.IsEncryptionEnabled(), "encryption should be enabled")
-
-	retrieved, err := db.GetNode(ctx, node.ID)
-	require.NoError(t, err)
-	assert.Equal(t, sensitiveSSN, retrieved.Properties["ssn"])
+	sensitiveData := []byte("password=secret123")
+	// Historical slot 7 remains reserved. This record is input data, never a
+	// request to apply the retired command or a claim of encrypted WAL bytes.
+	entry := &replication.WALEntry{Position: 1, Command: &replication.Command{Type: replication.CommandType(7), Data: sensitiveData}}
+	assert.Equal(t, sensitiveData, entry.Command.Data)
+	for _, test := range []struct {
+		name, property, secret string
+		replicated             bool
+	}{
+		{"native", "ssn", "123-45-6789", false},
+		{"ha-primary", "secret", string(entry.Command.Data), true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("NORNICDB_CLUSTER_MODE", "standalone")
+			if test.replicated {
+				// A local socket owner rejects connections, so this async-primary case
+				// needs no external standby service and cannot leave an RPC parked.
+				peer, err := net.Listen("tcp", "127.0.0.1:0")
+				require.NoError(t, err)
+				joined := make(chan struct{})
+				go func() {
+					defer close(joined)
+					for {
+						connection, err := peer.Accept()
+						if err != nil {
+							return
+						}
+						_ = connection.Close()
+					}
+				}()
+				t.Cleanup(func() {
+					_ = peer.Close()
+					select {
+					case <-joined:
+					case <-time.After(5 * time.Second):
+						t.Error("local peer worker did not join")
+					}
+				})
+				for key, value := range map[string]string{
+					"NORNICDB_CLUSTER_MODE": "ha_standby", "NORNICDB_CLUSTER_NODE_ID": "encryption-primary",
+					"NORNICDB_CLUSTER_DATA_DIR": filepath.Join(dir, "replication"), "NORNICDB_CLUSTER_BIND_ADDR": "127.0.0.1:0",
+					"NORNICDB_CLUSTER_ADVERTISE_ADDR":     "127.0.0.1:0",
+					"NORNICDB_CLUSTER_REPLICATION_SECRET": "",
+					"NORNICDB_CLUSTER_TLS_ENABLED":        "false",
+					"NORNICDB_CLUSTER_HA_ROLE":            "primary", "NORNICDB_CLUSTER_HA_PEER_ADDR": peer.Addr().String(),
+					"NORNICDB_CLUSTER_HA_SYNC_MODE": "async", "NORNICDB_CLUSTER_HA_AUTO_FAILOVER": "false",
+					"NORNICDB_CLUSTER_HA_HEARTBEAT_MS": "10", "NORNICDB_CLUSTER_HA_RECONNECT_INTERVAL": "10ms",
+					"NORNICDB_CLUSTER_HA_MAX_RECONNECT_BACKOFF": "10ms",
+				} {
+					t.Setenv(key, value)
+				}
+			}
+			config := testEncryptionConfig("test-secure-password-12345!")
+			config.Memory.EmbeddingEnabled = false
+			open := func() *DB {
+				db, err := Open(dir, config)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = db.Close() })
+				assert.True(t, db.IsEncryptionEnabled(), "encryption should be enabled")
+				native, ok := storage.UnwrapEngine(db.GetBaseStorageForManager()).(*storage.BadgerEngine)
+				require.True(t, ok, "encryption case must use actual Badger backing")
+				require.False(t, native.IsInMemory(), "at-rest case must persist on disk")
+				if test.replicated {
+					_, ok := db.GetBaseStorageForManager().(*replication.ReplicatedEngine)
+					require.True(t, ok, "replicated case must use the real public replication chain")
+				}
+				return db
+			}
+			db := open()
+			ctx := context.Background()
+			properties := map[string]any{test.property: test.secret}
+			var node *Node
+			var err error
+			if test.replicated {
+				node, err = db.CreateNodeWithID(ctx, "sensitive", nil, properties)
+			} else {
+				properties["name"] = "Jane Doe"
+				node, err = db.CreateNode(ctx, []string{"Person"}, properties)
+			}
+			require.NoError(t, err)
+			retrieved, err := db.GetNode(ctx, node.ID)
+			require.NoError(t, err)
+			assert.Equal(t, test.secret, retrieved.Properties[test.property])
+			require.NoError(t, db.Close())
+			reopened := open()
+			retrieved, err = reopened.GetNode(ctx, node.ID)
+			require.NoError(t, err)
+			assert.Equal(t, test.secret, retrieved.Properties[test.property], "encrypted value must survive a durable reopen")
+		})
+	}
 }
 
 func TestEncryptionWithCustomFields(t *testing.T) {

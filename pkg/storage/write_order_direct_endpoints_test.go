@@ -57,7 +57,7 @@ func TestDirectWritesOrderAfterBufferedEndpoints(t *testing.T) {
 			require.NoError(t, b.FlushWriteBehind())
 
 			buffered, err := implicitWrite(b, func(tx *BadgerTransaction) error {
-				return tx.UpdateNode(&Node{ID: tc.relabel, Labels: []string{"C"}})
+				return tx.UpdateGraphNode(&Node{ID: tc.relabel, Labels: []string{"C"}}, ClientNodeEdits)
 			})
 			require.NoError(t, err)
 			require.True(t, buffered, "the relabel is acknowledged, not yet applied")

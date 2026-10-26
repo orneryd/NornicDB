@@ -636,7 +636,7 @@ func tlfLockSnapshot(t *testing.T, c Constraint, values map[string]interface{}) 
 	sm := NewSchemaManager()
 	require.NoError(t, sm.AddConstraint(c))
 	node := &Node{ID: "test:lock", Labels: []string{c.Label}, Properties: values}
-	release, err := sm.lockConstraintKeysOf(context.Background(), "tlf-lock", node)
+	release, err := sm.acquireUniqueConstraintCommitLocks(context.Background(), "tlf-lock", sm.appendConstraintValueKeys(nil, []*Node{node}, nil))
 	require.NoError(t, err)
 	sm.uniqueConstraintCommitLocksMu.Lock()
 	actual := make(map[uniqueConstraintLockKey]bool)

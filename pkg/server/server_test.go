@@ -4536,7 +4536,7 @@ func TestDbConfigStatusAndHeimdallRoutes_AdditionalBranches(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPut, "/admin/databases/nornic/config", strings.NewReader(`{}`))
 	rec = httptest.NewRecorder()
 	server.handlePutDbConfig(rec, req, "nornic")
-	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	require.NoError(t, server.dbManager.CreateDatabase("status_db"))
 	st, err := server.dbManager.GetStorage("status_db")

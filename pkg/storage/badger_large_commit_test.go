@@ -116,9 +116,9 @@ func TestLargeCommit_DeleteBeyondOneBatch(t *testing.T) {
 	batches := countBatches(t)
 	tx, err = engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteNode("test:hub"))
+	require.NoError(t, tx.DeleteGraphNode("test:hub", CascadeEdges))
 	for i := 0; i < n; i++ {
-		require.NoError(t, tx.DeleteNode(largeCommitNodeID(i)))
+		require.NoError(t, tx.DeleteGraphNode(largeCommitNodeID(i), CascadeEdges))
 	}
 	require.NoError(t, tx.Commit())
 	require.Greater(t, batches.Load(), int64(1))
@@ -245,7 +245,7 @@ func TestLargeCommit_FailureRollsBackWrittenBatches(t *testing.T) {
 	})
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits))
 	stageLargeCreate(t, tx, 6000)
 	require.ErrorIs(t, tx.Commit(), injected)
 	restore()
@@ -288,7 +288,7 @@ func TestLargeCommit_CrashMidCommitRollsBackOnOpen(t *testing.T) {
 	})
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits))
 	stageLargeCreate(t, tx, 6000)
 	require.Error(t, tx.Commit())
 	restore()
@@ -319,11 +319,11 @@ func TestLargeCommit_ConflictCoversTheWholeTransaction(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	stageLargeCreate(t, tx, 6000)
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits))
 
 	peer, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, peer.UpdateNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(3)}}))
+	require.NoError(t, peer.UpdateGraphNode(&Node{ID: "test:base", Labels: []string{"Base"}, Properties: map[string]any{"v": int64(3)}}, ClientNodeEdits))
 	require.NoError(t, peer.Commit())
 
 	err = tx.Commit()
@@ -357,7 +357,7 @@ func TestLargeCommit_DeleteWithOpenSnapshotReader(t *testing.T) {
 	tx, err = engine.BeginTransaction()
 	require.NoError(t, err)
 	for i := 0; i < n; i++ {
-		require.NoError(t, tx.DeleteNode(largeCommitNodeID(i)))
+		require.NoError(t, tx.DeleteGraphNode(largeCommitNodeID(i), CascadeEdges))
 	}
 	require.NoError(t, tx.Commit())
 	require.Greater(t, batches.Load(), int64(1))

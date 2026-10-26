@@ -27,14 +27,14 @@ func (b *BadgerEngine) migrateLegacyPolicyMetadata(ctx context.Context) error {
 					return 0, false, fmt.Errorf("decode legacy access metadata %q: %w", entityID, err)
 				}
 				entry.HasAccessState = true
-				current, err := getAccessMetaInTxn(txn, entityID)
+				current, err := accessMetaInTxn(txn, entityID, accessMetaRead, nil)
 				if err != nil {
 					return 0, false, err
 				}
 				if current != nil {
 					entry.IndexKeys, entry.HasIndexKeys, entry.Deindexed = current.IndexKeys, current.HasIndexKeys, current.Deindexed
 				}
-				if err := putAccessMetaInTxn(txn, entityID, &entry); err != nil {
+				if _, err := accessMetaInTxn(txn, entityID, accessMetaWrite, &entry); err != nil {
 					return 0, false, err
 				}
 			case 0x12:

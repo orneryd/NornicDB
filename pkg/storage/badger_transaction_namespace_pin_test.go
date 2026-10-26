@@ -95,43 +95,34 @@ func TestBadgerTransaction_CreateNodeCrossNamespaceRejected(t *testing.T) {
 	}
 }
 
-func TestBadgerTransaction_UpdateNodeCrossNamespaceRejected(t *testing.T) {
-	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
-	if err != nil {
-		t.Fatalf("BeginTransaction: %v", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.CreateNode(newPrefixedNode("tenant_a:n1", "L")); err != nil {
-		t.Fatalf("CreateNode: %v", err)
-	}
-	err = tx.UpdateNode(newPrefixedNode("tenant_b:n1", "L"))
-	if err == nil {
-		t.Fatalf("UpdateNode in second namespace must fail")
-	}
-	if !errors.Is(err, ErrCrossNamespaceTransaction) {
-		t.Fatalf("error must wrap ErrCrossNamespaceTransaction, got: %v", err)
-	}
-}
-
-func TestBadgerTransaction_DeleteNodeCrossNamespaceRejected(t *testing.T) {
-	engine := newTestEngine(t)
-	tx, err := engine.BeginTransaction()
-	if err != nil {
-		t.Fatalf("BeginTransaction: %v", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-
-	if _, err := tx.CreateNode(newPrefixedNode("tenant_a:n1", "L")); err != nil {
-		t.Fatalf("CreateNode: %v", err)
-	}
-	err = tx.DeleteNode(NodeID("tenant_b:n1"))
-	if err == nil {
-		t.Fatalf("DeleteNode in second namespace must fail")
-	}
-	if !errors.Is(err, ErrCrossNamespaceTransaction) {
-		t.Fatalf("error must wrap ErrCrossNamespaceTransaction, got: %v", err)
+func TestBadgerTransaction_NodeMutationCrossNamespaceRejected(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*BadgerTransaction) error
+	}{
+		{"UpdateNode", func(tx *BadgerTransaction) error {
+			return tx.UpdateGraphNode(newPrefixedNode("tenant_b:n1", "L"), ClientNodeEdits)
+		}},
+		{"DeleteNode", func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(NodeID("tenant_b:n1"), CascadeEdges) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newTestEngine(t)
+			tx, err := engine.BeginTransaction()
+			if err != nil {
+				t.Fatalf("BeginTransaction: %v", err)
+			}
+			defer func() { _ = tx.Rollback() }()
+			if _, err := tx.CreateNode(newPrefixedNode("tenant_a:n1", "L")); err != nil {
+				t.Fatalf("CreateNode: %v", err)
+			}
+			err = tc.mutate(tx)
+			if err == nil {
+				t.Fatalf("%s in second namespace must fail", tc.name)
+			}
+			if !errors.Is(err, ErrCrossNamespaceTransaction) {
+				t.Fatalf("error must wrap ErrCrossNamespaceTransaction, got: %v", err)
+			}
+		})
 	}
 }
 

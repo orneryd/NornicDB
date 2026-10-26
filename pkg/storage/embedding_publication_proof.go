@@ -27,6 +27,7 @@ func (cw *commitWriter) commitOutcome() error {
 	if err := cw.db.oracle.waitPublished(ts); err != nil {
 		return err
 	}
+	cw.db.oracle.stage.apply(ts)
 	// Certify a closed interval: the accepted read saw every publication
 	// preceding this commit. An earlier in-flight commit, dictionary write or
 	// any other unobserved predecessor requires fresh validation after commit.

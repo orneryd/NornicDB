@@ -255,7 +255,7 @@ func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
 		return err
 	}
 	if w.namespace == "" {
-		err := w.tx.UpdateNode(node)
+		err := w.tx.UpdateGraphNode(node, storage.ClientNodeEdits)
 		if err == nil {
 			w.markMutatedNodeID(node.ID)
 		}
@@ -263,7 +263,7 @@ func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
 	}
 	namespaced := storage.CopyNode(node)
 	namespaced.ID = w.prefixNodeID(node.ID)
-	err := w.tx.UpdateNode(namespaced)
+	err := w.tx.UpdateGraphNode(namespaced, storage.ClientNodeEdits)
 	if err == nil {
 		w.markMutatedNodeID(node.ID)
 	}
@@ -271,13 +271,12 @@ func (w *transactionStorageWrapper) UpdateNode(node *storage.Node) error {
 }
 
 func (w *transactionStorageWrapper) DeleteNode(id storage.NodeID) error {
-	return w.tx.DeleteNode(w.prefixNodeID(id))
+	return w.tx.DeleteGraphNode(w.prefixNodeID(id), storage.CascadeEdges)
 }
 
-// DeleteConnectedNode is BadgerTransaction.DeleteConnectedNode for this
-// wrapper's namespace (storage.ConnectedNodeDeleter).
-func (w *transactionStorageWrapper) DeleteConnectedNode(id storage.NodeID) error {
-	return w.tx.DeleteConnectedNode(w.prefixNodeID(id))
+// DeleteGraphNode applies a transactional deletion policy in this namespace.
+func (w *transactionStorageWrapper) DeleteGraphNode(id storage.NodeID, mode storage.NodeDeletionMode) error {
+	return w.tx.DeleteGraphNode(w.prefixNodeID(id), mode)
 }
 
 // IncidentEdges is BadgerTransaction.IncidentEdges for this wrapper's
@@ -862,7 +861,7 @@ func (w *transactionStorageWrapper) createEdges(edges []*storage.Edge, minted bo
 
 func (w *transactionStorageWrapper) BulkDeleteNodes(ids []storage.NodeID) error {
 	for _, id := range ids {
-		if err := w.tx.DeleteNode(w.prefixNodeID(id)); err != nil {
+		if err := w.tx.DeleteGraphNode(w.prefixNodeID(id), storage.CascadeEdges); err != nil {
 			return err
 		}
 	}

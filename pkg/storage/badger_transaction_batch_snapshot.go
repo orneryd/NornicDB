@@ -12,7 +12,7 @@ func (tx *BadgerTransaction) AdvanceImplicitSnapshot() error {
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return err
 	}
-	if !tx.implicit || len(tx.operations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0 || tx.knowledgeSchemaDirty || len(tx.mergeKeyReleases) > 0 {
+	if tx.commitMode != CommitModeImplicit || len(tx.operations) > 0 || len(tx.pendingWrites) > 0 || len(tx.pendingDeletes) > 0 || tx.knowledgeSchemaDirty || len(tx.mergeKeyReleases) > 0 {
 		return fmt.Errorf("cannot advance a written or explicit transaction snapshot: %w", ErrConflict)
 	}
 	if err := tx.refreshSnapshotLocked(); err != nil {

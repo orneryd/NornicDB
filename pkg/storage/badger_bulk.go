@@ -2,6 +2,7 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -186,6 +187,37 @@ func createBulkEntities[T any](b *BadgerEngine, entities []*T, id func(*T) strin
 	}
 	namespace, _, _ := ParseDatabasePrefix(firstID)
 	return b.inBulkTransaction(namespace, apply)
+}
+
+// deleteBulkEntities owns bulk deletion routing, filtering and NotFound
+// handling. Capture retains its existing ordered input validation; ordinary
+// bulk calls omit empty and repeated IDs before invoking the same command.
+func deleteBulkEntities[T ~string](b *BadgerEngine, ids []T, remove func(*BadgerTransaction, T) error) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	apply := func(tx *BadgerTransaction, filter bool) error {
+		var seen map[T]struct{}
+		if filter {
+			seen = make(map[T]struct{}, len(ids))
+		}
+		for _, id := range ids {
+			if filter {
+				if _, repeated := seen[id]; repeated || id == "" {
+					continue
+				}
+				seen[id] = struct{}{}
+			}
+			if err := remove(tx, id); err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+		}
+		return nil
+	}
+	if handled, err := b.inCaptureTransaction(string(ids[0]), func(tx *BadgerTransaction) error { return apply(tx, false) }); handled {
+		return err
+	}
+	return b.inBulkTransaction(firstIDNamespace(ids), func(tx *BadgerTransaction) error { return apply(tx, true) })
 }
 
 // ============================================================================

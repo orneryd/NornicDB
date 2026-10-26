@@ -64,41 +64,33 @@ func TestBadgerEngine_InvalidatePendingEmbeddingsIndex_Noop(t *testing.T) {
 }
 
 func TestBadgerTransaction_HasPendingNodeMutations(t *testing.T) {
-	be := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = be.Close() })
-
-	tx, err := be.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-
-	// Brand-new tx: no pending mutations.
-	require.False(t, tx.HasPendingNodeMutations())
-
-	// Stage a create — pending now non-empty.
-	_, err = tx.CreateNode(&Node{
-		ID:     "test:pending-1",
-		Labels: []string{"L"},
-	})
-	require.NoError(t, err)
-	require.True(t, tx.HasPendingNodeMutations())
-}
-
-func TestBadgerTransaction_HasPendingNodeMutations_DeletionAlsoCounts(t *testing.T) {
-	be := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = be.Close() })
-
-	// Seed a committed node so we can stage a delete in a fresh tx.
-	_, err := be.CreateNode(&Node{ID: "test:committed", Labels: []string{"L"}})
-	require.NoError(t, err)
-
-	tx, err := be.BeginTransaction()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = tx.Rollback() })
-
-	require.False(t, tx.HasPendingNodeMutations())
-	require.NoError(t, tx.DeleteNode("test:committed"))
-	require.True(t, tx.HasPendingNodeMutations(),
-		"a staged delete should also trigger HasPendingNodeMutations")
+	for _, deletion := range []bool{false, true} {
+		name := "create"
+		if deletion {
+			name = "DeletionAlsoCounts"
+		}
+		t.Run(name, func(t *testing.T) {
+			be := newTestMemoryEngine(t)
+			t.Cleanup(func() { _ = be.Close() })
+			if deletion {
+				// Seed a committed node so we can stage a delete in a fresh tx.
+				_, err := be.CreateNode(&Node{ID: "test:committed", Labels: []string{"L"}})
+				require.NoError(t, err)
+			}
+			tx, err := be.BeginTransaction()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = tx.Rollback() })
+			require.False(t, tx.HasPendingNodeMutations())
+			if deletion {
+				require.NoError(t, tx.DeleteGraphNode("test:committed", CascadeEdges))
+				require.True(t, tx.HasPendingNodeMutations(), "a staged delete should also trigger HasPendingNodeMutations")
+			} else {
+				_, err = tx.CreateNode(&Node{ID: "test:pending-1", Labels: []string{"L"}})
+				require.NoError(t, err)
+				require.True(t, tx.HasPendingNodeMutations())
+			}
+		})
+	}
 }
 
 func TestReadNodeLabelsInTxn_ReturnsLabels(t *testing.T) {

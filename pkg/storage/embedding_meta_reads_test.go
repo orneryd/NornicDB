@@ -70,7 +70,7 @@ func TestGetNodeEmbeddingMetaThroughStorageStack(t *testing.T) {
 	require.Nil(t, meta)
 	_, err = stack.CreateNode(&Node{ID: "gone", Properties: map[string]any{"text": "z"}, EmbedMeta: map[string]any{"chunk_count": 1}})
 	require.NoError(t, err)
-	writeBehindCommit(t, badgerEngine, func(tx *BadgerTransaction) error { return tx.DeleteNode("nornic:gone") })
+	writeBehindCommit(t, badgerEngine, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("nornic:gone", CascadeEdges) })
 	_, err = stack.GetNodeEmbeddingMeta("gone")
 	require.ErrorIs(t, err, ErrNotFound, "a buffered delete")
 	require.NoError(t, badgerEngine.FlushWriteBehind())

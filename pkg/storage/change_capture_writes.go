@@ -23,10 +23,10 @@ func (b *BadgerEngine) inCaptureTransaction(id string, write func(tx *BadgerTran
 	return true, tx.Commit()
 }
 
-// upsertNodeInTransaction is UpdateNode's upsert in a transaction: an
+// ApplyNodeUpdate is UpdateNode's upsert in a transaction: an
 // update, or a create when the node doesn't exist.
-func upsertNodeInTransaction(tx *BadgerTransaction, node *Node) error {
-	err := tx.UpdateNode(node)
+func ApplyNodeUpdate(tx *BadgerTransaction, node *Node) error {
+	err := tx.UpdateGraphNode(node, ClientNodeEdits)
 	if errors.Is(err, ErrNotFound) {
 		_, err = tx.CreateNode(node)
 	}

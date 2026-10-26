@@ -88,9 +88,7 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 	for _, ls := range loadedSchemas {
 		loadedMap[ls.namespace] = ls.schema
 	}
-	b.schemasMu.Lock()
-	b.schemas = loadedMap
-	b.schemasMu.Unlock()
+	b.transitionNamespaceSchema("", schemaNamespaceReplace, loadedMap)
 
 	return nil
 }
@@ -129,34 +127,10 @@ func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefi
 		return fmt.Errorf("schema: marshal %q: %w", namespace, err)
 	}
 
-	return b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Set(schemaKey(namespace), blob)
+	return b.commitEngineWrite(func(cw *commitWriter) error {
+		cw.publishKeys = []any{namespaceWriteKey(namespace)}
+		return cw.writeOnce(func(txn *badger.Txn) error { return txn.Set(schemaKey(namespace), blob) })
 	})
-}
-
-// dropNamespaceSchema removes a namespace's schema from memory and disk, so a
-// database recreated under the same name starts with an empty schema. The
-// detached SchemaManager keeps working for holders of a stale reference but no
-// longer persists, so it cannot write the dropped schema back.
-func (b *BadgerEngine) dropNamespaceSchema(namespace string) error {
-	if namespace == "" {
-		return fmt.Errorf("schema: namespace is required")
-	}
-	b.resetRelationshipUniqueIndexes()
-
-	b.schemasMu.Lock()
-	if sm := b.schemas[namespace]; sm != nil {
-		sm.SetPersister(nil)
-		delete(b.schemas, namespace)
-	}
-	b.schemasMu.Unlock()
-
-	if err := b.withUpdate(func(txn *badger.Txn) error {
-		return txn.Delete(schemaKey(namespace))
-	}); err != nil {
-		return fmt.Errorf("schema: drop %q: %w", namespace, err)
-	}
-	return nil
 }
 
 func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *SchemaManager) error {
@@ -283,10 +257,37 @@ func (b *BadgerEngine) GetSchemaForNamespace(namespace string) *SchemaManager {
 	}
 	b.schemasMu.RUnlock()
 
-	// Lazily create empty schema for new namespaces; a concurrent caller may
-	// have created it since the read check.
+	return b.transitionNamespaceSchema(namespace, schemaNamespaceEnsure, nil)
+}
+
+type namespaceSchemaTransition uint8
+
+const (
+	schemaNamespaceEnsure namespaceSchemaTransition = iota
+	schemaNamespaceRetire
+	schemaNamespaceReplace
+)
+
+// transitionNamespaceSchema is the schema registry's mutation owner. Lookup
+// keeps its public read-fast path; creation, namespace retirement, and Restore
+// all install or detach managers here under the same registry lock.
+func (b *BadgerEngine) transitionNamespaceSchema(namespace string, action namespaceSchemaTransition, replacement map[string]*SchemaManager) *SchemaManager {
+	if action == schemaNamespaceRetire {
+		b.resetRelationshipUniqueIndexes()
+	}
 	b.schemasMu.Lock()
 	defer b.schemasMu.Unlock()
+	switch action {
+	case schemaNamespaceRetire:
+		if sm := b.schemas[namespace]; sm != nil {
+			sm.SetPersister(nil)
+			delete(b.schemas, namespace)
+		}
+		return nil
+	case schemaNamespaceReplace:
+		b.schemas = replacement
+		return nil
+	}
 	sm := b.schemas[namespace]
 	if sm == nil {
 		sm = NewSchemaManager()

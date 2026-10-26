@@ -3,8 +3,6 @@ package storage
 import (
 	"context"
 	"sync"
-
-	"github.com/dgraph-io/badger/v4"
 )
 
 // A scan can re-enter the transaction while its callback runs without the
@@ -66,12 +64,4 @@ func (opts StreamNodesOptions) readVisibility() readVisibility {
 
 func (opts StreamNodesOptions) copyResidentNode(node *Node) *Node {
 	return projectCachedNodeForRead(node, opts.Projection, opts.StripEmbeddings, opts.QueryNodes && !opts.WithEmbeddings)
-}
-
-// readQueryNodeItemInTxn settles body and embedding metadata in one read
-// view without fetching chunk payloads, sharing the point-reader contract.
-func (b *BadgerEngine) readQueryNodeItemInTxn(txn *badger.Txn, item *badger.Item, id NodeID) (*Node, error) {
-	return b.readNodeItemInTxn(txn, item, id, func(txn *badger.Txn, node *Node, id NodeID) (*Node, error) {
-		return b.loadNodeEmbeddingState(txn, node, id, false)
-	})
 }

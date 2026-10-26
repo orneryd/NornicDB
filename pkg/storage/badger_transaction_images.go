@@ -21,11 +21,11 @@ func (tx *BadgerTransaction) StoredNodeImage(node *Node) (*Node, error) {
 	}
 	namespace := NewNamespacedEngine(tx.engine, tx.namespace)
 	if image, ok := writtenNodeSource(node); ok {
-		image.ID = namespace.prefixNodeID(image.ID)
+		image.ID = namespace.PrefixNodeID(image.ID)
 		return image, nil
 	}
 	canonical := copyNode(node)
-	canonical.ID = namespace.prefixNodeID(canonical.ID)
+	canonical.ID = namespace.PrefixNodeID(canonical.ID)
 	data, _, err := tx.engine.encodeNodeInTxn(tx.badgerTx, tx.namespace, canonical)
 	if err != nil {
 		return nil, err
@@ -42,9 +42,9 @@ func (tx *BadgerTransaction) StoredEdgeImage(edge *Edge) (*Edge, error) {
 	}
 	namespace := NewNamespacedEngine(tx.engine, tx.namespace)
 	canonical := copyEdge(edge)
-	canonical.ID = namespace.prefixEdgeID(canonical.ID)
-	canonical.StartNode = namespace.prefixNodeID(canonical.StartNode)
-	canonical.EndNode = namespace.prefixNodeID(canonical.EndNode)
+	canonical.ID = namespace.PrefixEdgeID(canonical.ID)
+	canonical.StartNode = namespace.PrefixNodeID(canonical.StartNode)
+	canonical.EndNode = namespace.PrefixNodeID(canonical.EndNode)
 	return tx.codecEdgeImageLocked(canonical)
 }
 

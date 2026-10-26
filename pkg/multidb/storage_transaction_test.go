@@ -15,7 +15,7 @@ func TestTransactionQuotaRateRefillAndCancellation(t *testing.T) {
 	require.NoError(t, err)
 	tracker := engine.(*sizeTrackingEngine)
 	clock := newManualClock(time.Unix(1, 0))
-	tracker.checker.writeRateLimiter = newRateLimiterWithClock(1, clock.Now)
+	tracker.checker.policy().writeRateLimiter = newRateLimiterWithClock(1, clock.Now)
 	commit := func(ctx context.Context, id string) error {
 		t.Helper()
 		tx, err := manager.inner.(*storage.MemoryEngine).BeginTransaction()

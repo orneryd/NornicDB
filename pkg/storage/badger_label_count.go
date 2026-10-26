@@ -528,6 +528,10 @@ func (b *BadgerEngine) readNamedCountInNamespace(kind byte, namespace, name stri
 }
 
 func (b *BadgerEngine) namedCountInNamespace(kind byte, namespace, name string) (int64, error) {
+	if err := b.pendingNamespaceConflict(namespace); err != nil {
+		return 0, err
+	}
+
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}
@@ -565,6 +569,10 @@ func (b *BadgerEngine) namedCountInNamespace(kind byte, namespace, name string) 
 // namedCount sums persisted base counts, their unfolded deltas and committed
 // write-behind deltas across namespaces under one family read hold.
 func (b *BadgerEngine) namedCount(kind byte, name string) (int64, error) {
+	if err := b.pendingNamespaceConflict(""); err != nil {
+		return 0, err
+	}
+
 	if err := b.ensureOpen(false); err != nil {
 		return 0, err
 	}

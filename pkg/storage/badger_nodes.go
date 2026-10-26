@@ -19,6 +19,10 @@ import (
 // REQUIRES: node.ID must be prefixed with namespace (e.g., "nornic:node-123").
 // This enforces that all nodes are namespaced at the storage layer.
 func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
+	return b.createNodeWithWriteContext(node, nil)
+}
+
+func (b *BadgerEngine) createNodeWithWriteContext(node *Node, inherited *entityWriteContext) (NodeID, error) {
 	if node != nil {
 		if handled, err := b.inCaptureTransaction(string(node.ID), func(tx *BadgerTransaction) error {
 			_, err := tx.CreateNode(node)
@@ -32,11 +36,16 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	ordered, barrierErr := b.beginOrderedWrite()
+	var entityID string
+	if node != nil {
+		entityID = string(node.ID)
+	}
+	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, false, inherited)
 	if barrierErr != nil {
 		return "", barrierErr
 	}
-	defer ordered.finish()
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
 	dbName, err := b.admitCreatedNode(node, nil)
 	if err != nil {
 		return "", err
@@ -45,10 +54,11 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 
 	// The constraint keys' commit locks cover the check, the write and the
 	// publication to the constraint cache, as for a transaction's commit.
-	releaseUniqueLocks, lockErr := lockEngineWriteKeys(schema, node)
+	releaseUniqueLocks, lockErr := lockEngineWriteKeys(schema, node, write.owner)
 	if lockErr != nil {
 		return "", lockErr
 	}
+	defer releaseUniqueLocks()
 	var persistSeparateEmbeddings bool
 	var embeddingsToPersist [][]float32
 	var image *Node
@@ -58,12 +68,18 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 	if b.writeBehind != nil {
 		_, orderErr := b.orderAfterBufferedCommits(&order, writtenEntities{nodes: []NodeID{node.ID}})
 		if orderErr != nil {
-			releaseUniqueLocks()
 			return "", orderErr
 		}
 		defer order.release()
 	}
-	err = b.withUpdate(func(txn *badger.Txn) error {
+	var publicationOps []Operation
+	publish := func() { b.publishCommitOperations(dbName, schema, publicationOps, true, true) }
+	keys := func() []any {
+		publicationOps = []Operation{{Type: OpCreateNode, Node: image}}
+		capturePublicationOperations(notification, publicationOps)
+		return appendNodePublicationKeys(nil, schema, node.ID, nil, image)
+	}
+	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
 			return err
@@ -110,29 +126,17 @@ func (b *BadgerEngine) CreateNode(node *Node) (NodeID, error) {
 		}
 		// Create-only path: primary key IS the current head body.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
+	}, publish, keys, notification, func(cw *commitWriter) error {
+		if persistSeparateEmbeddings {
+			if err := cw.replaceEmbeddingRange(node.ID, embeddingsToPersist, nil); err != nil {
+				return err
+			}
+		}
+		return write.stagePublication(cw)
 	})
 	if err != nil {
-		releaseUniqueLocks()
 		return "", err
 	}
-
-	// On successful create, register unique constraint values
-	for _, label := range image.Labels {
-		for propName, propValue := range image.Properties {
-			schema.RegisterUniqueValue(label, propName, propValue, image.ID)
-		}
-	}
-	releaseUniqueLocks()
-	if persistSeparateEmbeddings {
-		if err := b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist); err != nil {
-			return "", err
-		}
-	}
-
-	b.cacheOnNodeCreated(image)
-
-	// Notify listeners (e.g., search service) to index the new node
-	b.notifyNodeCreated(image)
 
 	return node.ID, nil
 }
@@ -319,7 +323,7 @@ func (b *BadgerEngine) getNodeSnapshotForRead(id NodeID, force bool, v readVisib
 		mode = nodeReadCacheSnapshot
 	}
 	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
-		return b.readNodeItemInTxn(txn, item, id, b.loadNodeEmbeddings)
+		return b.readNodeItemInTxn(txn, item, id, nodeItemFullEmbeddings)
 	}, copyNode, mode)
 }
 
@@ -330,17 +334,20 @@ func (b *BadgerEngine) getNodeSnapshotForRead(id NodeID, force bool, v readVisib
 // node is cached apart from the node cache (queryNodeCache), so full reads
 // never see it and still hydrate.
 func (b *BadgerEngine) GetQueryNode(id NodeID) (*Node, error) {
-	return b.getQueryNode(id, visibleRead)
+	return b.readNodeMetadata(id, visibleRead, nodeItemQueryMetadata)
 }
 
-func (b *BadgerEngine) getQueryNode(id NodeID, v readVisibility) (*Node, error) {
-	return b.getNodeByID(id, v,
-		func(txn *badger.Txn, item *badger.Item) (*Node, error) {
-			return b.readQueryNodeItemInTxn(txn, item, id)
-		},
-		copyNodeForCaller,
-		nodeReadCacheQuery,
-	)
+// readNodeMetadata binds hydration, copy ownership and cache publication together.
+// Query metadata keeps its own cache and caller-owned view; body-only reads
+// strip vectors from overlay/cache hits and never publish partial bodies.
+func (b *BadgerEngine) readNodeMetadata(id NodeID, v readVisibility, hydration nodeItemHydration) (*Node, error) {
+	copyImage, cache := copyNodeForCaller, nodeReadCacheQuery
+	if hydration == nodeItemBodyOnly {
+		copyImage, cache = copyNodeWithoutEmbeddings, nodeReadCacheProjection
+	}
+	return b.getNodeByID(id, v, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
+		return b.readNodeItemInTxn(txn, item, id, hydration)
+	}, copyImage, cache)
 }
 
 // RelationshipEndpointVisible implements RelationshipEndpointChecker with the
@@ -348,6 +355,10 @@ func (b *BadgerEngine) getQueryNode(id NodeID, v readVisibility) (*Node, error) 
 // key exists, without reading or decoding the record. It doesn't answer while
 // decay filtering can hide a node at read time, or when the lookup fails.
 func (b *BadgerEngine) RelationshipEndpointVisible(id NodeID) (visible, answered bool) {
+	if err := b.pendingNamespaceConflict(namespaceForNodeID(id)); err != nil {
+		return false, false
+	}
+
 	if id == "" || b.visibilityFiltered() || b.ensureOpen(false) != nil {
 		return false, false
 	}
@@ -414,27 +425,32 @@ func (b *BadgerEngine) getNodeProjected(id NodeID, properties []string, v readVi
 // The decoded node is not cached, so an embedding-free read can never poison
 // the cache for later full reads.
 func (b *BadgerEngine) GetNodeWithoutEmbeddings(id NodeID) (*Node, error) {
-	return b.getNodeByID(id, visibleRead, func(txn *badger.Txn, item *badger.Item) (*Node, error) {
-		return b.readNodeItemInTxn(txn, item, id, nil)
-	}, copyNodeWithoutEmbeddings, nodeReadCacheProjection)
+	return b.readNodeMetadata(id, visibleRead, nodeItemBodyOnly)
 }
 
 // UpdateNode updates an existing node or creates it if it doesn't exist (upsert).
-func (b *BadgerEngine) UpdateNode(node *Node) error {
+func (b *BadgerEngine) UpdateNode(node *Node) error { return b.updateNodeWithWriteContext(node, nil) }
+
+func (b *BadgerEngine) updateNodeWithWriteContext(node *Node, inherited *entityWriteContext) error {
 	if node != nil {
 		if handled, err := b.inCaptureTransaction(string(node.ID), func(tx *BadgerTransaction) error {
-			return upsertNodeInTransaction(tx, node)
+			return ApplyNodeUpdate(tx, node)
 		}); handled {
 			return err
 		}
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurPut)
-	ordered, barrierErr := b.beginOrderedWrite()
+	var entityID string
+	if node != nil {
+		entityID = string(node.ID)
+	}
+	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, false, inherited)
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer ordered.finish()
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
 	if node == nil {
 		return ErrInvalidData
 	}
@@ -458,7 +474,7 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 
 	// The constraint keys' commit locks cover the check, the write and the
 	// publication to the constraint cache, as for a transaction's commit.
-	releaseUniqueLocks, lockErr := lockEngineWriteKeys(schema, node)
+	releaseUniqueLocks, lockErr := lockEngineWriteKeys(schema, node, write.owner)
 	if lockErr != nil {
 		return lockErr
 	}
@@ -482,7 +498,17 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		}
 		defer order.release()
 	}
-	err := b.withUpdate(func(txn *badger.Txn) error {
+	var publicationOps []Operation
+	publish := func() { b.publishCommitOperations(dbName, schema, publicationOps, true, true) }
+	keys := func() []any {
+		publicationOps = []Operation{{Type: OpUpdateNode, Node: image, OldNode: existingNode}}
+		if wasInsert {
+			publicationOps[0].Type = OpCreateNode
+		}
+		capturePublicationOperations(notification, publicationOps)
+		return appendNodePublicationKeys(nil, schema, node.ID, existingNode, image)
+	}
+	err := b.withPublishingUpdate(func(txn *badger.Txn) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), time.Now())
 		if err != nil {
 			return err
@@ -673,43 +699,14 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 		// Primary key now holds the new head body; archive of old body
 		// into mvccNodeVersionKey(oldHead.Version) happened above.
 		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
-	})
-	if err == nil && persistSeparateEmbeddings {
-		err = b.replaceSeparateEmbeddingChunks(node.ID, embeddingsToPersist)
-	}
-
-	// Update cache on successful operation
-	if err == nil {
-		if wasInsert {
-			// Register unique constraint values
-			for _, label := range image.Labels {
-				for propName, propValue := range image.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, image.ID)
-				}
+	}, publish, keys, notification, func(cw *commitWriter) error {
+		if persistSeparateEmbeddings {
+			if err := cw.replaceEmbeddingRange(node.ID, embeddingsToPersist, nil); err != nil {
+				return err
 			}
-
-			b.cacheOnNodeCreated(image)
-			// Notify listeners about the new node
-			b.notifyNodeCreated(image)
-		} else {
-			if existingNode != nil {
-				for _, label := range existingNode.Labels {
-					for propName, propValue := range existingNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-			for _, label := range image.Labels {
-				for propName, propValue := range image.Properties {
-					schema.RegisterUniqueValue(label, propName, propValue, image.ID)
-				}
-			}
-
-			b.cacheOnNodeUpdatedWithOldNode(image, existingNode)
-			// Notify listeners to re-index the updated node
-			b.notifyNodeUpdated(image)
 		}
-	}
+		return write.stagePublication(cw)
+	})
 
 	return err
 }
@@ -719,26 +716,35 @@ func (b *BadgerEngine) UpdateNode(node *Node) error {
 // chunks' deletions come first, then the new chunks, each key its own unit
 // (commitEngineWrite repeatable units). Readers see the old chunks or the new ones, never a mix
 // (#703).
-func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings [][]float32) error {
+func (b *BadgerEngine) replaceSeparateEmbeddingChunks(nodeID NodeID, embeddings [][]float32, inherited *entityWriteContext) error {
+	write, releaseWrite, err := b.beginEntityWrite(string(nodeID), false, inherited)
+	if err != nil {
+		return err
+	}
+	defer releaseWrite()
 	return b.commitEngineWrite(func(cw *commitWriter) error {
-		return cw.replaceEmbeddingRange(nodeID, embeddings, nil)
+		if err := cw.replaceEmbeddingRange(nodeID, embeddings, nil); err != nil {
+			return err
+		}
+		return write.stagePublication(cw)
 	})
 }
 
 // DeleteNode removes a node and all its edges.
 func (b *BadgerEngine) DeleteNode(id NodeID) error {
 	if handled, err := b.inCaptureTransaction(string(id), func(tx *BadgerTransaction) error {
-		return tx.DeleteNode(id)
+		return tx.DeleteGraphNode(id, CascadeEdges)
 	}); handled {
 		return err
 	}
 	start := time.Now()
 	defer b.observeStorageOp(start, b.opDurDelete)
-	ordered, barrierErr := b.beginOrderedWrite()
+	write, releaseWrite, barrierErr := b.beginEntityWrite(string(id), false, nil, entityWritePlan{read: func() (writtenEntities, error) { return b.nativeDeletionFootprint(string(id), false) }})
 	if barrierErr != nil {
 		return barrierErr
 	}
-	defer ordered.finish()
+	notification := b.queueCommitOperations(nil, nil, notificationAtCommit)
+	defer func() { releaseWrite(); b.completeCommitNotification(notification) }()
 	if id == "" {
 		return ErrInvalidID
 	}
@@ -747,11 +753,12 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		return err
 	}
 
-	// Track edge deletions for counter update after transaction
-	var totalEdgesDeleted int64
-	var deletedEdgeIDs []EdgeID
-	var deletedEdges []*Edge
-	var deletedNode *Node
+	var result nodeDeletionResult
+
+	err := b.validateNativeDeletionFootprint(write, string(id), false)
+	if err != nil {
+		return err
+	}
 
 	// Ordered after the write-behind commits acknowledged before it
 	// (orderAfterBufferedCommits), so their replay cannot undo it.
@@ -762,165 +769,47 @@ func (b *BadgerEngine) DeleteNode(id NodeID) error {
 		}
 		defer order.release()
 	}
-	err := b.withUpdate(func(txn *badger.Txn) error {
-		version, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now())
-		if allocErr != nil {
-			return allocErr
-		}
-		// deleteNodeInTxn archives the pre-delete node body and each
-		// cascade-deleted edge body into their version records BEFORE
-		// removing the primary keys — see that function's doc.
-		edgesDeleted, edgeIDs, edges, node, err := b.deleteNodeInTxn(txn, id)
-		totalEdgesDeleted = edgesDeleted
-		deletedEdgeIDs = edgeIDs
-		deletedEdges = edges
-		deletedNode = node
-		if err != nil {
-			return err
-		}
-		if deletedNode == nil {
-			return nil
-		}
-		dbName, _, ok := ParseDatabasePrefix(string(deletedNode.ID))
-		if !ok {
-			return nil
-		}
-		schema := b.GetSchemaForNamespace(dbName)
-		if err := b.applyTemporalIndexesForNodeChangeInTxn(txn, dbName, schema, deletedNode, nil); err != nil {
-			return err
-		}
-		if err := b.adjustNodeLabelCountsInTxn(txn, dbName, deletedNode.Labels, nil); err != nil {
-			return err
-		}
-		// Tombstone markers (tiny, no body) preserve delete semantics
-		// for snapshot reads at the deletion version.
-		if err := b.writeNodeMVCCTombstoneInTxn(txn, id, version); err != nil {
-			return err
-		}
-		if err := b.writeNodeMVCCHeadInTxn(txn, id, version, true); err != nil {
-			return err
-		}
-		for i, edgeID := range deletedEdgeIDs {
-			if err := b.writeEdgeAdjacencyDeltaInTxn(txn, deletedEdges[i], nil, version); err != nil {
-				return err
-			}
-			if err := b.writeEdgeMVCCTombstoneInTxn(txn, edgeID, version); err != nil {
-				return err
-			}
-			if err := b.writeEdgeMVCCHeadInTxn(txn, edgeID, version, true); err != nil {
-				return err
-			}
-			// Per-type derived counters follow the cascaded index removal.
-			if deletedEdges[i] != nil && deletedEdges[i].Type != "" {
-				if err := b.adjustEdgeTypeCountInTxn(txn, namespaceForEdgeID(edgeID), deletedEdges[i].Type, -1); err != nil {
-					return err
-				}
-				// Positional (label, type) counters: the deleted node's labels
-				// are known; the peer endpoint's labels are read while its body
-				// is still live.
-				startLabels := deletedNode.Labels
-				endLabels := deletedNode.Labels
-				if deletedEdges[i].StartNode == deletedNode.ID && deletedEdges[i].EndNode != deletedNode.ID {
-					peer, err := b.readNodeLabelsIfPresentInTxn(txn, deletedEdges[i].EndNode)
-					if err != nil {
-						return err
-					}
-					endLabels = peer
-				} else if deletedEdges[i].EndNode == deletedNode.ID && deletedEdges[i].StartNode != deletedNode.ID {
-					peer, err := b.readNodeLabelsIfPresentInTxn(txn, deletedEdges[i].StartNode)
-					if err != nil {
-						return err
-					}
-					startLabels = peer
-				}
-				if err := b.adjustEdgeTypeLabelCountsForEdgeInTxn(txn, namespaceForEdgeID(edgeID), deletedEdges[i].Type, startLabels, endLabels, -1); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	})
-
-	// Invalidate cache on successful delete
-	if err == nil {
-		if deletedNode != nil {
-			dbName, _, ok := ParseDatabasePrefix(string(deletedNode.ID))
-			if ok {
-				schema := b.GetSchemaForNamespace(dbName)
-				for _, label := range deletedNode.Labels {
-					for propName, propValue := range deletedNode.Properties {
-						schema.UnregisterUniqueValue(label, propName, propValue)
-					}
-				}
-			}
-		}
-
-		if deletedNode != nil {
-			b.cacheOnNodeDeletedWithLabels(id, deletedNode.Labels, totalEdgesDeleted)
-		} else {
-			b.cacheOnNodeDeleted(id, totalEdgesDeleted)
-		}
-
-		// Notify listeners about deleted edges
-		for _, edgeID := range deletedEdgeIDs {
-			b.notifyEdgeDeleted(edgeID)
-		}
-
-		// Notify listeners (e.g., search service) to remove from indexes
-		b.notifyNodeDeleted(id)
+	var publicationOps []Operation
+	schema := b.schemaForNodeID(id)
+	publish := func() {
+		b.publishCommitOperations(namespaceForNodeID(id), schema, publicationOps, true, true)
 	}
+	keys := func() []any {
+		publicationOps = []Operation{result.operation(id)}
+		capturePublicationOperations(notification, publicationOps)
+		return appendOperationPublicationKeys(nil, schema, publicationOps)
+	}
+
+	err = b.withPublishingUpdate(func(txn *badger.Txn) error {
+		var err error
+		result, err = b.executeNodeDeletion(txn, id, nil)
+		return err
+	}, publish, keys, notification, write.stagePublication)
 
 	return err
 }
 
-// deleteEdgesWithPrefix deletes all edges matching a prefix (helper for DeleteNode).
-// deleteEdgesWithPrefix deletes all edges matching the given prefix.
-// Returns the count of edges actually deleted for accurate stats tracking.
-// IMPORTANT: The returned count MUST be used to decrement edgeCount after txn commits.
-func (b *BadgerEngine) deleteEdgesWithPrefix(txn *badger.Txn, prefix []byte) (int64, []EdgeID, []*Edge, error) {
-	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	defer it.Close()
-
-	var edgeIDs []EdgeID
-	for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-		edgeNum, ok := extractEdgeNumIDFromOutgoingKey(it.Item().KeyCopy(nil))
-		if !ok {
-			continue
-		}
-		edgeID, ok := b.idDict.lookupEdgeIDByNum(edgeNum)
-		if !ok {
-			continue
-		}
-		edgeIDs = append(edgeIDs, edgeID)
-	}
-
-	var deletedCount int64
-	var deletedIDs []EdgeID
-	var deletedEdges []*Edge
-	for _, edgeID := range edgeIDs {
-		edgeForAdjacency, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
-		if err != nil && err != ErrNotFound {
-			return 0, nil, nil, err
-		}
-		err = b.deleteEdgeInTxn(txn, edgeID)
-		if err == nil {
-			deletedCount++
-			deletedIDs = append(deletedIDs, edgeID)
-			// ErrNotFound from the pre-delete load leaves this nil; the later adjacency-delta write
-			// intentionally no-ops because there was no live adjacency membership left to tombstone.
-			deletedEdges = append(deletedEdges, edgeForAdjacency)
-		} else if err != ErrNotFound {
-			return 0, nil, nil, err
+// removeNodeRecordKeys is the durable node-record deletion owner for direct
+// and staged writers. Cascades and history use their existing snapshot owners;
+// numeric IDs stay until pruning because tombstones and heads still use them.
+func (b *BadgerEngine) removeNodeRecordKeys(w kvWriter, node *Node) error {
+	for _, label := range node.Labels {
+		if key := b.labelIndexKeyStringLookup(label, node.ID); key != nil {
+			if err := w.Delete(key); err != nil {
+				return err
+			}
 		}
 	}
-
-	return deletedCount, deletedIDs, deletedEdges, nil
+	if err := w.Delete(pendingEmbedKey(node.ID)); err != nil {
+		return err
+	}
+	return w.Delete(nodeKey(node.ID))
 }
 
 // ============================================================================
 
 // lockEngineWriteKeys takes node's constraint key locks for a direct engine
 // write, under an owner of its own (a variable so tests can make it fail).
-var lockEngineWriteKeys = func(schema *SchemaManager, node *Node) (func(), error) {
-	return schema.lockConstraintKeysOf(context.Background(), newEngineWriteLockOwner(), node)
+var lockEngineWriteKeys = func(schema *SchemaManager, node *Node, owner string) (func(), error) {
+	return schema.acquireUniqueConstraintCommitLocks(context.Background(), owner, schema.appendConstraintValueKeys(nil, []*Node{node}, nil))
 }
