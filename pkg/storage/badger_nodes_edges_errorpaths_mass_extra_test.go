@@ -3,7 +3,6 @@ package storage
 import (
 	"testing"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/stretchr/testify/require"
 )
 
@@ -77,15 +76,4 @@ func TestBadgerEngine_EdgeCRUDErrorAndBranchPaths(t *testing.T) {
 	require.ErrorIs(t, engine.DeleteEdge("test:missing"), ErrNotFound)
 	require.NoError(t, engine.DeleteEdge("test:e1"))
 	require.NoError(t, engine.BulkDeleteEdges([]EdgeID{"test:missing", ""}))
-}
-
-func TestBadgerEngine_DeleteNodeInTxnMissingNodeBranch(t *testing.T) {
-	engine := newTestMemoryEngine(t)
-	t.Cleanup(func() { _ = engine.Close() })
-
-	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		_, _, _, _, err := engine.deleteNodeInTxn(txn, "test:missing")
-		require.ErrorIs(t, err, ErrNotFound)
-		return nil
-	}))
 }

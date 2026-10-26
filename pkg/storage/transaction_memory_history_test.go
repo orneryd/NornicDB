@@ -19,7 +19,7 @@ func TestStagedMemoryBytesCountsDeletedOldBodies(t *testing.T) {
 	require.NoError(t, err)
 	for i := 0; i < count; i++ {
 		id := NodeID("test:old-" + string(rune('a'+i)))
-		require.NoError(t, tx.DeleteNode(id))
+		require.NoError(t, tx.DeleteGraphNode(id, CascadeEdges))
 	}
 	require.Greater(t, tx.StagedMemoryBytes(), int64(1<<20), "deleted old bodies remain owned until rollback")
 	require.NoError(t, tx.Rollback())

@@ -38,7 +38,7 @@ func TestOverlayBodiesAreReadThroughVisibility(t *testing.T) {
 		}
 		file, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		require.NoError(t, err)
-		if !buildsOnLinuxForOverlayGuard(file) {
+		if !buildsOnLinux(file) {
 			continue
 		}
 		files = append(files, file)
@@ -209,19 +209,4 @@ func TestOverlayVisibilityReadRequiresCompletePolicy(t *testing.T) {
 		})
 	}
 	require.False(t, overlayReadHasVisibility(nil, false), "a method value carries no read policy")
-}
-
-// buildsOnLinuxForOverlayGuard reports whether file builds for the linux
-// production build the CI runs.
-func buildsOnLinuxForOverlayGuard(file *ast.File) bool {
-	for _, group := range file.Comments {
-		for _, comment := range group.List {
-			if !strings.HasPrefix(comment.Text, "//go:build ") {
-				continue
-			}
-			text := comment.Text
-			return !strings.Contains(text, "!linux") && !strings.Contains(text, "windows") && !strings.Contains(text, "darwin") && !strings.Contains(text, "ignore")
-		}
-	}
-	return true
 }

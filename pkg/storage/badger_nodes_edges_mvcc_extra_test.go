@@ -35,31 +35,49 @@ func TestBadgerEngine_WriteEmbeddingChunksBatched_OversizedChunk(t *testing.T) {
 }
 
 func TestBadgerEngine_DeleteNodeInTxn_NotFoundStillCleansEmbeddingChunks(t *testing.T) {
-	engine := newTestEngine(t)
-	id := NodeID("test:ghost")
-
-	err := engine.withUpdate(func(txn *badger.Txn) error {
-		if err := txn.Set(embeddingKey(id, 0), []byte{1, 2, 3}); err != nil {
-			return err
-		}
-		if err := txn.Set(embeddingKey(id, 1), []byte{4, 5, 6}); err != nil {
-			return err
-		}
-		_, _, _, _, err := engine.deleteNodeInTxn(txn, id)
-		return err
-	})
-	require.ErrorIs(t, err, ErrNotFound)
-
-	require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.Prefix = embeddingPrefix(id)
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
-			t.Fatalf("embedding chunk still present: %q", it.Item().Key())
-		}
-		return nil
-	}))
+	for _, tc := range []struct {
+		name                  string
+		chunks, commitCleanup bool
+	}{
+		{name: "missing body commits cleanup", commitCleanup: true},
+		{name: "missing body rolls back staged chunks", chunks: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newTestEngine(t)
+			id := NodeID("test:ghost")
+			err := engine.withUpdate(func(txn *badger.Txn) error {
+				if tc.chunks {
+					if err := txn.Set(embeddingKey(id, 0), []byte{1, 2, 3}); err != nil {
+						return err
+					}
+					if err := txn.Set(embeddingKey(id, 1), []byte{4, 5, 6}); err != nil {
+						return err
+					}
+				}
+				_, err := engine.executeNodeDeletion(txn, id, nil)
+				if tc.commitCleanup {
+					require.ErrorIs(t, err, ErrNotFound)
+					return nil
+				}
+				return err
+			})
+			if tc.commitCleanup {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, ErrNotFound)
+			}
+			require.NoError(t, engine.withView(func(txn *badger.Txn) error {
+				opts := badger.DefaultIteratorOptions
+				opts.Prefix = embeddingPrefix(id)
+				it := txn.NewIterator(opts)
+				defer it.Close()
+				for it.Rewind(); it.ValidForPrefix(opts.Prefix); it.Next() {
+					t.Fatalf("embedding chunk still present: %q", it.Item().Key())
+				}
+				return nil
+			}))
+		})
+	}
 }
 
 func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
@@ -70,7 +88,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 		}))
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, _, _, _, err := engine.deleteNodeInTxn(readTxn, "test:embed-node")
+		_, err := engine.executeNodeDeletion(readTxn, "test:embed-node", nil)
 		require.ErrorContains(t, err, "failed to delete embedding chunk")
 	})
 
@@ -80,7 +98,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 			return txn.Set(nodeKey("test:corrupt-node"), []byte("bad-node"))
 		}))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-			_, _, _, _, err := engine.deleteNodeInTxn(txn, "test:corrupt-node")
+			_, err := engine.executeNodeDeletion(txn, "test:corrupt-node", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -92,7 +110,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 		require.NoError(t, err)
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, _, _, _, err = engine.deleteNodeInTxn(readTxn, "test:archive-node")
+		_, err = engine.executeNodeDeletion(readTxn, "test:archive-node", nil)
 		require.Error(t, err)
 	})
 
@@ -106,7 +124,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 			return txn.Set(mvccNodeHeadKey(nodeNum), []byte("bad-head"))
 		}))
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			_, _, _, _, err := engine.deleteNodeInTxn(txn, "test:bad-head-node")
+			_, err := engine.executeNodeDeletion(txn, "test:bad-head-node", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -123,7 +141,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 		}))
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, _, _, _, err = engine.deleteNodeInTxn(readTxn, "test:label-delete-node")
+		_, err = engine.executeNodeDeletion(readTxn, "test:label-delete-node", nil)
 		require.Error(t, err)
 	})
 
@@ -138,7 +156,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 		}))
 		readTxn := engine.db.testTxn(false)
 		defer readTxn.Discard()
-		_, _, _, _, err = engine.deleteNodeInTxn(readTxn, "test:primary-delete-node")
+		_, err = engine.executeNodeDeletion(readTxn, "test:primary-delete-node", nil)
 		require.Error(t, err)
 	})
 
@@ -153,7 +171,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 			return txn.Set(edgeKey("test:out-edge"), []byte("bad-edge"))
 		}))
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			_, _, _, _, err := engine.deleteNodeInTxn(txn, "test:out-mid")
+			_, err := engine.executeNodeDeletion(txn, "test:out-mid", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -170,7 +188,7 @@ func TestBadgerEngine_DeleteNodeInTxn_ErrorBranches(t *testing.T) {
 			return txn.Set(edgeKey("test:in-edge"), []byte("bad-edge"))
 		}))
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-			_, _, _, _, err := engine.deleteNodeInTxn(txn, "test:in-mid")
+			_, err := engine.executeNodeDeletion(txn, "test:in-mid", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -219,7 +237,7 @@ func TestBadgerEngine_DeleteEdgeFamily_AdjacencyLoadErrors(t *testing.T) {
 		require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
 			prefix := engine.outgoingIndexPrefixString("test:dp-a")
 			require.NotNil(t, prefix)
-			_, _, _, err := engine.deleteEdgesWithPrefix(txn, prefix)
+			_, err := engine.executeNodeDeletion(txn, "test:dp-a", nil)
 			require.Error(t, err)
 			return nil
 		}))
@@ -246,7 +264,8 @@ func TestBadgerEngine_UpdateEdgeAndDeletePrefixHelpers_Branches(t *testing.T) {
 		if err := txn.Set(append(append([]byte{}, prefix...), []byte("bad")...), []byte{}); err != nil {
 			return err
 		}
-		deleted, ids, _, delErr := engine.deleteEdgesWithPrefix(txn, prefix)
+		result, delErr := engine.executeNodeDeletion(txn, "test:a", nil)
+		deleted, ids := int64(len(result.ids)), result.ids
 		if delErr != nil {
 			return delErr
 		}
@@ -269,7 +288,8 @@ func TestBadgerEngine_DeleteNodeInTxn_ReturnsDeletedEdgeBodiesForAdjacencyTombst
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:center-right", StartNode: "test:center", EndNode: "test:right", Type: "REL"}))
 
 	require.NoError(t, engine.withUpdate(func(txn *badger.Txn) error {
-		deletedCount, deletedIDs, deletedEdges, deletedNode, err := engine.deleteNodeInTxn(txn, "test:center")
+		result, err := engine.executeNodeDeletion(txn, "test:center", nil)
+		deletedCount, deletedIDs, deletedEdges, deletedNode := int64(len(result.ids)), result.ids, result.edges, result.node
 		require.NoError(t, err)
 		require.Equal(t, int64(2), deletedCount)
 		require.Equal(t, NodeID("test:center"), deletedNode.ID)
@@ -324,7 +344,7 @@ func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 		}))
 
 		err = engine.withView(func(txn *badger.Txn) error {
-			return engine.iterateNodesVisibleAtInTxn(txn, MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999}, func(*Node) error {
+			return engine.iterateNodesVisibleAtInScopeInTxn(txn, "", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999}, func(*Node) error {
 				return nil
 			})
 		})
@@ -344,7 +364,7 @@ func TestBadgerEngine_MVCCIteratorsAndVisibilityExtraBranches(t *testing.T) {
 
 		wantErr := errors.New("stop-yield")
 		err = engine.withView(func(txn *badger.Txn) error {
-			return engine.iterateNodesVisibleAtInTxn(txn, MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999}, func(*Node) error {
+			return engine.iterateNodesVisibleAtInScopeInTxn(txn, "", MVCCVersion{CommitTimestamp: time.Now().UTC(), CommitSequence: 999}, func(*Node) error {
 				return wantErr
 			})
 		})
@@ -629,7 +649,7 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, current.StartNode, loaded.StartNode)
 
-			visible, err := engine.getEdgeVisibleAtInTxn(txn, "test:e1", head.Version)
+			visible, err := engine.getEdgeAtInTxn(txn, "test:e1", head.Version, mvccEntityRead{visibility: visibleRead})
 			require.NoError(t, err)
 			require.Equal(t, current.EndNode, visible.EndNode)
 			return nil
@@ -711,7 +731,7 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 				return err
 			}
 			require.Equal(t, current.StartNode, loaded.StartNode)
-			visible, err := engine.getEdgeVisibleAtInTxn(txn, current.ID, head.Version)
+			visible, err := engine.getEdgeAtInTxn(txn, current.ID, head.Version, mvccEntityRead{visibility: visibleRead})
 			if err != nil {
 				return err
 			}
@@ -721,7 +741,7 @@ func TestBadgerEngine_MVCCAdjacencyVisibilityExtraBranches(t *testing.T) {
 
 		require.NoError(t, engine.DeleteEdge(current.ID))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
-			_, err := engine.getEdgeVisibleAtInTxn(txn, current.ID, maxMVCCVersion())
+			_, err := engine.getEdgeAtInTxn(txn, current.ID, maxMVCCVersion(), mvccEntityRead{visibility: visibleRead})
 			require.ErrorIs(t, err, ErrNotFound)
 			return nil
 		}))

@@ -54,13 +54,6 @@ func (fields legacyCompatMap) MarshalMsgpack() ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-func legacyCompatEncode(t *testing.T, value any) []byte {
-	t.Helper()
-	data, err := msgpack.Marshal(value)
-	require.NoError(t, err)
-	return data
-}
-
 func legacyCompatUint64(value uint64) []byte {
 	return binary.BigEndian.AppendUint64(nil, value)
 }
@@ -84,10 +77,10 @@ func legacyCompatRecords(t *testing.T, scalar bool) map[string][]byte {
 		if i == 2 {
 			props[0] = 2
 		}
-		props = append(props, legacyCompatEncode(t, text)...)
+		props = append(props, fixtureowner.Encode[any](t, msgpack.Marshal, text)...)
 		if i == 2 {
 			props = append(props, 2)
-			props = append(props, legacyCompatEncode(t, []float32{0, 0, 1})...)
+			props = append(props, fixtureowner.Encode[any](t, msgpack.Marshal, []float32{0, 0, 1})...)
 		}
 		var named, chunks any
 		switch i {
@@ -99,7 +92,7 @@ func legacyCompatRecords(t *testing.T, scalar bool) map[string][]byte {
 			chunks = [][]float32{{0.6, 0.8, 0}}
 		}
 		timestamp := time.Unix(0, created[i]).UTC()
-		body := legacyCompatEncode(t, legacyCompatMap{
+		body := fixtureowner.Encode[any](t, msgpack.Marshal, legacyCompatMap{
 			{"ID", id}, {"Labels", []string{"Doc"}}, {"Properties", nil},
 			{"CreatedAt", timestamp}, {"UpdatedAt", timestamp},
 			{"NamedEmbeddings", named}, {"ChunkEmbeddings", chunks}, {"EmbedMeta", nil},
@@ -119,7 +112,7 @@ func legacyCompatRecords(t *testing.T, scalar bool) map[string][]byte {
 		records[string(append([]byte{0x0e}, legacyCompatUint64(num)...))] = head
 		records[string(append([]byte{0x1a}, id...))] = legacyCompatUint64(num)
 		records[string(append([]byte{0x1d}, legacyCompatUint64(num)...))] = []byte(id)
-		records["\x10accessmeta:"+id] = legacyCompatEncode(t, legacyCompatMap{
+		records["\x10accessmeta:"+id] = fixtureowner.Encode[any](t, msgpack.Marshal, legacyCompatMap{
 			{"targetId", id}, {"targetScope", "NODE"},
 			{"fixed", legacyCompatMap{{"accessCount", int64(0)}, {"lastAccessedAt", int64(0)}, {"traversalCount", int64(0)}, {"lastTraversedAt", int64(0)}}},
 			{"lastMutatedAt", int64(0)}, {"mutationCount", int64(0)},
@@ -271,10 +264,10 @@ func legacyCompatFiles(t *testing.T, scalar bool) map[string][]byte {
 		}
 	}
 	return map[string][]byte{
-		"bm25":           legacyCompatEncode(t, legacyCompatBM25(scalar)),
-		"build_settings": legacyCompatEncode(t, settings),
-		"hnsw":           legacyCompatEncode(t, legacyCompatHNSW(scalar)),
-		"vectors.meta":   legacyCompatEncode(t, legacyCompatVectorMeta(scalar)),
+		"bm25":           fixtureowner.Encode[any](t, msgpack.Marshal, legacyCompatBM25(scalar)),
+		"build_settings": fixtureowner.Encode[any](t, msgpack.Marshal, settings),
+		"hnsw":           fixtureowner.Encode[any](t, msgpack.Marshal, legacyCompatHNSW(scalar)),
+		"vectors.meta":   fixtureowner.Encode[any](t, msgpack.Marshal, legacyCompatVectorMeta(scalar)),
 		"vectors.vec":    vectors,
 	}
 }

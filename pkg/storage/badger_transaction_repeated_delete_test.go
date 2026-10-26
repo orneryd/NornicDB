@@ -20,8 +20,8 @@ func TestBadgerTransaction_RepeatedDeleteChangesNothing(t *testing.T) {
 
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
-	require.NoError(t, tx.DeleteNode("test:a"))
-	require.ErrorIs(t, tx.DeleteNode("test:a"), ErrNotFound)
+	require.NoError(t, tx.DeleteGraphNode("test:a", CascadeEdges))
+	require.ErrorIs(t, tx.DeleteGraphNode("test:a", CascadeEdges), ErrNotFound)
 	require.ErrorIs(t, tx.DeleteEdge("test:ab"), ErrNotFound, "deleted with its node")
 	require.NoError(t, tx.DeleteEdge("test:bc"))
 	require.ErrorIs(t, tx.DeleteEdge("test:bc"), ErrNotFound)

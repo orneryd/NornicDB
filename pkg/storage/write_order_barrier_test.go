@@ -34,7 +34,7 @@ func TestOrderedDrainProceedsPastQueuedExclusiveWriter(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:n", Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:n", Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits))
 	require.NoError(t, tx.Commit())
 
 	// Park the direct update on its write-order stripe, after it took the

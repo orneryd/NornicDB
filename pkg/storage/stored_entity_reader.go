@@ -319,24 +319,24 @@ func streamStoredEdgesByTypeInScope(ctx context.Context, engine Engine, scope, e
 
 // GetStoredNode is GetNode's stored read (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredNode(id NodeID) (*Node, error) {
-	return materializedRead(func() (*Node, error) { return GetStoredNode(n.inner, n.prefixNodeID(id)) }, func(value *Node) *Node { return n.toUserNode(value, nodeUserView{}) }, false)
+	return materializedRead(func() (*Node, error) { return GetStoredNode(n.inner, n.PrefixNodeID(id)) }, func(value *Node) *Node { return n.toUserNode(value, nodeUserView{}) }, false)
 }
 
 // GetStoredEdge is GetEdge's stored read (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredEdge(id EdgeID) (*Edge, error) {
-	return materializedRead(func() (*Edge, error) { return GetStoredEdge(n.inner, n.prefixEdgeID(id)) }, func(value *Edge) *Edge { return n.toUserEdge(value) }, false)
+	return materializedRead(func() (*Edge, error) { return GetStoredEdge(n.inner, n.PrefixEdgeID(id)) }, func(value *Edge) *Edge { return n.toUserEdge(value) }, false)
 }
 
 // GetStoredOutgoingEdges is GetOutgoingEdges' stored read
 // (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredOutgoingEdges(nodeID NodeID) ([]*Edge, error) {
-	return materializedRead(func() ([]*Edge, error) { return GetStoredOutgoingEdges(n.inner, n.prefixNodeID(nodeID)) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, true, false) }, false)
+	return materializedRead(func() ([]*Edge, error) { return GetStoredOutgoingEdges(n.inner, n.PrefixNodeID(nodeID)) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, true, false) }, false)
 }
 
 // GetStoredIncomingEdges is GetIncomingEdges' stored read
 // (StoredEntityReader).
 func (n *NamespacedEngine) GetStoredIncomingEdges(nodeID NodeID) ([]*Edge, error) {
-	return materializedRead(func() ([]*Edge, error) { return GetStoredIncomingEdges(n.inner, n.prefixNodeID(nodeID)) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, true, false) }, false)
+	return materializedRead(func() ([]*Edge, error) { return GetStoredIncomingEdges(n.inner, n.PrefixNodeID(nodeID)) }, func(edges []*Edge) []*Edge { return n.toUserEdgesInNamespace(edges, true, false) }, false)
 }
 
 // GetStoredNodesByLabel is GetNodesByLabel's stored read

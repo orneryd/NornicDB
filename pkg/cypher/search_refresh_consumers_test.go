@@ -68,17 +68,13 @@ func (b *consumerObservationBarrier) GetNode(id storage.NodeID) (*storage.Node, 
 // the barrier for ordinary reads.
 type consumerSuppressionBarrier struct{ *consumerObservationBarrier }
 
-// SetNodeManuallySuppressed arms the barrier once storage shows the node again.
-func (b consumerSuppressionBarrier) SetNodeManuallySuppressed(id storage.NodeID, suppressed bool) error {
-	err := b.Engine.(storage.ManualSuppressionEngine).SetNodeManuallySuppressed(id, suppressed)
-	if err == nil && !suppressed {
+// SetManualSuppression arms the barrier only when storage shows a node again.
+func (b consumerSuppressionBarrier) SetManualSuppression(kind storage.StoredEntityKind, id string, suppressed bool) error {
+	err := b.Engine.(storage.ManualSuppressionEngine).SetManualSuppression(kind, id, suppressed)
+	if err == nil && kind == storage.StoredEntityNodeKind && !suppressed {
 		b.armed.Store(true)
 	}
 	return err
-}
-
-func (b consumerSuppressionBarrier) SetEdgeManuallySuppressed(id storage.EdgeID, suppressed bool) error {
-	return b.Engine.(storage.ManualSuppressionEngine).SetEdgeManuallySuppressed(id, suppressed)
 }
 
 func (b consumerSuppressionBarrier) GetInnerEngine() storage.Engine { return b.Engine }

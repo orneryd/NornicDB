@@ -39,7 +39,7 @@ func TestSnapshotOverlayQueryNodeVisibility(t *testing.T) {
 				case "engine-overlay", "engine-retired":
 					require.NoError(t, tx.SetImplicit(true))
 					require.NoError(t, tx.SetNamespace("test"))
-					require.NoError(t, tx.UpdateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "after"}}))
+					require.NoError(t, tx.UpdateGraphNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "after"}}, ClientNodeEdits))
 					require.NoError(t, tx.Commit())
 					if buffered {
 						require.Positive(t, b.writeBehind.PendingOps())
@@ -49,11 +49,11 @@ func TestSnapshotOverlayQueryNodeVisibility(t *testing.T) {
 						}
 					}
 				case "transaction-pending":
-					require.NoError(t, tx.UpdateNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "after"}}))
+					require.NoError(t, tx.UpdateGraphNode(&Node{ID: id, Labels: []string{"Doc"}, Properties: map[string]any{"title": "after"}}, ClientNodeEdits))
 					read = tx.GetQueryNode
 					readStored = tx.GetStoredNode
 				case "transaction-connected":
-					require.NoError(t, tx.DeleteConnectedNode(id))
+					require.NoError(t, tx.DeleteGraphNode(id, RejectConnected))
 					read = tx.GetQueryNode
 					readStored = tx.GetStoredNode
 				case "transaction-scan":
@@ -63,7 +63,7 @@ func TestSnapshotOverlayQueryNodeVisibility(t *testing.T) {
 					read = tx.GetQueryNode
 					readStored = tx.GetStoredNode
 				}
-				require.NoError(t, b.SetNodeManuallySuppressed(id, true))
+				require.NoError(t, b.SetManualSuppression(StoredEntityNodeKind, string(id), true))
 				for _, reveal := range []bool{false, true, false} {
 					b.SetRevealAll(reveal)
 					stored, storedErr := readStored(id)

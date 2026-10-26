@@ -195,6 +195,7 @@ func buildsOnLinux(file *ast.File) bool {
 // derives from. Adding a mutator without a row fails
 // TestStorageMutatorPopulationIsClassified.
 var storageMutatorClassification = map[string]string{
+	"BadgerTransaction.PrepareEntityCommit":             scenarioPublishes + " (prepared client/stored-image commit and abort; preparation itself publishes nothing)",
 	"BadgerTransaction.AdvanceImplicitSnapshot":         "advances a read snapshot only; independent child commits publish their own events",
 	"BadgerTransaction.ResumeAfterIndependentCommit":    "advances a read snapshot while retaining pending mutations; only Commit publishes those writes",
 	"BadgerEngine.CreateNode":                           scenarioPublishes,
@@ -207,8 +208,7 @@ var storageMutatorClassification = map[string]string{
 	"BadgerEngine.BulkCreateEdges":                      scenarioPublishes,
 	"BadgerEngine.BulkDeleteNodes":                      scenarioPublishes,
 	"BadgerEngine.BulkDeleteEdges":                      scenarioPublishes,
-	"BadgerEngine.SetNodeManuallySuppressed":            scenarioPublishes,
-	"BadgerEngine.SetEdgeManuallySuppressed":            scenarioPublishes,
+	"BadgerEngine.SetManualSuppression":                 scenarioPublishes,
 	"BadgerEngine.UpdateNodeEmbeddingSidecar":           scenarioPublishes,
 	"BadgerEngine.ClearAllEmbeddings":                   scenarioPublishes,
 	"BadgerEngine.ClearAllEmbeddingsForPrefix":          scenarioPublishes,
@@ -221,13 +221,14 @@ var storageMutatorClassification = map[string]string{
 	"BadgerTransaction.CommitContextWithPublication":    "Commit's implementation; " + scenarioPublishes,
 	"BadgerTransaction.CreateNode":                      "buffers in the transaction; published by its Commit",
 	"BadgerTransaction.CreateEdge":                      "buffers in the transaction; published by its Commit",
-	"BadgerTransaction.UpdateNode":                      "buffers in the transaction; published by its Commit",
+	"BadgerTransaction.UpdateGraphNode":                 "buffers in the transaction; published by its Commit",
+	"BadgerTransaction.DeleteGraphNode":                 "buffers deletion with the selected relationship policy; published by its Commit",
 	"BadgerTransaction.BulkCreateEdges":                 "buffers in the transaction; published by its Commit",
 	"BadgerTransaction.CreateMintedNode":                "CreateNode for a minted ID; published by its Commit",
 	"BadgerTransaction.CreateMintedEdge":                "CreateEdge for a minted ID; published by its Commit",
 	"BadgerTransaction.BulkCreateMintedEdges":           "BulkCreateEdges for minted IDs; published by its Commit",
 	"BadgerTransaction.PrepareMergeKey":                 "reserves a MERGE key in the transaction; no entity state",
-	"BadgerTransaction.PrepareMergeNode":                "admits MERGE constraint tuples and may advance the snapshot; entity writes are published by CreateNode/UpdateNode at Commit",
+	"BadgerTransaction.PrepareMergeNode":                "admits MERGE constraint tuples and may advance the snapshot; entity writes are published by CreateNode/UpdateGraphNode at Commit",
 	"BadgerTransaction.PrepareMergeNodeForWrite":        "admits MERGE write keys and may land previously published buffered commits; new entity writes are published by its Commit",
 	"BadgerEngine.Close":                                "deletes the stored suppressions of entities deleted before it (endSuppressions); no entity state",
 	"BadgerEngine.Restore":                              "replaces the whole store offline; DB.Restore owns the reset of search (restartSearchAfterRestore)",
@@ -273,4 +274,23 @@ func TestStorageMutatorPopulationIsClassified(t *testing.T) {
 	}
 	sort.Strings(stale)
 	require.Empty(t, stale, "classified methods no longer in the population")
+}
+
+func TestBuildConstraintsForStorageSourceGuards(t *testing.T) {
+	for _, tc := range []struct {
+		text string
+		want bool
+	}{
+		{"", true}, {"linux && amd64 && cgo && noui && nolocalllm", true},
+		{"linux || windows", true}, {"!linux", false}, {"windows || darwin", false},
+		{"ignore", false}, {"!(windows || darwin)", true}, {"go1.26", true}, {"(", true},
+	} {
+		t.Run(tc.text, func(t *testing.T) {
+			file := &ast.File{}
+			if tc.text != "" {
+				file.Comments = []*ast.CommentGroup{{List: []*ast.Comment{{Text: "//go:build " + tc.text}}}}
+			}
+			require.Equal(t, tc.want, buildsOnLinux(file))
+		})
+	}
 }

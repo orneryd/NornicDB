@@ -59,15 +59,20 @@ func newWriteBehindTestEngine(t testing.TB, interval time.Duration, options ...w
 	return engine
 }
 
-func bufferedCreate(t testing.TB, engine *BadgerEngine, node *Node) {
+func bufferedWrite(t testing.TB, engine *BadgerEngine, write func(*BadgerTransaction) error) {
 	t.Helper()
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
+	defer tx.Rollback()
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	_, err = tx.CreateNode(node)
-	require.NoError(t, err)
+	require.NoError(t, write(tx))
 	require.NoError(t, tx.Commit())
+}
+
+func bufferedCreate(t testing.TB, engine *BadgerEngine, node *Node) {
+	t.Helper()
+	bufferedWrite(t, engine, func(tx *BadgerTransaction) error { _, err := tx.CreateNode(node); return err })
 }
 
 func TestWriteBehind_BufferedCommitVisibleBeforeFlush(t *testing.T) {
@@ -111,7 +116,7 @@ func TestWriteBehind_MultipleCommitsApplyInOrder(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	err = tx.UpdateNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(2)}})
+	err = tx.UpdateGraphNode(&Node{ID: "test:n1", Labels: []string{"L"}, Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits)
 	require.NoError(t, err)
 	require.NoError(t, tx.Commit())
 
@@ -135,7 +140,7 @@ func TestWriteBehind_BufferedDeleteHidesAndPersists(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.DeleteNode("test:n1"))
+	require.NoError(t, tx.DeleteGraphNode("test:n1", CascadeEdges))
 	require.NoError(t, tx.Commit())
 
 	_, err = engine.GetNode("test:n1")
@@ -241,7 +246,7 @@ func TestWriteBehind_ScansSeeBufferedWrites(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.DeleteNode("test:o0"))
+	require.NoError(t, tx.DeleteGraphNode("test:o0", CascadeEdges))
 	require.NoError(t, tx.Commit())
 
 	nodes, err = engine.GetNodesByLabel("Order")
@@ -334,7 +339,7 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.DeleteNode("test:a"))
+	require.NoError(t, tx.DeleteGraphNode("test:a", CascadeEdges))
 	require.NoError(t, tx.Commit())
 
 	// The buffered delete must hide the relationship immediately.
@@ -350,7 +355,7 @@ func TestWriteBehind_DetachDeleteAcrossBatchesDeletesEdgesOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.DeleteNode("test:b"))
+	require.NoError(t, tx.DeleteGraphNode("test:b", CascadeEdges))
 	require.NoError(t, tx.Commit())
 
 	require.Equal(t, int64(-2), engine.writeBehind.EdgeTypeCountDelta("R"),
@@ -421,7 +426,7 @@ func TestWriteBehind_DetachDeleteAfterFlushStillDeletesOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.DeleteNode("test:a"))
+	require.NoError(t, tx.DeleteGraphNode("test:a", CascadeEdges))
 	require.NoError(t, tx.Commit())
 	require.NoError(t, engine.FlushWriteBehind())
 
@@ -431,7 +436,7 @@ func TestWriteBehind_DetachDeleteAfterFlushStillDeletesOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.DeleteNode("test:b"))
+	require.NoError(t, tx.DeleteGraphNode("test:b", CascadeEdges))
 	require.NoError(t, tx.Commit())
 	require.Equal(t, int64(0), engine.writeBehind.EdgeTypeCountDelta("R"),
 		"already-applied relationship must not be deleted twice")
@@ -443,123 +448,102 @@ func TestWriteBehind_DetachDeleteAfterFlushStillDeletesOnce(t *testing.T) {
 	require.Zero(t, count)
 }
 
-// TestWriteBehind_PropertyIndexSeesBufferedNodes reproduces the Pokec
+// TestWriteBehind_PropertyIndexBufferedGenerations reproduces the Pokec
 // batched-load loss: a property-index seek must find nodes whose commits are
 // acknowledged but not yet flushed, or MATCH (n:User {id: $x}) CREATE …
 // silently produces nothing. The buffer attaches to the schema as its
 // pending-write source.
-func TestWriteBehind_PropertyIndexSeesBufferedNodes(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
-	schema := engine.GetSchemaForNamespace("test")
-	require.NoError(t, schema.AddPropertyIndex("user_id_idx", "User", []string{"id"}))
-
-	bufferedCreate(t, engine, &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(1)}})
-
-	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)),
-		"index lookup must see buffered nodes before the flush")
-	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(2)))
-
-	// After the flush the committed index takes over.
-	require.NoError(t, engine.FlushWriteBehind())
-	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)))
-
-	// A buffered rewrite supersedes the committed entry and moves the value.
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(2)}}))
-	require.NoError(t, tx.Commit())
-	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(1)),
-		"buffered rewrite must supersede the committed index entry")
-	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(2)))
-
-	// A buffered delete removes the entry before the flush lands.
-	tx, err = engine.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.DeleteNode("test:u1"))
-	require.NoError(t, tx.Commit())
-	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(2)),
-		"buffered delete must hide the node from index seeks")
-	require.NoError(t, engine.FlushWriteBehind())
-	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(2)))
-}
-
-// TestWriteBehind_PropertyIndexAcrossGenerations keeps the pending index
+// AcrossGenerations keeps the pending index
 // correct when generations land while a later generation still holds a
 // newer version of the same node.
-func TestWriteBehind_PropertyIndexAcrossGenerations(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
-	schema := engine.GetSchemaForNamespace("test")
-	require.NoError(t, schema.AddPropertyIndex("user_id_idx", "User", []string{"id"}))
 
-	bufferedCreate(t, engine, &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(1)}})
-	require.NoError(t, engine.FlushWriteBehind())
-	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)))
-
-	// Rewrite the node and re-create it after a delete in later buffered
-	// generations; the index must always reflect the newest state.
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(7)}}))
-	require.NoError(t, tx.Commit())
-	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(7)))
-	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(1)))
-
-	tx, err = engine.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.DeleteNode("test:u1"))
-	require.NoError(t, tx.Commit())
-	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(7)))
-
-	bufferedCreate(t, engine, &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(9)}})
-	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(9)))
-
-	require.NoError(t, engine.FlushWriteBehind())
-	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(9)))
-	require.Empty(t, schema.PropertyIndexLookup("User", "id", int64(7)))
-}
-
-// TestWriteBehind_PropertyIndexKeepsUnchangedValueOnBufferedUpdate is the
+// KeepsUnchangedValueOnBufferedUpdate is the
 // #1043 follow-up: a buffered update that keeps a flushed node's indexed
 // value (MATCH (n:User {id: 1}) SET n.v = …) must leave the node findable by
 // that value. The committed entry is superseded by the buffered version, so
 // the pending index has to list it, or the next MATCH by id finds nothing
 // and its SET silently does nothing.
-func TestWriteBehind_PropertyIndexKeepsUnchangedValueOnBufferedUpdate(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
-	schema := engine.GetSchemaForNamespace("test")
-	require.NoError(t, schema.AddPropertyIndex("user_id_idx", "User", []string{"id"}))
-
-	bufferedCreate(t, engine, &Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(1), "v": int64(0)}})
-	require.NoError(t, engine.FlushWriteBehind())
-
-	update := func(v int64) {
-		tx, err := engine.BeginTransaction()
-		require.NoError(t, err)
-		require.NoError(t, tx.SetImplicit(true))
-		require.NoError(t, tx.SetNamespace("test"))
-		require.NoError(t, tx.UpdateNode(&Node{ID: "test:u1", Labels: []string{"User"}, Properties: map[string]any{"id": int64(1), "v": v}}))
-		require.NoError(t, tx.Commit())
+func TestWriteBehind_PropertyIndexBufferedGenerations(t *testing.T) {
+	type lookup struct {
+		value   int64
+		present bool
+		message string
 	}
-	update(1)
-	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)),
-		"a buffered update that keeps the indexed value must stay findable by it")
-	update(2)
-	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)),
-		"a second buffered update of the same node must stay findable too")
-
-	require.NoError(t, engine.FlushWriteBehind())
-	require.Equal(t, []NodeID{"test:u1"}, schema.PropertyIndexLookup("User", "id", int64(1)))
-	node, err := engine.GetNode("test:u1")
-	require.NoError(t, err)
-	require.Equal(t, int64(2), node.Properties["v"], "the last buffered update must be the one applied")
+	type step struct {
+		action      string
+		id, version int64
+		lookups     []lookup
+	}
+	for _, tc := range []struct {
+		name        string
+		withVersion bool
+		steps       []step
+	}{
+		{name: "SeesBufferedNodes", steps: []step{
+			{lookups: []lookup{{1, true, "index lookup must see buffered nodes before the flush"}, {2, false, ""}}},
+			{action: "flush", lookups: []lookup{{1, true, ""}}},
+			{action: "update", id: 2, lookups: []lookup{{1, false, "buffered rewrite must supersede the committed index entry"}, {2, true, ""}}},
+			{action: "delete", lookups: []lookup{{2, false, "buffered delete must hide the node from index seeks"}}},
+			{action: "flush", lookups: []lookup{{2, false, ""}}},
+		}},
+		{name: "AcrossGenerations", steps: []step{
+			{action: "flush", lookups: []lookup{{1, true, ""}}},
+			{action: "update", id: 7, lookups: []lookup{{7, true, ""}, {1, false, ""}}},
+			{action: "delete", lookups: []lookup{{7, false, ""}}},
+			{action: "create", id: 9, lookups: []lookup{{9, true, ""}}},
+			{action: "flush", lookups: []lookup{{9, true, ""}, {7, false, ""}}},
+		}},
+		{name: "KeepsUnchangedValueOnBufferedUpdate", withVersion: true, steps: []step{
+			{action: "flush"},
+			{action: "update", id: 1, version: 1, lookups: []lookup{{1, true, "a buffered update that keeps the indexed value must stay findable by it"}}},
+			{action: "update", id: 1, version: 2, lookups: []lookup{{1, true, "a second buffered update of the same node must stay findable too"}}},
+			{action: "flush", lookups: []lookup{{1, true, ""}}},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newWriteBehindTestEngine(t, time.Hour)
+			schema := engine.GetSchemaForNamespace("test")
+			require.NoError(t, schema.AddPropertyIndex("user_id_idx", "User", []string{"id"}))
+			node := func(id, version int64) *Node {
+				props := map[string]any{"id": id}
+				if tc.withVersion {
+					props["v"] = version
+				}
+				return &Node{ID: "test:u1", Labels: []string{"User"}, Properties: props}
+			}
+			bufferedCreate(t, engine, node(1, 0))
+			for _, step := range tc.steps {
+				switch step.action {
+				case "": // Observe the initial buffered generation.
+				case "flush":
+					require.NoError(t, engine.FlushWriteBehind())
+				case "create":
+					bufferedCreate(t, engine, node(step.id, step.version))
+				case "update":
+					bufferedWrite(t, engine, func(tx *BadgerTransaction) error {
+						return tx.UpdateGraphNode(node(step.id, step.version), ClientNodeEdits)
+					})
+				case "delete":
+					bufferedWrite(t, engine, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode("test:u1", CascadeEdges) })
+				default:
+					t.Fatalf("unknown property-index test action %q", step.action)
+				}
+				for _, check := range step.lookups {
+					got := schema.PropertyIndexLookup("User", "id", check.value)
+					if check.present {
+						require.Equal(t, []NodeID{"test:u1"}, got, check.message)
+					} else {
+						require.Empty(t, got, check.message)
+					}
+				}
+			}
+			if tc.withVersion {
+				got, err := engine.GetNode("test:u1")
+				require.NoError(t, err)
+				require.Equal(t, int64(2), got.Properties["v"], "the last buffered update must be the one applied")
+			}
+		})
+	}
 }
 
 func TestWriteBehind_DisabledCommitIsSynchronous(t *testing.T) {

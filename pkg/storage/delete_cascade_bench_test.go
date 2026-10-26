@@ -33,7 +33,7 @@ func BenchmarkTransactionDeleteNodeCascade(b *testing.B) {
 		require.NoError(b, engine.BulkCreateNodes(nodes))
 		require.NoError(b, engine.BulkCreateEdges(edges))
 		for j := 0; j < degree; j += 2 {
-			require.NoError(b, engine.SetEdgeManuallySuppressed(EdgeID(fmt.Sprintf("test:out-edge-%d-%d", i, j)), true))
+			require.NoError(b, engine.SetManualSuppression(StoredEntityEdgeKind, string(fmt.Sprintf("test:out-edge-%d-%d", i, j)), true))
 		}
 		return hub
 	}
@@ -50,7 +50,7 @@ func BenchmarkTransactionDeleteNodeCascade(b *testing.B) {
 		if err := tx.SetNamespace("test"); err != nil {
 			b.Fatal(err)
 		}
-		if err := tx.DeleteNode(hub); err != nil {
+		if err := tx.DeleteGraphNode(hub, CascadeEdges); err != nil {
 			b.Fatal(err)
 		}
 		if err := tx.Commit(); err != nil {

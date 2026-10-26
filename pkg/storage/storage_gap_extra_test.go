@@ -1026,7 +1026,7 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 			return nil
 		}))
 		require.Equal(t, 260, countChunks(t, engine, nodeID))
-		require.NoError(t, engine.replaceSeparateEmbeddingChunks(nodeID, nil))
+		require.NoError(t, engine.replaceSeparateEmbeddingChunks(nodeID, nil, nil))
 		require.Equal(t, 0, countChunks(t, engine, nodeID))
 	})
 
@@ -1044,7 +1044,7 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 			return txn.Set(embeddingKey(nodeID, 1), oldEmb)
 		}))
 
-		require.NoError(t, engine.replaceSeparateEmbeddingChunks(nodeID, [][]float32{{9, 9}, {8, 8, 8}}))
+		require.NoError(t, engine.replaceSeparateEmbeddingChunks(nodeID, [][]float32{{9, 9}, {8, 8, 8}}, nil))
 		require.Equal(t, 2, countChunks(t, engine, nodeID))
 		require.NoError(t, engine.withView(func(txn *badger.Txn) error {
 			item, err := txn.Get(embeddingKey(nodeID, 1))
@@ -1057,7 +1057,7 @@ func TestSeparateEmbeddingChunkHelpers(t *testing.T) {
 			})
 		}))
 
-		require.NoError(t, engine.replaceSeparateEmbeddingChunks(nodeID, nil))
+		require.NoError(t, engine.replaceSeparateEmbeddingChunks(nodeID, nil, nil))
 		require.Equal(t, 0, countChunks(t, engine, nodeID))
 	})
 }

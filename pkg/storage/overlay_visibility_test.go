@@ -31,12 +31,12 @@ func TestBufferedSuppressedEntitiesFollowReadVisibility(t *testing.T) {
 	}
 	require.NoError(t, engine.CreateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(1)}}))
 	require.NoError(t, engine.FlushWriteBehind())
-	require.NoError(t, engine.SetNodeManuallySuppressed("test:h", true))
-	require.NoError(t, engine.SetEdgeManuallySuppressed("test:r", true))
+	require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:h", true))
+	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:r", true))
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetImplicit(true))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:h", Labels: []string{"H"}, Properties: map[string]any{"v": int64(2)}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:h", Labels: []string{"H"}, Properties: map[string]any{"v": int64(2)}}, ClientNodeEdits))
 	require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"v": int64(2)}}))
 	require.NoError(t, tx.Commit())
 	ctx := context.Background()
@@ -121,8 +121,8 @@ func TestBufferedSuppressedEntitiesFollowReadVisibility(t *testing.T) {
 	// on the same key is a separate, queued bug
 	// (sig/handoff/bugqueue-q-suppress-flusher-race-20261021.md).
 	require.NoError(t, engine.FlushWriteBehind())
-	require.NoError(t, engine.SetNodeManuallySuppressed("test:h", false))
-	require.NoError(t, engine.SetEdgeManuallySuppressed("test:r", false))
+	require.NoError(t, engine.SetManualSuppression(StoredEntityNodeKind, "test:h", false))
+	require.NoError(t, engine.SetManualSuppression(StoredEntityEdgeKind, "test:r", false))
 	require.Contains(t, edgeIDs(engine.GetEdgesBetween("test:a", "test:b")), EdgeID("test:r"))
 	require.NotNil(t, engine.GetEdgeBetween("test:a", "test:b", "LINK"))
 	require.Contains(t, nodeIDs(engine.GetNodesByLabel("H")), NodeID("test:h"))

@@ -204,16 +204,35 @@ func (m *managedBadgerDB) commit(txn *badger.Txn) error {
 	return m.oracle.waitPublished(ts)
 }
 
-func (m *managedBadgerDB) commitShared(txn *badger.Txn) (uint64, error) {
+func (m *managedBadgerDB) commitShared(txn *badger.Txn, publication ...*commitPublication) (uint64, error) {
 	m.commitGate.RLock()
 	defer m.commitGate.RUnlock()
 	m.advanceDiscardTs()
-	ts, err := m.oracle.assign()
+	var publish *commitPublication
+	if len(publication) > 0 {
+		publish = publication[0]
+	}
+	if publish != nil && publish.owner != nil {
+		if err := publish.owner.prepareStoredEntityPublication(); err != nil {
+			return 0, err
+		}
+	}
+	var ts uint64
+	var err error
+	if publish != nil && publish.owner != nil {
+		ts, err = m.oracle.assign(publish.owner.reserveNotification)
+	} else {
+		ts, err = m.oracle.assign()
+	}
 	if err != nil {
 		return 0, err
 	}
 	defer m.oracle.finish(ts)
-	return ts, txn.CommitAt(ts, nil)
+	if err := txn.CommitAt(ts, nil); err != nil {
+		return ts, err
+	}
+	m.oracle.stage.register(ts, publish)
+	return ts, nil
 }
 
 // advanceDiscardTs lets compaction drop versions no open read can see any
@@ -448,7 +467,8 @@ func (wb *managedWriteBatch) Cancel() { wb.w.discard() }
 // batch. beginLargeCommit takes the commit gate exclusively; finish or abort
 // releases it. Not safe for concurrent use.
 type largeCommit struct {
-	db *managedBadgerDB
+	originalReadTs uint64
+	db             *managedBadgerDB
 	// intentTs is the timestamp the intent record was written at. It stays
 	// unfinished in the oracle until the commit publishes or rolls back,
 	// which holds the published timestamp below every batch.
@@ -463,9 +483,9 @@ type largeCommit struct {
 
 // beginLargeCommit takes the commit gate exclusively and durably records the
 // intent of a large commit.
-func (m *managedBadgerDB) beginLargeCommit() (*largeCommit, error) {
+func (m *managedBadgerDB) beginLargeCommit(onAssign ...func()) (*largeCommit, error) {
 	m.commitGate.Lock()
-	intentTs, err := m.oracle.assign()
+	intentTs, err := m.oracle.assign(onAssign...)
 	if err != nil {
 		m.commitGate.Unlock()
 		return nil, err
@@ -519,7 +539,13 @@ func (lc *largeCommit) commitBatch(txn *badger.Txn) error {
 // finish writes the last batch together with the intent's deletion,
 // publishes the whole commit and releases the gate. On error the caller must
 // abort.
-func (lc *largeCommit) finish(w *batchWriter) error {
+func (lc *largeCommit) finish(w *batchWriter, publication ...*commitPublication) error {
+	if len(publication) > 0 && publication[0] != nil && publication[0].owner != nil {
+		if err := publication[0].owner.prepareStoredEntityPublication(); err != nil {
+			return err
+		}
+	}
+
 	// Every earlier batch must be durable before the intent's deletion is.
 	err := lc.db.syncIfPersistent()
 	if err == nil {
@@ -531,7 +557,15 @@ func (lc *largeCommit) finish(w *batchWriter) error {
 	if err != nil {
 		return err
 	}
+	var publish *commitPublication
+	if len(publication) > 0 {
+		publish = publication[0]
+	}
+	lc.db.oracle.stage.register(lc.intentTs, publish)
 	lc.release()
+	if publish != nil {
+		lc.db.oracle.stage.apply(lc.intentTs)
+	}
 	return nil
 }
 
@@ -659,6 +693,8 @@ type commitOracle struct {
 	// readsHeld turns new reads away while Restore replaces the store
 	// (holdReads); changed is broadcast when the last open read ends.
 	readsHeld bool
+
+	stage publicationStage
 }
 
 func newCommitOracle(maxVersion uint64) *commitOracle {
@@ -745,7 +781,7 @@ func (o *commitOracle) releaseReads() {
 }
 
 // assign returns the next commit timestamp, unfinished until finish.
-func (o *commitOracle) assign() (uint64, error) {
+func (o *commitOracle) assign(onAssign ...func()) (uint64, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.failed != nil {
@@ -754,6 +790,9 @@ func (o *commitOracle) assign() (uint64, error) {
 	ts := o.nextTs
 	o.nextTs++
 	o.inflight[ts] = struct{}{}
+	for _, reserve := range onAssign {
+		reserve()
+	}
 	return ts, nil
 }
 

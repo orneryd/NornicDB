@@ -20,6 +20,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Transaction Go node updates use `UpdateGraphNode(node, policy)` with per-operation
+  `ClientNodeEdits` or `StoredNodeImages`. Manual visibility uses
+  `SetManualSuppression(kind, id, suppressed)` for nodes and relationships.
+  Migrate removed methods and optional capabilities using the
+  [storage Go migration guide](docs/development/transaction-node-deletion-api.md).
+
+- Go batch WAL replay uses the canonical `ReplayWALEntry` applier and
+  `ReplayResult.Record`; migrate the removed `ReplayWALEntries` convenience
+  wrapper using the [WAL replay guide](docs/architecture/wal-property-bindings.md#go-batch-replay).
+
+- Retire low-level raw Cypher, property and legacy batch replication commands;
+  use normal Bolt/HTTP APIs or prepared entity transactions. Preserve their numeric
+  slots as explicit errors. See the [replication migration guide](docs/development/replicated-entity-commits.md).
+
+- Transactional Go node deletion now uses `DeleteGraphNode(id, mode)` with
+  `CascadeEdges` or `RejectConnected`. Migrate the removed transaction methods
+  and custom deletion capabilities using the
+  [transaction deletion migration guide](docs/development/transaction-node-deletion-api.md).
+
 - Embedded Go query readers now take explicit request contexts, and executor cache
   policy is configured on `NewStorageExecutor`. Migrate callers using the
   [Go API migration guide](docs/api-reference/README.md#embedded-go-query-readers-v144-migration).
@@ -37,6 +56,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interruption; see [Securing Replication Traffic](docs/user-guides/clustering.md#securing-replication-traffic).
 
 ### Fixed
+
+- Keep a failed database DROP unavailable until durable cleanup completes, with
+  recovery on retry, reopen and Restore. Refresh attached quota accounting before
+  writes resume after Restore, preserving configured limits and accepted reservations.
+
+- Publish each replication command to the in-memory WAL once; complete transport
+  shutdown without holding admission locks or missing late connections.
+- Prevent native node-deletion/relationship lock cycles and retain temporal
+  uniqueness through commit completion.
+- Clearing an absent database configuration succeeds when storage wraps its
+  not-found error.
+
+- Publish derived storage indexes and caches in commit order for overlapping
+  entities and unique values, while allowing disjoint publications to progress
+  independently. Preserve replacement property-index entries after deletion.
+- Persist replacement transaction embedding chunks and remove obsolete chunks
+  across repeated updates, rollback and database reopen.
 
 - Preserve hidden stored node and relationship identity, quota usage and cascades.
   Order buffered, direct and maintenance writes together so flushes and restarts

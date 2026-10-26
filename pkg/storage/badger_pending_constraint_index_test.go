@@ -19,60 +19,69 @@ func pendingNode(id string, label string, props map[string]interface{}) *Node {
 	return &Node{ID: NodeID(prefixTestID(id)), Labels: []string{label}, Properties: props}
 }
 
-func TestPendingConstraintIndex_UniqueDuplicatesInTransaction(t *testing.T) {
-	engine, cleanup := setupTestBadgerEngine(t)
-	defer cleanup()
-	require.NoError(t, engine.GetSchemaForNamespace("test").AddUniqueConstraint("u_k", "Item", "k"))
+func TestPendingConstraintIndex_DuplicatesInTransaction(t *testing.T) {
+	for _, tc := range []struct {
+		name, prefix, label string
+		addConstraint       func(*SchemaManager) error
+		properties          func(int) map[string]interface{}
+		check               func(*testing.T, *BadgerTransaction)
+	}{
+		{name: "Unique", prefix: "u", label: "Item",
+			addConstraint: func(schema *SchemaManager) error { return schema.AddUniqueConstraint("u_k", "Item", "k") },
+			properties:    func(i int) map[string]interface{} { return map[string]interface{}{"k": int64(i)} },
+			check: func(t *testing.T, tx *BadgerTransaction) {
+				var err error
+				// A numeric value equal across types is a duplicate, as before.
+				_, err = tx.CreateNode(pendingNode("u-dup", "Item", map[string]interface{}{"k": float64(5)}))
+				require.Error(t, err, "duplicate of a pending value must be rejected")
 
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	defer tx.Rollback()
-	for i := 0; i < 3*pendingIndexMinNodes; i++ {
-		_, err := tx.CreateNode(pendingNode(fmt.Sprintf("u-%d", i), "Item", map[string]interface{}{"k": int64(i)}))
-		require.NoError(t, err)
+				// Rewriting a pending node frees its old value and takes the new one.
+				require.NoError(t, tx.UpdateGraphNode(pendingNode("u-3", "Item", map[string]interface{}{"k": int64(1000)}), ClientNodeEdits))
+				_, err = tx.CreateNode(pendingNode("u-reuse", "Item", map[string]interface{}{"k": int64(3)}))
+				require.NoError(t, err, "the value a rewritten pending node gave up is free again")
+				_, err = tx.CreateNode(pendingNode("u-dup2", "Item", map[string]interface{}{"k": int64(1000)}))
+				require.Error(t, err, "the rewritten node's new value is taken")
+
+				// Deleting a pending node frees its value.
+				require.NoError(t, tx.DeleteGraphNode(NodeID(prefixTestID("u-7")), CascadeEdges))
+				_, err = tx.CreateNode(pendingNode("u-reuse7", "Item", map[string]interface{}{"k": int64(7)}))
+				require.NoError(t, err, "the value of a deleted pending node is free again")
+
+				// Another label with the same value is not a duplicate.
+				_, err = tx.CreateNode(pendingNode("other-5", "Other", map[string]interface{}{"k": int64(5)}))
+				require.NoError(t, err)
+
+			}},
+		{name: "NodeKey", prefix: "nk", label: "User",
+			addConstraint: func(schema *SchemaManager) error {
+				return schema.AddConstraint(Constraint{Name: "user_key", Type: ConstraintNodeKey, Label: "User", Properties: []string{"tenant", "name"}})
+			},
+			properties: func(i int) map[string]interface{} {
+				return map[string]interface{}{"tenant": "t1", "name": fmt.Sprintf("user%d", i)}
+			},
+			check: func(t *testing.T, tx *BadgerTransaction) {
+				var err error
+				_, err = tx.CreateNode(pendingNode("nk-other-tenant", "User", map[string]interface{}{"tenant": "t2", "name": "user4"}))
+				require.NoError(t, err, "same name under another tenant is a different key")
+				_, err = tx.CreateNode(pendingNode("nk-dup", "User", map[string]interface{}{"tenant": "t1", "name": "user4"}))
+				require.Error(t, err, "the full composite key of a pending node must be rejected")
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine, cleanup := setupTestBadgerEngine(t)
+			defer cleanup()
+			require.NoError(t, tc.addConstraint(engine.GetSchemaForNamespace("test")))
+			tx, err := engine.BeginTransaction()
+			require.NoError(t, err)
+			defer tx.Rollback()
+			for i := 0; i < 3*pendingIndexMinNodes; i++ {
+				_, err := tx.CreateNode(pendingNode(fmt.Sprintf("%s-%d", tc.prefix, i), tc.label, tc.properties(i)))
+				require.NoError(t, err)
+			}
+			tc.check(t, tx)
+			require.NoError(t, tx.Commit())
+		})
 	}
-	// A numeric value equal across types is a duplicate, as before.
-	_, err = tx.CreateNode(pendingNode("u-dup", "Item", map[string]interface{}{"k": float64(5)}))
-	require.Error(t, err, "duplicate of a pending value must be rejected")
-
-	// Rewriting a pending node frees its old value and takes the new one.
-	require.NoError(t, tx.UpdateNode(pendingNode("u-3", "Item", map[string]interface{}{"k": int64(1000)})))
-	_, err = tx.CreateNode(pendingNode("u-reuse", "Item", map[string]interface{}{"k": int64(3)}))
-	require.NoError(t, err, "the value a rewritten pending node gave up is free again")
-	_, err = tx.CreateNode(pendingNode("u-dup2", "Item", map[string]interface{}{"k": int64(1000)}))
-	require.Error(t, err, "the rewritten node's new value is taken")
-
-	// Deleting a pending node frees its value.
-	require.NoError(t, tx.DeleteNode(NodeID(prefixTestID("u-7"))))
-	_, err = tx.CreateNode(pendingNode("u-reuse7", "Item", map[string]interface{}{"k": int64(7)}))
-	require.NoError(t, err, "the value of a deleted pending node is free again")
-
-	// Another label with the same value is not a duplicate.
-	_, err = tx.CreateNode(pendingNode("other-5", "Other", map[string]interface{}{"k": int64(5)}))
-	require.NoError(t, err)
-
-	require.NoError(t, tx.Commit())
-}
-
-func TestPendingConstraintIndex_NodeKeyDuplicatesInTransaction(t *testing.T) {
-	engine, cleanup := setupTestBadgerEngine(t)
-	defer cleanup()
-	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(Constraint{
-		Name: "user_key", Type: ConstraintNodeKey, Label: "User", Properties: []string{"tenant", "name"},
-	}))
-
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	defer tx.Rollback()
-	for i := 0; i < 3*pendingIndexMinNodes; i++ {
-		_, err := tx.CreateNode(pendingNode(fmt.Sprintf("nk-%d", i), "User", map[string]interface{}{"tenant": "t1", "name": fmt.Sprintf("user%d", i)}))
-		require.NoError(t, err)
-	}
-	_, err = tx.CreateNode(pendingNode("nk-other-tenant", "User", map[string]interface{}{"tenant": "t2", "name": "user4"}))
-	require.NoError(t, err, "same name under another tenant is a different key")
-	_, err = tx.CreateNode(pendingNode("nk-dup", "User", map[string]interface{}{"tenant": "t1", "name": "user4"}))
-	require.Error(t, err, "the full composite key of a pending node must be rejected")
-	require.NoError(t, tx.Commit())
 }
 
 func TestPendingConstraintIndex_TemporalOverlapInTransaction(t *testing.T) {

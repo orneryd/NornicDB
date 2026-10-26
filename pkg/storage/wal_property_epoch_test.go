@@ -67,7 +67,7 @@ func TestWALPropertyEpochMidBufferSnapshotAndCrashBoundaries(t *testing.T) {
 				require.NoError(t, err)
 				require.NoError(t, tx.SetNamespace("epoch"))
 				require.NoError(t, tx.SetImplicit(true))
-				require.NoError(t, tx.UpdateNode(&Node{ID: id, Properties: properties}))
+				require.NoError(t, tx.UpdateGraphNode(&Node{ID: id, Properties: properties}, ClientNodeEdits))
 				require.NoError(t, tx.Commit())
 				require.True(t, tx.AcknowledgedBuffered())
 			}

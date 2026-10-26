@@ -74,7 +74,7 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 					node, err := tx.GetNode("test:a")
 					require.NoError(t, err)
 					node.Properties = map[string]any{"v": float64(4)}
-					require.NoError(t, tx.UpdateNode(node))
+					require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 					edge, err := tx.GetEdge("test:r")
 					require.NoError(t, err)
 					edge.Properties = map[string]any{"v": float64(4)}
@@ -82,12 +82,12 @@ func TestBufferedRecoveryPreservesTypedCurrentAndHistory(t *testing.T) {
 				}
 				if mutation == "delete" {
 					require.NoError(t, tx.DeleteEdge("test:r"))
-					require.NoError(t, tx.DeleteNode("test:a"))
+					require.NoError(t, tx.DeleteGraphNode("test:a", CascadeEdges))
 				} else {
 					node, err := tx.GetNode("test:a")
 					require.NoError(t, err)
 					node.Properties = final
-					require.NoError(t, tx.UpdateNode(node))
+					require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
 					edge, err := tx.GetEdge("test:r")
 					require.NoError(t, err)
 					edge.Properties = final
@@ -262,7 +262,7 @@ func TestBufferedRecoveryRejectsCorruptAuthoritativeBodies(t *testing.T) {
 			payload, err := json.Marshal(data)
 			require.NoError(t, err)
 			require.Error(t, ReplayWALEntry(b, WALEntry{Operation: OpBufferedCommit, Data: payload}))
-			present, err := b.bufferedFlushMarkerExists("corrupt")
+			present, err := b.bufferedFlushMarkerExists("", "corrupt", "")
 			require.NoError(t, err)
 			require.False(t, present)
 			_, err = b.GetNode("test:n")

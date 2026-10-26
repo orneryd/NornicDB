@@ -739,40 +739,83 @@ func TestDatabaseManager_GetStorage(t *testing.T) {
 }
 
 func TestDatabaseManagerLazilyReconcilesStorageSizes(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	seed, err := NewDatabaseManager(base, nil)
-	require.NoError(t, err)
-	engine, err := seed.GetStorage(seed.DefaultDatabaseName())
-	require.NoError(t, err)
-	node := &storage.Node{ID: "persisted", Labels: []string{"Record"}, Properties: map[string]any{"name": "alpha"}}
-	_, err = engine.CreateNode(node)
-	require.NoError(t, err)
-	restarted, err := NewDatabaseManager(base, nil)
-	require.NoError(t, err)
-	restartedStorage, err := restarted.GetStorage(restarted.DefaultDatabaseName())
-	require.NoError(t, err)
-	storedNode, err := restartedStorage.GetNode("persisted")
-	require.NoError(t, err)
-	wantNodeSize, err := calculateNodeSize(storedNode)
-	require.NoError(t, err)
-	restarted.mu.RLock()
-	info := restarted.databases[restarted.DefaultDatabaseName()]
-	restarted.mu.RUnlock()
-	require.NotNil(t, info)
-	info.sizeMu.RLock()
-	require.False(t, info.sizeInitialized)
-	info.sizeMu.RUnlock()
-
-	totalSize, nodeSize, edgeSize := restarted.GetStorageSize(restarted.DefaultDatabaseName())
-	require.Equal(t, wantNodeSize, totalSize)
-	require.Equal(t, wantNodeSize, nodeSize)
-	require.Zero(t, edgeSize)
-
-	info.sizeMu.RLock()
-	require.True(t, info.sizeInitialized)
-	require.Equal(t, wantNodeSize, info.nodeSize)
-	require.Equal(t, wantNodeSize, info.totalSize)
-	info.sizeMu.RUnlock()
+	for _, tc := range []struct {
+		name     string
+		restart  bool
+		database string
+		nodes    []*storage.Node
+		edge     *storage.Edge
+	}{
+		{name: "restart-default-node", restart: true, nodes: []*storage.Node{{ID: "persisted", Labels: []string{"Record"}, Properties: map[string]any{"name": "alpha"}}}},
+		{name: "live-tenant-graph", database: "tenant_size", nodes: []*storage.Node{{ID: "a", Labels: []string{"Person"}, Properties: map[string]any{"name": "alice", "age": int64(42)}}, {ID: "b", Labels: []string{"Person"}, Properties: map[string]any{"name": "bob"}}}, edge: &storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "KNOWS", Properties: map[string]any{"since": int64(2020)}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+			seed, err := NewDatabaseManager(inner, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = seed.Close() })
+			database := tc.database
+			if database == "" {
+				database = seed.DefaultDatabaseName()
+			} else {
+				require.NoError(t, seed.CreateDatabase(database))
+			}
+			store, err := seed.GetStorage(database)
+			require.NoError(t, err)
+			for _, node := range tc.nodes {
+				_, err = store.CreateNode(node)
+				require.NoError(t, err)
+			}
+			if tc.edge != nil {
+				require.NoError(t, store.CreateEdge(tc.edge))
+			}
+			manager := seed
+			var wantSingle int64
+			if tc.restart {
+				manager, err = NewDatabaseManager(inner, nil)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = manager.Close() })
+				restartedStorage, err := manager.GetStorage(database)
+				require.NoError(t, err)
+				storedNode, err := restartedStorage.GetNode("persisted")
+				require.NoError(t, err)
+				wantSingle, err = calculateNodeSize(storedNode)
+				require.NoError(t, err)
+			}
+			manager.mu.RLock()
+			info := manager.databases[database]
+			manager.mu.RUnlock()
+			require.NotNil(t, info)
+			info = info.accountingOwner()
+			info.sizeMu.RLock()
+			initialized := info.sizeInitialized
+			info.sizeMu.RUnlock()
+			require.False(t, initialized)
+			total, nodeBytes, edgeBytes := manager.GetStorageSize(database)
+			wantNodes, wantEdges, calcErr := manager.calculateStorageSizeFromEngine(storage.NewNamespacedEngine(inner, database))
+			require.NoError(t, calcErr)
+			assert.Equal(t, wantNodes+wantEdges, total)
+			assert.Equal(t, wantNodes, nodeBytes)
+			assert.Equal(t, wantEdges, edgeBytes)
+			if tc.restart {
+				require.Equal(t, wantSingle, total)
+				require.Equal(t, wantSingle, nodeBytes)
+				require.Zero(t, edgeBytes)
+			} else {
+				assert.Greater(t, total, int64(0))
+				assert.Greater(t, nodeBytes, int64(0))
+				assert.Greater(t, edgeBytes, int64(0))
+				assert.Equal(t, total, nodeBytes+edgeBytes)
+			}
+			info.sizeMu.RLock()
+			initialized = info.sizeInitialized
+			cachedNodes, cachedTotal := info.nodeSize, info.totalSize
+			info.sizeMu.RUnlock()
+			require.True(t, initialized)
+			require.Equal(t, nodeBytes, cachedNodes)
+			require.Equal(t, total, cachedTotal)
+		})
+	}
 }
 
 func TestDatabaseManager_GetStorage_NotFound(t *testing.T) {
@@ -1061,57 +1104,6 @@ func TestDatabaseManager_BackwardsCompatibility(t *testing.T) {
 	nodes, err := store.AllNodes()
 	require.NoError(t, err)
 	assert.Len(t, nodes, 1)
-}
-
-func TestDatabaseManager_GetStorageSize_LazyInitFromRealData(t *testing.T) {
-	inner := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-	defer inner.Close()
-
-	manager, err := NewDatabaseManager(inner, nil)
-	require.NoError(t, err)
-	defer manager.Close()
-
-	require.NoError(t, manager.CreateDatabase("tenant_size"))
-	store, err := manager.GetStorage("tenant_size")
-	require.NoError(t, err)
-
-	_, err = store.CreateNode(&storage.Node{
-		ID:     storage.NodeID("a"),
-		Labels: []string{"Person"},
-		Properties: map[string]any{
-			"name": "alice",
-			"age":  int64(42),
-		},
-	})
-	require.NoError(t, err)
-	_, err = store.CreateNode(&storage.Node{
-		ID:     storage.NodeID("b"),
-		Labels: []string{"Person"},
-		Properties: map[string]any{
-			"name": "bob",
-		},
-	})
-	require.NoError(t, err)
-	require.NoError(t, store.CreateEdge(&storage.Edge{
-		ID:         storage.EdgeID("ab"),
-		StartNode:  storage.NodeID("a"),
-		EndNode:    storage.NodeID("b"),
-		Type:       "KNOWS",
-		Properties: map[string]any{"since": int64(2020)},
-	}))
-
-	total, nodeBytes, edgeBytes := manager.GetStorageSize("tenant_size")
-	assert.Greater(t, total, int64(0))
-	assert.Greater(t, nodeBytes, int64(0))
-	assert.Greater(t, edgeBytes, int64(0))
-	assert.Equal(t, total, nodeBytes+edgeBytes)
-
-	base := storage.NewNamespacedEngine(inner, "tenant_size")
-	wantNodeBytes, wantEdgeBytes, calcErr := manager.calculateStorageSizeFromEngine(base)
-	require.NoError(t, calcErr)
-	assert.Equal(t, wantNodeBytes+wantEdgeBytes, total)
-	assert.Equal(t, wantNodeBytes, nodeBytes)
-	assert.Equal(t, wantEdgeBytes, edgeBytes)
 }
 
 func TestDatabaseManager_GetStorageSize_IncrementalTrackingMatchesExactBytes(t *testing.T) {

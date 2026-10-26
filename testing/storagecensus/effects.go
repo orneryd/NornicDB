@@ -2,6 +2,7 @@ package storagecensus
 
 import (
 	"fmt"
+	"go/token"
 	"go/types"
 	"os"
 	"sort"
@@ -31,10 +32,11 @@ type req struct {
 	// later marks a write a closure makes after its maker returned (one
 	// that is stored, sent or started): no acquisition of the maker or its
 	// callers covers it.
-	later bool
+	later  bool
+	guards []typeGuard
 }
 
-func (r req) id() string { return r.space + "|" + r.origin }
+func (r req) id() string { return r.space + "|" + r.origin + "|" + guardID(r.guards) }
 
 // pend is a write whose key a function receives (a parameter, or a variable
 // a closure captures): its callers resolve it. covered records that an
@@ -45,10 +47,11 @@ type pend struct {
 	chain   []string
 	covered cover
 	later   bool // as in req
+	guards  []typeGuard
 }
 
 func (p pend) id() string {
-	return fmt.Sprintf("%s|%s|%d|%t", p.shape.id(true), p.origin, p.covered, p.later)
+	return fmt.Sprintf("%s|%s|%d|%t", p.shape.id(true), p.origin, p.covered, p.later) + "|" + guardID(p.guards)
 }
 
 type summary struct {
@@ -64,6 +67,7 @@ type analysis struct {
 	writes      map[string]write
 	acq         *acquirer
 	bodyMarks   map[ssa.Instruction]bool
+	bodyChains  map[ssa.Instruction]map[string][]string
 	bodyWriters map[*ssa.Function]bool
 	bodyVia     map[*ssa.Function]ssa.Instruction // why a function is in bodyWriters
 	paramCovers map[parameterCoverKey]cover       // see paramCover
@@ -163,21 +167,50 @@ func (a *analysis) callees(fn *ssa.Function, site ssa.CallInstruction) []*ssa.Fu
 // every resolution of that write: for diagnosing the census, not part of it.
 var traceOrigin = os.Getenv("NORNICDB_CENSUS_TRACE")
 
-func (a *analysis) resolve(shape keyShape, origin string, chain []string, covered cover, later bool, at *ssa.Function, where ssa.Instruction, s *summary) {
-	for _, one := range expand(shape) {
-		a.resolveOne(one, origin, chain, covered, later, at, where, s)
+func (a *analysis) resolve(shape keyShape, origin string, chain []string, covered cover, later bool, at *ssa.Function, where ssa.Instruction, s *summary, inherited ...[]typeGuard) {
+	var guards []typeGuard
+	if len(inherited) > 0 {
+		guards = inherited[0]
 	}
-}
-
-func (a *analysis) resolveOne(shape keyShape, origin string, chain []string, covered cover, later bool, at *ssa.Function, where ssa.Instruction, s *summary) {
-	if cases, ok := a.selectedByteCases(shape, at); ok {
-		for _, one := range cases {
-			a.resolveOne(one, origin, chain, covered, later, at, where, s)
+	guards = combineGuards(guards, typeGuardsAt(at, where))
+	// Resolve every finite key alternative through this same owner. Each
+	// recursive call gets its own selector coverage and writer provenance.
+	expanded := expand(shape)
+	if len(expanded) > 1 {
+		for _, one := range expanded {
+			a.resolve(one, origin, chain, covered, later, at, where, s, guards)
+		}
+		return
+	}
+	shape = expanded[0]
+	// Resolve a finite closed-world selector at the same owner as every
+	// other key alternative. Unknown values remain pending/fail closed.
+	var selected map[ssa.Value]bool
+	if len(shape.bytes) > 0 || (!later && len(shape.selectors) > 0) {
+		selected = a.acq.selectedValues(at)
+	}
+	for index, source := range shape.bytes {
+		if source.known || source.param < 0 || source.param >= len(at.Params) {
+			continue
+		}
+		parameter := at.Params[source.param]
+		if !selected[parameter] {
+			continue
+		}
+		values, why := a.k.byteVals(parameter, map[ssa.Value]bool{})
+		if why != "" || len(values) == 0 {
+			break
+		}
+		for _, value := range values {
+			next := shape
+			next.bytes = append([]byteSrc(nil), shape.bytes...)
+			next.bytes[index] = byteSrc{known: true, val: value, param: -1}
+			next.selectors = append(append([]selectorFact(nil), shape.selectors...), selectorFact{parameter, int64(value), token.EQL})
+			a.resolve(next, origin, chain, covered, later, at, where, s, guards)
 		}
 		return
 	}
 	if !later {
-		selected := a.acq.selectedValues(at)
 		for _, fact := range shape.selectors {
 			if selected[fact.value] {
 				covered |= a.acq.covers(at, where, flowAssumption{selector: fact})
@@ -192,7 +225,7 @@ func (a *analysis) resolveOne(shape keyShape, origin string, chain []string, cov
 		w := write{Space: shape.whole, Class: "whole-store", Origin: origin, Func: chainFunc(chain), Where: a.p.funcName(at) + " " + a.p.pos(where.Pos())}
 		a.writes[w.Origin+"|"+w.Where+"|"+w.Space] = w
 		if !covered.has(shape.whole) {
-			s.add(req{space: shape.whole, class: "whole-store", origin: origin, chain: chain, later: later})
+			s.add(req{space: shape.whole, class: "whole-store", origin: origin, chain: chain, later: later, guards: guards})
 		}
 		return
 	}
@@ -202,7 +235,7 @@ func (a *analysis) resolveOne(shape keyShape, origin string, chain []string, cov
 			a.p.funcName(at), a.p.pos(where.Pos()), shape, name, param, why, covered, later, chain)
 	}
 	if shape.param >= 0 || shape.free >= 0 || (name == "" && (param >= 0 || shape.capturedByte())) {
-		p := pend{shape: shape, origin: origin, chain: chain, covered: covered, later: later}
+		p := pend{shape: shape, origin: origin, chain: chain, covered: covered, later: later, guards: guards}
 		s.pends[p.id()] = p
 		return
 	}
@@ -219,10 +252,19 @@ func (a *analysis) resolveOne(shape keyShape, origin string, chain []string, cov
 			a.bodyMarks = map[ssa.Instruction]bool{}
 		}
 		a.bodyMarks[where] = true
+		if a.bodyChains == nil {
+			a.bodyChains = map[ssa.Instruction]map[string][]string{}
+		}
+		if a.bodyChains[where] == nil {
+			a.bodyChains[where] = map[string][]string{}
+		}
+		// Keep every calling path to this physical origin: an owned path
+		// must not overwrite a bypass path that resolves at the same instruction.
+		a.bodyChains[where][origin+"|"+strings.Join(chain, "\x00")] = append([]string(nil), chain...)
 	}
 	a.writes[w.Origin+"|"+w.Where+"|"+w.Space] = w
 	if (orderedClasses[class] || w.Class == "unclassified") && !covered.has(w.Space) {
-		r := req{space: w.Space, class: w.Class, origin: origin, chain: chain, later: later}
+		r := req{space: w.Space, class: w.Class, origin: origin, chain: chain, later: later, guards: guards}
 		if w.Class == "unclassified" {
 			r.space = "?" + why
 		}
@@ -271,7 +313,7 @@ func (a *analysis) summarize(fn *ssa.Function) *summary {
 					chain := []string{name + " " + origin}
 					covered := a.acq.covers(fn, ins)
 					if whole != "" {
-						a.resolveWhole(whole, origin, chain, covered, fn, ins, s)
+						a.resolve(keyShape{whole: whole, param: -1, free: -1}, origin, chain, covered, false, fn, ins, s)
 						continue
 					}
 					for _, shape := range a.k.shapes(key, 0) {
@@ -339,6 +381,11 @@ func (a *analysis) transfer(fn *ssa.Function, at ssa.Instruction, callee *ssa.Fu
 	covered := a.acq.covers(fn, at) | extra
 	step := a.p.funcName(fn) + " " + a.p.pos(at.Pos())
 	for _, r := range cs.reqs {
+		guards, possible := transferGuards(r.guards, args)
+		if !possible {
+			continue
+		}
+		r.guards = combineGuards(guards, typeGuardsAt(fn, at))
 		if covered.has(r.space) && !r.later {
 			continue
 		}
@@ -346,6 +393,10 @@ func (a *analysis) transfer(fn *ssa.Function, at ssa.Instruction, callee *ssa.Fu
 		s.add(r)
 	}
 	for _, p := range cs.pends {
+		guards, possible := transferGuards(p.guards, args)
+		if !possible {
+			continue
+		}
 		chain := append([]string{step}, p.chain...)
 		var shapes []keyShape
 		switch {
@@ -372,7 +423,7 @@ func (a *analysis) transfer(fn *ssa.Function, at ssa.Instruction, callee *ssa.Fu
 			cov = p.covered
 		}
 		for _, shape := range shapes {
-			a.resolve(shape, p.origin, chain, cov, p.later, fn, at, s)
+			a.resolve(shape, p.origin, chain, cov, p.later, fn, at, s, guards)
 		}
 	}
 }
@@ -408,6 +459,10 @@ func (a *analysis) closureParamShapes(s keyShape, closure, maker *ssa.Function) 
 func (a *analysis) transferLater(fn *ssa.Function, mc *ssa.MakeClosure, closure *ssa.Function, cs *summary, s *summary) {
 	step := a.p.funcName(fn) + " " + a.p.pos(mc.Pos())
 	for _, p := range cs.pends {
+		guards, possible := transferGuards(p.guards, nil)
+		if !possible {
+			continue
+		}
 		chain := append([]string{step}, p.chain...)
 		var shapes []keyShape
 		switch {
@@ -421,16 +476,8 @@ func (a *analysis) transferLater(fn *ssa.Function, mc *ssa.MakeClosure, closure 
 			shapes = []keyShape{unknownShape("key reaches " + closure.String() + ", a closure that runs later, as its parameter")}
 		}
 		for _, shape := range shapes {
-			a.resolve(shape, p.origin, chain, p.covered, true, fn, mc, s)
+			a.resolve(shape, p.origin, chain, p.covered, true, fn, mc, s, guards)
 		}
-	}
-}
-
-func (a *analysis) resolveWhole(whole, origin string, chain []string, covered cover, fn *ssa.Function, at ssa.Instruction, s *summary) {
-	w := write{Space: whole, Class: "whole-store", Origin: origin, Func: chainFunc(chain), Where: a.p.funcName(fn) + " " + a.p.pos(at.Pos())}
-	a.writes[w.Origin+"|"+w.Where+"|"+w.Space] = w
-	if !covered.has(whole) {
-		s.add(req{space: whole, class: "whole-store", origin: origin, chain: chain})
 	}
 }
 

@@ -15,12 +15,13 @@ func indexTombstoneKey(originalIndexKey []byte) []byte {
 // index key within the provided transaction. Cost: one Badger point lookup,
 // rejected in <50ns by bloom filter when no tombstone exists.
 func hasIndexTombstone(txn *badger.Txn, originalIndexKey []byte) bool {
-	entry, err := getAccessMetaInTxn(txn, policyIndexMetaIDPrefix+string(originalIndexKey))
+	entry, err := accessMetaInTxn(txn, policyIndexMetaIDPrefix+string(originalIndexKey), accessMetaRead, nil)
 	return err == nil && entry != nil && entry.IndexTombstone
 }
 
 func putIndexTombstoneInTxn(txn *badger.Txn, originalKey []byte) error {
-	return putAccessMetaInTxn(txn, policyIndexMetaIDPrefix+string(originalKey), &knowledgepolicy.AccessMetaEntry{IndexTombstone: true})
+	_, err := accessMetaInTxn(txn, policyIndexMetaIDPrefix+string(originalKey), accessMetaWrite, &knowledgepolicy.AccessMetaEntry{IndexTombstone: true})
+	return err
 }
 
 // WriteIndexTombstones writes zero-length presence markers for all given
