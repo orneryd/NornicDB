@@ -2,7 +2,9 @@ package replication
 
 import (
 	"context"
+	"errors"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"sync/atomic"
@@ -12,8 +14,9 @@ import (
 
 type acceptedMirrorStorage struct {
 	Storage
-	peer  *StorageAdapter
-	calls atomic.Int32
+	peer     *StorageAdapter
+	calls    atomic.Int32
+	ackError error
 }
 
 func (s *acceptedMirrorStorage) PrepareEntityCommand(ctx context.Context, cmd *Command) (*Command, func(storage.CommitOutcome), bool, error) {
@@ -24,16 +27,21 @@ func (s *acceptedMirrorStorage) ApplyCommand(cmd *Command) error {
 	if err := s.Storage.ApplyCommand(cmd); err != nil {
 		return err
 	}
-	// Exercise actual serialized ownership isolation, not shared command pointers.
-	bytes, err := storage.EncodeCommandPayload(cmd)
-	if err != nil {
-		return err
+	if s.peer != nil {
+		// Exercise actual serialized ownership isolation, not shared command pointers.
+		bytes, err := storage.EncodeCommandPayload(cmd)
+		if err != nil {
+			return err
+		}
+		var peer Command
+		if err = storage.DecodeCommandPayload(bytes, &peer); err != nil {
+			return err
+		}
+		if err = s.peer.ApplyCommand(&peer); err != nil {
+			return err
+		}
 	}
-	var peer Command
-	if err = storage.DecodeCommandPayload(bytes, &peer); err != nil {
-		return err
-	}
-	return s.peer.ApplyCommand(&peer)
+	return s.ackError
 }
 func TestAcceptedStandaloneExplicitTransactionReplicatesOriginalSnapshot(t *testing.T) {
 	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
@@ -100,4 +108,44 @@ func TestAcceptedFollowerRejectsBeforePreparationOrRecord(t *testing.T) {
 	route, found := storage.EntityCommitSubmitterFor(engine)
 	require.True(t, found)
 	require.ErrorIs(t, route.CheckAdmission(), ErrNotLeader)
+}
+
+func TestDatabaseDropPreservesAcceptedCatalogAcknowledgementError(t *testing.T) {
+	base, err := fixtureowner.OwnResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+	require.NoError(t, err)
+	adapter, err := NewStorageAdapterWithWAL(base, t.TempDir())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = adapter.Close() })
+	mirror := &acceptedMirrorStorage{Storage: adapter}
+	r := NewStandaloneReplicator(&Config{}, mirror)
+	require.NoError(t, r.Start(context.Background()))
+	t.Cleanup(func() { _ = r.Shutdown() })
+	engine := NewReplicatedEngine(base, r, time.Second)
+	manager, err := multidb.NewDatabaseManager(engine, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	require.NoError(t, manager.CreateDatabase("victim"))
+	view, err := manager.GetStorage("victim")
+	require.NoError(t, err)
+	_, err = view.CreateNode(&storage.Node{ID: "keep", Properties: map[string]interface{}{"value": "before"}})
+	require.NoError(t, err)
+	sentinel := errors.New("catalog applied but acknowledgement failed")
+	mirror.ackError = sentinel
+	err = manager.DropDatabase("victim")
+	require.ErrorIs(t, err, sentinel)
+	var accepted *storage.AcceptedCommitError
+	require.ErrorAs(t, err, &accepted)
+	require.Equal(t, storage.CommitApplied, accepted.State)
+	require.NotEmpty(t, accepted.LogicalID)
+	require.True(t, manager.Exists("victim"))
+	_, err = manager.GetStorage("victim")
+	require.ErrorIs(t, err, multidb.ErrDatabaseOffline)
+	node, err := base.GetStoredNode("victim:keep")
+	require.NoError(t, err)
+	require.Equal(t, "before", node.Properties["value"])
+	mirror.ackError = nil
+	require.NoError(t, manager.DropDatabase("victim"))
+	require.False(t, manager.Exists("victim"))
+	_, err = base.GetStoredNode("victim:keep")
+	require.ErrorIs(t, err, storage.ErrNotFound)
 }

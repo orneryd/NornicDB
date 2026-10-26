@@ -300,7 +300,7 @@ func TestAdjacencyHeaderMatchesRecord(t *testing.T) {
 	same("transaction update")
 
 	require.NoError(t, eng.withUpdate(func(txn *badger.Txn) error {
-		_, _, err := eng.evaluateEdgeSuppressionInTxn(txn, "test:e")
+		_, err := eng.evaluateSuppressionInTxn(txn, suppressionEvaluation{id: "test:e", isEdge: true})
 		return err
 	}))
 	record, err := eng.GetEdge("test:e")

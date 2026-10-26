@@ -670,8 +670,12 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 	// LastAccessed onto AccessMeta records, but ONLY for nodes that
 	// had non-zero access state. Catalog-only records do not report access state.
 	for _, fix := range nodeFixtures {
-		meta, err := eng.GetAccessMeta(string(fix.ID))
-		require.NoError(t, err, "GetAccessMeta(%q)", fix.ID)
+		metaResult, err := eng.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: string(fix.ID)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		require.NoError(t, err, "ReadAccessMeta(%q)", fix.ID)
+		meta := metaResult.Entry
 		if fix.AccessCount == 0 && fix.DecayScore == 0 && fix.LastAccessed.IsZero() {
 			require.Nil(t, meta, "expected no AccessMeta for %q", fix.ID)
 			continue

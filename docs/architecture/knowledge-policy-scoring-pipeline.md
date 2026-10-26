@@ -20,7 +20,7 @@ flowchart TD
 
     BE --> ENT["Materialize entity metadata<br/>ID, labels or type, props,<br/>createdAt, updatedAt or versionAt"]
     BE --> AMS["AccessMetaStore<br/>Badger LSM"]
-    AMS -->|"GetAccessMeta"| AME["AccessMetaEntry<br/>fixed fields, overflow,<br/>kalman filters"]
+    AMS -->|"ReadAccessMeta<br/>point or all"| AME["AccessMetaEntry<br/>fixed fields, overflow,<br/>kalman filters"]
 
     ENT --> NS["extractNamespaceFromID"]
     NS --> SF["getScorerForNamespace<br/>per-tenant Scorer"]
@@ -152,6 +152,15 @@ That follow-on document covers:
 - retention sweep behavior once suppressed entities remain in storage long enough
 
 ## See Also
+
+Go consumers read metadata through `ReadAccessMeta`. Replace
+`GetAccessMeta(id)` with
+`ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{EntityID: id})` and use
+the result's `Entry`. Replace `ScanAccessMeta()` with
+`ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadAll})`
+and use `Entries`. Both return the storage error separately. Point reads preserve
+work and tombstone entries; all reads enumerate entity access state in one
+captured transaction and skip internal work keys.
 
 - [Knowledge-Layer Policies](../user-guides/knowledge-layer-policies.md) — DDL, catalog objects, and end-to-end examples
 - [Decay Profiles](../user-guides/decay-profiles.md) — half-life, thresholds, floors, and the four decay functions

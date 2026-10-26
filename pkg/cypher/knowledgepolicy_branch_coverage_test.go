@@ -309,14 +309,26 @@ func TestKnowledgePolicyFunctionHelpers_Branches(t *testing.T) {
 	require.Nil(t, v)
 
 	// Memory engine has no decay context, so decay helpers return neutral fallback values.
-	decayScore := exec.evalKnowledgePolicy(context.Background(), "decayScore(n, {unknown:'x'})", map[string]*storage.Node{"n": node}, nil)
+	decayScore, policyHandled := exec.evaluateKnowledgePolicyFunction(context.Background(), "decayScore(n, {unknown:'x'})", "", map[string]*storage.Node{"n": node}, nil)
+	if !policyHandled {
+		t.Fatal("knowledge-policy expression was not handled")
+	}
 	require.Equal(t, 1.0, decayScore)
-	decay := exec.evalKnowledgePolicy(context.Background(), "decay(n, {unknown:'x'})", map[string]*storage.Node{"n": node}, nil)
+	decay, policyHandled := exec.evaluateKnowledgePolicyFunction(context.Background(), "decay(n, {unknown:'x'})", "", map[string]*storage.Node{"n": node}, nil)
+	if !policyHandled {
+		t.Fatal("knowledge-policy expression was not handled")
+	}
 	require.Equal(t, map[string]interface{}{"score": 1.0, "applies": false, "reason": "no BadgerEngine"}, decay)
 
 	// Policy fallbacks on missing entity and missing argument.
-	policy := exec.evalKnowledgePolicy(context.Background(), "policy()", map[string]*storage.Node{"n": node}, nil)
+	policy, policyHandled := exec.evaluateKnowledgePolicyFunction(context.Background(), "policy()", "", map[string]*storage.Node{"n": node}, nil)
+	if !policyHandled {
+		t.Fatal("knowledge-policy expression was not handled")
+	}
 	require.Equal(t, map[string]interface{}{"targetId": "", "targetScope": "NODE"}, policy)
-	policy = exec.evalKnowledgePolicy(context.Background(), "policy(missing)", map[string]*storage.Node{"n": node}, nil)
+	policy, policyHandled = exec.evaluateKnowledgePolicyFunction(context.Background(), "policy(missing)", "", map[string]*storage.Node{"n": node}, nil)
+	if !policyHandled {
+		t.Fatal("knowledge-policy expression was not handled")
+	}
 	require.Equal(t, map[string]interface{}{"targetId": "", "targetScope": "NODE"}, policy)
 }

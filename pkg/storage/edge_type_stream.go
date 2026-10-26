@@ -151,15 +151,17 @@ func (b *BadgerEngine) streamEdgesByTypeInScope(ctx context.Context, scope, edge
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
 		if edgeType != "" {
-			overlay, touched = b.bufferedTypeEdges(w, v, edgeType, scope)
+			pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType, prefix: scope})
+			overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 		} else {
-			overlay, touched = b.bufferedAllEdges(w, v, scope)
+			pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedEdges, prefix: scope})
+			overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 		}
 	}
 
 	nowNanos := DecayScoringTime()
 	emit := func(edge *Edge) error {
-		if edge == nil || b.hidesEdge(v, edge, nowNanos) {
+		if edge == nil || b.filterEntityByDecay(v, edge, nowNanos) {
 			return nil
 		}
 		if len(touched) > 0 && touched[edge.ID] {

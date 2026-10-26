@@ -93,7 +93,7 @@ func (w *WriteBehindBuffer) entityStateLocked(kind bufferedEntityKind, id string
 	}
 	policy := read[0]
 	now := DecayScoringTime()
-	if (state.node != nil && policy.engine.hidesNode(policy.visibility, state.node, now)) || (state.edge != nil && policy.engine.hidesEdge(policy.visibility, state.edge, now)) {
+	if (state.node != nil && policy.engine.filterEntityByDecay(policy.visibility, state.node, now)) || (state.edge != nil && policy.engine.filterEntityByDecay(policy.visibility, state.edge, now)) {
 		return bufferedEntityState{found: true, deleted: true}
 	}
 	return state

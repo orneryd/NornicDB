@@ -6,38 +6,24 @@ package storage
 // Scans use the adapters here; point reads pass a complete bufferedReadVisibility
 // to entityStateLocked. TestOverlayBodiesAreReadThroughVisibility rejects raw
 // body reads outside these owners. Each takes the read's visibility and applies
-// hidesNode or hidesEdge, the predicates the storage paths use. A hidden
+// filterEntityByDecay, the predicate the storage paths use. A hidden
 // buffered body stays in the touched or
 // suppressed set it comes with, so it masks its stored predecessor instead of
 // revealing it. All of them run where the caller holds the buffer's read
 // lock (withReadView's capture, captureReadView's cached callback).
 
-// visibleBufferedNodes keeps the nodes of a fresh overlay slice that a read
-// with visibility v sees.
-func (b *BadgerEngine) visibleBufferedNodes(v readVisibility, nodes []*Node) []*Node {
-	if v == storedRead || len(nodes) == 0 || !b.visibilityFiltered() {
-		return nodes
+// visibleBufferedEntities compacts either fresh overlay slice through the same
+// visibility owner. Hidden bodies still mask their stored predecessor through
+// the caller's untouched touched/suppressed sets.
+func visibleBufferedEntities[E *Node | *Edge](b *BadgerEngine, v readVisibility, entities []E) []E {
+	if v == storedRead || len(entities) == 0 || !b.visibilityFiltered() {
+		return entities
 	}
-	nowNanos := DecayScoringTime()
-	visible := nodes[:0]
-	for _, node := range nodes {
-		if !b.hidesNode(v, node, nowNanos) {
-			visible = append(visible, node)
-		}
-	}
-	return visible
-}
-
-// visibleBufferedEdges is visibleBufferedNodes for relationships.
-func (b *BadgerEngine) visibleBufferedEdges(v readVisibility, edges []*Edge) []*Edge {
-	if v == storedRead || len(edges) == 0 || !b.visibilityFiltered() {
-		return edges
-	}
-	nowNanos := DecayScoringTime()
-	visible := edges[:0]
-	for _, edge := range edges {
-		if !b.hidesEdge(v, edge, nowNanos) {
-			visible = append(visible, edge)
+	now := DecayScoringTime()
+	visible := entities[:0]
+	for _, entity := range entities {
+		if !b.filterEntityByDecay(v, entity, now) {
+			visible = append(visible, entity)
 		}
 	}
 	return visible
@@ -50,37 +36,66 @@ type bufferedReadVisibility struct {
 	visibility readVisibility
 }
 
-// bufferedLabelNodes is the overlay's label scan for a read with visibility v.
-func (b *BadgerEngine) bufferedLabelNodes(w *WriteBehindBuffer, v readVisibility, label string, prefixes ...string) ([]*Node, map[NodeID]bool) {
-	nodes, touched := w.labelOverlayLocked(label, prefixes...)
-	return b.visibleBufferedNodes(v, nodes), touched
+// bufferedEntityRead selects one overlay index while retaining the read policy.
+// An empty label/type still means that exact index key; only kind selects a
+// whole-entity scan. Prefix is empty for the complete physical namespace set.
+type bufferedEntityRead struct {
+	kind                              bufferedEntityReadKind
+	prefix, label, edgeType, property string
+	valueKey                          any
+	source, target                    NodeID
+	outgoing                          bool
+}
+type bufferedEntityReadKind uint8
+
+const (
+	bufferedNodes bufferedEntityReadKind = iota
+	bufferedLabel
+	bufferedKey
+	bufferedEdges
+	bufferedType
+	bufferedAdjacency
+	bufferedLiveAdjacency
+	bufferedBetween
+)
+
+type bufferedEntityResult struct {
+	nodes                        []*Node
+	edges                        []*Edge
+	nodesTouched                 map[NodeID]bool
+	edgesTouched                 map[EdgeID]bool
+	suppressed                   map[EdgeID]struct{}
+	sourceDeleted, targetDeleted bool
 }
 
-// bufferedAllNodes is the overlay's node scan for a read with visibility v.
-func (b *BadgerEngine) bufferedAllNodes(w *WriteBehindBuffer, v readVisibility, prefixes ...string) ([]*Node, map[NodeID]bool) {
-	nodes, touched := w.allNodesOverlayLocked(prefixes...)
-	return b.visibleBufferedNodes(v, nodes), touched
-}
-
-// bufferedAllEdges is the overlay's relationship scan for a read with
-// visibility v.
-func (b *BadgerEngine) bufferedAllEdges(w *WriteBehindBuffer, v readVisibility, prefixes ...string) ([]*Edge, map[EdgeID]bool) {
-	edges, touched := w.allEdgesOverlayLocked(prefixes...)
-	return b.visibleBufferedEdges(v, edges), touched
-}
-
-// bufferedTypeEdges is the overlay's relationship-type scan for a read with
-// visibility v.
-func (b *BadgerEngine) bufferedTypeEdges(w *WriteBehindBuffer, v readVisibility, edgeType string, prefixes ...string) ([]*Edge, map[EdgeID]bool) {
-	edges, touched := w.typeOverlayLocked(edgeType, prefixes...)
-	return b.visibleBufferedEdges(v, edges), touched
-}
-
-// bufferedAdjacency is the overlay's adjacency of nodeID for a read with
-// visibility v.
-func (b *BadgerEngine) bufferedAdjacency(w *WriteBehindBuffer, v readVisibility, nodeID NodeID, outgoing bool) (live []*Edge, suppressed map[EdgeID]struct{}, nodeDeleted bool) {
-	live, suppressed, nodeDeleted = w.edgeAdjacencyOverlayLocked(nodeID, outgoing)
-	return b.visibleBufferedEdges(v, live), suppressed, nodeDeleted
+// readBufferedEntities is the sole indexed-overlay capture/filter owner. The
+// caller holds w's read lock; touched IDs and deletion masks remain unfiltered
+// so hidden buffered bodies cannot reveal their older committed predecessors.
+func (b *BadgerEngine) readBufferedEntities(w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) (result bufferedEntityResult) {
+	switch request.kind {
+	case bufferedNodes:
+		result.nodes, result.nodesTouched = w.allNodesOverlayLocked(request.prefix)
+	case bufferedLabel:
+		result.nodes, result.nodesTouched = w.labelOverlayLocked(request.label, request.prefix)
+	case bufferedKey:
+		result.nodes = w.keyCandidatesLocked(request.label, request.property, request.valueKey)
+	case bufferedEdges:
+		result.edges, result.edgesTouched = w.allEdgesOverlayLocked(request.prefix)
+	case bufferedType:
+		result.edges, result.edgesTouched = w.typeOverlayLocked(request.edgeType, request.prefix)
+	case bufferedAdjacency:
+		result.edges, result.suppressed, result.sourceDeleted = w.edgeAdjacencyOverlayLocked(request.source, request.outgoing)
+	case bufferedLiveAdjacency:
+		result.edges = w.liveAdjacencyLocked(request.source, request.outgoing)
+	case bufferedBetween:
+		result.edges, result.suppressed, result.sourceDeleted, result.targetDeleted = w.edgesBetweenOverlayLocked(request.source, request.target)
+	}
+	if request.kind <= bufferedKey {
+		result.nodes = visibleBufferedEntities(b, v, result.nodes)
+	} else {
+		result.edges = visibleBufferedEntities(b, v, result.edges)
+	}
+	return result
 }
 
 // commitsSince visits the operations of each commit the buffer acknowledged
@@ -100,23 +115,4 @@ func (w *WriteBehindBuffer) commitsSince(since MVCCVersion, visit func(MVCCVersi
 			}
 		}
 	}
-}
-
-// bufferedLiveAdjacency is the overlay's live adjacency index of id for a
-// read with visibility v, without the buffer's global tombstones.
-func (b *BadgerEngine) bufferedLiveAdjacency(w *WriteBehindBuffer, v readVisibility, id NodeID, outgoing bool) []*Edge {
-	return b.visibleBufferedEdges(v, w.liveAdjacencyLocked(id, outgoing))
-}
-
-// bufferedEdgesBetween is the overlay's relationships from source to target
-// for a read with visibility v.
-func (b *BadgerEngine) bufferedEdgesBetween(w *WriteBehindBuffer, v readVisibility, source, target NodeID) (live []*Edge, suppressed map[EdgeID]struct{}, sourceDeleted, targetDeleted bool) {
-	live, suppressed, sourceDeleted, targetDeleted = w.edgesBetweenOverlayLocked(source, target)
-	return b.visibleBufferedEdges(v, live), suppressed, sourceDeleted, targetDeleted
-}
-
-// bufferedKeyCandidates is the overlay's pending holders of a key value for a
-// read with visibility v.
-func (b *BadgerEngine) bufferedKeyCandidates(w *WriteBehindBuffer, v readVisibility, label, property string, valueKey interface{}) []*Node {
-	return b.visibleBufferedNodes(v, w.keyCandidatesLocked(label, property, valueKey))
 }

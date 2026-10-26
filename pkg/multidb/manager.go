@@ -7,6 +7,7 @@ package multidb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"maps"
@@ -52,6 +53,7 @@ type DatabaseManager struct {
 	inner storage.Engine
 
 	// Database metadata (persisted in "system" namespace)
+	pendingDrops    map[string]bool
 	databases       map[string]*DatabaseInfo
 	serverID        string
 	serverCreatedAt time.Time
@@ -239,6 +241,10 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 		return m, nil
 	}
 
+	if err := m.recoverPendingDrops(); err != nil {
+		return nil, err
+	}
+
 	if err := m.ensureSystemDatabases(); err != nil {
 		return nil, err
 	}
@@ -265,10 +271,10 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 // can reach a namespace. Construction only registers callbacks; it never scans.
 func (m *DatabaseManager) registerGraphRuntimeOwners() error {
 	for name, info := range m.databases {
-		if info.Type != "standard" || name == m.config.SystemDatabase {
+		if m.pendingDrops[name] || info.Type != "standard" || name == m.config.SystemDatabase {
 			continue
 		}
-		if _, err := m.getStorageInternal(name); err != nil {
+		if _, _, err := m.databaseViewLocked(name, true); err != nil {
 			return err
 		}
 	}
@@ -423,7 +429,7 @@ func (m *DatabaseManager) CreateDatabase(name string) error {
 		return err
 	}
 	runtime.activateDatabase(m.databases[name].Limits)
-	_, err = m.getStorageInternal(name)
+	_, _, err = m.databaseViewLocked(name, true)
 	return err
 }
 
@@ -451,32 +457,21 @@ func (m *DatabaseManager) DropDatabase(name string) error {
 	}
 
 	// Prevent dropping default (unless allowed)
-	if info.IsDefault && !m.config.AllowDropDefault {
+	if info.IsDefault && !m.config.AllowDropDefault && !m.pendingDrops[name] {
 		return ErrCannotDropDefaultDB
 	}
 
-	// Delete all data with this namespace prefix
-	prefix := name + ":"
-	nodesDeleted, edgesDeleted, err := m.inner.DeleteByPrefix(prefix)
-	if err != nil {
-		return localizedError(localization.MultidbManagerDeleteDatabaseDataFailed(err), err)
+	// Publish and sync the catalog intent before irreversible native deletion.
+	// An admitted DROP stays unavailable and is completed on retry or reopen.
+	wasPending := m.pendingDrops[name]
+	m.transitionPendingDrop(name, true)
+	persistErr := m.persistMetadata()
+	var accepted *storage.AcceptedCommitError
+	if persistErr != nil && !errors.As(persistErr, &accepted) {
+		m.transitionPendingDrop(name, wasPending)
+		return persistErr
 	}
-
-	// Update metadata with deletion info (for logging/debugging)
-	_ = nodesDeleted
-	_ = edgesDeleted
-
-	// Remove from metadata
-	delete(m.databases, name)
-	m.applyChangeCapture(name, nil)
-	delete(m.engines, name) // Clear cached engine
-
-	if err := m.persistMetadata(); err != nil {
-		// If persistence fails, restore the database to maintain consistency
-		// This prevents the database from being dropped in memory but still existing in storage
-		m.databases[name] = info
-		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
-	}
+	delete(m.engines, name)
 	if runtime := info.managed.Load(); runtime != nil {
 		runtime.retireDatabase()
 	} else {
@@ -487,9 +482,32 @@ func (m *DatabaseManager) DropDatabase(name string) error {
 			}
 		}
 	}
-	delete(m.limitCheckers, name)
 	m.dropDatabaseStatementCachesLocked(name)
 	changed = true
+	if persistErr != nil {
+		return errors.Join(persistErr, m.syncDropMetadata())
+	}
+	if err := m.syncDropMetadata(); err != nil {
+		return err
+	}
+	if _, _, err := m.inner.DeleteByPrefix(name + ":"); err != nil {
+		return localizedError(localization.MultidbManagerDeleteDatabaseDataFailed(err), err)
+	}
+
+	delete(m.databases, name)
+	m.transitionPendingDrop(name, false)
+	if err := m.persistMetadata(); err != nil {
+		m.databases[name] = info
+		m.transitionPendingDrop(name, true)
+		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
+	}
+	if err := m.syncDropMetadata(); err != nil {
+		m.databases[name] = info
+		m.transitionPendingDrop(name, true)
+		return err
+	}
+	m.applyChangeCapture(name, nil)
+	delete(m.limitCheckers, name)
 
 	return nil
 }
@@ -537,7 +555,8 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 			}
 			return m.getRemoteStorageInternal(runtimeRef, authToken)
 		}
-		return m.getStorageInternal(resolvedName)
+		engine, _, err := m.databaseViewLocked(resolvedName, true)
+		return engine, err
 	}
 
 	// Validate database exists
@@ -546,7 +565,7 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 		return nil, ErrDatabaseNotFound
 	}
 
-	if info.Status != "online" {
+	if m.pendingDrops[name] || info.Status != "online" {
 		return nil, ErrDatabaseOffline
 	}
 
@@ -584,7 +603,7 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 				}
 
 				// Get storage for constituent
-				constituentStorage, err = m.getStorageInternal(actualName)
+				constituentStorage, _, err = m.databaseViewLocked(actualName, true)
 				if err != nil {
 					return nil, localizedError(localization.MultidbManagerGetConstituentStorageFailed(ref.DatabaseName, err), err)
 				}
@@ -603,16 +622,8 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 		return compositeEngine, nil
 	}
 
-	// Create the standard database wrapper chain once per canonical database.
-	baseEngine := storage.NewNamespacedEngine(m.inner, name)
-	checker, err := m.getOrCreateLimitCheckerLocked(name)
-	if err != nil {
-		return nil, err
-	}
-	engine := newSizeTrackingEngine(baseEngine, m, name, checker)
-	m.engines[name] = engine
-
-	return engine, nil
+	engine, _, err := m.databaseViewLocked(name, true)
+	return engine, err
 }
 
 // resolveCompositeConstituentInternal resolves dotted graph references in the form
@@ -651,34 +662,38 @@ func (m *DatabaseManager) resolveCompositeConstituentInternal(name string) (Cons
 	return ConstituentRef{}, "", false
 }
 
-// getStorageInternal gets storage for a database without resolving aliases.
-// Must be called with lock held.
-func (m *DatabaseManager) getStorageInternal(name string) (storage.Engine, error) {
-	// Check cache first
-	if engine, exists := m.engines[name]; exists {
-		return engine, nil
+// databaseViewLocked is the single lookup/construction owner for a namespace's
+// storage view and quota checker. A checker-only request never opens storage or
+// invokes runtime callbacks. The caller holds m.mu; cached views stay unchanged.
+func (m *DatabaseManager) databaseViewLocked(name string, includeStorage bool) (storage.Engine, *databaseLimitChecker, error) {
+	if includeStorage {
+		if m.pendingDrops[name] {
+			return nil, nil, ErrDatabaseOffline
+		}
+		if engine, exists := m.engines[name]; exists {
+			return engine, m.limitCheckers[name], nil
+		}
 	}
-
-	// Validate database exists
-	info, exists := m.databases[name]
-	if !exists {
-		return nil, ErrDatabaseNotFound
+	info := m.databases[name]
+	if info == nil {
+		return nil, nil, ErrDatabaseNotFound
 	}
-
-	if info.Status != "online" {
-		return nil, ErrDatabaseOffline
+	if includeStorage && info.Status != "online" {
+		return nil, nil, ErrDatabaseOffline
 	}
-
-	// Create namespaced engine with storage-size tracking.
-	baseEngine := storage.NewNamespacedEngine(m.inner, name)
-	checker, err := m.getOrCreateLimitCheckerLocked(name)
-	if err != nil {
-		return nil, err
+	checker := m.limitCheckers[name]
+	if checker == nil {
+		checker = &databaseLimitChecker{manager: m, databaseName: name, localPolicy: &databaseLimitPolicy{}}
+		checker.localPolicy.updateLimits(info.limitsSnapshot())
+		checker.info.Store(info)
+		m.limitCheckers[name] = checker
 	}
-	engine := newSizeTrackingEngine(baseEngine, m, name, checker)
+	if !includeStorage {
+		return nil, checker, nil
+	}
+	engine := newSizeTrackingEngine(storage.NewNamespacedEngine(m.inner, name), m, name, checker)
 	m.engines[name] = engine
-
-	return engine, nil
+	return engine, checker, nil
 }
 
 // getRemoteStorageInternal creates an engine for a remote constituent.
@@ -709,7 +724,7 @@ func (m *DatabaseManager) ListDatabases() []*DatabaseInfo {
 
 	result := make([]*DatabaseInfo, 0, len(m.databases))
 	for _, info := range m.databases {
-		result = append(result, cloneDatabaseInfo(info))
+		result = append(result, cloneDatabaseInfo(info, m.pendingDrops[info.Name]))
 	}
 	return result
 }
@@ -724,12 +739,16 @@ func (m *DatabaseManager) GetDatabase(name string) (*DatabaseInfo, error) {
 		return nil, ErrDatabaseNotFound
 	}
 
-	return cloneDatabaseInfo(info), nil
+	return cloneDatabaseInfo(info, m.pendingDrops[info.Name]), nil
 }
 
 // cloneDatabaseInfo returns a deep-enough, lock-safe snapshot of DatabaseInfo.
 // Caller must hold m.mu (read or write) before invoking.
-func cloneDatabaseInfo(info *DatabaseInfo) *DatabaseInfo {
+func cloneDatabaseInfo(info *DatabaseInfo, pendingDrop bool) *DatabaseInfo {
+	status := info.Status
+	if pendingDrop {
+		status = "offline"
+	}
 	limitsCopy := info.limitsSnapshot()
 
 	aliases := append([]string(nil), info.Aliases...)
@@ -748,7 +767,7 @@ func cloneDatabaseInfo(info *DatabaseInfo) *DatabaseInfo {
 		Name:            info.Name,
 		CreatedAt:       info.CreatedAt,
 		CreatedBy:       info.CreatedBy,
-		Status:          info.Status,
+		Status:          status,
 		Type:            info.Type,
 		IsDefault:       info.IsDefault,
 		NodeCount:       info.NodeCount,
@@ -1005,23 +1024,6 @@ func (m *DatabaseManager) GetDatabaseLimits(databaseName string) (*Limits, error
 	}
 
 	return info.limitsSnapshot(), nil
-}
-
-// getOrCreateLimitCheckerLocked owns namespace checker lookup and construction.
-// Caller holds manager.mu; this does not initialize storage or invoke callbacks.
-func (m *DatabaseManager) getOrCreateLimitCheckerLocked(databaseName string) (*databaseLimitChecker, error) {
-	info := m.databases[databaseName]
-	if info == nil {
-		return nil, ErrDatabaseNotFound
-	}
-	if checker := m.limitCheckers[databaseName]; checker != nil {
-		return checker, nil
-	}
-	checker := &databaseLimitChecker{manager: m, databaseName: databaseName, localPolicy: &databaseLimitPolicy{}}
-	checker.localPolicy.updateLimits(info.limitsSnapshot())
-	checker.info.Store(info)
-	m.limitCheckers[databaseName] = checker
-	return checker, nil
 }
 
 func cloneLimits(limits *Limits) *Limits {

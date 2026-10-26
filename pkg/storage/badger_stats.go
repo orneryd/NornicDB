@@ -803,7 +803,8 @@ func (b *BadgerEngine) StreamNodesWithOptions(ctx context.Context, opts StreamNo
 		v = visibleRead
 	}
 	capture := func(w *WriteBehindBuffer) {
-		overlay, touched = b.bufferedAllNodes(w, v, opts.Prefix)
+		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedNodes, prefix: opts.Prefix})
+		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
 	}
 	inScope := func(id NodeID) bool {
 		return opts.Prefix == "" || strings.HasPrefix(string(id), opts.Prefix)
@@ -894,7 +895,7 @@ func (b *BadgerEngine) streamNodesWithOptionsInTxn(ctx context.Context, txn *bad
 		if err != nil || node == nil {
 			return nil // Skip invalid nodes
 		}
-		if opts.ApplyDecayFilter && b.filterNodeByDecay(node, nowNanos) {
+		if opts.ApplyDecayFilter && b.filterEntityByDecay(visibleRead, node, nowNanos) {
 			return nil
 		}
 		if opts.StripEmbeddings {
@@ -983,7 +984,8 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 	var overlay []*Edge
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
-		overlay, touched = b.bufferedAllEdges(w, visibleRead)
+		pendingEdges := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedEdges})
+		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 	}
 	nowNanos := DecayScoringTime()
 	stopped := false
@@ -994,7 +996,7 @@ func (b *BadgerEngine) StreamEdges(ctx context.Context, fn func(edge *Edge) erro
 		if len(touched) > 0 && touched[edge.ID] {
 			return nil // the write-behind overlay shadows this committed row
 		}
-		if b.filterEdgeByDecay(edge, nowNanos) {
+		if b.filterEntityByDecay(visibleRead, edge, nowNanos) {
 			return nil
 		}
 		err := fn(edge)

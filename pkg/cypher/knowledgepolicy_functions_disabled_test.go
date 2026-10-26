@@ -17,13 +17,13 @@ func TestDecayMismatchLoggedOnce(t *testing.T) {
 	rels := map[string]*storage.Edge{}
 	ctx := context.Background()
 
-	exec.evalKnowledgePolicy(ctx, "decayScore(n)", nodes, rels)
+	exec.evaluateKnowledgePolicyFunction(ctx, "decayScore(n)", "", nodes, rels)
 	if !exec.decayMismatchLogged {
 		t.Error("expected decayMismatchLogged=true after first call")
 	}
 
 	exec.decayMismatchLogged = false
-	exec.evalKnowledgePolicy(ctx, "decayScore(n)", nodes, rels)
+	exec.evaluateKnowledgePolicyFunction(ctx, "decayScore(n)", "", nodes, rels)
 	if !exec.decayMismatchLogged {
 		t.Error("flag should be set again after reset")
 	}

@@ -16,6 +16,13 @@ does not prove rollback: the write can still apply. Pending work retains its quo
 reservation until application or a definite discard. Check the resulting data before
 issuing a new, non-idempotent request after an uncertain outcome.
 
+Direct Go writes expose errors after acceptance as `*storage.AcceptedCommitError`.
+Use `errors.As` to inspect `State` (`CommitApplied` or `CommitRecoveryPending`)
+and `LogicalID` when available. `errors.Is` still reaches the original error.
+An error from a failed forwarded reply is recovery-pending because the leader
+may have accepted the request. A definite pre-admission rejection remains an
+ordinary error. Do not roll back catalog admission on an accepted error.
+
 ## Retired low-level replication commands
 
 The internal `CmdCypher`, `CmdSetProperty` and `CmdBatchWrite` entry points are
@@ -43,6 +50,10 @@ coherent stored-entity observation, commit submission, and the shared
 `storage.ManagedEntityRuntimeRegistry`. Native engines provide these capabilities.
 The registry keeps one accounting, reservation and limit-policy owner for each
 physical namespace across manager views.
+
+Count-store decorators also forward `storage.NamespaceEdgeTypeStatsProvider`.
+`NamespaceRelationshipCount` dispatches its typed tier to that provider; a
+missing capability is `ErrInvalidData`, never a global count or a scan.
 
 A transparent decorator implements `storage.EngineUnwrapper.GetInnerEngine()` to
 expose its actual backing engine. A decorator that applies write policy also
@@ -92,6 +103,14 @@ include the unfinished namespace. Explicitly scoped reads and writes for other
 namespaces remain available. Retry the same DROP to finish cleanup. Opening the
 store or restoring a backup with an unfinished intent completes that cleanup before
 serving graph operations.
+
+`DatabaseManager.DropDatabase` also records its catalog intent before native
+deletion. A rejected intent write leaves the data and live catalog intact.
+After admission, an error keeps the database unavailable (`ErrDatabaseOffline`)
+until retry or writable manager startup completes removal. Catalog completion is
+synced before a successful DROP returns, so same-name recreation cannot inherit
+an old pending catalog intent. Read-only managers retain pending state without
+applying cleanup. Physical deletion continues through the native prefix owner.
 
 Successful Restore invalidates initialized managed usage in attached managers.
 The next managed write reads actual restored usage before admission, preserving
