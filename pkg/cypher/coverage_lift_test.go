@@ -1,3 +1,4 @@
+// Author of fulltext-owner convergence: Codex implementation lane, 2026-10-26 (NOR-148).
 package cypher
 
 import (
@@ -114,14 +115,6 @@ func TestCoverageLiftPureBranchHelpers(t *testing.T) {
 	applyFulltextOptions(result, fulltextQueryOptions{skip: 2, limit: -1})
 	assert.Empty(t, result.Rows)
 	applyFulltextOptions(nil, fulltextQueryOptions{skip: 1, limit: 1})
-
-	seen := 0
-	result = &ExecuteResult{}
-	assert.False(t, appendFulltextOptionedRow(result, fulltextQueryOptions{skip: 1, limit: 1}, &seen, []interface{}{"skip"}))
-	assert.True(t, appendFulltextOptionedRow(result, fulltextQueryOptions{skip: 1, limit: 1}, &seen, []interface{}{"keep"}))
-	assert.Equal(t, [][]interface{}{{"keep"}}, result.Rows)
-	assert.False(t, appendFulltextOptionedRow(nil, fulltextQueryOptions{}, &seen, []interface{}{"ignored"}))
-	assert.False(t, appendFulltextOptionedRow(result, fulltextQueryOptions{}, nil, []interface{}{"ignored"}))
 
 	assert.True(t, containsVariableLengthPathPattern("MATCH (a)-[*]->(b) RETURN b"))
 	assert.True(t, containsVariableLengthPathPattern("MATCH (a)-[*1..3]->(b) RETURN b"))

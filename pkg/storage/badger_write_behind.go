@@ -720,6 +720,11 @@ func (b *BadgerEngine) FlushWriteBehind() error {
 	return nil
 }
 
+// WriteBehindEnabled reports whether buffered publication can change scan
+// order as it drains, independently of visible graph mutation revisions.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func (b *BadgerEngine) WriteBehindEnabled() bool { return b.writeBehindEnabled() }
+
 // writeBehindEnabled reports whether the buffer is active.
 func (b *BadgerEngine) writeBehindEnabled() bool {
 	return b.writeBehind != nil

@@ -257,45 +257,21 @@ func (b *BadgerEngine) readEdgeInTxn(txn *badger.Txn, edgeID EdgeID) (*Edge, err
 type storedEdgeBodyVisitor func(EdgeID, []byte) (bool, error)
 
 func (b *BadgerEngine) streamAllEdgesInScopeTxnWithBodies(ctx context.Context, txn *badger.Txn, scope string, emit func(*Edge) error, body storedEdgeBodyVisitor) error {
-	prefix := []byte{prefixEdge}
-	if scope != "" {
-		prefix = edgeKey(EdgeID(scope))
+	// The caller owns visibility and overlay shadowing; decode errors end the
+	// scan. A stop from emit is returned to the caller as before.
+	scan := edgeRowScan{
+		scope:      rowsWithPrefix(scope),
+		overlay:    noOverlay[EdgeID](),
+		decode:     decodeErrorsFail,
+		visibility: scanStored,
+		hooks:      rowHooks[EdgeID]{before: func(id EdgeID) (bool, error) { return id == "", nil }},
+		body:       body,
 	}
-	it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	defer it.Close()
-	for it.Rewind(); it.Valid(); it.Next() {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		key := it.Item().Key()
-		if len(key) <= 1 {
-			continue
-		}
-		edgeID := EdgeID(key[1:])
-		var edge *Edge
-		var handled bool
-		if err := it.Item().Value(func(val []byte) error {
-			if body != nil {
-				var err error
-				handled, err = body(edgeID, val)
-				if err != nil || handled {
-					return err
-				}
-			}
-			var decodeErr error
-			edge, decodeErr = b.decodeEdgeBodyByID(val, edgeID)
-			return decodeErr
-		}); err != nil {
-			return err
-		}
-		if handled {
-			continue
-		}
-		if err := emit(edge); err != nil {
-			return err
-		}
+	stopped, err := b.scanEdgeRows(ctx, txn, scan, emit)
+	if stopped {
+		return ErrIterationStopped
 	}
-	return nil
+	return err
 }
 
 // streamEdgesByTypeAtSnapshotWithView reads scoped type candidates and bodies

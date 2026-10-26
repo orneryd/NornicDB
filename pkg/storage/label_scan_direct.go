@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"strings"
 
 	"github.com/dgraph-io/badger/v4"
@@ -18,30 +19,29 @@ const labelScanMaxBuffered = 1024
 // readNodeRecordsInOnePass calls read with the stored record of each of ids
 // that exists, walking scope's node records once ("" is every database)
 // instead of looking each record up. read's order is the records' key order;
-// an error from read stops the walk and is returned.
-func readNodeRecordsInOnePass(txn *badger.Txn, scope string, ids []NodeID, read func(NodeID, *badger.Item) error) error {
+// an error from read stops the walk and is returned. The walk is the engine's
+// one node-row scan; read keeps its own versioned record reader.
+func (b *BadgerEngine) readNodeRecordsInOnePass(txn *badger.Txn, scope string, ids []NodeID, read func(NodeID, *badger.Item) error) error {
 	wanted := make(map[NodeID]struct{}, len(ids))
 	for _, id := range ids {
 		wanted[id] = struct{}{}
 	}
-	prefix := []byte{prefixNode}
-	if scope != "" {
-		prefix = nodeKey(NodeID(scope))
+	if len(wanted) == 0 {
+		return nil
 	}
-	records := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-	defer records.Close()
-	for records.Rewind(); records.Valid() && len(wanted) > 0; records.Next() {
-		item := records.Item()
-		nodeID := NodeID(item.Key()[1:])
-		if _, ok := wanted[nodeID]; !ok {
-			continue
-		}
-		delete(wanted, nodeID)
-		if err := read(nodeID, item); err != nil {
-			return err
-		}
-	}
-	return nil
+	rows := nodeRowScan{scope: rowsWithPrefix(scope), overlay: noOverlay[NodeID](), decode: decodeErrorsFail, visibility: scanStored,
+		hooks: rowHooks[NodeID]{before: func(id NodeID) (bool, error) {
+			if len(wanted) == 0 {
+				return true, ErrIterationStopped // every wanted record was read
+			}
+			_, ok := wanted[id]
+			return !ok, nil
+		}},
+		item: func(id NodeID, item *badger.Item) (bool, error) {
+			delete(wanted, id)
+			return true, read(id, item)
+		}}
+	return b.streamNodesWithOptionsInTxn(context.Background(), txn, rows, StreamNodesOptions{}, func(*Node) error { return nil })
 }
 
 // labelCoversScope reports whether label is on at least half of the nodes in

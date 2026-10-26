@@ -286,7 +286,7 @@ func TestReadNodeRecordsInOnePassStopsOnCallbackError(t *testing.T) {
 	stop := fmt.Errorf("stop reading records")
 	visited := 0
 	require.ErrorIs(t, eng.withView(func(txn *badger.Txn) error {
-		return readNodeRecordsInOnePass(txn, "test:", ids, func(NodeID, *badger.Item) error {
+		return eng.readNodeRecordsInOnePass(txn, "test:", ids, func(NodeID, *badger.Item) error {
 			visited++
 			return stop
 		})
@@ -344,7 +344,7 @@ func BenchmarkLabelRecordReads(b *testing.B) {
 		{
 			name: "one_pass",
 			read: func(read func(NodeID, *badger.Item) error) error {
-				return readNodeRecordsInOnePass(txn, "test:", ids, read)
+				return eng.readNodeRecordsInOnePass(txn, "test:", ids, read)
 			},
 		},
 	} {

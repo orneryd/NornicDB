@@ -49,6 +49,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Go catalog construction and all catalog mutations now take an explicit context.
   Custom catalog storage must expose authoritative commit receipts; migrate
   callers and adapters using the [catalog API guide](docs/development/catalog-context-api.md).
+<!-- Author: Codex implementation lane, 2026-10-26 (NOR-148). -->
+- Reuse maintained full-text documents for ranked node and relationship queries while
+  preserving Lucene matching, scores, eligibility and transaction visibility.
+  Bind cold/recovery population to one committed snapshot so concurrent writes
+  cannot restart it indefinitely; cancellation also interrupts projection waits.
+  Keep ordered traversal at the original reader boundary so matching prefixes stop
+  acquisition immediately; build scoring documents only after read/query admission.
+  Committed node and relationship row scans (AllNodes, AllEdges, StreamEdges and read
+  snapshots) share one scan per entity kind, and a read error while refreshing
+  maintained documents is returned instead of being retried as a full scan.
 
 - Go access-metadata reads use `ReadAccessMeta(AccessMetaReadRequest)` with
   `AccessMetaReadPoint` or `AccessMetaReadAll`. Migrate `GetAccessMeta` results
