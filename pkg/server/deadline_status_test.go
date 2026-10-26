@@ -24,7 +24,7 @@ func TestHTTPDeadlineStatus(t *testing.T) {
 		nornicerrors.MarkStatementTimeout(context.DeadlineExceeded, nornicerrors.ErrDatabaseQueryTimeLimit),
 		fmt.Errorf("route: %w", nornicerrors.MarkStatementTimeout(fmt.Errorf("pipeline stage: %w", context.DeadlineExceeded), nornicerrors.ErrDatabaseQueryTimeLimit)),
 	} {
-		failure := statementError(err)
+		failure := statementError(err, nil)
 		require.Equal(t, "Neo.ClientError.Transaction.TransactionTimedOut", failure.Code)
 		require.Equal(t, nornicerrors.TransactionTimedOutMessage, failure.Message)
 	}
@@ -34,7 +34,7 @@ func TestHTTPDeadlineStatus(t *testing.T) {
 		fmt.Errorf("embedder: %w", context.DeadlineExceeded),
 		nornicerrors.MarkStatementTimeout(context.DeadlineExceeded, context.DeadlineExceeded),
 	} {
-		failure := statementError(err)
+		failure := statementError(err, nil)
 		require.NotEqual(t, "Neo.ClientError.Transaction.TransactionTimedOut", failure.Code)
 	}
 }

@@ -1,9 +1,10 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
+
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
 
 // publishSnowballPackage installs a completely built and checked library/manifest
@@ -40,11 +41,11 @@ func publishSnowballPackage(staged, destination string) (err error) {
 		for i := len(artifacts) - 1; i >= 0; i-- {
 			file := &artifacts[i]
 			if file.installed {
-				err = errors.Join(err, os.Remove(file.target))
+				err = compose.Outcomes(err, os.Remove(file.target))
 			}
 			if file.saved {
 				if restoreErr := os.Rename(file.backup, file.target); restoreErr != nil {
-					err = errors.Join(err, fmt.Errorf("restore %s from %s: %w", file.target, file.backup, restoreErr))
+					err = compose.Outcomes(err, fmt.Errorf("restore %s from %s: %w", file.target, file.backup, restoreErr))
 				}
 			}
 		}

@@ -2,10 +2,10 @@ package server
 
 import (
 	"context"
-	"errors"
 	"log/slog"
 
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/mcp"
@@ -82,7 +82,7 @@ func (s *Server) stopHeimdallPlugins() error {
 	defer s.heimdallPluginsMu.Unlock()
 	var err error
 	if manager := s.heimdallSubsystem; manager != nil {
-		err = observability.RedactError(errors.Join(manager.StopAll(), manager.ShutdownAll()))
+		err = observability.RedactError(compose.Outcomes(manager.StopAll(), manager.ShutdownAll()))
 		s.heimdallSubsystem = nil
 	}
 	if s.heimdallCacheRouter != nil {

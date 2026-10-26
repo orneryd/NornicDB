@@ -157,6 +157,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatch, including dynamic graph selections and execution without a grant
   resolver; preserve read-only alias reads and writable-alias writes.
 
+<!-- Author: Codex, NOR-180 implementation lane, updated 2026-10-29. -->
+- Report logical WAL commit and abort record failures from explicit and implicit
+  transactions through HTTP, Bolt, GraphQL and the CLI shell, retaining primary
+  statuses, localized diagnostics and the actual native graph outcome across
+  cleanup, cancellation, callback and procedure aggregation, and response
+  formatting. Keep independently failed terminal records visible together.
+  <!-- Author: Claude, NOR-180, 2026-10-30. -->
+  A transaction start, commit or rollback failure without a more specific
+  status now reports Neo4j's `Neo.DatabaseError.Transaction.Transaction{Start,Commit,Rollback}Failed`
+  on every route, auto-commit statements included (previously `ClientError`,
+  or `Statement.SyntaxError` on some routes).
+  An explicit HTTP transaction whose MERGE-only COMMIT loses a uniqueness race
+  now reports the retryable `Neo.TransientError.Transaction.Outdated`, as Bolt
+  and auto-commit statements already did (previously
+  `Neo.ClientError.Schema.ConstraintValidationFailed`).
+
 - Keep typed relationship counts scoped through WAL, tracing, replication and
   managed database views. Journal catalog DROP intent before deleting data;
   retry or reopen completes interrupted cleanup without reopening an empty

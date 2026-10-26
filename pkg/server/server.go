@@ -163,7 +163,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/orneryd/nornicdb/pkg/security"
 	"io"
@@ -190,6 +189,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/config/dbconfig"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/embed"
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 	"github.com/orneryd/nornicdb/pkg/graphql"
 	"github.com/orneryd/nornicdb/pkg/heimdall"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -2032,13 +2032,13 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 	}
 	defer func() {
 		if s.slowQueryFile != nil {
-			err = errors.Join(err, s.slowQueryFile.Close())
+			err = compose.Outcomes(err, s.slowQueryFile.Close())
 		}
 	}()
 
 	defer func() {
 		if shutdownErr := s.stopHeimdallPlugins(); shutdownErr != nil {
-			err = errors.Join(err, shutdownErr)
+			err = compose.Outcomes(err, shutdownErr)
 		}
 	}()
 	s.statementCacheIndex.Close()
