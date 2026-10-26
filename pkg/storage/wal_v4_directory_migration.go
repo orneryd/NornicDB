@@ -12,6 +12,8 @@ import (
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/google/uuid"
+
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
 
 const v4WALBackupComplete = ".nornic-v4-wal-backup-complete"
@@ -80,7 +82,7 @@ func backupV4WALDirectory(source, backup string) error {
 		if copyErr == nil {
 			copyErr = out.Sync()
 		}
-		copyErr = errors.Join(copyErr, in.Close(), out.Close())
+		copyErr = compose.Outcomes(copyErr, in.Close(), out.Close())
 		if copyErr != nil {
 			return copyErr
 		}
@@ -100,7 +102,7 @@ func backupV4WALDirectory(source, backup string) error {
 	if err != nil {
 		return err
 	}
-	if err := errors.Join(marker.Sync(), marker.Close()); err != nil {
+	if err := compose.Outcomes(marker.Sync(), marker.Close()); err != nil {
 		return err
 	}
 	for i := len(directories) - 1; i >= 0; i-- {
@@ -396,7 +398,7 @@ func (b *BadgerEngine) recoverV4WALAtOpen(allowUpgrade, pending, formatOnly bool
 	replayed, replayErr := RecoverBufferedCommitsAtOpen(b, wal)
 	closeErr := wal.Close()
 	if replayErr != nil || closeErr != nil {
-		return false, errors.Join(replayErr, closeErr)
+		return false, compose.Outcomes(replayErr, closeErr)
 	}
 	if formatOnly {
 		if err := b.db.Update(func(tx *badger.Txn) error { return tx.Delete(v4WALFormatRecoveryKey) }); err != nil {

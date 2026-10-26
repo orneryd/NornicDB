@@ -41,6 +41,12 @@ github.com/orneryd/nornicdb/internal/testutil.RequireCatalogOptionContext
 github.com/orneryd/nornicdb/internal/testutil.RequireCatalogOptionContext -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine calls=1
 github.com/orneryd/nornicdb/internal/testutil/remotegraph.New
 github.com/orneryd/nornicdb/internal/testutil/remotegraph.New -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine calls=2
+github.com/orneryd/nornicdb/internal/testutil/walterminal.New
+github.com/orneryd/nornicdb/internal/testutil/walterminal.New -> github.com/orneryd/nornicdb/pkg/storage.NewMemoryEngine calls=1
+github.com/orneryd/nornicdb/internal/testutil/walterminal.NewEnclosedOutcomeFlow
+github.com/orneryd/nornicdb/internal/testutil/walterminal.NewEnclosedOutcomeFlow -> github.com/orneryd/nornicdb/internal/testutil/walterminal.New calls=5
+github.com/orneryd/nornicdb/internal/testutil/walterminal.NewOutcomeContract
+github.com/orneryd/nornicdb/internal/testutil/walterminal.NewOutcomeContract -> github.com/orneryd/nornicdb/internal/testutil/walterminal.New calls=1
 github.com/orneryd/nornicdb/internal/transactionalcalltest.CheckExecute
 github.com/orneryd/nornicdb/internal/transactionalcalltest.CheckExecute -> github.com/orneryd/nornicdb/pkg/storage.NewBadgerEngineInMemory calls=1
 github.com/orneryd/nornicdb/pkg/cypher/testutil.SetupTestExecutor

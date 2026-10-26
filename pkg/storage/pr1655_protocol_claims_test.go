@@ -22,6 +22,7 @@ import (
 
 type pr1655PublicClient struct {
 	run           func(string) ([][]interface{}, error)
+	setParams     func(map[string]interface{})
 	begin, commit func() error
 	rollback      func()
 }
@@ -38,7 +39,7 @@ func pr1655PublicStatus(err error) string {
 	if errors.As(err, &boltError) {
 		return boltError.Code
 	}
-	code, _ := nornicerrors.Neo4jCommitStatus(err)
+	code, _ := nornicerrors.Neo4jStatus(nornicerrors.TransactionControlFailure(nornicerrors.TerminalCommit, err))
 	return code
 }
 
@@ -48,19 +49,21 @@ func pr1655OpenPublicClient(t *testing.T, srv *server.Server, route string) *pr1
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
+	var params map[string]interface{}
+	setParams := func(values map[string]interface{}) { params = values }
 	switch route {
 	case "Execute":
 		store, err := srv.GetDatabaseManager().GetStorage("nornic")
 		require.NoError(t, err)
 		exec := cypher.NewStorageExecutor(store)
 		run := func(query string) ([][]interface{}, error) {
-			result, err := exec.Execute(ctx, query, nil)
+			result, err := exec.Execute(ctx, query, params)
 			if err != nil {
 				return nil, err
 			}
 			return result.Rows, nil
 		}
-		client := &pr1655PublicClient{run: run, begin: func() error { _, err := run("BEGIN"); return err }, commit: func() error { _, err := run("COMMIT"); return err }, rollback: func() { _, _ = run("ROLLBACK") }}
+		client := &pr1655PublicClient{setParams: setParams, run: run, begin: func() error { _, err := run("BEGIN"); return err }, commit: func() error { _, err := run("COMMIT"); return err }, rollback: func() { _, _ = run("ROLLBACK") }}
 		t.Cleanup(client.rollback)
 		return client
 	case "Bolt":
@@ -84,13 +87,13 @@ func pr1655OpenPublicClient(t *testing.T, srv *server.Server, route string) *pr1
 		session := driver.NewSession(ctx, neo4j.SessionConfig{DatabaseName: "nornic"})
 		t.Cleanup(func() { require.NoError(t, session.Close(ctx)) })
 		var tx neo4j.ExplicitTransaction
-		client := &pr1655PublicClient{}
+		client := &pr1655PublicClient{setParams: setParams}
 		client.begin = func() error { var err error; tx, err = session.BeginTransaction(ctx); return err }
 		client.run = func(query string) ([][]interface{}, error) {
 			var result neo4j.ResultWithContext
 			var err error
 			if tx != nil {
-				result, err = tx.Run(ctx, query, nil)
+				result, err = tx.Run(ctx, query, params)
 			} else {
 				result, err = session.Run(ctx, query, nil)
 			}
@@ -133,7 +136,7 @@ func pr1655OpenPublicClient(t *testing.T, srv *server.Server, route string) *pr1
 		post := func(url, query string) (server.TransactionResponse, error) {
 			statements := []map[string]interface{}{}
 			if query != "" {
-				statements = append(statements, map[string]interface{}{"statement": query})
+				statements = append(statements, map[string]interface{}{"statement": query, "parameters": params})
 			}
 			body, err := json.Marshal(map[string]interface{}{"statements": statements})
 			if err != nil {
@@ -157,7 +160,7 @@ func pr1655OpenPublicClient(t *testing.T, srv *server.Server, route string) *pr1
 			}
 			return decoded, nil
 		}
-		public := &pr1655PublicClient{}
+		public := &pr1655PublicClient{setParams: setParams}
 		public.begin = func() error {
 			response, err := post(root, "")
 			if err == nil {
