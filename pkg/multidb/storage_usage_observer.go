@@ -21,7 +21,7 @@ func (m *DatabaseManager) initializeStorageUsage(database string, owner storedEn
 	if info == nil {
 		return ErrDatabaseNotFound
 	}
-	registry, _ := owner.(storage.ManagedEntityRuntimeRegistry)
+	registry, _ := storage.OwnedCapability[storage.ManagedEntityRuntimeRegistry](owner)
 	runtime, err := bindManagedRuntime(info, limits, database, managedEntityOwner{observer: owner, registry: registry, boundary: boundary})
 	if err != nil {
 		return err

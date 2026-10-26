@@ -861,7 +861,11 @@ func estimateSearchResponseBytes(response *SearchResponse) int64 {
 //		log.Printf("Failed to index: %v", err)
 //	}
 type Service struct {
-	engine                 storage.Engine
+	engine storage.Engine
+	// engine is fixed at Service issuance. Retain its common operation adapter,
+	// while ExecuteBoundRead evaluates live admission for each point read.
+	pointReadOnce          sync.Once
+	pointRead              func(storage.NodeID) (*storage.Node, error)
 	vectorIndex            *VectorIndex
 	vectorFileStore        *VectorFileStore // guarded by mu; snapshots retain a store whose methods check closure
 	bm25MemoryMaxBytes     int64
@@ -3246,7 +3250,7 @@ func (s *Service) lastWriteTime() time.Time {
 	if engine == nil {
 		return time.Time{}
 	}
-	if p, ok := engine.(interface{ LastWriteTime() time.Time }); ok {
+	if p, ok := storage.ViewMetadataForEngine[interface{ LastWriteTime() time.Time }](engine); ok {
 		return p.LastWriteTime()
 	}
 	return time.Time{}
@@ -3256,13 +3260,7 @@ func (s *Service) shouldIndexNode(node *storage.Node) (bool, error) {
 	if node == nil {
 		return false, nil
 	}
-	provider, ok := s.engine.(interface {
-		IsCurrentTemporalNode(node *storage.Node, asOf time.Time) (bool, error)
-	})
-	if !ok {
-		return true, nil
-	}
-	return provider.IsCurrentTemporalNode(node, time.Now().UTC())
+	return storage.IsCurrentTemporalNode(s.engine, node, time.Now().UTC())
 }
 
 // indexNodeLocked does the work of IndexNode. Caller must hold s.indexMu.
@@ -3984,10 +3982,18 @@ func (s *Service) buildNodeIterator(snapshot storage.ReadSnapshotView) NodeItera
 	if snapshot != nil {
 		return snapshot
 	}
-	if iterator, ok := s.engine.(NodeIterator); ok {
-		return iterator
+	if ok := storage.HasReadCapability[NodeIterator](s.engine); ok {
+		return capabilityNodeIterator{engine: s.engine}
 	}
 	return nil
+}
+
+// The build may retain its iterator after selecting it. Retain an operation
+// owner, so a later refusal uses the same engine's core read before any rows.
+type capabilityNodeIterator struct{ engine storage.Engine }
+
+func (i capabilityNodeIterator) IterateNodes(visit func(*storage.Node) bool) error {
+	return storage.VisitNodes(i.engine, visit)
 }
 
 // buildRelationshipVectorIndexes installs the stored relationships' vectors,
@@ -4010,7 +4016,9 @@ func (s *Service) buildRelationshipVectorIndexes(ctx context.Context, snapshot s
 		return nil
 	}
 	if snapshot != nil {
-		return snapshot.StreamEdges(ctx, install)
+		return storage.VisitWithCapability(snapshot, func(reader storage.ReadSnapshotView, deliver func(*storage.Edge) error) error {
+			return reader.StreamEdges(ctx, deliver)
+		}, nil, install)
 	}
 	return storage.StreamEdgesWithFallback(ctx, s.engine, 1000, install)
 }
@@ -4290,7 +4298,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 		// Only clear disk-backed indexes when we can prove storage changed after
 		// those artifacts were written (e.g., DB dropped/recreated with same name).
 		// This avoids breaking valid "disk-only bootstrap" test/restore scenarios.
-		if p, ok := s.engine.(interface{ LastWriteTime() time.Time }); ok {
+		if p, ok := storage.ViewMetadataForEngine[interface{ LastWriteTime() time.Time }](s.engine); ok {
 			if lastWrite := p.LastWriteTime(); !lastWrite.IsZero() {
 				if info, statErr := security.RootedStat(vectorPath + ".vec"); statErr == nil {
 					shouldClearStaleDisk = lastWrite.After(info.ModTime())
@@ -4561,7 +4569,7 @@ func (s *Service) BuildIndexes(ctx context.Context) (resultErr error) {
 			s.buildProcessed.Store(int64(count))
 			return nil
 		}
-		err := iterator.IterateNodes(func(node *storage.Node) bool {
+		err := storage.VisitWhileWithCapability(iterator, func(reader NodeIterator, deliver func(*storage.Node) bool) error { return reader.IterateNodes(deliver) }, nil, func(node *storage.Node) bool {
 			select {
 			case <-ctx.Done():
 				return false
@@ -5071,6 +5079,9 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 
 	// Try RRF hybrid search
 	response, err := s.rrfHybridSearch(ctx, query, embedding, opts)
+	if isSearchReadFailure(err) {
+		return nil, err
+	}
 	if err == nil && response.selectionIsAuthoritative() {
 		if resultCache != nil && response.FallbackReason != SearchFallbackRerankFailed {
 			resultCache.Put(cacheKey, response)
@@ -5095,6 +5106,9 @@ func (s *Service) Search(ctx context.Context, query string, embedding []float32,
 	hybridFailed := err != nil
 	hybridIncomplete := err == nil && response != nil && !response.RetrievalExhausted
 	response, err = s.vectorSearchOnly(ctx, embedding, opts)
+	if isSearchReadFailure(err) {
+		return nil, err
+	}
 	if err == nil && len(response.Results) > 0 {
 		response.RetrievalExhausted = response.RetrievalExhausted && !hybridIncomplete
 		response.FallbackTriggered = true
@@ -5156,12 +5170,12 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	bm25SeenOrphans := make(map[string]bool)
 	retrieveBM25 := func() bm25RetrievalResult {
 		bm25Start := time.Now()
-		results, stats, err := s.adaptiveBM25Search(ctx, fulltextIndex, query, opts, func(results []indexResult) []indexResult {
+		results, stats, err := s.adaptiveBM25Search(ctx, fulltextIndex, query, opts, func(results []indexResult) ([]indexResult, error) {
 			results = s.filterDecayedCandidates(results)
 			if opts.filtersCandidates() {
-				results = s.filterByTypeAndProperties(ctx, results, opts, bm25SeenOrphans)
+				return s.filterByTypeAndProperties(ctx, results, opts, bm25SeenOrphans)
 			}
-			return results
+			return results, nil
 		})
 		return bm25RetrievalResult{
 			results:  results,
@@ -5197,12 +5211,12 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	var vectorStats vectorOverfetchStats
 	seenOrphans := make(map[string]bool)
 	if pipelineErr == nil {
-		vectorResults, vectorStats, pipelineErr = s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, lexicalEntryIDsFromResults(bm25Result.results), func(results []indexResult) []indexResult {
+		vectorResults, vectorStats, pipelineErr = s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, lexicalEntryIDsFromResults(bm25Result.results), func(results []indexResult) ([]indexResult, error) {
 			results = s.filterDecayedCandidates(results)
 			if opts.filtersCandidates() {
-				results = s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
+				return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 			}
-			return results
+			return results, nil
 		})
 	}
 	vectorMs := int(time.Since(vectorStart).Milliseconds())
@@ -5263,6 +5277,9 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	if opts.RerankEnabled {
 		var outcome rerankOutcome
 		fusedResults, outcome = s.applyStage2Rerank(ctx, query, fusedResults, opts, seenOrphans, reranker)
+		if outcome.failure != nil && isSearchReadFailure(outcome.failure) {
+			return nil, outcome.failure
+		}
 		rerankFallback = outcome.FallbackReason
 		if len(outcome.excludedIDs) > 0 {
 			rerankExcluded = make(map[string]struct{}, len(outcome.excludedIDs))
@@ -5282,7 +5299,10 @@ func (s *Service) rrfHybridSearch(ctx context.Context, query string, embedding [
 	}
 
 	// Step 7: Convert to SearchResult and enrich with node data
-	results := s.enrichResults(ctx, fusedResults, opts, seenOrphans, hitMatchQuery{text: query, embedding: embedding, hybrid: true})
+	results, err := s.enrichResults(ctx, fusedResults, opts, seenOrphans, hitMatchQuery{text: query, embedding: embedding, hybrid: true})
+	if err != nil {
+		return nil, err
+	}
 	fusionMs := int(time.Since(fusionStart).Milliseconds())
 	totalMs := int(time.Since(totalStart).Milliseconds())
 
@@ -5366,11 +5386,11 @@ func (s *Service) VectorSearchCandidates(ctx context.Context, embedding []float3
 	}
 
 	seenOrphans := make(map[string]bool)
-	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, nil, func(results []indexResult) []indexResult {
+	results, _, err := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, nil, func(results []indexResult) ([]indexResult, error) {
 		if opts.filtersCandidates() {
-			results = s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
+			return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 		}
-		return results
+		return results, nil
 	})
 	if err != nil {
 		return nil, err
@@ -5502,7 +5522,7 @@ func (s *Service) adaptiveVectorSearch(
 	embedding []float32,
 	opts *SearchOptions,
 	lexicalEntryIDs []string,
-	postProcess func([]indexResult) []indexResult,
+	postProcess func([]indexResult) ([]indexResult, error),
 ) ([]indexResult, vectorOverfetchStats, error) {
 	if opts == nil {
 		defaults := defaultSearchOptionsValue()
@@ -5541,7 +5561,10 @@ func (s *Service) adaptiveVectorSearch(
 			results = append(results, indexResult{ID: nodeID, MatchID: result.ID, Score: result.Score})
 		}
 		if postProcess != nil {
-			results = postProcess(results)
+			results, err = postProcess(results)
+			if err != nil {
+				return nil, stats, err
+			}
 		}
 		if len(results) >= config.target {
 			stats.exhausted = stats.exhausted && len(results) == config.target
@@ -5612,7 +5635,7 @@ func (s *Service) completeVectorSearch(
 	embedding []float32,
 	opts *SearchOptions,
 	target int,
-	postProcess func([]indexResult) []indexResult,
+	postProcess func([]indexResult) ([]indexResult, error),
 	stats vectorOverfetchStats,
 ) ([]indexResult, vectorOverfetchStats, error) {
 	work := newSearchBatch(ctx)
@@ -5706,7 +5729,11 @@ func (s *Service) completeVectorSearch(
 			return nil, stats, err
 		}
 		end := min(start+target, len(ranked))
-		results = append(results, postProcess(append([]indexResult(nil), ranked[start:end]...))...)
+		page, err := postProcess(append([]indexResult(nil), ranked[start:end]...))
+		if err != nil {
+			return nil, stats, err
+		}
+		results = append(results, page...)
 	}
 	if len(results) > target {
 		results = results[:target]
@@ -5732,7 +5759,7 @@ func (s *Service) adaptiveBM25Search(
 	index bm25Index,
 	query string,
 	opts *SearchOptions,
-	postProcess func([]indexResult) []indexResult,
+	postProcess func([]indexResult) ([]indexResult, error),
 ) ([]indexResult, vectorOverfetchStats, error) {
 	if index == nil {
 		return nil, vectorOverfetchStats{exhausted: true}, nil
@@ -5747,9 +5774,9 @@ func (s *Service) adaptiveBM25Search(
 			return index.SearchAllowed(query, limit, allowed)
 		}
 	}
-	filter := func(results []indexResult) []indexResult {
+	filter := func(results []indexResult) ([]indexResult, error) {
 		if postProcess == nil {
-			return results
+			return results, nil
 		}
 		return postProcess(results)
 	}
@@ -5764,7 +5791,10 @@ func (s *Service) adaptiveBM25Search(
 		stats.rawCandidates = len(rawResults)
 		// BM25 enumerates an exact ranked prefix before metadata filtering.
 		stats.exhausted = len(rawResults) < requestLimit
-		results := filter(rawResults)
+		results, err := filter(rawResults)
+		if err != nil {
+			return nil, stats, err
+		}
 		if len(results) >= config.target {
 			stats.exhausted = stats.exhausted && len(results) == config.target
 			return results[:config.target], stats, nil
@@ -5802,7 +5832,7 @@ func (s *Service) completeBM25Search(
 	search func(query string, limit int) []indexResult,
 	query string,
 	documents, target, batch int,
-	filter func([]indexResult) []indexResult,
+	filter func([]indexResult) ([]indexResult, error),
 	stats vectorOverfetchStats,
 ) ([]indexResult, vectorOverfetchStats, error) {
 	all := search(query, max(documents, 1))
@@ -5815,7 +5845,11 @@ func (s *Service) completeBM25Search(
 		}
 		end := min(start+batch, len(all))
 		page := append([]indexResult(nil), all[start:end]...)
-		results = append(results, filter(page)...)
+		filtered, err := filter(page)
+		if err != nil {
+			return nil, stats, err
+		}
+		results = append(results, filtered...)
 	}
 	stats.exhausted = len(results) < target
 	if len(results) > target {
@@ -6750,54 +6784,49 @@ func envDurationSec(key string, fallbackSec int) time.Duration {
 }
 
 func (s *Service) getNodeWithoutEmbeddings(id storage.NodeID) (*storage.Node, error) {
-	if reader, ok := s.engine.(storage.NodeWithoutEmbeddingsReader); ok {
-		return reader.GetNodeWithoutEmbeddings(id)
-	}
-	return s.engine.GetNode(id)
+	s.pointReadOnce.Do(func() {
+		issued := s.engine
+		operation := storage.BindReadOperation[storage.NodeWithoutEmbeddingsReader](issued)
+		s.pointRead = func(id storage.NodeID) (*storage.Node, error) {
+			return storage.ExecuteBoundRead(operation, func(reader storage.NodeWithoutEmbeddingsReader) (*storage.Node, error) {
+				return reader.GetNodeWithoutEmbeddings(id)
+			}, func() (*storage.Node, error) { return issued.GetNode(id) })
+		}
+	})
+	return s.pointRead(id)
 }
 
 func (s *Service) batchGetNodesWithoutEmbeddings(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	if len(ids) == 0 {
 		return map[storage.NodeID]*storage.Node{}, nil
 	}
-	if reader, ok := s.engine.(storage.BatchNodeWithoutEmbeddingsReader); ok {
-		nodes, err := reader.BatchGetNodesWithoutEmbeddings(ids)
-		if err == nil {
-			return nodes, nil
-		}
-		if !errors.Is(err, storage.ErrNotImplemented) {
-			return nil, err
-		}
-	}
-	nodes := make(map[storage.NodeID]*storage.Node, len(ids))
-	for _, id := range ids {
-		node, err := s.getNodeWithoutEmbeddings(id)
-		if err != nil {
-			if errors.Is(err, storage.ErrNotFound) {
-				continue
+	return storage.ReadWithCapability(s.engine, func(reader storage.BatchNodeWithoutEmbeddingsReader) (map[storage.NodeID]*storage.Node, error) {
+		return reader.BatchGetNodesWithoutEmbeddings(ids)
+	}, func() (map[storage.NodeID]*storage.Node, error) {
+		nodes := make(map[storage.NodeID]*storage.Node, len(ids))
+		for _, id := range ids {
+			node, err := s.getNodeWithoutEmbeddings(id)
+			if err != nil {
+				if errors.Is(err, storage.ErrNotFound) {
+					continue
+				}
+				return nil, err
 			}
-			return nil, err
+			nodes[id] = node
 		}
-		nodes[id] = node
-	}
-	return nodes, nil
+		return nodes, nil
+	})
 }
 
 func (s *Service) supportsBatchNodesWithoutEmbeddings() bool {
-	reader, ok := s.engine.(storage.BatchNodeWithoutEmbeddingsReader)
-	if !ok {
-		return false
-	}
-	if capability, ok := reader.(storage.BatchNodeWithoutEmbeddingsCapability); ok {
-		return capability.BatchGetNodesWithoutEmbeddingsSupported()
-	}
-	return true
+	available := storage.HasReadCapability[storage.BatchNodeWithoutEmbeddingsReader](s.engine)
+	return available
 }
 
 // filterCandidatesByType filters candidates by node type/label.
-func (s *Service) filterCandidatesByType(ctx context.Context, candidates []SearchCandidate, types []string, seenOrphans map[string]bool) []SearchCandidate {
+func (s *Service) filterCandidatesByType(ctx context.Context, candidates []SearchCandidate, types []string, seenOrphans map[string]bool) ([]SearchCandidate, error) {
 	if len(types) == 0 {
-		return candidates
+		return candidates, nil
 	}
 
 	typeSet := make(map[string]bool, len(types))
@@ -6807,11 +6836,11 @@ func (s *Service) filterCandidatesByType(ctx context.Context, candidates []Searc
 
 	filtered := make([]SearchCandidate, 0, len(candidates))
 	for _, cand := range candidates {
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(cand.ID))
+		node, err := s.readSearchNode(ctx, storage.NodeID(cand.ID), seenOrphans)
 		if err != nil {
-			if s.handleOrphanedEmbedding(ctx, cand.ID, err, seenOrphans) {
-				continue
-			}
+			return nil, err
+		}
+		if node == nil {
 			continue
 		}
 
@@ -6829,7 +6858,7 @@ func (s *Service) filterCandidatesByType(ctx context.Context, candidates []Searc
 		}
 	}
 
-	return filtered
+	return filtered, nil
 }
 
 // fuseRRF implements the Reciprocal Rank Fusion (RRF) algorithm.
@@ -7131,11 +7160,9 @@ func (s *Service) applyStage2Rerank(ctx context.Context, query string, results [
 			candidates = append(candidates, candidate)
 			continue
 		}
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(r.ID))
+		node, err := s.readSearchNode(ctx, storage.NodeID(r.ID), seenOrphans)
 		if err != nil {
-			_ = s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans)
-			candidates = append(candidates, candidate)
-			continue
+			return nil, rerankOutcome{failure: err}
 		}
 		if node == nil {
 			candidates = append(candidates, candidate)
@@ -7288,11 +7315,11 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 		return nil, pipelineErr
 	}
 	seenOrphans := make(map[string]bool)
-	results, vectorStats, searchErr := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, nil, func(results []indexResult) []indexResult {
+	results, vectorStats, searchErr := s.adaptiveVectorSearch(ctx, pipeline, embedding, opts, nil, func(results []indexResult) ([]indexResult, error) {
 		if opts.filtersCandidates() {
-			results = s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
+			return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 		}
-		return results
+		return results, nil
 	})
 	if searchErr != nil {
 		return nil, searchErr
@@ -7329,7 +7356,10 @@ func (s *Service) vectorSearchOnly(ctx context.Context, embedding []float32, opt
 			searchMethod, len(results), time.Since(searchStart))
 	}
 
-	searchResults := s.enrichIndexResults(ctx, results, opts, seenOrphans, hitMatchQuery{embedding: embedding})
+	searchResults, hydrateErr := s.enrichIndexResults(ctx, results, opts, seenOrphans, hitMatchQuery{embedding: embedding})
+	if hydrateErr != nil {
+		return nil, hydrateErr
+	}
 	// Vector-only: set vector_rank from position (1-based), bm25_rank = 0
 	for i := range searchResults {
 		searchResults[i].VectorRank = i + 1
@@ -7380,18 +7410,21 @@ func (s *Service) fullTextSearchOnly(ctx context.Context, query string, opts *Se
 	}
 	bm25Start := time.Now()
 	seenOrphans := make(map[string]bool)
-	results, bm25Stats, err := s.adaptiveBM25Search(ctx, ft, query, opts, func(results []indexResult) []indexResult {
+	results, bm25Stats, err := s.adaptiveBM25Search(ctx, ft, query, opts, func(results []indexResult) ([]indexResult, error) {
 		if opts.filtersCandidates() {
-			results = s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
+			return s.filterByTypeAndProperties(ctx, results, opts, seenOrphans)
 		}
-		return results
+		return results, nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	bm25Ms := int(time.Since(bm25Start).Milliseconds())
 
-	searchResults := s.enrichIndexResults(ctx, results, opts, seenOrphans, hitMatchQuery{text: query})
+	searchResults, hydrateErr := s.enrichIndexResults(ctx, results, opts, seenOrphans, hitMatchQuery{text: query})
+	if hydrateErr != nil {
+		return nil, hydrateErr
+	}
 	// Full-text only: set bm25_rank from position (1-based), vector_rank = 0
 	for i := range searchResults {
 		searchResults[i].VectorRank = 0
@@ -7822,24 +7855,24 @@ func propValueMatchesAny(propVal any, wantVals []string) bool {
 }
 
 // filterByProperties filters results to the nodes opts admits (admitsNode).
-func (s *Service) filterByProperties(ctx context.Context, results []indexResult, opts *SearchOptions, seenOrphans map[string]bool) []indexResult {
+func (s *Service) filterByProperties(ctx context.Context, results []indexResult, opts *SearchOptions, seenOrphans map[string]bool) ([]indexResult, error) {
 	if len(opts.Filters) == 0 && opts.Where == nil {
-		return results
+		return results, nil
 	}
 	var filtered []indexResult
 	for _, r := range results {
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(r.ID))
+		node, err := s.readSearchNode(ctx, storage.NodeID(r.ID), seenOrphans)
 		if err != nil {
-			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
-				continue
-			}
+			return nil, err
+		}
+		if node == nil {
 			continue
 		}
 		if opts.admitsNode(node) {
 			filtered = append(filtered, r)
 		}
 	}
-	return filtered
+	return filtered, nil
 }
 
 // filterByTypeAndProperties resolves type predicates from compact index metadata
@@ -7850,9 +7883,9 @@ func (s *Service) filterByTypeAndProperties(
 	results []indexResult,
 	opts *SearchOptions,
 	seenOrphans map[string]bool,
-) []indexResult {
+) ([]indexResult, error) {
 	if !opts.filtersCandidates() {
-		return results
+		return results, nil
 	}
 	types := opts.Types
 	// properties is whether the nodes' properties are tested too.
@@ -7864,7 +7897,7 @@ func (s *Service) filterByTypeAndProperties(
 			results = indexedResults
 			typesResolved = true
 			if len(results) == 0 || !properties {
-				return results
+				return results, nil
 			}
 		}
 	}
@@ -7890,12 +7923,18 @@ func (s *Service) filterByTypeAndProperties(
 	if err != nil {
 		// Batch unavailable – fall back to the individual-fetch helpers.
 		if len(types) > 0 && !typesResolved {
-			results = s.filterByType(ctx, results, types, seenOrphans)
+			results, err = s.filterByType(ctx, results, types, seenOrphans)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if properties {
-			results = s.filterByProperties(ctx, results, opts, seenOrphans)
+			results, err = s.filterByProperties(ctx, results, opts, seenOrphans)
+			if err != nil {
+				return nil, err
+			}
 		}
-		return results
+		return results, nil
 	}
 
 	var filtered []indexResult
@@ -7915,13 +7954,13 @@ func (s *Service) filterByTypeAndProperties(
 
 		filtered = append(filtered, r)
 	}
-	return filtered
+	return filtered, nil
 }
 
 // filterByType filters results to only include specified node types.
-func (s *Service) filterByType(ctx context.Context, results []indexResult, types []string, seenOrphans map[string]bool) []indexResult {
+func (s *Service) filterByType(ctx context.Context, results []indexResult, types []string, seenOrphans map[string]bool) ([]indexResult, error) {
 	if len(types) == 0 {
-		return results
+		return results, nil
 	}
 
 	typeSet := make(map[string]struct{})
@@ -7931,11 +7970,11 @@ func (s *Service) filterByType(ctx context.Context, results []indexResult, types
 
 	var filtered []indexResult
 	for _, r := range results {
-		node, err := s.getNodeWithoutEmbeddings(storage.NodeID(r.ID))
+		node, err := s.readSearchNode(ctx, storage.NodeID(r.ID), seenOrphans)
 		if err != nil {
-			if s.handleOrphanedEmbedding(ctx, r.ID, err, seenOrphans) {
-				continue
-			}
+			return nil, err
+		}
+		if node == nil {
 			continue
 		}
 
@@ -7955,7 +7994,7 @@ func (s *Service) filterByType(ctx context.Context, results []indexResult, types
 		}
 	}
 
-	return filtered
+	return filtered, nil
 }
 
 func boundedResultLimit(total, limit int) int {

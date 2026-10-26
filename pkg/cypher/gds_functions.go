@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -380,7 +381,7 @@ func fnGDSAsNode(ctx cypherfn.Context, args []string) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return gdsNodeByID(store, values[0], graphFunctionIdentityDomain(ctx, store)), nil
+	return gdsNodeByID(store, values[0], graphFunctionIdentityDomain(ctx, store))
 }
 
 // fnGDSAsNodes is gds.util.asNodes(nodeIds): the nodes with those ids, in
@@ -403,27 +404,25 @@ func fnGDSAsNodes(ctx cypherfn.Context, args []string) (interface{}, error) {
 	}
 	nodes := make([]interface{}, 0, len(ids))
 	for _, id := range ids {
-		if node := gdsNodeByID(store, id, graphFunctionIdentityDomain(ctx, store)); node != nil {
+		node, err := gdsNodeByID(store, id, graphFunctionIdentityDomain(ctx, store))
+		if err != nil { return nil, err }
+		if node != nil {
 			nodes = append(nodes, node)
 		}
 	}
 	return nodes, nil
 }
 
-func gdsNodeByID(store storage.Engine, value interface{}, domains ...graphIdentityDomain) interface{} {
-	if store == nil || value == nil {
-		return nil
-	}
-	id, ok := graphEntityLookupID(store, value, domains...)
-	if !ok {
-		return nil
-	}
-	// Storage's transaction owner decides visibility; preserve getQueryNode.
-	var noExecutor *StorageExecutor
-	if node, err := noExecutor.getQueryNode(store, id); err == nil && node != nil {
-		return node
-	}
-	return nil
+func gdsNodeByID(store storage.Engine, value interface{}, domains ...graphIdentityDomain) (interface{}, error) {
+    if store == nil || value == nil { return nil, nil }
+    id, ok := graphEntityLookupID(store, value, domains...)
+    if !ok { return nil, nil }
+    var noExecutor *StorageExecutor
+    node, err := noExecutor.getQueryNode(store, id)
+    if errors.Is(err, storage.ErrNotFound) { return nil, nil }
+    if err != nil { return nil, err }
+    if node == nil { return nil, nil }
+    return node, nil
 }
 
 // fnGDSIsFinite is gds.util.isFinite / isInfinite: isFinite is true for a

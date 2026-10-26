@@ -114,7 +114,7 @@ func TestCheckEdgeEndpointConflicts_TombstonedEndpointBranches(t *testing.T) {
 
 		require.NoError(t, engine.DeleteNode("test:target"))
 
-		err = tx.checkEdgeEndpointConflicts(&Edge{ID: "test:e1", StartNode: "test:start", EndNode: "test:target", Type: "REL"})
+		err = checkEndpointConflictForTest(tx, &Edge{ID: "test:e1", StartNode: "test:start", EndNode: "test:target", Type: "REL"})
 		require.ErrorIs(t, err, ErrConflict)
 		require.Contains(t, err.Error(), "deleted after transaction start")
 	})
@@ -131,7 +131,7 @@ func TestCheckEdgeEndpointConflicts_TombstonedEndpointBranches(t *testing.T) {
 		require.NoError(t, err)
 		t.Cleanup(func() { _ = tx.Rollback() })
 
-		err = tx.checkEdgeEndpointConflicts(&Edge{ID: "test:e2", StartNode: "test:start", EndNode: "test:target", Type: "REL"})
+		err = checkEndpointConflictForTest(tx, &Edge{ID: "test:e2", StartNode: "test:start", EndNode: "test:target", Type: "REL"})
 		require.ErrorIs(t, err, ErrInvalidEdge)
 	})
 }

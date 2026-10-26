@@ -333,7 +333,7 @@ func (s *Server) AllowAllDatabaseAccess(ctx context.Context) error {
 	var names []string
 	if store, ok := s.collections.(*databaseCollectionStore); ok {
 		names = store.dbManager.ListDatabaseNames()
-	} else if lister, ok := s.baseStorage.(interface{ ListNamespaces() []string }); ok {
+	} else if lister, ok := storage.ViewMetadataForEngine[interface{ ListNamespaces() []string }](s.baseStorage); ok {
 		names = lister.ListNamespaces()
 	} else {
 		return localizedStatus(ctx, s.config.Localizer, codes.PermissionDenied, localization.QdrantPermissionDenied())

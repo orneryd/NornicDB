@@ -13,9 +13,9 @@ import (
 // policy procedures and scalar readers alike.
 func (e *StorageExecutor) knowledgePolicyContext(database string) (storage.Engine, *storage.SchemaManager, error) {
 	engine := e.storage
-	if source, ok := engine.(interface {
+	if source, ok := storage.ViewMetadataForEngine[interface {
 		ConstituentStorage(string) (storage.Engine, error)
-	}); ok && database != "" {
+	}](engine); ok && database != "" {
 		var err error
 		engine, err = source.ConstituentStorage(database)
 		if err != nil {
@@ -23,7 +23,7 @@ func (e *StorageExecutor) knowledgePolicyContext(database string) (storage.Engin
 		}
 	}
 	var transaction *storage.BadgerTransaction
-	if wrapper, ok := engine.(*transactionStorageWrapper); ok {
+	if wrapper, ok := e.nativeMemberFor(engine); ok {
 		transaction = wrapper.tx
 	} else if database == "" && e.txContext != nil && e.txContext.active {
 		transaction, _ = e.txContext.tx.(*storage.BadgerTransaction)

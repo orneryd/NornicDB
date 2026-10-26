@@ -15,20 +15,22 @@ func batchNodesWithContext(ctx context.Context, engine Engine, ids []NodeID, wit
 	var nodes map[NodeID]*Node
 	var err error
 	if withoutEmbeddings {
-		if reader, ok := engine.(interface {
-			BatchGetNodesWithoutEmbeddingsWithContext(context.Context, []NodeID) (map[NodeID]*Node, error)
-		}); ok {
-			return reader.BatchGetNodesWithoutEmbeddingsWithContext(ctx, ids)
-		}
-		reader, ok := engine.(BatchNodeWithoutEmbeddingsReader)
-		if !ok {
-			return nil, ErrNotImplemented
-		}
-		nodes, err = reader.BatchGetNodesWithoutEmbeddings(ids)
+		return ReadWithCapability(engine, func(reader BatchNodeWithoutEmbeddingsReader) (map[NodeID]*Node, error) {
+			if contextual, ok := OwnedCapability[interface {
+				BatchGetNodesWithoutEmbeddingsWithContext(context.Context, []NodeID) (map[NodeID]*Node, error)
+			}](reader); ok {
+				return contextual.BatchGetNodesWithoutEmbeddingsWithContext(ctx, ids)
+			}
+			nodes, err := reader.BatchGetNodesWithoutEmbeddings(ids)
+			if err == nil {
+				err = ctx.Err()
+			}
+			return nodes, err
+		}, nil)
 	} else {
-		if reader, ok := engine.(interface {
+		if reader, ok := OwnedCapability[interface {
 			BatchGetNodesWithContext(context.Context, []NodeID) (map[NodeID]*Node, error)
-		}); ok {
+		}](engine); ok {
 			return reader.BatchGetNodesWithContext(ctx, ids)
 		}
 		nodes, err = engine.BatchGetNodes(ids)

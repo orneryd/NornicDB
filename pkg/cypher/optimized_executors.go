@@ -13,6 +13,7 @@ package cypher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
@@ -26,6 +27,11 @@ import (
 func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, patternInfo PatternInfo) (*ExecuteResult, bool) {
 	switch patternInfo.Pattern {
 	case PatternMutualRelationship:
+		issued, err := e.FunctionStorage("")
+		if err != nil {
+			return nil, false
+		}
+		readNode := storage.BindQueryNodeRead(issued)
 		// Parse RETURN clause to get actual column names/aliases
 		returnItems := e.extractReturnItemsFromQuery(ctx, query)
 		columns := e.buildColumnsFromReturnItems(returnItems)
@@ -38,7 +44,7 @@ func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, pa
 
 		// Get edges by type directly (MUCH faster than AllEdges + filter)
 		// This uses the edge type index for O(edges_of_type) instead of O(all_edges)
-		edgeList, err := e.storage.GetEdgesByType(patternInfo.RelType)
+		edgeList, err := issued.GetEdgesByType(patternInfo.RelType)
 		if err != nil {
 			return nil, false
 		}
@@ -70,8 +76,14 @@ func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, pa
 					seenPairs[pairKey] = true
 
 					// Get node properties
-					startNode := e.getNodeCached(edge.StartNode, nodeCache)
-					endNode := e.getNodeCached(edge.EndNode, nodeCache)
+					startNode, err := e.getNodeCached(readNode, edge.StartNode, nodeCache)
+					if err != nil {
+						return nil, false
+					}
+					endNode, err := e.getNodeCached(readNode, edge.EndNode, nodeCache)
+					if err != nil {
+						return nil, false
+					}
 
 					if startNode != nil && endNode != nil {
 						startName := e.getPropertyString(startNode, "name")
@@ -117,6 +129,11 @@ func (e *StorageExecutor) ExecuteOptimized(ctx context.Context, query string, pa
 // =============================================================================
 
 func (e *StorageExecutor) executeRelationshipCountOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+	issued, err := e.FunctionStorage("")
+	if err != nil {
+		return nil, err
+	}
+	readNode := storage.BindQueryNodeRead(issued)
 	// Parse RETURN clause to get actual column names/aliases
 	returnItems := e.extractReturnItemsFromQuery(ctx, query)
 	columns := e.buildColumnsFromReturnItems(returnItems)
@@ -128,7 +145,7 @@ func (e *StorageExecutor) executeRelationshipCountOptimized(ctx context.Context,
 	}
 
 	// Get all edges
-	allEdges, err := e.storage.AllEdges()
+	allEdges, err := issued.AllEdges()
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +190,10 @@ func (e *StorageExecutor) executeRelationshipCountOptimized(ctx context.Context,
 	nodeCache := make(map[storage.NodeID]*storage.Node)
 	for i := 0; i < limit; i++ {
 		row := rows[i]
-		node := e.getNodeCached(row.nodeID, nodeCache)
+		node, err := e.getNodeCached(readNode, row.nodeID, nodeCache)
+		if err != nil {
+			return nil, err
+		}
 		if node != nil {
 			name := e.getPropertyString(node, "name")
 			result.Rows = append(result.Rows, []interface{}{name, row.count})
@@ -198,6 +218,11 @@ type edgeAggStats struct {
 }
 
 func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, query string, info PatternInfo) (*ExecuteResult, error) {
+	issued, err := e.FunctionStorage("")
+	if err != nil {
+		return nil, err
+	}
+	readNode := storage.BindQueryNodeRead(issued)
 	// This optimization handles queries like:
 	// MATCH (c)-[r:REVIEWED]->(p) RETURN p.name, avg(r.rating), count(r)
 	// GROUP BY p (the end node)
@@ -209,7 +234,7 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 	}
 
 	// Get all edges
-	allEdges, err := e.storage.AllEdges()
+	allEdges, err := issued.AllEdges()
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +307,10 @@ func (e *StorageExecutor) executeEdgePropertyAggOptimized(ctx context.Context, q
 	nodeCache := make(map[storage.NodeID]*storage.Node)
 	for i := 0; i < limit; i++ {
 		row := rows[i]
-		node := e.getNodeCached(row.nodeID, nodeCache)
+		node, err := e.getNodeCached(readNode, row.nodeID, nodeCache)
+		if err != nil {
+			return nil, err
+		}
 		if node == nil {
 			continue
 		}
@@ -324,16 +352,19 @@ func (e *StorageExecutor) extractReturnItemsFromQuery(ctx context.Context, query
 }
 
 // getNodeCached retrieves a node, using cache to avoid repeated lookups
-func (e *StorageExecutor) getNodeCached(id storage.NodeID, cache map[storage.NodeID]*storage.Node) *storage.Node {
+func (e *StorageExecutor) getNodeCached(read func(storage.NodeID) (*storage.Node, error), id storage.NodeID, cache map[storage.NodeID]*storage.Node) (*storage.Node, error) {
 	if node, exists := cache[id]; exists {
-		return node
+		return node, nil
 	}
-	node, err := e.getQueryNode(e.storage, id)
+	node, err := read(id)
 	if err != nil {
-		return nil
+		if errors.Is(err, storage.ErrNotFound) {
+			return nil, nil
+		}
+		return nil, err
 	}
 	cache[id] = node
-	return node
+	return node, nil
 }
 
 // getPropertyString extracts a string property from a node
@@ -347,14 +378,43 @@ func (e *StorageExecutor) getPropertyString(node *storage.Node, prop string) str
 	return ""
 }
 
-// BatchGetNodes retrieves multiple nodes in a single operation
-// Used for large result set optimization
+// BatchGetNodes retrieves nodes through the executor's issued view. An ID whose
+// point read fails is omitted; successfully read IDs remain in the result.
+//
+// Deprecated: Use BatchGetNodesContext to receive point-read errors.
 func (e *StorageExecutor) BatchGetNodes(ids []storage.NodeID) map[storage.NodeID]*storage.Node {
+	result, _ := e.BatchGetNodesContext(context.Background(), ids)
+	return result
+}
+
+// BatchGetNodesContext reads each ID through the same issued view as
+// FunctionStorage, including an active explicit transaction. Missing IDs are
+// omitted. Other point failures are joined in the returned error; the map still
+// contains successful reads, including IDs after a failed point read. Cancellation
+// stops further reads and returns the successful results collected so far.
+func (e *StorageExecutor) BatchGetNodesContext(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	result := make(map[storage.NodeID]*storage.Node, len(ids))
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	issued, err := e.FunctionStorage("")
+	if err != nil {
+		return result, err
+	}
+	var failures []error
 	for _, id := range ids {
-		if node, err := e.storage.GetNode(id); err == nil && node != nil {
+		if err := ctx.Err(); err != nil {
+			return result, errors.Join(append(failures, err)...)
+		}
+		node, err := issued.GetNode(id)
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			failures = append(failures, fmt.Errorf("get node %q: %w", id, err))
+		} else if err == nil && node != nil {
 			result[id] = node
 		}
 	}
-	return result
+	if err := ctx.Err(); err != nil {
+		failures = append(failures, err)
+	}
+	return result, errors.Join(failures...)
 }

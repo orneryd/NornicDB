@@ -4221,6 +4221,14 @@
       ]
     },
     {
+      "func": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn",
+      "pos": "pkg/storage/badger_deindex_enqueue.go:145",
+      "gates": "pkg/storage.BadgerEngine.evaluateSuppressionInTxn pkg/storage/badger_deindex_enqueue.go:158",
+      "owners": [
+        "pkg/storage.BadgerEngine.evaluateSuppressionInTxn"
+      ]
+    },
+    {
       "func": "pkg/storage.BadgerEngine.forgetManualSuppression",
       "pos": "pkg/storage/badger_manual_suppression.go:217",
       "gates": "pkg/storage.BadgerEngine.forgetManualSuppression pkg/storage/badger_manual_suppression.go:232 -> pkg/storage.BadgerEngine.endSuppressions -",

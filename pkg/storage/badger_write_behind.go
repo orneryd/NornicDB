@@ -48,9 +48,12 @@ func bufferedMemoryError(cause error) error {
 // before the replayable WAL boundary. The physical cgroup sample remains the
 // final pressure check; this deliberately overestimates shared references.
 func estimateBufferedCommitBytes(c *bufferedCommit) int64 {
-	bytes := int64(256 + len(c.namespace) + len(c.txID) + 256*len(c.ops))
+	// Reserve the generation owner's bounded version index, including typed
+	// cascade tombstones, through the existing payload/overlay budget.
+
+	bytes := int64(256 + len(c.namespace) + len(c.txID) + (256+128)*len(c.ops))
 	for _, op := range c.ops {
-		bytes += int64(len(op.NodeID) + len(op.EdgeID) + 16*len(op.DeletedEdgeIDs))
+		bytes += int64(len(op.NodeID) + len(op.EdgeID) + (16+128)*len(op.DeletedEdgeIDs))
 		for _, node := range [2]*Node{op.Node, op.OldNode} {
 			bytes += estimateRetainedNodeBytes(node)
 		}

@@ -13,14 +13,42 @@ import (
 // operation. The context used for span parenting is set via SetContext by the
 // calling layer (cypher executor) which has the active span context.
 type TracedEngine struct {
+	readBinding ReadBindingSlot
 	Engine
 	mu  sync.RWMutex
 	ctx context.Context
 }
 
+// TracedEngine declares every optional method; admission is derived from this policy.
+var tracedEngineReadPolicy = BoundaryReadPolicy{
+	{Methods: "BatchGetNodesWithContext", Disposition: CapabilityTransparent, Scope: "Starts a trace span from the caller context and forwards to the common batch dispatcher; tracing changes no node identity, membership or visibility."},
+	{Methods: "EdgeCountByTypeInNamespace EdgeCountByStartLabelInNamespace EdgeCountByEndLabelInNamespace", Disposition: CapabilityTransparent, Scope: "The maintainer namespace-counter owner retains explicit namespace/tier point-read semantics; common cursor admission adds no scan or counter state."},
+	{Methods: "ReadStored StoredReadPolicy", Disposition: CapabilityTransparent, Scope: "Explicit stored modes preserve this view; mandatory facts never use ordinary/full-body fallback."},
+	{Methods: "AllNodesWithContext", Disposition: CapabilityTransparent, Scope: "Context-bearing read forwards the same caller and retains this declared scoped view."},
+	{Methods: "BulkCreateNodesWithContext", Disposition: CapabilityRefused, Scope: "Exact contextual mutation retains its issued interceptor; optional read discovery cannot invoke it."},
+	{Methods: "CreateNodeWithContext", Disposition: CapabilityRefused, Scope: "Exact contextual mutation retains its issued interceptor; optional read discovery cannot invoke it."},
+	{Methods: "ForEachNodeIDByLabelInScopeWithContext", Disposition: CapabilityTransparent, Scope: "Context-bearing read forwards the same caller and retains this declared scoped view."},
+	{Methods: "ForEachNodeIDByLabelWithContext", Disposition: CapabilityTransparent, Scope: "Context-bearing read forwards the same caller and retains this declared scoped view."},
+	{Methods: "GetFirstNodeByLabelInScopeWithContext", Disposition: CapabilityTransparent, Scope: "Context-bearing read forwards the same caller and retains this declared scoped view."},
+	{Methods: "GetNodesByLabelInScopeWithContext", Disposition: CapabilityTransparent, Scope: "Context-bearing read forwards the same caller and retains this declared scoped view."},
+	{Methods: "GetNodesByLabelVisibleAtInScopeWithContext", Disposition: CapabilityTransparent, Scope: "Context-bearing read forwards the same caller and retains this declared scoped view."},
+	{Methods: "GetNodesByLabelWithContext", Disposition: CapabilityTransparent, Scope: "Context-bearing read forwards the same caller and retains this declared scoped view."},
+	{Methods: "StreamNodesByLabelProjectedInScopeWithContext", Disposition: CapabilityTransparent, Scope: "Context-bearing read forwards the same caller and retains this declared scoped view."},
+	{Methods: "UpdateNodeWithContext", Disposition: CapabilityRefused, Scope: "Exact contextual mutation retains its issued interceptor; optional read discovery cannot invoke it."},
+	{Methods: "SetManualSuppression", Disposition: CapabilityRefused, Scope: "Exact metadata mutation through this tracing operation owner."},
+	{Methods: "ForEachNodeIDByLabel ForEachNodeIDByLabelInScope GetFirstNodeByLabelInScope GetInnerEngine GetNodesByLabelInScope " +
+		"GetNodesByLabelVisibleAtInScope GraphMutationVersion GraphMutationVersionInNamespace OpenReadSnapshot SetContext " +
+		"StreamEdgesByType StreamEdgesByTypeInScope StreamNodesByLabelProjectedInScope SubscribeEvents",
+		Disposition: CapabilityTransparent, Scope: "Read view delegates to ReadCapabilitySource; writes and decorator metadata retain their exact owner."},
+}
+
+func (*TracedEngine) ReadCapabilityPolicy() BoundaryReadPolicy { return tracedEngineReadPolicy.Copy() }
+
 // NewTracedEngine wraps inner with tracing instrumentation.
 func NewTracedEngine(inner Engine) *TracedEngine {
-	return &TracedEngine{Engine: inner, ctx: context.Background()}
+	view := &TracedEngine{Engine: inner, ctx: context.Background()}
+	view.readBinding.Store(RebindReadView(view))
+	return view
 }
 
 // SetContext updates the context used for span parenting. Called by the cypher
@@ -233,4 +261,11 @@ func (t *TracedEngine) BatchGetNodesWithContext(ctx context.Context, ids []NodeI
 	)
 	defer span.End()
 	return BatchGetNodesWithContext(ctx, t.Engine, ids)
+}
+
+func (t *TracedEngine) SetManualSuppression(kind StoredEntityKind, id string, suppressed bool) error {
+	if owner, ok := OwnedCapability[ManualSuppressionEngine](t.Engine); ok {
+		return owner.SetManualSuppression(kind, id, suppressed)
+	}
+	return ErrNotImplemented
 }

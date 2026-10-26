@@ -66,8 +66,9 @@ type RemoteCypherMode interface{ ResolvedWriteMode() (write, known bool) }
 // RemoteEngine implements Engine by forwarding operations to a remote NornicDB instance
 // via Bolt protocol (preferred) or HTTP tx API (fallback), auto-detected from the URI scheme.
 type RemoteEngine struct {
-	transport remoteTransport
-	schema    *SchemaManager
+	membershipProvider MembershipProvider
+	transport          remoteTransport
+	schema             *SchemaManager
 }
 
 type remoteStatement struct {
@@ -1098,6 +1099,8 @@ func (r *RemoteEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 	return r.readEdgesBetween(startID, endID, nil)
 }
 
+//
+// Deprecated: Use GetEdgesBetween and filter by type to receive errors. Failed lookups may appear as nil.
 func (r *RemoteEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *Edge {
 	edges, _ := r.readEdgesBetween(startID, endID, &edgeType)
 	if len(edges) == 0 {
@@ -1107,6 +1110,9 @@ func (r *RemoteEngine) GetEdgeBetween(startID, endID NodeID, edgeType string) *E
 }
 
 func (r *RemoteEngine) GetEdgesByType(edgeType string) ([]*Edge, error) {
+	if edgeType == "" {
+		return r.AllEdges()
+	}
 	return readRemoteEntities(r, nil, fmt.Sprintf("MATCH ()-[r:%s]->() RETURN r", quoteIdent(edgeType)), nil, valueToEdge)
 }
 
@@ -1166,6 +1172,8 @@ func (r *RemoteEngine) AllEdges() ([]*Edge, error) {
 	return readRemoteEntities(r, nil, "MATCH ()-[r]->() RETURN r", nil, valueToEdge)
 }
 
+//
+// Deprecated: Use AllNodes to receive errors. Failed reads are omitted and may appear as an empty collection.
 func (r *RemoteEngine) GetAllNodes() []*Node {
 	nodes, err := r.AllNodes()
 	if err != nil {
@@ -1174,11 +1182,15 @@ func (r *RemoteEngine) GetAllNodes() []*Node {
 	return nodes
 }
 
+//
+// Deprecated: Use GetIncomingEdges and count the returned edges to receive errors. Failed reads may appear as zero.
 func (r *RemoteEngine) GetInDegree(nodeID NodeID) int {
 	count, _ := r.remoteCount(nil, "MATCH ()-[r]->(n) WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)})
 	return int(count)
 }
 
+//
+// Deprecated: Use GetOutgoingEdges and count the returned edges to receive errors. Failed reads may appear as zero.
 func (r *RemoteEngine) GetOutDegree(nodeID NodeID) int {
 	count, _ := r.remoteCount(nil, "MATCH (n)-[r]->() WHERE n.id = $id RETURN count(r)", map[string]interface{}{"id": string(nodeID)})
 	return int(count)

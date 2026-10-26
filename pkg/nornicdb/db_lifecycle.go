@@ -199,7 +199,7 @@ func persistDerivedAfterStorageBoundary(engine storage.Engine, derivedIndexesHea
 // prepareDerivedIndexes consumes the one-use clean-shutdown marker before
 // traffic can start. Missing or invalid state conservatively rebuilds.
 func prepareDerivedIndexes(ctx context.Context, engine storage.Engine) bool {
-	if state, ok := engine.(storage.StartupMaintenanceStateEngine); ok {
+	if state, ok := storage.OwnedCapability[storage.StartupMaintenanceStateEngine](engine); ok {
 		clean, err := state.ConsumeCleanShutdownMarker(ctx)
 		if err != nil && !errors.Is(err, storage.ErrNotImplemented) {
 			log.Printf("⚠️  Clean-shutdown state check failed; rebuilding derived indexes: %v", err)
@@ -210,14 +210,14 @@ func prepareDerivedIndexes(ctx context.Context, engine storage.Engine) bool {
 	}
 
 	healthy := true
-	if maint, ok := engine.(storage.TemporalMaintenanceEngine); ok {
+	if maint, ok := storage.OwnedCapability[storage.TemporalMaintenanceEngine](engine); ok {
 		log.Printf("🕰️ Rebuilding temporal indexes before serving traffic...")
 		if err := maint.RebuildTemporalIndexes(ctx); err != nil && !errors.Is(err, storage.ErrNotImplemented) {
 			log.Printf("⚠️  Temporal index rebuild failed: %v", err)
 			healthy = false
 		}
 	}
-	if maint, ok := engine.(storage.MVCCMaintenanceEngine); ok {
+	if maint, ok := storage.OwnedCapability[storage.MVCCMaintenanceEngine](engine); ok {
 		log.Printf("🧾 Rebuilding MVCC heads before serving traffic...")
 		if err := maint.RebuildMVCCHeads(ctx); err != nil && !errors.Is(err, storage.ErrNotImplemented) {
 			log.Printf("⚠️  MVCC head rebuild failed: %v", err)
@@ -233,11 +233,11 @@ func markStorageCleanShutdown(engine storage.Engine, derivedIndexesHealthy bool)
 	if !derivedIndexesHealthy {
 		return nil
 	}
-	state, ok := engine.(storage.StartupMaintenanceStateEngine)
+	state, ok := storage.OwnedCapability[storage.StartupMaintenanceStateEngine](engine)
 	if !ok {
 		return nil
 	}
-	if flusher, ok := engine.(interface{ Flush() error }); ok {
+	if flusher, ok := storage.OwnedCapability[interface{ Flush() error }](engine); ok {
 		if err := flusher.Flush(); err != nil {
 			return fmt.Errorf("flush storage before clean shutdown: %w", err)
 		}

@@ -169,9 +169,9 @@ func createRelationshipForMerge(
 			}
 			continue
 		}
-		if reporter, ok := store.(interface {
+		if reporter, ok := storage.OwnedCapability[interface {
 			EdgeCreateWasNoOp(storage.EdgeID) bool
-		}); ok && reporter.EdgeCreateWasNoOp(edge.ID) {
+		}](store); ok && reporter.EdgeCreateWasNoOp(edge.ID) {
 			return edge, false, nil
 		}
 		return edge, true, nil

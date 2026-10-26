@@ -11,16 +11,18 @@ func TemporalNodeAsOfWithContext(ctx context.Context, engine TemporalLookupEngin
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if reader, ok := engine.(interface {
-		GetTemporalNodeAsOfWithContext(context.Context, string, string, interface{}, string, string, time.Time) (*Node, error)
-	}); ok {
-		return reader.GetTemporalNodeAsOfWithContext(ctx, label, key, value, start, end, at)
-	}
-	node, err := engine.GetTemporalNodeAsOf(label, key, value, start, end, at)
-	if err == nil {
-		err = ctx.Err()
-	}
-	return node, err
+	return ReadWithCapability(engine, func(provider TemporalLookupEngine) (*Node, error) {
+		if reader, ok := OwnedCapability[interface {
+			GetTemporalNodeAsOfWithContext(context.Context, string, string, interface{}, string, string, time.Time) (*Node, error)
+		}](provider); ok {
+			return reader.GetTemporalNodeAsOfWithContext(ctx, label, key, value, start, end, at)
+		}
+		node, err := provider.GetTemporalNodeAsOf(label, key, value, start, end, at)
+		if err == nil {
+			err = ctx.Err()
+		}
+		return node, err
+	}, nil)
 }
 
 // IsCurrentTemporalNodeWithContext dispatches the existing temporal visibility
@@ -32,14 +34,16 @@ func IsCurrentTemporalNodeWithContext(ctx context.Context, engine TemporalCurren
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
-	if reader, ok := engine.(interface {
-		IsCurrentTemporalNodeWithContext(context.Context, *Node, time.Time) (bool, error)
-	}); ok {
-		return reader.IsCurrentTemporalNodeWithContext(ctx, node, at)
-	}
-	current, err := engine.IsCurrentTemporalNode(node, at)
-	if err == nil {
-		err = ctx.Err()
-	}
-	return current, err
+	return ReadWithCapability(engine, func(provider TemporalCurrentNodeEngine) (bool, error) {
+		if reader, ok := OwnedCapability[interface {
+			IsCurrentTemporalNodeWithContext(context.Context, *Node, time.Time) (bool, error)
+		}](provider); ok {
+			return reader.IsCurrentTemporalNodeWithContext(ctx, node, at)
+		}
+		current, err := provider.IsCurrentTemporalNode(node, at)
+		if err == nil {
+			err = ctx.Err()
+		}
+		return current, err
+	}, nil)
 }

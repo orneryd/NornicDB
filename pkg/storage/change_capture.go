@@ -547,7 +547,7 @@ func (l *changeEndpointLabels) node(id NodeID) *Node {
 	if node, ok := l.read[id]; ok {
 		return node
 	}
-	node, err := l.engine.GetNodeWithoutEmbeddings(id)
+	node, err := ReadWithCapability(l.engine, func(reader NodeWithoutEmbeddingsReader) (*Node, error) { return reader.GetNodeWithoutEmbeddings(id) }, nil)
 	if err != nil {
 		node = nil
 	}
@@ -832,19 +832,7 @@ func (j *changeRetentionJob) RunOnce(now time.Time) {
 // ChangeCaptureOf returns the change-capturing engine under engine's
 // wrappers (namespace, async, WAL, tracing), if it has one.
 func ChangeCaptureOf(engine Engine) (ChangeCaptureEngine, bool) {
-	for engine != nil {
-		if capture, ok := engine.(ChangeCaptureEngine); ok {
-			return capture, true
-		}
-		wrapper, ok := engine.(EngineUnwrapper)
-		if !ok {
-			return nil, false
-		}
-		inner := wrapper.GetInnerEngine()
-		if inner == engine {
-			return nil, false
-		}
-		engine = inner
-	}
-	return nil, false
+	// Capture configuration is physical wrapper metadata. The common cursor
+	// asks each exact outer owner first; data-read transparency grants no effects.
+	return engineCapability[ChangeCaptureEngine](engine, capabilityIdentityOwner, nil)
 }

@@ -439,12 +439,12 @@ func (e *StorageExecutor) runSearchRequest(ctx context.Context, req map[string]i
 	}
 	if opts.Graph {
 		if graphPage {
-			return e.graphSearchPage(response), nil
+			return e.graphSearchPage(response)
 		}
-		return e.graphSearchResult(response), nil
+		return e.graphSearchResult(response)
 	}
 	if opts.Relationships {
-		return e.relationshipSearchResult(response), nil
+		return e.relationshipSearchResult(response)
 	}
 
 	result := &ExecuteResult{

@@ -87,7 +87,8 @@ func TestRetrieveGraphRequestErrorsAndMissingEndpoint(t *testing.T) {
 	_, err = exec.Execute(ctx, "CALL db.retrieveGraph({query: 'alpha', failClosed: true, limit: 1.5})", nil)
 	require.ErrorContains(t, err, "invalid limit value")
 
-	kind, node, relationship, start, end := exec.graphSearchEntity(&search.SearchResult{Relationship: &storage.Edge{ID: "r", Type: "R", StartNode: "gone", EndNode: "gone too"}})
+	kind, node, relationship, start, end, materializeErr := exec.graphSearchEntity(&search.SearchResult{Relationship: &storage.Edge{ID: "r", Type: "R", StartNode: "gone", EndNode: "gone too"}})
+	require.NoError(t, materializeErr)
 	require.Equal(t, "relationship", kind)
 	require.Nil(t, node)
 	require.NotNil(t, relationship)

@@ -41,21 +41,17 @@ func materializedValuesWithContext[T any](ctx context.Context, values []*T, visi
 	return ctx.Err()
 }
 
-// materializedKeyed is the shared batch-result walk. Projection binds each
-// authoritative result key to its owned or borrowed entity view.
-func materializedKeyed[K comparable, T any](values map[K]*T, project func(K, *T) (K, *T)) map[K]*T {
-	out, _ := materializedKeyedWithContext(context.Background(), values, project)
-	return out
-}
-
-func materializedKeyedWithContext[K comparable, T any](ctx context.Context, values map[K]*T, project func(K, *T) (K, *T)) (map[K]*T, error) {
+// materializedKeyedWithContext joins the original requests to their already
+// qualified keys. Projection changes the entity view, never the caller's key.
+// physical is produced by materializedIDsWithContext from the same requests.
+func materializedKeyedWithContext[K comparable, T any](ctx context.Context, requests, physical []K, values map[K]*T, project func(K, *T) *T) (map[K]*T, error) {
 	out := make(map[K]*T, len(values))
-	for key, value := range values {
+	for i, key := range requests {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if id, item := project(key, value); item != nil {
-			out[id] = item
+		if item := project(physical[i], values[physical[i]]); item != nil {
+			out[key] = item
 		}
 	}
 	return out, ctx.Err()

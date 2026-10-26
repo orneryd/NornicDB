@@ -261,10 +261,10 @@ func TestBoltCoverage_SendRecordsBatched(t *testing.T) {
 	conn := &mockConn{}
 	session := newTestSession(conn, &mockExecutor{})
 
-	require.NoError(t, session.sendRecordsBatched(nil, "nornic"))
+	require.NoError(t, session.sendRecordsBatched(nil, "nornic", nil))
 
 	rows := [][]any{{"alpha", int64(1)}, {"beta", int64(2)}}
-	require.NoError(t, session.sendRecordsBatched(rows, "nornic"))
+	require.NoError(t, session.sendRecordsBatched(rows, "nornic", nil))
 	assert.Greater(t, session.writer.Buffered(), 0)
 	require.NoError(t, session.writer.Flush())
 	assert.NotEmpty(t, conn.writeData)

@@ -17,9 +17,19 @@ import "context"
 // visibleBufferedEntities compacts either fresh overlay slice through the same
 // visibility owner. Hidden bodies still mask their stored predecessor through
 // the caller's untouched touched/suppressed sets.
+func visibleBufferedEntities[E *Node | *Edge](b *BadgerEngine, v readVisibility, entities []E) []E {
+	visible, _ := visibleBufferedEntitiesWithContext(context.Background(), b, v, entities)
+	return visible
+}
+
+// visibleBufferedEntitiesWithContext extends the shared entity filter with the
+// caller's preparation lifetime; node and relationship visibility share one loop.
 func visibleBufferedEntitiesWithContext[E *Node | *Edge](ctx context.Context, b *BadgerEngine, v readVisibility, entities []E) ([]E, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if v == storedRead || len(entities) == 0 || !b.visibilityFiltered() {
-		return entities, ctx.Err()
+		return entities, nil
 	}
 	now := DecayScoringTime()
 	visible := entities[:0]
@@ -81,10 +91,13 @@ func (b *BadgerEngine) readBufferedEntities(w *WriteBehindBuffer, v readVisibili
 	return result
 }
 
-// readBufferedEntitiesWithContext captures the selected overlay index and applies
-// the shared visibility predicate before returning. The caller holds w's read
-// lock. Cancellation never yields partial candidates or changes deletion masks.
+// readBufferedEntitiesWithContext is the same indexed-overlay capture owner for
+// contextual preparation. Compatibility entry points supply Background once;
+// statement readers carry their actual context to the existing index owners.
 func (b *BadgerEngine) readBufferedEntitiesWithContext(ctx context.Context, w *WriteBehindBuffer, v readVisibility, request bufferedEntityRead) (result bufferedEntityResult, err error) {
+	if err = ctx.Err(); err != nil {
+		return result, err
+	}
 	switch request.kind {
 	case bufferedNodes:
 		result.nodes, result.nodesTouched, err = w.allNodesOverlayLockedWithContext(ctx, request.prefix)

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"errors"
 	"context"
 	"slices"
 
@@ -33,7 +34,8 @@ func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, 
 	}
 	store := e.getStorage(ctx)
 	edge, err := store.GetEdge(storage.EdgeID(lookupID))
-	if err != nil || edge == nil {
+	if err != nil && !errors.Is(err, storage.ErrNotFound) { recordExpressionFailure(ctx, err); return nil, true, true }
+	if edge == nil {
 		return nil, true, true
 	}
 	if len(relationship.Types) > 0 && !slices.Contains(relationship.Types, edge.Type) {
@@ -52,7 +54,9 @@ func (e *StorageExecutor) relationshipIDSeedNodes(ctx context.Context, pattern, 
 	// The traversal trusts its seeds: each must match the start node's own
 	// labels and properties, as a bound start node does.
 	for _, id := range endpoints {
-		if node, getErr := e.newRelationshipEndpointReader(store).readRetained(id, nil); getErr == nil && node != nil && e.matchesEndPattern(node, &match.StartNode) {
+		node, getErr := e.newRelationshipEndpointReader(store).readRetained(id, nil)
+		if getErr != nil && !errors.Is(getErr, storage.ErrNotFound) { recordExpressionFailure(ctx, getErr); return nil, true, true }
+		if node != nil && e.matchesEndPattern(node, &match.StartNode) {
 			nodes = append(nodes, node)
 		}
 	}

@@ -67,23 +67,9 @@ func incidentEdgeListsContext(ctx context.Context, store storage.Engine, nodeID 
 		}
 		return nil, edges, err
 	}
-	if adjacent, ok := store.(storage.AdjacentEdgesEngine); ok {
-		out, in, err := adjacent.GetAdjacentEdges(nodeID)
-		if err == nil {
-			err = ctx.Err()
-		}
-		return out, in, err
+	outgoing, incoming, err := storage.GetAdjacentEdges(store, nodeID)
+	if err == nil {
+		err = ctx.Err()
 	}
-	outgoing, err := store.GetOutgoingEdges(nodeID)
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
-	incoming, err := store.GetIncomingEdges(nodeID)
-	if err != nil {
-		return nil, nil, err
-	}
-	return outgoing, incoming, ctx.Err()
+	return outgoing, incoming, err
 }

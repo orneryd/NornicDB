@@ -110,7 +110,7 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 		if node == nil {
 			continue
 		}
-		lookupID, validSource := node.Identity().NodeLookupID(store)
+		lookupID, validSource := e.identityLookup(store).NodeLookupID(node.Identity())
 		if !validSource {
 			continue
 		}
@@ -120,8 +120,10 @@ func (e *StorageExecutor) tryExecuteDeleteWithWithLimitHotPath(ctx context.Conte
 		}
 		edgesCount := 0
 		if needEdgeStats {
-			outgoingEdges, _ := store.GetOutgoingEdges(storage.NodeID(nodeID))
-			incomingEdges, _ := store.GetIncomingEdges(storage.NodeID(nodeID))
+			outgoingEdges, err := store.GetOutgoingEdges(storage.NodeID(nodeID))
+			if err != nil { return nil, true, err }
+			incomingEdges, err := store.GetIncomingEdges(storage.NodeID(nodeID))
+			if err != nil { return nil, true, err }
 			edgesCount = len(outgoingEdges) + len(incomingEdges)
 		}
 		if err := store.DeleteNode(storage.NodeID(nodeID)); err == nil {
@@ -384,15 +386,16 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 				switch entity := value.(type) {
 				case *storage.Node:
 					if entity != nil {
-						id, valid := entity.Identity().NodeLookupID(store)
-						if _, err := e.getQueryNode(store, id); valid && errors.Is(err, storage.ErrNotFound) {
+						id, valid := e.identityLookup(store).NodeLookupID(entity.Identity())
+						if !valid { continue }
+						if _, err := e.getQueryNode(store, id); err != nil && !errors.Is(err, storage.ErrNotFound) { recordExpressionFailure(ctx, err); return } else if valid && errors.Is(err, storage.ErrNotFound) {
 							nodeIDs = append(nodeIDs, id)
 						}
 					}
 				case *storage.Edge:
 					if entity != nil {
-						id := deleteEdgeLookupID(store, entity)
-						if _, err := store.GetEdge(id); errors.Is(err, storage.ErrNotFound) {
+						id := e.deleteEdgeLookupID(store, entity)
+						if _, err := store.GetEdge(id); err != nil && !errors.Is(err, storage.ErrNotFound) { recordExpressionFailure(ctx, err); return } else if errors.Is(err, storage.ErrNotFound) {
 							edgeIDs[id] = struct{}{}
 						}
 					}
@@ -406,7 +409,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 					pipelineItemUnevaluable(ctx, target)
 					return
 				}
-				collectDeleteTargetValue(store, value, seenNodes, seenEdges, &nodeIDs, &targetEdges)
+				collectDeleteTargetValue(e.identityLookup(store), value, seenNodes, seenEdges, &nodeIDs, &targetEdges)
 			}
 		}
 		for _, id := range targetEdges {
@@ -422,6 +425,7 @@ func (e *StorageExecutor) applyDeleteReturnProjection(result *ExecuteResult, cyp
 	e.replaceDeletedEntityViews(rows, deleted)
 	projected, err := e.projectMergeReturn(ctx, rows, cypher[returnIdx:])
 	if err != nil {
+		recordExpressionFailure(ctx, err)
 		return
 	}
 	result.Columns = projected.Columns
@@ -459,9 +463,9 @@ func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars str
 	return true
 }
 
-func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResult, store storage.Engine) {
+func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResult, store storage.Engine) error {
 	if matchResult == nil {
-		return
+		return nil
 	}
 	for rowIdx := range matchResult.Rows {
 		row := matchResult.Rows[rowIdx]
@@ -479,17 +483,19 @@ func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResul
 				continue
 			}
 			node, err := e.getQueryNode(store, storage.NodeID(nodeID))
-			if err != nil || node == nil {
+			if err != nil && !errors.Is(err, storage.ErrNotFound) { return err }
+			if node == nil {
 				continue
 			}
 			row[colIdx] = node
 		}
 	}
+	return nil
 }
 
-func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine) {
+func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResult, store storage.Engine) error {
 	if matchResult == nil {
-		return
+		return nil
 	}
 	for rowIdx := range matchResult.Rows {
 		row := matchResult.Rows[rowIdx]
@@ -507,12 +513,14 @@ func (e *StorageExecutor) normalizeSetMatchRowsToEdges(matchResult *ExecuteResul
 				continue
 			}
 			edge, err := store.GetEdge(storage.EdgeID(edgeID))
-			if err != nil || edge == nil {
+			if err != nil && !errors.Is(err, storage.ErrNotFound) { return err }
+			if edge == nil {
 				continue
 			}
 			row[colIdx] = edge
 		}
 	}
+	return nil
 }
 
 var setScopeVarPattern = regexp.MustCompile(`(?i)\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:\.|\+=|=)`)
@@ -1264,10 +1272,12 @@ func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLa
 	}
 
 	// Check outgoing edges (node is the source).
-	outgoing, _ := store.GetOutgoingEdges(node.ID)
+	outgoing, err := store.GetOutgoingEdges(node.ID)
+	if err != nil { return err }
 	for _, edge := range outgoing {
 		targetNode, err := store.GetNode(storage.NodeID(edge.EndNode))
-		if err != nil || targetNode == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) { return err }
+		if targetNode == nil {
 			continue
 		}
 		if err := checkPolicyForEdge(edge.Type, node.Labels, targetNode.Labels, policies); err != nil {
@@ -1276,10 +1286,12 @@ func validatePolicyOnLabelChange(store storage.Engine, node *storage.Node, oldLa
 	}
 
 	// Check incoming edges (node is the target).
-	incoming, _ := store.GetIncomingEdges(node.ID)
+	incoming, err := store.GetIncomingEdges(node.ID)
+	if err != nil { return err }
 	for _, edge := range incoming {
 		sourceNode, err := store.GetNode(storage.NodeID(edge.StartNode))
-		if err != nil || sourceNode == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) { return err }
+		if sourceNode == nil {
 			continue
 		}
 		if err := checkPolicyForEdge(edge.Type, sourceNode.Labels, node.Labels, policies); err != nil {

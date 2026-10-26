@@ -233,11 +233,11 @@ func TestStoragePreparationPopulationControl(t *testing.T) {
 // manifests as the gate. Each mutation must fail for its own new/changed work.
 func TestStorageWorkCensusMutationControls(t *testing.T) {
 	path, raw := source(t, "pkg/storage/badger_constraint_read.go")
-	needle := []byte("captured, readErr := b.readBufferedEntitiesWithContext(ctx, w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: label})")
+	needle := []byte("captured, captureErr = b.readBufferedEntitiesWithContext(ctx, w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: label})")
 	if bytes.Count(raw, needle) != 1 {
 		t.Fatal("real buffered constraint route moved")
 	}
-	raw = bytes.Replace(raw, needle, []byte("captured := b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: label})\nvar readErr error"), 1)
+	raw = bytes.Replace(raw, needle, []byte("captured = b.readBufferedEntities(w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: label})"), 1)
 	needle = []byte("}, func(txn *badger.Txn) error {")
 	if bytes.Count(raw, needle) != 1 {
 		t.Fatal("constraint body reader moved")

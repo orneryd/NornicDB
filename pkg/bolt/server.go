@@ -415,6 +415,7 @@ type QueryResult struct {
 }
 
 type resultStream struct {
+	entitySource *boltEntityDatabaseResolver
 	result   *QueryResult
 	delivery *resultstream.Delivery
 	index    int
@@ -1576,6 +1577,7 @@ type Session struct {
 	rawTransactionExecutor          bool
 
 	// Query result state (for streaming with PULL)
+	lastEntitySource *boltEntityDatabaseResolver
 	lastResult            *QueryResult
 	lastResultMemoryLease *memory.Lease
 	resultMemoryLeases    map[int64]*memory.Lease
@@ -2602,4 +2604,10 @@ func (s *Server) bindStatementCacheIndex() {
 			}
 		}
 	})
+}
+
+// FunctionStorage exposes this adapter's existing issued execution view to
+// result identity projection, including explicit transaction membership.
+func (a *boltQueryExecutorAdapter) FunctionStorage(database string) (storage.Engine,error) {
+ return a.executor.FunctionStorage(database)
 }

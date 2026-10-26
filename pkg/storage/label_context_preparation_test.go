@@ -18,6 +18,7 @@ type preparationCancelContext struct {
 	owner           string
 	additionalOwner string
 	observed        string
+	includeClosures bool
 	after, hits     int
 	cancel          context.CancelFunc
 }
@@ -27,7 +28,7 @@ func (c *preparationCancelContext) Err() error {
 	n := runtime.Callers(2, pcs[:])
 	if n > 0 {
 		frame, _ := runtime.CallersFrames(pcs[:n]).Next()
-		if strings.HasSuffix(frame.Function, c.owner) || strings.Contains(frame.Function, "/pkg/storage."+c.owner+"[") || c.additionalOwner != "" && strings.HasSuffix(frame.Function, c.additionalOwner) {
+		if strings.HasSuffix(frame.Function, c.owner) || strings.Contains(frame.Function, "/pkg/storage."+c.owner+"[") || c.additionalOwner != "" && strings.HasSuffix(frame.Function, c.additionalOwner) || c.includeClosures && strings.Contains(frame.Function, "/pkg/storage."+c.owner+".func") {
 			c.observed = frame.Function
 			c.hits++
 			if c.hits >= c.after {
@@ -147,7 +148,10 @@ func TestLabelContextCollectorTail(t *testing.T) {
 		_, err := base.CreateNode(&Node{ID: "test:tail", Labels: []string{"Target"}})
 		require.NoError(t, err)
 		c := NewCompositeEngine(map[string]Engine{"one": preparationLegacyLabelEngine{base}}, map[string]string{"one": "test"}, map[string]string{"one": "read"})
-		ctx := preparationContext(t, "ForEachNodeIDByLabelWithContext", 2)
+		ctx := preparationContext(t, "nodeReadOperation.visit", 2)
+		// The mandatory node kernel owns both entry and pre-delivery checks;
+		// the composite no longer materializes the child's legacy label slice.
+		ctx.includeClosures = true
 		seen := 0
 		err = c.ForEachNodeIDByLabelWithContext(ctx, "Target", func(NodeID) bool { seen++; return true })
 		require.GreaterOrEqual(t, ctx.hits, 2)

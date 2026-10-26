@@ -191,12 +191,13 @@ func (e *StorageExecutor) callDbCdcQuery(ctx context.Context, args []interface{}
 	// Events are read a page at a time, so a large backlog isn't decoded at
 	// once, until the limit is reached or the events end.
 	const page = 1000
+	contextual, contextualCapture := storage.OwnedCapability[storage.ContextualChangeCaptureEngine](capture)
 	for position := from; !hasLimit || int64(len(result.Rows)) < limit; {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 		var events []storage.ChangeEvent
-		if contextual, ok := capture.(storage.ContextualChangeCaptureEngine); ok {
+		if contextualCapture {
 			events, err = contextual.ChangeEventsWithContext(ctx, database, position.commitSeq, position.seq, page)
 		} else {
 			events, err = capture.ChangeEvents(database, position.commitSeq, position.seq, page)

@@ -70,7 +70,7 @@ func storageSelectors() []Selector {
 	entrance := work("entrance", "call")
 	entrance.PackagePrefixes = []string{module}
 	entrance.NameContains = []string{"Reader", "Candidates"}
-	entrance.NamePrefixes = []string{"Stream", "stream", "GetAll", "ForEach", "Iterate", "Collect", "collect", "Lookup", "lookup", "GetNodes", "getNodes", "AllNodes", "readNodeRecords", "buffered", "readBufferedEntities", "pendingValueMatches", "ensurePendingValueTracked"}
+	entrance.NamePrefixes = []string{"Stream", "stream", "GetAll", "ForEach", "Iterate", "Collect", "collect", "Lookup", "lookup", "GetNodes", "getNodes", "AllNodes", "readNodeRecords", "readBuffered", "visibleBuffered", "buffered", "pendingValueMatches", "ensurePendingValueTracked"}
 	rules = append(rules, entrance)
 	// KindFromSymbol preserves named primitive families without executable
 	// selector callbacks in clients. Names and prefixes are declarative unions.

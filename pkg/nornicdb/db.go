@@ -1244,7 +1244,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 	// goes through the engine this DB's namespaced view wraps, so events carry
 	// fully-qualified IDs (<db>:<id>); every wrapper in between forwards it
 	// (storage.EventSubscriber), and one that does not fails Open.
-	if namespaced, ok := db.storage.(*storage.NamespacedEngine); ok {
+	if namespaced, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](db.storage); ok {
 		// The downstream mutation path is debounced, so events are queued
 		// inline; only the ID is queued, the refresh reads the stored state.
 		err := storage.SubscribeEvents(namespaced.GetInnerEngine(), storage.EventHandlers{
@@ -1330,7 +1330,7 @@ func Open(dataDir string, config *Config) (*DB, error) {
 		// Collect all database names: default plus any from storage namespace listing.
 		dbNames := make(map[string]struct{})
 		dbNames[defaultDBName] = struct{}{}
-		if lister, ok := db.baseStorage.(storage.NamespaceLister); ok {
+		if lister, ok := storage.ViewMetadataForEngine[storage.NamespaceLister](db.baseStorage); ok {
 			for _, ns := range lister.ListNamespaces() {
 				if ns != "" && ns != "system" {
 					dbNames[ns] = struct{}{}
@@ -1981,7 +1981,7 @@ func (db *DB) GetBaseStorageForManager() storage.Engine {
 	defer db.mu.RUnlock()
 
 	// Unwrap the NamespacedEngine to get the base storage
-	if namespaced, ok := db.storage.(*storage.NamespacedEngine); ok {
+	if namespaced, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](db.storage); ok {
 		return namespaced.GetInnerEngine()
 	}
 
@@ -2072,10 +2072,7 @@ func (db *DB) PendingEmbeddingsCount() int {
 	if db.embedQueue != nil {
 		return db.embedQueue.PendingEmbeddingsCount()
 	}
-	if counter, ok := db.baseStorage.(interface{ PendingEmbeddingsCount() int }); ok {
-		return counter.PendingEmbeddingsCount()
-	}
-	return 0
+	return storage.ReadValueWithCapability(db.baseStorage, func(reader interface{ PendingEmbeddingsCount() int }) int { return reader.PendingEmbeddingsCount() }, nil)
 }
 
 // WaitForEmbeddings waits for queued and claimed embedding work to drain.
@@ -2304,18 +2301,18 @@ func (db *DB) ClearAllEmbeddings() (int, error) {
 	idPrefix := ""
 
 	// Unwrap NamespacedEngine first (DB instances are scoped to a single database namespace)
-	if namespacedEngine, ok := engine.(*storage.NamespacedEngine); ok {
+	if namespacedEngine, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](engine); ok {
 		idPrefix = namespacedEngine.Namespace() + ":"
 		engine = namespacedEngine.GetInnerEngine()
 	}
 
 	// Unwrap WALEngine if present
-	if walEngine, ok := engine.(*storage.WALEngine); ok {
+	if walEngine, ok := storage.OwnedCapability[*storage.WALEngine](engine); ok {
 		engine = walEngine.GetInnerEngine()
 	}
 
 	// Now check if we have a BadgerEngine
-	if badgerStorage, ok := engine.(*storage.BadgerEngine); ok {
+	if badgerStorage, ok := storage.OwnedCapability[*storage.BadgerEngine](engine); ok {
 		if idPrefix != "" {
 			return badgerStorage.ClearAllEmbeddingsForPrefix(idPrefix)
 		}
@@ -2417,7 +2414,7 @@ func (db *DB) Cypher(ctx context.Context, query string, params map[string]any) (
 
 // unwrapToBadgerEngine walks the engine wrapper chain to find the underlying BadgerEngine.
 func unwrapToBadgerEngine(eng storage.Engine) *storage.BadgerEngine {
-	badger, ok := storage.UnwrapEngine(eng).(*storage.BadgerEngine)
+	badger, ok := storage.OwnedCapability[*storage.BadgerEngine](storage.UnwrapEngine(eng))
 	if !ok {
 		return nil
 	}

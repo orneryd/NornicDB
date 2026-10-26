@@ -38,7 +38,7 @@ func RecoverBufferedCommitsAtOpen(engine Engine, wal *WAL) (int, error) {
 }
 
 func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthority) (int, error) {
-	b, ok := engine.(*BadgerEngine)
+	b, ok := OwnedCapability[*BadgerEngine](engine)
 	if !ok || b == nil || wal == nil {
 		return 0, nil
 	}

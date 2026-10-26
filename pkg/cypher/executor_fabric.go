@@ -228,6 +228,7 @@ func (e *StorageExecutor) fabricResultCacheKey(ctx context.Context, prepared *fa
 	key := cacheKeyBuilder{}
 	var scratch [binary.MaxVarintLen64 + 1]byte
 	writeCacheKeyString(&key, &scratch, resultCacheEntryKey(ctx, cypher, params))
+	key.buf = binary.AppendVarint(key.buf, e.maxResults())
 	key.buf = binary.AppendUvarint(key.buf, e.statementCacheScope.Generation())
 	scopes := make([]*multidb.StatementCacheScope, 0, len(selections))
 	for _, selection := range selections {
@@ -239,7 +240,7 @@ func (e *StorageExecutor) fabricResultCacheKey(ctx context.Context, prepared *fa
 		if err != nil {
 			return "", false
 		}
-		provider, ok := engine.(storage.GraphMutationVersionProvider)
+		provider, ok := storage.ViewMetadataForEngine[storage.GraphMutationVersionProvider](engine)
 		if !ok {
 			return "", false
 		}
@@ -601,12 +602,12 @@ func sameSourceID(a interface{}, b interface{}) bool {
 }
 
 func (e *StorageExecutor) currentDatabaseName() string {
-	if composite, ok := e.storage.(interface{ CompositeName() string }); ok {
+	if composite, ok := viewMetadataForExecutor[interface{ CompositeName() string }](e); ok {
 		if name := strings.TrimSpace(composite.CompositeName()); name != "" {
 			return name
 		}
 	}
-	if ns, ok := e.storage.(interface{ Namespace() string }); ok {
+	if ns, ok := viewMetadataForExecutor[interface{ Namespace() string }](e); ok {
 		if name := strings.TrimSpace(ns.Namespace()); name != "" {
 			return name
 		}
@@ -760,7 +761,7 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 	if compositeRoot {
 		c.localDispatchMu.Lock()
 		defer c.localDispatchMu.Unlock()
-		engine = composite.WithConstituentAccess(func(database string, physical storage.Engine, write bool) (storage.Engine, error) {
+		engine = composite.WithMembership(&fabricExecutionMembership{transaction: c.fabricTransaction()}).WithConstituentAccess(func(database string, physical storage.Engine, write bool) (storage.Engine, error) {
 			return c.compositeParticipantStorage(ctx, database, physical, write)
 		})
 	} else if sub, ok := fabric.SubTransactionFromContext(ctx); ok {
@@ -915,6 +916,7 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	if _, err := txExec.Execute(beginCtx, "BEGIN", nil); err != nil {
 		return nil, localizedError(localization.CypherCommandRoutingFabricShardTransactionFailed(dbName, err), err)
 	}
+	txExec.txContext.coordinatorOwned = true
 
 	terminalCtx := context.WithoutCancel(beginCtx)
 	commitFn := func(_ *fabric.SubTransaction) error {

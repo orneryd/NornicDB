@@ -2,8 +2,6 @@ package storage
 
 import "context"
 
-import "strings"
-
 var (
 	_ NodeWithoutEmbeddingsReader          = (*WALEngine)(nil)
 	_ BatchNodeWithoutEmbeddingsReader     = (*WALEngine)(nil)
@@ -21,13 +19,8 @@ var (
 // real batched embedding-free read. Wrappers use this shared check so merely
 // implementing the forwarding method does not advertise a broken capability.
 func batchNodeWithoutEmbeddingsSupported(engine Engine) bool {
-	if _, ok := engine.(BatchNodeWithoutEmbeddingsReader); !ok {
-		return false
-	}
-	if capability, ok := engine.(BatchNodeWithoutEmbeddingsCapability); ok {
-		return capability.BatchGetNodesWithoutEmbeddingsSupported()
-	}
-	return true
+	available := HasReadCapability[BatchNodeWithoutEmbeddingsReader](engine)
+	return available
 }
 
 // namespaceLabelCount is the shared namespace-aware capability dispatch.
@@ -38,19 +31,32 @@ func namespaceLabelCount(engine Engine, namespace, label string) (int64, error) 
 
 // namespaceLabelCountWithContext carries the caller through validation and label materialization.
 func namespaceLabelCountWithContext(ctx context.Context, engine Engine, namespace, label string) (int64, error) {
-	if provider, ok := engine.(NamespaceLabelStatsProvider); ok {
-		return NodeCountByLabelInNamespaceWithContext(ctx, provider, namespace, label)
-	}
-	nodes, err := GetNodesByLabelWithContext(ctx, engine, label)
-	if err != nil {
-		return 0, err
-	}
 	prefix := namespace + ":"
-	var count int64
-	for _, node := range nodes {
-		if node != nil && strings.HasPrefix(string(node.ID), prefix) {
-			count++
-		}
+	ordinary := func() (int64, error) {
+		var count int64
+		err := (nodeReadOperation{engine, StreamNodesOptions{Prefix: prefix, Label: label, Projection: []string{}, ApplyDecayFilter: true}}).visit(ctx, func(*Node) error { count++; return nil })
+		return count, err
 	}
-	return count, nil
+	if scoped, ok := ViewMetadataForEngine[interface{ Namespace() string }](engine); ok && scoped.Namespace() != "" {
+		if scoped.Namespace() != namespace {
+			if err := ctx.Err(); err != nil {
+				return 0, err
+			}
+			member := MembershipForEngine(engine)
+			if member.Status == MembershipEnded {
+				return 0, ErrTransactionClosed
+			}
+			if member.Status == MembershipUnbound {
+				return 0, ErrNotImplemented
+			}
+			return 0, nil
+		}
+		// Rows of a namespace view already have logical IDs. Applying its physical
+		// prefix again excludes every row, including through a transparent wrapper.
+		prefix = ""
+		return ordinary()
+	}
+	return ReadWithCapability(engine, func(reader NamespaceLabelStatsProvider) (int64, error) {
+		return NodeCountByLabelInNamespaceWithContext(ctx, reader, namespace, label)
+	}, ordinary)
 }

@@ -57,14 +57,17 @@ func (v *graphMutationVersions) namespaceCounter(namespace string) *atomic.Uint6
 }
 
 func graphMutationVersion(engine Engine, namespace string) (uint64, bool) {
+	// Revisions are live metadata, not optional row reads. Keep the existing
+	// forwarding owner so per-statement revision calls do not enter read
+	// availability checks; each provider reports support in its own result.
 	if namespace != "" {
-		provider, ok := engine.(NamespaceGraphMutationVersionProvider)
+		provider, ok := ViewMetadataForEngine[NamespaceGraphMutationVersionProvider](engine)
 		if !ok {
 			return 0, false
 		}
 		return provider.GraphMutationVersionInNamespace(namespace)
 	}
-	provider, ok := engine.(GraphMutationVersionProvider)
+	provider, ok := ViewMetadataForEngine[GraphMutationVersionProvider](engine)
 	if !ok {
 		return 0, false
 	}
@@ -95,7 +98,10 @@ func (n *NamespacedEngine) GraphMutationVersion() (uint64, bool) {
 }
 
 // GraphMutationVersionInNamespace keeps nested views scoped to their database.
-func (n *NamespacedEngine) GraphMutationVersionInNamespace(string) (uint64, bool) {
+func (n *NamespacedEngine) GraphMutationVersionInNamespace(namespace string) (uint64, bool) {
+	if namespace != n.namespace {
+		return 0, false
+	}
 	return n.GraphMutationVersion()
 }
 

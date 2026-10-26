@@ -599,7 +599,7 @@ func (s *Server) applyMVCCPressureWarnings(w http.ResponseWriter, dbName string,
 	if err != nil {
 		return
 	}
-	lce, ok := storageEngine.(storage.MVCCLifecycleEngine)
+	lce, ok := storage.ViewMetadataForEngine[storage.MVCCLifecycleEngine](storageEngine)
 	if !ok {
 		return
 	}

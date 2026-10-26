@@ -405,8 +405,8 @@ func deletedEntityReadText(clause pipelineClause) string {
 
 // deleteEdgeLookupID uses the same identity translation as collected targets
 // for relationships discovered while validating or detaching a node.
-func deleteEdgeLookupID(store storage.Engine, edge *storage.Edge) storage.EdgeID {
-	id, _ := edge.Identity().LookupID(store, "5")
+func (e *StorageExecutor) deleteEdgeLookupID(store storage.Engine, edge *storage.Edge) storage.EdgeID {
+	id, _ := e.identityLookup(store).LookupID(edge.Identity(), "5")
 	return storage.EdgeID(id)
 }
 

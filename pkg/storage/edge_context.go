@@ -8,9 +8,9 @@ func CreateEdgeWithContext(ctx context.Context, engine interface{ CreateEdge(*Ed
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if owner, ok := engine.(interface {
+	if owner, ok := OwnedCapability[interface {
 		CreateEdgeWithContext(context.Context, *Edge) error
-	}); ok {
+	}](engine); ok {
 		return owner.CreateEdgeWithContext(ctx, edge)
 	}
 	return engine.CreateEdge(edge)
@@ -21,9 +21,9 @@ func BulkCreateEdgesWithContext(ctx context.Context, engine interface{ BulkCreat
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if owner, ok := engine.(interface {
+	if owner, ok := OwnedCapability[interface {
 		BulkCreateEdgesWithContext(context.Context, []*Edge) error
-	}); ok {
+	}](engine); ok {
 		return owner.BulkCreateEdgesWithContext(ctx, edges)
 	}
 	return engine.BulkCreateEdges(edges)
@@ -34,9 +34,9 @@ func CreateMintedEdgeWithContext(ctx context.Context, engine interface{ CreateMi
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if owner, ok := engine.(interface {
+	if owner, ok := OwnedCapability[interface {
 		CreateMintedEdgeWithContext(context.Context, *Edge) error
-	}); ok {
+	}](engine); ok {
 		return owner.CreateMintedEdgeWithContext(ctx, edge)
 	}
 	return engine.CreateMintedEdge(edge)
@@ -47,9 +47,9 @@ func BulkCreateMintedEdgesWithContext(ctx context.Context, engine interface{ Bul
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if owner, ok := engine.(interface {
+	if owner, ok := OwnedCapability[interface {
 		BulkCreateMintedEdgesWithContext(context.Context, []*Edge) error
-	}); ok {
+	}](engine); ok {
 		return owner.BulkCreateMintedEdgesWithContext(ctx, edges)
 	}
 	return engine.BulkCreateMintedEdges(edges)

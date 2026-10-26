@@ -64,7 +64,7 @@ func TestRemoteHTTPModeLeavesCountersIndependent(t *testing.T) {
 			result := &cypher.ExecuteResult{Metadata: map[string]interface{}{"resolved_query_type": mode}, Stats: &cypher.QueryStats{NodesCreated: created}}
 			stats := queryStatsFromResult(result)
 			var response TransactionResponse
-			(&Server{}).appendStatementResult(&response, result, "nornic", true)
+			(&Server{}).appendStatementResult(&response, result, "nornic", true, nil)
 			require.Equal(t, mode, response.Results[0].QueryType)
 			require.Equal(t, created > 0, stats.ContainsUpdates)
 			require.Equal(t, created, stats.NodesCreated)

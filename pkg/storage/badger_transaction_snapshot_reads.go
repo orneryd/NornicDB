@@ -508,9 +508,9 @@ func (tx *BadgerTransaction) edgeHeaders(nodeID NodeID, direction EdgeDirection)
 		var committed []*Edge
 		var err error
 		if direction == Outgoing {
-			committed, _, err = tx.engine.OutgoingEdgeHeaders(nodeID)
+			committed, _, err = OutgoingEdgeHeaders(tx.engine, nodeID)
 		} else {
-			committed, _, err = tx.engine.IncomingEdgeHeaders(nodeID)
+			committed, _, err = IncomingEdgeHeaders(tx.engine, nodeID)
 		}
 		if err != nil {
 			return nil, true, err

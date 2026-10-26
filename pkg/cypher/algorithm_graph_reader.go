@@ -60,8 +60,21 @@ func (e *StorageExecutor) readAlgorithmGraph(ctx context.Context, procedure stri
 // multiplicity and relationship properties for the consuming algorithm. Never
 // mutate a storage-owned slice or retain a graph-sized cross-read identity set.
 type algorithmRelationshipReader struct {
+	namespace carriedNamespace
 	storage.Engine
 	types map[string]struct{}
+}
+
+// algorithmRelationshipReader declares every optional method; admission is derived from this policy.
+var algorithmRelationshipReaderReadPolicy = storage.BoundaryReadPolicy{
+	{Methods: "ReadStored StoredReadPolicy", Disposition: storage.CapabilityRefused, Scope: "Explicit stored modes preserve this view; mandatory facts never use ordinary/full-body fallback."},
+	{Methods: "Namespace", Disposition: storage.CapabilityOwned, Scope: "Carried namespace identity; the filtered data view stays owned."},
+	{Methods: "SubscribeEvents",
+		Disposition: storage.CapabilityOwned, Scope: "Relationship type filtering remains in core Engine reads; scoped event subscription stays on the view."},
+}
+
+func (*algorithmRelationshipReader) ReadCapabilityPolicy() storage.BoundaryReadPolicy {
+	return algorithmRelationshipReaderReadPolicy.Copy()
 }
 
 func (r *algorithmRelationshipReader) selectEdges(edges []*storage.Edge, err error) ([]*storage.Edge, error) {
@@ -92,3 +105,18 @@ func (r *algorithmRelationshipReader) SubscribeEvents(handlers storage.EventHand
 }
 
 var _ storage.EventSubscriber = (*algorithmRelationshipReader)(nil)
+
+func (*algorithmRelationshipReader) EngineCapabilityPolicy() storage.EngineBoundaryPolicy {
+	return storage.EngineBoundaryPolicy{Kind: storage.EngineView, ReadState: storage.BindingCarried, Membership: storage.BindingCarried, Controller: storage.BindingRefused, PendingActions: storage.BindingCarried, SchemaPublication: storage.BindingCarried, ReadLease: storage.BindingCarried, StatementMode: storage.BindingCarried, Identity: storage.BindingCarried, Enforcement: storage.BindingCarried, CompoundDependencies: storage.BindingCarried, SameVersionFallback: storage.BindingCarried, Delivery: storage.BindingCarried, ExactEffects: storage.BindingCarried, FullRead: storage.BindingCarried, ObservedNode: storage.BindingRefused, ObservedEdge: storage.BindingRefused}
+}
+
+// Stored integrity facts may not bypass this view.
+func (r *algorithmRelationshipReader) StoredReadPolicy() storage.StoredReadPolicy {
+	return storage.RefusedStoredReadPolicy()
+}
+func (r *algorithmRelationshipReader) ReadStored(ctx context.Context, _ storage.StoredReadRequest) (storage.StoredReadResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, storage.ErrNotImplemented
+}

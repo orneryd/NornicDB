@@ -39,12 +39,18 @@ type storedEntityView struct {
 	boundaries   *storedEntityObserverRegistry
 	read         embeddingRecordReader
 	acknowledged *WriteBehindBuffer
+	// selectedState is bound under the existing capture/transaction owner. It
+	// avoids reacquiring retirement locks while that owner is already holding them.
+	selectedState func(bufferedEntityKind, string) bufferedEntityState
 }
 
 // bufferedState selects the stored-inclusive typed overlay under its existing
 // read lock. The record reader remains the caller's pinned transaction; hidden
 // bodies and tombstones must mask that same committed predecessor.
 func (v storedEntityView) bufferedState(b *BadgerEngine, kind bufferedEntityKind, id string) bufferedEntityState {
+	if v.selectedState != nil {
+		return v.selectedState(kind, id)
+	}
 	if v.acknowledged == nil {
 		return bufferedEntityState{}
 	}
@@ -54,29 +60,16 @@ func (v storedEntityView) bufferedState(b *BadgerEngine, kind bufferedEntityKind
 }
 
 func (v storedEntityView) node(b *BadgerEngine, id NodeID) (*Node, error) {
-	if v.absent {
-		return nil, nil
-	}
-	if state := v.bufferedState(b, bufferedNodeEntity, string(id)); state.found {
-		if state.deleted {
-			return nil, nil
-		}
-		return copyNode(state.node), nil
-	}
-
 	var node *Node
-	err := v.read.value(nodeKey(id), func(data []byte) error {
-		var err error
-		node, err = b.decodeNode(namespaceForNodeID(id), data)
-		return err
+	err := v.withSelectedEntity(b, bufferedNodeEntity, string(id), func(state bufferedEntityState) error {
+		if !state.deleted {
+			node = copyNode(state.node)
+		}
+		return nil
+	}, func() error {
+		return v.value(bufferedNodeEntity, string(id), func(data []byte) error { var err error; node, err = v.nodeRecord(b, id, data); return err })
 	})
-	if err == badger.ErrKeyNotFound {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return b.loadNodeEmbeddingState(v.read, node, id, true)
+	return node, err
 }
 
 func (v storedEntityView) edge(b *BadgerEngine, id EdgeID) (*Edge, error) {
@@ -91,18 +84,17 @@ func (v storedEntityView) edge(b *BadgerEngine, id EdgeID) (*Edge, error) {
 // staged record decoding. Callers retain their own read cut and missing-value
 // contract; live visibility is applied after this complete image is resolved.
 func (b *BadgerEngine) readStoredEdgeImage(reader embeddingRecordReader, state bufferedEntityState, id EdgeID) (*Edge, bool, error) {
-	if state.found {
-		if state.deleted {
-			return nil, false, nil
-		}
-		return copyEdge(state.edge), true, nil
-	}
 	var edge *Edge
-	err := reader.value(edgeKey(id), func(data []byte) error { var err error; edge, err = b.decodeEdgeBodyByID(data, id); return err })
-	if err == badger.ErrKeyNotFound {
-		return nil, false, nil
-	}
-	return edge, err == nil, err
+	source := storedEntityView{read: reader, selectedState: func(bufferedEntityKind, string) bufferedEntityState { return state }}
+	err := source.withSelectedEntity(b, bufferedEdgeEntity, string(id), func(state bufferedEntityState) error {
+		if !state.deleted {
+			edge = copyEdge(state.edge)
+		}
+		return nil
+	}, func() error {
+		return source.value(bufferedEdgeEntity, string(id), func(data []byte) error { var err error; edge, err = source.edgeRecord(b, id, data); return err })
+	})
+	return edge, edge != nil, err
 }
 
 // captureStoredEntityChanges reads each typed touched entity once. Both views
@@ -128,21 +120,13 @@ func (b *BadgerEngine) captureStoredEntityChanges(ctx context.Context, keys []an
 		switch id := key.(type) {
 		case NodeID:
 			read := func() error { var err error; change.BeforeNode, err = before.node(b, id); return err }
-			if before.boundaries != nil && (*before.boundaries)[namespaceForNodeID(id)].boundary != nil {
-				err = (*before.boundaries)[namespaceForNodeID(id)].boundary.WithStoredEntityRead(StoredEntityNodePriorRead, string(id), read)
-			} else {
-				err = read()
-			}
+			err = before.withBoundary(StoredEntityNodePriorRead, string(id), read)
 			if err == nil {
 				change.AfterNode, err = after.node(b, id)
 			}
 		case EdgeID:
 			read := func() error { var err error; change.BeforeEdge, err = before.edge(b, id); return err }
-			if before.boundaries != nil && (*before.boundaries)[namespaceForEdgeID(id)].boundary != nil {
-				err = (*before.boundaries)[namespaceForEdgeID(id)].boundary.WithStoredEntityRead(StoredEntityEdgePriorRead, string(id), read)
-			} else {
-				err = read()
-			}
+			err = before.withBoundary(StoredEntityEdgePriorRead, string(id), read)
 			if err == nil {
 				change.AfterEdge, err = after.edge(b, id)
 			}
@@ -629,4 +613,84 @@ func (b *BadgerEngine) prepareStoredEntityChanges(registry *storedEntityObserver
 			publish()
 		}
 	}, nil
+}
+
+// value owns typed stored record selection on the caller's pinned reader.
+// Missing records are absence. The caller's mode determines how much of a
+// present record is decoded; publication requests a complete image explicitly.
+func (v storedEntityView) value(kind bufferedEntityKind, id string, visit func([]byte) error) error {
+	if v.absent {
+		return nil
+	}
+	var key []byte
+	switch kind {
+	case bufferedNodeEntity:
+		key = nodeKey(NodeID(id))
+	case bufferedEdgeEntity:
+		key = edgeKey(EdgeID(id))
+	default:
+		return ErrInvalidData
+	}
+	err := v.read.value(key, visit)
+	if err == badger.ErrKeyNotFound {
+		return nil
+	}
+	return err
+}
+func (v storedEntityView) nodeRecord(b *BadgerEngine, id NodeID, data []byte) (*Node, error) {
+	node, err := b.decodeNodeProjectedWithContext(v.read.ctx, namespaceForNodeID(id), data, nil)
+	if err != nil {
+		return nil, err
+	}
+	return b.loadNodeEmbeddingState(v.read, node, id, true)
+}
+
+// edgeRecord is the complete stored relationship image on this reader. The
+// compact body's endpoint numbers belong to its persisted dictionary cut;
+// consulting the live dictionary here would mix captured facts and new IDs.
+func (v storedEntityView) edgeRecord(b *BadgerEngine, id EdgeID, data []byte) (*Edge, error) {
+	edge, start, end, err := b.decodeEdgeCompactV2WithContext(v.read.ctx, namespaceForEdgeID(id), data)
+	if err != nil {
+		return nil, err
+	}
+	edge.ID = id
+	edge.StartNode, err = v.read.nodeID(start)
+	if err != nil {
+		return nil, err
+	}
+	edge.EndNode, err = v.read.nodeID(end)
+	return edge, err
+}
+
+func (r embeddingRecordReader) nodeID(num uint64) (NodeID, error) {
+	var id NodeID
+	err := r.value(append([]byte{prefixIDDictNodeReverse}, encodeNumID(num)...), func(value []byte) error { id = NodeID(value); return nil })
+	return id, err
+}
+
+// withBoundary is the existing stored-read interception seam for both complete
+// publication images and explicit D7 fact/projection modes.
+func (v storedEntityView) withBoundary(kind StoredEntityReadKind, id string, read func() error) error {
+	if v.boundaries != nil {
+		namespace := namespaceForNodeID(NodeID(id))
+		if kind == StoredEntityEdgePriorRead {
+			namespace = namespaceForEdgeID(EdgeID(id))
+		}
+		if boundary := (*v.boundaries)[namespace].boundary; boundary != nil {
+			return boundary.WithStoredEntityRead(kind, id, read)
+		}
+	}
+	return read()
+}
+
+// withSelectedEntity owns absent/ACK/staged/physical precedence for every
+// explicit mode. Mode-specific decoders/copies run only after this selection.
+func (v storedEntityView) withSelectedEntity(b *BadgerEngine, kind bufferedEntityKind, id string, buffered func(bufferedEntityState) error, physical func() error) error {
+	if v.absent {
+		return nil
+	}
+	if state := v.bufferedState(b, kind, id); state.found {
+		return buffered(state)
+	}
+	return physical()
 }

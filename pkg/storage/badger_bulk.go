@@ -261,12 +261,16 @@ func deleteBulkEntities[T ~string](b *BadgerEngine, ids []T, remove func(*Badger
 // ============================================================================
 
 // GetInDegree returns the number of incoming edges to a node.
+//
+// Deprecated: Use GetIncomingEdges and count the returned edges to receive errors. Failed reads may appear as zero.
 func (b *BadgerEngine) GetInDegree(nodeID NodeID) int {
 	count, _ := b.countByPrefix("", 0, nil, adjacencyCountRequest{nodeID: nodeID, incoming: true})
 	return int(count)
 }
 
 // GetOutDegree returns the number of outgoing edges from a node.
+//
+// Deprecated: Use GetOutgoingEdges and count the returned edges to receive errors. Failed reads may appear as zero.
 func (b *BadgerEngine) GetOutDegree(nodeID NodeID) int {
 	count, _ := b.countByPrefix("", 0, nil, adjacencyCountRequest{nodeID: nodeID, incoming: false})
 	return int(count)

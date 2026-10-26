@@ -16,7 +16,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 	detach bool,
 ) (*ExecuteResult, bool, error) {
 	matchSegment = strings.TrimSpace(matchSegment)
-	_, inTransactionWrapper := e.getStorage(ctx).(*transactionStorageWrapper)
+	_, inTransactionWrapper := e.nativeMemberFor(e.getStorage(ctx))
 	if detach || strings.Contains(deleteVars, ",") {
 		return nil, false, nil
 	}
@@ -185,7 +185,7 @@ func (e *StorageExecutor) collectBoundRelationshipDeleteSources(ctx context.Cont
 	}
 
 	store := e.getStorage(ctx)
-	if txWrapper, ok := store.(*transactionStorageWrapper); !ok || !txWrapper.tx.HasPendingNodeMutations() {
+	if txWrapper, ok := e.nativeMemberFor(store); !ok || !txWrapper.tx.HasPendingNodeMutations() {
 		return e.collectNodesWithStreaming(ctx, sourcePattern.labels, sourcePattern.properties, sourcePattern.variable, "", -1)
 	}
 

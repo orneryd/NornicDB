@@ -427,7 +427,7 @@ func (e *StorageExecutor) buildRelationshipBatchNodeMatchIndex(ctx context.Conte
 				if err := ctx.Err(); err != nil {
 					return nil, false, err
 				}
-				ids, lookupErr := propertyIndexLookup(ctx, store, schema, key.label, key.prop, value)
+				ids, lookupErr := e.propertyIndexLookup(ctx, store, schema, key.label, key.prop, value)
 				if lookupErr != nil {
 					return nil, false, lookupErr
 				}

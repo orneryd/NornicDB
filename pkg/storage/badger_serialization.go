@@ -8,6 +8,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"encoding/gob"
 	"fmt"
@@ -97,8 +98,26 @@ func decodeStoredTime(decoder *msgpack.Decoder, value reflect.Value, length int)
 // is no longer a runtime serializer choice — msgpack is the only format
 // the engine emits.
 func encodeValue(value any) ([]byte, error) {
-	payload, err := msgpack.Marshal(value)
+	return encodeValueWithContext(nil, value)
+}
+
+func encodeValueWithContext(ctx context.Context, value any) ([]byte, error) {
+	var payload []byte
+	var err error
+	if ctx == nil {
+		payload, err = msgpack.Marshal(value)
+	} else {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var buffer bytes.Buffer
+		err = msgpack.NewEncoder(util.WriterWithContext(ctx, &buffer)).Encode(value)
+		payload = buffer.Bytes()
+	}
 	if err != nil {
+		return nil, err
+	}
+	if err := copyContextError(ctx); err != nil {
 		return nil, err
 	}
 	out := make([]byte, 0, len(serializationMagic)+2+len(payload))
@@ -114,6 +133,14 @@ func encodeValue(value any) ([]byte, error) {
 // in-place migration tool can read old data; the engine's hot path will
 // only ever see msgpack bodies in databases written by current code.
 func decodeValue(data []byte, value any) error {
+	return decodeValueWithContext(nil, data, value)
+}
+func decodeValueWithContext(ctx context.Context, data []byte, value any) error {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
 	headerSerializer, payload, ok, err := splitSerializationHeader(data)
 	if err != nil {
 		return err
@@ -121,15 +148,15 @@ func decodeValue(data []byte, value any) error {
 	if ok {
 		switch headerSerializer {
 		case serializerIDMsgpack:
-			return util.DecodeMsgpackBytes(payload, value)
+			return util.DecodeMsgpackBytesWithContext(ctx, payload, value)
 		case serializerIDGob:
-			return gob.NewDecoder(bytes.NewReader(payload)).Decode(value)
+			return gob.NewDecoder(util.ReaderWithContext(ctx, bytes.NewReader(payload))).Decode(value)
 		default:
 			return fmt.Errorf("unsupported storage serializer id: %d", headerSerializer)
 		}
 	}
 	// Legacy fallback: pre-header gob bodies.
-	return gob.NewDecoder(bytes.NewReader(data)).Decode(value)
+	return gob.NewDecoder(util.ReaderWithContext(ctx, bytes.NewReader(data))).Decode(value)
 }
 
 // splitSerializationHeader returns the serializer id from the leading

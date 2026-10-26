@@ -166,8 +166,8 @@ func TestNamespacedExtraLifecycleLabelAndAccessBranches(t *testing.T) {
 
 	require.NoError(t, ns.SetLifecycleSchedule(2*time.Minute))
 	require.Equal(t, 2*time.Minute, recorder.scheduledInterval)
-	require.Equal(t, recorder.debtKeys, ns.TopLifecycleDebtKeys(7))
-	require.Equal(t, 7, recorder.debtLimit)
+	require.Nil(t, ns.TopLifecycleDebtKeys(7), "engine-wide debt scans have no namespace-scoped contract")
+	require.Zero(t, recorder.debtLimit, "a refused scan must not call the global provider")
 
 	ns.RecordMaterializedAccess("n1")
 	ns.RecordMaterializedAccess("tenant:n2")

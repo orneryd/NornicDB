@@ -185,7 +185,7 @@ func TestFilterByTypeAndProperties_EmptyFilterList_ReturnsNothing(t *testing.T) 
 	filters := map[string][]string{"collection": {}}
 	seenOrphans := map[string]bool{}
 
-	out := svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: filters}, seenOrphans)
+	out := mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: filters}, seenOrphans))
 
 	require.Empty(t, out, "an empty filter value list matches nothing")
 }
@@ -201,7 +201,7 @@ func TestFilterByTypeAndProperties_NoFilters_ReturnsAll(t *testing.T) {
 	makeNode(t, eng, "nornic:b", []string{"Y"}, map[string]any{})
 
 	results := buildFilterResults("nornic:a", "nornic:b")
-	out := svc.filterByTypeAndProperties(ctx, results, &SearchOptions{}, map[string]bool{})
+	out := mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{}, map[string]bool{}))
 	require.Len(t, out, 2)
 }
 
@@ -217,7 +217,7 @@ func TestFilterByTypeAndProperties_TypeFilter_LabelMatch(t *testing.T) {
 	makeNode(t, eng, "nornic:person2", []string{"Person"}, map[string]any{"name": "Bob"})
 
 	results := buildFilterResults("nornic:person1", "nornic:org1", "nornic:person2")
-	out := svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: []string{"person"}}, map[string]bool{})
+	out := mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: []string{"person"}}, map[string]bool{}))
 
 	require.Len(t, out, 2)
 	ids := []string{out[0].ID, out[1].ID}
@@ -236,7 +236,7 @@ func TestFilterByTypeAndProperties_TypeFilter_TypeProperty(t *testing.T) {
 	makeNode(t, eng, "nornic:n2", []string{}, map[string]any{"type": "Gadget"})
 
 	results := buildFilterResults("nornic:n1", "nornic:n2")
-	out := svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: []string{"widget"}}, map[string]bool{})
+	out := mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: []string{"widget"}}, map[string]bool{}))
 
 	require.Len(t, out, 1)
 	assert.Equal(t, "nornic:n1", out[0].ID)
@@ -253,7 +253,7 @@ func TestFilterByTypeAndProperties_PropertyFilter_ScalarMatch(t *testing.T) {
 	makeNode(t, eng, "nornic:stage", []string{"Svc"}, map[string]any{"env": "staging"})
 
 	results := buildFilterResults("nornic:prod", "nornic:stage")
-	out := svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: map[string][]string{"env": {"prod"}}}, map[string]bool{})
+	out := mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: map[string][]string{"env": {"prod"}}}, map[string]bool{}))
 
 	require.Len(t, out, 1)
 	assert.Equal(t, "nornic:prod", out[0].ID)
@@ -271,7 +271,7 @@ func TestFilterByTypeAndProperties_PropertyFilter_MultiValueOR(t *testing.T) {
 	makeNode(t, eng, "nornic:n3", []string{"X"}, map[string]any{"env": "staging"})
 
 	results := buildFilterResults("nornic:n1", "nornic:n2", "nornic:n3")
-	out := svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: map[string][]string{"env": {"prod", "dev"}}}, map[string]bool{})
+	out := mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: map[string][]string{"env": {"prod", "dev"}}}, map[string]bool{}))
 
 	require.Len(t, out, 2)
 	ids := []string{out[0].ID, out[1].ID}
@@ -291,9 +291,9 @@ func TestFilterByTypeAndProperties_CombinedTypeAndProperty(t *testing.T) {
 	makeNode(t, eng, "nornic:c", []string{"Database"}, map[string]any{"env": "prod"})
 
 	results := buildFilterResults("nornic:a", "nornic:b", "nornic:c")
-	out := svc.filterByTypeAndProperties(ctx, results,
+	out := mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results,
 		&SearchOptions{Types: []string{"service"}, Filters: map[string][]string{"env": {"prod"}}},
-		map[string]bool{})
+		map[string]bool{}))
 
 	// Only "nornic:a" is a Service AND env=prod.
 	require.Len(t, out, 1)
@@ -316,7 +316,7 @@ func TestFilterByTypeAndProperties_EmptyValueList_CombinedWithPopulatedFilter(t 
 		"collection": {}, // empty: matches nothing
 		"env":        {"prod"},
 	}
-	out := svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: filters}, map[string]bool{})
+	out := mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: filters}, map[string]bool{}))
 
 	require.Empty(t, out, "an empty-list filter key matches nothing")
 }
@@ -334,7 +334,7 @@ func TestFilterByTypeAndProperties_AllEmptyFilters_ReturnsNothing(t *testing.T) 
 	results := buildFilterResults("nornic:x", "nornic:y")
 	filters := map[string][]string{"tag": {}, "category": {}}
 
-	out := svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: filters}, map[string]bool{})
+	out := mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: filters}, map[string]bool{}))
 	require.Empty(t, out)
 }
 
@@ -348,7 +348,7 @@ func TestFilterByTypeAndProperties_ScorePreserved(t *testing.T) {
 	makeNode(t, eng, "nornic:n1", []string{"X"}, map[string]any{"env": "prod"})
 
 	results := []indexResult{{ID: "nornic:n1", Score: 0.987654}}
-	out := svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: map[string][]string{"env": {"prod"}}}, map[string]bool{})
+	out := mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Filters: map[string][]string{"env": {"prod"}}}, map[string]bool{}))
 
 	require.Len(t, out, 1)
 	assert.InDelta(t, 0.987654, out[0].Score, 1e-9, "score must be preserved exactly")
@@ -367,7 +367,7 @@ func TestFilterByTypeAndProperties_OrphanedID_Skipped(t *testing.T) {
 
 	results := buildFilterResults("nornic:real", "nornic:ghost")
 	// Provide a type filter so BatchGetNodes is invoked and the ghost is detected.
-	out := svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: []string{"x"}}, map[string]bool{})
+	out := mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, results, &SearchOptions{Types: []string{"x"}}, map[string]bool{}))
 
 	// "nornic:ghost" must be silently dropped; only "nornic:real" survives.
 	require.Len(t, out, 1)
@@ -380,6 +380,6 @@ func TestFilterByTypeAndProperties_EmptyInput(t *testing.T) {
 	svc := NewService(eng)
 	ctx := context.Background()
 
-	out := svc.filterByTypeAndProperties(ctx, nil, &SearchOptions{Types: []string{"X"}, Filters: map[string][]string{"env": {"prod"}}}, map[string]bool{})
+	out := mustSearchRead[[]indexResult](t)(svc.filterByTypeAndProperties(ctx, nil, &SearchOptions{Types: []string{"X"}, Filters: map[string][]string{"env": {"prod"}}}, map[string]bool{}))
 	assert.Empty(t, out)
 }

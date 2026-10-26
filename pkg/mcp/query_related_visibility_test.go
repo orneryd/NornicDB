@@ -31,7 +31,8 @@ func TestMCPRelatedNodesProjectSuppressedTitle(t *testing.T) {
 	router := NewServer(nil, nil)
 	router.SetDatabaseScopedStorage(func(string) (storage.Engine, error) { return engine, nil })
 	normalCtx := ContextWithDatabase(context.Background(), "tenant")
-	related := router.getRelatedNodes(normalCtx, "a", 2)
+	related, relatedErr := router.getRelatedNodes(normalCtx, "a", 2)
+	require.NoError(t, relatedErr)
 	require.Len(t, related, 2)
 	for _, node := range related {
 		require.Empty(t, node.Title)
@@ -44,7 +45,8 @@ func TestMCPRelatedNodesProjectSuppressedTitle(t *testing.T) {
 	// a second read lock behind a queued writer.
 	ctx, release := storage.BeginQueryRevealScopeContext(context.Background(), engine, true)
 	defer release()
-	revealed := router.getRelatedNodes(ContextWithDatabase(ctx, "tenant"), "a", 2)
+	revealed, relatedErr := router.getRelatedNodes(ContextWithDatabase(ctx, "tenant"), "a", 2)
+	require.NoError(t, relatedErr)
 	require.Len(t, revealed, 2)
 	for _, node := range revealed {
 		require.Equal(t, "private title", node.Title)

@@ -136,7 +136,7 @@ func (e *StorageExecutor) cacheMergeNode(labels []string, props map[string]inter
 // (PrepareMergeNodeForWrite, NOR-117). Storage without a transaction admits
 // nothing.
 func prepareMergeKeys(ctx context.Context, store storage.Engine, labels []string, props map[string]interface{}, write bool) error {
-	preparer, ok := store.(storage.MergeNodePreparer)
+	preparer, ok := storage.OwnedCapability[storage.MergeNodePreparer](store)
 	if !ok || len(labels) == 0 || len(props) == 0 {
 		return nil
 	}
@@ -161,7 +161,10 @@ func (e *StorageExecutor) loadMergeCandidateNodes(ctx context.Context, store sto
 		}
 		seen[id] = struct{}{}
 		n, err := e.getQueryNode(store, id)
-		if err != nil || n == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, err
+		}
+		if n == nil {
 			continue
 		}
 		out = append(out, n)
@@ -261,7 +264,7 @@ func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engin
 			}
 			schemaLookupUsed = true
 			e.markMergeSchemaLookupUsed()
-			ids, lookupErr := compositeIndexLookup(ctx, store, idx, compositeLookupValues(idx, props), true)
+			ids, lookupErr := e.compositeIndexLookup(ctx, store, idx, compositeLookupValues(idx, props), true)
 			if lookupErr != nil {
 				return nil, lookupErr
 			}
@@ -329,7 +332,7 @@ func (e *StorageExecutor) findMergeNode(ctx context.Context, store storage.Engin
 			}
 			schemaLookupUsed = true
 			e.markMergeSchemaLookupUsed()
-			ids, lookupErr := propertyIndexLookup(ctx, store, schema, label, prop, val)
+			ids, lookupErr := e.propertyIndexLookup(ctx, store, schema, label, prop, val)
 			if lookupErr != nil {
 				return nil, lookupErr
 			}
@@ -411,33 +414,13 @@ func (e *StorageExecutor) findMergeNodesScanned(ctx context.Context, store stora
 		}
 		return matches, false, nil
 	}
-	lookup, hasEqualityLookup := store.(storage.TransactionEqualityLookup)
-	wrapper, transactional := store.(*transactionStorageWrapper)
-	if transactional {
-		lookup, hasEqualityLookup = wrapper.tx, true
-	}
-	if hasEqualityLookup && len(labels) > 0 && len(props) > 0 {
-		if transactional && wrapper.namespace != "" {
-			if err := wrapper.tx.SetNamespace(wrapper.namespace); err != nil {
-				return nil, false, err
-			}
-		}
-		var candidates []*storage.Node
-		var complete bool
-		var lookupErr error
-		if contextual, ok := lookup.(storage.ContextTransactionEqualityLookup); ok {
-			candidates, complete, lookupErr = contextual.LookupNodesByEqualityWithContext(ctx, labels[0], props)
-		} else {
-			candidates, complete, lookupErr = lookup.LookupNodesByEquality(labels[0], props)
-		}
-
+	if len(labels) > 0 && len(props) > 0 {
+		candidates, complete, lookupErr := storage.LookupNodesByEqualityWithContext(ctx, store, labels[0], props)
 		if lookupErr != nil {
 			return nil, false, lookupErr
 		}
 		if complete {
-			if transactional && wrapper.namespace != "" {
-				candidates = wrapper.toUserNamespacedNodes(candidates)
-			}
+			// The selected capability owns the issued view and its namespace projection.
 			e.markMergeScanFallbackUsed()
 			for _, candidate := range candidates {
 				if err := ctx.Err(); err != nil {
@@ -515,7 +498,7 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(ctx context.Context, stor
 	for _, idx := range indexes {
 		if mergeIndexMatchesAllProperties(idx, props) {
 			e.markMergeSchemaLookupUsed()
-			ids, err := compositeIndexLookup(ctx, store, idx, compositeLookupValues(idx, props), true)
+			ids, err := e.compositeIndexLookup(ctx, store, idx, compositeLookupValues(idx, props), true)
 			return ids, true, err
 		}
 	}
@@ -525,7 +508,7 @@ func (e *StorageExecutor) mergeNodeIndexedCandidateIDs(ctx context.Context, stor
 		if _, ok := schema.GetPropertyIndex(label, prop); !ok {
 			continue
 		}
-		ids, err := propertyIndexLookup(ctx, store, schema, label, prop, props[prop])
+		ids, err := e.propertyIndexLookup(ctx, store, schema, label, prop, props[prop])
 		if err != nil {
 			return nil, false, err
 		}

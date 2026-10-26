@@ -1,53 +1,167 @@
 package storage
 
-import "context"
+import (
+	"context"
+	"reflect"
+	"sort"
+)
+
+// resolveNodeReads owns source resolution for both point and batch reads.
+// It binds the catalog and live readable aliases once, asks only required
+// children, and resolves each original ID at its first successful source.
+// Callers adapt point/batch transport; they never choose source precedence.
+func (c *CompositeEngine) resolveNodeReads(ctx context.Context, ids []NodeID, read func(string, Engine, []NodeID, func(NodeID, *Node) error) error, emit func(NodeID, *Node)) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := c.StorageMembership().ReadError(); err != nil {
+		return err
+	}
+	aliases, err := c.getConstituentsForReadWithContext(ctx)
+	if err != nil {
+		return err
+	}
+	catalog := c.constituentReadCatalog()
+	type route struct {
+		original, local NodeID
+		alias           string
+	}
+	var single [1]route
+	routes := single[:0]
+	if len(ids) > 1 {
+		routes = make([]route, 0, len(ids))
+	}
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		selected, local, qualified, err := catalog.selectEntity("4", string(id), aliases)
+		if err == ErrNotFound || err == ErrInvalidID {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		r := route{original: id, local: NodeID(local)}
+		if qualified {
+			r.alias = selected[0]
+		}
+		routes = append(routes, r)
+	}
+	var resolved map[NodeID]bool
+	if len(routes) > 1 {
+		resolved = make(map[NodeID]bool, len(routes))
+	}
+	resolvedSingle := false
+	isResolved := func(id NodeID) bool {
+		if len(routes) == 1 {
+			return resolvedSingle
+		}
+		return resolved[id]
+	}
+	for _, alias := range aliases {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		var point [1]NodeID
+		requests := point[:0]
+		var originals map[NodeID][]NodeID
+		if len(routes) > 1 {
+			originals = make(map[NodeID][]NodeID)
+		}
+		for _, r := range routes {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if isResolved(r.original) || r.alias != "" && r.alias != alias {
+				continue
+			}
+			if originals == nil {
+				requests = append(requests, r.local)
+				continue
+			}
+			if _, requested := originals[r.local]; !requested {
+				requests = append(requests, r.local)
+			}
+			originals[r.local] = append(originals[r.local], r.original)
+		}
+		if len(requests) == 0 {
+			continue
+		}
+		engine, err := c.getConstituent(alias)
+		if err != nil {
+			return err
+		}
+		if err := read(alias, engine, requests, func(local NodeID, node *Node) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if node == nil {
+				return nil
+			}
+			var pointOriginal [1]NodeID
+			matching := pointOriginal[:0]
+			if originals == nil {
+				if local == routes[0].local {
+					matching = append(matching, routes[0].original)
+				}
+			} else {
+				matching = originals[local]
+			}
+			for _, original := range matching {
+				if isResolved(original) {
+					continue
+				}
+				if resolved == nil {
+					resolvedSingle = true
+				} else {
+					resolved[original] = true
+				}
+				emit(original, c.sourceNode(alias, engine, node))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	return ctx.Err()
+}
 
 // constituentForElementID resolves a qualified identity before a local read.
 // A qualified ID never falls back to another database with the same local ID.
 // qualified is true even when its database is unavailable or the kind differs.
-func (c *CompositeEngine) constituentForElementID(kind, value string) (engine Engine, local string, qualified bool) {
+func (c *CompositeEngine) constituentForElementID(kind, value string) (engine Engine, local string, qualified bool, err error) {
 	aliases, local, qualified := c.constituentsForEntity(kind, value)
 	if !qualified || len(aliases) == 0 {
-		return nil, local, qualified
+		return nil, local, qualified, nil
 	}
-	engine, _ = c.getConstituent(aliases[0])
-	return engine, local, true
+	engine, err = c.getConstituent(aliases[0])
+	return engine, local, true, err
 }
 
 // constituentsForEntity is the shared source selector for ordinary and MVCC
 // identity reads. A qualified reference cannot fall through to another source.
 func (c *CompositeEngine) constituentsForEntity(kind, value string) ([]string, string, bool) {
-	actual, database, local, qualified := ParseElementID(value)
-	aliases := c.getConstituentsForRead()
-	if !qualified {
-		return aliases, value, false
-	}
-	if actual != kind {
-		return nil, local, true
-	}
-	for _, alias := range aliases {
-		engine, err := c.getConstituent(alias)
-		if err != nil {
-			continue
-		}
-		if c.constituentDatabase(alias, engine) == database {
-			return []string{alias}, local, true
-		}
-	}
-	return nil, local, true
+	aliases, local, qualified, _ := c.constituentReadCatalog().selectEntity(kind, value, c.getConstituentsForRead())
+	return aliases, local, qualified
 }
 
 func (c *CompositeEngine) constituentDatabase(alias string, engine Engine) string {
+	if database, known := c.constituentReadCatalog().database[alias]; known {
+		return database
+	}
+	// Preserve the helper's unknown-alias diagnostic contract. Actual operation
+	// aliases always consume the issued catalog above.
 	if database := DatabaseOf(engine); database != "" {
 		return database
 	}
 	c.mu.RLock()
 	database := c.constituentNames[alias]
 	c.mu.RUnlock()
-	if database == "" {
-		database = alias
+	if database != "" {
+		return database
 	}
-	return database
+	return alias
 }
 
 func nodeFromDatabase(node *Node, database string) *Node {
@@ -125,14 +239,14 @@ func nodePairDatabase(start, end NodeID) string {
 // constituentForNodePair scopes both endpoints to the same selected source.
 // Unqualified endpoint IDs stay local within that source; two different
 // qualified sources can never name a stored relationship.
-func (c *CompositeEngine) constituentForNodePair(start, end NodeID) (Engine, NodeID, NodeID, bool) {
+func (c *CompositeEngine) constituentForNodePair(start, end NodeID) (Engine, NodeID, NodeID, bool, error) {
 	startKind, startDB, startLocal, startQualified := ParseElementID(string(start))
 	endKind, endDB, endLocal, endQualified := ParseElementID(string(end))
 	if !startQualified && !endQualified {
-		return nil, start, end, false
+		return nil, start, end, false, nil
 	}
 	if startQualified && startKind != "4" || endQualified && endKind != "4" || startQualified && endQualified && startDB != endDB {
-		return nil, "", "", true
+		return nil, "", "", true, nil
 	}
 	selected := string(start)
 	if !startQualified {
@@ -142,8 +256,8 @@ func (c *CompositeEngine) constituentForNodePair(start, end NodeID) (Engine, Nod
 	if !endQualified {
 		endLocal = string(end)
 	}
-	engine, _, _ := c.constituentForElementID("4", selected)
-	return engine, NodeID(startLocal), NodeID(endLocal), true
+	engine, _, _, err := c.constituentForElementID("4", selected)
+	return engine, NodeID(startLocal), NodeID(endLocal), true, err
 }
 
 func (c *CompositeEngine) constituentNodeElementID(alias string, engine Engine, id NodeID) NodeID {
@@ -173,4 +287,71 @@ func (c *CompositeEngine) edgeSourceAlias(edge *Edge) (string, bool, error) {
 		return "", true, ErrNotFound
 	}
 	return aliases[0], true, nil
+}
+
+// compositeReadCatalog is this CompositeEngine's immutable view topology.
+// WithConstituentAccess/WithMembership issue fresh engines and fresh catalogs;
+// live participant admission remains getConstituent's operation, never metadata
+// discovery. No snapshot, publication frontier or entity payload is cached here.
+type compositeReadSourceKey struct {
+	engine                  Engine
+	database, namespacePath string
+}
+type compositeReadCatalog struct {
+	aliases    []string
+	database   map[string]string
+	keys       map[string]compositeReadSourceKey
+	comparable map[string]bool
+}
+
+func (c *CompositeEngine) constituentReadCatalog() *compositeReadCatalog {
+	c.readCatalogOnce.Do(func() {
+		c.mu.RLock()
+		defer c.mu.RUnlock()
+		catalog := &compositeReadCatalog{database: map[string]string{}, keys: map[string]compositeReadSourceKey{}, comparable: map[string]bool{}}
+		aliases := make([]string, 0, len(c.constituents))
+		for alias := range c.constituents {
+			aliases = append(aliases, alias)
+		}
+		sort.Strings(aliases)
+		for _, alias := range aliases {
+			engine := c.constituents[alias]
+			database := DatabaseOf(engine)
+			physicalDatabase := database
+			if database == "" {
+				database = c.constituentNames[alias]
+			}
+			if database == "" {
+				database = alias
+			}
+			catalog.database[alias] = database
+			if engine == nil {
+				continue
+			}
+			source, path := readSourceIdentity(engine)
+			catalog.keys[alias] = compositeReadSourceKey{source, physicalDatabase, path}
+			catalog.comparable[alias] = source != nil && reflect.TypeOf(source).Comparable()
+			catalog.aliases = append(catalog.aliases, alias)
+		}
+		c.readCatalog = catalog
+	})
+	return c.readCatalog
+}
+
+// selectEntity is the shared ordinary/MVCC/stored identity selector. aliases is
+// the operation's live access-mode selection, not cached permission.
+func (catalog *compositeReadCatalog) selectEntity(kind, value string, aliases []string) ([]string, string, bool, error) {
+	actual, database, local, qualified := ParseElementID(value)
+	if !qualified {
+		return aliases, value, false, nil
+	}
+	if actual != kind {
+		return nil, local, true, ErrInvalidID
+	}
+	for i, alias := range aliases {
+		if catalog.database[alias] == database {
+			return aliases[i : i+1], local, true, nil
+		}
+	}
+	return nil, local, true, ErrNotFound
 }

@@ -42,47 +42,27 @@ type ScopedStoredEntityReader interface {
 // replication). ok is false for an engine that cannot read hidden entities
 // (composite and remote databases); integrity work then reads through the
 // Engine methods, all the engine can give.
-func StoredReader(engine Engine) (reader StoredEntityReader, ok bool) {
-	for engine != nil {
-		if reader, ok := engine.(StoredEntityReader); ok {
-			return reader, true
-		}
-		unwrapper, ok := engine.(EngineUnwrapper)
-		if !ok {
-			return nil, false
-		}
-		inner := unwrapper.GetInnerEngine()
-		if inner == engine {
-			return nil, false
-		}
-		engine = inner
+func StoredReader(engine Engine) (StoredEntityReader, bool) {
+	if !HasReadCapability[StoredEntityReader](engine) {
+		return nil, false
 	}
-	return nil, false
+	return storedReadOperation{engine}, true
 }
 
 // GetStoredNode reads node id for integrity work: the stored node when engine
 // can read hidden entities (StoredReader), else engine.GetNode.
 func GetStoredNode(engine Engine, id NodeID) (*Node, error) {
-	if reader, ok := StoredReader(engine); ok {
-		return reader.GetStoredNode(id)
-	}
-	return engine.GetNode(id)
+	return ReadWithCapability(engine, func(reader StoredEntityReader) (*Node, error) { return reader.GetStoredNode(id) }, func() (*Node, error) { return engine.GetNode(id) })
 }
 
 // GetStoredEdge is GetStoredNode for relationship id.
 func GetStoredEdge(engine Engine, id EdgeID) (*Edge, error) {
-	if reader, ok := StoredReader(engine); ok {
-		return reader.GetStoredEdge(id)
-	}
-	return engine.GetEdge(id)
+	return ReadWithCapability(engine, func(reader StoredEntityReader) (*Edge, error) { return reader.GetStoredEdge(id) }, func() (*Edge, error) { return engine.GetEdge(id) })
 }
 
 // GetStoredNodesByLabel is GetStoredNode for a label's nodes.
 func GetStoredNodesByLabel(engine Engine, label string) ([]*Node, error) {
-	if reader, ok := StoredReader(engine); ok {
-		return reader.GetStoredNodesByLabel(label)
-	}
-	return engine.GetNodesByLabel(label)
+	return ReadWithCapability(engine, func(reader StoredEntityReader) ([]*Node, error) { return reader.GetStoredNodesByLabel(label) }, func() ([]*Node, error) { return engine.GetNodesByLabel(label) })
 }
 
 // GetStoredOutgoingEdges is GetStoredNode for a node's outgoing relationships.
@@ -90,21 +70,33 @@ func GetStoredOutgoingEdges(engine Engine, nodeID NodeID) ([]*Edge, error) {
 	return GetStoredOutgoingEdgesWithContext(context.Background(), engine, nodeID)
 }
 
-// GetStoredOutgoingEdgesWithContext retains StoredReader policy while carrying
-// the caller into an available contextual directional reader.
+// GetStoredOutgoingEdgesWithContext carries the original caller through the
+// same-view stored directional operation and its existing ordinary fallback.
 func GetStoredOutgoingEdgesWithContext(ctx context.Context, engine Engine, nodeID NodeID) ([]*Edge, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if reader, ok := StoredReader(engine); ok {
-		if contextual, ok := reader.(interface {
+	return ReadWithCapability(engine, func(reader StoredEntityReader) ([]*Edge, error) {
+		if contextual, ok := OwnedCapability[interface {
 			GetStoredOutgoingEdgesWithContext(context.Context, NodeID) ([]*Edge, error)
-		}); ok {
+		}](reader); ok {
 			return contextual.GetStoredOutgoingEdgesWithContext(ctx, nodeID)
 		}
-		return reader.GetStoredOutgoingEdges(nodeID)
-	}
-	return engine.GetOutgoingEdges(nodeID)
+		edges, err := reader.GetStoredOutgoingEdges(nodeID)
+		if err == nil {
+			err = ctx.Err()
+		}
+		return edges, err
+	}, func() ([]*Edge, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		edges, err := engine.GetOutgoingEdges(nodeID)
+		if err == nil {
+			err = ctx.Err()
+		}
+		return edges, err
+	})
 }
 
 // GetStoredIncomingEdges is GetStoredNode for a node's incoming relationships.
@@ -112,21 +104,33 @@ func GetStoredIncomingEdges(engine Engine, nodeID NodeID) ([]*Edge, error) {
 	return GetStoredIncomingEdgesWithContext(context.Background(), engine, nodeID)
 }
 
-// GetStoredIncomingEdgesWithContext is the incoming counterpart of the same
-// stored-inclusive directional dispatch.
+// GetStoredIncomingEdgesWithContext carries the original caller through the
+// same-view stored directional operation and its existing ordinary fallback.
 func GetStoredIncomingEdgesWithContext(ctx context.Context, engine Engine, nodeID NodeID) ([]*Edge, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if reader, ok := StoredReader(engine); ok {
-		if contextual, ok := reader.(interface {
+	return ReadWithCapability(engine, func(reader StoredEntityReader) ([]*Edge, error) {
+		if contextual, ok := OwnedCapability[interface {
 			GetStoredIncomingEdgesWithContext(context.Context, NodeID) ([]*Edge, error)
-		}); ok {
+		}](reader); ok {
 			return contextual.GetStoredIncomingEdgesWithContext(ctx, nodeID)
 		}
-		return reader.GetStoredIncomingEdges(nodeID)
-	}
-	return engine.GetIncomingEdges(nodeID)
+		edges, err := reader.GetStoredIncomingEdges(nodeID)
+		if err == nil {
+			err = ctx.Err()
+		}
+		return edges, err
+	}, func() ([]*Edge, error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		edges, err := engine.GetIncomingEdges(nodeID)
+		if err == nil {
+			err = ctx.Err()
+		}
+		return edges, err
+	})
 }
 
 // StreamStoredEdgesByType visits edgeType's relationships for integrity work
@@ -137,13 +141,14 @@ func StreamStoredEdgesByType(ctx context.Context, engine Engine, edgeType string
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if reader, ok := StoredReader(engine); ok {
-		return reader.StreamStoredEdgesByType(ctx, edgeType, visit)
-	}
-	if edgeType == "" {
-		return StreamEdgesWithFallback(ctx, engine, 1000, visit)
-	}
-	return StreamEdgesByType(ctx, engine, edgeType, visit)
+	return VisitWithCapability(engine, func(reader StoredEntityReader, deliver func(*Edge) error) error {
+		return reader.StreamStoredEdgesByType(ctx, edgeType, deliver)
+	}, func(deliver func(*Edge) error) error {
+		if edgeType == "" {
+			return StreamEdgesWithFallback(ctx, engine, 1000, deliver)
+		}
+		return StreamEdgesByType(ctx, engine, edgeType, deliver)
+	}, visit)
 }
 
 // StreamStoredNodesByLabelProjected visits label's nodes for integrity work,
@@ -316,26 +321,6 @@ func (w *WALEngine) StreamStoredEdgesByTypeInScope(ctx context.Context, scope, e
 // unwrapping the decorators that add no visibility of their own, as
 // StoredReader does. ok is false at a stored reader without scoped scans
 // (NamespacedEngine) and at an engine that cannot read hidden entities.
-func storedScopeReader(engine Engine) (ScopedStoredEntityReader, bool) {
-	for engine != nil {
-		if scoped, ok := engine.(ScopedStoredEntityReader); ok {
-			return scoped, true
-		}
-		if _, ok := engine.(StoredEntityReader); ok {
-			return nil, false
-		}
-		unwrapper, ok := engine.(EngineUnwrapper)
-		if !ok {
-			return nil, false
-		}
-		inner := unwrapper.GetInnerEngine()
-		if inner == engine {
-			return nil, false
-		}
-		engine = inner
-	}
-	return nil, false
-}
 
 // getStoredNodesByLabelInScope is the scoped stored label scan of an inner
 // engine for the wrapping engines: the scoped scan when the store under it
@@ -348,13 +333,13 @@ func getStoredNodesByLabelInScope(engine Engine, scope, label string) ([]*Node, 
 
 // getStoredNodesByLabelInScopeWithContext carries the caller through validation and label materialization.
 func getStoredNodesByLabelInScopeWithContext(ctx context.Context, engine Engine, scope, label string) ([]*Node, error) {
-	if scoped, ok := storedScopeReader(engine); ok {
-		return GetStoredNodesByLabelInScopeWithContext(ctx, scoped, scope, label)
-	}
-	if _, ok := StoredReader(engine); ok {
-		return GetStoredNodesByLabelWithContext(ctx, engine, label)
-	}
-	return getNodesByLabelInScopeWithContext(ctx, engine, scope, label)
+	return ReadWithCapability(engine, func(reader ScopedStoredEntityReader) ([]*Node, error) {
+		return GetStoredNodesByLabelInScopeWithContext(ctx, reader, scope, label)
+	}, func() ([]*Node, error) {
+		return ReadWithCapability(engine, func(reader StoredEntityReader) ([]*Node, error) {
+			return GetStoredNodesByLabelWithContext(ctx, reader, label)
+		}, func() ([]*Node, error) { return getNodesByLabelInScopeWithContext(ctx, engine, scope, label) })
+	})
 }
 
 // streamStoredNodesByLabelProjectedInScope is getStoredNodesByLabelInScope
@@ -365,31 +350,35 @@ func streamStoredNodesByLabelProjectedInScope(engine Engine, scope, label string
 
 // streamStoredNodesByLabelProjectedInScopeWithContext carries the caller through this read and its materialization.
 func streamStoredNodesByLabelProjectedInScopeWithContext(ctx context.Context, engine Engine, scope, label string, properties []string, visit func(*Node) error) error {
-	if scoped, ok := storedScopeReader(engine); ok {
-		return StreamStoredNodesByLabelProjectedInScopeWithContext(ctx, scoped, scope, label, properties, visit)
-	}
-	if reader, ok := StoredReader(engine); ok {
-		return StreamStoredNodesByLabelProjectedWithContext(ctx, reader, label, properties, visit)
-	}
-	if _, ok := engine.(ScopedLabelNodeReader); ok {
-		return streamNodesByLabelProjectedInScopeWithContext(ctx, engine, scope, label, properties, visit)
-	}
-	return streamNodesByLabelForValidationWithContext(ctx, engine, label, properties, visit)
+	return VisitWithCapability(engine, func(reader ScopedStoredEntityReader, deliver func(*Node) error) error {
+		return StreamStoredNodesByLabelProjectedInScopeWithContext(ctx, reader, scope, label, properties, deliver)
+	}, func(deliver func(*Node) error) error {
+		return VisitWithCapability(engine, func(reader StoredEntityReader, next func(*Node) error) error {
+			return StreamStoredNodesByLabelProjectedWithContext(ctx, reader, label, properties, next)
+		}, func(next func(*Node) error) error {
+			if HasReadCapability[ScopedLabelNodeReader](engine) {
+				return streamNodesByLabelProjectedInScopeWithContext(ctx, engine, scope, label, properties, next)
+			}
+			return streamNodesByLabelForValidation(engine, label, properties, next)
+		}, deliver)
+	}, visit)
 }
 
 // streamStoredEdgesByTypeInScope is getStoredNodesByLabelInScope for the
 // relationship type stream.
 func streamStoredEdgesByTypeInScope(ctx context.Context, engine Engine, scope, edgeType string, visit func(*Edge) error) error {
-	if scoped, ok := storedScopeReader(engine); ok {
-		return scoped.StreamStoredEdgesByTypeInScope(ctx, scope, edgeType, visit)
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	if reader, ok := StoredReader(engine); ok {
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		return reader.StreamStoredEdgesByType(ctx, edgeType, visit)
-	}
-	return streamEdgesByTypeInScope(ctx, engine, scope, edgeType, visit)
+	return VisitWithCapability(engine, func(reader ScopedStoredEntityReader, deliver func(*Edge) error) error {
+		return reader.StreamStoredEdgesByTypeInScope(ctx, scope, edgeType, deliver)
+	}, func(deliver func(*Edge) error) error {
+		return VisitWithCapability(engine, func(reader StoredEntityReader, next func(*Edge) error) error {
+			return reader.StreamStoredEdgesByType(ctx, edgeType, next)
+		}, func(next func(*Edge) error) error {
+			return streamEdgesByTypeInScope(ctx, engine, scope, edgeType, next)
+		}, deliver)
+	}, visit)
 }
 
 // NamespacedEngine: the inner engine's stored reads within the database
@@ -466,7 +455,7 @@ func (n *NamespacedEngine) StreamStoredEdgesByType(ctx context.Context, edgeType
 		return ErrInvalidData
 	}
 	return streamStoredEdgesByTypeInScope(ctx, n.inner, n.nodeScope(), edgeType, func(edge *Edge) error {
-		if edge == nil || !n.hasEdgePrefix(edge.ID) {
+		if edge == nil || !n.edgeInScope(edge) {
 			return nil
 		}
 		return visit(n.toUserEdge(edge))
@@ -488,7 +477,7 @@ func (n *NamespacedEngine) toUserEdgesInNamespaceWithContext(ctx context.Context
 		if skipNil && edge == nil {
 			return
 		}
-		if n.hasEdgePrefix(edge.ID) {
+		if n.edgeInScope(edge) {
 			out = append(out, n.toUserEdge(edge))
 		}
 	})
@@ -496,4 +485,30 @@ func (n *NamespacedEngine) toUserEdgesInNamespaceWithContext(ctx context.Context
 		return nil, err
 	}
 	return out, nil
+}
+
+// storedReadOperation keeps the established StoredReader API while withholding
+// the raw capability. Each method re-enters the shared execution owner.
+type storedReadOperation struct{ engine Engine }
+
+func (r storedReadOperation) GetStoredNode(id NodeID) (*Node, error) {
+	return GetStoredNode(r.engine, id)
+}
+func (r storedReadOperation) GetStoredEdge(id EdgeID) (*Edge, error) {
+	return GetStoredEdge(r.engine, id)
+}
+func (r storedReadOperation) GetStoredNodesByLabel(label string) ([]*Node, error) {
+	return GetStoredNodesByLabel(r.engine, label)
+}
+func (r storedReadOperation) GetStoredOutgoingEdges(id NodeID) ([]*Edge, error) {
+	return GetStoredOutgoingEdges(r.engine, id)
+}
+func (r storedReadOperation) GetStoredIncomingEdges(id NodeID) ([]*Edge, error) {
+	return GetStoredIncomingEdges(r.engine, id)
+}
+func (r storedReadOperation) StreamStoredNodesByLabelProjected(label string, props []string, visit func(*Node) error) error {
+	return StreamStoredNodesByLabelProjected(r.engine, label, props, visit)
+}
+func (r storedReadOperation) StreamStoredEdgesByType(ctx context.Context, kind string, visit func(*Edge) error) error {
+	return StreamStoredEdgesByType(ctx, r.engine, kind, visit)
 }

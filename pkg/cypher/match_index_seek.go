@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"errors"
 	"context"
 	"fmt"
 	"sort"
@@ -129,7 +130,7 @@ func (e *StorageExecutor) entitySeekLookup(value, kind, function string) (string
 	if storage.CompositeDatabaseOf(e.storage) == "" {
 		return local, true, true
 	}
-	id, found := (storage.EntityIdentity{Database: database, LocalID: local}).LookupID(e.storage, kind)
+	id, found := e.identityLookup(e.storage).LookupID(storage.EntityIdentity{Database: database, LocalID: local}, kind)
 	return id, found, true
 }
 
@@ -408,7 +409,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, property, value)
+		candidates, err := e.propertyIndexLookup(ctx, e.storage, schema, label, property, value)
 		if err != nil {
 			return nil, false, err
 		}
@@ -438,7 +439,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexAnyOf(ctx context.Cont
 			return nil, false, err
 		}
 		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, true, err
+		}
+		if node == nil {
 			continue
 		}
 		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
@@ -503,7 +507,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(ctx context.Co
 			if err := ctx.Err(); err != nil {
 				return nil, false, err
 			}
-			candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, property, value)
+			candidates, err := e.propertyIndexLookup(ctx, e.storage, schema, label, property, value)
 			if err != nil {
 				return nil, false, err
 			}
@@ -533,7 +537,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInAnyOf(ctx context.Co
 			return nil, false, err
 		}
 		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, true, err
+		}
+		if node == nil {
 			continue
 		}
 		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
@@ -588,7 +595,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 			if err := ctx.Err(); err != nil {
 				return nil, false, err
 			}
-			candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, property, value)
+			candidates, err := e.propertyIndexLookup(ctx, e.storage, schema, label, property, value)
 			if err != nil {
 				return nil, false, err
 			}
@@ -618,7 +625,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInLiteralAnyOf(
 			return nil, false, err
 		}
 		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, true, err
+		}
+		if node == nil {
 			continue
 		}
 		if !seekCandidateHasLabels(node, nodePattern.labels, anyOf) {
@@ -809,7 +819,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(ctx context.
 			if err := ctx.Err(); err != nil {
 				return nil, false, err
 			}
-			candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, lprop, v)
+			candidates, err := e.propertyIndexLookup(ctx, e.storage, schema, label, lprop, v)
 			if err != nil {
 				return nil, false, err
 			}
@@ -829,7 +839,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(ctx context.
 			if err := ctx.Err(); err != nil {
 				return nil, false, err
 			}
-			candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, rprop, v)
+			candidates, err := e.propertyIndexLookup(ctx, e.storage, schema, label, rprop, v)
 			if err != nil {
 				return nil, false, err
 			}
@@ -859,7 +869,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexInOrParam(ctx context.
 			return nil, false, err
 		}
 		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, true, err
+		}
+		if node == nil {
 			continue
 		}
 		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
@@ -922,7 +935,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, lprop, lval)
+		candidates, err := e.propertyIndexLookup(ctx, e.storage, schema, label, lprop, lval)
 		if err != nil {
 			return nil, false, err
 		}
@@ -937,7 +950,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
 		}
-		candidates, err := propertyIndexLookup(ctx, e.storage, schema, label, rprop, rval)
+		candidates, err := e.propertyIndexLookup(ctx, e.storage, schema, label, rprop, rval)
 		if err != nil {
 			return nil, false, err
 		}
@@ -966,7 +979,10 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrEquality(
 			return nil, false, err
 		}
 		node, err := e.getQueryNode(e.storage, storage.NodeID(id))
-		if err != nil || node == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, true, err
+		}
+		if node == nil {
 			continue
 		}
 		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
@@ -1081,7 +1097,10 @@ func (e *StorageExecutor) tryCollectNodesFromIDIn(
 		seen[lookupID] = struct{}{}
 
 		node, err := e.getQueryNode(e.storage, storage.NodeID(lookupID))
-		if err != nil || node == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, true, err
+		}
+		if node == nil {
 			continue
 		}
 		if len(nodePattern.labels) > 0 && !mergeNodeHasLabels(node, nodePattern.labels) {
@@ -1136,7 +1155,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexOrderLimit(
 		return nil, false, nil
 	}
 
-	schema := orderedPropertyIndexSchema(e.storage)
+	schema := e.orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -1190,7 +1209,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNullOrderLimit(
 		return nil, false, nil
 	}
 
-	schema := orderedPropertyIndexSchema(e.storage)
+	schema := e.orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -1221,7 +1240,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexNotNull(ctx context.Co
 		return nil, false, nil
 	}
 
-	schema := orderedPropertyIndexSchema(e.storage)
+	schema := e.orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -1281,7 +1300,7 @@ func (e *StorageExecutor) indexCandidateLabels(ctx context.Context, schema *stor
 		out = append(out, label)
 	}
 	sort.Strings(out)
-	if !labellessPropertyIndexUsable(ctx, e.storage, out...) {
+	if !e.labellessPropertyIndexUsable(ctx, e.storage, out...) {
 		return nil
 	}
 	return out
@@ -1963,7 +1982,7 @@ func (e *StorageExecutor) tryCollectNodesFromPropertyIndexRange(ctx context.Cont
 	if !ok {
 		return nil, false, nil
 	}
-	schema := orderedPropertyIndexSchema(e.storage)
+	schema := e.orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}

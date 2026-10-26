@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"errors"
 	"context"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
@@ -129,7 +130,8 @@ func (e *StorageExecutor) apocNodes(argument string, value interface{}) ([]*stor
 		return []*storage.Node{typed}, nil
 	case string:
 		view := graphIdentityView(e.storage)
-		id, valid := view.inputKey(typed)
+		id, valid, err := view.inputKey(typed)
+		if err != nil { return nil, err }
 		if !valid {
 			return nil, localizedError(localization.CypherCoreApocPathNodeNotFound(argument, typed), nil)
 		}
@@ -453,12 +455,14 @@ func (x *apocExpansion) verdict(node *storage.Node, depth int) (include, expand 
 // apocSteps lists the relationships the filter steps follow from node: no
 // steps follow every relationship. The path algorithms (dijkstra, aStar,
 // allSimplePaths) read their relTypesAndDirections through it too (#1185).
-func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshipStep) []*storage.Edge {
+func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshipStep) ([]*storage.Edge, error) {
 	if len(steps) == 0 {
 		steps = []apocRelationshipStep{{direction: "both"}}
 	}
-	out, _ := e.storage.GetOutgoingEdges(node)
-	in, _ := e.storage.GetIncomingEdges(node)
+	out, err := e.storage.GetOutgoingEdges(node)
+		if err != nil { return nil, err }
+	in, err := e.storage.GetIncomingEdges(node)
+		if err != nil { return nil, err }
 	var edges []*storage.Edge
 	seen := make(map[storage.EdgeID]bool)
 	take := func(edge *storage.Edge, step apocRelationshipStep) {
@@ -479,7 +483,7 @@ func (e *StorageExecutor) apocSteps(node storage.NodeID, steps []apocRelationshi
 			}
 		}
 	}
-	return edges
+	return edges, nil
 }
 
 // otherEnd is the node edge leads to from the node from.
@@ -569,7 +573,8 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 			if err != nil {
 				return nil, err
 			}
-			edges := e.apocSteps(step.node.ID, filter)
+			edges, err := e.apocSteps(step.node.ID, filter)
+			if err != nil { return nil, err }
 			next := make([]*apocStep, 0, len(edges))
 			for _, edge := range edges {
 				// A path never turns straight back along the relationship
@@ -585,7 +590,8 @@ func (e *StorageExecutor) runApocExpansion(ctx context.Context, x *apocExpansion
 					continue
 				}
 				other, err := e.getQueryNode(e.storage, otherID)
-				if err != nil || other == nil {
+				if err != nil && !errors.Is(err, storage.ErrNotFound) { return nil, err }
+				if other == nil {
 					continue
 				}
 				switch x.uniqueness {
@@ -785,7 +791,8 @@ func (e *StorageExecutor) callApocPathSubgraphAll(ctx context.Context, args []in
 	}
 	relationships := make([]interface{}, 0)
 	for _, value := range nodes {
-		edges, _ := e.storage.GetOutgoingEdges(value.(*storage.Node).ID)
+		edges, err := e.storage.GetOutgoingEdges(value.(*storage.Node).ID)
+		if err != nil { return nil, err }
 		for _, edge := range edges {
 			if members[edge.EndNode] {
 				relationships = append(relationships, edge)

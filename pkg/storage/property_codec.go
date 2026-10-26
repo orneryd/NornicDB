@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
+	"github.com/orneryd/nornicdb/pkg/util"
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/vmihailenco/msgpack/v5/msgpcode"
 )
@@ -101,6 +103,14 @@ func propertyProjectionSet(properties []string) map[string]struct{} {
 }
 
 func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data []byte, include map[string]struct{}) (map[string]any, error) {
+	return b.decodeTokenizedPropertiesProjectedWithContext(nil, namespace, data, include)
+}
+func (b *BadgerEngine) decodeTokenizedPropertiesProjectedWithContext(ctx context.Context, namespace string, data []byte, include map[string]struct{}) (map[string]any, error) {
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 	if len(data) == 0 {
 		return map[string]any{}, nil
 	}
@@ -114,7 +124,7 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data
 	// Pooled: a scan decodes this once per node, and a new decoder per node
 	// was a large part of the per-node cost (#824).
 	dec := msgpack.GetDecoder()
-	dec.Reset(reader)
+	dec.Reset(util.ReaderWithContext(ctx, reader))
 	defer msgpack.PutDecoder(dec)
 	outSize := int(count)
 	if include != nil && len(include) < outSize {
@@ -122,6 +132,11 @@ func (b *BadgerEngine) decodeTokenizedPropertiesProjected(namespace string, data
 	}
 	out := make(map[string]any, outSize)
 	for i := uint64(0); i < count; i++ {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		// reader.Len() tells us how many bytes the msgpack decoder has
 		// not yet consumed. We slice rest from the head by the same
 		// number to reach the next byte of unread input.

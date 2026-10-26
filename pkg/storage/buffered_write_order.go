@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"hash/maphash"
@@ -10,7 +11,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/dgraph-io/badger/v4"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -385,16 +385,26 @@ func (b *BadgerEngine) orderCovering(h *orderHold, e writtenEntities, reach func
 // the image read last (nil when there is none).
 func (b *BadgerEngine) storedEdgeEndpoints(id EdgeID, image **Edge) func() ([]NodeID, error) {
 	return func() ([]NodeID, error) {
-		edge, err := b.GetStoredEdge(id)
-		if errors.Is(err, ErrNotFound) {
-			edge, err = nil, nil
-		}
+		// A caller asking for the before-image explicitly selects full mode.
 		if image != nil {
+			edge, err := b.GetStoredEdge(id)
+			if errors.Is(err, ErrNotFound) {
+				edge, err = nil, nil
+			}
 			*image = edge
+			if err != nil || edge == nil {
+				return nil, err
+			}
+			return []NodeID{edge.StartNode, edge.EndNode}, nil
 		}
-		if err != nil || edge == nil {
+		facts, err := ReadStoredMetadata(context.Background(), b, StoredReadRequest{Edges: []EdgeID{id}})
+		if err != nil {
 			return nil, err
 		}
+		if len(facts.Edges) == 0 || !facts.Edges[0].Exists {
+			return nil, nil
+		}
+		edge := facts.Edges[0]
 		return []NodeID{edge.StartNode, edge.EndNode}, nil
 	}
 }
@@ -403,36 +413,17 @@ func (b *BadgerEngine) storedEdgeEndpoints(id EdgeID, image **Edge) func() ([]No
 // stored adjacency holds: the ones a delete of it cascades to.
 func (b *BadgerEngine) cascadeEndpoints(id NodeID) func() ([]NodeID, error) {
 	return func() ([]NodeID, error) {
-		var nodes []NodeID
-		err := b.withView(func(txn *badger.Txn) error {
-			for _, prefix := range [...][]byte{b.outgoingIndexPrefixString(id), b.incomingIndexPrefixString(id)} {
-				if prefix == nil {
-					continue
-				}
-				var edges []EdgeID
-				it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
-				for it.Seek(prefix); it.ValidForPrefix(prefix); it.Next() {
-					if num, ok := extractEdgeNumIDFromOutgoingKey(it.Item().Key()); ok {
-						if edgeID, ok := b.idDict.lookupEdgeIDByNum(num); ok {
-							edges = append(edges, edgeID)
-						}
-					}
-				}
-				it.Close()
-				for _, edgeID := range edges {
-					edge, err := b.loadEdgeForAdjacencyTombstoneInTxn(txn, edgeID)
-					if errors.Is(err, ErrNotFound) {
-						continue
-					}
-					if err != nil {
-						return err
-					}
-					nodes = append(nodes, edge.StartNode, edge.EndNode)
-				}
+		facts, err := ReadStoredMetadata(context.Background(), b, StoredReadRequest{Adjacency: []StoredAdjacencyRequest{{Node: id, Direction: Outgoing}, {Node: id, Direction: Incoming}}})
+		if err != nil {
+			return nil, err
+		}
+		nodes := make([]NodeID, 0, 2*len(facts.Edges))
+		for _, edge := range facts.Edges {
+			if edge.Exists {
+				nodes = append(nodes, edge.StartNode, edge.EndNode)
 			}
-			return nil
-		})
-		return nodes, err
+		}
+		return nodes, nil
 	}
 }
 
@@ -692,7 +683,8 @@ func (tx *BadgerTransaction) revalidateEndpointsLocked() error {
 	if len(tx.pendingEdges) == 0 && len(tx.deletedNodes) == 0 {
 		return nil
 	}
-	var checked map[NodeID]struct{}
+	request := StoredReadRequest{}
+	checked := map[NodeID]bool{}
 	for _, edge := range tx.pendingEdges {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -701,39 +693,50 @@ func (tx *BadgerTransaction) revalidateEndpointsLocked() error {
 			if _, deleted := tx.deletedNodes[id]; deleted {
 				return errEndpointChanged
 			}
-			if _, staged := tx.pendingNodes[id]; staged {
+			if _, staged := tx.pendingNodes[id]; staged || checked[id] {
 				continue
 			}
-			if _, done := checked[id]; done {
-				continue
-			}
-			if checked == nil {
-				checked = make(map[NodeID]struct{})
-			}
-			checked[id] = struct{}{}
-			if _, err := tx.engine.GetStoredNode(id); errors.Is(err, ErrNotFound) {
-				return errEndpointChanged
-			} else if err != nil {
-				return err
-			}
+			checked[id] = true
+			request.Nodes = append(request.Nodes, id)
 		}
 	}
 	for id := range tx.deletedNodes {
+		request.Adjacency = append(request.Adjacency, StoredAdjacencyRequest{Node: id, Direction: Outgoing}, StoredAdjacencyRequest{Node: id, Direction: Incoming})
+	}
+	if len(request.Nodes) == 0 && len(request.Adjacency) == 0 {
+		return nil
+	}
+	// Mandatory stored presence and cascade discovery share one capture while
+	// the existing order owner holds the complete set. No body fallback occurs.
+	facts, err := ReadStoredMetadata(ctx, tx.engine, request)
+	if err != nil {
+		return err
+	}
+	present := map[NodeID]bool{}
+	for _, node := range facts.Nodes {
+		present[node.ID] = node.Exists
+	}
+	for id := range checked {
+		if !present[id] {
+			return errEndpointChanged
+		}
+	}
+	for _, edge := range facts.Edges {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		out, in, err := readAdjacencyWithContext(ctx, tx.engine, adjacencyBoth, id, "", nil, storedRead)
-		if err != nil {
-			return err
+		if !edge.Exists {
+			continue
 		}
-		for _, edge := range append(out, in...) {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if _, deleted := tx.deletedEdges[edge.ID]; deleted {
+		if _, deleted := tx.deletedEdges[edge.ID]; deleted {
+			continue
+		}
+		moved := tx.pendingEdges[edge.ID]
+		for _, id := range [...]NodeID{edge.StartNode, edge.EndNode} {
+			if _, deleted := tx.deletedNodes[id]; !deleted {
 				continue
 			}
-			if moved := tx.pendingEdges[edge.ID]; moved != nil && moved.StartNode != id && moved.EndNode != id {
+			if moved != nil && moved.StartNode != id && moved.EndNode != id {
 				continue
 			}
 			return errEndpointChanged

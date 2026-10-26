@@ -27,7 +27,7 @@ func isCompositeRoot(engine storage.Engine) bool {
 	type compositeChecker interface {
 		IsComposite() bool
 	}
-	if cc, ok := engine.(compositeChecker); ok {
+	if cc, ok := storage.ViewMetadataForEngine[compositeChecker](engine); ok {
 		return cc.IsComposite()
 	}
 	return false
@@ -105,7 +105,7 @@ func (e *StorageExecutor) executeSchemaCommand(ctx context.Context, cypher strin
 	}
 	result, err := e.countSchemaChanges(ctx, cypher, run)
 	if err == nil {
-		if wrapper, ok := e.storage.(*transactionStorageWrapper); ok {
+		if wrapper, ok := e.schemaMember(); ok {
 			err = wrapper.tx.StageSchemaChangesWithContext(ctx)
 		}
 	}

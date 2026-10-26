@@ -129,8 +129,10 @@ func (e *StorageExecutor) callDbTemporalAsOf(ctx context.Context, args []interfa
 		return nil, err
 	}
 
-	if temporalLookup, ok := e.storage.(storage.TemporalLookupEngine); ok && !hasSnapshot {
-		node, err := storage.TemporalNodeAsOfWithContext(ctx, temporalLookup, label, keyProp, keyValue, validFromProp, validToProp, asOf)
+	if !hasSnapshot {
+		node, err := storage.ReadWithCapability(e.storage, func(reader storage.TemporalLookupEngine) (*storage.Node, error) {
+			return storage.TemporalNodeAsOfWithContext(ctx, reader, label, keyProp, keyValue, validFromProp, validToProp, asOf)
+		}, func() (*storage.Node, error) { return nil, nil })
 		if err != nil {
 			return nil, localizedError(localization.CypherSpecializedCallsTemporalLookupFailed(label, err), err)
 		}
@@ -249,10 +251,9 @@ func temporalNodesByLabel(ctx context.Context, engine storage.Engine, label stri
 	if !hasSnapshot {
 		return storage.GetNodesByLabelWithContext(ctx, engine, label)
 	}
-	if provider, ok := engine.(storage.MVCCIndexedVisibilityEngine); ok {
-		return storage.GetNodesByLabelVisibleAtWithContext(ctx, provider, label, version)
-	}
-	return nil, storage.ErrNotImplemented
+	return storage.ReadWithCapability(engine, func(reader storage.MVCCIndexedVisibilityEngine) ([]*storage.Node, error) {
+		return storage.GetNodesByLabelVisibleAtWithContext(ctx, reader, label, version)
+	}, nil)
 }
 
 func valuesEqual(a, b interface{}) bool {

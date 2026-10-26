@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"errors"
 	"container/heap"
 	"context"
 	"sort"
@@ -60,7 +61,7 @@ func (h *indexedOrderHeap) Pop() interface{} {
 // bounds (impliedPropertyBounds) skips the primary-key groups where can't
 // match.
 func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern nodePatternInfo, where string, specs []nodeOrderSpec, label string, limit int, bounds storage.PropertyIndexBounds) ([]*storage.Node, bool, error) {
-	schema := orderedPropertyIndexSchema(e.storage)
+	schema := e.orderedPropertyIndexSchema(e.storage)
 	if schema == nil {
 		return nil, false, nil
 	}
@@ -90,7 +91,8 @@ func (e *StorageExecutor) collectIndexedOrderWindow(ctx context.Context, pattern
 				return false
 			}
 			node, err := e.getQueryNode(e.storage, id)
-			if err != nil || node == nil {
+			if err != nil && !errors.Is(err, storage.ErrNotFound) { visitErr = err; return false }
+			if node == nil {
 				continue
 			}
 			if (len(pattern.labels) > 0 && !nodeHasAnyLabel(node, pattern.labels)) || !e.nodeMatchesProps(node, pattern.properties) {

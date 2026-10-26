@@ -4,13 +4,15 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/types"
+	"os"
 	"path/filepath"
-
-	"github.com/orneryd/nornicdb/internal/workcensus"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/capabilitycensus"
+	"github.com/orneryd/nornicdb/internal/workcensus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,135 +29,174 @@ var overlayBodyReadersOutsideComposition = map[string]string{
 // buffer's bodies through the visibility composition: scan adapters in
 // overlay_visibility.go, or entityStateLocked with an explicit complete read
 // policy. A new raw body reader outside those owners fails here.
+// overlayBodyCompositionProblems interprets the canonical typed population.
+// It neither loads/parses files nor restricts consumers to the storage package.
+func overlayBodyCompositionProblems(inventory workcensus.Inventory) ([]string, map[string]bool) {
+	isBuffer := func(typ types.Type) bool {
+		return readCensusNamed(typ, "WriteBehindBuffer") || readCensusNamed(typ, "CommitBuffer")
+	}
+	var carriesBody func(types.Type, map[types.Type]bool) bool
+	carriesBody = func(typ types.Type, seen map[types.Type]bool) bool {
+		if typ == nil || seen[typ] {
+			return false
+		}
+		seen[typ] = true
+		typ = types.Unalias(typ)
+		if named, ok := typ.(*types.Named); ok {
+			if named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "github.com/orneryd/nornicdb/pkg/storage" {
+				switch named.Obj().Name() {
+				case "Node", "Edge", "bufferedEntityState", "bufferedCommit", "bufferedMutation", "CommitBuffer", "pendingNodeIndex":
+					return true
+				}
+			}
+			return carriesBody(named.Underlying(), seen)
+		}
+		switch value := typ.(type) {
+		case *types.Pointer:
+			return carriesBody(value.Elem(), seen)
+		case *types.Slice:
+			return carriesBody(value.Elem(), seen)
+		case *types.Array:
+			return carriesBody(value.Elem(), seen)
+		case *types.Map:
+			return carriesBody(value.Elem(), seen)
+		case *types.Struct:
+			for i := 0; i < value.NumFields(); i++ {
+				if carriesBody(value.Field(i).Type(), seen) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	var problems []string
+	used := map[string]bool{}
+	seen := map[string]bool{}
+	declarations := readCensusDeclarations(inventory)
+	for _, member := range inventory.Members {
+		if member.Syntax == nil || member.Syntax.Info == nil || readCensusPath(member) == "pkg/storage/overlay_visibility.go" {
+			continue
+		}
+		var selected *ast.SelectorExpr
+		switch node := member.Syntax.Node.(type) {
+		case *ast.CallExpr:
+			selected, _ = node.Fun.(*ast.SelectorExpr)
+		case *ast.Ident:
+			for _, ancestor := range member.Syntax.Ancestors {
+				if candidate, ok := ancestor.(*ast.SelectorExpr); ok && candidate.Sel == node {
+					selected = candidate
+				}
+			}
+		}
+		if selected == nil {
+			continue
+		}
+		identity := readCensusPath(member) + ":" + strconv.Itoa(int(selected.Pos()))
+		if seen[identity] {
+			continue
+		}
+		seen[identity] = true
+		selection := member.Syntax.Info.Selections[selected]
+		if selection == nil {
+			continue
+		}
+		buffer := isBuffer(selection.Recv())
+		if signature, ok := selection.Obj().Type().(*types.Signature); ok && signature.Recv() != nil {
+			buffer = buffer || isBuffer(signature.Recv().Type())
+		}
+		if !buffer {
+			continue
+		}
+		fn := declarations[member.OwnerID]
+		name := member.Owner
+		if fn != nil {
+			name = fn.Name.Name
+			if fn.Recv != nil && len(fn.Recv.List) == 1 {
+				typ := member.Syntax.Info.TypeOf(fn.Recv.List[0].Type)
+				if isBuffer(typ) {
+					continue
+				}
+				typ = types.Unalias(typ)
+				if pointer, ok := typ.(*types.Pointer); ok {
+					typ = types.Unalias(pointer.Elem())
+				}
+				if named, ok := typ.(*types.Named); ok {
+					name = named.Obj().Name() + "." + name
+				}
+			}
+		}
+		body := false
+		switch selection.Kind() {
+		case types.FieldVal:
+			body = carriesBody(selection.Type(), map[types.Type]bool{})
+		case types.MethodVal, types.MethodExpr:
+			if signature, ok := selection.Type().(*types.Signature); ok {
+				for i := 0; i < signature.Results().Len(); i++ {
+					body = body || carriesBody(signature.Results().At(i).Type(), map[types.Type]bool{})
+				}
+			}
+			var call *ast.CallExpr
+			if candidate, ok := member.Syntax.Node.(*ast.CallExpr); ok && candidate.Fun == selected {
+				call = candidate
+			}
+			for _, ancestor := range member.Syntax.Ancestors {
+				if candidate, ok := ancestor.(*ast.CallExpr); ok && candidate.Fun == selected {
+					call = candidate
+				}
+			}
+			if selected.Sel.Name == "entityStateLocked" && overlayReadHasVisibility(call, selection.Kind() == types.MethodExpr) {
+				continue
+			}
+		}
+		if !body {
+			continue
+		}
+		if _, allowed := overlayBodyReadersOutsideComposition[name]; allowed {
+			used[name] = true
+			continue
+		}
+		problems = append(problems, member.ID+": "+name+" uses "+selected.Sel.Name+" outside the shared overlay composition")
+	}
+	sort.Strings(problems)
+	return problems, used
+}
+
 func TestOverlayBodiesAreReadThroughVisibility(t *testing.T) {
-	readers, used := overlayBodyReaders(t, nil)
-	require.Empty(t, readers, "overlay bodies read outside the canonical visibility composition")
+	result, err := capabilitycensus.Discover("../..")
+	require.NoError(t, err)
+	problems, used := overlayBodyCompositionProblems(result.Inventory)
+	require.Empty(t, problems, "overlay bodies read outside the canonical visibility composition")
 	for name := range overlayBodyReadersOutsideComposition {
 		require.True(t, used[name], "classified overlay reader %s no longer reads the buffer", name)
 	}
 }
 
-// Generic parsing, typing, source traversal and owner identity are supplied by
-// workcensus. This client interprets only the storage visibility policy.
-func overlayBodyReaders(t *testing.T, overlay map[string][]byte) ([]string, map[string]bool) {
-	t.Helper()
-	const pkgPath = "github.com/orneryd/nornicdb/pkg/storage"
-	inv, err := workcensus.Extract(workcensus.Config{
-		Dir: "../..", Patterns: []string{"./pkg/storage"}, Packages: []string{pkgPath},
-		BuildFlags: []string{"-tags=noui,nolocalllm"}, SourceOnly: true, IncludeSyntax: true,
-		Overlay: overlay, Selectors: []workcensus.Selector{{Kind: "overlay reference", Node: "identifier", Reachability: "all"}},
-	})
+func TestOverlayBodyOutsidePackageControl(t *testing.T) {
+	root := t.TempDir()
+	files := map[string]string{
+		"go.mod":                "module github.com/orneryd/nornicdb\ngo 1.26.0\n",
+		"pkg/storage/buffer.go": "package storage\ntype Node struct{}\ntype WriteBehindBuffer struct{}\nfunc(*WriteBehindBuffer)ReadBody()*Node{return nil}\n",
+	}
+	for path, source := range files {
+		require.NoError(t, os.MkdirAll(filepath.Dir(filepath.Join(root, path)), 0755))
+		require.NoError(t, os.WriteFile(filepath.Join(root, path), []byte(source), 0644))
+	}
+	baseline, err := workcensus.Extract(capabilitycensus.Config(root))
 	require.NoError(t, err)
-	isBuffer := func(typ types.Type) bool {
-		if ptr, ok := typ.(*types.Pointer); ok {
-			typ = ptr.Elem()
-		}
-		named, ok := typ.(*types.Named)
-		return ok && named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == pkgPath && (named.Obj().Name() == "WriteBehindBuffer" || named.Obj().Name() == "CommitBuffer")
-	}
-	bodyType := func(typ types.Type) bool {
-		for _, body := range []string{".Node", ".Edge", ".bufferedEntityState", ".bufferedCommit", ".bufferedMutation", ".CommitBuffer", ".pendingNodeIndex"} {
-			if strings.Contains(typ.String(), body) {
-				return true
-			}
-		}
-		return false
-	}
-	carriesBodies := func(sig *types.Signature) bool {
-		for i := 0; i < sig.Results().Len(); i++ {
-			if bodyType(sig.Results().At(i).Type()) {
-				return true
-			}
-		}
-		return false
-	}
-	var readers []string
-	used := make(map[string]bool)
-	for _, member := range inv.Members {
-		site := member.Syntax
-		if site == nil || site.Info == nil || filepath.Base(member.File) == "overlay_visibility.go" {
-			continue
-		}
-		id, ok := site.Node.(*ast.Ident)
-		if !ok {
-			continue
-		}
-		var selected *ast.SelectorExpr
-		var call *ast.CallExpr
-		var fn *ast.FuncDecl
-		for _, ancestor := range site.Ancestors {
-			switch node := ancestor.(type) {
-			case *ast.SelectorExpr:
-				if node.Sel == id {
-					selected = node
-				}
-			case *ast.CallExpr:
-				if sel, ok := node.Fun.(*ast.SelectorExpr); ok && sel.Sel == id {
-					call = node
-				}
-			case *ast.FuncDecl:
-				fn = node
-			}
-		}
-		if fn == nil {
-			fn, _ = site.Owner.(*ast.FuncDecl)
-		}
-		if selected == nil || fn == nil {
-			continue
-		}
-		name := fn.Name.Name
-		if fn.Recv != nil && len(fn.Recv.List) == 1 {
-			recv := fn.Recv.List[0].Type
-			if star, ok := recv.(*ast.StarExpr); ok {
-				recv = star.X
-			}
-			if id, ok := recv.(*ast.Ident); ok {
-				if id.Name == "WriteBehindBuffer" || id.Name == "CommitBuffer" {
-					continue
-				}
-				name = id.Name + "." + name
-			}
-		}
-		selection := site.Info.Selections[selected]
-		if selection == nil || !isBuffer(selection.Recv()) {
-			continue
-		}
-		switch selection.Kind() {
-		case types.FieldVal:
-			if !bodyType(selection.Type()) {
-				continue
-			}
-		case types.MethodVal, types.MethodExpr:
-			if sig, ok := selection.Type().(*types.Signature); !ok || !carriesBodies(sig) {
-				continue
-			}
-			if selected.Sel.Name == "entityStateLocked" && overlayReadHasVisibility(call, selection.Kind() == types.MethodExpr) {
-				continue
-			}
-		default:
-			continue
-		}
-		if _, classified := overlayBodyReadersOutsideComposition[name]; classified {
-			used[name] = true
-			continue
-		}
-		readers = append(readers, name+" uses "+selected.Sel.Name+" at "+site.FileSet.Position(selected.Pos()).String())
-	}
-	sort.Strings(readers)
-	return readers, used
-}
-
-func TestOverlayVisibilitySourceControl(t *testing.T) {
-	path, err := filepath.Abs("census_overlay_probe.go")
+	problems, _ := overlayBodyCompositionProblems(baseline)
+	require.Empty(t, problems)
+	path := filepath.Join(root, "plugins", "unfamiliar", "read.go")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0755))
+	require.NoError(t, os.WriteFile(path, []byte(`package unfamiliar
+import raw "github.com/orneryd/nornicdb/pkg/storage"
+type Alias = raw.WriteBehindBuffer
+func opaque(buffer *Alias)*raw.Node{return buffer.ReadBody()}
+`), 0644))
+	changed, err := workcensus.Extract(capabilitycensus.Config(root))
 	require.NoError(t, err)
-	readers, _ := overlayBodyReaders(t, map[string][]byte{path: []byte(`package storage
-func censusRawOverlay(b *BadgerEngine) []*Node {
- nodes, _ := b.writeBehind.allNodesOverlayLocked()
- return nodes
-}
-`)})
-	require.Len(t, readers, 1)
-	require.Contains(t, readers[0], "censusRawOverlay uses allNodesOverlayLocked")
+	problems, _ = overlayBodyCompositionProblems(changed)
+	require.NotEmpty(t, problems, "a new typed raw-body caller outside the owner package must fail the same gate")
+	require.Contains(t, strings.Join(problems, "\n"), "plugins/unfamiliar/read.go:")
 }
 
 // overlayReadHasVisibility accepts only a direct canonical point read with a

@@ -315,7 +315,7 @@ func SaveToNeo4jExport(engine Engine, path string) error {
 	// Collect all nodes
 	var allNodes []*Node
 	// Use ExportableEngine interface which both MemoryEngine and BadgerEngine implement
-	exportable, ok := engine.(ExportableEngine)
+	exportable, ok := engine, engine != nil
 	if !ok {
 		return localizedError(localization.StorageLoaderExportEngineUnsupported(fmt.Sprintf("%T", engine)), nil)
 	}
@@ -522,19 +522,21 @@ type ExportableEngine interface {
 // FindNodeNeedingEmbedding finds a single node that needs embedding.
 // This is more efficient than AllNodes() as it stops after finding one.
 func FindNodeNeedingEmbedding(engine Engine) *Node {
-	// Use AllNodes but stop early - not ideal but works with any engine
-	if exportable, ok := engine.(ExportableEngine); ok {
-		nodes, err := exportable.AllNodes()
-		if err != nil {
-			return nil
-		}
-		for _, node := range nodes {
-			if NodeNeedsEmbedding(node) {
-				return node
-			}
-		}
+	if engine == nil {
+		return nil
 	}
-	return nil
+	var found *Node
+	err := VisitNodes(engine, func(node *Node) bool {
+		if NodeNeedsEmbedding(node) {
+			found = CopyNode(node)
+			return false
+		}
+		return true
+	})
+	if err != nil {
+		return nil
+	}
+	return found
 }
 
 // NOTE: MemoryEngine now inherits AllNodes(), AllEdges(), GetEdgesByType()

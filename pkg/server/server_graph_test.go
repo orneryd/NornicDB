@@ -488,7 +488,7 @@ func TestGraphDiffEndpoint(t *testing.T) {
 		"node_ids": []string{"a", "b", "c"},
 		"as_of":    asOf,
 	}, "Bearer "+token)
-	require.Equal(t, 200, resp.Code)
+	require.Equal(t, 200, resp.Code, resp.Body.String())
 
 	payload := decodeGraphPayload(t, resp.Body)
 	nodesByID := make(map[string]graphNodePayload, len(payload.Nodes))

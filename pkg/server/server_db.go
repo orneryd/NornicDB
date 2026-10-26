@@ -1,6 +1,7 @@
 package server
 
 import (
+	"sync"
 	"context"
 	"encoding/json"
 	"errors"
@@ -591,11 +592,13 @@ func (s *Server) handleDatabaseInfo(w http.ResponseWriter, r *http.Request, dbNa
 
 	nodeCount, err := storage.NodeCount()
 	if err != nil {
-		nodeCount = 0
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+		return
 	}
 	edgeCount, err := storage.EdgeCount()
 	if err != nil {
-		edgeCount = 0
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+		return
 	}
 	_, nodeStorageBytes, _ := s.dbManager.GetStorageSize(dbName)
 	_, _, managedEmbeddingBytes := s.db.GetDatabaseManagedEmbeddingStats(dbName)
@@ -1131,7 +1134,16 @@ func (s *Server) convertValueToNeo4jFormat(val interface{}, dbName string) inter
 }
 
 func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ...*transactionHTTPValueState) (interface{}, []interface{}) {
-	entityMeta := func(id, elementID, entityType string) []interface{} {
+	if len(graph) == 0 {
+  graph = []*transactionHTTPValueState{{source: s.bindEntityDatabase(dbName, nil)}}
+ } else if graph[0].source == nil {
+  graph[0].source = s.bindEntityDatabase(dbName, nil)
+ }
+ entityDatabase := func(database string, nodeID storage.NodeID, edgeID storage.EdgeID) string {
+  if database != "" { return database }
+  return graph[0].source.database(dbName, nodeID, edgeID)
+ }
+ entityMeta := func(id, elementID, entityType string) []interface{} {
 		return []interface{}{map[string]interface{}{
 			"id": s.hashStringToInt64(id), "elementId": elementID,
 			"type": entityType, "deleted": false,
@@ -1177,7 +1189,7 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		if props == nil {
 			props = map[string]interface{}{}
 		}
-		converted, _ := s.transactionHTTPValue(props, dbName)
+		converted, _ := s.transactionHTTPValue(props, dbName, graph...)
 		properties := converted.(map[string]interface{})
 		kind := "node"
 		if relationshipType, relationship := typed["type"].(string); relationship {
@@ -1223,9 +1235,9 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		if typed == nil {
 			return nil, []interface{}{nil}
 		}
-		converted, _ := s.transactionHTTPValue(typed.Properties, dbName)
+		converted, _ := s.transactionHTTPValue(typed.Properties, dbName, graph...)
 		properties := converted.(map[string]interface{})
-		elementID := typed.ElementID(s.entityDatabase(dbName, typed.ID, ""))
+		elementID := typed.ElementID(entityDatabase(typed.Database, typed.ID, ""))
 		if len(graph) > 0 && graph[0].graph != nil {
 			graph[0].addNode(GraphNode{ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Labels: typed.Labels, Properties: properties})
 		}
@@ -1238,15 +1250,15 @@ func (s *Server) transactionHTTPValue(value interface{}, dbName string, graph ..
 		if typed == nil {
 			return nil, []interface{}{nil}
 		}
-		converted, _ := s.transactionHTTPValue(typed.Properties, dbName)
+		converted, _ := s.transactionHTTPValue(typed.Properties, dbName, graph...)
 		properties := converted.(map[string]interface{})
-		elementID := typed.ElementID(s.entityDatabase(dbName, "", typed.ID))
+		elementID := typed.ElementID(entityDatabase(typed.Database, "", typed.ID))
 		if len(graph) > 0 && graph[0].graph != nil {
-			graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.StartNode)), 10), EndNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.EndNode)), 10), ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: typed.StartElementID(s.entityDatabase(dbName, typed.StartNode, "")), EndNode: typed.EndElementID(s.entityDatabase(dbName, typed.EndNode, "")), Properties: properties})
+			graph[0].addEdge(GraphRelationship{StartNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.StartNode)), 10), EndNodeID: strconv.FormatInt(s.hashStringToInt64(string(typed.EndNode)), 10), ID: strconv.FormatInt(s.hashStringToInt64(string(typed.ID)), 10), ElementID: elementID, Type: typed.Type, StartNode: typed.StartElementID(entityDatabase(typed.Database, typed.StartNode, "")), EndNode: typed.EndElementID(entityDatabase(typed.Database, typed.EndNode, "")), Properties: properties})
 		}
 		meta := entityMeta(string(typed.ID), elementID, "relationship")
 		if transactionHTTPWantsREST(graph) {
-			return transactionHTTPRESTEntity("relationship", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"type": typed.Type, "startNodeElementId": typed.StartElementID(s.entityDatabase(dbName, typed.StartNode, "")), "endNodeElementId": typed.EndElementID(s.entityDatabase(dbName, typed.EndNode, ""))}), meta
+			return transactionHTTPRESTEntity("relationship", dbName, meta[0].(map[string]interface{}), properties, map[string]interface{}{"type": typed.Type, "startNodeElementId": typed.StartElementID(entityDatabase(typed.Database, typed.StartNode, "")), "endNodeElementId": typed.EndElementID(entityDatabase(typed.Database, typed.EndNode, ""))}), meta
 		}
 		return properties, meta
 	case *cypher.PathResult:
@@ -1326,34 +1338,38 @@ func transactionHTTPFloat(value float64, bits int) interface{} {
 	return json.Number(text)
 }
 
-// entityDatabase resolves the database an entity actually lives in for
-// element-id projection: for a composite execution database, the constituent
-// that holds the node or edge; otherwise dbName itself (#745 §3, HTTP row
-// and meta output). A miss (deleted entity, unavailable constituent) falls
-// back to dbName.
-func (s *Server) entityDatabase(dbName string, nodeID storage.NodeID, edgeID storage.EdgeID) string {
-	if s.dbManager == nil || !s.dbManager.IsCompositeDatabase(dbName) {
-		return dbName
-	}
-	engine, err := s.dbManager.GetStorage(dbName)
-	if err != nil {
-		return dbName
-	}
-	composite, ok := engine.(*storage.CompositeEngine)
-	if !ok {
-		return dbName
-	}
-	if nodeID != "" {
-		if name := composite.ConstituentDatabaseForNode(nodeID); name != "" {
-			return name
-		}
-	}
-	if edgeID != "" {
-		if name := composite.ConstituentDatabaseForEdge(edgeID); name != "" {
-			return name
-		}
-	}
-	return dbName
+// bindEntityDatabase binds identity projection to the issued view. Carried
+// entity identities need no read. An absent legacy entity keeps the historical
+// request-database fallback; an unavailable view is a serialization failure.
+func (s *Server) bindEntityDatabase(dbName string, issued storage.Engine) *httpEntitySource {
+ source := &httpEntitySource{}
+ var once sync.Once
+ var engine storage.Engine
+ var composite bool
+ source.resolve = func(nodeID storage.NodeID, edgeID storage.EdgeID) (string, error) {
+  once.Do(func() {
+   engine = issued
+   if engine == nil && s.dbManager != nil {
+    engine, source.err = s.dbManager.GetStorage(dbName)
+   }
+   if source.err == nil && engine != nil { composite = storage.CompositeDatabaseOf(engine) != "" }
+  })
+  if source.err != nil { return "", source.err }
+  if !composite { return dbName, nil }
+  if nodeID != "" {
+   node, err := engine.GetNode(nodeID)
+   if errors.Is(err, storage.ErrNotFound) { return dbName, nil }
+   if err != nil { return "", err }
+   if node != nil && node.Database != "" { return node.Database, nil }
+  } else if edgeID != "" {
+   edge, err := engine.GetEdge(edgeID)
+   if errors.Is(err, storage.ErrNotFound) { return dbName, nil }
+   if err != nil { return "", err }
+   if edge != nil && edge.Database != "" { return edge.Database, nil }
+  }
+  return dbName, nil
+ }
+ return source
 }
 
 // hashStringToInt64 converts a string ID to an int64 for Neo4j compatibility.
@@ -1397,11 +1413,18 @@ func (s *Server) transactionCommitURL(r *http.Request, dbName, txID string) stri
 	return s.transactionURL(r, dbName, txID) + "/commit"
 }
 
-func (s *Server) appendStatementResult(response *TransactionResponse, result *cypher.ExecuteResult, dbName string, includeStats bool, contents ...[]string) {
+func (s *Server) appendStatementResult(response *TransactionResponse, result *cypher.ExecuteResult, dbName string, includeStats bool, contents []string, executors ...*cypher.StorageExecutor) error {
 	if selected, ok := result.Metadata["db"].(string); ok && selected != "" {
 		dbName = selected
 	}
-	columns := result.Columns
+ var issued storage.Engine
+ if len(executors)>0 && executors[0]!=nil {
+  var err error
+  issued, err = executors[0].FunctionStorage("")
+  if err != nil { return err }
+ }
+ source := s.bindEntityDatabase(dbName, issued)
+ columns := result.Columns
 	if columns == nil {
 		columns = []string{}
 	}
@@ -1410,14 +1433,14 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 		Data:    make([]ResultRow, len(result.Rows)),
 	}
 	for i, row := range result.Rows {
-		var graph []*transactionHTTPValueState
+		graph := []*transactionHTTPValueState{{source: source}}
 		if len(result.MapKeyOrders) > 0 {
-			graph = []*transactionHTTPValueState{{mapKeyOrders: result.MapKeyOrders}}
+			graph = []*transactionHTTPValueState{{source: source, mapKeyOrders: result.MapKeyOrders}}
 		}
 		if len(contents) > 0 {
-			for _, format := range contents[0] {
+			for _, format := range contents {
 				if format == "graph" {
-					graph = []*transactionHTTPValueState{{graph: &GraphResult{Nodes: []GraphNode{}, Relationships: []GraphRelationship{}}, mapKeyOrders: result.MapKeyOrders}}
+					graph = []*transactionHTTPValueState{{graph: &GraphResult{Nodes: []GraphNode{}, Relationships: []GraphRelationship{}}, source: source, mapKeyOrders: result.MapKeyOrders}}
 					break
 				}
 			}
@@ -1431,9 +1454,9 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 		}
 		qr.Data[i] = ResultRow{Row: convertedRow, Meta: metadata}
 		if len(contents) > 0 {
-			for _, format := range contents[0] {
+			for _, format := range contents {
 				if format == "rest" {
-					state := &transactionHTTPValueState{rest: true, mapKeyOrders: result.MapKeyOrders}
+					state := &transactionHTTPValueState{rest: true, source: source, mapKeyOrders: result.MapKeyOrders}
 					qr.Data[i].REST = make([]interface{}, len(row))
 					for column, value := range row {
 						qr.Data[i].REST[column], _ = s.transactionHTTPValue(value, dbName, state)
@@ -1446,6 +1469,7 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 			qr.Data[i].Graph = graph[0].graph
 		}
 	}
+	if source.err != nil { return source.err }
 	if includeStats {
 		qr.QueryType, _ = cypher.ResolvedStatementQueryType(result.Metadata)
 		qr.Stats = queryStatsFromResult(result)
@@ -1459,6 +1483,7 @@ func (s *Server) appendStatementResult(response *TransactionResponse, result *cy
 	}
 	response.Results = append(response.Results, qr)
 	applyResultMetadata(response, result.Metadata)
+	return nil
 }
 
 func shouldUseAcceptedStatusForMutation(resp *TransactionResponse) bool {
@@ -1618,7 +1643,7 @@ func (s *Server) runRequestStatements(
 				return &failure
 			}
 			if result != nil && len(result.Columns) > 0 && !nornicerrors.IsCompileTimeStatus(failure.Code) {
-				s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
+				_ = s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents, executor)
 				return &failure
 			}
 			queryErr := statementFailure(ctx, response, executor, queryStatement, err, localize)
@@ -1652,7 +1677,11 @@ func (s *Server) runRequestStatements(
 			result.Rows = filtered
 		}
 
-		s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents)
+		if err := s.appendStatementResult(response, result, effectiveDB, stmt.IncludeStats, stmt.ResultDataContents, executor); err != nil {
+			failure := statementError(err)
+			localizeStatementError(&failure, err, localize)
+			return &failure
+		}
 		return nil
 	}
 	for _, stmt := range statements {

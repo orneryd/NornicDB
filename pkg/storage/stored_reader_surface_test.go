@@ -22,6 +22,9 @@ type unwrappingEngine struct {
 
 func (u unwrappingEngine) GetInnerEngine() Engine { return u.inner }
 
+// ReadCapabilitySource declares this fixture's transparent stored-read view.
+func (u unwrappingEngine) ReadCapabilitySource() (Engine, bool) { return u.inner, true }
+
 // idCheck sorts the IDs a stored read returned, failing on its error; its
 // methods take a read's two results directly.
 type idCheck struct{ t *testing.T }

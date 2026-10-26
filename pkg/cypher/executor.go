@@ -310,8 +310,13 @@ type SettingsSnapshot struct {
 type SettingsResolver func() SettingsSnapshot
 
 type StorageExecutor struct {
-	parser  *Parser
-	storage storage.Engine
+	parser                  *Parser
+	storage                 storage.Engine
+	storageReadView         storage.Engine
+	storageReadViewKnown    bool
+	storageExecution        *storageExecutionBinding
+	storageQueryLimits      executorQueryLimitProvider
+	storageQueryLimitsKnown bool
 	// The storage decorator chain is immutable for an executor. Discover the
 	// policy engine once; its enabled setting is still read dynamically.
 	propertyDecayEngine      *storage.BadgerEngine
@@ -528,6 +533,10 @@ type syntaxValidationCacheShard struct {
 
 func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExecutor {
 	e.ensureNodeLookupCache()
+	readView := e.storageReadView
+	if override != e.storage || !e.storageReadViewKnown {
+		readView = executorReadView(override)
+	}
 	// Transactional clones use the lookup cache pinned to the
 	// transactionStorageWrapper. Concurrent transactions hold distinct
 	// wrappers and therefore distinct caches — that isolation prevents
@@ -541,7 +550,7 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 	// benefit from the cross-query speedup.
 	lookupCache := e.nodeLookupCache
 	lookupCacheMu := e.nodeLookupCacheLock()
-	if txWrapper, isTxScoped := override.(*transactionStorageWrapper); isTxScoped {
+	if txWrapper, isTxScoped := storage.OwnedCapability[*transactionStorageWrapper](readView); isTxScoped {
 		// Seed the wrapper-scoped cache from the parent's committed
 		// entries on first clone so subsequent Execute calls retain
 		// the cross-query speedup. Concurrent transactions still hold
@@ -555,6 +564,10 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		graphIdentityScope:             e.graphIdentityScope,
 		parser:                         e.parser,
 		storage:                        override,
+		storageReadView:                readView,
+		storageReadViewKnown:           true,
+		storageQueryLimits:             e.storageQueryLimits,
+		storageQueryLimitsKnown:        e.storageQueryLimitsKnown && override == e.storage,
 		propertyDecayEngine:            unwrapBadgerEngine(override),
 		propertyDecayEngineKnown:       true,
 		txContext:                      e.txContext,
@@ -605,6 +618,17 @@ func (e *StorageExecutor) cloneWithStorage(override storage.Engine) *StorageExec
 		metrics:  e.metrics,
 		database: e.database,
 	}
+	if override == e.storage && e.storageExecution != nil {
+		cloned.storageExecution = e.storageExecution
+	} else {
+		cloned.storageExecution = bindStorageExecution(override)
+	}
+	if e.storageQueryLimitsKnown && (override == e.storage || cloned.storageMembership().Enforcement == e.storage) {
+		cloned.storageQueryLimits = e.storageQueryLimits
+	} else {
+		cloned.storageQueryLimits = bindExecutionEnforcement(override, cloned.storageExecution)
+	}
+	cloned.storageQueryLimitsKnown = true
 	cloned.UseStatementCaches(e.StatementCaches())
 	cloned.statementCacheScope = e.statementCacheScope
 	return cloned
@@ -755,6 +779,9 @@ func NewStorageExecutor(store storage.Engine, cachePolicy ...QueryCachePolicy) *
 	exec := &StorageExecutor{
 		parser:                         NewParser(),
 		storage:                        store,
+		storageReadView:                executorReadView(store),
+		storageReadViewKnown:           true,
+		storageQueryLimitsKnown:        true,
 		propertyDecayEngine:            unwrapBadgerEngine(store),
 		propertyDecayEngineKnown:       true,
 		cache:                          queryCache,
@@ -784,9 +811,13 @@ func NewStorageExecutor(store storage.Engine, cachePolicy ...QueryCachePolicy) *
 		apocRemoteURLAllowlist:         normalizeAPOCRemoteURLAllowlist(apocCfg.Security.RemoteURLAllowlist),
 		apocLocalFileAccessRoot:        strings.TrimSpace(apocCfg.Security.FileAccessRoot),
 	}
+	exec.storageExecution = bindStorageExecution(store)
+	exec.storageQueryLimits = bindExecutionEnforcement(store, exec.storageExecution)
 	exec.queryStatistics = (&queryStatisticsRegistry{}).forDatabase(exec.currentDatabaseName())
 	ensureBuiltInProceduresRegistered()
-	_ = exec.loadPersistedProcedures(context.Background())
+	if status := exec.storageMembership().Status; status == storage.MembershipUnowned || status == storage.MembershipBound {
+		_ = exec.loadPersistedProcedures(context.Background())
+	}
 	return exec
 }
 
@@ -1285,7 +1316,7 @@ func (e *StorageExecutor) refreshSearch(node storage.NodeID, edge storage.EdgeID
 	if node == "" && edge == "" {
 		return
 	}
-	if tx, ok := e.storage.(*transactionStorageWrapper); ok {
+	if tx, ok := e.pendingMember(); ok {
 		if e.searchResolver != nil || e.searchService != nil {
 			tx.deferSearchRefresh(node, edge)
 		}
@@ -1569,32 +1600,11 @@ type implicitTxEngines struct {
 }
 
 func (e *StorageExecutor) resolveImplicitTxEngines() implicitTxEngines {
-	engine := e.storage
-	visited := make(map[storage.Engine]bool)
 	out := implicitTxEngines{}
-
-	for engine != nil && !visited[engine] {
-		visited[engine] = true
-
-		if out.namespace == "" {
-			if ns, ok := engine.(interface{ Namespace() string }); ok {
-				out.namespace = ns.Namespace()
-			}
-		}
-		if out.txEngine == nil {
-			if tc, ok := engine.(TransactionCapableEngine); ok {
-				out.txEngine = tc
-			}
-		}
-
-		switch wrapper := engine.(type) {
-		case storage.EngineUnwrapper:
-			engine = wrapper.GetInnerEngine()
-		default:
-			engine = nil
-		}
+	if ns, ok := viewMetadataForExecutor[interface{ Namespace() string }](e); ok {
+		out.namespace = ns.Namespace()
 	}
-
+	out.txEngine, _ = storage.TransactionOwnerForEngine[TransactionCapableEngine](e.storage)
 	return out
 }
 
@@ -1606,12 +1616,11 @@ func (e *StorageExecutor) executeImplicitAsync(ctx context.Context, cypher strin
 	// A public procedure callback may re-enter Execute with the statement's
 	// transaction in its executor, context, or both. Reuse that owner rather
 	// than committing a nested implicit transaction independently.
-	if statementStorage, ok := e.getStorage(ctx).(*transactionStorageWrapper); ok {
-		statementExec := e
-		if e.storage != statementStorage {
-			statementExec = e.cloneWithStorage(statementStorage)
-		}
-		return statementExec.executeWithoutTransaction(ctx, cypher, upperQuery)
+	if e.storageMembership().Status != storage.MembershipUnowned {
+		return e.executeWithoutTransaction(ctx, cypher, upperQuery)
+	}
+	if statementStorage, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
+		return e.cloneWithStorage(statementStorage).executeWithoutTransaction(ctx, cypher, upperQuery)
 	}
 	// Check if this is a write operation using cached analysis
 	info := e.analyzer.Analyze(ctx, cypher)
@@ -1699,7 +1708,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 
 	// Start implicit transaction
 	if engines.namespace != "" {
-		if primer, ok := txEngine.(interface{ EnsureNamespaceMVCC(string) error }); ok {
+		if primer, ok := storage.OwnedCapability[interface{ EnsureNamespaceMVCC(string) error }](txEngine); ok {
 			if err := primer.EnsureNamespaceMVCC(engines.namespace); err != nil {
 				return nil, localizedError(localization.CypherCoreImplicitTransactionPrimeFailed(err), err)
 			}
@@ -1770,6 +1779,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		mutatedNodeIDs: make(map[string]struct{}),
 	}
 	txWrapper.initNamespacePrefix()
+	txWrapper.statementMode, _ = ctx.Value(resolvedStatementModeKey{}).(*resolvedStatementMode)
 
 	ctx, statsScope := beginProcedureStatementStatsScope(ctx)
 	defer func() {
@@ -1815,7 +1825,7 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 	// A write-shaped query can legitimately match no mutation targets. Committing
 	// an empty Badger transaction still performs store-wide validation work, so
 	// roll it back after the match has completed instead.
-	if tx.OperationCount() == 0 && !tx.HasKnowledgePolicyChanges() && !tx.RequiresCommitValidation() {
+	if tx.OperationCount() == 0 && len(txWrapper.schemaCommitActions) == 0 && !tx.HasKnowledgePolicyChanges() && !tx.RequiresCommitValidation() {
 		_ = tx.Rollback()
 		if wal != nil && walSeqStart > 0 {
 			_, _ = wal.AppendTxAbort(dbName, txID, "no mutations")
@@ -1863,6 +1873,10 @@ func (e *StorageExecutor) executeWithImplicitTransactionCallback(ctx context.Con
 		// same wire shape.
 		return nil, localizedError(localization.CypherCoreImplicitTransactionCommitFailed(err), err)
 	}
+	for _, action := range txWrapper.schemaCommitActions {
+		action()
+	}
+	txWrapper.schemaCommitActions = nil
 	txExec.refreshSearchAfterCommit(txWrapper)
 
 	// Attach receipt metadata if WAL markers were recorded. Receipts are
@@ -2063,7 +2077,11 @@ func GetAuthenticatedPrincipalFromContext(ctx context.Context) string {
 // getStorage returns the storage to use for the current execution.
 // If a transaction wrapper is present in context, it uses that; otherwise uses e.storage.
 func (e *StorageExecutor) getStorage(ctx context.Context) storage.Engine {
-	if txWrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
+	binding := e.storageMembership()
+	if binding.Status != storage.MembershipUnowned {
+		return e.storage
+	}
+	if txWrapper, ok := storage.OwnedCapability[*transactionStorageWrapper](ctx.Value(ctxKeyTxStorage)); ok {
 		return txWrapper
 	}
 	return e.storage
@@ -2072,27 +2090,14 @@ func (e *StorageExecutor) getStorage(ctx context.Context) storage.Engine {
 // resolveWALAndDatabase attempts to find a WAL instance and database name
 // by unwrapping common storage wrappers (namespaced, async, WAL engines).
 func (e *StorageExecutor) resolveWALAndDatabase() (*storage.WAL, string) {
-	engine := e.storage
-	var dbName string
-	// Wrapper chains are short (a handful of decorators); a depth cap makes
-	// the cycle guard unnecessary and keeps this hot path allocation-free.
-	const maxDepth = 16
-	for depth := 0; engine != nil && depth < maxDepth; depth++ {
-		if ns, ok := engine.(interface{ Namespace() string }); ok && dbName == "" {
-			dbName = ns.Namespace()
-		}
-		if walProvider, ok := engine.(interface{ GetWAL() *storage.WAL }); ok {
-			return walProvider.GetWAL(), dbName
-		}
-		switch wrapper := engine.(type) {
-		case storage.EngineUnwrapper:
-			engine = wrapper.GetInnerEngine()
-		default:
-			return nil, dbName
-		}
+	var name string
+	if ns, ok := viewMetadataForExecutor[interface{ Namespace() string }](e); ok {
+		name = ns.Namespace()
 	}
-
-	return nil, dbName
+	if provider, ok := storage.MetadataCapabilityForEngine[interface{ GetWAL() *storage.WAL }](e.storage); ok {
+		return provider.GetWAL(), name
+	}
+	return nil, name
 }
 
 // statementAccessesGraph reports whether a statement reads or writes graph

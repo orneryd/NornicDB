@@ -5,6 +5,7 @@
 package multidb
 
 import (
+	"slices"
 	"strings"
 	"sync"
 )
@@ -56,7 +57,7 @@ func NewLabelRouting() *LabelRouting {
 func (r *LabelRouting) SetLabelRouting(label string, constituents []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.labelMap[strings.ToLower(label)] = constituents
+	r.labelMap[strings.ToLower(label)] = slices.Clone(constituents)
 }
 
 // RouteQuery routes a query based on labels.

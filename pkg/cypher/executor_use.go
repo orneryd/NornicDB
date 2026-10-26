@@ -195,7 +195,7 @@ func (e *StorageExecutor) scopedExecutorForUse(db string, authToken string) (sco
 
 	// Without a database manager (embedded), a namespaced store switches
 	// namespace on its inner engine.
-	ns, ok := e.storage.(*storage.NamespacedEngine)
+	ns, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](e.storage)
 	if !ok {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseBackendUnsupported(targetDB), nil)
 	}
@@ -262,10 +262,10 @@ func (e *StorageExecutor) inTransaction(ctx context.Context) bool {
 	if e.txContext != nil && e.txContext.active {
 		return true
 	}
-	if _, nested := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); nested {
+	if _, nested := storage.OwnedCapability[*transactionStorageWrapper](ctx.Value(ctxKeyTxStorage)); nested {
 		return true
 	}
-	_, scoped := e.storage.(*transactionStorageWrapper)
+	_, scoped := viewMetadataForExecutor[*transactionStorageWrapper](e)
 	return scoped
 }
 
@@ -481,7 +481,7 @@ func (e *StorageExecutor) resolveCompositeConstituent(fullName, compositeName, a
 		return nil, "", localizedError(localization.CypherCommandRoutingUseFailed(fullName, err), err)
 	}
 
-	compositeEngine, ok := engineIface.(*storage.CompositeEngine)
+	compositeEngine, ok := storage.ViewMetadataForEngine[*storage.CompositeEngine](engineIface)
 	if !ok {
 		return nil, "", localizedError(localization.CypherCommandRoutingUseDatabaseNotComposite(fullName, compositeName), nil)
 	}

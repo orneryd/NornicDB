@@ -278,7 +278,7 @@ func sameSystemStore(a, b storage.Engine) bool {
 		return false
 	}
 	namespace := func(engine storage.Engine) string {
-		if scoped, ok := engine.(interface{ Namespace() string }); ok {
+		if scoped, ok := storage.ViewMetadataForEngine[interface{ Namespace() string }](engine); ok {
 			return scoped.Namespace()
 		}
 		return ""

@@ -1,9 +1,9 @@
 package storage
 
 import (
-	"context"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
+	"context"
 	"errors"
 	"testing"
 	"time"

@@ -63,24 +63,14 @@ func (e *StorageExecutor) databaseName() string {
 // storageDatabaseName is the database an engine serves: the namespace of the
 // engine or one it wraps, else the configured default database.
 func storageDatabaseName(engine storage.Engine) string {
-	visited := make(map[storage.Engine]bool)
-	for engine != nil && !visited[engine] {
-		visited[engine] = true
-		if composite, ok := engine.(interface{ CompositeName() string }); ok {
-			if name := composite.CompositeName(); name != "" {
-				return name
-			}
+	if composite, ok := storage.ViewMetadataForEngine[interface{ CompositeName() string }](engine); ok {
+		if name := composite.CompositeName(); name != "" {
+			return name
 		}
-		if namespaceProvider, ok := engine.(interface{ Namespace() string }); ok {
-			if namespace := strings.TrimSpace(namespaceProvider.Namespace()); namespace != "" {
-				return namespace
-			}
-		}
-		switch wrapper := engine.(type) {
-		case storage.EngineUnwrapper:
-			engine = wrapper.GetInnerEngine()
-		default:
-			engine = nil
+	}
+	if namespaceProvider, ok := storage.ViewMetadataForEngine[interface{ Namespace() string }](engine); ok {
+		if namespace := strings.TrimSpace(namespaceProvider.Namespace()); namespace != "" {
+			return namespace
 		}
 	}
 

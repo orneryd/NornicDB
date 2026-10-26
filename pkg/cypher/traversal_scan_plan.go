@@ -62,8 +62,8 @@ func planPipelineTraversalScan(match *TraversalMatch, where string, row pipeline
 func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor, match *TraversalMatch, visit func(*storage.Edge, storage.NodeID, storage.NodeID) error) error {
 	store := e.getStorage(ctx)
 	oriented := func(edge *storage.Edge) error {
-		start, startOK := edge.StartIdentity().NodeLookupID(store)
-		end, endOK := edge.EndIdentity().NodeLookupID(store)
+		start, startOK := e.identityLookup(store).NodeLookupID(edge.StartIdentity())
+		end, endOK := e.identityLookup(store).NodeLookupID(edge.EndIdentity())
 		if !startOK || !endOK {
 			return nil
 		}
@@ -96,7 +96,7 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 			if node == nil || !e.pipelineNodeMatchesPattern(node, match.StartNode) {
 				return nil
 			}
-			lookupID, validSource := node.Identity().NodeLookupID(store)
+			lookupID, validSource := e.identityLookup(store).NodeLookupID(node.Identity())
 			if !validSource {
 				return nil
 			}
@@ -121,8 +121,8 @@ func (plan traversalScanPlan) visitEdges(ctx context.Context, e *StorageExecutor
 				if err := ctx.Err(); err != nil {
 					return err
 				}
-				start, startOK := edge.StartIdentity().NodeLookupID(store)
-				end, endOK := edge.EndIdentity().NodeLookupID(store)
+				start, startOK := e.identityLookup(store).NodeLookupID(edge.StartIdentity())
+				end, endOK := e.identityLookup(store).NodeLookupID(edge.EndIdentity())
 				if !startOK || !endOK {
 					continue
 				}

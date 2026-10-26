@@ -16,6 +16,8 @@ const (
 )
 
 type bufferedEntityState struct {
+	version MVCCVersion
+
 	node    *Node
 	edge    *Edge
 	found   bool
@@ -24,7 +26,13 @@ type bufferedEntityState struct {
 
 // entityState is the single per-generation visibility owner. Typed commit
 // tombstones and legacy generic deletes are resolved before the stored body.
-func (b *CommitBuffer) entityState(kind bufferedEntityKind, id string) bufferedEntityState {
+func (b *CommitBuffer) entityState(kind bufferedEntityKind, id string) (state bufferedEntityState) {
+	defer func() {
+		if state.found {
+			state.version = b.versions[bufferedEntityID{kind, id}]
+		}
+	}()
+
 	if b.deletes[id]&kind != 0 {
 		return bufferedEntityState{found: true, deleted: true}
 	}

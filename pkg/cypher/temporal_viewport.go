@@ -44,9 +44,7 @@ func TemporalViewportFromContext(ctx context.Context) (TemporalViewport, bool) {
 	return viewport, ok
 }
 
-type temporalCurrentNodeChecker interface {
-	IsCurrentTemporalNode(node *storage.Node, asOf time.Time) (bool, error)
-}
+type temporalCurrentNodeChecker func(*storage.Node, time.Time) (bool, error)
 
 func filterNodesByTemporalViewport(ctx context.Context, nodes []*storage.Node, viewport TemporalViewport, checker temporalCurrentNodeChecker) ([]*storage.Node, error) {
 	if !viewport.Enabled() || checker == nil {
@@ -60,7 +58,7 @@ func filterNodesByTemporalViewport(ctx context.Context, nodes []*storage.Node, v
 		if node == nil {
 			continue
 		}
-		visible, err := storage.IsCurrentTemporalNodeWithContext(ctx, checker, node, viewport.AsOf)
+		visible, err := checkTemporalNode(checker, node, viewport.AsOf)
 		if err != nil {
 			return nil, err
 		}
@@ -76,7 +74,7 @@ func nodeVisibleInTemporalViewport(ctx context.Context, node *storage.Node, view
 	if !viewport.Enabled() || checker == nil || node == nil {
 		return true, nil
 	}
-	return storage.IsCurrentTemporalNodeWithContext(ctx, checker, node, viewport.AsOf)
+	return checkTemporalNode(checker, node, viewport.AsOf)
 }
 
 func filterNodesByRequiredLabels(nodes []*storage.Node, labels []string) []*storage.Node {
@@ -104,4 +102,14 @@ func (e *StorageExecutor) loadNodesWithTemporalViewport(ctx context.Context, lab
 // take the projected scan instead of decoding every node (#857).
 func (e *StorageExecutor) loadPatternNodes(ctx context.Context, labels []string, properties map[string]interface{}) ([]*storage.Node, error) {
 	return e.collectNodesWithStreaming(ctx, labels, properties, "", "", -1)
+}
+
+// Temporal readers retained by a traversal are execution adapters, never raw
+// providers. A mid-check refusal propagates at the original view and as-of.
+
+func temporalCheckerForView(ctx context.Context, engine storage.Engine) temporalCurrentNodeChecker {
+	return storage.BindTemporalNodeRead(ctx, engine)
+}
+func checkTemporalNode(checker temporalCurrentNodeChecker, node *storage.Node, asOf time.Time) (bool, error) {
+	return checker(node, asOf)
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"context"
 	"fmt"
 	"runtime"
@@ -331,8 +332,14 @@ func (r *heimdallDBRouter) Stats(ctx context.Context, database string) (heimdall
 		return heimdall.DatabaseStats{}, err
 	}
 
-	nodeCount, _ := engine.NodeCount()
-	edgeCount, _ := engine.EdgeCount()
+	nodeCount, err := engine.NodeCount()
+	if err != nil {
+		return heimdall.DatabaseStats{}, err
+	}
+	edgeCount, err := engine.EdgeCount()
+	if err != nil {
+		return heimdall.DatabaseStats{}, err
+	}
 
 	result := heimdall.DatabaseStats{
 		NodeCount:         nodeCount,
@@ -455,7 +462,9 @@ func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query 
 
 		// Get related nodes when depth >= 1 (1 = direct neighbors, 2+ = multi-hop)
 		if depth >= 1 {
-			sr.Related = r.getRelatedNodesContext(ctx, engine, r0.ID, depth)
+			related, err := r.getRelatedNodesContext(ctx, engine, r0.ID, depth)
+			if err != nil { return nil, err }
+			sr.Related = related
 		}
 
 		results = append(results, sr)
@@ -473,13 +482,13 @@ func (r *heimdallDBRouter) Discover(ctx context.Context, database string, query 
 }
 
 // getRelatedNodes fetches connected nodes up to the specified depth (BFS).
-func (r *heimdallDBRouter) getRelatedNodes(engine storage.Engine, nodeID string, depth int) []heimdall.RelatedNode {
+func (r *heimdallDBRouter) getRelatedNodes(engine storage.Engine, nodeID string, depth int) ([]heimdall.RelatedNode, error) {
 	return r.getRelatedNodesContext(context.Background(), engine, nodeID, depth)
 }
 
-func (r *heimdallDBRouter) getRelatedNodesContext(ctx context.Context, engine storage.Engine, nodeID string, depth int) []heimdall.RelatedNode {
+func (r *heimdallDBRouter) getRelatedNodesContext(ctx context.Context, engine storage.Engine, nodeID string, depth int) ([]heimdall.RelatedNode, error) {
 	if depth < 1 || engine == nil {
-		return nil
+		return nil, nil
 	}
 
 	_, visible, release := storage.BeginQueryResultProjectionContext(ctx, engine)
@@ -502,8 +511,10 @@ func (r *heimdallDBRouter) getRelatedNodesContext(ctx context.Context, engine st
 			continue
 		}
 
-		out, _ := engine.GetOutgoingEdges(storage.NodeID(current.id))
-		in, _ := engine.GetIncomingEdges(storage.NodeID(current.id))
+		out, err := engine.GetOutgoingEdges(storage.NodeID(current.id))
+		if err != nil { return nil, err }
+		in, err := engine.GetIncomingEdges(storage.NodeID(current.id))
+		if err != nil { return nil, err }
 
 		type edgeRef struct {
 			edge      *storage.Edge
@@ -536,7 +547,8 @@ func (r *heimdallDBRouter) getRelatedNodesContext(ctx context.Context, engine st
 			visited[neighborID] = true
 
 			node, err := engine.GetNode(storage.NodeID(neighborID))
-			if err != nil || node == nil {
+			if err != nil && !errors.Is(err, storage.ErrNotFound) { return nil, err }
+			if node == nil {
 				continue
 			}
 
@@ -556,7 +568,7 @@ func (r *heimdallDBRouter) getRelatedNodesContext(ctx context.Context, engine st
 		}
 	}
 
-	return related
+	return related, nil
 }
 
 // getFirstLabel returns the first label or empty string.

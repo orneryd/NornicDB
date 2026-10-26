@@ -28,12 +28,14 @@ type endpointPropertyCache struct {
 // existence-only reads. Storage projection and existence hints do not carry
 // the query view's complete visibility contract.
 type relationshipEndpointReader struct {
-	executor *StorageExecutor
-	store    storage.Engine
+	executor   *StorageExecutor
+	store      storage.Engine
+	hideSystem func() bool
 }
 
 func (e *StorageExecutor) newRelationshipEndpointReader(store storage.Engine) relationshipEndpointReader {
-	return relationshipEndpointReader{executor: e, store: store}
+	lookup := e.identityLookup(store)
+	return relationshipEndpointReader{executor: e, store: store, hideSystem: func() bool { return lookup.Database() != "system" }}
 }
 
 func (reader relationshipEndpointReader) read(id storage.NodeID, _ []string) (*storage.Node, error) {
@@ -41,7 +43,7 @@ func (reader relationshipEndpointReader) read(id storage.NodeID, _ []string) (*s
 	if err != nil || node == nil {
 		return node, err
 	}
-	if shouldHideSystemNodes(reader.store) && isSystemNode(node) {
+	if reader.hideSystem() && isSystemNode(node) {
 		return nil, storage.ErrNotFound
 	}
 	// Transient scalar consumers inspect the canonical view directly. Owners
@@ -130,7 +132,8 @@ func (n *rowEndpointPropertyNode) eval(e *StorageExecutor, values map[string]int
 	if err != nil {
 		return nil, false, err
 	}
-	id, exists := e.relationshipEndpointID(edge, n.end)
+	id, exists, err := e.relationshipEndpointID(edge, n.end)
+	if err != nil { return nil, false, err }
 	if !exists {
 		return nil, true, nil
 	}
@@ -141,7 +144,8 @@ func (n *rowEndpointPropertyNode) eval(e *StorageExecutor, values map[string]int
 			return value, true, nil
 		}
 	}
-	node := e.readRelationshipEndpoint(id, []string{n.property})
+	node, err := e.readRelationshipEndpoint(id, []string{n.property})
+	if err != nil { return nil, false, err }
 	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(node), n.property)
 	if ok && cache != nil {
 		cache.keep(key, value)

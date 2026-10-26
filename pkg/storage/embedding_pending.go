@@ -36,17 +36,16 @@ func (b *BadgerEngine) CountPendingEmbeddingIDs(accept func([]byte) bool) int {
 // CountPendingEmbeddingIDs preserves the storage capability's fallback for
 // engines without a durable pending index, using selection's eligibility rule.
 func CountPendingEmbeddingIDs(engine Engine, accept func([]byte) bool) int {
-	if counter, ok := engine.(PendingEmbeddingCounter); ok {
-		return counter.CountPendingEmbeddingIDs(accept)
-	}
-	count := 0
-	_ = engine.StreamNodesWithOptions(context.Background(), StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
-		if NodeNeedsEmbedding(node) && (accept == nil || accept([]byte(node.ID))) {
-			count++
-		}
-		return nil
+	return ReadValueWithCapability(engine, func(reader PendingEmbeddingCounter) int { return reader.CountPendingEmbeddingIDs(accept) }, func() int {
+		count := 0
+		_ = engine.StreamNodesWithOptions(context.Background(), StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
+			if NodeNeedsEmbedding(node) && (accept == nil || accept([]byte(node.ID))) {
+				count++
+			}
+			return nil
+		})
+		return count
 	})
-	return count
 }
 
 func (n *NamespacedEngine) CountPendingEmbeddingIDs(accept func([]byte) bool) int {
@@ -65,7 +64,11 @@ func (c *CompositeEngine) CountPendingEmbeddingIDs(accept func([]byte) bool) int
 		if err != nil {
 			continue
 		}
-		total += CountPendingEmbeddingIDs(engine, accept)
+		var scoped func([]byte) bool
+		if accept != nil {
+			scoped = func(id []byte) bool { return accept([]byte(c.constituentNodeElementID(alias, engine, NodeID(id)))) }
+		}
+		total += CountPendingEmbeddingIDs(engine, scoped)
 	}
 	return total
 }

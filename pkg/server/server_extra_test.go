@@ -1246,19 +1246,16 @@ func TestDBLifecycleHandlers(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 
 	rec = makeRequest(t, server, "GET", "/admin/databases/nornic/mvcc/debt?limit=1", nil, "Bearer "+token)
-	require.Equal(t, http.StatusOK, rec.Code)
-	var debtResp map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &debtResp))
-	require.Equal(t, "nornic", debtResp["database"])
-	require.Equal(t, float64(1), debtResp["limit"])
-	keys, ok := debtResp["keys"].([]any)
-	require.True(t, ok)
-	require.LessOrEqual(t, len(keys), 1)
+	// The engine-wide debt scan has no namespace contract. The view must
+	// refuse it instead of returning a misleading empty or foreign key list.
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "Neo.ClientError.Statement.NotSupported")
+	require.NotContains(t, rec.Body.String(), `"keys"`)
 
 	rec = makeRequest(t, server, "GET", "/admin/databases/nornic/mvcc/debt?limit=1000", nil, "Bearer "+token)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &debtResp))
-	require.Equal(t, float64(100), debtResp["limit"])
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	require.Contains(t, rec.Body.String(), "Neo.ClientError.Statement.NotSupported")
+	require.NotContains(t, rec.Body.String(), `"keys"`)
 
 	rec = makeRequest(t, server, "GET", "/admin/databases/nornic/mvcc/prune", nil, "Bearer "+token)
 	require.Equal(t, http.StatusMethodNotAllowed, rec.Code)
@@ -1293,7 +1290,8 @@ func TestTransactionResponsesIncludeMVCCPressureWarnings(t *testing.T) {
 	}, "Bearer "+token)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, string(storage.PressureHigh), rec.Header().Get("X-NornicDB-MVCC-Pressure"))
-	require.Contains(t, rec.Header().Values("Warning"), "299 NornicDB \"MVCC lifecycle pressure is high on database 'nornic' (pinned_bytes=4096 oldest_reader_age_seconds=12.500)\"")
+	require.Contains(t, rec.Header().Values("Warning"), "299 NornicDB \"MVCC lifecycle pressure is high on database 'nornic' (pinned_bytes=0 oldest_reader_age_seconds=0.000)\"")
+	require.NotContains(t, rec.Header().Get("Warning"), "4096", "engine-wide reader aggregates are not namespace diagnostics")
 
 	var response TransactionResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
@@ -1412,9 +1410,12 @@ func TestHeimdallRouterAndHelpers(t *testing.T) {
 	assert.NoError(t, err)
 	err = mem.CreateEdge(&storage.Edge{ID: "nornic:e1", StartNode: "nornic:n1", EndNode: "nornic:n2", Type: "REL"})
 	assert.NoError(t, err)
-	related := router.getRelatedNodes(mem, "nornic:n1", 1)
+	related, relatedErr := router.getRelatedNodes(mem, "nornic:n1", 1)
+	require.NoError(t, relatedErr)
 	assert.Len(t, related, 1)
-	assert.Nil(t, router.getRelatedNodes(mem, "nornic:n1", 0))
+	emptyRelated, emptyRelatedErr := router.getRelatedNodes(mem, "nornic:n1", 0)
+	assert.NoError(t, emptyRelatedErr)
+	assert.Nil(t, emptyRelated)
 
 	assert.Equal(t, "A", getFirstLabel([]string{"A", "B"}))
 	assert.Equal(t, "", getFirstLabel(nil))

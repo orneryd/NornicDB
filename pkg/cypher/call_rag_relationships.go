@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/orneryd/nornicdb/pkg/search"
-	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // relationshipSearchRequestKey marks a db.retrieveRelationships request; a
@@ -30,23 +29,18 @@ func (e *StorageExecutor) callDbRetrieveRelationships(ctx context.Context, args 
 // relationshipSearchResult is a relationship search's rows: each matching
 // relationship with its start and end nodes (null when not visible), then
 // the same scores and search metadata as node results (#1065).
-func (e *StorageExecutor) relationshipSearchResult(response *search.SearchResponse) *ExecuteResult {
+func (e *StorageExecutor) relationshipSearchResult(response *search.SearchResponse) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"relationship", "start", "end", "score", "rrf_score", "vector_rank", "bm25_rank", "search_method", "fallback_triggered", "fallback_reason"},
 		Rows:    make([][]interface{}, 0, len(response.Results)),
 	}
-	endpoint := func(id storage.NodeID) interface{} {
-		if node, err := e.storage.GetNode(id); err == nil && node != nil {
-			return node
-		}
-		return nil
-	}
 	for _, r := range response.Results {
-		relationship := r.Relationship
+		_, _, relationship, start, end, err := e.graphSearchEntity(&r)
+		if err != nil { return nil, err }
 		result.Rows = append(result.Rows, []interface{}{
 			relationship,
-			endpoint(relationship.StartNode),
-			endpoint(relationship.EndNode),
+			start,
+			end,
 			r.Score,
 			r.RRFScore,
 			r.VectorRank,
@@ -56,5 +50,5 @@ func (e *StorageExecutor) relationshipSearchResult(response *search.SearchRespon
 			string(response.FallbackReason),
 		})
 	}
-	return result
+	return result, nil
 }

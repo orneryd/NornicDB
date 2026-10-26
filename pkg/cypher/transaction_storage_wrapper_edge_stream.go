@@ -26,9 +26,15 @@ func (w *transactionStorageWrapper) streamEdgesByType(ctx context.Context, edgeT
 		return storage.StreamEdgesByType(ctx, w.underlying, edgeType, visit)
 	}
 	prefix := w.namespace + w.separator
-	stream := w.tx.StreamEdgesByType
-	if stored {
-		stream = w.tx.StreamStoredEdgesByType
+	stream := func(ctx context.Context, kind string, visit func(*storage.Edge) error) error {
+		if stored {
+			return storage.VisitWithCapability(w.tx, func(reader storage.StoredEntityReader, deliver func(*storage.Edge) error) error {
+				return reader.StreamStoredEdgesByType(ctx, kind, deliver)
+			}, nil, visit)
+		}
+		return storage.VisitWithCapability(w.tx, func(reader storage.EdgeTypeStreamer, deliver func(*storage.Edge) error) error {
+			return reader.StreamEdgesByType(ctx, kind, deliver)
+		}, nil, visit)
 	}
 	return stream(ctx, edgeType, func(edge *storage.Edge) error {
 		if edge == nil {

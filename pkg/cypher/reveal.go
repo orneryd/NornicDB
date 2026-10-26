@@ -49,11 +49,21 @@ func isRevealFunctionName(name string) bool {
 // setRevealOnEngine enables reveal mode on the underlying BadgerEngine.
 // Returns a cleanup function that must be deferred.
 func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (context.Context, func(), *storage.BadgerEngine) {
+	var member *transactionStorageWrapper
+	if binding := storage.MembershipForEngine(eng); binding.Status == storage.MembershipBound {
+		member, _ = storage.OwnedCapability[*transactionStorageWrapper](binding.ReadLease)
+	}
+	if member != nil {
+		ctx = member.borrowReadLease(ctx)
+	}
 	be := unwrapBadgerEngine(eng)
 	if be == nil {
 		return ctx, func() {}, nil
 	}
 	if scope, ok := ctx.Value(revealScopeKey{}).(*revealScopeState); ok && scope.engine == be {
+		if member != nil {
+			return ctx, member.bindReadLease(ctx, func() {}), nil
+		}
 		return ctx, func() {}, nil
 	}
 	failure, hasFailure := ctx.Value(expressionFailureKey{}).(*expressionFailure)
@@ -63,10 +73,17 @@ func setRevealOnEngine(ctx context.Context, eng storage.Engine, reveal bool) (co
 		activeContext := failure.readScopeContext
 		failure.mu.Unlock()
 		if activeEngine == be {
-			return storage.InheritQueryRevealScopes(ctx, activeContext), func() {}, nil
+			ctx = storage.InheritQueryRevealScopes(ctx, activeContext)
+			if member != nil {
+				return ctx, member.bindReadLease(ctx, func() {}), nil
+			}
+			return ctx, func() {}, nil
 		}
 	}
 	ctx, cleanup := storage.BeginQueryRevealScopeContext(ctx, eng, reveal)
+	if member != nil {
+		cleanup = member.bindReadLease(ctx, cleanup)
+	}
 	if hasFailure {
 		failure.mu.Lock()
 		activeEngine := failure.readScopeEngine
@@ -105,7 +122,7 @@ func clearRevealScope(ctx context.Context, engine *storage.BadgerEngine) {
 // unwrapBadgerEngine walks the engine wrapper chain to find the underlying
 // BadgerEngine. Returns nil if the chain does not contain one.
 func unwrapBadgerEngine(eng storage.Engine) *storage.BadgerEngine {
-	badger, ok := storage.UnwrapEngine(eng).(*storage.BadgerEngine)
+	badger, ok := storage.OwnedCapability[*storage.BadgerEngine](storage.UnwrapEngine(eng))
 	if !ok {
 		return nil
 	}

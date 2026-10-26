@@ -5,6 +5,7 @@
 package storage
 
 import (
+	"slices"
 	"strings"
 )
 
@@ -31,7 +32,7 @@ func NewQueryAnalyzer() *QueryAnalyzer {
 
 // SetLabelRouting configures label-based routing.
 func (a *QueryAnalyzer) SetLabelRouting(label string, constituents []string) {
-	a.labelRouting[strings.ToLower(label)] = constituents
+	a.labelRouting[strings.ToLower(label)] = slices.Clone(constituents)
 }
 
 // SetPropertyRouting configures property-based routing.

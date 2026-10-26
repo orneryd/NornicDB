@@ -33,13 +33,13 @@ func (b *BadgerEngine) keyConstraintNodesWithContext(ctx context.Context, idx *C
 		if w == nil {
 			return
 		}
+		var captured bufferedEntityResult
 		if valueKey, ok := indexValueKey(values[0]); ok {
-			captured, readErr := b.readBufferedEntitiesWithContext(ctx, w, storedRead, bufferedEntityRead{kind: bufferedKey, label: label, property: property, valueKey: valueKey})
-			pending, captureErr = captured.nodes, readErr
+			captured, captureErr = b.readBufferedEntitiesWithContext(ctx, w, storedRead, bufferedEntityRead{kind: bufferedKey, label: label, property: property, valueKey: valueKey})
 		} else {
-			captured, readErr := b.readBufferedEntitiesWithContext(ctx, w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: label})
-			pending, captureErr = captured.nodes, readErr
+			captured, captureErr = b.readBufferedEntitiesWithContext(ctx, w, storedRead, bufferedEntityRead{kind: bufferedLabel, label: label})
 		}
+		pending = captured.nodes
 		if captureErr != nil {
 			return
 		}

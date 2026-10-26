@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-
 	"github.com/dgraph-io/badger/v4"
 )
 

@@ -5,6 +5,7 @@
 package cypher
 
 import (
+	"errors"
 	"context"
 	"sort"
 	"strconv"
@@ -17,7 +18,7 @@ import (
 )
 
 // VarLengthUnboundedMaxHops is the depth cap applied when a variable-length
-// relationship pattern is written without an explicit upper bound — for
+// relationship pattern is written without an explicit upper bound â€” for
 // example `[*]`, `[*..]`, or `[*N..]`. The previous defaults (10 and 100) were
 // surprising in practice: BFS traversals silently returned no rows on graphs
 // whose actual diameter exceeded the cap. This sentinel is large enough that
@@ -130,15 +131,14 @@ func traversalRelationshipsNeedOnlyHeaders(match *TraversalMatch) bool {
 // no relationship properties and storage can list them, full relationships
 // otherwise.
 func (e *StorageExecutor) traversalEdges(ctx *TraversalContext, nodeID storage.NodeID, outgoing bool) []*storage.Edge {
-	if reader, ok := e.storage.(storage.EdgeHeaderReader); ok && ctx.relationshipsNeedOnlyHeaders {
+	if ctx.relationshipsNeedOnlyHeaders {
 		var edges []*storage.Edge
 		var answered bool
 		var err error
-		if outgoing {
-			edges, answered, err = reader.OutgoingEdgeHeaders(nodeID)
-		} else {
-			edges, answered, err = reader.IncomingEdgeHeaders(nodeID)
+		if e.storageExecution == nil {
+			e.storageExecution = bindStorageExecution(e.storage)
 		}
+		edges, answered, err = e.storageExecution.queryRead(e.storage).headers(nodeID, outgoing)
 		if err != nil && ctx.cancelCtx != nil {
 			recordExpressionFailure(ctx.cancelCtx, err)
 			return nil
@@ -231,7 +231,7 @@ func readRelationshipPattern(ctx context.Context, pattern string, properties pat
 			hasRange := strings.Contains(spec, "..")
 			switch {
 			case spec == "":
-				// `[*]` — fully unbounded.
+				// `[*]` â€” fully unbounded.
 				result.MinHops = 1
 				result.MaxHops = VarLengthUnboundedMaxHops
 			case hasRange:
@@ -243,7 +243,7 @@ func readRelationshipPattern(ctx context.Context, pattern string, properties pat
 				if parts[1] != "" {
 					result.MaxHops, _ = strconv.Atoi(parts[1])
 				} else {
-					// `[*N..]` — open-ended upper bound.
+					// `[*N..]` â€” open-ended upper bound.
 					result.MaxHops = VarLengthUnboundedMaxHops
 				}
 			default:
@@ -409,7 +409,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 			paths = e.traverseChainedGraph(ctx, matches, optimizedStartNodes)
 		} else {
 			viewport, _ := TemporalViewportFromContext(ctx)
-			checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
+			checker := temporalCheckerForView(ctx, e.getStorage(ctx))
 			paths = e.traverseGraphSequential(ctx, matches, optimizedStartNodes, viewport, checker)
 		}
 		// Still need to apply WHERE clause filter (in case there are other conditions)
@@ -418,7 +418,7 @@ func (e *StorageExecutor) executeMatchWithRelationshipsWithPathSeeded(ctx contex
 		}
 	} else if matches.TraversalLimit > 0 && !matches.IsChained && len(matches.StartNode.properties) == 0 {
 		viewport, _ := TemporalViewportFromContext(ctx)
-		checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
+		checker := temporalCheckerForView(ctx, e.getStorage(ctx))
 		var streamed bool
 		var streamErr error
 		paths, streamed, streamErr = e.traverseGraphWithStreamingStartNodes(ctx, matches, viewport, checker)
@@ -1236,7 +1236,7 @@ func (e *StorageExecutor) parseNodePatternFromString(ctx context.Context, s stri
 // traverseGraph executes the traversal and returns all matching paths
 func (e *StorageExecutor) traverseGraph(ctx context.Context, match *TraversalMatch) []PathResult {
 	viewport, _ := TemporalViewportFromContext(ctx)
-	checker, _ := e.getStorage(ctx).(temporalCurrentNodeChecker)
+	checker := temporalCheckerForView(ctx, e.getStorage(ctx))
 	// Handle chained patterns differently (multi-segment traversal)
 	if match.IsChained && len(match.Segments) > 1 {
 		return e.traverseChainedGraph(ctx, match, nil)
@@ -1288,14 +1288,17 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 	}
 	store := e.getStorage(ctx)
 	seen := make(map[storage.NodeID]bool)
-	add := func(id storage.NodeID) {
+	add := func(id storage.NodeID) error {
 		if seen[id] {
-			return
+			return nil
 		}
 		seen[id] = true
-		if node, getErr := e.newRelationshipEndpointReader(store).readRetained(id, nil); getErr == nil && node != nil {
+		node, getErr := e.newRelationshipEndpointReader(store).readRetained(id, nil)
+		if getErr != nil && !errors.Is(getErr, storage.ErrNotFound) { return getErr }
+		if node != nil {
 			nodes = append(nodes, node)
 		}
+		return nil
 	}
 	for _, relationshipType := range relationship.Types {
 		edges, err := store.GetEdgesByType(relationshipType)
@@ -1308,19 +1311,19 @@ func (e *StorageExecutor) relationshipTypeSeedNodes(ctx context.Context, match *
 			}
 			switch relationship.Direction {
 			case "outgoing":
-				if id, ok := edge.StartIdentity().NodeLookupID(store); ok {
-					add(id)
+				if id, ok := e.identityLookup(store).NodeLookupID(edge.StartIdentity()); ok {
+					if err := add(id); err != nil { return nil, true, err }
 				}
 			case "incoming":
-				if id, ok := edge.EndIdentity().NodeLookupID(store); ok {
-					add(id)
+				if id, ok := e.identityLookup(store).NodeLookupID(edge.EndIdentity()); ok {
+					if err := add(id); err != nil { return nil, true, err }
 				}
 			default:
-				if id, ok := edge.StartIdentity().NodeLookupID(store); ok {
-					add(id)
+				if id, ok := e.identityLookup(store).NodeLookupID(edge.StartIdentity()); ok {
+					if err := add(id); err != nil { return nil, true, err }
 				}
-				if id, ok := edge.EndIdentity().NodeLookupID(store); ok {
-					add(id)
+				if id, ok := e.identityLookup(store).NodeLookupID(edge.EndIdentity()); ok {
+					if err := add(id); err != nil { return nil, true, err }
 				}
 			}
 		}
@@ -1337,25 +1340,17 @@ func (e *StorageExecutor) traverseGraphWithStreamingStartNodes(
 	store := e.getStorage(ctx)
 	labels := match.StartNode.labels
 	var stream func(func(*storage.Node) error) error
-	if e.queryNodeReader(store) != nil {
+	if e.queryNodeReader(store) {
 		stream = func(visit func(*storage.Node) error) error {
 			return streamQueryNodes(ctx, store, labels, visit)
 		}
 	} else if len(labels) > 0 {
-		reader, ok := store.(storage.ProjectedLabelNodeReader)
-		if !ok {
-			return nil, false, nil
-		}
 		stream = func(visit func(*storage.Node) error) error {
-			return storage.StreamNodesByLabelProjectedWithContext(ctx, reader, labels[0], nil, visit)
+			return storage.StreamLabelNodesWithContext(ctx, store, labels[0], nil, visit)
 		}
 	} else {
-		reader, ok := store.(storage.StreamingEngine)
-		if !ok {
-			return nil, false, nil
-		}
 		stream = func(visit func(*storage.Node) error) error {
-			return reader.StreamNodes(ctx, visit)
+			return storage.StreamNodesWithFallback(ctx, store, 0, visit)
 		}
 	}
 
@@ -1759,9 +1754,7 @@ func (e *StorageExecutor) newTraversalContext(traversalCtx context.Context, star
 	}
 	if viewport, ok := TemporalViewportFromContext(traversalCtx); ok {
 		ctx.temporalViewport = viewport
-		if checker, canCheck := e.getStorage(traversalCtx).(temporalCurrentNodeChecker); canCheck {
-			ctx.temporalChecker = checker
-		}
+		ctx.temporalChecker = temporalCheckerForView(traversalCtx, e.getStorage(traversalCtx))
 	}
 	return ctx
 }
@@ -1783,13 +1776,15 @@ func (e *StorageExecutor) loadTraversalEndpointNode(ctx *TraversalContext, nextN
 		}
 		var err error
 		nextNode, err = e.newRelationshipEndpointReader(e.storage).readRetained(nextNodeID, properties)
-		if err != nil || nextNode == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) { recordExpressionFailure(ctx.cancelCtx, err); return nil, false }
+		if nextNode == nil {
 			return nil, false
 		}
 		ctx.nodeCache[nextNodeID] = nextNode
 	}
 	visible, err := nodeVisibleInTemporalViewport(ctx.cancelCtx, nextNode, ctx.temporalViewport, ctx.temporalChecker)
-	if err != nil || !visible {
+	if err != nil { recordExpressionFailure(ctx.cancelCtx, err); return nil, false }
+	if !visible {
 		return nil, false
 	}
 	return nextNode, true
@@ -1851,7 +1846,7 @@ func (e *StorageExecutor) findPaths(
 
 	// Translate the native source once at the storage boundary. Local IDs
 	// alone cannot select adjacency in a composite with duplicate IDs.
-	lookupID, validSource := currentNode.Identity().NodeLookupID(e.storage)
+	lookupID, validSource := e.identityLookup(e.storage).NodeLookupID(currentNode.Identity())
 	if !validSource {
 		return results
 	}
@@ -1903,7 +1898,7 @@ func (e *StorageExecutor) findPaths(
 		if ctx.direction == "outgoing" || (ctx.direction == "both" && edge.StartIdentity() == currentNode.Identity()) {
 			nextIdentity = edge.EndIdentity()
 		}
-		nextNodeID, validSource := nextIdentity.NodeLookupID(e.storage)
+		nextNodeID, validSource := e.identityLookup(e.storage).NodeLookupID(nextIdentity)
 		if !validSource {
 			continue
 		}

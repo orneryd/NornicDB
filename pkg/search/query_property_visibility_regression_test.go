@@ -90,7 +90,7 @@ func TestNormalSearchProjectionCoversEnrichmentAndContinuation(t *testing.T) {
 	be.SetDecayEnabled(true)
 	opts := DefaultSearchOptions()
 	opts.Limit = 1
-	for _, results := range [][]SearchResult{svc.enrichResults(context.Background(), []rrfResult{{ID: "a", RRFScore: 1}}, opts, nil, hitMatchQuery{text: "needle"}), svc.enrichIndexResults(context.Background(), []indexResult{{ID: "a", Score: 1}}, opts, nil, hitMatchQuery{text: "needle"})} {
+	for _, results := range [][]SearchResult{mustSearchRead[[]SearchResult](t)(svc.enrichResults(context.Background(), []rrfResult{{ID: "a", RRFScore: 1}}, opts, nil, hitMatchQuery{text: "needle"})), mustSearchRead[[]SearchResult](t)(svc.enrichIndexResults(context.Background(), []indexResult{{ID: "a", Score: 1}}, opts, nil, hitMatchQuery{text: "needle"}))} {
 		require.Len(t, results, 1)
 		assertPolicyProjectedSearchResult(t, results[0])
 	}

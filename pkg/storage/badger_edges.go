@@ -254,7 +254,22 @@ func (b *BadgerEngine) GetEdge(id EdgeID) (*Edge, error) {
 // GetStoredEdge is GetEdge for integrity work: it also returns a relationship
 // the visibility layer hides (StoredEntityReader).
 func (b *BadgerEngine) GetStoredEdge(id EdgeID) (*Edge, error) {
-	return b.getEdge(id, storedRead)
+	return b.getStoredEdgeWithContext(context.Background(), id)
+}
+
+func (b *BadgerEngine) getStoredEdgeWithContext(ctx context.Context, id EdgeID) (*Edge, error) {
+	if id == "" {
+		return nil, ErrInvalidID
+	}
+	result, err := ReadStored(ctx, b, StoredReadRequest{Mode: StoredFullMaterialization, Edges: []EdgeID{id}})
+	if err != nil {
+		return nil, err
+	}
+	rows := result.(StoredFullRead).Edges
+	if len(rows) == 0 {
+		return nil, ErrNotFound
+	}
+	return rows[0], nil
 }
 
 func (b *BadgerEngine) getEdge(id EdgeID, v readVisibility) (*Edge, error) {
@@ -330,14 +345,8 @@ func (b *BadgerEngine) updateEdgeWithWriteContext(edge *Edge, inherited *entityW
 		endpoints = []NodeID{edge.StartNode, edge.EndNode}
 	}
 	write, releaseWrite, barrierErr := b.beginEntityWrite(entityID, true, inherited, entityWritePlan{known: writtenEntities{nodes: endpoints}, read: func() (writtenEntities, error) {
-		stored, err := b.GetStoredEdge(EdgeID(entityID))
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return writtenEntities{}, err
-		}
-		if stored == nil {
-			return writtenEntities{}, nil
-		}
-		return writtenEntities{nodes: []NodeID{stored.StartNode, stored.EndNode}}, nil
+		endpoints, err := b.storedEdgeEndpoints(EdgeID(entityID), nil)()
+		return writtenEntities{nodes: endpoints}, err
 	}})
 	if barrierErr != nil {
 		return barrierErr
@@ -361,13 +370,12 @@ func (b *BadgerEngine) updateEdgeWithWriteContext(edge *Edge, inherited *entityW
 	}
 	defer releaseConstraint()
 
-	storedBefore, lookupErr := b.GetStoredEdge(edge.ID)
-	if lookupErr == nil && storedBefore != nil {
-		if err := schema.requireEntityFootprint(write.owner, writtenEntities{nodes: []NodeID{storedBefore.StartNode, storedBefore.EndNode}}); err != nil {
-			return err
-		}
-	} else if lookupErr != nil && lookupErr != ErrNotFound {
+	storedEndpoints, lookupErr := b.storedEdgeEndpoints(edge.ID, nil)()
+	if lookupErr != nil {
 		return lookupErr
+	}
+	if err := schema.requireEntityFootprint(write.owner, writtenEntities{nodes: storedEndpoints}); err != nil {
+		return err
 	}
 	var oldEdge *Edge
 	var image *Edge

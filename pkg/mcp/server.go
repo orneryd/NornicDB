@@ -766,7 +766,7 @@ func (s *Server) DefaultDatabaseName() string {
 	if s.db == nil {
 		return ""
 	}
-	if ns, ok := s.db.GetStorage().(*storage.NamespacedEngine); ok && ns != nil {
+	if ns, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](s.db.GetStorage()); ok && ns != nil {
 		return ns.Namespace()
 	}
 	return ""
@@ -833,7 +833,7 @@ func (s *Server) storageForContext(ctx context.Context) (storage.Engine, error) 
 		return store, nil
 	}
 	// If the DB's storage is namespaced, reuse its inner engine for other databases.
-	if ns, ok := store.(*storage.NamespacedEngine); ok {
+	if ns, ok := storage.ViewMetadataForEngine[*storage.NamespacedEngine](store); ok {
 		if ns.Namespace() == dbName {
 			return store, nil
 		}
@@ -1161,7 +1161,9 @@ func (s *Server) handleDiscover(ctx context.Context, args map[string]interface{}
 						Properties:     sanitizePropertiesForLLM(props),
 					}
 					if depth > 1 {
-						res.Related = s.getRelatedNodes(ctx, res.ID, depth)
+						related, err := s.getRelatedNodes(ctx, res.ID, depth)
+						if err != nil { return nil, err }
+						res.Related = related
 					}
 					if minScore > 0 && res.Similarity < minScore {
 						continue
@@ -2148,20 +2150,19 @@ func getMap(m map[string]interface{}, key string) map[string]interface{} {
 
 // getRelatedNodes fetches related nodes up to the specified depth using graph traversal.
 // Returns a slice of RelatedNode with relationship information.
-func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) []RelatedNode {
+func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) ([]RelatedNode, error) {
 	if depth <= 1 {
-		return nil
-	}
-
-	engine, err := s.storageForContext(ctx)
-	if err != nil || engine == nil {
-		return nil
+		return nil, nil
 	}
 
 	startLocal := localNodeIDFromAny(nodeID)
 	if startLocal == "" {
-		return nil
+		return nil, nil
 	}
+
+	engine, err := s.storageForContext(ctx)
+	if err != nil { return nil, err }
+	if engine == nil { return nil, nil }
 
 	_, visible, release := storage.BeginQueryResultProjectionContext(ctx, engine)
 	defer release()
@@ -2192,7 +2193,8 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 		}
 
 		// Outgoing edges
-		out, _ := engine.GetOutgoingEdges(storage.NodeID(cur.idLocal))
+		out, err := engine.GetOutgoingEdges(storage.NodeID(cur.idLocal))
+		if err != nil { return nil, err }
 		for _, e := range out {
 			neighbor := string(e.EndNode)
 			if neighbor == "" || visited[neighbor] {
@@ -2202,7 +2204,9 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 			nextPath := append(append([]string{}, cur.path...), s.nodeElementID(ctx, neighbor))
 
 			ntype, ntitle := "Node", ""
-			if n, err := engine.GetNode(storage.NodeID(neighbor)); err == nil && n != nil {
+			n, err := engine.GetNode(storage.NodeID(neighbor))
+			if err != nil && !errors.Is(err, storage.ErrNotFound) { return nil, err }
+			if n != nil {
 				props := visible.NodeProperties(n)
 				ntype = getLabelType(n.Labels)
 				ntitle = getStringProp(props, "title")
@@ -2231,7 +2235,8 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 		}
 
 		// Incoming edges
-		in, _ := engine.GetIncomingEdges(storage.NodeID(cur.idLocal))
+		in, err := engine.GetIncomingEdges(storage.NodeID(cur.idLocal))
+		if err != nil { return nil, err }
 		for _, e := range in {
 			neighbor := string(e.StartNode)
 			if neighbor == "" || visited[neighbor] {
@@ -2241,7 +2246,9 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 			nextPath := append(append([]string{}, cur.path...), s.nodeElementID(ctx, neighbor))
 
 			ntype, ntitle := "Node", ""
-			if n, err := engine.GetNode(storage.NodeID(neighbor)); err == nil && n != nil {
+			n, err := engine.GetNode(storage.NodeID(neighbor))
+			if err != nil && !errors.Is(err, storage.ErrNotFound) { return nil, err }
+			if n != nil {
 				props := visible.NodeProperties(n)
 				ntype = getLabelType(n.Labels)
 				ntitle = getStringProp(props, "title")
@@ -2266,7 +2273,7 @@ func (s *Server) getRelatedNodes(ctx context.Context, nodeID string, depth int) 
 		}
 	}
 
-	return related
+	return related, nil
 }
 
 // truncateString truncates a string to maxLen with ellipsis

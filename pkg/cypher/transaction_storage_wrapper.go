@@ -18,6 +18,11 @@ import (
 // lose their committed entries (#809). The lookup stays an index lookup: a
 // transaction that reads by an indexed property doesn't scan the label.
 func propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) ([]storage.NodeID, error) {
+	member, _ := transactionMemberForEngine(engine)
+	return lookupPropertyIndex(ctx, member, schema, label, property, value)
+}
+
+func lookupPropertyIndex(ctx context.Context, wrapper *transactionStorageWrapper, schema *storage.SchemaManager, label, property string, value interface{}) ([]storage.NodeID, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -25,7 +30,7 @@ func propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *sto
 	if err != nil {
 		return nil, err
 	}
-	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+	if wrapper != nil {
 		return wrapper.tx.MergePendingPropertyMatchesWithContext(ctx, ids, label, property, value)
 	}
 	return ids, ctx.Err()
@@ -36,6 +41,11 @@ func propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *sto
 // the transaction's own pending node writes merged in. full selects LookupFull
 // (all index properties equal) over LookupPrefix (leading properties equal).
 func compositeIndexLookup(ctx context.Context, engine storage.Engine, idx *storage.CompositeIndex, values []interface{}, full bool) ([]storage.NodeID, error) {
+	member, _ := transactionMemberForEngine(engine)
+	return lookupCompositeIndex(ctx, member, idx, values, full)
+}
+
+func lookupCompositeIndex(ctx context.Context, wrapper *transactionStorageWrapper, idx *storage.CompositeIndex, values []interface{}, full bool) ([]storage.NodeID, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -49,7 +59,7 @@ func compositeIndexLookup(ctx context.Context, engine storage.Engine, idx *stora
 	if err != nil {
 		return nil, err
 	}
-	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional {
+	if wrapper != nil {
 		return wrapper.tx.MergePendingCompositeMatchesWithContext(ctx, ids, idx.Label, idx.Properties, values)
 	}
 	return ids, ctx.Err()
@@ -60,11 +70,11 @@ func compositeIndexLookup(ctx context.Context, engine storage.Engine, idx *stora
 // indexes are per label, so their union for a property lists only the nodes
 // that carry an indexed label. A committed lookup is complete only when an
 // indexed label covers the namespace; transaction reads use the merged scan.
-func labellessPropertyIndexUsable(ctx context.Context, engine storage.Engine, labels ...string) bool {
-	if _, transactional := engine.(*transactionStorageWrapper); transactional {
+func (e *StorageExecutor) labellessPropertyIndexUsable(ctx context.Context, engine storage.Engine, labels ...string) bool {
+	if _, transactional := e.nativeMemberFor(engine); transactional {
 		return false
 	}
-	stats, supported := engine.(storage.LabelStatsEngine)
+	supported := storage.HasReadCapability[storage.LabelStatsEngine](engine)
 	if !supported || len(labels) == 0 {
 		return false
 	}
@@ -73,7 +83,9 @@ func labellessPropertyIndexUsable(ctx context.Context, engine storage.Engine, la
 		return false
 	}
 	for _, label := range labels {
-		count, err := storage.NodeCountByLabelWithContext(ctx, stats, label)
+		count, err := storage.ReadWithCapability(engine, func(stats storage.LabelStatsEngine) (int64, error) {
+			return storage.NodeCountByLabelWithContext(ctx, stats, label)
+		}, nil)
 		if err == nil && count == total {
 			return true
 		}
@@ -87,8 +99,8 @@ func labellessPropertyIndexUsable(ctx context.Context, engine storage.Engine, la
 // committed index isn't the transaction's order, so those scans read the
 // transaction's merged label scan instead. A transaction that has written no
 // nodes reads the index, as an auto-commit statement does.
-func orderedPropertyIndexSchema(engine storage.Engine) *storage.SchemaManager {
-	if wrapper, transactional := engine.(*transactionStorageWrapper); transactional && wrapper.tx.HasPendingNodeMutations() {
+func (e *StorageExecutor) orderedPropertyIndexSchema(engine storage.Engine) *storage.SchemaManager {
+	if wrapper, transactional := e.nativeMemberFor(engine); transactional && wrapper.tx.HasPendingNodeMutations() {
 		return nil
 	}
 	return engine.GetSchema()
@@ -98,6 +110,16 @@ func orderedPropertyIndexSchema(engine storage.Engine) *storage.SchemaManager {
 // for use in implicit transaction execution. It routes writes through the transaction
 // (for atomicity/rollback) and reads through the underlying engine (for performance).
 type transactionStorageWrapper struct {
+	lifecycleOwner any
+	membershipOnce sync.Once
+	membershipKind func() storage.MembershipKind
+	controller     *StorageExecutor
+	ownerOnce      sync.Once
+	commitOwner    storage.TransactionCommitter
+	leaseMu        sync.Mutex
+	leaseContext   context.Context
+	statementMode  *resolvedStatementMode
+
 	tx                  *storage.BadgerTransaction
 	underlying          storage.Engine // For read operations not supported by transaction
 	schema              *storage.SchemaManager
@@ -130,14 +152,49 @@ type transactionStorageWrapper struct {
 	txNodeLookupCacheMu *sync.RWMutex
 }
 
+// transactionStorageWrapper declares every optional method; admission is derived from this policy.
+var transactionStorageWrapperReadPolicy = storage.BoundaryReadPolicy{
+	{Methods: "BatchGetNodesWithContext", Disposition: storage.CapabilityOwned, Scope: "Uses the native transaction batch point-view owner and applies this issuance namespace; pending writes, pinned bodies and ended lifetime cannot delegate to committed storage."},
+	{Methods: "BulkCreateEdgesWithContext", Disposition: storage.CapabilityRefused, Scope: "Calls createEdgesWithContext in batch mode, retaining schema token registration, namespace input copies and the same native transaction mutation."},
+	{Methods: "BulkCreateMintedEdgesWithContext", Disposition: storage.CapabilityRefused, Scope: "Selects minted creation through createEdgesWithContext; exact native transaction admission and rollback remain on this issued mutation adapter."},
+	{Methods: "CreateEdgeWithContext", Disposition: storage.CapabilityRefused, Scope: "Selects single-edge creation through createEdgesWithContext with schema token registration and namespace endpoint translation; not a data-read operation."},
+	{Methods: "CreateMintedEdgeWithContext", Disposition: storage.CapabilityRefused, Scope: "Selects minted single-edge creation through the same input/schema/transaction mutation owner, never optional read discovery."},
+	{Methods: "DeleteGraphNodeWithContext", Disposition: storage.CapabilityRefused, Scope: "Prefixes the exact requested node and invokes the native transaction cascade/reject policy owner; optional read selection cannot authorize deletion."},
+	{Methods: "DeleteNodeWithContext", Disposition: storage.CapabilityRefused, Scope: "Chooses CascadeEdges via the issued DeleteGraphNodeWithContext adapter, retaining native transaction rollback and namespace."},
+	{Methods: "IncidentEdgesWithContext", Disposition: storage.CapabilityOwned, Scope: "Reads the native pending/snapshot incident set without ordinary fallback and converts its node/edge namespace before returning."},
+	{Methods: "BindQueryNodeRead BindEdgeHeaderRead", Disposition: storage.CapabilityRefused, Scope: "Typed operation issuance protocol, not an optional data read."},
+	{Methods: "ReadStored StoredReadPolicy", Disposition: storage.CapabilityOwned, Scope: "Explicit stored modes preserve this view; mandatory facts never use ordinary/full-body fallback."},
+	{Methods: "BulkCreateMintedNodesWithContext", Disposition: storage.CapabilityRefused, Scope: "Exact contextual mutation retains its issued interceptor; optional read discovery cannot invoke it."},
+	{Methods: "BulkCreateNodesWithContext", Disposition: storage.CapabilityRefused, Scope: "Exact contextual mutation retains its issued interceptor; optional read discovery cannot invoke it."},
+	{Methods: "CreateMintedNodeWithContext", Disposition: storage.CapabilityRefused, Scope: "Exact contextual mutation retains its issued interceptor; optional read discovery cannot invoke it."},
+	{Methods: "CreateNodeWithContext", Disposition: storage.CapabilityRefused, Scope: "Exact contextual mutation retains its issued interceptor; optional read discovery cannot invoke it."},
+	{Methods: "UpdateNodeWithContext", Disposition: storage.CapabilityRefused, Scope: "Exact contextual mutation retains its issued interceptor; optional read discovery cannot invoke it."},
+	{Methods: "AllNodesWithContext ForEachNodeIDByLabelWithContext GetFirstNodeByLabelWithContext GetNodesByLabelVisibleAtWithContext GetNodesByLabelWithContext GetStoredNodesByLabelWithContext NodeCountByLabelWithContext StreamNodesByLabelProjectedWithContext StreamStoredNodesByLabelProjectedWithContext", Disposition: storage.CapabilityOwned, Scope: "Context-bearing reads preserve this view and the original caller."},
+	{Methods: "ForEachNodeIDByLabel GetEdgesBetweenVisibleAt GetEdgesByTypeVisibleAt GetIncomingEdgesVisibleAt GetNodeProjected " +
+		"GetNodesByLabelVisibleAt GetOutgoingEdgesVisibleAt GetQueryNode GetStoredEdge GetStoredIncomingEdges " +
+		"GetStoredNode GetStoredNodesByLabel GetStoredOutgoingEdges HasManualSuppressions IncidentEdges " +
+		"IncomingEdgeHeaders IsDecayEnabled MatchEdgesBetween Namespace " +
+		"NodeCountByLabel OutgoingEdgeHeaders PropertyKeyKnown StreamEdgesByType StreamNodesByLabelProjected " +
+		"StreamStoredEdgesByType StreamStoredNodesByLabelProjected",
+		Disposition: storage.CapabilityOwned, Scope: "Pinned transaction and pending writes; namespace conversion and historical dependency checks."},
+	{Methods: "SetManualSuppression BindReadCapabilityGuard CommitTransaction BulkCreateMintedEdges BulkCreateMintedNodes CreateMintedEdge CreateMintedNode DeleteGraphNode " +
+		"EdgeCreateWasNoOp GetInnerEngine PrepareMergeNode PrepareMergeNodeForWrite RelationshipEndpointVisible " +
+		"WithStoreTransaction",
+		Disposition: storage.CapabilityRefused, Scope: "No scoped optional read contract on this view; configuration, mutation and maintenance require their exact operation owner."},
+}
+
+func (*transactionStorageWrapper) ReadCapabilityPolicy() storage.BoundaryReadPolicy {
+	return transactionStorageWrapperReadPolicy.Copy()
+}
+
 // PropertyKeyKnown reports whether a write in the transaction's database has
 // stored a value under name (storage.PropertyKeyLookup), from the engine the
 // transaction reads through.
 func (w *transactionStorageWrapper) PropertyKeyKnown(name string) bool {
-	if lookup, ok := w.underlying.(storage.PropertyKeyLookup); ok {
+	if lookup, ok := storage.ViewMetadataForEngine[storage.PropertyKeyLookup](w.underlying); ok {
 		return lookup.PropertyKeyKnown(name)
 	}
-	registry, ok := w.underlying.(storage.PropertyKeyRegistry)
+	registry, ok := storage.ViewMetadataForEngine[storage.NamespacePropertyKeyLookup](w.underlying)
 	return ok && registry.PropertyKeyKnownInNamespace(w.namespace, name)
 }
 
@@ -324,9 +381,13 @@ func (w *transactionStorageWrapper) IncidentEdges(nodeID storage.NodeID) ([]*sto
 
 func (w *transactionStorageWrapper) IncidentEdgesWithContext(ctx context.Context, nodeID storage.NodeID) ([]*storage.Edge, error) {
 	if w.namespace == "" {
-		return w.tx.IncidentEdgesWithContext(ctx, nodeID)
+		return storage.ReadWithCapability(w.tx, func(reader storage.IncidentEdgeLister) ([]*storage.Edge, error) {
+			return w.tx.IncidentEdgesWithContext(ctx, nodeID)
+		}, nil)
 	}
-	edges, err := w.tx.IncidentEdgesWithContext(ctx, w.prefixNodeID(nodeID))
+	edges, err := storage.ReadWithCapability(w.tx, func(reader storage.IncidentEdgeLister) ([]*storage.Edge, error) {
+		return w.tx.IncidentEdgesWithContext(ctx, w.prefixNodeID(nodeID))
+	}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -380,14 +441,7 @@ func (w *transactionStorageWrapper) GetNode(id storage.NodeID) (*storage.Node, e
 // namespace (BadgerTransaction.GetQueryNode): the node with its embedding
 // metadata, without separately stored vectors.
 func (w *transactionStorageWrapper) GetQueryNode(id storage.NodeID) (*storage.Node, error) {
-	node, err := w.tx.GetQueryNode(w.prefixNodeID(id))
-	if err != nil {
-		return nil, err
-	}
-	if w.namespace == "" {
-		return node, nil
-	}
-	return w.toUserNode(node), nil
+	return w.BindQueryNodeRead()(id)
 }
 
 // GetNodeProjected implements storage.ProjectedNodeReader in the wrapper's
@@ -395,7 +449,9 @@ func (w *transactionStorageWrapper) GetQueryNode(id storage.NodeID) (*storage.No
 // BadgerTransaction.GetNodeProjected). Traversals use it with an empty
 // property list to read an endpoint's labels without its properties (#1110).
 func (w *transactionStorageWrapper) GetNodeProjected(id storage.NodeID, properties []string) (*storage.Node, error) {
-	node, err := w.tx.GetNodeProjected(w.prefixNodeID(id), properties)
+	node, err := storage.ReadWithCapability(w.tx, func(reader storage.ProjectedNodeReader) (*storage.Node, error) {
+		return reader.GetNodeProjected(w.prefixNodeID(id), properties)
+	}, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -406,8 +462,8 @@ func (w *transactionStorageWrapper) GetNodeProjected(id storage.NodeID, properti
 }
 
 // RelationshipEndpointVisible answers for the transaction, in its namespace.
-func (w *transactionStorageWrapper) RelationshipEndpointVisible(id storage.NodeID) (visible, answered bool) {
-	return w.tx.RelationshipEndpointVisible(w.prefixNodeID(id))
+func (w *transactionStorageWrapper) RelationshipEndpointVisible(id storage.NodeID) (bool, bool) {
+	return storage.RelationshipEndpointVisible(w.tx, w.prefixNodeID(id))
 }
 
 func (w *transactionStorageWrapper) GetEdge(id storage.EdgeID) (*storage.Edge, error) {
@@ -476,12 +532,14 @@ func (w *transactionStorageWrapper) streamNodesByLabelProjectedWithContext(ctx c
 		return storage.ErrInvalidData
 	}
 	stream := func(label string, properties []string, visit func(*storage.Node) error) error {
-		return w.tx.StreamNodesByLabelProjectedWithContext(ctx, label, properties, visit)
-	}
-	if stored {
-		stream = func(label string, properties []string, visit func(*storage.Node) error) error {
-			return w.tx.StreamStoredNodesByLabelProjectedWithContext(ctx, label, properties, visit)
+		if stored {
+			return storage.VisitWithCapability(w.tx, func(reader storage.StoredEntityReader, deliver func(*storage.Node) error) error {
+				return storage.StreamStoredNodesByLabelProjectedWithContext(ctx, reader, label, properties, deliver)
+			}, nil, visit)
 		}
+		return storage.VisitWithCapability(w.tx, func(reader storage.ProjectedLabelNodeReader, deliver func(*storage.Node) error) error {
+			return storage.StreamNodesByLabelProjectedWithContext(ctx, reader, label, properties, deliver)
+		}, nil, visit)
 	}
 	return stream(label, properties, func(node *storage.Node) error {
 		if node == nil {
@@ -535,37 +593,7 @@ func (w *transactionStorageWrapper) StreamNodesWithOptions(ctx context.Context, 
 			return fn(&out)
 		})
 	}
-	nodes, err := storage.AllNodesWithContext(ctx, w)
-	if err != nil {
-		return err
-	}
-	for _, node := range nodes {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if node == nil {
-			continue
-		}
-		if opts.Prefix != "" && !strings.HasPrefix(string(node.ID), opts.Prefix) {
-			continue
-		}
-		out := node
-		switch {
-		case opts.Projection != nil:
-			out = copyNodeProjected(node, opts.Projection)
-		case opts.StripEmbeddings || (!opts.WithEmbeddings && !opts.ApplyDecayFilter):
-			out = copyNodeWithoutEmbeddingVectors(node)
-		}
-		if err := fn(out); err != nil {
-			if err == storage.ErrIterationStopped {
-				return nil
-			}
-			return err
-		}
-	}
-	return nil
+	return storage.ErrNotImplemented
 }
 
 // copyNodeProjected returns a node carrying only the requested user properties.
@@ -615,21 +643,15 @@ func (w *transactionStorageWrapper) ForEachNodeIDByLabelWithContext(ctx context.
 		return nil
 	}
 	if !w.tx.HasPendingNodeMutations() {
-		if lookup, ok := w.underlying.(storage.LabelNodeIDLookupEngine); ok {
-			return storage.ForEachNodeIDByLabelWithContext(ctx, lookup, label, visit)
-		}
+		return storage.VisitNodeIDsByLabel(w.underlying, label, visit)
 	}
-
-	nodes, err := storage.GetNodesByLabelWithContext(ctx, w, label)
+	nodes, err := w.GetNodesByLabelWithContext(ctx, label)
 	if err != nil {
 		return err
 	}
 	for _, node := range nodes {
-		if node == nil {
-			continue
-		}
-		if !visit(node.ID) {
-			return nil
+		if node != nil && !visit(node.ID) {
+			break
 		}
 	}
 	return nil
@@ -648,14 +670,14 @@ func (w *transactionStorageWrapper) GetOutgoingEdges(nodeID storage.NodeID) ([]*
 
 // OutgoingEdgeHeaders lists the transaction's relationship headers in its
 // namespace.
-func (w *transactionStorageWrapper) OutgoingEdgeHeaders(nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
-	return w.userEdgeHeaders(w.tx.OutgoingEdgeHeaders(w.prefixNodeID(nodeID)))
+func (w *transactionStorageWrapper) OutgoingEdgeHeaders(id storage.NodeID) ([]*storage.Edge, bool, error) {
+	return w.BindEdgeHeaderRead(true)(id)
 }
 
 // IncomingEdgeHeaders lists the transaction's relationship headers in its
 // namespace.
-func (w *transactionStorageWrapper) IncomingEdgeHeaders(nodeID storage.NodeID) ([]*storage.Edge, bool, error) {
-	return w.userEdgeHeaders(w.tx.IncomingEdgeHeaders(w.prefixNodeID(nodeID)))
+func (w *transactionStorageWrapper) IncomingEdgeHeaders(id storage.NodeID) ([]*storage.Edge, bool, error) {
+	return w.BindEdgeHeaderRead(false)(id)
 }
 
 func (w *transactionStorageWrapper) userEdgeHeaders(edges []*storage.Edge, answered bool, err error) ([]*storage.Edge, bool, error) {
@@ -692,10 +714,10 @@ func (w *transactionStorageWrapper) GetEdgesBetween(startID, endID storage.NodeI
 // (storage.EdgesBetweenMatcher).
 func (w *transactionStorageWrapper) MatchEdgesBetween(startID, endID storage.NodeID, edgeType string, properties []string, match func(*storage.Edge) bool) ([]*storage.Edge, error) {
 	if w.namespace == "" {
-		return w.tx.MatchEdgesBetween(startID, endID, edgeType, properties, match)
+		return storage.MatchEdgesBetween(w.tx, startID, endID, edgeType, properties, match)
 	}
 	var candidate storage.Edge
-	edges, err := w.tx.MatchEdgesBetween(w.prefixNodeID(startID), w.prefixNodeID(endID), edgeType, properties, func(edge *storage.Edge) bool {
+	edges, err := storage.MatchEdgesBetween(w.tx, w.prefixNodeID(startID), w.prefixNodeID(endID), edgeType, properties, func(edge *storage.Edge) bool {
 		candidate = *edge
 		candidate.ID = w.unprefixEdgeID(edge.ID)
 		candidate.StartNode, candidate.EndNode = startID, endID
@@ -707,6 +729,8 @@ func (w *transactionStorageWrapper) MatchEdgesBetween(startID, endID storage.Nod
 	return w.toUserEdges(edges), nil
 }
 
+//
+// Deprecated: Use GetEdgesBetween and filter by type to receive errors. Failed lookups may appear as nil.
 func (w *transactionStorageWrapper) GetEdgeBetween(startID, endID storage.NodeID, edgeType string) *storage.Edge {
 	if w.namespace == "" {
 		return w.tx.GetEdgeBetween(startID, endID, edgeType)
@@ -735,70 +759,64 @@ func (w *transactionStorageWrapper) GetNodesByLabelVisibleAt(label string, versi
 
 // GetNodesByLabelVisibleAtWithContext carries the caller through this read and its materialization.
 func (w *transactionStorageWrapper) GetNodesByLabelVisibleAtWithContext(ctx context.Context, label string, version storage.MVCCVersion) ([]*storage.Node, error) {
-	if provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine); ok {
-		nodes, err := storage.GetNodesByLabelVisibleAtWithContext(ctx, provider, label, version)
+
+	return storage.ReadWithCapability(w.underlying, func(reader storage.MVCCIndexedVisibilityEngine) ([]*storage.Node, error) {
+		values, err := storage.GetNodesByLabelVisibleAtWithContext(ctx, reader, label, version)
 		if err != nil || w.namespace == "" || w.underlyingIsNamespaced() {
-			return nodes, err
+			return values, err
 		}
-		return w.toUserNamespacedNodesWithContext(ctx, nodes)
-	}
-	return nil, storage.ErrNotImplemented
+		return w.toUserNamespacedNodesWithContext(ctx, values)
+	}, nil)
 }
 
 func (w *transactionStorageWrapper) GetOutgoingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine)
-	if !ok {
-		return nil, storage.ErrNotImplemented
+	if !w.underlyingIsNamespaced() {
+		nodeID = w.prefixNodeID(nodeID)
 	}
-	if w.underlyingIsNamespaced() {
-		return provider.GetOutgoingEdgesVisibleAt(nodeID, version)
-	}
-	edges, err := provider.GetOutgoingEdgesVisibleAt(w.prefixNodeID(nodeID), version)
-	if err != nil || w.namespace == "" {
-		return edges, err
-	}
-	return w.toUserNamespacedEdges(edges), nil
+	return storage.ReadWithCapability(w.underlying, func(reader storage.MVCCIndexedVisibilityEngine) ([]*storage.Edge, error) {
+		values, err := reader.GetOutgoingEdgesVisibleAt(nodeID, version)
+		if err != nil || w.namespace == "" || w.underlyingIsNamespaced() {
+			return values, err
+		}
+		return w.toUserNamespacedEdges(values), nil
+	}, nil)
 }
 
 func (w *transactionStorageWrapper) GetIncomingEdgesVisibleAt(nodeID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine)
-	if !ok {
-		return nil, storage.ErrNotImplemented
+	if !w.underlyingIsNamespaced() {
+		nodeID = w.prefixNodeID(nodeID)
 	}
-	if w.underlyingIsNamespaced() {
-		return provider.GetIncomingEdgesVisibleAt(nodeID, version)
-	}
-	edges, err := provider.GetIncomingEdgesVisibleAt(w.prefixNodeID(nodeID), version)
-	if err != nil || w.namespace == "" {
-		return edges, err
-	}
-	return w.toUserNamespacedEdges(edges), nil
+	return storage.ReadWithCapability(w.underlying, func(reader storage.MVCCIndexedVisibilityEngine) ([]*storage.Edge, error) {
+		values, err := reader.GetIncomingEdgesVisibleAt(nodeID, version)
+		if err != nil || w.namespace == "" || w.underlyingIsNamespaced() {
+			return values, err
+		}
+		return w.toUserNamespacedEdges(values), nil
+	}, nil)
 }
 
 func (w *transactionStorageWrapper) GetEdgesByTypeVisibleAt(edgeType string, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	if provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine); ok {
-		edges, err := provider.GetEdgesByTypeVisibleAt(edgeType, version)
+
+	return storage.ReadWithCapability(w.underlying, func(reader storage.MVCCIndexedVisibilityEngine) ([]*storage.Edge, error) {
+		values, err := reader.GetEdgesByTypeVisibleAt(edgeType, version)
 		if err != nil || w.namespace == "" || w.underlyingIsNamespaced() {
-			return edges, err
+			return values, err
 		}
-		return w.toUserNamespacedEdges(edges), nil
-	}
-	return nil, storage.ErrNotImplemented
+		return w.toUserNamespacedEdges(values), nil
+	}, nil)
 }
 
 func (w *transactionStorageWrapper) GetEdgesBetweenVisibleAt(startID, endID storage.NodeID, version storage.MVCCVersion) ([]*storage.Edge, error) {
-	provider, ok := w.underlying.(storage.MVCCIndexedVisibilityEngine)
-	if !ok {
-		return nil, storage.ErrNotImplemented
+	if !w.underlyingIsNamespaced() {
+		startID, endID = w.prefixNodeID(startID), w.prefixNodeID(endID)
 	}
-	if w.underlyingIsNamespaced() {
-		return provider.GetEdgesBetweenVisibleAt(startID, endID, version)
-	}
-	edges, err := provider.GetEdgesBetweenVisibleAt(w.prefixNodeID(startID), w.prefixNodeID(endID), version)
-	if err != nil || w.namespace == "" {
-		return edges, err
-	}
-	return w.toUserNamespacedEdges(edges), nil
+	return storage.ReadWithCapability(w.underlying, func(reader storage.MVCCIndexedVisibilityEngine) ([]*storage.Edge, error) {
+		values, err := reader.GetEdgesBetweenVisibleAt(startID, endID, version)
+		if err != nil || w.namespace == "" || w.underlyingIsNamespaced() {
+			return values, err
+		}
+		return w.toUserNamespacedEdges(values), nil
+	}, nil)
 }
 
 func (w *transactionStorageWrapper) AllNodes() ([]*storage.Node, error) {
@@ -825,6 +843,8 @@ func (w *transactionStorageWrapper) AllEdges() ([]*storage.Edge, error) {
 	return w.toUserNamespacedEdges(edges), nil
 }
 
+//
+// Deprecated: Use AllNodes to receive errors. Failed reads are omitted and may appear as an empty collection.
 func (w *transactionStorageWrapper) GetAllNodes() []*storage.Node {
 	nodes := w.tx.GetAllNodes()
 	if w.namespace == "" {
@@ -833,12 +853,18 @@ func (w *transactionStorageWrapper) GetAllNodes() []*storage.Node {
 	return w.toUserNamespacedNodes(nodes)
 }
 
+//
+// Deprecated: Use GetIncomingEdges and count the returned edges to receive errors. Failed reads may appear as zero.
 func (w *transactionStorageWrapper) GetInDegree(nodeID storage.NodeID) int {
-	return w.underlying.GetInDegree(nodeID)
+	edges, _ := w.GetIncomingEdges(nodeID)
+	return len(edges)
 }
 
+//
+// Deprecated: Use GetOutgoingEdges and count the returned edges to receive errors. Failed reads may appear as zero.
 func (w *transactionStorageWrapper) GetOutDegree(nodeID storage.NodeID) int {
-	return w.underlying.GetOutDegree(nodeID)
+	edges, _ := w.GetOutgoingEdges(nodeID)
+	return len(edges)
 }
 
 func (w *transactionStorageWrapper) GetSchema() *storage.SchemaManager {
@@ -1125,7 +1151,7 @@ func (w *transactionStorageWrapper) toUserNamespacedNodesWithContext(ctx context
 }
 
 func (w *transactionStorageWrapper) underlyingIsNamespaced() bool {
-	scoped, ok := w.underlying.(interface{ Namespace() string })
+	scoped, ok := storage.ViewMetadataForEngine[interface{ Namespace() string }](w.underlying)
 	return ok && w.namespace != "" && scoped.Namespace() == w.namespace
 }
 
@@ -1133,10 +1159,30 @@ func (w *transactionStorageWrapper) BatchGetNodes(ids []storage.NodeID) (map[sto
 	return w.BatchGetNodesWithContext(context.Background(), ids)
 }
 
-// BatchGetNodesWithContext preserves the existing underlying batch semantics
-// while carrying statement cancellation into its preparation.
+// BatchGetNodesWithContext scopes the transaction's existing pinned batch
+// owner, including pending mutations and the ended-owner boundary.
 func (w *transactionStorageWrapper) BatchGetNodesWithContext(ctx context.Context, ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
-	return storage.BatchGetNodesWithContext(ctx, w.underlying, ids)
+	requests := make([]storage.NodeID, len(ids))
+	for i, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		requests[i] = w.prefixNodeID(id)
+	}
+	nodes, err := w.tx.BatchGetNodesWithContext(ctx, requests)
+	if err != nil || w.namespace == "" {
+		return nodes, err
+	}
+	result := make(map[storage.NodeID]*storage.Node, len(nodes))
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if node := nodes[w.prefixNodeID(id)]; node != nil {
+			result[id] = w.toUserNode(node)
+		}
+	}
+	return result, nil
 }
 
 func (w *transactionStorageWrapper) Close() error {
@@ -1179,17 +1225,15 @@ func (w *transactionStorageWrapper) NodeCountByLabel(label string) (int64, error
 // NodeCountByLabelWithContext carries the caller through this read and its materialization.
 func (w *transactionStorageWrapper) NodeCountByLabelWithContext(ctx context.Context, label string) (int64, error) {
 	if w.countersDescribeTransaction() {
-		if counter, ok := w.underlying.(interface {
-			NodeCountByLabel(string) (int64, error)
-		}); ok {
-			delta, tracked := w.tx.PendingNodeLabelCountDelta(w.namespace, label)
-			if tracked || !w.tx.HasPendingNodeMutations() {
-				count, err := storage.NodeCountByLabelWithContext(ctx, counter, label)
+		delta, tracked := w.tx.PendingNodeLabelCountDelta(w.namespace, label)
+		if tracked || !w.tx.HasPendingNodeMutations() {
+			return storage.ReadWithCapability(w.underlying, func(reader storage.LabelStatsEngine) (int64, error) {
+				count, err := storage.NodeCountByLabelWithContext(ctx, reader, label)
 				return count + delta, err
-			}
+			}, func() (int64, error) { return w.nodeCountByLabelScan(label) })
 		}
 	}
-	return w.nodeCountByLabelScanWithContext(ctx, label)
+	return w.nodeCountByLabelScan(label)
 }
 
 func (w *transactionStorageWrapper) nodeCountByLabelScan(label string) (int64, error) {
@@ -1276,7 +1320,10 @@ func (w *transactionStorageWrapper) edgeCountByEndpointLabelScan(label, edgeType
 			nodeID = edge.StartNode
 		}
 		node, err := w.GetNode(nodeID)
-		if err != nil || node == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return 0, err
+		}
+		if node == nil {
 			continue
 		}
 		for _, nodeLabel := range node.Labels {
@@ -1298,4 +1345,42 @@ func (w *transactionStorageWrapper) DeleteByPrefix(prefix string) (nodesDeleted 
 // WithStoreTransaction joins system-store mutations to this existing transaction.
 func (w *transactionStorageWrapper) WithStoreTransaction(ctx context.Context, mutate func(storage.Engine) error) error {
 	return mutate(w)
+}
+
+func (*transactionStorageWrapper) EngineCapabilityPolicy() storage.EngineBoundaryPolicy {
+	return storage.EngineBoundaryPolicy{Kind: storage.EngineView, ReadState: storage.BindingOwned, Membership: storage.BindingOwned, Controller: storage.BindingOwned, PendingActions: storage.BindingOwned, SchemaPublication: storage.BindingOwned, ReadLease: storage.BindingOwned, StatementMode: storage.BindingOwned, Identity: storage.BindingOwned, Enforcement: storage.BindingOwned, CompoundDependencies: storage.BindingOwned, SameVersionFallback: storage.BindingOwned, Delivery: storage.BindingOwned, ExactEffects: storage.BindingOwned, FullRead: storage.BindingOwned, ObservedNode: storage.BindingRefused, ObservedEdge: storage.BindingRefused}
+}
+
+func (e *StorageExecutor) propertyIndexLookup(ctx context.Context, engine storage.Engine, schema *storage.SchemaManager, label, property string, value interface{}) ([]storage.NodeID, error) {
+	member, _ := e.nativeMemberFor(engine)
+	return lookupPropertyIndex(ctx, member, schema, label, property, value)
+}
+func (e *StorageExecutor) compositeIndexLookup(ctx context.Context, engine storage.Engine, index *storage.CompositeIndex, values []interface{}, full bool) ([]storage.NodeID, error) {
+	member, _ := e.nativeMemberFor(engine)
+	return lookupCompositeIndex(ctx, member, index, values, full)
+}
+
+// Compile the original native member once while this view retains scope and
+// delivery transforms. Row execution calls only the retained typed operation.
+func (w *transactionStorageWrapper) BindQueryNodeRead() func(storage.NodeID) (*storage.Node, error) {
+	if w.tx == nil {
+		return func(storage.NodeID) (*storage.Node, error) { return nil, storage.ErrTransactionClosed }
+	}
+	read := storage.BindQueryNodeRead(w.tx)
+	return func(id storage.NodeID) (*storage.Node, error) {
+		node, err := read(w.prefixNodeID(id))
+		if err != nil || w.namespace == "" {
+			return node, err
+		}
+		return w.toUserNode(node), nil
+	}
+}
+func (w *transactionStorageWrapper) BindEdgeHeaderRead(outgoing bool) func(storage.NodeID) ([]*storage.Edge, bool, error) {
+	if w.tx == nil {
+		return func(storage.NodeID) ([]*storage.Edge, bool, error) { return nil, false, storage.ErrTransactionClosed }
+	}
+	read := storage.BindEdgeHeaderReads(w.tx)
+	return func(id storage.NodeID) ([]*storage.Edge, bool, error) {
+		return w.userEdgeHeaders(read(w.prefixNodeID(id), outgoing))
+	}
 }

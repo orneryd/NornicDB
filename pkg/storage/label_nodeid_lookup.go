@@ -17,29 +17,16 @@ func FirstNodeIDByLabel(engine Engine, label string) (NodeID, error) {
 	if engine == nil {
 		return "", ErrInvalidData
 	}
-
-	if lookup, ok := engine.(LabelNodeIDLookupEngine); ok {
-		var found NodeID
-		if err := lookup.ForEachNodeIDByLabel(label, func(id NodeID) bool {
-			found = id
-			return false
-		}); err != nil {
-			return "", err
-		}
-		if found == "" {
-			return "", ErrNotFound
-		}
-		return found, nil
-	}
-
-	node, err := engine.GetFirstNodeByLabel(label)
+	var found NodeID
+	seen := false
+	err := VisitNodeIDsByLabel(engine, label, func(id NodeID) bool { found = id; seen = true; return false })
 	if err != nil {
 		return "", err
 	}
-	if node == nil {
+	if !seen {
 		return "", ErrNotFound
 	}
-	return node.ID, nil
+	return found, nil
 }
 
 // NodeIDsByLabel returns up to limit node IDs that have the label.

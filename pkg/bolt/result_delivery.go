@@ -40,14 +40,17 @@ func (s *Session) abandonContinuationResults() {
 // DISCARD selects complete records without writing them. Use the same
 // PackStream encoder as PULL so reference ownership is independent of whether
 // a procedure page is returned as a map, JSON text or a nested Bolt value.
-func (s *Session) discardResultDelivery(stream resultStream, rows [][]any) {
+func (s *Session) discardResultDelivery(stream resultStream, rows [][]any) error {
 	if stream.delivery == nil || !stream.delivery.Pending() {
-		return
+		return nil
 	}
-	resolver := s.recordEntityDatabaseResolver(stream.database)
+	resolver := stream.entitySource
+	if resolver == nil { resolver = s.recordEntityDatabaseResolver(stream.database, s.executor) }
 	for _, row := range rows {
 		buf := encodeRecordListInto(s.recordBuf[:0], row, s.useUTCDateTimeStructs(), s.boltV5(), stream.database, resolver)
+		if resolver.err != nil { return &entityProjectionError{resolver.err} }
 		stream.delivery.DiscardEncoded(buf)
 		s.recordBuf = buf[:0]
 	}
+	return nil
 }

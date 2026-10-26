@@ -4,6 +4,7 @@
 package cypher
 
 import (
+	"errors"
 	"context"
 
 	"strings"
@@ -102,7 +103,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.
 				}
 				values[i] = nodeInfo.properties[idx.Properties[i]]
 			}
-			ids, err := compositeIndexLookup(ctx, store, idx, values, covered == len(idx.Properties))
+			ids, err := e.compositeIndexLookup(ctx, store, idx, values, covered == len(idx.Properties))
 			if err != nil {
 				return nil, false, err
 			}
@@ -128,7 +129,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.
 			// Labelled: probe the (label, prop) index when one exists.
 			if _, ok := schema.GetPropertyIndex(nodeInfo.labels[0], prop); ok {
 				var err error
-				ids, err = propertyIndexLookup(ctx, store, schema, nodeInfo.labels[0], prop, val)
+				ids, err = e.propertyIndexLookup(ctx, store, schema, nodeInfo.labels[0], prop, val)
 				if err != nil {
 					return nil, false, err
 				}
@@ -136,7 +137,7 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.
 			}
 		} else {
 			labels := e.indexCandidateLabels(ctx, schema, nil, prop)
-			if labellessPropertyIndexUsable(ctx, store, labels...) {
+			if e.labellessPropertyIndexUsable(ctx, store, labels...) {
 				var err error
 				ids, err = schema.PropertyIndexLookupAnyLabelWithContext(ctx, prop, val)
 				if err != nil {
@@ -199,7 +200,10 @@ func (e *StorageExecutor) lookupPatternCandidatesUsingPropertyIndex(ctx context.
 			continue
 		}
 		n, err := e.getQueryNode(store, id)
-		if err != nil || n == nil {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return nil, true, err
+		}
+		if n == nil {
 			continue
 		}
 		out = append(out, n)
@@ -350,9 +354,9 @@ func (e *StorageExecutor) executeMergeWithContext(ctx context.Context, cypher st
 			}
 			edge = createdEdge
 			if !created {
-				if reporter, ok := store.(interface {
+				if reporter, ok := storage.OwnedCapability[interface {
 					EdgeCreateWasNoOp(storage.EdgeID) bool
-				}); ok && reporter.EdgeCreateWasNoOp(edge.ID) {
+				}](store); ok && reporter.EdgeCreateWasNoOp(edge.ID) {
 					result.Stats.relationshipMergeNoOp = true
 				}
 			}

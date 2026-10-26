@@ -18,7 +18,7 @@ type mintedEntityCreator interface {
 // createMintedNode creates node, whose ID the executor minted, through
 // store's minted create when it has one and its ordinary create otherwise.
 func createMintedNode(ctx context.Context, store storage.Engine, node *storage.Node) (storage.NodeID, error) {
-	if creator, ok := store.(mintedEntityCreator); ok {
+	if creator, ok := storage.OwnedCapability[mintedEntityCreator](store); ok {
 		return storage.CreateMintedNodeWithContext(ctx, creator, node)
 	}
 	return storage.CreateNodeWithContext(ctx, store, node)
@@ -26,7 +26,7 @@ func createMintedNode(ctx context.Context, store storage.Engine, node *storage.N
 
 // bulkCreateMintedNodes is createMintedNode for a batch.
 func bulkCreateMintedNodes(ctx context.Context, store storage.Engine, nodes []*storage.Node) error {
-	if creator, ok := store.(mintedEntityCreator); ok {
+	if creator, ok := storage.OwnedCapability[mintedEntityCreator](store); ok {
 		return storage.BulkCreateMintedNodesWithContext(ctx, creator, nodes)
 	}
 	return storage.BulkCreateNodesWithContext(ctx, store, nodes)
@@ -34,7 +34,7 @@ func bulkCreateMintedNodes(ctx context.Context, store storage.Engine, nodes []*s
 
 // createMintedEdge is createMintedNode for a relationship.
 func createMintedEdge(ctx context.Context, store storage.Engine, edge *storage.Edge) error {
-	if creator, ok := store.(mintedEntityCreator); ok {
+	if creator, ok := storage.OwnedCapability[mintedEntityCreator](store); ok {
 		return storage.CreateMintedEdgeWithContext(ctx, creator, edge)
 	}
 	return storage.CreateEdgeWithContext(ctx, store, edge)
@@ -42,7 +42,7 @@ func createMintedEdge(ctx context.Context, store storage.Engine, edge *storage.E
 
 // bulkCreateMintedEdges is createMintedEdge for a batch.
 func bulkCreateMintedEdges(ctx context.Context, store storage.Engine, edges []*storage.Edge) error {
-	if creator, ok := store.(mintedEntityCreator); ok {
+	if creator, ok := storage.OwnedCapability[mintedEntityCreator](store); ok {
 		return storage.BulkCreateMintedEdgesWithContext(ctx, creator, edges)
 	}
 	return storage.BulkCreateEdgesWithContext(ctx, store, edges)

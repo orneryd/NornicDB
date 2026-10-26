@@ -92,8 +92,8 @@
     "sha256": "2b48bbac124751eb2dd485e84748812458631e32524a16477decd1d4ed774f83"
   },
   "pkg/cypher/node_helpers.go:materializedValue": {
-    "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",
-    "sha256": "a19859776d56b6055b7b4f0b307e19b45f2534a168716898af1a067a25aae268"
+    "reason": "Traverses graph result carriers to record materialized entity access through the shared storage operation. Lists and maps only contain nested entity carriers; numeric leaves remain opaque and are neither converted nor narrowed.",
+    "sha256": "87554a1b67e5533ce56e1b74262f81a0ec0e07f934718bd8b376a5aa7ec4a6e7"
   },
   "pkg/cypher/parameters.go:parameterRowValue": {
     "reason": "Graph structure or snapshot/normalization traversal preserves carriers; numeric elements are opaque leaves, not coordinates or checked numeric targets.",

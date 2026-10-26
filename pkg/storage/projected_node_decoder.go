@@ -2,9 +2,11 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/vmihailenco/msgpack/v5"
 	"github.com/vmihailenco/msgpack/v5/msgpcode"
@@ -32,6 +34,8 @@ import (
 // it: a body is written with tokens that already exist. Not safe for
 // concurrent use; one per scan.
 type projectedNodeDecoder struct {
+	ctx     context.Context
+	work    *StoredReadWork
 	b       *BadgerEngine
 	include map[string]struct{}
 	filter  func(map[string]interface{}) bool
@@ -138,6 +142,11 @@ func (d *projectedNodeDecoder) decodeProperties(data []byte) (bool, error) {
 	d.reader.Reset(rest)
 	dec := d.dec
 	for i := uint64(0); i < count; i++ {
+		if d.ctx != nil {
+			if err := d.ctx.Err(); err != nil {
+				return false, err
+			}
+		}
 		offset := len(rest) - d.reader.Len()
 		if offset >= len(rest) {
 			return false, fmt.Errorf("decoding tokenized properties: ran out of bytes after %d/%d entries", i, count)
@@ -150,7 +159,7 @@ func (d *projectedNodeDecoder) decodeProperties(data []byte) (bool, error) {
 		d.reader.Reset(rest[offset+n:])
 		property, wanted := d.tokens[token]
 		if !wanted {
-			if err := dec.Skip(); err != nil {
+			if err := skipStoredMsgpackValue(&d.reader); err != nil {
 				return false, fmt.Errorf("decoding tokenized properties: skip key %d value: %w", token, err)
 			}
 			continue
@@ -158,9 +167,14 @@ func (d *projectedNodeDecoder) decodeProperties(data []byte) (bool, error) {
 		if property.hasEquals && !msgpackStringEquals(rest[offset+n:], property.equals) {
 			return false, nil
 		}
+		before := d.reader.Len()
 		value, err := decodeStrictTypedValue(dec)
 		if err != nil {
 			return false, fmt.Errorf("decoding tokenized properties: key %q value: %w", property.name, err)
+		}
+		if d.work != nil {
+			d.work.PropertyValues++
+			d.work.PropertyBytes += uint64(before - d.reader.Len())
 		}
 		d.scratch[property.name] = restoreStoredTemporalValue(value)
 	}
@@ -243,6 +257,19 @@ type storedNodeMetadata struct {
 }
 
 func decodeNodeMetadata(data []byte) (storedNodeMetadata, error) {
+	return decodeNodeMetadataMode(context.Background(), data, true, nil)
+}
+func decodeNodeFactMetadata(ctx context.Context, data []byte, work *StoredReadWork) (storedNodeMetadata, error) {
+	return decodeNodeMetadataMode(ctx, data, false, work)
+}
+
+// The same envelope grammar serves the label reader's visibility metadata and
+// the stored operation's ID/labels mode. Stored facts finish before arbitrary
+// EmbedMeta or vector fields; they never visit the excluded payload.
+func decodeNodeMetadataMode(ctx context.Context, data []byte, visibility bool, work *StoredReadWork) (storedNodeMetadata, error) {
+	if err := ctx.Err(); err != nil {
+		return storedNodeMetadata{}, err
+	}
 	envelope, err := SplitNodeEnvelope(data)
 	if err != nil {
 		return storedNodeMetadata{}, err
@@ -251,30 +278,63 @@ func decodeNodeMetadata(data []byte) (storedNodeMetadata, error) {
 	if err != nil {
 		return storedNodeMetadata{}, err
 	}
-	// V2 writers emit MessagePack. Legacy gob materialization remains in the
-	// existing migration/full decoder; it cannot satisfy payload-free discovery.
 	if !ok || serializer != serializerIDMsgpack {
 		return storedNodeMetadata{}, fmt.Errorf("node metadata requires the stored MessagePack format")
 	}
+	if work != nil {
+		work.EnvelopeParses++
+	}
 	reader := bytes.NewReader(payload)
-	dec := msgpack.NewDecoder(reader) // ByteScanner: no read-ahead before a seek.
+	dec := msgpack.NewDecoder(reader)
 	count, err := dec.DecodeMapLen()
 	if err != nil {
 		return storedNodeMetadata{}, err
 	}
 	var metadata storedNodeMetadata
+	idSeen, labelsSeen := false, false
 	for i := 0; i < count; i++ {
+		if err := ctx.Err(); err != nil {
+			return storedNodeMetadata{}, err
+		}
 		name, err := dec.DecodeString()
 		if err != nil {
 			return storedNodeMetadata{}, err
 		}
+		if !visibility && name != "ID" && name != "Labels" {
+			return storedNodeMetadata{}, ErrNotImplemented
+		}
 		switch name {
 		case "ID":
-			var id string
-			id, err = dec.DecodeString()
+			id, e := dec.DecodeString()
 			metadata.ID = NodeID(id)
+			idSeen = true
+			err = e
+			if work != nil {
+				work.MetadataBytes += uint64(len(id))
+			}
 		case "Labels":
-			err = dec.Decode(&metadata.Labels)
+			var n int
+			n, err = dec.DecodeArrayLen()
+			if err != nil {
+				break
+			}
+			if n >= 0 {
+				metadata.Labels = make([]string, 0, n)
+				for j := 0; j < n; j++ {
+					if e := ctx.Err(); e != nil {
+						return storedNodeMetadata{}, e
+					}
+					label, e := dec.DecodeString()
+					if e != nil {
+						return storedNodeMetadata{}, e
+					}
+					metadata.Labels = append(metadata.Labels, strings.Clone(label))
+					if work != nil {
+						work.MetadataBytes += uint64(len(label))
+					}
+				}
+			}
+			labelsSeen = true
 		case "VisibilitySuppressed":
 			metadata.VisibilitySuppressed, err = dec.DecodeBool()
 		default:
@@ -282,6 +342,9 @@ func decodeNodeMetadata(data []byte) (storedNodeMetadata, error) {
 		}
 		if err != nil {
 			return storedNodeMetadata{}, err
+		}
+		if !visibility && idSeen && labelsSeen {
+			return metadata, nil
 		}
 	}
 	return metadata, nil

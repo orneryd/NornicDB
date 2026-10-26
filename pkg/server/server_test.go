@@ -4395,7 +4395,7 @@ func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 			"receipt":    map[string]interface{}{"writes": 1},
 			"optimistic": map[string]interface{}{"createdNodeIds": []string{"nornic:1"}},
 		},
-	}, "nornicdb", false)
+	}, "nornicdb", false, nil)
 	require.Len(t, resp.Results, 1)
 	require.NotNil(t, resp.Receipt)
 	require.NotNil(t, resp.Optimistic)
@@ -4405,7 +4405,7 @@ func TestNeo4jConversionAndTxHelpers_AdditionalBranches(t *testing.T) {
 	server.appendStatementResult(resp, &cypher.ExecuteResult{
 		Columns: nil,
 		Rows:    [][]interface{}{},
-	}, "nornicdb", false)
+	}, "nornicdb", false, nil)
 	require.Len(t, resp.Results, 1)
 	require.NotNil(t, resp.Results[0].Columns)
 	require.Len(t, resp.Results[0].Columns, 0)

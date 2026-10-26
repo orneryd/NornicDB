@@ -28,7 +28,8 @@ func TestHeimdallRelatedNodesProjectSuppressedTitle(t *testing.T) {
 	require.NoError(t, engine.CreateEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "LINK"}))
 	be.SetDecayEnabled(true)
 	router := &heimdallDBRouter{}
-	related := router.getRelatedNodes(engine, "a", 1)
+	related, relatedErr := router.getRelatedNodes(engine, "a", 1)
+	require.NoError(t, relatedErr)
 	require.Len(t, related, 1)
 	require.Empty(t, related[0].Title)
 	require.Equal(t, "b", related[0].ID)
@@ -39,7 +40,8 @@ func TestHeimdallRelatedNodesProjectSuppressedTitle(t *testing.T) {
 	// a second read lock behind a queued writer.
 	ctx, release := storage.BeginQueryRevealScopeContext(context.Background(), engine, true)
 	defer release()
-	revealed := router.getRelatedNodesContext(ctx, engine, "a", 1)
+	revealed, relatedErr := router.getRelatedNodesContext(ctx, engine, "a", 1)
+	require.NoError(t, relatedErr)
 	require.Len(t, revealed, 1)
 	require.Equal(t, "private title", revealed[0].Title)
 }

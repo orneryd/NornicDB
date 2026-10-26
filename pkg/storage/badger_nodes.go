@@ -312,7 +312,18 @@ func (b *BadgerEngine) GetNode(id NodeID) (*Node, error) {
 
 // GetStoredNode returns the physical body through the same captured read view.
 func (b *BadgerEngine) GetStoredNode(id NodeID) (*Node, error) {
-	return b.getNode(id, storedRead)
+	if id == "" {
+		return nil, ErrInvalidID
+	}
+	result, err := ReadStored(context.Background(), b, StoredReadRequest{Mode: StoredFullMaterialization, Nodes: []NodeID{id}})
+	if err != nil {
+		return nil, err
+	}
+	rows := result.(StoredFullRead).Nodes
+	if len(rows) == 0 {
+		return nil, ErrNotFound
+	}
+	return rows[0], nil
 }
 
 func (b *BadgerEngine) getNode(id NodeID, v readVisibility) (*Node, error) {

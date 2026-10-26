@@ -1157,7 +1157,10 @@ func (s *Server) collectLatestInducedSubgraph(engine storage.Engine, nodeIDs []s
 	visible := normalizeNodeIDs(nodeIDs)
 	for _, nodeID := range visible {
 		node, err := engine.GetNode(storage.NodeID(nodeID))
-		if err != nil || node == nil || !filters.allowNode(node) {
+		if err != nil && !errors.Is(err, storage.ErrNotFound) {
+			return collection, err
+		}
+		if node == nil || !filters.allowNode(node) {
 			continue
 		}
 		collection.addNode(node, "")
@@ -1193,52 +1196,56 @@ func (s *Server) collectLatestInducedSubgraph(engine storage.Engine, nodeIDs []s
 }
 
 func (s *Server) collectSnapshotInducedSubgraph(engine storage.Engine, nodeIDs []string, version storage.MVCCVersion, filters graphFilterSet) (graphCollection, error) {
-	provider, ok := engine.(storage.MVCCVisibilityEngine)
-	if !ok {
-		return graphCollection{}, storage.ErrNotImplemented
+	type snapshotRead interface {
+		storage.MVCCVisibilityEngine
+		storage.MVCCIndexedVisibilityEngine
 	}
-	indexed, ok := engine.(storage.MVCCIndexedVisibilityEngine)
-	if !ok {
-		return graphCollection{}, storage.ErrNotImplemented
-	}
+	return storage.ReadWithCapability(engine, func(provider snapshotRead) (graphCollection, error) {
 
-	collection := newGraphCollection()
-	for _, nodeID := range normalizeNodeIDs(nodeIDs) {
-		node, err := provider.GetNodeVisibleAt(storage.NodeID(nodeID), version)
-		if err != nil || node == nil || !filters.allowNode(node) {
-			continue
+		collection := newGraphCollection()
+		for _, nodeID := range normalizeNodeIDs(nodeIDs) {
+			node, err := provider.GetNodeVisibleAt(storage.NodeID(nodeID), version)
+			if err != nil {
+				if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrNotVisibleAtSnapshot) {
+					continue
+				}
+				return graphCollection{}, err
+			}
+			if node == nil || !filters.allowNode(node) {
+				continue
+			}
+			collection.addNode(node, "")
 		}
-		collection.addNode(node, "")
-	}
 
-	resolvedIDs := sortedNodeIDs(collection.nodes)
-	if len(resolvedIDs) == 0 {
+		resolvedIDs := sortedNodeIDs(collection.nodes)
+		if len(resolvedIDs) == 0 {
+			return collection, nil
+		}
+		resolvedSet := make(map[storage.NodeID]struct{}, len(resolvedIDs))
+		for _, id := range resolvedIDs {
+			resolvedSet[storage.NodeID(id)] = struct{}{}
+		}
+		edges, err := provider.GetEdgesByTypeVisibleAt("", version)
+		if err != nil {
+			return collection, err
+		}
+		for _, edge := range edges {
+			if edge == nil || edge.StartNode == edge.EndNode {
+				continue
+			}
+			if _, ok := resolvedSet[edge.StartNode]; !ok {
+				continue
+			}
+			if _, ok := resolvedSet[edge.EndNode]; !ok {
+				continue
+			}
+			if filters.allowEdge(edge) {
+				collection.addEdge(edge, "")
+			}
+		}
+
 		return collection, nil
-	}
-	resolvedSet := make(map[storage.NodeID]struct{}, len(resolvedIDs))
-	for _, id := range resolvedIDs {
-		resolvedSet[storage.NodeID(id)] = struct{}{}
-	}
-	edges, err := indexed.GetEdgesByTypeVisibleAt("", version)
-	if err != nil {
-		return collection, err
-	}
-	for _, edge := range edges {
-		if edge == nil || edge.StartNode == edge.EndNode {
-			continue
-		}
-		if _, ok := resolvedSet[edge.StartNode]; !ok {
-			continue
-		}
-		if _, ok := resolvedSet[edge.EndNode]; !ok {
-			continue
-		}
-		if filters.allowEdge(edge) {
-			collection.addEdge(edge, "")
-		}
-	}
-
-	return collection, nil
+	}, nil)
 }
 
 func diffGraphCollections(baseline, target graphCollection) graphCollection {

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/binary"
 
 	"github.com/dgraph-io/badger/v4"
@@ -35,7 +36,7 @@ type IDDictionaryReport struct {
 func (b *BadgerEngine) CheckIDDictionary() (*IDDictionaryReport, error) {
 	report := &IDDictionaryReport{}
 	var unlabelled []NodeID
-	err := b.db.View(func(txn *badger.Txn) error {
+	err := b.withReadView(nil, func(txn *badger.Txn) error {
 		labelled, err := b.labelNumIDsForDictionaryCheck(txn)
 		if err != nil {
 			return err
@@ -61,18 +62,22 @@ func (b *BadgerEngine) CheckIDDictionary() (*IDDictionaryReport, error) {
 			}
 			it.Close()
 		}
-		return nil
-	})
-	if err != nil {
-		return report, err
-	}
-	// A node in no label index key is mismatched only if it has labels.
-	for _, id := range unlabelled {
-		if node, err := b.GetStoredNode(id); err == nil && len(node.Labels) > 0 {
-			report.MismatchedNodes = append(report.MismatchedNodes, id)
+		// Diagnose the persisted records in the same physical capture as the
+		// index scan. ACK-only entities are not dictionary repair candidates.
+		// Keep the existing best-effort treatment of unreadable candidate bodies.
+		for _, id := range unlabelled {
+			result, err := b.storedReadInTxn(context.Background(), txn, StoredReadRequest{Mode: StoredMetadataOnly, Nodes: []NodeID{id}}, "", nil, nil, nil, false)
+			if err == nil {
+				for _, node := range result.StoredFacts().Nodes {
+					if node.Exists && len(node.Labels) > 0 {
+						report.MismatchedNodes = append(report.MismatchedNodes, node.ID)
+					}
+				}
+			}
 		}
-	}
-	return report, nil
+		return nil
+	}, readViewOptions{scopeKind: readPrefixScope})
+	return report, err
 }
 
 // labelNumIDsForDictionaryCheck reads the completed label index when ready.
@@ -105,18 +110,12 @@ func (b *BadgerEngine) labelNumIDsForDictionaryCheck(txn *badger.Txn) (map[uint6
 		if !ok {
 			continue
 		}
-		var hasLabels bool
-		if err := it.Item().Value(func(value []byte) error {
-			node, err := decodeNodeMetadata(value)
-			if err != nil {
-				return err
-			}
-			hasLabels = len(node.Labels) > 0
-			return nil
-		}); err != nil {
+		result, err := b.storedReadInTxn(context.Background(), txn, StoredReadRequest{Mode: StoredMetadataOnly, Nodes: []NodeID{id}}, "", nil, nil, nil, false)
+		if err != nil {
 			return nil, err
 		}
-		if hasLabels {
+		node := result.StoredFacts().Nodes[0]
+		if node.Exists && len(node.Labels) > 0 {
 			labelled[num] = true
 		}
 	}
@@ -232,8 +231,12 @@ func (b *BadgerEngine) lostNodeNumID(id NodeID, claimed map[uint64]bool) (uint64
 	if err != nil || !ready {
 		return 0, false, err
 	}
-	node, err := b.GetStoredNode(id)
-	if err != nil || len(node.Labels) == 0 {
+	result, err := b.ReadStored(context.Background(), StoredReadRequest{Mode: StoredMetadataOnly, Nodes: []NodeID{id}})
+	if err != nil {
+		return 0, false, nil
+	}
+	node := result.StoredFacts().Nodes[0]
+	if !node.Exists || len(node.Labels) == 0 {
 		return 0, false, nil
 	}
 	var candidates map[uint64]bool
@@ -257,8 +260,12 @@ func (b *BadgerEngine) lostNodeNumID(id NodeID, claimed map[uint64]bool) (uint64
 // unclaimed ID in its start node's outgoing keys, its end node's incoming
 // keys and its type's index.
 func (b *BadgerEngine) lostEdgeNumID(id EdgeID, claimed map[uint64]bool) (uint64, bool, error) {
-	edge, err := b.GetStoredEdge(id)
+	result, err := b.ReadStored(context.Background(), StoredReadRequest{Mode: StoredMetadataOnly, Edges: []EdgeID{id}})
 	if err != nil {
+		return 0, false, nil
+	}
+	edge := result.StoredFacts().Edges[0]
+	if !edge.Exists {
 		return 0, false, nil
 	}
 	startNum, startOK := b.idDict.lookupNodeNumID(edge.StartNode)

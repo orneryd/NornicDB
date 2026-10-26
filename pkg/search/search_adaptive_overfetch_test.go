@@ -272,8 +272,8 @@ func TestAdaptiveBM25SearchWidensAfterFiltering(t *testing.T) {
 	service := NewServiceWithDimensions(newTestMemoryEngine(t), 2)
 	opts := adaptiveOverfetchTestOptions(2)
 
-	results, stats, err := service.adaptiveBM25Search(context.Background(), index, "query", opts, func(results []indexResult) []indexResult {
-		return results[1:]
+	results, stats, err := service.adaptiveBM25Search(context.Background(), index, "query", opts, func(results []indexResult) ([]indexResult, error) {
+		return results[1:], nil
 	})
 
 	require.NoError(t, err)
