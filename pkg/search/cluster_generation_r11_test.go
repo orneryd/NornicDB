@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -44,29 +43,27 @@ func TestClusterGenerationFirstPersistentBuildKeepsLexicalProfiles(t *testing.T)
 	assertClusterGenerationCoherent(t, f.svc, cgAllChecks)
 	view := cgView(f.svc)
 	for cid := 0; cid < view.numClusters; cid++ {
+		if len(f.svc.clusterIndex.GetClusterMemberIDsForCluster(cid)) == 0 {
+			require.Empty(t, view.profiles[cid], "an empty cluster has no lexical population")
+			continue
+		}
 		require.NotEmpty(t, view.profiles[cid], "cluster %d has a lexical profile after the first build", cid)
 	}
 }
 
-// r11Move moves the first (sorted) member of cluster from to cluster to by a
-// public node update, and returns its ID.
-func r11Move(t *testing.T, f *cgFixture, from, to int) string {
+// r11ClusterPair chooses distinct populated clusters in label order. K-means
+// may leave a numbered centroid empty; these probes test cross-cluster state,
+// not a requirement that every requested centroid own a document.
+func r11ClusterPair(t *testing.T, f *cgFixture) (int, int) {
 	t.Helper()
-	ids := f.svc.clusterIndex.GetClusterMemberIDsForCluster(from)
-	sort.Strings(ids)
-	dest := f.svc.clusterIndex.GetClusterMemberIDsForCluster(to)
-	require.NotEmpty(t, ids)
-	require.NotEmpty(t, dest)
-	node, err := f.engine.GetNode(storage.NodeID(vectorOwnerForTest(t, ids[0])))
-	require.NoError(t, err)
-	vec, ok := f.svc.getVectorLookup()(dest[0])
-	require.True(t, ok)
-	node.ChunkEmbeddings = [][]float32{append([]float32(nil), vec...)}
-	require.NoError(t, f.write(node))
-	cid, ok := f.svc.clusterIndex.ClusterOf(ids[0])
-	require.True(t, ok)
-	require.Equal(t, to, cid)
-	return ids[0]
+	var populated []int
+	for cid := 0; cid < f.svc.clusterIndex.NumClusters(); cid++ {
+		if len(f.svc.clusterIndex.GetClusterMemberIDsForCluster(cid)) > 0 {
+			populated = append(populated, cid)
+		}
+	}
+	require.GreaterOrEqual(t, len(populated), 2, "the probe requires two distinct live populations")
+	return populated[0], populated[len(populated)-1]
 }
 
 // r11Context runs fn at its at-th Err call.
@@ -104,7 +101,8 @@ func TestClusterGenerationPersistenceSnapshotsOnePopulation(t *testing.T) {
 			f.t = t
 			before := cgView(f.svc).membership
 			var moved string
-			ctx := &r11Context{Context: context.Background(), at: 4, fn: func() { moved = r11Move(t, f, 0, 1) }}
+			from, to := r11ClusterPair(t, f)
+			ctx := &r11Context{Context: context.Background(), at: 4, fn: func() { moved, _ = moveClusterMember(t, f, from, to) }}
 			dir := t.TempDir()
 			path.save(f, ctx, filepath.Join(dir, "hnsw"))
 			require.NotEmpty(t, moved, "the move ran between cluster files")
@@ -118,20 +116,47 @@ func TestClusterGenerationPersistenceSnapshotsOnePopulation(t *testing.T) {
 // F2 (TestSolR11RestoreUsesLiveMembership): a moved vector's tombstone in its
 // old cluster's graph does not decide its restored membership.
 func TestClusterGenerationRestoreUsesLiveMembership(t *testing.T) {
-	f := newCGFixture(t, 20, false)
-	moved := r11Move(t, f, 3, 0)
-	path := filepath.Join(t.TempDir(), "hnsw")
-	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
-	_, membership, err := DeriveIVFCentroidsFromClusters(path, f.svc.getVectorLookup())
-	require.NoError(t, err)
-	require.Equal(t, 0, membership[moved], "restored membership follows the live graph entry, not the tombstone")
+	for _, withEmpty := range []bool{false, true} {
+		t.Run(fmt.Sprintf("empty_label=%t", withEmpty), func(t *testing.T) {
+			f := newCGFixture(t, 20, false)
+			emptyCID := -1
+			if withEmpty {
+				for cid := 0; cid < f.svc.clusterIndex.NumClusters(); cid++ {
+					if len(f.svc.clusterIndex.GetClusterMemberIDsForCluster(cid)) == 0 {
+						emptyCID = cid
+						break
+					}
+				}
+				if emptyCID < 0 {
+					// A public removal can leave a requested centroid unoccupied.
+					// Preserve the remaining noisy vectors and their exact ranks.
+					emptyCID = 0
+					for _, id := range f.svc.clusterIndex.GetClusterMemberIDsForCluster(emptyCID) {
+						owner := storage.NodeID(vectorOwnerForTest(t, id))
+						require.NoError(t, f.engine.DeleteNode(owner))
+						require.NoError(t, f.svc.RemoveNode(owner))
+					}
+				}
+				require.Empty(t, f.svc.clusterIndex.GetClusterMemberIDsForCluster(emptyCID))
+			}
+			to, from := r11ClusterPair(t, f)
+			moved, _ := moveClusterMember(t, f, from, to)
+			path := filepath.Join(t.TempDir(), "hnsw")
+			require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
+			_, membership, err := DeriveIVFCentroidsFromClusters(path, f.svc.getVectorLookup())
+			require.NoError(t, err)
+			require.Contains(t, membership, moved, "a missing entry must not pass as the zero-valued cluster ID")
+			require.Equal(t, to, membership[moved], "restored membership follows the live graph entry, not the tombstone")
+		})
+	}
 }
 
 // A saved generation with a live member in two clusters is not one
 // population: it is rejected, not made authoritative.
 func TestClusterGenerationRestoreRejectsDuplicateMembers(t *testing.T) {
 	f := newCGFixture(t, 20, false)
-	ids := f.svc.clusterIndex.GetClusterMemberIDsForCluster(0)
+	source, target := r11ClusterPair(t, f)
+	ids := f.svc.clusterIndex.GetClusterMemberIDsForCluster(source)
 	require.NotEmpty(t, ids)
 	vec, ok := f.svc.getVectorLookup()(ids[0])
 	require.True(t, ok)
@@ -140,12 +165,12 @@ func TestClusterGenerationRestoreRejectsDuplicateMembers(t *testing.T) {
 		graphs[cid] = g
 	}
 	dup := NewHNSWIndex(4, DefaultHNSWConfig())
-	for _, id := range f.svc.clusterIndex.GetClusterMemberIDsForCluster(1) {
+	for _, id := range f.svc.clusterIndex.GetClusterMemberIDsForCluster(target) {
 		v, _ := f.svc.getVectorLookup()(id)
 		require.NoError(t, dup.Add(id, v))
 	}
 	require.NoError(t, dup.Add(ids[0], vec))
-	graphs[1] = dup
+	graphs[target] = dup
 	path := filepath.Join(t.TempDir(), "hnsw")
 	require.NoError(t, SaveIVFHNSW(path, graphs))
 	_, _, err := DeriveIVFCentroidsFromClusters(path, f.svc.getVectorLookup())
@@ -182,19 +207,24 @@ func r11Restore(t *testing.T, f *cgFixture, path string) {
 func TestClusterGenerationRestorePlacesNewCanonicalVector(t *testing.T) {
 	f := newCGFixture(t, 20, false)
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
-	ids := f.svc.clusterIndex.GetClusterMemberIDsForCluster(1)
+	_, target := r11ClusterPair(t, f)
+	require.NotZero(t, target, "the probe must reject default-cluster-zero placement")
+	ids := f.svc.clusterIndex.GetClusterMemberIDsForCluster(target)
 	require.NotEmpty(t, ids)
-	vec, ok := f.svc.getVectorLookup()(ids[0])
-	require.True(t, ok)
+	routing := f.svc.clusterIndex.PublishedClustering()
+	require.NotNil(t, routing)
+	vec := routing.Centroids()[target]
 	path := filepath.Join(t.TempDir(), "hnsw")
 	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
 	node := &storage.Node{ID: "late-restored", Properties: map[string]any{"text": "newcomer"}, ChunkEmbeddings: [][]float32{append([]float32(nil), vec...)}}
 	require.NoError(t, f.write(node))
-	before, _ := f.svc.clusterIndex.ClusterOf("late-restored")
-	require.Equal(t, 1, before)
+	before, found := f.svc.clusterIndex.ClusterOf("late-restored")
+	require.True(t, found)
+	require.Equal(t, target, before)
 	r11Restore(t, f, path)
-	after, _ := f.svc.clusterIndex.ClusterOf("late-restored")
-	require.Equal(t, 1, after, "placed at its nearest restored centroid")
+	after, found := f.svc.clusterIndex.ClusterOf("late-restored")
+	require.True(t, found)
+	require.Equal(t, target, after, "placed at its nearest restored centroid")
 	require.True(t, r11PublicSelfHit(t, f, vec, "late-restored"))
 }
 
@@ -203,14 +233,16 @@ func TestClusterGenerationRestorePlacesNewCanonicalVector(t *testing.T) {
 func TestClusterGenerationRestoreMovedPublicQuery(t *testing.T) {
 	f := newCGFixture(t, 20, false)
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
-	moved := r11Move(t, f, 3, 0)
+	to, from := r11ClusterPair(t, f)
+	moved, _ := moveClusterMember(t, f, from, to)
 	vec, ok := f.svc.getVectorLookup()(moved)
 	require.True(t, ok)
 	path := filepath.Join(t.TempDir(), "hnsw")
 	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
 	r11Restore(t, f, path)
-	cid, _ := f.svc.clusterIndex.ClusterOf(moved)
-	require.Equal(t, 0, cid)
+	cid, found := f.svc.clusterIndex.ClusterOf(moved)
+	require.True(t, found)
+	require.Equal(t, to, cid)
 	require.True(t, r11PublicSelfHit(t, f, vec, vectorOwnerForTest(t, moved)))
 }
 
@@ -222,12 +254,15 @@ func TestClusterGenerationRestorePlacesVectorsUpdatedAfterSave(t *testing.T) {
 	t.Setenv("NORNICDB_KMEANS_NPROBE", "1")
 	path := filepath.Join(t.TempDir(), "hnsw")
 	require.NoError(t, SaveIVFHNSW(path, f.svc.clusterGen.graphs))
-	moved := r11Move(t, f, 2, 1)
+	from, to := r11ClusterPair(t, f)
+	require.NotZero(t, to, "the probe must reject default-cluster-zero placement")
+	moved, _ := moveClusterMember(t, f, from, to)
 	vec, ok := f.svc.getVectorLookup()(moved)
 	require.True(t, ok)
 	r11Restore(t, f, path)
-	cid, _ := f.svc.clusterIndex.ClusterOf(moved)
-	require.Equal(t, 1, cid, "placed by its current coordinates, not its saved cluster")
+	cid, found := f.svc.clusterIndex.ClusterOf(moved)
+	require.True(t, found)
+	require.Equal(t, to, cid, "placed by its current coordinates, not its saved cluster")
 	require.True(t, r11PublicSelfHit(t, f, vec, vectorOwnerForTest(t, moved)))
 }
 

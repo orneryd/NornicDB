@@ -1,8 +1,6 @@
 package storage
 
 import (
-	"context"
-
 	"github.com/dgraph-io/badger/v4"
 )
 
@@ -33,7 +31,7 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 			if err != nil {
 				return nil, err
 			}
-			if b.hidesNode(v, node, DecayScoringTime()) {
+			if b.filterEntityByDecay(v, node, DecayScoringTime()) {
 				return nil, ErrNotFound
 			}
 			return node, nil
@@ -72,7 +70,7 @@ func (b *BadgerEngine) getNodeAtInTxn(txn *badger.Txn, id NodeID, version MVCCVe
 	} else {
 		node = copyNodeForCaller(record.Node)
 	}
-	if b.hidesNode(v, node, DecayScoringTime()) {
+	if b.filterEntityByDecay(v, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	return node, nil
@@ -109,7 +107,7 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 			}); err != nil {
 				return nil, err
 			}
-			if b.filterNodeByDecay(node, DecayScoringTime()) {
+			if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 				return nil, ErrNotFound
 			}
 			return node, nil
@@ -143,7 +141,7 @@ func (b *BadgerEngine) getNodeProjectedVisibleAtInTxn(txn *badger.Txn, id NodeID
 		return nil, ErrNotFound
 	}
 	node := copyNodeProjectedWithoutEmbeddings(record.Node, properties)
-	if b.filterNodeByDecay(node, DecayScoringTime()) {
+	if b.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	return node, nil
@@ -334,7 +332,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 			return b.readProjectedNodeItemInTxn(txn, item, nodeID, properties, include)
 		}
 		emit := func(node *Node) error {
-			if node == nil || b.hidesNode(v, node, nowNanos) || !hasLabel(node.Labels, label) {
+			if node == nil || b.filterEntityByDecay(v, node, nowNanos) || !hasLabel(node.Labels, label) {
 				return nil
 			}
 			return visit(node)
@@ -443,22 +441,6 @@ func (b *BadgerEngine) GetEdgesByTypeVisibleAt(edgeType string, version MVCCVers
 			edges = append(edges, edge)
 			return nil
 		})
-	})
-	if err != nil {
-		return nil, err
-	}
-	return edges, nil
-}
-
-// getEdgesByTypeVisibleAtSnapshotWithView resolves type candidates from the
-// same physical Badger snapshot used by an explicit transaction. The type
-// index in that snapshot represents membership at BEGIN, so unrelated edge
-// bodies are never decoded.
-func (b *BadgerEngine) getEdgesByTypeVisibleAtSnapshotWithView(edgeType string, version MVCCVersion, view func(func(*badger.Txn) error) error) ([]*Edge, error) {
-	edges := make([]*Edge, 0)
-	err := b.streamEdgesByTypeAtSnapshotWithView(context.Background(), "", edgeType, version, view, visibleRead, func(edge *Edge) error {
-		edges = append(edges, edge)
-		return nil
 	})
 	if err != nil {
 		return nil, err

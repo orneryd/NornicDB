@@ -1601,7 +1601,7 @@ func (tx *BadgerTransaction) validateNewEdgeLocked(edge *Edge, endpoint func(Nod
 	}
 	existing, err := tx.getCommittedEdgeLocked(edge.ID)
 	if err == nil {
-		if !tx.engine.hidesEdge(visibleRead, existing, DecayScoringTime()) {
+		if !tx.engine.filterEntityByDecay(visibleRead, existing, DecayScoringTime()) {
 			return nil, nil, false, ErrAlreadyExists
 		}
 		// A MERGE may add ON CREATE SET properties after CreateEdge. Defer
@@ -2067,7 +2067,7 @@ func (tx *BadgerTransaction) GetQueryNode(nodeID NodeID) (*Node, error) {
 	// Snapshot scan caches hold complete bodies, including suppressed nodes.
 	// Every query point read must apply the scan's visibility decision before
 	// a caller can project or admit an endpoint from any cache or overlay.
-	if err == nil && tx.engine.filterNodeByDecay(node, DecayScoringTime()) {
+	if err == nil && tx.engine.filterEntityByDecay(visibleRead, node, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	return node, err
@@ -2329,6 +2329,24 @@ func (tx *BadgerTransaction) GetEdgeBetween(startID, endID NodeID, edgeType stri
 	return nil
 }
 
+// getCommittedEdgesByTypeLocked reads the committed edges of edgeType ("" is
+// every edge) visible at the pinned snapshot through the edge type index, then
+// merges the transaction's pending edge writes and deletes as the public reads
+// do. The type index in that snapshot is the membership at BEGIN and the read
+// retains the global collection contract of AllEdges and GetEdgesByType.
+// The caller supplies the original pending-record filter and holds tx.mu.
+func (tx *BadgerTransaction) getCommittedEdgesByTypeLocked(edgeType string, includePending func(*Edge) bool) ([]*Edge, error) {
+	committed := make([]*Edge, 0)
+	err := tx.engine.streamEdgesByTypeAtSnapshotWithView(context.Background(), "", edgeType, tx.readTS, tx.withSnapshotViewLocked, visibleRead, func(edge *Edge) error {
+		committed = append(committed, edge)
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return tx.mergePendingEdgesLocked(committed, includePending), nil
+}
+
 // AllEdges returns all visible edges including pending transaction writes.
 func (tx *BadgerTransaction) AllEdges() ([]*Edge, error) {
 	tx.mu.Lock()
@@ -2340,20 +2358,17 @@ func (tx *BadgerTransaction) AllEdges() ([]*Edge, error) {
 		return nil, err
 	}
 
-	var committed []*Edge
-	var err error
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, and buffered edges are
 		// invisible to the pinned view. Read the latest overlaid view.
-		committed, err = tx.engine.AllEdges()
-	} else {
-		committed, err = tx.engine.getEdgesByTypeVisibleAtSnapshotWithView("", tx.readTS, tx.withSnapshotViewLocked)
+		committed, err := tx.engine.AllEdges()
+		if err != nil {
+			return nil, err
+		}
+		return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool { return edge != nil }), nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool { return edge != nil }), nil
+	return tx.getCommittedEdgesByTypeLocked("", func(edge *Edge) bool { return edge != nil })
 }
 
 // GetEdgesByType returns edges of a given type including pending transaction writes.
@@ -2368,22 +2383,19 @@ func (tx *BadgerTransaction) GetEdgesByType(edgeType string) ([]*Edge, error) {
 		return nil, err
 	}
 
-	var committed []*Edge
-	var err error
 	if tx.readTS.IsZero() || tx.engine.writeBehind != nil {
 		// Write-behind reads are read-committed: the flusher may land a
 		// buffered commit after the pinned snapshot, so read the latest
 		// (overlaid) view instead.
-		committed, err = tx.engine.GetEdgesByType(edgeType)
-	} else {
-		committed, err = tx.engine.getEdgesByTypeVisibleAtSnapshotWithView(edgeType, tx.readTS, tx.withSnapshotViewLocked)
+		committed, err := tx.engine.GetEdgesByType(edgeType)
+		if err != nil {
+			return nil, err
+		}
+		return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
+			return edge.Type == edgeType
+		}), nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	return tx.mergePendingEdgesLocked(committed, func(edge *Edge) bool {
-		return edge.Type == edgeType
-	}), nil
+	return tx.getCommittedEdgesByTypeLocked(edgeType, func(edge *Edge) bool { return edge.Type == edgeType })
 }
 
 // GetNodesByLabel returns nodes with the given label including pending transaction writes.
@@ -2466,7 +2478,7 @@ func (tx *BadgerTransaction) streamNodesByLabelProjected(label string, propertie
 		scope := tx.labelScanScopeLocked(opts.Prefix)
 		nowNanos := DecayScoringTime()
 		for _, n := range overlay {
-			if !nodeIDInScope(n.ID, scope) || tx.engine.hidesNode(v, n, nowNanos) {
+			if !nodeIDInScope(n.ID, scope) || tx.engine.filterEntityByDecay(v, n, nowNanos) {
 				continue
 			}
 			if err := invokeVisit(projectCachedNodeForRead(n, properties, false, queryNodes)); err != nil {
@@ -3356,7 +3368,7 @@ func (tx *BadgerTransaction) getCommittedEdgeForUpdateLocked(edgeID EdgeID) (*Ed
 	if !errors.Is(err, ErrNotVisibleAtSnapshot) && !errors.Is(err, ErrNotFound) {
 		return edge, err
 	}
-	_, latestErr := tx.engine.getEdgeLatest(edgeID, storedRead)
+	_, _, latestErr := tx.engine.readLatestEntity(string(edgeID), true, storedRead)
 	switch {
 	case latestErr == nil:
 		// Live at latest-committed state: a write-write conflict, not a
@@ -3481,7 +3493,7 @@ func (tx *BadgerTransaction) validateSnapshotIsolationConflicts() error {
 	// statement-time classification.
 	for edgeID, candidate := range tx.edgeCreateNoOps {
 		stored, err := tx.engine.GetStoredEdge(edgeID)
-		if err != nil || !tx.engine.hidesEdge(visibleRead, stored, DecayScoringTime()) {
+		if err != nil || !tx.engine.filterEntityByDecay(visibleRead, stored, DecayScoringTime()) {
 			return ErrAlreadyExists
 		}
 		same, err := tx.sameEdgeCreateIdentityLocked(stored, candidate)

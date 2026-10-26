@@ -444,7 +444,7 @@ func (b *BadgerEngine) getEdgeAtInTxn(txn *badger.Txn, id EdgeID, version MVCCVe
 		return nil, ErrNotFound
 	}
 	edge := copyEdge(record.Edge)
-	if b.hidesEdge(v, edge, DecayScoringTime()) {
+	if b.filterEntityByDecay(v, edge, DecayScoringTime()) {
 		return nil, ErrNotFound
 	}
 	return edge, nil
@@ -1107,82 +1107,77 @@ func (b *BadgerEngine) GetEdgeCurrentHead(id EdgeID) (MVCCHead, error) {
 }
 
 func (b *BadgerEngine) GetNodeLatestVisible(id NodeID) (*Node, error) {
-	// Post-refactor invariant: the primary nodeKey holds the current head
-	// body. GetNode already applies decay filtering. If the primary-key
-	// read succeeds, we're done — no need to resolve a version record.
-	if node, err := b.GetNode(id); err == nil {
-		return node, nil
-	} else if !errors.Is(err, ErrNotFound) {
-		return nil, err
-	}
-	var node *Node
-	err := b.withView(func(txn *badger.Txn) error {
-		head, err := b.loadNodeMVCCHeadInTxn(txn, id)
-		if err != nil {
-			return err
-		}
-		if head.Tombstoned {
-			return ErrNotFound
-		}
-		// Head says the node lives but GetNode failed or was filtered —
-		// fall back to version records (e.g. pre-refactor data where the
-		// primary key is absent but a version record exists).
-		record, _, err := b.loadNodeMVCCRecordAtOrBeforeInTxn(txn, id, head.Version)
-		if err != nil {
-			return err
-		}
-		if record.Tombstoned || record.Node == nil {
-			return ErrNotFound
-		}
-		node = copyNode(record.Node)
-		if b.filterNodeByDecay(node, DecayScoringTime()) {
-			node = nil
-			return ErrNotFound
-		}
-		return nil
-	})
+	node, _, err := b.readLatestEntity(string(id), false, visibleRead)
 	return node, err
 }
 
 func (b *BadgerEngine) GetEdgeLatestVisible(id EdgeID) (*Edge, error) {
-	return b.getEdgeLatest(id, visibleRead)
+	_, edge, err := b.readLatestEntity(string(id), true, visibleRead)
+	return edge, err
 }
 
-// getEdgeLatest is GetEdgeLatestVisible through the visibility layer when v
-// applies it.
-func (b *BadgerEngine) getEdgeLatest(id EdgeID, v readVisibility) (*Edge, error) {
-	if edge, err := b.getEdge(id, v); err == nil {
-		return edge, nil
-	} else if !errors.Is(err, ErrNotFound) {
-		return nil, err
-	}
+// readLatestEntity first uses the captured current-body owner. Only a missing
+// body consults the committed MVCC head and its retained version records, as
+// required for older persisted stores. All paths apply the same read policy.
+func (b *BadgerEngine) readLatestEntity(id string, isEdge bool, v readVisibility) (*Node, *Edge, error) {
+	var node *Node
 	var edge *Edge
-	err := b.withView(func(txn *badger.Txn) error {
-		head, err := b.loadEdgeMVCCHeadInTxn(txn, id)
+	var err error
+	if isEdge {
+		edge, err = b.getEdge(EdgeID(id), v)
+	} else {
+		node, err = b.getNode(NodeID(id), v)
+	}
+	if err == nil {
+		return node, edge, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return nil, nil, err
+	}
+	node, edge = nil, nil
+	err = b.withView(func(txn *badger.Txn) error {
+		var head MVCCHead
+		var err error
+		if isEdge {
+			head, err = b.loadEdgeMVCCHeadInTxn(txn, EdgeID(id))
+		} else {
+			head, err = b.loadNodeMVCCHeadInTxn(txn, NodeID(id))
+		}
 		if err != nil {
 			return err
 		}
 		if head.Tombstoned {
 			return ErrNotFound
 		}
-		// Fallback path only — primary-key read already attempted via
-		// GetEdge above. See GetNodeLatestVisible for the node analogue
-		// and the post-refactor storage-layout invariant.
-		record, _, err := b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, id, head.Version)
-		if err != nil {
-			return err
+		var entity any
+		if isEdge {
+			record, _, err := b.loadEdgeMVCCRecordAtOrBeforeInTxn(txn, EdgeID(id), head.Version)
+			if err != nil {
+				return err
+			}
+			if record.Tombstoned || record.Edge == nil {
+				return ErrNotFound
+			}
+			edge = copyEdge(record.Edge)
+			entity = edge
+		} else {
+			record, _, err := b.loadNodeMVCCRecordAtOrBeforeInTxn(txn, NodeID(id), head.Version)
+			if err != nil {
+				return err
+			}
+			if record.Tombstoned || record.Node == nil {
+				return ErrNotFound
+			}
+			node = copyNode(record.Node)
+			entity = node
 		}
-		if record.Tombstoned || record.Edge == nil {
-			return ErrNotFound
-		}
-		edge = copyEdge(record.Edge)
-		if b.hidesEdge(v, edge, DecayScoringTime()) {
-			edge = nil
+		if b.filterEntityByDecay(v, entity, DecayScoringTime()) {
+			node, edge = nil, nil
 			return ErrNotFound
 		}
 		return nil
 	})
-	return edge, err
+	return node, edge, err
 }
 
 func (b *BadgerEngine) GetEdgeVisibleAt(id EdgeID, version MVCCVersion) (*Edge, error) {
@@ -1301,7 +1296,7 @@ func (b *BadgerEngine) iterateNodesVisibleAtInScopeInTxn(txn *badger.Txn, scope 
 		if body == nil {
 			continue
 		}
-		if opts.ApplyDecayFilter && b.filterNodeByDecay(body, nowNanos) {
+		if opts.ApplyDecayFilter && b.filterEntityByDecay(visibleRead, body, nowNanos) {
 			continue
 		}
 		if err := yield(body); err != nil {
@@ -1399,7 +1394,7 @@ func (b *BadgerEngine) iterateEdgesAtInTxn(txn *badger.Txn, version MVCCVersion,
 		if body == nil {
 			continue
 		}
-		if b.hidesEdge(v, body, nowNanos) {
+		if b.filterEntityByDecay(v, body, nowNanos) {
 			continue
 		}
 		if err := yield(body); err != nil {

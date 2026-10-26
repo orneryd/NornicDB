@@ -47,6 +47,17 @@ func (m *DatabaseManager) loadMetadata() error {
 		}
 		m.databases = databases
 	}
+	if encoded, ok := node.Properties["pending_drops"].(string); ok {
+		var pending map[string]bool
+		if err := json.Unmarshal([]byte(encoded), &pending); err != nil {
+			return err
+		}
+		for name, active := range pending {
+			if active {
+				m.transitionPendingDrop(name, true)
+			}
+		}
+	}
 
 	return nil
 }
@@ -72,7 +83,7 @@ func (m *DatabaseManager) persistMetadata(changes ...databaseLimitsChange) error
 	// Serialize metadata
 	snapshot := make(map[string]*DatabaseInfo, len(m.databases))
 	for name, info := range m.databases {
-		snapshot[name] = cloneDatabaseInfo(info)
+		snapshot[name] = cloneDatabaseInfo(info, false)
 	}
 	for _, change := range changes {
 		if info := snapshot[change.database]; info != nil {
@@ -84,6 +95,11 @@ func (m *DatabaseManager) persistMetadata(changes ...databaseLimitsChange) error
 		return localizedError(localization.MultidbMetadataSerializeFailed(err), err)
 	}
 
+	pending, err := json.Marshal(m.pendingDrops)
+	if err != nil {
+		return err
+	}
+
 	// Use system namespace to store metadata
 	systemEngine := storage.NewNamespacedEngine(m.inner, m.config.SystemDatabase)
 
@@ -92,6 +108,7 @@ func (m *DatabaseManager) persistMetadata(changes ...databaseLimitsChange) error
 		Labels: []string{"_System", "_Metadata"},
 		Properties: map[string]any{
 			"data":              string(data),
+			"pending_drops":     string(pending),
 			"type":              "databases",
 			"updated_at":        time.Now().Unix(),
 			"server_id":         m.serverID,

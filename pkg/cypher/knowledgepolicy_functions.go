@@ -11,21 +11,79 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// evaluateKnowledgePolicyFunction dispatches decayScore(), decay(), and policy()
-// calls. Returns (result, true) if the expression was handled, (nil, false) otherwise.
-func (e *StorageExecutor) evaluateKnowledgePolicyFunction(
-	ctx context.Context,
-	expr string,
-	lowerExpr string,
-	nodes map[string]*storage.Node,
-	rels map[string]*storage.Edge,
-) (interface{}, bool) {
+// evaluateKnowledgePolicyFunction owns recognition, source selection and
+// result projection for policy(), decay() and decayScore().
+func (e *StorageExecutor) evaluateKnowledgePolicyFunction(ctx context.Context, expr, lowerExpr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) (interface{}, bool) {
+	handled := false
 	for _, name := range []string{"decayScore", "decayscore", "decay", "policy"} {
 		if matchFuncStartAndSuffix(expr, name) {
-			return e.evalKnowledgePolicy(ctx, expr, nodes, rels), true
+			handled = true
+			break
 		}
 	}
-	return nil, false
+	if !handled {
+		return nil, false
+	}
+
+	originalName, _, _ := strings.Cut(expr, "(")
+	name := strings.ToLower(strings.TrimSpace(originalName))
+	args := e.splitFunctionArgs(extractFuncArgs(expr, strings.TrimSpace(originalName)))
+	disabled := func(reason string) interface{} {
+		if name == "policy" {
+			return minimalPolicyMap("")
+		}
+		if name == "decayscore" {
+			return 1.0
+		}
+		return decayDisabledMap(reason)
+	}
+	if len(args) == 0 {
+		return disabled(localization.CypherKnowledgePolicyReasonNoEntityArgument().Fallback), true
+	}
+	ent, ok := e.resolveEntityForDecay(ctx, args[0], nodes, rels)
+	if !ok {
+		return disabled(localization.CypherKnowledgePolicyReasonEntityNotFound().Fallback), true
+	}
+	be, now, available := e.getDecayContext(ctx, ent.engine)
+	var meta *knowledgepolicy.AccessMetaEntry
+	if available {
+		result, _ := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: ent.entityID})
+		meta = result.Entry
+	}
+	if name == "policy" {
+		if meta != nil {
+			return accessMetaToMap(meta), true
+		}
+		scope := knowledgepolicy.ScopeNode
+		if ent.isEdge {
+			scope = knowledgepolicy.ScopeEdge
+		}
+		return map[string]interface{}{"targetId": ent.entityID, "targetScope": string(scope)}, true
+	}
+	if !available {
+		return disabled(localization.CypherKnowledgePolicyReasonNoBadgerEngine().Fallback), true
+	}
+	if !be.IsDecayEnabled() {
+		e.logDecayMismatchOnce()
+		return disabled(localization.CypherKnowledgePolicyReasonDecayDisabled().Fallback), true
+	}
+	scorer := be.ScorerForNamespace(storage.ExtractNamespaceFromID(ent.entityID))
+	if scorer == nil {
+		return disabled(localization.CypherKnowledgePolicyReasonNoDecayProfile().Fallback), true
+	}
+	property := ""
+	if len(args) >= 2 {
+		var err error
+		property, err = validateDecayOptions(ctx, args[1], nodes, rels, e)
+		if err != nil {
+			return nil, true
+		}
+	}
+	resolution := ent.score(scorer, meta, property, now)
+	if name == "decayscore" {
+		return resolution.FinalScore, true
+	}
+	return resolutionToMap(resolution), true
 }
 
 type resolvedEntity struct {
@@ -110,69 +168,6 @@ func (e *StorageExecutor) logDecayMismatchOnce() {
 	}
 	e.decayMismatchLogged = true
 	e.logEvent(slog.LevelWarn, localization.CypherDecaySubsystemDisabledEvent())
-}
-
-// evalKnowledgePolicy owns source selection, access metadata and scoring for
-// policy(), decay() and decayScore(); only their result presentation differs.
-func (e *StorageExecutor) evalKnowledgePolicy(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge) interface{} {
-	originalName, _, _ := strings.Cut(expr, "(")
-	name := strings.ToLower(strings.TrimSpace(originalName))
-	args := e.splitFunctionArgs(extractFuncArgs(expr, strings.TrimSpace(originalName)))
-	disabled := func(reason string) interface{} {
-		if name == "policy" {
-			return minimalPolicyMap("")
-		}
-		if name == "decayscore" {
-			return 1.0
-		}
-		return decayDisabledMap(reason)
-	}
-	if len(args) == 0 {
-		return disabled(localization.CypherKnowledgePolicyReasonNoEntityArgument().Fallback)
-	}
-	ent, ok := e.resolveEntityForDecay(ctx, args[0], nodes, rels)
-	if !ok {
-		return disabled(localization.CypherKnowledgePolicyReasonEntityNotFound().Fallback)
-	}
-	be, now, available := e.getDecayContext(ctx, ent.engine)
-	var meta *knowledgepolicy.AccessMetaEntry
-	if available {
-		meta, _ = be.GetAccessMeta(ent.entityID)
-	}
-	if name == "policy" {
-		if meta != nil {
-			return accessMetaToMap(meta)
-		}
-		scope := knowledgepolicy.ScopeNode
-		if ent.isEdge {
-			scope = knowledgepolicy.ScopeEdge
-		}
-		return map[string]interface{}{"targetId": ent.entityID, "targetScope": string(scope)}
-	}
-	if !available {
-		return disabled(localization.CypherKnowledgePolicyReasonNoBadgerEngine().Fallback)
-	}
-	if !be.IsDecayEnabled() {
-		e.logDecayMismatchOnce()
-		return disabled(localization.CypherKnowledgePolicyReasonDecayDisabled().Fallback)
-	}
-	scorer := be.ScorerForNamespace(storage.ExtractNamespaceFromID(ent.entityID))
-	if scorer == nil {
-		return disabled(localization.CypherKnowledgePolicyReasonNoDecayProfile().Fallback)
-	}
-	property := ""
-	if len(args) >= 2 {
-		var err error
-		property, err = validateDecayOptions(ctx, args[1], nodes, rels, e)
-		if err != nil {
-			return nil
-		}
-	}
-	resolution := ent.score(scorer, meta, property, now)
-	if name == "decayscore" {
-		return resolution.FinalScore
-	}
-	return resolutionToMap(resolution)
 }
 
 func decayDisabledMap(reason string) map[string]interface{} {

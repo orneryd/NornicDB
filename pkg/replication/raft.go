@@ -1420,7 +1420,13 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 			return localizedError(localization.ReplicationRaftForwardToLeaderFailed(err), err)
 		}
 		if fa, ok := conn.(forwardApplySender); ok {
-			return fa.SendForwardApply(fwdCtx, cmd, timeout)
+			err := fa.SendForwardApply(fwdCtx, cmd, timeout)
+			if err == nil {
+				return nil
+			}
+			// Once sent, a failed reply cannot establish that the leader did
+			// not accept it. Preserve that uncertainty through the Go API.
+			return &storage.AcceptedCommitError{State: storage.CommitRecoveryPending, LogicalID: cmd.RequestID, Err: err}
 		}
 		return ErrNotLeader
 	}

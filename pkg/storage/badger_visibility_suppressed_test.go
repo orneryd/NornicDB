@@ -55,7 +55,7 @@ func TestVisibilitySuppressed_FastPathNode(t *testing.T) {
 	}
 
 	nowNanos := DecayScoringTime()
-	if !eng.filterNodeByDecay(node, nowNanos) {
+	if !eng.filterEntityByDecay(visibleRead, node, nowNanos) {
 		t.Error("expected suppressed node to be filtered by fast path")
 	}
 }
@@ -76,7 +76,7 @@ func TestVisibilitySuppressed_RevealAllBypass(t *testing.T) {
 	defer eng.SetRevealAll(false)
 
 	nowNanos := DecayScoringTime()
-	if eng.filterNodeByDecay(node, nowNanos) {
+	if eng.filterEntityByDecay(visibleRead, node, nowNanos) {
 		t.Error("revealAll should bypass VisibilitySuppressed")
 	}
 }
@@ -94,7 +94,7 @@ func TestVisibilitySuppressed_FastPathEdge(t *testing.T) {
 	}
 
 	nowNanos := DecayScoringTime()
-	if !eng.filterEdgeByDecay(edge, nowNanos) {
+	if !eng.filterEntityByDecay(visibleRead, edge, nowNanos) {
 		t.Error("expected suppressed edge to be filtered by fast path")
 	}
 }
@@ -112,7 +112,7 @@ func TestVisibilitySuppressed_NotSuppressedPassesThrough(t *testing.T) {
 	}
 
 	nowNanos := DecayScoringTime()
-	if eng.filterNodeByDecay(node, nowNanos) {
+	if eng.filterEntityByDecay(visibleRead, node, nowNanos) {
 		t.Error("recent non-suppressed node should not be filtered")
 	}
 }
@@ -157,7 +157,7 @@ func TestVisibilitySuppressed_ScoringRunsBeforeStaleFlagForReverseFloor(t *testi
 		VisibilitySuppressed: true,
 	}
 
-	if eng.filterNodeByDecay(node, now.UnixNano()) {
+	if eng.filterEntityByDecay(visibleRead, node, now.UnixNano()) {
 		t.Fatal("lightweight scoring must run before stale VisibilitySuppressed flag; scoreFloor clears the gate")
 	}
 }

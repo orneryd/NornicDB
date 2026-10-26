@@ -120,16 +120,38 @@ func TestManagedRuntimeWholeResetAndRecreate(t *testing.T) {
 
 type managedCatalogFailureEngine struct {
 	storage.Engine
-	reject error
+	reject            error
+	rejectAt, updates int
+	rejectDelete      bool
+	acceptedError     bool
 }
 
 func (e *managedCatalogFailureEngine) GetInnerEngine() storage.Engine { return e.Engine }
 func (e *managedCatalogFailureEngine) UpdateNode(node *storage.Node) error {
-	if e.reject != nil && node.ID == "system:databases:metadata" {
-		return e.reject
+	if node.ID == "system:databases:metadata" {
+		if e.reject != nil {
+			return e.reject
+		}
+		e.updates++
+		if e.rejectAt > 0 && e.updates == e.rejectAt {
+			return storage.ErrConflict
+		}
+	}
+	if e.acceptedError && node.ID == "system:databases:metadata" && e.updates == 1 {
+		if err := e.Engine.UpdateNode(node); err != nil {
+			return err
+		}
+		return &storage.AcceptedCommitError{State: storage.CommitApplied, LogicalID: "catalog-accepted", Err: storage.ErrConflict}
 	}
 	return e.Engine.UpdateNode(node)
 }
+func (e *managedCatalogFailureEngine) DeleteByPrefix(prefix string) (int64, int64, error) {
+	if e.rejectDelete {
+		return 0, 0, storage.ErrConflict
+	}
+	return e.Engine.DeleteByPrefix(prefix)
+}
+
 func TestManagedRuntimeMetadataFailurePreservesPolicyAndRestoredDatabase(t *testing.T) {
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer base.Close()
@@ -167,9 +189,11 @@ func TestManagedRuntimeMetadataFailurePreservesPolicyAndRestoredDatabase(t *test
 	require.EqualValues(t, 1, limits.Storage.MaxNodes)
 	count, err := storage.NewNamespacedEngine(base, "retained").NodeCount()
 	require.NoError(t, err)
-	require.Zero(t, count, "the existing physical-first DROP cleared storage before metadata failed")
-	_, err = left.CreateNode(&storage.Node{ID: "after"})
+	require.EqualValues(t, 1, count, "a rejected catalog intent must preserve the existing data")
+	require.NoError(t, left.UpdateNode(&storage.Node{ID: "before", Properties: map[string]interface{}{"survives": "after"}}))
+	retained, err := right.GetNode("before")
 	require.NoError(t, err)
+	require.Equal(t, "after", retained.Properties["survives"])
 	_, err = right.CreateNode(&storage.Node{ID: "blocked-again"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
 	exactNodes, exactEdges, err := first.calculateStorageSizeFromEngine(storage.NewNamespacedEngine(base, "retained"))

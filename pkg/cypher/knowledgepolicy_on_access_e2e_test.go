@@ -346,12 +346,12 @@ func TestE2E_OnAccessDoesNotTriggerForWhereOnlyEvaluation(t *testing.T) {
 
 	flusher.Flush()
 
-	entry, err := be.GetAccessMeta("test:where-only-1")
+	entry, err := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:where-only-1"})
 	require.NoError(t, err)
-	require.Nil(t, entry, "WHERE evaluation must not trigger ON ACCESS mutations")
-	entry, err = be.GetAccessMeta("test:where-only-2")
+	require.Nil(t, entry.Entry, "WHERE evaluation must not trigger ON ACCESS mutations")
+	entry, err = be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:where-only-2"})
 	require.NoError(t, err)
-	require.Nil(t, entry, "non-materialized peers must not be queued for ON ACCESS")
+	require.Nil(t, entry.Entry, "non-materialized peers must not be queued for ON ACCESS")
 
 	result, err = exec.Execute(ctx, `MATCH (n:WhereOnlySource) WHERE n.kind = 'ignore-me' RETURN n`, nil)
 	require.NoError(t, err)
@@ -366,13 +366,13 @@ func TestE2E_OnAccessDoesNotTriggerForWhereOnlyEvaluation(t *testing.T) {
 
 	flusher.Flush()
 
-	entry, err = be.GetAccessMeta("test:where-only-1")
+	entry, err = be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:where-only-1"})
 	require.NoError(t, err)
-	require.NotNil(t, entry, "materialized RETURN should trigger ON ACCESS")
-	require.Equal(t, int64(1), entry.Fixed.AccessCount)
-	entry, err = be.GetAccessMeta("test:where-only-2")
+	require.NotNil(t, entry.Entry, "materialized RETURN should trigger ON ACCESS")
+	require.Equal(t, int64(1), entry.Entry.Fixed.AccessCount)
+	entry, err = be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:where-only-2"})
 	require.NoError(t, err)
-	require.Nil(t, entry, "only the materialized node should be flushed")
+	require.Nil(t, entry.Entry, "only the materialized node should be flushed")
 }
 
 func TestE2E_OnAccessDoesNotTriggerForScalarProjection(t *testing.T) {
@@ -431,9 +431,9 @@ func TestE2E_OnAccessDoesNotTriggerForScalarProjection(t *testing.T) {
 
 	flusher.Flush()
 
-	entry, err := be.GetAccessMeta("test:scalar-only-1")
+	entry, err := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:scalar-only-1"})
 	require.NoError(t, err)
-	require.Nil(t, entry, "scalar projection must not count as materializing the node")
+	require.Nil(t, entry.Entry, "scalar projection must not count as materializing the node")
 }
 
 func TestE2E_OnAccessOnlyTriggersAfterScoringGate(t *testing.T) {
@@ -504,17 +504,17 @@ func TestE2E_OnAccessOnlyTriggersAfterScoringGate(t *testing.T) {
 	require.Len(t, result.Rows, 0, "scoreFloor below threshold should fail the scoring gate")
 	requireBufferedAccessCounts(t, acc, map[string]int64{"test:blocked-reverse": 0})
 	flusher.Flush()
-	entry, err := be.GetAccessMeta("test:blocked-reverse")
+	entry, err := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:blocked-reverse"})
 	require.NoError(t, err)
-	require.Nil(t, entry, "ON ACCESS must not run for rows rejected by the scoring gate")
+	require.Nil(t, entry.Entry, "ON ACCESS must not run for rows rejected by the scoring gate")
 
 	result, err = exec.Execute(ctx, `MATCH (n:PassingReverse) RETURN n`, nil)
 	require.NoError(t, err)
 	require.Len(t, result.Rows, 1, "scoreFloor above threshold should pass the scoring gate")
 	requireBufferedAccessCounts(t, acc, map[string]int64{"test:passing-reverse": 1})
 	flusher.Flush()
-	entry, err = be.GetAccessMeta("test:passing-reverse")
+	entry, err = be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: "test:passing-reverse"})
 	require.NoError(t, err)
-	require.NotNil(t, entry)
-	require.Equal(t, int64(1), entry.Fixed.AccessCount)
+	require.NotNil(t, entry.Entry)
+	require.Equal(t, int64(1), entry.Entry.Fixed.AccessCount)
 }

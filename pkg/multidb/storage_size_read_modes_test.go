@@ -20,7 +20,7 @@ func TestStorageSizeReadModesPreserveInitializationError(t *testing.T) {
 	require.EqualValues(t, 7, edges)
 	require.False(t, info.accountingOwner().sizeInitialized, "reporting retains cached counters when lazy init fails")
 	manager.mu.Lock()
-	checker, err := manager.getOrCreateLimitCheckerLocked("test")
+	_, checker, err := manager.databaseViewLocked("test", false)
 	manager.mu.Unlock()
 	require.NoError(t, err)
 	err = checker.CheckStorageLimits("create_node", &storage.Node{ID: "n"}, nil)

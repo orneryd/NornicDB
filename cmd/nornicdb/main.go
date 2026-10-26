@@ -1871,8 +1871,8 @@ func runDecaySuppress(cmd *cobra.Command, args []string) error {
 		}
 
 		var accessMeta *knowledgepolicy.AccessMetaEntry
-		if meta, metaErr := be.GetAccessMeta(entityID); metaErr == nil {
-			accessMeta = meta
+		if result, metaErr := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: entityID}); metaErr == nil {
+			accessMeta = result.Entry
 		}
 
 		res := scorer.ScoreNode(
@@ -1958,8 +1958,8 @@ func runDecayStats(cmd *cobra.Command, args []string) error {
 		}
 
 		var accessMeta *knowledgepolicy.AccessMetaEntry
-		if meta, metaErr := be.GetAccessMeta(entityID); metaErr == nil {
-			accessMeta = meta
+		if result, metaErr := be.ReadAccessMeta(knowledgepolicy.AccessMetaReadRequest{Mode: knowledgepolicy.AccessMetaReadPoint, EntityID: entityID}); metaErr == nil {
+			accessMeta = result.Entry
 		}
 
 		res := scorer.ScoreNode(

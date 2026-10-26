@@ -69,7 +69,7 @@ func (b *BadgerEngine) GetFirstNodeByLabelInScope(scope, label string) (*Node, e
 			}); err != nil {
 				return err
 			}
-			if b.filterNodeByDecay(node, nowNanos) {
+			if b.filterEntityByDecay(visibleRead, node, nowNanos) {
 				node = nil
 				continue
 			}
@@ -204,7 +204,10 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
 	checkTombstones := b.checksIndexTombstones(v)
-	err := b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = b.bufferedLabelNodes(w, v, label, scope) }, func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) {
+		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedLabel, label: label, prefix: scope})
+		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
+	}, func(txn *badger.Txn) error {
 		nodes = nil
 		loaded = nil
 		it := b.newNodeIndexReader(txn, scope, labelIndexPrefix(label), "")
@@ -227,7 +230,7 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 			if cached, ok := b.nodeCache[nodeID]; ok && current {
 				b.nodeCacheMu.RUnlock()
 				cn := copyNode(cached)
-				if b.hidesNode(v, cn, nowNanos) {
+				if b.filterEntityByDecay(v, cn, nowNanos) {
 					continue
 				}
 				nodes = append(nodes, cn)
@@ -251,7 +254,7 @@ func (b *BadgerEngine) getNodesByLabelInScope(scope, label string, v readVisibil
 				return readErr
 			}
 
-			if b.hidesNode(v, node, nowNanos) {
+			if b.filterEntityByDecay(v, node, nowNanos) {
 				continue
 			}
 
@@ -322,7 +325,8 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 	var overlay []*Node
 	var touched map[NodeID]bool
 	capture := func(w *WriteBehindBuffer) {
-		overlay, touched = b.bufferedLabelNodes(w, v, label, scope)
+		pendingNodes := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedLabel, label: label, prefix: scope})
+		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
 	}
 
 	include := propertyProjectionSet(properties)
@@ -351,7 +355,7 @@ func (b *BadgerEngine) streamNodesByLabelProjectedInScope(scope, label string, p
 			return projectCachedNodeForRead(cached, properties, false, queryNodes), true
 		}
 		emit := func(node *Node) error {
-			if node == nil || b.hidesNode(v, node, nowNanos) {
+			if node == nil || b.filterEntityByDecay(v, node, nowNanos) {
 				return nil
 			}
 			if len(touched) > 0 && touched[node.ID] {
@@ -534,7 +538,8 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 	var overlay []*Node
 	var touched map[NodeID]bool
 	capture := func(w *WriteBehindBuffer) {
-		overlay, touched = b.bufferedAllNodes(w, visibleRead)
+		pendingNodes := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedNodes})
+		overlay, touched = pendingNodes.nodes, pendingNodes.nodesTouched
 	}
 	nowNanos := DecayScoringTime()
 	gen := b.nodeCacheGen.current()
@@ -560,7 +565,7 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 			if cached, ok := b.nodeCache[nodeID]; ok && current {
 				b.nodeCacheMu.RUnlock()
 				nodeCopy := copyNode(cached)
-				if b.filterNodeByDecay(nodeCopy, nowNanos) {
+				if b.filterEntityByDecay(visibleRead, nodeCopy, nowNanos) {
 					continue
 				}
 				nodes = append(nodes, nodeCopy)
@@ -575,7 +580,7 @@ func (b *BadgerEngine) AllNodes() ([]*Node, error) {
 				return readErr
 			}
 
-			if b.filterNodeByDecay(node, nowNanos) {
+			if b.filterEntityByDecay(visibleRead, node, nowNanos) {
 				continue
 			}
 
@@ -612,7 +617,8 @@ func (b *BadgerEngine) allEdges(v readVisibility) ([]*Edge, error) {
 	var overlay []*Edge
 	var touched map[EdgeID]bool
 	capture := func(w *WriteBehindBuffer) {
-		overlay, touched = b.bufferedAllEdges(w, v)
+		pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedEdges})
+		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
 	}
 	nowNanos := DecayScoringTime()
 	err := b.withReadView(capture, func(txn *badger.Txn) error {
@@ -638,7 +644,7 @@ func (b *BadgerEngine) allEdges(v readVisibility) ([]*Edge, error) {
 				return err
 			}
 
-			if b.hidesEdge(v, edge, nowNanos) {
+			if b.filterEntityByDecay(v, edge, nowNanos) {
 				continue
 			}
 
@@ -698,7 +704,10 @@ func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edg
 	var edges []*Edge
 	nowNanos := DecayScoringTime()
 	gen := b.edgeTypeCacheGen.current()
-	err := b.withReadView(func(w *WriteBehindBuffer) { overlay, touched = b.bufferedTypeEdges(w, v, edgeType) }, func(txn *badger.Txn) error {
+	err := b.withReadView(func(w *WriteBehindBuffer) {
+		pendingEdges := b.readBufferedEntities(w, v, bufferedEntityRead{kind: bufferedType, edgeType: edgeType})
+		overlay, touched = pendingEdges.edges, pendingEdges.edgesTouched
+	}, func(txn *badger.Txn) error {
 		prefix := edgeTypeIndexPrefix(edgeType)
 		it := txn.NewIterator(badgerPrefixIteratorOptions(prefix))
 		defer it.Close()
@@ -743,7 +752,7 @@ func (b *BadgerEngine) getEdgesByType(edgeType string, v readVisibility) ([]*Edg
 				return err
 			}
 
-			if b.hidesEdge(v, edge, nowNanos) {
+			if b.filterEntityByDecay(v, edge, nowNanos) {
 				continue
 			}
 
@@ -857,7 +866,7 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 			if node == nil {
 				return false, nil
 			}
-			if !b.filterNodeByDecay(node, now) {
+			if !b.filterEntityByDecay(visibleRead, node, now) {
 				result[id] = node
 			}
 		}
@@ -913,7 +922,7 @@ func (b *BadgerEngine) readNodeBatch(ids []NodeID, embeddings bool) (map[NodeID]
 					loaded = append(loaded, node)
 				}
 			}
-			if !b.filterNodeByDecay(node, now) {
+			if !b.filterEntityByDecay(visibleRead, node, now) {
 				result[id] = node
 			}
 		}
@@ -1016,7 +1025,7 @@ func (b *BadgerEngine) materializeAdjEdges(ids []EdgeID, v readVisibility) ([]*E
 	var miss []EdgeID
 	for _, id := range ids {
 		if cached, ok := b.cacheLoadEdge(id); ok {
-			if b.hidesEdge(v, cached, nowNanos) {
+			if b.filterEntityByDecay(v, cached, nowNanos) {
 				continue
 			}
 			out = append(out, cached)
@@ -1046,7 +1055,7 @@ func (b *BadgerEngine) materializeAdjEdges(ids []EdgeID, v readVisibility) ([]*E
 				return err
 			}
 			b.cacheFillEdge(gen, edge)
-			if b.hidesEdge(v, edge, nowNanos) {
+			if b.filterEntityByDecay(v, edge, nowNanos) {
 				continue
 			}
 			out = append(out, edge)
@@ -1091,7 +1100,7 @@ func (b *BadgerEngine) collectEdgesByIndexPrefix(txn *badger.Txn, prefix []byte,
 		if err != nil {
 			return nil, nil, err
 		}
-		if edge == nil || b.hidesEdge(v, edge, nowNanos) {
+		if edge == nil || b.filterEntityByDecay(v, edge, nowNanos) {
 			continue
 		}
 		edges = append(edges, edge)
@@ -1131,7 +1140,8 @@ func (b *BadgerEngine) edgeHeaders(nodeID NodeID, outgoing bool) ([]*Edge, bool,
 		var suppressed map[EdgeID]struct{}
 		var nodeDeleted bool
 		view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-			live, suppressed, nodeDeleted = b.bufferedAdjacency(w, visibleRead, nodeID, outgoing)
+			pendingAdjacency := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedAdjacency, source: nodeID, outgoing: outgoing})
+			live, suppressed, nodeDeleted = pendingAdjacency.edges, pendingAdjacency.suppressed, pendingAdjacency.sourceDeleted
 		}, readViewOptions{scope: namespaceForNodeID(nodeID)})
 		if err != nil {
 			return nil, true, err
@@ -1341,7 +1351,8 @@ func (b *BadgerEngine) GetEdgesBetween(startID, endID NodeID) ([]*Edge, error) {
 		var suppressed map[EdgeID]struct{}
 		var sourceDeleted, targetDeleted bool
 		view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-			live, suppressed, sourceDeleted, targetDeleted = b.bufferedEdgesBetween(w, visibleRead, startID, endID)
+			pendingBetween := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: startID, target: endID})
+			live, suppressed, sourceDeleted, targetDeleted = pendingBetween.edges, pendingBetween.suppressed, pendingBetween.sourceDeleted, pendingBetween.targetDeleted
 		}, readViewOptions{scope: namespaceForNodeID(startID)})
 		if err != nil {
 			return nil, err
@@ -1421,7 +1432,8 @@ func (b *BadgerEngine) GetEdgeBetween(source, target NodeID, edgeType string) *E
 	var suppressed map[EdgeID]struct{}
 	var sourceDeleted, targetDeleted bool
 	view, err := b.captureReadView(func(w *WriteBehindBuffer) {
-		live, suppressed, sourceDeleted, targetDeleted = b.bufferedEdgesBetween(w, visibleRead, source, target)
+		pendingBetween := b.readBufferedEntities(w, visibleRead, bufferedEntityRead{kind: bufferedBetween, source: source, target: target})
+		live, suppressed, sourceDeleted, targetDeleted = pendingBetween.edges, pendingBetween.suppressed, pendingBetween.sourceDeleted, pendingBetween.targetDeleted
 	}, readViewOptions{scope: namespaceForNodeID(source)})
 	if err != nil {
 		return nil
@@ -1519,7 +1531,7 @@ func (b *BadgerEngine) edgeBetweenFromHeadIndex(source, target NodeID, edgeType 
 		if err != nil {
 			return fmt.Errorf("load edge-between head edge %q: %w", edgeID, err)
 		}
-		if b.filterEdgeByDecay(edge, DecayScoringTime()) {
+		if b.filterEntityByDecay(visibleRead, edge, DecayScoringTime()) {
 			return nil
 		}
 		if edgeMatchesBetween(edge, source, target, edgeType) {
@@ -1579,7 +1591,7 @@ func (b *BadgerEngine) edgesBetweenFromSetIndex(startID, endID NodeID, edgeType 
 			if err != nil {
 				return err
 			}
-			if !edgeMatchesBetween(edge, startID, endID, edgeType) || b.filterEdgeByDecay(edge, nowNanos) {
+			if !edgeMatchesBetween(edge, startID, endID, edgeType) || b.filterEntityByDecay(visibleRead, edge, nowNanos) {
 				continue
 			}
 			result = append(result, edge)
@@ -1653,7 +1665,7 @@ func (b *BadgerEngine) edgesBetweenFromLegacyOutgoingIndex(startID, endID NodeID
 			if err != nil {
 				return err
 			}
-			if !edgeMatchesBetween(edge, startID, endID, edgeType) || b.filterEdgeByDecay(edge, nowNanos) {
+			if !edgeMatchesBetween(edge, startID, endID, edgeType) || b.filterEntityByDecay(visibleRead, edge, nowNanos) {
 				continue
 			}
 			result = append(result, edge)

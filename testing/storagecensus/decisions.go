@@ -14,9 +14,8 @@ import (
 // storage.StoredEntityReader, which see hidden entities), they are the
 // sources of a hidden-policy decision.
 var visibilityPrimitives = map[string]bool{
-	"pkg/storage.BadgerEngine.hidesNode":          true,
-	"pkg/storage.BadgerEngine.hidesEdge":          true,
-	"pkg/storage.BadgerEngine.manuallySuppressed": true,
+	"pkg/storage.BadgerEngine.filterEntityByDecay": true,
+	"pkg/storage.BadgerEngine.manuallySuppressed":  true,
 }
 
 // Decision is a branch on hidden state (or on a read that sees hidden

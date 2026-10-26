@@ -16,22 +16,33 @@ func TestCensusRejectsSuppressionEvaluatorBypass(t *testing.T) {
 	path := filepath.Join(abs, "pkg/storage/badger_deindex_enqueue.go")
 	source, err := os.ReadFile(path)
 	require.NoError(t, err)
-	text := strings.Replace(string(source), "b.evaluateEdgeSuppressionInTxn(txn, EdgeID(entityID))", "b.censusBypassEdgeSuppressionInTxn(txn, EdgeID(entityID))", 1)
+	text := strings.ReplaceAll(string(source), "b.evaluateSuppressionInTxn(", "b.censusBypassSuppressionInTxn(")
 	require.NotEqual(t, string(source), text)
+	// Retire the declaration as well as its callers: the shared transition
+	// still has a real ownership decision even when no entry point calls it.
+	retired := strings.Replace(text, "func (b *BadgerEngine) evaluateSuppressionInTxn(", "func (b *BadgerEngine) retiredSuppressionInTxn(", 1)
+	require.NotEqual(t, text, retired)
+	text = retired
 	text += `
-func(b *BadgerEngine)censusBypassEdgeSuppressionInTxn(txn *badger.Txn,id EdgeID)(bool,*Edge,error){
- edge,err:=b.GetStoredEdge(id)
- if err==nil { data,encodeErr:=b.encodeEdgeInTxn(txn,namespaceForEdgeID(id),edge);if encodeErr!=nil{return false,nil,encodeErr};return true,edge,txn.Set(edgeKey(id),data) }
- return false,nil,err
+func(b *BadgerEngine)censusBypassSuppressionInTxn(txn *badger.Txn,input suppressionEvaluation)(suppressionMutation,error){
+ id:=input.id;if input.node!=nil{id=string(input.node.ID)}
+ edge,err:=b.GetStoredEdge(EdgeID(id))
+ if err==nil { data,encodeErr:=b.encodeEdgeInTxn(txn,namespaceForEdgeID(EdgeID(id)),edge);if encodeErr!=nil{return suppressionMutation{},encodeErr};return suppressionMutation{edge:edge},txn.Set(edgeKey(EdgeID(id)),data) }
+ return suppressionMutation{},err
 }
 `
-	report, err := Census(root, map[string][]byte{path: []byte(text)})
+	labelPath := filepath.Join(abs, "pkg/storage/badger_nodes.go")
+	labels, err := os.ReadFile(labelPath)
+	require.NoError(t, err)
+	labelText := strings.ReplaceAll(string(labels), "b.evaluateSuppressionInTxn(", "b.censusBypassSuppressionInTxn(")
+	require.NotEqual(t, string(labels), labelText)
+	report, err := Census(root, map[string][]byte{path: []byte(text), labelPath: []byte(labelText)})
 	require.NoError(t, err)
 	base, err := Census(root, nil)
 	require.NoError(t, err)
 	require.Empty(t, base.Violations)
 	require.Contains(t, strings.Join(report.Violations, "\n"), "hidden decision outside the disposition owner: pkg/cypher.StorageExecutor.executeCreateConstraint")
-	require.Contains(t, strings.Join(report.Violations, "\n"), "stale: decision owner pkg/storage.BadgerEngine.evaluateEdgeSuppressionInTxn")
+	require.Contains(t, strings.Join(report.Violations, "\n"), "stale: decision owner pkg/storage.BadgerEngine.evaluateSuppressionInTxn")
 }
 
 // A legitimate effect cannot mask a second direct body write, and a method
@@ -39,12 +50,12 @@ func(b *BadgerEngine)censusBypassEdgeSuppressionInTxn(txn *badger.Txn,id EdgeID)
 func TestBodyOwnershipRequiresEveryEffectPath(t *testing.T) {
 	p, pkg := coverageProgram(t, `package storage
  type BadgerEngine struct{}
- func(b *BadgerEngine)evaluateEdgeSuppressionInTxn(){}
- func(b *BadgerEngine)evaluateEdgeSuppressionInTxnLookalike(){}
+ func(b *BadgerEngine)evaluateSuppressionInTxn(){}
+ func(b *BadgerEngine)evaluateSuppressionInTxnLookalike(){}
  func(b *BadgerEngine)bypass(){}
- func owned(b *BadgerEngine){b.evaluateEdgeSuppressionInTxn()}
- func mixed(b *BadgerEngine){b.evaluateEdgeSuppressionInTxn();b.bypass()}
- func lookalike(b *BadgerEngine){b.evaluateEdgeSuppressionInTxnLookalike()}
+ func owned(b *BadgerEngine){b.evaluateSuppressionInTxn()}
+ func mixed(b *BadgerEngine){b.evaluateSuppressionInTxn();b.bypass()}
+ func lookalike(b *BadgerEngine){b.evaluateSuppressionInTxnLookalike()}
  `)
 	a := &analysis{p: p, bodyMarks: map[ssa.Instruction]bool{}, bodyChains: map[ssa.Instruction]map[string][]string{}}
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
@@ -61,7 +72,7 @@ func TestBodyOwnershipRequiresEveryEffectPath(t *testing.T) {
 	a.markBodyWriters()
 	proofs := a.bodyOwnerProofs()
 	require.False(t, proofs[pkg.Func("owned")].unowned)
-	require.True(t, proofs[pkg.Func("owned")].owners["pkg/storage.BadgerEngine.evaluateEdgeSuppressionInTxn"])
+	require.True(t, proofs[pkg.Func("owned")].owners["pkg/storage.BadgerEngine.evaluateSuppressionInTxn"])
 	require.True(t, proofs[pkg.Func("mixed")].unowned)
 	require.True(t, proofs[pkg.Func("lookalike")].unowned)
 }
@@ -104,11 +115,11 @@ func TestPublicationTimestampHasExactOwner(t *testing.T) {
 func TestReviewCensusBranchEveryGatedInstruction(t *testing.T) {
 	p, pkg := coverageProgram(t, `package storage
  type BadgerEngine struct{}
- func(b *BadgerEngine)evaluateEdgeSuppressionInTxn(){}
+ func(b *BadgerEngine)evaluateSuppressionInTxn(){}
  func(b *BadgerEngine)bypass(){}
- func(b *BadgerEngine)hidesNode()bool{return true}
- func deciding(b *BadgerEngine){if b.hidesNode(){b.evaluateEdgeSuppressionInTxn();b.bypass()}}
- func mixed(b *BadgerEngine,hidden bool){if hidden {b.evaluateEdgeSuppressionInTxn();b.bypass()}}
+ func(b *BadgerEngine)filterEntityByDecay()bool{return true}
+ func deciding(b *BadgerEngine){if b.filterEntityByDecay(){b.evaluateSuppressionInTxn();b.bypass()}}
+ func mixed(b *BadgerEngine,hidden bool){if hidden {b.evaluateSuppressionInTxn();b.bypass()}}
  `)
 	a := &analysis{p: p, bodyMarks: map[ssa.Instruction]bool{}, bodyChains: map[ssa.Instruction]map[string][]string{}}
 	for fn := range ssautil.AllFunctions(pkg.Prog) {
@@ -116,7 +127,7 @@ func TestReviewCensusBranchEveryGatedInstruction(t *testing.T) {
 			continue
 		}
 		p.funcs = append(p.funcs, fn)
-		if fn.Name() == "evaluateEdgeSuppressionInTxn" || fn.Name() == "bypass" {
+		if fn.Name() == "evaluateSuppressionInTxn" || fn.Name() == "bypass" {
 			ins := fn.Blocks[0].Instrs[0]
 			a.bodyMarks[ins] = true
 			a.bodyChains[ins] = map[string][]string{"body": {p.funcName(fn) + " body"}}
