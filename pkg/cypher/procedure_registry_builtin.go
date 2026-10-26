@@ -1,3 +1,4 @@
+// Author: Codex implementation lane, 2026-10-27 (NOR-148 request context forwarding).
 package cypher
 
 import (
@@ -90,11 +91,11 @@ func ensureBuiltInProceduresRegistered() {
 
 		registerProcedure(fulltextQueryProcedureSpec("db.index.fulltext.queryNodes", "node", "NODE"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextQueryNodes(args)
+				return e.callDbIndexFulltextQueryNodes(ctx, args)
 			})
 		registerProcedure(fulltextQueryProcedureSpec("db.index.fulltext.queryRelationships", "relationship", "RELATIONSHIP"),
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {
-				return e.callDbIndexFulltextQueryRelationships(args)
+				return e.callDbIndexFulltextQueryRelationships(ctx, args)
 			})
 		registerBuiltInProcedure("db.index.fulltext.createNodeIndex", "db.index.fulltext.createNodeIndex(indexName :: STRING, labels :: LIST<STRING>, properties :: LIST<STRING>)", localization.CypherProcedureMetadata("db.index.fulltext.createNodeIndex"), ProcedureModeWrite, 3, 4, false,
 			func(ctx context.Context, e *StorageExecutor, cypher string, args []interface{}) (*ExecuteResult, error) {

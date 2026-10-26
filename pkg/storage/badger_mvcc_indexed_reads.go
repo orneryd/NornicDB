@@ -395,7 +395,7 @@ func (b *BadgerEngine) streamNodesByLabelFromPhysicalSnapshotAfterRead(
 		// in label-index order.
 		nodes := make(map[NodeID]*Node, len(pending))
 		readErrors := make(map[NodeID]error)
-		if err := readNodeRecordsInOnePass(txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
+		if err := b.readNodeRecordsInOnePass(txn, scope, pending, func(nodeID NodeID, item *badger.Item) error {
 			node, err := readItem(nodeID, item)
 			nodes[nodeID] = node
 			if err != nil {

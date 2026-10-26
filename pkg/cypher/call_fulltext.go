@@ -1,10 +1,11 @@
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
 package cypher
 
 import (
+	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
-	"sort"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -56,7 +57,7 @@ func requireFulltextIndex(indexName string, declared bool) error {
 	return localizedError(localization.CypherSpecializedCallsFulltextIndexNotFound(indexName), nil)
 }
 
-func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*ExecuteResult, error) {
+func (e *StorageExecutor) callDbIndexFulltextQueryNodes(ctx context.Context, args []interface{}) (*ExecuteResult, error) {
 	result := &ExecuteResult{
 		Columns: []string{"node", "score"},
 		Rows:    [][]interface{}{},
@@ -91,148 +92,24 @@ func (e *StorageExecutor) callDbIndexFulltextQueryNodes(args []interface{}) (*Ex
 		targetProperties = []string{"content", "text", "title", "name", "description", "body", "summary", "path", "workerRole", "requirements"}
 	}
 
-	// Lucene wildcard family. Three Neo4j-compatible shapes resolve here:
-	//
-	//   *        — MatchAllDocsQuery; every doc in the index.
-	//   *:*      — Solr/Lucene field-and-value wildcard; equivalent to *.
-	//   <prop>:* — Field-presence query; every doc that has a value for
-	//              <prop>. The property must be one the index declared,
-	//              otherwise the query returns nothing (matching Neo4j
-	//              behavior — an undeclared field has no postings list).
-	//
-	// All three branches still apply targetLabels — without that filter,
-	// the index ignores its declared FOR (m:Memory) scope and returns
-	// every node in the database. This was the May 2026 mcp-neo4j-memory
-	// Bug 2: fulltext index ignored its declared label scope.
-	if isFulltextWildcard(query) {
-		nodes, err := e.storage.AllNodes()
-		if err != nil {
-			return nil, err
-		}
-		for _, node := range nodes {
-			if !matchesLabels(node, targetLabels) {
-				continue
-			}
-			// Skip nodes with no content in any of the indexed properties.
-			// Without this, a wildcard query against an index declared on
-			// e.g. `m.name, m.type` would still surface unrelated labels
-			// that happen to share a property name.
-			if extractTextContent(node, targetProperties) == "" {
-				continue
-			}
-			result.Rows = append(result.Rows, []interface{}{node, 1.0})
-		}
-		applyFulltextOptions(result, opts)
-		return result, nil
-	}
-	if propName, ok := fulltextFieldPresenceQuery(query); ok {
-		// Reject queries that ask for a property the index didn't declare.
-		// Neo4j-Lucene treats an undeclared field as having no postings,
-		// so the result is empty. We match that by silently returning no
-		// rows when propName isn't in targetProperties.
-		if !containsString(targetProperties, propName) {
+	wildcard := isFulltextWildcard(query)
+	presence, isPresence := fulltextFieldPresenceQuery(query)
+	if wildcard || isPresence {
+		if isPresence && !containsString(targetProperties, presence) {
 			return result, nil
 		}
-		nodes, err := e.storage.AllNodes()
-		if err != nil {
+		if err := e.fulltextUnrankedRows(ctx, indexName, targetLabels, targetProperties, false, wildcard, presence, opts, result); err != nil {
 			return nil, err
-		}
-		for _, node := range nodes {
-			if !matchesLabels(node, targetLabels) {
-				continue
-			}
-			if !nodeHasNonEmptyProperty(node, propName) {
-				continue
-			}
-			result.Rows = append(result.Rows, []interface{}{node, 1.0})
 		}
 		applyFulltextOptions(result, opts)
 		return result, nil
 	}
-
-	// Parse the query using the full Lucene-classic parser. Composite
-	// queries like `group_id:"g" AND (term)` require this so the
-	// parenthesized default-field clause is intersected with the field-
-	// scoped clause rather than silently discarded (the pre-parser bug).
-	parsed, err := ParseFulltextQuery(query)
+	hits, err := e.fulltextHits(ctx, indexName, query, targetLabels, targetProperties, false)
 	if err != nil {
 		return nil, err
 	}
-	if parsed.IsEmpty() {
-		return result, nil
-	}
-
-	nodes, err := e.storage.AllNodes()
-	if err != nil {
-		return nil, err
-	}
-
-	// First pass: build the per-doc content strings and populate docFreq
-	// for BM25 IDF, restricted to the terms the parser actually scores.
-	type nodeDoc struct {
-		node *storage.Node
-		doc  *ftDoc
-	}
-	docs := make([]nodeDoc, 0, len(nodes))
-	docFreq := make(map[string]int, len(parsed.PrimaryTerms()))
-	var totalDocLen int64
-	for _, node := range nodes {
-		if !matchesLabels(node, targetLabels) {
-			continue
-		}
-		doc := buildNodeFulltextDoc(node, targetProperties)
-		if doc == nil {
-			continue
-		}
-		docs = append(docs, nodeDoc{node: node, doc: doc})
-		totalDocLen += int64(doc.contentTokenN)
-		for _, term := range parsed.PrimaryTerms() {
-			if strings.Contains(doc.contentLower, term) {
-				docFreq[term]++
-			}
-		}
-	}
-	totalDocs := len(docs)
-	avgDocLen := 100.0
-	if totalDocs > 0 {
-		avgDocLen = float64(totalDocLen) / float64(totalDocs)
-	}
-
-	ctx := &ftEvalCtx{
-		DefaultFields: targetProperties,
-		avgDocLen:     avgDocLen,
-		totalDocs:     totalDocs,
-		docFreq:       docFreq,
-	}
-
-	type scoredNode struct {
-		node  *storage.Node
-		score float64
-	}
-	scoredNodes := make([]scoredNode, 0, len(docs))
-	for _, d := range docs {
-		matched, score := parsed.Match(ctx, d.doc)
-		if !matched {
-			continue
-		}
-		if score <= 0 {
-			// A pure field-scoped or presence match still deserves a positive
-			// score so the doc surfaces in the result. Use 1.0 as the floor
-			// (matches the wildcard/presence fast-paths above).
-			score = 1.0
-		}
-		scoredNodes = append(scoredNodes, scoredNode{node: d.node, score: score})
-	}
-
-	sort.Slice(scoredNodes, func(i, j int) bool {
-		if scoredNodes[i].score == scoredNodes[j].score {
-			return scoredNodes[i].node.ID < scoredNodes[j].node.ID
-		}
-		return scoredNodes[i].score > scoredNodes[j].score
-	})
-
-	for _, sn := range scoredNodes {
-		result.Rows = append(result.Rows, []interface{}{sn.node, sn.score})
+	for _, hit := range hits {
+		result.Rows = append(result.Rows, []interface{}{storage.CopyNode(hit.row.node), hit.score})
 	}
 	applyFulltextOptions(result, opts)
 
@@ -354,101 +231,6 @@ func applyFulltextOptions(result *ExecuteResult, opts fulltextQueryOptions) {
 	if opts.limit >= 0 && opts.limit < len(result.Rows) {
 		result.Rows = result.Rows[:opts.limit]
 	}
-}
-
-func appendFulltextOptionedRow(result *ExecuteResult, opts fulltextQueryOptions, seen *int, row []interface{}) bool {
-	if result == nil || seen == nil {
-		return false
-	}
-	current := *seen
-	*seen = current + 1
-	if current < opts.skip {
-		return false
-	}
-	if opts.limit >= 0 && len(result.Rows) >= opts.limit {
-		return true
-	}
-	result.Rows = append(result.Rows, row)
-	return opts.limit >= 0 && len(result.Rows) >= opts.limit
-}
-
-// parseFulltextQuery parses a fulltext query into regular terms, exclude terms, and must-have terms
-func parseFulltextQuery(query string) (terms, excludeTerms, mustHaveTerms []string) {
-	query = lowerASCII(query)
-
-	// Handle quoted phrases.
-	var phrases []string
-	query, phrases = extractQuotedPhrasesAndStrip(query)
-	mustHaveTerms = append(mustHaveTerms, phrases...)
-
-	// Split by spaces and operators
-	words := strings.Fields(query)
-
-	for i := 0; i < len(words); i++ {
-		word := words[i]
-
-		// Handle NOT operator
-		if word == "not" && i+1 < len(words) {
-			excludeTerms = append(excludeTerms, words[i+1])
-			i++
-			continue
-		}
-
-		// Handle - prefix for exclusion
-		if strings.HasPrefix(word, "-") && len(word) > 1 {
-			excludeTerms = append(excludeTerms, word[1:])
-			continue
-		}
-
-		// Handle + prefix for required
-		if strings.HasPrefix(word, "+") && len(word) > 1 {
-			mustHaveTerms = append(mustHaveTerms, word[1:])
-			continue
-		}
-
-		// Skip AND/OR operators
-		if word == "and" || word == "or" {
-			continue
-		}
-
-		// Regular term
-		if len(word) > 0 {
-			terms = append(terms, word)
-		}
-	}
-
-	return terms, excludeTerms, mustHaveTerms
-}
-
-func extractQuotedPhrasesAndStrip(s string) (stripped string, phrases []string) {
-	var out strings.Builder
-	out.Grow(len(s))
-
-	inQuote := false
-	phraseStart := 0
-
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if isCypherDoubleQuoteByte(ch) && !isBackslashEscaped(s, i) {
-			if !inQuote {
-				inQuote = true
-				phraseStart = i + 1
-			} else {
-				inQuote = false
-				if phraseStart <= i {
-					phrases = append(phrases, s[phraseStart:i])
-				}
-			}
-			// Preserve token spacing where phrase used to be.
-			out.WriteByte(' ')
-			continue
-		}
-		if !inQuote {
-			out.WriteByte(ch)
-		}
-	}
-
-	return out.String(), phrases
 }
 
 // isFulltextWildcard reports whether the query should be treated as

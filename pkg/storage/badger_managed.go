@@ -1,3 +1,4 @@
+// Author of captured-reader publication proof: Codex implementation lane, 2026-10-27.
 package storage
 
 import (
@@ -226,6 +227,9 @@ func (m *managedBadgerDB) commitShared(txn *badger.Txn, publication ...*commitPu
 	}
 	if err != nil {
 		return 0, err
+	}
+	if publish != nil && publish.owner != nil && publish.owner.readerNeutral {
+		m.oracle.markReaderNeutral(ts)
 	}
 	defer m.oracle.finish(ts)
 	if err := txn.CommitAt(ts, nil); err != nil {
@@ -683,13 +687,16 @@ type commitOracle struct {
 	// commit has finished; reads use it.
 	published atomic.Uint64
 
-	mu        sync.Mutex
-	changed   sync.Cond // broadcast when published advances or the oracle fails
-	nextTs    uint64
-	inflight  map[uint64]struct{}
-	readers   map[uint64]int
-	discardTs uint64
-	failed    error
+	mu       sync.Mutex
+	changed  sync.Cond // broadcast when published advances or the oracle fails
+	nextTs   uint64
+	inflight map[uint64]bool // true only for an explicitly reader-neutral writer
+	// Assigned timestamps, not another revision counter or a commit journal.
+	// They prove whether one reader-relevant publication separates two views.
+	readerLatest, readerPrevious uint64
+	readers                      map[uint64]int
+	discardTs                    uint64
+	failed                       error
 	// readsHeld turns new reads away while Restore replaces the store
 	// (holdReads); changed is broadcast when the last open read ends.
 	readsHeld bool
@@ -699,9 +706,10 @@ type commitOracle struct {
 
 func newCommitOracle(maxVersion uint64) *commitOracle {
 	o := &commitOracle{
-		nextTs:   maxVersion + 1,
-		inflight: make(map[uint64]struct{}),
-		readers:  make(map[uint64]int),
+		nextTs:       maxVersion + 1,
+		inflight:     make(map[uint64]bool),
+		readerLatest: maxVersion,
+		readers:      make(map[uint64]int),
 	}
 	o.changed.L = &o.mu
 	o.published.Store(maxVersion)
@@ -789,7 +797,7 @@ func (o *commitOracle) assign(onAssign ...func()) (uint64, error) {
 	}
 	ts := o.nextTs
 	o.nextTs++
-	o.inflight[ts] = struct{}{}
+	o.inflight[ts] = false
 	for _, reserve := range onAssign {
 		reserve()
 	}
@@ -800,6 +808,13 @@ func (o *commitOracle) assign(onAssign ...func()) (uint64, error) {
 // every lower timestamp is finished.
 func (o *commitOracle) finish(ts uint64) {
 	o.mu.Lock()
+	if !o.inflight[ts] {
+		if ts > o.readerLatest {
+			o.readerPrevious, o.readerLatest = o.readerLatest, ts
+		} else if ts > o.readerPrevious && ts < o.readerLatest {
+			o.readerPrevious = ts
+		}
+	}
 	delete(o.inflight, ts)
 	published := o.nextTs - 1
 	for pending := range o.inflight {
@@ -811,6 +826,12 @@ func (o *commitOracle) finish(ts uint64) {
 		o.published.Store(published)
 		o.changed.Broadcast()
 	}
+	o.mu.Unlock()
+}
+
+func (o *commitOracle) markReaderNeutral(ts uint64) {
+	o.mu.Lock()
+	o.inflight[ts] = true
 	o.mu.Unlock()
 }
 

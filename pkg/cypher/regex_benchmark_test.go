@@ -1,3 +1,4 @@
+// Author of fulltext-owner convergence: Codex implementation lane, 2026-10-26 (NOR-148).
 package cypher
 
 import (
@@ -76,7 +77,7 @@ func BenchmarkParseDuration(b *testing.B) {
 	}
 }
 
-// BenchmarkFulltextQueryParsing benchmarks fulltext query phrase extraction
+// BenchmarkFulltextQueryParsing exercises the parser used by public queries.
 func BenchmarkFulltextQueryParsing(b *testing.B) {
 	queries := []string{
 		`simple query`,
@@ -88,7 +89,9 @@ func BenchmarkFulltextQueryParsing(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, q := range queries {
-			parseFulltextQuery(q)
+			if _, err := ParseFulltextQuery(q); err != nil {
+				b.Fatal(err)
+			}
 		}
 	}
 }

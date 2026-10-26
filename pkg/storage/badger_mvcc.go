@@ -1711,37 +1711,16 @@ func (b *BadgerEngine) collectNodeBootstrapBatch(ctx context.Context, start []by
 	var lastScanned []byte
 	reachedEnd := true
 	err := b.withView(func(txn *badger.Txn) error {
-		opts := badgerIteratorOptions()
-		opts.Prefix = []byte{prefixNode}
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Seek(start); it.ValidForPrefix(opts.Prefix); it.Next() {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-			key := append([]byte(nil), it.Item().Key()...)
-			if len(key) <= 1 {
-				continue
-			}
-			id := NodeID(key[1:])
-			var node *Node
-			if err := it.Item().Value(func(val []byte) error {
-				var decodeErr error
-				node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
-				return decodeErr
-			}); err != nil {
-				return err
-			}
+		rows := nodeRowScan{scope: allRows(), overlay: noOverlay[NodeID](), decode: decodeErrorsFail, visibility: scanStored}
+		return b.streamNodeRowsFrom(ctx, txn, start, rows, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
 			nodes = append(nodes, node)
-			lastScanned = key
+			lastScanned = nodeKey(node.ID)
 			if len(nodes) >= limit {
 				reachedEnd = false
-				break
+				return ErrIterationStopped
 			}
-		}
-		return nil
+			return nil
+		})
 	})
 	return nodes, lastScanned, reachedEnd, err
 }
@@ -1795,41 +1774,18 @@ func (b *BadgerEngine) collectEdgeBootstrapBatch(ctx context.Context, start []by
 	var lastScanned []byte
 	reachedEnd := true
 	err := b.withView(func(txn *badger.Txn) error {
-		opts := badgerIteratorOptions()
-		opts.Prefix = []byte{prefixEdge}
-		it := txn.NewIterator(opts)
-		defer it.Close()
-		for it.Seek(start); it.ValidForPrefix(opts.Prefix); it.Next() {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-			key := append([]byte(nil), it.Item().Key()...)
-			if len(key) <= 1 {
-				continue
-			}
-			id := EdgeID(key[1:])
-			var edge *Edge
-			if err := it.Item().Value(func(val []byte) error {
-				var decodeErr error
-				edge, decodeErr = b.decodeEdgeBodyByID(val, id)
-				return decodeErr
-			}); err != nil {
-				return err
-			}
-			if edge == nil {
-				continue
-			}
-			edge.ID = id
+		scan := edgeRowScan{scope: allRows(), overlay: noOverlay[EdgeID](), decode: decodeErrorsFail, visibility: scanStored,
+			hooks: rowHooks[EdgeID]{before: func(id EdgeID) (bool, error) { return id == "", nil }}}
+		_, err := b.scanEdgeRowsFrom(ctx, txn, start, scan, func(edge *Edge) error {
 			edges = append(edges, edge)
-			lastScanned = key
+			lastScanned = edgeKey(edge.ID)
 			if len(edges) >= limit {
 				reachedEnd = false
-				break
+				return ErrIterationStopped
 			}
-		}
-		return nil
+			return nil
+		})
+		return err
 	})
 	return edges, lastScanned, reachedEnd, err
 }
@@ -1860,77 +1816,49 @@ func (b *BadgerEngine) applyEdgeBootstrapBatch(edges []*Edge) error {
 }
 
 func (b *BadgerEngine) bootstrapNodeMVCCFromCurrentStateInTxn(txn *badger.Txn) error {
-	opts := badgerIteratorOptions()
-	opts.Prefix = []byte{prefixNode}
-	it := txn.NewIterator(opts)
-	defer it.Close()
-	for it.Rewind(); it.Valid(); it.Next() {
-		key := append([]byte(nil), it.Item().Key()...)
-		if len(key) <= 1 {
-			continue
-		}
-		id := NodeID(key[1:])
-		if _, err := b.loadNodeMVCCHeadInTxn(txn, id); err == nil {
-			continue
-		} else if err != ErrNotFound {
-			return err
-		}
-		var node *Node
-		if err := it.Item().Value(func(val []byte) error {
-			var decodeErr error
-			node, decodeErr = b.decodeNodeWithEmbeddings(txn, val, id)
-			return decodeErr
-		}); err != nil {
-			return err
-		}
+	// A node with an MVCC head is skipped before its row is decoded.
+	rows := nodeRowScan{scope: allRows(), overlay: noOverlay[NodeID](), decode: decodeErrorsFail, visibility: scanStored,
+		hooks: rowHooks[NodeID]{before: func(id NodeID) (bool, error) {
+			if _, err := b.loadNodeMVCCHeadInTxn(txn, id); err == nil {
+				return true, nil
+			} else if err != ErrNotFound {
+				return false, err
+			}
+			return false, nil
+		}}}
+	return b.streamNodesWithOptionsInTxn(context.Background(), txn, rows, StreamNodesOptions{WithEmbeddings: true}, func(node *Node) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForNodeID(node.ID), mvccBootstrapTime(node.CreatedAt, node.UpdatedAt))
 		if err != nil {
 			return err
 		}
 		// Primary key already holds the body — just seed the head.
-		if err := b.writeNodeMVCCHeadInTxn(txn, id, version, false); err != nil {
-			return err
-		}
-		_ = node // keep decoded copy for any future hooks
-	}
-	return nil
+		return b.writeNodeMVCCHeadInTxn(txn, node.ID, version, false)
+	})
 }
 
 func (b *BadgerEngine) bootstrapEdgeMVCCFromCurrentStateInTxn(txn *badger.Txn) error {
-	opts := badgerIteratorOptions()
-	opts.Prefix = []byte{prefixEdge}
-	it := txn.NewIterator(opts)
-	defer it.Close()
-	for it.Rewind(); it.Valid(); it.Next() {
-		key := append([]byte(nil), it.Item().Key()...)
-		if len(key) <= 1 {
-			continue
-		}
-		id := EdgeID(key[1:])
-		if _, err := b.loadEdgeMVCCHeadInTxn(txn, id); err == nil {
-			continue
-		} else if err != ErrNotFound {
-			return err
-		}
-		var edge *Edge
-		if err := it.Item().Value(func(val []byte) error {
-			var decodeErr error
-			edge, decodeErr = b.decodeEdgeBodyByID(val, id)
-			return decodeErr
-		}); err != nil {
-			return err
-		}
+	// An edge with an MVCC head is skipped before its row is decoded.
+	scan := edgeRowScan{scope: allRows(), overlay: noOverlay[EdgeID](), decode: decodeErrorsFail, visibility: scanStored,
+		hooks: rowHooks[EdgeID]{before: func(id EdgeID) (bool, error) {
+			if id == "" {
+				return true, nil
+			}
+			if _, err := b.loadEdgeMVCCHeadInTxn(txn, id); err == nil {
+				return true, nil
+			} else if err != ErrNotFound {
+				return false, err
+			}
+			return false, nil
+		}}}
+	_, err := b.scanEdgeRows(context.Background(), txn, scan, func(edge *Edge) error {
 		version, err := b.allocateMVCCVersion(txn, namespaceForEdgeID(edge.ID), mvccBootstrapTime(edge.CreatedAt, edge.UpdatedAt))
 		if err != nil {
 			return err
 		}
 		// Primary key already holds the body — just seed the head.
-		if err := b.writeEdgeMVCCHeadInTxn(txn, id, version, false); err != nil {
-			return err
-		}
-		_ = edge
-	}
-	return nil
+		return b.writeEdgeMVCCHeadInTxn(txn, edge.ID, version, false)
+	})
+	return err
 }
 
 func (b *BadgerEngine) PruneMVCCVersions(ctx context.Context, opts MVCCPruneOptions) (int64, error) {
