@@ -1,3 +1,4 @@
+// Author of fulltext-owner convergence: Codex implementation lane, 2026-10-26 (NOR-148).
 package cypher
 
 import (
@@ -1421,13 +1422,9 @@ func TestCypherHelpers_ApocLouvainBasic(t *testing.T) {
 }
 
 func TestCypherHelpers_ParseFulltextQueryAndShowDatabase(t *testing.T) {
-	terms, excludes, must := parseFulltextQuery(`alpha AND beta OR "exact phrase" +must -drop NOT skip`)
-	assert.Contains(t, terms, "alpha")
-	assert.Contains(t, terms, "beta")
-	assert.Contains(t, excludes, "drop")
-	assert.Contains(t, excludes, "skip")
-	assert.Contains(t, must, "exact phrase")
-	assert.Contains(t, must, "must")
+	parsed, parseErr := ParseFulltextQuery(`alpha AND beta OR "exact phrase" +must -drop NOT skip`)
+	require.NoError(t, parseErr)
+	assert.ElementsMatch(t, []string{"alpha", "beta", "drop", "skip", "exact phrase", "must"}, parsed.PrimaryTerms())
 
 	base := newTestMemoryEngine(t)
 	eng := storage.NewNamespacedEngine(base, "tenant_show")

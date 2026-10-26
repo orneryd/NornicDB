@@ -1,4 +1,5 @@
 // Package storage provides storage engine implementations for NornicDB.
+// Author of fulltext revision invalidation: Codex implementation lane, 2026-10-26 (NOR-148).
 package storage
 
 import (
@@ -112,6 +113,10 @@ func (b *BadgerEngine) Restore(path string) (restoreErr error) {
 	if err := db.DropAll(); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)
 	}
+	// A restore replaces every named-index document, even when the backup
+	// has the same entity count or loading later fails. Readers rebuild from
+	// the replacement store; queued pre-restore notifications cannot certify it.
+	defer b.graphMutationVersions.changedPrefix("")
 	b.InvalidatePendingEmbeddingsIndex()
 	if err := db.Load(bufio.NewReaderSize(file, 16*1024), 1000); err != nil {
 		return localizedError(localization.StorageClientBackupFailed(err), err)

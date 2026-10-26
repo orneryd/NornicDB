@@ -3,6 +3,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 
 	"github.com/dgraph-io/badger/v4"
@@ -321,48 +322,37 @@ func (b *BadgerEngine) collectAuthoritativeEdgeTypeCountsSnapshot() (*edgeTypeCo
 		endLabels:   make(map[namespaceEdgeTypeLabel]int64),
 	}
 	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixEdge}))
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			key := it.Item().KeyCopy(nil)
-			if len(key) <= 1 {
-				continue
-			}
-			edgeID := EdgeID(key[1:])
-			namespace, _, ok := ParseDatabasePrefix(string(edgeID))
-			if !ok {
-				continue
-			}
-			if err := it.Item().Value(func(value []byte) error {
-				edge, decodeErr := b.decodeEdgeBodyByID(value, edgeID)
-				if decodeErr != nil {
-					return nil // skip undecodable bodies (same as EdgeCount semantics)
-				}
-				edgeType := edge.Type
-				if edgeType == "" {
-					return nil
-				}
-				snap.types[namespaceEdgeType{namespace: namespace, edgeType: edgeType}]++
-				startLabels, startErr := b.readNodeLabelsIfPresentInTxn(txn, edge.StartNode)
-				if startErr != nil {
-					return startErr
-				}
-				endLabels, endErr := b.readNodeLabelsIfPresentInTxn(txn, edge.EndNode)
-				if endErr != nil {
-					return endErr
-				}
-				for _, label := range uniqueLabels(startLabels) {
-					snap.startLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edgeType}]++
-				}
-				for _, label := range uniqueLabels(endLabels) {
-					snap.endLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edgeType}]++
-				}
+		// Undecodable bodies are skipped (same as EdgeCount semantics); rows
+		// outside a database namespace are not counted and not decoded.
+		scan := edgeRowScan{scope: allRows(), overlay: noOverlay[EdgeID](), decode: decodeErrorsSkip, visibility: scanStored,
+			hooks: rowHooks[EdgeID]{before: func(id EdgeID) (bool, error) {
+				_, _, ok := ParseDatabasePrefix(string(id))
+				return !ok, nil
+			}}}
+		_, err := b.scanEdgeRows(context.Background(), txn, scan, func(edge *Edge) error {
+			namespace := namespaceForEdgeID(edge.ID)
+			edgeType := edge.Type
+			if edgeType == "" {
 				return nil
-			}); err != nil {
-				return err
 			}
-		}
-		return nil
+			snap.types[namespaceEdgeType{namespace: namespace, edgeType: edgeType}]++
+			startLabels, startErr := b.readNodeLabelsIfPresentInTxn(txn, edge.StartNode)
+			if startErr != nil {
+				return startErr
+			}
+			endLabels, endErr := b.readNodeLabelsIfPresentInTxn(txn, edge.EndNode)
+			if endErr != nil {
+				return endErr
+			}
+			for _, label := range uniqueLabels(startLabels) {
+				snap.startLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edgeType}]++
+			}
+			for _, label := range uniqueLabels(endLabels) {
+				snap.endLabels[namespaceEdgeTypeLabel{namespace: namespace, label: label, edgeType: edgeType}]++
+			}
+			return nil
+		})
+		return err
 	})
 	if err != nil {
 		return nil, err

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -374,32 +375,24 @@ func (b *BadgerEngine) loadPersistedLabelCounts() (map[string]int64, error) {
 func (b *BadgerEngine) collectAuthoritativeLabelCounts() (map[string]int64, error) {
 	counts := make(map[string]int64)
 	err := b.db.View(func(txn *badger.Txn) error {
-		it := txn.NewIterator(badgerPrefixIteratorOptions([]byte{prefixNode}))
-		defer it.Close()
-		for it.Rewind(); it.Valid(); it.Next() {
-			key := it.Item().KeyCopy(nil)
-			if len(key) <= 1 {
-				continue
+		// Rows outside a database namespace are not counted and not decoded.
+		rows := nodeRowScan{scope: allRows(), overlay: noOverlay[NodeID](), decode: decodeErrorsFail, visibility: scanStored,
+			hooks: rowHooks[NodeID]{
+				before: func(id NodeID) (bool, error) {
+					_, _, ok := ParseDatabasePrefix(string(id))
+					return !ok, nil
+				},
+				decodeFailure: func(id NodeID, err error) error {
+					return fmt.Errorf("decode node %q for label counts: %w", id, err)
+				},
+			}}
+		return b.streamNodesWithOptionsInTxn(context.Background(), txn, rows, StreamNodesOptions{}, func(node *Node) error {
+			namespace := namespaceForNodeID(node.ID)
+			for _, label := range uniqueLabels(node.Labels) {
+				counts[namespace+"\x00"+label]++
 			}
-			nodeID := NodeID(key[1:])
-			namespace, _, ok := ParseDatabasePrefix(string(nodeID))
-			if !ok {
-				continue
-			}
-			if err := it.Item().Value(func(val []byte) error {
-				node, decodeErr := b.decodeNode(namespace, val)
-				if decodeErr != nil {
-					return fmt.Errorf("decode node %q for label counts: %w", nodeID, decodeErr)
-				}
-				for _, label := range uniqueLabels(node.Labels) {
-					counts[namespace+"\x00"+label]++
-				}
-				return nil
-			}); err != nil {
-				return err
-			}
-		}
-		return nil
+			return nil
+		})
 	})
 	return counts, err
 }

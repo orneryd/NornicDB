@@ -1,3 +1,4 @@
+// Author: Codex implementation lane, 2026-10-27 (NOR-148 snapshot reader contract).
 package replication
 
 import (
@@ -157,6 +158,8 @@ func (e *ReplicatedEngine) DeleteByPrefix(prefix string) (nodesDeleted int64, ed
 func (r *ReplicatedEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSnapshotView, error) {
 	return storage.OpenReadSnapshot(ctx, r.Engine)
 }
+
+func (r *ReplicatedEngine) OwnsSnapshotReader(issued storage.Engine) bool { return issued == r }
 
 var _ storage.ReadSnapshotter = (*ReplicatedEngine)(nil)
 var _ storage.EventSubscriber = (*ReplicatedEngine)(nil)

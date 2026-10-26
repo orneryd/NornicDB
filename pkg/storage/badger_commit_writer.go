@@ -1,3 +1,4 @@
+// Author of reader-neutral publication annotation: Codex implementation lane, 2026-10-27.
 package storage
 
 import (
@@ -26,10 +27,11 @@ import (
 // reference them (ordinary commit: one separate commit before it; large
 // commit: a batch of their own ahead of each batch).
 type commitWriter struct {
-	publish      func()
-	stored       *storedEntityCommit
-	publishKeys  []any
-	notification *commitNotification
+	publish       func()
+	stored        *storedEntityCommit
+	publishKeys   []any
+	notification  *commitNotification
+	readerNeutral bool
 	batchWriter
 	engine              *BadgerEngine
 	embeddingOutcome    *Node

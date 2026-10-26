@@ -29,6 +29,49 @@ type EventSubscriber interface {
 	SubscribeEvents(handlers EventHandlers) error
 }
 
+// EventNotificationsSettled reports whether every previously visible mutation
+// has finished delivering its events. An unsupported engine returns false.
+// Consumers may establish a new revision/event baseline only at such a point,
+// and must sample the graph revision again after sampling their event counter.
+// It never waits for callbacks, which may themselves be waiting on the reader.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func EventNotificationsSettled(engine Engine) bool {
+	provider, ok := engine.(interface{ EventNotificationsSettled() bool })
+	return ok && provider.EventNotificationsSettled()
+}
+
+// EventNotificationsSettled observes the canonical notification queue. Native
+// synchronous commits reserve their queue entry before publishing graph data.
+// Buffered commits acknowledge data before their per-operation events exist;
+// those cannot certify this baseline and conservatively return false.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func (b *BadgerEngine) EventNotificationsSettled() bool {
+	if b.writeBehindEnabled() {
+		return false
+	}
+	b.notificationMu.Lock()
+	defer b.notificationMu.Unlock()
+	return b.notificationHead == nil && !b.notificationDraining
+}
+
+// EventNotificationsSettled forwards the existing publisher's metadata.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func (n *NamespacedEngine) EventNotificationsSettled() bool {
+	return EventNotificationsSettled(n.inner)
+}
+
+// EventNotificationsSettled forwards the existing publisher's metadata.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func (w *WALEngine) EventNotificationsSettled() bool {
+	return EventNotificationsSettled(w.engine)
+}
+
+// EventNotificationsSettled forwards the existing publisher's metadata.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func (t *TracedEngine) EventNotificationsSettled() bool {
+	return EventNotificationsSettled(t.Engine)
+}
+
 // SubscribeEvents subscribes handlers to engine, or reports that it cannot
 // deliver events. It checks engine only, never unwrapping it: a wrapper that
 // does not forward the capability is an error, not a silent gap.

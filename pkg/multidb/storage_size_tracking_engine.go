@@ -1,3 +1,4 @@
+// Author: Codex implementation lane, 2026-10-27 (NOR-148 snapshot reader contract).
 package multidb
 
 import (
@@ -629,8 +630,10 @@ func (t *sizeTrackingEngine) PropertyKeyKnown(name string) bool {
 
 // OpenReadSnapshot forwards to the tracked engine; reads are not charged.
 func (t *sizeTrackingEngine) OpenReadSnapshot(ctx context.Context) (storage.ReadSnapshotView, error) {
-	return storage.OpenReadSnapshot(ctx, t.Engine)
+	return storage.OpenReadSnapshot(storage.SnapshotStreamFallbackContext(ctx, t.Engine), t.Engine)
 }
+
+func (t *sizeTrackingEngine) OwnsSnapshotReader(issued storage.Engine) bool { return issued == t }
 
 var _ storage.ReadSnapshotter = (*sizeTrackingEngine)(nil)
 var _ storage.EventSubscriber = (*sizeTrackingEngine)(nil)
