@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: migrate fixtures to admitted callable publication.
+
 import (
 	"context"
 	"testing"
@@ -21,11 +23,7 @@ func BenchmarkListInputCollections(b *testing.B) {
 			b.Run(input.name+"/"+function, func(b *testing.B) {
 				prefix := "apoc.coll."
 				if function == "toList" {
-					previous := PluginFunctionLookup
-					PluginFunctionLookup = func(name string) (interface{}, bool) {
-						return apocconvert.ToList, name == "apoc.convert.toList"
-					}
-					defer func() { PluginFunctionLookup = previous }()
+					withPluginFunctions(b, map[string]interface{}{"apoc.convert.toList": apocconvert.ToList})
 					prefix = "apoc.convert."
 				}
 				store := storage.NewNamespacedEngine(newTestMemoryEngine(b), "list_bench")

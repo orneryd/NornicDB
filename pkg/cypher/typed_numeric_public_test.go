@@ -1,5 +1,7 @@
 package cypher
 
+// Author: Codex NOR-184 lane: preserve compiled ABI inventory with callable metadata.
+
 import (
 	"context"
 	"encoding/json"
@@ -171,7 +173,7 @@ func TestTypedNumericPublicWidths(t *testing.T) {
 	for _, name := range apoc.List() {
 		if strings.HasPrefix(name, "apoc.util.") {
 			info, _ := apoc.GetInfo(name)
-			signature := reflect.TypeOf(info.Handler)
+			signature := info.Handler.Signature()
 			if signature.Kind() == reflect.Func && signature.NumIn() == 1 && signature.In(0).Kind() == reflect.Interface {
 				queries = append(queries, name+"(%s)", name+"(head(%s))")
 			}
@@ -180,7 +182,7 @@ func TestTypedNumericPublicWidths(t *testing.T) {
 			continue
 		}
 		info, _ := apoc.GetInfo(name)
-		signature := reflect.TypeOf(info.Handler)
+		signature := info.Handler.Signature()
 		if signature.Kind() != reflect.Func || signature.NumIn() == 0 {
 			continue
 		}
@@ -408,7 +410,7 @@ func TestTypedNumericMathNarrowing(t *testing.T) {
 			continue
 		}
 		info, _ := apoc.GetInfo(name)
-		signature := reflect.TypeOf(info.Handler)
+		signature := info.Handler.Signature()
 		if signature.Kind() != reflect.Func || signature.IsVariadic() {
 			continue
 		}
