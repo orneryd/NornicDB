@@ -2,8 +2,9 @@ package lifecycle
 
 import (
 	"context"
-	"errors"
 	"fmt"
+
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
 
 // DrainReverse calls Shutdown on each component in REVERSE slice order
@@ -23,7 +24,7 @@ func DrainReverse(ctx context.Context, components []Component) error {
 	for i := len(components) - 1; i >= 0; i-- {
 		c := components[i]
 		if err := c.Shutdown(ctx); err != nil {
-			shutdownErr = errors.Join(shutdownErr, fmt.Errorf("%s shutdown: %w", c.Name(), err))
+			shutdownErr = compose.Outcomes(shutdownErr, fmt.Errorf("%s shutdown: %w", c.Name(), err))
 		}
 	}
 	return shutdownErr

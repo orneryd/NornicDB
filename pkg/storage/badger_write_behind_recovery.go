@@ -2,8 +2,9 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
+
+	"github.com/orneryd/nornicdb/pkg/errors/compose"
 )
 
 // Recovery retains one batch plus the record currently being decoded, rather
@@ -167,10 +168,10 @@ func recoverAcceptedCommits(engine Engine, wal *WAL, authority walPropertyAuthor
 	// Completed batches remain durable if a later record fails. Repair their
 	// counts as well, while preserving the original recovery failure.
 	if countErr := b.ensureLabelCounts(); countErr != nil {
-		err = errors.Join(err, fmt.Errorf("wal: rebuild label counts after buffered replay: %w", countErr))
+		err = compose.Outcomes(err, fmt.Errorf("wal: rebuild label counts after buffered replay: %w", countErr))
 	}
 	if countErr := b.ensureEdgeTypeCounts(); countErr != nil {
-		err = errors.Join(err, fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", countErr))
+		err = compose.Outcomes(err, fmt.Errorf("wal: rebuild edge-type counts after buffered replay: %w", countErr))
 	}
 	return replayed, err
 }
