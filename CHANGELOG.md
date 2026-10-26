@@ -147,6 +147,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recovery on retry, reopen and Restore. Refresh attached quota accounting before
   writes resume after Restore, preserving configured limits and accepted reservations.
 
+<!-- Author: Codex implementation lane for NOR-207, 2026-10-26. -->
+- Match APOC word-initial capitalize/decapitalize values, including ASCII-space
+  boundaries and trimming. Plain capitalize changes only its initial character;
+  camelCase and upperCamelCase retain their existing outputs.
+
 - Publish each replication command to the in-memory WAL once; complete transport
   shutdown without holding admission locks or missing late connections.
 - Prevent native node-deletion/relationship lock cycles and retain temporal
