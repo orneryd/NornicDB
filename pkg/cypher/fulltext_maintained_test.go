@@ -27,7 +27,13 @@ func (s *fulltextCountingStore) AllNodes() ([]*storage.Node, error) {
 
 func fulltextMaintainedFixture(tb testing.TB, count int) (*StorageExecutor, *fulltextCountingStore) {
 	tb.Helper()
-	base := storage.NewMemoryEngine()
+	// Use the physical Badger owner (in memory). The MemoryEngine wrapper's
+	// missing canonical unwrapping is tracked separately as NOR-289.
+	return fulltextMaintainedFixtureOn(tb, storage.NewMemoryEngine().BadgerEngine, count)
+}
+
+func fulltextMaintainedFixtureOn(tb testing.TB, base *storage.BadgerEngine, count int) (*StorageExecutor, *fulltextCountingStore) {
+	tb.Helper()
 	store := &fulltextCountingStore{NamespacedEngine: storage.NewNamespacedEngine(base, "fulltext_fixture")}
 	tb.Cleanup(func() { require.NoError(tb, base.Close()) })
 	nodes := make([]*storage.Node, count)
@@ -45,7 +51,9 @@ func fulltextMaintainedFixture(tb testing.TB, count int) (*StorageExecutor, *ful
 	}
 	err := store.BulkCreateNodes(nodes)
 	require.NoError(tb, err)
-	exec := NewStorageExecutor(store)
+	// Every measured invocation must reach the procedure, including repeated
+	// identical parameters; query-result caching would hide corpus rebuilds.
+	exec := NewStorageExecutor(store, QueryCachePolicy{MaxEntries: 0})
 	_, err = exec.Execute(context.Background(), "CREATE FULLTEXT INDEX source_text FOR (n:Source) ON EACH [n.text, n.title]", nil)
 	require.NoError(tb, err)
 	return exec, store
@@ -76,6 +84,20 @@ func TestFulltextMaintainedPublicNoRebuild(t *testing.T) {
 		}
 		require.Equal(t, scans, store.scans.Load(), "a repeated public search rebuilt the corpus from storage")
 	}
+	node, err := store.GetNode("n000040")
+	require.NoError(t, err)
+	node.Properties["text"] = "newunique hotel services"
+	require.NoError(t, store.UpdateNode(node))
+	scans := store.scans.Load()
+	changed, err := exec.Execute(ctx, queries[0], map[string]any{"query": "newunique", "limit": int64(10)})
+	require.NoError(t, err)
+	require.Len(t, changed.Rows, 1)
+	require.Equal(t, scans, store.scans.Load(), "one changed document must refresh without rereading the whole store")
+	require.NoError(t, store.DeleteNode("n000040"))
+	deleted, err := exec.Execute(ctx, queries[0], map[string]any{"query": "newunique", "limit": int64(10)})
+	require.NoError(t, err)
+	require.Empty(t, deleted.Rows)
+	require.Equal(t, scans, store.scans.Load(), "deletion must retire its document without rereading the whole store")
 }
 
 // The carrier deliberately uses only release APIs so both A/B arms execute
@@ -84,8 +106,8 @@ func BenchmarkNOR148FulltextPublic(b *testing.B) {
 	exec, _ := fulltextMaintainedFixture(b, 6000)
 	params := map[string]any{"query": "hotel torrey pines services", "limit": int64(10)}
 	for name, query := range map[string]string{
-		"top10": "CALL db.index.fulltext.queryNodes('source_text', $query) YIELD node, score RETURN node.id, score ORDER BY score DESC, node.id LIMIT $limit",
-		"count": "CALL db.index.fulltext.queryNodes('source_text', $query) YIELD node, score RETURN count(node) AS n",
+		"top10":    "CALL db.index.fulltext.queryNodes('source_text', $query) YIELD node, score RETURN node.id, score ORDER BY score DESC, node.id LIMIT $limit",
+		"count":    "CALL db.index.fulltext.queryNodes('source_text', $query) YIELD node, score RETURN count(node) AS n",
 		"eligible": "CALL db.index.fulltext.queryNodes('source_text', $query) YIELD node, score WHERE coalesce(node.current, true) RETURN node.id, score ORDER BY score DESC, node.id LIMIT $limit",
 	} {
 		b.Run(name, func(b *testing.B) {
@@ -95,7 +117,9 @@ func BenchmarkNOR148FulltextPublic(b *testing.B) {
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				_, err := exec.Execute(context.Background(), query, params)
-				if err != nil { b.Fatal(err) }
+				if err != nil {
+					b.Fatal(err)
+				}
 			}
 		})
 	}

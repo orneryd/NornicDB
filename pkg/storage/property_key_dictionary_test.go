@@ -107,7 +107,7 @@ func TestPropertyKeyDict_PersistTxnCountersReportsFailure(t *testing.T) {
 	eng := newTestEngine(t)
 	require.NoError(t, eng.db.Close())
 
-	err := eng.propKeyDict.persistTxnCounters(eng.db, propKeyTxnDrain{
+	err := eng.propKeyDict.persistTxnCounters(eng.db, standalonePublication, propKeyTxnDrain{
 		counters: map[string]uint64{"nornic": 20},
 		pending: []propKeyPersistEntry{{
 			namespace: "nornic",
@@ -129,7 +129,7 @@ func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
 	firstTxn.Discard()
 	closed := newTestEngine(t)
 	require.NoError(t, closed.db.Close())
-	require.Error(t, dict.persistTxnCounters(closed.db, drain))
+	require.Error(t, dict.persistTxnCounters(closed.db, standalonePublication, drain))
 
 	secondTxn := eng.db.testTxn(true)
 	_, err = dict.resolveOrAllocateInTxn(secondTxn, "nornic", "novelProperty")
@@ -137,7 +137,7 @@ func TestPropertyKeyDict_FailedPersistenceIsStagedAgain(t *testing.T) {
 	retryDrain := dict.flushTxnCounters(secondTxn)
 	secondTxn.Discard()
 	require.Len(t, retryDrain.pending, 1, "an unpersisted token must be restaged on retry")
-	require.NoError(t, dict.persistTxnCounters(eng.db, retryDrain))
+	require.NoError(t, dict.persistTxnCounters(eng.db, standalonePublication, retryDrain))
 }
 
 func TestPropertyKeyDict_NovelKeySurvivesCleanReopen(t *testing.T) {
@@ -191,7 +191,7 @@ func TestPropertyKeyDict_HydrateFromBadger(t *testing.T) {
 		counters = first.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	require.NoError(t, first.propKeyDict.persistTxnCounters(first.db, counters))
+	require.NoError(t, first.propKeyDict.persistTxnCounters(first.db, standalonePublication, counters))
 	require.NoError(t, first.Close())
 
 	// Reopen — V0 store with no bodies, so the upgrade gate doesn't
@@ -239,7 +239,7 @@ func TestPropertyKeyDict_HydrateRecoversFromMissingCounter(t *testing.T) {
 		counters = first.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	require.NoError(t, first.propKeyDict.persistTxnCounters(first.db, counters))
+	require.NoError(t, first.propKeyDict.persistTxnCounters(first.db, standalonePublication, counters))
 
 	// Manually delete the counter key to simulate a partial write.
 	require.NoError(t, first.db.Update(func(txn *badger.Txn) error {
@@ -289,7 +289,7 @@ func TestPropertyKeyDict_CounterFlushesOncePerNamespace(t *testing.T) {
 		batchedCounters = dict.flushTxnCounters(txn)
 		return nil
 	}))
-	require.NoError(t, dict.persistTxnCounters(eng.db, batchedCounters))
+	require.NoError(t, dict.persistTxnCounters(eng.db, standalonePublication, batchedCounters))
 
 	// Exactly two counter keys should exist.
 	require.NoError(t, eng.db.View(func(txn *badger.Txn) error {
@@ -543,7 +543,7 @@ func TestPropertyKeyDict_HydrateSkipsMalformedKeys(t *testing.T) {
 		counters = first.propKeyDict.flushTxnCounters(txn)
 		return nil
 	}))
-	require.NoError(t, first.propKeyDict.persistTxnCounters(first.db, counters))
+	require.NoError(t, first.propKeyDict.persistTxnCounters(first.db, standalonePublication, counters))
 
 	// Inject malformed keys under both prefixes.
 	require.NoError(t, first.db.Update(func(txn *badger.Txn) error {

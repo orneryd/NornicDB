@@ -145,7 +145,7 @@ func TestEmbeddingPublicationProofRefreshesAfterReentrantWrite(t *testing.T) {
 func TestEmbeddingPublicationProofUnobservedPredecessor(t *testing.T) {
 	b := newSidecarTestBadger(t)
 	node := publicationProofPayload(t, b)
-	prior, err := b.db.oracle.assign()
+	prior, err := b.db.oracle.assign(standalonePublication)
 	require.NoError(t, err)
 	defer b.db.oracle.finish(prior)
 	previous := b.db.newTxnAt(prior-1, true)

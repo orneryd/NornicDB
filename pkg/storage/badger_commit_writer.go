@@ -1,3 +1,4 @@
+// Author of the reader publication: #1683 lane (Claude), 2026-10-30 (NOR-148).
 package storage
 
 import (
@@ -25,11 +26,17 @@ import (
 // property-key tokens are made durable before the first batch that can
 // reference them (ordinary commit: one separate commit before it; large
 // commit: a batch of their own ahead of each batch).
+//
+// Every timestamp the commit takes is in the write's reader publication pub,
+// which the caller opened (newReaderPublication) and closes after the write's
+// follow-up commits: one write is one step for readers however many batches
+// and commits it takes.
 type commitWriter struct {
 	publish      func()
 	stored       *storedEntityCommit
 	publishKeys  []any
 	notification *commitNotification
+	pub          *readerPublication
 	batchWriter
 	engine              *BadgerEngine
 	embeddingOutcome    *Node
@@ -46,8 +53,8 @@ type commitWriter struct {
 	onBatch func(next *badger.Txn)
 }
 
-func (b *BadgerEngine) newCommitWriter(db *managedBadgerDB, txn *badger.Txn) *commitWriter {
-	cw := &commitWriter{engine: b, db: db}
+func (b *BadgerEngine) newCommitWriter(db *managedBadgerDB, txn *badger.Txn, pub *readerPublication) *commitWriter {
+	cw := &commitWriter{engine: b, db: db, pub: pub}
 	cw.batchWriter = batchWriter{txn: txn, to: cw}
 	return cw
 }
@@ -60,7 +67,7 @@ func (cw *commitWriter) commitBatch(txn *badger.Txn) error {
 		if cw.beforeLarge != nil {
 			cw.beforeLarge()
 		}
-		lc, err := cw.db.beginLargeCommit(cw.reserveNotification)
+		lc, err := cw.db.beginLargeCommit(cw.pub, cw.reserveNotification)
 		if err != nil {
 			return err
 		}
@@ -113,7 +120,7 @@ func (cw *commitWriter) finish() error {
 	cw.collectPendingEmbeddingAdds(cw.txn)
 	if cw.large == nil {
 		dict := cw.engine.propKeyDict
-		if err := dict.persistTxnCounters(cw.db, dict.flushTxnCounters(cw.txn)); err != nil {
+		if err := dict.persistTxnCounters(cw.db, cw.pub, dict.flushTxnCounters(cw.txn)); err != nil {
 			return fmt.Errorf("%w: %w", errPersistingTokens, err)
 		}
 		if err := cw.commitOutcome(); err != nil {
@@ -151,7 +158,7 @@ func (cw *commitWriter) abort() error {
 var errPersistingTokens = errors.New("persisting property key dictionary")
 
 func (cw *commitWriter) commitOutcomeBatch() (uint64, error) {
-	return cw.db.commitShared(cw.txn, cw.publication())
+	return cw.db.commitShared(cw.txn, cw.pub, cw.publication())
 }
 
 // publication is the memory-only delta associated with this physical commit.

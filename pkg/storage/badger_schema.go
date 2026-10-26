@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/jsontext"
 
@@ -172,34 +173,14 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 		idx.mu.Unlock()
 	}
 
-	prefix := make([]byte, 0, 1+len(namespace)+1)
-	prefix = append(prefix, prefixNode)
-	prefix = append(prefix, []byte(namespace)...)
-	prefix = append(prefix, ':')
-
 	// Called by loadPersistedSchemas, a loader: it reads past a restore's
 	// hold (viewHeld).
 	if err := b.db.viewHeld(func(txn *badger.Txn) error {
-		opts := badgerIteratorOptions()
-		opts.Prefix = prefix
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			var raw []byte
-			if err := item.Value(func(val []byte) error {
-				raw = append([]byte(nil), val...)
-				return nil
-			}); err != nil {
-				return err
-			}
-
-			node, err := b.decodeNode(namespace, raw)
-			if err != nil {
+		rows := nodeRowScan{scope: rowsWithPrefix(namespace + ":"), overlay: noOverlay[NodeID](), decode: decodeErrorsFail, visibility: scanStored,
+			hooks: rowHooks[NodeID]{decodeFailure: func(_ NodeID, err error) error {
 				return fmt.Errorf("schema: rebuild unique values: decode node: %w", err)
-			}
-
+			}}}
+		return b.streamNodesWithOptionsInTxn(context.Background(), txn, rows, StreamNodesOptions{}, func(node *Node) error {
 			if hasUnique {
 				for _, label := range node.Labels {
 					for propName, propValue := range node.Properties {
@@ -225,8 +206,8 @@ func (b *BadgerEngine) rebuildUniqueConstraintValues(namespace string, sm *Schem
 					}
 				}
 			}
-		}
-		return nil
+			return nil
+		})
 	}); err != nil {
 		return err
 	}

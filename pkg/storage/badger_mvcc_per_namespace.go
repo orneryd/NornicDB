@@ -125,7 +125,7 @@ func (b *BadgerEngine) namespaceMVCC(namespace string) (*namespaceMVCCState, err
 	}
 	b.mvccByNamespaceMu.Unlock()
 	if !ok && recoveredSeq > persisted {
-		b.persistMVCCSequence(namespace)
+		b.persistMVCCSequence(namespace, standalonePublication)
 	}
 	return state, nil
 }
@@ -188,7 +188,7 @@ func (b *BadgerEngine) EnsureNamespaceMVCC(namespace string) error {
 		}
 	}
 	if wantSeq > persisted {
-		b.persistMVCCSequence(namespace)
+		b.persistMVCCSequence(namespace, standalonePublication)
 	}
 	return nil
 }

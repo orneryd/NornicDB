@@ -359,12 +359,12 @@ func (d *propertyKeyDictionary) flushTxnCounters(txn *badger.Txn) propKeyTxnDrai
 
 // persistTxnCounters writes the staged forward/reverse entries and
 // per-namespace counter keys out of the user transaction, as ordinary
-// commits of as many batches as they need.
-func (d *propertyKeyDictionary) persistTxnCounters(db *managedBadgerDB, drain propKeyTxnDrain) error {
+// commits of as many batches as they need, in reader publication p.
+func (d *propertyKeyDictionary) persistTxnCounters(db *managedBadgerDB, p *readerPublication, drain propKeyTxnDrain) error {
 	if drain.empty() {
 		return nil
 	}
-	w := &batchWriter{to: db}
+	w := &batchWriter{to: ordinaryBatches{db: db, p: p}}
 	defer w.discard()
 	err := drain.writeTo(w)
 	if err == nil {

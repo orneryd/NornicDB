@@ -81,6 +81,11 @@ func (s *transactionOwnedStorage) SubscribeEvents(handlers storage.EventHandlers
 	return storage.SubscribeEvents(s.Engine, handlers)
 }
 
+// EventNotificationsSettled forwards the owned engine's report.
+func (s *transactionOwnedStorage) EventNotificationsSettled() bool {
+	return storage.EventNotificationsSettled(s.Engine)
+}
+
 var _ storage.EventSubscriber = (*transactionOwnedStorage)(nil)
 
 func ownedTransactionControlError() error {

@@ -266,7 +266,7 @@ func (b *BadgerEngine) persistReplayTxnCounters(cw *commitWriter, drain propKeyT
 	if drain.empty() {
 		return nil
 	}
-	var to batchTarget = b.db
+	var to batchTarget = ordinaryBatches{db: b.db, p: cw.pub}
 	if cw.large != nil {
 		to = cw.large
 	}
@@ -323,7 +323,9 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 	}
 
 	txn := b.db.DB.NewTransactionAt(b.db.oracle.published.Load(), true)
-	cw := b.newCommitWriter(b.db, txn)
+	pub := newReaderPublication()
+	defer b.db.oracle.closePublication(pub)
+	cw := b.newCommitWriter(b.db, txn, pub)
 	recovered := false
 	for _, commit := range commits {
 		if commit.recovered {
@@ -543,10 +545,10 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 
 	// Commit tail: durability bookkeeping, derived counts, caches, callbacks.
 	for ns := range versions {
-		b.persistMVCCSequence(ns)
+		b.persistMVCCSequence(ns, pub)
 	}
 	if anyCounters {
-		b.idDict.persistCounters(b.db, maxNode, maxEdge)
+		b.idDict.persistCounters(b.db, pub, maxNode, maxEdge)
 	}
 	// Apply the generation's merged count deltas in ONE metadata transaction
 	// instead of three separate Badger commits while holding the count
@@ -577,7 +579,7 @@ func (b *BadgerEngine) applyBufferedCommitsWithCountPublication(commits []buffer
 						"subsystem", "storage", "error", tierErr)
 				}
 			}
-			if tierErr := b.applyEdgeTypeLabelCountDeltasLocked(edgeTypeLabelDeltas); tierErr != nil {
+			if tierErr := b.applyEdgeTypeLabelCountDeltasLocked(pub, edgeTypeLabelDeltas); tierErr != nil {
 				if repairErr := b.rebuildAuthoritativeEdgeTypeCountsLocked(); repairErr != nil && b.log != nil {
 					b.log.Error("write-behind replay: (label, type) count delta apply and repair failed",
 						"subsystem", "storage", "update_error", tierErr, "repair_error", repairErr)
@@ -719,6 +721,11 @@ func (b *BadgerEngine) FlushWriteBehind() error {
 	}
 	return nil
 }
+
+// WriteBehindEnabled reports whether buffered publication can change scan
+// order as it drains, independently of visible graph mutation revisions.
+// Author: Codex implementation lane, 2026-10-26 (NOR-148).
+func (b *BadgerEngine) WriteBehindEnabled() bool { return b.writeBehindEnabled() }
 
 // writeBehindEnabled reports whether the buffer is active.
 func (b *BadgerEngine) writeBehindEnabled() bool {

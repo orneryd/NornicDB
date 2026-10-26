@@ -42,14 +42,14 @@ func TestBadgerEngine_MVCCSequenceLoadInitializeAndPersist(t *testing.T) {
 
 	t.Run("persistMVCCSequence branch behavior", func(t *testing.T) {
 		// Empty namespace short-circuits.
-		engine.persistMVCCSequence("")
+		engine.persistMVCCSequence("", standalonePublication)
 
 		state, err := engine.namespaceMVCC("test")
 		require.NoError(t, err)
 
 		// Zero sequence short-circuits (no key written).
 		state.seq.Store(0)
-		engine.persistMVCCSequence("test")
+		engine.persistMVCCSequence("test", standalonePublication)
 		err = engine.db.View(func(txn *badger.Txn) error {
 			_, gErr := txn.Get(state.persistKey)
 			require.ErrorIs(t, gErr, badger.ErrKeyNotFound)
@@ -59,7 +59,7 @@ func TestBadgerEngine_MVCCSequenceLoadInitializeAndPersist(t *testing.T) {
 
 		// Non-zero sequence persists value.
 		state.seq.Store(77)
-		engine.persistMVCCSequence("test")
+		engine.persistMVCCSequence("test", standalonePublication)
 		err = engine.db.View(func(txn *badger.Txn) error {
 			item, gErr := txn.Get(state.persistKey)
 			require.NoError(t, gErr)

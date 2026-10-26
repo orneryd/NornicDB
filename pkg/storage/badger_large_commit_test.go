@@ -401,7 +401,7 @@ func TestManagedBadger_RecoversInterruptedLargeCommit(t *testing.T) {
 		return txn.Set([]byte("k2"), []byte("b"))
 	}))
 
-	lc, err := m.beginLargeCommit()
+	lc, err := m.beginLargeCommit(standalonePublication)
 	require.NoError(t, err)
 	batch := lc.openBatch()
 	require.NoError(t, batch.Set([]byte("k1"), []byte("x")))
@@ -409,7 +409,7 @@ func TestManagedBadger_RecoversInterruptedLargeCommit(t *testing.T) {
 	require.NoError(t, batch.Set([]byte("k3"), []byte("c")))
 	require.NoError(t, lc.commitBatch(batch))
 	// A rollback a crash interrupted: one key already restored.
-	restoreTs, err := m.oracle.assign()
+	restoreTs, err := m.oracle.assign(standalonePublication)
 	require.NoError(t, err)
 	partial := m.DB.NewTransactionAt(lc.intentTs, true)
 	require.NoError(t, partial.Set([]byte("k1"), []byte("a")))
@@ -445,7 +445,7 @@ func TestManagedBadger_FirstBatchConflictWritesNothing(t *testing.T) {
 	require.NoError(t, txn.Set([]byte("other"), []byte("y")))
 	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("b")) }))
 
-	lc, err := m.beginLargeCommit()
+	lc, err := m.beginLargeCommit(standalonePublication)
 	require.NoError(t, err)
 	require.ErrorIs(t, lc.commitBatch(txn), badger.ErrConflict)
 	require.NoError(t, lc.abort())
@@ -504,7 +504,7 @@ func TestCommitOracle_DiscardStaysBelowOpenReads(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(10), readTs)
 	for i := 0; i < 3; i++ {
-		ts, err := o.assign()
+		ts, err := o.assign(standalonePublication)
 		require.NoError(t, err)
 		o.finish(ts)
 	}
@@ -520,9 +520,9 @@ func TestCommitOracle_DiscardStaysBelowOpenReads(t *testing.T) {
 
 func TestCommitOracle_PublishesOnlyContiguousFinishes(t *testing.T) {
 	o := newCommitOracle(0)
-	first, err := o.assign()
+	first, err := o.assign(standalonePublication)
 	require.NoError(t, err)
-	second, err := o.assign()
+	second, err := o.assign(standalonePublication)
 	require.NoError(t, err)
 	o.finish(second)
 	require.Zero(t, o.published.Load(), "a later commit is not visible before an earlier one finishes")

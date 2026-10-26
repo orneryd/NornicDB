@@ -109,7 +109,7 @@ func (b *BadgerEngine) persistPropertyIdentityLocked(db *managedBadgerDB, identi
 		tx := db.newTxnAt(ts, true)
 		defer tx.Discard()
 		if err = write(tx); err == nil {
-			err = db.commit(tx)
+			err = db.commit(tx, standalonePublication)
 		}
 	} else {
 		err = db.Update(write)

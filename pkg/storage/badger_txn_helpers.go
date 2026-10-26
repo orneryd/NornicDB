@@ -153,6 +153,9 @@ func (b *BadgerEngine) withPublishingUpdate(fn func(*badger.Txn) error, publish 
 type engineWriteOptions struct {
 	units     []func(*badger.Txn) error
 	lifecycle *lifecycleWrite
+	// publication is the reader publication of the write this commit
+	// follows up; without one the commit is a write of its own.
+	publication *readerPublication
 }
 
 // commitEngineWrite is the one commit of the engine's own writes (withUpdate callbacks or repeatable units): write fills the commit writer, which then commits. A
@@ -176,6 +179,11 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, opt
 		return err
 	}
 	defer b.txnWG.Done()
+	pub := option.publication
+	if pub == nil {
+		pub = newReaderPublication()
+		defer db.oracle.closePublication(pub)
+	}
 	var nodeMax, edgeMax uint64
 	err = recoverBadgerClosedPanic(func() error {
 		var txn *badger.Txn
@@ -190,7 +198,7 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, opt
 			return err
 		}
 		defer db.endRead(readTs)
-		cw := b.newCommitWriter(db, txn)
+		cw := b.newCommitWriter(db, txn, pub)
 		defer cw.discard()
 		fail := func(err error) error {
 			b.idDict.discardTxnCounters(cw.txn)
@@ -223,7 +231,7 @@ func (b *BadgerEngine) commitEngineWrite(write func(cw *commitWriter) error, opt
 	})
 	if err == nil {
 		runCommitTailHook()
-		b.idDict.persistCounters(db, nodeMax, edgeMax)
+		b.idDict.persistCounters(db, pub, nodeMax, edgeMax)
 	}
 	return err
 }

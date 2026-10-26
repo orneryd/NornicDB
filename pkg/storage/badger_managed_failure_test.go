@@ -202,7 +202,7 @@ func TestPropertyKeyDict_ManyNamesRefusedStayUnpersisted(t *testing.T) {
 	}
 	drain := engine.propKeyDict.flushTxnCounters(txn)
 	engine.db.oracle.fail(errors.New("disk gone"))
-	require.ErrorContains(t, engine.propKeyDict.persistTxnCounters(engine.db, drain), "refuses writes until restart")
+	require.ErrorContains(t, engine.propKeyDict.persistTxnCounters(engine.db, standalonePublication, drain), "refuses writes until restart")
 	again := engine.db.DB.NewTransactionAt(engine.db.oracle.published.Load(), true)
 	defer again.Discard()
 	_, err = engine.propKeyDict.resolveOrAllocateInTxn(again, "test", "refused_0")
@@ -214,11 +214,11 @@ func TestPropertyKeyDict_ManyNamesRefusedStayUnpersisted(t *testing.T) {
 // waiting for its own write to publish is released with the failure.
 func TestCommitOracle_FailureReleasesWaiters(t *testing.T) {
 	o := newCommitOracle(5)
-	ts, err := o.assign()
+	ts, err := o.assign(standalonePublication)
 	require.NoError(t, err)
 	cause := errors.New("disk gone")
 	o.fail(cause)
-	_, err = o.assign()
+	_, err = o.assign(standalonePublication)
 	require.ErrorIs(t, err, cause)
 	require.ErrorIs(t, o.waitPublished(ts), cause)
 	require.ErrorIs(t, o.failure(), cause)
@@ -235,7 +235,7 @@ func TestManagedBadger_OpenFailsWhenRecoveryCannotWrite(t *testing.T) {
 	m, err := fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts))
 	require.NoError(t, err)
 	require.NoError(t, m.Update(func(txn *badger.Txn) error { return txn.Set([]byte("k"), []byte("a")) }))
-	lc, err := m.beginLargeCommit()
+	lc, err := m.beginLargeCommit(standalonePublication)
 	require.NoError(t, err)
 	batch := lc.openBatch()
 	require.NoError(t, batch.Set([]byte("k"), []byte("x")))
@@ -270,7 +270,7 @@ func TestManagedBadger_LargeCommitCannotStartOnReadOnlyStore(t *testing.T) {
 	m, err = fixtureowner.OwnResult[*managedBadgerDB](t, nil)(openManagedBadger(opts.WithReadOnly(true)))
 	require.NoError(t, err)
 	defer m.Close()
-	_, err = m.beginLargeCommit()
+	_, err = m.beginLargeCommit(standalonePublication)
 	require.ErrorContains(t, err, "rolling back")
 	require.Error(t, m.oracle.failure())
 	require.NoError(t, m.View(func(txn *badger.Txn) error {
@@ -334,7 +334,7 @@ func TestCommitWriter_BeforeLargeRunsOnceWhenTheCommitTurnsLarge(t *testing.T) {
 		txn, readTs, err := engine.db.beginTxn(true)
 		require.NoError(t, err)
 		defer engine.db.endRead(readTs)
-		cw := engine.newCommitWriter(engine.db, txn)
+		cw := engine.newCommitWriter(engine.db, txn, standalonePublication)
 		defer cw.discard()
 		calls := 0
 		cw.beforeLarge = func() { calls++ }
