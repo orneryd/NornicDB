@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+
+	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 )
 
 // ErrSecondWriteShard is returned when a distributed transaction attempts to write
@@ -339,7 +341,7 @@ func (t *FabricTransaction) Commit(commitFn CommitCallback, rollbackFn RollbackC
 		t.state = outcome
 		err = fmt.Errorf("commit failed on shard '%s': %w", writer.ShardName, err)
 		if cleanupErr != nil {
-			err = fmt.Errorf("%w (rollback failed: %w; cleanup not confirmed)", err, cleanupErr)
+			err = nornicerrors.CombineTerminalOutcomes(err, fmt.Errorf("rollback failed (cleanup not confirmed): %w", cleanupErr))
 		}
 		switch outcome {
 		case "committed":
@@ -413,7 +415,8 @@ func (t *FabricTransaction) abortCommitLocked(rollbackFn RollbackCallback, panic
 	}
 	t.state = "rolledback"
 	if len(rollbackErrs) > 0 {
-		return fmt.Errorf("%w: %w (rollback failed on: %w; cleanup not confirmed)", ErrCommitKeptNothing, commitErr, errors.Join(rollbackErrs...))
+		rollbackErr := fmt.Errorf("rollback failed (cleanup not confirmed): %w", nornicerrors.CombineTerminalOutcomes(nil, rollbackErrs...))
+		return nornicerrors.CombineTerminalOutcomes(fmt.Errorf("%w: %w", ErrCommitKeptNothing, commitErr), rollbackErr)
 	}
 	return fmt.Errorf("%w: %w", ErrCommitKeptNothing, commitErr)
 }
@@ -463,7 +466,7 @@ func (t *FabricTransaction) Rollback(rollbackFn RollbackCallback) error {
 	}
 	t.state = "rolledback"
 	if len(failures) > 0 {
-		return fmt.Errorf("rollback failed (cleanup not confirmed): %w", errors.Join(failures...))
+		return fmt.Errorf("rollback failed (cleanup not confirmed): %w", nornicerrors.CombineTerminalOutcomes(nil, failures...))
 	}
 	return nil
 }
