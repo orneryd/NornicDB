@@ -22,8 +22,8 @@ func TestRecoveredUpdateDeleteReleasesIntermediateUniqueValue(t *testing.T) {
 			node, err := tx.GetNode("test:original")
 			require.NoError(t, err)
 			node.Properties["v"] = "transient"
-			require.NoError(t, tx.UpdateNode(node))
-			require.NoError(t, tx.DeleteNode(node.ID))
+			require.NoError(t, tx.UpdateGraphNode(node, ClientNodeEdits))
+			require.NoError(t, tx.DeleteGraphNode(node.ID, CascadeEdges))
 			require.NoError(t, tx.Commit())
 			require.True(t, tx.AcknowledgedBuffered())
 			entries, err := ReadWALEntriesFromDir(wal.Config().Dir)

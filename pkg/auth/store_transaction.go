@@ -82,8 +82,12 @@ func (s *storeTransaction) CreateNode(node *storage.Node) (storage.NodeID, error
 	return s.tx.CreateNode(node)
 }
 
-func (s *storeTransaction) UpdateNode(node *storage.Node) error { return s.tx.UpdateNode(node) }
-func (s *storeTransaction) DeleteNode(id storage.NodeID) error  { return s.tx.DeleteNode(id) }
+func (s *storeTransaction) UpdateNode(node *storage.Node) error {
+	return s.tx.UpdateGraphNode(node, storage.ClientNodeEdits)
+}
+func (s *storeTransaction) DeleteNode(id storage.NodeID) error {
+	return s.tx.DeleteGraphNode(id, storage.CascadeEdges)
+}
 func (s *storeTransaction) GetNode(id storage.NodeID) (*storage.Node, error) {
 	return s.tx.GetNode(id)
 }

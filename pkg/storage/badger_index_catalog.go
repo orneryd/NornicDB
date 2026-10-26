@@ -26,7 +26,7 @@ func (b *BadgerEngine) PutIndexEntryCatalog(entityID string, cat *IndexEntryCata
 }
 
 func putIndexEntryCatalogInTxn(txn *badger.Txn, entityID string, cat *IndexEntryCatalog) error {
-	entry, err := getAccessMetaInTxn(txn, entityID)
+	entry, err := accessMetaInTxn(txn, entityID, accessMetaRead, nil)
 	if err != nil {
 		return err
 	}
@@ -36,14 +36,19 @@ func putIndexEntryCatalogInTxn(txn *badger.Txn, entityID string, cat *IndexEntry
 	entry.IndexKeys = cat.IndexKeys
 	entry.HasIndexKeys = true
 	entry.Deindexed = cat.Deindexed
-	return putAccessMetaInTxn(txn, entityID, entry)
+	_, err = accessMetaInTxn(txn, entityID, accessMetaWrite, entry)
+	return err
 }
 
 func (b *BadgerEngine) GetIndexEntryCatalog(entityID string) (*IndexEntryCatalog, error) {
+	if err := b.pendingPrefixConflict(entityID); err != nil {
+		return nil, err
+	}
+
 	var entry *knowledgepolicy.AccessMetaEntry
 	err := b.withView(func(txn *badger.Txn) error {
 		var err error
-		entry, err = getAccessMetaInTxn(txn, entityID)
+		entry, err = accessMetaInTxn(txn, entityID, accessMetaRead, nil)
 		return err
 	})
 	if err != nil {
@@ -61,15 +66,16 @@ func (b *BadgerEngine) DeleteIndexEntryCatalog(entityID string) error {
 	})
 }
 
-func deleteIndexEntryCatalogInTxn(txn *badger.Txn, entityID string) error {
-	entry, err := getAccessMetaInTxn(txn, entityID)
+func deleteIndexEntryCatalogInTxn(txn kvWriter, entityID string) error {
+	entry, err := accessMetaInTxn(txn, entityID, accessMetaRead, nil)
 	if err != nil || entry == nil {
 		return err
 	}
 	entry.IndexKeys = nil
 	entry.HasIndexKeys = false
 	entry.Deindexed = false
-	return putAccessMetaInTxn(txn, entityID, entry)
+	_, err = accessMetaInTxn(txn, entityID, accessMetaWrite, entry)
+	return err
 }
 
 // collectNodeIndexKeys returns all secondary-index keys written for a node.

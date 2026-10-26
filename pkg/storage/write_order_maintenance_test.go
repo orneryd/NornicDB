@@ -163,7 +163,7 @@ func TestTemporalRebuildRunsAcrossNoWrite(t *testing.T) {
 				moved := period(from.Add(48 * time.Hour))
 				moved.ID = "test:p1"
 				var err error
-				attempts, err = conflictRetried(inner, func(tx *BadgerTransaction) error { return tx.UpdateNode(moved) })
+				attempts, err = conflictRetried(inner, func(tx *BadgerTransaction) error { return tx.UpdateGraphNode(moved, ClientNodeEdits) })
 				if err != nil {
 					return err
 				}
@@ -208,7 +208,7 @@ func TestIDRepairRunsAcrossNoWrite(t *testing.T) {
 			hook, wait := writeAtPause(pauseIDRepairRestore, func() error {
 				var err error
 				attempts, err = conflictRetried(b, func(tx *BadgerTransaction) error {
-					return tx.UpdateNode(&Node{ID: "test:b", Labels: []string{"Doc", "Source", "Fresh"}})
+					return tx.UpdateGraphNode(&Node{ID: "test:b", Labels: []string{"Doc", "Source", "Fresh"}}, ClientNodeEdits)
 				})
 				if err != nil {
 					return err

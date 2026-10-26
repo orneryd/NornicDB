@@ -51,28 +51,28 @@ type bufferedReadVisibility struct {
 }
 
 // bufferedLabelNodes is the overlay's label scan for a read with visibility v.
-func (b *BadgerEngine) bufferedLabelNodes(w *WriteBehindBuffer, v readVisibility, label string) ([]*Node, map[NodeID]bool) {
-	nodes, touched := w.labelOverlayLocked(label)
+func (b *BadgerEngine) bufferedLabelNodes(w *WriteBehindBuffer, v readVisibility, label string, prefixes ...string) ([]*Node, map[NodeID]bool) {
+	nodes, touched := w.labelOverlayLocked(label, prefixes...)
 	return b.visibleBufferedNodes(v, nodes), touched
 }
 
 // bufferedAllNodes is the overlay's node scan for a read with visibility v.
-func (b *BadgerEngine) bufferedAllNodes(w *WriteBehindBuffer, v readVisibility) ([]*Node, map[NodeID]bool) {
-	nodes, touched := w.allNodesOverlayLocked()
+func (b *BadgerEngine) bufferedAllNodes(w *WriteBehindBuffer, v readVisibility, prefixes ...string) ([]*Node, map[NodeID]bool) {
+	nodes, touched := w.allNodesOverlayLocked(prefixes...)
 	return b.visibleBufferedNodes(v, nodes), touched
 }
 
 // bufferedAllEdges is the overlay's relationship scan for a read with
 // visibility v.
-func (b *BadgerEngine) bufferedAllEdges(w *WriteBehindBuffer, v readVisibility) ([]*Edge, map[EdgeID]bool) {
-	edges, touched := w.allEdgesOverlayLocked()
+func (b *BadgerEngine) bufferedAllEdges(w *WriteBehindBuffer, v readVisibility, prefixes ...string) ([]*Edge, map[EdgeID]bool) {
+	edges, touched := w.allEdgesOverlayLocked(prefixes...)
 	return b.visibleBufferedEdges(v, edges), touched
 }
 
 // bufferedTypeEdges is the overlay's relationship-type scan for a read with
 // visibility v.
-func (b *BadgerEngine) bufferedTypeEdges(w *WriteBehindBuffer, v readVisibility, edgeType string) ([]*Edge, map[EdgeID]bool) {
-	edges, touched := w.typeOverlayLocked(edgeType)
+func (b *BadgerEngine) bufferedTypeEdges(w *WriteBehindBuffer, v readVisibility, edgeType string, prefixes ...string) ([]*Edge, map[EdgeID]bool) {
+	edges, touched := w.typeOverlayLocked(edgeType, prefixes...)
 	return b.visibleBufferedEdges(v, edges), touched
 }
 

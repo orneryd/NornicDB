@@ -65,13 +65,13 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 		{
 			name: "explicit transaction",
 			node: func(t *testing.T, b *BadgerEngine, n *Node) error {
-				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.UpdateNode(n) })
+				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.UpdateGraphNode(n, ClientNodeEdits) })
 			},
 			edge: func(t *testing.T, b *BadgerEngine, e *Edge) error {
 				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.UpdateEdge(e) })
 			},
 			delNode: func(t *testing.T, b *BadgerEngine, id NodeID) error {
-				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.DeleteNode(id) })
+				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(id, CascadeEdges) })
 			},
 			delEdge: func(t *testing.T, b *BadgerEngine, id EdgeID) error {
 				return explicit(t, b, func(tx *BadgerTransaction) error { return tx.DeleteEdge(id) })
@@ -110,9 +110,9 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 						require.NoError(t, b.FlushWriteBehind())
 						if op == "hidden delete" {
 							if kind == "node" {
-								require.NoError(t, b.SetNodeManuallySuppressed("test:n", true))
+								require.NoError(t, b.SetManualSuppression(StoredEntityNodeKind, "test:n", true))
 							} else {
-								require.NoError(t, b.SetEdgeManuallySuppressed("test:r", true))
+								require.NoError(t, b.SetManualSuppression(StoredEntityEdgeKind, "test:r", true))
 							}
 						}
 						// An acknowledged, unflushed commit of the entity.
@@ -120,7 +120,7 @@ func TestSynchronousWritesOrderAfterBufferedCommits(t *testing.T) {
 						require.NoError(t, err)
 						require.NoError(t, tx.SetImplicit(true))
 						if kind == "node" {
-							require.NoError(t, tx.UpdateNode(&Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}))
+							require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:n", Properties: map[string]any{"v": "acknowledged"}}, ClientNodeEdits))
 						} else {
 							require.NoError(t, tx.UpdateEdge(edge("acknowledged")))
 						}
@@ -199,7 +199,7 @@ func TestSynchronousDeleteRemovesBufferedRelationships(t *testing.T) {
 			default:
 				del, err := b.BeginTransaction()
 				require.NoError(t, err)
-				require.NoError(t, del.DeleteNode("test:a"))
+				require.NoError(t, del.DeleteGraphNode("test:a", CascadeEdges))
 				require.NoError(t, del.Commit())
 			}
 			check := func(stage string) {

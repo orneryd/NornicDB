@@ -37,12 +37,12 @@ func TestFollowerCreateMeetsHiddenPredecessor(t *testing.T) {
 		}
 		require.NoError(t, base.CreateEdge(&storage.Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "old"}}))
 		require.NoError(t, base.FlushWriteBehind())
-		require.NoError(t, base.SetNodeManuallySuppressed(hiddenNode, true))
-		require.NoError(t, base.SetEdgeManuallySuppressed(hiddenEdge, true))
+		require.NoError(t, base.SetManualSuppression(storage.StoredEntityNodeKind, string(hiddenNode), true))
+		require.NoError(t, base.SetManualSuppression(storage.StoredEntityEdgeKind, string(hiddenEdge), true))
 
-		err = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: encodeNodeForTest(t, &storage.Node{ID: hiddenNode, Labels: []string{"Replicated"}})})
+		err = adapter.ApplyCommand(&Command{Type: CmdCreateNode, Data: runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: hiddenNode, Labels: []string{"Replicated"}})})
 		require.ErrorIs(t, err, storage.ErrAlreadyExists, "write-behind=%v", buffered)
-		err = adapter.ApplyCommand(&Command{Type: CmdCreateEdge, Data: encodeEdgeForTest(t, &storage.Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "new"}})})
+		err = adapter.ApplyCommand(&Command{Type: CmdCreateEdge, Data: runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, &storage.Edge{ID: hiddenEdge, StartNode: "test:a", EndNode: "test:b", Type: "LINK", Properties: map[string]any{"key": "new"}})})
 		var conflict *storage.HiddenEdgeIdentityConflictError
 		require.True(t, errors.Is(err, storage.ErrAlreadyExists) || errors.As(err, &conflict), "write-behind=%v: %v", buffered, err)
 

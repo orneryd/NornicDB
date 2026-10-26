@@ -11,63 +11,92 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBadgerEngine_TemporalAsOfAndCurrentPointer(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-	constraint := Constraint{
-		Name:       "fact_temporal",
-		Type:       ConstraintTemporal,
-		Label:      "FactVersion",
-		Properties: []string{"fact_key", "valid_from", "valid_to"},
-	}
-	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(constraint))
-
-	v1Start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	v1End := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
-	v2Start := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
-
-	_, err := engine.CreateNode(&Node{
-		ID:     NodeID(prefixTestID("fact-v1")),
-		Labels: []string{"FactVersion"},
-		Properties: map[string]interface{}{
-			"fact_key":   "k1",
-			"valid_from": v1Start,
-			"valid_to":   v1End,
-		},
-	})
-	require.NoError(t, err)
-	_, err = engine.CreateNode(&Node{
-		ID:     NodeID(prefixTestID("fact-v2")),
-		Labels: []string{"FactVersion"},
-		Properties: map[string]interface{}{
-			"fact_key":   "k1",
-			"valid_from": v2Start,
-			"valid_to":   nil,
-		},
-	})
-	require.NoError(t, err)
-
-	node, err := engine.GetTemporalNodeAsOfInNamespace("test", "FactVersion", "fact_key", "k1", "valid_from", "valid_to", time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC))
-	require.NoError(t, err)
-	require.NotNil(t, node)
-	require.Equal(t, NodeID(prefixTestID("fact-v1")), node.ID)
-
-	node, err = engine.GetTemporalNodeAsOfInNamespace("test", "FactVersion", "fact_key", "k1", "valid_from", "valid_to", time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC))
-	require.NoError(t, err)
-	require.NotNil(t, node)
-	require.Equal(t, NodeID(prefixTestID("fact-v2")), node.ID)
-
-	desc := makeTemporalDescriptor("test", constraint, "k1")
-	var currentID NodeID
-	err = engine.withView(func(txn *badger.Txn) error {
-		item, err := txn.Get(temporalCurrentKey(desc))
-		require.NoError(t, err)
-		return item.Value(func(val []byte) error {
-			currentID = NodeID(append([]byte(nil), val...))
-			return nil
+func TestBadgerTemporal_AsOfAndCurrentPointer(t *testing.T) {
+	for _, transactional := range []bool{false, true} {
+		name := "EngineAsOfAndCurrentPointer"
+		if transactional {
+			name = "TransactionCurrentPointerFollowsCommittedWrites"
+		}
+		t.Run(name, func(t *testing.T) {
+			engine := createTestBadgerEngine(t)
+			constraint := Constraint{Name: "fact_temporal", Type: ConstraintTemporal, Label: "FactVersion", Properties: []string{"fact_key", "valid_from", "valid_to"}}
+			require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(constraint))
+			closedID, currentID := NodeID(prefixTestID("fact-v1")), NodeID(prefixTestID("fact-v2"))
+			key := "k1"
+			closedStart := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+			closedEnd := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+			currentStart := time.Date(2024, 2, 1, 0, 0, 0, 0, time.UTC)
+			type query struct {
+				at   time.Time
+				want NodeID
+			}
+			queries := []query{{time.Date(2024, 1, 15, 0, 0, 0, 0, time.UTC), closedID}, {time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC), currentID}}
+			var base time.Time
+			if transactional {
+				base = time.Now().UTC().Truncate(time.Second)
+				closedID, currentID = NodeID(prefixTestID("fact-closed")), NodeID(prefixTestID("fact-current"))
+				key = "txn-pointer"
+				closedStart, closedEnd, currentStart = base.Add(-4*time.Hour), base.Add(-2*time.Hour), base.Add(-1*time.Hour)
+				queries = []query{{base, currentID}}
+			}
+			makeVersion := func(id NodeID, start time.Time, end interface{}) *Node {
+				return &Node{ID: id, Labels: []string{"FactVersion"}, Properties: map[string]interface{}{"fact_key": key, "valid_from": start, "valid_to": end}}
+			}
+			_, err := engine.CreateNode(makeVersion(closedID, closedStart, closedEnd))
+			require.NoError(t, err)
+			current := makeVersion(currentID, currentStart, nil)
+			if transactional {
+				tx, err := engine.BeginTransaction()
+				require.NoError(t, err)
+				defer tx.Rollback()
+				_, err = tx.CreateNode(current)
+				require.NoError(t, err)
+				require.NoError(t, tx.Commit())
+			} else {
+				_, err = engine.CreateNode(current)
+				require.NoError(t, err)
+			}
+			for _, query := range queries {
+				node, err := engine.GetTemporalNodeAsOfInNamespace("test", "FactVersion", "fact_key", key, "valid_from", "valid_to", query.at)
+				require.NoError(t, err)
+				require.NotNil(t, node)
+				require.Equal(t, query.want, node.ID)
+			}
+			desc := makeTemporalDescriptor("test", constraint, key)
+			var gotID NodeID
+			err = engine.withView(func(txn *badger.Txn) error {
+				item, err := txn.Get(temporalCurrentKey(desc))
+				require.NoError(t, err)
+				return item.Value(func(val []byte) error {
+					gotID = NodeID(append([]byte(nil), val...))
+					if transactional {
+						require.Equal(t, currentID, gotID)
+					}
+					return nil
+				})
+			})
+			require.NoError(t, err)
+			if !transactional {
+				require.Equal(t, currentID, gotID)
+			}
+			if transactional {
+				tx, err := engine.BeginTransaction()
+				require.NoError(t, err)
+				defer tx.Rollback()
+				require.NoError(t, tx.DeleteGraphNode(currentID, CascadeEdges))
+				require.NoError(t, tx.Commit())
+				node, err := engine.GetTemporalNodeAsOfInNamespace("test", "FactVersion", "fact_key", key, "valid_from", "valid_to", base)
+				require.NoError(t, err)
+				require.Nil(t, node)
+				err = engine.withView(func(txn *badger.Txn) error {
+					_, err := txn.Get(temporalCurrentKey(desc))
+					require.ErrorIs(t, err, badger.ErrKeyNotFound)
+					return nil
+				})
+				require.NoError(t, err)
+			}
 		})
-	})
-	require.NoError(t, err)
-	require.Equal(t, NodeID(prefixTestID("fact-v2")), currentID)
+	}
 }
 
 func TestBadgerEngine_TemporalAdjacentOverlapChecks(t *testing.T) {
@@ -105,77 +134,6 @@ func TestBadgerEngine_TemporalAdjacentOverlapChecks(t *testing.T) {
 	err = tx.checkTemporalConstraint(makeNode("acct-middle-bad", "acct", base.Add(90*time.Minute), base.Add(4*time.Hour)), constraint)
 	require.Error(t, err)
 	require.NoError(t, tx.Rollback())
-}
-
-func TestBadgerTransaction_TemporalCurrentPointerFollowsCommittedWrites(t *testing.T) {
-	engine := createTestBadgerEngine(t)
-	constraint := Constraint{
-		Name:       "fact_temporal",
-		Type:       ConstraintTemporal,
-		Label:      "FactVersion",
-		Properties: []string{"fact_key", "valid_from", "valid_to"},
-	}
-	require.NoError(t, engine.GetSchemaForNamespace("test").AddConstraint(constraint))
-
-	base := time.Now().UTC().Truncate(time.Second)
-	closedID := NodeID(prefixTestID("fact-closed"))
-	currentID := NodeID(prefixTestID("fact-current"))
-	_, err := engine.CreateNode(&Node{
-		ID:     closedID,
-		Labels: []string{"FactVersion"},
-		Properties: map[string]interface{}{
-			"fact_key":   "txn-pointer",
-			"valid_from": base.Add(-4 * time.Hour),
-			"valid_to":   base.Add(-2 * time.Hour),
-		},
-	})
-	require.NoError(t, err)
-
-	tx, err := engine.BeginTransaction()
-	require.NoError(t, err)
-	_, err = tx.CreateNode(&Node{
-		ID:     currentID,
-		Labels: []string{"FactVersion"},
-		Properties: map[string]interface{}{
-			"fact_key":   "txn-pointer",
-			"valid_from": base.Add(-1 * time.Hour),
-			"valid_to":   nil,
-		},
-	})
-	require.NoError(t, err)
-	require.NoError(t, tx.Commit())
-
-	node, err := engine.GetTemporalNodeAsOfInNamespace("test", "FactVersion", "fact_key", "txn-pointer", "valid_from", "valid_to", base)
-	require.NoError(t, err)
-	require.NotNil(t, node)
-	require.Equal(t, currentID, node.ID)
-
-	desc := makeTemporalDescriptor("test", constraint, "txn-pointer")
-	err = engine.withView(func(txn *badger.Txn) error {
-		item, err := txn.Get(temporalCurrentKey(desc))
-		require.NoError(t, err)
-		return item.Value(func(val []byte) error {
-			require.Equal(t, currentID, NodeID(append([]byte(nil), val...)))
-			return nil
-		})
-	})
-	require.NoError(t, err)
-
-	tx, err = engine.BeginTransaction()
-	require.NoError(t, err)
-	require.NoError(t, tx.DeleteNode(currentID))
-	require.NoError(t, tx.Commit())
-
-	node, err = engine.GetTemporalNodeAsOfInNamespace("test", "FactVersion", "fact_key", "txn-pointer", "valid_from", "valid_to", base)
-	require.NoError(t, err)
-	require.Nil(t, node)
-
-	err = engine.withView(func(txn *badger.Txn) error {
-		_, err := txn.Get(temporalCurrentKey(desc))
-		require.ErrorIs(t, err, badger.ErrKeyNotFound)
-		return nil
-	})
-	require.NoError(t, err)
 }
 
 func TestBadgerEngine_RebuildTemporalIndexes(t *testing.T) {

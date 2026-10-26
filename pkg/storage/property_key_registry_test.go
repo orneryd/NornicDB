@@ -61,7 +61,7 @@ func TestPropertyKeyRegistryAcrossStack(t *testing.T) {
 	committed, err := tx.GetNode("ns:n1")
 	require.NoError(t, err)
 	committed.Properties["h"] = int64(1)
-	require.NoError(t, tx.UpdateNode(committed))
+	require.NoError(t, tx.UpdateGraphNode(committed, ClientNodeEdits))
 	require.NoError(t, tx.CreateEdge(&Edge{ID: "ns:te1", StartNode: "ns:n1", EndNode: "ns:t1", Type: "R", Properties: map[string]any{"i": int64(1)}}))
 	committedEdge, err := tx.GetEdge("ns:e1")
 	require.NoError(t, err)

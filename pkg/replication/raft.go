@@ -11,6 +11,7 @@ import (
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/observability"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // RaftState represents the current state of a Raft node.
@@ -121,11 +122,16 @@ type RaftReplicator struct {
 	leaderID    string
 	leaderAddr  string
 
+	// applyMu serializes physical application without holding logMu across
+	// storage callbacks. Acquire it before logMu.
+	applyMu sync.Mutex
+
 	// Log (protected by logMu)
 	logMu       sync.RWMutex
 	log         []*RaftLogEntry
 	commitIndex uint64
 	lastApplied uint64
+	applyErr    error // committed entry awaiting successful state-machine application
 
 	// Peer state (leader only) and config.Raft.Peers (protected by peerMu).
 	// Lock order: mu, then logMu, then peerMu.
@@ -202,11 +208,11 @@ func (r *RaftReplicator) peerCount() int {
 
 // applyFuture represents a pending apply operation.
 type applyFuture struct {
-	cmd    *Command
-	index  uint64
-	term   uint64
-	errCh  chan error
-	doneCh chan struct{}
+	cmd      *Command
+	index    uint64
+	term     uint64
+	errCh    chan error
+	accepted *raftAcceptedOutcome
 }
 
 // rpcRequest represents an incoming RPC request.
@@ -802,53 +808,71 @@ func (r *RaftReplicator) runApplyLoop(ctx context.Context) {
 }
 
 // processApply handles a single apply request.
-func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) {
+// raftApplyQueue marks the private queue-transfer phase. The accepted
+// future already owns its receipt and producer lease; ordinary requests retain
+// their original separate enqueue and response timeout budgets.
+type raftApplyQueue struct{ timeout time.Duration }
+
+func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture, queue ...raftApplyQueue) error {
+	if len(queue) > 0 {
+		if future.accepted != nil {
+			select {
+			case r.applyCh <- future:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-r.stopCh:
+				return ErrClosed
+			}
+		}
+		timeout := queue[0].timeout
+		select {
+		case r.applyCh <- future:
+		case <-time.After(timeout):
+			return localizedError(localization.ReplicationRaftApplyQueueFull(), nil)
+		}
+		select {
+		case err := <-future.errCh:
+			return err
+		case <-time.After(timeout):
+			return localizedError(localization.ReplicationRaftApplyTimedOut(), nil)
+		}
+	}
+
 	r.mu.RLock()
-	isLeader := r.state == StateLeader
+	var admissionErr error
+	if future.accepted != nil {
+		admissionErr = r.acceptedAdmissionErrorLocked(future.accepted.term)
+	} else if r.state != StateLeader {
+		admissionErr = ErrNotLeader
+	}
+	if admissionErr != nil {
+		r.mu.RUnlock()
+		future.discardBeforeCommit(admissionErr)
+		return nil
+	}
 	term := r.currentTerm
-	r.mu.RUnlock()
-
-	if !isLeader {
-		future.errCh <- ErrNotLeader
-		return
-	}
-
-	// Append to local log
+	// Retain the role/term lease through append and future registration.
+	// Shutdown and leadership changes cannot pass a half-transferred command.
 	r.logMu.Lock()
-	entry := &RaftLogEntry{
-		Index:   r.log[len(r.log)-1].Index + 1,
-		Term:    term,
-		Command: future.cmd,
-	}
+	entry := &RaftLogEntry{Index: r.log[len(r.log)-1].Index + 1, Term: term, Command: future.cmd}
 	r.log = append(r.log, entry)
-	future.index = entry.Index
-	future.term = term
-	r.logMu.Unlock()
-
-	// Track this future for commit notification
+	future.index, future.term = entry.Index, term
 	r.futuresMu.Lock()
 	r.futures[entry.Index] = future
 	r.futuresMu.Unlock()
+	r.logMu.Unlock()
+	r.mu.RUnlock()
 
-	// If single node, commit immediately
+	// If single node, commit immediately through the same ordered owner.
 	if r.peerCount() == 0 {
+		r.applyMu.Lock()
 		r.logMu.Lock()
 		r.commitIndex = entry.Index
+		r.advanceCommitIndex(raftCommittedFrontier{index: r.commitIndex})
 		r.logMu.Unlock()
-
-		// Apply to state machine
-		err := r.storage.ApplyCommand(future.cmd)
-
-		r.logMu.Lock()
-		r.lastApplied = entry.Index
-		r.logMu.Unlock()
-
-		r.futuresMu.Lock()
-		delete(r.futures, entry.Index)
-		r.futuresMu.Unlock()
-
-		future.errCh <- err
-		return
+		r.applyMu.Unlock()
+		return nil
 	}
 
 	// Trigger replication to peers
@@ -857,47 +881,59 @@ func (r *RaftReplicator) processApply(ctx context.Context, future *applyFuture) 
 	r.mu.RUnlock()
 	r.sendHeartbeatsToAllPeers(ctx, currentTerm)
 
-	// Wait for commit in background
+	// Accepted and ordinary requests share one deadline observer. Only the
+	// accepted coordinator retains logical ownership beyond that deadline.
 	go r.waitForCommit(ctx, future)
+
+	return nil
 }
 
 // waitForCommit waits for an entry to be committed.
 func (r *RaftReplicator) waitForCommit(ctx context.Context, future *applyFuture) {
-	ticker := time.NewTicker(10 * time.Millisecond)
-	defer ticker.Stop()
-
-	timeout := time.After(r.config.Raft.CommitTimeout)
-
+	timer := time.NewTimer(r.config.Raft.CommitTimeout)
+	defer timer.Stop()
+	var ctxDone, acceptedDone <-chan struct{}
+	var tick <-chan time.Time
+	if future.accepted != nil {
+		acceptedDone = future.accepted.receipt.Done()
+	} else {
+		ctxDone = ctx.Done()
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		tick = ticker.C
+	}
 	for {
+		var err error
+		remove := false
 		select {
-		case <-ctx.Done():
-			future.errCh <- ctx.Err()
+		case <-acceptedDone:
 			return
+		case <-ctxDone:
+			err = ctx.Err()
 		case <-r.stopCh:
-			future.errCh <- ErrClosed
-			return
-		case <-timeout:
-			r.futuresMu.Lock()
-			delete(r.futures, future.index)
-			r.futuresMu.Unlock()
-			future.errCh <- localizedError(localization.ReplicationRaftCommitTimedOut(r.config.Raft.CommitTimeout), nil)
-			return
-		case <-ticker.C:
+			err = ErrClosed
+		case <-timer.C:
+			err = localizedError(localization.ReplicationRaftCommitTimedOut(r.config.Raft.CommitTimeout), nil)
+			remove = true
+		case <-tick:
 			r.logMu.RLock()
-			committed := r.commitIndex >= future.index
 			applied := r.lastApplied >= future.index
 			r.logMu.RUnlock()
-
-			if applied {
-				future.errCh <- nil
-				return
-			}
-
-			if committed {
-				// Entry is committed but not yet applied - wait for apply
+			if !applied {
 				continue
 			}
 		}
+		if future.accepted != nil {
+			_ = future.accepted.owner.Resolve(storage.CommitOutcome{State: storage.CommitRecoveryPending, Err: err})
+		} else {
+			if remove {
+				r.futuresMu.Lock()
+				delete(r.futures, future.index)
+				r.futuresMu.Unlock()
+			}
+			future.errCh <- err
+		}
+		return
 	}
 }
 
@@ -918,67 +954,92 @@ func (r *RaftReplicator) runCommitLoop(ctx context.Context) {
 }
 
 // advanceCommitIndex checks if any entries can be committed.
-func (r *RaftReplicator) advanceCommitIndex() {
-	r.mu.RLock()
-	isLeader := r.state == StateLeader
-	term := r.currentTerm
-	r.mu.RUnlock()
+// raftCommittedFrontier is a private held-lock phase: the caller already
+// selected a committed frontier under applyMu then logMu. It cannot promote
+// consensus; only the zero-argument leader phase computes a quorum frontier.
+type raftCommittedFrontier struct{ index uint64 }
 
-	if !isLeader {
-		return
-	}
-
-	r.logMu.Lock()
-	defer r.logMu.Unlock()
-
-	// Find highest index replicated to majority of servers
-	for n := r.commitIndex + 1; n < uint64(len(r.log)); n++ {
-		// Only commit entries from current term (Raft safety property)
-		if r.log[n].Term != term {
-			continue
+func (r *RaftReplicator) advanceCommitIndex(known ...raftCommittedFrontier) {
+	if len(known) == 0 {
+		r.mu.RLock()
+		isLeader := r.state == StateLeader
+		term := r.currentTerm
+		r.mu.RUnlock()
+		if !isLeader {
+			return
 		}
+		r.applyMu.Lock()
+		defer r.applyMu.Unlock()
+		r.logMu.Lock()
+		defer r.logMu.Unlock()
 
-		// Count replications (including self)
-		replicatedTo := 1
-		r.peerMu.RLock()
-		for _, peer := range r.config.Raft.Peers {
-			if r.matchIndex[peer.ID] >= n {
-				replicatedTo++
+		// Find highest index replicated to majority of servers
+		for n := r.commitIndex + 1; n < uint64(len(r.log)); n++ {
+			// Only commit entries from current term (Raft safety property)
+			if r.log[n].Term != term {
+				continue
 			}
-		}
-		totalServers := len(r.config.Raft.Peers) + 1
-		r.peerMu.RUnlock()
 
-		// Check for majority
-		if replicatedTo > totalServers/2 {
-			r.commitIndex = n
-		}
-	}
-
-	// Apply committed entries to state machine
-	for r.lastApplied < r.commitIndex {
-		r.lastApplied++
-		applyIdx := r.lastApplied
-
-		if int(applyIdx) < len(r.log) {
-			entry := r.log[applyIdx]
-			if entry.Command != nil {
-				if err := r.storage.ApplyCommand(entry.Command); err != nil {
-					r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
+			// Count replications (including self)
+			replicatedTo := 1
+			r.peerMu.RLock()
+			for _, peer := range r.config.Raft.Peers {
+				if r.matchIndex[peer.ID] >= n {
+					replicatedTo++
 				}
 			}
+			totalServers := len(r.config.Raft.Peers) + 1
+			r.peerMu.RUnlock()
+
+			// Check for majority
+			if replicatedTo > totalServers/2 {
+				r.commitIndex = n
+			}
 		}
 
-		// Notify any waiting futures
-		r.futuresMu.Lock()
-		if future, ok := r.futures[applyIdx]; ok {
-			delete(r.futures, applyIdx)
-			r.futuresMu.Unlock()
-			future.errCh <- nil
+	}
+	frontier := r.commitIndex
+	if len(known) > 0 {
+		frontier = known[0].index
+	}
+	// This is the sole application owner for leader, follower and single-node
+	// commits. Native application runs without logMu; failures retain committed
+	// ownership and successful-only lastApplied advancement for ordered retry.
+
+	for r.lastApplied < frontier {
+		index := r.lastApplied + 1
+		entry := r.log[index]
+		var err error
+		if entry.Command != nil {
+			r.logMu.Unlock()
+			err = r.storage.ApplyCommand(entry.Command)
+			r.logMu.Lock()
+		}
+		if err != nil {
+			r.applyErr = err
+			r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
 		} else {
-			r.futuresMu.Unlock()
+			r.lastApplied = index
+		}
+		// A transport waiter can already have timed out; its buffered result
+		// must not park the committed application owner while holding logMu.
+		// Command ownership remains in the committed log on an apply error.
+		r.futuresMu.Lock()
+		future := r.futures[index]
+		if err == nil || future == nil || future.accepted == nil {
+			delete(r.futures, index)
+		}
+		r.futuresMu.Unlock()
+		if future != nil {
+			future.reportRecorded(err)
+		}
+
+		if err != nil {
+			return
 		}
 	}
+	r.applyErr = nil
+
 }
 
 // runPeerConnector maintains connections to peers.
@@ -1164,6 +1225,11 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 		CodecVersion: CurrentCodecVersion,
 	}
 
+	if r.closed.Load() {
+		r.mu.Unlock()
+		return resp
+	}
+
 	// If request term is stale, reject
 	if req.Term < r.currentTerm {
 		r.mu.Unlock()
@@ -1189,6 +1255,10 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 	case r.heartbeatCh <- struct{}{}:
 	default:
 	}
+
+	// Serialize physical application and log replacement in that order.
+	r.applyMu.Lock()
+	defer r.applyMu.Unlock()
 
 	// Check log consistency
 	r.logMu.Lock()
@@ -1223,7 +1293,24 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 		idx := req.PrevLogIndex + uint64(i) + 1
 		if int(idx) < len(r.log) {
 			if r.log[idx].Term != entry.Term {
-				// Conflict: delete this and all following entries
+				// A committed prefix is immutable. Only uncommitted entries
+				// can be proven discarded by a new leader's replacement.
+				if idx <= r.commitIndex {
+					resp.ConflictIndex = r.commitIndex + 1
+					return resp
+				}
+				r.futuresMu.Lock()
+				var discarded []*applyFuture
+				for index, future := range r.futures {
+					if index >= idx {
+						discarded = append(discarded, future)
+						delete(r.futures, index)
+					}
+				}
+				r.futuresMu.Unlock()
+				for _, future := range discarded {
+					go future.discardBeforeCommit(ErrNotLeader)
+				}
 				clear(r.log[idx:])
 				r.log = r.log[:idx]
 				r.log = append(r.log, entry)
@@ -1252,18 +1339,7 @@ func (r *RaftReplicator) handleAppendEntriesRequest(req *AppendEntriesRequest) *
 		}
 	}
 
-	// Apply committed entries to state machine
-	for r.lastApplied < r.commitIndex {
-		r.lastApplied++
-		if int(r.lastApplied) < len(r.log) {
-			entry := r.log[r.lastApplied]
-			if entry.Command != nil {
-				if err := r.storage.ApplyCommand(entry.Command); err != nil {
-					r.config.logPrintf(context.Background(), slog.LevelError, "[Raft %s] Failed to apply entry %d", r.config.NodeID, entry.Index)
-				}
-			}
-		}
-	}
+	r.advanceCommitIndex(raftCommittedFrontier{index: r.commitIndex})
 
 	resp.Success = true
 	return resp
@@ -1320,11 +1396,8 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 		}
 	}()
 
-	if r.closed.Load() {
-		return ErrClosed
-	}
-	if !r.started.Load() {
-		return ErrNotReady
+	if err := checkApplyReadiness(r.closed.Load(), r.started.Load()); err != nil {
+		return err
 	}
 
 	r.mu.RLock()
@@ -1352,23 +1425,12 @@ func (r *RaftReplicator) Apply(cmd *Command, timeout time.Duration) error {
 		return ErrNotLeader
 	}
 
-	future := &applyFuture{
-		cmd:   cmd,
-		errCh: make(chan error, 1),
-	}
-
-	select {
-	case r.applyCh <- future:
-	case <-time.After(timeout):
-		return localizedError(localization.ReplicationRaftApplyQueueFull(), nil)
-	}
-
-	select {
-	case err := <-future.errCh:
+	if handled, err := routeLeaderEntityCommand(r.storage, r, cmd, timeout); handled {
 		return err
-	case <-time.After(timeout):
-		return localizedError(localization.ReplicationRaftApplyTimedOut(), nil)
 	}
+
+	future := &applyFuture{cmd: cmd, errCh: make(chan error, 1)}
+	return r.processApply(context.Background(), future, raftApplyQueue{timeout: timeout})
 }
 
 // ApplyBatch applies multiple commands atomically.
@@ -1456,8 +1518,12 @@ func (r *RaftReplicator) Health() *HealthStatus {
 	r.logMu.RLock()
 	commitIdx := r.commitIndex
 	appliedIdx := r.lastApplied
+	applyFailed := r.applyErr != nil
 	r.logMu.RUnlock()
 
+	if applyFailed && !r.closed.Load() {
+		stateStr = "apply_failed"
+	}
 	return &HealthStatus{
 		Mode:         ModeRaft,
 		NodeID:       r.config.NodeID,
@@ -1466,7 +1532,7 @@ func (r *RaftReplicator) Health() *HealthStatus {
 		LeaderID:     leaderID,
 		LeaderAddr:   leaderAddr,
 		State:        stateStr,
-		Healthy:      r.started.Load() && !r.closed.Load(),
+		Healthy:      r.started.Load() && !r.closed.Load() && !applyFailed,
 		Term:         term,
 		CommitIndex:  commitIdx,
 		AppliedIndex: appliedIdx,
@@ -1499,12 +1565,15 @@ func (r *RaftReplicator) WaitForLeader(ctx context.Context) error {
 
 // Shutdown gracefully shuts down the replicator.
 func (r *RaftReplicator) Shutdown() error {
+	r.mu.Lock()
 	if !r.closed.CompareAndSwap(false, true) {
+		r.mu.Unlock()
 		return nil
 	}
+	close(r.stopCh)
+	r.mu.Unlock()
 
 	r.config.logPrintf(context.Background(), slog.LevelInfo, "[Raft %s] Shutting down", r.config.NodeID)
-	close(r.stopCh)
 
 	// Close transport to stop listener (unblocks listenForPeers goroutine)
 	if r.transport != nil {
@@ -1520,19 +1589,36 @@ func (r *RaftReplicator) Shutdown() error {
 	}
 	r.peerMu.Unlock()
 
-	// Fail any pending futures
-	r.futuresMu.Lock()
-	for _, future := range r.futures {
+	// Stop queue consumers before classifying remaining ownership. Commands
+	// that never entered the log are a definite discard; committed entries
+	// remain recovery-pending even while their unused native snapshot is freed.
+	r.wg.Wait()
+	for {
 		select {
-		case future.errCh <- ErrClosed:
+		case future := <-r.applyCh:
+			future.discardBeforeCommit(ErrClosed)
 		default:
+			goto queueDrained
 		}
 	}
+queueDrained:
+	r.logMu.RLock()
+	committed := r.commitIndex
+	r.futuresMu.Lock()
+	pending := r.futures
 	r.futures = make(map[uint64]*applyFuture)
 	r.futuresMu.Unlock()
-
-	// Wait for goroutines
-	r.wg.Wait()
+	r.logMu.RUnlock()
+	for index, future := range pending {
+		if future.accepted == nil || index > committed {
+			future.discardBeforeCommit(ErrClosed)
+			continue
+		}
+		if local := future.cmd.accepted; local != nil && !local.started.Load() {
+			local.prepared.CloseNative() // release only physical staging, not logical ownership
+		}
+		_ = future.accepted.owner.Resolve(storage.CommitOutcome{State: storage.CommitRecoveryPending, Err: ErrClosed})
+	}
 
 	return nil
 }

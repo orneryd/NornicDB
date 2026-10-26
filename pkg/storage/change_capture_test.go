@@ -141,13 +141,13 @@ func TestChangeCaptureTransactions(t *testing.T) {
 			return tx.CreateEdge(&Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(1)}})
 		})
 		run(func(tx *BadgerTransaction) error {
-			if err := tx.UpdateNode(&Node{ID: id("a"), Labels: []string{"La", "New"}, Properties: map[string]any{"v": int64(2), "k": "x"}}); err != nil {
+			if err := tx.UpdateGraphNode(&Node{ID: id("a"), Labels: []string{"La", "New"}, Properties: map[string]any{"v": int64(2), "k": "x"}}, ClientNodeEdits); err != nil {
 				return err
 			}
 			return tx.UpdateEdge(&Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(2)}})
 		})
 		run(func(tx *BadgerTransaction) error { // no change, and created then deleted
-			if err := tx.UpdateNode(&Node{ID: id("b"), Labels: []string{"Lb"}, Properties: map[string]any{"v": int64(1), "k": "x"}}); err != nil {
+			if err := tx.UpdateGraphNode(&Node{ID: id("b"), Labels: []string{"Lb"}, Properties: map[string]any{"v": int64(1), "k": "x"}}, ClientNodeEdits); err != nil {
 				return err
 			}
 			if err := tx.UpdateEdge(&Edge{ID: EdgeID(ns + ":r"), Type: "R", StartNode: id("a"), EndNode: id("b"), Properties: map[string]any{"w": int64(2)}}); err != nil {
@@ -156,14 +156,14 @@ func TestChangeCaptureTransactions(t *testing.T) {
 			if _, err := tx.CreateNode(&Node{ID: id("tmp")}); err != nil {
 				return err
 			}
-			return tx.DeleteNode(id("tmp"))
+			return tx.DeleteGraphNode(id("tmp"), CascadeEdges)
 		})
 		tx, err := engine.BeginTransaction()
 		require.NoError(t, err)
 		_, err = tx.CreateNode(&Node{ID: id("gone")})
 		require.NoError(t, err)
 		require.NoError(t, tx.Rollback())
-		run(func(tx *BadgerTransaction) error { return tx.DeleteNode(id("a")) }) // cascades, as DETACH DELETE
+		run(func(tx *BadgerTransaction) error { return tx.DeleteGraphNode(id("a"), CascadeEdges) }) // cascades, as DETACH DELETE
 
 		events, err := engine.ChangeEvents(ns, 0, 0, 0)
 		require.NoError(t, err)

@@ -352,7 +352,7 @@ func (c *CompositeEngine) CreateNode(node *Node) (NodeID, error) {
 	if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
 		// NamespacedEngine.CreateNode returns unprefixed, but we need the prefixed ID
 		// Reconstruct it by prefixing the returned ID
-		actualPrefixedID = namespacedEngine.prefixNodeID(nodeID)
+		actualPrefixedID = namespacedEngine.PrefixNodeID(nodeID)
 	}
 	c.mu.Lock()
 	// Store only prefixed ID -> constituent mapping
@@ -517,7 +517,7 @@ func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 	// (since we don't know which namespace the node belongs to)
 	for _, engine := range c.constituents {
 		if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
-			prefixedStartID := namespacedEngine.prefixNodeID(edge.StartNode)
+			prefixedStartID := namespacedEngine.PrefixNodeID(edge.StartNode)
 			if constituent, found := c.nodeToConstituent[prefixedStartID]; found {
 				startConstituent = constituent
 				startNodeInTx = true
@@ -529,7 +529,7 @@ func (c *CompositeEngine) CreateEdge(edge *Edge) error {
 	// Try to find the constituent for end node
 	for _, engine := range c.constituents {
 		if namespacedEngine, ok := engine.(*NamespacedEngine); ok {
-			prefixedEndID := namespacedEngine.prefixNodeID(edge.EndNode)
+			prefixedEndID := namespacedEngine.PrefixNodeID(edge.EndNode)
 			if constituent, found := c.nodeToConstituent[prefixedEndID]; found {
 				endConstituent = constituent
 				endNodeInTx = true

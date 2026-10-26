@@ -225,8 +225,8 @@ func (b *BadgerEngine) CensusMutantHiddenReplace(n *Node) error {
 	},
 	{
 		name: "hold released before the write", file: "pkg/storage/badger_nodes.go",
-		edits: [][2]string{{"\t\tdefer order.release()\n\t}\n\terr := b.withUpdate(func(txn *badger.Txn) error {\n\t\tversion, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now())",
-			"\t\torder.release()\n\t}\n\terr := b.withUpdate(func(txn *badger.Txn) error {\n\t\tversion, allocErr := b.allocateMVCCVersion(txn, namespaceForNodeID(id), time.Now())"}},
+		edits: [][2]string{{"\t\tdefer order.release()\n\t}\n\tvar publicationOps []Operation\n\tschema := b.schemaForNodeID(id)",
+			"\t\torder.release()\n\t}\n\tvar publicationOps []Operation\n\tschema := b.schemaForNodeID(id)"}},
 		entry: "pkg/storage.BadgerEngine.DeleteNode", want: []string{"unordered write:", ""},
 	},
 	{
@@ -269,9 +269,21 @@ func (b *BadgerEngine) CensusMutantHelper() error { return b.withUpdate(b.census
 		want: []string{"unscoped total: pkg/multidb.DatabaseManager.CensusMutantQuota"},
 	},
 	{
+		name: "accepted allowance map changed through alias", file: "pkg/multidb/zz_census_mutant.go",
+		src:  "package multidb\nfunc(i *DatabaseInfo)CensusPendingAlias(){alias:=i.pending;alias[\"rogue\"]=reservedUsage{nodes:1}}\n",
+		want: []string{"unowned quota change: pkg/multidb.DatabaseInfo.pending", "in pkg/multidb.DatabaseInfo.CensusPendingAlias"},
+	},
+
+	{
+		name: "new quota field stays unclassified", file: "pkg/multidb/manager.go",
+		edits: [][2]string{{"type DatabaseInfo struct {", "func(i *DatabaseInfo) CensusUnknownQuota(){i.censusUnknownQuota++}\ntype DatabaseInfo struct {\ncensusUnknownQuota int64"}},
+		want:  []string{"unclassified field: pkg/multidb.DatabaseInfo.censusUnknownQuota"},
+	},
+
+	{
 		name: "visible prior sized for quota", file: "pkg/multidb/storage_transaction.go",
-		edits: [][2]string{{"return storage.GetStoredNode(t.Engine, storage.NodeID(strings.TrimPrefix(string(id), t.dbName+\":\")))", "return t.Engine.GetNode(storage.NodeID(strings.TrimPrefix(string(id), t.dbName+\":\")))"}},
-		want:  []string{"visible read in quota accounting: pkg/multidb.sizeTrackingEngine.CommitTransaction"},
+		edits: [][2]string{{"if trackBytes {\n\t\tchanges = prepared.Changes()", "if trackBytes {\n\t\tchanges = prepared.Changes()\nfor i := range changes { if changes[i].BeforeNode != nil { changes[i].BeforeNode, _ = t.Engine.GetNode(changes[i].BeforeNode.ID) } }"}},
+		want:  []string{"visible read in quota accounting: pkg/multidb.sizeTrackingEngine.admitPrepared"},
 	},
 	{
 		name: "write through an interface with no acquisition", file: "pkg/storage/zz_census_mutant.go",

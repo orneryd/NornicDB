@@ -1,6 +1,7 @@
 package replication
 
 import (
+	"fmt"
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"bufio"
@@ -163,6 +164,31 @@ func (m *coverageReplicator) HandleForwardApply(cmd *Command, timeout time.Durat
 
 func TestReplicatedEngine_MethodCoverage(t *testing.T) {
 	t.Parallel()
+	t.Run("standalone backing", func(t *testing.T) {
+		base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
+		t.Cleanup(func() { _ = base.Close() })
+
+		engine := setupTestAdapter(t, adapterFixtureOptions{backing: base, standalone: true, timeout: 5 * time.Second}).engine
+		var err error
+
+		_, err = engine.CreateNode(&storage.Node{ID: "db1:n1", Labels: []string{"Person"}})
+		require.NoError(t, err)
+		_, err = engine.CreateNode(&storage.Node{ID: "db2:n2", Labels: []string{"Person"}})
+		require.NoError(t, err)
+
+		// Write must be visible on the underlying engine.
+		_, err = base.GetNode("db1:n1")
+		require.NoError(t, err)
+
+		// Drop prefix must remove only matching IDs.
+		_, _, err = engine.DeleteByPrefix("db1:")
+		require.NoError(t, err)
+		_, err = base.GetNode("db1:n1")
+		require.ErrorIs(t, err, storage.ErrNotFound)
+		_, err = base.GetNode("db2:n2")
+		require.NoError(t, err)
+
+	})
 
 	var nilEngine *ReplicatedEngine
 	assert.True(t, nilEngine.IsLeader())
@@ -217,10 +243,10 @@ func TestReplicatedEngine_MethodCoverage(t *testing.T) {
 	_, _, err = engine.DeleteByPrefix("db1:")
 	require.NoError(t, err)
 
-	require.NoError(t, decodeGob(mock.applied[6].Data, &[][]byte{}))
-	require.NoError(t, decodeGob(mock.applied[7].Data, &[][]byte{}))
-	require.NoError(t, decodeGob(mock.applied[8].Data, &[]storage.NodeID{}))
-	require.NoError(t, decodeGob(mock.applied[9].Data, &[]storage.EdgeID{}))
+	require.NoError(t, storage.DecodeCommandPayload(mock.applied[6].Data, &[][]byte{}))
+	require.NoError(t, storage.DecodeCommandPayload(mock.applied[7].Data, &[][]byte{}))
+	require.NoError(t, storage.DecodeCommandPayload(mock.applied[8].Data, &[]storage.NodeID{}))
+	require.NoError(t, storage.DecodeCommandPayload(mock.applied[9].Data, &[]storage.EdgeID{}))
 
 	mock.applyErr = errors.New("replicate failed")
 	_, err = engine.CreateNode(&storage.Node{ID: "n-fail-create", Labels: []string{"L"}})
@@ -257,7 +283,7 @@ func TestRegisterClusterHandlers_AndDispatch(t *testing.T) {
 	RegisterClusterHandlers(tr, mock)
 	require.Len(t, tr.handlers, 7)
 
-	walPayload, err := encodeGob([]*WALEntry{{Position: 7, Command: &Command{Type: CmdCreateNode}}})
+	walPayload, err := storage.EncodeCommandPayload([]*WALEntry{{Position: 7, Command: &Command{Type: CmdCreateNode}}})
 	require.NoError(t, err)
 	walResp, err := tr.handlers[ClusterMsgWALBatch](context.Background(), "peer-1", &ClusterMessage{Payload: walPayload})
 	require.NoError(t, err)
@@ -265,7 +291,7 @@ func TestRegisterClusterHandlers_AndDispatch(t *testing.T) {
 	require.Len(t, mock.walEntries, 1)
 	assert.Equal(t, uint64(7), mock.walEntries[0].Position)
 
-	heartbeatPayload, err := encodeGob(HeartbeatRequest{NodeID: "peer-1", Role: "standby"})
+	heartbeatPayload, err := storage.EncodeCommandPayload(HeartbeatRequest{NodeID: "peer-1", Role: "standby"})
 	require.NoError(t, err)
 	heartbeatResp, err := tr.handlers[ClusterMsgHeartbeat](context.Background(), "peer-1", &ClusterMessage{Payload: heartbeatPayload})
 	require.NoError(t, err)
@@ -276,35 +302,35 @@ func TestRegisterClusterHandlers_AndDispatch(t *testing.T) {
 	_, err = tr.handlers[ClusterMsgHeartbeat](context.Background(), "peer-1", &ClusterMessage{Payload: []byte("bad")})
 	require.ErrorContains(t, err, "decode heartbeat")
 
-	fencePayload, err := encodeGob(FenceRequest{Reason: "failover"})
+	fencePayload, err := storage.EncodeCommandPayload(FenceRequest{Reason: "failover"})
 	require.NoError(t, err)
 	fenceResp, err := tr.handlers[ClusterMsgFence](context.Background(), "peer-1", &ClusterMessage{Payload: fencePayload})
 	require.NoError(t, err)
 	assert.Equal(t, ClusterMsgFenceResponse, fenceResp.Type)
 	assert.Equal(t, "failover", mock.fenceReq.Reason)
 
-	promotePayload, err := encodeGob(PromoteRequest{Reason: "planned"})
+	promotePayload, err := storage.EncodeCommandPayload(PromoteRequest{Reason: "planned"})
 	require.NoError(t, err)
 	promoteResp, err := tr.handlers[ClusterMsgPromote](context.Background(), "peer-1", &ClusterMessage{Payload: promotePayload})
 	require.NoError(t, err)
 	assert.Equal(t, ClusterMsgPromoteResponse, promoteResp.Type)
 	assert.Equal(t, "planned", mock.promoteReq.Reason)
 
-	votePayload, err := encodeGob(RaftVoteRequest{Term: 5, CandidateID: "cand"})
+	votePayload, err := storage.EncodeCommandPayload(RaftVoteRequest{Term: 5, CandidateID: "cand"})
 	require.NoError(t, err)
 	voteResp, err := tr.handlers[ClusterMsgVoteRequest](context.Background(), "peer-1", &ClusterMessage{Payload: votePayload})
 	require.NoError(t, err)
 	assert.Equal(t, ClusterMsgVoteResponse, voteResp.Type)
 	assert.Equal(t, uint64(5), mock.voteReq.Term)
 
-	appendPayload, err := encodeGob(RaftAppendEntriesRequest{Term: 7, LeaderID: "l1", PrevLogIndex: 9})
+	appendPayload, err := storage.EncodeCommandPayload(RaftAppendEntriesRequest{Term: 7, LeaderID: "l1", PrevLogIndex: 9})
 	require.NoError(t, err)
 	appendResp, err := tr.handlers[ClusterMsgAppendEntries](context.Background(), "peer-1", &ClusterMessage{Payload: appendPayload})
 	require.NoError(t, err)
 	assert.Equal(t, ClusterMsgAppendEntriesResponse, appendResp.Type)
 	assert.Equal(t, uint64(9), mock.appendReq.PrevLogIndex)
 
-	forwardPayload, err := encodeGob(Command{Type: CmdCreateNode, Data: []byte("x")})
+	forwardPayload, err := storage.EncodeCommandPayload(Command{Type: CmdCreateNode, Data: []byte("x")})
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Millisecond)
 	defer cancel()
@@ -320,14 +346,14 @@ func TestRegisterClusterHandlers_AndDispatch(t *testing.T) {
 	forwardResp, err = tr.handlers[ClusterMsgForwardApply](context.Background(), "peer-1", &ClusterMessage{Payload: forwardPayload})
 	require.NoError(t, err)
 	var fr forwardApplyResponse
-	require.NoError(t, decodeGob(forwardResp.Payload, &fr))
+	require.NoError(t, storage.DecodeCommandPayload(forwardResp.Payload, &fr))
 	assert.Equal(t, "forward apply failed", fr.Err)
 }
 
 func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 	t.Parallel()
 
-	adapter, _ := setupTestAdapter(t)
+	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
 
 	_, err := adapter.engine.CreateNode(&storage.Node{ID: "n1", Labels: []string{"L"}})
@@ -345,16 +371,16 @@ func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 	}
 	require.NoError(t, adapter.ApplyCommand(&Command{
 		Type:      CmdUpdateEdge,
-		Data:      encodeEdgeForTest(t, updatedEdge),
+		Data:      runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, updatedEdge),
 		Timestamp: time.Now(),
 	}))
 	gotEdge, err := adapter.engine.GetEdge("e1")
 	require.NoError(t, err)
 	assert.Equal(t, float64(2), gotEdge.Properties["weight"])
 
-	nodeBytes1 := encodeNodeForTest(t, &storage.Node{ID: "n3", Labels: []string{"L"}})
-	nodeBytes2 := encodeNodeForTest(t, &storage.Node{ID: "n4", Labels: []string{"L"}})
-	bulkNodesPayload := encodeGobForTest(t, [][]byte{nodeBytes1, nodeBytes2})
+	nodeBytes1 := runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: "n3", Labels: []string{"L"}})
+	nodeBytes2 := runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: "n4", Labels: []string{"L"}})
+	bulkNodesPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{nodeBytes1, nodeBytes2})
 	require.NoError(t, adapter.ApplyCommand(&Command{
 		Type:      CmdBulkCreateNodes,
 		Data:      bulkNodesPayload,
@@ -365,8 +391,8 @@ func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 	_, err = adapter.engine.GetNode("n4")
 	require.NoError(t, err)
 
-	edgeBytes := encodeEdgeForTest(t, &storage.Edge{ID: "e2", StartNode: "n3", EndNode: "n4", Type: "REL"})
-	bulkEdgesPayload := encodeGobForTest(t, [][]byte{edgeBytes})
+	edgeBytes := runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, &storage.Edge{ID: "e2", StartNode: "n3", EndNode: "n4", Type: "REL"})
+	bulkEdgesPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{edgeBytes})
 	require.NoError(t, adapter.ApplyCommand(&Command{
 		Type:      CmdBulkCreateEdges,
 		Data:      bulkEdgesPayload,
@@ -377,7 +403,7 @@ func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 
 	require.NoError(t, adapter.ApplyCommand(&Command{
 		Type:      CmdBulkDeleteNodes,
-		Data:      encodeGobForTest(t, []storage.NodeID{"n4"}),
+		Data:      runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, []storage.NodeID{"n4"}),
 		Timestamp: time.Now(),
 	}))
 	_, err = adapter.engine.GetNode("n4")
@@ -385,7 +411,7 @@ func TestStorageAdapter_ApplyCommand_UpdateEdgeAndBulkCommands(t *testing.T) {
 
 	require.NoError(t, adapter.ApplyCommand(&Command{
 		Type:      CmdBulkDeleteEdges,
-		Data:      encodeGobForTest(t, []storage.EdgeID{"e2"}),
+		Data:      runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, []storage.EdgeID{"e2"}),
 		Timestamp: time.Now(),
 	}))
 	_, err = adapter.engine.GetEdge("e2")
@@ -609,7 +635,7 @@ func TestMultiRegionReplicator_UncoveredWrapperMethods(t *testing.T) {
 func TestStorageAdapter_PruneWALEntries(t *testing.T) {
 	t.Parallel()
 
-	adapter, _ := setupTestAdapter(t)
+	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
 
 	adapter.memWAL = []*WALEntry{
@@ -906,32 +932,22 @@ func TestRaftReplicator_HandleTransportWrappers(t *testing.T) {
 	assert.True(t, appendResp.Success)
 }
 
-func TestStorageAdapter_ApplyBatchWriteBranches(t *testing.T) {
-	t.Parallel()
-
-	adapter, _ := setupTestAdapter(t)
+func TestStorageAdapter_TypedMixedTransactionReplacesLegacyBatch(t *testing.T) {
+	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
-
-	_, err := adapter.engine.CreateNode(&storage.Node{ID: "a", Labels: []string{"L"}})
+	for _, id := range []storage.NodeID{"a", "b"} {
+		_, err := adapter.engine.CreateNode(&storage.Node{ID: id, Labels: []string{"L"}})
+		require.NoError(t, err)
+	}
+	require.ErrorIs(t, adapter.ApplyCommand(&Command{Type: cmdRetiredBatchWrite, Data: []byte("bad")}), ErrRetiredCommand)
+	ops := []storage.Operation{{Type: storage.OpCreateNode, Node: &storage.Node{ID: "test:n-batch", Labels: []string{"L"}}}, {Type: storage.OpCreateEdge, Edge: &storage.Edge{ID: "test:e-batch", StartNode: "test:a", EndNode: "test:b", Type: "REL"}}}
+	payload, err := storage.EncodeEntityTransaction("test", "mixed-replacement", ops)
 	require.NoError(t, err)
-	_, err = adapter.engine.CreateNode(&storage.Node{ID: "b", Labels: []string{"L"}})
-	require.NoError(t, err)
-
-	nodeBytes := encodeNodeForTest(t, &storage.Node{ID: "n-batch", Labels: []string{"L"}})
-	edgeBytes := encodeEdgeForTest(t, &storage.Edge{ID: "e-batch", StartNode: "a", EndNode: "b", Type: "REL"})
-	batchPayload := encodeGobForTest(t, struct {
-		Nodes [][]byte
-		Edges [][]byte
-	}{Nodes: [][]byte{nodeBytes}, Edges: [][]byte{edgeBytes}})
-
-	require.NoError(t, adapter.applyBatchWrite(batchPayload))
+	require.NoError(t, storage.ApplyAcceptedEntityTransaction(adapter.engine, payload))
 	_, err = adapter.engine.GetNode("n-batch")
 	require.NoError(t, err)
 	_, err = adapter.engine.GetEdge("e-batch")
 	require.NoError(t, err)
-
-	err = adapter.applyBatchWrite([]byte("bad"))
-	require.ErrorContains(t, err, "decode batch")
 }
 
 func TestNewDefaultTransportFromConfig_Branches(t *testing.T) {
@@ -1019,7 +1035,7 @@ func TestHAStandbyReplicator_Start_DefaultTransportSuccessPaths(t *testing.T) {
 func TestStorageAdapter_RestoreSnapshot_ErrorPaths(t *testing.T) {
 	t.Parallel()
 
-	adapter, _ := setupTestAdapter(t)
+	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
 
 	badReader := io.NopCloser(io.Reader(&errReader{err: errors.New("read boom")}))
@@ -1038,7 +1054,7 @@ func TestStorageAdapter_RestoreSnapshot_ErrorPaths(t *testing.T) {
 		WALPosition: 3,
 		Nodes:       []*storage.Node{node, node},
 	}
-	payload, encErr := encodeGob(snapshot)
+	payload, encErr := storage.EncodeCommandPayload(snapshot)
 	require.NoError(t, encErr)
 	err = adapter.RestoreSnapshot(io.NopCloser(bytes.NewReader(payload)))
 	require.ErrorContains(t, err, "restore node")
@@ -1066,182 +1082,106 @@ type errReader struct{ err error }
 
 func (r *errReader) Read([]byte) (int, error) { return 0, r.err }
 
-func TestStorageAdapter_ApplyCommand_SyncWALFallbackPath(t *testing.T) {
+func TestStorageAdapter_ApplyCommand_SyncWALFallback(t *testing.T) {
 	t.Parallel()
-
-	adapter, _ := setupTestAdapter(t)
-	t.Cleanup(func() { _ = adapter.Close() })
-
-	// Force the non-blocking queue send to hit default: path, exercising
-	// the synchronous WAL append fallback branch. We stop the async
-	// writer first so the queue swap doesn't race with walWriterLoop
-	// reading the channel (caught by go test -race when this test runs
-	// alongside others that don't stop the writer).
-	adapter.stopWALWriterForTest()
-	adapter.walQueue = make(chan *walWriteRequest)
-
-	cmd := &Command{
-		Type:      CmdCreateNode,
-		Data:      encodeNodeForTest(t, &storage.Node{ID: "fallback-n1", Labels: []string{"L"}}),
-		Timestamp: time.Now(),
+	for _, closed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("closed=%v", closed), func(t *testing.T) {
+			adapter := setupTestAdapter(t).adapter
+			// Stop the actual writer before replacing its queue, preserving the race-safe
+			// rendezvous that forces the non-blocking enqueue's synchronous fallback.
+			adapter.stopWALWriterForTest()
+			adapter.walQueue = make(chan *walWriteRequest)
+			id := storage.NodeID("fallback-n1")
+			if closed {
+				require.NoError(t, adapter.wal.Close())
+				id = "fallback-fail"
+			}
+			command := &Command{Type: CmdCreateNode, Data: runtimeFixtureOwner.Encode(t, storage.EncodeNodePayload, &storage.Node{ID: id, Labels: []string{"L"}}), Timestamp: time.Now()}
+			err := adapter.ApplyCommand(command)
+			if closed && err != nil {
+				require.ErrorContains(t, err, "failed to append to WAL")
+				return
+			}
+			require.NoError(t, err)
+			_, err = adapter.engine.GetNode(id)
+			require.NoError(t, err)
+		})
 	}
-	require.NoError(t, adapter.ApplyCommand(cmd))
-
-	_, err := adapter.engine.GetNode("fallback-n1")
-	require.NoError(t, err)
 }
 
-func TestStorageAdapter_ApplyCommand_SyncWALFallbackError(t *testing.T) {
+func TestClusterTransport_SendMethods_ErrorMatrix(t *testing.T) {
 	t.Parallel()
-
-	adapter, _ := setupTestAdapter(t)
-	t.Cleanup(func() { _ = adapter.Close() })
-
-	// Force fallback branch and make WAL append fail. Stop the async
-	// writer first so the queue swap doesn't race with walWriterLoop.
-	adapter.stopWALWriterForTest()
-	adapter.walQueue = make(chan *walWriteRequest)
-	require.NoError(t, adapter.wal.Close())
-
-	cmd := &Command{
-		Type:      CmdCreateNode,
-		Data:      encodeNodeForTest(t, &storage.Node{ID: "fallback-fail", Labels: []string{"L"}}),
-		Timestamp: time.Now(),
-	}
-	err := adapter.ApplyCommand(cmd)
-	if err != nil {
-		require.ErrorContains(t, err, "failed to append to WAL")
-		return
-	}
-	_, getErr := adapter.engine.GetNode("fallback-fail")
-	require.NoError(t, getErr)
-}
-
-func TestClusterTransport_SendMethods_DecodeAndErrorBranches(t *testing.T) {
-	t.Parallel()
-
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	server := NewClusterTransport(&ClusterTransportConfig{
-		NodeID:   "server-decode",
-		BindAddr: "127.0.0.1:0",
-	})
-
-	// Return intentionally invalid payloads to exercise decode error paths.
-	server.RegisterHandler(ClusterMsgWALBatch, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		return &ClusterMessage{Type: ClusterMsgWALBatchResponse, Payload: []byte("bad")}, nil
-	})
-	server.RegisterHandler(ClusterMsgHeartbeat, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		return &ClusterMessage{Type: ClusterMsgHeartbeatResponse, Payload: []byte("bad")}, nil
-	})
-	server.RegisterHandler(ClusterMsgFence, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		return &ClusterMessage{Type: ClusterMsgFenceResponse, Payload: []byte("bad")}, nil
-	})
-	server.RegisterHandler(ClusterMsgPromote, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		return &ClusterMessage{Type: ClusterMsgPromoteResponse, Payload: []byte("bad")}, nil
-	})
-	server.RegisterHandler(ClusterMsgVoteRequest, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		return &ClusterMessage{Type: ClusterMsgVoteResponse, Payload: []byte("bad")}, nil
-	})
-	server.RegisterHandler(ClusterMsgAppendEntries, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		return &ClusterMessage{Type: ClusterMsgAppendEntriesResponse, Payload: []byte("bad")}, nil
-	})
+	server := NewClusterTransport(&ClusterTransportConfig{NodeID: "server-errors", BindAddr: "127.0.0.1:0"})
+	for request, response := range map[ClusterMessageType]ClusterMessageType{ClusterMsgWALBatch: ClusterMsgWALBatchResponse, ClusterMsgHeartbeat: ClusterMsgHeartbeatResponse, ClusterMsgFence: ClusterMsgFenceResponse, ClusterMsgPromote: ClusterMsgPromoteResponse, ClusterMsgVoteRequest: ClusterMsgVoteResponse, ClusterMsgAppendEntries: ClusterMsgAppendEntriesResponse} {
+		server.RegisterHandler(request, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
+			return &ClusterMessage{Type: response, Payload: []byte("bad")}, nil
+		})
+	}
 	server.RegisterHandler(ClusterMsgForwardApply, func(context.Context, string, *ClusterMessage) (*ClusterMessage, error) {
-		payload, err := encodeGob(forwardApplyResponse{Err: "leader apply failed"})
-		require.NoError(t, err)
-		return &ClusterMessage{Type: ClusterMsgForwardApplyResponse, Payload: payload}, nil
+		return &ClusterMessage{Type: ClusterMsgForwardApplyResponse, Payload: runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, forwardApplyResponse{Err: "leader apply failed"})}, nil
 	})
-
-	go func() {
-		_ = server.Listen(ctx, server.bindAddr, nil)
-	}()
-
-	deadline := time.Now().Add(2 * time.Second)
-	var boundAddr string
-	for time.Now().Before(deadline) {
-		server.mu.RLock()
-		ln := server.listener
-		boundAddr = server.bindAddr
-		server.mu.RUnlock()
-		if ln != nil {
-			break
+	listenDone := make(chan struct{})
+	go func() { defer close(listenDone); _ = server.Listen(ctx, server.bindAddr, nil) }()
+	t.Cleanup(func() {
+		cancel()
+		_ = server.Close()
+		select {
+		case <-listenDone:
+		case <-time.After(5 * time.Second):
+			t.Error("server listen did not join")
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	client := NewClusterTransport(&ClusterTransportConfig{NodeID: "client-decode"})
-	conn, err := client.Connect(ctx, boundAddr)
+	})
+	var address string
+	require.Eventually(t, func() bool {
+		server.resources.mu.RLock()
+		defer server.resources.mu.RUnlock()
+		address = server.bindAddr
+		return server.resources.listener != nil
+	}, 2*time.Second, 10*time.Millisecond)
+	client := NewClusterTransport(&ClusterTransportConfig{NodeID: "client-errors"})
+	t.Cleanup(func() { _ = client.Close() })
+	conn, err := client.Connect(ctx, address)
 	require.NoError(t, err)
-	defer conn.Close()
+	t.Cleanup(func() { _ = conn.Close() })
 	require.True(t, waitForConnected(conn, 2*time.Second))
 	cc := conn.(*ClusterConnection)
-
-	_, err = cc.SendWALBatch(ctx, []*WALEntry{{Position: 1}})
-	require.ErrorContains(t, err, "decode")
-	_, err = cc.SendHeartbeat(ctx, &HeartbeatRequest{NodeID: "n1"})
-	require.ErrorContains(t, err, "decode")
-	_, err = cc.SendFence(ctx, &FenceRequest{Reason: "r"})
-	require.ErrorContains(t, err, "decode")
-	_, err = cc.SendPromote(ctx, &PromoteRequest{Reason: "r"})
-	require.ErrorContains(t, err, "decode")
-	_, err = cc.SendRaftVote(ctx, &RaftVoteRequest{Term: 1})
-	require.ErrorContains(t, err, "decode")
-	_, err = cc.SendRaftAppendEntries(ctx, &RaftAppendEntriesRequest{Term: 1})
-	require.ErrorContains(t, err, "decode")
-
-	err = cc.SendForwardApply(ctx, &Command{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}, 100*time.Millisecond)
-	require.ErrorContains(t, err, "leader apply failed")
-}
-
-func TestClusterTransport_SendMethods_SendRPCErrorBranches(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	server := NewClusterTransport(&ClusterTransportConfig{
-		NodeID:   "server-rpc-err",
-		BindAddr: "127.0.0.1:0",
-	})
-	go func() {
-		_ = server.Listen(ctx, server.bindAddr, nil)
-	}()
-
-	deadline := time.Now().Add(2 * time.Second)
-	var boundAddr string
-	for time.Now().Before(deadline) {
-		server.mu.RLock()
-		ln := server.listener
-		boundAddr = server.bindAddr
-		server.mu.RUnlock()
-		if ln != nil {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	cases := []struct {
+		name        string
+		send        func(context.Context) error
+		decodeError string
+	}{
+		{"WALBatch", func(c context.Context) error { _, e := cc.SendWALBatch(c, []*WALEntry{{Position: 1}}); return e }, "decode"},
+		{"Heartbeat", func(c context.Context) error { _, e := cc.SendHeartbeat(c, &HeartbeatRequest{NodeID: "n1"}); return e }, "decode"},
+		{"Fence", func(c context.Context) error { _, e := cc.SendFence(c, &FenceRequest{Reason: "r"}); return e }, "decode"},
+		{"Promote", func(c context.Context) error { _, e := cc.SendPromote(c, &PromoteRequest{Reason: "r"}); return e }, "decode"},
+		{"RaftVote", func(c context.Context) error { _, e := cc.SendRaftVote(c, &RaftVoteRequest{Term: 1}); return e }, "decode"},
+		{"RaftAppendEntries", func(c context.Context) error {
+			_, e := cc.SendRaftAppendEntries(c, &RaftAppendEntriesRequest{Term: 1})
+			return e
+		}, "decode"},
+		{"ForwardApply", func(c context.Context) error {
+			return cc.SendForwardApply(c, &Command{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}, 100*time.Millisecond)
+		}, "leader apply failed"},
 	}
-
-	client := NewClusterTransport(&ClusterTransportConfig{NodeID: "client-rpc-err"})
-	conn, err := client.Connect(context.Background(), boundAddr)
-	require.NoError(t, err)
-	defer conn.Close()
-	require.True(t, waitForConnected(conn, 2*time.Second))
-	cc := conn.(*ClusterConnection)
-
-	cancelCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-	_, err = cc.SendWALBatch(cancelCtx, []*WALEntry{{Position: 1}})
-	require.Error(t, err)
-	_, err = cc.SendHeartbeat(cancelCtx, &HeartbeatRequest{NodeID: "n1"})
-	require.Error(t, err)
-	_, err = cc.SendFence(cancelCtx, &FenceRequest{Reason: "r"})
-	require.Error(t, err)
-	_, err = cc.SendPromote(cancelCtx, &PromoteRequest{Reason: "r"})
-	require.Error(t, err)
-	_, err = cc.SendRaftVote(cancelCtx, &RaftVoteRequest{Term: 1})
-	require.Error(t, err)
-	_, err = cc.SendRaftAppendEntries(cancelCtx, &RaftAppendEntriesRequest{Term: 1})
-	require.Error(t, err)
-	err = cc.SendForwardApply(cancelCtx, &Command{Type: CmdCreateNode, Data: []byte("x"), Timestamp: time.Now()}, 100*time.Millisecond)
-	require.Error(t, err)
+	for _, canceled := range []bool{false, true} {
+		callCtx := ctx
+		if canceled {
+			var stop context.CancelFunc
+			callCtx, stop = context.WithCancel(ctx)
+			stop()
+		}
+		for _, test := range cases {
+			t.Run(fmt.Sprintf("%s/canceled=%v", test.name, canceled), func(t *testing.T) {
+				err := test.send(callCtx)
+				if canceled {
+					require.Error(t, err)
+				} else {
+					require.ErrorContains(t, err, test.decodeError)
+				}
+			})
+		}
+	}
 }
 
 func TestHAStandby_HelperBranches(t *testing.T) {
@@ -1310,67 +1250,67 @@ func TestHAStandbyReplicator_Apply_TraceWritesPath(t *testing.T) {
 func TestCodec_DecodePayloadErrorPaths(t *testing.T) {
 	t.Parallel()
 
-	_, err := decodeNodePayload([]byte("bad-node-payload"))
+	_, err := storage.DecodeNodePayload([]byte("bad-node-payload"))
 	require.Error(t, err)
 
-	_, err = decodeEdgePayload([]byte("bad-edge-payload"))
+	_, err = storage.DecodeEdgePayload([]byte("bad-edge-payload"))
 	require.Error(t, err)
 }
 
 func TestStorageAdapter_ApplyHelpers_ErrorAndFallbackBranches(t *testing.T) {
 	t.Parallel()
 
-	adapter, _ := setupTestAdapter(t)
+	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
 
-	require.ErrorContains(t, adapter.applyCreateNode([]byte("bad")), "decode node")
-	require.ErrorContains(t, adapter.applyUpdateNode([]byte("bad")), "decode node")
-	require.ErrorContains(t, adapter.applyCreateEdge([]byte("bad")), "decode edge")
-	require.ErrorContains(t, adapter.applyUpdateEdge([]byte("bad")), "decode edge")
-	require.ErrorContains(t, adapter.applyDeleteEdge([]byte("bad")), "decode delete edge request")
-	require.ErrorContains(t, adapter.applySetProperty([]byte("bad")), "decode set property request")
+	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdCreateNode, []byte("bad")), "decode node")
+	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdUpdateNode, []byte("bad")), "decode node")
+	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdCreateEdge, []byte("bad")), "decode edge")
+	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdUpdateEdge, []byte("bad")), "decode edge")
+	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdDeleteEdge, []byte("bad")), "decode delete edge request")
+	require.ErrorIs(t, adapter.ApplyCommand(&Command{Type: cmdRetiredSetProperty, Data: []byte("bad")}), ErrRetiredCommand)
 	require.ErrorContains(t, adapter.applyDeleteByPrefix([]byte("bad")), "decode delete by prefix request")
-	require.ErrorContains(t, adapter.applyBulkCreateNodes([]byte("bad")), "decode bulk create nodes")
-	require.ErrorContains(t, adapter.applyBulkCreateEdges([]byte("bad")), "decode bulk create edges")
-	require.ErrorContains(t, adapter.applyBulkDeleteNodes([]byte("bad")), "decode bulk delete nodes")
-	require.ErrorContains(t, adapter.applyBulkDeleteEdges([]byte("bad")), "decode bulk delete edges")
+	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdBulkCreateNodes, []byte("bad")), "decode bulk create nodes")
+	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdBulkCreateEdges, []byte("bad")), "decode bulk create edges")
+	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdBulkDeleteNodes, []byte("bad")), "decode bulk delete nodes")
+	require.ErrorContains(t, applyDirectEntityCommand(adapter.engine, CmdBulkDeleteEdges, []byte("bad")), "decode bulk delete edges")
 
 	_, err := adapter.engine.CreateNode(&storage.Node{ID: "raw-fallback-node", Labels: []string{"L"}})
 	require.NoError(t, err)
-	require.NoError(t, adapter.applyDeleteNode([]byte("raw-fallback-node")))
+	require.NoError(t, applyDirectEntityCommand(adapter.engine, CmdDeleteNode, []byte("raw-fallback-node")))
 	_, err = adapter.engine.GetNode("raw-fallback-node")
 	require.ErrorIs(t, err, storage.ErrNotFound)
 
-	emptyPrefixPayload := encodeGobForTest(t, struct{ Prefix string }{Prefix: ""})
+	emptyPrefixPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, struct{ Prefix string }{Prefix: ""})
 	require.ErrorContains(t, adapter.applyDeleteByPrefix(emptyPrefixPayload), "prefix is required")
 
-	badNodePayload := encodeGobForTest(t, [][]byte{[]byte("bad-node")})
-	require.Error(t, adapter.applyBulkCreateNodes(badNodePayload))
+	badNodePayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{[]byte("bad-node")})
+	require.Error(t, applyDirectEntityCommand(adapter.engine, CmdBulkCreateNodes, badNodePayload))
 
-	badEdgePayload := encodeGobForTest(t, [][]byte{[]byte("bad-edge")})
-	require.Error(t, adapter.applyBulkCreateEdges(badEdgePayload))
+	badEdgePayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, [][]byte{[]byte("bad-edge")})
+	require.Error(t, applyDirectEntityCommand(adapter.engine, CmdBulkCreateEdges, badEdgePayload))
 
 	// Edge create should fail when endpoints don't exist.
-	validEdgeBytes := encodeEdgeForTest(t, &storage.Edge{ID: "edge-missing-nodes", StartNode: "no-a", EndNode: "no-b", Type: "REL"})
-	edgeOnlyBatch := encodeGobForTest(t, struct {
+	validEdgeBytes := runtimeFixtureOwner.Encode(t, storage.EncodeEdgePayload, &storage.Edge{ID: "edge-missing-nodes", StartNode: "no-a", EndNode: "no-b", Type: "REL"})
+	edgeOnlyBatch := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, struct {
 		Nodes [][]byte
 		Edges [][]byte
 	}{
 		Edges: [][]byte{validEdgeBytes},
 	})
-	require.Error(t, adapter.applyBatchWrite(edgeOnlyBatch))
+	require.ErrorIs(t, adapter.ApplyCommand(&Command{Type: cmdRetiredBatchWrite, Data: edgeOnlyBatch}), ErrRetiredCommand)
 
-	emptyCypherPayload := encodeGobForTest(t, struct {
+	emptyCypherPayload := runtimeFixtureOwner.Encode[any](t, storage.EncodeCommandPayload, struct {
 		Query  string
 		Params map[string]interface{}
 	}{})
-	require.ErrorContains(t, adapter.applyCypher(emptyCypherPayload), "cypher query is empty")
+	require.ErrorIs(t, adapter.ApplyCommand(&Command{Type: cmdRetiredCypher, Data: emptyCypherPayload}), ErrRetiredCommand)
 }
 
 func TestStorageAdapter_GetWALEntries_ReadErrorPath(t *testing.T) {
 	t.Parallel()
 
-	adapter, _ := setupTestAdapter(t)
+	adapter := setupTestAdapter(t).adapter
 	t.Cleanup(func() { _ = adapter.Close() })
 
 	// Force persistent WAL read failure branch (path is not a directory).
@@ -1380,39 +1320,27 @@ func TestStorageAdapter_GetWALEntries_ReadErrorPath(t *testing.T) {
 	require.ErrorContains(t, err, "failed to read WAL entries")
 }
 
-func TestStorageAdapter_Close_WhenWALAlreadyNil(t *testing.T) {
+func TestStorageAdapter_WriteSnapshot_Failures(t *testing.T) {
 	t.Parallel()
-
-	adapter, _ := setupTestAdapter(t)
-	adapter.walMu.Lock()
-	if adapter.wal != nil {
-		_ = adapter.wal.Close()
-		adapter.wal = nil
+	for _, test := range []struct {
+		name          string
+		encodeFailure bool
+		want          string
+	}{
+		{name: "writer", want: "write failed"},
+		{name: "codec", encodeFailure: true, want: "encode snapshot"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			adapter := setupTestAdapter(t).adapter
+			var writer io.Writer = &errWriter{err: errors.New("write failed")}
+			if test.encodeFailure {
+				adapter.engine = &snapshotEncodeErrorEngine{}
+				writer = &bytes.Buffer{}
+			}
+			err := adapter.WriteSnapshot(writer)
+			require.ErrorContains(t, err, test.want)
+		})
 	}
-	adapter.walMu.Unlock()
-
-	require.NoError(t, adapter.Close())
-}
-
-func TestStorageAdapter_WriteSnapshot_WriterError(t *testing.T) {
-	t.Parallel()
-
-	adapter, _ := setupTestAdapter(t)
-	t.Cleanup(func() { _ = adapter.Close() })
-
-	err := adapter.WriteSnapshot(&errWriter{err: errors.New("write failed")})
-	require.ErrorContains(t, err, "write failed")
-}
-
-func TestStorageAdapter_WriteSnapshot_EncodeError(t *testing.T) {
-	t.Parallel()
-
-	adapter, _ := setupTestAdapter(t)
-	t.Cleanup(func() { _ = adapter.Close() })
-
-	adapter.engine = &snapshotEncodeErrorEngine{}
-	err := adapter.WriteSnapshot(&bytes.Buffer{})
-	require.ErrorContains(t, err, "encode snapshot")
 }
 
 type errWriter struct{ err error }
@@ -1457,37 +1385,38 @@ func TestTransport_WireReadWriteHelpers(t *testing.T) {
 
 	var out bytes.Buffer
 	bw := bufio.NewWriter(&out)
-	require.NoError(t, writeClusterMessage(bw, msg))
+	require.NoError(t, transferClusterMessage(msg, nil, bw, 0))
 	require.NoError(t, bw.Flush())
 
-	readMsg, err := readClusterMessage(bufio.NewReader(bytes.NewReader(out.Bytes())), 1024)
+	readMsg := new(ClusterMessage)
+	err := transferClusterMessage(readMsg, bufio.NewReader(bytes.NewReader(out.Bytes())), nil, 1024)
 	require.NoError(t, err)
 	require.Equal(t, ClusterMsgHeartbeat, readMsg.Type)
 	require.Equal(t, []byte("ok"), readMsg.Payload)
 
 	errBuf := bufio.NewWriter(&errWriter{err: errors.New("write boom")})
-	require.NoError(t, writeClusterMessage(errBuf, msg))
+	require.NoError(t, transferClusterMessage(msg, nil, errBuf, 0))
 	require.ErrorContains(t, errBuf.Flush(), "write boom")
 
-	_, err = readClusterMessage(bufio.NewReader(bytes.NewReader(nil)), 1024)
+	err = transferClusterMessage(new(ClusterMessage), bufio.NewReader(bytes.NewReader(nil)), nil, 1024)
 	require.Error(t, err)
 
 	var tooLarge bytes.Buffer
 	require.NoError(t, binary.Write(&tooLarge, binary.BigEndian, uint32(4096)))
-	_, err = readClusterMessage(bufio.NewReader(bytes.NewReader(tooLarge.Bytes())), 64)
+	err = transferClusterMessage(new(ClusterMessage), bufio.NewReader(bytes.NewReader(tooLarge.Bytes())), nil, 64)
 	require.ErrorContains(t, err, "message too large")
 
 	var truncated bytes.Buffer
 	require.NoError(t, binary.Write(&truncated, binary.BigEndian, uint32(8)))
 	truncated.Write([]byte{1, 2, 3})
-	_, err = readClusterMessage(bufio.NewReader(bytes.NewReader(truncated.Bytes())), 1024)
+	err = transferClusterMessage(new(ClusterMessage), bufio.NewReader(bytes.NewReader(truncated.Bytes())), nil, 1024)
 	require.Error(t, err)
 
 	var badPayload bytes.Buffer
 	payload := []byte("not-gob")
 	require.NoError(t, binary.Write(&badPayload, binary.BigEndian, uint32(len(payload))))
 	badPayload.Write(payload)
-	_, err = readClusterMessage(bufio.NewReader(bytes.NewReader(badPayload.Bytes())), 1024)
+	err = transferClusterMessage(new(ClusterMessage), bufio.NewReader(bytes.NewReader(badPayload.Bytes())), nil, 1024)
 	require.Error(t, err)
 
 	cc := &ClusterConnection{}

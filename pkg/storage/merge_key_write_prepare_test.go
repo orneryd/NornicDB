@@ -32,7 +32,7 @@ func TestPrepareMergeNodeForWriteSerializesWritersOfOneNode(t *testing.T) {
 	node, err := first.GetNode(nodeID)
 	require.NoError(t, err)
 	node.Properties["w"] = int64(1)
-	require.NoError(t, first.UpdateNode(node))
+	require.NoError(t, first.UpdateGraphNode(node, ClientNodeEdits))
 
 	reader := beginMergeKeyTx(t, engine)
 	require.NoError(t, reader.PrepareMergeNode(ctx, []string{"U"}, key), "a reader doesn't wait")
@@ -50,7 +50,7 @@ func TestPrepareMergeNodeForWriteSerializesWritersOfOneNode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), node.Properties["w"], "the second writer sees the first one's commit")
 	node.Properties["w"] = int64(2)
-	require.NoError(t, second.UpdateNode(node))
+	require.NoError(t, second.UpdateGraphNode(node, ClientNodeEdits))
 	require.NoError(t, second.Commit())
 	stored, err := engine.GetNode(nodeID)
 	require.NoError(t, err)
@@ -96,108 +96,92 @@ func TestSetUniqueKeyLockWaitHookForTestingRestores(t *testing.T) {
 	require.Nil(t, uniqueKeyLockWaitHook.Load())
 }
 
-// TestPrepareMergeNodeForWriteLandsBufferedCommit: with write-behind, an
+// TestPrepareMergeNodeForWriteBufferedAdmission: with write-behind, an
 // auto-commit write of the node is buffered when its key is released. The
 // next MERGE writer lands it before catching up, so it reads and writes on
 // top of it and commits, instead of losing to the later flush.
-func TestPrepareMergeNodeForWriteLandsBufferedCommit(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
-	schema := engine.GetSchemaForNamespace("test")
-	require.NoError(t, schema.AddConstraint(Constraint{Name: "u_k", Type: ConstraintUnique, Label: "U", Properties: []string{"k"}}))
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema))
-	ctx := context.Background()
-	nodeID := createKeyNode(t, engine, "wb", 1)
-	require.NoError(t, engine.FlushWriteBehind())
-	key := map[string]interface{}{"k": int64(1)}
+func TestPrepareMergeNodeForWriteBufferedAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		drained bool
+	}{{"lands buffered commit", false}, {"after buffer drained", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newWriteBehindTestEngine(t, time.Hour)
+			schema := engine.GetSchemaForNamespace("test")
+			require.NoError(t, schema.AddConstraint(Constraint{Name: "u_k", Type: ConstraintUnique, Label: "U", Properties: []string{"k"}}))
+			require.NoError(t, RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema))
+			ctx := context.Background()
+			name := "wb"
+			if tc.drained {
+				name = "drained"
+			}
+			nodeID := createKeyNode(t, engine, name, 1)
+			if !tc.drained {
+				require.NoError(t, engine.FlushWriteBehind())
+			}
+			key := map[string]interface{}{"k": int64(1)}
+			buffered := beginMergeKeyTx(t, engine)
+			require.NoError(t, buffered.SetImplicit(true))
+			require.NoError(t, buffered.PrepareMergeNodeForWrite(ctx, []string{"U"}, key))
+			node, err := buffered.GetNode(nodeID)
+			require.NoError(t, err)
+			node.Properties["w"] = int64(1)
+			require.NoError(t, buffered.UpdateGraphNode(node, ClientNodeEdits))
+			require.NoError(t, buffered.Commit())
+			_, pending, _ := engine.writeBehind.GetNode(nodeID)
+			require.True(t, pending, "the auto-commit write is buffered")
+			writer := beginMergeKeyTx(t, engine)
+			// A frame born after ACK but before physical flush must catch up even
+			// when the actual flush precedes its MERGE admission (NOR-117).
+			if tc.drained {
+				require.NoError(t, engine.FlushWriteBehind())
+				_, pending, _ = engine.writeBehind.GetNode(nodeID)
+				require.False(t, pending)
+			}
+			require.NoError(t, writer.PrepareMergeNodeForWrite(ctx, []string{"U"}, key))
+			if !tc.drained {
+				_, pending, _ = engine.writeBehind.GetNode(nodeID)
+				require.False(t, pending, "the writer landed the buffered commit")
+			}
+			node, err = writer.GetNode(nodeID)
+			require.NoError(t, err)
+			require.Equal(t, int64(1), node.Properties["w"])
+			node.Properties["w"] = int64(2)
+			require.NoError(t, writer.UpdateGraphNode(node, ClientNodeEdits))
+			require.NoError(t, writer.Commit())
+			stored, err := engine.GetNode(nodeID)
+			require.NoError(t, err)
+			require.Equal(t, int64(2), stored.Properties["w"])
+			if tc.drained {
+				return
+			}
+			// Write-behind reads are read-committed and do not pin a snapshot.
+			reader := beginMergeKeyTx(t, engine)
+			read, err := reader.GetNodesByLabel("U")
+			require.NoError(t, err)
+			require.Len(t, read, 1)
+			require.Equal(t, int64(2), read[0].Properties["w"])
 
-	buffered := beginMergeKeyTx(t, engine)
-	require.NoError(t, buffered.SetImplicit(true))
-	require.NoError(t, buffered.PrepareMergeNodeForWrite(ctx, []string{"U"}, key))
-	node, err := buffered.GetNode(nodeID)
-	require.NoError(t, err)
-	node.Properties["w"] = int64(1)
-	require.NoError(t, buffered.UpdateNode(node))
-	require.NoError(t, buffered.Commit())
-	_, pending, _ := engine.writeBehind.GetNode(nodeID)
-	require.True(t, pending, "the auto-commit write is buffered")
-
-	writer := beginMergeKeyTx(t, engine)
-	require.NoError(t, writer.PrepareMergeNodeForWrite(ctx, []string{"U"}, key))
-	_, pending, _ = engine.writeBehind.GetNode(nodeID)
-	require.False(t, pending, "the writer landed the buffered commit")
-	node, err = writer.GetNode(nodeID)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), node.Properties["w"])
-	node.Properties["w"] = int64(2)
-	require.NoError(t, writer.UpdateNode(node))
-	require.NoError(t, writer.Commit())
-	stored, err := engine.GetNode(nodeID)
-	require.NoError(t, err)
-	require.Equal(t, int64(2), stored.Properties["w"])
-
-	// Write-behind reads are read-committed and do not pin a snapshot.
-	reader := beginMergeKeyTx(t, engine)
-	read, err := reader.GetNodesByLabel("U")
-	require.NoError(t, err)
-	require.Len(t, read, 1)
-	require.Equal(t, int64(2), read[0].Properties["w"])
-
-	// A writer with pending writes cannot move its snapshot: its MERGE
-	// fails with the retryable conflict when a newer commit is landed.
-	observed := beginMergeKeyTx(t, engine)
-	_, err = observed.CreateNode(&Node{ID: "test:other", Labels: []string{"Other"}, Properties: map[string]interface{}{"v": int64(1)}})
-	require.NoError(t, err)
-	again := beginMergeKeyTx(t, engine)
-	require.NoError(t, again.SetImplicit(true))
-	require.NoError(t, again.PrepareMergeNodeForWrite(ctx, []string{"U"}, key))
-	node, err = again.GetNode(nodeID)
-	require.NoError(t, err)
-	node.Properties["w"] = int64(3)
-	require.NoError(t, again.UpdateNode(node))
-	require.NoError(t, again.Commit())
-	require.ErrorIs(t, observed.PrepareMergeNodeForWrite(ctx, []string{"U"}, key), ErrConflict)
-	require.NoError(t, observed.Rollback())
-	require.NoError(t, reader.PrepareMergeNodeForWrite(ctx, []string{"U"}, key))
-	node, err = reader.GetNode(nodeID)
-	require.NoError(t, err)
-	require.Equal(t, int64(3), node.Properties["w"], "read-committed reader catches up to the later writer")
-	require.NoError(t, reader.Rollback())
-}
-
-// The ACK advances logical visibility before the flusher lands the Badger
-// writes. A writer begun in between must refresh even if admission finds
-// the buffer already drained (NOR-117).
-func TestPrepareMergeNodeForWriteAfterBufferDrained(t *testing.T) {
-	engine := newWriteBehindTestEngine(t, time.Hour)
-	schema := engine.GetSchemaForNamespace("test")
-	require.NoError(t, schema.AddConstraint(Constraint{Name: "u_k", Type: ConstraintUnique, Label: "U", Properties: []string{"k"}}))
-	require.NoError(t, RefreshUniqueConstraintValuesForEngine(NewNamespacedEngine(engine, "test"), schema))
-	ctx := context.Background()
-	nodeID := createKeyNode(t, engine, "drained", 1)
-	key := map[string]interface{}{"k": int64(1)}
-	buffered := beginMergeKeyTx(t, engine)
-	require.NoError(t, buffered.SetImplicit(true))
-	require.NoError(t, buffered.PrepareMergeNodeForWrite(ctx, []string{"U"}, key))
-	node, err := buffered.GetNode(nodeID)
-	require.NoError(t, err)
-	node.Properties["w"] = int64(1)
-	require.NoError(t, buffered.UpdateNode(node))
-	require.NoError(t, buffered.Commit())
-	_, pending, _ := engine.writeBehind.GetNode(nodeID)
-	require.True(t, pending)
-
-	writer := beginMergeKeyTx(t, engine)
-	require.NoError(t, engine.FlushWriteBehind())
-	_, pending, _ = engine.writeBehind.GetNode(nodeID)
-	require.False(t, pending)
-	require.NoError(t, writer.PrepareMergeNodeForWrite(ctx, []string{"U"}, key))
-	node, err = writer.GetNode(nodeID)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), node.Properties["w"])
-	node.Properties["w"] = int64(2)
-	require.NoError(t, writer.UpdateNode(node))
-	require.NoError(t, writer.Commit())
-	stored, err := engine.GetNode(nodeID)
-	require.NoError(t, err)
-	require.Equal(t, int64(2), stored.Properties["w"])
+			// A writer with pending writes cannot move its snapshot: its MERGE
+			// fails with the retryable conflict when a newer commit is landed.
+			observed := beginMergeKeyTx(t, engine)
+			_, err = observed.CreateNode(&Node{ID: "test:other", Labels: []string{"Other"}, Properties: map[string]interface{}{"v": int64(1)}})
+			require.NoError(t, err)
+			again := beginMergeKeyTx(t, engine)
+			require.NoError(t, again.SetImplicit(true))
+			require.NoError(t, again.PrepareMergeNodeForWrite(ctx, []string{"U"}, key))
+			node, err = again.GetNode(nodeID)
+			require.NoError(t, err)
+			node.Properties["w"] = int64(3)
+			require.NoError(t, again.UpdateGraphNode(node, ClientNodeEdits))
+			require.NoError(t, again.Commit())
+			require.ErrorIs(t, observed.PrepareMergeNodeForWrite(ctx, []string{"U"}, key), ErrConflict)
+			require.NoError(t, observed.Rollback())
+			require.NoError(t, reader.PrepareMergeNodeForWrite(ctx, []string{"U"}, key))
+			node, err = reader.GetNode(nodeID)
+			require.NoError(t, err)
+			require.Equal(t, int64(3), node.Properties["w"], "read-committed reader catches up to the later writer")
+			require.NoError(t, reader.Rollback())
+		})
+	}
 }

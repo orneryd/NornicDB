@@ -73,7 +73,7 @@ func TestReadSnapshotSeesOnePoint(t *testing.T) {
 	tx, err := engine.BeginTransaction()
 	require.NoError(t, err)
 	require.NoError(t, tx.SetNamespace("test"))
-	require.NoError(t, tx.UpdateNode(&Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "new"}}))
+	require.NoError(t, tx.UpdateGraphNode(&Node{ID: "test:a", Labels: []string{"Doc"}, Properties: map[string]any{"text": "new"}}, ClientNodeEdits))
 	require.NoError(t, tx.UpdateEdge(&Edge{ID: "test:r", StartNode: "test:a", EndNode: "test:b", Type: "REL", Properties: map[string]any{"note": "new"}}))
 	require.NoError(t, tx.Commit())
 

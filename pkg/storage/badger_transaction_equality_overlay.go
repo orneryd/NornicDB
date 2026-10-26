@@ -24,6 +24,12 @@ func (tx *BadgerTransaction) LookupNodesByEquality(label string, properties map[
 	if err := tx.ensureLifecycleActiveLocked(); err != nil {
 		return nil, false, err
 	}
+	if tx.namespace == "" {
+		if err := tx.engine.pendingNamespaceConflict(""); err != nil {
+			return nil, false, err
+		}
+	}
+
 	if tx.snapshotTx == nil || tx.readTS.IsZero() || tx.engine.writeBehind != nil || len(properties) == 0 {
 		return nil, false, nil
 	}

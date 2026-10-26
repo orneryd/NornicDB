@@ -16,7 +16,14 @@ import (
 // listeners run. Database wrappers finalize accounting and release admission at
 // this boundary. The callback must not panic. Failed commits never invoke it.
 // Buffered commits invoke it at their acknowledged-publication boundary.
-func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, afterPublication func()) (commitErr error) {
+func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, afterPublication func()) error {
+	if tx.clientDetached.Load() {
+		return ErrTransactionClosed
+	}
+	return tx.commitContextWithPreparation(ctx, afterPublication, nil)
+}
+
+func (tx *BadgerTransaction) commitContextWithPreparation(ctx context.Context, afterPublication func(), prepare func() error) (commitErr error) {
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -47,7 +54,7 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 	}()
 	defer tx.releaseWriteBarrierLocked()
 
-	if err := tx.ensureLifecycleActiveLocked(); err != nil {
+	if err := tx.ensureLifecycleActiveLocked(true); err != nil {
 		return err
 	}
 	// The engine's write barrier is held through publication, before listener
@@ -56,12 +63,28 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 	// publication; shared otherwise, so Close waits for the commit and a
 	// commit that arrives after Close finished fails here without touching
 	// Badger.
-	lease, writeErr := tx.engine.beginBarrierWrite(tx.schemaRuntime != nil, false)
-	if writeErr != nil {
-		tx.closeLocked(TxStatusRolledBack, true, nil)
-		return writeErr
+	if tx.commitReleaseWrite != nil && tx.schemaRuntime != nil {
+		// A read-only MERGE may precede DDL; release its key admission before
+		// acquiring the schema-exclusive lifecycle lease. Schema snapshot validation
+		// below still rejects intervening graph changes.
+		tx.releaseMergeAdmissionLocked()
+		tx.releaseWriteBarrierLocked()
 	}
-	tx.commitReleaseWrite = lease.releaseCallback()
+	if tx.commitReleaseWrite == nil {
+		lease, writeErr := tx.engine.beginBarrierWrite(tx.schemaRuntime != nil, false)
+		if writeErr != nil {
+			tx.closeLocked(TxStatusRolledBack, true, nil)
+			return writeErr
+		}
+		tx.commitReleaseWrite = lease.releaseCallback()
+	}
+
+	if tx.namespace != "" && (len(tx.pendingWrites) > 0 || len(tx.operations) > 0 || tx.schemaRuntime != nil) {
+		if err := tx.engine.pendingNamespaceConflict(tx.namespace); err != nil {
+			return tx.abortCommitLocked(err)
+		}
+	}
+
 	if len(tx.operations) > 0 && tx.engine.prefixDroppedSince(tx.lifecycleSeq, tx.namespace) {
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return fmt.Errorf("%w: namespace %q was deleted or rewritten by maintenance after the transaction began", ErrConflict, tx.namespace)
@@ -70,6 +93,33 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 		tx.closeLocked(TxStatusRolledBack, true, nil)
 		return fmt.Errorf("schema snapshot changed before commit: %w", ErrConflict)
 	}
+
+	// Metadata handlers are external code and may interpose a peer commit.
+	// Validate optimistically before invoking them, without retaining entity keys.
+	// Metadata-free commits retain the single protected validation phase.
+	if len(tx.Metadata) > 0 {
+		if err := tx.validateCommitLocked(); err != nil {
+			return err
+		}
+		// Log metadata. D-10a bracket-prefix migrated to a transaction_id slog
+		// attribute so log aggregators can group commits by transaction without
+		// parsing message text.
+		tx.engine.log.Debug("transaction committing with metadata",
+			"subsystem", "transaction",
+			"transaction_id", tx.ID,
+			slog.Any("metadata", tx.Metadata),
+		)
+	}
+
+	// Optimistic validation above preserves ordinary snapshot conflicts. Only
+	// the final authoritative phase owns entity keys: an intervening peer may
+	// commit before this acquisition, so revalidate under the existing key order.
+	// Entity and endpoint authority precedes unique values for every native commit.
+	releaseEntityAuthority, authorityErr := tx.lockPendingEntityAuthorityLocked()
+	if authorityErr != nil {
+		return tx.abortCommitLocked(authorityErr)
+	}
+	defer releaseEntityAuthority()
 
 	// Acquire per-(label, property, value) commit locks for every unique
 	// constraint value touched by this transaction's pending nodes. Held
@@ -84,38 +134,29 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 	// — the second overwriting the first — leaving the UNIQUE constraint
 	// silently violated in storage. See cross_session_merge_unique_test.go
 	// for the reproduction.
-	releaseCommitLocks, err := tx.acquireUniqueConstraintCommitLocks()
-	if err != nil {
-		tx.closeLocked(TxStatusRolledBack, true, nil)
-		return err
+	var err error
+	releaseCommitLocks := func() {}
+	if tx.namespace != "" && (len(tx.pendingNodes) != 0 || len(tx.pendingEdges) != 0) {
+		schemaForValues := tx.engine.GetSchemaForNamespace(tx.namespace)
+		nodes := make([]*Node, 0, len(tx.pendingNodes))
+		for _, node := range tx.pendingNodes {
+			nodes = append(nodes, node)
+		}
+		edges := make([]*Edge, 0, len(tx.pendingEdges))
+		for _, edge := range tx.pendingEdges {
+			edges = append(edges, edge)
+		}
+		valueKeys := schemaForValues.appendConstraintValueKeys(nil, nodes, edges)
+		releaseCommitLocks, err = schemaForValues.acquireUniqueConstraintCommitLocks(context.Background(), tx.ID, valueKeys)
+		if err != nil {
+			tx.closeLocked(TxStatusRolledBack, true, nil)
+			return err
+		}
 	}
+
 	defer releaseCommitLocks()
 
-	// Nodes a non-DETACH DELETE left connected: deleted now, or the commit
-	// fails (DeleteConnectedNode).
-	if err := tx.resolveConnectedDeletesLocked(); err != nil {
-		tx.closeLocked(TxStatusRolledBack, true, nil)
-		return err
-	}
-
-	// Final constraint validation before commit
-	if err := tx.validateAllConstraints(); err != nil {
-		tx.closeLocked(TxStatusRolledBack, true, nil)
-		// Wire contract: prefix "constraint violation:" is matched by downstream Bolt classifiers.
-		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
-		return localizedError(localization.StorageTransactionConstraintViolation(err), err)
-	}
-
-	if err := tx.validateSnapshotIsolationConflicts(); err != nil {
-		tx.closeLocked(TxStatusRolledBack, true, nil)
-		// MERGE-on-same-unique-value race: surface as the consumer-
-		// pinned constraint-violation wire shape so retry classifiers
-		// see the same prefix as a validate-time UNIQUE failure. The
-		// generic SI conflict shape stays unwrapped.
-		var cv *ConstraintViolationError
-		if errors.As(err, &cv) && cv.Type == ConstraintUnique {
-			return localizedError(localization.StorageTransactionConstraintViolation(err), err)
-		}
+	if err := tx.validateCommitLocked(); err != nil {
 		return err
 	}
 
@@ -125,19 +166,30 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 		return fmt.Errorf("buffering temporal index writes: %w", err)
 	}
 
-	// Log metadata. D-10a bracket-prefix migrated to a transaction_id slog
-	// attribute so log aggregators can group commits by transaction without
-	// parsing message text.
-	if len(tx.Metadata) > 0 {
-		tx.engine.log.Debug("transaction committing with metadata",
-			"subsystem", "transaction",
-			"transaction_id", tx.ID,
-			slog.Any("metadata", tx.Metadata),
-		)
-	}
-
 	if err := tx.materializeDeferredEdgesLocked(); err != nil {
 		return tx.abortCommitLocked(err)
+	}
+
+	// A coherent usage cut may already have replayed ACKs this transaction
+	// logically observed before begin. Reuse the existing rebase owner before
+	// capturing pairs; its logical MVCC snapshot anchor remains unchanged.
+	if tx.replayedSinceBeginLocked() && tx.schemaRuntime == nil && !tx.knowledgeSchemaDirty {
+		if err := tx.rebaseBadgerAfterDrainLocked(); err != nil {
+			return tx.abortCommitLocked(err)
+		}
+	}
+	// MVCC history, change events, the entity caches and the callbacks all
+	// take each entity's final body as storage returns it.
+	if err := tx.engine.storeWrittenBodies(tx.pendingWrites, tx.operations); err != nil {
+		return tx.abortCommitLocked(err)
+	}
+
+	// Preparation hands immutable semantic images to the accepted command owner
+	// only after the normal validation/order pipeline, before any commit bytes.
+	if prepare != nil {
+		if err := prepare(); err != nil {
+			return tx.abortCommitLocked(err)
+		}
 	}
 
 	// Buffered replay can run before this function returns, including from
@@ -155,7 +207,7 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 	// knowledge-policy flag directly instead of HasKnowledgePolicyChanges.)
 	// A database that captures changes commits through Badger: its change
 	// events are written in the same commit as the data (#937).
-	if tx.engine.writeBehindEnabled() && tx.implicit && tx.schemaRuntime == nil &&
+	if tx.engine.writeBehindEnabled() && tx.commitMode == CommitModeImplicit && tx.schemaRuntime == nil &&
 		!tx.knowledgeSchemaDirty && len(temporalTargets) == 0 &&
 		(tx.namespace == "" || tx.engine.ChangeCapture(tx.namespace) == ChangeCaptureOff) {
 		return tx.commitBufferedLocked()
@@ -182,12 +234,6 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 		if err := tx.revalidateEndpointsLocked(); err != nil {
 			return tx.abortCommitLocked(err)
 		}
-	}
-
-	// MVCC history, change events, the entity caches and the callbacks all
-	// take each entity's final body as storage returns it.
-	if err := tx.engine.storeWrittenBodies(tx.pendingWrites, tx.operations); err != nil {
-		return tx.abortCommitLocked(err)
 	}
 
 	physicalOperations := tx.physicalOperationsLocked()
@@ -226,7 +272,46 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 	// for this transaction's own registration (#911).
 	tx.releaseSnapshotReaderLocked()
 
+	mergeReleases := tx.mergeKeyReleases
+	tx.mergeKeyReleases = nil
+	defer func() {
+		for _, release := range mergeReleases {
+			release()
+		}
+	}()
+	acceptedRelease := tx.commitReleaseAcceptedAuthority
 	cw := tx.engine.newCommitWriter(tx.badgerDB, tx.badgerTx)
+	logicalID := tx.ID
+	if tx.commitLogicalID != "" {
+		logicalID = tx.commitLogicalID
+	}
+	cw.configureStoredEntityPublication(logicalID, false)
+	// The physical writer owns the same immutable delta for ordinary and large
+	// commits. Register it before the timestamp becomes visible; its stage may
+	// help an earlier same-key publisher without waiting for that goroutine.
+	operations := tx.operations
+	engine, namespace := tx.engine, tx.namespace
+	if len(operations) > 0 || tx.knowledgeSchemaDirty {
+		schema := engine.GetSchemaForNamespace(namespace)
+		cw.publishKeys = appendOperationPublicationKeys(nil, schema, operations)
+		if len(operations) > 0 {
+			notification = engine.queueCommitOperations(nil, nil, notificationAtCommit)
+			capturePublicationOperations(notification, operations)
+			cw.notification = notification
+		}
+		cw.publish = func() {
+			knowledgePolicyChanged = tx.publishKnowledgePolicySchemaLocked()
+			engine.publishCommitOperations(namespace, schema, operations, true, true)
+			releaseEntityAuthority()
+			for _, release := range mergeReleases {
+				release()
+			}
+			if acceptedRelease != nil {
+				acceptedRelease()
+			}
+
+		}
+	}
 	cw.beforeLarge = tx.acquireCommitPublicationLocked
 	cw.onBatch = func(next *badger.Txn) { tx.badgerTx = next }
 	tx.commitW = cw
@@ -280,10 +365,6 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 	}
 	tx.engine.idDict.markTxnCommitted(committingTxn)
 	tx.commitW = nil
-	knowledgePolicyChanged = tx.publishKnowledgePolicySchemaLocked()
-	if len(tx.operations) > 0 {
-		notification = tx.engine.queueCommitOperations(tx.operations, nil)
-	}
 	// Later acknowledgements must order after this committed image.
 	order.release()
 	runCommitTailHook()
@@ -333,91 +414,9 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 	}
 	tx.engine.idDict.persistCounters(tx.engine.db, idCounterNodeMax, idCounterEdgeMax)
 
-	// Apply cache/count updates and fire callbacks after commit.
-	// This keeps cached stats O(1) and ensures external systems (e.g. search indexes)
-	// observe transactional writes the same way as non-transactional writes.
-	for _, op := range tx.operations {
-		switch op.Type {
-		case OpCreateNode:
-			tx.engine.cacheOnNodeCreated(op.Node)
-		case OpUpdateNode:
-			tx.engine.cacheOnNodeUpdatedWithOldNode(op.Node, op.OldNode)
-		case OpDeleteNode:
-			if op.OldNode != nil {
-				tx.engine.cacheOnNodeDeletedWithLabels(op.NodeID, op.OldNode.Labels, op.EdgesDeleted)
-			} else {
-				tx.engine.cacheOnNodeDeleted(op.NodeID, op.EdgesDeleted)
-			}
-		case OpCreateEdge:
-			tx.engine.cacheOnEdgeCreated(op.Edge)
-		case OpUpdateEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			tx.engine.cacheOnEdgeUpdated(oldType, op.Edge)
-		case OpDeleteEdge:
-			oldType := ""
-			if op.OldEdge != nil {
-				oldType = op.OldEdge.Type
-			}
-			tx.engine.cacheOnEdgeDeleted(op.EdgeID, oldType)
-		case OpUpdateEmbedding:
-			// Embeddings are regenerable; no-op for cached counts.
-		}
-	}
-
-	tx.engine.prepareCommitOperations(tx.operations, notification != nil)
-
-	// Update derived unique-constraint caches (in-memory) based on committed operations.
-	// This keeps non-transactional CreateNode() uniqueness checks consistent with transactional writes.
-	//
-	// All committed ops belong to the transaction's pinned namespace, so the
-	// schema lookup is hoisted out of the loop.
-	//
-	// NOTE: We don't persist these caches; they are rebuilt from stored nodes on startup.
-	if tx.namespace != "" {
-		schema := tx.engine.GetSchemaForNamespace(tx.namespace)
-		if schema != nil {
-			for _, op := range tx.operations {
-				switch op.Type {
-				case OpCreateNode:
-					if op.Node == nil {
-						continue
-					}
-					for _, label := range op.Node.Labels {
-						for propName, propValue := range op.Node.Properties {
-							schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-						}
-					}
-				case OpUpdateNode:
-					if op.OldNode != nil {
-						for _, label := range op.OldNode.Labels {
-							for propName, propValue := range op.OldNode.Properties {
-								schema.UnregisterUniqueValue(label, propName, propValue)
-							}
-						}
-					}
-					if op.Node != nil {
-						for _, label := range op.Node.Labels {
-							for propName, propValue := range op.Node.Properties {
-								schema.RegisterUniqueValue(label, propName, propValue, op.Node.ID)
-							}
-						}
-					}
-				case OpDeleteNode:
-					if op.OldNode == nil {
-						continue
-					}
-					for _, label := range op.OldNode.Labels {
-						for propName, propValue := range op.OldNode.Properties {
-							schema.UnregisterUniqueValue(label, propName, propValue)
-						}
-					}
-				}
-			}
-		}
-	}
+	// Cache, index, unique-value and logical revision publication completed in
+	// the writer's ordered memory-only stage. Durable follow-ups remain above;
+	// listeners become ready only in the outer lock/admission release owner.
 
 	// ACID GUARANTEE: Force fsync for EXPLICIT transactions only.
 	// Explicit COMMIT must be durable before we return success (user asked
@@ -427,7 +426,7 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 	// Msync here once per UNWIND batch amplifies the syscall cost linearly
 	// in batch count with no observable durability benefit over the
 	// coalesced path. In-memory mode has no disk to sync.
-	if !tx.engine.IsInMemory() && !tx.implicit {
+	if !tx.engine.IsInMemory() && tx.commitMode == CommitModeExplicit {
 		if err := tx.engine.Sync(); err != nil {
 			// Transaction is committed in Badger but fsync failed.
 			// Log error but don't rollback - data is in Badger's WAL.
@@ -443,4 +442,35 @@ func (tx *BadgerTransaction) CommitContextWithPublication(ctx context.Context, a
 	tx.closeLocked(TxStatusCommitted, false, nil)
 	return nil
 
+}
+
+// validateCommitLocked keeps both optimistic and protected validation on the
+// same constraint/conflict and consumer error-classification owner.
+func (tx *BadgerTransaction) validateCommitLocked() error {
+	if err := tx.resolveConnectedDeletesLocked(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		return err
+	}
+
+	if err := tx.validateAllConstraints(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		// Wire contract: prefix "constraint violation:" is matched by downstream Bolt classifiers.
+		// See docs/plans/consumer-pinned-error-contract-plan.md §2.1.
+		return localizedError(localization.StorageTransactionConstraintViolation(err), err)
+	}
+
+	if err := tx.validateSnapshotIsolationConflicts(); err != nil {
+		tx.closeLocked(TxStatusRolledBack, true, nil)
+		// MERGE-on-same-unique-value race: surface as the consumer-
+		// pinned constraint-violation wire shape so retry classifiers
+		// see the same prefix as a validate-time UNIQUE failure. The
+		// generic SI conflict shape stays unwrapped.
+		var cv *ConstraintViolationError
+		if errors.As(err, &cv) && cv.Type == ConstraintUnique {
+			return localizedError(localization.StorageTransactionConstraintViolation(err), err)
+		}
+		return err
+	}
+
+	return nil
 }

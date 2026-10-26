@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
+	"strings"
 	"testing"
 	"time"
 
@@ -50,6 +51,9 @@ func TestTransactionOverlayCommittedMergeCostIsLocal(t *testing.T) {
 	exec := NewStorageExecutor(store)
 	_, err := exec.Execute(context.Background(), `UNWIND range(0,105) AS i CREATE (:Probe {id: toString(i)})`, nil)
 	require.NoError(t, err)
+	peer := NewStorageExecutor(storage.NewNamespacedEngine(base, "other"))
+	_, err = peer.Execute(context.Background(), `CREATE (:Probe {id:'42'})`, nil)
+	require.NoError(t, err)
 	tx, err := base.BeginTransaction()
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = tx.Rollback() })
@@ -64,6 +68,11 @@ func TestTransactionOverlayCommittedMergeCostIsLocal(t *testing.T) {
 	allocations := testing.AllocsPerRun(5, read)
 	t.Logf("repeated committed MERGE candidate allocations=%g", allocations)
 	require.Less(t, allocations, float64(100), "a repeated one-node match must not copy the whole label set")
+	nodes, complete, err := reader.findMergeNodesScanned(wrapper, []string{"Probe"}, map[string]interface{}{"id": "42"})
+	require.NoError(t, err)
+	require.True(t, complete)
+	require.Len(t, nodes, 1, "peer namespace cannot join the pinned equality population")
+	require.False(t, strings.HasPrefix(string(nodes[0].ID), "test:"), "query candidates retain user-facing IDs")
 }
 
 const overlayCostCreate = `UNWIND range(1,$edges) AS i

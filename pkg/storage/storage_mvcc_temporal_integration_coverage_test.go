@@ -45,7 +45,7 @@ func TestStorage_MVCCTemporal_IntegrationCoverageScenario(t *testing.T) {
 	nodeA, err := tx2.GetNode("test:a")
 	require.NoError(t, err)
 	nodeA.Properties["name"] = "Alice-updated"
-	require.NoError(t, tx2.UpdateNode(nodeA))
+	require.NoError(t, tx2.UpdateGraphNode(nodeA, ClientNodeEdits))
 	edge1, err := tx2.GetEdge("test:e1")
 	require.NoError(t, err)
 	edge1.Properties["w"] = int64(3)
@@ -57,7 +57,7 @@ func TestStorage_MVCCTemporal_IntegrationCoverageScenario(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, tx3.SetNamespace("test"))
 	require.NoError(t, tx3.DeleteEdge("test:e2"))
-	require.NoError(t, tx3.DeleteNode("test:c"))
+	require.NoError(t, tx3.DeleteGraphNode("test:c", CascadeEdges))
 	require.NoError(t, tx3.Commit())
 
 	engine.activeMVCCSnapshotReaders.Store(0)
