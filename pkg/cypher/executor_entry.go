@@ -1,3 +1,4 @@
+// Author of statement-lifetime syntax retention: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/config"
+	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -114,6 +116,7 @@ func (e *StorageExecutor) executeRouted(ctx context.Context, cypher string, para
 }
 
 func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map[string]interface{}, outcome *statementOutcome, clientText bool) (result *ExecuteResult, retErr error) {
+	ctx = cypherantlr.WithStatementSyntax(ctx, cypher)
 	// The statement's context (deadlineCtx, once the database's query limits
 	// apply) ends at the first of its deadlines, and its cause names that
 	// deadline's owner: a Bolt client's tx_timeout, the server's statement
@@ -268,6 +271,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 		cypher = canonical
 		defer func() { result, retErr = rewrite.restore(result, retErr) }()
 	}
+	ctx = cypherantlr.WithStatementSyntax(ctx, originalCypher, cypher)
 	// Digit-grouping underscores (1_000) go here, on every route; columns
 	// and messages keep the client's text (#907).
 	if grouped, numericRewrite := canonicalizeNumericLiterals(cypher); numericRewrite != nil {
@@ -695,6 +699,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	}
 
 	// Validate basic syntax
+	ctx = cypherantlr.WithStatementSyntax(ctx, originalCypher, cypher)
 	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
 		// Plan 04-03 Site 2 (parse-error chokepoint): emit op_type="parse_error"
 		// per D-04b sixth enum value. No duration observation — parse cost is
@@ -745,6 +750,7 @@ func (e *StorageExecutor) execute(ctx context.Context, cypher string, params map
 	if finishTerminated {
 		scopeText += " FINISH"
 	}
+	ctx = cypherantlr.WithStatementSyntax(ctx, originalCypher, scopeText)
 	if err := e.validateSemanticScopes(ctx, scopeText); err != nil {
 		return nil, err
 	}

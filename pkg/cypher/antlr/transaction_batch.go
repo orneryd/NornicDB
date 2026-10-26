@@ -1,3 +1,4 @@
+// Author of retained CALL inspection: Codex R17 implementation agent.
 package antlr
 
 import (
@@ -35,12 +36,11 @@ type CallClause struct {
 // ReadCallClause is the standalone entry adapter. Statement consumers call
 // DescribeCall on the retained node instead of parsing a second CALL fragment.
 func ReadCallClause(ctx context.Context, query string) (CallClause, error) {
-	syntax, err := ParseSyntax(ctx, query, FragmentEntry, false)
+	call, err := LeadingCallSyntax(ctx, query, false)
 	if err != nil {
 		return CallClause{}, err
 	}
-	call, found := syntax.LeadingCall()
-	if !found || call.Rule() != CypherParserRULE_callSubquery {
+	if !call.Valid() || call.Rule() != CypherParserRULE_callSubquery {
 		message := localization.CypherANTLRParseSyntaxError("expected a CALL subquery")
 		return CallClause{}, localization.NewLocalizedError(string(message.ID), message, nil)
 	}

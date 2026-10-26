@@ -1,3 +1,4 @@
+// Author of retained syntax cache identity: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -27,6 +28,7 @@ type projectedScopeFacts struct {
 }
 
 type projectionFactsKey struct {
+	origin                                 cypherantlr.SyntaxOrigin
 	query, incoming, retained              string
 	incomingKnown, retainedKnown, cypher25 bool
 }
@@ -88,11 +90,19 @@ func (e *StorageExecutor) projectionFactsFor(ctx context.Context, query string, 
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}
 	key := projectionKey(query, incoming, retained, cypher25)
+	syntax, err := cypherantlr.QuerySyntax(ctx, query, cypher25)
+	if ctx.Err() != nil {
+		return programFailure(resultmetadata.ReasonParserDecline, 0, ctx.Err())
+	}
+	if err != nil {
+		return programFailure(resultmetadata.ReasonParserDecline, 0, syntaxAdmissionError(query, err))
+	}
+	key.origin = syntax.Origin()
 	generation := globalProcedureRegistry.generation.Load()
 	if facts, found := projectionFactsCache.get(key); found && facts.generation == generation {
 		return facts
 	}
-	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25)
+	facts := e.compileStatementProgram(ctx, query, incoming, retained, cypher25, syntax)
 	if err := ctx.Err(); err != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, err)
 	}

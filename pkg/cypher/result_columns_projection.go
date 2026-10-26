@@ -1,3 +1,4 @@
+// Author of retained syntax cache identity: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -57,7 +58,7 @@ func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pip
 	if len(retained) != 0 {
 		origin := retained[0]
 		program, ok := ctx.Value(boundStatementProgramKey{}).(*boundStatementProgram)
-		if !ok || program == nil || !origin.syntax.Valid() || program.syntax.Source() != origin.syntax.Source() {
+		if !ok || program == nil || !origin.syntax.Valid() || program.syntax.Source() != origin.syntax.Source() || program.syntax.Origin() != origin.syntax.Origin() {
 			return nil
 		}
 		plan := program.projections[origin.syntax.ID()]

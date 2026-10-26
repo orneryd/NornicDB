@@ -1,3 +1,4 @@
+// Author of retained query compilation: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -59,7 +60,11 @@ func (compiler *projectionCompilation) compileBound(ctx context.Context, incomin
 	if compiler.cypher25 {
 		ctx = context.WithValue(ctx, cypherVersionKey{}, "25")
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, compiler.source, cypherantlr.StatementEntry, compiler.cypher25)
+	syntax := compiler.syntax
+	var err error
+	if !syntax.Valid() {
+		syntax, err = cypherantlr.QuerySyntax(ctx, compiler.source, compiler.cypher25)
+	}
 	if ctx.Err() != nil {
 		return programFailure(resultmetadata.ReasonParserDecline, 0, ctx.Err())
 	}

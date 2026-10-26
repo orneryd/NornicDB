@@ -1,3 +1,4 @@
+// Author of private inspection entry migration: Codex R17 implementation agent.
 package antlr
 
 import (
@@ -93,14 +94,14 @@ func TestStatementSyntaxEntryViewsAndCacheIdentity(t *testing.T) {
 	}{
 		{"CALL (x) { RETURN x AS value } IN TRANSACTIONS OF 2 ROWS", CallEntry, CypherParserRULE_callSubquery},
 		{"WITH $row AS x RETURN x", ClauseEntry, CypherParserRULE_subqueryBody},
-		{"coalesce(/* é */ 1, 2)", FragmentEntry, CypherParserRULE_expression},
+		{"coalesce(/* é */ 1, 2)", fragmentEntry, CypherParserRULE_expression},
 		{"(n:$any(labels))-[r:T]->(m)", PatternEntry, CypherParserRULE_pattern},
 	} {
 		syntax, err := ParseSyntax(ctx, sample.source, sample.entry, false)
 		require.NoError(t, err, sample.source)
 		require.Equal(t, sample.rule, syntax.Root().Rule())
 		require.Equal(t, sample.source, syntax.Source())
-		if sample.entry == FragmentEntry {
+		if sample.entry == fragmentEntry {
 			require.NotContains(t, syntax.Root().Code(), "é")
 			_, err = ParseSyntax(ctx, sample.source, StatementEntry, false)
 			require.Error(t, err, "an expression cache entry cannot authorize a statement")
@@ -109,7 +110,7 @@ func TestStatementSyntaxEntryViewsAndCacheIdentity(t *testing.T) {
 	source := "RETURN 537 AS canonicalStatementWarmup"
 	statement, err := ParseSyntax(ctx, source, StatementEntry, false)
 	require.NoError(t, err)
-	fragment, err := ParseSyntax(ctx, source, FragmentEntry, false)
+	fragment, err := ParseSyntax(ctx, source, fragmentEntry, false)
 	require.NoError(t, err)
 	require.Same(t, statement.data, fragment.data)
 }

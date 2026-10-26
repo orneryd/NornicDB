@@ -1,3 +1,4 @@
+// Author of retained CALL inspection: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -19,11 +20,7 @@ type callSubqueryScopeClause struct {
 // text and bodyOffset let validation use the same parsed clause. Legacy
 // importing-WITH and implicit imports are resolved by their existing owners.
 func readCallSubqueryScope(ctx context.Context, source string) callSubqueryScopeClause {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
-	if !syntax.Valid() {
-		return callSubqueryScopeClause{invalid: err != nil}
-	}
-	first, _ := syntax.LeadingCall()
+	first, err := cypherantlr.LeadingCallSyntax(ctx, source, cypherVersionFromContext(ctx) == "25")
 	if !first.Valid() {
 		return callSubqueryScopeClause{invalid: err != nil}
 	}

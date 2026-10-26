@@ -1,3 +1,4 @@
+// Author of retained syntax inspection: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -10,13 +11,13 @@ import (
 // canonicalQueryClause adapts standalone execution helpers to the same grammar
 // product. The bound compiler supplies the retained clause node directly.
 func canonicalQueryClause(ctx context.Context, source string) (cypherantlr.SyntaxNode, bool) {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.InspectSyntax(ctx, source, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return cypherantlr.SyntaxNode{}, false
 	}
 	root := statementSyntaxQuery(syntax)
 	if !root.Valid() {
-		root, _ = syntax.Window(0, len(source), cypherantlr.CypherParserRULE_subqueryBody)
+		root = syntax.Root()
 	}
 	body := queryBodyFromSyntax(root)
 	if len(body.branches) == 0 || len(body.branches[0].clauses) == 0 {

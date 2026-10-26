@@ -1,3 +1,4 @@
+// Author of retained syntax inspection: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -24,7 +25,7 @@ func forEachQueryBody(ctx context.Context, source string, containers []string, v
 	if isNornicExtensionStatement(source) || isSchemaCommandStatement(source) {
 		return nil
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.InspectSyntax(ctx, source, cypherVersionFromContext(ctx) == "25")
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -120,12 +121,13 @@ func readQueryBody(ctx context.Context, source string, start, end int) queryBody
 	if ctx.Err() != nil {
 		return declinedQueryBody(start, end)
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.InspectSyntax(ctx, source, cypherVersionFromContext(ctx) == "25")
 	if err != nil || ctx.Err() != nil {
 		return declinedQueryBody(start, end)
 	}
 	node, ok := syntax.Window(start, end, cypherantlr.CypherParserRULE_query, cypherantlr.CypherParserRULE_regularQuery, cypherantlr.CypherParserRULE_subqueryBody, cypherantlr.CypherParserRULE_singleQuery, cypherantlr.CypherParserRULE_matchSt)
 	if !ok {
+		root := syntax.Root()
 		pattern, found := syntax.Window(start, end, cypherantlr.CypherParserRULE_patternWhere, cypherantlr.CypherParserRULE_pattern)
 		if found {
 			if container, parent := pattern.Parent(); parent {
@@ -134,7 +136,7 @@ func readQueryBody(ctx context.Context, source string, start, end int) queryBody
 				}
 			}
 		}
-		return declinedQueryBody(start, end)
+		return queryBodyFromSyntax(root)
 	}
 	return queryBodyFromSyntax(node)
 }
@@ -232,7 +234,7 @@ func queryBodyFromSyntax(node cypherantlr.SyntaxNode) queryBody {
 			body.foreach.updates = append(body.foreach.updates, clause)
 		}
 		body.branches = []queryBodyBranch{branch}
-	case cypherantlr.CypherParserRULE_singleQuery:
+	case cypherantlr.CypherParserRULE_singleQuery, cypherantlr.CypherParserRULE_singlePartQ, cypherantlr.CypherParserRULE_multiPartQ, cypherantlr.CypherParserRULE_readingStatement, cypherantlr.CypherParserRULE_updatingStatement:
 		branch := newQueryBodyBranch(node)
 		appendQuerySyntax(&branch, node)
 		body.branches = []queryBodyBranch{branch}
@@ -241,8 +243,14 @@ func queryBodyFromSyntax(node cypherantlr.SyntaxNode) queryBody {
 		appendQuerySyntax(&branch, node)
 		body.branches = []queryBodyBranch{branch}
 	default:
-		start, end := node.Span()
-		return declinedQueryBody(start, end)
+		if _, clause := querySyntaxClauseKind(node); clause {
+			branch := newQueryBodyBranch(node)
+			appendQuerySyntax(&branch, node)
+			body.branches = []queryBodyBranch{branch}
+		} else {
+			start, end := node.Span()
+			return declinedQueryBody(start, end)
+		}
 	}
 	var all *bool
 	for i := range body.branches {
@@ -397,7 +405,14 @@ func querySyntaxClauseKind(node cypherantlr.SyntaxNode) (pipelineClauseKind, boo
 
 func statementSyntaxQuery(syntax cypherantlr.StatementSyntax) cypherantlr.SyntaxNode {
 	root := syntax.Root()
-	if root.Rule() == cypherantlr.CypherParserRULE_query {
+	switch root.Rule() {
+	case cypherantlr.CypherParserRULE_query, cypherantlr.CypherParserRULE_regularQuery,
+		cypherantlr.CypherParserRULE_subqueryBody, cypherantlr.CypherParserRULE_singleQuery,
+		cypherantlr.CypherParserRULE_singlePartQ, cypherantlr.CypherParserRULE_multiPartQ,
+		cypherantlr.CypherParserRULE_readingStatement, cypherantlr.CypherParserRULE_updatingStatement:
+		return root
+	}
+	if _, clause := querySyntaxClauseKind(root); clause {
 		return root
 	}
 	script := root.ChildRule(cypherantlr.CypherParserRULE_script)
@@ -440,12 +455,11 @@ func queryStatementWindow(ctx context.Context, source string) (start, end int, m
 }
 
 func callSubqueryBraces(ctx context.Context, source string) (open, end int, ok bool) {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	call, err := cypherantlr.LeadingCallSyntax(ctx, source, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return -1, -1, false
 	}
-	call, found := syntax.LeadingCall()
-	if !found || call.Rule() != cypherantlr.CypherParserRULE_callSubquery {
+	if !call.Valid() || call.Rule() != cypherantlr.CypherParserRULE_callSubquery {
 		return -1, -1, false
 	}
 	return querySyntaxBraces(call)

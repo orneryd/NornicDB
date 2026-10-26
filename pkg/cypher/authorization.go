@@ -1,3 +1,4 @@
+// Author of retained syntax inspection: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -92,7 +93,7 @@ func QueryPermissionRequirements(ctx context.Context, query string) PermissionRe
 // For example, RegisteredProceduresForCalls(ctx, "CALL db.labels()") resolves
 // the declaration listed by SHOW PROCEDURES without exposing its handler.
 func RegisteredProceduresForCalls(ctx context.Context, query string) []ProcedureSpec {
-	structure, err := cypherantlr.ParseSyntax(ctx, query, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	structure, err := cypherantlr.InspectSyntax(ctx, query, cypherVersionFromContext(ctx) == "25")
 	if err != nil {
 		return nil
 	}

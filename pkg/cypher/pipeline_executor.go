@@ -1,3 +1,4 @@
+// Author of retained syntax cache identity: Codex R17 implementation agent.
 package cypher
 
 // Pipeline executor for composite queries of the form
@@ -221,8 +222,13 @@ func pipelineClauseBody(text, keyword string) string {
 // it for workloads with unbounded distinct texts.
 var pipelineClauseSplits = struct {
 	sync.RWMutex
-	splits map[string]pipelineClauseSplit
-}{splits: make(map[string]pipelineClauseSplit)}
+	splits map[pipelineClauseKey]pipelineClauseSplit
+}{splits: make(map[pipelineClauseKey]pipelineClauseSplit)}
+
+type pipelineClauseKey struct {
+	source string
+	origin cypherantlr.SyntaxOrigin
+}
 
 // pipelineClauseSplit is a text's split with procedure calls as clauses;
 // topLevelCall records whether the text has a CALL of its own, which makes
@@ -257,7 +263,11 @@ func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bo
 	if ctx.Err() != nil {
 		return nil, false
 	}
-	key := semanticCacheKey(cypher, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.QuerySyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25")
+	if err != nil {
+		return nil, false
+	}
+	key := pipelineClauseKey{source: semanticCacheKey(cypher, cypherVersionFromContext(ctx) == "25"), origin: syntax.Origin()}
 	pipelineClauseSplits.RLock()
 	split, cached := pipelineClauseSplits.splits[key]
 	pipelineClauseSplits.RUnlock()
@@ -272,7 +282,7 @@ func cachedPipelineClauses(ctx context.Context, cypher string, procedureCalls bo
 			return nil, false
 		}
 		if len(pipelineClauseSplits.splits) >= pipelineClauseSplitLimit {
-			pipelineClauseSplits.splits = make(map[string]pipelineClauseSplit)
+			pipelineClauseSplits.splits = make(map[pipelineClauseKey]pipelineClauseSplit)
 		}
 		pipelineClauseSplits.splits[key] = split
 		pipelineClauseSplits.Unlock()

@@ -1,3 +1,4 @@
+// Author of retained syntax cache key adaptation: Codex R17 implementation agent.
 package cypher
 
 import (
@@ -22,7 +23,7 @@ func TestQueryReaderCancellationDoesNotPoisonCompilation(t *testing.T) {
 				query := fmt.Sprintf("MATCH (n:ReaderCanceled%sVersion%s) RETURN count(n) AS count", parser.name, version)
 				key := semanticCacheKey(query, version == "25")
 				pipelineClauseSplits.Lock()
-				delete(pipelineClauseSplits.splits, key)
+				delete(pipelineClauseSplits.splits, pipelineClauseKey{source: key})
 				pipelineClauseSplits.Unlock()
 				checkpoint := newCheckpointContext(32, nil)
 				defer checkpoint.cancel()
@@ -32,7 +33,7 @@ func TestQueryReaderCancellationDoesNotPoisonCompilation(t *testing.T) {
 				require.False(t, ok)
 				require.Nil(t, clauses)
 				pipelineClauseSplits.RLock()
-				_, cached := pipelineClauseSplits.splits[key]
+				_, cached := pipelineClauseSplits.splits[pipelineClauseKey{source: key}]
 				pipelineClauseSplits.RUnlock()
 				require.False(t, cached, "canceled syntax must not publish a declined split")
 

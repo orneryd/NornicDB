@@ -1,3 +1,4 @@
+// Author of private inspection entry migration: Codex R17 implementation agent.
 package antlr
 
 import (
@@ -165,7 +166,7 @@ func TestStatementSyntaxScopeSelectionWindows(t *testing.T) {
 }
 func TestStatementSyntaxWholeSourceIdentityAcrossAdapters(t *testing.T) {
 	source := "WITH 1 AS uniqueCanonicalIdentity CALL { WITH uniqueCanonicalIdentity RETURN uniqueCanonicalIdentity AS value } RETURN value"
-	fragment, err := ParseSyntax(context.Background(), source, FragmentEntry, false)
+	fragment, err := ParseSyntax(context.Background(), source, fragmentEntry, false)
 	require.NoError(t, err)
 	statement, err := ParseSyntax(context.Background(), source, StatementEntry, false)
 	require.NoError(t, err)
@@ -174,7 +175,7 @@ func TestStatementSyntaxWholeSourceIdentityAcrossAdapters(t *testing.T) {
 	prior, err := ParseSyntax(context.Background(), "RETURN 92741 AS adapterWarmup", ClauseEntry, false)
 	require.NoError(t, err)
 	require.Equal(t, CypherParserRULE_subqueryBody, prior.Root().Rule())
-	full, err := ParseSyntax(context.Background(), "RETURN 92741 AS adapterWarmup", FragmentEntry, false)
+	full, err := ParseSyntax(context.Background(), "RETURN 92741 AS adapterWarmup", fragmentEntry, false)
 	require.NoError(t, err)
 	require.Equal(t, CypherParserRULE_script, full.Root().Rule(), "a scope-independent adapter cannot replace a statement with a different entry's tree")
 }
