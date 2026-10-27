@@ -137,6 +137,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/buildinfo"
@@ -2523,7 +2524,7 @@ func (s *Session) databaseScopedExecutorOptions(dbName string, useAuthScopedReso
 			}
 		}
 		if mgr, ok := s.server.dbManager.(*multidb.DatabaseManager); ok {
-			executor.SetDatabaseManager(&boltDatabaseManagerAdapter{manager: mgr})
+			executor.SetDatabaseManager(&boltDatabaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: mgr}})
 		}
 	}
 	return options

@@ -15,12 +15,12 @@ import (
 // executor on pcomp.
 func newCompositeFixture(t *testing.T) *StorageExecutor {
 	t.Helper()
-	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
-	require.NoError(t, mgr.CreateDatabase("pother"))
-	require.NoError(t, mgr.CreateDatabase("pthird"))
-	require.NoError(t, mgr.CreateCompositeDatabase("pcomp", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "pother"}))
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "pthird"}))
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "pcomp", []multidb.ConstituentRef{
 		{Alias: "other", DatabaseName: "pother", Type: "local", AccessMode: "read_write"},
 		{Alias: "third", DatabaseName: "pthird", Type: "local", AccessMode: "read_write"},
 	}))

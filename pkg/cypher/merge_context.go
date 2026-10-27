@@ -5,6 +5,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 
 	"strings"
 
@@ -651,7 +652,7 @@ func splitSetAssignment(assignment string) (target, property, operator, right st
 	if colon := findTopLevelOperator(assignment, ":", false, true); colon > 0 && (eq < 0 || colon < eq) {
 		// Label form x:L1:L2 / x:$(expr); a dynamic label expression may
 		// itself contain "=".
-		if target := strings.TrimSpace(assignment[:colon]); isValidIdentifier(target) {
+		if target := strings.TrimSpace(assignment[:colon]); cyphertext.IsIdentifier(target) {
 			return target, "", ":", strings.TrimSpace(assignment[colon+1:])
 		}
 	}
@@ -689,7 +690,7 @@ func requireSetParameter(ctx context.Context, expr string) error {
 		return nil
 	}
 	name := expr[1:]
-	if !isValidIdentifier(name) {
+	if !cyphertext.IsIdentifier(name) {
 		return nil
 	}
 	params := getParamsFromContext(ctx)
@@ -754,10 +755,10 @@ func (e *StorageExecutor) evaluateSetExpressionWithContext(ctx context.Context, 
 	if err := requireSetParameter(ctx, expr); err != nil {
 		return nil, err
 	}
-	if value, resolved := resolveDirectParamRef(ctx, expr); resolved {
+	if value, resolved := resolveValueReference(ctx, expr, parameterName); resolved {
 		return checkedPropertyResult(ctx, expr, value, true, nil)
 	}
-	if value, resolved := resolveContextPathRef(ctx, expr); resolved {
+	if value, resolved := resolveValueReference(ctx, expr, rowPath); resolved {
 		return checkedPropertyResult(ctx, expr, value, true, nil)
 	}
 	return e.checkedPropertyExpression(ctx, expr, entityRow(ctx, nodes, rels))

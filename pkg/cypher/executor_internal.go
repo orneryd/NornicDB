@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/config"
@@ -60,22 +61,46 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	cypher = normalizeCypherSyntaxConfusables(cypher)
+	ctx, source := cyphertext.WithSource(ctx, cypher)
+	if source.Err != nil {
+		if invalid, ok := source.Err.(*cyphertext.UnicodeSourceError); ok {
+			return nil, invalidUnicodeLiteralError(invalid.Offset)
+		}
+		return nil, source.Err
+	}
+	if cypher != source.Text {
+		normalized := sourceQueryRewrite(source)
+		defer func() { result, retErr = normalized.restore(result, retErr) }()
+	}
+	cypher = source.Text
 	if config.IsCypherQueryNormalizationEnabled() {
 		var err error
-		cypher, _, err = normalizeQueryText(ctx, cypher)
+		var rewrite *queryRewrite
+		cypher, rewrite, err = normalizeQueryText(ctx, cypher)
+		ctx = withSourceRewrite(ctx, rewrite)
 		if err != nil {
 			return nil, err
 		}
 	}
-	cypher, _ = canonicalizeNumericLiterals(cypher)
-	cypher, _ = canonicalizeFunctionAliases(cypher)
-	if cypherVersionFromContext(ctx) == "25" {
-		cypher, _ = separateCypher25Parameters(cypher)
+	if canonical, rewrite := canonicalizeNumericLiterals(cypher); rewrite != nil {
+		cypher = canonical
+		ctx = withSourceRewrite(ctx, rewrite)
 	}
-	cypher, _ = desugarStandaloneOrderClauses(cypher)
-	cypher = strings.TrimSpace(cypher)
-	cypher = trimTrailingStatementDelimiters(cypher)
+	if canonical, rewrite := canonicalizeFunctionAliases(cypher); rewrite != nil {
+		cypher = canonical
+		ctx = withSourceRewrite(ctx, rewrite)
+	}
+	if cypherVersionFromContext(ctx) == "25" {
+		if canonical, rewrite := separateCypher25Parameters(cypher); rewrite != nil {
+			cypher = canonical
+			ctx = withSourceRewrite(ctx, rewrite)
+		}
+	}
+	if canonical, rewrite := desugarStandaloneOrderClauses(cypher); rewrite != nil {
+		cypher = canonical
+		ctx = withSourceRewrite(ctx, rewrite)
+	}
+	ctx, cypher = trimSourceText(ctx, cypher, trimSourceTerminator)
 	if err := e.validateStatementFraming(ctx, cypher); err != nil {
 		return nil, err
 	}
@@ -97,7 +122,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 		}()
 	}
 
-	if use, remaining, hasUse, err := parseUseClause(cypher, false); hasUse || err != nil {
+	if use, remaining, hasUse, err := parseUseClause(ctx, cypher, false, cyphertext.AcceptedSource); hasUse || err != nil {
 		if err != nil {
 			return nil, err
 		}
@@ -136,7 +161,7 @@ func (e *StorageExecutor) executeInternal(ctx context.Context, cypher string, pa
 	}
 
 	// Basic syntax validation to preserve existing error behavior.
-	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25"); err != nil {
+	if err := e.validateSyntax(ctx, cypher, cypherVersionFromContext(ctx) == "25", syntaxStatement); err != nil {
 		return nil, err
 	}
 	if err := e.validateTransactionalCalls(ctx, cypher, nil); err != nil {

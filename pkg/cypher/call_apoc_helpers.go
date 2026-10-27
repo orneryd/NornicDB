@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
@@ -11,12 +12,12 @@ import (
 
 // findMatchingParen finds the index of the closing parenthesis matching the one at startIdx.
 func (e *StorageExecutor) findMatchingParen(s string, startIdx int) int {
-	return findMatchingDelimiter(s, startIdx, '(', ')')
+	return cyphertext.FindMatchingDelimiter(s, startIdx, '(', ')', cyphertext.OpeningDelimiter)
 }
 
 // findMatchingBrace finds the index of the closing brace matching the one at startIdx.
 func (e *StorageExecutor) findMatchingBrace(s string, startIdx int) int {
-	return findMatchingDelimiter(s, startIdx, '{', '}')
+	return cyphertext.FindMatchingDelimiter(s, startIdx, '{', '}', cyphertext.OpeningDelimiter)
 }
 
 // splitBySemicolon splits a string by semicolons, respecting quotes.
@@ -45,7 +46,7 @@ func (e *StorageExecutor) splitBySemicolon(s string) []string {
 // extractProcedureName uses the same component reader as authorization,
 // retaining exact case while accepting quoted names and spaced separators.
 func extractProcedureName(ctx context.Context, source string) string {
-	syntax, _ := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, _ := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if !syntax.Valid() {
 		return ""
 	}

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"strconv"
 	"strings"
@@ -889,7 +890,10 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 	// A supported function call compiles through the same shared helper the
 	// row evaluator applies (#728): the compiled fast path is a compiled form
 	// of the one evaluator, with identical results.
-	if function, argument, ok := parseFunctionCallWS(clause); ok {
+	var callFacts1 functionCallFacts
+	if ok := inspectFunctionCall(clause, qualifiedFunctionCall, "", &callFacts1); ok {
+		function, argument := callFacts1.name, callFacts1.inner
+
 		if inner, ok := e.compileBindingValueResolver(argument); ok {
 			switch lowerASCII(function) {
 			case "size":
@@ -915,7 +919,7 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 		// the caller falls back to the shared evaluator, which computes the
 		// arithmetic exactly (#692).
 		property, validProperty := isOneSymbolicName(propName)
-		if !validProperty || varName == "" || strings.ContainsAny(varName, " \t\r\n") {
+		if !validProperty || varName == "" || strings.IndexFunc(varName, cyphertext.IsWhitespace) >= 0 {
 			return nil, false
 		}
 		return func(b binding, params map[string]interface{}) (interface{}, bool) {
@@ -927,7 +931,7 @@ func (e *StorageExecutor) compileBindingValueResolver(expr string) (bindingValue
 			return getBindingNodeValue(e.queryVisibleValue(node).(*storage.Node), property)
 		}, true
 	}
-	if isValidIdentifier(clause) {
+	if cyphertext.IsIdentifier(clause) {
 		return func(b binding, params map[string]interface{}) (interface{}, bool) {
 			_ = params
 			node := b[clause]

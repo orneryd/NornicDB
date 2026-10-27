@@ -1,6 +1,6 @@
 package server
-import "github.com/orneryd/nornicdb/pkg/cypher"
 
+import "github.com/orneryd/nornicdb/pkg/cypher"
 
 import (
 	"context"
@@ -12,10 +12,10 @@ import (
 
 func TestStatementCacheFamilyHTTPExecutorCacheFamily(t *testing.T) {
 	server, _ := setupTestServer(t)
-	if err := server.dbManager.CreateDatabase("review1477local"); err != nil {
+	if err := server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "review1477local"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := server.dbManager.CreateCompositeDatabase("review1477comp", []multidb.ConstituentRef{
+	if err := server.dbManager.CreateCompositeDatabase(t.Context(), "review1477comp", []multidb.ConstituentRef{
 		{Alias: "local1", DatabaseName: "review1477local", Type: "local", AccessMode: "read_write"},
 		{Alias: "r1", DatabaseName: "remote_db", Type: "remote", AccessMode: "read", URI: "http://remote.example"},
 	}); err != nil {

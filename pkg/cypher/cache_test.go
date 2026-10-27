@@ -270,6 +270,11 @@ func TestSmartQueryCache_LabelExtraction(t *testing.T) {
 		expected []string
 	}{
 		{
+			name:     "case-sensitive lowercase and Unicode labels",
+			query:    "MATCH (n:person)-[:knows]->(m:Équipe) RETURN n, m",
+			expected: []string{"person", "knows", "Équipe"},
+		},
+		{
 			name:     "single label",
 			query:    "MATCH (n:User) RETURN n",
 			expected: []string{"User"},

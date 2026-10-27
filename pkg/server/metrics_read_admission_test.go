@@ -56,8 +56,8 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			s, users := setupTestServer(t)
 			ctx := context.Background()
 			const role = "metrics-reader"
-			require.NoError(t, s.dbManager.CreateDatabase("metrics_private"))
-			require.NoError(t, s.dbManager.CreateAlias("metrics_alias", "nornic"))
+			require.NoError(t, s.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "metrics_private"}))
+			require.NoError(t, s.dbManager.CreateAlias(t.Context(), "metrics_alias", "nornic"))
 			for database, size := range map[string]int{"nornic": 2, "metrics_private": 3} {
 				engine, err := s.dbManager.GetStorage(database)
 				require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestMetricsDatabaseReadAdmission(t *testing.T) {
 			t.Run("allowlist-revoked", func(t *testing.T) { check(t, 2, 1, visibleSlow) })
 			require.NoError(t, s.privilegesStore.SavePrivilege(ctx, role, "nornic", false, false))
 			t.Run("no-database-read", func(t *testing.T) { check(t, 0, 0, 0, true) })
-			require.NoError(t, s.dbManager.CreateCompositeDatabase("metrics_remote", []multidb.ConstituentRef{{
+			require.NoError(t, s.dbManager.CreateCompositeDatabase(t.Context(), "metrics_remote", []multidb.ConstituentRef{{
 				Alias: "leaf", DatabaseName: "external_metrics", Type: "remote", AccessMode: "read", URI: "bolt://localhost:1",
 			}}))
 			cypherMetrics.BindSlowQueries("metrics_remote").Add(5)

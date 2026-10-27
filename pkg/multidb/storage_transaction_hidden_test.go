@@ -70,7 +70,7 @@ func TestTransactionQuotaHiddenPriorEntities(t *testing.T) {
 						if quota == "bytes" {
 							limits = &Limits{Storage: StorageLimits{MaxBytes: total}}
 						}
-						require.NoError(t, manager.SetDatabaseLimits(db, limits))
+						require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, limits))
 						tx, err := base.BeginTransaction()
 						require.NoError(t, err)
 						t.Cleanup(func() { _ = tx.Rollback() })

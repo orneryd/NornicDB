@@ -80,7 +80,7 @@ query
     ;
 
 useClause
-    : USE (symbol (DOT symbol)* | functionInvocation)
+    : USE useGraphPrefix invocationName useGraphArguments? {p.useReferenceComplete()}?
     ;
 
 // EXPLAIN/PROFILE prefix
@@ -206,7 +206,7 @@ transactionBatch
 
 // Subquery body can start with WITH (to import variables) or have statements
 subqueryBody
-    : useClause? ((readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* (returnSt | FINISH)? (UNION ALL? subqueryBody)?
+    : useClause? ((readingStatement | updatingStatement)* withSt)* (readingStatement | updatingStatement)* (embeddingSt | returnSt | FINISH)? (UNION ALL? subqueryBody)?
     ;
 
 returnSt
@@ -218,7 +218,7 @@ withSt
     ;
 
 embeddingSt
-    : WITH EMBEDDING
+    : {p.EmbeddingOptionTerminal()}? WITH EMBEDDING
     ;
 
 skipSt
@@ -250,9 +250,10 @@ orderSt
     ;
 
 // Reads may follow writes without a WITH (CREATE … MATCH … RETURN), as in
-// Neo4j 5 and 25.
+// Neo4j 5 and 25. The embedding option ends the query grammatically, so a
+// nonterminal WITH EMBEDDING can only be the multiPartQ projection.
 singlePartQ
-    : readingStatement* (returnSt | FINISH | updatingStatement (readingStatement | updatingStatement)* embeddingSt? (returnSt | FINISH)?)?
+    : readingStatement* (returnSt | FINISH | updatingStatement (readingStatement | updatingStatement)* (embeddingSt | returnSt | FINISH)?)?
     | callSubquery orderSt?
     ;
 
@@ -611,7 +612,7 @@ invocationName
     ;
 
 functionInvocation
-    : invocationName LPAREN DISTINCT? expressionChain? RPAREN
+    : invocationName LPAREN (DISTINCT? expressionChain)? RPAREN
     | TRIM LPAREN (LEADING | TRAILING | BOTH)? expression? FROM expression RPAREN
     ;
 
@@ -661,7 +662,7 @@ allReduceExpression
     ;
 
 parameter
-    : DOLLAR (name | numLit | DIGIT_NAME)
+    : DOLLAR (UNION | name | numLit | DIGIT_NAME)
     ;
 
 // literals
@@ -724,6 +725,7 @@ name
 symbol
     : ESC_LITERAL
     | ID
+    | UNION
     | COUNT
     | SUM
     | AVG
@@ -928,4 +930,27 @@ privilegeCommand
 
 procedurePrivilegePattern
     : (symbol | MULT) (DOT (symbol | MULT))*
+    ;
+
+// Credential roles are part of the value grammar; remote DDL productions in
+// the parity layer use these nodes to populate the statement redaction set.
+credentialValue
+    : qualifiedName | STRING_LITERAL | CHAR_LITERAL | numLit | parameter
+    ;
+credentialURL
+    : qualifiedName | STRING_LITERAL | CHAR_LITERAL | numLit | parameter
+    ;
+
+// Left-factored so a prefix view never predicts against the following clause.
+useGraphArguments
+    : LPAREN (DISTINCT? expressionChain)? RPAREN
+    ;
+
+// GRAPH is selected once, including in a prefix view with arbitrary followers.
+useGraphPrefix
+    : {p.useGraphKeyword()}? ID
+    | {!p.useGraphKeyword()}?
+    ;
+useReferencePrefix
+    : useClause .* EOF
     ;

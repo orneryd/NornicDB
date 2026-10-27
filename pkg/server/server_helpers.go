@@ -2,9 +2,10 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"io"
 	"log/slog"
 	"net"
@@ -13,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/audit"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	"github.com/orneryd/nornicdb/pkg/cypher"
@@ -197,7 +197,7 @@ func (s *Server) databaseReadTargets(database string, mode auth.DatabaseAccessMo
 	// A dotted local constituent may name a local alias. Remote names above
 	// keep their foreign identity even when a local alias has the same spelling.
 	if strings.Contains(database, ".") {
-		physical, allowed = cypher.GraphAccess(manager, physical, canAccess)
+		physical, _, allowed = cypher.GraphAccessTarget(manager, physical, canAccess)
 		if !allowed {
 			return nil, false
 		}
@@ -214,9 +214,9 @@ func (s *Server) databaseReadTargets(database string, mode auth.DatabaseAccessMo
 		var target string
 		switch ref.Type {
 		case "local":
-			target, allowed = cypher.GraphAccess(manager, ref.DatabaseName, canAccess)
+			target, _, allowed = cypher.GraphAccessTarget(manager, ref.DatabaseName, canAccess)
 		case "remote":
-			target, allowed = cypher.GraphAccess(nil, ref.DatabaseName, canAccess)
+			target, _, allowed = cypher.GraphAccessTarget(nil, ref.DatabaseName, canAccess)
 		default:
 			return nil, false
 		}
@@ -391,64 +391,6 @@ func (s *Server) GetResolvedAccessForRoles(roles []string, dbName string) auth.R
 	return auth.ResolveDatabaseAccess(roles, dbName, s.privilegesStore, s.roleEntitlementsStore)
 }
 
-// isCreateDatabaseStatement returns true if the statement is CREATE DATABASE or CREATE COMPOSITE DATABASE.
-// Used to trigger auto-grant of access when a new database is created.
-func isCreateDatabaseStatement(statement string) bool {
-	t := strings.TrimSpace(statement)
-	u := strings.ToUpper(t)
-	return strings.HasPrefix(u, "CREATE COMPOSITE DATABASE") || strings.HasPrefix(u, "CREATE DATABASE")
-}
-
-// parseCreatedDatabaseName extracts the database name from a CREATE DATABASE or CREATE COMPOSITE DATABASE statement.
-// Returns (name, true) when the statement matches and name is non-empty; otherwise ("", false).
-// Handles "CREATE DATABASE name [IF NOT EXISTS]" and "CREATE COMPOSITE DATABASE name ...".
-func parseCreatedDatabaseName(statement string) (dbName string, ok bool) {
-	t := strings.TrimSpace(statement)
-	if t == "" {
-		return "", false
-	}
-	u := strings.ToUpper(t)
-	if strings.HasPrefix(u, "CREATE COMPOSITE DATABASE") {
-		// Skip "CREATE COMPOSITE DATABASE" (case-insensitive, flexible whitespace)
-		rest := t[len("CREATE COMPOSITE DATABASE"):]
-		rest = strings.TrimLeft(rest, " \t\n\r")
-		if rest == "" {
-			return "", false
-		}
-		// Name is first token (until whitespace or newline)
-		end := 0
-		for end < len(rest) && rest[end] != ' ' && rest[end] != '\t' && rest[end] != '\n' && rest[end] != '\r' {
-			end++
-		}
-		name := strings.TrimSpace(rest[:end])
-		return name, name != ""
-	}
-	if strings.HasPrefix(u, "CREATE DATABASE") {
-		// Skip "CREATE DATABASE" (case-insensitive, flexible whitespace)
-		rest := t[len("CREATE DATABASE"):]
-		rest = strings.TrimLeft(rest, " \t\n\r")
-		if rest == "" {
-			return "", false
-		}
-		// Name runs until "IF NOT EXISTS" or end; may be backtick-quoted
-		restUpper := strings.ToUpper(rest)
-		ifIdx := strings.Index(restUpper, "IF NOT EXISTS")
-		if ifIdx > 0 {
-			rest = strings.TrimSpace(rest[:ifIdx])
-		}
-		rest = strings.TrimSpace(rest)
-		if rest == "" {
-			return "", false
-		}
-		// Unquote backticks if present
-		if end, closed := cyphertext.ScanQuotedText(rest, 0); closed && end == len(rest) && cyphertext.IsBacktick(rest[0]) {
-			rest = strings.ReplaceAll(rest[1:end-1], "``", "`")
-		}
-		return rest, rest != ""
-	}
-	return "", false
-}
-
 // hasPermission reports a global entitlement of roles, through the one
 // entitlement check (auth.EntitlementsAllow): the role entitlements store
 // (stored overrides and the built-in roles' defaults), or without one the
@@ -499,7 +441,7 @@ func (s *Server) ProcedureGrantChecker(roles []string) func(procedure string) bo
 }
 
 func isMutationQuery(query string) bool {
-	requirements := cypher.QueryPermissionRequirements(context.Background(), query)
+	requirements := cypher.QueryPermissionRequirements(context.Background(), query, cypher.RawSource)
 	return requirements.Write || requirements.Schema
 }
 
@@ -513,7 +455,7 @@ func (s *Server) canAccessGraph(claims *auth.JWTClaims, graph string) bool {
 }
 
 // graphAccess reports whether mode allows graph and the database its data
-// is in (cypher.GraphAccess). A nil mode allows every database.
+// is in (cypher.GraphAccessTarget). A nil mode allows every database.
 func (s *Server) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataDatabase string, allowed bool) {
 	var manager cypher.GraphDatabaseResolver
 	if s.dbManager != nil {
@@ -523,7 +465,8 @@ func (s *Server) graphAccess(mode auth.DatabaseAccessMode, graph string) (dataDa
 	if mode != nil {
 		canAccess = mode.CanAccessDatabase
 	}
-	return cypher.GraphAccess(manager, graph, canAccess)
+	dataDatabase, _, allowed = cypher.GraphAccessTarget(manager, graph, canAccess)
+	return dataDatabase, allowed
 }
 
 // isShowDatabasesQuery returns true if the normalized statement is SHOW DATABASES (flexible whitespace).
@@ -582,13 +525,7 @@ func (w *responseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter 
 func (s *Server) readJSON(r *http.Request, v interface{}) error {
 	// Limit body size
 	body := io.LimitReader(r.Body, s.config.MaxRequestSize)
-	return json.NewDecoder(body).Decode(v)
-}
-
-func (s *Server) writeJSON(w http.ResponseWriter, status int, v interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+	return jsontext.NewDecoder(body).Decode(v)
 }
 
 func (s *Server) applyMVCCPressureWarnings(w http.ResponseWriter, dbName string, response *TransactionResponse) {
@@ -664,7 +601,7 @@ func (s *Server) writeError(w http.ResponseWriter, status int, message string, e
 		"code":    status,
 	}
 
-	s.writeJSON(w, status, response)
+	httpresponse.WriteJSON(w, status, response)
 }
 
 // writeNeo4jError writes an error in Neo4j format.
@@ -677,7 +614,7 @@ func (s *Server) writeNeo4jError(w http.ResponseWriter, status int, code, messag
 			Message: message,
 		}},
 	}
-	s.writeJSON(w, status, response)
+	httpresponse.WriteJSON(w, status, response)
 }
 
 // Logging helpers

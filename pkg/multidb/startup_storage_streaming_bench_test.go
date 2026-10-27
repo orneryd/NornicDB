@@ -95,14 +95,14 @@ func BenchmarkStartupStorageSizeReconciliation(b *testing.B) {
 // but is deferred until a byte limit or explicit size query needs it.
 func BenchmarkStartupDatabaseManagerWithoutSizeScan(b *testing.B) {
 	engine := newStartupBenchmarkEngine(b, true)
-	if _, err := NewDatabaseManager(engine, nil); err != nil {
+	if _, err := NewDatabaseManager(b.Context(), engine, nil); err != nil {
 		b.Fatal(err)
 	}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for iteration := 0; iteration < b.N; iteration++ {
-		manager, err := NewDatabaseManager(engine, nil)
+		manager, err := NewDatabaseManager(b.Context(), engine, nil)
 		if err != nil {
 			b.Fatal(err)
 		}

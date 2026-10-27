@@ -18,11 +18,11 @@ func TestManagedBulkPreservesReplacementContract(t *testing.T) {
 					t.Run(fmt.Sprintf("buffered=%v/%s/hidden=%v/%s", buffered, entity, hidden, quota), func(t *testing.T) {
 						base, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineWithOptions(storage.BadgerOptions{DataDir: t.TempDir(), WriteBehind: buffered}))
 						require.NoError(t, err)
-						manager, err := NewDatabaseManager(base, nil)
+						manager, err := NewDatabaseManager(t.Context(), base, nil)
 						require.NoError(t, err)
 						t.Cleanup(func() { require.NoError(t, manager.Close()) })
 						const db = "bulk_accounting"
-						require.NoError(t, manager.CreateDatabase(db))
+						require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: db}))
 						engine, err := manager.GetStorage(db)
 						require.NoError(t, err)
 						for _, id := range []storage.NodeID{"a", "b", "n"} {
@@ -42,7 +42,7 @@ func TestManagedBulkPreservesReplacementContract(t *testing.T) {
 						if quota == "bytes" {
 							limits = &Limits{Storage: StorageLimits{MaxBytes: before}}
 						}
-						require.NoError(t, manager.SetDatabaseLimits(db, limits))
+						require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, limits))
 						if entity == "node" {
 							err = engine.BulkCreateNodes([]*storage.Node{{ID: "n", Properties: map[string]any{"payload": "small"}}})
 						} else {

@@ -6,6 +6,8 @@ package storage
 
 import (
 	"strings"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // QueryAnalyzer analyzes queries to extract routing information.
@@ -31,7 +33,7 @@ func NewQueryAnalyzer() *QueryAnalyzer {
 
 // SetLabelRouting configures label-based routing.
 func (a *QueryAnalyzer) SetLabelRouting(label string, constituents []string) {
-	a.labelRouting[strings.ToLower(label)] = constituents
+	a.labelRouting[cyphertext.NameLower(label)] = constituents
 }
 
 // SetPropertyRouting configures property-based routing.
@@ -95,7 +97,7 @@ func (a *QueryAnalyzer) RouteQuery(queryInfo *QueryInfo, allConstituents []strin
 		allFound := true
 
 		for _, label := range queryInfo.Labels {
-			labelLower := strings.ToLower(label)
+			labelLower := cyphertext.NameLower(label)
 			if constituents, exists := a.labelRouting[labelLower]; exists {
 				for _, alias := range constituents {
 					constituentSet[alias] = true

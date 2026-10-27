@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
 
@@ -54,7 +55,7 @@ func writeCypher25ValueText(out *strings.Builder, value interface{}) bool {
 			if index > 0 {
 				out.WriteString(", ")
 			}
-			out.WriteString(cypher25NameText(key))
+			out.WriteString(cyphertext.PrintIdentifier(key, isSimpleCypherName, cyphertext.RawSource))
 			out.WriteString(": ")
 			if !writeCypher25ValueText(out, entries[key]) {
 				return false
@@ -72,7 +73,7 @@ func writeCypher25ValueText(out *strings.Builder, value interface{}) bool {
 		if !isEdge || edge == nil {
 			return false
 		}
-		out.WriteString("[:" + cypher25NameText(edge.Type) + "]")
+		out.WriteString("[:" + cyphertext.PrintIdentifier(edge.Type, isSimpleCypherName, cyphertext.RawSource) + "]")
 	case valueKindPath:
 		return writeCypher25PathText(out, value)
 	default:
@@ -88,7 +89,7 @@ func writeCypher25ValueText(out *strings.Builder, value interface{}) bool {
 func writeCypher25NodeText(out *strings.Builder, node *storage.Node) {
 	out.WriteByte('(')
 	for _, label := range node.Labels {
-		out.WriteString(":" + cypher25NameText(label))
+		out.WriteString(":" + cyphertext.PrintIdentifier(label, isSimpleCypherName, cyphertext.RawSource))
 	}
 	out.WriteByte(')')
 }
@@ -128,7 +129,7 @@ func writeCypher25PathText(out *strings.Builder, value interface{}) bool {
 	}
 	writeCypher25NodeText(out, path.Nodes[0])
 	for index, edge := range path.Relationships {
-		relationship := "[:" + cypher25NameText(edge.Type) + "]"
+		relationship := "[:" + cyphertext.PrintIdentifier(edge.Type, isSimpleCypherName, cyphertext.RawSource) + "]"
 		if edge.StartNode == path.Nodes[index].ID {
 			out.WriteString("-" + relationship + "->")
 		} else {
@@ -155,25 +156,16 @@ func convertToStringInVersion(value interface{}, cypher25 bool) interface{} {
 	return out.String()
 }
 
-// cypher25NameText is a key, label or type as cypher25ValueText writes it:
-// as it is when it is a plain name, else backtick-quoted (`a b`).
-func cypher25NameText(name string) string {
-	if isSimpleCypherName(name) {
-		return name
-	}
-	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
-}
-
 func isSimpleCypherName(key string) bool {
 	if key == "" {
 		return false
 	}
-	first := key[0]
-	if !isIdentStartByte(first) {
+
+	if !cyphertext.NameStartAt(key, 0) {
 		return false
 	}
 	for i := 1; i < len(key); i++ {
-		if !isIdentByte(key[i]) {
+		if !cyphertext.NamePartAt(key, i) {
 			return false
 		}
 	}

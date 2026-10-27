@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // TestPipelineEvaluatesEveryProjectionItem: the pipeline evaluates the items
@@ -121,7 +123,20 @@ func TestUnwindAliasIsOneVariable(t *testing.T) {
 		_, err := exec.Execute(ctx, query, nil)
 		require.Error(t, err, query)
 		require.Contains(t, statusText(err), "Neo.ClientError.Statement.SyntaxError", query)
-		require.Contains(t, err.Error(), "Invalid input '"+token+"'", query)
+		if token == "y" {
+			// The grammar admission owner rejects an extra identifier before
+			// the native UNWIND reader. Keep its precise structured position,
+			// rather than requiring that later reader's English diagnostic.
+			var localized *localization.LocalizedError
+			require.ErrorAs(t, err, &localized)
+			position := localization.CypherANTLRUnexpectedInput(1, 19)
+			want := localization.CypherANTLRParseSyntaxError(position.Fallback, position)
+			require.Equal(t, want.ID, localized.Message.ID)
+			require.Equal(t, want.Data, localized.Message.Data)
+			require.Equal(t, want.Fallback, localized.Message.Fallback)
+		} else {
+			require.Contains(t, err.Error(), "Invalid input '"+token+"'", query)
+		}
 	}
 }
 

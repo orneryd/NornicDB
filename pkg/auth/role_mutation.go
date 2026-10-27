@@ -195,7 +195,7 @@ func roleOwnedRecords(view storage.Engine, oldName, newName string) ([]roleOwned
 				}
 				record.replacementID = storage.NodeID(roleEntitlementPrefix + newName)
 			case "_User":
-				user, _ := (&Authenticator{}).userFromNode(node)
+				user := mapUserRecord(loadUserRecord, nil, node).User
 				if node.ID != storage.NodeID("user:"+user.Username) {
 					continue
 				}

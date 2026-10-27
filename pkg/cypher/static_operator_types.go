@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 
@@ -434,7 +435,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 		return staticOperand{}, nil
 	}
 	if receiver, projected := staticMapProjectionReceiver(expression); projected && receiver != "" {
-		if _, _, projection := staticMapProjectionSplit(expression); !projection {
+		if _, _, projection := mapProjectionSplit(expression, mapProjectionStatic); !projection {
 			return staticOperand{}, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax",
 				localization.CypherCoreMapProjectionReceiver(receiver))
 		}
@@ -442,7 +443,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	if _, isList := stripEnclosingRowDelimiter(expression, '[', ']'); isList {
 		return checker.checkAtom(expression)
 	}
-	if expression[0] == '{' && findMatchingDelimiter(expression, 0, '{', '}') == len(expression)-1 {
+	if expression[0] == '{' && cyphertext.FindMatchingDelimiter(expression, 0, '{', '}', cyphertext.OpeningDelimiter) == len(expression)-1 {
 		return checker.checkAtom(expression)
 	}
 	if _, _, projection := checker.mapProjection(expression); projection {
@@ -450,7 +451,7 @@ func (checker staticOperatorChecker) derive(expression string) (staticOperand, e
 	}
 	// A map projection is an operand: an expression around one (s{.a} IS
 	// NULL, toString(s{.a})) is typed like any other.
-	if !isOperatorExpressionText(checker.maskMapProjections(expression)) {
+	if !expressionTextAccepted(checker.maskMapProjections(expression), expressionTextOperator) {
 		// A function call or subquery expression over a pattern still has
 		// its result type (size([(n)-->() | 1]) is an Integer).
 		return staticPatternExpressionType(expression), nil
@@ -719,7 +720,7 @@ func maskCaseBlocks(expression string) string {
 		default:
 			continue
 		}
-		if !matchKeywordAt(expression, index, "CASE") || (index > 0 && (isIdentByte(expression[index-1]) || expression[index-1] == '.')) {
+		if !matchKeywordAt(expression, index, "CASE") || (index > 0 && (cyphertext.NamePartAt(expression, index-1) || expression[index-1] == '.')) {
 			continue
 		}
 		end := leadingCaseExpressionEnd(expression[index:])
@@ -767,7 +768,7 @@ func staticPostfixSplit(expression string) (receiver, inner string, subscript, o
 		case ']':
 			depth--
 		case '.':
-			if depth == 0 && index > 0 && index+1 < len(expression) && isIdentStartByte(expression[index+1]) {
+			if depth == 0 && index > 0 && index+1 < len(expression) && cyphertext.NameStartAt(expression, index+1) {
 				last, subscript = index, false
 			}
 		}
@@ -778,7 +779,7 @@ func staticPostfixSplit(expression string) (receiver, inner string, subscript, o
 	// expression is trimmed and last > 0, so the receiver isn't empty.
 	receiver = strings.TrimSpace(expression[:last])
 	if subscript {
-		if findMatchingDelimiter(expression, last, '[', ']') != len(expression)-1 {
+		if cyphertext.FindMatchingDelimiter(expression, last, '[', ']', cyphertext.OpeningDelimiter) != len(expression)-1 {
 			return "", "", false, false
 		}
 		return receiver, expression[last+1 : len(expression)-1], true, true
@@ -892,7 +893,7 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 		}
 		// A string literal key reads a known member (m['a']); a key from
 		// a variable is read at run time, as in Neo4j 2026.09.
-		if text, literal := decodeCypherQuotedString(strings.TrimSpace(inner)); literal {
+		if text, literal := cyphertext.DecodeString(strings.TrimSpace(inner), cyphertext.AcceptedSource); literal {
 			if member, found := receiver.staticMapMember(text); found {
 				return member, nil
 			}
@@ -917,12 +918,12 @@ func (checker staticOperatorChecker) checkPostfix(receiverText, inner string, su
 }
 
 // staticArithmeticOperandText reports whether text is a whole operand of
-// arithmetic (isOperandExpressionText), a subscript or slice of one
+// arithmetic (expressionTextOperand policy), a subscript or slice of one
 // ([1, 2.5][0] + 'a' is a String), a whole CASE or a COUNT { } / COLLECT { } /
 // EXISTS { } expression: an operator split at a pattern's arrow is none.
 func staticArithmeticOperandText(text string) bool {
 	text = strings.TrimSpace(text)
-	if isOperandExpressionText(text) {
+	if expressionTextAccepted(text, expressionTextOperand) {
 		return true
 	}
 	if receiver, _, _, postfix := staticPostfixSplit(text); postfix {
@@ -942,7 +943,10 @@ var staticSubqueryExpressionTypes = map[string]string{"COUNT": "Integer", "COLLE
 // operator check doesn't read (it holds a pattern): a whole function call's
 // or subquery expression's, or unknown.
 func staticPatternExpressionType(expression string) staticOperand {
-	if function, arguments, call := parseFunctionCallWS(expression); call && function != "" {
+	var callFacts1 functionCallFacts
+	if call := inspectFunctionCall(expression, qualifiedFunctionCall, "", &callFacts1); call && callFacts1.name != "" {
+		function, arguments := callFacts1.name, callFacts1.inner
+
 		return provenOperand(staticFunctionResultType(function, arguments))
 	}
 	operand, _ := staticSubqueryExpressionOperand(expression)
@@ -955,19 +959,19 @@ func staticPatternExpressionType(expression string) staticOperand {
 // List<T> whatever its body returns (toUpper(head(COLLECT { RETURN 1 AS x }))
 // is admitted).
 func staticSubqueryExpressionOperand(expression string) (operand staticOperand, subquery bool) {
-	name, next, ok := scanIdentifierToken(expression, 0)
+	name, ok := cyphertext.ScanIdentifier(expression, 0)
 	if !ok {
 		return staticOperand{}, false
 	}
-	typeName, known := staticSubqueryExpressionTypes[upperASCII(name)]
+	typeName, known := staticSubqueryExpressionTypes[upperASCII(name.Value)]
 	if !known {
 		return staticOperand{}, false
 	}
-	open := next
-	for open < len(expression) && isASCIIWhitespace(expression[open]) {
+	open := name.End
+	for open < len(expression) && cyphertext.IsWhitespaceAt(expression, open) {
 		open++
 	}
-	if open < len(expression) && expression[open] == '{' && isSubqueryBrace(expression, open) && findMatchingDelimiter(expression, open, '{', '}') == len(expression)-1 {
+	if open < len(expression) && expression[open] == '{' && isSubqueryBrace(expression, open) && cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter) == len(expression)-1 {
 		return provenOperand(typeName), true
 	}
 	return staticOperand{}, false
@@ -990,13 +994,13 @@ func staticMapProjectionReceiver(expression string) (receiver string, projected 
 			if expression[open] == '[' {
 				opening, closingDelimiter = '[', ']'
 			}
-			closing := findMatchingDelimiter(expression, open, opening, closingDelimiter)
+			closing := cyphertext.FindMatchingDelimiter(expression, open, opening, closingDelimiter, cyphertext.OpeningDelimiter)
 			if closing < 0 {
 				return "", false
 			}
 			open = closing
 		case '{':
-			if findMatchingDelimiter(expression, open, '{', '}') == len(expression)-1 {
+			if cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter) == len(expression)-1 {
 				receiver = strings.TrimSpace(expression[:open])
 				_, subqueryName := staticSubqueryExpressionTypes[upperASCII(receiver)]
 				if !endsWithOperand(receiver) && (!subqueryName || isSubqueryBrace(expression, open)) {
@@ -1008,7 +1012,7 @@ func staticMapProjectionReceiver(expression string) (receiver string, projected 
 				}
 				return receiver, true
 			}
-			closing := findMatchingDelimiter(expression, open, '{', '}')
+			closing := cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter)
 			if closing < 0 {
 				return "", false
 			}
@@ -1046,11 +1050,11 @@ func endsWithOperand(text string) bool {
 	switch {
 	case isCypherQuoteByte(last) || last == ')' || last == ']' || last == '}':
 		return true
-	case !isIdentByte(last):
+	case !cyphertext.NamePartAt(text, len(text)-1):
 		return false
 	}
 	start := len(text)
-	for start > 0 && isIdentByte(text[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(text, start-1) {
 		start--
 	}
 	word := text[start:]
@@ -1107,7 +1111,7 @@ func withoutUnaryPlus(cypher string) (string, bool) {
 		if index+1 < len(cypher) && cypher[index+1] == '=' {
 			continue // SET n += m
 		}
-		if !unaryPlusAt(strings.TrimRight(cypher[:index], " \t\r\n")) {
+		if !unaryPlusAt(strings.TrimRightFunc(cypher[:index], cyphertext.IsWhitespace)) {
 			continue
 		}
 		if rewritten == nil {
@@ -1133,7 +1137,7 @@ func unaryPlusAt(before string) bool {
 	switch last := before[len(before)-1]; {
 	case strings.IndexByte("(,[{:=<>+-*/%^|", last) >= 0:
 		return true
-	case !isIdentByte(last):
+	case !cyphertext.NamePartAt(before, len(before)-1):
 		return false
 	}
 	for _, keyword := range [...]string{"RETURN", "WITH", "WHERE", "AND", "OR", "XOR", "NOT", "THEN", "ELSE", "WHEN", "CASE", "IN", "BY", "UNWIND", "DISTINCT"} {
@@ -1149,33 +1153,18 @@ func endsWithKeywordFold(text, keyword string) bool {
 	if len(text) < len(keyword) || !strings.EqualFold(text[len(text)-len(keyword):], keyword) {
 		return false
 	}
-	return len(text) == len(keyword) || !isIdentByte(text[len(text)-len(keyword)-1])
+	return len(text) == len(keyword) || !cyphertext.NamePartAt(text, len(text)-len(keyword)-1)
 }
 
-// staticMapProjectionSplit splits a map projection (variable{.a, k: v})
-// into its variable and item list.
-func staticMapProjectionSplit(expression string) (variable, items string, projection bool) {
-	open := strings.IndexByte(expression, '{')
-	if open <= 0 || findMatchingDelimiter(expression, open, '{', '}') != len(expression)-1 {
-		return "", "", false
-	}
-	variable = simpleSemanticIdentifier(strings.TrimSpace(expression[:open]))
-	_, subqueryName := staticSubqueryExpressionTypes[upperASCII(variable)]
-	if variable == "" || isCypherKeyword(variable) && !subqueryName || isSubqueryBrace(expression, open) {
-		return "", "", false
-	}
-	return variable, expression[open+1 : len(expression)-1], true
-}
-
-// mapProjection is staticMapProjectionSplit for this scope: a variable with
+// mapProjection applies mapProjectionSplit for this scope: a variable with
 // a keyword's name that the scope binds (WITH 5 AS skip … skip{.a}) is
 // projected too.
 func (checker staticOperatorChecker) mapProjection(expression string) (variable, items string, projection bool) {
-	if variable, items, projection = staticMapProjectionSplit(expression); projection {
+	if variable, items, projection = mapProjectionSplit(expression, mapProjectionStatic); projection {
 		return variable, items, true
 	}
 	open := strings.IndexByte(expression, '{')
-	if open <= 0 || findMatchingDelimiter(expression, open, '{', '}') != len(expression)-1 || isSubqueryBrace(expression, open) {
+	if open <= 0 || cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter) != len(expression)-1 || isSubqueryBrace(expression, open) {
 		return "", "", false
 	}
 	if variable = simpleSemanticIdentifier(strings.TrimSpace(expression[:open])); variable == "" || !checker.scope.bound(variable) {
@@ -1197,7 +1186,7 @@ func (checker staticOperatorChecker) maskMapProjections(expression string) strin
 		switch c := expression[index]; {
 		case isCypherStringQuoteByte(c):
 			index = skipQuotedSemanticText(expression, index) - 1
-		case isCypherBacktickByte(c) || isIdentStartByte(c) && (index == 0 || !isIdentByte(expression[index-1]) && expression[index-1] != '$' && expression[index-1] != '.'):
+		case isCypherBacktickByte(c) || cyphertext.NameStartAt(expression, index) && (index == 0 || !cyphertext.NamePartAt(expression, index-1) && expression[index-1] != '$' && expression[index-1] != '.'):
 			name, next, ok := scanSymbolicName(expression, index)
 			if !ok {
 				continue
@@ -1210,7 +1199,7 @@ func (checker staticOperatorChecker) maskMapProjections(expression string) strin
 			if isCypherKeyword(name) && !checker.scope.bound(normalizeProjectionColumnName(name)) {
 				continue
 			}
-			end := findMatchingDelimiter(expression, open, '{', '}')
+			end := cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter)
 			if end < 0 {
 				return expression
 			}
@@ -1264,7 +1253,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		}
 		return listLiteralOperand(elements), nil
 	}
-	if expression[0] == '{' && findMatchingDelimiter(expression, 0, '{', '}') == len(expression)-1 {
+	if expression[0] == '{' && cyphertext.FindMatchingDelimiter(expression, 0, '{', '}', cyphertext.OpeningDelimiter) == len(expression)-1 {
 		mapOperand := provenOperand("Map")
 		for _, pair := range splitTopLevelComma(expression[1 : len(expression)-1]) {
 			if separator := findTopLevelMapKeyValueSeparator(pair); separator > 0 {
@@ -1297,7 +1286,10 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 		}
 		return provenOperand("Map"), nil
 	}
-	if function, arguments, call := parseFunctionCallWS(expression); call && function != "" {
+	var callFacts2 functionCallFacts
+	if call := inspectFunctionCall(expression, qualifiedFunctionCall, "", &callFacts2); call && callFacts2.name != "" {
+		function, arguments := callFacts2.name, callFacts2.inner
+
 		if isQuantifierFunction(lowerASCII(function)) {
 			if variable, list, predicate, ok := parseQuantifierArguments(arguments); ok {
 				_, err := checker.checkListComprehension(variable, list, predicate, "")
@@ -1363,7 +1355,7 @@ func (checker staticOperatorChecker) checkAtom(expression string) (staticOperand
 // scalarLiteralTypeName is the type of a string, number or boolean literal,
 // "" for any other expression: the operator check's leaf.
 func scalarLiteralTypeName(expression string) string {
-	if token, _, ok := scanIdentifierToken(expression, 0); ok && !strings.EqualFold(token, "true") && !strings.EqualFold(token, "false") {
+	if token, ok := cyphertext.ScanIdentifier(expression, 0); ok && !strings.EqualFold(token.Value, "true") && !strings.EqualFold(token.Value, "false") {
 		return ""
 	}
 	value, literal := parseLiteralValueFromComputedRow(expression)
@@ -1464,7 +1456,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(ctx context.Context, c
 			case cypherStringQuoteClass:
 				index = skipQuotedSemanticText(pattern, index) - 1
 			case '{':
-				closing := findMatchingDelimiter(pattern, index, '{', '}')
+				closing := cyphertext.FindMatchingDelimiter(pattern, index, '{', '}', cyphertext.OpeningDelimiter)
 				if closing < 0 {
 					return nil
 				}
@@ -1516,7 +1508,7 @@ func (e *StorageExecutor) forEachClauseOperatorExpression(ctx context.Context, c
 		projection, _ = cutDistinct(projection)
 		if mayNeedStaticTypeCheck(projection) {
 			for _, item := range splitTopLevelComma(projection) {
-				expression, _ := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
+				expression := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted).expression
 				if mayNeedStaticTypeCheck(expression) {
 					if err := visit(expression, false); err != nil {
 						return err
@@ -1591,7 +1583,8 @@ func forEachProjectedTailExpression(ctx context.Context, projection, rest string
 	projection, _ = cutDistinct(strings.TrimSpace(projection))
 	items := splitTopLevelComma(projection)
 	item := func(index int) (string, string) {
-		return parseProjectionExprAlias(ctx, strings.TrimSpace(items[index]))
+		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(items[index]), projectionAdmitted)
+		return itemSource.expression, itemSource.alias
 	}
 	for _, term := range parseOrderByClause(clauseTextUntil(rest, order+len("ORDER BY"), "SKIP", "LIMIT", "WHERE")) {
 		if orderedProjectionExpressions([]orderByTerm{term}, len(items), item) != nil {
@@ -1674,16 +1667,14 @@ func parameterMayMismatchOperator(cypher string, params map[string]interface{}) 
 		if cypher[index] != '$' {
 			// A parenthesised parameter is its operator's operand too:
 			// ($m) + 'a'.
-			if !isWhitespace(cypher[index]) && cypher[index] != '(' {
+			if !cyphertext.IsWhitespaceAt(cypher, index) && cypher[index] != '(' {
 				previous = cypher[index]
 			}
 			continue
 		}
 		start := index + 1
 		end := start
-		for end < len(cypher) && isIdentByte(cypher[end]) {
-			end++
-		}
+		end = cyphertext.NamePartEnd(cypher, end)
 		if end == start {
 			previous = '$'
 			continue

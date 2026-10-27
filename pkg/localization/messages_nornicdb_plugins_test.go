@@ -25,7 +25,7 @@ func TestNornicDBCorePluginLoadFailedRenders(t *testing.T) {
 	} {
 		manager, err := NewManager([]language.Tag{tc.tag}, nil)
 		require.NoError(t, err)
-		rendered, _, err := manager.Render(WithPreferences(context.Background(), tc.tag), message)
+		rendered, _, err := manager.Render(WithPreferences(context.Background(), tc.tag), MessageRequest(message))
 		require.NoError(t, err)
 		require.Equal(t, tc.text, rendered, tc.tag.String())
 	}

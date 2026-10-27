@@ -149,7 +149,7 @@ func TestIsFunctionCallWSChaos(t *testing.T) {
 			for i := 0; i < 5; i++ {
 				ws := randomWhitespace(rng)
 				expr := fmt.Sprintf(tc.template, ws)
-				result := isFunctionCallWS(expr, tc.funcName)
+				result := inspectFunctionCall(expr, namedFunctionCall, tc.funcName, nil)
 				assert.True(t, result, "isFunctionCallWS should return true for standalone '%s'", expr)
 			}
 		})
@@ -173,7 +173,7 @@ func TestIsFunctionCallWSChaos(t *testing.T) {
 			for i := 0; i < 3; i++ {
 				ws := randomWhitespace(rng)
 				expr := fmt.Sprintf(tc.template, ws)
-				result := isFunctionCallWS(expr, tc.funcName)
+				result := inspectFunctionCall(expr, namedFunctionCall, tc.funcName, nil)
 				assert.False(t, result, "isFunctionCallWS should return false for non-standalone '%s'", expr)
 			}
 		})
@@ -195,11 +195,11 @@ func TestChaosNestedFunctions(t *testing.T) {
 		nested := fmt.Sprintf("toLower%s(substring%s(x, 0))", ws1, ws2)
 
 		// Outer function should match as standalone
-		assert.True(t, isFunctionCallWS(nested, "tolower"),
+		assert.True(t, inspectFunctionCall(nested, namedFunctionCall, "tolower", nil),
 			"outer function should be standalone in '%s'", nested)
 
 		// Inner function should NOT match as standalone (it's nested)
-		assert.False(t, isFunctionCallWS(nested, "substring"),
+		assert.False(t, inspectFunctionCall(nested, namedFunctionCall, "substring", nil),
 			"inner function should NOT be standalone in '%s'", nested)
 
 		// But inner function should match with matchFuncStart when extracted
@@ -306,8 +306,8 @@ func TestChaosEdgeCases(t *testing.T) {
 		{"space_after_paren", "count( n )", "count", true},
 		// Empty args
 		{"empty_args", "now ()", "now", true},
-		// Unicode whitespace (should NOT match - we only support ASCII whitespace)
-		{"non_breaking_space", "count\u00A0(n)", "count", false}, // NBSP
+		// Unicode whitespace uses the same accepted whitespace owner as statements.
+		{"non_breaking_space", "count\u00A0(n)", "count", true}, // NBSP
 	}
 
 	for _, tc := range testCases {
@@ -408,7 +408,7 @@ func TestChaosQueryPatterns(t *testing.T) {
 					"should match generated expr '%s'", expr)
 
 				// Also test isFunctionCallWS for standalone
-				assert.True(t, isFunctionCallWS(expr, p.funcName),
+				assert.True(t, inspectFunctionCall(expr, namedFunctionCall, p.funcName, nil),
 					"should be standalone function call '%s'", expr)
 			}
 		})
@@ -460,7 +460,7 @@ func TestChaosNoFalsePositiveInExpressions(t *testing.T) {
 					"matchFuncStart should match start of '%s'", expr)
 
 				// But isFunctionCallWS should NOT match (not standalone)
-				assert.False(t, isFunctionCallWS(expr, e.funcName),
+				assert.False(t, inspectFunctionCall(expr, namedFunctionCall, e.funcName, nil),
 					"isFunctionCallWS should NOT match '%s' (not standalone)", expr)
 			}
 		})
@@ -488,7 +488,7 @@ func TestChaosNoFalsePositiveInExpressions(t *testing.T) {
 					"matchFuncStart should NOT match '%s' (func not at start)", expr)
 
 				// isFunctionCallWS should also NOT match
-				assert.False(t, isFunctionCallWS(expr, e.funcName),
+				assert.False(t, inspectFunctionCall(expr, namedFunctionCall, e.funcName, nil),
 					"isFunctionCallWS should NOT match '%s' (func not at start)", expr)
 			}
 		})

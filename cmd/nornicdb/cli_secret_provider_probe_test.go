@@ -107,7 +107,7 @@ func TestCLISecretProviderErrors(t *testing.T) {
 			t.Fatal("synthetic remote client could not initialize")
 		}
 		defer engine.Close()
-		_, _, err = engine.QueryCypher(context.Background(), "RETURN 1", nil)
+		_, _, err = engine.QueryCypher(context.Background(), "RETURN 1", nil, storage.RemoteAccessRead)
 		check(t, err)
 	})
 }

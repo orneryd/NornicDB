@@ -74,7 +74,7 @@ func TestNewBadgerEngineWithOptions_ConstructorErrorBranches(t *testing.T) {
 			}
 			return txn.Set(nodeKey(NodeID("test:n2")), buf.Bytes())
 		})
-		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true}))
+		engine, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4()}))
 		if engine != nil {
 			fixtureowner.Own(t, engine)
 		}

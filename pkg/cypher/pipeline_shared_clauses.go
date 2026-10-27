@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -26,7 +27,7 @@ func cypherGrammarVersion(query string) string {
 			rest = strings.TrimSpace(rest[end:])
 		}
 		for rest != "" && !startsWithClauseKeyword(rest) {
-			end := strings.IndexAny(rest, " \t\r\n")
+			end := strings.IndexFunc(rest, cyphertext.IsWhitespace)
 			if end < 0 {
 				rest = ""
 				break

@@ -23,6 +23,8 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/contextslot"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"reflect"
 	"slices"
@@ -64,9 +66,10 @@ const (
 // keyword (MATCH/CREATE/WITH/UNWIND/RETURN) and the clause body — exactly
 // what you would pass to the clause implementation.
 type pipelineClause struct {
-	kind   pipelineClauseKind
-	syntax cypherantlr.SyntaxNode
-	text   string
+	kind               pipelineClauseKind
+	syntax             cypherantlr.SyntaxNode
+	embeddingCandidate string
+	text               string
 	// optional marks OPTIONAL CALL (kinds pipelineClauseCall and
 	// pipelineClauseCallSubquery; text is the CALL itself): an input row the
 	// call produces no row for is kept, with null for the call's columns
@@ -301,12 +304,15 @@ func parsePipelineClauses(ctx context.Context, source string) (clauses []pipelin
 	if branch.useStart >= 0 || branch.finished || len(branch.clauses) == 0 {
 		return nil, false, false
 	}
-	for _, clause := range branch.clauses {
+	// Inline embedding candidates keep the bound syntax of their WITH; the
+	// pipeline frame resolves them like the scope compiler does.
+	for index, clause := range branch.clauses {
 		if clause.kind == pipelineClauseCall || clause.kind == pipelineClauseCallSubquery {
 			topLevelCall = true
 		}
 		item := clause.pipelineClause
 		item.syntax = clause.syntax
+		item.embeddingCandidate = embeddingCandidate(branch.clauses, index)
 		clauses = append(clauses, item)
 	}
 	return clauses, true, topLevelCall
@@ -376,8 +382,8 @@ func findAllTopLevelPipelineKeywordPositions(query, keyword string) []int {
 		}
 		if parenDepth == 0 && bracketDepth == 0 && braceDepth == 0 && asciiUpper(character) == first &&
 			i+len(keyword) <= len(query) && strings.EqualFold(query[i:i+len(keyword)], keyword) &&
-			(i == 0 || !isIdentByte(query[i-1])) &&
-			(i+len(keyword) == len(query) || !isIdentByte(query[i+len(keyword)])) {
+			(i == 0 || !cyphertext.NamePartAt(query, i-1)) &&
+			(i+len(keyword) == len(query) || !cyphertext.NamePartAt(query, i+len(keyword))) {
 			if (!withSearch || !isOperatorWith(query, i)) && !clauseKeywordUsedAsName(query, i, i+len(keyword), keyword) {
 				if positions == nil {
 					positions = make([]int, 0, 4)
@@ -499,7 +505,10 @@ type pipelineRowOutput struct {
 func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipelineRow, scope map[string]struct{}, clauses, originalClauses []pipelineClause, output *pipelineRowOutput) (*ExecuteResult, bool, error) {
 	stream, _ := ctx.Value(armedResultStreamKey{}).(*ResultStream)
 	programClauses := originalClauses
-	if len(programClauses) == 0 {
+	// Projections and effects are looked up by the executing clause's syntax.
+	// When whitespace normalization re-read the statement, bind that source.
+	if len(programClauses) == 0 || len(clauses) > 0 && clauses[0].syntax.Valid() && programClauses[0].syntax.Valid() &&
+		clauses[0].syntax.Source() != programClauses[0].syntax.Source() {
 		programClauses = clauses
 	}
 	var programErr error
@@ -517,7 +526,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 		wrote = output.wrote
 	}
 	if pipelineClausesMayDelete(clauses) {
-		ctx = withDeletedEntities(ctx)
+		ctx = contextslot.Ensure[deletedEntities](ctx)
 	}
 	// A statement's MERGEs learn which of their nodes it writes once, from
 	// all its clauses (a row-ordered stretch below sees only part of them);
@@ -620,7 +629,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				return pipelineDecline(ctx, wrote, clause.text)
 			}
 		}
-		if deleted := deletedEntitiesOf(ctx); !deleted.empty() {
+		if deleted := contextslot.Get[deletedEntities](ctx); !deleted.empty() {
 			if err := validateDeletedEntityReads(rows, deletedEntityReadText(clause), deleted); err != nil {
 				return nil, true, err
 			}
@@ -783,8 +792,31 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 				e.refreshRowEntities(ctx, rows)
 			}
 		case pipelineClauseWith:
-			// Carry imports after projection without adding them to DISTINCT/group keys.
-			if source != nil {
+			// The execution frame is the authoritative variable owner. It
+			// already includes wildcard exports, scoped imports and UNION
+			// branches; no syntax reader reconstructs those scopes.
+			if name := clause.embeddingCandidate; name != "" {
+				if binding, bound := pipelineFrameBinding(ctx, scope, name); !bound {
+					if wrapper, ok := ctx.Value(ctxKeyTxStorage).(*transactionStorageWrapper); ok {
+						mutated := wrapper.snapshotMutatedNodeIDs()
+						if err := e.applyInlineEmbeddingMutations(ctx, mutated); err != nil {
+							return nil, true, err
+						}
+						wrapper.clearMutatedNodeIDs(mutated)
+					} else {
+						return nil, true, localizedError(localization.CypherCoreEmbeddingTransactionStorageRequired(), nil)
+					}
+					continue
+				} else {
+					clause.text = "WITH " + binding
+				}
+			}
+			// Carry imports after an aggregating projection so they do not add
+			// grouping or DISTINCT keys. Other WITH clauses project imports in
+			// pipelineClausesCarrying.
+			carried := pipelineImports(ctx)
+			carryAfter := len(carried) > 0 && pipelineClauseAggregates(ctx, clause)
+			if source != nil && !carryAfter {
 				if windowed, supported := e.pipelineWithWindowSource(ctx, source, rows, clause.text); supported {
 					source = windowed
 					scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
@@ -815,7 +847,7 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			if source == nil {
 				source = pipelineRowsSource(rows)
 			}
-			newRows, ok := e.pipelineApplyWithSource(ctx, rows, clause.text, source, rowsValidated)
+			newRows, ok := e.pipelineApplyWith(ctx, rows, clause.text, source, rowsValidated)
 			source = nil
 			if !ok {
 				return pipelineDecline(ctx, wrote, clause.text)
@@ -825,6 +857,9 @@ func (e *StorageExecutor) runPipelineClauseRows(ctx context.Context, rows []pipe
 			}
 			rows = newRows
 			scope = pipelineProjectionScope(ctx, scope, clause.text, pipelineImports(ctx))
+			if carryAfter {
+				carryPipelineImports(rows, scope, carried)
+			}
 		case pipelineClauseUnwind:
 			if err := e.validatePipelineRangeArguments(ctx, rows, clause.text, "UNWIND"); err != nil {
 				return nil, true, err
@@ -1394,7 +1429,7 @@ func pipelineHasClauseKind(clauses []pipelineClause, kind pipelineClauseKind) bo
 }
 
 func normalizePipelineWhitespace(query string) string {
-	if !strings.ContainsAny(query, "\t\n\r") {
+	if strings.IndexFunc(query, cyphertext.NonCanonicalWhitespace) < 0 {
 		return strings.TrimSpace(query)
 	}
 	var normalized strings.Builder
@@ -1412,7 +1447,7 @@ func normalizePipelineWhitespace(query string) string {
 			index = end - 1
 			continue
 		}
-		if isWhitespace(character) {
+		if cyphertext.IsWhitespaceAt(query, index) {
 			spacePending = normalized.Len() > 0
 			continue
 		}
@@ -1803,8 +1838,8 @@ func replaceQualifiedReferenceOutsideQuotesUnless(input, reference, replacement 
 		character := input[index]
 		end := index + len(reference)
 		if end <= len(input) && input[index:end] == reference &&
-			(index == 0 || (!isIdentByte(input[index-1]) && input[index-1] != '.')) &&
-			(end == len(input) || (!isIdentByte(input[end]) && input[end] != '.')) &&
+			(index == 0 || (!cyphertext.NamePartAt(input, index-1) && input[index-1] != '.')) &&
+			(end == len(input) || (!cyphertext.NamePartAt(input, end) && input[end] != '.')) &&
 			(locals == nil || !locals.keeps(input, variable, index)) {
 			output.WriteString(replacement)
 			index = end
@@ -2004,7 +2039,7 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 		whereClause = normalizePipelineWhitespace(pattern[whereIndex+len("WHERE"):])
 		pattern = strings.TrimSpace(pattern[:whereIndex])
 	}
-	open, close := firstRelationshipBracket(pattern)
+	open, close := readRelationshipBracket(pattern, 0, requireClosedRelationship)
 	if open < 0 || close < 0 {
 		return nil, false, nil
 	}
@@ -2031,7 +2066,7 @@ func (e *StorageExecutor) pipelineApplyBoundRelationshipListMatch(ctx context.Co
 		if !ok || len(relationships) == 0 || !repeatableElements(ctx) && relationshipListReusesEdge(relationships) {
 			continue
 		}
-		rowCtx, prepared, err := e.preparePatternRow(ctx, pattern, row)
+		rowCtx, prepared, err := e.bindPatternProperties(ctx, pattern, row)
 		if err != nil {
 			return nil, true, err
 		}
@@ -2179,12 +2214,30 @@ func precededByOptionalKeyword(cypher string, position int) bool {
 func keywordsBefore(s string, position int, words ...string) int {
 	end := position
 	for w := len(words) - 1; w >= 0; w-- {
-		end = len(strings.TrimRight(s[:end], " \t\n\r"))
+		end = len(strings.TrimRightFunc(s[:end], cyphertext.IsWhitespace))
 		start := end - len(words[w])
-		if start < 0 || !equalFoldASCII(s[start:end], words[w]) || start > 0 && isIdentByte(s[start-1]) {
+		if start < 0 || !equalFoldASCII(s[start:end], words[w]) || start > 0 && cyphertext.NamePartAt(s, start-1) {
 			return -1
 		}
 		end = start
 	}
 	return end
+}
+
+// pipelineFrameBinding uses the execution frame and its existing identifier
+// translation. It does not reconstruct CALL, UNION or wildcard scopes.
+func pipelineFrameBinding(ctx context.Context, scope map[string]struct{}, name string) (string, bool) {
+	if _, bound := scope[name]; bound {
+		return name, true
+	}
+	if names, _ := ctx.Value(quotedVariablesKey{}).(*quotedVariableNames); names != nil {
+		for internal, original := range names.internal {
+			if original.name == name {
+				if _, bound := scope[internal]; bound {
+					return internal, true
+				}
+			}
+		}
+	}
+	return name, false
 }

@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ func TestPlan_UnionLexicalTokens(t *testing.T) {
 		"USE cmp.a RETURN \"UNION\" AS value",
 		"USE cmp.a RETURN 'plain' AS `UNION`",
 	} {
-		fragment, err := p.Plan("USE cmp CALL { "+body+" } RETURN value", "cmp")
+		fragment, err := p.Plan(t.Context(), "USE cmp CALL { "+body+" } RETURN value", "cmp", cyphertext.RawSource)
 		require.NoError(t, err, body)
 		execs := collectPlannedExecs(fragment)
 		require.Len(t, execs, 2, body)
@@ -34,7 +35,7 @@ func TestPlan_UnionPlainAllocations(t *testing.T) {
 	for _, shape := range unionPlainShapes() {
 		t.Run(shape.name, func(t *testing.T) {
 			var err error
-			allocs := testing.AllocsPerRun(100, func() { unionPlainPlanSink, err = p.Plan(shape.query, "cmp") })
+			allocs := testing.AllocsPerRun(100, func() { unionPlainPlanSink, err = p.Plan(t.Context(), shape.query, "cmp", cyphertext.RawSource) })
 			require.NoError(t, err)
 			require.LessOrEqual(t, allocs, min(shape.baseAllocs, ceilings[shape.name]), "no-UNION planning must preserve the composed allocation ratchet")
 			t.Logf("allocs=%g baseline=%g", allocs, shape.baseAllocs)
@@ -75,7 +76,7 @@ func BenchmarkFabricUnionPlainPlanning(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				fragment, err := p.Plan(shape.query, "cmp")
+				fragment, err := p.Plan(b.Context(), shape.query, "cmp", cyphertext.RawSource)
 				if err != nil {
 					b.Fatal(err)
 				}

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -10,9 +11,10 @@ import (
 // pending participant view once a source has been opened.
 func (c *cypherFabricExecutor) compositeParticipantStorage(ctx context.Context, database string, engine storage.Engine, write bool) (storage.Engine, error) {
 	tx := c.fabricTransaction()
+	participantKey := fabric.ParticipantKeyFromLocation(&fabric.LocationLocal{DBName: database})
 	if !write {
 		c.mu.Lock()
-		participant := c.localShardTxExecutors()[database]
+		participant := c.localShardTxExecutors()[participantKey]
 		c.mu.Unlock()
 		if participant == nil {
 			return engine, nil
@@ -23,7 +25,7 @@ func (c *cypherFabricExecutor) compositeParticipantStorage(ctx context.Context, 
 	if err := authorizeDatabase(ctx, database, "write"); err != nil {
 		return nil, err
 	}
-	sub, err := tx.GetOrOpen(database, true)
+	sub, err := tx.GetOrOpen(participantKey, true)
 	if err != nil {
 		return nil, err
 	}

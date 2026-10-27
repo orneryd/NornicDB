@@ -1,0 +1,74 @@
+# Refreshed duplicate-check findings
+
+Checker snapshot: integrated author handover before the read-only admission fix.
+Baseline: origin/release/v1.4.4 d663ce8f1320e409e2eaa29560b987ffe6526207.
+780 functions, four moves, 67 findings; exit1. No finding is waived.
+Checkboxes remain pending until a fresh enabled check confirms convergence.
+
+- [ ] 1. `TestDatabaseManager_EncryptRemoteCredential_NoCipherConfigured()` / `TestDatabaseManager_DecryptStoredRemotePassword_NoCipherConfigured()`
+- [ ] 2. `populationReceiver()` / `admissionTypeName()` — canonical testfixture.ReceiverName with explicit pointer policy implemented; focused PASS.
+- [ ] 3. `TestDatabaseManager_DecryptStoredRemotePassword()` / `TestDatabaseManager_DecryptStoredRemotePassword_PlaintextFallback()`
+- [ ] 4. `requireNoSyntheticProviderCredentials()` / `assertNoSyntheticCredential()` — canonical testfixture.RequireMarkersAbsent implemented; focused PASS.
+- [ ] 5. `TestExtractParameters()` / `TestSplitByKeyword()`
+- [ ] 6. `.executeDropDatabase()` / `.executeDropCompositeDatabase()`
+- [ ] 7. `splitOutsideParens()` / `splitOutsideBrackets()`
+- [ ] 8. `.executeCreateDatabase()` / `.executeCreateOrReplaceDatabase()`
+- [ ] 9. `splitAtTopLevelUse()` / `splitTopLevelAnd()`
+- [ ] 10. `TestParseUseClause_StaticGraphReferences()` / `TestParseUseClause_DynamicGraphReferences()`
+- [ ] 11. `TestRequestTimeoutMiddleware_TxRoute_UsesConfigAndOverride()` / `TestRequestTimeoutMiddleware_TxRoute_TracksActiveTxRequests()`
+- [ ] 12. `kpScanNumber()` / `kpScanInt()`
+- [ ] 13. `.validateSyntaxANTLR()` / `.validateSyntax()`
+- [ ] 14. `.As()` / `.As()`
+- [ ] 15. `newUsePropertyFixture()` / `TestDatabaseManager_GetStorage()`
+- [ ] 16. `TestFabricRemoteCompletionTransactionDeadline()` / `TestFabricRemoteCompletionOutlivesBeginContext()`
+- [ ] 17. `kpScanInt()` / `kpScanNumber()` — canonical kpScanDecimal[T] implemented; exact integer precision/control tests PASS.
+- [ ] 18. `.Start()` / `.Start()`
+- [ ] 19. `caseSimpleTestContinuesAt()` / `caseVariableNamedCase()`
+- [ ] 20. `.rowValueFallback()` / `.evaluateRowFallback()`
+- [ ] 21. `isOperatorExpressionText()` / `isOperandExpressionText()`
+- [ ] 22. `.restore()` / `.restore()`
+- [ ] 23. `ScanIdentifier()` / `scanIdentifierToken()`
+- [ ] 24. `containsStandaloneIdentifier()` / `containsStandaloneIdentifier()`
+- [ ] 25. `caseVariableNamedCase()` / `casePrefixWordIsVariable()`
+- [ ] 26. `casePreviousWordIn()` / `casePreviousWordIsCase()`
+- [ ] 27. `resolveParameterReference()` / `resolveSetMergeSourceFromParams()`
+- [ ] 28. `isValidIdentifier()` / `isValidIdentifier()`
+- [ ] 29. `TestCredentialStructuralErrorProjection()` / `TestCredentialRemoteUserErrorProjection()`
+- [ ] 30. `casePreviousWordIsCase()` / `casePreviousWordIn()`
+- [ ] 31. `.executeViaFabricWithTx()` / `.prepareFabricExecution()`
+- [ ] 32. `identifierAt()` / `indexIdentifierFold()`
+- [ ] 33. `TestCLISecretCredentialPrecedence()` / `TestCLISecretProviderOpaqueCredential()`
+- [ ] 34. `TestCatalogRemoteMixedCaseLookup()` / `TestCatalog_PopulateFromManager_WithCompositeAndRemote()`
+- [ ] 35. `.validateSyntaxNornic()` / `.validateSyntax()`
+- [ ] 36. `.parseIndexedNodeOrderSpecs()` / `.parseNodeOrderSpecs()`
+- [ ] 37. `.SetEmbedConfigForDB()` / `.SetDefaultEmbedConfig()`
+- [ ] 38. `.startEmbedderInit()` / `.initEmbedderWithRetry()`
+- [ ] 39. `gluedAliasKeywordAt()` / `aliasKeywordEndsAt()`
+- [ ] 40. `TestLocalOccurrencesWalkOnce()` / `TestLocalOccurrences()`
+- [ ] 41. `.OpenWithExecutorForOwner()` / `.OpenWithExecutor()`
+- [ ] 42. `.Render()` / `.Render()`
+- [ ] 43. `.readsPatternVariable()` / `readsPatternVariable()`
+- [ ] 44. `findAllKeywordPositions()` / `findAllTopLevelPipelineKeywordPositions()`
+- [ ] 45. `.OriginalOffset()` / `.originalOffset()`
+- [ ] 46. `replaceParameterReferences()` / `ReplaceParameters()`
+- [ ] 47. `mapDelimiterTail()` / `mapRelationshipDelimiter()`
+- [ ] 48. `traversalCallNameIsSafe()` / `traversalBareVariableInSafeCall()`
+- [ ] 49. `parseStatementSyntax()` / `ParseSyntax()`
+- [ ] 50. `parseReturnProjectionPlan()` / `returnProjectionPlanFor()`
+- [ ] 51. `scanRelationshipBracket()` / `nextRelationshipBracket()`
+- [ ] 52. `extractRelationshipVariables()` / `extractRelationshipVariable()`
+- [ ] 53. `.statementCacheScopeLocked()` / `.resolveCompositeConstituentInternal()`
+- [ ] 54. `.parseNodeOrderSpecs()` / `.parseIndexedNodeOrderSpecs()`
+- [ ] 55. `referencesUnwindBinding()` / `simpleUnwindFieldRef()`
+- [ ] 56. `.restoreSourceMessage()` / `.restoreMessage()`
+- [ ] 57. `.scope()` / `findAllTopLevelPipelineKeywordPositions()`
+- [ ] 58. `addStretchPropertyReads()` / `addStretchMapKeys()`
+- [ ] 59. `.redactFailure()` / `redactError()`
+- [ ] 60. `isConstantNumericExpression()` / `exprCanBeNumber()`
+- [ ] 61. `.OriginalSpan()` / `.originalSpan()`
+- [ ] 62. `RemoteUserForDisplay()` / `remoteDisplayCredentials()`
+- [ ] 63. `exprCanBeNumber()` / `isConstantNumericExpression()`
+- [ ] 64. `nextSignificantWords()` / `previousSignificantWord()`
+- [ ] 65. `groupByEdit()` / `groupByKeysEnd()`
+- [ ] 66. `scanStandaloneOrderClauses()` / `desugarStandaloneOrderClauses()`
+- [ ] 67. `splitCypherStatements()` / `splitCypherStatements()`

@@ -185,7 +185,7 @@ func (e *StorageExecutor) sharedSeededCallForTest(ctx context.Context, input *Ex
 func (e *StorageExecutor) sharedCorrelatedCallForTest(ctx context.Context, input *ExecuteResult, body string, imports []string) (*ExecuteResult, error) {
 	columns := append([]string(nil), input.Columns...)
 	call := "CALL (" + strings.Join(imports, ", ") + ") { " + body + " }"
-	outputs, err := e.ResultColumns(ctx, call, resultmetadata.KnownScope(input.Columns), cypherVersionFromContext(ctx) == "25")
+	outputs, err := e.ResultColumns(ctx, call, resultmetadata.KnownScope(input.Columns), cypherVersionFromContext(ctx) == "25", RawSource)
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +325,7 @@ func (e *StorageExecutor) sharedCreateBindingsForTest(ctx context.Context, query
 	clauses, ok, _ := parsePipelineClauses(ctx, query)
 	if !ok || len(clauses) == 0 || clauses[0].kind != pipelineClauseCreate {
 		if pattern := strings.TrimSpace(strings.TrimPrefix(query, "CREATE")); patternHasRelationship(pattern) {
-			if err := validateCreateRelationshipShape(pattern); err != nil {
+			if err := validateRelationshipMutation(pattern, createRelationshipMutation); err != nil {
 				return nil, nil, nil, fmt.Errorf("invalid relationship pattern: %w", err)
 			}
 		}

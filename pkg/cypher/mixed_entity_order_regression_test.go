@@ -25,7 +25,7 @@ func mixedEntityOrderRemoteValues(t *testing.T, fixture string) []interface{} {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: peer.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph_values", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph_values", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	return rows[0]
 }
@@ -86,7 +86,7 @@ func mixedEntityOrderKnownRemote(t *testing.T, id int, element string) storage.R
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: peer.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN n", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN n", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	node := rows[0][0].(storage.RemoteEntityValue)
 	legacy, _, _ := node.LegacyIDs()

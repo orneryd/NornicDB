@@ -5,6 +5,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -194,8 +195,15 @@ type SetItem struct {
 
 // Parse parses a Cypher query string into a Query AST.
 func (p *Parser) Parse(cypher string) (*Query, error) {
-	// Normalize whitespace
-	cypher = strings.TrimSpace(cypher)
+	ctx, source := cyphertext.WithSource(context.Background(), cypher)
+	if source.Err != nil {
+		return nil, source.Err
+	}
+	trimmed := strings.TrimSpace(source.Text)
+	start := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))
+	source = source.Window(start, start+len(trimmed))
+	ctx = cyphertext.WithSourceView(ctx, source)
+	cypher = source.Text
 
 	query := &Query{
 		Clauses:    make([]Clause, 0),
@@ -246,9 +254,9 @@ func (p *Parser) Parse(cypher string) (*Query, error) {
 		case "RETURN":
 			if returns == nil {
 				builder := NewASTBuilder()
-				for _, source := range builder.splitIntoClauses(cypher) {
-					if source.clauseType == ASTClauseReturn {
-						returns = append(returns, builder.parseReturn(context.Background(), source.text))
+				for _, fragment := range builder.splitIntoClauses(cypher) {
+					if fragment.clauseType == ASTClauseReturn {
+						returns = append(returns, builder.parseReturn(ctx, source.Window(fragment.startPos, fragment.startPos+len(fragment.text))))
 					}
 				}
 			}
@@ -339,46 +347,71 @@ func (p *Parser) parseDelete(tokens []string, pos int) (*DeleteClause, int) {
 
 // tokenize splits Cypher into tokens.
 func tokenize(cypher string) ([]string, error) {
-	// Simple tokenizer - will need improvement
-	tokens := make([]string, 0)
-	current := strings.Builder{}
+	tokens, _, err := tokenizeSource(cypher)
+	return tokens, err
+}
 
-	for i := 0; i < len(cypher); i++ {
-		c := cypher[i]
-		if isCypherStringQuoteByte(c) {
-			end, closed := scanCypherQuotedText(cypher, i, c)
-			if !closed {
-				return nil, localizedError(localization.CypherCoreUnterminatedStringLiteral(), nil)
+type sourceToken struct{ start, end int }
+
+// tokenizeSource retains exact source spans for the DDL value reader.
+func tokenizeSource(cypher string, sets ...*cyphertext.CredentialSet) ([]string, []sourceToken, error) {
+	var tokens []string
+	var spans []sourceToken
+	start := -1
+	emit := func(end int) {
+		if start >= 0 {
+			tokens = append(tokens, cypher[start:end])
+			spans = append(spans, sourceToken{start, end})
+			for _, set := range sets {
+				value, err := parseCypherValueToken(cypher[start:end])
+				if err == nil {
+					set.Record(cypher, start, end, value, false)
+				}
 			}
-			current.WriteString(cypher[i:end])
-			tokens = append(tokens, current.String())
-			current.Reset()
+			start = -1
+		}
+	}
+	for i := 0; i < len(cypher); i++ {
+		if end := cyphertext.CommentEnd(cypher, i); end >= 0 {
+			emit(i)
 			i = end - 1
 			continue
 		}
-
-		switch c {
-		case ' ', '\t', '\n', '\r':
-			if current.Len() > 0 {
-				tokens = append(tokens, current.String())
-				current.Reset()
+		if start < 0 && cyphertext.NumberStartsAt(cypher, i) {
+			number, _ := cyphertext.ScanNumber(cypher, i)
+			start = i
+			emit(number.TailEnd)
+			i = number.TailEnd - 1
+			continue
+		}
+		c := cypher[i]
+		if isCypherQuoteByte(c) {
+			if start < 0 {
+				start = i
 			}
-		case '(', ')', '[', ']', '{', '}', ':', ',', '.', '=', '<', '>', '-', '+', '*', '/':
-			if current.Len() > 0 {
-				tokens = append(tokens, current.String())
-				current.Reset()
+			end, closed := scanCypherQuotedText(cypher, i, c)
+			if !closed {
+				return nil, nil, localizedError(localization.CypherCoreUnterminatedStringLiteral(), nil)
 			}
-			tokens = append(tokens, string(c))
+			emit(end)
+			i = end - 1
+			continue
+		}
+		switch {
+		case cyphertext.IsWhitespaceAt(cypher, i):
+			emit(i)
+		case strings.ContainsRune("()[]{}:,.=<>-+*/", rune(c)):
+			emit(i)
+			start = i
+			emit(i + 1)
 		default:
-			current.WriteByte(c)
+			if start < 0 {
+				start = i
+			}
 		}
 	}
-
-	if current.Len() > 0 {
-		tokens = append(tokens, current.String())
-	}
-
-	return tokens, nil
+	emit(len(cypher))
+	return tokens, spans, nil
 }
 
 // Executor executes Cypher queries.

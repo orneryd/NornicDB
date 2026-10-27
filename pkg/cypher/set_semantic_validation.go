@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"math/bits"
 	"reflect"
 	"sort"
@@ -171,14 +172,14 @@ func trailingWordAfterOperand(expression string) (string, bool) {
 		case c == ')' || c == ']' || c == '}':
 			depth--
 			operandEnded = depth == 0
-		case isASCIIWhitespace(c):
-		case depth == 0 && isIdentStartByte(c):
-			word, end, _ := scanIdentifierToken(expression, i)
-			if operandEnded && !isExpressionOperatorWord(word) {
-				return word, true
+		case cyphertext.IsWhitespaceAt(expression, i):
+		case depth == 0 && cyphertext.NameStartAt(expression, i):
+			word, _ := cyphertext.ScanIdentifier(expression, i)
+			if operandEnded && !isExpressionOperatorWord(word.Value) {
+				return word.Value, true
 			}
-			operandEnded = !isExpressionOperatorWord(word)
-			i = end
+			operandEnded = !isExpressionOperatorWord(word.Value)
+			i = word.End
 			continue
 		case depth == 0 && c == '.':
 			// a property name follows: part of the operand
@@ -244,7 +245,7 @@ func (e *StorageExecutor) validateSetClauseScope(scope *semanticBindingScope, cl
 			// Label assignment `n:Label[:Label2]`: the variable before the
 			// first colon must be bound, as for a property assignment, and so
 			// must the variables a dynamic label's expression reads.
-			if target = normalizeProjectionColumnName(target); isValidIdentifier(target) && !scope.contains(target) {
+			if target = normalizeProjectionColumnName(target); cyphertext.IsIdentifier(target) && !scope.contains(target) {
 				return createUndefinedVariableError(target)
 			}
 			// The chain was read above (validatePipelineSetAssignments).
@@ -379,20 +380,20 @@ func expressionFreeVariables(expression string) []string {
 				delimiters = delimiters[:len(delimiters)-1]
 			}
 		}
-		name, next, ok := scanIdentifierToken(expression, index)
+		name, ok := cyphertext.ScanIdentifier(expression, index)
 		if !ok {
 			index++
 			continue
 		}
-		if index > 0 && expression[index-1] >= '0' && expression[index-1] <= '9' {
-			index = next
+		if index > 0 && cyphertext.IsDigit(expression[index-1]) {
+			index = name.End
 			continue
 		}
-		previous := previousSetExpressionByte(expression, index)
-		following := nextSetExpressionByte(expression, next)
-		upper := upperASCII(name)
+		previous := cyphertext.NeighborByte(expression, index, cyphertext.Before)
+		following := cyphertext.NeighborByte(expression, name.End, cyphertext.AtOrAfter)
+		upper := upperASCII(name.Value)
 		if following == '(' && (upper == "TRIM" || upper == "NORMALIZE") {
-			open := skipSpaces(expression, next)
+			open := skipSpaces(expression, name.End)
 			if closing := findMatchingParen(expression, open); closing >= 0 {
 				inner := expression[open+1 : closing]
 				parameters, grammar := trimFromArguments(inner)
@@ -416,7 +417,7 @@ func expressionFreeVariables(expression string) []string {
 				}
 			}
 		}
-		if functionEnd, call := qualifiedFunctionNameEnd(expression, next); call {
+		if functionEnd, call := qualifiedFunctionNameEnd(expression, name.End); call {
 			delimiters = append(delimiters, '(')
 			index = functionEnd + 1
 			continue
@@ -424,7 +425,7 @@ func expressionFreeVariables(expression string) []string {
 		// A subquery expression (EXISTS / COUNT / COLLECT { … }) binds its own
 		// variables and sees the outer ones; its body isn't an expression.
 		if _, open, subquery := subqueryExpressionKeywordAt(expression, index); subquery {
-			if closing := findMatchingDelimiter(expression, open, '{', '}'); closing > next {
+			if closing := cyphertext.FindMatchingDelimiter(expression, open, '{', '}', cyphertext.OpeningDelimiter); closing > name.End {
 				index = closing + 1
 				continue
 			}
@@ -434,8 +435,8 @@ func expressionFreeVariables(expression string) []string {
 		normalForm := false
 		switch upper {
 		case "NFC", "NFD", "NFKC", "NFKD":
-			form, _, word := scanIdentifierToken(expression, skipSpaces(expression, next))
-			normalForm = word && strings.EqualFold(form, "NORMALIZED")
+			form, word := cyphertext.ScanIdentifier(expression, skipSpaces(expression, name.End))
+			normalForm = word && strings.EqualFold(form.Value, "NORMALIZED")
 		}
 		keyword := setExpressionKeyword(upper)
 		// END is also a legal variable, notably the operand in NOT end +
@@ -445,15 +446,15 @@ func expressionFreeVariables(expression string) []string {
 			keyword = false
 		}
 		if previous != '$' && previous != '.' && following != '(' && !mapKey && !normalForm && !keyword {
-			if !locals.shadows(name, index) {
-				names = append(names, name)
+			if !locals.shadows(name.Value, index) {
+				names = append(names, name.Value)
 			}
 		}
-		index = next
+		index = name.End
 		if following == ':' && !mapKey {
 			// The labels of n:A:B and of a label expression n:A|B&!C or
 			// n:%: names of labels, not variables.
-			labelStart := skipSpaces(expression, next)
+			labelStart := skipSpaces(expression, name.End)
 			for labelStart < len(expression) && strings.IndexByte(":|&", expression[labelStart]) >= 0 {
 				labelName := skipSpaces(expression, labelStart+1)
 				for labelName < len(expression) && expression[labelName] == '!' {
@@ -461,10 +462,11 @@ func expressionFreeVariables(expression string) []string {
 				}
 				labelEnd := labelName + 1
 				if labelName >= len(expression) || expression[labelName] != '%' {
-					var valid bool
-					if _, labelEnd, valid = scanIdentifierToken(expression, labelName); !valid {
+					label, valid := cyphertext.ScanIdentifier(expression, labelName)
+					if !valid {
 						break
 					}
+					labelEnd = label.End
 				}
 				labelStart = skipSpaces(expression, labelEnd)
 				index = labelStart
@@ -498,25 +500,6 @@ func expressionLocalBindings(expression string) map[string]struct{} {
 		}
 	}
 	return locals
-}
-
-func previousSetExpressionByte(text string, index int) byte {
-	for index--; index >= 0; index-- {
-		if !isWhitespace(text[index]) {
-			return text[index]
-		}
-	}
-	return 0
-}
-
-func nextSetExpressionByte(text string, index int) byte {
-	for index < len(text) {
-		if !isWhitespace(text[index]) {
-			return text[index]
-		}
-		index++
-	}
-	return 0
 }
 
 func setExpressionKeyword(token string) bool {

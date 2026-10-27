@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +30,7 @@ func fabricDispatchRemoteExecutor(t *testing.T) *StorageExecutor {
 	exec := newFabricCallRowsExecutor(t)
 	exec.cache = nil
 	mgr := exec.dbManager.(*testDatabaseManagerAdapter).manager
-	require.NoError(t, mgr.AddConstituent("comp", multidb.ConstituentRef{
+	require.NoError(t, mgr.AddConstituent(t.Context(), "comp", multidb.ConstituentRef{
 		Alias: "remote", DatabaseName: "neo4j", Type: "remote", AccessMode: "read_write", URI: uri,
 	}))
 	return exec
@@ -36,7 +38,7 @@ func fabricDispatchRemoteExecutor(t *testing.T) *StorageExecutor {
 
 // Participant completion must outlive both the APPLY batch and the statement
 // which first enlisted it. Canceling the statement after it returns must not
-// cancel a later COMMIT/ROLLBACK of the transaction.
+// cancel a later COMMIT/ROLLBACK of the transaction opened with a live context.
 func TestFabricRemoteApplyCompletion(t *testing.T) {
 	exec := fabricDispatchRemoteExecutor(t)
 	for _, keys := range []int{1, 513, 1025} {
@@ -101,42 +103,91 @@ func TestFabricUnionApplyTrace(t *testing.T) {
 	}
 }
 
-// Participant completion belongs to the transaction, not to the context that
-// began it: an HTTP BEGIN's request has ended before its COMMIT is sent. The
-// remote write is durable after COMMIT and gone after ROLLBACK.
-func TestFabricRemoteCompletionOutlivesBeginContext(t *testing.T) {
+// Participant completion belongs to the protocol's transaction owner. An ended
+// statement must permit later COMMIT/ROLLBACK; an expired owner must reject it.
+// Successful COMMIT persists the remote write and ROLLBACK removes it.
+func TestFabricRemoteCompletionContextLifetime(t *testing.T) {
+	exec := fabricDispatchRemoteExecutor(t)
+	for _, scope := range []struct {
+		name        string
+		requestOnly bool
+		actions     []string
+		ends        []string
+	}{
+		{name: "ended_request", requestOnly: true, actions: []string{"COMMIT", "ROLLBACK"}, ends: []string{"cancel", "deadline"}},
+		{name: "ended_owner", actions: []string{"COMMIT"}, ends: []string{"deadline"}},
+	} {
+		for _, action := range scope.actions {
+			for _, end := range scope.ends {
+				t.Run(scope.name+"/"+action+"/"+end, func(t *testing.T) {
+					id := fmt.Sprintf("%s-%s-%s-%d", scope.name, action, end, time.Now().UnixNano())
+					params := map[string]interface{}{"id": id}
+					runExec := fabricCallRowsCompositeExecutor(t, exec)
+					ctx, cancel := context.WithCancel(context.Background())
+					if end == "deadline" {
+						timeout := 5 * time.Second
+						if scope.requestOnly {
+							timeout = 2 * time.Second
+						}
+						ctx, cancel = context.WithTimeout(context.Background(), timeout)
+					}
+					defer cancel()
+					if scope.requestOnly {
+						owner, cancelOwner := context.WithCancel(context.Background())
+						defer cancelOwner()
+						ctx = fabric.WithTransactionLifetime(ctx, owner)
+					}
+					_, err := runExec.Execute(ctx, "BEGIN", nil)
+					require.NoError(t, err)
+					query := "USE comp.remote RETURN 1 AS k"
+					if scope.requestOnly {
+						query = "USE comp.remote CREATE (:FabricCompletion {id: $id})"
+					}
+					_, err = runExec.Execute(ctx, query, params)
+					require.NoError(t, err)
+					if end == "cancel" {
+						cancel()
+					}
+					<-ctx.Done()
+					_, err = runExec.Execute(context.Background(), action, nil)
+					if !scope.requestOnly {
+						require.Error(t, err)
+						require.Contains(t, strings.ToLower(err.Error()), "deadline")
+						return
+					}
+					require.NoError(t, err, "participant completion")
+					result, err := exec.Execute(context.Background(), "USE comp.remote MATCH (n:FabricCompletion {id: $id}) RETURN count(n) AS c", params)
+					require.NoError(t, err)
+					want := "[[1]]"
+					if action == "ROLLBACK" {
+						want = "[[0]]"
+					}
+					fabricDispatchRows(t, result.Rows, want)
+					_, err = exec.Execute(context.Background(), "USE comp.remote MATCH (n:FabricCompletion {id: $id}) DETACH DELETE n", params)
+					require.NoError(t, err)
+				})
+			}
+		}
+	}
+}
+
+// The transaction owner's cancellation must still stop remote completion, even
+// when COMMIT itself is submitted with a fresh context.
+func TestFabricRemoteCompletionTransactionCancellation(t *testing.T) {
 	exec := fabricDispatchRemoteExecutor(t)
 	for _, action := range []string{"COMMIT", "ROLLBACK"} {
-		for _, end := range []string{"cancel", "deadline"} {
-			t.Run(action+"/"+end, func(t *testing.T) {
-				id := fmt.Sprintf("%s-%s-%d", action, end, time.Now().UnixNano())
-				params := map[string]interface{}{"id": id}
-				runExec := fabricCallRowsCompositeExecutor(t, exec)
-				ctx, cancel := context.WithCancel(context.Background())
-				if end == "deadline" {
-					ctx, cancel = context.WithTimeout(context.Background(), 2*time.Second)
-				}
-				defer cancel()
-				_, err := runExec.Execute(ctx, "BEGIN", nil)
-				require.NoError(t, err)
-				_, err = runExec.Execute(ctx, "USE comp.remote CREATE (:FabricCompletion {id: $id})", params)
-				require.NoError(t, err)
-				if end == "cancel" {
-					cancel()
-				}
-				<-ctx.Done()
-				_, err = runExec.Execute(context.Background(), action, nil)
-				require.NoError(t, err, "participant completion")
-				result, err := exec.Execute(context.Background(), "USE comp.remote MATCH (n:FabricCompletion {id: $id}) RETURN count(n) AS c", params)
-				require.NoError(t, err)
-				want := "[[1]]"
-				if action == "ROLLBACK" {
-					want = "[[0]]"
-				}
-				fabricDispatchRows(t, result.Rows, want)
-				_, err = exec.Execute(context.Background(), "USE comp.remote MATCH (n:FabricCompletion {id: $id}) DETACH DELETE n", params)
-				require.NoError(t, err)
-			})
-		}
+		t.Run(action, func(t *testing.T) {
+			runExec := fabricCallRowsCompositeExecutor(t, exec)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			_, err := runExec.Execute(ctx, "BEGIN", nil)
+			require.NoError(t, err)
+			_, err = runExec.Execute(ctx, "USE comp.remote RETURN 1 AS k", nil)
+			require.NoError(t, err)
+			cancel()
+			_, err = runExec.Execute(context.Background(), action, nil)
+			require.Error(t, err)
+			require.True(t, strings.Contains(strings.ToLower(err.Error()), "cancel"), "%v", err)
+		})
 	}
 }

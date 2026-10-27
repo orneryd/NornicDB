@@ -1,6 +1,8 @@
 package server
 
 import (
+	"errors"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"net/http"
 	"time"
 
@@ -20,7 +22,7 @@ func (s *Server) handleGPUStatus(w http.ResponseWriter, r *http.Request) {
 
 	gpuManagerIface := s.db.GetGPUManager()
 	if gpuManagerIface == nil {
-		s.writeJSON(w, http.StatusOK, map[string]interface{}{
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"available": false,
 			"enabled":   false,
 			"message":   s.localizedText(w, r, localization.GPUManagerNotInitialized()),
@@ -58,61 +60,52 @@ func (s *Server) handleGPUStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) handleGPUEnable(w http.ResponseWriter, r *http.Request) {
+type gpuControlAction uint8
+
+const (
+	gpuControlEnable gpuControlAction = iota
+	gpuControlDisable
+)
+
+// handleGPUControl owns admission and mutation for the two GPU control routes.
+// Router authorization remains outside this handler, as for the original routes.
+func (s *Server) handleGPUControl(w http.ResponseWriter, r *http.Request, action gpuControlAction) {
 	if r.Method != http.MethodPost {
 		s.writePostRequired(w, r)
 		return
 	}
-
 	gpuManagerIface := s.db.GetGPUManager()
 	if gpuManagerIface == nil {
 		s.writeGPUManagerNotInitialized(w, r)
 		return
 	}
-
 	gpuManager, ok := gpuManagerIface.(*gpu.Manager)
 	if !ok {
 		s.writeInvalidGPUManagerType(w, r)
 		return
 	}
-
-	if err := gpuManager.Enable(); err != nil {
-		s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+	var status string
+	var message localization.Message
+	switch action {
+	case gpuControlEnable:
+		if err := gpuManager.Enable(); err != nil {
+			s.writeBoundaryError(w, r, http.StatusInternalServerError, err, ErrInternalError)
+			return
+		}
+		status, message = "enabled", localization.GPUAccelerationEnabled()
+	case gpuControlDisable:
+		gpuManager.Disable()
+		status, message = "disabled", localization.GPUAccelerationDisabled()
+	default:
+		s.writeBoundaryError(w, r, http.StatusInternalServerError, errors.New("invalid GPU control action"), ErrInternalError)
 		return
 	}
-
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":  "enabled",
-		"message": s.localizedText(w, r, localization.GPUAccelerationEnabled()),
-	})
-}
-
-func (s *Server) handleGPUDisable(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		s.writePostRequired(w, r)
-		return
-	}
-
-	gpuManagerIface := s.db.GetGPUManager()
-	if gpuManagerIface == nil {
-		s.writeGPUManagerNotInitialized(w, r)
-		return
-	}
-
-	gpuManager, ok := gpuManagerIface.(*gpu.Manager)
-	if !ok {
-		s.writeInvalidGPUManagerType(w, r)
-		return
-	}
-
-	gpuManager.Disable()
-
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
-		"status":  "disabled",
-		"message": s.localizedText(w, r, localization.GPUAccelerationDisabled()),
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"status":  status,
+		"message": s.localizedText(w, r, message),
 	})
 }
 
@@ -194,7 +187,7 @@ func (s *Server) handleGPUTest(w http.ResponseWriter, r *http.Request) {
 		usedMode = "gpu"
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]interface{}{
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"results": results,
 		"performance": map[string]interface{}{
 			"elapsed_ms":     elapsedMs,

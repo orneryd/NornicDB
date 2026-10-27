@@ -129,7 +129,7 @@ func TestFabricRemoteImportContract(t *testing.T) {
 			exec := fabricDispatchRemoteExecutor(t)
 			if httpURI != "" {
 				mgr := exec.dbManager.(*testDatabaseManagerAdapter).manager
-				require.NoError(t, mgr.AddConstituent("comp", multidb.ConstituentRef{Alias: "http", DatabaseName: "neo4j", Type: "remote", AccessMode: "read_write", URI: httpURI}))
+				require.NoError(t, mgr.AddConstituent(t.Context(), "comp", multidb.ConstituentRef{Alias: "http", DatabaseName: "neo4j", Type: "remote", AccessMode: "read_write", URI: httpURI}))
 			}
 			for _, remote := range remotes {
 				for _, c := range cases(remote) {

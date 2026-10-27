@@ -35,7 +35,7 @@ func (readAdmissionSearcher) Search(context.Context, string, []float32, *search.
 func TestDatabaseReadAdmissionThroughEveryGRPCReadMethod(t *testing.T) {
 	ctx := context.Background()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	manager, err := multidb.NewDatabaseManager(base, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	collections, err := NewDatabaseCollectionStore(manager, nil)
 	require.NoError(t, err)

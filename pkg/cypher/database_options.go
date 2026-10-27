@@ -2,18 +2,18 @@ package cypher
 
 import (
 	"context"
-	"sort"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // DatabaseOptionsManager is the optional DatabaseManagerInterface extension
-// for database options: CREATE DATABASE … OPTIONS, ALTER DATABASE … SET /
-// REMOVE OPTION, and SHOW DATABASES' options column (#937).
+// for ALTER DATABASE … SET / REMOVE OPTION and SHOW DATABASES' options
+// column (#937). CREATE initial options belong to DatabaseCreateRequest.
 type DatabaseOptionsManager interface {
 	DatabaseOptions(name string) (map[string]string, error)
-	SetDatabaseOption(name, key, value string) error
+	SetDatabaseOption(ctx context.Context, name, key, value string) error
 }
 
 // txLogEnrichmentOption is Neo4j's change data capture option.
@@ -74,28 +74,6 @@ func (e *StorageExecutor) splitDatabaseOptions(ctx context.Context, cypher strin
 	return cypher[:at], options, nil
 }
 
-// applyDatabaseOptions sets a new database's options.
-func (e *StorageExecutor) applyDatabaseOptions(name string, options map[string]string) error {
-	if len(options) == 0 {
-		return nil
-	}
-	manager, ok := e.dbManager.(DatabaseOptionsManager)
-	if !ok {
-		return localizedError(localization.CypherAdminDatabaseOptionsUnavailable("CREATE DATABASE"), nil)
-	}
-	keys := make([]string, 0, len(options))
-	for key := range options {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		if err := manager.SetDatabaseOption(name, key, options[key]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // alterDatabaseOption runs ALTER DATABASE name [IF EXISTS] SET OPTION key
 // value / REMOVE OPTION key, from the statement's text after DATABASE;
 // handled is false for another ALTER DATABASE form. A missing database is
@@ -120,9 +98,9 @@ func (e *StorageExecutor) alterDatabaseOption(ctx context.Context, cypher string
 		return nil, true, localizedError(localization.CypherAdminDatabaseNameExpected("ALTER DATABASE"), err)
 	}
 	rest := strings.TrimSpace(cypher[from+at:])
-	rest = strings.TrimSpace(rest[strings.IndexAny(rest, " \t\r\n"):]) // past SET / REMOVE
+	rest = strings.TrimSpace(rest[strings.IndexFunc(rest, cyphertext.IsWhitespace):]) // past SET / REMOVE
 	rest = strings.TrimSpace(rest[len("OPTION"):])
-	key, valueText, _ := strings.Cut(rest, " ")
+	key, valueText, _ := cyphertext.CutWhitespace(rest)
 	key = strings.TrimSpace(key)
 	valueText = strings.TrimSpace(valueText)
 	if key == "" || remove != (valueText == "") {
@@ -151,7 +129,7 @@ func (e *StorageExecutor) alterDatabaseOption(ctx context.Context, cypher string
 	if !ok {
 		return nil, true, localizedError(localization.CypherAdminDatabaseOptionsUnavailable("ALTER DATABASE"), nil)
 	}
-	if err := manager.SetDatabaseOption(resolved, key, value); err != nil {
+	if err := manager.SetDatabaseOption(ctx, resolved, key, value); err != nil {
 		return nil, true, err
 	}
 	return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, true, nil

@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -39,16 +40,16 @@ func eachChainLabel(chain string, visit func(name string, quoted bool)) bool {
 func eachChainItem(chain string, visit func(text string, quoted, dynamic bool)) bool {
 	for start := 0; ; {
 		index := start
-		for index < len(chain) && isASCIISpace(chain[index]) {
+		for index < len(chain) && cyphertext.IsWhitespaceAt(chain, index) {
 			index++
 		}
 		if index+1 < len(chain) && chain[index] == '$' && chain[index+1] == '(' {
-			closing := findMatchingDelimiter(chain, index+1, '(', ')')
+			closing := cyphertext.FindMatchingDelimiter(chain, index+1, '(', ')', cyphertext.OpeningDelimiter)
 			if closing < 0 {
 				return false
 			}
 			end := closing + 1
-			for end < len(chain) && isASCIISpace(chain[end]) {
+			for end < len(chain) && cyphertext.IsWhitespaceAt(chain, end) {
 				end++
 			}
 			if end < len(chain) && chain[end] != ':' {
@@ -66,7 +67,7 @@ func eachChainItem(chain string, visit func(text string, quoted, dynamic bool)) 
 			if !ok {
 				return false
 			}
-			for end < len(chain) && isASCIISpace(chain[end]) {
+			for end < len(chain) && cyphertext.IsWhitespaceAt(chain, end) {
 				end++
 			}
 			if end < len(chain) && chain[end] != ':' {
@@ -100,7 +101,7 @@ func eachChainItem(chain string, visit func(text string, quoted, dynamic bool)) 
 // validateChainLabel applies the label rules to one label: a quoted label is
 // not empty; an unquoted label is an identifier and not a reserved word.
 func validateChainLabel(name string, quoted bool) error {
-	if name == "" || (!quoted && !isValidIdentifier(name)) {
+	if name == "" || (!quoted && !cyphertext.IsIdentifier(name)) {
 		return localizedError(localization.CypherMutationsInvalidLabelName(name), nil)
 	}
 	if !quoted && containsReservedKeyword(name) {

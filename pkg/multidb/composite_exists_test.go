@@ -9,13 +9,13 @@ import (
 
 func TestExistsOrIsConstituent_StandardDB(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(base, nil)
+	mgr, err := NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
 	defer mgr.Close()
 
-	if err := mgr.CreateDatabase("mydb"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "mydb"}); err != nil {
 		t.Fatalf("CreateDatabase failed: %v", err)
 	}
 
@@ -26,16 +26,16 @@ func TestExistsOrIsConstituent_StandardDB(t *testing.T) {
 
 func TestExistsOrIsConstituent_CompositeDB(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(base, nil)
+	mgr, err := NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
 	defer mgr.Close()
 
-	if err := mgr.CreateDatabase("shard_a"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shard_a"}); err != nil {
 		t.Fatalf("CreateDatabase failed: %v", err)
 	}
-	if err := mgr.CreateCompositeDatabase("comp", []ConstituentRef{
+	if err := mgr.CreateCompositeDatabase(t.Context(), "comp", []ConstituentRef{
 		{Alias: "a", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
 	}); err != nil {
 		t.Fatalf("CreateCompositeDatabase failed: %v", err)
@@ -48,16 +48,16 @@ func TestExistsOrIsConstituent_CompositeDB(t *testing.T) {
 
 func TestExistsOrIsConstituent_ConstituentDotted(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(base, nil)
+	mgr, err := NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
 	defer mgr.Close()
 
-	if err := mgr.CreateDatabase("shard_a"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shard_a"}); err != nil {
 		t.Fatalf("CreateDatabase failed: %v", err)
 	}
-	if err := mgr.CreateCompositeDatabase("translations", []ConstituentRef{
+	if err := mgr.CreateCompositeDatabase(t.Context(), "translations", []ConstituentRef{
 		{Alias: "tr", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
 	}); err != nil {
 		t.Fatalf("CreateCompositeDatabase failed: %v", err)
@@ -70,16 +70,16 @@ func TestExistsOrIsConstituent_ConstituentDotted(t *testing.T) {
 
 func TestExistsOrIsConstituent_ConstituentDotted_CaseInsensitive(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(base, nil)
+	mgr, err := NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
 	defer mgr.Close()
 
-	if err := mgr.CreateDatabase("shard_a"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shard_a"}); err != nil {
 		t.Fatalf("CreateDatabase failed: %v", err)
 	}
-	if err := mgr.CreateCompositeDatabase("translations", []ConstituentRef{
+	if err := mgr.CreateCompositeDatabase(t.Context(), "translations", []ConstituentRef{
 		{Alias: "TR", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
 	}); err != nil {
 		t.Fatalf("CreateCompositeDatabase failed: %v", err)
@@ -92,7 +92,7 @@ func TestExistsOrIsConstituent_ConstituentDotted_CaseInsensitive(t *testing.T) {
 
 func TestExistsOrIsConstituent_Unknown(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(base, nil)
+	mgr, err := NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
@@ -105,13 +105,13 @@ func TestExistsOrIsConstituent_Unknown(t *testing.T) {
 
 func TestExistsOrIsConstituent_DottedButNotComposite(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(base, nil)
+	mgr, err := NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
 	defer mgr.Close()
 
-	if err := mgr.CreateDatabase("notcomposite"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "notcomposite"}); err != nil {
 		t.Fatalf("CreateDatabase failed: %v", err)
 	}
 
@@ -122,16 +122,16 @@ func TestExistsOrIsConstituent_DottedButNotComposite(t *testing.T) {
 
 func TestExistsOrIsConstituent_DottedWrongAlias(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(base, nil)
+	mgr, err := NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
 	defer mgr.Close()
 
-	if err := mgr.CreateDatabase("shard_a"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shard_a"}); err != nil {
 		t.Fatalf("CreateDatabase failed: %v", err)
 	}
-	if err := mgr.CreateCompositeDatabase("comp", []ConstituentRef{
+	if err := mgr.CreateCompositeDatabase(t.Context(), "comp", []ConstituentRef{
 		{Alias: "a", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
 	}); err != nil {
 		t.Fatalf("CreateCompositeDatabase failed: %v", err)
@@ -144,16 +144,16 @@ func TestExistsOrIsConstituent_DottedWrongAlias(t *testing.T) {
 
 func TestExistsOrIsConstituent_Alias(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(base, nil)
+	mgr, err := NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
 	defer mgr.Close()
 
-	if err := mgr.CreateDatabase("realdb"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "realdb"}); err != nil {
 		t.Fatalf("CreateDatabase failed: %v", err)
 	}
-	if err := mgr.CreateAlias("myalias", "realdb"); err != nil {
+	if err := mgr.CreateAlias(t.Context(), "myalias", "realdb"); err != nil {
 		t.Fatalf("CreateAlias failed: %v", err)
 	}
 
@@ -164,16 +164,16 @@ func TestExistsOrIsConstituent_Alias(t *testing.T) {
 
 func TestGetStorageWithAuth_ConstituentDotted_Local(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := NewDatabaseManager(base, nil)
+	mgr, err := NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager failed: %v", err)
 	}
 	defer mgr.Close()
 
-	if err := mgr.CreateDatabase("shard_local"); err != nil {
+	if err := mgr.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shard_local"}); err != nil {
 		t.Fatalf("CreateDatabase failed: %v", err)
 	}
-	if err := mgr.CreateCompositeDatabase("cmp", []ConstituentRef{
+	if err := mgr.CreateCompositeDatabase(t.Context(), "cmp", []ConstituentRef{
 		{Alias: "a", DatabaseName: "shard_local", Type: "local", AccessMode: "read_write"},
 	}); err != nil {
 		t.Fatalf("CreateCompositeDatabase failed: %v", err)
@@ -192,7 +192,7 @@ func TestGetStorageWithAuth_ConstituentDotted_RemoteFactory(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	var gotAuth string
 
-	mgr, err := NewDatabaseManager(base, &Config{
+	mgr, err := NewDatabaseManager(t.Context(), base, &Config{
 		RemoteEngineFactory: func(_ ConstituentRef, authToken string) (storage.Engine, error) {
 			gotAuth = authToken
 			return fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil
@@ -203,7 +203,7 @@ func TestGetStorageWithAuth_ConstituentDotted_RemoteFactory(t *testing.T) {
 	}
 	defer mgr.Close()
 
-	if err := mgr.CreateCompositeDatabase("cmp_remote", []ConstituentRef{
+	if err := mgr.CreateCompositeDatabase(t.Context(), "cmp_remote", []ConstituentRef{
 		{Alias: "r", DatabaseName: "tenant_r", Type: "remote", AccessMode: "read_write", URI: "http://remote"},
 	}); err != nil {
 		t.Fatalf("CreateCompositeDatabase failed: %v", err)

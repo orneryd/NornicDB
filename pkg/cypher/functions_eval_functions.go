@@ -69,7 +69,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// A plugin function overrides a built-in of the same name, so plugins
 	// are asked first, as the row evaluator does (#1163).
-	if _, _, call := parseFunctionCallWS(expr); call && strings.Contains(expr, ".") {
+	if call := inspectFunctionCall(expr, qualifiedFunctionCall, "", nil); call && strings.Contains(expr, ".") {
 		if result, handled := e.tryCallPluginFunction(ctx, expr, nodes, rels, paths, allPathEdges, allPathNodes, pathLength); handled {
 			return result
 		}
@@ -78,7 +78,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// ========================================
 	// Registered Function Dispatch (Phase B: pkg/cypher/fn)
 	// ========================================
-	if name, inner, ok := parseFunctionCallWS(expr); ok {
+	var callFacts1 functionCallFacts
+	if ok := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1); ok {
+		name, inner := callFacts1.name, callFacts1.inner
+
 		args := e.splitFunctionArgs(inner)
 		fnCtx := e.registryFunctionContext(ctx, func(argExpr string) (interface{}, error) {
 			return e.checkedPropertyExpression(ctx, argExpr, e.entityRowWithPaths(ctx, nodes, rels, paths))
@@ -533,7 +536,10 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullFunctions(ctx context
 	// date.<component>(value) and datetime.<component>(value): read as the
 	// row evaluator reads them (temporalComponent), so both evaluators give
 	// the same value for every accessor (#1105).
-	if name, inner, ok := parseFunctionCallWS(expr); ok {
+	var callFacts2 functionCallFacts
+	if ok := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts2); ok {
+		name, inner := callFacts2.name, callFacts2.inner
+
 		if kind, component, dotted := strings.Cut(lowerASCII(name), "."); dotted && (kind == "date" || kind == "datetime") && isTemporalComponent(component) {
 			value, _ := temporalComponent(component, e.evaluateExpressionWithContextFull(ctx, inner, nodes, rels, paths, allPathEdges, allPathNodes, pathLength))
 			return value

@@ -307,7 +307,10 @@ func rowContextShapeOf(expr string) *rowContextShape {
 		brace:            strings.Contains(expr, "{"),
 	}
 	shape.subquery, shape.isSubquery = standaloneSubqueryExpression(expr)
-	if function, argument, ok := parseFunctionCallWS(shape.trimmed); ok {
+	var callFacts1 functionCallFacts
+	if ok := inspectFunctionCall(shape.trimmed, qualifiedFunctionCall, "", &callFacts1); ok {
+		function, argument := callFacts1.name, callFacts1.inner
+
 		shape.identity = strings.EqualFold(function, "id") || strings.EqualFold(function, "elementId")
 		shape.function, shape.argument = function, argument
 	}
@@ -326,7 +329,7 @@ func (e *StorageExecutor) evaluateRowExpressionWithContext(ctx context.Context, 
 		if value, bound := valueBindingsFromContext(ctx)[expr]; bound {
 			return cypherfn.RuntimeValue(value), true
 		}
-		if value, bound := resolveDirectParamRef(ctx, expr); bound {
+		if value, bound := resolveValueReference(ctx, expr, parameterName); bound {
 			return cypherfn.RuntimeValue(value), true
 		}
 	}

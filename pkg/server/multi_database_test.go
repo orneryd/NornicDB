@@ -2,6 +2,8 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"bytes"
 	"encoding/json"
 	"net/http"
@@ -457,6 +459,6 @@ func TestMultiDatabase_GetExecutorForDatabase(t *testing.T) {
 // tests can use the Cypher API instead.
 func createDatabase(t *testing.T, server *Server, dbName string, token string) {
 	t.Helper()
-	err := server.dbManager.CreateDatabase(dbName)
+	err := server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: dbName})
 	require.NoError(t, err, "failed to create database %s", dbName)
 }

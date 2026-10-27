@@ -44,7 +44,7 @@ func TestConfigurationPrecedence(t *testing.T) {
 		config := DefaultConfig()
 		assert.Equal(t, "nornic", config.DefaultDatabase)
 
-		manager, err := NewDatabaseManager(inner, config)
+		manager, err := NewDatabaseManager(t.Context(), inner, config)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -61,7 +61,7 @@ func TestConfigurationPrecedence(t *testing.T) {
 		configFileValue := "from-config-file"
 		config := NewConfigFromDefaultDatabase(configFileValue)
 
-		manager, err := NewDatabaseManager(testInner, config)
+		manager, err := NewDatabaseManager(t.Context(), testInner, config)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -81,7 +81,7 @@ func TestConfigurationPrecedence(t *testing.T) {
 		// Simulate config system reading env var and passing to DatabaseManager
 		config := NewConfigFromDefaultDatabase("env-database")
 
-		manager, err := NewDatabaseManager(testInner, config)
+		manager, err := NewDatabaseManager(t.Context(), testInner, config)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -100,7 +100,7 @@ func TestConfigurationPrecedence(t *testing.T) {
 		// Simulate config system reading Neo4j env var
 		config := NewConfigFromDefaultDatabase("neo4j-compat")
 
-		manager, err := NewDatabaseManager(testInner, config)
+		manager, err := NewDatabaseManager(t.Context(), testInner, config)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -116,7 +116,7 @@ func TestBackwardsCompatibility(t *testing.T) {
 
 	t.Run("default database works without specifying", func(t *testing.T) {
 		// Old code that didn't specify database should still work
-		manager, err := NewDatabaseManager(inner, nil)
+		manager, err := NewDatabaseManager(t.Context(), inner, nil)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -141,7 +141,7 @@ func TestBackwardsCompatibility(t *testing.T) {
 
 		// Support legacy "nornicdb" name
 		config := NewConfigFromDefaultDatabase("nornicdb")
-		manager, err := NewDatabaseManager(testInner, config)
+		manager, err := NewDatabaseManager(t.Context(), testInner, config)
 		require.NoError(t, err)
 		defer manager.Close()
 
@@ -155,7 +155,7 @@ func TestBackwardsCompatibility(t *testing.T) {
 		defer testInner.Close()
 
 		// Simulate existing data in "nornic" namespace
-		manager, err := NewDatabaseManager(testInner, nil)
+		manager, err := NewDatabaseManager(t.Context(), testInner, nil)
 		require.NoError(t, err)
 		defer manager.Close()
 

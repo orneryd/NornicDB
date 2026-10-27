@@ -20,9 +20,9 @@ func subscriptionTestContext(database string, mode auth.DatabaseAccessMode, acce
 
 func TestGraphQLSubscriptionsRequireSelectedDatabaseRead(t *testing.T) {
 	db := testDB(t)
-	dbManager, err := multidb.NewDatabaseManager(db.GetBaseStorageForManager(), nil)
+	dbManager, err := multidb.NewDatabaseManager(t.Context(), db.GetBaseStorageForManager(), nil)
 	require.NoError(t, err)
-	require.NoError(t, dbManager.CreateDatabase("named"))
+	require.NoError(t, dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "named"}))
 	resolver := NewResolver(db, dbManager)
 	subscriptions := &subscriptionResolver{Resolver: resolver}
 

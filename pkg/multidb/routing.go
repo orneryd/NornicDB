@@ -5,8 +5,9 @@
 package multidb
 
 import (
-	"strings"
 	"sync"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // RoutingStrategy defines how queries are routed to constituent databases.
@@ -56,7 +57,7 @@ func NewLabelRouting() *LabelRouting {
 func (r *LabelRouting) SetLabelRouting(label string, constituents []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.labelMap[strings.ToLower(label)] = constituents
+	r.labelMap[cyphertext.NameLower(label)] = constituents
 }
 
 // RouteQuery routes a query based on labels.
@@ -72,7 +73,7 @@ func (r *LabelRouting) RouteQuery(queryInfo *QueryInfo) []string {
 	// Collect all constituents for all labels
 	constituentSet := make(map[string]bool)
 	for _, label := range queryInfo.Labels {
-		labelLower := strings.ToLower(label)
+		labelLower := cyphertext.NameLower(label)
 		if constituents, exists := r.labelMap[labelLower]; exists {
 			for _, alias := range constituents {
 				constituentSet[alias] = true
@@ -102,7 +103,7 @@ func (r *LabelRouting) RouteWrite(operation string, labels []string, properties 
 	}
 
 	// Use first label for routing
-	labelLower := strings.ToLower(labels[0])
+	labelLower := cyphertext.NameLower(labels[0])
 	if constituents, exists := r.labelMap[labelLower]; exists && len(constituents) > 0 {
 		// Route to first constituent for this label
 		return constituents[0]

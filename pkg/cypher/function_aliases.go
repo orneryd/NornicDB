@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 // GQL function aliases (Neo4j 2026.02): another name for a Cypher function,
 // with its arguments, results and errors. canonicalizeFunctionAliases
@@ -53,14 +56,12 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 				continue
 			}
 		}
-		if !isIdentByte(c) || isDigitByte(c) || index > 0 && (isIdentByte(query[index-1]) || query[index-1] == '.' || query[index-1] == '$') {
+		if !cyphertext.NamePartAt(query, index) || isDigitByte(c) || index > 0 && (cyphertext.NamePartAt(query, index-1) || query[index-1] == '.' || query[index-1] == '$') {
 			index++
 			continue
 		}
 		end := index + 1
-		for end < len(query) && isIdentByte(query[end]) {
-			end++
-		}
+		end = cyphertext.NamePartEnd(query, end)
 		next := skipSpaces(query, end)
 		if next >= len(query) || query[next] != '(' {
 			index = end
@@ -76,13 +77,13 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 			continue
 		}
 		if rewrite == nil {
-			rewrite = &queryRewrite{original: query}
+			rewrite = &queryRewrite{Source: cyphertext.Source{Original: query}}
 			out.Grow(len(query) + 16)
 		}
 		out.WriteString(query[last:start])
 		canonStart := out.Len()
 		out.WriteString(replacement)
-		rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: start, origEnd: stop, canonStart: canonStart, canonEnd: out.Len()})
+		rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: start, End: stop}, Accepted: cyphertext.Span{Start: canonStart, End: out.Len()}})
 		last = stop
 		index = stop
 	}
@@ -90,25 +91,25 @@ func canonicalizeFunctionAliases(query string) (string, *queryRewrite) {
 		return query, nil
 	}
 	out.WriteString(query[last:])
-	rewrite.canonical = out.String()
-	return rewrite.canonical, rewrite
+	rewrite.Text = out.String()
+	return rewrite.Text, rewrite
 }
 
 // propertyExistsKeyName finds the key of PROPERTY_EXISTS(variable, key)
 // whose parentheses open at open: its span and the key as a string literal,
 // or an empty replacement when the call doesn't have that form.
 func propertyExistsKeyName(query string, open int) (start, end int, literal string) {
-	_, after, ok := scanIdentifierToken(query, skipSpaces(query, open+1))
-	comma := skipSpaces(query, after)
+	after, ok := cyphertext.ScanIdentifier(query, skipSpaces(query, open+1))
+	comma := skipSpaces(query, after.End)
 	if !ok || comma >= len(query) || query[comma] != ',' {
 		return 0, 0, ""
 	}
 	start = skipSpaces(query, comma+1)
-	key, end, ok := scanIdentifierToken(query, start)
-	if closing := skipSpaces(query, end); !ok || closing >= len(query) || query[closing] != ')' {
+	key, ok := cyphertext.ScanIdentifier(query, start)
+	if closing := skipSpaces(query, key.End); !ok || closing >= len(query) || query[closing] != ')' {
 		return 0, 0, ""
 	}
-	return start, end, "'" + strings.ReplaceAll(strings.ReplaceAll(key, `\`, `\\`), `'`, `\'`) + "'"
+	return start, key.End, "'" + strings.ReplaceAll(strings.ReplaceAll(key.Value, `\`, `\\`), `'`, `\'`) + "'"
 }
 
 // mayCallFunctionAlias is canonicalizeFunctionAliases's quick check, in one

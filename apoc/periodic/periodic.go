@@ -8,6 +8,9 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
 // Iterate executes a statement for each item in a collection.
@@ -91,7 +94,7 @@ func Repeat(name, statement string, rate int64) context.CancelFunc {
 				return
 			case <-ticker.C:
 				// Execute statement
-				fmt.Printf("Executing periodic task '%s': %s\n", name, statement)
+				writeTaskDiagnostic("periodic task", name, statement)
 			}
 		}
 	}()
@@ -115,7 +118,7 @@ func Schedule(name, cron, statement string) context.CancelFunc {
 			case <-ctx.Done():
 				return
 			case <-time.After(1 * time.Hour):
-				fmt.Printf("Executing scheduled task '%s': %s\n", name, statement)
+				writeTaskDiagnostic("scheduled task", name, statement)
 			}
 		}
 	}()
@@ -131,7 +134,7 @@ func Schedule(name, cron, statement string) context.CancelFunc {
 func Countdown(name, statement string, delay int64) {
 	go func() {
 		time.Sleep(time.Duration(delay) * time.Second)
-		fmt.Printf("Executing countdown task '%s': %s\n", name, statement)
+		writeTaskDiagnostic("countdown task", name, statement)
 		// Execute statement
 	}()
 }
@@ -163,7 +166,7 @@ func List() []map[string]interface{} {
 //	apoc.periodic.submit('job1', 'MATCH (n) RETURN count(n)')
 func Submit(name, statement string) map[string]interface{} {
 	go func() {
-		fmt.Printf("Executing background job '%s': %s\n", name, statement)
+		writeTaskDiagnostic("background job", name, statement)
 		// Execute statement
 	}()
 
@@ -201,4 +204,15 @@ func Truncate(config map[string]interface{}) map[string]interface{} {
 		"batches":   0,
 		"batchSize": batchSize,
 	}
+}
+
+// writeTaskDiagnostic owns asynchronous display, never statement execution.
+// A PASSWORD token outside quotes/comments uses fail-closed source display;
+// URL-only text retains the canonical non-secret endpoint display.
+func writeTaskDiagnostic(kind, name, statement string) {
+	source := cyphertext.NormalizeSource(statement)
+	if cyphertext.FindIdentifier(source.Text, "PASSWORD", 0, cyphertext.IdentifierFold) >= 0 {
+		statement = observability.RedactedPlaceholder()
+	}
+	fmt.Printf("Executing %s '%s': %s\n", kind, observability.RedactText(name), observability.RedactText(statement))
 }

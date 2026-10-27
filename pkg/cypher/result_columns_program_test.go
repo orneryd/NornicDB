@@ -25,7 +25,7 @@ func TestStatementFactsProgram(t *testing.T) {
 		{"CALL () { CREATE (:FactsUnit) } RETURN 1 AS value", []string{"value"}, []string{}, []string{}, resultmetadata.ImportListed, resultmetadata.CallUnit},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			exec.StatementFacts(tc.query, resultmetadata.KnownScope(nil), true).Visit(func(statement resultmetadata.Statement) {
+			exec.StatementFacts(tc.query, resultmetadata.KnownScope(nil), true, RawSource).Visit(func(statement resultmetadata.Statement) {
 				statement.Columns.Visit(func(names []string) { require.Equal(t, tc.columns, names) }, func() { t.Fatal("known program has unknown columns") })
 				for _, clause := range statement.Clauses {
 					require.GreaterOrEqual(t, clause.Start, 0)
@@ -48,7 +48,7 @@ func TestStatementFactsProgram(t *testing.T) {
 		})
 	}
 	for _, query := range []string{"CALL (missing) { RETURN 1 AS value } RETURN value", "CALL (x,) { RETURN 1 AS value } RETURN value", "LOAD CSV FROM 'unused' AS row RETURN *", "CALL missing.procedure()"} {
-		exec.StatementFacts(query, resultmetadata.KnownScope(nil), false).Visit(func(resultmetadata.Statement) { t.Fatal("incomplete statement became known", query) }, func() { t.Fatal("owner declined", query) }, func(reason resultmetadata.Unresolved) { require.Error(t, reason.Err) })
+		exec.StatementFacts(query, resultmetadata.KnownScope(nil), false, RawSource).Visit(func(resultmetadata.Statement) { t.Fatal("incomplete statement became known", query) }, func() { t.Fatal("owner declined", query) }, func(reason resultmetadata.Unresolved) { require.Error(t, reason.Err) })
 	}
 }
 
@@ -64,14 +64,14 @@ func TestStatementFactsParticipantPreflight(t *testing.T) {
 			require.Equal(t, "USE comp.remote", strings.TrimSpace(query[obligation.UseStart:obligation.UseEnd]))
 			obligation.Incoming.Visit(func(names []string) { require.Equal(t, []string{"outer"}, names) }, func() { t.Fatal("unknown argument scope reached participant") })
 			return resultmetadata.KnownColumns([]string{output}), nil
-		})
+		}, RawSource)
 		facts.Visit(func(statement resultmetadata.Statement) {
 			statement.Columns.Visit(func(names []string) { require.Equal(t, []string{output}, names) }, func() { t.Fatal("participant schema was not completed") })
 			require.True(t, statement.Clauses[len(statement.Clauses)-1].ParticipantResolved)
 		}, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) { t.Fatal(reason.Err) })
 		require.Equal(t, 1, calls, "participant answers must not be cached by text")
 	}
-	exec.StatementFacts(query, resultmetadata.KnownScope([]string{"outer"}), false).Visit(func(resultmetadata.Statement) { t.Fatal("participant answer leaked into nil-schema cache") }, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) {
+	exec.StatementFacts(query, resultmetadata.KnownScope([]string{"outer"}), false, RawSource).Visit(func(resultmetadata.Statement) { t.Fatal("participant answer leaked into nil-schema cache") }, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) {
 		require.Equal(t, resultmetadata.ReasonDynamicSchema, reason.Reason)
 		require.Error(t, reason.Err)
 	})
@@ -83,13 +83,13 @@ func TestStatementFactsParticipantPreflight(t *testing.T) {
 			return resultmetadata.UnknownColumns(), errors.New("participant failure")
 		},
 	} {
-		exec.StatementFactsWith(query, resultmetadata.KnownScope([]string{"outer"}), false, answer).Visit(func(resultmetadata.Statement) { t.Fatal("unknown participant schema became complete") }, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) { require.Error(t, reason.Err) })
+		exec.StatementFactsWith(query, resultmetadata.KnownScope([]string{"outer"}), false, answer, RawSource).Visit(func(resultmetadata.Statement) { t.Fatal("unknown participant schema became complete") }, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) { require.Error(t, reason.Err) })
 	}
 	nested := "USE comp.remote CALL (outer) { CALL custom.participantOnly() YIELD value AS kept RETURN * } RETURN *"
 	exec.StatementFactsWith(nested, resultmetadata.KnownScope([]string{"outer"}), false, func(resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
 		t.Fatal("explicit YIELD must not require signature preflight")
 		return resultmetadata.UnknownColumns(), nil
-	}).Visit(func(statement resultmetadata.Statement) {
+	}, RawSource).Visit(func(statement resultmetadata.Statement) {
 		statement.Columns.Visit(func(names []string) { require.Equal(t, []string{"kept", "outer"}, names) }, func() { t.Fatal("explicit yields unresolved") })
 		for _, clause := range statement.Clauses {
 			if clause.Call != nil {
@@ -101,7 +101,7 @@ func TestStatementFactsParticipantPreflight(t *testing.T) {
 	exec.StatementFactsWith(withoutUse, resultmetadata.KnownScope(nil), false, func(resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
 		t.Fatal("a procedure without USE is owned by the local registry")
 		return resultmetadata.UnknownColumns(), nil
-	}).Visit(func(resultmetadata.Statement) { t.Fatal("unknown local procedure accepted") }, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) {
+	}, RawSource).Visit(func(resultmetadata.Statement) { t.Fatal("unknown local procedure accepted") }, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) {
 		require.Equal(t, resultmetadata.ReasonUnknownProcedure, reason.Reason)
 	})
 }
@@ -138,7 +138,7 @@ func TestStatementFactsOriginalSourceWindows(t *testing.T) {
 					check(branch)
 				}
 			}
-			exec.StatementFacts(query, resultmetadata.KnownScope([]string{"outer"}), true).Visit(check, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) { t.Fatal(reason.Err, reason.Position) })
+			exec.StatementFacts(query, resultmetadata.KnownScope([]string{"outer"}), true, RawSource).Visit(check, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) { t.Fatal(reason.Err, reason.Position) })
 		})
 	}
 }
@@ -146,7 +146,7 @@ func TestStatementFactsOriginalSourceWindows(t *testing.T) {
 func TestStatementFactsPublicHeaderUnknownIsTerminal(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "header-unknown"))
 	query := "USE comp.remote CREATE (:MustNotExist) CALL custom.participantOnly()"
-	_, err := exec.StatementResultColumnsContext(context.Background(), query)
+	_, err := exec.StatementResultColumnsContext(context.Background(), query, RawSource)
 	require.Error(t, err)
 	_, err = exec.executeExplain(context.Background(), query)
 	require.Error(t, err)
@@ -162,7 +162,7 @@ func TestStatementFactsSeparatesScopeFromVisibleColumns(t *testing.T) {
 	// WHEN lowering passes this control variable into CALL (*). It is an
 	// execution identity even though RETURN * must not publish it as a column.
 	query := "CALL (*) { FILTER " + whenBranchVariable + " = 1 RETURN 1 AS value } RETURN *"
-	exec.StatementFacts(query, resultmetadata.KnownScope([]string{whenBranchVariable, "outer"}), true).Visit(func(statement resultmetadata.Statement) {
+	exec.StatementFacts(query, resultmetadata.KnownScope([]string{whenBranchVariable, "outer"}), true, RawSource).Visit(func(statement resultmetadata.Statement) {
 		call := statement.Clauses[0].Call
 		require.NotNil(t, call)
 		require.Equal(t, []string{whenBranchVariable, "outer"}, call.Imports)
@@ -179,13 +179,13 @@ func TestStatementFactsUnitAdministration(t *testing.T) {
 		"REVOKE EXECUTE PROCEDURE db.labels ON DBMS FROM reader",
 		"REVOKE GRANT EXECUTE BOOSTED PROCEDURES db.* ON DBMS FROM reader",
 	} {
-		exec.StatementFacts(query, resultmetadata.KnownScope(nil), false).Visit(func(statement resultmetadata.Statement) {
+		exec.StatementFacts(query, resultmetadata.KnownScope(nil), false, RawSource).Visit(func(statement resultmetadata.Statement) {
 			statement.Columns.Visit(func(names []string) { require.Empty(t, names) }, func() { t.Fatal("a parsed unit command has unknown columns") })
 			require.Len(t, statement.Clauses, 1)
 			require.Equal(t, resultmetadata.ClauseWrite, statement.Clauses[0].Kind)
 		}, func() { t.Fatal("owner declined a supported command") }, func(reason resultmetadata.Unresolved) { t.Fatal(query, reason.Err) })
 	}
-	exec.StatementFacts("GRANT EXECUTE PROCEDURE db.labels", resultmetadata.KnownScope(nil), false).Visit(func(resultmetadata.Statement) {
+	exec.StatementFacts("GRANT EXECUTE PROCEDURE db.labels", resultmetadata.KnownScope(nil), false, RawSource).Visit(func(resultmetadata.Statement) {
 		t.Fatal("malformed command became known")
 	}, func() { t.Fatal("malformed command declined") }, func(reason resultmetadata.Unresolved) {
 		require.Contains(t, statusText(reason.Err), "Neo.ClientError.Statement.SyntaxError")

@@ -1,43 +1,60 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
-// parseFunctionCallWS parses a standalone function call expression, tolerating
-// whitespace between the function name and the opening parenthesis.
-//
-// Examples:
-//   - "toLower(n.name)"   -> ("toLower", "n.name", true)
-//   - "toLower ( n.name)" -> ("toLower", " n.name", true)
-//
-// Returns ok=false if the expression is not a standalone function call.
-func parseFunctionCallWS(expr string) (name string, inner string, ok bool) {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
-		return "", "", false
+type functionCallPurpose uint8
+
+const (
+	qualifiedFunctionCall functionCallPurpose = iota
+	namedFunctionCall
+)
+
+type functionCallFacts struct {
+	name  string
+	inner string
+}
+
+// inspectFunctionCall owns standalone call shape and matching delimiters.
+// Qualified extraction trims its input and validates/canonicalizes qualified
+// names. Named recognition preserves the original source extent and existing
+// prefix matcher; it does not impose qualified-name admission. Facts are
+// optional and populated on success, so boolean recognition needs no result
+// product or additional allocation.
+func inspectFunctionCall(source string, purpose functionCallPurpose, expectedName string, facts *functionCallFacts) bool {
+	switch purpose {
+	case qualifiedFunctionCall:
+		source = strings.TrimSpace(source)
+	case namedFunctionCall:
+		if !hasFuncStart(source, expectedName) {
+			return false
+		}
+	default:
+		return false
 	}
-
-	openIdx := strings.Index(expr, "(")
-	if openIdx <= 0 {
-		return "", "", false
+	open := strings.IndexByte(source, '(')
+	if open < 0 || (purpose == qualifiedFunctionCall && open == 0) {
+		return false
 	}
-
-	var valid bool
-	name, valid = canonicalCallableName(expr[:openIdx])
-	if !valid {
-		return "", "", false
+	var name string
+	if purpose == qualifiedFunctionCall {
+		var ok bool
+		name, ok = canonicalCallableName(source[:open])
+		if !ok {
+			return false
+		}
 	}
-
-	closeIdx := findMatchingDelimiter(expr, openIdx, '(', ')')
-	if closeIdx < 0 {
-		return "", "", false
+	close := cyphertext.FindMatchingDelimiter(source, open, '(', ')', cyphertext.OpeningDelimiter)
+	if close != len(source)-1 {
+		return false
 	}
-
-	// Ensure no trailing non-space content after the matching close paren.
-	if strings.TrimSpace(expr[closeIdx+1:]) != "" {
-		return "", "", false
+	if facts != nil {
+		facts.name = name
+		facts.inner = source[open+1 : close]
 	}
-
-	return name, expr[openIdx+1 : closeIdx], true
+	return true
 }
 
 // functionNameStartsAt prevents a builtin scanner from matching only the last
@@ -65,14 +82,14 @@ func functionNameStartsAt(text string, at int) bool {
 			index++
 		}
 	} else {
-		for previous >= 0 && isASCIIWhitespace(text[previous]) {
+		for previous >= 0 && cyphertext.IsWhitespaceAt(text, previous) {
 			previous--
 		}
 	}
 	if previous >= 0 && text[previous] == '.' {
 		return false
 	}
-	return !isIdentByte(text[at-1])
+	return !cyphertext.NamePartAt(text, at-1)
 }
 
 // canonicalCallableName shares the qualified identifier reader used by semantic
@@ -81,13 +98,13 @@ func canonicalCallableName(text string) (string, bool) {
 	text = strings.TrimSpace(text)
 	// Ordinary unquoted names need no normalization. Validate their lexical
 	// components in one pass before using the trivia/quoted-token reader.
-	if len(text) > 0 && isIdentStartByte(text[0]) {
+	if len(text) > 0 && cyphertext.NameStartAt(text, 0) {
 		compact := true
 		for index := 1; index < len(text); index++ {
-			if isIdentByte(text[index]) {
+			if cyphertext.NamePartAt(text, index) {
 				continue
 			}
-			if text[index] == '.' && index+1 < len(text) && isIdentStartByte(text[index+1]) {
+			if text[index] == '.' && index+1 < len(text) && cyphertext.NameStartAt(text, index+1) {
 				index++
 				continue
 			}
@@ -98,19 +115,19 @@ func canonicalCallableName(text string) (string, bool) {
 			return text, true
 		}
 	}
-	name, end, ok := scanIdentifierToken(text, 0)
+	name, ok := cyphertext.ScanIdentifier(text, 0)
 	if !ok {
 		return "", false
 	}
-	if end == len(text) {
-		return name, true
+	if name.End == len(text) {
+		return name.Value, true
 	}
-	parts, end := dottedNameParts(text, end, true)
+	parts, end := dottedNameParts(text, name.End, true)
 	if end != len(text) && queryGapEnd(text, end) != len(text) {
 		return "", false
 	}
-	if len(name)+len(parts) == len(text) {
+	if len(name.Value)+len(parts) == len(text) {
 		return text, true
 	}
-	return name + parts, true
+	return name.Value + parts, true
 }

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"bytes"
 	"context"
 	"net/http"
@@ -15,9 +17,9 @@ import (
 
 func TestMCPHTTPAuthorizationResolvesScopeBeforeDatabaseAccess(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("tenant_a"))
-	require.NoError(t, server.dbManager.CreateDatabase("private"))
-	require.NoError(t, server.dbManager.CreateAlias("primary", "tenant_a"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private"}))
+	require.NoError(t, server.dbManager.CreateAlias(t.Context(), "primary", "tenant_a"))
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "viewer", []string{"tenant_a", "primary"}))
 	require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "viewer", "tenant_a", true, false))
 	token := getAuthToken(t, authenticator, "reader")

@@ -4,6 +4,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
 	"strings"
@@ -23,11 +24,13 @@ import (
 // Projection expressions use the same row-expression operator as WHERE,
 // RETURN, and ORDER BY so list, map, property, and postfix operations cannot
 // diverge between pipeline clauses.
-func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, bool) {
-	return e.pipelineApplyWithSource(ctx, rows, clause, pipelineRowsSource(rows), false)
-}
-
-func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
+//
+// A nil source means the rows are already materialized, so the row source is
+// derived from them; a caller with a replayable source passes it explicitly.
+func (e *StorageExecutor) pipelineApplyWith(ctx context.Context, rows []pipelineRow, clause string, source pipelineRowSource, rowsValidated bool) ([]pipelineRow, bool) {
+	if source == nil {
+		source = pipelineRowsSource(rows)
+	}
 	if plan, ok := parsePipelineRowWith(ctx, clause); ok {
 		plan.retainRows, plan.skipValidation = true, true
 		out := make([]pipelineRow, 0, len(rows))
@@ -124,7 +127,8 @@ func (e *StorageExecutor) pipelineApplyWithSource(ctx context.Context, rows []pi
 		if item == "" || item == "{}" {
 			continue
 		}
-		expr, alias := parseProjectionExprAlias(ctx, item)
+		itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
+		expr, alias := itemSource.expression, itemSource.alias
 		if expr == "" {
 			return nil, false
 		}
@@ -430,7 +434,7 @@ func respellAggregateCalls(text string, spellings map[string]string) string {
 func aggregateCallKey(call string) string {
 	open := strings.IndexByte(call, '(')
 	arguments := strings.TrimSpace(call[open+1:])
-	if len(arguments) > len("DISTINCT") && strings.EqualFold(arguments[:len("DISTINCT")], "DISTINCT") && !isIdentByte(arguments[len("DISTINCT")]) {
+	if len(arguments) > len("DISTINCT") && strings.EqualFold(arguments[:len("DISTINCT")], "DISTINCT") && !cyphertext.NamePartAt(arguments, len("DISTINCT")) {
 		arguments = "DISTINCT " + arguments[len("DISTINCT"):]
 	}
 	return upperASCII(strings.TrimSpace(call[:open])) + "(" + stripExpressionWhitespace(arguments)
@@ -441,7 +445,7 @@ func aggregateCallKey(call string) string {
 // from NOTa.
 func stripExpressionWhitespace(expression string) string {
 	expression = strings.TrimSpace(expression)
-	if strings.IndexAny(expression, " \t\n\r") < 0 {
+	if strings.IndexFunc(expression, cyphertext.IsWhitespace) < 0 {
 		return expression
 	}
 	var stripped strings.Builder
@@ -454,12 +458,12 @@ func stripExpressionWhitespace(expression string) string {
 		}
 		current := expression[index]
 		switch {
-		case isASCIIWhitespace(current):
+		case cyphertext.IsWhitespaceAt(expression, index):
 			next := index + 1
-			for next < len(expression) && isASCIIWhitespace(expression[next]) {
+			for next < len(expression) && cyphertext.IsWhitespaceAt(expression, next) {
 				next++
 			}
-			if isIdentByte(expression[index-1]) && isIdentByte(expression[next]) {
+			if cyphertext.NamePartAt(expression, index-1) && cyphertext.NamePartAt(expression, next) {
 				stripped.WriteByte(' ')
 			}
 			index = next - 1

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	apocstorage "github.com/orneryd/nornicdb/apoc/storage"
+	"github.com/orneryd/nornicdb/internal/collection"
 	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -303,36 +304,16 @@ func (e *apocAdapterTestEngine) GetOutDegree(nodeID storage.NodeID) int {
 
 func (e *apocAdapterTestEngine) GetSchema() *storage.SchemaManager { return e.schema }
 func (e *apocAdapterTestEngine) BulkCreateNodes(nodes []*storage.Node) error {
-	for _, node := range nodes {
-		if _, err := e.CreateNode(node); err != nil {
-			return err
-		}
-	}
-	return nil
+	return collection.ApplyInOrder(nodes, func(node *storage.Node) error { _, err := e.CreateNode(node); return err })
 }
 func (e *apocAdapterTestEngine) BulkCreateEdges(edges []*storage.Edge) error {
-	for _, edge := range edges {
-		if err := e.CreateEdge(edge); err != nil {
-			return err
-		}
-	}
-	return nil
+	return collection.ApplyInOrder(edges, e.CreateEdge)
 }
 func (e *apocAdapterTestEngine) BulkDeleteNodes(ids []storage.NodeID) error {
-	for _, id := range ids {
-		if err := e.DeleteNode(id); err != nil {
-			return err
-		}
-	}
-	return nil
+	return collection.ApplyInOrder(ids, e.DeleteNode)
 }
 func (e *apocAdapterTestEngine) BulkDeleteEdges(ids []storage.EdgeID) error {
-	for _, id := range ids {
-		if err := e.DeleteEdge(id); err != nil {
-			return err
-		}
-	}
-	return nil
+	return collection.ApplyInOrder(ids, e.DeleteEdge)
 }
 func (e *apocAdapterTestEngine) BatchGetNodes(ids []storage.NodeID) (map[storage.NodeID]*storage.Node, error) {
 	out := make(map[storage.NodeID]*storage.Node, len(ids))

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"strings"
@@ -17,7 +18,7 @@ import (
 // escaped. ok is false for a value JSON can't hold.
 func apocConvertToJSON(value interface{}) (string, bool) {
 	var buffer bytes.Buffer
-	encoder := json.NewEncoder(&buffer)
+	encoder := jsontext.NewEncoder(&buffer)
 	encoder.SetEscapeHTML(false)
 	if err := encoder.Encode(value); err != nil {
 		return "", false
@@ -104,10 +105,9 @@ func apocConvertFromJSON(wantMap bool, value interface{}) (interface{}, error) {
 	if text == "" {
 		return nil, nil
 	}
-	decoder := json.NewDecoder(bytes.NewReader([]byte(text)))
-	decoder.UseNumber()
-	var decoded interface{}
-	if err := decoder.Decode(&decoded); err != nil {
+	decoder := jsontext.NewDecoder(bytes.NewReader([]byte(text)))
+	decoded, err := decoder.DecodeValue()
+	if err != nil {
 		return invalid(err)
 	}
 	if decoded == nil {

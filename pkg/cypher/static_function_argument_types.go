@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -376,20 +377,20 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			index = skipQuotedSemanticText(text, index)
 			continue
 		}
-		name, next, ok := scanIdentifierToken(text, index)
+		name, ok := cyphertext.ScanIdentifier(text, index)
 		if !ok {
 			index++
 			continue
 		}
-		if index > 0 && (text[index-1] == '.' || text[index-1] == '$' || isIdentByte(text[index-1])) {
-			index = next
+		if index > 0 && (text[index-1] == '.' || text[index-1] == '$' || cyphertext.NamePartAt(text, index-1)) {
+			index = name.End
 			continue
 		}
 		if index > 0 && text[index-1] == ':' {
 			// A label or type name (n:Label, [:TYPE]); a map value written
 			// without a space ({a:toUpper(x)}) is a call like any other.
-			if open := skipSpaces(text, next); open >= len(text) || text[open] != '(' {
-				index = next
+			if open := skipSpaces(text, name.End); open >= len(text) || text[open] != '(' {
+				index = name.End
 				continue
 			}
 		}
@@ -397,32 +398,32 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			// `x IS :: DATE` names a type, not a call: in a REQUIRE { ... }
 			// block the next entry may start with "(", which must not read
 			// as DATE(...).
-			index = next
+			index = name.End
 			continue
 		}
 		// A qualified name has one canonical identity in validation and dispatch.
-		parts, end := dottedNameParts(text, next, true)
-		name, next = name+parts, end
+		parts, end := dottedNameParts(text, name.End, true)
+		name.Value, name.End = name.Value+parts, end
 
-		open := skipSpaces(text, next)
+		open := skipSpaces(text, name.End)
 		if open >= len(text) || text[open] != '(' {
-			index = next
+			index = name.End
 			continue
 		}
-		if isReduceFormFunction(name) {
-			if err := checkReduceForm(name, text, open, check); err != nil {
+		if isReduceFormFunction(name.Value) {
+			if err := checkReduceForm(name.Value, text, open, check); err != nil {
 				return err
 			}
 			index = open + 1
 			continue
 		}
-		arguments, typed := lookupStaticFunctionArguments(name)
-		arity, counted := lookupFunctionArity(name)
+		arguments, typed := lookupStaticFunctionArguments(name.Value)
+		arity, counted := lookupFunctionArity(name.Value)
 		if !typed && !counted {
 			index = open + 1
 			continue
 		}
-		closing := findMatchingDelimiter(text, open, '(', ')')
+		closing := cyphertext.FindMatchingDelimiter(text, open, '(', ')', cyphertext.OpeningDelimiter)
 		if closing < 0 {
 			return nil
 		}
@@ -434,7 +435,7 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 			// named all (#907).
 			inner = ""
 		}
-		if strings.EqualFold(name, "trim") {
+		if strings.EqualFold(name.Value, "trim") {
 			if parameters, fromForm := trimFromArguments(inner); fromForm {
 				for _, expression := range parameters {
 					if err := check(arguments[0], expression, open+1); err != nil {
@@ -448,19 +449,19 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 		var buffer [8]string
 		expressions := appendTopLevelComma(buffer[:0], inner)
 		if counted {
-			if err := checkFunctionArity(name, arity, len(expressions)); err != nil {
+			if err := checkFunctionArity(name.Value, arity, len(expressions)); err != nil {
 				return err
 			}
 		}
-		byCount, _ := lookupLowerASCII(staticFunctionArgumentsByCount, name)
+		byCount, _ := lookupLowerASCII(staticFunctionArgumentsByCount, name.Value)
 		if overload, found := byCount[len(expressions)]; found {
 			arguments = overload
 		}
-		if strings.EqualFold(name, "format") {
+		if strings.EqualFold(name.Value, "format") {
 			arguments, typed = staticFormatArguments(expressions), true
 		}
 		if len(expressions) > 0 {
-			if err := checkStaticLiteralArguments(name, expressions); err != nil {
+			if err := checkStaticLiteralArguments(name.Value, expressions); err != nil {
 				return err
 			}
 		}
@@ -487,14 +488,14 @@ func forEachStaticFunctionArgument(text string, check func(argument staticArgume
 // type (IS :: ZONED DATETIME, IS TYPED LOCAL TIME).
 func precededByTypeAnnotation(text string, index int) bool {
 	end := index
-	for end > 0 && isSpaceByte(text[end-1]) {
+	for end > 0 && cyphertext.IsWhitespaceAt(text, end-1) {
 		end--
 	}
 	if end >= 2 && text[end-2:end] == "::" {
 		return true
 	}
 	start := end
-	for start > 0 && isIdentByte(text[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(text, start-1) {
 		start--
 	}
 	word := text[start:end]
@@ -599,17 +600,17 @@ func validateStaticFunctionParameters(cypher string, params map[string]interface
 		if len(expression) < 2 || expression[0] != '$' {
 			return nil
 		}
-		name, next, ok := scanIdentifierToken(expression, 1)
-		if !ok || next != len(expression) {
+		name, ok := cyphertext.ScanIdentifier(expression, 1)
+		if !ok || name.End != len(expression) {
 			return nil
 		}
 		// A missing parameter (nil) has no static type.
-		operand := staticParameterOperand(params[name])
+		operand := staticParameterOperand(params[name.Value])
 		if !operand.known() || operand.is("Float") || operand.fits(argument.accepts) {
 			return nil
 		}
 		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidArgumentType",
-			localization.CypherCoreParameterTypeMismatch(name, argument.expected, operand.display))
+			localization.CypherCoreParameterTypeMismatch(name.Value, argument.expected, operand.display))
 	})
 }
 
@@ -631,22 +632,22 @@ func unwindParameterBindings(cypher string) map[string]string {
 			continue
 		}
 		source := strings.TrimSpace(body[:as])
-		alias, _, ok := scanIdentifierToken(strings.TrimSpace(body[as+len("AS"):]), 0)
+		alias, ok := cyphertext.ScanIdentifier(strings.TrimSpace(body[as+len("AS"):]), 0)
 		if !ok || len(source) < 4 || !isListLiteral(source) {
 			continue
 		}
 		parameter := strings.TrimSpace(source[1 : len(source)-1])
-		name, next, isParameter := scanIdentifierToken(parameter, 1)
-		if !isParameter || parameter[0] != '$' || next != len(parameter) {
+		name, isParameter := cyphertext.ScanIdentifier(parameter, 1)
+		if !isParameter || parameter[0] != '$' || name.End != len(parameter) {
 			continue
 		}
-		if strings.Count(cypher, "AS "+alias) != 1 {
+		if strings.Count(cypher, "AS "+alias.Value) != 1 {
 			continue
 		}
 		if bindings == nil {
 			bindings = make(map[string]string)
 		}
-		bindings[alias] = name
+		bindings[alias.Value] = name.Value
 	}
 }
 
@@ -655,7 +656,7 @@ func unwindParameterBindings(cypher string) map[string]string {
 func parameterMayBeFunctionArgument(cypher string) bool {
 	for index := strings.IndexByte(cypher, '$'); index >= 0; {
 		before := index
-		for before > 0 && isASCIISpace(cypher[before-1]) {
+		for before > 0 && cyphertext.IsWhitespaceAt(cypher, before-1) {
 			before--
 		}
 		if before > 0 && (cypher[before-1] == '(' || cypher[before-1] == ',' || cypher[before-1] == '[') {
@@ -729,24 +730,24 @@ func (scope staticTypeScope) typeOf(variable string) string {
 // (staticTypeScope.members).
 func staticMemberAccessBase(expression string) (string, bool) {
 	expression = strings.TrimSpace(expression)
-	base, end, ok := scanIdentifierToken(expression, 0)
-	if !ok || end == len(expression) {
+	base, ok := cyphertext.ScanIdentifier(expression, 0)
+	if !ok || base.End == len(expression) {
 		return "", false
 	}
-	for index := end; index < len(expression); {
+	for index := base.End; index < len(expression); {
 		switch expression[index] {
 		case '.':
-			_, next, ok := scanIdentifierToken(expression, index+1)
+			next, ok := cyphertext.ScanIdentifier(expression, index+1)
 			if !ok {
 				return "", false
 			}
-			index = next
+			index = next.End
 		case '[':
-			closing := findMatchingDelimiter(expression, index, '[', ']')
+			closing := cyphertext.FindMatchingDelimiter(expression, index, '[', ']', cyphertext.OpeningDelimiter)
 			if closing < 0 {
 				return "", false
 			}
-			if _, literal := decodeCypherQuotedString(strings.TrimSpace(expression[index+1 : closing])); !literal {
+			if _, literal := cyphertext.DecodeString(strings.TrimSpace(expression[index+1:closing]), cyphertext.AcceptedSource); !literal {
 				return "", false
 			}
 			index = closing + 1
@@ -754,7 +755,7 @@ func staticMemberAccessBase(expression string) (string, bool) {
 			return "", false
 		}
 	}
-	return base, true
+	return base.Value, true
 }
 
 // staticExpressionType is the static type of expression in scope, the
@@ -811,7 +812,7 @@ func validateStaticFunctionVariablesTyped(text string, scopeOf func() staticType
 		// (size(properties(m)) is size of a Map, Neo4j's compile-time type
 		// mismatch); the call's own arguments are checked as calls of
 		// their own.
-		_, _, call := parseFunctionCallWS(strings.TrimSpace(expression))
+		call := inspectFunctionCall(strings.TrimSpace(expression), qualifiedFunctionCall, "", nil)
 		switch {
 		case property:
 			variable = base
@@ -876,7 +877,7 @@ func entityPropertyRead(expression string) (string, bool) {
 // form (parseReduceForm), a list of a known type must be a list, and an
 // allReduce predicate of a known type a boolean.
 func checkReduceForm(function, text string, open int, check func(staticArgumentType, string, int) error) error {
-	closing := findMatchingDelimiter(text, open, '(', ')')
+	closing := cyphertext.FindMatchingDelimiter(text, open, '(', ')', cyphertext.OpeningDelimiter)
 	if closing < 0 {
 		return nil
 	}

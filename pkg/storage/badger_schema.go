@@ -1,8 +1,8 @@
 package storage
 
 import (
-	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 
 	"github.com/dgraph-io/badger/v4"
 )
@@ -51,7 +51,7 @@ func (b *BadgerEngine) loadPersistedSchemas() error {
 			}
 
 			var def SchemaDefinition
-			if err := json.Unmarshal(data, &def); err != nil {
+			if err := jsontext.Unmarshal(data, &def); err != nil {
 				return fmt.Errorf("schema: decode %q: %w", namespace, err)
 			}
 			if def.Version == 0 {
@@ -122,7 +122,7 @@ func (b *BadgerEngine) persistSchemaDefinition(namespace string, def *SchemaDefi
 		def.Version = schemaDefinitionVersion
 	}
 
-	blob, err := json.Marshal(def)
+	blob, err := jsontext.Marshal(def)
 	if err != nil {
 		return fmt.Errorf("schema: marshal %q: %w", namespace, err)
 	}

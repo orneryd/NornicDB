@@ -123,7 +123,7 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 						result.Record(entry, storage.ReplayWALEntry(base, entry))
 					}
 					require.Zero(t, result.Failed, "%s errors=%+v", result.Summary(), result.Errors)
-					manager, err := NewDatabaseManager(storage.NewWALEngine(base, wal), nil)
+					manager, err := NewDatabaseManager(t.Context(), storage.NewWALEngine(base, wal), nil)
 					if err != nil {
 						_ = wal.Close()
 						_ = base.Close()
@@ -132,7 +132,7 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 						t.Fatalf("managed open after WAL-only rebuild generation=%d: %v", generation, err)
 					}
 					if generation == 0 {
-						require.NoError(t, manager.CreateDatabase("binding_model"))
+						require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "binding_model"}))
 					}
 					view, err := manager.GetStorage("binding_model")
 					require.NoError(t, err)
@@ -144,7 +144,7 @@ func TestManagedWALRebuildCacheBindingsControl(t *testing.T) {
 					if generation < 2 {
 						// A synchronous metadata write warms the namespace on develop;
 						// the separately owned cold-reopen deadlock is outside this control.
-						require.NoError(t, manager.SetDatabaseLimits("binding_model", &Limits{}))
+						require.NoError(t, manager.SetDatabaseLimits(t.Context(), "binding_model", &Limits{}))
 						node := &storage.Node{ID: storage.NodeID(fmt.Sprintf("n%d", generation)), Properties: map[string]any{"v": fmt.Sprintf("value-%d", generation)}}
 						_, err = view.CreateNode(node)
 						require.NoError(t, err)

@@ -3,7 +3,6 @@ package fabric
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -11,12 +10,22 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
+// Remote factories may decorate an engine. Fabric depends on its Cypher
+// capabilities rather than the concrete transport implementation.
+type remoteCypherEngine interface {
+	QueryCypher(context.Context, string, map[string]interface{}, storage.RemoteAccessMode) ([]string, [][]interface{}, error)
+	BeginCypherTx(context.Context) (storage.RemoteCypherTx, error)
+	Close() error
+}
+
 // RemoteFragmentExecutor executes fragments against a remote NornicDB instance
 // via the RemoteEngine transport (Bolt or HTTP, auto-detected from URI scheme).
+// Execute and ExecuteRows accept raw remote source. Compiler fragments emit
+// accepted source back to raw before this transport boundary.
 type RemoteFragmentExecutor struct {
-	// engineCache caches RemoteEngine instances by URI+database key to avoid
+	// engineCache caches RemoteEngine instances by endpoint and exact auth identity to avoid
 	// reconnecting on every fragment execution.
-	engineCache map[string]*storage.RemoteEngine
+	engineCache map[remoteEngineIdentity]remoteCypherEngine
 	txHandles   map[string]*remoteParticipant
 	mu          sync.RWMutex
 }
@@ -100,7 +109,7 @@ func (p *remoteParticipant) rollbackDetached(ctx context.Context) error {
 // NewRemoteFragmentExecutor creates a remote executor.
 func NewRemoteFragmentExecutor() *RemoteFragmentExecutor {
 	return &RemoteFragmentExecutor{
-		engineCache: make(map[string]*storage.RemoteEngine),
+		engineCache: make(map[remoteEngineIdentity]remoteCypherEngine),
 		txHandles:   make(map[string]*remoteParticipant),
 	}
 }
@@ -146,13 +155,13 @@ func (r *RemoteFragmentExecutor) RollbackParticipants(ctx context.Context) error
 //   - query: the Cypher query to execute
 //   - params: query parameters
 //   - authToken: the caller's auth token for OIDC forwarding
-func (r *RemoteFragmentExecutor) Execute(ctx context.Context, loc *LocationRemote, query string, params map[string]interface{}, authToken string) (*ResultStream, error) {
+func (r *RemoteFragmentExecutor) Execute(ctx context.Context, loc *LocationRemote, query string, params map[string]interface{}, authToken string, mode storage.RemoteAccessMode) (*ResultStream, error) {
 	engine, err := r.getOrCreateEngine(loc, authToken)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to remote '%s' at %s: %w", loc.DBName, observability.RedactURL(loc.URI), err)
 	}
 
-	columns, rows, err := r.executeRemoteQuery(ctx, engine, query, params)
+	columns, rows, err := r.executeRemoteQuery(ctx, engine, query, params, mode)
 	if err != nil {
 		return nil, fmt.Errorf("remote execution on '%s' (%s) failed: %w", loc.DBName, observability.RedactURL(loc.URI), err)
 	}
@@ -164,15 +173,8 @@ func (r *RemoteFragmentExecutor) Execute(ctx context.Context, loc *LocationRemot
 }
 
 // ExecuteRows runs a Cypher query against a remote location and returns a row iterator.
-func (r *RemoteFragmentExecutor) ExecuteRows(ctx context.Context, loc *LocationRemote, query string, params map[string]interface{}, authToken string) ([]string, RowIterator, error) {
-	res, err := r.Execute(ctx, loc, query, params, authToken)
-	if err != nil {
-		return nil, nil, err
-	}
-	if res == nil {
-		return nil, NewResultRowIterator(nil), nil
-	}
-	return res.Columns, NewResultRowIterator(res), nil
+func (r *RemoteFragmentExecutor) ExecuteRows(ctx context.Context, loc *LocationRemote, query string, params map[string]interface{}, authToken string, mode storage.RemoteAccessMode) ([]string, RowIterator, error) {
+	return resultRows(r.Execute(ctx, loc, query, params, authToken, mode))
 }
 
 // Close closes all cached remote engines.
@@ -189,58 +191,40 @@ func (r *RemoteFragmentExecutor) Close() error {
 	}
 	for key, engine := range r.engineCache {
 		if err := engine.Close(); err != nil {
-			lastErr = fmt.Errorf("failed to close remote engine '%s': %w", observability.RedactText(key), err)
+			lastErr = fmt.Errorf("failed to close remote engine '%s': %w", observability.RedactText(key.uri+"|"+key.database), err)
 		}
 		delete(r.engineCache, key)
 	}
 	return lastErr
 }
 
-// cacheKey produces a unique key for engine caching.
-func cacheKey(loc *LocationRemote, authToken string) string {
-	modeRaw := strings.TrimSpace(loc.AuthMode)
-	mode := modeRaw
+// remoteEngineIdentity keeps admitted credential fields distinct and exact.
+// It must never be formatted into diagnostics because it contains credentials.
+type remoteEngineIdentity struct {
+	graph, uri, database, mode, user, password, token, revision string
+}
+
+func cacheKey(loc *LocationRemote, authToken string) remoteEngineIdentity {
+	mode := strings.TrimSpace(loc.AuthMode)
 	if mode == "" || strings.EqualFold(mode, "oidc_forwarding") {
 		mode = "oidc_forwarding"
 	} else if strings.EqualFold(mode, "user_password") {
 		mode = "user_password"
 	}
-
-	authIdentity := "none"
-	switch mode {
-	case "user_password":
-		authIdentity = strings.TrimSpace(loc.User) + ":" + strings.TrimSpace(loc.Password)
-	default:
-		// oidc_forwarding: include forwarded token context to prevent cross-caller reuse.
-		authIdentity = strings.TrimSpace(authToken)
+	key := remoteEngineIdentity{uri: loc.URI, database: loc.DBName, mode: mode, revision: loc.CredentialRevision}
+	if loc.ResolveEngine != nil {
+		key.graph = loc.GraphName
 	}
-
-	sum := fnv64aString(authIdentity)
-	var b strings.Builder
-	// uri|db|mode|authhash
-	b.Grow(len(loc.URI) + len(loc.DBName) + len(mode) + 20)
-	b.WriteString(loc.URI)
-	b.WriteByte('|')
-	b.WriteString(loc.DBName)
-	b.WriteByte('|')
-	b.WriteString(mode)
-	b.WriteByte('|')
-	b.WriteString(strconv.FormatUint(sum, 16))
-	return b.String()
-}
-
-func fnv64aString(s string) uint64 {
-	var h uint64 = 14695981039346656037
-	const prime uint64 = 1099511628211
-	for i := 0; i < len(s); i++ {
-		h ^= uint64(s[i])
-		h *= prime
+	if mode == "user_password" {
+		key.user, key.password = loc.User, loc.Password
+	} else {
+		key.token = strings.TrimSpace(authToken)
 	}
-	return h
+	return key
 }
 
 // getOrCreateEngine returns a cached engine or creates a new one.
-func (r *RemoteFragmentExecutor) getOrCreateEngine(loc *LocationRemote, authToken string) (*storage.RemoteEngine, error) {
+func (r *RemoteFragmentExecutor) getOrCreateEngine(loc *LocationRemote, authToken string) (remoteCypherEngine, error) {
 	key := cacheKey(loc, authToken)
 
 	r.mu.RLock()
@@ -256,6 +240,18 @@ func (r *RemoteFragmentExecutor) getOrCreateEngine(loc *LocationRemote, authToke
 	defer r.mu.Unlock()
 	engine, exists := r.engineCache[key]
 	if !exists {
+		if loc.ResolveEngine != nil {
+			resolved, err := loc.ResolveEngine(authToken)
+			if err != nil {
+				return nil, err
+			}
+			remote, ok := resolved.(remoteCypherEngine)
+			if !ok {
+				return nil, fmt.Errorf("remote constituent '%s' resolved to %T", loc.GraphName, resolved)
+			}
+			r.engineCache[key] = remote
+			return remote, nil
+		}
 		cfg := storage.RemoteEngineConfig{
 			URI:      loc.URI,
 			Database: loc.DBName,
@@ -280,13 +276,12 @@ func (r *RemoteFragmentExecutor) getOrCreateEngine(loc *LocationRemote, authToke
 	return engine, nil
 }
 
-// executeRemoteQuery runs a Cypher query via a RemoteEngine and returns columns + rows.
-// This uses the engine's GetNodesByLabel as a transport mechanism for arbitrary Cypher.
-// The RemoteEngine.transport.query method handles the actual Bolt/HTTP execution.
-func (r *RemoteFragmentExecutor) executeRemoteQuery(ctx context.Context, engine *storage.RemoteEngine, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+// executeRemoteQuery uses the factory's Cypher capabilities for implicit or
+// explicit transactions, preserving decorator behavior on both paths.
+func (r *RemoteFragmentExecutor) executeRemoteQuery(ctx context.Context, engine remoteCypherEngine, query string, params map[string]interface{}, mode storage.RemoteAccessMode) ([]string, [][]interface{}, error) {
 	sub, hasSub := SubTransactionFromContext(ctx)
 	if !hasSub || sub == nil {
-		return engine.QueryCypher(ctx, query, params)
+		return engine.QueryCypher(ctx, query, params, mode)
 	}
 	handle, err := r.getOrCreateTxHandle(ctx, sub, engine)
 	if err != nil {
@@ -312,7 +307,7 @@ func (r *RemoteFragmentExecutor) executeRemoteQuery(ctx context.Context, engine 
 	return columns, rows, nil
 }
 
-func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *SubTransaction, engine *storage.RemoteEngine) (*remoteParticipant, error) {
+func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *SubTransaction, engine remoteCypherEngine) (*remoteParticipant, error) {
 	r.mu.RLock()
 	if handle, ok := r.txHandles[sub.ShardName]; ok {
 		r.mu.RUnlock()
@@ -336,10 +331,10 @@ func (r *RemoteFragmentExecutor) getOrCreateTxHandle(ctx context.Context, sub *S
 		return nil, fmt.Errorf("fabric transaction context is missing for remote sub-transaction '%s'", sub.ShardName)
 	}
 	// The sub-transaction ends with its transaction, after the statement or
-	// APPLY batch that enlisted it has returned and cancelled ctx. As for a
-	// local participant, completion keeps ctx's values but not its
-	// cancellation; storage.RemoteRequestTimeout bounds it.
-	terminalCtx := context.WithoutCancel(ctx)
+	// APPLY batch that enlisted it has returned and cancelled ctx. BindContext
+	// keeps the transaction owner's lifetime and values, not the statement's
+	// cancellation; endWithin bounds the remote terminal request.
+	terminalCtx := fabricTx.BindContext(ctx)
 	commitFn := func(_ *SubTransaction) error { return handle.endWithin(terminalCtx, true) }
 	rollbackFn := func(_ *SubTransaction) error { return handle.endWithin(terminalCtx, false) }
 	if err := fabricTx.BindParticipantCallbacks(sub.ShardName, commitFn, rollbackFn); err != nil {

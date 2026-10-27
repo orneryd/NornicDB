@@ -72,230 +72,162 @@ func TestBoltCrossSessionMergeUniqueConflict_EshuDefaultNamespaceExplicitTx(t *t
 	}
 }
 
-// TestBoltDatabaseManagerExecuteWriteUniqueMerge_DefaultNamespace exercises the
+// The default-namespace population exercises the
 // real database-manager Bolt path used by Eshu's NornicDB deployment. A
 // commit-time UNIQUE conflict must become a successful retry because the next
 // ExecuteWrite attempt can MATCH the committed nornic-scoped node.
-func TestBoltDatabaseManagerExecuteWriteUniqueMerge_DefaultNamespace(t *testing.T) {
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := multidb.NewDatabaseManager(base, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = mgr.Close()
-	})
+type uniqueMergeTestBackend uint8
 
-	server := NewWithDatabaseManager(&Config{
-		Port:            0,
-		MaxConnections:  32,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}, &mockExecutor{}, mgr)
-	port := startBoltTestServer(t, server)
+const (
+	uniqueMergeTestMemory uniqueMergeTestBackend = iota
+	uniqueMergeTestBadger
+	uniqueMergeTestWAL
+)
 
-	ctx := context.Background()
-	driver, err := neo4jdriver.NewDriverWithContext(
-		fmt.Sprintf("bolt://127.0.0.1:%d", port),
-		neo4jdriver.NoAuth(),
-		func(config *neo4jconfig.Config) {
-			config.MaxTransactionRetryTime = 5 * time.Second
-		},
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = driver.Close(context.Background())
-	})
-	require.NoError(t, driver.VerifyConnectivity(ctx))
+type uniqueMergeTestInput uint8
 
-	setup := driver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode:   neo4jdriver.AccessModeWrite,
-		DatabaseName: "nornic",
-	})
-	_, err = setup.Run(ctx,
-		"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE",
-		nil,
-	)
-	require.NoError(t, err)
-	require.NoError(t, setup.Close(ctx))
+const (
+	uniqueMergeTestDirect uniqueMergeTestInput = iota
+	uniqueMergeTestUnwindRows
+)
 
-	const concurrency = 8
-	var wg sync.WaitGroup
-	failures := make([]string, concurrency)
-
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			session := driver.NewSession(ctx, neo4jdriver.SessionConfig{
-				AccessMode:   neo4jdriver.AccessModeWrite,
-				DatabaseName: "nornic",
-			})
-			defer func() {
-				_ = session.Close(ctx)
-			}()
-			_, execErr := session.ExecuteWrite(ctx, func(tx neo4jdriver.ManagedTransaction) (any, error) {
-				result, runErr := tx.Run(ctx,
-					"MERGE (r:TerraformResource {uid: $uid}) SET r.name = $name",
-					map[string]any{
-						"uid":  "dbmanager-same-uid",
-						"name": fmt.Sprintf("session%d", idx),
-					},
-				)
-				if runErr != nil {
-					return nil, runErr
+// Every backend keeps its original schema/input population while sharing the
+// actual concurrent driver/manager commit-and-read lifecycle.
+func TestBoltDatabaseManagerExecuteWriteUniqueMerge_BackendPopulations(t *testing.T) {
+	const constraint = "CREATE CONSTRAINT terraform_resource_uid_unique IF NOT EXISTS FOR (n:TerraformResource) REQUIRE n.uid IS UNIQUE"
+	const lookup = "CREATE INDEX nornicdb_terraform_resource_uid_lookup IF NOT EXISTS FOR (n:TerraformResource) ON (n.uid)"
+	cases := []struct {
+		name          string
+		backend       uniqueMergeTestBackend
+		input         uniqueMergeTestInput
+		uid           string
+		schemaQueries []string
+	}{
+		{"memory default", uniqueMergeTestMemory, uniqueMergeTestDirect, "dbmanager-same-uid", []string{"CREATE CONSTRAINT tr_uid IF NOT EXISTS FOR (r:TerraformResource) REQUIRE r.uid IS UNIQUE"}},
+		{"badger lookup", uniqueMergeTestBadger, uniqueMergeTestUnwindRows, "badger-dbmanager-same-uid", []string{constraint, lookup}},
+		{"WAL lookup", uniqueMergeTestWAL, uniqueMergeTestUnwindRows, "prod-stack-same-uid", []string{constraint, lookup}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var base storage.Engine
+			switch tc.backend {
+			case uniqueMergeTestMemory:
+				base = fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
+			case uniqueMergeTestBadger, uniqueMergeTestWAL:
+				badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
+				if badger != nil {
+					fixtureowner.Own(t, badger)
 				}
-				_, consumeErr := result.Consume(ctx)
-				return nil, consumeErr
-			})
-			if execErr != nil {
-				failures[idx] = execErr.Error()
+				require.NoError(t, err)
+				base = badger
+				if tc.backend == uniqueMergeTestWAL {
+					wal, err := storage.NewWAL(t.TempDir(), nil)
+					require.NoError(t, err)
+					base = storage.NewWALEngine(badger, wal)
+				}
 			}
-		}(i)
-	}
-	wg.Wait()
+			mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_ = mgr.Close()
+			})
 
-	for idx, msg := range failures {
-		if msg != "" {
-			t.Errorf("session %d failed: %s", idx, msg)
-		}
-	}
+			server := NewWithDatabaseManager(&Config{
+				Port:            0,
+				MaxConnections:  32,
+				ReadBufferSize:  8192,
+				WriteBufferSize: 8192,
+			}, &mockExecutor{}, mgr)
+			port := startBoltTestServer(t, server)
 
-	check := driver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode:   neo4jdriver.AccessModeRead,
-		DatabaseName: "nornic",
-	})
-	defer func() {
-		_ = check.Close(ctx)
-	}()
-	result, err := check.Run(ctx,
-		"MATCH (r:TerraformResource {uid: $uid}) RETURN count(r)",
-		map[string]any{"uid": "dbmanager-same-uid"},
-	)
-	require.NoError(t, err)
-	record, err := result.Single(ctx)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, record.Values[0])
-}
+			ctx := context.Background()
+			driver, err := neo4jdriver.NewDriverWithContext(
+				fmt.Sprintf("bolt://127.0.0.1:%d", port),
+				neo4jdriver.NoAuth(),
+				func(config *neo4jconfig.Config) {
+					config.MaxTransactionRetryTime = 5 * time.Second
+				},
+			)
+			require.NoError(t, err)
+			t.Cleanup(func() {
+				_ = driver.Close(context.Background())
+			})
+			require.NoError(t, driver.VerifyConnectivity(ctx))
 
-func TestBoltDatabaseManagerExecuteWriteUniqueMerge_ProductionWrapperStackWithLookupIndex(t *testing.T) {
-	badger, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngine(t.TempDir()))
-	if badger != nil {
-		fixtureowner.Own(t, badger)
-	}
-	require.NoError(t, err)
-	wal, err := storage.NewWAL(t.TempDir(), nil)
-	require.NoError(t, err)
-	walStore := storage.NewWALEngine(badger, wal)
-	base := walStore
-	mgr, err := multidb.NewDatabaseManager(base, nil)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = mgr.Close()
-	})
-
-	server := NewWithDatabaseManager(&Config{
-		Port:            0,
-		MaxConnections:  32,
-		ReadBufferSize:  8192,
-		WriteBufferSize: 8192,
-	}, &mockExecutor{}, mgr)
-	port := startBoltTestServer(t, server)
-
-	ctx := context.Background()
-	driver, err := neo4jdriver.NewDriverWithContext(
-		fmt.Sprintf("bolt://127.0.0.1:%d", port),
-		neo4jdriver.NoAuth(),
-		func(config *neo4jconfig.Config) {
-			config.MaxTransactionRetryTime = 5 * time.Second
-		},
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = driver.Close(context.Background())
-	})
-	require.NoError(t, driver.VerifyConnectivity(ctx))
-
-	setup := driver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode:   neo4jdriver.AccessModeWrite,
-		DatabaseName: "nornic",
-	})
-	// The constraint first: its own index serves the uid seeks, and the index
-	// statement after it is a no-op, as in Neo4j. The other order fails with
-	// IndexAlreadyExists (#884).
-	_, err = setup.Run(ctx,
-		"CREATE CONSTRAINT terraform_resource_uid_unique IF NOT EXISTS FOR (n:TerraformResource) REQUIRE n.uid IS UNIQUE",
-		nil,
-	)
-	require.NoError(t, err)
-	_, err = setup.Run(ctx,
-		"CREATE INDEX nornicdb_terraform_resource_uid_lookup IF NOT EXISTS FOR (n:TerraformResource) ON (n.uid)",
-		nil,
-	)
-	require.NoError(t, err)
-	require.NoError(t, setup.Close(ctx))
-
-	const concurrency = 8
-	var wg sync.WaitGroup
-	failures := make([]string, concurrency)
-
-	for i := 0; i < concurrency; i++ {
-		wg.Add(1)
-		go func(idx int) {
-			defer wg.Done()
-			session := driver.NewSession(ctx, neo4jdriver.SessionConfig{
+			setup := driver.NewSession(ctx, neo4jdriver.SessionConfig{
 				AccessMode:   neo4jdriver.AccessModeWrite,
 				DatabaseName: "nornic",
 			})
-			defer func() {
-				_ = session.Close(ctx)
-			}()
-			_, execErr := session.ExecuteWrite(ctx, func(tx neo4jdriver.ManagedTransaction) (any, error) {
-				result, runErr := tx.Run(ctx,
-					`UNWIND $rows AS row
+			// Constraint precedes optional lookup-index DDL, preserving the original no-op order (#884).
+			for _, query := range tc.schemaQueries {
+				_, err = setup.Run(ctx, query, nil)
+				require.NoError(t, err)
+			}
+			require.NoError(t, setup.Close(ctx))
+
+			const concurrency = 8
+			var wg sync.WaitGroup
+			failures := make([]string, concurrency)
+
+			for i := 0; i < concurrency; i++ {
+				wg.Add(1)
+				go func(idx int) {
+					defer wg.Done()
+					session := driver.NewSession(ctx, neo4jdriver.SessionConfig{
+						AccessMode:   neo4jdriver.AccessModeWrite,
+						DatabaseName: "nornic",
+					})
+					defer func() {
+						_ = session.Close(ctx)
+					}()
+					_, execErr := session.ExecuteWrite(ctx, func(tx neo4jdriver.ManagedTransaction) (any, error) {
+						params := map[string]any{"uid": tc.uid, "name": fmt.Sprintf("session%d", idx)}
+						query := "MERGE (r:TerraformResource {uid: $uid}) SET r.name = $name"
+						if tc.input == uniqueMergeTestUnwindRows {
+							query = `UNWIND $rows AS row
 MERGE (r:TerraformResource {uid: row.uid})
-SET r.name = row.name`,
-					map[string]any{
-						"rows": []map[string]any{
-							{
-								"uid":  "prod-stack-same-uid",
-								"name": fmt.Sprintf("session%d", idx),
-							},
-						},
-					},
-				)
-				if runErr != nil {
-					return nil, runErr
-				}
-				_, consumeErr := result.Consume(ctx)
-				return nil, consumeErr
-			})
-			if execErr != nil {
-				failures[idx] = execErr.Error()
+SET r.name = row.name`
+							params = map[string]any{"rows": []map[string]any{{"uid": tc.uid, "name": fmt.Sprintf("session%d", idx)}}}
+						}
+						result, runErr := tx.Run(ctx, query, params)
+
+						if runErr != nil {
+							return nil, runErr
+						}
+						_, consumeErr := result.Consume(ctx)
+						return nil, consumeErr
+					})
+					if execErr != nil {
+						failures[idx] = execErr.Error()
+					}
+				}(i)
 			}
-		}(i)
-	}
-	wg.Wait()
+			wg.Wait()
 
-	for idx, msg := range failures {
-		if msg != "" {
-			t.Errorf("session %d failed: %s", idx, msg)
-		}
-	}
+			for idx, msg := range failures {
+				if msg != "" {
+					t.Errorf("session %d failed: %s", idx, msg)
+				}
+			}
 
-	check := driver.NewSession(ctx, neo4jdriver.SessionConfig{
-		AccessMode:   neo4jdriver.AccessModeRead,
-		DatabaseName: "nornic",
-	})
-	defer func() {
-		_ = check.Close(ctx)
-	}()
-	result, err := check.Run(ctx,
-		"MATCH (r:TerraformResource {uid: $uid}) RETURN count(r)",
-		map[string]any{"uid": "prod-stack-same-uid"},
-	)
-	require.NoError(t, err)
-	record, err := result.Single(ctx)
-	require.NoError(t, err)
-	require.EqualValues(t, 1, record.Values[0])
+			check := driver.NewSession(ctx, neo4jdriver.SessionConfig{
+				AccessMode:   neo4jdriver.AccessModeRead,
+				DatabaseName: "nornic",
+			})
+			defer func() {
+				_ = check.Close(ctx)
+			}()
+			result, err := check.Run(ctx,
+				"MATCH (r:TerraformResource {uid: $uid}) RETURN count(r)",
+				map[string]any{"uid": tc.uid},
+			)
+			require.NoError(t, err)
+			record, err := result.Single(ctx)
+			require.NoError(t, err)
+			require.EqualValues(t, 1, record.Values[0])
+
+		})
+	}
 }
 
 func TestBoltDatabaseManagerMergeExistingNodeAfterLateSchemaBootstrap(t *testing.T) {
@@ -307,7 +239,7 @@ func TestBoltDatabaseManagerMergeExistingNodeAfterLateSchemaBootstrap(t *testing
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
 	base := storage.NewWALEngine(badger, wal)
-	mgr, err := multidb.NewDatabaseManager(base, nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = mgr.Close()

@@ -34,8 +34,9 @@ type CallClause struct {
 
 // ReadCallClause is the standalone entry adapter. Statement consumers call
 // DescribeCall on the retained node instead of parsing a second CALL fragment.
-func ReadCallClause(ctx context.Context, query string) (CallClause, error) {
-	syntax, err := ParseSyntax(ctx, query, FragmentEntry, false)
+// For example, ReadCallClause(ctx, clientQuery, RawSource) retains client spelling.
+func ReadCallClause(ctx context.Context, query string, stage SourceStage) (CallClause, error) {
+	syntax, err := ParseSyntax(ctx, query, FragmentEntry, false, stage)
 	if err != nil {
 		return CallClause{}, err
 	}
@@ -50,8 +51,9 @@ func ReadCallClause(ctx context.Context, query string) (CallClause, error) {
 // ReadTransactionalCalls consumes the one product and traversal. Placement
 // state belongs to each enclosing query; independently committed writes are
 // not writes of the containing query. No preliminary lexer or recursion remains.
-func ReadTransactionalCalls(ctx context.Context, query string) ([]CallClause, error) {
-	syntax, err := ParseSyntax(ctx, query, StatementEntry, false)
+// For example, use AcceptedSource for a compiler's already projected statement.
+func ReadTransactionalCalls(ctx context.Context, query string, stage SourceStage) ([]CallClause, error) {
+	syntax, err := ParseSyntax(ctx, query, StatementEntry, false, stage)
 	if err != nil {
 		return nil, err
 	}
@@ -122,8 +124,8 @@ func DescribeCall(call SyntaxNode) CallClause {
 	bodyEnd, _ := close.Span()
 	_, end := call.Span()
 	result := CallClause{
-		Body:  strings.TrimSpace(call.data.source[bodyStart:bodyEnd]),
-		After: strings.TrimSpace(call.data.source[end:]),
+		Body:  strings.TrimSpace(call.data.view.Original[bodyStart:bodyEnd]),
+		After: strings.TrimSpace(call.data.view.Original[end:]),
 	}
 	batch := call.ChildRule(CypherParserRULE_transactionBatch)
 	if !batch.Valid() {

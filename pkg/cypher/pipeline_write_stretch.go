@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -215,15 +216,14 @@ func addStretchLabelChain(chain string, tokens *stretchTokens) {
 
 // addStretchMapKeys records the keys of a "{k: v, …}" map.
 func addStretchMapKeys(text string, tokens *stretchTokens) {
-	end := findMatchingDelimiter(text, 0, '{', '}')
+	end := cyphertext.FindMatchingDelimiter(text, 0, '{', '}', cyphertext.OpeningDelimiter)
 	if end < 0 {
 		return
 	}
-	for _, entry := range splitTopLevelComma(text[1:end]) {
-		if colon := findTopLevelMapKeyValueSeparator(entry); colon > 0 {
-			tokens.add(&tokens.keys, strings.Trim(strings.TrimSpace(entry[:colon]), "`"))
-		}
-	}
+	// The pattern effect visitor supplies CST Code with comments removed.
+	_ = forEachMapEntry(text[:end+1], mapCodeText, func(key, _ string) {
+		tokens.add(&tokens.keys, key)
+	})
 }
 
 // addStretchSetWrites projects the existing mutation item reader onto writes.
@@ -264,49 +264,6 @@ func addStretchRemoveWrites(list string, writes *stretchTokens) {
 			writes.anyKey = true
 		default:
 			writes.add(&writes.keys, item.property)
-		}
-	}
-}
-
-// addStretchPropertyReads records the property keys text reads: v.key
-// outside string literals. Any key for what this scan can't name: v {.*} or
-// any map projection, properties(), keys(), a quoted key (v.`key`), spaces
-// around the dot, and a subscript (v['key'], v[$k]), which may read any key.
-func addStretchPropertyReads(text string, tokens *stretchTokens) {
-	lower := lowerASCII(text)
-	if strings.Contains(text, ".*") || strings.Contains(text, "{.") || strings.Contains(text, "{ .") ||
-		strings.Contains(lower, "properties(") || strings.Contains(lower, "keys(") {
-		tokens.anyKey = true
-	}
-	for index := 0; index < len(text); index++ {
-		switch character := text[index]; {
-		case isCypherQuoteByte(character):
-			index = skipCypherQuotedText(text, index, character) - 1
-		case character == '[' && index > 0 && (isIdentByte(text[index-1]) || text[index-1] == ')' || text[index-1] == ']'):
-			tokens.anyKey = true
-		case character == '.' && index+1 < len(text) && text[index+1] != '.' && (index == 0 || text[index-1] != '.'):
-			before, after := index, index+1
-			for before > 0 && isASCIISpace(text[before-1]) {
-				before--
-			}
-			for after < len(text) && isASCIISpace(text[after]) {
-				after++
-			}
-			if before == 0 || !(isIdentByte(text[before-1]) || text[before-1] == ')' || isCypherBacktickByte(text[before-1])) || after >= len(text) {
-				continue
-			}
-			if before != index || after != index+1 || isCypherBacktickByte(text[after]) || !isIdentStartByte(text[after]) {
-				if isCypherBacktickByte(text[after]) || isIdentStartByte(text[after]) {
-					tokens.anyKey = true
-				}
-				continue
-			}
-			end := after
-			for end < len(text) && isIdentByte(text[end]) {
-				end++
-			}
-			tokens.add(&tokens.keys, text[after:end])
-			index = end - 1
 		}
 	}
 }

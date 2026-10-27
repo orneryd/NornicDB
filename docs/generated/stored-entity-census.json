@@ -234,7 +234,7 @@
     {
       "space": "prefixNode",
       "class": "entity-body",
-      "writes": 8
+      "writes": 9
     },
     {
       "space": "prefixOutgoingIndex",
@@ -354,16 +354,16 @@
     {
       "space": "prefixMVCCMetaNamespaceSeq",
       "class": "mvcc-sequence",
-      "origin": "pkg/storage/badger.go:1357",
-      "func": "pkg/storage.BadgerEngine.persistMVCCSequence$1 pkg/storage/badger.go:1357",
+      "origin": "pkg/storage/badger.go:1367",
+      "func": "pkg/storage.BadgerEngine.persistMVCCSequence$1 pkg/storage/badger.go:1367",
       "where": "pkg/storage.BadgerEngine.persistMVCCSequence -"
     },
     {
       "space": "prefixMVCCMetaSchemaVersion",
       "class": "store-metadata",
-      "origin": "pkg/storage/badger.go:1397",
-      "func": "pkg/storage.BadgerEngine.writeSchemaVersion$1 pkg/storage/badger.go:1397",
-      "where": "pkg/storage.BadgerEngine.writeSchemaVersion$1 pkg/storage/badger.go:1397"
+      "origin": "pkg/storage/badger.go:1404",
+      "func": "pkg/storage.writeSchemaVersionInTxn pkg/storage/badger.go:1404",
+      "where": "pkg/storage.writeSchemaVersionInTxn pkg/storage/badger.go:1404"
     },
     {
       "space": "prefixMVCCMeta+\"accessmeta:\"",
@@ -2200,6 +2200,13 @@
       "where": "pkg/storage.BadgerEngine.migrateV1ToV2Edges$1 pkg/storage/migration_v1_to_v2.go:505"
     },
     {
+      "space": "prefixNode",
+      "class": "entity-body",
+      "origin": "pkg/storage/migration_v3_to_v4.go:77",
+      "func": "pkg/storage.BadgerEngine.migrateV3ToV4$1 pkg/storage/migration_v3_to_v4.go:77",
+      "where": "pkg/storage.BadgerEngine.migrateV3ToV4$1 pkg/storage/migration_v3_to_v4.go:77"
+    },
+    {
       "space": "prefixPropKeyForward",
       "class": "property-key-dictionary",
       "origin": "pkg/storage/property_key_dictionary.go:397",
@@ -2505,7 +2512,7 @@
       "field": "pkg/storage.BadgerEngine.adjCacheMaxNodes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1049"
+      "pos": "pkg/storage/badger.go:1059"
     },
     {
       "field": "pkg/storage.BadgerEngine.cacheHits",
@@ -2535,7 +2542,7 @@
       "field": "pkg/storage.BadgerEngine.edgeCacheMaxItems",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1047"
+      "pos": "pkg/storage/badger.go:1057"
     },
     {
       "field": "pkg/storage.BadgerEngine.edgeCacheVersions",
@@ -2637,13 +2644,13 @@
       "field": "pkg/storage.BadgerEngine.edgeTypeCacheMaxTypes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1036"
+      "pos": "pkg/storage/badger.go:1046"
     },
     {
       "field": "pkg/storage.BadgerEngine.labelFirstCacheMax",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1039"
+      "pos": "pkg/storage/badger.go:1049"
     },
     {
       "field": "pkg/storage.BadgerEngine.manualSuppressionCount",
@@ -2673,13 +2680,13 @@
       "field": "pkg/storage.BadgerEngine.mvccLegacyGlobalSeed",
       "class": "MVCC sequence",
       "func": "pkg/storage.BadgerEngine.initializeMVCCSequence",
-      "pos": "pkg/storage/badger.go:1269"
+      "pos": "pkg/storage/badger.go:1279"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
       "class": "entity-count",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1053"
+      "pos": "pkg/storage/badger.go:1063"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceEdgeCounts",
@@ -2727,7 +2734,7 @@
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
       "class": "entity-count",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1052"
+      "pos": "pkg/storage/badger.go:1062"
     },
     {
       "field": "pkg/storage.BadgerEngine.namespaceNodeCounts",
@@ -2793,13 +2800,13 @@
       "field": "pkg/storage.BadgerEngine.nodeBodyCacheMaxBytes",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1033"
+      "pos": "pkg/storage/badger.go:1043"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCacheMaxEntries",
       "class": "configuration",
       "func": "pkg/storage.NewBadgerEngineWithOptions",
-      "pos": "pkg/storage/badger.go:1030"
+      "pos": "pkg/storage/badger.go:1040"
     },
     {
       "field": "pkg/storage.BadgerEngine.nodeCount",
@@ -2840,14 +2847,20 @@
     {
       "field": "pkg/storage.BadgerEngine.storageVersion",
       "class": "store metadata",
-      "func": "pkg/storage.BadgerEngine.RunOnStartMigrations",
-      "pos": "pkg/storage/migration_runner.go:115"
+      "func": "pkg/storage.BadgerEngine.runOnStartMigrations",
+      "pos": "pkg/storage/migration_runner.go:143"
     },
     {
       "field": "pkg/storage.BadgerEngine.storageVersion",
       "class": "store metadata",
-      "func": "pkg/storage.BadgerEngine.RunOnStartMigrations",
-      "pos": "pkg/storage/migration_runner.go:173"
+      "func": "pkg/storage.BadgerEngine.runOnStartMigrations",
+      "pos": "pkg/storage/migration_runner.go:207"
+    },
+    {
+      "field": "pkg/storage.BadgerEngine.storageVersion",
+      "class": "store metadata",
+      "func": "pkg/storage.BadgerEngine.migrateV3ToV4",
+      "pos": "pkg/storage/migration_v3_to_v4.go:101"
     },
     {
       "field": "pkg/storage.BadgerTransaction.badgerReadTs",
@@ -3489,73 +3502,103 @@
       "field": "pkg/storage.remoteCypherTx.resolvedMode",
       "class": "resolved remote query mode",
       "func": "pkg/storage.remoteCypherTx.QueryCypher",
-      "pos": "pkg/storage/remote_engine.go:653"
+      "pos": "pkg/storage/remote_engine.go:661"
     },
     {
       "field": "pkg/storage.remoteCypherTx.resolvedMode",
       "class": "resolved remote query mode",
       "func": "pkg/storage.remoteCypherTx.QueryCypher",
-      "pos": "pkg/storage/remote_engine.go:675"
+      "pos": "pkg/storage/remote_engine.go:683"
     },
     {
       "field": "pkg/storage.remoteCypherTx.resolvedMode",
       "class": "resolved remote query mode",
       "func": "pkg/storage.remoteCypherTx.QueryCypher",
-      "pos": "pkg/storage/remote_engine.go:688"
+      "pos": "pkg/storage/remote_engine.go:696"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:356"
+      "pos": "pkg/storage/remote_parameters.go:351"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:359"
+      "pos": "pkg/storage/remote_parameters.go:354"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:362"
+      "pos": "pkg/storage/remote_parameters.go:357"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:365"
+      "pos": "pkg/storage/remote_parameters.go:360"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:368"
+      "pos": "pkg/storage/remote_parameters.go:363"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:375"
+      "pos": "pkg/storage/remote_parameters.go:370"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:384"
+      "pos": "pkg/storage/remote_parameters.go:379"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:385"
+      "pos": "pkg/storage/remote_parameters.go:380"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:386"
+      "pos": "pkg/storage/remote_parameters.go:381"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.value",
+      "pos": "pkg/storage/remote_parameters.go:390"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.value",
+      "pos": "pkg/storage/remote_parameters.go:391"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.value",
+      "pos": "pkg/storage/remote_parameters.go:392"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.value",
+      "pos": "pkg/storage/remote_parameters.go:393"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.value",
+      "pos": "pkg/storage/remote_parameters.go:394"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
@@ -3585,61 +3628,37 @@
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:399"
+      "pos": "pkg/storage/remote_parameters.go:407"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:400"
+      "pos": "pkg/storage/remote_parameters.go:408"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:401"
+      "pos": "pkg/storage/remote_parameters.go:409"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:402"
+      "pos": "pkg/storage/remote_parameters.go:420"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:403"
+      "pos": "pkg/storage/remote_parameters.go:423"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:412"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:413"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:414"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:425"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:428"
+      "pos": "pkg/storage/remote_parameters.go:426"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
@@ -3651,55 +3670,55 @@
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
+      "pos": "pkg/storage/remote_parameters.go:435"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.value",
       "pos": "pkg/storage/remote_parameters.go:436"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:440"
+      "pos": "pkg/storage/remote_parameters.go:437"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:441"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:442"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.value",
-      "pos": "pkg/storage/remote_parameters.go:466"
+      "pos": "pkg/storage/remote_parameters.go:461"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.float",
-      "pos": "pkg/storage/remote_parameters.go:475"
+      "pos": "pkg/storage/remote_parameters.go:470"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.float",
-      "pos": "pkg/storage/remote_parameters.go:478"
+      "pos": "pkg/storage/remote_parameters.go:473"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.float",
-      "pos": "pkg/storage/remote_parameters.go:481"
+      "pos": "pkg/storage/remote_parameters.go:476"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.float",
-      "pos": "pkg/storage/remote_parameters.go:484"
+      "pos": "pkg/storage/remote_parameters.go:479"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.object",
+      "pos": "pkg/storage/remote_parameters.go:486"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
@@ -3711,85 +3730,109 @@
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.object",
-      "pos": "pkg/storage/remote_parameters.go:496"
+      "pos": "pkg/storage/remote_parameters.go:494"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.object",
-      "pos": "pkg/storage/remote_parameters.go:499"
+      "pos": "pkg/storage/remote_parameters.go:495"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.object",
-      "pos": "pkg/storage/remote_parameters.go:500"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.object",
-      "pos": "pkg/storage/remote_parameters.go:512"
+      "pos": "pkg/storage/remote_parameters.go:507"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.list",
-      "pos": "pkg/storage/remote_parameters.go:533"
+      "pos": "pkg/storage/remote_parameters.go:528"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.list",
-      "pos": "pkg/storage/remote_parameters.go:544"
+      "pos": "pkg/storage/remote_parameters.go:539"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.list",
-      "pos": "pkg/storage/remote_parameters.go:560"
+      "pos": "pkg/storage/remote_parameters.go:555"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.list",
-      "pos": "pkg/storage/remote_parameters.go:594"
+      "pos": "pkg/storage/remote_parameters.go:589"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.conforming",
-      "pos": "pkg/storage/remote_parameters.go:618"
+      "pos": "pkg/storage/remote_parameters.go:613"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.conforming",
-      "pos": "pkg/storage/remote_parameters.go:625"
+      "pos": "pkg/storage/remote_parameters.go:620"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.conforming",
-      "pos": "pkg/storage/remote_parameters.go:632"
+      "pos": "pkg/storage/remote_parameters.go:627"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.conforming",
-      "pos": "pkg/storage/remote_parameters.go:634"
+      "pos": "pkg/storage/remote_parameters.go:629"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.conforming",
-      "pos": "pkg/storage/remote_parameters.go:635"
+      "pos": "pkg/storage/remote_parameters.go:630"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.conforming",
-      "pos": "pkg/storage/remote_parameters.go:647"
+      "pos": "pkg/storage/remote_parameters.go:642"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.dateTime",
+      "pos": "pkg/storage/remote_parameters.go:682"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.dateTime",
+      "pos": "pkg/storage/remote_parameters.go:683"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.dateTime",
+      "pos": "pkg/storage/remote_parameters.go:684"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.dateTime",
+      "pos": "pkg/storage/remote_parameters.go:685"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.dateTime",
+      "pos": "pkg/storage/remote_parameters.go:686"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
@@ -3807,18 +3850,6 @@
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.dateTime",
-      "pos": "pkg/storage/remote_parameters.go:689"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.dateTime",
-      "pos": "pkg/storage/remote_parameters.go:690"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.dateTime",
       "pos": "pkg/storage/remote_parameters.go:691"
     },
     {
@@ -3831,7 +3862,13 @@
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.dateTime",
-      "pos": "pkg/storage/remote_parameters.go:693"
+      "pos": "pkg/storage/remote_parameters.go:694"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.dateTime",
+      "pos": "pkg/storage/remote_parameters.go:695"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
@@ -3843,31 +3880,37 @@
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.dateTime",
-      "pos": "pkg/storage/remote_parameters.go:697"
+      "pos": "pkg/storage/remote_parameters.go:698"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.dateTime",
-      "pos": "pkg/storage/remote_parameters.go:699"
+      "func": "pkg/storage.remoteHTTPWriter.timeOfDay",
+      "pos": "pkg/storage/remote_parameters.go:704"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.dateTime",
-      "pos": "pkg/storage/remote_parameters.go:700"
+      "func": "pkg/storage.remoteHTTPWriter.timeOfDay",
+      "pos": "pkg/storage/remote_parameters.go:705"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.dateTime",
-      "pos": "pkg/storage/remote_parameters.go:701"
+      "func": "pkg/storage.remoteHTTPWriter.timeOfDay",
+      "pos": "pkg/storage/remote_parameters.go:706"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.dateTime",
-      "pos": "pkg/storage/remote_parameters.go:703"
+      "func": "pkg/storage.remoteHTTPWriter.timeOfDay",
+      "pos": "pkg/storage/remote_parameters.go:707"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.timeOfDay",
+      "pos": "pkg/storage/remote_parameters.go:708"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
@@ -3909,18 +3952,6 @@
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.timeOfDay",
-      "pos": "pkg/storage/remote_parameters.go:715"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.timeOfDay",
-      "pos": "pkg/storage/remote_parameters.go:716"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.timeOfDay",
       "pos": "pkg/storage/remote_parameters.go:717"
     },
     {
@@ -3938,20 +3969,32 @@
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.timeOfDay",
-      "pos": "pkg/storage/remote_parameters.go:722"
+      "func": "pkg/storage.remoteHTTPWriter.date",
+      "pos": "pkg/storage/remote_parameters.go:725"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.timeOfDay",
-      "pos": "pkg/storage/remote_parameters.go:723"
+      "func": "pkg/storage.remoteHTTPWriter.date",
+      "pos": "pkg/storage/remote_parameters.go:726"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.timeOfDay",
-      "pos": "pkg/storage/remote_parameters.go:724"
+      "func": "pkg/storage.remoteHTTPWriter.date",
+      "pos": "pkg/storage/remote_parameters.go:727"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.date",
+      "pos": "pkg/storage/remote_parameters.go:728"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.date",
+      "pos": "pkg/storage/remote_parameters.go:729"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
@@ -3964,18 +4007,6 @@
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.date",
       "pos": "pkg/storage/remote_parameters.go:731"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.date",
-      "pos": "pkg/storage/remote_parameters.go:732"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.date",
-      "pos": "pkg/storage/remote_parameters.go:733"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
@@ -3998,20 +4029,32 @@
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.date",
-      "pos": "pkg/storage/remote_parameters.go:739"
+      "func": "pkg/storage.remoteHTTPWriter.localDateTime",
+      "pos": "pkg/storage/remote_parameters.go:743"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.date",
-      "pos": "pkg/storage/remote_parameters.go:740"
+      "func": "pkg/storage.remoteHTTPWriter.localDateTime",
+      "pos": "pkg/storage/remote_parameters.go:744"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.date",
-      "pos": "pkg/storage/remote_parameters.go:741"
+      "func": "pkg/storage.remoteHTTPWriter.localDateTime",
+      "pos": "pkg/storage/remote_parameters.go:745"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.localDateTime",
+      "pos": "pkg/storage/remote_parameters.go:746"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.localDateTime",
+      "pos": "pkg/storage/remote_parameters.go:747"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
@@ -4077,18 +4120,6 @@
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.localDateTime",
-      "pos": "pkg/storage/remote_parameters.go:758"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.localDateTime",
-      "pos": "pkg/storage/remote_parameters.go:759"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.localDateTime",
       "pos": "pkg/storage/remote_parameters.go:760"
     },
     {
@@ -4106,32 +4137,38 @@
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.localDateTime",
-      "pos": "pkg/storage/remote_parameters.go:765"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.localDateTime",
-      "pos": "pkg/storage/remote_parameters.go:766"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.localDateTime",
+      "func": "pkg/storage.remoteHTTPWriter.point",
       "pos": "pkg/storage/remote_parameters.go:767"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.point",
-      "pos": "pkg/storage/remote_parameters.go:772"
+      "pos": "pkg/storage/remote_parameters.go:768"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.point",
-      "pos": "pkg/storage/remote_parameters.go:773"
+      "pos": "pkg/storage/remote_parameters.go:769"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.point",
+      "pos": "pkg/storage/remote_parameters.go:770"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.point",
+      "pos": "pkg/storage/remote_parameters.go:771"
+    },
+    {
+      "field": "pkg/storage.remoteHTTPWriter.buf",
+      "class": "request serialization scratch",
+      "func": "pkg/storage.remoteHTTPWriter.point",
+      "pos": "pkg/storage/remote_parameters.go:772"
     },
     {
       "field": "pkg/storage.remoteHTTPWriter.buf",
@@ -4149,38 +4186,14 @@
       "field": "pkg/storage.remoteHTTPWriter.buf",
       "class": "request serialization scratch",
       "func": "pkg/storage.remoteHTTPWriter.point",
-      "pos": "pkg/storage/remote_parameters.go:776"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.point",
       "pos": "pkg/storage/remote_parameters.go:777"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.point",
-      "pos": "pkg/storage/remote_parameters.go:779"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.point",
-      "pos": "pkg/storage/remote_parameters.go:780"
-    },
-    {
-      "field": "pkg/storage.remoteHTTPWriter.buf",
-      "class": "request serialization scratch",
-      "func": "pkg/storage.remoteHTTPWriter.point",
-      "pos": "pkg/storage/remote_parameters.go:782"
     }
   ],
   "decisions": [
     {
       "func": "pkg/cypher.StorageExecutor.executeCreateConstraint",
       "pos": "-",
-      "gates": "pkg/cypher.StorageExecutor.executeCreateConstraint pkg/cypher/schema.go:222 -> pkg/storage.ValidateConstraintOnCreationForEngine pkg/storage/constraint_validation.go:35 -> pkg/storage.validateRelationshipConstraintOnCreationForEngine pkg/storage/constraint_validation_rel_stream.go:91 -> pkg/storage.newRelationshipConstraintCheck pkg/storage/constraint_validation_rel_stream.go:116 -> pkg/storage.newRelPolicyCheck pkg/storage/constraint_validation_rel_stream.go:323 -> pkg/cypher.algorithmRelationshipReader.GetSchema - -> pkg/cypher.graphIdentityStorage.GetSchema - -> pkg/cypher.transactionStorageWrapper.GetSchema pkg/cypher/transaction_storage_wrapper.go:762 -> pkg/multidb.sizeTrackingEngine.GetSchema - -> pkg/storage.NamespacedEngine.GetSchema pkg/storage/namespaced.go:519 -> pkg/storage.BadgerEngine.GetSchemaForNamespace pkg/storage/badger_schema.go:260 -> pkg/storage.BadgerEngine.transitionNamespaceSchema - -> pkg/storage.BadgerEngine.transitionNamespaceSchema$2 pkg/storage/badger_schema.go:298 -> pkg/storage.BadgerEngine.ReconcileDecaySuppression pkg/storage/badger_decay_reconcile.go:23 -> pkg/storage.BadgerEngine.EnqueueDeindexIfSuppressed pkg/storage/badger_deindex_enqueue.go:26 -> pkg/storage.BadgerEngine.queueCommitOperations pkg/storage/badger_commit_notifications.go:79",
+      "gates": "pkg/cypher.StorageExecutor.executeCreateConstraint pkg/cypher/schema.go:223 -> pkg/storage.ValidateConstraintOnCreationForEngine pkg/storage/constraint_validation.go:35 -> pkg/storage.validateRelationshipConstraintOnCreationForEngine pkg/storage/constraint_validation_rel_stream.go:91 -> pkg/storage.newRelationshipConstraintCheck pkg/storage/constraint_validation_rel_stream.go:116 -> pkg/storage.newRelPolicyCheck pkg/storage/constraint_validation_rel_stream.go:323 -> pkg/cypher.algorithmRelationshipReader.GetSchema - -> pkg/cypher.graphIdentityStorage.GetSchema - -> pkg/cypher.transactionStorageWrapper.GetSchema pkg/cypher/transaction_storage_wrapper.go:762 -> pkg/multidb.sizeTrackingEngine.GetSchema - -> pkg/storage.NamespacedEngine.GetSchema pkg/storage/namespaced.go:519 -> pkg/storage.BadgerEngine.GetSchemaForNamespace pkg/storage/badger_schema.go:260 -> pkg/storage.BadgerEngine.transitionNamespaceSchema - -> pkg/storage.BadgerEngine.transitionNamespaceSchema$2 pkg/storage/badger_schema.go:298 -> pkg/storage.BadgerEngine.ReconcileDecaySuppression pkg/storage/badger_decay_reconcile.go:23 -> pkg/storage.BadgerEngine.EnqueueDeindexIfSuppressed pkg/storage/badger_deindex_enqueue.go:26 -> pkg/storage.BadgerEngine.queueCommitOperations pkg/storage/badger_commit_notifications.go:79",
       "owners": [
         "pkg/storage.BadgerEngine.evaluateSuppressionInTxn",
         "pkg/storage.BadgerEngine.forgetManualSuppression",

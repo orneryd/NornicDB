@@ -3,10 +3,9 @@ package antlr
 import (
 	"context"
 	"fmt"
-	"io"
-	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 )
 
 // predictionCanceled unwinds only this parse, through ANTLR's public stream
@@ -38,14 +37,6 @@ func (s *contextTokenStream) LT(k int) antlr.Token {
 func (s *contextTokenStream) Consume() {
 	s.check()
 	s.TokenStream.Consume()
-}
-
-// contextCharStream checks within a token, rather than only between tokens.
-// Poll at bounded intervals to keep large comments/strings cancellable without
-// querying the context for every lexer lookahead.
-type contextCharStream struct {
-	antlr.CharStream
-	contextCharCancellation
 }
 
 // Shared cancellation owner for both character representations. ASCII consumes
@@ -86,35 +77,6 @@ func (s *contextCharCancellation) rethrow() {
 	}
 }
 
-func (s *contextCharCancellation) releaseContext() {
-	s.ctx = context.Background()
-	s.unwind = nil
-}
-
-func (s *contextCharStream) LA(k int) int { s.check(); return s.CharStream.LA(k) }
-func (s *contextCharStream) Consume()     { s.check(); s.CharStream.Consume() }
-
-// Embed the concrete ASCII stream so lookahead and text access retain their
-// direct implementation. Lexer consumption polls every 1024 characters, even
-// within one long token. Lookahead rethrows an interrupted match without
-// polling the context or counting every character operation.
-type contextASCIICharStream struct {
-	asciiCharStream
-	contextCharCancellation
-}
-
-func (s *contextASCIICharStream) LA(k int) int {
-	s.rethrow()
-	return s.asciiCharStream.LA(k)
-}
-
-func (s *contextASCIICharStream) Consume() {
-	if s.i&1023 == 0 {
-		s.poll()
-	}
-	s.asciiCharStream.Consume()
-}
-
 func recoverPredictionCancellation(err *error) {
 	if p := recover(); p != nil {
 		if canceled, ok := p.(predictionCanceled); ok {
@@ -125,39 +87,9 @@ func recoverPredictionCancellation(err *error) {
 	}
 }
 
-func contextInputStream(ctx context.Context, query string) antlr.CharStream {
-	ascii := true
-	for i := 0; i < len(query); i++ {
-		if i&1023 == 0 {
-			if err := ctx.Err(); err != nil {
-				panic(predictionCanceled{err})
-			}
-		}
-		if query[i] >= 0x80 {
-			ascii = false
-			break
-		}
-	}
-	if ascii {
-		input := newASCIICharStream(query)
-		if ctx.Done() != nil {
-			stream := &contextASCIICharStream{asciiCharStream: *input}
-			stream.ctx = ctx
-			return stream
-		}
-		return input
-	}
-	if ctx.Done() != nil {
-		stream := &contextCharStream{CharStream: antlr.NewIoStream(&contextInputReader{Reader: strings.NewReader(query), ctx: ctx})}
-		stream.ctx = ctx
-		return stream
-	}
-	return antlr.NewInputStream(query)
-}
-
 // LexContext tokenizes for consumers such as log redaction using the same
 // synchronous cancellation seam as validation. No partial tokens escape.
-func LexContext(ctx context.Context, query string) (tokens []antlr.Token, err error) {
+func LexContext(ctx context.Context, query string, stage cyphertext.SourceStage) (tokens []antlr.Token, err error) {
 	defer func() {
 		if err != nil {
 			tokens = nil
@@ -167,7 +99,12 @@ func LexContext(ctx context.Context, query string) (tokens []antlr.Token, err er
 	if err = ctx.Err(); err != nil {
 		return nil, err
 	}
-	lexer := NewCypherLexer(contextInputStream(ctx, query))
+	projection := cyphertext.NewSource(ctx, query, stage)
+	if projection.Err != nil {
+		return nil, projection.Err
+	}
+	_, input := sourceInputStream(ctx, projection)
+	lexer := NewCypherLexer(input)
 	listener := &parseErrorListener{}
 	lexer.RemoveErrorListeners()
 	lexer.AddErrorListener(listener)
@@ -176,23 +113,11 @@ func LexContext(ctx context.Context, query string) (tokens []antlr.Token, err er
 		// Check once more at EOF instead of polling again for every token.
 		token := lexer.NextToken()
 		if len(listener.errors) != 0 {
-			return nil, fmt.Errorf("invalid Cypher token: %s", listener.errors[0])
+			return nil, fmt.Errorf("invalid Cypher token: %s", listener.errors[0].Fallback)
 		}
 		if token == nil || token.GetTokenType() == antlr.TokenEOF {
 			return tokens, ctx.Err()
 		}
 		tokens = append(tokens, token)
 	}
-}
-
-type contextInputReader struct {
-	io.Reader
-	ctx context.Context
-}
-
-func (r *contextInputReader) Read(p []byte) (int, error) {
-	if err := r.ctx.Err(); err != nil {
-		panic(predictionCanceled{err})
-	}
-	return r.Reader.Read(p)
 }

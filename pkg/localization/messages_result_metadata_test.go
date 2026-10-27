@@ -19,7 +19,7 @@ func TestResultMetadataErrorsRenderEveryBundledLocale(t *testing.T) {
 		for _, locale := range []string{"en-US", "en-XA", "es-ES"} {
 			t.Run(string(message.ID)+"/"+locale, func(t *testing.T) {
 				tag := language.MustParse(locale)
-				text, selected, err := manager.Render(WithPreferences(context.Background(), tag), message)
+				text, selected, err := manager.Render(WithPreferences(context.Background(), tag), MessageRequest(message))
 				require.NoError(t, err)
 				require.Equal(t, tag, selected)
 				require.NotEmpty(t, text)

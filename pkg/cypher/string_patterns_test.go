@@ -2,14 +2,17 @@ package cypher
 
 import (
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-func TestSplitByKeyword(t *testing.T) {
+func TestStringSlicePatterns(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		keyword  string
-		expected []string
+		name       string
+		input      string
+		keyword    string
+		parameters bool
+		expected   []string
 	}{
 		{
 			name:     "single MATCH",
@@ -53,22 +56,52 @@ func TestSplitByKeyword(t *testing.T) {
 			keyword:  "CREATE",
 			expected: []string{"", "(a) ", "(b)"},
 		},
+		{
+			parameters: true,
+			name:       "single parameter",
+			input:      "WHERE n.name = $name",
+			expected:   []string{"name"},
+		},
+		{
+			parameters: true,
+			name:       "multiple parameters",
+			input:      "WHERE n.name = $name AND n.age > $minAge",
+			expected:   []string{"name", "minAge"},
+		},
+		{
+			parameters: true,
+			name:       "no parameters",
+			input:      "MATCH (n) RETURN n",
+			expected:   nil,
+		},
+		{
+			parameters: true,
+			name:       "parameter with underscore",
+			input:      "WHERE n.id = $user_id",
+			expected:   []string{"user_id"},
+		},
+		{
+			parameters: true,
+			name:       "parameter with numbers",
+			input:      "WHERE n.id = $id123",
+			expected:   []string{"id123"},
+		},
+		{
+			parameters: true,
+			name:       "numeric parameter name",
+			input:      "WHERE n.id = $123abc",
+			expected:   []string{"123abc"},
+		},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := SplitByKeyword(tt.input, tt.keyword)
-			if len(result) != len(tt.expected) {
-				t.Errorf("SplitByKeyword(%q, %q) = %v (len=%d), want %v (len=%d)",
-					tt.input, tt.keyword, result, len(result), tt.expected, len(tt.expected))
-				return
+			var result []string
+			if tt.parameters {
+				result = ExtractParameters(tt.input)
+			} else {
+				result = SplitByKeyword(tt.input, tt.keyword)
 			}
-			for i := range result {
-				if result[i] != tt.expected[i] {
-					t.Errorf("SplitByKeyword(%q, %q)[%d] = %q, want %q",
-						tt.input, tt.keyword, i, result[i], tt.expected[i])
-				}
-			}
+			require.Equal(t, tt.expected, result)
 		})
 	}
 }
@@ -381,60 +414,6 @@ func TestParseAggregationProperty(t *testing.T) {
 	v, p = ParseAggregationProperty("not_agg")
 	if v != "" || p != "" {
 		t.Errorf("got (%q, %q), want empty strings", v, p)
-	}
-}
-
-func TestExtractParameters(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected []string
-	}{
-		{
-			name:     "single parameter",
-			input:    "WHERE n.name = $name",
-			expected: []string{"name"},
-		},
-		{
-			name:     "multiple parameters",
-			input:    "WHERE n.name = $name AND n.age > $minAge",
-			expected: []string{"name", "minAge"},
-		},
-		{
-			name:     "no parameters",
-			input:    "MATCH (n) RETURN n",
-			expected: nil,
-		},
-		{
-			name:     "parameter with underscore",
-			input:    "WHERE n.id = $user_id",
-			expected: []string{"user_id"},
-		},
-		{
-			name:     "parameter with numbers",
-			input:    "WHERE n.id = $id123",
-			expected: []string{"id123"},
-		},
-		{
-			name:     "invalid parameter (number first)",
-			input:    "WHERE n.id = $123abc",
-			expected: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := ExtractParameters(tt.input)
-			if len(result) != len(tt.expected) {
-				t.Errorf("ExtractParameters(%q) = %v, want %v", tt.input, result, tt.expected)
-				return
-			}
-			for i := range result {
-				if result[i] != tt.expected[i] {
-					t.Errorf("result[%d] = %q, want %q", i, result[i], tt.expected[i])
-				}
-			}
-		})
 	}
 }
 

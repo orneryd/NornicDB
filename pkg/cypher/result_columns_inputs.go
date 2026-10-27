@@ -72,7 +72,7 @@ func addSyntaxPatternBindings(scope map[string]struct{}, clause cypherantlr.Synt
 }
 
 func canonicalPatternVariables(ctx context.Context, source string) []string {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.PatternEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.PatternEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return nil
 	}

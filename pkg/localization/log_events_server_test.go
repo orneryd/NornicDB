@@ -103,7 +103,7 @@ func TestRemainingServerLogEventsRenderAcrossLocales(t *testing.T) {
 				{language.EuropeanSpanish, test.spanish},
 				{language.MustParse("en-XA"), "[!! " + test.english + " !!]"},
 			} {
-				got, _, renderErr := manager.Render(WithPreferences(context.Background(), locale.tag), test.event.Message)
+				got, _, renderErr := manager.Render(WithPreferences(context.Background(), locale.tag), MessageRequest(test.event.Message))
 				require.NoError(t, renderErr)
 				require.Equal(t, locale.want, got)
 			}

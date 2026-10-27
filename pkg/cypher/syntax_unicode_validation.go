@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"unicode"
 	"unicode/utf8"
 
@@ -11,9 +12,8 @@ import (
 // validateUnicodeOperators rejects Unicode punctuation that visually mimics a
 // Cypher operator. Such characters remain valid inside strings, escaped
 // identifiers, and comments, where they are data rather than query syntax.
-// Every other non-ASCII character outside them is part of a name (the
-// scanners read it as one, isIdentByte), so it must be one Neo4j takes there:
-// isIdentifierStartRune where a name starts, isIdentifierPartRune after its
+// Non-ASCII name characters outside them must be ones Neo4j takes there:
+// cyphertext.ValidNameStart where a name starts, cyphertext.ValidNamePart after its
 // first character. €a and a· are "Invalid input" as in Neo4j.
 func validateUnicodeOperators(query string) error {
 	const unicodeMinus = '−'
@@ -34,9 +34,9 @@ func validateUnicodeOperators(query string) error {
 		if r != '-' && (unicode.Is(unicode.Dash, r) || r == unicodeMinus) {
 			return invalidUnicodeCharacterError(r, offset)
 		}
-		if r >= utf8.RuneSelf {
-			startsName := offset == 0 || !isIdentByte(query[offset-1])
-			if startsName && !isIdentifierStartRune(r) || !startsName && !isIdentifierPartRune(r) {
+		if r >= utf8.RuneSelf && !cyphertext.IsWhitespace(r) {
+			startsName := offset == 0 || !cyphertext.NamePartAt(query, offset-1)
+			if startsName && !cyphertext.ValidNameStart(r) || !startsName && !cyphertext.ValidNamePart(r) {
 				return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
 					localization.CypherCoreInvalidInput(string(r)))
 			}
@@ -48,40 +48,23 @@ func validateUnicodeOperators(query string) error {
 
 // isUnquotedName reports whether name's characters can be written without
 // backticks in Neo4j (`a—b` must stay quoted; ñ, éa and a€ need not), by the
-// rules validateUnicodeOperators checks. ASCII is isIdentStartByte /
-// isIdentByte's business.
+// rules validateUnicodeOperators checks. Token boundaries belong to cyphertext.
 func isUnquotedName(name string) bool {
 	for offset, r := range name {
 		if r < utf8.RuneSelf {
 			continue
 		}
-		if offset == 0 && !isIdentifierStartRune(r) || offset > 0 && !isIdentifierPartRune(r) {
+		if offset == 0 && !cyphertext.ValidNameStart(r) || offset > 0 && !cyphertext.ValidNamePart(r) {
 			return false
 		}
 	}
 	return true
 }
 
-// isIdentifierStartRune reports whether a non-ASCII character can start an
-// unquoted name in Neo4j 5.26: a letter, a letter number (Ⅰ) or a
-// connector punctuation (‿), not a digit, mark or currency sign.
-func isIdentifierStartRune(r rune) bool {
-	return unicode.IsLetter(r) || unicode.In(r, unicode.Nl, unicode.Pc)
-}
-
-// isIdentifierPartRune reports whether a non-ASCII character can continue an
-// unquoted name in Neo4j 5.26 (Java's identifier part): a start character, a
-// digit, a combining mark, a currency sign (a€), a format character, or a
-// C1 control.
-func isIdentifierPartRune(r rune) bool {
-	return isIdentifierStartRune(r) || unicode.In(r, unicode.Nd, unicode.Mn, unicode.Mc, unicode.Sc, unicode.Cf) ||
-		r >= 0x80 && r <= 0x9F
-}
-
 func invalidUnicodeCharacterError(character rune, offset int) error {
-	return newSemanticError(
+	return newSourceOffsetError(
 		"Neo.ClientError.Statement.SyntaxError",
 		"InvalidUnicodeCharacter",
-		fmt.Sprintf("invalid Unicode character %q (U+%04X) at byte offset %d", character, character, offset),
+		fmt.Sprintf("invalid Unicode character %q (U+%04X) at byte offset ", character, character), offset,
 	)
 }

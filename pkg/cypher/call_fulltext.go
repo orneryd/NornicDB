@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"sort"
 	"strings"
@@ -289,7 +290,7 @@ func buildFulltextDocFromProperties(properties map[string]interface{}, content s
 // `Cloud\Trail` reaches the Lucene parser as `Cloud\\Trail`, defeating the
 // escape rule.
 func decodeCypherStringLiteral(s string) string {
-	if decoded, quoted := decodeCypherQuotedString(s); quoted {
+	if decoded, quoted := cyphertext.DecodeString(s, cyphertext.AcceptedSource); quoted {
 		return decoded
 	}
 	return s
@@ -483,7 +484,7 @@ func fulltextFieldPresenceQuery(query string) (string, bool) {
 	// would mean the query is something like `name OR foo:*` (a more
 	// complex Lucene expression that needs the BM25 path).
 	for _, r := range name {
-		if !isIdentRune(r) {
+		if !cyphertext.NamePart(r) {
 			return "", false
 		}
 	}
@@ -535,4 +536,16 @@ func extractTextContent(node *storage.Node, properties []string) string {
 	}
 
 	return strings.TrimSpace(content.String())
+}
+
+// isBackslashEscaped reads decoded Lucene phrase text, not Cypher tokens.
+func isBackslashEscaped(s string, idx int) bool {
+	if idx <= 0 {
+		return false
+	}
+	backslashes := 0
+	for i := idx - 1; i >= 0 && s[i] == '\\'; i-- {
+		backslashes++
+	}
+	return backslashes%2 == 1
 }

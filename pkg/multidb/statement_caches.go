@@ -140,7 +140,6 @@ func (m *DatabaseManager) statementCacheScopeLocked(name string) (string, *State
 	if m.statementCachesClosed {
 		return "", nil, ErrDatabaseNotFound
 	}
-	name = strings.TrimSpace(name)
 	if scope := m.statementCacheScopes[name]; scope != nil {
 		return scope.database, scope, nil
 	}
@@ -150,10 +149,11 @@ func (m *DatabaseManager) statementCacheScopeLocked(name string) (string, *State
 	if err == nil {
 		references = []string{name, database}
 	} else {
-		ref, resolved, ok := m.resolveCompositeConstituentInternal(name)
+		constituent, resolved, ok := m.resolveCompositeConstituentInternal(name)
 		if !ok {
 			return "", nil, ErrDatabaseNotFound
 		}
+		ref := constituent.ref
 		composite := name[:strings.IndexByte(name, '.')]
 		key = composite + "." + ref.Alias
 		references = []string{key, composite}

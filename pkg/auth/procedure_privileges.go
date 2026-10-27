@@ -35,6 +35,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -65,7 +66,7 @@ func NewProcedurePrivilegeStore(systemStorage storage.Engine) *ProcedurePrivileg
 // record and lookup: trimmed, lower case, without the role_ prefix identity
 // providers add (ROLE_ops is the role ops).
 func NormalizeRoleName(role string) string {
-	return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(role)), "role_")
+	return strings.TrimPrefix(cyphertext.NameLower(strings.TrimSpace(role)), "role_")
 }
 
 // procedurePrivilegeNodeID is the ID of the node holding role's grant for
@@ -212,22 +213,29 @@ func (p *ProcedurePrivilegeStore) AllowsBoosted(roles []string, procedure string
 // name or glob, as Neo4j matches them: * stands for any characters, dots
 // included, and ? for one character; names compare case-insensitively.
 func ProcedureGlobMatches(glob, name string) bool {
-	// Characters, not bytes: ? matches one character however many bytes
-	// it takes.
-	g, n := []rune(strings.ToLower(glob)), []rune(strings.ToLower(name))
-	// Iterative wildcard match with backtracking to the last *.
+	// The named pattern protocol counts canonical virtual codepoints. Ordinary
+	// runs keep the existing lowercase policy; admitted lone UTF16 units remain
+	// one distinct name character rather than becoming replacement runes.
+	g, n := cyphertext.NameLower(glob), cyphertext.NameLower(name)
 	gi, ni, star, mark := 0, 0, -1, 0
 	for ni < len(n) {
+		var pattern rune
+		patternWidth := 0
+		if gi < len(g) {
+			pattern, patternWidth = cyphertext.ReadCodepoint(g, gi)
+		}
+		value, valueWidth := cyphertext.ReadCodepoint(n, ni)
 		switch {
-		case gi < len(g) && (g[gi] == '?' || g[gi] == n[ni]):
-			gi++
-			ni++
-		case gi < len(g) && g[gi] == '*':
+		case gi < len(g) && (pattern == '?' || pattern == value):
+			gi += patternWidth
+			ni += valueWidth
+		case gi < len(g) && pattern == '*':
+			gi += patternWidth
 			star, mark = gi, ni
-			gi++
 		case star >= 0:
-			gi = star + 1
-			mark++
+			gi = star
+			_, width := cyphertext.ReadCodepoint(n, mark)
+			mark += width
 			ni = mark
 		default:
 			return false

@@ -13,7 +13,7 @@ import (
 )
 
 func TestRule73GraphQLPublicLifetime(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,16 +33,16 @@ func TestRule73GraphQLPublicLifetime(t *testing.T) {
 	run("RETURN 89 AS live")
 	for i := range 64 {
 		name := fmt.Sprintf("gate_graphql_%d", i)
-		if err := manager.CreateDatabase(name); err != nil {
+		if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 			t.Fatal(err)
 		}
 		alias := name + "_alias"
-		if err := manager.CreateAlias(alias, name); err != nil {
+		if err := manager.CreateAlias(t.Context(), alias, name); err != nil {
 			t.Fatal(err)
 		}
 		body := fmt.Sprintf("MATCH (n:GraphQLGate%d) RETURN count(n) AS c", i)
 		run("USE " + alias + " " + body)
-		if err := manager.DropAlias(alias); err != nil {
+		if err := manager.DropAlias(t.Context(), alias); err != nil {
 			t.Fatal(err)
 		}
 		shards := reflect.ValueOf(owner).Elem().FieldByName("syntax").Elem().FieldByName("shards")
@@ -51,7 +51,7 @@ func TestRule73GraphQLPublicLifetime(t *testing.T) {
 				t.Fatal("GraphQL retained removed alias verdict")
 			}
 		}
-		if err := manager.DropDatabase(name); err != nil {
+		if err := manager.DropDatabase(t.Context(), name); err != nil {
 			t.Fatal(err)
 		}
 		if owner.Disposed() {

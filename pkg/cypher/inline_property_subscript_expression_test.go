@@ -137,7 +137,7 @@ func TestRelationshipRangeReadersSkipPropertyMaps(t *testing.T) {
 	assert.Equal(t,
 		map[string]struct{}{"s": {}},
 		variableLengthRelationshipVariableSet("(n {k: [x * 2]})-[r:T {w: $ws[i * 2]}]->()-[s*2]->()"))
-	open, end := nextRelationshipBracket("(a)-[r->(b)", 0)
+	open, end := readRelationshipBracket("(a)-[r->(b)", 0, requireClosedRelationship)
 	assert.Equal(t, []int{-1, -1}, []int{open, end})
 }
 

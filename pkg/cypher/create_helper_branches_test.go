@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestResolveSetMergeSourceFromParams_Branches(t *testing.T) {
+func TestResolveParameterPath_Branches(t *testing.T) {
 	params := map[string]interface{}{
 		"row": map[string]interface{}{
 			"props": map[string]interface{}{"a": int64(1)},
@@ -16,39 +16,40 @@ func TestResolveSetMergeSourceFromParams_Branches(t *testing.T) {
 		},
 	}
 
-	v, ok := resolveSetMergeSourceFromParams(params, "row")
+	ctx := withParams(context.Background(), params)
+	v, ok := resolveValueReference(ctx, "$row", parameterPath)
 	require.True(t, ok)
 	require.NotNil(t, v)
 
-	v, ok = resolveSetMergeSourceFromParams(params, "row.props")
+	v, ok = resolveValueReference(ctx, "$row.props", parameterPath)
 	require.True(t, ok)
 	require.Equal(t, map[string]interface{}{"a": int64(1)}, v)
 
-	v, ok = resolveSetMergeSourceFromParams(params, "row.m2.b")
+	v, ok = resolveValueReference(ctx, "$row.m2.b", parameterPath)
 	require.True(t, ok)
 	require.Equal(t, "x", v)
 
-	v, ok = resolveSetMergeSourceFromParams(params, "row['props']")
+	v, ok = resolveValueReference(ctx, "$row['props']", parameterPath)
 	require.True(t, ok)
 	require.Equal(t, map[string]interface{}{"a": int64(1)}, v)
 
-	v, ok = resolveSetMergeSourceFromParams(params, "row[\"props\"].a")
+	v, ok = resolveValueReference(ctx, "$row[\"props\"].a", parameterPath)
 	require.True(t, ok)
 	require.EqualValues(t, int64(1), v)
 
-	_, ok = resolveSetMergeSourceFromParams(nil, "row")
+	_, ok = resolveValueReference(context.Background(), "$row", parameterPath)
 	require.False(t, ok)
-	_, ok = resolveSetMergeSourceFromParams(params, "")
+	_, ok = resolveValueReference(ctx, "$", parameterPath)
 	require.False(t, ok)
-	_, ok = resolveSetMergeSourceFromParams(params, "missing")
+	_, ok = resolveValueReference(ctx, "$missing", parameterPath)
 	require.False(t, ok)
-	_, ok = resolveSetMergeSourceFromParams(params, "row.props.missing")
+	_, ok = resolveValueReference(ctx, "$row.props.missing", parameterPath)
 	require.False(t, ok)
-	_, ok = resolveSetMergeSourceFromParams(params, "row.bad-char")
+	_, ok = resolveValueReference(ctx, "$row.bad-char", parameterPath)
 	require.False(t, ok)
-	_, ok = resolveSetMergeSourceFromParams(params, "row['props'")
+	_, ok = resolveValueReference(ctx, "$row['props'", parameterPath)
 	require.False(t, ok)
-	_, ok = resolveSetMergeSourceFromParams(params, "row[props]")
+	_, ok = resolveValueReference(ctx, "$row[props]", parameterPath)
 	require.False(t, ok)
 }
 

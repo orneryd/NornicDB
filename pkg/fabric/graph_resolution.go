@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -113,11 +114,11 @@ func (e *FabricExecutor) constituentForElementID(elementID, scope string) (strin
 	names := e.catalog.ListGraphs()
 	sort.Strings(names)
 	for _, name := range names {
-		if !strings.HasPrefix(name, strings.ToLower(scope)+".") {
+		if !strings.HasPrefix(name, cyphertext.NameLower(scope)+".") {
 			continue
 		}
 		loc, err := e.catalog.Resolve(name)
-		if err == nil && strings.EqualFold(loc.DatabaseName(), database) {
+		if err == nil && cyphertext.NameEqualFold(loc.DatabaseName(), database) {
 			return name, nil
 		}
 	}
@@ -126,7 +127,7 @@ func (e *FabricExecutor) constituentForElementID(elementID, scope string) (strin
 
 // inScope reports whether graph is a constituent of the composite scope.
 func inScope(graph, scope string) bool {
-	return scope != "" && len(graph) > len(scope)+1 && strings.EqualFold(graph[:len(scope)+1], scope+".")
+	return scope != "" && len(graph) > len(scope)+1 && cyphertext.NameEqualFold(graph[:len(scope)+1], scope+".")
 }
 
 // graphFunctionParameterCount is Neo4j's message for a graph function called

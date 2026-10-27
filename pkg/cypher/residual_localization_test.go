@@ -98,7 +98,7 @@ func TestResidualCypherDescriptorsPreserveContracts(t *testing.T) {
 		require.Equal(t, testCase.id, localizedErr.Message.ID)
 		require.Equal(t, string(testCase.id), localizedErr.Code)
 
-		rendered, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.AmericanEnglish), testCase.message)
+		rendered, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.AmericanEnglish), localization.MessageRequest(testCase.message))
 		require.NoError(t, err, testCase.id)
 		require.Equal(t, language.AmericanEnglish, tag, testCase.id)
 		require.Equal(t, testCase.text, rendered, testCase.id)
@@ -123,13 +123,13 @@ func TestResidualCypherCatalogLocales(t *testing.T) {
 	require.NoError(t, err)
 	message := localization.CypherResidualSetMergeMapOrParameterRequired("broken")
 
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
+	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, language.EuropeanSpanish, tag)
 	require.Equal(t, `SET += requiere un mapa o parámetro (recibido: "broken")`, spanish)
 
 	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), message)
+	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, pseudoTag, tag)
 	require.Equal(t, `[!! SET += requires a map or parameter (got: "broken") !!]`, pseudo)

@@ -1,10 +1,13 @@
 package observability
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/url"
+	"reflect"
 	"strings"
+	"sync"
 	"unicode"
 	"unicode/utf8"
 
@@ -255,7 +258,7 @@ func forEachCredentialURL(text string, visit func(start, end int)) {
 			if unicode.IsControl(r) {
 				break
 			}
-			if unicode.IsSpace(r) {
+			if cyphertext.IsWhitespace(r) {
 				// Malformed userinfo can contain whitespace before its @.
 				// Keep the whole authority for the canonical fail-closed reader.
 				authority := colon + 3
@@ -353,40 +356,104 @@ func redactURLCredential(string, error) (string, error) {
 	return redactedPlaceholder, nil
 }
 
-// redactJSONCredentialValues protects named fields and applies the shared
-// text URL reader to every string, including values in error bodies.
-func redactJSONCredentialValues(value any, path string, credentials []string) (any, bool) {
-	changed := false
+// RedactValue projects structured diagnostic values without changing runtime
+// inputs or converting their numeric types. Maps and slices are copied only when
+// a descendant changes; unchanged branches remain shared and must not be mutated.
+// For example, RedactValue(params, ContextCredentials(query)...) protects a
+// query's credentials repeated under otherwise ordinary parameter names.
+func RedactValue(value any, credentials ...string) any {
+	safe, _ := redactJSONCredentialValues(value, "", IsSensitiveFieldName, func(text string) string {
+		return RedactText(text, credentials...)
+	}, nil)
+	return safe
+}
+
+type credentialContainer struct {
+	kind    reflect.Kind
+	address uintptr
+	length  int
+}
+
+// redactJSONCredentialValues is the structured-value owner for display text,
+// runtime diagnostic maps and slog attributes. Each boundary supplies its own
+// field policy and text projection; traversal and copy-on-write stay identical.
+func redactJSONCredentialValues(value any, path string, sensitive func(string) bool, redactText func(string) string, active map[credentialContainer]struct{}) (any, bool) {
+	// Retain an ancestor edge unchanged: the downstream encoder then reports
+	// its existing unsupported-cycle diagnostic. Only the active path counts;
+	// shared non-cyclic branches must each receive their full projection.
+	switch value.(type) {
+	case map[string]any, []any:
+		container := reflect.ValueOf(value)
+		if container.Len() != 0 {
+			identity := credentialContainer{container.Kind(), uintptr(container.UnsafePointer()), container.Len()}
+			if _, cyclic := active[identity]; cyclic {
+				return value, false
+			}
+			if active == nil {
+				active = make(map[credentialContainer]struct{})
+			}
+			active[identity] = struct{}{}
+			defer delete(active, identity)
+		}
+	}
 	switch value := value.(type) {
 	case map[string]any:
+		out := value
+		changed := false
 		for key, child := range value {
 			name := path + "." + key
-			if IsSensitiveFieldName(name) {
-				if child != redactedPlaceholder {
-					value[key] = redactedPlaceholder
+			var safe any
+			var childChanged bool
+			if sensitive(name) {
+				safe, childChanged = redactedPlaceholder, child != redactedPlaceholder
+			} else {
+				safe, childChanged = redactJSONCredentialValues(child, name, sensitive, redactText, active)
+			}
+			if childChanged {
+				if !changed {
+					out = make(map[string]any, len(value))
+					for key, original := range value {
+						out[key] = original
+					}
 					changed = true
 				}
-				continue
-			}
-			safe, childChanged := redactJSONCredentialValues(child, name, credentials)
-			if childChanged {
-				value[key] = safe
-				changed = true
+				out[key] = safe
 			}
 		}
+		return out, changed
 	case []any:
+		out := value
+		changed := false
 		for i, child := range value {
-			safe, childChanged := redactJSONCredentialValues(child, path, credentials)
+			safe, childChanged := redactJSONCredentialValues(child, path, sensitive, redactText, active)
 			if childChanged {
-				value[i] = safe
-				changed = true
+				if !changed {
+					out = append([]any(nil), value...)
+					changed = true
+				}
+				out[i] = safe
 			}
 		}
+		return out, changed
+	case []string:
+		out := value
+		changed := false
+		for i, text := range value {
+			safe := redactText(text)
+			if safe != text {
+				if !changed {
+					out = append([]string(nil), value...)
+					changed = true
+				}
+				out[i] = safe
+			}
+		}
+		return out, changed
 	case string:
-		safe := redactCredentialText(value, credentials)
+		safe := redactText(value)
 		return safe, safe != value
 	}
-	return value, changed
+	return value, false
 }
 
 func redactCredentialText(text string, credentials []string) string {
@@ -494,7 +561,9 @@ func RedactText(text string, credentials ...string) string {
 	if len(trimmed) > 0 && strings.ContainsRune("{[\"", rune(trimmed[0])) {
 		var value any
 		if json.Unmarshal([]byte(text), &value) == nil {
-			safe, changed := redactJSONCredentialValues(value, "", credentials)
+			safe, changed := redactJSONCredentialValues(value, "", IsSensitiveFieldName, func(text string) string {
+				return redactCredentialText(text, credentials)
+			}, nil)
 			if !changed {
 				return text
 			}
@@ -507,25 +576,6 @@ func RedactText(text string, credentials ...string) string {
 	return redactCredentialText(text, credentials)
 }
 
-type displayError struct {
-	cause     error
-	text      string
-	localized *localization.LocalizedError
-}
-
-func (e *displayError) Error() string { return e.text }
-func (e *displayError) Unwrap() error { return e.cause }
-
-// Renderers use errors.As to recover message identity. Give them a safe copy,
-// while Unwrap still exposes the original cause for Is/As and retry handling.
-func (e *displayError) As(target any) bool {
-	if localized, ok := target.(**localization.LocalizedError); ok && e.localized != nil {
-		*localized = e.localized
-		return true
-	}
-	return false
-}
-
 // RedactError keeps errors.Is/As and transport/retry classification intact.
 // Localized message identity/data is also retained as a safe display copy.
 func RedactError(err error, credentials ...string) error {
@@ -533,30 +583,68 @@ func RedactError(err error, credentials ...string) error {
 	return result
 }
 
+var diagnosticCatalog = sync.OnceValues(func() (*localization.Manager, error) {
+	return localization.NewManager(nil, nil)
+})
+
+// RedactErrorDetails suppresses source-bearing diagnostic fields when a source
+// reader cannot safely delimit a credential. Parameter-free catalog messages
+// are reconstructed from the embedded catalog, never from an error's fallback.
+// Error identity and causes remain available for classification.
+func RedactErrorDetails(err error) error {
+	result, _ := projectError(err, func(string) string { return redactedPlaceholder }, true)
+	return result
+}
+
 func redactError(err error, credentials ...string) (error, bool) {
+	return projectError(err, func(text string) string { return RedactText(text, credentials...) }, false)
+}
+
+func projectError(err error, project func(string) string, suppressDetails bool) (error, bool) {
 	if err == nil {
 		return nil, false
 	}
-	text := RedactText(err.Error(), credentials...)
+	text := project(err.Error())
 	changed := text != err.Error()
 	var localized *localization.LocalizedError
 	if errors.As(err, &localized) {
 		copy := *localized
-		copy.Message.Fallback = RedactText(copy.Message.Fallback, credentials...)
+		copy.Message.Fallback = project(copy.Message.Fallback)
 		changed = changed || copy.Message.Fallback != localized.Message.Fallback
 		copy.Message.Data = make(map[string]any, len(localized.Message.Data))
 		for key, value := range localized.Message.Data {
+			if suppressDetails {
+				// Data can contain arbitrary structured values, including nested
+				// messages. Nothing supplied by the diagnostic is trusted here.
+				copy.Message.Data[key] = redactedPlaceholder
+				changed = true
+				continue
+			}
 			switch value := value.(type) {
 			case string:
-				safe := RedactText(value, credentials...)
+				safe := project(value)
 				copy.Message.Data[key] = safe
 				changed = changed || safe != value
 			case error:
-				safe, redacted := redactError(value, credentials...)
+				safe, redacted := projectError(value, project, false)
 				copy.Message.Data[key] = safe
 				changed = changed || redacted
 			default:
 				copy.Message.Data[key] = value
+			}
+		}
+		if suppressDetails {
+			copy.Message.PluralCount = nil
+			changed = true
+			if len(localized.Message.Data) == 0 && localized.Message.PluralCount == nil {
+				catalog, catalogErr := diagnosticCatalog()
+				if catalogErr == nil {
+					catalogText, _, renderErr := catalog.Render(context.Background(), localization.MessageRequest(localization.Message{ID: localized.Message.ID}))
+					if renderErr == nil {
+						text = catalogText
+						copy.Message.Fallback = catalogText
+					}
+				}
 			}
 		}
 		localized = &copy
@@ -564,7 +652,7 @@ func redactError(err error, credentials ...string) (error, bool) {
 	if !changed {
 		return err, false
 	}
-	return &displayError{cause: err, text: text, localized: localized}, true
+	return localization.ProjectError(err, text, localized, nil), true
 }
 
 // DisplayArgs is a copy of argv for diagnostic endpoints. It never changes the

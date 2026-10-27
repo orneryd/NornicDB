@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"sync/atomic"
 
@@ -33,21 +34,21 @@ func parseReduceForm(function, arguments string) (reduceForm, bool) {
 		return form, false
 	}
 	assignment := strings.TrimSpace(parts[0])
-	accumulator, end, ok := scanIdentifierToken(assignment, 0)
+	accumulator, ok := cyphertext.ScanIdentifier(assignment, 0)
 	if !ok {
 		return form, false
 	}
-	equals := skipSpaces(assignment, end)
+	equals := skipSpaces(assignment, accumulator.End)
 	if equals >= len(assignment) || assignment[equals] != '=' {
 		return form, false
 	}
-	form.accumulator, form.initial = accumulator, strings.TrimSpace(assignment[equals+1:])
+	form.accumulator, form.initial = accumulator.Value, strings.TrimSpace(assignment[equals+1:])
 	iteration := strings.TrimSpace(parts[1])
-	variable, end, ok := scanIdentifierToken(iteration, 0)
+	variable, ok := cyphertext.ScanIdentifier(iteration, 0)
 	if !ok {
 		return form, false
 	}
-	rest := strings.TrimLeft(iteration[end:], " \t\r\n")
+	rest := strings.TrimLeftFunc(iteration[variable.End:], cyphertext.IsWhitespace)
 	if !startsWithKeywordFold(rest, "IN") {
 		return form, false
 	}
@@ -56,7 +57,7 @@ func parseReduceForm(function, arguments string) (reduceForm, bool) {
 	if pipe < 0 {
 		return form, false
 	}
-	form.variable, form.list, form.step = variable, strings.TrimSpace(rest[:pipe]), strings.TrimSpace(rest[pipe+1:])
+	form.variable, form.list, form.step = variable.Value, strings.TrimSpace(rest[:pipe]), strings.TrimSpace(rest[pipe+1:])
 	if form.initial == "" || form.list == "" || form.step == "" {
 		return form, false
 	}

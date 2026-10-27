@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"reflect"
@@ -28,7 +29,7 @@ func prevWordEqualsIgnoreCase(s string, pos int, word string) bool {
 		return false
 	}
 	end := i + 1
-	for i >= 0 && isIdentByte(s[i]) {
+	for i >= 0 && cyphertext.NamePartAt(s, i) {
 		i--
 	}
 	start := i + 1
@@ -57,11 +58,6 @@ func findKeywordNotInBrackets(s string, keyword string) int {
 		return -1
 	}
 	return keywordIndexFrom(s, keywordCore, 0, opts)
-}
-
-// isWhitespace returns true if the rune is a whitespace character
-func isWhitespace(ch byte) bool {
-	return isASCIISpace(ch)
 }
 
 // ========================================
@@ -720,7 +716,7 @@ func splitUnwindCompoundMutationStages(restQuery, unwindParamName, unwindVar str
 		return nil, false
 	}
 	skipSpace := func(pos int) int {
-		for pos < len(trimmed) && isASCIISpace(trimmed[pos]) {
+		for pos < len(trimmed) && cyphertext.IsWhitespaceAt(trimmed, pos) {
 			pos++
 		}
 		return pos
@@ -1512,13 +1508,13 @@ func rewriteUnwindCorrelationToIn(query string, variable string, paramName strin
 		}
 
 		lhsEnd := i
-		for lhsEnd > 0 && isASCIISpace(query[lhsEnd-1]) {
+		for lhsEnd > 0 && cyphertext.IsWhitespaceAt(query, lhsEnd-1) {
 			lhsEnd--
 		}
 		lhsStart := lhsEnd
 		for lhsStart > 0 {
 			prev := query[lhsStart-1]
-			if isIdentByte(prev) || prev == '.' {
+			if cyphertext.NamePartAt(query, lhsStart-1) || prev == '.' {
 				lhsStart--
 				continue
 			}
@@ -1530,14 +1526,14 @@ func rewriteUnwindCorrelationToIn(query string, variable string, paramName strin
 		}
 
 		rhsStart := i + 1
-		for rhsStart < len(query) && isASCIISpace(query[rhsStart]) {
+		for rhsStart < len(query) && cyphertext.IsWhitespaceAt(query, rhsStart) {
 			rhsStart++
 		}
 		if rhsStart+len(variable) > len(query) || !strings.EqualFold(query[rhsStart:rhsStart+len(variable)], variable) {
 			continue
 		}
 		rhsEnd := rhsStart + len(variable)
-		if rhsEnd < len(query) && isIdentByte(query[rhsEnd]) {
+		if rhsEnd < len(query) && cyphertext.NamePartAt(query, rhsEnd) {
 			continue
 		}
 		matches = append(matches, equalityMatch{start: lhsStart, end: rhsEnd, lhs: lhs})
@@ -1768,12 +1764,12 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 	}
 	if !ok || len(queries) < 2 {
 		// A failed product is diagnostic framing only: no branch executes.
-		if syntax, parseErr := cypherantlr.ParseSyntax(ctx, cypher, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25"); parseErr != nil && syntax.Valid() {
+		if syntax, parseErr := cypherantlr.ParseSyntax(ctx, cypher, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource); parseErr != nil && syntax.Valid() {
 			body := queryBodyFromSyntax(statementSyntaxQuery(syntax))
 			if len(body.branches) > 1 {
 				for index, branch := range body.branches {
 					text := cypher[branch.start:branch.end]
-					if _, err := cypherantlr.ParseSyntax(ctx, text, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25"); err != nil {
+					if _, err := cypherantlr.ParseSyntax(ctx, text, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource); err != nil {
 						return nil, localizedError(localization.CypherResidualUnionBranchFailed(index+1, truncateQuery(text, 50), err), err)
 					}
 				}
@@ -1783,6 +1779,9 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 	}
 	if mixed {
 		return nil, unionMixedError()
+	}
+	if len(queries) < 2 {
+		return nil, localizedError(localization.CypherResidualUnionClauseNotFound(truncateQuery(cypher, 80)), nil)
 	}
 	if unionAll != splitAll {
 		if unionAll {
@@ -1810,7 +1809,7 @@ func (e *StorageExecutor) executeUnion(ctx context.Context, cypher string, union
 		// even though the query has an explicit RETURN/YIELD projection. For UNION semantics we
 		// must validate/provide branch column shapes deterministically.
 		if len(result.Columns) == 0 {
-			columns, err := e.ResultColumns(ctx, query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25")
+			columns, err := e.ResultColumns(ctx, query, e.resultIncomingScope(), cypherGrammarVersion(query) == "25", AcceptedSource)
 			if err != nil {
 				return nil, err
 			}
@@ -2106,15 +2105,13 @@ func replaceIdentifierOutsideQuotesUnless(input string, ident string, replacemen
 		}
 		ch := input[i]
 
-		if !isIdentByte(ch) {
+		if !cyphertext.NamePartAt(input, i) {
 			b.WriteByte(ch)
 			i++
 			continue
 		}
 		start := i
-		for i < len(input) && isIdentByte(input[i]) {
-			i++
-		}
+		i = cyphertext.NamePartEnd(input, i)
 		token := input[start:i]
 		if token == ident && shouldReplaceIdentifierToken(input, start, i) && (locals == nil || !locals.keeps(input, ident, start)) {
 			b.WriteString(replacement)
@@ -2127,33 +2124,15 @@ func replaceIdentifierOutsideQuotesUnless(input string, ident string, replacemen
 
 func shouldReplaceIdentifierToken(input string, tokenStart int, tokenEnd int) bool {
 	// Do not replace property tokens (n.name) or map keys ({name: ...}).
-	prev := prevNonSpaceByte(input, tokenStart)
+	prev := cyphertext.NeighborByte(input, tokenStart, cyphertext.Before)
 	if prev == '.' {
 		return false
 	}
-	next := nextNonSpaceByte(input, tokenEnd)
+	next := cyphertext.NeighborByte(input, tokenEnd, cyphertext.AtOrAfter)
 	if next == ':' {
 		return false
 	}
 	return true
-}
-
-func prevNonSpaceByte(s string, pos int) byte {
-	for i := pos - 1; i >= 0; i-- {
-		if !isASCIISpace(s[i]) {
-			return s[i]
-		}
-	}
-	return 0
-}
-
-func nextNonSpaceByte(s string, pos int) byte {
-	for i := pos; i < len(s); i++ {
-		if !isASCIISpace(s[i]) {
-			return s[i]
-		}
-	}
-	return 0
 }
 
 func toStringAnyMap(value interface{}) (map[string]interface{}, bool) {

@@ -75,7 +75,7 @@ var visibleReads = map[string]bool{"GetNode": true, "GetEdge": true}
 
 var visibleReaders = map[string]string{
 	"pkg/multidb.DatabaseManager.loadMetadata":        "reads the system database's metadata node",
-	"pkg/multidb.DatabaseManager.persistMetadata":     "reads the system database's metadata node",
+	"pkg/multidb.DatabaseManager.transitionCatalog":   "reads only the system database's qualified catalog metadata prior; accounts no user entities",
 	"pkg/multidb.DatabaseManager.isMigrationComplete": "reads the system database's migration status node",
 	"pkg/multidb.sizeTrackingEngine.GetQueryNode":     "forwards a query's read; accounts nothing",
 }
@@ -120,9 +120,9 @@ func (a *analysis) checkRules(r *Report, names map[string]*ssa.Function) {
 				}
 				// A visible read in the quota layer. A promoted method's
 				// wrapper only forwards: its callers are checked instead.
-				if fn.Synthetic == "" && a.visibleRead(c) && strings.HasPrefix(name, "pkg/multidb.") &&
+				if target := a.visibleReadTarget(c); fn.Synthetic == "" && target != "" && strings.HasPrefix(name, "pkg/multidb.") &&
 					visibleReaders[name] == "" && visibleReaders[outer(name)] == "" && !note(name) {
-					r.Violations = append(r.Violations, fmt.Sprintf("visible read in quota accounting: %s at %s reads through %s, which misses hidden entities", name, a.p.pos(ins.Pos()), c.Method.Name()))
+					r.Violations = append(r.Violations, fmt.Sprintf("visible read in quota accounting: %s at %s reads through %s, which misses hidden entities", name, a.p.pos(ins.Pos()), target))
 				}
 				// A write callback the call graph cannot resolve.
 				_, builtin := c.Value.(*ssa.Builtin)
@@ -195,18 +195,25 @@ func (a *analysis) fromRawEngine(v ssa.Value) bool {
 	return false
 }
 
-// visibleRead reports a call of an engine's visible read: through the
-// storage.Engine interface, or a method of a storage type.
-func (a *analysis) visibleRead(c *ssa.CallCommon) bool {
+// visibleReadTarget names the accepted visible-read target through either an
+// interface invoke or a concrete storage method. Reporting consumes this same
+// identity: static calls have no CallCommon.Method to name separately.
+func (a *analysis) visibleReadTarget(c *ssa.CallCommon) string {
 	if c.IsInvoke() {
-		return visibleReads[c.Method.Name()]
+		if visibleReads[c.Method.Name()] {
+			return c.Method.Name()
+		}
+		return ""
 	}
 	callee := c.StaticCallee()
 	if callee == nil || !visibleReads[callee.Name()] || callee.Signature.Recv() == nil {
-		return false
+		return ""
 	}
 	// A wrapper of a promoted method reads through the embedded engine.
-	return strings.HasPrefix(a.p.funcName(callee), "pkg/storage.") || strings.HasPrefix(callee.Synthetic, "wrapper for")
+	if strings.HasPrefix(a.p.funcName(callee), "pkg/storage.") || strings.HasPrefix(callee.Synthetic, "wrapper for") {
+		return callee.Name()
+	}
+	return ""
 }
 
 // passesWriter reports whether a call passes a Badger write transaction or

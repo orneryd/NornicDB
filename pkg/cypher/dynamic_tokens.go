@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
@@ -159,7 +160,7 @@ func staticWriteTokenError(clause pipelineClause, scope staticTypeScope) error {
 		if actions := clause.text[set:]; !strings.ContainsAny(actions, ":[=") && !mentionsNonEntity(actions, scope) {
 			return nil // the pattern's labels aren't items
 		}
-		actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"))
+		actions := splitMergeClauseActions(pipelineClauseBody(clause.text, "MERGE"), nil)
 		if err := staticSetItemsTokenError(mergeActionAssignments(actions.onCreate), scope); err != nil {
 			return err
 		}
@@ -200,25 +201,25 @@ func mentionsNonEntity(text string, scope staticTypeScope) bool {
 	}
 	previous := ""
 	for index := 0; index < len(text); {
-		name, next, ok := scanIdentifierToken(text, index)
+		name, ok := cyphertext.ScanIdentifier(text, index)
 		if !ok {
-			if c := text[index]; c > ' ' {
+			if !cyphertext.IsWhitespaceAt(text, index) {
 				previous = text[index : index+1]
 			}
 			index++
 			continue
 		}
 		head := previous == "," || strings.EqualFold(previous, "SET") || strings.EqualFold(previous, "REMOVE")
-		previous = name
-		index = next
+		previous = name.Value
+		index = name.End
 		if !head {
 			continue
 		}
-		if kind, bound := scope.kinds[name]; bound {
+		if kind, bound := scope.kinds[name.Value]; bound {
 			if kind != matchBindingNode && kind != matchBindingRelationship && kind != matchBindingUnknown {
 				return true
 			}
-		} else if _, typed := scope.values[name]; typed {
+		} else if _, typed := scope.values[name.Value]; typed {
 			return true
 		}
 	}
@@ -443,7 +444,7 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 		case cypherQuoteClass:
 			i = skipCypherQuotedText(pattern, i, c) - 1
 		case '{':
-			if closing := findMatchingDelimiter(pattern, i, '{', '}'); closing > 0 {
+			if closing := cyphertext.FindMatchingDelimiter(pattern, i, '{', '}', cyphertext.OpeningDelimiter); closing > 0 {
 				i = closing
 			}
 		case '[':
@@ -455,7 +456,7 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 				continue
 			}
 			open := i + strings.IndexByte(pattern[i:], '(')
-			closing := findMatchingDelimiter(pattern, open, '(', ')')
+			closing := cyphertext.FindMatchingDelimiter(pattern, open, '(', ')', cyphertext.OpeningDelimiter)
 			if closing < 0 {
 				return pattern, nil
 			}
@@ -475,7 +476,7 @@ func (e *StorageExecutor) resolveRowDynamicTokens(ctx context.Context, pattern s
 				}
 			} else if len(names) == 0 {
 				// No labels: the colon before goes too.
-				for start > last && isASCIISpace(pattern[start-1]) {
+				for start > last && cyphertext.IsWhitespaceAt(pattern, start-1) {
 					start--
 				}
 				if start > last && pattern[start-1] == ':' {
@@ -519,7 +520,7 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 				continue
 			}
 			open := i + strings.IndexByte(text[i:], '(')
-			closing := findMatchingDelimiter(text, open, '(', ')')
+			closing := cyphertext.FindMatchingDelimiter(text, open, '(', ')', cyphertext.OpeningDelimiter)
 			if closing < 0 {
 				return nil
 			}
@@ -537,7 +538,7 @@ func staticPatternTokenError(clause pipelineClause, scope staticTypeScope) error
 				continue
 			}
 			open := i + len(function)
-			closing := findMatchingDelimiter(text, open, '(', ')')
+			closing := cyphertext.FindMatchingDelimiter(text, open, '(', ')', cyphertext.OpeningDelimiter)
 			if closing < 0 {
 				return nil
 			}

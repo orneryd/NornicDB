@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/testfixture"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -93,6 +94,29 @@ func TestStatementExecutionClauseContracts(t *testing.T) {
 	}
 }
 
+// USE [GRAPH] g is read by the USE grammar owner; the statement grammar has no
+// optional GRAPH keyword. A statement's write, transaction and procedure
+// contract, and the permissions derived from it, do not depend on its graph
+// references, so every USE spelling yields the contract of the statement.
+func TestStatementExecutionContractReadsEveryUseSpelling(t *testing.T) {
+	for _, body := range []string{
+		"CREATE (:Contract)", "MATCH (n) DETACH DELETE n", "CALL { CREATE (:Contract) RETURN 1 AS x } RETURN x",
+		"CALL { USE GRAPH g.one CREATE (:Contract) RETURN 1 AS x } RETURN x", "MATCH (n) RETURN n",
+	} {
+		want, err := readStatementExecutionContract(t.Context(), body)
+		require.NoError(t, err, body)
+		for _, use := range []string{"USE g ", "USE GRAPH g ", "USE GRAPH limit ", "USE GRAPH `call` ", "USE graph "} {
+			query := use + body
+			got, err := readStatementExecutionContract(t.Context(), query)
+			require.NoError(t, err, query)
+			require.Equal(t, want, got, query)
+			require.Equal(t, want.writes, QueryPermissionRequirements(t.Context(), query, RawSource).Write, query)
+		}
+	}
+	_, err := readStatementExecutionContract(t.Context(), "USE GRAPH g MATCH (n RETURN n")
+	require.Error(t, err)
+}
+
 // The entire production package is scanned. A new function, typed alias or
 // admission helper cannot read the cache-only flag outside its quarantined
 // cache/telemetry owners. The mode owner's dependency closure may not call any
@@ -105,7 +129,7 @@ func TestStatementExecutionAdmissionBoundary(t *testing.T) {
 	fields := map[string]map[string]string{}
 	globals := map[string]string{}
 	var declarations []*ast.GenDecl
-	typeName := func(expr ast.Expr) string { return admissionTypeName(expr) }
+	typeName := func(expr ast.Expr) string { return testfixture.ReceiverName(expr, testfixture.ReceiverBaseName) }
 	for _, file := range files {
 		name := file.Name()
 		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -272,18 +296,4 @@ func TestStatementExecutionAdmissionBoundary(t *testing.T) {
 		}
 		visit(root, nil)
 	}
-}
-
-func admissionTypeName(expr ast.Expr) string {
-	switch value := expr.(type) {
-	case *ast.Ident:
-		return value.Name
-	case *ast.StarExpr:
-		return admissionTypeName(value.X)
-	case *ast.IndexExpr:
-		return admissionTypeName(value.X)
-	case *ast.IndexListExpr:
-		return admissionTypeName(value.X)
-	}
-	return ""
 }

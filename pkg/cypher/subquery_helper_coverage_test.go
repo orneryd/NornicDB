@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -108,24 +109,27 @@ func TestCallSubqueryHelpers_CorrelationAndTopLevelSplits(t *testing.T) {
 	_, _, ok = splitTopLevelEqualityCallSubquery("'a=b'")
 	require.False(t, ok)
 
-	matchVar, matchProp, otherWhere, ok := extractCallSubqueryCorrelationWhere("n.id = outer AND outer IS NOT NULL AND n.age > 3", "outer")
+	matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere("n.id = outer AND outer IS NOT NULL AND n.age > 3", "outer", splitTopLevelAndConjuncts, splitTopLevelEqualityCallSubquery, parseCallSubqueryVarProp, isSimpleIdentifier)
 	require.True(t, ok)
 	require.Equal(t, "n", matchVar)
 	require.Equal(t, "id", matchProp)
 	require.Equal(t, "outer IS NOT NULL AND n.age > 3", otherWhere)
 
-	sanitized, ok := sanitizeCallSubqueryOtherWhere(otherWhere, "outer")
+	sanitized, ok := cyphertext.FilterImportConjuncts(otherWhere, "outer", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
 	require.True(t, ok)
 	require.Equal(t, "n.age > 3", sanitized)
 
-	_, ok = sanitizeCallSubqueryOtherWhere("outer > 3 AND n.age > 3", "outer")
+	_, ok = cyphertext.FilterImportConjuncts("outer > 3 AND n.age > 3", "outer", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
 	require.False(t, ok)
 
-	require.True(t, isCallSubqueryImportNotNullGuardTerm("`outer` IS NOT NULL", "outer"))
-	require.False(t, isCallSubqueryImportNotNullGuardTerm("outer IS NULL", "outer"))
-	require.True(t, containsStandaloneIdentifier("outer + 1 > 0", "outer"))
-	require.False(t, containsStandaloneIdentifier("n.outer = 1", "outer"))
-	require.False(t, containsStandaloneIdentifier("'outer' = name", "outer"))
+	guard, ok := cyphertext.FilterImportConjuncts("`outer` IS NOT NULL", "outer", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
+	require.True(t, ok)
+	require.Empty(t, guard)
+	_, ok = cyphertext.FilterImportConjuncts("outer IS NULL", "outer", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
+	require.False(t, ok)
+	require.True(t, cyphertext.FindIdentifier("outer + 1 > 0", "outer", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
+	require.False(t, cyphertext.FindIdentifier("n.outer = 1", "outer", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
+	require.False(t, cyphertext.FindIdentifier("'outer' = name", "outer", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
 
 	v, p, ok := parseCallSubqueryVarProp("`n`.`id`")
 	require.True(t, ok)

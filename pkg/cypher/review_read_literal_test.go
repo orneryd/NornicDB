@@ -13,12 +13,12 @@ func TestReviewR73ReadLiteralData(t *testing.T) {
 	for _, body := range []string{"RETURN 'hello' AS value", "RETURN 'CREATE' AS value"} {
 		for _, explicit := range []bool{false, true} {
 			t.Run(fmt.Sprintf("body=%s/explicit=%v", body, explicit), func(t *testing.T) {
-				manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+				manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = manager.Close() })
-				require.NoError(t, manager.CreateDatabase("r73one"))
-				require.NoError(t, manager.CreateDatabase("r73two"))
-				require.NoError(t, manager.CreateCompositeDatabase("r73comp", []multidb.ConstituentRef{
+				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "r73one"}))
+				require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "r73two"}))
+				require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "r73comp", []multidb.ConstituentRef{
 					{Alias: "one", DatabaseName: "r73one", Type: "local", AccessMode: "read_write"},
 					{Alias: "two", DatabaseName: "r73two", Type: "local", AccessMode: "read_write"},
 				}))

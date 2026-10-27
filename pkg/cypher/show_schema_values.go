@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"fmt"
 	"sort"
 	"strconv"
@@ -41,19 +43,13 @@ func showIndexOptions(provider string, config map[string]interface{}) map[string
 	return map[string]interface{}{"indexConfig": config, "indexProvider": provider}
 }
 
-// quoteSchemaName backtick-quotes a name for a generated statement, doubling
-// any backtick in it.
-func quoteSchemaName(name string) string {
-	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
-}
-
 // schemaPattern is the pattern of an index or constraint statement:
 // (n:`A`|`B`) for nodes, ()-[r:`T`]-() for relationships. It returns the
 // pattern and its variable.
 func schemaPattern(entityType string, labelsOrTypes []string) (string, string) {
 	names := make([]string, len(labelsOrTypes))
 	for i, name := range labelsOrTypes {
-		names[i] = quoteSchemaName(name)
+		names[i] = cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource)
 	}
 	if entityType == string(storage.ConstraintEntityRelationship) {
 		return "()-[r:" + strings.Join(names, "|") + "]-()", "r"
@@ -65,7 +61,7 @@ func schemaPattern(entityType string, labelsOrTypes []string) (string, string) {
 func schemaProperties(variable string, properties []string) string {
 	items := make([]string, len(properties))
 	for i, property := range properties {
-		items[i] = variable + "." + quoteSchemaName(property)
+		items[i] = variable + "." + cyphertext.PrintIdentifier(property, nil, cyphertext.RawSource)
 	}
 	return strings.Join(items, ", ")
 }
@@ -74,7 +70,7 @@ func schemaProperties(variable string, properties []string) string {
 // index, in Neo4j's form.
 func showIndexCreateStatement(indexType, name, entityType string, labelsOrTypes, properties []string, config map[string]interface{}) string {
 	pattern, variable := schemaPattern(entityType, labelsOrTypes)
-	statement := "CREATE " + indexType + " INDEX " + quoteSchemaName(name) + " FOR " + pattern + " ON "
+	statement := "CREATE " + indexType + " INDEX " + cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource) + " FOR " + pattern + " ON "
 	if indexType == "FULLTEXT" {
 		statement += "EACH [" + schemaProperties(variable, properties) + "]"
 	} else {
@@ -96,7 +92,7 @@ func schemaConfigLiteral(config map[string]interface{}) string {
 	sort.Strings(keys)
 	items := make([]string, len(keys))
 	for i, key := range keys {
-		items[i] = quoteSchemaName(key) + ": " + schemaConfigValue(config[key])
+		items[i] = cyphertext.PrintIdentifier(key, nil, cyphertext.RawSource) + ": " + schemaConfigValue(config[key])
 	}
 	return "{" + strings.Join(items, ",") + "}"
 }
@@ -147,7 +143,7 @@ func showConstraintType(constraintType storage.ConstraintType, entityType storag
 // NornicDB form (docs/neo4j-migration/cypher-compatibility.md) for
 // temporal no-overlap, domain, cardinality and endpoint policy constraints.
 func showConstraintCreateStatement(c storage.Constraint) interface{} {
-	head := "CREATE CONSTRAINT " + quoteSchemaName(c.Name) + " FOR "
+	head := "CREATE CONSTRAINT " + cyphertext.PrintIdentifier(c.Name, nil, cyphertext.RawSource) + " FOR "
 	entityType := c.EffectiveEntityType()
 	pattern, variable := schemaPattern(string(entityType), []string{c.Label})
 	properties := "(" + schemaProperties(variable, c.Properties) + ")"
@@ -169,13 +165,13 @@ func showConstraintCreateStatement(c storage.Constraint) interface{} {
 		}
 		return head + pattern + " REQUIRE " + schemaProperties(variable, c.Properties) + " IN [" + strings.Join(values, ", ") + "]"
 	case storage.ConstraintCardinality:
-		relationship := "()-[r:" + quoteSchemaName(c.Label) + "]->()"
+		relationship := "()-[r:" + cyphertext.PrintIdentifier(c.Label, nil, cyphertext.RawSource) + "]->()"
 		if strings.EqualFold(c.Direction, "INCOMING") {
-			relationship = "()<-[r:" + quoteSchemaName(c.Label) + "]-()"
+			relationship = "()<-[r:" + cyphertext.PrintIdentifier(c.Label, nil, cyphertext.RawSource) + "]-()"
 		}
 		return head + relationship + " REQUIRE MAX COUNT " + strconv.Itoa(c.MaxCount)
 	case storage.ConstraintPolicy:
-		return head + "(:" + quoteSchemaName(c.SourceLabel) + ")-[r:" + quoteSchemaName(c.Label) + "]->(:" + quoteSchemaName(c.TargetLabel) + ") REQUIRE " + strings.ToUpper(c.PolicyMode)
+		return head + "(:" + cyphertext.PrintIdentifier(c.SourceLabel, nil, cyphertext.RawSource) + ")-[r:" + cyphertext.PrintIdentifier(c.Label, nil, cyphertext.RawSource) + "]->(:" + cyphertext.PrintIdentifier(c.TargetLabel, nil, cyphertext.RawSource) + ") REQUIRE " + strings.ToUpper(c.PolicyMode)
 	}
 	return nil
 }
@@ -184,7 +180,7 @@ func showConstraintCreateStatement(c storage.Constraint) interface{} {
 // property type constraint.
 func showPropertyTypeCreateStatement(name string, entityType storage.ConstraintEntityType, label, property, propertyType string) string {
 	pattern, variable := schemaPattern(string(entityType), []string{label})
-	return "CREATE CONSTRAINT " + quoteSchemaName(name) + " FOR " + pattern + " REQUIRE (" + schemaProperties(variable, []string{property}) + ") IS :: " + propertyType
+	return "CREATE CONSTRAINT " + cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource) + " FOR " + pattern + " REQUIRE (" + schemaProperties(variable, []string{property}) + ") IS :: " + propertyType
 }
 
 // showConstraintOptions is the options column of a constraint: the owned

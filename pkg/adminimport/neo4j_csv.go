@@ -1,6 +1,8 @@
 package adminimport
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	"encoding/csv"
 	"encoding/json"
@@ -605,14 +607,14 @@ func renderConstraintStatement(c storage.Constraint) (string, bool) {
 	default:
 		return "", false
 	}
-	return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR %s REQUIRE %s", quoteCypherIdent(c.Name), pattern, requirement), true
+	return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR %s REQUIRE %s", cyphertext.PrintIdentifier(c.Name, nil, cyphertext.RawSource), pattern, requirement), true
 }
 
 func renderPropertyTypeConstraintStatement(c storage.PropertyTypeConstraint) (string, bool) {
 	entity := c.EffectiveEntityType()
 	pattern := cypherPattern(entity, c.Label)
-	ref := entityVariable(entity) + "." + quoteCypherIdent(c.Property)
-	return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR %s REQUIRE %s IS :: %s", quoteCypherIdent(c.Name), pattern, ref, c.ExpectedType), true
+	ref := entityVariable(entity) + "." + cyphertext.PrintIdentifier(c.Property, nil, cyphertext.RawSource)
+	return fmt.Sprintf("CREATE CONSTRAINT %s IF NOT EXISTS FOR %s REQUIRE %s IS :: %s", cyphertext.PrintIdentifier(c.Name, nil, cyphertext.RawSource), pattern, ref, c.ExpectedType), true
 }
 
 func renderIndexStatement(index any) (string, bool) {
@@ -629,7 +631,7 @@ func renderIndexStatement(index any) (string, bool) {
 		if len(properties) == 0 {
 			return "", false
 		}
-		return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR %s ON (%s)", quoteCypherIdent(name), cypherPattern(storage.ConstraintEntityNode, label), strings.Join(cypherPropertyRefs("n", properties), ", ")), true
+		return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR %s ON (%s)", cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource), cypherPattern(storage.ConstraintEntityNode, label), strings.Join(cypherPropertyRefs("n", properties), ", ")), true
 	case "RANGE":
 		if owning, _ := m["owningConstraint"].(string); owning != "" {
 			return "", false
@@ -648,7 +650,7 @@ func renderIndexStatement(index any) (string, bool) {
 		if entityType == string(storage.ConstraintEntityRelationship) {
 			entity = storage.ConstraintEntityRelationship
 		}
-		return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR %s ON (%s)", quoteCypherIdent(name), cypherPattern(entity, label), strings.Join(cypherPropertyRefs(entityVariable(entity), properties), ", ")), true
+		return fmt.Sprintf("CREATE INDEX %s IF NOT EXISTS FOR %s ON (%s)", cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource), cypherPattern(entity, label), strings.Join(cypherPropertyRefs(entityVariable(entity), properties), ", ")), true
 	case "FULLTEXT":
 		properties := stringSliceValue(m["properties"])
 		labels := stringSliceValue(m["labels"])
@@ -659,16 +661,16 @@ func renderIndexStatement(index any) (string, bool) {
 		if len(labels) > 0 {
 			parts := make([]string, 0, len(labels))
 			for _, item := range labels {
-				parts = append(parts, quoteCypherIdent(item))
+				parts = append(parts, cyphertext.PrintIdentifier(item, nil, cyphertext.RawSource))
 			}
-			return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR (n:%s) ON EACH [%s]", quoteCypherIdent(name), strings.Join(parts, "|"), strings.Join(cypherPropertyRefs("n", properties), ", ")), true
+			return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR (n:%s) ON EACH [%s]", cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource), strings.Join(parts, "|"), strings.Join(cypherPropertyRefs("n", properties), ", ")), true
 		}
 		if len(relationshipTypes) > 0 {
 			parts := make([]string, 0, len(relationshipTypes))
 			for _, item := range relationshipTypes {
-				parts = append(parts, quoteCypherIdent(item))
+				parts = append(parts, cyphertext.PrintIdentifier(item, nil, cyphertext.RawSource))
 			}
-			return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR ()-[r:%s]-() ON EACH [%s]", quoteCypherIdent(name), strings.Join(parts, "|"), strings.Join(cypherPropertyRefs("r", properties), ", ")), true
+			return fmt.Sprintf("CREATE FULLTEXT INDEX %s IF NOT EXISTS FOR ()-[r:%s]-() ON EACH [%s]", cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource), strings.Join(parts, "|"), strings.Join(cypherPropertyRefs("r", properties), ", ")), true
 		}
 		return "", false
 	case "VECTOR":
@@ -695,7 +697,7 @@ func renderIndexStatement(index any) (string, bool) {
 			options += fmt.Sprintf(", `vector.similarity_function`: '%s'", strings.ToLower(similarity))
 		}
 		options += "}}"
-		return fmt.Sprintf("CREATE VECTOR INDEX %s IF NOT EXISTS FOR %s ON (%s) %s", quoteCypherIdent(name), cypherPattern(entity, label), strings.Join(cypherPropertyRefs(variable, []string{property}), ", "), options), true
+		return fmt.Sprintf("CREATE VECTOR INDEX %s IF NOT EXISTS FOR %s ON (%s) %s", cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource), cypherPattern(entity, label), strings.Join(cypherPropertyRefs(variable, []string{property}), ", "), options), true
 	default:
 		return "", false
 	}
@@ -703,25 +705,25 @@ func renderIndexStatement(index any) (string, bool) {
 
 func cypherPattern(entity storage.ConstraintEntityType, label string) string {
 	if entity == storage.ConstraintEntityRelationship {
-		return fmt.Sprintf("()-[r:%s]-()", quoteCypherIdent(label))
+		return fmt.Sprintf("()-[r:%s]-()", cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource))
 	}
-	return fmt.Sprintf("(n:%s)", quoteCypherIdent(label))
+	return fmt.Sprintf("(n:%s)", cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource))
 }
 
 func cypherRelationshipPattern(label, direction, sourceLabel, targetLabel string) string {
 	left := "()"
 	right := "()"
 	if sourceLabel != "" {
-		left = fmt.Sprintf("(:%s)", quoteCypherIdent(sourceLabel))
+		left = fmt.Sprintf("(:%s)", cyphertext.PrintIdentifier(sourceLabel, nil, cyphertext.RawSource))
 	}
 	if targetLabel != "" {
-		right = fmt.Sprintf("(:%s)", quoteCypherIdent(targetLabel))
+		right = fmt.Sprintf("(:%s)", cyphertext.PrintIdentifier(targetLabel, nil, cyphertext.RawSource))
 	}
 	switch strings.ToUpper(direction) {
 	case "INCOMING":
-		return fmt.Sprintf("%s<-[r:%s]-%s", left, quoteCypherIdent(label), right)
+		return fmt.Sprintf("%s<-[r:%s]-%s", left, cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource), right)
 	default:
-		return fmt.Sprintf("%s-[r:%s]->%s", left, quoteCypherIdent(label), right)
+		return fmt.Sprintf("%s-[r:%s]->%s", left, cyphertext.PrintIdentifier(label, nil, cyphertext.RawSource), right)
 	}
 }
 
@@ -735,13 +737,9 @@ func entityVariable(entity storage.ConstraintEntityType) string {
 func cypherPropertyRefs(variable string, properties []string) []string {
 	refs := make([]string, 0, len(properties))
 	for _, property := range properties {
-		refs = append(refs, variable+"."+quoteCypherIdent(property))
+		refs = append(refs, variable+"."+cyphertext.PrintIdentifier(property, nil, cyphertext.RawSource))
 	}
 	return refs
-}
-
-func quoteCypherIdent(value string) string {
-	return "`" + strings.ReplaceAll(value, "`", "``") + "`"
 }
 
 func formatConstraintValues(values []interface{}) []string {

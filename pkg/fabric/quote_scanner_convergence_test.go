@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"testing"
 
@@ -50,7 +51,7 @@ func TestFabricStructuralReadersUseCanonicalQuotation(t *testing.T) {
 			require.Equal(t, -1, indexTopLevelKeyword(mapText, "AND"))
 			require.Len(t, splitTopLevelAnd("n.x = "+mapText+" AND n.y = 1"), 2)
 
-			fragment, planErr := NewFabricPlanner(NewCatalog()).Plan("RETURN "+mapText+" AS x", "neo4j")
+			fragment, planErr := NewFabricPlanner(NewCatalog()).Plan(t.Context(), "RETURN "+mapText+" AS x", "neo4j", cyphertext.RawSource)
 			require.NoError(t, planErr)
 			require.NotNil(t, fragment)
 		})

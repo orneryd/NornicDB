@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -35,7 +36,7 @@ func plannerUseCatalog() *Catalog {
 // session on the composite or on one of its constituents.
 func TestPlan_DynamicUseKeepsReference(t *testing.T) {
 	for _, sessionDB := range []string{"cmp", "cmp.a"} {
-		fragment, err := NewFabricPlanner(plannerUseCatalog()).Plan("USE graph.byName($g) MATCH (n) RETURN n", sessionDB)
+		fragment, err := NewFabricPlanner(plannerUseCatalog()).Plan(t.Context(), "USE graph.byName($g) MATCH (n) RETURN n", sessionDB, cyphertext.RawSource)
 		require.NoError(t, err, sessionDB)
 		exec, ok := fragment.(*FragmentExec)
 		require.True(t, ok, "expected *FragmentExec, got %T", fragment)
@@ -54,13 +55,13 @@ func TestPlan_DynamicUseKeepsReference(t *testing.T) {
 func TestPlan_DynamicUseResolvedAtRunTime(t *testing.T) {
 	planner := NewFabricPlanner(plannerUseCatalog())
 
-	fragment, err := planner.Plan("USE graph.byName('cmp.zzz') RETURN 1", "cmp")
+	fragment, err := planner.Plan(t.Context(), "USE graph.byName('cmp.zzz') RETURN 1", "cmp", cyphertext.RawSource)
 	require.NoError(t, err)
 	exec, ok := fragment.(*FragmentExec)
 	require.True(t, ok, "expected *FragmentExec, got %T", fragment)
 	require.Equal(t, "graph.byName", exec.Graph.Function)
 
-	_, err = planner.Plan("USE cmp.zzz RETURN 1", "cmp")
+	_, err = planner.Plan(t.Context(), "USE cmp.zzz RETURN 1", "cmp", cyphertext.RawSource)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid USE target 'cmp.zzz'")
 }
@@ -68,8 +69,8 @@ func TestPlan_DynamicUseResolvedAtRunTime(t *testing.T) {
 // TestPlan_DynamicUseInUnionBranches pins that each UNION branch keeps its
 // own dynamic reference.
 func TestPlan_DynamicUseInUnionBranches(t *testing.T) {
-	fragment, err := NewFabricPlanner(plannerUseCatalog()).Plan(
-		"USE graph.byName('cmp.a') RETURN 1 AS x UNION USE graph.byElementId($id) RETURN 2 AS x", "cmp")
+	fragment, err := NewFabricPlanner(plannerUseCatalog()).Plan(t.Context(),
+		"USE graph.byName('cmp.a') RETURN 1 AS x UNION USE graph.byElementId($id) RETURN 2 AS x", "cmp", cyphertext.RawSource)
 	require.NoError(t, err)
 	union, ok := fragment.(*FragmentUnion)
 	require.True(t, ok, "expected *FragmentUnion, got %T", fragment)
@@ -95,8 +96,8 @@ func TestPlan_DynamicUseInImportingCallSubquery(t *testing.T) {
 	planner := NewFabricPlanner(plannerUseCatalog())
 	read, _ := recordedCallImports("g")
 	planner.SetCallImportReader(read)
-	fragment, err := planner.Plan(
-		"UNWIND $graphs AS g CALL { WITH g USE graph.byName(g) MATCH (n) RETURN count(n) AS c } RETURN g, c", "cmp")
+	fragment, err := planner.Plan(t.Context(),
+		"UNWIND $graphs AS g CALL { WITH g USE graph.byName(g) MATCH (n) RETURN count(n) AS c } RETURN g, c", "cmp", cyphertext.RawSource)
 	require.NoError(t, err)
 
 	execs := collectPlannedExecs(fragment)
@@ -122,8 +123,8 @@ func TestPlan_DynamicUseInImportingCallSubquery(t *testing.T) {
 // top-level USE, a CALL subquery with a static USE runs on its constituent
 // and the clauses after the subquery run on the dynamic reference.
 func TestPlan_DynamicTopLevelUseWithStaticSubquery(t *testing.T) {
-	fragment, err := NewFabricPlanner(plannerUseCatalog()).Plan(
-		"USE graph.byName($g) CALL { USE cmp.a RETURN 1 AS one } RETURN one", "cmp")
+	fragment, err := NewFabricPlanner(plannerUseCatalog()).Plan(t.Context(),
+		"USE graph.byName($g) CALL { USE cmp.a RETURN 1 AS one } RETURN one", "cmp", cyphertext.RawSource)
 	require.NoError(t, err)
 
 	execs := collectPlannedExecs(fragment)
@@ -145,7 +146,7 @@ func TestPlan_DynamicTopLevelUseWithStaticSubquery(t *testing.T) {
 // the USE grammar treats as part of the name.
 func TestParseLeadingWithUse_NameStartingWithUse(t *testing.T) {
 	body := "WITH a USEא MATCH (n) RETURN n"
-	use, rewritten, ok, err := parseLeadingWithUse(body)
+	use, rewritten, ok, err := parseLeadingWithUse(t.Context(), body)
 	require.NoError(t, err)
 	require.False(t, ok)
 	require.Equal(t, UseClause{}, use)

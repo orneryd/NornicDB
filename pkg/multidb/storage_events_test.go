@@ -13,7 +13,7 @@ import (
 // events of that database (sizeTrackingEngine forwards the subscription).
 func TestSizeTrackedDatabaseDeliversEvents(t *testing.T) {
 	m := newTestManager(t)
-	require.NoError(t, m.CreateDatabase("tenant"))
+	require.NoError(t, m.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "tenant"}))
 	engine, err := m.GetStorage("tenant")
 	require.NoError(t, err)
 	var mu sync.Mutex

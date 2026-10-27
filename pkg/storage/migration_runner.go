@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,22 +16,25 @@ import (
 func (b *BadgerEngine) isStorageEmpty() (bool, error) {
 	empty := true
 	err := b.db.View(func(txn *badger.Txn) error {
-		for _, prefix := range [][]byte{{prefixNode}, {prefixEdge}} {
-			opts := badgerIteratorOptions()
-			opts.Prefix = prefix
-			it := txn.NewIterator(opts)
-			it.Rewind()
-			if it.ValidForPrefix(prefix) {
-				empty = false
-			}
-			it.Close()
-			if !empty {
-				return nil
-			}
-		}
+		empty = isStorageEmptyInTxn(txn)
 		return nil
 	})
 	return empty, err
+}
+
+func isStorageEmptyInTxn(txn *badger.Txn) bool {
+	for _, prefix := range [][]byte{{prefixNode}, {prefixEdge}} {
+		opts := badgerIteratorOptions()
+		opts.Prefix = prefix
+		it := txn.NewIterator(opts)
+		it.Rewind()
+		present := it.ValidForPrefix(prefix)
+		it.Close()
+		if present {
+			return false
+		}
+	}
+	return true
 }
 
 // ErrStorageUpgradeRequired is returned by RunOnStartMigrations when
@@ -65,9 +69,27 @@ func (e *ErrStorageUpgradeRequired) Error() string {
 //	         property-key codec; bumps the version after a clean pass.
 //	V2 → V3: restore versioned adjacency and exact-case label/type indexes.
 //
+// Manual invocations cannot perform a V4 catalog payload upgrade: reopening
+// is required before any manager can retain the legacy catalog snapshot.
+// Existing V0/V1/V2/V3 manual migration behavior is retained.
+//
 // Sets engine.storageVersion to the post-migration version so the
 // encode path can deterministically pick codecs from it.
 func (b *BadgerEngine) RunOnStartMigrations(allowUpgrade bool) error {
+	return b.runOnStartMigrations(allowUpgrade, migrationManual)
+}
+
+type migrationPhase uint8
+
+const (
+	migrationStartupOpening migrationPhase = iota
+	migrationManual
+)
+
+// runOnStartMigrations is the single ordered runner. Opening owns the only
+// point before a DatabaseManager can retain the catalog image; manual calls
+// cannot safely replace that image without a supported owner refresh protocol.
+func (b *BadgerEngine) runOnStartMigrations(allowUpgrade bool, phase migrationPhase) error {
 	// The migrations rewrite stored state wholesale: a maintenance write
 	// (beginMaintenanceWrite). Opened by NewBadgerEngineWithOptions, the engine
 	// has no write-behind buffer yet and nothing else holds it; called on an
@@ -81,6 +103,12 @@ func (b *BadgerEngine) RunOnStartMigrations(allowUpgrade bool) error {
 	currentVersion, err := b.readSchemaVersion()
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
+	}
+
+	// Reject before any older arm can mutate a store: V4 catalog replacement
+	// is startup-only even when the store first needs V0/V1/V2 repairs.
+	if storageVersionCurrent >= storageVersionCatalogV4 && currentVersion < storageVersionCatalogV4 && phase != migrationStartupOpening {
+		return fmt.Errorf("catalog V4 payload upgrade is startup-only; reopen the database with --upgrade-storage")
 	}
 
 	if b.log != nil {
@@ -169,6 +197,12 @@ func (b *BadgerEngine) RunOnStartMigrations(allowUpgrade bool) error {
 		if b.log != nil {
 			b.log.Info("migration arm v2→v3 complete", "duration_ms", time.Since(armStart).Milliseconds())
 		}
+	}
+	if currentVersion < storageVersionCatalogV4 {
+		if err := b.migrateV3ToV4(context.Background()); err != nil {
+			return fmt.Errorf("migration v3→v4 failed: %w", err)
+		}
+		currentVersion = storageVersionCatalogV4
 	}
 	b.storageVersion = currentVersion
 

@@ -378,7 +378,7 @@ func (s *Service) localizedStatus(ctx context.Context, code codes.Code, message 
 		match := s.localizer.Resolve("grpc", preferences...)
 		ctx = localization.WithPreferences(ctx, match.Tag)
 	}
-	text, _, err := s.localizer.Render(ctx, message)
+	text, _, err := s.localizer.Render(ctx, localization.MessageRequest(message))
 	if err != nil {
 		text = message.Fallback
 	}

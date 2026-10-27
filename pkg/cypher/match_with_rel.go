@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
 
@@ -14,7 +15,7 @@ func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable, orderExpr 
 	}
 
 	// Parse multiple ORDER BY columns: "n.value ASC, n.name DESC"
-	specs := e.parseNodeOrderSpecs(orderExpr, variable)
+	specs, _ := e.parseNodeOrderSpecs(orderExpr, variable)
 	if len(specs) == 0 {
 		return nodes
 	}
@@ -42,42 +43,26 @@ func (e *StorageExecutor) orderNodes(nodes []*storage.Node, variable, orderExpr 
 }
 
 // parseNodeOrderSpecs parses "n.value ASC, n.name DESC" for node sorting
-func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) []nodeOrderSpec {
+func (e *StorageExecutor) parseNodeOrderSpecs(orderExpr, variable string) ([]nodeOrderSpec, bool) {
+	terms := parseOrderByClause(orderExpr)
+	if len(terms) == 0 || variable == "" {
+		return nil, false
+	}
 	var specs []nodeOrderSpec
 
-	// Split by comma
-	parts := splitOutsideParens(orderExpr, ',')
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-
-		tokens := strings.Fields(part)
-		if len(tokens) == 0 {
-			continue
-		}
-
-		expr := tokens[0]
-		descending := len(tokens) > 1 && upperASCII(tokens[1]) == "DESC"
-
+	for _, term := range terms {
 		// Node sorting is safe only for direct properties of the matched
 		// variable. Aliases and computed expressions must be sorted after
 		// projection, when their values actually exist.
-		prefix := variable + "."
-		if !strings.HasPrefix(expr, prefix) {
-			return nil
-		}
-		propName := expr[len(prefix):]
-		if propName == "" || strings.ContainsAny(propName, ".()[]") {
-			return nil
+		base, propName, ok := splitPostfixPropertyAccess(term.column)
+		if !ok || base != variable {
+			return nil, false
 		}
 
-		specs = append(specs, nodeOrderSpec{propName: propName, descending: descending})
+		specs = append(specs, nodeOrderSpec{propName: propName, descending: term.descending})
 	}
 
-	return specs
+	return specs, true
 }
 
 // evaluateWhereOnComputedRow is the computed-row entry into the shared row
@@ -102,12 +87,44 @@ func (e *StorageExecutor) evaluateExpressionFromValues(expr string, values map[s
 	return e.evaluateExpressionFromValuesContext(rowStatementContextOrBackground(values), expr, values)
 }
 
+// rowFallbackPolicy keeps row materialization's resolution preconditions separate
+// from direct context evaluation while sharing one context/depth dispatch owner.
+type rowFallbackPolicy uint8
+
+const (
+	rowFallbackContext rowFallbackPolicy = iota
+	rowFallbackValue
+)
+
 // evaluateRowFallback is the row evaluator's fallback to the shared
 // evaluator. err is the error a function raised there (a registry function's
 // argument error), which the shared evaluator records as the statement error
 // rather than returning it; the row evaluator reports the expression as
 // unresolved and evaluateRowExpressionWithContext records err.
-func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}) (interface{}, bool, error) {
+func (e *StorageExecutor) evaluateRowFallback(expr string, values map[string]interface{}, policy rowFallbackPolicy) (interface{}, bool, error) {
+	if policy == rowFallbackValue {
+		if err := scalarExpressionEvaluationError(expr, values); err != nil {
+			return nil, false, err
+		}
+		if cyphertext.IsIdentifier(expr) {
+			if value, bound := e.boundValue(rowStatementContextOrBackground(values), expr); bound {
+				return runtimeRowResult(value, true, nil)
+			}
+			return nil, false, nil
+		}
+		if strings.HasPrefix(expr, "$") {
+			// A parameter absent from a planning scope is unresolved, not text.
+			// Actual materialization rejects this result at the checked boundary.
+			ctx := rowStatementContextOrBackground(values)
+			if value, ok := resolveValueReference(ctx, expr, parameterName); ok {
+				return runtimeRowResult(value, true, nil)
+			}
+			if value, ok := resolveValueReference(ctx, expr, parameterPath); ok {
+				return runtimeRowResult(value, true, nil)
+			}
+			return nil, false, nil
+		}
+	}
 	parent := rowStatementContextOrBackground(values)
 	state, _ := parent.Value(rowFallbackExpressionKey{}).(rowFallbackState)
 	if state.depth >= maxRowFallbackDepth {

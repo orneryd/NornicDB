@@ -8,6 +8,7 @@ import (
 	"time"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/fabric"
 )
 
 const (
@@ -100,7 +101,10 @@ func (l *transactionLifecycle) begin(
 	var beginErr error
 	var beginPanic any
 	if executor != nil {
-		beginPanic, beginErr = invokeTransactionBegin(txCtx, executor, metadata)
+		// Query cancellation belongs to txCtx. Participant completion must
+		// survive that cancellation so timeout/ROLLBACK can finish cleanup.
+		// The connection owner still cancels completion on disconnect/shutdown.
+		beginPanic, beginErr = invokeTransactionBegin(fabric.WithTransactionLifetime(txCtx, parent), executor, metadata)
 	}
 	if beginErr == nil && beginPanic == nil {
 		beginErr = txCtx.Err()

@@ -83,7 +83,7 @@ func TestCLISecretCredentialPrecedence(t *testing.T) {
 				output, _ := os.ReadFile(file.Name())
 				assertCLISecretAbsent(t, "credential-consumption startup", output)
 			}()
-			client := &http.Client{Timeout: time.Second}
+			client := &http.Client{Timeout: 15 * time.Second}
 			base := fmt.Sprintf("http://127.0.0.1:%d", port)
 			deadline := time.Now().Add(25 * time.Second)
 			for {

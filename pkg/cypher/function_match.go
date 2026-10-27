@@ -5,6 +5,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -71,7 +72,7 @@ func hasFuncStart(expr, funcName string) bool {
 	}
 	// Ensure next token is optional whitespace then '('
 	i := len(funcName)
-	for i < len(expr) && isSpaceByte(expr[i]) {
+	for i < len(expr) && cyphertext.IsWhitespaceAt(expr, i) {
 		i++
 	}
 	return i < len(expr) && expr[i] == '('
@@ -128,24 +129,6 @@ func extractFuncArgsLen(expr, funcName string) (string, int) {
 	return strings.TrimSpace(expr[idx+1 : len(expr)-1]), idx
 }
 
-// isFunctionCallWS is a whitespace-tolerant version of isFunctionCall.
-// Checks if an expression is a standalone function call with balanced parentheses,
-// allowing optional whitespace between function name and opening paren.
-//
-// Examples:
-//   - isFunctionCallWS("count(n)", "count")           → true
-//   - isFunctionCallWS("COUNT (n)", "count")          → true
-//   - isFunctionCallWS("count (n) + 1", "count")      → false (not standalone)
-//   - isFunctionCallWS("toLower(count (n))", "count") → false (nested)
-func isFunctionCallWS(expr, funcName string) bool {
-	if !matchFuncStart(expr, funcName) {
-		return false
-	}
-	// The call's closing parenthesis ends the expression.
-	open := strings.IndexByte(expr, '(')
-	return findMatchingParen(expr, open) == len(expr)-1
-}
-
 // extractFuncArgsWithSuffix extracts function arguments and any suffix after the function call.
 // This properly handles cases like "collect({...})[..10]" where there's a suffix after the function.
 //
@@ -168,13 +151,4 @@ func extractFuncArgsWithSuffix(expr, funcName string) (args string, suffix strin
 		return "", "", false
 	}
 	return strings.TrimSpace(expr[open+1 : close]), expr[close+1:], true
-}
-
-func isSpaceByte(b byte) bool {
-	switch b {
-	case ' ', '\t', '\n', '\r':
-		return true
-	default:
-		return false
-	}
 }

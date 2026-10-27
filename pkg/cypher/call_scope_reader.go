@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
@@ -19,7 +21,7 @@ type callSubqueryScopeClause struct {
 // text and bodyOffset let validation use the same parsed clause. Legacy
 // importing-WITH and implicit imports are resolved by their existing owners.
 func readCallSubqueryScope(ctx context.Context, source string) callSubqueryScopeClause {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if !syntax.Valid() {
 		return callSubqueryScopeClause{invalid: err != nil}
 	}
@@ -38,4 +40,38 @@ func readCallSubqueryScope(ctx context.Context, source string) callSubqueryScope
 		return callSubqueryScopeClause{bodyOffset: start, invalid: err != nil}
 	}
 	return callSubqueryScopeClause{invalid: err != nil}
+}
+
+// malformedCallScopeError refines a grammar rejection using CALL's canonical
+// scope reader. Only a parenthesized scope followed by a subquery body qualifies;
+// procedure arguments and quoted/comment text cannot supply a scope clause.
+func malformedCallScopeError(ctx context.Context, source string) error {
+	opts := defaultKeywordScanOpts()
+	opts.SkipParens, opts.SkipBrackets = false, false
+	for from := 0; from < len(source); {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		call := keywordIndexFrom(source, "CALL", from, opts)
+		if call < 0 {
+			return nil
+		}
+		from = call + len("CALL")
+		open, unfinished := cyphertext.GapEnd(source, from)
+		if unfinished >= 0 || open >= len(source) || source[open] != '(' {
+			continue
+		}
+		close := cyphertext.FindMatchingDelimiter(source, open, '(', ')', cyphertext.OpeningDelimiter)
+		if close < 0 {
+			continue
+		}
+		body, unfinished := cyphertext.GapEnd(source, close+1)
+		if unfinished >= 0 || body >= len(source) || source[body] != '{' {
+			continue
+		}
+		if _, err := callScopeClauseVariables(ctx, source[open+1:close]); err != nil {
+			return err
+		}
+	}
+	return nil
 }

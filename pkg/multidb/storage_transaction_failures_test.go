@@ -30,7 +30,7 @@ func TestTransactionQuotaAdmissionReadFailureRollsBack(t *testing.T) {
 			if at == "bytes" {
 				limits = &Limits{Storage: StorageLimits{MaxBytes: 10000}}
 			}
-			require.NoError(t, manager.SetDatabaseLimits(db, limits))
+			require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, limits))
 			tracker := engine.(*sizeTrackingEngine)
 			underlying := tracker.Engine
 			injected := errors.New("test storage read failed")
@@ -79,7 +79,7 @@ func TestTransactionQuotaNamespaceAndDatabaseLifecycle(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrCrossNamespaceTransaction)
 	require.True(t, nornicerrors.IsCommitRolledBack(err))
 	staged := stagedQuotaNode(t, manager, db, "dropped")
-	require.NoError(t, manager.DropDatabase(db))
+	require.NoError(t, manager.DropDatabase(t.Context(), db))
 	err = tracker.CommitTransaction(context.Background(), staged)
 	require.ErrorIs(t, err, ErrDatabaseNotFound)
 	require.False(t, staged.IsActive())

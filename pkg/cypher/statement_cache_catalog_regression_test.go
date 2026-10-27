@@ -13,23 +13,23 @@ func TestRule73SelectionForms(t *testing.T) {
 	for _, form := range []string{"canonical", "alias", "self_alias", "constituent", "colon_use", "explain", "profile", "call_use", "dynamic", "composite_root"} {
 		t.Run(form, func(t *testing.T) {
 			store := newTestMemoryEngine(t)
-			manager, err := multidb.NewDatabaseManager(store, nil)
+			manager, err := multidb.NewDatabaseManager(t.Context(), store, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer manager.Close()
-			if err := manager.CreateDatabase("gate_leaf"); err != nil {
+			if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "gate_leaf"}); err != nil {
 				t.Fatal(err)
 			}
 			aliasTarget := "gate_leaf"
 			if form == "self_alias" {
 				aliasTarget = "nornic"
 			}
-			if err := manager.CreateAlias("gate_alias", aliasTarget); err != nil {
+			if err := manager.CreateAlias(t.Context(), "gate_alias", aliasTarget); err != nil {
 				t.Fatal(err)
 			}
 			ref := multidb.ConstituentRef{Alias: "leaf", DatabaseName: "gate_leaf", Type: "local", AccessMode: "read_write"}
-			if err := manager.CreateCompositeDatabase("gate_comp", []multidb.ConstituentRef{ref}); err != nil {
+			if err := manager.CreateCompositeDatabase(t.Context(), "gate_comp", []multidb.ConstituentRef{ref}); err != nil {
 				t.Fatal(err)
 			}
 			rootName := "nornic"
@@ -48,19 +48,21 @@ func TestRule73SelectionForms(t *testing.T) {
 			const body = "MATCH (n:GateMatrix) RETURN count(n) AS c"
 			selection := "gate_leaf"
 			query := "USE gate_leaf " + body
-			remove := func() error { return manager.DropDatabase("gate_leaf") }
-			recreate := func() error { return manager.CreateDatabase("gate_leaf") }
+			remove := func() error { return manager.DropDatabase(t.Context(), "gate_leaf") }
+			recreate := func() error {
+				return manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "gate_leaf"})
+			}
 			switch form {
 			case "alias", "self_alias":
 				selection = "gate_alias"
 				query = "USE gate_alias " + body
-				remove = func() error { return manager.DropAlias("gate_alias") }
-				recreate = func() error { return manager.CreateAlias("gate_alias", aliasTarget) }
+				remove = func() error { return manager.DropAlias(t.Context(), "gate_alias") }
+				recreate = func() error { return manager.CreateAlias(t.Context(), "gate_alias", aliasTarget) }
 			case "constituent":
 				selection = "gate_comp.leaf"
 				query = "USE gate_comp.leaf " + body
-				remove = func() error { return manager.RemoveConstituent("gate_comp", "leaf") }
-				recreate = func() error { return manager.AddConstituent("gate_comp", ref) }
+				remove = func() error { return manager.RemoveConstituent(t.Context(), "gate_comp", "leaf") }
+				recreate = func() error { return manager.AddConstituent(t.Context(), "gate_comp", ref) }
 			case "colon_use":
 				query = ":USE gate_leaf\n" + body
 			case "explain":
@@ -70,18 +72,20 @@ func TestRule73SelectionForms(t *testing.T) {
 			case "call_use":
 				selection = "gate_comp.leaf"
 				query = "CALL { USE gate_comp.leaf " + body + " } RETURN c"
-				remove = func() error { return manager.RemoveConstituent("gate_comp", "leaf") }
-				recreate = func() error { return manager.AddConstituent("gate_comp", ref) }
+				remove = func() error { return manager.RemoveConstituent(t.Context(), "gate_comp", "leaf") }
+				recreate = func() error { return manager.AddConstituent(t.Context(), "gate_comp", ref) }
 			case "dynamic":
 				selection = "gate_comp.leaf"
 				query = "CALL { USE graph.byName($graph) " + body + " } RETURN c"
-				remove = func() error { return manager.RemoveConstituent("gate_comp", "leaf") }
-				recreate = func() error { return manager.AddConstituent("gate_comp", ref) }
+				remove = func() error { return manager.RemoveConstituent(t.Context(), "gate_comp", "leaf") }
+				recreate = func() error { return manager.AddConstituent(t.Context(), "gate_comp", ref) }
 			case "composite_root":
 				selection = "gate_comp"
 				query = "USE gate_comp RETURN 73 AS c"
-				remove = func() error { return manager.DropCompositeDatabase("gate_comp") }
-				recreate = func() error { return manager.CreateCompositeDatabase("gate_comp", []multidb.ConstituentRef{ref}) }
+				remove = func() error { return manager.DropCompositeDatabase(t.Context(), "gate_comp") }
+				recreate = func() error {
+					return manager.CreateCompositeDatabase(t.Context(), "gate_comp", []multidb.ConstituentRef{ref})
+				}
 			}
 			params := map[string]interface{}{"graph": "gate_comp.leaf"}
 			if _, err := root.Execute(context.Background(), query, params); err != nil {
@@ -94,7 +98,7 @@ func TestRule73SelectionForms(t *testing.T) {
 			// Warm only text accepted through the real public query first. Register a
 			// body-independent full text too, to attack exact/canonical/upper metadata.
 			if form != "colon_use" {
-				if err := root.validateSyntax(context.Background(), query, false); err != nil {
+				if err := root.validateSyntax(context.Background(), query, false, syntaxStatement); err != nil {
 					t.Fatal(err)
 				}
 				root.cachedUpperQuery(query)
@@ -134,15 +138,15 @@ func TestRule73ReferenceCycles64(t *testing.T) {
 	for _, kind := range []string{"database", "alias", "constituent", "composite"} {
 		t.Run(kind, func(t *testing.T) {
 			store := newTestMemoryEngine(t)
-			manager, err := multidb.NewDatabaseManager(store, nil)
+			manager, err := multidb.NewDatabaseManager(t.Context(), store, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer manager.Close()
-			if err := manager.CreateDatabase("gate_cycle_leaf"); err != nil {
+			if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "gate_cycle_leaf"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.CreateCompositeDatabase("gate_cycle_comp", nil); err != nil {
+			if err := manager.CreateCompositeDatabase(t.Context(), "gate_cycle_comp", nil); err != nil {
 				t.Fatal(err)
 			}
 			engine, err := manager.GetStorage("nornic")
@@ -159,15 +163,15 @@ func TestRule73ReferenceCycles64(t *testing.T) {
 				selection := fmt.Sprintf("gate_cycle_%d", i)
 				switch kind {
 				case "database":
-					err = manager.CreateDatabase(selection)
+					err = manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: selection})
 				case "alias":
-					err = manager.CreateAlias(selection, "gate_cycle_leaf")
+					err = manager.CreateAlias(t.Context(), selection, "gate_cycle_leaf")
 				case "constituent":
 					ref.Alias = selection
-					err = manager.AddConstituent("gate_cycle_comp", ref)
+					err = manager.AddConstituent(t.Context(), "gate_cycle_comp", ref)
 					selection = "gate_cycle_comp." + selection
 				case "composite":
-					err = manager.CreateCompositeDatabase(selection, []multidb.ConstituentRef{ref})
+					err = manager.CreateCompositeDatabase(t.Context(), selection, []multidb.ConstituentRef{ref})
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -179,13 +183,13 @@ func TestRule73ReferenceCycles64(t *testing.T) {
 				root.cachedUpperQuery(query)
 				switch kind {
 				case "database":
-					err = manager.DropDatabase(selection)
+					err = manager.DropDatabase(t.Context(), selection)
 				case "alias":
-					err = manager.DropAlias(selection)
+					err = manager.DropAlias(t.Context(), selection)
 				case "constituent":
-					err = manager.RemoveConstituent("gate_cycle_comp", ref.Alias)
+					err = manager.RemoveConstituent(t.Context(), "gate_cycle_comp", ref.Alias)
 				case "composite":
-					err = manager.DropCompositeDatabase(selection)
+					err = manager.DropCompositeDatabase(t.Context(), selection)
 				}
 				if err != nil {
 					t.Fatal(err)
@@ -220,13 +224,13 @@ func TestRule73ReferenceCycles64(t *testing.T) {
 
 func TestRule73FabricResultCacheRetarget(t *testing.T) {
 	store := newTestMemoryEngine(t)
-	manager, err := multidb.NewDatabaseManager(store, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer manager.Close()
 	for _, name := range []string{"gate_left", "gate_right"} {
-		if err := manager.CreateDatabase(name); err != nil {
+		if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 			t.Fatal(err)
 		}
 		engine, err := manager.GetStorage(name)
@@ -238,7 +242,7 @@ func TestRule73FabricResultCacheRetarget(t *testing.T) {
 		}
 	}
 	ref := multidb.ConstituentRef{Alias: "leaf", DatabaseName: "gate_left", Type: "local", AccessMode: "read_write"}
-	if err := manager.CreateCompositeDatabase("gate_results", []multidb.ConstituentRef{ref}); err != nil {
+	if err := manager.CreateCompositeDatabase(t.Context(), "gate_results", []multidb.ConstituentRef{ref}); err != nil {
 		t.Fatal(err)
 	}
 	engine, err := manager.GetStorage("nornic")
@@ -263,11 +267,11 @@ func TestRule73FabricResultCacheRetarget(t *testing.T) {
 	}
 	run("gate_left")
 	run("gate_left")
-	if err := manager.RemoveConstituent("gate_results", "leaf"); err != nil {
+	if err := manager.RemoveConstituent(t.Context(), "gate_results", "leaf"); err != nil {
 		t.Fatal(err)
 	}
 	ref.DatabaseName = "gate_right"
-	if err := manager.AddConstituent("gate_results", ref); err != nil {
+	if err := manager.AddConstituent(t.Context(), "gate_results", ref); err != nil {
 		t.Fatal(err)
 	}
 	run("gate_right")
@@ -275,7 +279,7 @@ func TestRule73FabricResultCacheRetarget(t *testing.T) {
 
 func TestRule73CatalogAddPreservesWarmOwner(t *testing.T) {
 	store := newTestMemoryEngine(t)
-	manager, err := multidb.NewDatabaseManager(store, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), store, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,8 +293,10 @@ func TestRule73CatalogAddPreservesWarmOwner(t *testing.T) {
 	if _, err := root.Execute(context.Background(), query, nil); err != nil {
 		t.Fatal(err)
 	}
-	events := []func() error{func() error { return manager.CreateDatabase("gate_added") }, func() error { return manager.CreateAlias("gate_added_alias", "gate_added") }, func() error { return manager.CreateCompositeDatabase("gate_added_comp", nil) }, func() error {
-		return manager.AddConstituent("gate_added_comp", multidb.ConstituentRef{Alias: "leaf", DatabaseName: "gate_added", Type: "local", AccessMode: "read_write"})
+	events := []func() error{func() error {
+		return manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "gate_added"})
+	}, func() error { return manager.CreateAlias(t.Context(), "gate_added_alias", "gate_added") }, func() error { return manager.CreateCompositeDatabase(t.Context(), "gate_added_comp", nil) }, func() error {
+		return manager.AddConstituent(t.Context(), "gate_added_comp", multidb.ConstituentRef{Alias: "leaf", DatabaseName: "gate_added", Type: "local", AccessMode: "read_write"})
 	}}
 	for _, event := range events {
 		if err := event(); err != nil {

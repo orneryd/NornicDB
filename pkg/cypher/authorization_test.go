@@ -51,7 +51,7 @@ func TestQueryPermissionRequirementsRecognizesCypherKeywords(t *testing.T) {
 		"keyword in comment":        {query: "// DELETE n\nMATCH (n) RETURN n"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			requirements := QueryPermissionRequirements(t.Context(), testCase.query)
+			requirements := QueryPermissionRequirements(t.Context(), testCase.query, RawSource)
 			require.Equal(t, !testCase.noRead, requirements.Read, testCase.query)
 			require.Equal(t, testCase.write, requirements.Write)
 			require.Equal(t, testCase.schema, requirements.Schema)

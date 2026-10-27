@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 )
@@ -316,11 +317,11 @@ var typeGrammarWords = map[string]bool{
 // keyword (x IS TYPED T, x IS NOT TYPED T), not a name (count(typed)).
 func typedFollowsIs(expression string, index int) bool {
 	end := index
-	for end > 0 && isASCIISpace(expression[end-1]) {
+	for end > 0 && cyphertext.IsWhitespaceAt(expression, end-1) {
 		end--
 	}
 	start := end
-	for start > 0 && isIdentByte(expression[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(expression, start-1) {
 		start--
 	}
 	word := expression[start:end]
@@ -347,7 +348,7 @@ func maskTypePredicateTypes(expression string) string {
 		case masked[index] == ':' && index+1 < len(masked) && masked[index+1] == ':':
 			start, position = index, index+2
 		case index+5 <= len(masked) && strings.EqualFold(string(masked[index:index+5]), "TYPED") &&
-			(index == 0 || !isIdentByte(masked[index-1])) && (index+5 == len(masked) || !isIdentByte(masked[index+5])) &&
+			(index == 0 || !cyphertext.NamePartAt(expression, index-1)) && (index+5 == len(masked) || !cyphertext.NamePartAt(expression, index+5)) &&
 			typedFollowsIs(expression, index):
 			start, position = index, index+5
 		}
@@ -373,12 +374,12 @@ func maskTypePredicateTypes(expression string) string {
 					continue
 				}
 			}
-			word, end, ok := scanIdentifierToken(expression, next)
-			if !ok || !typeGrammarWords[upperASCII(word)] {
+			word, ok := cyphertext.ScanIdentifier(expression, next)
+			if !ok || !typeGrammarWords[upperASCII(word.Value)] {
 				break
 			}
-			vector = strings.EqualFold(word, "VECTOR") || vector && !strings.EqualFold(word, "NOT")
-			position = end
+			vector = strings.EqualFold(word.Value, "VECTOR") || vector && !strings.EqualFold(word.Value, "NOT")
+			position = word.End
 		}
 		for blank := start; blank < position; blank++ {
 			masked[blank] = ' '

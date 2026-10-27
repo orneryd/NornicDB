@@ -20,6 +20,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
 	"time"
@@ -94,10 +95,14 @@ func (e *StorageExecutor) executeExplain(ctx context.Context, query string) (*Ex
 	if endsInFinish(ctx, query) {
 		query += " FINISH"
 	}
-	if err := validateQueryBodyComposition(ctx, query); err != nil {
-		return nil, err
+	// Catalog commands are validated by their typed command preparation; graph
+	// body composition has no clauses to validate in their native DDL syntax.
+	if !isMetadataCommand(query, metadataCatalogExecution) {
+		if err := validateQueryBodyComposition(ctx, query); err != nil {
+			return nil, err
+		}
 	}
-	columns, err := e.StatementResultColumnsContext(ctx, query)
+	columns, err := e.StatementResultColumnsContext(ctx, query, AcceptedSource)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +135,7 @@ func (e *StorageExecutor) executeProfile(ctx context.Context, query string) (*Ex
 	}
 	// Resolve participant signatures through the same owner as EXPLAIN and
 	// planning. Incomplete metadata cannot authorize execution effects.
-	columns, err := e.StatementResultColumnsContext(ctx, query)
+	columns, err := e.StatementResultColumnsContext(ctx, query, AcceptedSource)
 	if err != nil {
 		return nil, err
 	}
@@ -642,15 +647,8 @@ func extractLabelFromNodeSection(inside string) (string, bool) {
 }
 
 func isAllDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return false
-		}
-	}
-	return true
+	token, ok := cyphertext.ScanNumber(s, 0)
+	return ok && !token.Invalid && token.End == len(s) && token.Base == 10 && !token.Fraction && !token.Exponent && !token.Grouped && token.Suffix == 0
 }
 
 // analyzeLimitSkip analyzes LIMIT and SKIP clauses

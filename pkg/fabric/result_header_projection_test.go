@@ -102,7 +102,7 @@ func TestResultHeaderProjectionModifiersStayOnExecutionPath(t *testing.T) {
 
 // The existing execution double supplies pinned projection facts through the
 // same interface as the real Cypher owner. It does not parse query text.
-func (m *mockCypherExecutor) ResultProjection(ctx context.Context, query string, _ []string) resultmetadata.Projection {
+func (m *mockCypherExecutor) ResultProjection(ctx context.Context, query string, _ []string, stage SourceStage) resultmetadata.Projection {
 	return testHeaderProjection(query)
 }
 func (m *mockCypherExecutor) CachedResultColumns(_ context.Context, query string, _ []string) resultmetadata.Names {
@@ -112,14 +112,14 @@ func (m *mockCypherExecutor) CachedResultColumns(_ context.Context, query string
 	return testHeaderProjection(query).Names
 }
 
-func (s *slowBatchingCypherExecutor) ResultProjection(ctx context.Context, query string, _ []string) resultmetadata.Projection {
+func (s *slowBatchingCypherExecutor) ResultProjection(ctx context.Context, query string, _ []string, stage SourceStage) resultmetadata.Projection {
 	return testHeaderProjection(query)
 }
 func (s *slowBatchingCypherExecutor) CachedResultColumns(_ context.Context, query string, _ []string) resultmetadata.Names {
 	return testHeaderProjection(query).Names
 }
-func (c *callCountCypherExecutor) ResultProjection(ctx context.Context, query string, incoming []string) resultmetadata.Projection {
-	return c.mock.ResultProjection(ctx, query, incoming)
+func (c *callCountCypherExecutor) ResultProjection(ctx context.Context, query string, incoming []string, stage SourceStage) resultmetadata.Projection {
+	return c.mock.ResultProjection(ctx, query, incoming, stage)
 }
 func (c *callCountCypherExecutor) CachedResultColumns(ctx context.Context, query string, incoming []string) resultmetadata.Names {
 	return c.mock.CachedResultColumns(ctx, query, incoming)

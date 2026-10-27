@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"fmt"
 	"testing"
@@ -33,8 +35,8 @@ func TestMonster530YieldWhereStaticType(t *testing.T) {
 func TestShowDefaultAndHomeDatabase(t *testing.T) {
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	manager := newMockDatabaseManager(t)
-	require.NoError(t, manager.CreateDatabase("nornic"))
-	require.NoError(t, manager.CreateDatabase("tenant_a"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"}))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"}))
 	exec.SetDatabaseManager(manager)
 	ctx := context.Background()
 	for _, query := range []string{"SHOW DEFAULT DATABASE", "SHOW HOME DATABASE"} {

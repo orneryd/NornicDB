@@ -486,7 +486,7 @@ func (m *AuthMiddleware) writeLocalizedError(w http.ResponseWriter, r *http.Requ
 			match := m.localizer.Resolve("http", preferences...)
 			ctx = localization.WithPreferences(ctx, match.Tag)
 		}
-		if rendered, resolved, err := m.localizer.Render(ctx, message); err == nil {
+		if rendered, resolved, err := m.localizer.Render(ctx, localization.MessageRequest(message)); err == nil {
 			text = rendered
 			tag = resolved
 		}

@@ -3,7 +3,7 @@ package cypher
 
 import (
 	"context"
-	"regexp"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 )
@@ -19,21 +19,11 @@ import (
 //	    // handle error
 //	}
 //	// ast.Clauses contains structured representation
-type ASTBuilder struct {
-	// Precompiled patterns for performance
-	nodePattern     *regexp.Regexp
-	relationPattern *regexp.Regexp
-	propertyPattern *regexp.Regexp
-}
+type ASTBuilder struct{}
 
-// NewASTBuilder creates a new AST builder.
-func NewASTBuilder() *ASTBuilder {
-	return &ASTBuilder{
-		nodePattern:     regexp.MustCompile(`\((\w*)?(?::(\w+(?::\w+)*))?(?:\s*\{([^}]*)\})?\)`),
-		relationPattern: regexp.MustCompile(`-\[(\w*)?(?::(\w+))?\]->`),
-		propertyPattern: regexp.MustCompile(`(\w+)\s*:\s*([^,}]+)`),
-	}
-}
+// NewASTBuilder creates a new AST builder. Lexical extents come from cyphertext;
+// the builder retains its advisory pattern/clause structure.
+func NewASTBuilder() *ASTBuilder { return &ASTBuilder{} }
 
 // AST represents a complete parsed query.
 type AST struct {
@@ -295,18 +285,78 @@ type ASTCaseWhen struct {
 	Result    ASTExpression
 }
 
+// astTrim and astCommaViews retain exact accepted offsets; no substring lookup
+// is used to recover original spelling when equal expressions occur repeatedly.
+func astTrim(source *cyphertext.Source) *cyphertext.Source {
+	if source == nil {
+		return nil
+	}
+	start := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))
+	end := len(strings.TrimRightFunc(source.Text, cyphertext.IsWhitespace))
+	if end < start {
+		end = start
+	}
+	return source.Window(start, end)
+}
+
+func astRaw(source *cyphertext.Source) string {
+	if source == nil {
+		return ""
+	}
+	span, ok := source.OriginalSpan(cyphertext.Span{Start: 0, End: len(source.Text)}, cyphertext.SourceExtent)
+	if !ok {
+		return ""
+	}
+	return source.Original[span.Start:span.End]
+}
+
+func astCommaViews(source *cyphertext.Source) []*cyphertext.Source {
+	if source == nil {
+		return nil
+	}
+	var parts []*cyphertext.Source
+	for start := 0; ; {
+		comma := findTopLevelOperator(source.Text[start:], ",", false, true)
+		end := len(source.Text)
+		if comma >= 0 {
+			end = start + comma
+		}
+		parts = append(parts, astTrim(source.Window(start, end)))
+		if comma < 0 {
+			return parts
+		}
+		start = end + 1
+	}
+}
+
+func astWithoutComments(source *cyphertext.Source) *cyphertext.Source {
+	var edits []cyphertext.SourceEdit
+	text := stripCommentText(source.Text, &edits)
+	if len(edits) == 0 {
+		return source
+	}
+	return source.Rewrite(text, edits)
+}
+
 // Build parses a Cypher query into an AST.
 func (b *ASTBuilder) Build(cypher string) (*AST, error) {
+	source := cyphertext.NormalizeSource(cypher)
+	if source.Err != nil {
+		return nil, source.Err
+	}
 	ast := &AST{
 		RawQuery: cypher,
 		Clauses:  make([]ASTClause, 0),
 	}
 
+	// Preserve one accepted source and original spans while canonical trivia
+	// removal lets compound grammar phrases share their normal keyword owner.
+	source = astWithoutComments(source)
 	// Split into clauses
-	clauses := b.splitIntoClauses(cypher)
+	clauses := b.splitIntoClauses(source.Text)
 
 	for _, clauseInfo := range clauses {
-		clause := b.parseClause(context.Background(), clauseInfo.clauseType, clauseInfo.text, clauseInfo.startPos)
+		clause := b.parseClause(context.Background(), clauseInfo.clauseType, source.Window(clauseInfo.startPos, clauseInfo.startPos+len(clauseInfo.text)))
 		ast.Clauses = append(ast.Clauses, *clause)
 	}
 
@@ -361,8 +411,8 @@ func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
 	// Find all clause boundaries
 	type boundary struct {
 		pos        int
+		end        int
 		clauseType ASTClauseType
-		keyword    string
 	}
 	var boundaries []boundary
 
@@ -376,9 +426,9 @@ func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
 				break
 			}
 
-			// Skip CREATE and SET if they're part of "ON CREATE SET" or "ON MATCH SET"
+			// Skip action keywords within "ON CREATE SET" or "ON MATCH SET"
 			// These are MERGE clause modifiers, not standalone clauses
-			if kw.keyword == "CREATE" || kw.keyword == "SET" {
+			if kw.keyword == "CREATE" || kw.keyword == "MATCH" || kw.keyword == "SET" {
 				// Check if preceded by the keyword ON, not a name ending in on
 				if keywordsBefore(upper, absolutePos, "ON") >= 0 || keywordsBefore(upper, absolutePos, "ON", "CREATE") >= 0 || keywordsBefore(upper, absolutePos, "ON", "MATCH") >= 0 {
 					pos = absolutePos + len(kw.keyword)
@@ -389,7 +439,7 @@ func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
 			boundaries = append(boundaries, boundary{
 				pos:        absolutePos,
 				clauseType: kw.clauseType,
-				keyword:    kw.keyword,
+				end:        keywordEndAt(cypher, absolutePos, kw.keyword),
 			})
 			pos = absolutePos + len(kw.keyword)
 		}
@@ -413,7 +463,7 @@ func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
 		}
 		prev := filtered[len(filtered)-1]
 		// Skip if this boundary starts within the previous keyword
-		if b.pos < prev.pos+len(prev.keyword) {
+		if b.pos < prev.end {
 			continue
 		}
 		filtered = append(filtered, b)
@@ -438,108 +488,112 @@ func (b *ASTBuilder) splitIntoClauses(cypher string) []clauseInfo {
 }
 
 // parseClause parses a single clause into its structured form.
-func (b *ASTBuilder) parseClause(ctx context.Context, clauseType ASTClauseType, text string, startPos int) *ASTClause {
+func (b *ASTBuilder) parseClause(ctx context.Context, clauseType ASTClauseType, source *cyphertext.Source) *ASTClause {
+	text := source.Text
+	span, _ := source.OriginalSpan(cyphertext.Span{Start: 0, End: len(text)}, cyphertext.SourceExtent)
 	clause := &ASTClause{
 		Type:     clauseType,
-		RawText:  text,
-		StartPos: startPos,
-		EndPos:   startPos + len(text),
+		RawText:  astRaw(source),
+		StartPos: span.Start,
+		EndPos:   span.End,
 	}
 
 	switch clauseType {
 	case ASTClauseMatch, ASTClauseOptionalMatch:
-		clause.Match = b.parseMatch(text, clauseType == ASTClauseOptionalMatch)
+		clause.Match = b.parseMatch(source, clauseType == ASTClauseOptionalMatch)
 	case ASTClauseCreate:
-		clause.Create = b.parseCreate(text)
+		clause.Create = b.parseCreate(source)
 	case ASTClauseMerge:
-		clause.Merge = b.parseMerge(text)
+		clause.Merge = b.parseMerge(source)
 	case ASTClauseDelete, ASTClauseDetachDelete:
-		clause.Delete = b.parseDelete(text, clauseType == ASTClauseDetachDelete)
+		clause.Delete = b.parseDelete(source, clauseType == ASTClauseDetachDelete)
 	case ASTClauseSet:
-		clause.Set = b.parseSet(text)
+		clause.Set = b.parseSet(source)
 	case ASTClauseRemove:
-		clause.Remove = b.parseRemove(text)
+		clause.Remove = b.parseRemove(source)
 	case ASTClauseReturn:
-		clause.Return = b.parseReturn(ctx, text)
+		clause.Return = b.parseReturn(ctx, source)
 	case ASTClauseWith:
-		clause.With = b.parseWith(ctx, text)
+		clause.With = b.parseWith(ctx, source)
 	case ASTClauseWhere:
-		clause.Where = b.parseWhere(text)
+		clause.Where = b.parseWhere(source)
 	case ASTClauseUnwind:
-		clause.Unwind = b.parseUnwind(text)
+		clause.Unwind = b.parseUnwind(source)
 	case ASTClauseOrderBy:
-		clause.OrderBy = b.parseOrderBy(text)
+		clause.OrderBy = b.parseOrderBy(source)
 	case ASTClauseLimit:
-		clause.Limit = b.parseLimit(text)
+		clause.Limit = b.parseLimit(source)
 	case ASTClauseSkip:
-		clause.Skip = b.parseSkip(text)
+		clause.Skip = b.parseSkip(source)
 	case ASTClauseCall:
-		clause.Call = b.parseCall(text)
+		clause.Call = b.parseCall(source)
 	}
 
 	return clause
 }
 
 // parseMatch parses a MATCH clause.
-func (b *ASTBuilder) parseMatch(text string, optional bool) *ASTMatch {
+func (b *ASTBuilder) parseMatch(source *cyphertext.Source, optional bool) *ASTMatch {
+	text := source.Text
 	match := &ASTMatch{Optional: optional}
 
-	// Remove MATCH or OPTIONAL MATCH prefix
-	patternText := text
+	keyword := "MATCH"
 	if optional {
-		patternText = strings.TrimPrefix(upperASCII(text), "OPTIONAL MATCH")
-	} else {
-		patternText = strings.TrimPrefix(upperASCII(text), "MATCH")
+		keyword = "OPTIONAL MATCH"
 	}
-	patternText = strings.TrimSpace(text[len(text)-len(patternText):])
+	prefixEnd := keywordEndAt(text, 0, keyword)
+	match.Patterns = b.parsePatterns(astTrim(source.Window(prefixEnd, len(text))))
 
-	// Parse patterns
-	match.Patterns = b.parsePatterns(patternText)
 	return match
 }
 
 // parseCreate parses a CREATE clause.
-func (b *ASTBuilder) parseCreate(text string) *ASTCreate {
+func (b *ASTBuilder) parseCreate(source *cyphertext.Source) *ASTCreate {
+	text := source.Text
 	create := &ASTCreate{}
 	patternText := strings.TrimSpace(strings.TrimPrefix(upperASCII(text), "CREATE"))
 	patternText = strings.TrimSpace(text[len("CREATE"):])
-	create.Patterns = b.parsePatterns(patternText)
+	create.Patterns = b.parsePatterns(source.Window(len(text)-len(patternText), len(text)))
 	return create
 }
 
 // parseMerge parses a MERGE clause through the MERGE action parser
 // (splitMergeClauseActions): OnCreate and OnMatch hold the items of every
 // ON CREATE SET / ON MATCH SET clause, in order.
-func (b *ASTBuilder) parseMerge(text string) *ASTMerge {
+func (b *ASTBuilder) parseMerge(source *cyphertext.Source) *ASTMerge {
+	text := source.Text
 	merge := &ASTMerge{}
-	parts := splitMergeClauseActions(strings.TrimSpace(text[len("MERGE"):]))
-	if patterns := b.parsePatterns(parts.pattern); len(patterns) > 0 {
+	body := astTrim(source.Window(len("MERGE"), len(text)))
+	var spans mergeActionSpans
+	parts := splitMergeClauseActions(body.Text, &spans)
+	if patterns := b.parsePatterns(body.Window(spans.pattern.Start, spans.pattern.End)); len(patterns) > 0 {
 		merge.Pattern = patterns[0]
 	}
 	for index := 0; index < parts.onCreate.len(); index++ {
-		merge.OnCreate = append(merge.OnCreate, b.parseSetItems(parts.onCreate.assignments(index))...)
+		span := spans.onCreate.at(index)
+		merge.OnCreate = append(merge.OnCreate, b.parseSetItems(astTrim(body.Window(span.Start+len("SET"), span.End)))...)
 	}
 	for index := 0; index < parts.onMatch.len(); index++ {
-		merge.OnMatch = append(merge.OnMatch, b.parseSetItems(parts.onMatch.assignments(index))...)
+		span := spans.onMatch.at(index)
+		merge.OnMatch = append(merge.OnMatch, b.parseSetItems(astTrim(body.Window(span.Start+len("SET"), span.End)))...)
 	}
 	return merge
 }
 
 // parseDelete parses a DELETE clause.
-func (b *ASTBuilder) parseDelete(text string, detach bool) *ASTDelete {
+func (b *ASTBuilder) parseDelete(source *cyphertext.Source, detach bool) *ASTDelete {
+	text := source.Text
 	del := &ASTDelete{Detach: detach}
 
-	// Remove prefix
-	varText := text
+	keyword := "DELETE"
 	if detach {
-		varText = strings.TrimPrefix(upperASCII(text), "DETACH DELETE")
-	} else {
-		varText = strings.TrimPrefix(upperASCII(text), "DELETE")
+		keyword = "DETACH DELETE"
 	}
-	varText = strings.TrimSpace(text[len(text)-len(varText):])
+	prefixEnd := keywordEndAt(text, 0, keyword)
+	varText := strings.TrimSpace(text[prefixEnd:])
 
 	// Split by comma
-	vars := strings.Split(varText, ",")
+	vars := splitTopLevelComma(varText)
 	for _, v := range vars {
 		v = strings.TrimSpace(v)
 		if v != "" {
@@ -551,47 +605,48 @@ func (b *ASTBuilder) parseDelete(text string, detach bool) *ASTDelete {
 }
 
 // parseSet parses a SET clause.
-func (b *ASTBuilder) parseSet(text string) *ASTSet {
+func (b *ASTBuilder) parseSet(source *cyphertext.Source) *ASTSet {
+	text := source.Text
 	set := &ASTSet{}
 	itemsText := strings.TrimSpace(strings.TrimPrefix(upperASCII(text), "SET"))
 	itemsText = strings.TrimSpace(text[len("SET"):])
-	set.Items = b.parseSetItems(itemsText)
+	set.Items = b.parseSetItems(source.Window(len(text)-len(itemsText), len(text)))
 	return set
 }
 
 // parseSetItems parses SET assignments.
-func (b *ASTBuilder) parseSetItems(text string) []ASTSetItem {
+func (b *ASTBuilder) parseSetItems(source *cyphertext.Source) []ASTSetItem {
 	var items []ASTSetItem
 
 	// Split by comma (but not inside brackets/braces)
-	parts := splitSetAssignments(text)
+	parts := astCommaViews(source)
 
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
+	for _, partSource := range parts {
+		partSource = astTrim(partSource)
+		part := partSource.Text
 		if part == "" {
 			continue
 		}
 
-		item := ASTSetItem{RawValue: part}
+		item := ASTSetItem{RawValue: astRaw(partSource)}
 
 		// Parse n.prop = value or n = value or n += value
-		if eqIdx := strings.Index(part, "="); eqIdx > 0 {
+		if eqIdx := findTopLevelOperator(part, "=", false, true); eqIdx > 0 {
 			left := strings.TrimSpace(part[:eqIdx])
-			right := strings.TrimSpace(part[eqIdx+1:])
 
 			// Handle += operator
 			left = strings.TrimSuffix(left, "+")
 
-			// Parse left side (variable.property or just variable)
-			if dotIdx := strings.LastIndex(left, "."); dotIdx > 0 {
-				item.Variable = strings.TrimSpace(left[:dotIdx])
-				item.Property = strings.TrimSpace(left[dotIdx+1:])
-			} else {
-				item.Variable = left
+			// The contextual SET target owner supplies the postfix boundary
+			// and decoded property; quoted punctuation is part of the name.
+			item.Variable, item.Property, _ = parseSetAssignmentTarget(left)
+			if name, ok := cyphertext.ScanIdentifier(item.Variable, 0); ok && name.End == len(item.Variable) {
+				item.Variable = name.Value
 			}
 
-			item.Value = b.parseExpression(right)
-			item.RawValue = right
+			rightSource := astTrim(partSource.Window(eqIdx+1, len(part)))
+			item.Value = b.parseExpression(rightSource)
+			item.RawValue = astRaw(rightSource)
 		}
 
 		items = append(items, item)
@@ -601,13 +656,15 @@ func (b *ASTBuilder) parseSetItems(text string) []ASTSetItem {
 }
 
 // parseRemove parses a REMOVE clause.
-func (b *ASTBuilder) parseRemove(text string) *ASTRemove {
+func (b *ASTBuilder) parseRemove(source *cyphertext.Source) *ASTRemove {
+	text := source.Text
 	rem := &ASTRemove{}
 	itemsText := strings.TrimSpace(text[len("REMOVE"):])
 
-	parts := strings.Split(itemsText, ",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
+	parts := astCommaViews(source.Window(len(text)-len(itemsText), len(text)))
+	for _, partSource := range parts {
+		partSource = astTrim(partSource)
+		part := partSource.Text
 		if part == "" {
 			continue
 		}
@@ -615,18 +672,19 @@ func (b *ASTBuilder) parseRemove(text string) *ASTRemove {
 		item := ASTRemoveItem{}
 
 		// Check for label removal (n:Label) or property removal (n.prop)
-		if colonIdx := indexByteOutsideBackticks(part, ':'); colonIdx > 0 {
+		if colonIdx := findTopLevelOperator(part, ":", false, true); colonIdx > 0 {
 			item.Variable = strings.TrimSpace(part[:colonIdx])
 			labels := labelChainNames(part[colonIdx+1:])
 			for _, l := range labels {
-				l = strings.TrimSpace(l)
 				if l != "" {
 					item.Labels = append(item.Labels, l)
 				}
 			}
-		} else if dotIdx := strings.Index(part, "."); dotIdx > 0 {
-			item.Variable = strings.TrimSpace(part[:dotIdx])
-			item.Property = strings.TrimSpace(part[dotIdx+1:])
+		} else if variable, property, hasProperty := parseSetAssignmentTarget(part); hasProperty {
+			item.Variable, item.Property = variable, property
+		}
+		if name, ok := cyphertext.ScanIdentifier(item.Variable, 0); ok && name.End == len(item.Variable) {
+			item.Variable = name.Value
 		}
 
 		rem.Items = append(rem.Items, item)
@@ -636,7 +694,8 @@ func (b *ASTBuilder) parseRemove(text string) *ASTRemove {
 }
 
 // parseReturn parses a RETURN clause.
-func (b *ASTBuilder) parseReturn(ctx context.Context, text string) *ASTReturn {
+func (b *ASTBuilder) parseReturn(ctx context.Context, source *cyphertext.Source) *ASTReturn {
+	text := source.Text
 	ret := &ASTReturn{}
 
 	itemsText := strings.TrimSpace(text[len("RETURN"):])
@@ -645,22 +704,26 @@ func (b *ASTBuilder) parseReturn(ctx context.Context, text string) *ASTReturn {
 	itemsText, ret.Distinct = cutDistinct(itemsText)
 
 	// Parse items
-	parts := splitOutsideBrackets(itemsText, ',')
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
+	parts := astCommaViews(source.Window(len(text)-len(itemsText), len(text)))
+	for _, partSource := range parts {
+		partSource = astTrim(partSource)
+		part := partSource.Text
 		if part == "" {
 			continue
 		}
 
-		item := ASTReturnItem{RawText: part}
+		item := ASTReturnItem{RawText: astRaw(partSource)}
 
 		// Check for AS alias
-		if asIdx := projectionAliasIndex(ctx, part); asIdx > 0 {
-			item.Alias = strings.TrimSpace(part[asIdx+len("AS"):])
-			part = strings.TrimSpace(part[:asIdx])
+		projectionSource := cyphertext.NewSource(ctx, "RETURN "+part, cyphertext.AcceptedSource)
+		itemSource := readProjectionItemSource(cyphertext.WithSourceView(ctx, projectionSource), part, projectionAdmitted)
+		if itemSource.as > 0 {
+			item.Alias = itemSource.alias
+			partSource = astTrim(partSource.Window(0, itemSource.as))
+			part = partSource.Text
 		}
 
-		item.Expression = b.parseExpression(part)
+		item.Expression = b.parseExpression(partSource)
 		ret.Items = append(ret.Items, item)
 	}
 
@@ -668,7 +731,8 @@ func (b *ASTBuilder) parseReturn(ctx context.Context, text string) *ASTReturn {
 }
 
 // parseWith parses a WITH clause.
-func (b *ASTBuilder) parseWith(ctx context.Context, text string) *ASTWith {
+func (b *ASTBuilder) parseWith(ctx context.Context, source *cyphertext.Source) *ASTWith {
+	text := source.Text
 	with := &ASTWith{}
 
 	itemsText := strings.TrimSpace(text[len("WITH"):])
@@ -677,22 +741,26 @@ func (b *ASTBuilder) parseWith(ctx context.Context, text string) *ASTWith {
 	itemsText, with.Distinct = cutDistinct(itemsText)
 
 	// Parse items (same as RETURN)
-	parts := splitOutsideBrackets(itemsText, ',')
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
+	parts := astCommaViews(source.Window(len(text)-len(itemsText), len(text)))
+	for _, partSource := range parts {
+		partSource = astTrim(partSource)
+		part := partSource.Text
 		if part == "" {
 			continue
 		}
 
-		item := ASTReturnItem{RawText: part}
+		item := ASTReturnItem{RawText: astRaw(partSource)}
 
 		// Check for AS alias
-		if asIdx := projectionAliasIndex(ctx, part); asIdx > 0 {
-			item.Alias = strings.TrimSpace(part[asIdx+len("AS"):])
-			part = strings.TrimSpace(part[:asIdx])
+		projectionSource := cyphertext.NewSource(ctx, "RETURN "+part, cyphertext.AcceptedSource)
+		itemSource := readProjectionItemSource(cyphertext.WithSourceView(ctx, projectionSource), part, projectionAdmitted)
+		if itemSource.as > 0 {
+			item.Alias = itemSource.alias
+			partSource = astTrim(partSource.Window(0, itemSource.as))
+			part = partSource.Text
 		}
 
-		item.Expression = b.parseExpression(part)
+		item.Expression = b.parseExpression(partSource)
 		with.Items = append(with.Items, item)
 	}
 
@@ -700,54 +768,61 @@ func (b *ASTBuilder) parseWith(ctx context.Context, text string) *ASTWith {
 }
 
 // parseWhere parses a WHERE clause.
-func (b *ASTBuilder) parseWhere(text string) *ASTWhere {
+func (b *ASTBuilder) parseWhere(source *cyphertext.Source) *ASTWhere {
+	text := source.Text
 	condText := strings.TrimSpace(text[len("WHERE"):])
 	return &ASTWhere{
-		Condition: b.parseExpression(condText),
-		RawText:   condText,
+		Condition: b.parseExpression(source.Window(len(text)-len(condText), len(text))),
+		RawText:   astRaw(source.Window(len(text)-len(condText), len(text))),
 	}
 }
 
 // parseUnwind parses an UNWIND clause.
-func (b *ASTBuilder) parseUnwind(text string) *ASTUnwind {
+func (b *ASTBuilder) parseUnwind(source *cyphertext.Source) *ASTUnwind {
 	unwind := &ASTUnwind{}
-	content := strings.TrimSpace(text[len("UNWIND"):])
+	body := astTrim(source.Window(len("UNWIND"), len(source.Text)))
+	content := body.Text
 
-	// Find AS
-	upper := upperASCII(content)
-	if asIdx := strings.Index(upper, " AS "); asIdx > 0 {
-		unwind.RawExpr = strings.TrimSpace(content[:asIdx])
-		unwind.Variable = strings.TrimSpace(content[asIdx+4:])
-		unwind.Expression = b.parseExpression(unwind.RawExpr)
+	if asIndex := topLevelKeywordIndex(content, "AS"); asIndex > 0 {
+		// Map through the AS boundary before trimming accepted trivia: a
+		// normalized comment may occupy that trivia in the original source.
+		expressionSource := body.Window(0, asIndex)
+		unwind.RawExpr = strings.TrimSpace(astRaw(expressionSource))
+		unwind.Variable, _ = isOneSymbolicName(StripComments(content[asIndex+len("AS"):]))
+		unwind.Expression = b.parseExpression(astTrim(expressionSource))
 	}
 
 	return unwind
 }
 
 // parseOrderBy parses an ORDER BY clause.
-func (b *ASTBuilder) parseOrderBy(text string) *ASTOrderBy {
+func (b *ASTBuilder) parseOrderBy(source *cyphertext.Source) *ASTOrderBy {
+	text := source.Text
 	orderBy := &ASTOrderBy{}
-	content := strings.TrimSpace(text[len("ORDER BY"):])
+	content := strings.TrimSpace(text[keywordEndAt(text, 0, "ORDER BY"):])
 
-	parts := splitOutsideBrackets(content, ',')
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
+	parts := astCommaViews(source.Window(len(text)-len(content), len(text)))
+	for _, partSource := range parts {
+		partSource = astTrim(partSource)
+		part := partSource.Text
 		if part == "" {
 			continue
 		}
 
-		item := ASTOrderItem{RawText: part}
+		item := ASTOrderItem{RawText: astRaw(partSource)}
 
 		// Check for DESC/ASC
 		upper := upperASCII(part)
 		if strings.HasSuffix(upper, " DESC") {
 			item.Descending = true
-			part = strings.TrimSpace(part[:len(part)-5])
+			partSource = astTrim(partSource.Window(0, len(part)-5))
+			part = partSource.Text
 		} else if strings.HasSuffix(upper, " ASC") {
-			part = strings.TrimSpace(part[:len(part)-4])
+			partSource = astTrim(partSource.Window(0, len(part)-4))
+			part = partSource.Text
 		}
 
-		item.Expression = b.parseExpression(part)
+		item.Expression = b.parseExpression(partSource)
 		orderBy.Items = append(orderBy.Items, item)
 	}
 
@@ -755,7 +830,8 @@ func (b *ASTBuilder) parseOrderBy(text string) *ASTOrderBy {
 }
 
 // parseLimit parses a LIMIT clause.
-func (b *ASTBuilder) parseLimit(text string) *int64 {
+func (b *ASTBuilder) parseLimit(source *cyphertext.Source) *int64 {
+	text := source.Text
 	content := strings.TrimSpace(text[len("LIMIT"):])
 	if val, err := strconv.ParseInt(content, 10, 64); err == nil {
 		return &val
@@ -764,7 +840,8 @@ func (b *ASTBuilder) parseLimit(text string) *int64 {
 }
 
 // parseSkip parses a SKIP clause.
-func (b *ASTBuilder) parseSkip(text string) *int64 {
+func (b *ASTBuilder) parseSkip(source *cyphertext.Source) *int64 {
+	text := source.Text
 	content := strings.TrimSpace(text[len("SKIP"):])
 	if val, err := strconv.ParseInt(content, 10, 64); err == nil {
 		return &val
@@ -773,24 +850,36 @@ func (b *ASTBuilder) parseSkip(text string) *int64 {
 }
 
 // parseCall parses a CALL clause.
-func (b *ASTBuilder) parseCall(text string) *ASTCall {
+func (b *ASTBuilder) parseCall(source *cyphertext.Source) *ASTCall {
+	text := source.Text
 	call := &ASTCall{}
 	content := strings.TrimSpace(text[len("CALL"):])
 
 	// Find procedure name and arguments
-	if parenIdx := strings.Index(content, "("); parenIdx > 0 {
+	parenIdx := -1
+	for index := 0; index < len(content); index++ {
+		if end, opaque := cyphertext.SkipToken(content, index); opaque {
+			index = end - 1
+			continue
+		}
+		if content[index] == '(' {
+			parenIdx = index
+			break
+		}
+	}
+	if parenIdx > 0 {
 		call.Procedure = strings.TrimSpace(content[:parenIdx])
 
 		// Find closing paren
-		closeIdx := strings.LastIndex(content, ")")
+		closeIdx := cyphertext.FindMatchingDelimiter(content, parenIdx, '(', ')', cyphertext.OpeningDelimiter)
 		if closeIdx > parenIdx {
-			call.RawArgs = content[parenIdx+1 : closeIdx]
+			call.RawArgs = astRaw(source.Window(len(text)-len(content)+parenIdx+1, len(text)-len(content)+closeIdx))
 
 			// Parse YIELD if present
 			rest := strings.TrimSpace(content[closeIdx+1:])
 			if strings.HasPrefix(upperASCII(rest), "YIELD") {
 				yieldContent := strings.TrimSpace(rest[5:])
-				yields := strings.Split(yieldContent, ",")
+				yields := splitTopLevelComma(yieldContent)
 				for _, y := range yields {
 					y = strings.TrimSpace(y)
 					if y != "" {
@@ -807,55 +896,83 @@ func (b *ASTBuilder) parseCall(text string) *ASTCall {
 }
 
 // parsePatterns parses pattern text into ASTPattern structs.
-func (b *ASTBuilder) parsePatterns(text string) []ASTPattern {
+func (b *ASTBuilder) parsePatterns(source *cyphertext.Source) []ASTPattern {
 	var patterns []ASTPattern
 
 	// Split by top-level commas
-	parts := splitOutsideBrackets(text, ',')
+	parts := astCommaViews(source)
 
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
+	for _, partSource := range parts {
+		partSource = astTrim(partSource)
+		part := partSource.Text
 		if part == "" {
 			continue
 		}
 
-		pattern := ASTPattern{RawText: part}
+		pattern := ASTPattern{RawText: astRaw(partSource)}
 
-		// Find all nodes in pattern
-		for _, match := range b.nodePattern.FindAllStringSubmatch(part, -1) {
-			node := ASTNode{
-				Properties: make(map[string]ASTExpression),
+		for index := 0; index < len(part); {
+			if end, opaque := cyphertext.SkipToken(part, index); opaque {
+				index = end
+				continue
 			}
-			if len(match) > 1 {
-				node.Variable = match[1]
+			opener := part[index]
+			if opener != '(' && opener != '[' {
+				index++
+				continue
 			}
-			if len(match) > 2 && match[2] != "" {
-				node.Labels = strings.Split(match[2], ":")
+			closer := byte(')')
+			if opener == '[' {
+				closer = ']'
 			}
-			if len(match) > 3 && match[3] != "" {
-				node.RawProps = match[3]
-				// Parse properties
-				for _, propMatch := range b.propertyPattern.FindAllStringSubmatch(match[3], -1) {
-					if len(propMatch) > 2 {
-						node.Properties[propMatch[1]] = b.parseExpression(propMatch[2])
+			end := cyphertext.FindMatchingDelimiter(part, index, rune(opener), rune(closer), cyphertext.OpeningDelimiter)
+			if end < 0 {
+				break
+			}
+			variable, labels, properties, ok := b.patternFields(partSource.Window(index+1, end))
+			if ok && opener == '(' {
+				node := ASTNode{Variable: variable, Labels: labels, Properties: map[string]ASTExpression{}, RawProps: astRaw(properties)}
+				for _, fieldSource := range astCommaViews(properties) {
+					fieldSource = astTrim(fieldSource)
+					field := fieldSource.Text
+					name, present := cyphertext.ScanIdentifier(field, 0)
+					if !present {
+						continue
+					}
+					colon, _ := cyphertext.GapEnd(field, name.End)
+					if colon < len(field) && field[colon] == ':' {
+						node.Properties[name.Value] = b.parseExpression(fieldSource.Window(colon+1, len(field)))
 					}
 				}
+				pattern.Nodes = append(pattern.Nodes, node)
+			} else if ok && opener == '[' && len(labels) <= 1 && (properties == nil || properties.Text == "") {
+				open, close := readRelationshipBracket(part, index, requireClosedRelationship)
+				left := len(strings.TrimRightFunc(part[:index], cyphertext.IsWhitespace)) - 1
+				right, unclosed := cyphertext.GapEnd(part, end+1)
+				if open == index && close == end && left >= 0 && part[left] == '-' && unclosed < 0 && right < len(part) && part[right] == '-' {
+					start, finish := left, right+1
+					if start > 0 && part[start-1] == '<' {
+						start--
+					}
+					if finish < len(part) && part[finish] == '>' {
+						finish++
+					}
+					arrowDirection, _, _ := relationshipArrows(part[start:finish])
+					direction := EdgeBoth
+					switch arrowDirection {
+					case "incoming":
+						direction = EdgeIncoming
+					case "outgoing":
+						direction = EdgeOutgoing
+					}
+					relationship := ASTRelationship{Variable: variable, Direction: direction}
+					if len(labels) == 1 {
+						relationship.Type = labels[0]
+					}
+					pattern.Relationships = append(pattern.Relationships, relationship)
+				}
 			}
-			pattern.Nodes = append(pattern.Nodes, node)
-		}
-
-		// Find relationships
-		for _, match := range b.relationPattern.FindAllStringSubmatch(part, -1) {
-			rel := ASTRelationship{
-				Direction: EdgeOutgoing, // Default for ->
-			}
-			if len(match) > 1 {
-				rel.Variable = match[1]
-			}
-			if len(match) > 2 {
-				rel.Type = match[2]
-			}
-			pattern.Relationships = append(pattern.Relationships, rel)
+			index = end + 1
 		}
 
 		patterns = append(patterns, pattern)
@@ -864,24 +981,63 @@ func (b *ASTBuilder) parsePatterns(text string) []ASTPattern {
 	return patterns
 }
 
-// parseExpression parses an expression string.
-func (b *ASTBuilder) parseExpression(text string) ASTExpression {
-	text = strings.TrimSpace(text)
+// patternFields reads the builder's narrow node/relationship shape, delegating
+// all names, trivia and property-map extents to the lexical foundation.
+func (b *ASTBuilder) patternFields(source *cyphertext.Source) (variable string, labels []string, properties *cyphertext.Source, ok bool) {
+	text := source.Text
+	index, unclosed := cyphertext.GapEnd(text, 0)
+	if unclosed >= 0 {
+		return
+	}
+	if name, present := cyphertext.ScanIdentifier(text, index); present {
+		variable, index = name.Value, name.End
+	}
+	for {
+		index, unclosed = cyphertext.GapEnd(text, index)
+		if unclosed >= 0 {
+			return
+		}
+		if index >= len(text) || text[index] != ':' {
+			break
+		}
+		index, unclosed = cyphertext.GapEnd(text, index+1)
+		name, present := cyphertext.ScanIdentifier(text, index)
+		if unclosed >= 0 || !present {
+			return
+		}
+		labels, index = append(labels, name.Value), name.End
+	}
+	if index < len(text) && text[index] == '{' {
+		end := cyphertext.FindMatchingDelimiter(text, index, '{', '}', cyphertext.OpeningDelimiter)
+		if end < 0 {
+			return
+		}
+		properties, index = source.Window(index+1, end), end+1
+		index, unclosed = cyphertext.GapEnd(text, index)
+	}
+	ok = unclosed < 0 && index == len(text)
+	return
+}
 
-	expr := ASTExpression{RawText: text}
+// parseExpression parses an expression string.
+func (b *ASTBuilder) parseExpression(source *cyphertext.Source) ASTExpression {
+	text := source.Text
+	source = astTrim(source)
+	expr := ASTExpression{RawText: astRaw(source)}
+	source = astTrim(astWithoutComments(source))
+	text = source.Text
 
 	// Parameter ($name)
 	if strings.HasPrefix(text, "$") {
 		expr.Type = ASTExprParameter
-		expr.Parameter = text[1:]
+		expr.Parameter = symbolicNameValue(text[1:])
 		return expr
 	}
 
 	// String literal
-	if (strings.HasPrefix(text, "'") && strings.HasSuffix(text, "'")) ||
-		(strings.HasPrefix(text, "\"") && strings.HasSuffix(text, "\"")) {
+	if value, quoted := cyphertext.DecodeString(text, cyphertext.AcceptedSource); quoted {
 		expr.Type = ASTExprLiteral
-		expr.Literal = text[1 : len(text)-1]
+		expr.Literal = value
 		return expr
 	}
 
@@ -918,11 +1074,11 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 	// List literal
 	if isListLiteral(text) {
 		expr.Type = ASTExprList
-		inner := text[1 : len(text)-1]
-		parts := splitOutsideBrackets(inner, ',')
+		inner := source.Window(1, len(text)-1)
+		parts := astCommaViews(inner)
 		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p != "" {
+			p = astTrim(p)
+			if p.Text != "" {
 				expr.List = append(expr.List, b.parseExpression(p))
 			}
 		}
@@ -933,31 +1089,34 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 	if strings.HasPrefix(text, "{") && strings.HasSuffix(text, "}") {
 		expr.Type = ASTExprMap
 		expr.Map = make(map[string]ASTExpression)
-		inner := strings.TrimSpace(text[1 : len(text)-1])
-		if inner == "" {
+		inner := astTrim(source.Window(1, len(text)-1))
+		if inner.Text == "" {
 			return expr
 		}
-		parts := splitOutsideBrackets(inner, ',')
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
+		parts := astCommaViews(inner)
+		for _, partSource := range parts {
+			partSource = astTrim(partSource)
+			part := partSource.Text
 			if part == "" {
 				continue
 			}
 			if colonIdx := findTopLevelMapKeyValueSeparator(part); colonIdx > 0 {
 				key := normalizePropertyKey(strings.TrimSpace(part[:colonIdx]))
-				value := strings.TrimSpace(part[colonIdx+1:])
-				expr.Map[key] = b.parseExpression(value)
+				expr.Map[key] = b.parseExpression(partSource.Window(colonIdx+1, len(part)))
 			}
 		}
 		return expr
 	}
 
 	// Property access (n.prop)
-	if dotIdx := strings.Index(text, "."); dotIdx > 0 && !strings.Contains(text, "(") {
+	if variable, property, ok := splitPostfixPropertyAccess(text); ok {
 		expr.Type = ASTExprProperty
+		if decoded, named := isOneSymbolicName(variable); named {
+			variable = decoded
+		}
 		expr.Property = &ASTPropertyAccess{
-			Variable: text[:dotIdx],
-			Property: text[dotIdx+1:],
+			Variable: variable,
+			Property: property,
 		}
 		return expr
 	}
@@ -975,10 +1134,10 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 			// Check for DISTINCT
 			argsText, fc.Distinct = cutDistinctArgument(argsText)
 
-			args := splitOutsideBrackets(argsText, ',')
+			args := astCommaViews(source.Window(closeParen-len(argsText), closeParen))
 			for _, arg := range args {
-				arg = strings.TrimSpace(arg)
-				if arg != "" && arg != "*" {
+				arg = astTrim(arg)
+				if arg.Text != "" && arg.Text != "*" {
 					fc.Arguments = append(fc.Arguments, b.parseExpression(arg))
 				}
 			}
@@ -991,18 +1150,10 @@ func (b *ASTBuilder) parseExpression(text string) ASTExpression {
 	// Default: treat as variable
 	expr.Type = ASTExprVariable
 	expr.Variable = text
+	if name, ok := isOneSymbolicName(text); ok {
+		expr.Variable = name
+	}
 	return expr
-}
-
-// splitOutsideBrackets splits string by delimiter, ignoring delimiters inside brackets.
-func splitOutsideBrackets(s string, delim rune) []string {
-	if delim == ',' {
-		return splitTopLevelComma(s)
-	}
-	if index := findTopLevelOperator(s, string(delim), false, true); index >= 0 {
-		return []string{s[:index], s[index+1:]}
-	}
-	return []string{s}
 }
 
 // determineReadOnly checks if the AST represents a read-only query.

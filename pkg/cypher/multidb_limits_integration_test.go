@@ -15,11 +15,11 @@ import (
 func TestDatabaseManagerStorageExposesQueryLimitsToExecutor(t *testing.T) {
 	inner := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = inner.Close() })
-	manager, err := multidb.NewDatabaseManager(inner, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
 
-	require.NoError(t, manager.SetDatabaseLimits("nornic", &multidb.Limits{
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "nornic", &multidb.Limits{
 		Query: multidb.QueryLimits{MaxResults: 1},
 		Rate:  multidb.RateLimits{MaxQueriesPerSecond: 1},
 	}))

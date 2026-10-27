@@ -86,7 +86,7 @@ func TestCompositeExplicitTx_FailureRollsBackRemoteParticipant(t *testing.T) {
 				_, port := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "remote"))
 				runBoltQueryAndCollectRecords(t, openBoltTestConn(t, port), "CREATE CONSTRAINT rk_u FOR (u:U) REQUIRE u.k IS UNIQUE")
 
-				mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
+				mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
 					DefaultDatabase: "nornic",
 					SystemDatabase:  "system",
 					RemoteEngineFactory: func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {
@@ -95,7 +95,7 @@ func TestCompositeExplicitTx_FailureRollsBackRemoteParticipant(t *testing.T) {
 				})
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = mgr.Close() })
-				require.NoError(t, mgr.CreateCompositeDatabase("cmp_rk", []multidb.ConstituentRef{
+				require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp_rk", []multidb.ConstituentRef{
 					{Alias: "r", DatabaseName: "remote", Type: "remote", AccessMode: "read_write", URI: fmt.Sprintf("bolt://127.0.0.1:%d", port), AuthMode: "oidc_forwarding"},
 				}))
 				cmpStore, err := mgr.GetStorageWithAuth("cmp_rk", "Bearer remote-token")
@@ -259,7 +259,7 @@ func TestCompositeExplicitTx_FailureDoesNotWaitOnUnresponsiveRemote(t *testing.T
 
 			_, remotePort := startBoltIntegrationServerWithExplicitTx(t, storage.NewNamespacedEngine(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), "remote"))
 			proxy, port := startStallingProxy(t, remotePort)
-			mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
+			mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), &multidb.Config{
 				DefaultDatabase: "nornic",
 				SystemDatabase:  "system",
 				RemoteEngineFactory: func(ref multidb.ConstituentRef, authToken string) (storage.Engine, error) {
@@ -268,12 +268,12 @@ func TestCompositeExplicitTx_FailureDoesNotWaitOnUnresponsiveRemote(t *testing.T
 			})
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = mgr.Close() })
-			require.NoError(t, mgr.CreateDatabase("st_local"))
+			require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "st_local"}))
 			local, err := mgr.GetStorage("st_local")
 			require.NoError(t, err)
 			_, err = cypher.NewStorageExecutor(local).Execute(ctx, "CREATE CONSTRAINT st_u FOR (u:U) REQUIRE u.k IS UNIQUE", nil)
 			require.NoError(t, err)
-			require.NoError(t, mgr.CreateCompositeDatabase("cmp_st", []multidb.ConstituentRef{
+			require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp_st", []multidb.ConstituentRef{
 				{Alias: "l", DatabaseName: "st_local", Type: "local", AccessMode: "read_write"},
 				{Alias: "r", DatabaseName: "remote", Type: "remote", AccessMode: "read_write", URI: fmt.Sprintf("bolt://127.0.0.1:%d", port), AuthMode: "oidc_forwarding"},
 			}))

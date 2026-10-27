@@ -193,11 +193,11 @@ func TestExecutionDeterminismPureParameterizedCacheHit(t *testing.T) {
 }
 
 func TestExecutionDeterminismFabricEmbeddedDeadline(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, manager.Close()) })
-	require.NoError(t, manager.CreateDatabase("determinism_local"))
-	require.NoError(t, manager.CreateCompositeDatabase("determinism_composite", []multidb.ConstituentRef{
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "determinism_local"}))
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "determinism_composite", []multidb.ConstituentRef{
 		{Alias: "local", DatabaseName: "determinism_local", Type: "local", AccessMode: "read_write"},
 	}))
 	store, err := manager.GetStorage(manager.DefaultDatabaseName())

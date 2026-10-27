@@ -45,6 +45,7 @@ func testHeimdallPluginStartup(t *testing.T, failStart bool) {
 	source := fmt.Sprintf(`package main
 import (
  "fmt"
+ "strings"
  "github.com/orneryd/nornicdb/pkg/heimdall"
  watcher "github.com/orneryd/nornicdb/plugins/heimdall"
 )
@@ -61,7 +62,7 @@ func (p *testPlugin) Actions() map[string]heimdall.ActionFunc {
  return map[string]heimdall.ActionFunc{"probe":{External:true, Handler:func(ctx heimdall.ActionContext)(*heimdall.ActionResult,error){
  inference,err:=p.ctx.Heimdall.SendRawPrompt(ctx,"no model should be loaded")
  if err!=nil { return nil,err }
- return &heimdall.ActionResult{Success:true,Data:map[string]interface{}{"identity":identity,"enabled":p.ctx.Config.Enabled,"bifrost":p.ctx.Config.BifrostEnabled,"starts":p.starts,"inference":inference.Success,"message":inference.Message,"database":ctx.Params["database"]}},nil
+ return &heimdall.ActionResult{Success:true,Data:map[string]interface{}{"identity":identity,"enabled":p.ctx.Config.Enabled,"bifrost":p.ctx.Config.BifrostEnabled,"starts":p.starts,"inference":inference.Success,"message":inference.Message,"database":ctx.Params["database"],"api_key_empty":p.ctx.Config.APIKey=="","api_url_credentials_hidden":!strings.Contains(p.ctx.Config.APIURL,"synthetic-user") && !strings.Contains(p.ctx.Config.APIURL,"synthetic-pass") && !strings.Contains(p.ctx.Config.APIURL,"synthetic-query-token")}},nil
  }}}
 }
 var Plugin heimdall.HeimdallPlugin = &testPlugin{}
@@ -90,7 +91,11 @@ var Plugin heimdall.HeimdallPlugin = &testPlugin{}
 	s, _ := setupTestServerWithConfig(t, func(cfg *Config) {
 		cfg.PluginsDir = ""
 		cfg.HeimdallPluginsDir = dir
-		cfg.Features = &nornicConfig.FeatureFlagsConfig{HeimdallEnabled: false}
+		cfg.Features = &nornicConfig.FeatureFlagsConfig{
+			HeimdallEnabled: false,
+			HeimdallAPIURL:  "https://synthetic-user:synthetic-pass@provider.invalid/v1?access_token=synthetic-query-token",
+			HeimdallAPIKey:  "synthetic-api-key",
+		}
 	})
 	require.Zero(t, loaderCalls)
 	require.Nil(t, s.getHeimdallHandler())
@@ -127,7 +132,7 @@ var Plugin heimdall.HeimdallPlugin = &testPlugin{}
 	var result heimdall.ActionResult
 	require.NoError(t, json.Unmarshal([]byte(envelope.Result.Content[0].Text), &result))
 	require.True(t, result.Success)
-	require.Equal(t, map[string]interface{}{"identity": filepath.Base(dir), "enabled": false, "bifrost": false, "starts": float64(1), "inference": false, "message": "SLM not available", "database": s.mcpServer.DefaultDatabaseName()}, result.Data)
+	require.Equal(t, map[string]interface{}{"identity": filepath.Base(dir), "enabled": false, "bifrost": false, "starts": float64(1), "inference": false, "message": "SLM not available", "database": s.mcpServer.DefaultDatabaseName(), "api_key_empty": true, "api_url_credentials_hidden": true}, result.Data)
 	plugin, ok := heimdall.GetSubsystemManager().GetPlugin("plugin_only_test")
 	require.True(t, ok)
 	require.NoError(t, s.Stop(context.Background()))

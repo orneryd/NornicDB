@@ -1,6 +1,9 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"encoding/json"
 	"io"
 	"net/http"
@@ -64,7 +67,7 @@ func TestSearchStreamLifecycleHTTPEnds(t *testing.T) {
 			s, authenticator := setupTestServer(t)
 			token := "Bearer " + getAuthToken(t, authenticator, "admin")
 			const database = "stream_lifecycle"
-			require.NoError(t, s.dbManager.CreateDatabase(database))
+			require.NoError(t, s.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: database}))
 			engine, err := s.dbManager.GetStorage(database)
 			require.NoError(t, err)
 			for _, id := range []storage.NodeID{"a", "b"} {
@@ -100,7 +103,7 @@ func TestSearchStreamLifecycleHTTPEnds(t *testing.T) {
 				node.ChunkEmbeddings = [][]float32{{1, 0}}
 				require.NoError(t, engine.UpdateNode(node))
 			case "drop":
-				require.NoError(t, (&databaseManagerAdapter{manager: s.dbManager, db: s.db, server: s}).DropDatabase(database))
+				require.NoError(t, (&databaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: s.dbManager}, db: s.db, server: s}).DropDatabase(t.Context(), database))
 			}
 			if end == "write" || end == "backfill" || end == "disconnect" {
 				response := makeRequest(t, s, http.MethodPost, "/nornicdb/search", map[string]any{"qid": first.QID, "n": 1}, token)

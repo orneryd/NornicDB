@@ -31,7 +31,7 @@ func (denyCollectionChecker) VisibleDatabases(ctx context.Context, candidates []
 func newTestCollectionStore(t *testing.T) CollectionStore {
 	t.Helper()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	store, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)
@@ -378,18 +378,14 @@ func TestCollectionsService_AccessCheckerPaths(t *testing.T) {
 	require.Empty(t, resp.Collections)
 }
 
-func TestCollectionStore_MetaAndOpenBranches(t *testing.T) {
+func TestCollectionMetadataAdmission(t *testing.T) {
 	t.Parallel()
 
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	dbm, err := multidb.NewDatabaseManager(base, nil)
-	require.NoError(t, err)
-	storeI, err := NewDatabaseCollectionStore(dbm, nil)
-	require.NoError(t, err)
-	store := storeI.(*databaseCollectionStore)
+	store := newTestCollectionStore(t).(*databaseCollectionStore)
+	dbm := store.dbManager
 	ctx := context.Background()
 
-	_, _, err = store.Open(ctx, "")
+	_, _, err := store.Open(ctx, "")
 	require.ErrorIs(t, err, ErrCollectionNotFound)
 
 	require.Error(t, store.Create(ctx, "system", 4, qpb.Distance_Cosine))
@@ -397,7 +393,7 @@ func TestCollectionStore_MetaAndOpenBranches(t *testing.T) {
 	require.Error(t, store.Create(ctx, "bad:name", 4, qpb.Distance_Cosine))
 	require.Error(t, store.Create(ctx, "bad_dim", 0, qpb.Distance_Cosine))
 
-	require.NoError(t, dbm.CreateDatabase("plain_db"))
+	require.NoError(t, dbm.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "plain_db"}))
 	_, _, err = store.Open(ctx, "plain_db")
 	require.ErrorIs(t, err, ErrCollectionNotFound)
 
@@ -415,112 +411,116 @@ func TestCollectionStore_MetaAndOpenBranches(t *testing.T) {
 	_, _, err = store.Open(ctx, "meta_db")
 	require.ErrorIs(t, err, ErrCollectionNotFound)
 
-	// readCollectionMeta direct branches.
-	require.NoError(t, dbm.CreateDatabase("meta_direct"))
-	mem, err := dbm.GetStorage("meta_direct")
-	require.NoError(t, err)
-	_, err = mem.CreateNode(&storage.Node{
-		ID:     collectionMetaNodeID,
-		Labels: []string{collectionMetaNodeLabel},
-		Properties: map[string]any{
-			"dimensions": 4,
-			"distance":   "bad-type",
-			"created_at": time.Now().Unix(),
+	// readCollectionMeta typed metadata steps, original order.
+	metaSteps := []struct {
+		name           string
+		properties     map[string]any
+		expectErr      error
+		expectAnyError bool
+		withTimestamp  bool
+		expectDist     qpb.Distance
+	}{
+		{
+			name:          "meta_direct",
+			withTimestamp: true,
+			properties:    map[string]any{"dimensions": 4, "distance": "bad-type"},
+			expectDist:    qpb.Distance_Cosine, // default fallback
 		},
-	})
-	require.NoError(t, err)
-	meta2, err := readCollectionMeta(mem)
-	require.NoError(t, err)
-	require.Equal(t, qpb.Distance_Cosine, meta2.Distance) // default fallback
+		{
+			name:           "meta_empty",
+			expectAnyError: true,
+		},
+		{
+			name:       "meta_float_dist",
+			properties: map[string]any{"dimensions": int64(4), "distance": float64(qpb.Distance_Euclid)},
+			expectDist: qpb.Distance_Euclid,
+		},
+		{
+			name:       "meta_int_dist",
+			properties: map[string]any{"dimensions": int(4), "distance": int(qpb.Distance_Dot)},
+			expectDist: qpb.Distance_Dot,
+		},
+		{
+			name:       "meta_bad_dims",
+			properties: map[string]any{"dimensions": 0, "distance": int32(qpb.Distance_Dot)},
+			expectErr:  ErrInvalidCollection,
+		},
+	}
 
-	require.NoError(t, dbm.CreateDatabase("meta_empty"))
-	emptyMetaDB, err := dbm.GetStorage("meta_empty")
-	require.NoError(t, err)
-	_, err = readCollectionMeta(emptyMetaDB)
-	require.Error(t, err)
+	for _, step := range metaSteps {
+		require.NoError(t, dbm.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: step.name}))
+		mem, err := dbm.GetStorage(step.name)
+		require.NoError(t, err)
 
-	require.NoError(t, dbm.CreateDatabase("meta_float_dist"))
-	memFloatDist, err := dbm.GetStorage("meta_float_dist")
-	require.NoError(t, err)
-	_, err = memFloatDist.CreateNode(&storage.Node{
-		ID:         collectionMetaNodeID,
-		Labels:     []string{collectionMetaNodeLabel},
-		Properties: map[string]any{"dimensions": int64(4), "distance": float64(qpb.Distance_Euclid)},
-	})
-	require.NoError(t, err)
-	meta3, err := readCollectionMeta(memFloatDist)
-	require.NoError(t, err)
-	require.Equal(t, qpb.Distance_Euclid, meta3.Distance)
+		if step.withTimestamp {
+			step.properties["created_at"] = time.Now().Unix()
+		}
+		if step.properties != nil {
+			_, err = mem.CreateNode(&storage.Node{
+				ID:         collectionMetaNodeID,
+				Labels:     []string{collectionMetaNodeLabel},
+				Properties: step.properties,
+			})
+			require.NoError(t, err)
+		}
 
-	require.NoError(t, dbm.CreateDatabase("meta_int_dist"))
-	memIntDist, err := dbm.GetStorage("meta_int_dist")
-	require.NoError(t, err)
-	_, err = memIntDist.CreateNode(&storage.Node{
-		ID:         collectionMetaNodeID,
-		Labels:     []string{collectionMetaNodeLabel},
-		Properties: map[string]any{"dimensions": int(4), "distance": int(qpb.Distance_Dot)},
-	})
-	require.NoError(t, err)
-	meta4, err := readCollectionMeta(memIntDist)
-	require.NoError(t, err)
-	require.Equal(t, qpb.Distance_Dot, meta4.Distance)
+		metaResult, err := readCollectionMeta(mem)
+		if step.expectAnyError {
+			require.Error(t, err)
+			continue
+		}
+		if step.expectErr != nil {
+			require.ErrorIs(t, err, step.expectErr)
+			continue
+		}
 
-	require.NoError(t, dbm.CreateDatabase("meta_bad_dims"))
-	memBadDims, err := dbm.GetStorage("meta_bad_dims")
-	require.NoError(t, err)
-	_, err = memBadDims.CreateNode(&storage.Node{
-		ID:         collectionMetaNodeID,
-		Labels:     []string{collectionMetaNodeLabel},
-		Properties: map[string]any{"dimensions": 0, "distance": int32(qpb.Distance_Dot)},
-	})
-	require.NoError(t, err)
-	_, err = readCollectionMeta(memBadDims)
-	require.ErrorIs(t, err, ErrInvalidCollection)
+		require.NoError(t, err)
+		require.Equal(t, step.expectDist, metaResult.Distance)
+	}
 }
 
-func TestCollectionsService_CreateAdditionalBranches(t *testing.T) {
+func TestCollectionCreationShapes(t *testing.T) {
 	ctx := context.Background()
 	collections := newTestCollectionStore(t)
 	service := NewCollectionsService(collections, nil)
-
-	// ParamsMap branch.
-	_, err := service.Create(ctx, &qpb.CreateCollection{
-		CollectionName: "params_map_collection",
-		VectorsConfig: &qpb.VectorsConfig{
-			Config: &qpb.VectorsConfig_ParamsMap{
-				ParamsMap: &qpb.VectorParamsMap{
-					Map: map[string]*qpb.VectorParams{
-						"v": {Size: 4, Distance: qpb.Distance_Dot},
+	for _, tc := range []struct {
+		name      string
+		request   *qpb.CreateCollection
+		wantError bool
+	}{
+		{name: "params map", request: &qpb.CreateCollection{
+			CollectionName: "params_map_collection",
+			VectorsConfig: &qpb.VectorsConfig{
+				Config: &qpb.VectorsConfig_ParamsMap{
+					ParamsMap: &qpb.VectorParamsMap{
+						Map: map[string]*qpb.VectorParams{
+							"v": {Size: 4, Distance: qpb.Distance_Dot},
+						},
 					},
 				},
 			},
-		},
-	})
-	require.NoError(t, err)
-
-	// Invalid vectors config branch.
-	_, err = service.Create(ctx, &qpb.CreateCollection{
-		CollectionName: "bad_cfg",
-		VectorsConfig:  &qpb.VectorsConfig{},
-	})
-	require.Error(t, err)
-
-	// Duplicate create path (CreateDatabase failure).
-	_, err = service.Create(ctx, &qpb.CreateCollection{
-		CollectionName: "params_map_collection",
-		VectorsConfig: &qpb.VectorsConfig{
-			Config: &qpb.VectorsConfig_Params{
-				Params: &qpb.VectorParams{Size: 4, Distance: qpb.Distance_Cosine},
+		}, wantError: false},
+		{name: "invalid config", request: &qpb.CreateCollection{
+			CollectionName: "bad_cfg",
+			VectorsConfig:  &qpb.VectorsConfig{},
+		}, wantError: true},
+		{name: "duplicate", request: &qpb.CreateCollection{
+			CollectionName: "params_map_collection",
+			VectorsConfig: &qpb.VectorsConfig{
+				Config: &qpb.VectorsConfig_Params{
+					Params: &qpb.VectorParams{Size: 4, Distance: qpb.Distance_Cosine},
+				},
 			},
-		},
-	})
-	require.Error(t, err)
-
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	dbm, err := multidb.NewDatabaseManager(base, nil)
-	require.NoError(t, err)
-	storeNilVec, err := NewDatabaseCollectionStore(dbm, nil)
-	require.NoError(t, err)
+		}, wantError: true},
+	} {
+		_, err := service.Create(ctx, tc.request)
+		if tc.wantError {
+			require.Error(t, err, tc.name)
+		} else {
+			require.NoError(t, err, tc.name)
+		}
+	}
+	storeNilVec := newTestCollectionStore(t)
 	require.NoError(t, storeNilVec.Create(ctx, "nil_vec_store", 4, qpb.Distance_Cosine))
 }
 

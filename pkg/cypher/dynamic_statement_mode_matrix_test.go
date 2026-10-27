@@ -13,13 +13,13 @@ import (
 
 func newDynamicModeExecutor(t *testing.T, composite bool) (*StorageExecutor, storage.Engine, storage.Engine) {
 	t.Helper()
-	manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
 	for _, name := range []string{"mode_one", "mode_two"} {
-		require.NoError(t, manager.CreateDatabase(name))
+		require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 	}
-	require.NoError(t, manager.CreateCompositeDatabase("mode_comp", []multidb.ConstituentRef{
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "mode_comp", []multidb.ConstituentRef{
 		{Alias: "one", DatabaseName: "mode_one", Type: "local", AccessMode: "read_write"},
 		{Alias: "two", DatabaseName: "mode_two", Type: "local", AccessMode: "read_write"},
 	}))

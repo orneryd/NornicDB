@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/pkg/fabric"
 	"github.com/stretchr/testify/require"
 )
@@ -55,7 +56,7 @@ func TestFabricHelpers_InferColumnsAndRecordRewrite(t *testing.T) {
 }
 
 func TestFabricHelpers_ConstituentAndFragmentRouting(t *testing.T) {
-	ref, ok := toConstituentRef(map[string]interface{}{
+	ref, ok := catalogadapter.ConstituentRef(map[string]interface{}{
 		"alias":         "east",
 		"database_name": "db_east",
 		"type":          "remote",
@@ -63,13 +64,12 @@ func TestFabricHelpers_ConstituentAndFragmentRouting(t *testing.T) {
 		"auth_mode":     "basic",
 		"user":          "u",
 		"password":      "p",
-	})
+	}, catalogadapter.StoredConstituentRecord)
 	require.True(t, ok)
 	require.Equal(t, "east", ref.Alias)
 	require.Equal(t, "db_east", ref.DatabaseName)
 	require.Equal(t, "remote", ref.Type)
-	require.Equal(t, "v", mapString(map[string]interface{}{"k": "v"}, "k"))
-	_, ok = toConstituentRef(42)
+	_, ok = catalogadapter.ConstituentRef(42, catalogadapter.StoredConstituentRecord)
 	require.False(t, ok)
 
 	cat := fabric.NewCatalog()

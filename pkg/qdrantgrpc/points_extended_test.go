@@ -3,84 +3,17 @@ package qdrantgrpc
 import (
 	"context"
 	"errors"
-	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/multidb"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/stretchr/testify/require"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func setupExtendedPointsService(t *testing.T) (*PointsService, storage.Engine) {
-	t.Helper()
-
-	ctx := context.Background()
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	dbm, err := multidb.NewDatabaseManager(base, nil)
-	require.NoError(t, err)
-	collections, err := NewDatabaseCollectionStore(dbm, nil)
-	require.NoError(t, err)
-
-	cfg := DefaultConfig()
-	cfg.AllowVectorMutations = true
-	cfg.EmbedQuery = func(ctx context.Context, text string) ([]float32, error) {
-		_ = ctx
-		_ = text
-		return []float32{0.5, 0.5, 0, 0}, nil
-	}
-
-	require.NoError(t, collections.Create(ctx, "test_collection", 4, qpb.Distance_Cosine))
-
-	svc := NewPointsService(cfg, collections, sharedSearchProvider(), nil)
-
-	_, err = svc.Upsert(ctx, &qpb.UpsertPoints{
-		CollectionName: "test_collection",
-		Points: []*qpb.PointStruct{
-			{
-				Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "point1"}},
-				Vectors: &qpb.Vectors{
-					VectorsOptions: &qpb.Vectors_Vector{
-						Vector: &qpb.Vector{Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{1, 0, 0, 0}}}},
-					},
-				},
-				Payload: map[string]*qpb.Value{
-					"category": {Kind: &qpb.Value_StringValue{StringValue: "A"}},
-				},
-			},
-			{
-				Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "point2"}},
-				Vectors: &qpb.Vectors{
-					VectorsOptions: &qpb.Vectors_Vector{
-						Vector: &qpb.Vector{Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{0.9, 0.1, 0, 0}}}},
-					},
-				},
-				Payload: map[string]*qpb.Value{
-					"category": {Kind: &qpb.Value_StringValue{StringValue: "A"}},
-				},
-			},
-			{
-				Id: &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "point3"}},
-				Vectors: &qpb.Vectors{
-					VectorsOptions: &qpb.Vectors_Vector{
-						Vector: &qpb.Vector{Vector: &qpb.Vector_Dense{Dense: &qpb.DenseVector{Data: []float32{0, 1, 0, 0}}}},
-					},
-				},
-				Payload: map[string]*qpb.Value{
-					"category": {Kind: &qpb.Value_StringValue{StringValue: "B"}},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	return svc, base
-}
-
 func TestPointsService_PayloadOps(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := setupExtendedPointsService(t)
+	svc, _, _ := newPointsServiceFixture(t, pointsFixtureSeededPayloads)
 
 	_, err := svc.SetPayload(ctx, &qpb.SetPayloadPoints{
 		CollectionName: "test_collection",
@@ -134,7 +67,7 @@ func TestPointsService_PayloadOps(t *testing.T) {
 
 func TestPointsService_VectorOps_NamedVectors(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := setupExtendedPointsService(t)
+	svc, _, _ := newPointsServiceFixture(t, pointsFixtureSeededPayloads)
 
 	_, err := svc.UpdateVectors(ctx, &qpb.UpdatePointVectors{
 		CollectionName: "test_collection",
@@ -206,7 +139,7 @@ func TestPointsService_VectorOps_NamedVectors(t *testing.T) {
 
 func TestPointsService_RecommendAndGroupsAndFieldIndex(t *testing.T) {
 	ctx := context.Background()
-	svc, store := setupExtendedPointsService(t)
+	svc, _, store := newPointsServiceFixture(t, pointsFixtureSeededPayloads)
 
 	// Recommend
 	recResp, err := svc.Recommend(ctx, &qpb.RecommendPoints{
@@ -445,7 +378,7 @@ func TestFilterMatchRangeExtraBranches(t *testing.T) {
 
 func TestPointsService_ScrollBatchAndGroupsBranches(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := setupExtendedPointsService(t)
+	svc, _, _ := newPointsServiceFixture(t, pointsFixtureSeededPayloads)
 
 	scrollResp, err := svc.Scroll(ctx, &qpb.ScrollPoints{
 		CollectionName: "test_collection",
@@ -498,7 +431,7 @@ func ptrU32Ext(v uint32) *uint32 { return &v }
 
 func TestPointsService_RecommendQueryVectorBranches(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := setupExtendedPointsService(t)
+	svc, _, _ := newPointsServiceFixture(t, pointsFixtureSeededPayloads)
 
 	_, err := svc.recommendQueryVector(ctx, "missing_collection", "", nil, nil, nil, nil)
 	require.Error(t, err)
@@ -534,7 +467,7 @@ func TestPointsService_RecommendQueryVectorBranches(t *testing.T) {
 
 func TestPointsService_VectorFromInputMoreBranches(t *testing.T) {
 	ctx := context.Background()
-	svc, _ := setupExtendedPointsService(t)
+	svc, _, _ := newPointsServiceFixture(t, pointsFixtureSeededPayloads)
 
 	// Missing named vector on existing point.
 	_, err := svc.vectorFromInput(ctx, "test_collection", "missing_name", &qpb.VectorInput{

@@ -108,11 +108,11 @@ func TestResultCacheServesEachParameterValueItsOwnResult(t *testing.T) {
 // for; the caller gets the permission error it gets uncached (#729).
 func TestFabricResultCacheServesOnlyAuthorizedCallers(t *testing.T) {
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := multidb.NewDatabaseManager(base, nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	defer mgr.Close()
-	require.NoError(t, mgr.CreateDatabase("nornic_tr"))
-	require.NoError(t, mgr.CreateCompositeDatabase("nornic_cmp_a", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic_tr"}))
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "nornic_cmp_a", []multidb.ConstituentRef{
 		{Alias: "tr", DatabaseName: "nornic_tr", Type: "local", AccessMode: "read_write"},
 	}))
 	trStore, err := mgr.GetStorage("nornic_tr")

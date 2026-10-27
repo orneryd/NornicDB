@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 	"sync"
@@ -187,7 +188,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 			segments = []string{pattern}
 		}
 		for _, segment := range segments {
-			if err := validateMergeRelationshipShape(segment); err != nil {
+			if err := validateRelationshipMutation(segment, mergeRelationshipMutation); err != nil {
 				return err
 			}
 		}
@@ -229,7 +230,7 @@ func (e *StorageExecutor) validateMergeClause(scope *semanticBindingScope, claus
 }
 
 func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope, clause string) error {
-	parts := splitMergeClauseActions(mergeClauseBody(clause))
+	parts := splitMergeClauseActions(mergeClauseBody(clause), nil)
 	for _, clauses := range [...]mergeActionClauses{parts.onCreate, parts.onMatch} {
 		for index := 0; index < clauses.len(); index++ {
 			if err := e.validateSetClauseScope(scope, clauses.set(index)); err != nil {
@@ -240,21 +241,8 @@ func (e *StorageExecutor) validateMergeActionScopes(scope *semanticBindingScope,
 	return nil
 }
 
-func validateMergeRelationshipShape(pattern string) error {
-	open, close := firstRelationshipBracket(pattern)
-	if open < 0 || close < 0 {
-		return newSemanticError(
-			"Neo.ClientError.Statement.SyntaxError",
-			"NoSingleRelationshipType",
-			"MERGE relationships require exactly one relationship type",
-		)
-	}
-
-	return validateSingleRelationshipDeclaration("MERGE", "merged", pattern[open+1:close])
-}
-
 func mergeClausePattern(clause string) string {
-	return splitMergeClauseActions(mergeClauseBody(clause)).pattern
+	return splitMergeClauseActions(mergeClauseBody(clause), nil).pattern
 }
 
 // mergeClauseBody is a MERGE clause's text after the MERGE keyword.
@@ -277,14 +265,14 @@ func mergePatternUsesParameterPredicate(pattern string) bool {
 				index = end - 1
 			}
 		case '{':
-			if end := findMatchingDelimiter(pattern, index, '{', '}'); end > index {
+			if end := cyphertext.FindMatchingDelimiter(pattern, index, '{', '}', cyphertext.OpeningDelimiter); end > index {
 				index = end
 			}
 		case '$':
 			if dynamicLabelStartsAt(pattern, index) {
 				// A dynamic label or type ($(e), $all(e), $any(e)), not a
 				// parameter map.
-				if closing := findMatchingDelimiter(pattern, strings.IndexByte(pattern[index:], '(')+index, '(', ')'); closing > 0 {
+				if closing := cyphertext.FindMatchingDelimiter(pattern, strings.IndexByte(pattern[index:], '(')+index, '(', ')', cyphertext.OpeningDelimiter); closing > 0 {
 					index = closing
 				}
 				continue

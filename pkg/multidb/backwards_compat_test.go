@@ -18,7 +18,7 @@ func TestBackwardsCompatibility_ExistingCode(t *testing.T) {
 	defer inner.Close()
 
 	// Simulate old code: create manager with defaults
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
@@ -75,7 +75,7 @@ func TestBackwardsCompatibility_LegacyDatabaseName(t *testing.T) {
 
 	// Support legacy "nornicdb" name via config
 	config := NewConfigFromDefaultDatabase("nornicdb")
-	manager, err := NewDatabaseManager(inner, config)
+	manager, err := NewDatabaseManager(t.Context(), inner, config)
 	require.NoError(t, err)
 	defer manager.Close()
 

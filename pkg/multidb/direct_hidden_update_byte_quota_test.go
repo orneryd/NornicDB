@@ -57,7 +57,7 @@ func TestDirectHiddenUpdateByteQuota(t *testing.T) {
 				require.ErrorIs(t, err, storage.ErrNotFound, "the prior entity must really be hidden")
 
 				total, nodeBytes, edgeBytes := manager.GetStorageSize(db)
-				require.NoError(t, manager.SetDatabaseLimits(db, &Limits{Storage: StorageLimits{MaxBytes: total}}))
+				require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxBytes: total}}))
 				if entity == "node" {
 					prior, err := storage.GetStoredNode(engine, "n")
 					require.NoError(t, err)

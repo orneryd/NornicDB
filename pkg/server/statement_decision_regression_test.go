@@ -13,7 +13,7 @@ import (
 func TestStatementHTTPUseTarget(t *testing.T) {
 	ctx := context.Background()
 	server, users := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("other"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "other"}))
 	require.NoError(t, server.roleStore.CreateRole(ctx, "r2loader"))
 	require.NoError(t, server.roleEntitlementsStore.Set(ctx, "r2loader", []string{"read", "write"}))
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(ctx, "r2loader", []string{"nornic", "other"}))
@@ -59,9 +59,9 @@ func TestStatementHTTPFabricFragmentRequirements(t *testing.T) {
 	ctx := context.Background()
 	server, users := setupTestServer(t)
 	for _, database := range []string{"r2source", "r2target"} {
-		require.NoError(t, server.dbManager.CreateDatabase(database))
+		require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: database}))
 	}
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("r2cmp", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "r2cmp", []multidb.ConstituentRef{
 		{Alias: "source", DatabaseName: "r2source", Type: "local", AccessMode: "read_write"},
 		{Alias: "target", DatabaseName: "r2target", Type: "local", AccessMode: "read_write"},
 	}))

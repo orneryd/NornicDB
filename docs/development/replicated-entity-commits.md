@@ -44,8 +44,9 @@ keep a backup. The new version does not automatically translate those records.
 
 ## Custom Go storage adapters
 
-`NewDatabaseManager(storage.Engine, ...)` keeps its signature. An engine used for
-managed writes must expose `storage.ManagedEntityEngine`: native transactions,
+`NewDatabaseManager(ctx, storage.Engine, config)` and catalog mutations now require
+an explicit operation context; see [catalog API migration](catalog-context-api.md).
+An engine used for managed writes must expose `storage.ManagedEntityEngine`: native transactions,
 coherent stored-entity observation, commit submission, and the shared
 `storage.ManagedEntityRuntimeRegistry`. Native engines provide these capabilities.
 The registry keeps one accounting, reservation and limit-policy owner for each

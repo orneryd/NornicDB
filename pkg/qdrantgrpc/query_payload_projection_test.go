@@ -25,7 +25,7 @@ func TestQdrantQueriesProjectSuppressedPayload(t *testing.T) {
 	be, err := runtimeFixtureOwner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	defer be.Close()
-	dbm, err := multidb.NewDatabaseManager(be, nil)
+	dbm, err := multidb.NewDatabaseManager(t.Context(), be, nil)
 	require.NoError(t, err)
 	collections, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)

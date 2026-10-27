@@ -207,7 +207,7 @@ func promoteConstantNumbers(operator, leftExpr, rightExpr string, left, right in
 func constantNumericComparison(operator, leftExpr, rightExpr string) bool {
 	switch operator {
 	case "=", "<", ">", "<>", "!=":
-		return isConstantNumericExpression(leftExpr) && isConstantNumericExpression(rightExpr)
+		return numericExpressionAccepted(leftExpr, numericConstantPopulation) && numericExpressionAccepted(rightExpr, numericConstantPopulation)
 	}
 	return false
 }

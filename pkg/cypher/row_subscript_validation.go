@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"strings"
 
@@ -25,7 +26,7 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 		if text[index] != '[' {
 			continue
 		}
-		end := findMatchingDelimiter(text, index, '[', ']')
+		end := cyphertext.FindMatchingDelimiter(text, index, '[', ']', cyphertext.OpeningDelimiter)
 		if end < 0 {
 			return nil
 		}
@@ -36,7 +37,7 @@ func validateStaticPropertySubscripts(text string, scope staticTypeScope) error 
 		receiver := strings.TrimSpace(text[start:index])
 		// A bracket after a keyword (RETURN [..], x IN [..]) opens a list,
 		// not a subscript; true, false and null are values.
-		if !isOperandExpressionText(receiver) || (isCypherKeyword(receiver) && !isLiteralKeyword(receiver)) {
+		if !expressionTextAccepted(receiver, expressionTextOperand) || (isCypherKeyword(receiver) && !isLiteralKeyword(receiver)) {
 			continue
 		}
 		if _, err := checker.checkPostfix(receiver, text[index+1:end], true); err != nil {
@@ -73,7 +74,7 @@ func (e *StorageExecutor) validateRowSubscriptTypes(expression string, row pipel
 	baseExpression := strings.TrimSpace(expression[receiverStart:open])
 	// The trailing bracket must be a postfix access, not a list following
 	// an operator or clause keyword. Validate syntax before evaluating it.
-	if !isOperandExpressionText(baseExpression) || (isCypherKeyword(baseExpression) && !isLiteralKeyword(baseExpression)) {
+	if !expressionTextAccepted(baseExpression, expressionTextOperand) || (isCypherKeyword(baseExpression) && !isLiteralKeyword(baseExpression)) {
 		return nil
 	}
 	indexExpression := strings.TrimSpace(expression[open+1 : len(expression)-1])
@@ -165,7 +166,7 @@ func rowSubscriptStart(expr string) int {
 // expression starts, reading brackets outside string literals and quoted
 // names; -1 when expression doesn't end with a balanced group.
 func closingBracketGroupStart(expression string) int {
-	return matchingRowDelimiterStart(expression, len(expression)-1, '[', ']')
+	return cyphertext.FindMatchingDelimiter(expression, len(expression)-1, '[', ']', cyphertext.ClosingDelimiter)
 }
 
 // rowSubscriptReceiverStart finds the primary expression immediately to the
@@ -175,26 +176,26 @@ func closingBracketGroupStart(expression string) int {
 // receivers.
 func rowSubscriptReceiverStart(expression string, open int) int {
 	end := open - 1
-	for end >= 0 && isASCIIWhitespace(expression[end]) {
+	for end >= 0 && cyphertext.IsWhitespaceAt(expression, end) {
 		end--
 	}
 	if end < 0 {
 		return -1
 	}
-	if !isRowReceiverIdentifierByte(expression[end]) && !strings.ContainsRune(")]}", rune(expression[end])) && !isCypherQuoteByte(expression[end]) {
+	if !isRowReceiverIdentifierAt(expression, end) && !strings.ContainsRune(")]}", rune(expression[end])) && !isCypherQuoteByte(expression[end]) {
 		return -1
 	}
 	start := end
 	switch expression[end] {
 	case ']':
-		start = matchingRowDelimiterStart(expression, end, '[', ']')
+		start = cyphertext.FindMatchingDelimiter(expression, end, '[', ']', cyphertext.ClosingDelimiter)
 		// A bracket group after an operator or a comma is a list literal,
 		// the whole receiver (... + [5, 6][1]).
 		before := start - 1
-		for before >= 0 && isASCIIWhitespace(expression[before]) {
+		for before >= 0 && cyphertext.IsWhitespaceAt(expression, before) {
 			before--
 		}
-		if before >= 0 && !isRowReceiverIdentifierByte(expression[before]) && !strings.ContainsRune(")]}", rune(expression[before])) && !isCypherQuoteByte(expression[before]) {
+		if before >= 0 && !isRowReceiverIdentifierAt(expression, before) && !strings.ContainsRune(")]}", rune(expression[before])) && !isCypherQuoteByte(expression[before]) {
 			return start
 		}
 		if start > 0 {
@@ -210,25 +211,25 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		}
 		return start
 	case ')':
-		start = matchingRowDelimiterStart(expression, end, '(', ')')
+		start = cyphertext.FindMatchingDelimiter(expression, end, '(', ')', cyphertext.ClosingDelimiter)
 		if start < 0 {
 			return -1
 		}
-		for start > 0 && isRowReceiverIdentifierByte(expression[start-1]) {
+		for start > 0 && isRowReceiverIdentifierAt(expression, start-1) {
 			start--
 		}
 		return start
 	case '}':
-		open := matchingRowDelimiterStart(expression, end, '{', '}')
+		open := cyphertext.FindMatchingDelimiter(expression, end, '{', '}', cyphertext.ClosingDelimiter)
 		if open < 0 {
 			return -1
 		}
 		wordEnd := open - 1
-		for wordEnd >= 0 && isASCIIWhitespace(expression[wordEnd]) {
+		for wordEnd >= 0 && cyphertext.IsWhitespaceAt(expression, wordEnd) {
 			wordEnd--
 		}
 		word := wordEnd
-		for word >= 0 && isRowReceiverIdentifierByte(expression[word]) {
+		for word >= 0 && isRowReceiverIdentifierAt(expression, word) {
 			word--
 		}
 		// EXISTS / COUNT / COLLECT { … }: the receiver starts at its keyword.
@@ -245,43 +246,11 @@ func rowSubscriptReceiverStart(expression string, open int) int {
 		if isCypherStringQuoteByte(expression[end]) {
 			return quotedRowReceiverStart(expression, end)
 		}
-		for start > 0 && isRowReceiverIdentifierByte(expression[start-1]) {
+		for start > 0 && isRowReceiverIdentifierAt(expression, start-1) {
 			start--
 		}
 		return start
 	}
-}
-
-func matchingRowDelimiterStart(expression string, closeIndex int, open, close byte) int {
-	if closeIndex < 0 || closeIndex >= len(expression) || expression[closeIndex] != close {
-		return -1
-	}
-	for index := 0; index <= closeIndex; index++ {
-		switch character := expression[index]; {
-		case isCypherQuoteByte(character):
-			end, closed := scanCypherQuotedText(expression, index, character)
-			if !closed {
-				return -1
-			}
-			index = end - 1
-		case character == '/':
-			if end := queryCommentEnd(expression, index); end >= 0 {
-				index = end - 1
-			}
-		case character == open:
-			end := findMatchingDelimiter(expression, index, rune(open), rune(close))
-			if end == closeIndex {
-				return index
-			}
-			if end < 0 {
-				return -1
-			}
-			if end < closeIndex {
-				index = end
-			}
-		}
-	}
-	return -1
 }
 
 // quotedRowReceiverStart finds a string/name token ending at end. It reads
@@ -308,10 +277,8 @@ func quotedRowReceiverStart(expression string, end int) int {
 	return -1
 }
 
-func isRowReceiverIdentifierByte(value byte) bool {
-	return value == '_' || value == '.' || isCypherBacktickByte(value) || value == '$' ||
-		(value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z') ||
-		(value >= '0' && value <= '9') || value >= 0x80
+func isRowReceiverIdentifierAt(text string, index int) bool {
+	return cyphertext.NamePartAt(text, index) || text[index] == '.' || isCypherBacktickByte(text[index])
 }
 
 func isCypherInteger(value interface{}) bool {
@@ -336,7 +303,9 @@ func mapElementAccessByNonStringError(value interface{}) error {
 
 func (e *StorageExecutor) validatePipelineSizeArguments(ctx context.Context, rows []pipelineRow, clause, keyword string) error {
 	for _, expression := range projectionExpressions(ctx, clause, keyword) {
-		name, argument, functionCall := parseFunctionCallWS(expression)
+		var callFacts1 functionCallFacts
+		functionCall := inspectFunctionCall(expression, qualifiedFunctionCall, "", &callFacts1)
+		name, argument := callFacts1.name, callFacts1.inner
 		if !functionCall || !strings.EqualFold(name, "size") {
 			continue
 		}

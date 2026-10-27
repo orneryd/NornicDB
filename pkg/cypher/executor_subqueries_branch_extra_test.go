@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -24,9 +25,9 @@ func TestExecutorSubqueryHelpers_ExtraBranches(t *testing.T) {
 	idx = indexTopLevelKeywordCallSubquery("[1,2,RETURN] RETURN x", "RETURN")
 	require.Equal(t, 13, idx)
 
-	require.True(t, containsStandaloneIdentifier("x + y", "x"))
-	require.False(t, containsStandaloneIdentifier("foo.x", "x"))
-	require.False(t, containsStandaloneIdentifier("xx", "x"))
+	require.True(t, cyphertext.FindIdentifier("x + y", "x", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
+	require.False(t, cyphertext.FindIdentifier("foo.x", "x", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
+	require.False(t, cyphertext.FindIdentifier("xx", "x", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
 }
 
 func TestExecuteChainedCallSubquery_Branches(t *testing.T) {

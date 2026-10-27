@@ -15,8 +15,8 @@ func (a optionsTestManager) DatabaseOptions(name string) (map[string]string, err
 	return a.manager.DatabaseOptions(name)
 }
 
-func (a optionsTestManager) SetDatabaseOption(name, key, value string) error {
-	return a.manager.SetDatabaseOption(name, key, value)
+func (a optionsTestManager) SetDatabaseOption(ctx context.Context, name, key, value string) error {
+	return a.manager.SetDatabaseOption(ctx, name, key, value)
 }
 
 // CREATE DATABASE … OPTIONS, ALTER DATABASE … SET / REMOVE OPTION and SHOW
@@ -25,7 +25,7 @@ func (a optionsTestManager) SetDatabaseOption(name, key, value string) error {
 // a failing option creates nothing. Options persist with the database.
 func TestDatabaseOptions(t *testing.T) {
 	inner := newTestMemoryEngine(t)
-	manager, err := multidb.NewDatabaseManager(inner, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	exec.SetDatabaseManager(optionsTestManager{&testDatabaseManagerAdapter{manager: manager}})
@@ -45,7 +45,7 @@ func TestDatabaseOptions(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, map[string]interface{}{"txLogEnrichment": "DIFF"}, options("cdcdb"))
 
-	reloaded, err := multidb.NewDatabaseManager(inner, nil)
+	reloaded, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	persisted, err := reloaded.DatabaseOptions("cdcdb")
 	require.NoError(t, err)
@@ -87,13 +87,16 @@ func TestDatabaseOptions(t *testing.T) {
 		require.Error(t, err, statement)
 	}
 
-	// A manager without options: options fail before anything is created,
-	// and SHOW DATABASES shows none.
+	// Typed CREATE carries initial options even without the optional ALTER/SHOW
+	// options interface; that interface still gates standalone option mutation.
 	plain := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
 	plain.SetDatabaseManager(&testDatabaseManagerAdapter{manager: manager})
 	_, err = plain.Execute(ctx, "CREATE DATABASE plain OPTIONS {txLogEnrichment: 'FULL'}", nil)
-	require.Error(t, err)
-	require.False(t, manager.Exists("plain"))
+	require.NoError(t, err)
+	require.True(t, manager.Exists("plain"))
+	initial, err := manager.DatabaseOptions("plain")
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"txLogEnrichment": "FULL"}, initial)
 	_, err = plain.Execute(ctx, "ALTER DATABASE cdcdb SET OPTION txLogEnrichment 'FULL'", nil)
 	require.Error(t, err)
 	result, err := plain.Execute(ctx, "SHOW DATABASES YIELD name, options WHERE name = 'cdcdb' RETURN options", nil)

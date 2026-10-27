@@ -65,7 +65,7 @@ func TestServerTLS(t *testing.T) {
 func startTLSTestServer(t *testing.T, tlsConfig *tls.Config) *Server {
 	t.Helper()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	databaseManager, err := multidb.NewDatabaseManager(base, nil)
+	databaseManager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 
 	config := DefaultConfig()

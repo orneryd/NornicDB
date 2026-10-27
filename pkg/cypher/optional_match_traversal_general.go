@@ -18,6 +18,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"strings"
 
@@ -41,14 +42,14 @@ func scanOptionalPatternShape(pattern string) (nodeGroups, brackets int) {
 				i = end - 1
 			}
 		case '{':
-			if end := findMatchingDelimiter(pattern, i, '{', '}'); end > i {
+			if end := cyphertext.FindMatchingDelimiter(pattern, i, '{', '}', cyphertext.OpeningDelimiter); end > i {
 				i = end
 			}
 		case '(':
 			nodeGroups++
 		case '[':
 			brackets++
-			if end := findMatchingDelimiter(pattern, i, '[', ']'); end > i {
+			if end := cyphertext.FindMatchingDelimiter(pattern, i, '[', ']', cyphertext.OpeningDelimiter); end > i {
 				i = end
 			}
 		case '-':

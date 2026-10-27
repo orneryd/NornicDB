@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -173,22 +174,72 @@ func (m *Manager) Resolve(source string, preferred ...language.Tag) Match {
 }
 
 // Render formats a message using context preferences or the process default.
-func (m *Manager) Render(ctx context.Context, message Message) (string, language.Tag, error) {
-	if m == nil {
-		if message.Fallback != "" {
-			return message.Fallback, language.AmericanEnglish, nil
-		}
-		return string(message.ID), language.AmericanEnglish, fmt.Errorf("localization manager is nil")
+func (m *Manager) Render(ctx context.Context, request RenderRequest) (string, language.Tag, error) {
+	switch request.Purpose {
+	case MessageText, ErrorText:
+	default:
+		return "", language.AmericanEnglish, fmt.Errorf("invalid localization render purpose %d", request.Purpose)
 	}
+	if request.Purpose == ErrorText && request.Message == nil {
+		return "", language.AmericanEnglish, nil
+	}
+	if m == nil {
+		var text string
+		if request.Message != nil {
+			text = request.Message.Fallback
+			if text == "" {
+				text = string(request.Message.ID)
+			}
+		}
+		if request.Purpose == MessageText && (request.Message == nil || request.Message.Fallback == "") {
+			return text, language.AmericanEnglish, fmt.Errorf("localization manager is nil")
+		}
+		return text, language.AmericanEnglish, nil
+	}
+	var message Message
+	if request.Message != nil {
+		message = *request.Message
+	}
+	return m.renderCatalog(ctx, message)
+}
+
+// renderCatalog owns locale selection and immutable diagnostic expansion after
+// the canonical boundary has selected a non-nil manager and a message value.
+func (m *Manager) renderCatalog(ctx context.Context, message Message) (string, language.Tag, error) {
+
 	preferences := PreferencesFromContext(ctx)
 	if len(preferences) == 0 {
 		preferences = []language.Tag{m.DefaultTag()}
 	}
 	match := m.Match(preferences...)
+	// Render structured diagnostic data with the same boundary preferences as
+	// its outer message. Never replace the source data: errors can be rendered
+	// again in another language, including concurrently.
+	data := message.Data
+	for key, value := range message.Data {
+		sequence, ok := value.(MessageSequence)
+		if !ok {
+			continue
+		}
+		copy := make(map[string]any, len(data))
+		for k, v := range data {
+			copy[k] = v
+		}
+		data = copy
+		parts := make([]string, len(sequence.Messages))
+		for i, diagnostic := range sequence.Messages {
+			text, _, err := m.renderCatalog(ctx, diagnostic)
+			if err != nil {
+				return "", match.Tag, err
+			}
+			parts[i] = text
+		}
+		data[key] = strings.Join(parts, sequence.Separator)
+	}
 	localizer := i18n.NewLocalizer(m.bundle, match.Tag.String())
 	text, renderedTag, err := localizer.LocalizeWithTag(&i18n.LocalizeConfig{
 		MessageID:    string(message.ID),
-		TemplateData: message.Data,
+		TemplateData: data,
 		PluralCount:  message.PluralCount,
 	})
 	if err != nil {
@@ -202,7 +253,7 @@ func (m *Manager) Render(ctx context.Context, message Message) (string, language
 		fallback := i18n.NewLocalizer(m.bundle, SourceLanguage)
 		text, fallbackErr := fallback.Localize(&i18n.LocalizeConfig{
 			MessageID:    string(message.ID),
-			TemplateData: message.Data,
+			TemplateData: data,
 			PluralCount:  message.PluralCount,
 		})
 		if fallbackErr != nil {
@@ -225,7 +276,7 @@ func (m *Manager) Render(ctx context.Context, message Message) (string, language
 
 // MustRenderEnglish renders the guaranteed source-language fallback.
 func (m *Manager) MustRenderEnglish(message Message) string {
-	text, _, err := m.Render(WithPreferences(context.Background(), language.AmericanEnglish), message)
+	text, _, err := m.Render(WithPreferences(context.Background(), language.AmericanEnglish), MessageRequest(message))
 	if err != nil {
 		return string(message.ID)
 	}

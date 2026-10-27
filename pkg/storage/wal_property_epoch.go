@@ -4,8 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"io"
 	"os"
 	"path/filepath"
@@ -39,7 +39,7 @@ func decodeWALPropertyEpochFrame(entry WALEntry) (walPropertyEpochFrame, error) 
 	if !isWALPropertyEpoch(entry) {
 		return frame, fmt.Errorf("wal: invalid property epoch control")
 	}
-	if err := json.Unmarshal(entry.Data, &frame); err != nil {
+	if err := jsontext.Unmarshal(entry.Data, &frame); err != nil {
 		return frame, err
 	}
 	if frame.Format != 1 {
@@ -93,11 +93,11 @@ type walPropertyEpochState struct {
 	Bindings     []byte `json:"bindings"`
 }
 
-func (e *WALPropertyEpoch) MarshalJSON() ([]byte, error) { return json.Marshal(e.state) }
+func (e *WALPropertyEpoch) MarshalJSON() ([]byte, error) { return jsontext.Marshal(e.state) }
 
 func (e *WALPropertyEpoch) UnmarshalJSON(data []byte) error {
 	var state walPropertyEpochState
-	if err := json.Unmarshal(data, &state); err != nil {
+	if err := jsontext.Unmarshal(data, &state); err != nil {
 		return err
 	}
 	if state.Version != 1 || state.ID == "" || state.DictionaryID == "" || len(state.Bindings) == 0 {
@@ -163,7 +163,7 @@ func (d *propertyKeyDictionary) captureWALEpoch() (*WALPropertyEpoch, uint64, er
 // A caller already owns w.mu. Headers are written before their first body and
 // are flushed by the same forced flush that precedes acknowledgement.
 func encodeWALPropertyEpochFrame(frame walPropertyEpochFrame, sequence uint64, timestamp time.Time) ([]byte, error) {
-	data, err := json.Marshal(frame)
+	data, err := jsontext.Marshal(frame)
 	if err != nil {
 		return nil, err
 	}

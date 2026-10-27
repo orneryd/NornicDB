@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 // staticOperand is an operand's static type. The type is authoritative in
 // one place: a single type has its name as operandCategory, and a CASE union
@@ -412,7 +415,7 @@ func staticLiteralTypeName(expression string) string {
 	if expression == "" || expression[0] == '$' {
 		return ""
 	}
-	if token, _, ok := scanIdentifierToken(expression, 0); ok && !strings.EqualFold(token, "true") && !strings.EqualFold(token, "false") {
+	if token, ok := cyphertext.ScanIdentifier(expression, 0); ok && !strings.EqualFold(token.Value, "true") && !strings.EqualFold(token.Value, "false") {
 		return ""
 	}
 	return staticTextType(expression)

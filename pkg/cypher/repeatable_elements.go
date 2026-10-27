@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -60,7 +61,7 @@ func stripRepeatableElements(body string) (string, bool) {
 	if rest == "" {
 		return pattern, true
 	}
-	if !hasPrefixFold(rest, "AND") || len(rest) > len("AND") && isIdentByte(rest[len("AND")]) {
+	if !hasPrefixFold(rest, "AND") || len(rest) > len("AND") && cyphertext.NamePartAt(rest, len("AND")) {
 		return body, false
 	}
 	return pattern + " WHERE " + strings.TrimSpace(rest[len("AND"):]), true

@@ -86,15 +86,19 @@ func TestStretchReadAnalysis(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, effects.reads.anyNode, text)
 	}
-	for _, text := range []string{"x.`k`", "x . k", "x['k']", "x[$p]", "x {.k}", "keys(x)", "x.*"} {
-		var any stretchTokens
-		addStretchPropertyReads(text, &any)
-		require.True(t, any.anyKey, text)
+	for _, text := range []string{"x.`k`", "x . k", "x. k", "x /* comment */ .k", "x['k']", "x[$p]", "x {.k}", "keys(x)"} {
+		effects, err := pipelineClauseEffectsFor(context.Background(), "RETURN "+text)
+		require.NoError(t, err, text)
+		require.True(t, effects.reads.anyKey, text)
 	}
-	var numbers stretchTokens
-	addStretchPropertyReads("1.5 + x.k + [1..2]", &numbers)
-	require.False(t, numbers.anyKey)
-	require.Equal(t, map[string]struct{}{"k": {}}, numbers.keys)
+	numbers, err := pipelineClauseEffectsFor(context.Background(), "RETURN 1.5 + x.k, range(1,2)")
+	require.NoError(t, err)
+	require.False(t, numbers.reads.anyKey)
+	require.Equal(t, map[string]struct{}{"k": {}}, numbers.reads.keys)
+	for _, invalid := range []string{"RETURN x.*", "RETURN 1.5 + x.k + [1..2]"} {
+		_, err = pipelineClauseEffectsFor(context.Background(), invalid)
+		require.Error(t, err, invalid)
+	}
 
 	var chain stretchTokens
 	addStretchLabelChain(":", &chain)

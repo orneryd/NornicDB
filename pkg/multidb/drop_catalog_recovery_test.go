@@ -18,7 +18,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					require.NoError(t, err)
 					fixtureowner.Own(t, base)
 					e := &managedCatalogFailureEngine{Engine: base}
-					m, err := NewDatabaseManager(e, nil)
+					m, err := NewDatabaseManager(t.Context(), e, nil)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = m.Close() })
 					return base, e, m
@@ -26,7 +26,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 				base, e, m := open()
 				var victimView storage.Engine
 				for _, name := range []string{"victim", "peer"} {
-					require.NoError(t, m.CreateDatabase(name))
+					require.NoError(t, m.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: name}))
 					view, err := m.GetStorage(name)
 					require.NoError(t, err)
 					if name == "victim" {
@@ -46,7 +46,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 				case "catalog-completion-rejected":
 					e.rejectAt = 2
 				}
-				require.ErrorIs(t, m.DropDatabase("victim"), storage.ErrConflict)
+				require.ErrorIs(t, m.DropDatabase(t.Context(), "victim"), storage.ErrConflict)
 				require.True(t, m.Exists("victim"))
 				if phase == "intent-rejected" {
 					require.False(t, m.pendingDrops["victim"])
@@ -63,7 +63,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					require.NoError(t, err)
 					require.Equal(t, "offline", info.Status)
 					if recovery == "retry" {
-						require.NoError(t, m.SetDatabaseStatus("victim", "online"))
+						require.NoError(t, m.SetDatabaseStatus(t.Context(), "victim", "online"))
 						_, err = m.GetStorage("victim")
 						require.ErrorIs(t, err, ErrDatabaseOffline, "status changes cannot override an unfinished DROP")
 					}
@@ -74,7 +74,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 					updates := e.updates
 					before, err := base.NodeCountByPrefix("victim:")
 					require.NoError(t, err)
-					standby, err := NewDatabaseManager(&identityReadOnlyEngine{Engine: e}, nil)
+					standby, err := NewDatabaseManager(t.Context(), &identityReadOnlyEngine{Engine: e}, nil)
 					require.NoError(t, err)
 					t.Cleanup(func() { _ = standby.Close() })
 					require.True(t, standby.pendingDrops["victim"])
@@ -112,10 +112,10 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 						node, err := base.GetNode("victim:keep")
 						require.NoError(t, err)
 						require.Equal(t, "victim", node.Properties["value"])
-						require.NoError(t, m.DropDatabase("victim"))
+						require.NoError(t, m.DropDatabase(t.Context(), "victim"))
 					}
 				} else {
-					require.NoError(t, m.DropDatabase("victim"))
+					require.NoError(t, m.DropDatabase(t.Context(), "victim"))
 				}
 				require.False(t, m.Exists("victim"))
 				_, err := base.GetNode("victim:keep")
@@ -123,7 +123,7 @@ func TestDropCatalogFailureAndRecovery(t *testing.T) {
 				peer, err := base.GetNode("peer:keep")
 				require.NoError(t, err)
 				require.Equal(t, "peer", peer.Properties["value"])
-				require.NoError(t, m.CreateDatabase("victim"))
+				require.NoError(t, m.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "victim"}))
 				view, err := m.GetStorage("victim")
 				require.NoError(t, err)
 				count, err := view.NodeCount()

@@ -7,7 +7,6 @@ package multidb
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"maps"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
@@ -29,17 +29,20 @@ import (
 //   - Namespaced storage engine views
 //   - Neo4j 4.x multi-database compatibility
 //
-// Thread-safe: all operations are protected by mutex.
+// Reads use the published catalog. Mutations require their original operation
+// context and serialize through physical receipt settlement. Canceling a waiter
+// after acceptance never rolls back the accepted catalog proposal.
 //
 // Example:
 //
 //	// Create manager with shared storage
-//	inner := storage.NewBadgerEngine("./data")
-//	manager := multidb.NewDatabaseManager(inner, nil)
+//	ctx := context.Background()
+//	inner, _ := storage.NewBadgerEngine("./data")
+//	manager, _ := multidb.NewDatabaseManager(ctx, inner, nil)
 //
 //	// Create databases
-//	manager.CreateDatabase("tenant_a")
-//	manager.CreateDatabase("tenant_b")
+//	manager.CreateDatabase(ctx, DatabaseCreateRequest{Name: "tenant_a"})
+//	manager.CreateDatabase(ctx, DatabaseCreateRequest{Name: "tenant_b"})
 //
 //	// Get namespaced storage for a tenant
 //	tenantStorage, _ := manager.GetStorage("tenant_a")
@@ -47,7 +50,9 @@ import (
 //	// Use storage (isolated to tenant_a)
 //	tenantStorage.CreateNode(&storage.Node{ID: "123"})
 type DatabaseManager struct {
-	mu sync.RWMutex
+	mu            sync.RWMutex
+	catalogGate   chan struct{}
+	dropAdmission writeAdmission
 
 	// Shared underlying storage
 	inner storage.Engine
@@ -93,6 +98,9 @@ type DatabaseInfo struct {
 	Aliases      []string         `json:"aliases,omitempty"`      // Database aliases (Neo4j-compatible)
 	Limits       *Limits          `json:"limits,omitempty"`       // Resource limits
 	Constituents []ConstituentRef `json:"constituents,omitempty"` // Constituent databases (for composite type)
+	// runtimeConstituentsByAlias is rebuilt when constituent metadata changes.
+	// It is private and never serialized or returned from metadata snapshots.
+	runtimeConstituentsByAlias map[string]*runtimeConstituent
 	// Options are the database's options (CREATE DATABASE … OPTIONS, ALTER
 	// DATABASE … SET OPTION), by Neo4j's option name.
 	Options map[string]string `json:"options,omitempty"`
@@ -149,6 +157,10 @@ func DefaultConfig() *Config {
 }
 
 // NewDatabaseManager creates a new database manager.
+// ctx is the explicit startup/process lifetime, distinct from later request
+// contexts. Writable catalog storage must expose native entity preparation and
+// the authoritative EntityCommitSubmitter receipt capability through its wrapper
+// route. Read-only startup does not admit catalog writes.
 //
 // Parameters:
 //   - inner: The underlying storage engine (shared by all databases)
@@ -157,7 +169,13 @@ func DefaultConfig() *Config {
 // On creation, initializes:
 //   - System database (for metadata)
 //   - Default database ("nornic" by default, configurable)
-func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager, error) {
+func NewDatabaseManager(ctx context.Context, inner storage.Engine, config *Config) (*DatabaseManager, error) {
+	if ctx == nil {
+		return nil, fmt.Errorf("database manager requires a startup context: %w", storage.ErrInvalidData)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -181,6 +199,7 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 	}
 
 	m := &DatabaseManager{
+		catalogGate:         make(chan struct{}, 1),
 		inner:               inner,
 		databases:           make(map[string]*DatabaseInfo),
 		config:              config,
@@ -188,6 +207,7 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 		limitCheckers:       make(map[string]*databaseLimitChecker),
 		remoteEngineFactory: config.RemoteEngineFactory,
 	}
+	m.catalogGate <- struct{}{}
 	if key := strings.TrimSpace(config.RemoteCredentialEncryptionKey); key != "" {
 		cipher, err := newRemoteCredentialCipher(key)
 		if err != nil {
@@ -197,8 +217,9 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 	}
 
 	// Load existing databases from system namespace
-	if err := m.loadMetadata(); err != nil {
-		return nil, fmt.Errorf("failed to load database metadata: %w", err)
+	identityComplete, loadErr := m.loadMetadata(ctx)
+	if loadErr != nil {
+		return nil, fmt.Errorf("failed to load database metadata: %w", loadErr)
 	}
 	for name, info := range m.databases {
 		m.applyChangeCapture(name, info.Options)
@@ -241,11 +262,11 @@ func NewDatabaseManager(inner storage.Engine, config *Config) (*DatabaseManager,
 		return m, nil
 	}
 
-	if err := m.recoverPendingDrops(); err != nil {
+	if err := m.recoverPendingDrops(ctx); err != nil {
 		return nil, err
 	}
 
-	if err := m.ensureSystemDatabases(); err != nil {
+	if err := m.ensureSystemDatabases(ctx, identityComplete); err != nil {
 		return nil, err
 	}
 
@@ -274,8 +295,13 @@ func (m *DatabaseManager) registerGraphRuntimeOwners() error {
 		if m.pendingDrops[name] || info.Type != "standard" || name == m.config.SystemDatabase {
 			continue
 		}
-		if _, _, err := m.databaseViewLocked(name, true); err != nil {
+		_, checker, err := m.databaseViewLocked(name, false)
+		if err != nil {
 			return err
+		}
+		wrapped := newSizeTrackingEngine(storage.NewNamespacedEngine(m.inner, name), m, name, checker).(*sizeTrackingEngine)
+		if wrapped.runtimeErr != nil {
+			return wrapped.runtimeErr
 		}
 	}
 	return nil
@@ -356,81 +382,97 @@ func (m *DatabaseManager) cleanupLeakedSystemNodes() {
 }
 
 // ensureSystemDatabases creates system and default databases if they don't exist.
-func (m *DatabaseManager) ensureSystemDatabases() error {
-	// System database
-	if _, exists := m.databases[m.config.SystemDatabase]; !exists {
-		m.databases[m.config.SystemDatabase] = &DatabaseInfo{
-			Name:      m.config.SystemDatabase,
-			CreatedAt: time.Now(),
-			Status:    "online",
-			Type:      "system",
-			IsDefault: false,
-			UpdatedAt: time.Now(),
-		}
+func (m *DatabaseManager) ensureSystemDatabases(ctx context.Context, identityComplete bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Constructor-only input: the canonical load product proves every identity
+	// was persisted, rather than merely synthesized from a legacy creation time.
+	if identityComplete && m.databases[m.config.SystemDatabase] != nil && m.databases[m.config.DefaultDatabase] != nil {
+		return nil
 	}
 
-	// Default database
-	if _, exists := m.databases[m.config.DefaultDatabase]; !exists {
-		m.databases[m.config.DefaultDatabase] = &DatabaseInfo{
-			Name:      m.config.DefaultDatabase,
-			CreatedAt: time.Now(),
-			Status:    "online",
-			Type:      "standard",
-			IsDefault: true,
-			UpdatedAt: time.Now(),
+	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(m *DatabaseManager) error {
+		// System database
+		if _, exists := m.databases[m.config.SystemDatabase]; !exists {
+			m.databases[m.config.SystemDatabase] = &DatabaseInfo{
+				Name:      m.config.SystemDatabase,
+				CreatedAt: time.Now(),
+				Status:    "online",
+				Type:      "system",
+				IsDefault: false,
+				UpdatedAt: time.Now(),
+			}
 		}
-	}
 
-	return m.persistMetadata()
+		// Default database
+		if _, exists := m.databases[m.config.DefaultDatabase]; !exists {
+			m.databases[m.config.DefaultDatabase] = &DatabaseInfo{
+				Name:      m.config.DefaultDatabase,
+				CreatedAt: time.Now(),
+				Status:    "online",
+				Type:      "standard",
+				IsDefault: true,
+				UpdatedAt: time.Now(),
+			}
+		}
+
+		return nil
+
+	})
 }
 
 // CreateDatabase creates a new database.
 //
 // Parameters:
-//   - name: Database name (must be unique, lowercase recommended)
+//   - request: Database name and initial options, copied into one catalog publication
 //
 // Returns ErrDatabaseExists if database already exists.
 // Returns ErrMaxDatabasesReached if limit exceeded.
-func (m *DatabaseManager) CreateDatabase(name string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *DatabaseManager) CreateDatabase(ctx context.Context, request DatabaseCreateRequest) error {
+	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(m *DatabaseManager) error {
 
-	// Validate name
-	if name == "" {
-		return ErrInvalidDatabaseName
-	}
+		// Validate name
+		if request.Name == "" {
+			return ErrInvalidDatabaseName
+		}
 
-	// Check if exists
-	if _, exists := m.databases[name]; exists {
-		return ErrDatabaseExists
-	}
+		// Check if exists
+		if _, exists := m.databases[request.Name]; exists || m.pendingDrops[request.Name] {
+			return ErrDatabaseExists
+		}
 
-	// Check limit
-	if m.config.MaxDatabases > 0 && len(m.databases) >= m.config.MaxDatabases {
-		return ErrMaxDatabasesReached
-	}
+		// Check limit
+		if m.config.MaxDatabases > 0 && len(m.databases) >= m.config.MaxDatabases {
+			return ErrMaxDatabasesReached
+		}
 
-	// Create metadata
-	m.databases[name] = &DatabaseInfo{
-		Name:      name,
-		CreatedAt: time.Now(),
-		Status:    "online",
-		Type:      "standard",
-		IsDefault: false,
-		UpdatedAt: time.Now(),
-	}
+		// Validate and detach initial options before preparing any catalog write.
+		var options map[string]string
+		if len(request.Options) > 0 {
+			options = make(map[string]string, len(request.Options))
+			for key, value := range request.Options {
+				mode := strings.ToUpper(strings.TrimSpace(value))
+				if key != OptionTxLogEnrichment || (mode != "OFF" && mode != "DIFF" && mode != "FULL") {
+					return fmt.Errorf("invalid initial database option %q: %w", key, storage.ErrInvalidData)
+				}
+				options[key] = mode
+			}
+		}
+		// Create metadata
+		m.databases[request.Name] = &DatabaseInfo{
+			Name:      request.Name,
+			Options:   options,
+			CreatedAt: time.Now(),
+			Status:    "online",
+			Type:      "standard",
+			IsDefault: false,
+			UpdatedAt: time.Now(),
+		}
 
-	if err := m.persistMetadata(); err != nil {
-		return err
-	}
-	owner := managedEntityOwnerFor(m.inner)
-	runtime, err := bindManagedRuntime(m.databases[name], m.databases[name].Limits, name, owner)
-	if err != nil {
-		return err
-	}
-	runtime.activateDatabase(m.databases[name].Limits)
-	_, _, err = m.databaseViewLocked(name, true)
-	return err
+		return nil
+
+	})
 }
 
 // DropDatabase removes a database and all its data.
@@ -440,75 +482,60 @@ func (m *DatabaseManager) CreateDatabase(name string) error {
 //
 // Returns ErrDatabaseNotFound if database doesn't exist.
 // Returns ErrCannotDropSystemDB for system/default databases.
-func (m *DatabaseManager) DropDatabase(name string) error {
-	m.mu.Lock()
-	changed := false
-	defer func() { m.unlockStatementCacheIndexes(changed, false) }()
-
-	// Check if exists
-	info, exists := m.databases[name]
-	if !exists {
-		return ErrDatabaseNotFound
+func (m *DatabaseManager) DropDatabase(ctx context.Context, name string) error {
+	if ctx == nil {
+		return fmt.Errorf("DROP requires an operation context: %w", storage.ErrInvalidData)
 	}
-
-	// Prevent dropping system database
-	if info.Type == "system" {
-		return ErrCannotDropSystemDB
-	}
-
-	// Prevent dropping default (unless allowed)
-	if info.IsDefault && !m.config.AllowDropDefault && !m.pendingDrops[name] {
-		return ErrCannotDropDefaultDB
-	}
-
-	// Publish and sync the catalog intent before irreversible native deletion.
-	// An admitted DROP stays unavailable and is completed on retry or reopen.
-	wasPending := m.pendingDrops[name]
-	m.transitionPendingDrop(name, true)
-	persistErr := m.persistMetadata()
-	var accepted *storage.AcceptedCommitError
-	if persistErr != nil && !errors.As(persistErr, &accepted) {
-		m.transitionPendingDrop(name, wasPending)
-		return persistErr
-	}
-	delete(m.engines, name)
-	if runtime := info.managed.Load(); runtime != nil {
-		runtime.retireDatabase()
-	} else {
-		owner := managedEntityOwnerFor(m.inner)
-		if owner.registry != nil {
-			if runtime, ok := owner.registry.GetOrAttachManagedEntityRuntime(name, nil).(*managedDatabaseRuntime); ok && runtime != nil {
-				runtime.retireDatabase()
-			}
-		}
-	}
-	m.dropDatabaseStatementCachesLocked(name)
-	changed = true
-	if persistErr != nil {
-		return errors.Join(persistErr, m.syncDropMetadata())
-	}
-	if err := m.syncDropMetadata(); err != nil {
+	// A physical purge is a distinct synchronous owner. Serializing DROP
+	// invocations prevents a delayed old-generation purge from deleting a fresh
+	// same-name database; catalog receipts separately retain accepted authority.
+	release, err := m.dropAdmission.acquire(ctx, true, false)
+	if err != nil {
 		return err
+	}
+	defer release()
+	policy := catalogTransitionPolicy{durability: catalogDurableDrop, dropName: name}
+	completionOnly := false
+	if err := m.transitionCatalog(ctx, policy, func(candidate *DatabaseManager) error {
+		info := candidate.databases[name]
+		if info == nil {
+			if !candidate.pendingDrops[name] {
+				return ErrDatabaseNotFound
+			}
+			// Final metadata already applied, but its Sync acknowledgement failed.
+			// Complete only the existing fence; never purge a new graph generation.
+			candidate.transitionPendingDrop(name, false)
+			completionOnly = true
+			return nil
+		}
+		if info.Type == "system" {
+			return ErrCannotDropSystemDB
+		}
+		if info.IsDefault && !candidate.config.AllowDropDefault && !candidate.pendingDrops[name] {
+			return ErrCannotDropDefaultDB
+		}
+		candidate.transitionPendingDrop(name, true)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if completionOnly {
+		return nil
+	}
+	// Receipt publication and durable intent completed before irreversible work.
+	if err := ctx.Err(); err != nil {
+		return &storage.AcceptedCommitError{State: storage.CommitRecoveryPending, Err: err}
 	}
 	if _, _, err := m.inner.DeleteByPrefix(name + ":"); err != nil {
 		return localizedError(localization.MultidbManagerDeleteDatabaseDataFailed(err), err)
 	}
-
-	delete(m.databases, name)
-	m.transitionPendingDrop(name, false)
-	if err := m.persistMetadata(); err != nil {
-		m.databases[name] = info
-		m.transitionPendingDrop(name, true)
+	if err := m.transitionCatalog(ctx, policy, func(candidate *DatabaseManager) error {
+		delete(candidate.databases, name)
+		candidate.transitionPendingDrop(name, false)
+		return nil
+	}); err != nil {
 		return localizedError(localization.MultidbCompositePersistMetadataAfterDropFailed(err), err)
 	}
-	if err := m.syncDropMetadata(); err != nil {
-		m.databases[name] = info
-		m.transitionPendingDrop(name, true)
-		return err
-	}
-	m.applyChangeCapture(name, nil)
-	delete(m.limitCheckers, name)
-
 	return nil
 }
 
@@ -543,17 +570,9 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 	// Resolve dotted composite constituent references first (e.g. "cmp.tr").
 	// This is required for protocol-level USE routing where the effective database
 	// name is a constituent graph reference, not a top-level database metadata key.
-	if ref, resolvedName, ok := m.resolveCompositeConstituentInternal(name); ok {
-		if strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
-			runtimeRef := ref
-			if strings.EqualFold(strings.TrimSpace(runtimeRef.AuthMode), "user_password") {
-				decrypted, decErr := m.decryptStoredRemotePassword(runtimeRef.Password)
-				if decErr != nil {
-					return nil, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(runtimeRef.Alias, decErr), decErr)
-				}
-				runtimeRef.Password = decrypted
-			}
-			return m.getRemoteStorageInternal(runtimeRef, authToken)
+	if constituent, resolvedName, ok := m.resolveCompositeConstituentInternal(name); ok {
+		if strings.EqualFold(strings.TrimSpace(constituent.ref.Type), "remote") {
+			return m.getRemoteStorageResolvedInternal(constituent, authToken)
 		}
 		engine, _, err := m.databaseViewLocked(resolvedName, true)
 		return engine, err
@@ -576,31 +595,33 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 		constituentNames := make(map[string]string)
 		accessModes := make(map[string]string)
 
-		for _, ref := range info.Constituents {
+		for _, ref := range canonicalConstituents(info.Constituents, "") {
 			var constituentStorage storage.Engine
-			runtimeRef := ref
 			actualName := ref.DatabaseName
 			var err error
+			resolved := info.runtimeConstituentsByAlias[ref.Alias]
+			if resolved == nil {
+				m.rebuildRuntimeConstituentsFor(info)
+				resolved = info.runtimeConstituentsByAlias[ref.Alias]
+			}
 
 			switch ref.Type {
 			case "remote":
-				if strings.EqualFold(strings.TrimSpace(runtimeRef.AuthMode), "user_password") {
-					decrypted, decErr := m.decryptStoredRemotePassword(runtimeRef.Password)
-					if decErr != nil {
-						return nil, localizedError(localization.MultidbManagerResolveRemoteCredentialsFailed(runtimeRef.Alias, decErr), decErr)
-					}
-					runtimeRef.Password = decrypted
+				if resolved == nil {
+					return nil, ErrDatabaseNotFound
 				}
-				constituentStorage, err = m.getRemoteStorageInternal(runtimeRef, authToken)
+				constituentStorage, err = m.getRemoteStorageResolvedInternal(resolved, authToken)
 				if err != nil {
 					return nil, localizedError(localization.MultidbManagerGetRemoteStorageFailed(ref.Alias, err), err)
 				}
 			default:
-				// Resolve actual database name (might be an alias)
-				actualName, err = m.resolveDatabaseInternal(ref.DatabaseName)
-				if err != nil {
+				if resolved == nil || resolved.err != nil {
+					if resolved != nil {
+						err = resolved.err
+					}
 					return nil, localizedError(localization.MultidbCompositeConstituentDatabaseNotFound(ref.DatabaseName, err), err)
 				}
+				actualName = resolved.resolvedDatabaseName
 
 				// Get storage for constituent
 				constituentStorage, _, err = m.databaseViewLocked(actualName, true)
@@ -627,39 +648,42 @@ func (m *DatabaseManager) GetStorageWithAuth(name string, authToken string) (sto
 }
 
 // resolveCompositeConstituentInternal resolves dotted graph references in the form
-// "<composite>.<alias>" to a constituent reference and resolved backing database name.
+// "<composite>.<alias>" to their precomputed constituent entry and backing database name.
 // Must be called with lock held.
-func (m *DatabaseManager) resolveCompositeConstituentInternal(name string) (ConstituentRef, string, bool) {
+func (m *DatabaseManager) resolveCompositeConstituentInternal(name string) (*runtimeConstituent, string, bool) {
 	dotIdx := strings.IndexByte(name, '.')
 	if dotIdx <= 0 || dotIdx >= len(name)-1 {
-		return ConstituentRef{}, "", false
+		return nil, "", false
 	}
 
-	compositeName := strings.TrimSpace(name[:dotIdx])
-	constituentAlias := strings.TrimSpace(name[dotIdx+1:])
+	compositeName := name[:dotIdx]
+	constituentAlias := name[dotIdx+1:]
 	if compositeName == "" || constituentAlias == "" {
-		return ConstituentRef{}, "", false
+		return nil, "", false
 	}
 
 	info, exists := m.databases[compositeName]
 	if !exists || info.Type != "composite" {
-		return ConstituentRef{}, "", false
+		return nil, "", false
 	}
-	for _, ref := range info.Constituents {
-		if !strings.EqualFold(ref.Alias, constituentAlias) {
-			continue
-		}
-		resolvedName := ref.DatabaseName
-		if !strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
-			var err error
-			resolvedName, err = m.resolveDatabaseInternal(ref.DatabaseName)
-			if err != nil {
-				return ConstituentRef{}, "", false
-			}
-		}
-		return ref, resolvedName, true
+	if info.runtimeConstituentsByAlias == nil {
+		m.rebuildRuntimeConstituentsFor(info)
 	}
-	return ConstituentRef{}, "", false
+	resolved := info.runtimeConstituentsByAlias[constituentAlias]
+	if resolved == nil {
+		_, ref, found := findCanonicalConstituent(info.Constituents, constituentAlias)
+		if !found {
+			return nil, "", false
+		}
+		resolved = info.runtimeConstituentsByAlias[ref.Alias]
+		if resolved == nil {
+			return nil, "", false
+		}
+	}
+	if resolved.err != nil && !strings.EqualFold(strings.TrimSpace(resolved.ref.Type), "remote") {
+		return nil, "", false
+	}
+	return resolved, resolved.resolvedDatabaseName, true
 }
 
 // databaseViewLocked is the single lookup/construction owner for a namespace's
@@ -696,18 +720,38 @@ func (m *DatabaseManager) databaseViewLocked(name string, includeStorage bool) (
 	return engine, checker, nil
 }
 
-// getRemoteStorageInternal creates an engine for a remote constituent.
+// getRemoteStorageResolvedInternal creates an engine from a precomputed remote identity.
 // Must be called with lock held.
-func (m *DatabaseManager) getRemoteStorageInternal(ref ConstituentRef, authToken string) (storage.Engine, error) {
-	if m.remoteEngineFactory == nil {
-		return nil, localizedError(localization.MultidbManagerRemoteEngineFactoryNotConfigured(ref.Alias), nil)
+func (m *DatabaseManager) getRemoteStorageResolvedInternal(ref *runtimeConstituent, authToken string) (storage.Engine, error) {
+	if ref == nil {
+		return nil, ErrDatabaseNotFound
 	}
-	engine, err := m.remoteEngineFactory(ref, authToken)
+	if m.remoteEngineFactory == nil {
+		return nil, localizedError(localization.MultidbManagerRemoteEngineFactoryNotConfigured(ref.ref.Alias), nil)
+	}
+	runtimeRef := ref.storedRef
+	resolveErr := ref.err
+	if !ref.explicitAuth && strings.TrimSpace(authToken) != "" {
+		runtimeRef = ref.forwardedRef
+		resolveErr = ref.forwardedErr
+	}
+	if resolveErr != nil {
+		return nil, resolveErr
+	}
+	engine, err := m.remoteEngineFactory(runtimeRef, authToken)
 	if err != nil {
-		return nil, err
+		secrets := ref.redactionValues
+		if authToken != "" {
+			secrets = append(append([]string(nil), ref.redactionValues...), authToken)
+		}
+		redactedErr := observability.RedactError(err, secrets...)
+		if ref.redactedIdentity != "" {
+			return nil, fmt.Errorf("remote constituent %s: %w", ref.redactedIdentity, redactedErr)
+		}
+		return nil, redactedErr
 	}
 	if engine == nil {
-		return nil, localizedError(localization.MultidbManagerRemoteEngineFactoryReturnedNil(ref.Alias), nil)
+		return nil, localizedError(localization.MultidbManagerRemoteEngineFactoryReturnedNil(ref.ref.Alias), nil)
 	}
 	return engine, nil
 }
@@ -724,7 +768,7 @@ func (m *DatabaseManager) ListDatabases() []*DatabaseInfo {
 
 	result := make([]*DatabaseInfo, 0, len(m.databases))
 	for _, info := range m.databases {
-		result = append(result, cloneDatabaseInfo(info, m.pendingDrops[info.Name]))
+		result = append(result, cloneDatabaseInfo(info, m.pendingDrops[info.Name], databaseSnapshotVisible))
 	}
 	return result
 }
@@ -739,12 +783,21 @@ func (m *DatabaseManager) GetDatabase(name string) (*DatabaseInfo, error) {
 		return nil, ErrDatabaseNotFound
 	}
 
-	return cloneDatabaseInfo(info, m.pendingDrops[info.Name]), nil
+	return cloneDatabaseInfo(info, m.pendingDrops[info.Name], databaseSnapshotVisible), nil
 }
+
+// databaseSnapshotPurpose distinguishes complete catalog state from the
+// canonical winner projection exposed by public metadata readers.
+type databaseSnapshotPurpose uint8
+
+const (
+	databaseSnapshotFull databaseSnapshotPurpose = iota
+	databaseSnapshotVisible
+)
 
 // cloneDatabaseInfo returns a deep-enough, lock-safe snapshot of DatabaseInfo.
 // Caller must hold m.mu (read or write) before invoking.
-func cloneDatabaseInfo(info *DatabaseInfo, pendingDrop bool) *DatabaseInfo {
+func cloneDatabaseInfo(info *DatabaseInfo, pendingDrop bool, purpose databaseSnapshotPurpose) *DatabaseInfo {
 	status := info.Status
 	if pendingDrop {
 		status = "offline"
@@ -752,7 +805,15 @@ func cloneDatabaseInfo(info *DatabaseInfo, pendingDrop bool) *DatabaseInfo {
 	limitsCopy := info.limitsSnapshot()
 
 	aliases := append([]string(nil), info.Aliases...)
-	constituents := append([]ConstituentRef(nil), info.Constituents...)
+	var constituents []ConstituentRef
+	if purpose == databaseSnapshotVisible {
+		constituents = snapshotConstituents(info.Constituents)
+	} else {
+		// Admission retains exact-distinct folded registrations. A hidden earlier
+		// registration must survive persistence so removing the winner after reopen
+		// exposes the same graph as removing it before reopen.
+		constituents = append([]ConstituentRef(nil), info.Constituents...)
+	}
 
 	accounting := info.accountingOwner()
 	accounting.sizeMu.RLock()
@@ -800,34 +861,29 @@ func (m *DatabaseManager) DefaultDatabaseName() string {
 }
 
 // SetDatabaseStatus sets a database online/offline.
-func (m *DatabaseManager) SetDatabaseStatus(name, status string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *DatabaseManager) SetDatabaseStatus(ctx context.Context, name, status string) error {
+	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(m *DatabaseManager) error {
 
-	info, exists := m.databases[name]
-	if !exists {
-		return ErrDatabaseNotFound
-	}
+		info, exists := m.databases[name]
+		if !exists {
+			return ErrDatabaseNotFound
+		}
 
-	if status != "online" && status != "offline" {
-		return localizedError(localization.MultidbManagerInvalidStatus(status), nil)
-	}
+		if status != "online" && status != "offline" {
+			return localizedError(localization.MultidbManagerInvalidStatus(status), nil)
+		}
 
-	info.Status = status
-	info.UpdatedAt = time.Now()
+		info.Status = status
+		info.UpdatedAt = time.Now()
 
-	// Clear cached engine if going offline
-	if status == "offline" {
-		delete(m.engines, name)
-	}
+		return nil
 
-	return m.persistMetadata()
+	})
 }
 
 // Close releases resources.
 func (m *DatabaseManager) Close() error {
 	m.mu.Lock()
-	defer m.unlockStatementCacheIndexes(true, true)
 
 	// Clear all cached engines
 	m.engines = make(map[string]storage.Engine)
@@ -835,7 +891,9 @@ func (m *DatabaseManager) Close() error {
 	m.statementCachesClosed = true
 	m.disposeStatementCachesLocked()
 
-	// Close the underlying storage
+	// Native close can wait for accepted work. Its terminal callback needs the
+	// metadata lock to publish, so release it before entering that owner.
+	m.unlockStatementCacheIndexes(true, true)
 	return m.inner.Close()
 }
 
@@ -876,86 +934,80 @@ func (m *DatabaseManager) ResolveConnectionLimitOwner(selection string) (string,
 		if info == nil || info.Type != "composite" {
 			return "", ErrDatabaseNotFound
 		}
-		for _, constituent := range info.Constituents {
-			if constituent.Alias != selection[dot+1:] {
-				continue
-			}
-			if constituent.Type == "local" {
-				return m.resolveDatabaseInternal(constituent.DatabaseName)
-			}
-			return compositeName, nil
+		_, constituent, found := findCanonicalConstituent(info.Constituents, selection[dot+1:])
+		if !found {
+			return "", ErrDatabaseNotFound
 		}
-		return "", ErrDatabaseNotFound
+		if constituent.Type == "local" {
+			return m.resolveDatabaseInternal(constituent.DatabaseName)
+		}
+		return compositeName, nil
 	}
 	return m.resolveDatabaseInternal(selection)
 }
 
 // CreateAlias creates an alias for a database (Neo4j-compatible).
-func (m *DatabaseManager) CreateAlias(alias, databaseName string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *DatabaseManager) CreateAlias(ctx context.Context, alias, databaseName string) error {
+	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(m *DatabaseManager) error {
 
-	// Validate target database exists
-	info, exists := m.databases[databaseName]
-	if !exists {
-		return ErrDatabaseNotFound
-	}
+		// Validate target database exists
+		info, exists := m.databases[databaseName]
+		if !exists {
+			return ErrDatabaseNotFound
+		}
 
-	// Validate alias doesn't conflict with existing database name
-	// NOTE: do NOT call m.Exists() here — we already hold m.mu.Lock() and
-	// Exists() acquires m.mu.RLock(), which deadlocks on a non-re-entrant RWMutex.
-	if m.databases[alias] != nil {
-		return ErrAliasConflict
-	}
+		// Validate alias doesn't conflict with existing database name
+		// NOTE: do NOT call m.Exists() here — we already hold m.mu.Lock() and
+		// Exists() acquires m.mu.RLock(), which deadlocks on a non-re-entrant RWMutex.
+		if m.databases[alias] != nil {
+			return ErrAliasConflict
+		}
 
-	// Validate alias name
-	if err := m.validateAliasName(alias); err != nil {
-		return err
-	}
+		// Validate alias name
+		if err := m.validateAliasName(alias); err != nil {
+			return err
+		}
 
-	// Check if alias is already used by another database
-	for _, dbInfo := range m.databases {
-		for _, existingAlias := range dbInfo.Aliases {
-			if existingAlias == alias {
-				return ErrAliasExists
+		// Check if alias is already used by another database
+		for _, dbInfo := range m.databases {
+			for _, existingAlias := range dbInfo.Aliases {
+				if existingAlias == alias {
+					return ErrAliasExists
+				}
 			}
 		}
-	}
 
-	// Add alias
-	if info.Aliases == nil {
-		info.Aliases = []string{}
-	}
-	info.Aliases = append(info.Aliases, alias)
-	info.UpdatedAt = time.Now()
+		// Add alias
+		if info.Aliases == nil {
+			info.Aliases = []string{}
+		}
+		info.Aliases = append(info.Aliases, alias)
+		info.UpdatedAt = time.Now()
 
-	return m.persistMetadata()
+		return nil
+
+	})
 }
 
 // DropAlias removes an alias (Neo4j-compatible).
-func (m *DatabaseManager) DropAlias(alias string) error {
-	m.mu.Lock()
-	changed := false
-	defer func() { m.unlockStatementCacheIndexes(changed, false) }()
+func (m *DatabaseManager) DropAlias(ctx context.Context, alias string) error {
+	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(m *DatabaseManager) error {
 
-	// Find database with this alias
-	for _, info := range m.databases {
-		for i, existingAlias := range info.Aliases {
-			if existingAlias == alias {
-				// Remove alias
-				info.Aliases = slices.Delete(info.Aliases, i, i+1)
-				info.UpdatedAt = time.Now()
-				if err := m.persistMetadata(); err != nil {
-					return err
+		// Find database with this alias
+		for _, info := range m.databases {
+			for i, existingAlias := range info.Aliases {
+				if existingAlias == alias {
+					// Remove alias
+					info.Aliases = slices.Delete(info.Aliases, i, i+1)
+					info.UpdatedAt = time.Now()
+					return nil
 				}
-				m.invalidateStatementCacheReferenceLocked(alias)
-				changed = true
-				return nil
 			}
 		}
-	}
 
-	return ErrAliasNotFound
+		return ErrAliasNotFound
+
+	})
 }
 
 // ListAliases returns all aliases for a database, or all aliases if database is empty.
@@ -985,32 +1037,16 @@ func (m *DatabaseManager) ListAliases(databaseName string) map[string]string {
 }
 
 // SetDatabaseLimits sets resource limits for a database.
-func (m *DatabaseManager) SetDatabaseLimits(databaseName string, limits *Limits) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	info := m.databases[databaseName]
-	if info == nil {
-		return ErrDatabaseNotFound
-	}
-	runtime, err := bindManagedRuntime(info, info.limitsSnapshot(), databaseName, managedEntityOwnerFor(m.inner))
-	if err != nil {
-		return err
-	}
-	if runtime.retired.Load() {
-		return ErrDatabaseNotFound
-	}
-	runtime.policyUpdateMu.Lock()
-	defer runtime.policyUpdateMu.Unlock()
-	limits = cloneLimits(limits)
-	// Persist the proposal without exposing an uncommitted quota to another
-	// manager handle. A failed catalog write preserves policy and rate tokens.
-	if err := m.persistMetadata(databaseLimitsChange{database: databaseName, limits: limits}); err != nil {
-		return err
-	}
-	info.Limits = cloneLimits(limits)
-	info.UpdatedAt = time.Now()
-	runtime.policy.updateLimits(limits)
-	return nil
+func (m *DatabaseManager) SetDatabaseLimits(ctx context.Context, databaseName string, limits *Limits) error {
+	return m.transitionCatalog(ctx, catalogTransitionPolicy{}, func(candidate *DatabaseManager) error {
+		info := candidate.databases[databaseName]
+		if info == nil || candidate.pendingDrops[databaseName] {
+			return ErrDatabaseNotFound
+		}
+		info.Limits = cloneLimits(limits)
+		info.UpdatedAt = time.Now()
+		return nil
+	})
 }
 
 // GetDatabaseLimits returns resource limits for a database.

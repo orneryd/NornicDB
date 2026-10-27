@@ -19,8 +19,8 @@ import (
 func TestGh745_HTTPCompositeQueryIdentities(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	token := "Bearer " + getAuthToken(t, authenticator, "admin")
-	require.NoError(t, server.dbManager.CreateDatabase("identity_leaf"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("identity_root", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "identity_leaf"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "identity_root", []multidb.ConstituentRef{
 		{Alias: "leaf", DatabaseName: "identity_leaf", Type: "local", AccessMode: "read_write"},
 	}))
 	created := makeRequest(t, server, http.MethodPost, "/db/identity_leaf/tx/commit", map[string]any{
@@ -124,9 +124,9 @@ func TestGh745_HTTPCompositeElementIDUsesConstituentDatabase(t *testing.T) {
 	// A composite request's row values and meta must name the constituent
 	// that actually holds each entity (#745 §3), not the composite root.
 	server, _ := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("cmp_745_a"))
-	require.NoError(t, server.dbManager.CreateDatabase("cmp_745_b"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("cmp_745", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cmp_745_a"}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cmp_745_b"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "cmp_745", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "cmp_745_a", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "cmp_745_b", Type: "local", AccessMode: "read_write"},
 	}))

@@ -16,12 +16,12 @@ import (
 func compositeTestFixture(t *testing.T) (*StorageExecutor, *multidb.DatabaseManager) {
 	t.Helper()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := multidb.NewDatabaseManager(base, nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { mgr.Close() })
 
-	require.NoError(t, mgr.CreateDatabase("shard_a"))
-	require.NoError(t, mgr.CreateCompositeDatabase("comp", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "shard_a"}))
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "comp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "shard_a", Type: "local", AccessMode: "read_write"},
 	}))
 

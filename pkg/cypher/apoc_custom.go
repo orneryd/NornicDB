@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"encoding/base64"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"time"
 
@@ -39,7 +40,7 @@ func parseCustomSignature(signature string) (customSignature, bool) {
 	}
 	parsed := customSignature{name: strings.TrimPrefix(strings.TrimSpace(signature[:open]), apocCustomPrefix)}
 	for _, part := range strings.Split(parsed.name, ".") {
-		if !isValidIdentifier(part) {
+		if !cyphertext.IsIdentifier(part) {
 			return customSignature{}, false
 		}
 	}
@@ -60,7 +61,7 @@ func parseCustomSignature(signature string) (customSignature, bool) {
 			defaultLiteral, name = strings.TrimSpace(name[equals+1:]), strings.TrimSpace(name[:equals])
 		}
 		name = strings.TrimPrefix(name, "$")
-		if !isValidIdentifier(name) || seen[name] || typeName == "" {
+		if !cyphertext.IsIdentifier(name) || seen[name] || typeName == "" {
 			return customSignature{}, false
 		}
 		if defaultLiteral == "" && len(parsed.defaults) > 0 && parsed.defaults[len(parsed.defaults)-1] != "" {
@@ -89,7 +90,7 @@ func parseCustomSignature(signature string) (customSignature, bool) {
 	for _, part := range splitTopLevelComma(inner) {
 		name, typeName, found := strings.Cut(part, "::")
 		name, typeName = strings.TrimSpace(name), strings.TrimSpace(typeName)
-		if !found || !isValidIdentifier(name) || typeName == "" {
+		if !found || !cyphertext.IsIdentifier(name) || typeName == "" {
 			return customSignature{}, false
 		}
 		parsed.outputs = append(parsed.outputs, ProcedureColumn{Name: name, Type: upperASCII(typeName)})

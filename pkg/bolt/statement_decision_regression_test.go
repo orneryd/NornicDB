@@ -17,17 +17,17 @@ import (
 func TestStatementBoltUseAndFabric(t *testing.T) {
 	ctx := context.Background()
 	users, _, fixture, stores := boltProductionFixture(t)
-	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
 	for _, database := range []string{"other", "r2source", "r2target"} {
-		require.NoError(t, mgr.CreateDatabase(database))
+		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: database}))
 	}
-	require.NoError(t, mgr.CreateCompositeDatabase("r2cmp", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "r2cmp", []multidb.ConstituentRef{
 		{Alias: "source", DatabaseName: "r2source", Type: "local", AccessMode: "read_write"},
 		{Alias: "target", DatabaseName: "r2target", Type: "local", AccessMode: "read_write"},
 	}))
-	require.NoError(t, mgr.CreateCompositeDatabase("r2blockedcmp", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "r2blockedcmp", []multidb.ConstituentRef{
 		{Alias: "source", DatabaseName: "nornic", Type: "local", AccessMode: "read_write"},
 	}))
 	source, err := mgr.GetStorage("r2source")

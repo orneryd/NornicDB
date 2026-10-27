@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/json"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"math"
 	"strconv"
 	"strings"
@@ -164,11 +165,11 @@ func TestRemoteHTTPWriterValues(t *testing.T) {
 	require.JSONEq(t, `{"u":7,"n":"x","a":[1,2],"m":{"k":1},"s":{"A":1},"f32":1.5,"b":true,"i8":-3,"num":12,"bytes":"eA=="}`, string(sent))
 	for _, s := range []string{"", "plain", "quote\" back\\slash", "ctl\x00\x01\n\r\t\x1f", "é€😀", "line\u2028sep\u2029", "<&>"} {
 		var back string
-		require.NoError(t, json.Unmarshal(appendRemoteJSONString(nil, s), &back))
+		require.NoError(t, json.Unmarshal(jsontext.AppendString(nil, s), &back))
 		require.Equal(t, s, back)
 	}
 	var back string
-	require.NoError(t, json.Unmarshal(appendRemoteJSONString(nil, "bad\xffbyte"), &back))
+	require.NoError(t, json.Unmarshal(jsontext.AppendString(nil, "bad\xffbyte"), &back))
 	require.Equal(t, "bad\ufffdbyte", back)
 }
 

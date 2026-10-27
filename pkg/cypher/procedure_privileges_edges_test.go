@@ -19,6 +19,11 @@ type systemOnlyManager struct {
 	err    error
 }
 
+// This fixture owns one physical system namespace. Statement admission now
+// resolves its selected graph before executing transaction control as well.
+func (m systemOnlyManager) ResolveDatabase(name string) (string, error) { return name, nil }
+func (m systemOnlyManager) IsCompositeDatabase(string) bool             { return false }
+
 func (m systemOnlyManager) GetStorageForUse(name string, _ string) (interface{}, error) {
 	if m.err != nil {
 		return nil, m.err

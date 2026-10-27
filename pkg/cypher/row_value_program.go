@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"sync/atomic"
 
@@ -298,7 +299,7 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 	if isCaseExpression(expr) {
 		return bound(expr, c.compileCase(expr), impureRowValue())
 	}
-	if _, _, projection := rowMapProjectionSplit(expr); projection {
+	if _, _, projection := mapProjectionSplit(expr, mapProjectionRuntime); projection {
 		return rowTextValue(expr)
 	}
 	if _, enclosed := stripEnclosingRowDelimiter(expr, '{', '}'); enclosed {
@@ -321,7 +322,10 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 		c.compose(info, parts, infos)
 		return bound(expr, &rowListNode{items: parts}, info)
 	}
-	if function, inner, isFunction := parseFunctionCallWS(expr); isFunction {
+	var callFacts1 functionCallFacts
+	if isFunction := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1); isFunction {
+		function, inner := callFacts1.name, callFacts1.inner
+
 		name := lowerASCII(function)
 		if isQuantifierFunction(name) {
 			variable, listExpression, predicate, parsed := parseQuantifierArguments(inner)
@@ -441,7 +445,7 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 			// A fixed endpoint of a row relationship is stable throughout a
 			// list predicate. Hoist its property read when the loop variable
 			// is unrelated; this also preserves the per-row endpoint cache.
-			if isValidIdentifier(endpoint.argument) {
+			if cyphertext.IsIdentifier(endpoint.argument) {
 				return bound(expr, endpoint, rowValueInfo{pure: true, refs: []string{endpoint.argument}})
 			}
 			return bound(expr, endpoint, impureRowValue())
@@ -451,7 +455,7 @@ func (c *rowValueCompiler) compileValue(expr string) (rowValueNode, rowValueInfo
 		c.compose(info, parts, infos)
 		return bound(expr, &rowPropertyNode{text: expr, base: parts[0], chain: strings.TrimSpace(expr[dot+1:])}, info)
 	}
-	if isValidIdentifier(expr) || len(expr) > 1 && expr[0] == '$' && isValidIdentifier(expr[1:]) {
+	if cyphertext.IsIdentifier(expr) || len(expr) > 1 && expr[0] == '$' && cyphertext.IsIdentifier(expr[1:]) {
 		// A row variable or parameter: bound in the row, or read by the
 		// fallback as evaluateRowValueText reads it.
 		return bound(expr, &rowFallbackNode{text: expr}, rowValueInfo{pure: true, trivial: true, refs: []string{expr}})
@@ -467,7 +471,7 @@ func (c *rowValueCompiler) compileFunction(expr, name, argument string) (rowValu
 	switch name {
 	case "startnode", "endnode":
 		variable := strings.TrimSpace(argument)
-		if !isValidIdentifier(variable) {
+		if !cyphertext.IsIdentifier(variable) {
 			return rowTextValue(expr)
 		}
 		return bound(expr, &rowEndpointNode{text: expr, function: name, variable: variable}, rowValueInfo{pure: true, refs: []string{variable}})
@@ -750,33 +754,7 @@ func (n *rowPropertyChainNode) eval(e *StorageExecutor, values map[string]interf
 type rowFallbackNode struct{ text string }
 
 func (n *rowFallbackNode) eval(e *StorageExecutor, values map[string]interface{}, _ [][]rowValueMemo) (interface{}, bool, error) {
-	return e.rowValueFallback(n.text, values)
-}
-
-// rowValueFallback is evaluateRowValueText's last step for expr.
-func (e *StorageExecutor) rowValueFallback(expr string, values map[string]interface{}) (interface{}, bool, error) {
-	if err := scalarExpressionEvaluationError(expr, values); err != nil {
-		return nil, false, err
-	}
-	if isValidIdentifier(expr) {
-		if value, bound := e.boundValue(rowStatementContextOrBackground(values), expr); bound {
-			return runtimeRowResult(value, true, nil)
-		}
-		return nil, false, nil
-	}
-	if strings.HasPrefix(expr, "$") {
-		// A parameter absent from a planning scope is unresolved, not text.
-		// Actual materialization rejects this result at the checked boundary.
-		ctx := rowStatementContextOrBackground(values)
-		if value, ok := resolveDirectParamRef(ctx, expr); ok {
-			return runtimeRowResult(value, true, nil)
-		}
-		if value, ok := resolveParamPathRef(ctx, expr); ok {
-			return runtimeRowResult(value, true, nil)
-		}
-		return nil, false, nil
-	}
-	return e.evaluateRowFallback(expr, values)
+	return e.evaluateRowFallback(n.text, values, rowFallbackValue)
 }
 
 type rowListNode struct{ items []rowValueNode }
@@ -924,7 +902,7 @@ func (n *rowPropertyNode) eval(e *StorageExecutor, values map[string]interface{}
 		return nil, false, err
 	}
 	if !ok {
-		return e.rowValueFallback(n.text, values)
+		return e.evaluateRowFallback(n.text, values, rowFallbackValue)
 	}
 	value, ok := evaluateRowPropertyChain(e.queryVisibleValue(base), n.chain)
 	if !ok {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
 	"strconv"
 	"strings"
@@ -180,7 +181,7 @@ func (e *StorageExecutor) collectDeleteWithLimitCandidates(ctx context.Context, 
 			return nil, false, nil
 		}
 	}
-	rowCtx, prepared, prepareErr := e.preparePatternRow(ctx, patternPart, nil)
+	rowCtx, prepared, prepareErr := e.bindPatternProperties(ctx, patternPart, nil)
 	if prepareErr != nil {
 		return nil, true, prepareErr
 	}
@@ -449,14 +450,7 @@ func (e *StorageExecutor) isDeleteStreamingEligible(matchSegment, deleteVars str
 	if deleteVars == "" {
 		return false
 	}
-	// Basic identifier check
-	for i, r := range deleteVars {
-		if isIdentStartRune(r) || (i > 0 && r >= '0' && r <= '9') {
-			continue
-		}
-		return false
-	}
-	return true
+	return cyphertext.IsIdentifier(deleteVars)
 }
 
 func (e *StorageExecutor) normalizeSetMatchRowsToNodes(matchResult *ExecuteResult, store storage.Engine) {
@@ -528,7 +522,7 @@ func extractScopeVariablesFromSetAndReturn(setPart, returnPart string) []string 
 		if v == "" {
 			return
 		}
-		if !isValidIdentifier(v) {
+		if !cyphertext.IsIdentifier(v) {
 			return
 		}
 		if _, ok := seen[v]; ok {
@@ -644,7 +638,7 @@ func normalizeUnwindExpression(expr string) string {
 }
 
 func hasOuterParens(s string) bool {
-	return len(s) >= 2 && s[0] == '(' && findMatchingDelimiter(s, 0, '(', ')') == len(s)-1
+	return len(s) >= 2 && s[0] == '(' && cyphertext.FindMatchingDelimiter(s, 0, '(', ')', cyphertext.OpeningDelimiter) == len(s)-1
 }
 
 // coerceToUnwindItems is the one UNWIND coercion, as in Neo4j (#693): null
@@ -658,17 +652,6 @@ func coerceToUnwindItems(value interface{}) []interface{} {
 		return items
 	}
 	return []interface{}{value}
-}
-
-func extractWithAliases(querySegment string) []string {
-	matches := withAliasPattern.FindAllStringSubmatch(querySegment, -1)
-	aliases := make([]string, 0, len(matches))
-	for _, m := range matches {
-		if len(m) > 1 {
-			aliases = append(aliases, m[1])
-		}
-	}
-	return aliases
 }
 
 func dedupeNonEmpty(groups ...[]string) []string {
@@ -832,7 +815,8 @@ func (e *StorageExecutor) parseReturnItems(ctx context.Context, returnPart strin
 	if plan.star {
 		items := []returnItem{{expr: "*", alias: "*"}}
 		for _, item := range plan.starItems {
-			expr, alias := parseProjectionExprAlias(ctx, item)
+			itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
+			expr, alias := itemSource.expression, itemSource.alias
 			items = append(items, returnItem{expr: expr, alias: alias})
 		}
 		return items
@@ -871,8 +855,7 @@ func (e *StorageExecutor) evaluateRelationshipPatternInWhere(node *storage.Node,
 	if !strings.Contains(pattern, "("+variable+")") && !strings.Contains(pattern, "("+variable+":") {
 		return false
 	}
-	relationshipCount := strings.Count(pattern, "-[")
-	if relationshipCount > 1 {
+	if e.isChainedPattern(pattern) {
 		return e.checkChainedPattern(node, variable, pattern, "")
 	}
 	_ = e.extractTargetVariable(pattern, variable) // not needed for simple (var)-[]->() pattern
@@ -960,79 +943,60 @@ type relationshipHop struct {
 // parseRelationshipHops extracts relationship hops from a pattern
 func (e *StorageExecutor) parseRelationshipHops(pattern, variable string) []relationshipHop {
 	var hops []relationshipHop
-
-	// Find all relationship patterns: -[...]->  or  <-[...]-
-	remaining := pattern
-
-	for len(remaining) > 0 {
-		// Look for outgoing: -[...]->(
-		outIdx := strings.Index(remaining, "-[")
-		inIdx := strings.Index(remaining, "<-[")
-
-		if outIdx >= 0 && (inIdx < 0 || outIdx < inIdx) {
-			// Found outgoing pattern
-			relStart := outIdx + 2
-			relEnd := strings.Index(remaining[relStart:], "]")
-			if relEnd < 0 {
-				break
-			}
-			relEnd += relStart
-
-			relPart := remaining[relStart:relEnd]
-			// Extract relationship types
-			var relTypes []string
-			if strings.HasPrefix(relPart, ":") {
-				typePart := relPart[1:]
-				// Handle multiple types separated by |
-				for _, t := range strings.Split(typePart, "|") {
-					if t = strings.TrimSpace(t); t != "" {
-						relTypes = append(relTypes, t)
-					}
-				}
-			}
-
-			hops = append(hops, relationshipHop{
-				relTypes: relTypes,
-				outgoing: true,
-			})
-
-			remaining = remaining[relEnd+1:]
-		} else if inIdx >= 0 {
-			// Found incoming pattern
-			relStart := inIdx + 3
-			relEnd := strings.Index(remaining[relStart:], "]")
-			if relEnd < 0 {
-				break
-			}
-			relEnd += relStart
-
-			relPart := remaining[relStart:relEnd]
-			// Extract relationship types
-			var relTypes []string
-			if strings.HasPrefix(relPart, ":") {
-				typePart := relPart[1:]
-				for _, t := range strings.Split(typePart, "|") {
-					if t = strings.TrimSpace(t); t != "" {
-						relTypes = append(relTypes, t)
-					}
-				}
-			}
-
-			hops = append(hops, relationshipHop{
-				relTypes: relTypes,
-				outgoing: false,
-			})
-
-			remaining = remaining[relEnd+1:]
-		} else {
-			break
-		}
-	}
-
+	forEachRelationshipSource(pattern, func(_, open, close, _ int, incoming, _ bool) bool {
+		declaration := relationshipDeclarationOf(StripComments(pattern[open+1 : close]))
+		hops = append(hops, relationshipHop{relTypes: declaration.types, outgoing: !incoming})
+		return true
+	})
 	return hops
 }
 
-// traverseChain recursively checks if a chain of relationships exists
+// forEachRelationshipSource frames relationship declarations in pattern text.
+// The relationship grammar remains here; opaque, name and delimiter extents
+// belong to the shared lexical owners and the existing declaration reader.
+func forEachRelationshipSource(pattern string, visit func(start, open, close, end int, incoming, outgoing bool) bool) {
+	for index := 0; index < len(pattern); index++ {
+		if end, opaque := cyphertext.SkipToken(pattern, index); opaque {
+			index = end - 1
+			continue
+		}
+		if pattern[index] == '(' {
+			end := cyphertext.FindMatchingDelimiter(pattern, index, '(', ')', cyphertext.OpeningDelimiter)
+			if end < 0 {
+				return
+			}
+			index = end
+			continue
+		}
+		if pattern[index] != '[' || index == 0 || pattern[index-1] != '-' {
+			continue
+		}
+		close := cyphertext.FindMatchingDelimiter(pattern, index, '[', ']', cyphertext.OpeningDelimiter)
+		if close < 0 {
+			return
+		}
+		end, _ := cyphertext.GapEnd(pattern, close+1)
+		if end >= len(pattern) || pattern[end] != '-' {
+			index = close
+			continue
+		}
+		end++
+		outgoing := end < len(pattern) && pattern[end] == '>'
+		if outgoing {
+			end++
+		}
+		start := index - 1
+		incoming := start > 0 && pattern[start-1] == '<'
+		if incoming {
+			start--
+		}
+		if !visit(start, index, close, end, incoming, outgoing) {
+			return
+		}
+		index = end - 1
+	}
+}
+
 func (e *StorageExecutor) traverseChain(node *storage.Node, hops []relationshipHop, hopIndex int) bool {
 	if hopIndex >= len(hops) {
 		return true // All hops matched
@@ -1113,64 +1077,51 @@ func extractVariableNameFromReturnItem(expr string) string {
 // extractTargetVariable extracts the target variable name from a relationship pattern
 // e.g., from "(m)-[:MANAGES]->(report)" it extracts "report"
 func (e *StorageExecutor) extractTargetVariable(pattern, sourceVar string) string {
-	// Look for outgoing pattern: (source)-[...]->(target)
-	if arrowIdx := strings.Index(pattern, "]->"); arrowIdx >= 0 {
-		rest := pattern[arrowIdx+3:]
-		if parenIdx := strings.Index(rest, "("); parenIdx >= 0 {
-			rest = rest[parenIdx+1:]
-			// Extract variable name (before : or ))
-			endIdx := strings.IndexAny(rest, ":)")
-			if endIdx > 0 {
-				return strings.TrimSpace(rest[:endIdx])
+	target := ""
+	forEachRelationshipSource(pattern, func(start, _, _, end int, incoming, outgoing bool) bool {
+		if outgoing {
+			open, _ := cyphertext.GapEnd(pattern, end)
+			if open < len(pattern) && pattern[open] == '(' {
+				at, _ := cyphertext.GapEnd(pattern, open+1)
+				if name, ok := cyphertext.ScanIdentifier(pattern, at); ok {
+					target = name.Value
+				}
+			}
+		} else if incoming {
+			for index := 0; index < start; index++ {
+				if next, opaque := cyphertext.SkipToken(pattern, index); opaque {
+					index = next - 1
+					continue
+				}
+				if pattern[index] != '(' {
+					continue
+				}
+				close := cyphertext.FindMatchingDelimiter(pattern, index, '(', ')', cyphertext.OpeningDelimiter)
+				if close < 0 {
+					break
+				}
+				at, _ := cyphertext.GapEnd(pattern, index+1)
+				if name, ok := cyphertext.ScanIdentifier(pattern, at); ok {
+					target = name.Value
+				}
+				index = close
 			}
 		}
-	}
-
-	// Look for incoming pattern: (target)<-[...]-(source)
-	if arrowIdx := strings.Index(pattern, "<-["); arrowIdx >= 0 {
-		// Target is before the arrow
-		before := pattern[:arrowIdx]
-		if parenIdx := strings.LastIndex(before, "("); parenIdx >= 0 {
-			inner := before[parenIdx+1:]
-			endIdx := strings.IndexAny(inner, ":)")
-			if endIdx > 0 {
-				return strings.TrimSpace(inner[:endIdx])
-			}
-		}
-	}
-
-	return ""
+		return target == ""
+	})
+	return target
 }
 
-// extractRelTypesFromPattern extracts relationship types from a pattern
+// extractRelTypesFromPattern consumes the existing relationship grammar.
 func (e *StorageExecutor) extractRelTypesFromPattern(pattern, prefix string) []string {
 	var types []string
-
-	idx := strings.Index(pattern, prefix)
-	if idx < 0 {
-		return types
-	}
-
-	rest := pattern[idx+len(prefix):]
-	endIdx := strings.Index(rest, "]")
-	if endIdx < 0 {
-		return types
-	}
-
-	relPart := rest[:endIdx]
-
-	// Extract type after colon
-	if colonIdx := strings.Index(relPart, ":"); colonIdx >= 0 {
-		typePart := relPart[colonIdx+1:]
-		// Handle multiple types (TYPE1|TYPE2)
-		for _, t := range strings.Split(typePart, "|") {
-			t = strings.TrimSpace(t)
-			if t != "" {
-				types = append(types, t)
-			}
+	forEachRelationshipSource(pattern, func(start, open, close, _ int, _, _ bool) bool {
+		if !strings.HasPrefix(pattern[start:], prefix) {
+			return true
 		}
-	}
-
+		types = relationshipDeclarationOf(StripComments(pattern[open+1 : close])).types
+		return false
+	})
 	return types
 }
 
@@ -1342,6 +1293,5 @@ var (
 	deleteWherePropertyEquals = regexp.MustCompile(`(?i)^\s*([^.\s]+)\.(\w+)\s*=\s*(.+?)\s*$`)
 	// deleteWherePropertyInParameter is "variable.property IN $param".
 	deleteWherePropertyInParameter = regexp.MustCompile(`(?i)^\s*([^.\s]+)\.(\w+)\s+IN\s+\$(\w+)\s*$`)
-	withAliasPattern               = regexp.MustCompile(`(?i)\bAS\s+([A-Za-z_][A-Za-z0-9_]*)\b`)
 	subqueryWherePattern           = regexp.MustCompile(`(?i)\s+WHERE\s+`)
 )

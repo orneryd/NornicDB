@@ -827,7 +827,7 @@ func TestResolveGraphStorage_Branches(t *testing.T) {
 	_, _, err = server.resolveGraphStorage(req)
 	require.ErrorIs(t, err, multidb.ErrDatabaseNotFound)
 
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("cmp_graph_resolve", []multidb.ConstituentRef{{
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "cmp_graph_resolve", []multidb.ConstituentRef{{
 		Alias:        "main",
 		DatabaseName: "nornic",
 		Type:         "local",

@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	"strings"
 
@@ -100,7 +102,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFullPropsLiterals(
 
 	// String literal (single or double quotes)
 	if isWholeCypherQuotedString(expr) {
-		if decoded, ok := decodeCypherQuotedString(expr); ok {
+		if decoded, ok := cyphertext.DecodeString(expr, cyphertext.AcceptedSource); ok {
 			return decoded
 		}
 	}

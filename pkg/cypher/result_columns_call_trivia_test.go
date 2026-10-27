@@ -68,7 +68,7 @@ func TestStatementFactsCallFrameTrivia(t *testing.T) {
 						}
 						require.Equal(t, []string{"v"}, executor.StatementColumns(query))
 						composite := "USE comp " + strings.Replace(query, "{ "+frame.importing, "{ "+frame.importing+"USE comp.remote ", 1)
-						executor.StatementFacts(composite, resultmetadata.KnownScope(nil), false).Visit(func(statement resultmetadata.Statement) {
+						executor.StatementFacts(composite, resultmetadata.KnownScope(nil), false, RawSource).Visit(func(statement resultmetadata.Statement) {
 							var call *resultmetadata.Call
 							for _, clause := range statement.Clauses {
 								if clause.Call != nil {

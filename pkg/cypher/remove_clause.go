@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -31,7 +32,7 @@ func parseRemoveItems(body string) ([]removeItem, error) {
 		if item == "" {
 			continue
 		}
-		if variable, chain, hasLabels := splitNodeHead(item); hasLabels && isValidIdentifier(variable) {
+		if variable, chain, hasLabels := splitNodeHead(item); hasLabels && cyphertext.IsIdentifier(variable) {
 			labels, err := setLabelChainItems(chain)
 			if err != nil {
 				return nil, err
@@ -44,7 +45,7 @@ func parseRemoveItems(body string) ([]removeItem, error) {
 		if ok {
 			variable, _, _ = parseSetAssignmentTarget(receiver)
 		}
-		if !isValidIdentifier(variable) || (subscript && strings.TrimSpace(inner) == "") {
+		if !cyphertext.IsIdentifier(variable) || (subscript && strings.TrimSpace(inner) == "") {
 			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "InvalidSyntax", localization.CypherMutationsRemoveItemInvalid(item))
 		}
 		if subscript {

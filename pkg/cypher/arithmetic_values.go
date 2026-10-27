@@ -3,7 +3,6 @@ package cypher
 import (
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	math "github.com/orneryd/nornicdb/pkg/math/libm"
-	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
@@ -157,44 +156,12 @@ func foldedDivisionByZero(leftExpr, rightExpr string, left, right interface{}) (
 	if _, leftInt := cypherIntegerOperand(left); leftInt {
 		return nil, false
 	}
-	if !isConstantNumericExpression(leftExpr) || !isConstantNumericExpression(rightExpr) {
+	if !numericExpressionAccepted(leftExpr, numericConstantPopulation) || !numericExpressionAccepted(rightExpr, numericConstantPopulation) {
 		return nil, false
 	}
 	dividend, _ := toFloat64(left)
 	zero := 0.0
 	return dividend / zero, true
-}
-
-// isConstantNumericExpression reports an expression made only of number
-// literals (decimal, float, exponent, hex, octal), arithmetic operators and
-// parentheses.
-func isConstantNumericExpression(expr string) bool {
-	numbers := 0
-	for i := 0; i < len(expr); {
-		ch := expr[i]
-		switch {
-		case ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '(' || ch == ')' ||
-			ch == '+' || ch == '-' || ch == '*' || ch == '/' || ch == '%' || ch == '^':
-			i++
-		case ch >= '0' && ch <= '9' || ch == '.' && i+1 < len(expr) && expr[i+1] >= '0' && expr[i+1] <= '9':
-			numbers++
-			start := i
-			i++
-			for i < len(expr) {
-				c := expr[i]
-				if c >= '0' && c <= '9' || c == '.' || isIdentStartByte(c) {
-					i++
-				} else if (c == '+' || c == '-') && (expr[i-1] == 'e' || expr[i-1] == 'E') && !strings.ContainsAny(expr[start:i], "xX") {
-					i++
-				} else {
-					break
-				}
-			}
-		default:
-			return false
-		}
-	}
-	return numbers > 0
 }
 
 // isNonNumericArithmeticOperand reports values toFloat64 may accept but that

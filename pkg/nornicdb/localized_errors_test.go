@@ -53,13 +53,13 @@ func TestNornicDBLocalizedErrorRendersAtBoundary(t *testing.T) {
 	require.NoError(t, err)
 	message := localization.NornicDBCoreQueryDimensionMismatchForDatabase("tenant-a", 3, 2)
 
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
+	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, language.EuropeanSpanish, tag)
 	require.Equal(t, "base de datos \"tenant-a\": las dimensiones del embedding de consulta no coinciden (dimensiones del índice 3, dimensiones de la consulta 2)", spanish)
 
 	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), message)
+	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, pseudoTag, tag)
 	require.Equal(t, "[!! database \"tenant-a\": query embedding dimension mismatch (index dims 3, query dims 2) !!]", pseudo)

@@ -1,12 +1,13 @@
 package nornicdb
 
 import (
+	"context"
 	"github.com/orneryd/nornicdb/pkg/cypher"
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func maybeBootstrapDefaultKnowledgePolicy(base storage.Engine, namespace string) error {
+func maybeBootstrapDefaultKnowledgePolicy(ctx context.Context, base storage.Engine, namespace string) error {
 	if base == nil {
 		return nil
 	}
@@ -24,7 +25,7 @@ func maybeBootstrapDefaultKnowledgePolicy(base storage.Engine, namespace string)
 	}
 
 	for _, stmt := range defaultKnowledgePolicyBootstrapDDL() {
-		if err := applyKnowledgePolicyDDL(schema, stmt); err != nil {
+		if err := applyKnowledgePolicyDDL(ctx, schema, stmt); err != nil {
 			return localizedError(localization.NornicDBCoreBootstrapKnowledgePolicyFailed(namespace, err), err)
 		}
 	}
@@ -38,8 +39,8 @@ func knowledgePolicySchemaEmpty(schema *storage.SchemaManager) bool {
 	return len(bundles) == 0 && len(bindings) == 0 && len(profiles) == 0 && len(policies) == 0
 }
 
-func applyKnowledgePolicyDDL(schema *storage.SchemaManager, stmt string) error {
-	cmd, ok, err := cypher.ParseKnowledgePolicyDDL(stmt)
+func applyKnowledgePolicyDDL(ctx context.Context, schema *storage.SchemaManager, stmt string) error {
+	cmd, ok, err := cypher.ParseKnowledgePolicyDDL(ctx, stmt, cypher.RawSource)
 	if err != nil {
 		return err
 	}

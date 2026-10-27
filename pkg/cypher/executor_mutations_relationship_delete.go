@@ -80,7 +80,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		whereClause = strings.TrimSpace(pseudo[whereIdx+len("WHERE") : returnIdx])
 	}
 
-	rowCtx, sourceText, err := e.preparePatternRow(ctx, clauses[0], nil)
+	rowCtx, sourceText, err := e.bindPatternProperties(ctx, clauses[0], nil)
 	if err != nil {
 		return nil, true, err
 	}
@@ -106,7 +106,7 @@ func (e *StorageExecutor) tryExecuteBoundRelationshipDelete(
 		if source == nil {
 			continue
 		}
-		rowCtx, rowPattern, err := e.preparePatternRow(ctx, relPatternText, map[string]interface{}{sourcePattern.variable: source})
+		rowCtx, rowPattern, err := e.bindPatternProperties(ctx, relPatternText, map[string]interface{}{sourcePattern.variable: source})
 		if err != nil {
 			return nil, true, err
 		}

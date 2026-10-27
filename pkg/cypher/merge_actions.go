@@ -2,11 +2,45 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
+
+// mergeActionSpans optionally retains accepted offsets from the same parser.
+// Ordinary execution keeps the original compact string product; advisory raw
+// source consumers supply this stack-owned output to retain exact provenance.
+type mergeActionSpans struct {
+	pattern           cyphertext.Span
+	onCreate, onMatch mergeClauseSpans
+}
+
+type mergeClauseSpans struct {
+	inline   [2]cyphertext.Span
+	overflow []cyphertext.Span
+}
+
+func (spans *mergeClauseSpans) add(index int, span cyphertext.Span) {
+	if index < len(spans.inline) {
+		spans.inline[index] = span
+	} else {
+		spans.overflow = append(spans.overflow, span)
+	}
+}
+
+func (spans mergeClauseSpans) at(index int) cyphertext.Span {
+	if index < len(spans.inline) {
+		return spans.inline[index]
+	}
+	return spans.overflow[index-len(spans.inline)]
+}
+
+func mergeSourceSpan(text string, base int) cyphertext.Span {
+	start := len(text) - len(strings.TrimLeftFunc(text, cyphertext.IsWhitespace))
+	return cyphertext.Span{Start: base + start, End: base + max(start, len(strings.TrimRightFunc(text, cyphertext.IsWhitespace)))}
+}
 
 // mergeClauseActions is a MERGE clause split into its pattern and its
 // ON CREATE SET / ON MATCH SET clauses, each kind in the order written.
@@ -79,7 +113,10 @@ func mergeActionAssignments(clauses mergeActionClauses) []string {
 // the one parser of MERGE actions: the pipeline applies them
 // (pipelineApplyMerge), and the statement analysers and the AST builder read
 // them. It allocates only past two clauses of a kind or eight in all.
-func splitMergeClauseActions(mergeBody string) mergeClauseActions {
+func splitMergeClauseActions(mergeBody string, spans *mergeActionSpans) mergeClauseActions {
+	if spans != nil {
+		*spans = mergeActionSpans{}
+	}
 	type action struct {
 		position, set int
 		onCreate      bool
@@ -103,9 +140,15 @@ func splitMergeClauseActions(mergeBody string) mergeClauseActions {
 		}
 	}
 	if len(actions) == 0 {
+		if spans != nil {
+			spans.pattern = mergeSourceSpan(mergeBody, 0)
+		}
 		return mergeClauseActions{pattern: strings.TrimSpace(mergeBody)}
 	}
 	parts := mergeClauseActions{pattern: strings.TrimSpace(mergeBody[:actions[0].position])}
+	if spans != nil {
+		spans.pattern = mergeSourceSpan(mergeBody[:actions[0].position], 0)
+	}
 	for index, current := range actions {
 		stop := len(mergeBody)
 		if index+1 < len(actions) {
@@ -113,8 +156,14 @@ func splitMergeClauseActions(mergeBody string) mergeClauseActions {
 		}
 		set := strings.TrimSpace(mergeBody[current.set:stop])
 		if current.onCreate {
+			if spans != nil {
+				spans.onCreate.add(parts.onCreate.len(), mergeSourceSpan(mergeBody[current.set:stop], current.set))
+			}
 			parts.onCreate.add(set)
 		} else {
+			if spans != nil {
+				spans.onMatch.add(parts.onMatch.len(), mergeSourceSpan(mergeBody[current.set:stop], current.set))
+			}
 			parts.onMatch.add(set)
 		}
 	}
@@ -144,7 +193,7 @@ func (e *StorageExecutor) applyMergeActions(ctx context.Context, rows []pipeline
 func (e *StorageExecutor) isMultiRelationshipPattern(pattern string) bool {
 	// Fewer than two relationship brackets: one relationship at most, no
 	// parse needed.
-	if open, _ := firstRelationshipBracket(pattern); open < 0 || strings.Count(pattern[open+1:], "[") == 0 {
+	if open, _ := readRelationshipBracket(pattern, 0, requireClosedRelationship); open < 0 || strings.Count(pattern[open+1:], "[") == 0 {
 		return false
 	}
 	return len(mergePathSegments(pattern)) > 1
@@ -160,7 +209,7 @@ func mergePathSegments(pattern string) []string {
 	_, body := parseCreatePathAssignment(pattern)
 	var nodes [][2]int
 	for index := 0; index < len(body); index++ {
-		// findMatchingDelimiter skips quoted text and comments inside the
+		// cyphertext.FindMatchingDelimiter skips quoted text and comments inside the
 		// brackets; a valid pattern has none outside them.
 		switch character := body[index]; character {
 		case '(', '[':
@@ -168,7 +217,7 @@ func mergePathSegments(pattern string) []string {
 			if character == '[' {
 				closer = ']'
 			}
-			end := findMatchingDelimiter(body, index, opener, closer)
+			end := cyphertext.FindMatchingDelimiter(body, index, opener, closer, cyphertext.OpeningDelimiter)
 			if end < 0 {
 				return nil
 			}
@@ -197,20 +246,20 @@ func directedMergePath(pattern string) string {
 	builder.Grow(len(pattern) + 4)
 	last := 0
 	for index := 0; index < len(pattern); index++ {
-		// findMatchingDelimiter skips quoted text and comments inside the
+		// cyphertext.FindMatchingDelimiter skips quoted text and comments inside the
 		// brackets; a valid pattern has none outside them.
 		switch pattern[index] {
 		case '(':
-			if end := findMatchingDelimiter(pattern, index, '(', ')'); end > index {
+			if end := cyphertext.FindMatchingDelimiter(pattern, index, '(', ')', cyphertext.OpeningDelimiter); end > index {
 				index = end
 			}
 		case '[':
-			end := findMatchingDelimiter(pattern, index, '[', ']')
+			end := cyphertext.FindMatchingDelimiter(pattern, index, '[', ']', cyphertext.OpeningDelimiter)
 			if end < 0 {
 				return pattern
 			}
-			before := strings.TrimRight(pattern[:index], " \t\r\n")
-			after := strings.TrimLeft(pattern[end+1:], " \t\r\n")
+			before := strings.TrimRightFunc(pattern[:index], cyphertext.IsWhitespace)
+			after := strings.TrimLeftFunc(pattern[end+1:], cyphertext.IsWhitespace)
 			if !strings.HasSuffix(before, "<-") && strings.HasPrefix(after, "-(") {
 				builder.WriteString(pattern[last : end+1])
 				builder.WriteString("->")
@@ -247,7 +296,7 @@ func (e *StorageExecutor) pipelineMergePath(ctx context.Context, row pipelineRow
 		identityTail = identityPattern[where:]
 		identityPattern = strings.TrimSpace(identityPattern[:where])
 	}
-	ctx, identityPattern, err = e.preparePatternRow(ctx, identityPattern, row)
+	ctx, identityPattern, err = e.bindPatternProperties(ctx, identityPattern, row)
 	if err != nil {
 		return nil, nil, false, err
 	}

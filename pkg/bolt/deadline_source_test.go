@@ -26,7 +26,7 @@ func TestBoltLazyResultTimeoutSource(t *testing.T) {
 		{"tx_timeout shorter than database limit", 10 * time.Second, 150, nornicerrors.TransactionTimedOutClientConfiguration},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+			mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = mgr.Close() })
 			server := NewWithDatabaseManager(&Config{Port: 0, MaxConnections: 32, ReadBufferSize: 8192, WriteBufferSize: 8192}, &mockExecutor{}, mgr)
@@ -35,7 +35,7 @@ func TestBoltLazyResultTimeoutSource(t *testing.T) {
 			runBoltQueryAndCollectRecords(t, conn, fmt.Sprintf("UNWIND range(0, %d) AS i CREATE (:Item {k: i})", 2999))
 			limits := multidb.DefaultLimits()
 			limits.Query.MaxQueryTime = test.limit
-			require.NoError(t, mgr.SetDatabaseLimits("nornic", limits))
+			require.NoError(t, mgr.SetDatabaseLimits(t.Context(), "nornic", limits))
 			require.NoError(t, SendRun(t, conn, "MATCH (n:Item) RETURN n.k AS k", nil, map[string]any{"tx_timeout": test.txTimeoutMs}))
 			_, err = AssertSuccess(t, conn)
 			require.NoError(t, err)

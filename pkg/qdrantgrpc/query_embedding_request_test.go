@@ -9,7 +9,7 @@ import (
 )
 
 func TestPointsService_NumericAndIDQueriesDoNotBindEmbedding(t *testing.T) {
-	service, _, base := setupPointsService(t)
+	service, _, base := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 	t.Cleanup(func() { _ = base.Close() })
 	ctx := context.Background()
 	id := &qpb.PointId{PointIdOptions: &qpb.PointId_Uuid{Uuid: "snapshot-point"}}

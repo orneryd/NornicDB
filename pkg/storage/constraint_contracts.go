@@ -19,59 +19,15 @@ import (
 // ============================================================================
 
 // ccSkipSpaces advances past whitespace.
-func ccSkipSpaces(s string, i int) int {
-	for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
-		i++
-	}
-	return i
-}
-
-// ccIsIdentStart returns true for [A-Za-z_].
-func ccIsIdentStart(b byte) bool {
-	return (b >= 'A' && b <= 'Z') || (b >= 'a' && b <= 'z') || b == '_'
-}
-
-// ccIsIdentByte returns true for [A-Za-z0-9_].
-func ccIsIdentByte(b byte) bool {
-	return ccIsIdentStart(b) || (b >= '0' && b <= '9')
-}
+func ccSkipSpaces(s string, i int) int { end, _ := cyphertext.GapEnd(s, i); return end }
 
 // ccScanIdent reads an identifier at position i. Returns ("", i) if none.
 func ccScanIdent(s string, i int) (string, int) {
-	if i >= len(s) || !ccIsIdentStart(s[i]) {
+	name, ok := cyphertext.ScanIdentifier(s, i)
+	if !ok {
 		return "", i
 	}
-	start := i
-	for i < len(s) && ccIsIdentByte(s[i]) {
-		i++
-	}
-	return s[start:i], i
-}
-
-// ccMatchKeywordAt checks for a case-insensitive keyword at position i with
-// word-boundary checking. Returns the position after the keyword, or -1.
-func ccMatchKeywordAt(s string, i int, kw string) int {
-	if i+len(kw) > len(s) {
-		return -1
-	}
-	for k := 0; k < len(kw); k++ {
-		sc, kc := s[i+k], kw[k]
-		if sc >= 'a' && sc <= 'z' {
-			sc -= 'a' - 'A'
-		}
-		if kc >= 'a' && kc <= 'z' {
-			kc -= 'a' - 'A'
-		}
-		if sc != kc {
-			return -1
-		}
-	}
-	// Right boundary: must not be followed by ident char.
-	end := i + len(kw)
-	if end < len(s) && ccIsIdentByte(s[end]) {
-		return -1
-	}
-	return end
+	return name.Value, name.End
 }
 
 // ccScanComparator reads a comparison operator at position i.
@@ -597,7 +553,7 @@ func parsePropertyInExpression(expr string) (bool, []interface{}, string, error)
 	p = next
 	// IN keyword
 	p = ccSkipSpaces(s, p)
-	if end := ccMatchKeywordAt(s, p, "IN"); end == -1 {
+	if end := cyphertext.KeywordEnd(s, p, "IN", cyphertext.CypherWord); end == -1 {
 		return false, nil, "", nil
 	} else {
 		p = end
@@ -610,7 +566,7 @@ func parsePropertyInExpression(expr string) (bool, []interface{}, string, error)
 	p++
 	// Raw REQUIRE text keeps canonical quote/comment boundaries across packages.
 	bracketStart := p
-	p = cyphertext.FindMatchingDelimiter(s, p-1, '[', ']')
+	p = cyphertext.FindMatchingDelimiter(s, p-1, '[', ']', cyphertext.OpeningDelimiter)
 	if p < 0 {
 		return false, nil, "", nil
 	}
@@ -643,7 +599,7 @@ func parseCountPatternExpression(expr string) (bool, contractPattern, string, in
 	p := 0
 
 	// COUNT
-	if end := ccMatchKeywordAt(s, p, "COUNT"); end == -1 {
+	if end := cyphertext.KeywordEnd(s, p, "COUNT", cyphertext.CypherWord); end == -1 {
 		return false, contractPattern{}, "", 0, nil
 	} else {
 		p = end
@@ -656,26 +612,15 @@ func parseCountPatternExpression(expr string) (bool, contractPattern, string, in
 	p++
 	// Find matching }
 	braceStart := p
-	depth := 1
-	for p < len(s) && depth > 0 {
-		switch s[p] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-		}
-		if depth > 0 {
-			p++
-		}
-	}
-	if depth != 0 {
+	p = cyphertext.FindMatchingDelimiter(s, p-1, '{', '}', cyphertext.OpeningDelimiter)
+	if p < 0 {
 		return false, contractPattern{}, "", 0, nil
 	}
 	inner := strings.TrimSpace(s[braceStart:p])
 	p++ // skip '}'
 
 	// Optional MATCH keyword inside braces
-	if end := ccMatchKeywordAt(inner, 0, "MATCH"); end != -1 {
+	if end := cyphertext.KeywordEnd(inner, 0, "MATCH", cyphertext.CypherWord); end != -1 {
 		inner = strings.TrimSpace(inner[end:])
 	}
 
@@ -698,12 +643,11 @@ func parseCountPatternExpression(expr string) (bool, contractPattern, string, in
 	if p < len(s) && s[p] == '-' {
 		p++
 	}
-	for p < len(s) && s[p] >= '0' && s[p] <= '9' {
-		p++
-	}
-	if p == numStart {
+	token, ok := cyphertext.ScanNumber(s, p)
+	if !ok || token.Invalid || token.Base != 10 || token.Fraction || token.Exponent || token.Grouped || token.Suffix != 0 {
 		return false, contractPattern{}, "", 0, nil
 	}
+	p = token.End
 	threshold, err := strconv.Atoi(s[numStart:p])
 	if err != nil {
 		return false, contractPattern{}, "", 0, err
@@ -720,14 +664,14 @@ func parseNotExistsPatternExpression(expr string) (bool, contractPattern, error)
 	p := 0
 
 	// NOT
-	if end := ccMatchKeywordAt(s, p, "NOT"); end == -1 {
+	if end := cyphertext.KeywordEnd(s, p, "NOT", cyphertext.CypherWord); end == -1 {
 		return false, contractPattern{}, nil
 	} else {
 		p = end
 	}
 	// EXISTS
 	p = ccSkipSpaces(s, p)
-	if end := ccMatchKeywordAt(s, p, "EXISTS"); end == -1 {
+	if end := cyphertext.KeywordEnd(s, p, "EXISTS", cyphertext.CypherWord); end == -1 {
 		return false, contractPattern{}, nil
 	} else {
 		p = end
@@ -740,19 +684,8 @@ func parseNotExistsPatternExpression(expr string) (bool, contractPattern, error)
 	p++
 	// Find matching }
 	braceStart := p
-	depth := 1
-	for p < len(s) && depth > 0 {
-		switch s[p] {
-		case '{':
-			depth++
-		case '}':
-			depth--
-		}
-		if depth > 0 {
-			p++
-		}
-	}
-	if depth != 0 {
+	p = cyphertext.FindMatchingDelimiter(s, p-1, '{', '}', cyphertext.OpeningDelimiter)
+	if p < 0 {
 		return false, contractPattern{}, nil
 	}
 	inner := strings.TrimSpace(s[braceStart:p])
@@ -763,7 +696,7 @@ func parseNotExistsPatternExpression(expr string) (bool, contractPattern, error)
 	}
 
 	// Optional MATCH keyword
-	if end := ccMatchKeywordAt(inner, 0, "MATCH"); end != -1 {
+	if end := cyphertext.KeywordEnd(inner, 0, "MATCH", cyphertext.CypherWord); end != -1 {
 		inner = strings.TrimSpace(inner[end:])
 	}
 
@@ -871,7 +804,7 @@ func isDistinctEndpointsExpression(expr string) bool {
 	p := 0
 
 	// startNode
-	if end := ccMatchKeywordAt(s, p, "startNode"); end == -1 {
+	if end := cyphertext.KeywordEnd(s, p, "startNode", cyphertext.CypherWord); end == -1 {
 		return false
 	} else {
 		p = end
@@ -902,7 +835,7 @@ func isDistinctEndpointsExpression(expr string) bool {
 	p = next
 	// endNode
 	p = ccSkipSpaces(s, p)
-	if end := ccMatchKeywordAt(s, p, "endNode"); end == -1 {
+	if end := cyphertext.KeywordEnd(s, p, "endNode", cyphertext.CypherWord); end == -1 {
 		return false
 	} else {
 		p = end
@@ -933,7 +866,7 @@ func parseEndpointPropertyEqualityExpression(expr string) (bool, string, string)
 	p := 0
 
 	// startNode ( ident ) . property
-	if end := ccMatchKeywordAt(s, p, "startNode"); end == -1 {
+	if end := cyphertext.KeywordEnd(s, p, "startNode", cyphertext.CypherWord); end == -1 {
 		return false, "", ""
 	} else {
 		p = end
@@ -975,7 +908,7 @@ func parseEndpointPropertyEqualityExpression(expr string) (bool, string, string)
 
 	// endNode ( ident ) . property
 	p = ccSkipSpaces(s, p)
-	if end := ccMatchKeywordAt(s, p, "endNode"); end == -1 {
+	if end := cyphertext.KeywordEnd(s, p, "endNode", cyphertext.CypherWord); end == -1 {
 		return false, "", ""
 	} else {
 		p = end
@@ -1083,7 +1016,7 @@ func parseContractLiteralList(raw string) ([]interface{}, error) {
 func parseContractLiteral(raw string) (interface{}, error) {
 	raw = strings.TrimSpace(raw)
 	if cyphertext.IsWholeString(raw) {
-		if value, ok := cyphertext.DecodeString(raw); ok {
+		if value, ok := cyphertext.DecodeString(raw, cyphertext.RawSource); ok {
 			return value, nil
 		}
 	}

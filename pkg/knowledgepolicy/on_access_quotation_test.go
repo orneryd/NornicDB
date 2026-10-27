@@ -12,6 +12,8 @@ func TestEvalOnAccessCanonicalQuotation(t *testing.T) {
 		{`'a\\b, c'`, `a\b, c`},
 		{`'a\n, b'`, "a\n, b"},
 		{`'\u03bb, \U0001F600'`, "λ, 😀"},
+		{`'\uD800'`, "\xed\xa0\x80"},
+		{`'\uDC00'`, "\xed\xb0\x80"},
 		{"'`a``b`,:{}[]() // /* */'", "`a``b`,:{}[]() // /* */"},
 	} {
 		got, err := evalOnAccessExpression(tc.literal, evalCtxWith(nil, nil))
@@ -21,7 +23,7 @@ func TestEvalOnAccessCanonicalQuotation(t *testing.T) {
 		require.NoError(t, err, tc.literal)
 		require.Equal(t, true, got)
 	}
-	for _, literal := range []string{`'unterminated`, `"unterminated`, `'\uD800'`} {
+	for _, literal := range []string{`'unterminated`, `"unterminated`} {
 		_, err := evalOnAccessExpression(literal, evalCtxWith(nil, nil))
 		require.Error(t, err, literal)
 	}

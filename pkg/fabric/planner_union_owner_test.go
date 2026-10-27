@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -41,11 +42,11 @@ func TestPlan_UnionPlanningEntries(t *testing.T) {
 				if entry.multi {
 					blocks, extractErr := extractTopLevelCallBlocks(entry.query, nil)
 					require.NoError(t, extractErr)
-					fragment, err = p.planMultiGraph(planTarget{name: "cmp"}, "cmp", entry.query, blocks)
+					fragment, err = p.planMultiGraph(t.Context(), planTarget{name: "cmp"}, "cmp", entry.query, blocks)
 				} else if entry.shared {
-					fragment, err = p.planQuery(entry.query, planTarget{name: "cmp"}, "cmp", true)
+					fragment, err = p.planQuery(t.Context(), entry.query, planTarget{name: "cmp"}, "cmp", true)
 				} else {
-					fragment, err = p.Plan(entry.query, "cmp")
+					fragment, err = p.Plan(t.Context(), entry.query, "cmp", cyphertext.RawSource)
 				}
 				require.NoError(t, err)
 				var unions []*FragmentUnion
@@ -86,7 +87,7 @@ func TestPlan_UnionBranchContext(t *testing.T) {
 	for _, wrap := range []string{"%s", "CALL { %s } RETURN value"} {
 		body := "USE cmp.a RETURN 'left' AS value UNION ALL RETURN 'inherited' AS value"
 		query := strings.Replace(wrap, "%s", body, 1)
-		fragment, err := p.Plan(query, "cmp")
+		fragment, err := p.Plan(t.Context(), query, "cmp", cyphertext.RawSource)
 		require.NoError(t, err)
 		execs := collectPlannedExecs(fragment)
 		require.GreaterOrEqual(t, len(execs), 2)
@@ -97,7 +98,7 @@ func TestPlan_UnionBranchContext(t *testing.T) {
 
 func TestPlan_UnionUseContinuations(t *testing.T) {
 	p := NewFabricPlanner(plannerUseCatalog())
-	fragment, err := p.Plan("WITH 'left' AS value USE cmp.a RETURN value UNION ALL WITH 'right' AS value USE cmp.b RETURN value", "cmp")
+	fragment, err := p.Plan(t.Context(), "WITH 'left' AS value USE cmp.a RETURN value UNION ALL WITH 'right' AS value USE cmp.b RETURN value", "cmp", cyphertext.RawSource)
 	require.NoError(t, err)
 	u, ok := fragment.(*FragmentUnion)
 	require.True(t, ok, "expected union, got %T", fragment)
@@ -176,9 +177,9 @@ func TestPlannerUnionOwner_GuardMutations(t *testing.T) {
 	source, err := os.ReadFile("planner.go")
 	require.NoError(t, err)
 	for _, mutation := range []struct{ name, before, after string }{
-		{"public", "p.planQuery(trimmed, session, scope, false)", "p.planSingleQuery(trimmed, session, scope, false)"},
-		{"call", "p.planQuery(subRest, sub, scope, true)", "p.planSingleQuery(block.Body, top, scope, true)"},
-		{"use", "p.planQuery(subRest, sub, scope, true)", "p.planSingleQuery(subRest, sub, scope, true)"},
+		{"public", "p.planQuery(ctx, trimmed, session, scope, false)", "p.planSingleQuery(ctx, trimmed, session, scope, false)"},
+		{"call", "p.planQuery(ctx, subRest, sub, scope, true)", "p.planSingleQuery(ctx, block.Body, top, scope, true)"},
+		{"use", "p.planQuery(ctx, subRest, sub, scope, true)", "p.planSingleQuery(ctx, subRest, sub, scope, true)"},
 	} {
 		t.Run(mutation.name, func(t *testing.T) {
 			require.Contains(t, string(source), mutation.before)

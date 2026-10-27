@@ -41,3 +41,17 @@ func carrySubqueryImports[T any](projected, input, imports map[string]T) {
 		}
 	}
 }
+
+// carryPipelineImports restores CALL imports after an aggregate projection has
+// completed, so they remain available to following clauses without becoming
+// grouping or DISTINCT keys for the projection that just ran.
+func carryPipelineImports(rows []pipelineRow, scope map[string]struct{}, imports pipelineRow) {
+	for _, row := range rows {
+		carryPipelineRowImports(row, row, imports)
+	}
+	if scope != nil {
+		for name := range imports {
+			scope[name] = struct{}{}
+		}
+	}
+}

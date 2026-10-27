@@ -42,7 +42,7 @@ func pipelineSyntaxEffects(ctx context.Context, text string, statement bool) (pi
 	if effects, found := pipelineClauseEffectCache.get(key); found {
 		return effects, ctx.Err()
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, text, entry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, text, entry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return pipelineClauseEffects{}, err
 	}
@@ -133,7 +133,26 @@ func pipelineEffectVisitor(effects *pipelineClauseEffects) cypherantlr.SyntaxVis
 		case cypherantlr.CypherParserRULE_propertyExpression:
 			atom := node.ChildRule(cypherantlr.CypherParserRULE_atom)
 			if reading && !atom.ChildRule(cypherantlr.CypherParserRULE_parameter).Valid() && !atom.ChildRule(cypherantlr.CypherParserRULE_literal).Valid() {
-				addStretchPropertyReads(node.Code(), &effects.reads)
+				// Property names belong to this grammar node. Source adjacency
+				// preserves the existing conservative treatment of spaced or
+				// quoted dereferences without scanning expression text again.
+				_, previousEnd := atom.Span()
+				gapBeforeDot := false
+				for index := 0; index < node.ChildCount(); index++ {
+					child := node.Child(index)
+					start, end := child.Span()
+					if child.IsToken(cypherantlr.CypherLexerDOT) {
+						gapBeforeDot = start != previousEnd
+					} else if child.Rule() == cypherantlr.CypherParserRULE_name {
+						name := child.Code()
+						if gapBeforeDot || start != previousEnd || strings.HasPrefix(name, "`") {
+							effects.reads.anyKey = true
+						} else {
+							effects.reads.add(&effects.reads.keys, symbolicNameValue(name))
+						}
+					}
+					previousEnd = end
+				}
 			}
 		case cypherantlr.CypherParserRULE_propertyOrLabelExpression:
 			for index := 0; index < node.ChildCount(); index++ {

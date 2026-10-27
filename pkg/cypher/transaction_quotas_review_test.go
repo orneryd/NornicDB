@@ -70,10 +70,10 @@ func BenchmarkTransactionQuotaParallel(b *testing.B) {
 	for _, merge := range []bool{false, true} {
 		b.Run(fmt.Sprintf("merge=%v", merge), func(b *testing.B) {
 			base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
-			manager, err := multidb.NewDatabaseManager(base, nil)
+			manager, err := multidb.NewDatabaseManager(b.Context(), base, nil)
 			require.NoError(b, err)
 			b.Cleanup(func() { _ = manager.Close(); _ = base.Close() })
-			require.NoError(b, manager.CreateDatabase("parallel"))
+			require.NoError(b, manager.CreateDatabase(b.Context(), multidb.DatabaseCreateRequest{Name: "parallel"}))
 			engine, err := manager.GetStorage("parallel")
 			require.NoError(b, err)
 			if merge {

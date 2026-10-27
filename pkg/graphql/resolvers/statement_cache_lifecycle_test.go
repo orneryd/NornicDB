@@ -1,6 +1,8 @@
 package resolvers
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"fmt"
 	"github.com/orneryd/nornicdb/internal/testutil"
@@ -14,7 +16,7 @@ func TestStatementCacheFamilyGraphQLDropCycles(t *testing.T) {
 	resolver := NewResolver(db, manager)
 	for i := range 64 {
 		name := fmt.Sprintf("cache_graphql_%d", i)
-		if err := manager.CreateDatabase(name); err != nil {
+		if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 			t.Fatal(err)
 		}
 		executor, err := resolver.getCypherExecutor(context.Background(), name)
@@ -24,7 +26,7 @@ func TestStatementCacheFamilyGraphQLDropCycles(t *testing.T) {
 		if _, err := executor.Execute(context.Background(), "RETURN 1 AS value", nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := manager.DropDatabase(name); err != nil {
+		if err := manager.DropDatabase(t.Context(), name); err != nil {
 			t.Fatal(err)
 		}
 		if !executor.StatementCaches().Disposed() {

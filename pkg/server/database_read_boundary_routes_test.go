@@ -1,6 +1,8 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -67,7 +69,7 @@ func boundaryHandlerRequest(t *testing.T, method, path string, body any, claims 
 
 func TestGDPRExportRequiresDefaultDatabaseRead(t *testing.T) {
 	server, _ := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("named"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "named"}))
 	principals := setupBoundaryReadPrincipals(t, server)
 
 	defaultStorage, err := server.dbManager.GetStorage("nornic")
@@ -112,7 +114,7 @@ func TestGDPRExportRequiresDefaultDatabaseRead(t *testing.T) {
 
 func TestStatusAggregatesOnlyReadableDatabases(t *testing.T) {
 	server, _ := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("named"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "named"}))
 	principals := setupBoundaryReadPrincipals(t, server)
 
 	for _, database := range []string{"nornic", "named"} {

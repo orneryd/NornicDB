@@ -83,13 +83,13 @@ func TestCypherCommandRoutingCatalogRendering(t *testing.T) {
 	require.NoError(t, err)
 	message := localization.CypherCommandRoutingUnknownProcedure("missing.procedure")
 
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
+	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, language.EuropeanSpanish, tag)
 	require.Equal(t, "procedimiento desconocido: missing.procedure (pruebe SHOW PROCEDURES para ver los procedimientos disponibles)", spanish)
 
 	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), message)
+	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, pseudoTag, tag)
 	require.Equal(t, "[!! unknown procedure: missing.procedure (try SHOW PROCEDURES for available procedures) !!]", pseudo)

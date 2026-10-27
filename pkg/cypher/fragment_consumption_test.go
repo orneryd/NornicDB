@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"testing"
 
@@ -39,9 +40,10 @@ func TestSharedScannersConsumeCompleteFragments(t *testing.T) {
 	})
 
 	t.Run("quoted spans", func(t *testing.T) {
-		// Escaped quote and doubled quote both stay inside the span.
+		// Backslash escapes stay inside a string; doubled string delimiters
+		// close one token and begin another.
 		require.Equal(t, len(`'a\'b'`), skipCypherQuotedText(`'a\'b'`, 0, '\''))
-		require.Equal(t, len(`'a''b'`), skipCypherQuotedText(`'a''b'`, 0, '\''))
+		require.Equal(t, len("'a'"), skipCypherQuotedText(`'a''b'`, 0, '\''))
 		require.Equal(t, len(`"a\"b"`), skipCypherQuotedText(`"a\"b"`, 0, '"'))
 		// A backtick name escapes a backtick by doubling; a backslash does not
 		// escape, so the first backtick closes the name.
@@ -60,13 +62,13 @@ func TestSharedScannersConsumeCompleteFragments(t *testing.T) {
 		require.Equal(t, []int{strings.Index(text, "IN [1"), strings.Index(text, "IN [3]")}, visits)
 	})
 
-	t.Run("findMatchingDelimiter", func(t *testing.T) {
+	t.Run("canonical delimiter owner", func(t *testing.T) {
 		text := "([a /* ] */ {k: ')'}])"
-		close := findMatchingDelimiter(text, 0, '(', ')')
+		close := cyphertext.FindMatchingDelimiter(text, 0, '(', ')', cyphertext.OpeningDelimiter)
 		require.Equal(t, len(text)-1, close)
-		require.Equal(t, len("[a /* ] */ ']']")-1, findMatchingDelimiter("[a /* ] */ ']']", 0, '[', ']'))
+		require.Equal(t, len("[a /* ] */ ']']")-1, cyphertext.FindMatchingDelimiter("[a /* ] */ ']']", 0, '[', ']', cyphertext.OpeningDelimiter))
 		// The ']' inside the quoted string cannot close the group.
-		require.Equal(t, -1, findMatchingDelimiter("[a /* ] */ ']'", 0, '[', ']'))
+		require.Equal(t, -1, cyphertext.FindMatchingDelimiter("[a /* ] */ ']'", 0, '[', ']', cyphertext.OpeningDelimiter))
 	})
 
 	t.Run("keyword scanners skip fragments", func(t *testing.T) {

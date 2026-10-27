@@ -34,14 +34,14 @@ func TestFabricRemoteEntityGraphFunctions(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	mgr, err := multidb.NewDatabaseManager(base, &multidb.Config{
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, &multidb.Config{
 		RemoteEngineFactory: func(ref multidb.ConstituentRef, token string) (storage.Engine, error) {
 			return storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: ref.URI, Database: ref.DatabaseName, AuthToken: token})
 		},
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
-	require.NoError(t, mgr.CreateCompositeDatabase("remote_graph", []multidb.ConstituentRef{{Alias: "source", DatabaseName: "remote", Type: "remote", AccessMode: "read_write", URI: server.URL, AuthMode: "oidc_forwarding"}}))
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "remote_graph", []multidb.ConstituentRef{{Alias: "source", DatabaseName: "remote", Type: "remote", AccessMode: "read_write", URI: server.URL, AuthMode: "oidc_forwarding"}}))
 	store, err := mgr.GetStorage(mgr.DefaultDatabaseName())
 	require.NoError(t, err)
 	exec := NewStorageExecutor(store)
@@ -84,7 +84,7 @@ func TestRemoteHTTPGraphValueParameterBinding(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: server.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, query := range []string{
@@ -115,7 +115,7 @@ func TestRemoteEntityCacheIdentity(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: server.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	node := rows[0][0].(storage.RemoteEntityValue)
 	ordinary := map[string]interface{}(node)
@@ -158,7 +158,7 @@ func TestRemoteHTTPGraphValueParameterFunctions(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: server.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	exec := NewStorageExecutor(newTestMemoryEngine(t))
 	for _, tt := range []struct {

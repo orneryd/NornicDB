@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
 	"strings"
 	"time"
@@ -209,7 +210,7 @@ func parseProcedureArgNames(raw string) ([]string, error) {
 		if strings.HasPrefix(arg, "$") {
 			arg = strings.TrimSpace(arg[1:])
 		}
-		if !isValidIdentifier(arg) {
+		if !cyphertext.IsIdentifier(arg) {
 			return nil, localizedError(localization.CypherProceduresInvalidArgumentName(arg), nil)
 		}
 		if _, exists := seen[arg]; exists {

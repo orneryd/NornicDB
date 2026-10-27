@@ -43,7 +43,7 @@ func TestScopeClauseQuotedNames(t *testing.T) {
 		{"WITH 1 AS `null` CALL (null { RETURN `null` AS v } RETURN v", "CALL (null {"},
 		{"WITH 1 AS `x y` CALL (`unclosed) { RETURN 1 AS v } RETURN v", "CALL (`unclosed)"},
 	} {
-		canonical, _ := canonicalizeQuotedVariables(t.Context(), tt.query)
+		canonical, _ := canonicalizeQuotedVariablesWithBindings(t.Context(), tt.query, nil)
 		require.Contains(t, canonical, tt.want, tt.query)
 	}
 }

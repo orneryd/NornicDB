@@ -24,7 +24,7 @@ func TestRemoteHTTPGraphFunctionTransportControls(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: server.URL, Database: "remote"})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = remote.Close() })
-	columns, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil)
+	columns, rows, err := remote.QueryCypher(context.Background(), "RETURN graph values", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"node", "relationship", "ordinary"}, columns)
 	require.Len(t, rows, 1)

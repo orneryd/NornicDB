@@ -48,6 +48,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -232,7 +233,7 @@ func (e *StorageExecutor) evaluateInOpTruth(ctx context.Context, node *storage.N
 	value := e.evaluateExpressionWithContext(ctx, left, nodes, nil)
 	rightIdent := strings.TrimSpace(right)
 	var listVal interface{}
-	if isValidIdentifier(rightIdent) {
+	if cyphertext.IsIdentifier(rightIdent) {
 		if v, ok := e.boundValue(ctx, rightIdent); ok {
 			listVal = v
 		}
@@ -276,7 +277,7 @@ func containsIdentifierToken(expr, ident string) bool {
 	}
 
 	for _, r := range expr {
-		if isIdentRune(r) {
+		if cyphertext.NamePart(r) {
 			token.WriteRune(r)
 			continue
 		}

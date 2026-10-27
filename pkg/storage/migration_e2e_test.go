@@ -336,6 +336,7 @@ func TestMigrationE2E_V0ToCurrent(t *testing.T) {
 	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             dir,
 		AllowStorageUpgrade: true,
+		CatalogUpgradeV4:    graphOnlyCatalogUpgradeV4(),
 	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })
@@ -949,6 +950,7 @@ func TestMigrationE2E_MVCCAsOfReadsSurvive(t *testing.T) {
 	eng, err := fixtureowner.TrackResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{
 		DataDir:             dir,
 		AllowStorageUpgrade: true,
+		CatalogUpgradeV4:    graphOnlyCatalogUpgradeV4(),
 	}))
 	require.NoError(t, err)
 	t.Cleanup(func() { eng.Close() })

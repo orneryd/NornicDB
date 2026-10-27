@@ -74,9 +74,9 @@ func TestHandleImplicitTransaction_AdditionalPermissionAndStatusBranches(t *test
 
 	t.Run("executor access failure maps to 500 infrastructure status", func(t *testing.T) {
 		server, _ := setupTestServer(t)
-		require.NoError(t, server.dbManager.SetDatabaseStatus("nornic", "offline"))
+		require.NoError(t, server.dbManager.SetDatabaseStatus(t.Context(), "nornic", "offline"))
 		t.Cleanup(func() {
-			_ = server.dbManager.SetDatabaseStatus("nornic", "online")
+			_ = server.dbManager.SetDatabaseStatus(t.Context(), "nornic", "online")
 		})
 
 		req := httptest.NewRequest(http.MethodPost, "/db/nornic/tx/commit", strings.NewReader(readBody))

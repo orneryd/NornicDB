@@ -2,9 +2,9 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"strings"
-	"unicode"
 
 	"github.com/orneryd/nornicdb/pkg/observability"
 	"go.opentelemetry.io/otel"
@@ -104,7 +104,7 @@ func redactSpanErrorText(text string) string {
 			continue
 		}
 		// A prose apostrophe (can't, isn't) does not open an input literal.
-		if quote == '\'' && i > 0 && i+1 < len(text) && unicode.IsLetter(rune(text[i-1])) && unicode.IsLetter(rune(text[i+1])) {
+		if quote == '\'' && i > 0 && i+1 < len(text) && cyphertext.NameStartAt(text, i-1) && cyphertext.NameStartAt(text, i+1) {
 			continue
 		}
 		end, _ := scanCypherQuotedText(text, i, quote)

@@ -23,10 +23,10 @@ func TestSubqueryValueHelperBranches(t *testing.T) {
 	require.False(t, patternHasRelationship("(`we->ird`)"))
 	require.True(t, patternHasRelationship("(a)-->(b)"))
 
-	// projectionAliasIndex: AS without whitespace on both sides is no alias.
-	require.Equal(t, -1, projectionAliasIndex(t.Context(), "AS x"))
-	require.Equal(t, -1, projectionAliasIndex(t.Context(), "x AS"))
-	require.Equal(t, -1, projectionAliasIndex(t.Context(), "n.alias"))
+	// Admitted source without a complete AS definition has no alias offset.
+	require.Equal(t, -1, readProjectionItemSource(t.Context(), "AS x", projectionAdmitted).as)
+	require.Equal(t, -1, readProjectionItemSource(t.Context(), "x AS", projectionAdmitted).as)
+	require.Equal(t, -1, readProjectionItemSource(t.Context(), "n.alias", projectionAdmitted).as)
 
 	// findSubqueryExpressions stops at an unterminated backtick.
 	require.Empty(t, findSubqueryExpressions("`abc COUNT { (a) }"))

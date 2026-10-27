@@ -54,7 +54,7 @@ func TestStatementFactsBindNestedPatternElements(t *testing.T) {
 		{"MATCH (n WHERE size($xs) > 0) RETURN n", []string{"n"}},
 	} {
 		t.Run(tc.query, func(t *testing.T) {
-			exec.StatementFacts(tc.query, resultmetadata.KnownScope(nil), true).Visit(func(statement resultmetadata.Statement) {
+			exec.StatementFacts(tc.query, resultmetadata.KnownScope(nil), true, RawSource).Visit(func(statement resultmetadata.Statement) {
 				statement.Columns.Visit(func(names []string) { require.Equal(t, tc.columns, names) }, func() { t.Fatal("known statement has unknown columns") })
 			}, func() { t.Fatal("owner declined") }, func(reason resultmetadata.Unresolved) { t.Fatal(reason.Reason, reason.Position, reason.Err) })
 		})

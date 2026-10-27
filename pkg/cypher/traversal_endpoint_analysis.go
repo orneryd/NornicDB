@@ -1,6 +1,9 @@
 package cypher
 
-import "strings"
+import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"strings"
+)
 
 // traversalSafeArgumentFunctions are the functions whose node argument needs
 // no property values: identity, labels and row existence. count(v), id(v),
@@ -101,9 +104,9 @@ func traversalVariablePropertiesRead(expression, variable string) bool {
 			continue
 		}
 		if c == '$' {
-			_, next, ok := scanIdentifierToken(expression, index+1)
+			next, ok := cyphertext.ScanIdentifier(expression, index+1)
 			if ok {
-				index = next
+				index = next.End
 				continue
 			}
 			index++
@@ -119,11 +122,11 @@ func traversalVariablePropertiesRead(expression, variable string) bool {
 		// property key, and a name followed by '(' is a function name — neither
 		// is a variable reference.
 		before := nameStart
-		for before > 0 && isASCIIWhitespace(expression[before-1]) {
+		for before > 0 && cyphertext.IsWhitespaceAt(expression, before-1) {
 			before--
 		}
 		cursor := next
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
+		for cursor < len(expression) && cyphertext.IsWhitespaceAt(expression, cursor) {
 			cursor++
 		}
 		index = next
@@ -150,7 +153,7 @@ func traversalVariablePropertiesRead(expression, variable string) bool {
 // fn(v) or fn(DISTINCT v).
 func traversalBareVariableInSafeCall(expression string, nameStart int) bool {
 	pos := nameStart
-	for pos > 0 && isASCIIWhitespace(expression[pos-1]) {
+	for pos > 0 && cyphertext.IsWhitespaceAt(expression, pos-1) {
 		pos--
 	}
 	if pos > 0 && expression[pos-1] == '(' {
@@ -160,7 +163,7 @@ func traversalBareVariableInSafeCall(expression string, nameStart int) bool {
 		distinct := pos - len("DISTINCT")
 		if strings.EqualFold(expression[distinct:pos], "DISTINCT") {
 			p := distinct
-			for p > 0 && isASCIIWhitespace(expression[p-1]) {
+			for p > 0 && cyphertext.IsWhitespaceAt(expression, p-1) {
 				p--
 			}
 			if p > 0 && expression[p-1] == '(' {
@@ -175,13 +178,12 @@ func traversalBareVariableInSafeCall(expression string, nameStart int) bool {
 // at openParen is property-agnostic for a node argument.
 func traversalCallNameIsSafe(expression string, openParen int) bool {
 	end := openParen
-	for end > 0 && isASCIIWhitespace(expression[end-1]) {
+	for end > 0 && cyphertext.IsWhitespaceAt(expression, end-1) {
 		end--
 	}
 	start := end
 	for start > 0 {
-		b := expression[start-1]
-		if (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' {
+		if cyphertext.NamePartAt(expression, start-1) {
 			start--
 			continue
 		}

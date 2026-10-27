@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"net/http"
 	"reflect"
 	"sort"
@@ -212,7 +213,7 @@ func (s *Server) handleGraphNeighborhood(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
+	httpresponse.WriteJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
 		Database:      dbName,
 		GeneratedFrom: "node",
 		Depth:         req.Depth,
@@ -266,7 +267,7 @@ func (s *Server) handleGraphPath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
+	httpresponse.WriteJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
 		Database:      dbName,
 		GeneratedFrom: "query",
 	}))
@@ -319,7 +320,7 @@ func (s *Server) handleGraphTemporal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.writeJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
+	httpresponse.WriteJSON(w, http.StatusOK, collection.payload(graphMetaPayload{
 		Database:      dbName,
 		GeneratedFrom: "node",
 		AsOf:          version.CommitTimestamp.UTC().Format(time.RFC3339Nano),
@@ -416,7 +417,7 @@ func (s *Server) handleGraphDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	diff := diffGraphCollections(baseline, target)
-	s.writeJSON(w, http.StatusOK, diff.payload(graphMetaPayload{
+	httpresponse.WriteJSON(w, http.StatusOK, diff.payload(graphMetaPayload{
 		Database:      dbName,
 		GeneratedFrom: "diff",
 		AsOf:          targetVersion.CommitTimestamp.UTC().Format(time.RFC3339Nano),

@@ -1,0 +1,374 @@
+[
+  {
+    "character": "\t",
+    "input": "\t",
+    "accepted": "\t",
+    "kind": "whitespace"
+  },
+  {
+    "character": "\n",
+    "input": "\n",
+    "accepted": "\n",
+    "kind": "whitespace"
+  },
+  {
+    "character": "\u000b",
+    "input": "\u000b",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": "\f",
+    "input": "\f",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": "\r",
+    "input": "\r",
+    "accepted": "\r",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": "",
+    "input": "",
+    "accepted": "\n",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": "\n",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": "\n",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": " ",
+    "input": " ",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": "　",
+    "input": "　",
+    "accepted": " ",
+    "kind": "whitespace"
+  },
+  {
+    "character": "​",
+    "input": "​",
+    "accepted": "",
+    "kind": "deletion"
+  },
+  {
+    "character": "‌",
+    "input": "‌",
+    "accepted": "",
+    "kind": "deletion"
+  },
+  {
+    "character": "‍",
+    "input": "‍",
+    "accepted": "",
+    "kind": "deletion"
+  },
+  {
+    "character": "⁠",
+    "input": "⁠",
+    "accepted": "",
+    "kind": "deletion"
+  },
+  {
+    "character": "﻿",
+    "input": "﻿",
+    "accepted": "",
+    "kind": "deletion"
+  },
+  {
+    "character": "→",
+    "input": "→",
+    "accepted": "->",
+    "kind": "punctuation"
+  },
+  {
+    "character": "←",
+    "input": "←",
+    "accepted": "<-",
+    "kind": "punctuation"
+  },
+  {
+    "character": "（",
+    "input": "（",
+    "accepted": "(",
+    "kind": "punctuation"
+  },
+  {
+    "character": "）",
+    "input": "）",
+    "accepted": ")",
+    "kind": "punctuation"
+  },
+  {
+    "character": "［",
+    "input": "［",
+    "accepted": "[",
+    "kind": "punctuation"
+  },
+  {
+    "character": "］",
+    "input": "］",
+    "accepted": "]",
+    "kind": "punctuation"
+  },
+  {
+    "character": "｛",
+    "input": "｛",
+    "accepted": "{",
+    "kind": "punctuation"
+  },
+  {
+    "character": "｝",
+    "input": "｝",
+    "accepted": "}",
+    "kind": "punctuation"
+  },
+  {
+    "character": "，",
+    "input": "，",
+    "accepted": ",",
+    "kind": "punctuation"
+  },
+  {
+    "character": "：",
+    "input": "：",
+    "accepted": ":",
+    "kind": "punctuation"
+  },
+  {
+    "character": "；",
+    "input": "；",
+    "accepted": ";",
+    "kind": "punctuation"
+  },
+  {
+    "character": "．",
+    "input": "．",
+    "accepted": ".",
+    "kind": "punctuation"
+  },
+  {
+    "character": "＝",
+    "input": "＝",
+    "accepted": "=",
+    "kind": "punctuation"
+  },
+  {
+    "character": "＜",
+    "input": "＜",
+    "accepted": "<",
+    "kind": "punctuation"
+  },
+  {
+    "character": "＞",
+    "input": "＞",
+    "accepted": ">",
+    "kind": "punctuation"
+  },
+  {
+    "character": "＄",
+    "input": "＄",
+    "accepted": "$",
+    "kind": "punctuation"
+  },
+  {
+    "character": "­",
+    "input": "(a)­(b)",
+    "accepted": "(a)-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "‐",
+    "input": "(a)‐(b)",
+    "accepted": "(a)-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "‑",
+    "input": "(a)‑(b)",
+    "accepted": "(a)-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "‒",
+    "input": "(a)‒(b)",
+    "accepted": "(a)-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "–",
+    "input": "(a)–(b)",
+    "accepted": "(a)-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "—",
+    "input": "(a)—(b)",
+    "accepted": "(a)-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "―",
+    "input": "(a)―(b)",
+    "accepted": "(a)-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "﹘",
+    "input": "(a)﹘(b)",
+    "accepted": "(a)-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "﹣",
+    "input": "(a)﹣(b)",
+    "accepted": "(a)-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "－",
+    "input": "(a)－(b)",
+    "accepted": "(a)-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "⟨",
+    "input": "(a)⟨-(b)",
+    "accepted": "(a)<-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "〈",
+    "input": "(a)〈-(b)",
+    "accepted": "(a)<-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "﹤",
+    "input": "(a)﹤-(b)",
+    "accepted": "(a)<-(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "⟩",
+    "input": "(a)-⟩(b)",
+    "accepted": "(a)->(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "〉",
+    "input": "(a)-〉(b)",
+    "accepted": "(a)->(b)",
+    "kind": "arrow"
+  },
+  {
+    "character": "﹥",
+    "input": "(a)-﹥(b)",
+    "accepted": "(a)->(b)",
+    "kind": "arrow"
+  }
+]

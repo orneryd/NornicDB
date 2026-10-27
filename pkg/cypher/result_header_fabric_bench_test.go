@@ -50,17 +50,17 @@ func BenchmarkResultHeaderFabricDispatch(b *testing.B) {
 // APPLY and final projection. Parameters bypass result caching on every run.
 func BenchmarkResultHeaderFabricEmptyChain(b *testing.B) {
 	store := fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	manager, err := multidb.NewDatabaseManager(store, nil)
+	manager, err := multidb.NewDatabaseManager(b.Context(), store, nil)
 	if err != nil {
 		b.Fatal(err)
 	}
 	b.Cleanup(func() { _ = manager.Close() })
 	for _, database := range []string{"header_first", "header_second"} {
-		if err := manager.CreateDatabase(database); err != nil {
+		if err := manager.CreateDatabase(b.Context(), multidb.DatabaseCreateRequest{Name: database}); err != nil {
 			b.Fatal(err)
 		}
 	}
-	if err := manager.CreateCompositeDatabase("header_comp", []multidb.ConstituentRef{
+	if err := manager.CreateCompositeDatabase(b.Context(), "header_comp", []multidb.ConstituentRef{
 		{Alias: "one", DatabaseName: "header_first", Type: "local", AccessMode: "read_write"},
 		{Alias: "two", DatabaseName: "header_second", Type: "local", AccessMode: "read_write"},
 	}); err != nil {

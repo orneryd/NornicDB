@@ -107,7 +107,7 @@ Qdrant vectors do not overwrite NornicDB-managed embeddings because managed embe
 
 Because collections are databases, deleting a collection is a database drop:
 
-- `DROP DATABASE <name>` / `DatabaseManager.DropDatabase(name)` deletes the namespace prefix `<name>:` via `storage.Engine.DeleteByPrefix`.
+- `DROP DATABASE <name>` / `DatabaseManager.DropDatabase(ctx, name)` deletes the namespace prefix `<name>:` via `storage.Engine.DeleteByPrefix`.
 - For Badger-backed engines, `DeleteByPrefix` is optimized to use Badger's prefix drop for db-scoped keyspaces and targeted cleanup for secondary indexes.
 
 ## Why this split matters

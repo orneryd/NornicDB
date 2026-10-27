@@ -426,6 +426,18 @@ func (it *distinctRowIterator) Close() error {
 	return it.base.Close()
 }
 
+// resultRows adapts a completed local or remote execution to the row protocol.
+func resultRows(result *ResultStream, err error) ([]string, RowIterator, error) {
+	if err != nil {
+		return nil, nil, err
+	}
+	var columns []string
+	if result != nil {
+		columns = result.Columns
+	}
+	return columns, NewResultRowIterator(result), nil
+}
+
 // NewResultRowIterator wraps a ResultStream as a RowIterator.
 func NewResultRowIterator(r *ResultStream) RowIterator {
 	if r == nil || len(r.Rows) == 0 {

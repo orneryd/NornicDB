@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
@@ -20,18 +21,18 @@ func hasRevealCall(query string) bool {
 			continue
 		}
 
-		name, next, ok := scanIdentifierToken(query, index)
+		name, ok := cyphertext.ScanIdentifier(query, index)
 		if !ok {
 			index++
 			continue
 		}
-		if isRevealFunctionName(name) && (index == 0 || query[index-1] != '.') {
-			cursor := queryGapEnd(query, next)
+		if isRevealFunctionName(name.Value) && (index == 0 || query[index-1] != '.') {
+			cursor := queryGapEnd(query, name.End)
 			if cursor < len(query) && query[cursor] == '(' {
 				return true
 			}
 		}
-		index = next
+		index = name.End
 	}
 	return false
 }

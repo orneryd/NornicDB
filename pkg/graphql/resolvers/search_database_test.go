@@ -51,7 +51,7 @@ func TestSearchAndSimilarReadTheSelectedDatabase(t *testing.T) {
 	require.NotEmpty(t, similar)
 
 	// A request whose only database is another one reads that database.
-	require.NoError(t, dbManager.CreateDatabase("other"))
+	require.NoError(t, dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "other"}))
 	otherCtx := auth.WithRequestDatabaseScope(ctx, auth.NewRequestDatabaseScope("", map[string]string{"other": "other"}))
 	readable := withResolvedAccess(otherCtx, func(string) auth.ResolvedAccess { return auth.ResolvedAccess{Read: true} })
 	resp, err = qr.querySearch(readable, "Alice graph", &models.SearchOptions{Limit: &limit})
@@ -85,9 +85,9 @@ func TestSearchAndSimilarRefuseCompositeDatabase(t *testing.T) {
 	qr := &queryResolver{resolver}
 	nr := &nodeResolver{resolver}
 
-	require.NoError(t, dbManager.CreateDatabase("open_part"))
-	require.NoError(t, dbManager.CreateDatabase("closed_part"))
-	require.NoError(t, dbManager.CreateCompositeDatabase("portfolio", []multidb.ConstituentRef{
+	require.NoError(t, dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "open_part"}))
+	require.NoError(t, dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "closed_part"}))
+	require.NoError(t, dbManager.CreateCompositeDatabase(t.Context(), "portfolio", []multidb.ConstituentRef{
 		{Alias: "open", DatabaseName: "open_part", Type: "local", AccessMode: "read_write"},
 		{Alias: "closed", DatabaseName: "closed_part", Type: "local", AccessMode: "read_write"},
 	}))

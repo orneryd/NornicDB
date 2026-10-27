@@ -1,6 +1,9 @@
 package cypher
 
-import "context"
+import (
+	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+)
 
 import "strings"
 
@@ -34,7 +37,8 @@ func validateReturnOrderBySemanticScopeIn(ctx context.Context, clause string, re
 	// any of them (RETURN DISTINCT *, x AS y ORDER BY z, #883).
 	star := false
 	for _, item := range splitTopLevelComma(projectionBody) {
-		expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
+		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
+		expression, alias := itemSource.expression, itemSource.alias
 		if expression == "*" {
 			star = true
 			continue
@@ -141,7 +145,7 @@ func canonicalSemanticExpression(expression string) string {
 			continue
 		}
 		current := expression[index]
-		if isASCIIWhitespace(current) {
+		if cyphertext.IsWhitespaceAt(expression, index) {
 			continue
 		}
 		if current >= 'a' && current <= 'z' {
@@ -172,7 +176,8 @@ func validateReturnAggregationSemanticsIn(ctx context.Context, body string, oute
 	aliases := make(map[string]struct{})
 	expressions := make([]string, 0)
 	for _, item := range splitTopLevelComma(body) {
-		expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
+		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
+		expression, alias := itemSource.expression, itemSource.alias
 		expressions = append(expressions, expression)
 		if alias != "" && alias != expression {
 			aliases[normalizeProjectionColumnName(alias)] = struct{}{}
@@ -243,19 +248,19 @@ func aggregateContains(expression string, predicate func(string) bool) bool {
 
 func containsFunctionCallNamed(expression, expected string) bool {
 	for index := 0; index < len(expression); {
-		name, next, ok := scanIdentifierToken(expression, index)
+		name, ok := cyphertext.ScanIdentifier(expression, index)
 		if !ok {
 			index++
 			continue
 		}
-		cursor := next
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
+		cursor := name.End
+		for cursor < len(expression) && cyphertext.IsWhitespaceAt(expression, cursor) {
 			cursor++
 		}
-		if strings.EqualFold(normalizeProjectionColumnName(name), expected) && cursor < len(expression) && expression[cursor] == '(' {
+		if strings.EqualFold(normalizeProjectionColumnName(name.Value), expected) && cursor < len(expression) && expression[cursor] == '(' {
 			return true
 		}
-		index = next
+		index = name.End
 	}
 	return false
 }
@@ -292,9 +297,9 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 			continue
 		}
 		if expression[index] == '$' {
-			_, next, ok := scanIdentifierToken(expression, index+1)
+			next, ok := cyphertext.ScanIdentifier(expression, index+1)
 			if ok {
-				index = next
+				index = next.End
 				continue
 			}
 		}
@@ -308,7 +313,7 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 		// head(xs).id), which the scan doesn't read as a reference itself.
 		start := index
 		before := index
-		for before > 0 && isASCIIWhitespace(expression[before-1]) {
+		for before > 0 && cyphertext.IsWhitespaceAt(expression, before-1) {
 			before--
 		}
 		index = next
@@ -316,7 +321,7 @@ func forEachSemanticExpressionReference(expression string, visit func(reference 
 			continue
 		}
 		cursor := next
-		for cursor < len(expression) && isASCIIWhitespace(expression[cursor]) {
+		for cursor < len(expression) && cyphertext.IsWhitespaceAt(expression, cursor) {
 			cursor++
 		}
 		if cursor < len(expression) && expression[cursor] == '(' {
@@ -408,7 +413,7 @@ func maskSemanticBraceBodies(expression string) string {
 		default:
 			continue
 		}
-		close := findMatchingDelimiter(expression, index, '{', '}')
+		close := cyphertext.FindMatchingDelimiter(expression, index, '{', '}', cyphertext.OpeningDelimiter)
 		if close < 0 {
 			break
 		}
@@ -416,11 +421,11 @@ func maskSemanticBraceBodies(expression string) string {
 			masked[blank] = ' '
 		}
 		end := index
-		for end > 0 && isASCIIWhitespace(expression[end-1]) {
+		for end > 0 && cyphertext.IsWhitespaceAt(expression, end-1) {
 			end--
 		}
 		start := end
-		for start > 0 && isIdentByte(expression[start-1]) {
+		for start > 0 && cyphertext.NamePartAt(expression, start-1) {
 			start--
 		}
 		switch upperASCII(expression[start:end]) {

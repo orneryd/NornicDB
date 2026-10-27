@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strconv"
 	"strings"
@@ -552,15 +553,15 @@ var (
 // expression that starts with anything else (a function call, a literal).
 func undefinedVariableError(expression string) (err error, undefined bool) {
 	expression = strings.TrimSpace(expression)
-	name, end, isName := scanIdentifierToken(expression, 0)
+	name, isName := cyphertext.ScanIdentifier(expression, 0)
 	if !isName {
 		return nil, false
 	}
-	if rest := strings.TrimSpace(expression[end:]); rest != "" && rest[0] == '(' {
+	if rest := strings.TrimSpace(expression[name.End:]); rest != "" && rest[0] == '(' {
 		return nil, false
 	}
 	return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UndefinedVariable",
-		localization.CypherAdminVariableNotDefined(name)), true
+		localization.CypherAdminVariableNotDefined(name.Value)), true
 }
 
 // transactionIDFilter reads the transaction ids after SHOW / TERMINATE

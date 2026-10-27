@@ -57,19 +57,10 @@ func isBacktickQuotedName(name string) bool {
 	return ok && end == len(name)
 }
 
-// quotedVariableEdit is one rewritten occurrence: original[origStart:origEnd]
-// became canonical[canonStart:canonEnd].
-type quotedVariableEdit struct {
-	origStart, origEnd   int
-	canonStart, canonEnd int
-}
-
 // quotedVariableNames maps a canonicalized statement back to the one the
 // client sent.
 type quotedVariableNames struct {
-	original  string
-	canonical string
-	edits     []quotedVariableEdit
+	cyphertext.Source
 	// internal maps each internal identifier to its variable's name and to
 	// the quoted token as first written.
 	internal map[string]quotedVariableName
@@ -96,10 +87,18 @@ type quotedToken struct {
 	parameter  bool // a parameter name ($`a b`)
 }
 
-// canonicalizeQuotedVariables rewrites the backtick-quoted variables of
-// query (see the file comment). It returns nil when there is nothing to
-// rewrite; a query without a backtick isn't scanned.
-func canonicalizeQuotedVariables(ctx context.Context, query string) (string, *quotedVariableNames) {
+// Fabric's planner and remote participants consume native Cypher names.
+// Local fragments translate identifiers at the local execution boundary.
+func canonicalizeLocalQuotedVariables(ctx context.Context, query string, fabricQuery bool) (string, *quotedVariableNames) {
+	if fabricQuery {
+		return query, nil
+	}
+	return canonicalizeQuotedVariablesWithBindings(ctx, query, nil)
+}
+
+// External row bindings have the same identifier roles as bindings declared
+// in the query. The local query and its row keys are translated together.
+func canonicalizeQuotedVariablesWithBindings(ctx context.Context, query string, bindings map[string]interface{}) (string, *quotedVariableNames) {
 	if strings.IndexByte(query, '`') < 0 {
 		return query, nil
 	}
@@ -108,13 +107,16 @@ func canonicalizeQuotedVariables(ctx context.Context, query string) (string, *qu
 		return query, nil
 	}
 	bound := make(map[string]struct{})
+	for name := range bindings {
+		bound[name] = struct{}{}
+	}
 	for _, token := range tokens {
 		if token.binding {
 			bound[token.name] = struct{}{}
 		}
 	}
 
-	names := &quotedVariableNames{original: query, internal: make(map[string]quotedVariableName)}
+	names := &quotedVariableNames{Source: cyphertext.Source{Original: query}, internal: make(map[string]quotedVariableName)}
 	identifiers := make(map[string]string) // name -> replacement identifier
 	used := make(map[string]struct{})
 	replacementFor := func(token quotedToken) string {
@@ -176,14 +178,14 @@ func canonicalizeQuotedVariables(ctx context.Context, query string) (string, *qu
 		out.WriteString(query[last:token.start])
 		canonStart := out.Len()
 		out.WriteString(replacement)
-		names.edits = append(names.edits, quotedVariableEdit{origStart: token.start, origEnd: token.end, canonStart: canonStart, canonEnd: out.Len()})
+		names.Edits = append(names.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: token.start, End: token.end}, Accepted: cyphertext.Span{Start: canonStart, End: out.Len()}})
 		last = token.end
 	}
-	if len(names.edits) == 0 {
+	if len(names.Edits) == 0 {
 		return query, nil
 	}
 	out.WriteString(query[last:])
-	names.canonical = out.String()
+	names.Text = out.String()
 	for identifier := range names.internal {
 		names.internalOrder = append(names.internalOrder, identifier)
 	}
@@ -193,7 +195,35 @@ func canonicalizeQuotedVariables(ctx context.Context, query string) (string, *qu
 		}
 		return names.internalOrder[i] < names.internalOrder[j]
 	})
-	return names.canonical, names
+	return names.Text, names
+}
+
+func (names *quotedVariableNames) bindingValues(bindings map[string]interface{}) map[string]interface{} {
+	if names == nil || len(bindings) == 0 {
+		return bindings
+	}
+	var out map[string]interface{}
+	for internal, original := range names.internal {
+		if _, parameter := names.parameters[internal]; parameter {
+			continue
+		}
+		value, exists := bindings[original.name]
+		if !exists {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]interface{}, len(bindings))
+			for name, value := range bindings {
+				out[name] = value
+			}
+		}
+		delete(out, original.name)
+		out[internal] = value
+	}
+	if out != nil {
+		return out
+	}
+	return bindings
 }
 
 // parameterValues returns params with each internal parameter name bound
@@ -230,8 +260,8 @@ func (names *quotedVariableNames) parameterName(name string) string {
 // (NaN and Infinity read as their float), and without a '$', which only
 // Cypher 5 reads inside a name (Cypher 25 starts a parameter there).
 func isPlainVariableName(name string) bool {
-	_, end, ok := scanIdentifierToken(name, 0)
-	return ok && end == len(name) && isUnquotedName(name) && !isCypherKeyword(name) && !isLiteralKeyword(name) && strings.IndexByte(name, '$') < 0
+	end, ok := cyphertext.ScanIdentifier(name, 0)
+	return ok && end.End == len(name) && isUnquotedName(name) && !isCypherKeyword(name) && !isLiteralKeyword(name) && strings.IndexByte(name, '$') < 0
 }
 
 // internalVariableIdentifier is the plain identifier a quoted variable is
@@ -254,7 +284,7 @@ func internalVariableIdentifier(query, name string, used map[string]struct{}) st
 // scanQuotedTokens lists the backtick-quoted symbolic names of query outside
 // string literals, with their positions classified.
 func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return nil
 	} // Syntax admission owns this statement's error.
@@ -300,11 +330,11 @@ func scanQuotedTokens(ctx context.Context, source string) []quotedToken {
 }
 func previousWord(query string, index int) string {
 	end := index
-	for end > 0 && isWhitespace(query[end-1]) {
+	for end > 0 && cyphertext.IsWhitespaceAt(query, end-1) {
 		end--
 	}
 	start := end
-	for start > 0 && isIdentByte(query[start-1]) {
+	for start > 0 && cyphertext.NamePartAt(query, start-1) {
 		start--
 	}
 	return query[start:end]
@@ -346,16 +376,38 @@ func (names *quotedVariableNames) restore(result *ExecuteResult, err error, pars
 				}
 			}
 		}
-		if isExplainOrProfile(names.original) {
+		if isExplainOrProfile(names.Original) {
 			restored.Rows = names.restoreValue(result.Rows).([][]interface{})
 		} else if len(restored.Columns) > 0 {
-			names.restoreProjection(&restored, parseItems)
+			if start, end, ok := finalReturnBody(names.Text); ok {
+				body, _ := cutDistinct(strings.TrimSpace(names.Text[start:end]))
+				if strings.HasPrefix(body, "*") && (len(body) == 1 || !cyphertext.NamePartAt(body, 1)) && topLevelKeywordIndex(body, "UNION") < 0 {
+					sortColumnsByName(&restored)
+				} else {
+					originalText, _ := names.OriginalText(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExactBoundaries, func(text string) string { return names.restoreSourceText(text, quotedNamesOnly) })
+					items := parseItems(originalText)
+					canonicalItems := parseItems(names.Text[start:end])
+					if len(items) == len(restored.Columns) && len(canonicalItems) == len(items) {
+						for i, item := range items {
+							if item.alias != strings.TrimSpace(item.expr) {
+								// Parsed aliases are already decoded; unquoting twice
+								// would change whitespace or embedded backticks.
+								restored.Columns[i] = item.alias
+							} else if name, isName := isOneSymbolicName(item.expr); isName {
+								restored.Columns[i] = name
+							} else {
+								restored.Columns[i] = strings.TrimSpace(item.expr)
+							}
+						}
+					}
+				}
+			}
 		}
 		result = &restored
 	}
 	if err != nil && len(names.internal) > 0 {
-		if message := err.Error(); names.restoreText(message) != message {
-			err = &quotedVariableError{cause: err, message: names.restoreText(message)}
+		if message := err.Error(); names.restoreSourceText(message, quotedNamesOnly) != message {
+			err = &quotedVariableError{cause: err, message: names.restoreSourceText(message, quotedNamesOnly)}
 		}
 	}
 	return result, err
@@ -368,69 +420,36 @@ func (names *quotedVariableNames) restoreColumn(column string) string {
 	if internal, ok := names.internal[column]; ok {
 		return internal.name
 	}
-	if isPlainVariableName(column) || !names.touches(column) {
+	if isPlainVariableName(column) || !names.HasRewrite(cyphertext.RewriteMatch{Policy: cyphertext.RewriteFragmentMention, Fragment: column, Markers: names.internalOrder}) {
 		return column
 	}
 	// The final RETURN names the columns, so its text is the last
 	// occurrence.
-	if start := strings.LastIndex(names.canonical, column); start >= 0 {
-		if original, ok := names.originalSpan(start, start+len(column)); ok {
-			return original
+	if start := strings.LastIndex(names.Text, column); start >= 0 {
+		if span, ok := names.OriginalSpan(cyphertext.Span{Start: start, End: start + len(column)}, cyphertext.SourceExactBoundaries); ok {
+			return names.Original[span.Start:span.End]
 		}
 	}
-	return names.restoreText(column)
+	return names.restoreSourceText(column, quotedNamesOnly)
 }
 
-// touches reports whether text holds a rewritten occurrence.
-func (names *quotedVariableNames) touches(text string) bool {
-	for identifier := range names.internal {
-		if strings.Contains(text, identifier) {
-			return true
-		}
-	}
-	for _, edit := range names.edits {
-		if strings.Contains(text, names.canonical[edit.canonStart:edit.canonEnd]) {
-			return true
-		}
-	}
-	return false
-}
+type quotedSourceTextPolicy uint8
 
-// originalSpan maps canonical[start:end] to the original text it came from,
-// when both ends fall outside a rewritten occurrence or on its edges.
-func (names *quotedVariableNames) originalSpan(start, end int) (string, bool) {
-	mapOffset := func(offset int, isEnd bool) (int, bool) {
-		shift := 0
-		for _, edit := range names.edits {
-			switch {
-			case offset < edit.canonStart || (!isEnd && offset == edit.canonStart):
-				return offset + shift, true
-			case offset == edit.canonEnd:
-				return edit.origEnd, true
-			case offset < edit.canonEnd:
-				if offset == edit.canonStart {
-					return edit.origStart, true
-				}
-				return 0, false
-			}
-			shift = edit.origEnd - edit.canonEnd
-		}
-		return offset + shift, true
-	}
-	from, ok := mapOffset(start, false)
-	if !ok {
-		return "", false
-	}
-	to, ok := mapOffset(end, true)
-	if !ok || to < from || to > len(names.original) {
-		return "", false
-	}
-	return names.original[from:to], true
-}
+const (
+	quotedNamesOnly quotedSourceTextPolicy = iota
+	quotedStatementFragment
+)
 
-// restoreText replaces each internal identifier in text with the quoted
-// name as the statement wrote it.
-func (names *quotedVariableNames) restoreText(text string) string {
+// restoreSourceText keeps statement-fragment recovery and generated-name
+// substitution on one owner. Only statement fragments acquire strict source
+// span recovery; arbitrary metadata and error prose substitute names only.
+func (names *quotedVariableNames) restoreSourceText(text string, policy quotedSourceTextPolicy) string {
+	if policy == quotedStatementFragment && text != "" {
+		if start := strings.LastIndex(names.Text, text); start >= 0 {
+			originalText, _ := names.OriginalText(cyphertext.Span{Start: start, End: start + len(text)}, cyphertext.SourceExactBoundaries, func(text string) string { return names.restoreSourceText(text, quotedNamesOnly) })
+			return originalText
+		}
+	}
 	for _, identifier := range names.internalOrder {
 		if strings.Contains(text, identifier) {
 			text = strings.ReplaceAll(text, identifier, names.internal[identifier].written)
@@ -442,11 +461,11 @@ func (names *quotedVariableNames) restoreText(text string) string {
 func (names *quotedVariableNames) restoreValue(value interface{}) interface{} {
 	switch typed := value.(type) {
 	case string:
-		return names.restoreText(typed)
+		return names.restoreSourceText(typed, quotedNamesOnly)
 	case map[string]interface{}:
 		out := make(map[string]interface{}, len(typed))
 		for key, item := range typed {
-			out[names.restoreText(key)] = names.restoreValue(item)
+			out[names.restoreSourceText(key, quotedNamesOnly)] = names.restoreValue(item)
 		}
 		return out
 	case []interface{}:
@@ -460,7 +479,7 @@ func (names *quotedVariableNames) restoreValue(value interface{}) interface{} {
 			return value
 		}
 		plan := *typed
-		plan.Query = names.restoreStatementText(typed.Query)
+		plan.Query = names.restoreSourceText(typed.Query, quotedStatementFragment)
 		plan.Root, _ = names.restoreValue(typed.Root).(*PlanOperator)
 		return &plan
 	case *PlanOperator:
@@ -468,7 +487,7 @@ func (names *quotedVariableNames) restoreValue(value interface{}) interface{} {
 			return value
 		}
 		operator := *typed
-		operator.Description = names.restoreText(typed.Description)
+		operator.Description = names.restoreSourceText(typed.Description, quotedNamesOnly)
 		if typed.Arguments != nil {
 			operator.Arguments = names.restoreValue(typed.Arguments).(map[string]interface{})
 		}
@@ -543,19 +562,10 @@ func quotedVariableNamesFor(ctx context.Context, cypher string) *quotedVariableN
 		return nil
 	}
 	names, _ := ctx.Value(quotedVariablesKey{}).(*quotedVariableNames)
-	if names == nil || names.canonical != cypher {
+	if names == nil || names.Text != cypher {
 		return nil
 	}
 	return names
-}
-
-// originalText maps canonical[start:end] back to the text the client wrote,
-// or restores the internal names in it when the span can't be mapped.
-func (names *quotedVariableNames) originalText(start, end int) string {
-	if original, ok := names.originalSpan(start, end); ok {
-		return original
-	}
-	return names.restoreText(names.canonical[start:end])
 }
 
 // finalReturnBody locates the body of text's last top-level RETURN (after
@@ -573,36 +583,6 @@ func finalReturnBody(text string) (int, int, bool) {
 // item its text as written (x + 1 and `x` + 1 are different columns). For
 // RETURN * the columns are sorted by name, as Neo4j lists them, with the
 // rows reordered to match.
-func (names *quotedVariableNames) restoreProjection(result *ExecuteResult, parseItems func(string) []returnItem) {
-	start, end, ok := finalReturnBody(names.canonical)
-	if !ok {
-		return
-	}
-	body := strings.TrimSpace(names.canonical[start:end])
-	body, _ = cutDistinct(body)
-	if strings.HasPrefix(body, "*") && (len(body) == 1 || !isIdentByte(body[1])) && topLevelKeywordIndex(body, "UNION") < 0 {
-		sortColumnsByName(result)
-		return
-	}
-	items := parseItems(names.originalText(start, end))
-	canonicalItems := parseItems(names.canonical[start:end])
-	if len(items) != len(result.Columns) || len(canonicalItems) != len(items) {
-		return
-	}
-	for i, item := range items {
-		if item.alias != strings.TrimSpace(item.expr) {
-			// parseItems gives the alias's value already: unquoting it again
-			// would trim ` m` to m and read ```a``` as a.
-			result.Columns[i] = item.alias
-			continue
-		}
-		if name, isName := isOneSymbolicName(item.expr); isName {
-			result.Columns[i] = name
-			continue
-		}
-		result.Columns[i] = strings.TrimSpace(item.expr)
-	}
-}
 
 func sortColumnsByName(result *ExecuteResult) {
 	order := make([]int, len(result.Columns))
@@ -625,17 +605,6 @@ func sortColumnsByName(result *ExecuteResult) {
 		}
 	}
 	result.Columns, result.Rows = columns, rows
-}
-
-// restoreStatementText maps statement text taken from the canonical
-// statement (the whole statement or a part of it) back to the client's.
-func (names *quotedVariableNames) restoreStatementText(text string) string {
-	if text != "" {
-		if start := strings.LastIndex(names.canonical, text); start >= 0 {
-			return names.originalText(start, start+len(text))
-		}
-	}
-	return names.restoreText(text)
 }
 
 // declaredAt reports whether the name written at offset at is the variable

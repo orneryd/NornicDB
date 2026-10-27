@@ -99,9 +99,9 @@ func TestPrivateReproHTTPBareBeginRollbackOtherRequest(t *testing.T) {
 
 func TestPrivateReproCompositeConstituentAccess(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("private_allowed"))
-	require.NoError(t, server.dbManager.CreateDatabase("private_denied"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("private_cmp", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private_allowed"}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private_denied"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "private_cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "private_allowed", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "private_denied", Type: "local", AccessMode: "read_write"},
 	}))
@@ -148,9 +148,9 @@ func TestPrivateReproCompositeConstituentAccess(t *testing.T) {
 // denied constituents.
 func TestPrivateReproCompositePatternFormsRequireConstituentTarget(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("private_allowed"))
-	require.NoError(t, server.dbManager.CreateDatabase("private_denied"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("private_cmp", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private_allowed"}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private_denied"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "private_cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "private_allowed", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "private_denied", Type: "local", AccessMode: "read_write"},
 	}))

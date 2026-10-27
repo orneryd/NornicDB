@@ -1111,23 +1111,12 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	// Get the base storage engine from the DB (unwraps the namespaced storage).
 	// DatabaseManager will create NamespacedEngines for each logical database.
 	storageEngine := db.GetBaseStorageForManager()
-	remoteCredentialEncryptionKey := ""
-	switch {
-	case strings.TrimSpace(os.Getenv("NORNICDB_REMOTE_CREDENTIALS_KEY")) != "":
-		remoteCredentialEncryptionKey = strings.TrimSpace(os.Getenv("NORNICDB_REMOTE_CREDENTIALS_KEY"))
-	case strings.TrimSpace(globalConfig.Database.EncryptionPassword) != "":
-		remoteCredentialEncryptionKey = strings.TrimSpace(globalConfig.Database.EncryptionPassword)
+	remoteCredentialEncryptionKey, remoteCredentialKeySource := db.RemoteCredentialEncryptionKey()
+	if remoteCredentialKeySource == "database_encryption_password" || remoteCredentialKeySource == "jwt_signing_secret" {
 		config.Localizer.Log(context.Background(), config.Logger.With("component", "server"), slog.LevelWarn,
 			localization.ServerRemoteCredentialKeyFallbackEvent(
-				"database_encryption_password",
+				remoteCredentialKeySource,
 				"set NORNICDB_REMOTE_CREDENTIALS_KEY for key separation",
-			))
-	case strings.TrimSpace(globalConfig.Auth.JWTSecret) != "":
-		remoteCredentialEncryptionKey = strings.TrimSpace(globalConfig.Auth.JWTSecret)
-		config.Localizer.Log(context.Background(), config.Logger.With("component", "server"), slog.LevelWarn,
-			localization.ServerRemoteCredentialKeyFallbackEvent(
-				"jwt_signing_secret",
-				"set NORNICDB_REMOTE_CREDENTIALS_KEY for stronger key separation",
 			))
 	}
 	multiDBConfig := &multidb.Config{
@@ -1150,7 +1139,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			return storage.NewRemoteEngine(cfg)
 		},
 	}
-	dbManager, err := multidb.NewDatabaseManager(storageEngine, multiDBConfig)
+	dbManager, err := multidb.NewDatabaseManager(db.LifetimeContext(), storageEngine, multiDBConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize database manager: %w", err)
 	}
@@ -1190,6 +1179,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 		return s.activeTxReqs.Load() > 0
 	})
 	s.txSessions = txsession.NewManager(30*time.Second, s.newExecutorForDatabase)
+	s.requestsCtx, s.cancelRequestsCtx = context.WithCancel(context.Background())
+	s.txSessions.SetLifetimeContext(s.requestsCtx)
 	s.txSessions.SetTerminalErrorObserver(func(session *txsession.Session, err error) {
 		s.logMVCCSnapshotExpiration(session, err)
 	})
@@ -1359,12 +1350,18 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			if provider == "" {
 				provider = "local"
 			}
+			diagnosticCredentials := observability.ClientCredentials(heimdallCfg.APIURL, heimdallCfg.APIKey)
+			safeProviderName := observability.RedactText(provider, diagnosticCredentials...)
 			s.logEvent(context.Background(), slog.LevelInfo,
-				localization.ServerHeimdallProviderResolvedEvent(provider, "NORNICDB_HEIMDALL_PROVIDER"))
+				localization.ServerHeimdallProviderResolvedEvent(safeProviderName, "NORNICDB_HEIMDALL_PROVIDER"))
 			manager, err := heimdall.NewManager(heimdallCfg)
 			if err != nil {
 				s.logEvent(context.Background(), slog.LevelWarn,
-					localization.ServerHeimdallInitializationFailedEvent(err,
+					localization.ServerHeimdallInitializationFailedEvent(
+						observability.RedactError(
+							err,
+							observability.ClientCredentials(heimdallCfg.APIURL, heimdallCfg.APIKey)...,
+						),
 						"check NORNICDB_HEIMDALL_MODEL and NORNICDB_MODELS_DIR"))
 				s.initHeimdallPluginsWithoutInference(featuresConfig, mcpServer)
 				return
@@ -1412,7 +1409,8 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			plugins := heimdall.ListHeimdallPlugins()
 			actions := heimdall.ListHeimdallActions()
 			s.logEvent(context.Background(), slog.LevelInfo,
-				localization.ServerHeimdallReadyEvent(heimdallCfg.Model, len(plugins), len(actions),
+				localization.ServerHeimdallReadyEvent(
+					observability.RedactText(heimdallCfg.Model, diagnosticCredentials...), len(plugins), len(actions),
 					"/api/bifrost/chat/completions", "/api/bifrost/status"))
 			if len(plugins) == 0 {
 				s.logEvent(context.Background(), slog.LevelWarn,
@@ -1514,11 +1512,14 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			if provider == "voyage" && model == "" {
 				model = voyage.DefaultRerankModel
 			}
+			rerankDiagnosticCredentials := observability.ClientCredentials(apiURL, apiKey)
+			safeRerankProvider := observability.RedactText(provider, rerankDiagnosticCredentials...)
 			if apiURL == "" {
 				s.logEvent(context.Background(), slog.LevelWarn,
 					localization.ServerSearchRerankAPIURLMissingEvent(
-						"search_rerank", provider, "NORNICDB_SEARCH_RERANK_API_URL"))
+						"search_rerank", safeRerankProvider, "NORNICDB_SEARCH_RERANK_API_URL"))
 			} else if provider == "voyage" {
+				safeRerankAddress := observability.RedactText(apiURL, rerankDiagnosticCredentials...)
 				reranker, err := voyage.NewReranker(&voyage.RerankerConfig{
 					Enabled: true,
 					APIURL:  apiURL,
@@ -1529,14 +1530,17 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 					DisableTruncation: featuresConfig.SearchRerankDisableTruncation,
 				})
 				if err != nil {
-					s.logEvent(context.Background(), slog.LevelWarn, localization.ServerSearchRerankerModelUnavailableEvent(err))
+					s.logEvent(context.Background(), slog.LevelWarn,
+						localization.ServerSearchRerankerModelUnavailableEvent(
+							observability.RedactError(err, rerankDiagnosticCredentials...)))
 				} else {
 					db.SetSearchReranker(reranker)
 					setGlobalRerankerResolver(func(string) search.Reranker { return reranker })
 					s.logEvent(context.Background(), slog.LevelInfo,
-						localization.ServerSearchRerankerReadyExternalEvent("search_rerank", provider, apiURL))
+						localization.ServerSearchRerankerReadyExternalEvent("search_rerank", safeRerankProvider, safeRerankAddress))
 				}
 			} else {
+				safeRerankAddress := observability.RedactText(apiURL, rerankDiagnosticCredentials...)
 				ceConfig := &search.CrossEncoderConfig{
 					Enabled:  true,
 					APIURL:   apiURL,
@@ -1553,7 +1557,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 				db.SetSearchReranker(ce)
 				setGlobalRerankerResolver(func(string) search.Reranker { return ce })
 				s.logEvent(context.Background(), slog.LevelInfo,
-					localization.ServerSearchRerankerReadyExternalEvent("search_rerank", provider, apiURL))
+					localization.ServerSearchRerankerReadyExternalEvent("search_rerank", safeRerankProvider, safeRerankAddress))
 			}
 		}
 	} else {
@@ -1586,6 +1590,7 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 	// Local providers do not need an API URL; remote-provider defaults are
 	// resolved before this check.
 	embeddingsReady := config.EmbeddingEnabled && (embedConfig.Provider == "local" || embedConfig.APIURL != "")
+	var embedConfigToStart *embed.Config
 	if embeddingsReady {
 		// Set API path based on provider (only for remote providers)
 		switch embedConfig.Provider {
@@ -1604,11 +1609,14 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 
 		// Initialize embeddings asynchronously to prevent startup blocking
 		// Local GGUF models can take 5-30 seconds to load (graph compilation)
+		embedDiagnosticCredentials := observability.ClientCredentials(embedConfig.APIURL, embedConfig.APIKey)
 		s.logEvent(context.Background(), slog.LevelInfo,
-			localization.ServerEmbeddingModelLoadingEvent(embedConfig.Model, embedConfig.Provider,
+			localization.ServerEmbeddingModelLoadingEvent(
+				observability.RedactText(embedConfig.Model, embedDiagnosticCredentials...),
+				observability.RedactText(embedConfig.Provider, embedDiagnosticCredentials...),
 				"server starts immediately; embeddings available after model loads"))
 
-		s.startEmbedderInit(embedConfig, config.EmbeddingCacheSize, mcpServer, db)
+		embedConfigToStart = embedConfig
 	}
 
 	// Log authentication status
@@ -1799,6 +1807,11 @@ func New(db *nornicdb.DB, authenticator *auth.Authenticator, config *Config) (*S
 			})
 		}
 	}
+	if embedConfigToStart != nil {
+		// Per-database credential owners are installed above before the worker
+		// can process a node with an overridden provider configuration.
+		s.startEmbedderInit(embedConfigToStart, config.EmbeddingCacheSize, mcpServer, db)
+	}
 	// Release the search-index warmup gate. nornicdb.Open holds the
 	// warmup goroutine at a sync point until this is called so it can
 	// resolve per-DB flags through the resolver wired above instead of
@@ -1942,9 +1955,20 @@ func (s *Server) Start() error {
 	// setup before it; body-bearing upgrade proposals remain ordinary HTTP/1.
 	mux := s.buildRouter()
 
-	s.requestsCtx, s.cancelRequestsCtx = context.WithCancel(context.Background())
+	// Plan 04-02 D-03: instrumentedMux is the SOLE HTTP observation
+	// chokepoint per AGENTS.md §7 DRY. It wraps mux.ServeHTTP, reading
+	// `r.Pattern` post-dispatch (Go 1.22+ stdlib field) so path_template
+	// values come from the closed route table — never from r.URL.Path
+	// (cardinality bomb). Nil-safe: when s.httpMetrics is nil (test
+	// fixtures, pre-Phase-4 callers), the wrapper is a pass-through.
+	// Panic-safe: handler panics still emit a 5xx observation before
+	// re-propagating (T-04-08).
+	// buildRouter already places the single instrumentedMux inside metadata
+	// admission. Wrapping it again here would extract trace metadata before
+	// admission rejects an oversized request.
+	instrumented := mux
 	s.httpServer = &http.Server{
-		Handler:      mux,
+		Handler:      instrumented,
 		ReadTimeout:  s.config.ReadTimeout,
 		WriteTimeout: s.config.WriteTimeout,
 		IdleTimeout:  s.config.IdleTimeout,
@@ -1973,7 +1997,7 @@ func (s *Server) Start() error {
 		// HTTP mode: Use h2c (HTTP/2 cleartext) for backwards compatibility
 		// h2c allows HTTP/2 over plain TCP, falling back to HTTP/1.1 for older clients
 		// Select the transport before any adapter can buffer an initial body.
-		s.httpServer.Handler = newCleartextHTTPHandler(mux, http2Config)
+		s.httpServer.Handler = newCleartextHTTPHandler(instrumented, http2Config)
 		s.logEvent(context.Background(), slog.LevelInfo,
 			localization.ServerHTTP2EnabledEvent("h2c_cleartext", "http/1.1"))
 	}
@@ -2041,10 +2065,6 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 		s.rateLimiter.Stop()
 	}
 
-	if s.httpServer == nil {
-		return nil
-	}
-
 	// Cancel the BaseContext handed to all in-flight requests so handlers that
 	// honour ctx (Cypher BFS / shortestPath traversals, etc.) abandon work
 	// and let http.Server.Shutdown drain promptly. Without this, an unbounded
@@ -2052,6 +2072,9 @@ func (s *Server) Stop(ctx context.Context) (err error) {
 	// configured WriteTimeout.
 	if s.cancelRequestsCtx != nil {
 		s.cancelRequestsCtx()
+	}
+	if s.httpServer == nil {
+		return nil
 	}
 
 	return util.ShutdownHTTPServer(ctx, s.httpServer)
@@ -2119,6 +2142,9 @@ type ServerStats struct {
 // return. It runs as a db background task, so closing db cancels it and waits
 // for it too, even without Stop; a closed db refuses the embedder anyway.
 func (s *Server) startEmbedderInit(embedConfig *embed.Config, embeddingCacheSize int, mcpServer *mcp.Server, db *nornicdb.DB) {
+	// Install the failure redaction owner before the asynchronous worker or
+	// failure endpoint can observe this provider configuration.
+	db.SetDefaultEmbedConfig(embedConfig)
 	ctx, cancel := context.WithCancel(db.LifetimeContext())
 	done := make(chan struct{})
 	s.embedderInitCancel = cancel
@@ -2202,13 +2228,17 @@ func (s *Server) initEmbedderWithRetry(ctx context.Context, embedConfig *embed.C
 						embeddingCacheMemoryMB(embeddingCacheSize, embedConfig.Dimensions)))
 			}
 
+			clientCredentials := observability.ClientCredentials(embedConfig.APIURL, embedConfig.APIKey)
+			safeProviderName := observability.RedactText(embedConfig.Provider, clientCredentials...)
+			safeModelName := observability.RedactText(embedConfig.Model, clientCredentials...)
 			if embedConfig.Provider == "local" {
 				s.logEvent(context.Background(), slog.LevelInfo,
-					localization.ServerEmbeddingsReadyLocalEvent(embedConfig.Model, embedConfig.Dimensions))
+					localization.ServerEmbeddingsReadyLocalEvent(safeModelName, embedConfig.Dimensions))
 			} else {
+				safeProviderAddress := observability.RedactText(embedConfig.APIURL, clientCredentials...)
 				s.logEvent(context.Background(), slog.LevelInfo,
-					localization.ServerEmbeddingsReadyRemoteEvent(embedConfig.Provider,
-						embedConfig.APIURL, embedConfig.Model, embedConfig.Dimensions))
+					localization.ServerEmbeddingsReadyRemoteEvent(safeProviderName,
+						safeProviderAddress, safeModelName, embedConfig.Dimensions))
 			}
 
 			// DB publishes the query provider once; MCP shares its binding.
@@ -2221,18 +2251,26 @@ func (s *Server) initEmbedderWithRetry(ctx context.Context, embedConfig *embed.C
 				s.logEvent(context.Background(), slog.LevelInfo, localization.ServerEmbeddingRetryLoopStoppedEvent())
 				return
 			}
-			// Register as default for per-DB embedder registry (no-op if SetEmbedConfigForDB was not set).
-			db.SetDefaultEmbedConfig(embedConfig)
 			return
 		}
 
+		clientCredentials := observability.ClientCredentials(embedConfig.APIURL, embedConfig.APIKey)
+		safeProviderName := observability.RedactText(embedConfig.Provider, clientCredentials...)
+		safeModelName := observability.RedactText(embedConfig.Model, clientCredentials...)
+		safeFailure := observability.RedactError(err, clientCredentials...)
 		if embedConfig.Provider == "local" {
 			s.logEvent(context.Background(), slog.LevelWarn,
-				localization.ServerEmbeddingInitializationAttemptFailedLocalEvent(attempt, embedConfig.Model, err))
+				localization.ServerEmbeddingInitializationAttemptFailedLocalEvent(attempt, safeModelName, safeFailure))
 		} else {
+			safeProviderAddress := observability.RedactText(embedConfig.APIURL, clientCredentials...)
 			s.logEvent(context.Background(), slog.LevelWarn,
-				localization.ServerEmbeddingInitializationAttemptFailedRemoteEvent(attempt,
-					embedConfig.Provider, embedConfig.Model, embedConfig.APIURL, err))
+				localization.ServerEmbeddingInitializationAttemptFailedRemoteEvent(
+					attempt,
+					safeProviderName,
+					safeModelName,
+					safeProviderAddress,
+					safeFailure,
+				))
 		}
 
 		if backoff < maxBackoff {

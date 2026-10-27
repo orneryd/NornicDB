@@ -268,7 +268,7 @@ func (h *Handler) writeLocalizedContextError(w http.ResponseWriter, ctx context.
 	text := message.Fallback
 	tag := language.AmericanEnglish
 	if h.localizer != nil {
-		if rendered, resolved, err := h.localizer.Render(ctx, message); err == nil {
+		if rendered, resolved, err := h.localizer.Render(ctx, localization.MessageRequest(message)); err == nil {
 			text = rendered
 			tag = resolved
 		}

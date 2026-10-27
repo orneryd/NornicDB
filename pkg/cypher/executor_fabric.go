@@ -5,6 +5,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
 	"sync"
@@ -15,6 +17,7 @@ import (
 	"github.com/orneryd/nornicdb/pkg/localization"
 	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/storage"
+	"github.com/orneryd/nornicdb/pkg/txphase"
 )
 
 type fabricPreparedExecKey struct{}
@@ -27,7 +30,7 @@ func (e *StorageExecutor) participantSchemaForStatement(ctx context.Context, que
 	return nil
 }
 
-func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
+func (e *StorageExecutor) shouldUseFabricPlanner(ctx context.Context, cypher string) bool {
 	if e.dbManager == nil {
 		return false
 	}
@@ -35,14 +38,16 @@ func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
 	//   - USE <composite>
 	//   - USE <composite>.<constituent>
 	// Word presence alone is insufficient (e.g., "USE" inside string payloads).
+	// This lexical admission keeps ordinary statements on their single parse;
+	// Fabric reads the statement's structure only once it is engaged.
 	opts := defaultKeywordScanOpts()
 	searchFrom := 0
 	for {
-		useIdx := keywordIndexFrom(cypher, "USE", searchFrom, opts)
+		useIdx := useKeywordIndexFrom(cypher, searchFrom, opts)
 		if useIdx < 0 {
 			break
 		}
-		use, _, hasUse, err := fabric.ParseUseClause(cypher[useIdx:], true)
+		use, _, hasUse, err := fabric.ParseUseClause(ctx, cypher[useIdx:], true, cyphertext.AcceptedSource)
 		if hasUse && err == nil && (e.useTargetRequiresFabric(use.Name) || (use.IsDynamic() && e.sessionIsComposite())) {
 			return true
 		}
@@ -52,7 +57,6 @@ func (e *StorageExecutor) shouldUseFabricPlanner(cypher string) bool {
 }
 
 func (e *StorageExecutor) useTargetRequiresFabric(target string) bool {
-	target = strings.TrimSpace(target)
 	if target == "" || e.dbManager == nil {
 		return false
 	}
@@ -60,7 +64,7 @@ func (e *StorageExecutor) useTargetRequiresFabric(target string) bool {
 		return true
 	}
 	if dot := strings.IndexByte(target, '.'); dot > 0 {
-		base := strings.TrimSpace(target[:dot])
+		base := target[:dot]
 		if base != "" && e.dbManager.IsCompositeDatabase(base) {
 			return true
 		}
@@ -148,10 +152,7 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 	fabricExecutor.SetRemoteValueCodec(fabricRemoteValueCodec)
 	fabricExecutor.SetConcurrentExecution(autoCommit && !contract.dynamic)
 	fabricExecutor.SetGraphArgumentEvaluator(e.evaluateGraphArguments)
-	fabricExecutor.SetRemoteModeUncertainty(func(query string) bool {
-		contract, err := readStatementExecutionContract(ctx, query)
-		return err != nil || contract.calls
-	})
+	fabricExecutor.SetRemoteStatementPolicy(readRemoteStatementPolicy)
 	fabricExecutor.SetGraphAuthorizer(func(ctx context.Context, database, query string) error {
 		if err := e.authorizeSelectedDatabase(ctx, database, query); err != nil {
 			return err
@@ -169,24 +170,32 @@ func (e *StorageExecutor) executeViaFabricWithTx(ctx context.Context, cypher str
 	}
 	e.setFabricBatchedApplyRowsUsed(fabricTrace.ApplyBatchedLookupRows.Load())
 	if autoCommit {
+		commitCtx, err := txphase.CommitContext(ctx)
+		if err != nil {
+			_ = tx.Rollback(nil)
+			return nil, err
+		}
 		if err := tx.Commit(nil, nil); err != nil {
 			return nil, err
 		}
 		if tx.WriteShard() != "" {
 			publishStatementCommit(ctx)
 		}
+		// Once terminal commit is admitted, result framing must report its real
+		// outcome even if the request deadline expires while commit is pending.
+		ctx = commitCtx
 	}
 	if stream == nil {
 		return &ExecuteResult{Columns: []string{}, Rows: [][]interface{}{}}, nil
 	}
 	// Schema commands have a void result established by their command executor.
 	// USE selects the participant; it does not turn DDL into a graph projection.
-	_, command, _, useErr := parseUseClause(cypher, false)
+	_, command, _, useErr := parseUseClause(ctx, cypher, false, cyphertext.AcceptedSource)
 	if useErr != nil {
 		return nil, useErr
 	}
 	if len(stream.Columns) == 0 && !isSchemaCommandStatement(command) {
-		columns, err := e.ResultColumns(ctx, cypher, e.resultIncomingScope(), cypherVersionFromContext(ctx) == "25")
+		columns, err := e.ResultColumns(ctx, cypher, e.resultIncomingScope(), cypherVersionFromContext(ctx) == "25", AcceptedSource)
 		if err != nil {
 			return nil, err
 		}
@@ -322,7 +331,7 @@ func (e *StorageExecutor) prepareFabricExecution(ctx context.Context, cypher str
 		return nil, err
 	}
 	sessionDB := e.currentDatabaseName()
-	if dbFromCtx := GetUseDatabaseFromContext(ctx); strings.TrimSpace(dbFromCtx) != "" {
+	if dbFromCtx := GetUseDatabaseFromContext(ctx); dbFromCtx != "" {
 		sessionDB = dbFromCtx
 	}
 	fragment, err := e.planFabricQuery(ctx, catalog, cypher, sessionDB)
@@ -395,6 +404,27 @@ var fabricUnionContract = fabric.UnionContract{
 	},
 }
 
+// validateFabricSemanticScopes checks the variable scopes of a Fabric
+// statement as one graph does: translate quoted variables, then desugar
+// label expressions before checking scopes. Only this validation copy is
+// rewritten; the planner and remote participants keep the names as written.
+// Diagnostics are mapped back to those names.
+func (e *StorageExecutor) validateFabricSemanticScopes(ctx context.Context, cypher string, params map[string]interface{}) error {
+	statement := fabricSingleGraphStatement(ctx, cypher)
+	canonical, names := canonicalizeQuotedVariablesWithBindings(ctx, statement, nil)
+	if names != nil {
+		ctx = withQuotedVariableNames(ctx, names)
+		params = names.parameterValues(params)
+	}
+	desugared, _, err := desugarLabelExpressions(canonical, params, cypherVersionFromContext(ctx) == "25")
+	if err == nil {
+		err = e.validateSemanticScopes(ctx, desugared)
+	}
+	parseItems := func(text string) []returnItem { return e.parseReturnItems(ctx, text) }
+	_, err = names.restore(nil, err, parseItems)
+	return err
+}
+
 // fabricSingleGraphStatement is cypher without the USE clauses the Fabric
 // planner reads (FabricPlanner.SingleGraphStatement): the one statement whose
 // variable scopes are checked, as Neo4j checks a composite statement's, before
@@ -406,7 +436,7 @@ func fabricSingleGraphStatement(ctx context.Context, cypher string) string {
 	planner.SetCallImportReader(func(scope string, scoped bool, body string) ([]string, error) {
 		return callSubqueryImportedVariables(ctx, scope, scoped, body)
 	})
-	statement, err := planner.SingleGraphStatement(cypher)
+	statement, err := planner.SingleGraphStatement(ctx, cypher, cyphertext.AcceptedSource)
 	if err != nil {
 		return cypher
 	}
@@ -426,7 +456,7 @@ func (e *StorageExecutor) planFabricQuery(ctx context.Context, catalog *fabric.C
 	planner.SetCallImportReader(func(scope string, scoped bool, body string) ([]string, error) {
 		return callSubqueryImportedVariables(ctx, scope, scoped, body)
 	})
-	fragment, err := planner.Plan(cypher, sessionDB)
+	fragment, err := planner.Plan(ctx, cypher, sessionDB, cyphertext.AcceptedSource)
 	if err != nil {
 		return nil, err
 	}
@@ -514,7 +544,7 @@ func (e *StorageExecutor) normalizeFabricRowWrapper(ctx context.Context, cypher 
 	if stream == nil || !stream.RowWrapper || len(stream.Columns) != 1 || len(stream.Rows) == 0 {
 		return nil
 	}
-	inferred, err := e.ResultColumns(ctx, cypher, e.resultIncomingScope(), cypherGrammarVersion(cypher) == "25")
+	inferred, err := e.ResultColumns(ctx, cypher, e.resultIncomingScope(), cypherGrammarVersion(cypher) == "25", AcceptedSource)
 	if err != nil {
 		return err
 	}
@@ -602,12 +632,12 @@ func sameSourceID(a interface{}, b interface{}) bool {
 
 func (e *StorageExecutor) currentDatabaseName() string {
 	if composite, ok := e.storage.(interface{ CompositeName() string }); ok {
-		if name := strings.TrimSpace(composite.CompositeName()); name != "" {
+		if name := composite.CompositeName(); name != "" {
 			return name
 		}
 	}
 	if ns, ok := e.storage.(interface{ Namespace() string }); ok {
-		if name := strings.TrimSpace(ns.Namespace()); name != "" {
+		if name := ns.Namespace(); name != "" {
 			return name
 		}
 	}
@@ -617,13 +647,12 @@ func (e *StorageExecutor) currentDatabaseName() string {
 func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
 	catalog := fabric.NewCatalog()
 	for _, db := range e.dbManager.ListDatabases() {
-		dbName := strings.TrimSpace(db.Name())
+		dbName := db.Name()
 		if dbName == "" {
 			continue
 		}
 		catalog.Register(dbName, &fabric.LocationLocal{DBName: dbName})
 		for alias := range e.dbManager.ListAliases(dbName) {
-			alias = strings.TrimSpace(alias)
 			if alias != "" {
 				catalog.Register(alias, &fabric.LocationLocal{DBName: dbName})
 			}
@@ -637,18 +666,33 @@ func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
 			return nil, localizedError(localization.CypherCommandRoutingFabricConstituentsFailed(dbName, err), err)
 		}
 		for _, raw := range constituents {
-			ref, ok := toConstituentRef(raw)
-			if !ok || strings.TrimSpace(ref.Alias) == "" {
+			ref, ok := catalogadapter.ConstituentRef(raw, catalogadapter.StoredConstituentRecord)
+			if !ok || ref.Alias == "" {
 				continue
 			}
 			qualified := dbName + "." + ref.Alias
 			if strings.EqualFold(strings.TrimSpace(ref.Type), "remote") {
+				view, err := e.constituentDisplayView(ref)
+				if err != nil {
+					return nil, err
+				}
 				catalog.Register(qualified, &fabric.LocationRemote{
-					DBName:   ref.DatabaseName,
-					URI:      ref.URI,
-					AuthMode: strings.TrimSpace(ref.AuthMode),
-					User:     ref.User,
-					Password: ref.Password,
+					GraphName:          qualified,
+					DBName:             ref.DatabaseName,
+					URI:                view.URI,
+					AuthMode:           strings.TrimSpace(view.AuthMode),
+					CredentialRevision: ref.ConnectionV1,
+					ResolveEngine: func(authToken string) (storage.Engine, error) {
+						resolved, err := e.dbManager.GetStorageForUse(qualified, authToken)
+						if err != nil {
+							return nil, err
+						}
+						engine, ok := resolved.(storage.Engine)
+						if !ok {
+							return nil, localizedError(localization.CypherCommandRoutingFabricStorageTypeInvalid(qualified), nil)
+						}
+						return engine, nil
+					},
 				})
 				continue
 			}
@@ -656,36 +700,6 @@ func (e *StorageExecutor) buildFabricCatalog() (*fabric.Catalog, error) {
 		}
 	}
 	return catalog, nil
-}
-
-func toConstituentRef(raw interface{}) (multidb.ConstituentRef, bool) {
-	if ref, ok := raw.(multidb.ConstituentRef); ok {
-		return ref, true
-	}
-	m, ok := raw.(map[string]interface{})
-	if !ok {
-		return multidb.ConstituentRef{}, false
-	}
-	return multidb.ConstituentRef{
-		Alias:        mapString(m, "alias"),
-		DatabaseName: mapString(m, "database_name"),
-		Type:         mapString(m, "type"),
-		AccessMode:   mapString(m, "access_mode"),
-		URI:          mapString(m, "uri"),
-		SecretRef:    mapString(m, "secret_ref"),
-		AuthMode:     mapString(m, "auth_mode"),
-		User:         mapString(m, "user"),
-		Password:     mapString(m, "password"),
-	}, true
-}
-
-func mapString(m map[string]interface{}, key string) string {
-	if v, ok := m[key]; ok {
-		if s, ok := v.(string); ok {
-			return s
-		}
-	}
-	return ""
 }
 
 type cypherFabricExecutor struct {
@@ -741,9 +755,8 @@ func (c *cypherFabricExecutor) ExecuteRecordQuery(ctx context.Context, dbName, q
 	if err := executor.bindFabricStatementCacheScope(ctx, dbName); err != nil {
 		return nil, nil, true, err
 	}
-	executor.fabricRecordBindings = recordBindings
 	ctx = withExecutionDatabase(WithAuthToken(ctx, c.authToken), dbName)
-	columns, rows, err := c.executeFragmentQuery(ctx, executor, query, params)
+	columns, rows, err := c.executeFragmentQuery(ctx, executor, query, params, recordBindings)
 	return columns, rows, true, err
 }
 
@@ -787,14 +800,13 @@ func (c *cypherFabricExecutor) ExecuteQueryWithRecord(ctx context.Context, dbNam
 		return nil, nil, err
 	}
 	if len(recordBindings) > 0 {
-		exec.fabricRecordBindings = recordBindings
 		query = stripLeadingWithImportsForFabricRecord(query, recordBindings)
 	}
 	ctx = withExecutionDatabase(ctx, dbName)
-	return c.executeFragmentQuery(ctx, exec, query, params)
+	return c.executeFragmentQuery(ctx, exec, query, params, recordBindings)
 }
 
-func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *StorageExecutor, query string, params, recordBindings map[string]interface{}) ([]string, [][]interface{}, error) {
 	previousIdentityScope := exec.graphIdentityScope
 	var catalog *fabric.Catalog
 	if prepared, err := exec.preparedFabricFromContext(ctx); err == nil && prepared != nil {
@@ -805,7 +817,40 @@ func (c *cypherFabricExecutor) executeFragmentQuery(ctx context.Context, exec *S
 	// Local fragments bypass implicit execution's decision. Classify this
 	// fragment itself: writes and procedures must retain full node reads.
 	exec.readOnlyQueryNodes = exec.readsQueryNodesWithoutVectors(exec.analyzer.Analyze(ctx, query))
-	result, err := exec.executeInternal(ctx, query, params)
+	query, names := canonicalizeQuotedVariablesWithBindings(ctx, query, recordBindings)
+	if names != nil {
+		params = names.parameterValues(params)
+		recordBindings = names.bindingValues(recordBindings)
+		ctx = withQuotedVariableNames(ctx, names)
+	}
+	previousBindings := exec.fabricRecordBindings
+	exec.fabricRecordBindings = recordBindings
+	defer func() { exec.fabricRecordBindings = previousBindings }()
+	parseReturnItems := func(text string) []returnItem { return exec.parseReturnItems(ctx, text) }
+	// Fragment imports are installed before the engine's shared compile-time
+	// scope/type owner runs. As at the composite entry, this validation copy
+	// must desugar label expressions first. executeInternal owns rewriting the
+	// actual local execution and restoring its result to the fragment source.
+	scopeQuery, _, scopeErr := desugarLabelExpressions(query, params, cypherVersionFromContext(ctx) == "25")
+	if scopeErr == nil {
+		scopeErr = exec.validateMatchSemanticScopes(ctx, scopeQuery, cypherVersionFromContext(ctx) == "25")
+	}
+	if scopeErr != nil {
+		_, scopeErr = names.restore(nil, scopeErr, parseReturnItems)
+		return nil, nil, scopeErr
+	}
+	var result *ExecuteResult
+	var err error
+	if stripped, embedding := stripWithEmbeddingSuffix(query); c.autoCommit && (exec.txContext == nil || !exec.txContext.active) && (embedding || statementHasEmbeddingCandidate(ctx, query)) {
+		// Inline embeddings use the normal mutation/transaction owner. Internal
+		// fragment execution alone deliberately does not start an implicit tx.
+		result, err = exec.executeWithImplicitTransactionCallback(ctx, query, upperASCII(query), func(txCtx context.Context, txExec *StorageExecutor) (*ExecuteResult, error) {
+			return txExec.executeInternal(txCtx, stripped, params)
+		})
+	} else {
+		result, err = exec.executeInternal(ctx, query, params)
+	}
+	result, err = names.restore(result, err, parseReturnItems)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -842,7 +887,7 @@ func stripLeadingWithImportsForFabricRecord(query string, recordBindings map[str
 		startsWithKeywordFold(rest, "OPTIONAL MATCH") ||
 		startsWithKeywordFold(rest, "RETURN") ||
 		startsWithKeywordFold(rest, "UNWIND") ||
-		startsWithKeywordFold(rest, "USE")) {
+		startsWithUseClause(rest)) {
 		return query
 	}
 	imports := splitTopLevelComma(withClause)
@@ -887,6 +932,7 @@ func findLeadingWithEndLocal(query string) int {
 	}
 	return len(prefix) + end
 }
+
 func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, sub *fabric.SubTransaction, dbName string, engine storage.Engine) (*StorageExecutor, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -917,12 +963,17 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 	}
 
 	terminalCtx := context.WithoutCancel(beginCtx)
+	if tx := c.fabricTransaction(); tx != nil {
+		terminalCtx = WithTransactionControl(WithAuthToken(tx.BindContext(beginCtx), c.authToken))
+	}
 	commitFn := func(_ *fabric.SubTransaction) error {
 		_, err := txExec.Execute(terminalCtx, "COMMIT", nil)
 		return err
 	}
 	rollbackFn := func(_ *fabric.SubTransaction) error {
-		_, err := txExec.Execute(terminalCtx, "ROLLBACK", nil)
+		// Local storage rollback has no context API. Always release its state;
+		// the protocol terminal owner bounds its wait independently.
+		_, err := txExec.Execute(context.WithoutCancel(terminalCtx), "ROLLBACK", nil)
 		return err
 	}
 	if tx := c.fabricTransaction(); tx != nil {
@@ -939,10 +990,19 @@ func (c *cypherFabricExecutor) ensureLocalShardTxExecutor(ctx context.Context, s
 // (USE graph.byName(g)) for Fabric: values holds the statement's
 // parameters and the current row's variables.
 func (e *StorageExecutor) evaluateGraphArguments(ctx context.Context, expressions []string, values map[string]interface{}) ([]string, error) {
-	ctx = withQueryParams(ctx, values)
 	out := make([]string, len(expressions))
 	for i, expression := range expressions {
-		value, ok := e.evaluateRowExpressionWithContext(ctx, expression, pipelineRow(values))
+		query, names := canonicalizeQuotedVariablesWithBindings(ctx, "RETURN "+expression, values)
+		bindings, params := values, values
+		if names != nil {
+			bindings, params = names.bindingValues(values), names.parameterValues(values)
+		}
+		projected := strings.TrimSpace(query)
+		if len(projected) <= len("RETURN") || !strings.EqualFold(projected[:len("RETURN")], "RETURN") {
+			return nil, localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				localization.CypherCommandRoutingGraphFunctionArgumentInvalid(expression))
+		}
+		value, ok := e.evaluateRowExpressionWithContext(withQueryParams(ctx, params), strings.TrimSpace(projected[len("RETURN"):]), pipelineRow(bindings))
 		if !ok {
 			if err, undefined := undefinedVariableError(expression); undefined {
 				return nil, err
@@ -987,10 +1047,12 @@ func (e *cypherFabricExecutor) CachedResultColumns(ctx context.Context, query st
 	return e.base.CachedResultColumns(ctx, query, incoming)
 }
 
-func (e *cypherFabricExecutor) ResultProjection(ctx context.Context, query string, incoming []string) resultmetadata.Projection {
-	return e.base.ResultProjection(ctx, query, incoming)
+func (e *cypherFabricExecutor) ResultProjection(ctx context.Context, query string, incoming []string, stage SourceStage) resultmetadata.Projection {
+	return e.base.ResultProjection(ctx, query, incoming, stage)
 }
 
+// fabricTransaction is the coordinator's participant/lifetime owner on both
+// implicit and explicit dispatch; direct helper callers keep the session owner.
 func (c *cypherFabricExecutor) fabricTransaction() *fabric.FabricTransaction {
 	if c.transaction != nil {
 		return c.transaction

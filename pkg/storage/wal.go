@@ -32,9 +32,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"hash/crc32"
 	"io"
 	"log/slog"
@@ -376,7 +376,7 @@ type WAL struct {
 	config   *WALConfig
 	file     *os.File
 	writer   *bufio.Writer
-	encoder  *json.Encoder
+	encoder  *jsontext.Encoder
 	sequence atomic.Uint64
 	entries  atomic.Int64
 	bytes    atomic.Int64
@@ -501,7 +501,7 @@ func NewWAL(dir string, cfg *WALConfig) (*WAL, error) {
 		walLog: cfg.SlogLogger.With("subsystem", "wal"),
 	}
 	// cfg.Logger is guaranteed non-nil above.
-	w.encoder = json.NewEncoder(w.writer)
+	w.encoder = jsontext.NewEncoder(w.writer)
 	// An unreadable marker is treated as present: conversion is then attempted.
 	if _, err := os.Stat(walPropertyEpochUnsealedPath(cfg.Dir)); !os.IsNotExist(err) {
 		w.propertyEpochUnsealed = true
@@ -980,7 +980,7 @@ func (w *WAL) rotateSegmentLocked(lastSeq uint64) error {
 
 	w.file = file
 	w.writer = bufio.NewWriterSize(file, 64*1024)
-	w.encoder = json.NewEncoder(w.writer)
+	w.encoder = jsontext.NewEncoder(w.writer)
 	w.segmentFirstSeq = 0
 	w.segmentEntries = 0
 	w.segmentBytes = 0
@@ -1263,7 +1263,7 @@ func checkAtomicWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALInt
 }
 
 func checkLegacyWALIntegrity(file *os.File, report *WALIntegrityReport) (*WALIntegrityReport, error) {
-	decoder := json.NewDecoder(file)
+	decoder := jsontext.NewDecoder(file)
 	var lastGoodSeq uint64
 
 	for {
@@ -1790,7 +1790,7 @@ func (w *WAL) reopenWAL() error {
 	w.propertyEpochKnown, w.propertyEpochFormatChecked = false, false
 	w.file = file
 	w.writer = bufio.NewWriterSize(file, 64*1024)
-	w.encoder = json.NewEncoder(w.writer)
+	w.encoder = jsontext.NewEncoder(w.writer)
 	w.segmentFirstSeq = 0
 	w.segmentEntries = 0
 	w.segmentBytes = 0
@@ -2056,7 +2056,7 @@ func visitLegacyWALEntries(file *os.File, logger *slog.Logger, visit func(WALEnt
 	}
 	var skippedEmbeddings int
 	var lastGoodSeq uint64
-	decoder := json.NewDecoder(file)
+	decoder := jsontext.NewDecoder(file)
 
 	for {
 		var entry WALEntry
@@ -2243,7 +2243,7 @@ func readLegacyWALEntriesForTruncation(file *os.File, afterSeq uint64) ([]WALEnt
 		}
 		return nil
 	})
-	decoder := json.NewDecoder(file)
+	decoder := jsontext.NewDecoder(file)
 
 	for {
 		var entry WALEntry

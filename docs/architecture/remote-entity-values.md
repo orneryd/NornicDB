@@ -10,7 +10,7 @@ When forwarding remote query results into Fabric bindings, preserve the returned
 value instead of rebuilding its map:
 
 ```go
-columns, rows, err := remote.QueryCypher(ctx, "MATCH (n:Doc) RETURN n", nil)
+columns, rows, err := remote.QueryCypher(ctx, "MATCH (n:Doc) RETURN n", nil, storage.RemoteAccessRead)
 if err != nil {
     return err
 }
@@ -38,7 +38,7 @@ Go callers forwarding remote values should preserve their named types:
 
 ```go
 columns, rows, err := remote.QueryCypher(ctx,
-    "MATCH p=(a:Doc)-[:LINKS]->(b) RETURN p", nil)
+    "MATCH p=(a:Doc)-[:LINKS]->(b) RETURN p", nil, storage.RemoteAccessRead)
 if err != nil {
     return err
 }
@@ -120,3 +120,24 @@ Entity ordering follows source identity, never its mutable properties; legacy ID
 ties across source elements use element IDs to keep a stable order. Ordinary maps
 and lists retain their existing types and behavior. Malformed remote path/REST
 errors preserve storage localization message identities.
+
+## Explicit remote access mode
+
+Go callers must pass `storage.RemoteAccessRead` or `storage.RemoteAccessWrite`
+to `RemoteEngine.QueryCypher`. The mode selects the Bolt session and managed
+transaction; zero or other values are rejected before transport dispatch.
+Storage does not parse or guess the query's intent. For example:
+
+```go
+_, _, err := remote.QueryCypher(ctx,
+    "MATCH (n:Doc {id: $id}) SET n.title = $title",
+    map[string]interface{}{"id": "doc-1", "title": "Revised"},
+    storage.RemoteAccessWrite)
+```
+
+Fabric supplies the exact remote fragment's compiled grammar effects, including
+its generated import source. Opaque remote procedures and unsupported remote
+dialects use write routing and remain subject to the remote parser. Explicit
+remote transactions and batches retain their existing write session lifetime;
+`RemoteCypherTx.QueryCypher` keeps its existing arguments. Completed remote
+query summaries continue to determine actual distributed write participation.

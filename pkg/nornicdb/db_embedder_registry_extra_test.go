@@ -116,8 +116,13 @@ func TestDB_SetEmbedder_ExistingQueueAppliesYieldFn(t *testing.T) {
 
 func TestDB_SetDefaultEmbedConfig_ReturnsWhenQueueUnavailable(t *testing.T) {
 	db := &DB{}
-	db.SetDefaultEmbedConfig(&embed.Config{Provider: "openai", Model: "m", Dimensions: 3})
+	config := &embed.Config{Provider: "openai", Model: "m", Dimensions: 3}
+	db.SetDefaultEmbedConfig(config)
 	require.Nil(t, db.embedderRegistry)
+	require.Equal(t, config, db.defaultEmbedConfig)
+	require.NotSame(t, config, db.defaultEmbedConfig)
+	config.Model = "changed"
+	require.Equal(t, "m", db.defaultEmbedConfig.Model)
 
 	db.embedQueue = &EmbedQueue{}
 	db.SetDefaultEmbedConfig(&embed.Config{Provider: "openai", Model: "m", Dimensions: 3})

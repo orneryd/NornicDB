@@ -30,7 +30,7 @@ func TestTransactionalStatementPlacementReader(t *testing.T) {
 		{"RETURN 'CALL IN TRANSACTIONS' AS text", nil},
 	} {
 		t.Run(sample.query, func(t *testing.T) {
-			calls, err := ReadTransactionalCalls(context.Background(), sample.query)
+			calls, err := ReadTransactionalCalls(context.Background(), sample.query, RawSource)
 			require.NoError(t, err)
 			require.Len(t, calls, len(sample.placements))
 			for index, call := range calls {

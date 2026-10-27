@@ -193,7 +193,7 @@ func startsWithKeywords(s, firstWord, secondWord string) bool {
 		return false
 	}
 	afterFirst, ok := keywordMatchAt(s, 0, firstWord, firstStart, firstEnd)
-	if !ok || !keywordRightBoundaryOK(s, afterFirst, keywordBoundaryWord) {
+	if !ok || !keywordBoundaryOK(s, afterFirst, keywordBoundaryWord, keywordAfter) {
 		return false
 	}
 	// (An operator WITH, as in STARTS WITH, needs a word before it, so
@@ -202,14 +202,14 @@ func startsWithKeywords(s, firstWord, secondWord string) bool {
 		return false
 	}
 	j := afterFirst
-	if j >= len(s) || !isASCIISpace(s[j]) {
+	if j >= len(s) || !cyphertext.IsWhitespaceAt(s, j) {
 		return false
 	}
-	for j < len(s) && isASCIISpace(s[j]) {
+	for j < len(s) && cyphertext.IsWhitespaceAt(s, j) {
 		j++
 	}
 	afterSecond, ok := keywordMatchAt(s, j, secondWord, secondStart, secondEnd)
-	return ok && keywordRightBoundaryOK(s, afterSecond, keywordBoundaryWord)
+	return ok && keywordBoundaryOK(s, afterSecond, keywordBoundaryWord, keywordAfter)
 }
 
 // findMultiWordKeywordIndex finds a multi-word keyword with flexible whitespace.
@@ -245,11 +245,11 @@ func findMultiWordKeywordIndex(s, firstWord, secondWord string) int {
 		}
 
 		j := afterFirst
-		if j >= len(s) || !isASCIISpace(s[j]) {
+		if j >= len(s) || !cyphertext.IsWhitespaceAt(s, j) {
 			searchFrom = idx + 1
 			continue
 		}
-		for j < len(s) && isASCIISpace(s[j]) {
+		for j < len(s) && cyphertext.IsWhitespaceAt(s, j) {
 			j++
 		}
 
@@ -259,7 +259,7 @@ func findMultiWordKeywordIndex(s, firstWord, secondWord string) int {
 			continue
 		}
 
-		if keywordRightBoundaryOK(s, afterSecond, opts.Boundary) {
+		if keywordBoundaryOK(s, afterSecond, opts.Boundary, keywordAfter) {
 			return idx
 		}
 

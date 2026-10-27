@@ -50,6 +50,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"strings"
 	"sync"
@@ -160,40 +161,7 @@ func (e *StorageExecutor) substituteParams(cypher string, params map[string]inte
 // reference (#701). A quoted parameter name ($`a b`) is made plain by
 // canonicalizeQuotedVariables before any scan.
 func scanParameterReferences(query string, visit func(dollar, start, end int)) {
-	if strings.IndexByte(query, '$') < 0 {
-		return
-	}
-	quoted := containsQuoteCharacter(query)
-	for i := 0; i < len(query); {
-		next := nextUnquotedDollar(query, i, quoted)
-		if next < 0 {
-			return
-		}
-		if !isParameterStart(query, next) {
-			i = next + 1
-			continue
-		}
-		start := next + 1
-		if start >= len(query) {
-			return
-		}
-		first := query[start]
-		if !isIdentStartByte(first) {
-			i = start
-			continue
-		}
-		end := start + 1
-		for end < len(query) && isIdentByte(query[end]) {
-			end++
-		}
-		if dynamicLabelStartsAt(query, next) {
-			// $all(e), $any(e): a dynamic label, not a parameter.
-			i = end
-			continue
-		}
-		visit(next, start, end)
-		i = end
-	}
+	cyphertext.ParameterReferences(query, func(_ string, start, end int) { visit(start, start+1, end) })
 }
 
 // containsQuoteCharacter reports whether query has a quote character, so
@@ -207,22 +175,16 @@ func containsQuoteCharacter(query string) bool {
 // quote characters (quoted false) the single-byte search is much faster
 // than IndexAny.
 func nextUnquotedDollar(query string, from int, quoted bool) int {
-	for from < len(query) {
-		if !quoted {
-			if next := strings.IndexByte(query[from:], '$'); next >= 0 {
-				return from + next
-			}
-			return -1
+	// This locator also serves Cypher 25's name/parameter separation rewrite;
+	// it locates dollars, while ParameterReferences owns reference admission.
+	for index := from; index < len(query); index++ {
+		if end, opaque := cyphertext.SkipToken(query, index); opaque {
+			index = end - 1
+			continue
 		}
-		next := strings.IndexAny(query[from:], "$'\"`")
-		if next < 0 {
-			return -1
+		if query[index] == '$' {
+			return index
 		}
-		next += from
-		if query[next] == '$' {
-			return next
-		}
-		from = skipQuotedText(query, next)
 	}
 	return -1
 }
@@ -249,21 +211,21 @@ func separateCypher25Parameters(query string) (string, *queryRewrite) {
 			continue
 		}
 		if rewrite == nil {
-			rewrite = &queryRewrite{original: query}
+			rewrite = &queryRewrite{Source: cyphertext.Source{Original: query}}
 			out.Grow(len(query) + 4)
 		}
 		out.WriteString(query[last:i])
 		canonStart := out.Len()
 		out.WriteString(" $")
-		rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: i, origEnd: i + 1, canonStart: canonStart, canonEnd: out.Len()})
+		rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: i, End: i + 1}, Accepted: cyphertext.Span{Start: canonStart, End: out.Len()}})
 		last = i + 1
 	}
 	if rewrite == nil {
 		return query, nil
 	}
 	out.WriteString(query[last:])
-	rewrite.canonical = out.String()
-	return rewrite.canonical, rewrite
+	rewrite.Text = out.String()
+	return rewrite.Text, rewrite
 }
 
 // replaceParameterReferences calls replace for each parameter reference
@@ -278,7 +240,7 @@ func replaceParameterReferences(query string, replace func(name string, next byt
 		if end < len(query) {
 			following = query[end]
 		}
-		replacement, ok := replace(query[start:end], following)
+		replacement, ok := replace(cyphertext.SymbolicNameValue(query[start:end]), following)
 		if !ok {
 			return
 		}
@@ -330,50 +292,19 @@ func validateStatementParameters(cypher string, params map[string]interface{}) e
 // string literals and comments that bound doesn't have. It is the one
 // ParameterMissing scan (#657, #712): Execute calls it with the statement's,
 // the shell's and the enclosing query's parameters.
-func statementMissingParameters(cypher string, bound func(name string) bool) []string {
+func statementMissingParameters(query string, bound func(name string) bool) []string {
 	var missing []string
-	for index := 0; index < len(cypher); index++ {
-		switch cypherLexicalByte(cypher[index]) {
-		case cypherQuoteClass:
-			index = skipQuotedSemanticText(cypher, index) - 1
-		case '/':
-			if end := queryCommentEnd(cypher, index); end >= 0 {
-				index = end - 1
-			}
-		case '$':
-			if !isParameterStart(cypher, index) {
-				continue
-			}
-			start := index + 1
-			var name string
-			if start < len(cypher) && isCypherBacktickByte(cypher[start]) {
-				end := skipQuotedSemanticText(cypher, start)
-				name = normalizePropertyKey(cypher[start:end])
-				index = end - 1
-			} else {
-				end := start
-				for end < len(cypher) && isIdentByte(cypher[end]) {
-					end++
-				}
-				name = cypher[start:end]
-				index = end - 1
-			}
-			if name == "" || dynamicLabelStartsAt(cypher, start-1) {
-				// $(e), $all(e), $any(e): a dynamic label, not a parameter.
-				continue
-			}
-			if bound(name) {
-				continue
-			}
-			known := false
-			for _, previous := range missing {
-				known = known || previous == name
-			}
-			if !known {
-				missing = append(missing, name)
+	cyphertext.ParameterReferences(query, func(name string, _, _ int) {
+		if bound(name) {
+			return
+		}
+		for _, previous := range missing {
+			if previous == name {
+				return
 			}
 		}
-	}
+		missing = append(missing, name)
+	})
 	return missing
 }
 
@@ -383,67 +314,76 @@ func parameterMissingError(names []string) error {
 	return newSemanticError("Neo.ClientError.Statement.ParameterMissing", "MissingParameter", "Expected parameter(s): "+strings.Join(names, ", "))
 }
 
-// resolveDirectParamRef returns the typed parameter value for a literal
-// "$name" reference, paired with true. Returns (nil, false) when the
-// expression isn't a bare $param reference or the parameter isn't
-// present in the request context. Used by SET / SET +=  / map-merge
-// dispatchers to bypass the literal-stringification path that
-// substituteParams uses for scalars; preserving the typed value here is
-// what keeps []string, []float64, and map[string]any from widening to
-// []interface{} / map[string]interface{} on the read-back path.
-func resolveDirectParamRef(ctx context.Context, expr string) (interface{}, bool) {
+type valueReferenceMode uint8
+
+const (
+	parameterName valueReferenceMode = iota
+	parameterPath
+	rowPath
+)
+
+// resolveValueReference preserves typed values from the selected namespace.
+// Parameters require a $ prefix: name mode admits one parameter name, path mode
+// also permits map properties/quoted-key access. Row mode has no $ prefix and
+// never reads parameter bindings. None of these modes evaluates an expression.
+func resolveValueReference(ctx context.Context, expr string, mode valueReferenceMode) (interface{}, bool) {
 	expr = strings.TrimSpace(expr)
-	if !strings.HasPrefix(expr, "$") {
-		return nil, false
-	}
-	name := strings.TrimSpace(expr[1:])
-	if name == "" {
-		return nil, false
-	}
-	// Reject anything beyond a single identifier — e.g. "$name + 1" or
-	// "$name.foo" must keep going through the expression evaluator.
-	for _, r := range name {
-		if !isIdentRune(r) {
+	if mode != rowPath {
+		if !strings.HasPrefix(expr, "$") {
 			return nil, false
 		}
+		expr = strings.TrimSpace(expr[1:])
 	}
-	params := getParamsFromContext(ctx)
-	if params == nil {
-		return nil, false
-	}
-	v, ok := params[name]
-	if !ok {
-		return nil, false
-	}
-	return v, true
-}
-
-// resolveParamPathRef returns the typed parameter value for a literal
-// "$name.path" reference, paired with true. Bare "$name" references are also
-// supported, but callers that only want single identifiers should continue to
-// use resolveDirectParamRef.
-func resolveParamPathRef(ctx context.Context, expr string) (interface{}, bool) {
-	expr = strings.TrimSpace(expr)
-	if !strings.HasPrefix(expr, "$") {
-		return nil, false
-	}
-	params := getParamsFromContext(ctx)
-	if params == nil {
-		return nil, false
-	}
-	return resolveSetMergeSourceFromParams(params, strings.TrimSpace(expr[1:]))
-}
-
-// resolveContextPathRef resolves a variable path in the row's value scope.
-// Parameters have a separate namespace, reached only through $name by
-// resolveParamPathRef; an unrelated parameter must never shadow a row's
-// MERGE identity or SET source.
-func resolveContextPathRef(ctx context.Context, expr string) (interface{}, bool) {
-	expr = strings.TrimSpace(expr)
 	if expr == "" {
 		return nil, false
 	}
-	return resolveSetMergeSourceFromParams(valueBindingsFromContext(ctx), expr)
+	if mode == parameterName {
+		for _, r := range expr {
+			if !cyphertext.NamePart(r) {
+				return nil, false
+			}
+		}
+	}
+	var values map[string]interface{}
+	if mode == rowPath {
+		values = valueBindingsFromContext(ctx)
+	} else {
+		values = getParamsFromContext(ctx)
+	}
+	if values == nil {
+		return nil, false
+	}
+	if mode == parameterName {
+		value, found := values[expr]
+		return value, found
+	}
+	parts, ok := parseParamPathParts(expr)
+	if !ok || len(parts) == 0 {
+		return nil, false
+	}
+	current, ok := values[parts[0]]
+	if !ok {
+		return nil, false
+	}
+	for _, part := range parts[1:] {
+		switch m := current.(type) {
+		case map[string]interface{}:
+			next, exists := m[part]
+			if !exists {
+				return nil, false
+			}
+			current = next
+		case map[interface{}]interface{}:
+			next, exists := m[part]
+			if !exists {
+				return nil, false
+			}
+			current = next
+		default:
+			return nil, false
+		}
+	}
+	return current, true
 }
 
 // normalizeQueryParameters converts parameter values whose Go types aren't the

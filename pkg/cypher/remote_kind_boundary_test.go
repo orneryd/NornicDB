@@ -67,7 +67,7 @@ func TestRemoteEntityOrderingUsesSourceNumericIDs(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: peer.URL, Database: "neo4j"})
 	require.NoError(t, err)
 	defer remote.Close()
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN a,b,c", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN a,b,c", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	require.Positive(t, compareValuesForSort(rows[0][0], rows[0][1]), "source numeric IDs take precedence over element-ID spelling")
 	require.Negative(t, compareValuesForSort(rows[0][1], rows[0][0]))

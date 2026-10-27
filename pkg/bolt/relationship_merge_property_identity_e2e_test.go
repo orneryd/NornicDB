@@ -24,7 +24,7 @@ func TestBoltExecuteWriteConcurrentRelationshipPropertyIdentityPersists(t *testi
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
 	base := storage.NewWALEngine(badger, wal)
-	mgr, err := multidb.NewDatabaseManager(base, nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = mgr.Close()
@@ -170,7 +170,7 @@ func TestBoltProcedureWriteCommitInvalidatesSharedReadCache(t *testing.T) {
 	wal, err := storage.NewWAL(t.TempDir(), nil)
 	require.NoError(t, err)
 	base := storage.NewWALEngine(badger, wal)
-	mgr, err := multidb.NewDatabaseManager(base, nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		_ = mgr.Close()

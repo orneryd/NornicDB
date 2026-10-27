@@ -7,7 +7,9 @@ func BenchmarkReviewedQualifiedFunctionParse(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				name, _, ok := parseFunctionCallWS(tc.query)
+				var callFacts1 functionCallFacts
+				ok := inspectFunctionCall(tc.query, qualifiedFunctionCall, "", &callFacts1)
+				name := callFacts1.name
 				if !ok || name != tc.name {
 					b.Fatal(name, ok)
 				}
