@@ -303,18 +303,21 @@ func rewriteWALPropertyPayloads(writes map[string][]byte, transform func(string,
 		}
 		var start, end int
 		if key[0] == prefixNode {
-			if len(body) == 0 || body[0] != nodeFormatTokenizedV1 {
+			envelope, failure := splitNodeEnvelope(body)
+			// Keep the release WAL diagnostics. Framing and failure causes
+			// come from the same parser as full/projected/metadata reads.
+			switch failure {
+			case nodeEnvelopeEmpty, nodeEnvelopeWrongFormat:
 				return nil, fmt.Errorf("wal: invalid tokenized node body")
-			}
-			size, n, err := readUvarint(body[1:])
-			if err != nil {
-				return nil, err
-			}
-			start = 1 + n
-			if size > uint64(len(body)-start) {
+			case nodeEnvelopeShortVarint:
+				return nil, fmt.Errorf("varint truncated")
+			case nodeEnvelopeOverflowVarint:
+				return nil, fmt.Errorf("varint overflow")
+			case nodeEnvelopeShortProperties:
 				return nil, fmt.Errorf("wal: truncated node properties")
 			}
-			end = start + int(size)
+			end = len(body) - len(envelope.metadata)
+			start = end - len(envelope.properties)
 		} else {
 			var edge Edge
 			_, _, offset, err := decodeEdgeCompactHeaderInto(body, edgeFormatCompactV2, &edge)
