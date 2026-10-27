@@ -1,5 +1,7 @@
 package storage
 
+// Context-owner and envelope-metadata convergence author: Claude (storage-format-owners lane), #1693, 30 October 2026.
+
 import (
 	"bytes"
 	"encoding/binary"
@@ -98,23 +100,12 @@ func (d *projectedNodeDecoder) decode(key, data []byte) (*Node, error) {
 		return nil, nil
 	}
 	d.useNamespace(key[1:])
-	if len(data) < 1 {
-		return nil, fmt.Errorf("node body empty")
-	}
-	if data[0] != nodeFormatTokenizedV1 {
-		return nil, fmt.Errorf("node body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], nodeFormatTokenizedV1)
-	}
-	rest := data[1:]
-	propsLen, n := binary.Uvarint(rest)
-	if n <= 0 {
-		return nil, fmt.Errorf("node body: malformed properties length varint")
-	}
-	rest = rest[n:]
-	if uint64(len(rest)) < propsLen {
-		return nil, fmt.Errorf("node body: properties payload truncated")
+	envelope, err := SplitNodeEnvelope(data)
+	if err != nil {
+		return nil, err
 	}
 	clear(d.scratch)
-	kept, err := d.decodeProperties(rest[:propsLen])
+	kept, err := d.decodeProperties(envelope.properties)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +113,7 @@ func (d *projectedNodeDecoder) decode(key, data []byte) (*Node, error) {
 		return nil, nil
 	}
 	node := &Node{}
-	if err := decodeValue(rest[propsLen:], node); err != nil {
+	if err := decodeValue(envelope.metadata, node); err != nil {
 		return nil, err
 	}
 	node.Properties = make(map[string]interface{}, len(d.scratch))
@@ -202,4 +193,73 @@ func msgpackStringEquals(raw []byte, s string) bool {
 		return false
 	}
 	return size == len(s) && len(raw)-header >= size && string(raw[header:header+size]) == s
+}
+
+// NodeEnvelope contains borrowed V2 property and metadata payloads. Keep the
+// input alive and unchanged while using either view. Payload interpretation and
+// field selection belong to the consumer; framing belongs to SplitNodeEnvelope.
+type NodeEnvelope struct {
+	properties []byte
+	metadata   []byte
+}
+
+// PropertyPayload returns the borrowed serialized property payload.
+func (e NodeEnvelope) PropertyPayload() []byte { return e.properties }
+
+// MetadataPayload returns the borrowed metadata payload, including its serializer header.
+func (e NodeEnvelope) MetadataPayload() []byte { return e.metadata }
+
+// SplitNodeEnvelope validates the V2 format byte and property-length framing.
+// It never decodes properties or metadata and never copies payloads. Full,
+// projected, metadata-only (label) and WAL consumers share this owner; metadata
+// is interpreted only by the stored decoder (decodeValue). Other stored
+// operation clients must reuse it rather than implement another splitter.
+func SplitNodeEnvelope(data []byte) (NodeEnvelope, error) {
+	envelope, failure := splitNodeEnvelope(data)
+	switch failure {
+	case nodeEnvelopeEmpty:
+		return NodeEnvelope{}, fmt.Errorf("node body empty")
+	case nodeEnvelopeWrongFormat:
+		return NodeEnvelope{}, fmt.Errorf("node body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], nodeFormatTokenizedV1)
+	case nodeEnvelopeShortVarint, nodeEnvelopeOverflowVarint:
+		return NodeEnvelope{}, fmt.Errorf("node body: malformed properties length varint")
+	case nodeEnvelopeShortProperties:
+		return NodeEnvelope{}, fmt.Errorf("node body: properties payload truncated")
+	}
+	return envelope, nil
+}
+
+// nodeEnvelopeFailure preserves protocol-specific diagnostics without a second
+// framing reader. The exported reader and WAL bind these same parser facts.
+type nodeEnvelopeFailure uint8
+
+const (
+	nodeEnvelopeValid nodeEnvelopeFailure = iota
+	nodeEnvelopeEmpty
+	nodeEnvelopeWrongFormat
+	nodeEnvelopeShortVarint
+	nodeEnvelopeOverflowVarint
+	nodeEnvelopeShortProperties
+)
+
+func splitNodeEnvelope(data []byte) (NodeEnvelope, nodeEnvelopeFailure) {
+	if len(data) == 0 {
+		return NodeEnvelope{}, nodeEnvelopeEmpty
+	}
+	if data[0] != nodeFormatTokenizedV1 {
+		return NodeEnvelope{}, nodeEnvelopeWrongFormat
+	}
+	rest := data[1:]
+	propsLen, n := binary.Uvarint(rest)
+	if n == 0 {
+		return NodeEnvelope{}, nodeEnvelopeShortVarint
+	}
+	if n < 0 {
+		return NodeEnvelope{}, nodeEnvelopeOverflowVarint
+	}
+	rest = rest[n:]
+	if uint64(len(rest)) < propsLen {
+		return NodeEnvelope{}, nodeEnvelopeShortProperties
+	}
+	return NodeEnvelope{properties: rest[:propsLen], metadata: rest[propsLen:]}, nodeEnvelopeValid
 }
