@@ -55,23 +55,15 @@ func (b *BadgerEngine) newNodeIndexReader(txn *badger.Txn, scope string, prefix 
 	}
 
 	if after != "" {
-		item, err := txn.Get(nodeIDForwardKey(after))
-		if errors.Is(err, badger.ErrKeyNotFound) {
+		ref, found, err := b.snapshotNodeRef(txn, after)
+		if err == nil && !found {
 			err = ErrNotFound
-		}
-		if err == nil {
-			err = item.Value(func(value []byte) error {
-				if len(value) != 8 {
-					return ErrInvalidData
-				}
-				r.afterNum = binary.BigEndian.Uint64(value)
-				return nil
-			})
 		}
 		if err != nil {
 			r.err = err
 			return r
 		}
+		r.afterNum = ref.num
 		r.key = append(append([]byte(nil), prefix...), encodeNumID(r.afterNum)...)
 	}
 	return r

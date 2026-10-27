@@ -1123,27 +1123,16 @@ func (b *BadgerEngine) decodeNode(namespace string, data []byte) (*Node, error) 
 // properties (all of them when include is nil). A scan that tests properties
 // before keeping a node uses projectedNodeDecoder instead (#857).
 func (b *BadgerEngine) decodeNodeProjected(namespace string, data []byte, include map[string]struct{}) (*Node, error) {
-	if len(data) < 1 {
-		return nil, fmt.Errorf("node body empty")
+	envelope, err := SplitNodeEnvelope(data)
+	if err != nil {
+		return nil, err
 	}
-	if data[0] != nodeFormatTokenizedV1 {
-		return nil, fmt.Errorf("node body has unexpected format byte 0x%02x; expected V2 (0x%02x)", data[0], nodeFormatTokenizedV1)
-	}
-	rest := data[1:]
-	propsLen, n := binary.Uvarint(rest)
-	if n <= 0 {
-		return nil, fmt.Errorf("node body: malformed properties length varint")
-	}
-	rest = rest[n:]
-	if uint64(len(rest)) < propsLen {
-		return nil, fmt.Errorf("node body: properties payload truncated")
-	}
-	props, err := b.decodeTokenizedPropertiesProjected(namespace, rest[:propsLen], include)
+	props, err := b.decodeTokenizedPropertiesProjected(namespace, envelope.properties, include)
 	if err != nil {
 		return nil, err
 	}
 	node := &Node{}
-	if err := decodeValue(rest[propsLen:], node); err != nil {
+	if err := decodeValue(envelope.metadata, node); err != nil {
 		return nil, err
 	}
 	node.Properties = props
