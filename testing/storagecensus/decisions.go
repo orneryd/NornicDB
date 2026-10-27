@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/workcensus"
 	"golang.org/x/tools/go/ssa"
 )
 
@@ -236,18 +237,17 @@ func (d *decider) propagatesError(iff *ssa.If) bool {
 	if !ok || (cmp.Op != token.NEQ && cmp.Op != token.EQL) {
 		return false
 	}
-	errv := cmp.X
-	nilComparison := false
-	if c, ok := cmp.X.(*ssa.Const); ok && c.IsNil() {
-		errv = cmp.Y
-		nilComparison = true
-	} else if c, ok := cmp.Y.(*ssa.Const); ok && c.IsNil() {
-		nilComparison = true
+	errv, nilIndex, nilComparison := workcensus.NilComparison(cmp)
+	if !nilComparison {
+		errv = cmp.X
 	}
 	if !types.Identical(errv.Type(), types.Universe.Lookup("error").Type()) {
 		return false
 	}
-	if !nilComparison && !errorNonNilOnEntry(iff.Block(), errv) {
+	// A filtered error return is not a hidden disposition only when a
+	// dominating branch has excluded the successful nil result for this exact
+	// SSA error (the engine's NonNilAt).
+	if !nilComparison && !workcensus.NonNilAt(errv, iff.Block()) {
 		return false
 	}
 	switch errv.(type) {
@@ -255,50 +255,10 @@ func (d *decider) propagatesError(iff *ssa.If) bool {
 	default:
 		return false
 	}
-	branch := iff.Block().Succs[0]
 	if nilComparison {
-		if cmp.Op == token.EQL {
-			branch = iff.Block().Succs[1]
-		}
-		return returnsExactError(branch, errv)
+		return returnsExactError(iff.Block().Succs[1-nilIndex], errv)
 	}
-	return returnsExactError(branch, errv) || returnsExactError(iff.Block().Succs[1], errv)
-}
-
-// A filtered error return is not a hidden disposition only when a dominating
-// branch has excluded the successful nil result for this exact SSA error.
-func errorNonNilOnEntry(block *ssa.BasicBlock, errv ssa.Value) bool {
-	for _, guard := range block.Parent().Blocks {
-		if guard == block || !guard.Dominates(block) {
-			continue
-		}
-		branch, ok := guard.Instrs[len(guard.Instrs)-1].(*ssa.If)
-		if !ok {
-			continue
-		}
-		cmp, ok := branch.Cond.(*ssa.BinOp)
-		if !ok || (cmp.Op != token.NEQ && cmp.Op != token.EQL) {
-			continue
-		}
-		other := cmp.Y
-		if cmp.Y == errv {
-			other = cmp.X
-		} else if cmp.X != errv {
-			continue
-		}
-		nilValue, ok := other.(*ssa.Const)
-		if !ok || !nilValue.IsNil() {
-			continue
-		}
-		nonnil := guard.Succs[0]
-		if cmp.Op == token.EQL {
-			nonnil = guard.Succs[1]
-		}
-		if nonnil.Dominates(block) {
-			return true
-		}
-	}
-	return false
+	return returnsExactError(iff.Block().Succs[0], errv) || returnsExactError(iff.Block().Succs[1], errv)
 }
 
 func returnsExactError(branch *ssa.BasicBlock, errv ssa.Value) bool {
