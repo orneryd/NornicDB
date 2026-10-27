@@ -13,3 +13,12 @@
 - [ ] Publish exact-head evidence and update linked GitHub/Linear criteria; leave unproved criteria open.
 
 No API migration or behavioral change is made by this inventory-only commit.
+
+## Current acceptance proof
+
+- [x] Re-run real authenticated remote lifecycle matrix with native parser.
+- [x] Re-run same matrix with ANTLR runtime parser.
+- [x] Re-run focused persistence/runtime/wire checks on unchanged merged source.
+- [ ] Establish successful authenticated remote-write durable commit/rollback proof separately from read lifecycle.
+
+See evidence.md for commands, results and limits; these do not close the broader acceptance checklist.
