@@ -18,12 +18,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/workcensus"
+
 	"golang.org/x/tools/go/callgraph"
-	"golang.org/x/tools/go/callgraph/cha"
-	"golang.org/x/tools/go/callgraph/vta"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 // Module is the import path prefix of the analysed module.
@@ -49,38 +48,17 @@ func load(root string, overlay map[string][]byte) (*program, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := &packages.Config{
-		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles | packages.NeedImports |
-			packages.NeedTypes | packages.NeedTypesSizes | packages.NeedSyntax | packages.NeedTypesInfo,
-		Dir:        abs,
-		BuildFlags: []string{"-tags=noui,nolocalllm"},
-		// The canonical portable target must not inherit host-enabled cgo:
-		// a macOS compiler cannot assemble Linux/amd64 runtime C bindings.
+	loaded, err := workcensus.LoadProgram(workcensus.Config{
+		Dir: abs, Patterns: []string{"./..."},
+		BuildFlags: []string{"-tags=noui,nolocalllm"}, LoadMode: packages.NeedTypesSizes,
 		Env:     append(os.Environ(), "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOFLAGS=-mod=mod"),
 		Overlay: overlay,
-	}
-	pkgs, err := packages.Load(cfg, "./...")
+	})
 	if err != nil {
 		return nil, err
 	}
-	var errs []string
-	packages.Visit(pkgs, nil, func(p *packages.Package) {
-		for _, e := range p.Errors {
-			errs = append(errs, fmt.Sprintf("%s: %s", p.PkgPath, relPos(abs, e.Pos)+e.Msg))
-		}
-	})
-	if len(errs) > 0 {
-		sort.Strings(errs)
-		if len(errs) > 20 {
-			errs = append(errs[:20], fmt.Sprintf("... and %d more", len(errs)-20))
-		}
-		return nil, fmt.Errorf("the module does not type-check:\n  %s", strings.Join(errs, "\n  "))
-	}
-	prog, _ := ssautil.Packages(pkgs, ssa.InstantiateGenerics)
-	prog.Build()
-	all := ssautil.AllFunctions(prog)
-	p := &program{root: abs, fset: prog.Fset, ssa: prog}
-	for fn := range all {
+	p := &program{root: loaded.Root, fset: loaded.FileSet, ssa: loaded.SSA, cg: loaded.CallGraph}
+	for _, fn := range loaded.Functions {
 		// A generic function is analysed in its instantiations, not as
 		// written (its calls through type parameters resolve only there).
 		top := fn
@@ -95,19 +73,7 @@ func load(root string, overlay map[string][]byte) (*program, error) {
 		}
 	}
 	sort.Slice(p.funcs, func(i, j int) bool { return p.funcName(p.funcs[i]) < p.funcName(p.funcs[j]) })
-	p.cg = vta.CallGraph(all, cha.CallGraph(prog))
 	return p, nil
-}
-
-// relPos is a go/packages error position relative to the module root.
-func relPos(root, pos string) string {
-	if pos == "" || pos == "-" {
-		return ""
-	}
-	if rel, err := filepath.Rel(root, pos); err == nil {
-		pos = filepath.ToSlash(rel)
-	}
-	return pos + ": "
 }
 
 // inModule reports whether fn belongs to a package of the module (a closure

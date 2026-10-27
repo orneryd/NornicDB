@@ -2,6 +2,7 @@ package storagecensus
 
 import (
 	"github.com/orneryd/nornicdb/internal/lockeffect"
+	"github.com/orneryd/nornicdb/internal/workcensus"
 	"go/constant"
 	"go/token"
 	"go/types"
@@ -422,7 +423,7 @@ func (q *acquirer) nilTest(cmp *ssa.BinOp) bool {
 func successEdge(call *ssa.Call, errIndex int) (*ssa.If, *ssa.BasicBlock) {
 	// A call with one result (the error) is compared itself.
 	if _, tuple := call.Type().(*types.Tuple); !tuple && errIndex == 0 {
-		return nilCheck(call)
+		return workcensus.NilSuccessEdge(call)
 	}
 	for _, ref := range *call.Referrers() {
 		ex, ok := ref.(*ssa.Extract)
@@ -444,40 +445,8 @@ func successEdge(call *ssa.Call, errIndex int) (*ssa.If, *ssa.BasicBlock) {
 			}
 		}
 		for _, e := range errs {
-			if iff, succ := nilCheck(e); succ != nil {
+			if iff, succ := workcensus.NilSuccessEdge(e); succ != nil {
 				return iff, succ
-			}
-		}
-	}
-	return nil, nil
-}
-
-// nilCheck is the If that compares e with nil and its successor taken when
-// e is nil.
-func nilCheck(e ssa.Value) (*ssa.If, *ssa.BasicBlock) {
-	{
-		ex := e
-		for _, r := range *ex.Referrers() {
-			cmp, ok := r.(*ssa.BinOp)
-			if !ok || (cmp.Op != token.NEQ && cmp.Op != token.EQL) {
-				continue
-			}
-			other := cmp.Y
-			if cmp.Y == ex {
-				other = cmp.X
-			}
-			if c, ok := other.(*ssa.Const); !ok || !c.IsNil() {
-				continue
-			}
-			for _, u := range *cmp.Referrers() {
-				iff, ok := u.(*ssa.If)
-				if !ok || len(iff.Block().Succs) != 2 {
-					continue
-				}
-				if cmp.Op == token.NEQ {
-					return iff, iff.Block().Succs[1]
-				}
-				return iff, iff.Block().Succs[0]
 			}
 		}
 	}
