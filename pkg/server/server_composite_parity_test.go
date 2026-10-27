@@ -18,9 +18,9 @@ func TestHTTPCompositeSchemaFlows_E2E(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	adminToken := getAuthToken(t, authenticator, "admin")
 
-	require.NoError(t, server.dbManager.CreateDatabase("cmp_schema_a"))
-	require.NoError(t, server.dbManager.CreateDatabase("cmp_schema_b"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("cmp_schema", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cmp_schema_a"}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cmp_schema_b"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "cmp_schema", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "cmp_schema_a", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "cmp_schema_b", Type: "local", AccessMode: "read_write"},
 	}))
@@ -111,8 +111,8 @@ func TestCompositeRootSearchEndpointsRejected(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	adminToken := getAuthToken(t, authenticator, "admin")
 
-	require.NoError(t, server.dbManager.CreateDatabase("cmp_search_a"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("cmp_search", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cmp_search_a"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "cmp_search", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "cmp_search_a", Type: "local", AccessMode: "read_write"},
 	}))
 
@@ -141,9 +141,9 @@ func TestDatabaseInfoCompositeStatsProvenanceDeterministic(t *testing.T) {
 	server, authenticator := setupTestServer(t)
 	adminToken := getAuthToken(t, authenticator, "admin")
 
-	require.NoError(t, server.dbManager.CreateDatabase("cmp_stats_a"))
-	require.NoError(t, server.dbManager.CreateDatabase("cmp_stats_b"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("cmp_stats", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cmp_stats_a"}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cmp_stats_b"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "cmp_stats", []multidb.ConstituentRef{
 		{Alias: "b", DatabaseName: "cmp_stats_b", Type: "local", AccessMode: "read_write"},
 		{Alias: "a", DatabaseName: "cmp_stats_a", Type: "local", AccessMode: "read_write"},
 	}))
@@ -201,7 +201,7 @@ func TestCompositeConstituentStatsPartialBranches(t *testing.T) {
 	require.True(t, partial)
 	require.Nil(t, stats)
 
-	dbManager, err := multidb.NewDatabaseManager(server.db.GetBaseStorageForManager(), &multidb.Config{
+	dbManager, err := multidb.NewDatabaseManager(t.Context(), server.db.GetBaseStorageForManager(), &multidb.Config{
 		DefaultDatabase: "nornic",
 		SystemDatabase:  "system",
 		RemoteEngineFactory: func(_ multidb.ConstituentRef, authToken string) (storage.Engine, error) {
@@ -210,7 +210,7 @@ func TestCompositeConstituentStatsPartialBranches(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.NoError(t, dbManager.CreateCompositeDatabase("cmp_partial_stats", []multidb.ConstituentRef{
+	require.NoError(t, dbManager.CreateCompositeDatabase(t.Context(), "cmp_partial_stats", []multidb.ConstituentRef{
 		{Alias: "r", DatabaseName: "remote_db", Type: "remote", AccessMode: "read", URI: "http://remote.example"},
 	}))
 	server.dbManager = dbManager

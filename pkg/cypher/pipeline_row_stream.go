@@ -75,7 +75,8 @@ func compilePipelineRowWith(ctx context.Context, clause string) (pipelineRowWith
 		if item == "" || item == "{}" {
 			continue
 		}
-		expression, alias := parseProjectionExprAlias(ctx, item)
+		itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
+		expression, alias := itemSource.expression, itemSource.alias
 		if expression == "" || pipelineExpressionContainsAggregate(expression) {
 			return pipelineRowWith{}, false
 		}
@@ -89,12 +90,16 @@ func compilePipelineRowWith(ctx context.Context, clause string) (pipelineRowWith
 
 func pipelineUnwindUsesRange(clause string) bool {
 	expression, _, ok := parsePipelineIteration(clause)
-	function, _, call := parseFunctionCallWS(strings.TrimSpace(expression))
+	var callFacts1 functionCallFacts
+	call := inspectFunctionCall(strings.TrimSpace(expression), qualifiedFunctionCall, "", &callFacts1)
+	function := callFacts1.name
 	return ok && call && strings.EqualFold(function, "range")
 }
 
 func (e *StorageExecutor) pipelineUnwindValues(ctx context.Context, expression string, row pipelineRow) (iter.Seq[interface{}], bool) {
-	function, arguments, call := parseFunctionCallWS(strings.TrimSpace(expression))
+	var callFacts2 functionCallFacts
+	call := inspectFunctionCall(strings.TrimSpace(expression), qualifiedFunctionCall, "", &callFacts2)
+	function, arguments := callFacts2.name, callFacts2.inner
 	if call && strings.EqualFold(function, "range") {
 		parts := e.splitFunctionArgs(arguments)
 		values := make([]interface{}, len(parts))
@@ -714,7 +719,7 @@ parse:
 		items := splitTopLevelComma(body)
 		expressions = make([]string, 0, len(items))
 		for _, item := range items {
-			expression, _ := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
+			expression := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted).expression
 			expressions = append(expressions, expression)
 		}
 		break

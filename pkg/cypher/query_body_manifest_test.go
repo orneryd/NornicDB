@@ -48,6 +48,7 @@ var queryBodyWitnesses = map[string]string{
 	"union":                 "RETURN 1 AS a UNION CALL { @X@ } RETURN 1 AS a",
 	"use":                   "USE neo4j CALL { @X@ } RETURN 1 AS a",
 	"use-body":              "CALL { USE neo4j CALL { @X@ } RETURN 1 AS z } RETURN 1 AS a",
+	"use-argument":          "USE graph.byName(toString(COUNT { CALL { @X@ } })) RETURN 1 AS a",
 	"finish":                "CALL { CALL { @X@ } FINISH } RETURN 1 AS a",
 	"show":                  "SHOW TRANSACTIONS YIELD transactionId CALL { @X@ } RETURN transactionId",
 	"terminate":             "TERMINATE TRANSACTIONS 'neo4j-transaction-1' YIELD transactionId CALL { @X@ } RETURN transactionId",
@@ -101,6 +102,10 @@ var queryBodyWitnesses = map[string]string{
 // queryBodyManifest names, for every body-bearing grammar rule, the witness
 // that places a body in its position, or the reason none applies.
 var queryBodyManifest = map[string]string{
+	// Both new factored rules carry the graph argument's expression, whose
+	// COUNT body must retain normal CALL-ending validation. The prefix rule is
+	// consumed by the same USE source reader, not an exemption from traversal.
+	"useGraphArguments": "use-argument", "useReferencePrefix": "use-argument",
 	"syntaxFragment": "statement", "transactionBatch": "batch-size",
 	"script": "statement", "query": "statement", "regularQuery": "statement", "singleQuery": "statement",
 	"singlePartQ": "statement", "multiPartQ": "with", "readingStatement": "statement", "callSubquery": "statement",

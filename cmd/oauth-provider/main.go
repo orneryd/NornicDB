@@ -143,6 +143,9 @@ func validateLocalRedirectURI(rawURI string) (*url.URL, error) {
 	if redirectURL.Host == "" || redirectURL.User != nil || redirectURL.Fragment != "" {
 		return nil, fmt.Errorf("invalid redirect_uri")
 	}
+	if len(observability.ClientCredentials(rawURI)) != 0 {
+		return nil, fmt.Errorf("redirect_uri must not contain credential values")
+	}
 	host := strings.ToLower(redirectURL.Hostname())
 	if host != "localhost" && host != "127.0.0.1" && !strings.HasSuffix(host, ".localhost") {
 		return nil, fmt.Errorf("invalid redirect_uri: only localhost is allowed for testing")

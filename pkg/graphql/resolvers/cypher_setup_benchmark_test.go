@@ -15,7 +15,7 @@ func BenchmarkGraphQLNativeCypherSetup(b *testing.B) {
 	db, err := nornicdb.Open(b.TempDir(), nornicdb.DefaultConfig())
 	require.NoError(b, err)
 	b.Cleanup(func() { require.NoError(b, db.Close()) })
-	manager, err := multidb.NewDatabaseManager(db.GetBaseStorageForManager(), nil)
+	manager, err := multidb.NewDatabaseManager(b.Context(), db.GetBaseStorageForManager(), nil)
 	require.NoError(b, err)
 	// The manager borrows DB storage; DB owns its shutdown.
 	resolver := NewResolver(db, manager)

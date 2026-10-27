@@ -80,7 +80,8 @@ func cypher5ImportGrouping(body string, imports map[string]interface{}) (string,
 		aggregating := false
 		projected := map[string]bool{}
 		for _, item := range items {
-			expression, alias := projectionItemAlias(item)
+			itemSource := readProjectionItemSource(context.Background(), item, projectionBeforeRewrite)
+			expression, alias := itemSource.expression, itemSource.alias
 			projected[alias] = true
 			spans := findAggregateSpans(expression)
 			if len(spans) == 0 {

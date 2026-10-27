@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -50,7 +51,7 @@ func validateStaticQuantifierCall(inner string) error {
 	variable := strings.TrimSpace(StripComments(inner[:inIndex]))
 	listExpression := strings.TrimSpace(StripComments(rest[:whereIndex]))
 	predicate := strings.TrimSpace(rest[whereIndex+len("WHERE"):])
-	if !isValidIdentifier(variable) || !quantifierPredicateRequiresNumbers(predicate, variable) {
+	if !cyphertext.IsIdentifier(variable) || !quantifierPredicateRequiresNumbers(predicate, variable) {
 		return nil
 	}
 	list, ok := parseLiteralValueForPipeline(listExpression)
@@ -86,8 +87,8 @@ func quantifierPredicateRequiresNumbers(predicate, variable string) bool {
 				continue
 			}
 		}
-		if !identifierAt(predicate, index, variable) {
-			if !isWhitespace(predicate[index]) {
+		if cyphertext.FindIdentifier(predicate, variable, index, cyphertext.IdentifierFoldAt) != index {
+			if !cyphertext.IsWhitespaceAt(predicate, index) {
 				previous = predicate[index]
 			}
 			continue
@@ -100,14 +101,6 @@ func quantifierPredicateRequiresNumbers(predicate, variable string) bool {
 		index += len(variable) - 1
 	}
 	return false
-}
-
-func identifierAt(text string, index int, identifier string) bool {
-	if index < 0 || index+len(identifier) > len(text) || !strings.EqualFold(text[index:index+len(identifier)], identifier) {
-		return false
-	}
-	return (index == 0 || !isIdentByte(text[index-1])) &&
-		(index+len(identifier) == len(text) || !isIdentByte(text[index+len(identifier)]))
 }
 
 func isNumericOnlyOperatorByte(character byte) bool {

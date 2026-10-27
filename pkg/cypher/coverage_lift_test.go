@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"math"
 	"reflect"
 	"strings"
@@ -279,7 +280,7 @@ func TestCoverageLiftWithClauseExecutionShapes(t *testing.T) {
 	assert.False(t, prevWordEqualsIgnoreCase("name MATCH WITH n", strings.LastIndex("name MATCH WITH n", "WITH"), "STARTS"))
 	assert.Equal(t, -1, findKeywordNotInBrackets("[x IN xs WHERE x > 1] RETURN x", "WHERE"))
 	assert.GreaterOrEqual(t, findKeywordNotInBrackets("WITH 1 AS x RETURN x", "RETURN"), 0)
-	assert.True(t, isWhitespace('\n'))
+	assert.True(t, cyphertext.IsWhitespace('\n'))
 
 	result, err := exec.Execute(ctx, "WITH {name: 'Ada', score: 10} AS m WHERE m.name = 'Ada' RETURN m.name AS name, m.score AS score", nil)
 	require.NoError(t, err)

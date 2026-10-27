@@ -136,11 +136,7 @@ func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
 		return slog.Attr{Key: a.Key, Value: slog.GroupValue(h.redactAttrs(a.Value.Group())...)}
 	}
 	if a.Value.Kind() == slog.KindString {
-		s := RedactText(a.Value.String())
-		if strings.ContainsAny(s, "\r\n") {
-			s = crlfReplacer.Replace(s)
-		}
-		return slog.String(a.Key, s)
+		return slog.String(a.Key, redactLogText(a.Value.String()))
 	}
 	if a.Value.Kind() == slog.KindAny {
 		switch value := a.Value.Any().(type) {
@@ -148,23 +144,20 @@ func (h *redactingHandler) redactAttr(a slog.Attr) slog.Attr {
 			return h.redactAttr(slog.String(a.Key, value.Error()))
 		case fmt.Stringer:
 			return h.redactAttr(slog.String(a.Key, value.String()))
-		case []string:
-			var out []string
-			for i, text := range value {
-				redacted := h.redactAttr(slog.String(a.Key, text)).Value.String()
-				if redacted != text && out == nil {
-					out = append([]string(nil), value...)
-				}
-				if out != nil {
-					out[i] = redacted
-				}
-			}
-			if out != nil {
-				return slog.Any(a.Key, out)
-			}
+		}
+		if safe, changed := redactJSONCredentialValues(a.Value.Any(), a.Key, h.names.isSensitive, redactLogText, nil); changed {
+			return slog.Any(a.Key, safe)
 		}
 	}
 	return a
+}
+
+func redactLogText(text string) string {
+	text = RedactText(text)
+	if strings.ContainsAny(text, "\r\n") {
+		text = crlfReplacer.Replace(text)
+	}
+	return text
 }
 
 // WithAttrs / WithGroup preserve the wrapper, including preformatted attributes.

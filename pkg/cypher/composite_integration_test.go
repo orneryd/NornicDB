@@ -16,13 +16,13 @@ import (
 func TestCompositeDatabase_EndToEnd(t *testing.T) {
 	inner := newTestMemoryEngine(t)
 	defer inner.Close()
-	manager, _ := multidb.NewDatabaseManager(inner, nil)
+	manager, _ := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	adapter := &testDatabaseManagerAdapter{manager: manager}
 
 	// Create constituent databases
-	err := adapter.CreateDatabase("tenant_a")
+	err := adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"})
 	require.NoError(t, err)
-	err = adapter.CreateDatabase("tenant_b")
+	err = adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_b"})
 	require.NoError(t, err)
 
 	// Create composite database
@@ -40,7 +40,7 @@ func TestCompositeDatabase_EndToEnd(t *testing.T) {
 			"access_mode":   "read_write",
 		},
 	}
-	err = adapter.CreateCompositeDatabase("analytics", constituents)
+	err = adapter.CreateCompositeDatabase(t.Context(), "analytics", constituents)
 	require.NoError(t, err)
 
 	// Plain queries on composite root should be rejected.
@@ -91,20 +91,20 @@ func TestCompositeDatabase_EndToEnd(t *testing.T) {
 func TestCompositeDatabase_ComplexQuery(t *testing.T) {
 	inner := newTestMemoryEngine(t)
 	defer inner.Close()
-	manager, _ := multidb.NewDatabaseManager(inner, nil)
+	manager, _ := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	adapter := &testDatabaseManagerAdapter{manager: manager}
 
 	// Use unique database names for this test
 	db1Name := "complex_db1"
 
 	// Cleanup: drop databases if they exist
-	_ = adapter.DropDatabase(db1Name)
+	_ = adapter.DropDatabase(t.Context(), db1Name)
 
 	// Create constituent database
-	err := adapter.CreateDatabase(db1Name)
+	err := adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: db1Name})
 	require.NoError(t, err)
 	defer func() {
-		_ = adapter.DropDatabase(db1Name)
+		_ = adapter.DropDatabase(t.Context(), db1Name)
 	}()
 
 	// Target constituent directly for data queries.
@@ -150,7 +150,7 @@ func TestCompositeDatabase_ComplexQuery(t *testing.T) {
 func TestCompositeDatabase_QueryWithRelationships(t *testing.T) {
 	inner := newTestMemoryEngine(t)
 	defer inner.Close()
-	manager, err := multidb.NewDatabaseManager(inner, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	defer manager.Close()
 
@@ -159,14 +159,14 @@ func TestCompositeDatabase_QueryWithRelationships(t *testing.T) {
 	db1Name := "rel_db1"
 
 	// Cleanup: drop databases if they exist (from previous test runs)
-	_ = adapter.DropDatabase(db1Name)
+	_ = adapter.DropDatabase(t.Context(), db1Name)
 
 	t.Cleanup(func() {
-		_ = adapter.DropDatabase(db1Name)
+		_ = adapter.DropDatabase(t.Context(), db1Name)
 	})
 
 	// Create constituent database
-	err = adapter.CreateDatabase(db1Name)
+	err = adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: db1Name})
 	require.NoError(t, err)
 
 	// Target constituent directly for data queries.
@@ -213,7 +213,7 @@ func TestCompositeDatabase_QueryWithRelationships(t *testing.T) {
 func TestCompositeDatabase_AlterCompositeDatabase(t *testing.T) {
 	inner := newTestMemoryEngine(t)
 	defer inner.Close()
-	manager, _ := multidb.NewDatabaseManager(inner, nil)
+	manager, _ := multidb.NewDatabaseManager(t.Context(), inner, nil)
 	adapter := &testDatabaseManagerAdapter{manager: manager}
 
 	// Use unique database names for this test
@@ -223,28 +223,28 @@ func TestCompositeDatabase_AlterCompositeDatabase(t *testing.T) {
 	compositeName := "alter_composite"
 
 	// Cleanup: drop databases if they exist
-	_ = adapter.DropCompositeDatabase(compositeName)
-	_ = adapter.DropDatabase(db1Name)
-	_ = adapter.DropDatabase(db2Name)
-	_ = adapter.DropDatabase(db3Name)
+	_ = adapter.DropCompositeDatabase(t.Context(), compositeName)
+	_ = adapter.DropDatabase(t.Context(), db1Name)
+	_ = adapter.DropDatabase(t.Context(), db2Name)
+	_ = adapter.DropDatabase(t.Context(), db3Name)
 
 	// Create constituent databases
-	err := adapter.CreateDatabase(db1Name)
+	err := adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: db1Name})
 	require.NoError(t, err)
 	defer func() {
-		_ = adapter.DropDatabase(db1Name)
+		_ = adapter.DropDatabase(t.Context(), db1Name)
 	}()
 
-	err = adapter.CreateDatabase(db2Name)
+	err = adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: db2Name})
 	require.NoError(t, err)
 	defer func() {
-		_ = adapter.DropDatabase(db2Name)
+		_ = adapter.DropDatabase(t.Context(), db2Name)
 	}()
 
-	err = adapter.CreateDatabase(db3Name)
+	err = adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: db3Name})
 	require.NoError(t, err)
 	defer func() {
-		_ = adapter.DropDatabase(db3Name)
+		_ = adapter.DropDatabase(t.Context(), db3Name)
 	}()
 
 	// Create composite database with 2 constituents
@@ -262,10 +262,10 @@ func TestCompositeDatabase_AlterCompositeDatabase(t *testing.T) {
 			"access_mode":   "read_write",
 		},
 	}
-	err = adapter.CreateCompositeDatabase(compositeName, constituents)
+	err = adapter.CreateCompositeDatabase(t.Context(), compositeName, constituents)
 	require.NoError(t, err)
 	defer func() {
-		_ = adapter.DropCompositeDatabase(compositeName)
+		_ = adapter.DropCompositeDatabase(t.Context(), compositeName)
 	}()
 
 	// Get storage for composite database

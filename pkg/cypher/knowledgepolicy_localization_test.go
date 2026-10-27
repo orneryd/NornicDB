@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"testing"
 
@@ -35,7 +36,7 @@ func TestKnowledgePolicyParserErrorsHaveTypedIdentityAndExactEnglish(t *testing.
 			messageID: localization.MessageCypherKnowledgePolicyProfileNameExpectedAfter,
 			text:      "expected profile name after CREATE DECAY PROFILE",
 			parse: func() error {
-				_, _, err := ParseKnowledgePolicyDDL("CREATE DECAY PROFILE")
+				_, _, err := ParseKnowledgePolicyDDL(t.Context(), "CREATE DECAY PROFILE", RawSource)
 				return err
 			},
 		},
@@ -62,7 +63,7 @@ func TestKnowledgePolicyParserErrorsHaveTypedIdentityAndExactEnglish(t *testing.
 			messageID: localization.MessageCypherKnowledgePolicyUnknownOption,
 			text:      `unknown option: "bogus"`,
 			parse: func() error {
-				_, _, err := ParseKnowledgePolicyDDL("CREATE DECAY PROFILE profile OPTIONS { bogus: 1 }")
+				_, _, err := ParseKnowledgePolicyDDL(t.Context(), "CREATE DECAY PROFILE profile OPTIONS { bogus: 1 }", RawSource)
 				return err
 			},
 		},
@@ -71,7 +72,7 @@ func TestKnowledgePolicyParserErrorsHaveTypedIdentityAndExactEnglish(t *testing.
 			messageID: localization.MessageCypherKnowledgePolicyUnknownKalmanConfigKey,
 			text:      `unknown Kalman config key: "gain"`,
 			parse: func() error {
-				_, err := parseOnAccessBlock("WITH KALMAN { gain: 1 } SET n.score = 1")
+				_, err := parseOnAccessBlock(policyDDLSource{Source: cyphertext.NewSource(t.Context(), "WITH KALMAN { gain: 1 } SET n.score = 1", cyphertext.RawSource), original: true})
 				return err
 			},
 		},
@@ -83,7 +84,7 @@ func TestKnowledgePolicyParserErrorsHaveTypedIdentityAndExactEnglish(t *testing.
 		})
 	}
 
-	_, _, err := ParseKnowledgePolicyDDL("CREATE DECAY PROFILE profile OPTIONS { halfLifeSeconds: nope }")
+	_, _, err := ParseKnowledgePolicyDDL(t.Context(), "CREATE DECAY PROFILE profile OPTIONS { halfLifeSeconds: nope }", RawSource)
 	localizedErr := requireCypherKnowledgePolicyLocalizedError(t, err, localization.MessageCypherKnowledgePolicyInvalidValue, "invalid halfLifeSeconds: nope")
 	require.ErrorIs(t, err, strconv.ErrSyntax)
 	require.Equal(t, "halfLifeSeconds", localizedErr.Message.Data["Field"])

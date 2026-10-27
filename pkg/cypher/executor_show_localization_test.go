@@ -67,32 +67,32 @@ type cypherAdminErrorManager struct {
 	setLimitsErr      error
 }
 
-func (m *cypherAdminErrorManager) CreateDatabase(name string) error {
+func (m *cypherAdminErrorManager) CreateDatabase(ctx context.Context, request multidb.DatabaseCreateRequest) error {
 	if m.createDatabaseErr != nil {
 		return m.createDatabaseErr
 	}
-	return m.mockDatabaseManager.CreateDatabase(name)
+	return m.mockDatabaseManager.CreateDatabase(ctx, request)
 }
 
-func (m *cypherAdminErrorManager) DropDatabase(name string) error {
+func (m *cypherAdminErrorManager) DropDatabase(ctx context.Context, name string) error {
 	if m.dropDatabaseErr != nil {
 		return m.dropDatabaseErr
 	}
-	return m.mockDatabaseManager.DropDatabase(name)
+	return m.mockDatabaseManager.DropDatabase(ctx, name)
 }
 
-func (m *cypherAdminErrorManager) CreateAlias(alias, databaseName string) error {
+func (m *cypherAdminErrorManager) CreateAlias(ctx context.Context, alias, databaseName string) error {
 	if m.createAliasErr != nil {
 		return m.createAliasErr
 	}
-	return m.mockDatabaseManager.CreateAlias(alias, databaseName)
+	return m.mockDatabaseManager.CreateAlias(ctx, alias, databaseName)
 }
 
-func (m *cypherAdminErrorManager) DropAlias(alias string) error {
+func (m *cypherAdminErrorManager) DropAlias(ctx context.Context, alias string) error {
 	if m.dropAliasErr != nil {
 		return m.dropAliasErr
 	}
-	return m.mockDatabaseManager.DropAlias(alias)
+	return m.mockDatabaseManager.DropAlias(ctx, alias)
 }
 
 func (m *cypherAdminErrorManager) ResolveDatabase(nameOrAlias string) (string, error) {
@@ -106,11 +106,11 @@ func (m *cypherAdminErrorManager) GetDatabaseLimits(databaseName string) (interf
 	return m.mockDatabaseManager.GetDatabaseLimits(databaseName)
 }
 
-func (m *cypherAdminErrorManager) SetDatabaseLimits(databaseName string, limits interface{}) error {
+func (m *cypherAdminErrorManager) SetDatabaseLimits(ctx context.Context, databaseName string, limits interface{}) error {
 	if m.setLimitsErr != nil {
 		return m.setLimitsErr
 	}
-	return m.mockDatabaseManager.SetDatabaseLimits(databaseName, limits)
+	return m.mockDatabaseManager.SetDatabaseLimits(ctx, databaseName, limits)
 }
 
 func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) {
@@ -130,7 +130,7 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 
 	t.Run("drop database", func(t *testing.T) {
 		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t), dropDatabaseErr: cause}
-		require.NoError(t, manager.mockDatabaseManager.CreateDatabase("tenant_drop"))
+		require.NoError(t, manager.mockDatabaseManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_drop"}))
 		exec.SetDatabaseManager(manager)
 		_, err := exec.executeDropDatabase(ctx, "DROP DATABASE tenant_drop")
 		requireCypherAdminLocalizedError(t, err, localization.MessageCypherAdminDropDatabaseFailed, "failed to drop database 'tenant_drop': forced admin failure")
@@ -166,7 +166,7 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 
 	t.Run("database limit update", func(t *testing.T) {
 		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t), setLimitsErr: cause}
-		require.NoError(t, manager.mockDatabaseManager.CreateDatabase("tenant_limits"))
+		require.NoError(t, manager.mockDatabaseManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_limits"}))
 		exec.SetDatabaseManager(manager)
 		_, err := exec.executeAlterDatabase(ctx, "ALTER DATABASE tenant_limits SET LIMIT max_nodes = 42")
 		localizedErr := requireCypherAdminLocalizedError(t, err, localization.MessageCypherAdminSetDatabaseLimitsFailed, "failed to set limits for database 'tenant_limits': forced admin failure")
@@ -176,7 +176,7 @@ func TestCypherAdminLocalizedErrorsPreserveCausesAndMachineValues(t *testing.T) 
 
 	t.Run("invalid limit value", func(t *testing.T) {
 		manager := &cypherAdminErrorManager{mockDatabaseManager: newMockDatabaseManager(t)}
-		require.NoError(t, manager.mockDatabaseManager.CreateDatabase("tenant_limits"))
+		require.NoError(t, manager.mockDatabaseManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_limits"}))
 		manager.limits["tenant_limits"] = &multidb.Limits{}
 		exec.SetDatabaseManager(manager)
 		_, err := exec.executeAlterDatabase(ctx, "ALTER DATABASE tenant_limits SET LIMIT max_nodes = nope")

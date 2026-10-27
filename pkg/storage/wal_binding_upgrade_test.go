@@ -14,7 +14,7 @@ import (
 
 func reviewBindingEngine(t *testing.T, dir string) *BadgerEngine {
 	t.Helper()
-	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
+	b, err := fixtureowner.OwnResult[*BadgerEngine](t, ErrStorageClosed)(NewBadgerEngineWithOptions(BadgerOptions{DataDir: dir, AllowStorageUpgrade: true, CatalogUpgradeV4: graphOnlyCatalogUpgradeV4(), WriteBehind: true, WriteBehindInterval: time.Hour, EngineOptions: EngineOptions{RetentionPolicy: RetentionPolicy{MaxVersionsPerKey: 100}}}))
 	require.NoError(t, err)
 	// Keep crash fixtures pending even after an explicit flush adapts the delay.
 	b.writeBehind.SetDelayBounds(time.Hour, time.Hour)

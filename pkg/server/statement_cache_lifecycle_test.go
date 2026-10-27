@@ -1,9 +1,10 @@
 package server
-import "github.com/orneryd/nornicdb/pkg/cypher"
 
+import "github.com/orneryd/nornicdb/pkg/cypher"
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -15,13 +16,13 @@ func TestStatementCacheFamilyHTTPMetadataRemoval(t *testing.T) {
 		t.Run(removal, func(t *testing.T) {
 			server, _ := setupTestServer(t)
 			manager := server.dbManager
-			if err := manager.CreateDatabase("cache_local"); err != nil {
+			if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cache_local"}); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.CreateAlias("cache_alias", "cache_local"); err != nil {
+			if err := manager.CreateAlias(t.Context(), "cache_alias", "cache_local"); err != nil {
 				t.Fatal(err)
 			}
-			if err := manager.CreateCompositeDatabase("cache_comp", []multidb.ConstituentRef{
+			if err := manager.CreateCompositeDatabase(t.Context(), "cache_comp", []multidb.ConstituentRef{
 				{Alias: "local", DatabaseName: "cache_local", Type: "local", AccessMode: "read_write"},
 				{Alias: "remote", DatabaseName: "remote_db", Type: "remote", AccessMode: "read", URI: "http://remote.example"},
 			}); err != nil {
@@ -44,13 +45,13 @@ func TestStatementCacheFamilyHTTPMetadataRemoval(t *testing.T) {
 			}
 			switch removal {
 			case "database":
-				err = manager.DropDatabase("cache_local")
+				err = manager.DropDatabase(t.Context(), "cache_local")
 			case "alias":
-				err = manager.DropAlias("cache_alias")
+				err = manager.DropAlias(t.Context(), "cache_alias")
 			case "constituent":
-				err = manager.RemoveConstituent("cache_comp", "local")
+				err = manager.RemoveConstituent(t.Context(), "cache_comp", "local")
 			case "composite":
-				err = manager.DropCompositeDatabase("cache_comp")
+				err = manager.DropCompositeDatabase(t.Context(), "cache_comp")
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -72,7 +73,7 @@ func TestStatementCacheFamilyHTTPMetadataRemoval(t *testing.T) {
 				if _, err := server.executorCache.Get("cache_local"); err == nil {
 					t.Fatal("cached executor survived database drop")
 				}
-				if err := manager.CreateDatabase("cache_local"); err != nil {
+				if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "cache_local"}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -90,80 +91,94 @@ func TestStatementCacheFamilyHTTPMetadataRemoval(t *testing.T) {
 	}
 }
 
-func TestStatementCacheFamilyHeimdallLifecycle(t *testing.T) {
-	server, _ := setupTestServer(t)
-	manager := server.dbManager
-	if err := manager.CreateDatabase("cache_heimdall"); err != nil {
-		t.Fatal(err)
-	}
-	router := newHeimdallDBRouter(server.db, manager, nil)
-	_, first, _, err := router.executorForDatabase("cache_heimdall")
-	if err != nil {
-		t.Fatal(err)
-	}
-	regular, err := server.executorCache.Get("cache_heimdall")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.StatementCaches() != regular.StatementCaches() {
-		t.Fatal("protocols have distinct catalog owners")
-	}
-	if _, err := first.Execute(context.Background(), "RETURN 1 AS value", nil); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.DropDatabase("cache_heimdall"); err != nil {
-		t.Fatal(err)
-	}
-	if !first.StatementCaches().Disposed() {
-		t.Fatal("drop retained Heimdall cache owner")
-	}
-	if err := manager.CreateDatabase("cache_heimdall"); err != nil {
-		t.Fatal(err)
-	}
-	_, next, _, err := router.executorForDatabase("cache_heimdall")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if next == first || next.StatementCaches() == first.StatementCaches() {
-		t.Fatal("Heimdall reused dropped database generation")
-	}
-}
+type heimdallCacheTestSelection uint8
 
-func TestStatementCacheFamilyHeimdallAliasGeneration(t *testing.T) {
-	server, _ := setupTestServer(t)
-	manager := server.dbManager
-	if err := manager.CreateAlias("cache_heimdall_alias", "nornic"); err != nil {
-		t.Fatal(err)
-	}
-	router := newHeimdallDBRouter(server.db, manager, nil)
-	_, canonical, _, err := router.executorForDatabase("nornic")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, selected, _, err := router.executorForDatabase("cache_heimdall_alias")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if selected.StatementCaches() != canonical.StatementCaches() {
-		t.Fatal("alias has a separate owner")
-	}
-	if err := manager.DropAlias("cache_heimdall_alias"); err != nil {
-		t.Fatal(err)
-	}
-	if canonical.StatementCaches().Disposed() || !canonical.StatementCacheSelectionValid() || selected.StatementCacheSelectionValid() {
-		t.Fatal("alias removal retired canonical owner or retained Heimdall selection")
-	}
-	if _, _, _, err := router.executorForDatabase("cache_heimdall_alias"); err == nil {
-		t.Fatal("Heimdall cached a removed alias")
-	}
-	if err := manager.CreateAlias("cache_heimdall_alias", "nornic"); err != nil {
-		t.Fatal(err)
-	}
-	_, next, _, err := router.executorForDatabase("cache_heimdall_alias")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if next == selected || next.StatementCaches() != canonical.StatementCaches() || !next.StatementCacheSelectionValid() {
-		t.Fatal("recreated alias did not acquire a new Heimdall selection")
+const (
+	heimdallCacheTestDatabase heimdallCacheTestSelection = iota
+	heimdallCacheTestAlias
+)
+
+func TestStatementCacheFamilyHeimdallSelections(t *testing.T) {
+	for _, kind := range []heimdallCacheTestSelection{heimdallCacheTestDatabase, heimdallCacheTestAlias} {
+		t.Run(fmt.Sprintf("selection=%d", kind), func(t *testing.T) {
+			server, _ := setupTestServer(t)
+			manager := server.dbManager
+			name := "cache_heimdall"
+			var err error
+			if kind == heimdallCacheTestDatabase {
+				err = manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name})
+			} else {
+				name = "cache_heimdall_alias"
+				err = manager.CreateAlias(t.Context(), name, "nornic")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			router := newHeimdallDBRouter(server.db, manager, nil)
+			var first, canonical *cypher.StorageExecutor
+			if kind == heimdallCacheTestDatabase {
+				_, first, _, err = router.executorForDatabase(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				canonical, err = server.executorCache.Get(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				_, canonical, _, err = router.executorForDatabase("nornic")
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, first, _, err = router.executorForDatabase(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if first.StatementCaches() != canonical.StatementCaches() {
+				t.Fatal("selection has a separate canonical owner")
+			}
+			if kind == heimdallCacheTestDatabase {
+				if _, err := first.Execute(context.Background(), "RETURN 1 AS value", nil); err != nil {
+					t.Fatal(err)
+				}
+				err = manager.DropDatabase(t.Context(), name)
+			} else {
+				err = manager.DropAlias(t.Context(), name)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind == heimdallCacheTestDatabase {
+				if !first.StatementCaches().Disposed() {
+					t.Fatal("drop retained Heimdall cache owner")
+				}
+				err = manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name})
+			} else {
+				if canonical.StatementCaches().Disposed() || !canonical.StatementCacheSelectionValid() || first.StatementCacheSelectionValid() {
+					t.Fatal("alias removal retired canonical owner or retained Heimdall selection")
+				}
+				if _, _, _, err := router.executorForDatabase(name); err == nil {
+					t.Fatal("Heimdall cached a removed alias")
+				}
+				err = manager.CreateAlias(t.Context(), name, "nornic")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, next, _, err := router.executorForDatabase(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kind == heimdallCacheTestDatabase {
+				if next == first || next.StatementCaches() == first.StatementCaches() {
+					t.Fatal("Heimdall reused dropped database generation")
+				}
+			} else {
+				if next == first || next.StatementCaches() != canonical.StatementCaches() || !next.StatementCacheSelectionValid() {
+					t.Fatal("recreated alias did not acquire a new Heimdall selection")
+				}
+			}
+		})
 	}
 }

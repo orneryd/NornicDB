@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -19,7 +20,7 @@ func TestSingleGraphStatement(t *testing.T) {
 		{"MATCH (n) WITH n USE comp.one RETURN n", "MATCH (n) WITH n RETURN n"},
 		{"USE comp CALL { USE comp.one CALL { USE comp.remote RETURN 1 AS z } RETURN z } RETURN z", "CALL { CALL { RETURN 1 AS z } RETURN z } RETURN z"},
 	} {
-		got, err := p.SingleGraphStatement(tt.query)
+		got, err := p.SingleGraphStatement(t.Context(), tt.query, cyphertext.RawSource)
 		require.NoError(t, err, tt.query)
 		require.Equal(t, tt.want, got, tt.query)
 	}

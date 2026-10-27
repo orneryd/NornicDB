@@ -30,7 +30,7 @@ func readTransactionalStatement(ctx context.Context, query string) ([]cypherantl
 	if calls, ok := transactionalStatementReads.get(query); ok {
 		return calls, ctx.Err()
 	}
-	calls, err := cypherantlr.ReadTransactionalCalls(ctx, query)
+	calls, err := cypherantlr.ReadTransactionalCalls(ctx, query, cypherantlr.AcceptedSource)
 	if err == nil {
 		transactionalStatementReads.put(query, calls)
 	}
@@ -41,7 +41,7 @@ func readCallClause(ctx context.Context, clause string) (cypherantlr.CallClause,
 	if call, ok := callClauseReads.get(clause); ok {
 		return call, ctx.Err()
 	}
-	call, err := cypherantlr.ReadCallClause(ctx, clause)
+	call, err := cypherantlr.ReadCallClause(ctx, clause, cypherantlr.AcceptedSource)
 	if err == nil {
 		callClauseReads.put(clause, call)
 	}

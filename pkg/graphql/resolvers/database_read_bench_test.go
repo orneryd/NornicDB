@@ -13,7 +13,7 @@ import (
 
 func BenchmarkGraphQLDatabaseReads(b *testing.B) {
 	fixture := func(b *testing.B) (*Resolver, context.Context) {
-		manager, err := multidb.NewDatabaseManager(fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+		manager, err := multidb.NewDatabaseManager(b.Context(), fixtureowner.Own(b, fixtureowner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 		if err != nil {
 			b.Fatal(err)
 		}

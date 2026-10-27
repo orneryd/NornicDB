@@ -1,6 +1,8 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"encoding/json"
 	"net/http"
@@ -62,7 +64,7 @@ func TestHandleSearch_ReadinessChangesAfterInitialCheck(t *testing.T) {
 	server, _ := setupTestServer(t)
 	server.auth = nil
 	const database = "readiness_race"
-	require.NoError(t, server.dbManager.CreateDatabase(database))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: database}))
 	engine, err := server.dbManager.GetStorage(database)
 	require.NoError(t, err)
 	// Own the service's decorated reader before producer events from the seed

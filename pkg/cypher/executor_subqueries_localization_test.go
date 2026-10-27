@@ -43,13 +43,13 @@ func TestCypherSubqueriesCatalogRendering(t *testing.T) {
 	require.NoError(t, err)
 	message := localization.CypherSubqueriesCallError(errors.New("boom"))
 
-	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), message)
+	spanish, tag, err := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, language.EuropeanSpanish, tag)
 	require.Equal(t, "error de subconsulta CALL: boom", spanish)
 
 	pseudoTag := language.MustParse("en-XA")
-	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), message)
+	pseudo, tag, err := manager.Render(localization.WithPreferences(context.Background(), pseudoTag), localization.MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, pseudoTag, tag)
 	require.Equal(t, "[!! CALL subquery error: boom !!]", pseudo)

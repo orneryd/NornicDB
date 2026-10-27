@@ -1058,17 +1058,17 @@ func TestApplyWithProjection_Branches(t *testing.T) {
 	r := &storage.Edge{ID: "e1", Type: "KNOWS", StartNode: "n1", EndNode: "n1", Properties: map[string]interface{}{}}
 	ctx := context.Background()
 	input := []pipelineRow{{"n": n, "r": r, "answer": int64(42)}}
-	projected, ok := exec.pipelineApplyWith(ctx, input, "WITH *")
+	projected, ok := exec.pipelineApplyWith(ctx, input, "WITH *", nil, false)
 	require.True(t, ok)
 	require.Equal(t, input, projected)
-	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH n")
+	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH n", nil, false)
 	require.True(t, ok)
 	require.Equal(t, []pipelineRow{{"n": n}}, projected)
-	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH answer AS projected")
+	projected, ok = exec.pipelineApplyWith(ctx, input, "WITH answer AS projected", nil, false)
 	require.True(t, ok)
 	require.Equal(t, []pipelineRow{{"projected": int64(42)}}, projected)
 	failureCtx := withExpressionFailureSlot(ctx)
-	projected, ok = exec.pipelineApplyWith(failureCtx, input, "WITH n + 1 AS invalid")
+	projected, ok = exec.pipelineApplyWith(failureCtx, input, "WITH n + 1 AS invalid", nil, false)
 	require.False(t, ok)
 	require.Nil(t, projected)
 	require.Error(t, getExpressionFailure(failureCtx))
@@ -1295,20 +1295,6 @@ MERGE (c)-[:TOUCHED]->(ck)
 		"MERGE (c)-[:CHANGED]->(cs)",
 		"MERGE (c)-[:TOUCHED]->(ck)",
 	}, segments)
-}
-
-func TestProjectWithContext_PreservesScalarAliases(t *testing.T) {
-	ctx := context.Background()
-	exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "test"))
-	projected, ok := exec.pipelineApplyWith(ctx, []pipelineRow{{}},
-		`WITH 'entity-single' AS entity_id, 'calls' AS relation_type, 'state-single' AS state_id, 'commit-single-row' AS commit_hash`)
-	require.True(t, ok)
-	require.Equal(t, []pipelineRow{{
-		"entity_id":     "entity-single",
-		"relation_type": "calls",
-		"state_id":      "state-single",
-		"commit_hash":   "commit-single-row",
-	}}, projected)
 }
 
 func TestExecuteMatchSegment_ResolvesScalarBindings(t *testing.T) {

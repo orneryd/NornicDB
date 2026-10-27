@@ -12,15 +12,15 @@ func (c *testStatementCacheResource) Dispose()          { c.disposed = true }
 func (c *testStatementCacheResource) InvalidateScopes() {}
 
 func TestStatementCacheFamilyManagerLifecycle(t *testing.T) {
-	manager, err := NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	manager, err := NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer manager.Close()
-	if err := manager.CreateDatabase("cache_target"); err != nil {
+	if err := manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "cache_target"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := manager.CreateAlias("cache_alias", "cache_target"); err != nil {
+	if err := manager.CreateAlias(t.Context(), "cache_alias", "cache_target"); err != nil {
 		t.Fatal(err)
 	}
 	create := func(*StatementCacheScope) StatementCacheResource { return &testStatementCacheResource{} }
@@ -38,19 +38,19 @@ func TestStatementCacheFamilyManagerLifecycle(t *testing.T) {
 	if _, _, err := manager.DatabaseStatementCaches("missing", create); err == nil {
 		t.Fatal("missing database received owner")
 	}
-	if err := manager.DropDatabase("missing"); err == nil {
+	if err := manager.DropDatabase(t.Context(), "missing"); err == nil {
 		t.Fatal("missing drop succeeded")
 	}
 	if owner.(*testStatementCacheResource).disposed || !canonicalScope.Valid() || !aliasScope.Valid() {
 		t.Fatal("failed drop retired live state")
 	}
-	if err := manager.DropAlias("cache_alias"); err != nil {
+	if err := manager.DropAlias(t.Context(), "cache_alias"); err != nil {
 		t.Fatal(err)
 	}
 	if owner.(*testStatementCacheResource).disposed || !canonicalScope.Valid() || aliasScope.Valid() || len(manager.statementCaches) != 1 {
 		t.Fatal("alias drop retired its live canonical database")
 	}
-	if err := manager.CreateAlias("cache_alias", "cache_target"); err != nil {
+	if err := manager.CreateAlias(t.Context(), "cache_alias", "cache_target"); err != nil {
 		t.Fatal(err)
 	}
 	next, nextScope, err := manager.DatabaseStatementCaches("cache_alias", create)
@@ -60,13 +60,13 @@ func TestStatementCacheFamilyManagerLifecycle(t *testing.T) {
 	if next != owner || nextScope == aliasScope || nextScope.Generation() == aliasScope.Generation() || !nextScope.Valid() {
 		t.Fatal("recreated alias did not get a new selection on the surviving owner")
 	}
-	if err := manager.DropDatabase("cache_target"); err != nil {
+	if err := manager.DropDatabase(t.Context(), "cache_target"); err != nil {
 		t.Fatal(err)
 	}
 	if !owner.(*testStatementCacheResource).disposed || canonicalScope.Valid() || nextScope.Valid() || len(manager.statementCaches) != 0 || len(manager.statementCacheScopes) != 0 {
 		t.Fatal("database drop retained owned state")
 	}
-	if err := manager.CreateDatabase("cache_target"); err != nil {
+	if err := manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "cache_target"}); err != nil {
 		t.Fatal(err)
 	}
 	fresh, scope, err := manager.DatabaseStatementCaches("cache_target", create)

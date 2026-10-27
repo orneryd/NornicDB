@@ -1,6 +1,9 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"errors"
 	"strings"
@@ -24,34 +27,40 @@ type useAuthDBManager struct {
 	engine        storage.Engine
 }
 
-func (m *useAuthDBManager) CreateDatabase(name string) error { return nil }
-func (m *useAuthDBManager) DropDatabase(name string) error   { return nil }
+func (m *useAuthDBManager) CreateDatabase(ctx context.Context, request multidb.DatabaseCreateRequest) error {
+	return nil
+}
+func (m *useAuthDBManager) DropDatabase(ctx context.Context, name string) error { return nil }
 func (m *useAuthDBManager) ListDatabases() []DatabaseInfoInterface {
 	return []DatabaseInfoInterface{useAuthDBInfo{}}
 }
-func (m *useAuthDBManager) Exists(name string) bool                      { return true }
-func (m *useAuthDBManager) CreateAlias(alias, databaseName string) error { return nil }
-func (m *useAuthDBManager) DropAlias(alias string) error                 { return nil }
+func (m *useAuthDBManager) Exists(name string) bool { return true }
+func (m *useAuthDBManager) CreateAlias(ctx context.Context, alias, databaseName string) error {
+	return nil
+}
+func (m *useAuthDBManager) DropAlias(ctx context.Context, alias string) error { return nil }
 func (m *useAuthDBManager) ListAliases(databaseName string) map[string]string {
 	return map[string]string{}
 }
 func (m *useAuthDBManager) ResolveDatabase(nameOrAlias string) (string, error) {
 	return nameOrAlias, nil
 }
-func (m *useAuthDBManager) SetDatabaseLimits(databaseName string, limits interface{}) error {
+func (m *useAuthDBManager) SetDatabaseLimits(ctx context.Context, databaseName string, limits interface{}) error {
 	return nil
 }
 func (m *useAuthDBManager) GetDatabaseLimits(databaseName string) (interface{}, error) {
 	return nil, nil
 }
-func (m *useAuthDBManager) CreateCompositeDatabase(name string, constituents []interface{}) error {
+func (m *useAuthDBManager) CreateCompositeDatabase(ctx context.Context, name string, constituents []interface{}) error {
 	return nil
 }
-func (m *useAuthDBManager) DropCompositeDatabase(name string) error { return nil }
-func (m *useAuthDBManager) AddConstituent(compositeName string, constituent interface{}) error {
+func (m *useAuthDBManager) DropCompositeDatabase(ctx context.Context, name string) error { return nil }
+func (m *useAuthDBManager) AddConstituent(ctx context.Context, compositeName string, constituent interface{}) error {
 	return nil
 }
-func (m *useAuthDBManager) RemoveConstituent(compositeName string, alias string) error { return nil }
+func (m *useAuthDBManager) RemoveConstituent(ctx context.Context, compositeName string, alias string) error {
+	return nil
+}
 func (m *useAuthDBManager) GetCompositeConstituents(compositeName string) ([]interface{}, error) {
 	return []interface{}{}, nil
 }
@@ -118,7 +127,7 @@ func TestUseClause_RejectsUnauthorizedTargetBeforeRouting(t *testing.T) {
 }
 
 func TestParseUseClauseDynamicGraphRefs(t *testing.T) {
-	use, rem, hasUse, err := parseUseClause("USE graph.byName('translations.tr') RETURN 1 AS one", false)
+	use, rem, hasUse, err := parseUseClause(t.Context(), "USE graph.byName('translations.tr') RETURN 1 AS one", false, cyphertext.RawSource)
 	require.NoError(t, err)
 	require.True(t, hasUse)
 	require.True(t, use.IsDynamic())
@@ -127,13 +136,13 @@ func TestParseUseClauseDynamicGraphRefs(t *testing.T) {
 	require.Equal(t, `graph.byName("translations.tr")`, use.Text())
 	require.Equal(t, "RETURN 1 AS one", rem)
 
-	use, rem, hasUse, err = parseUseClause("USE graph . byElementId($id) MATCH (n) RETURN n", false)
+	use, rem, hasUse, err = parseUseClause(t.Context(), "USE graph . byElementId($id) MATCH (n) RETURN n", false, cyphertext.RawSource)
 	require.NoError(t, err)
 	require.True(t, hasUse)
 	require.Equal(t, "graph.byElementId($id)", use.Text())
 	require.Equal(t, "MATCH (n) RETURN n", rem)
 
-	_, _, hasUse, err = parseUseClause("USE graph.byName('unterminated RETURN 1", false)
+	_, _, hasUse, err = parseUseClause(t.Context(), "USE graph.byName('unterminated RETURN 1", false, cyphertext.RawSource)
 	require.True(t, hasUse)
 	requireStatusCode(t, err, "Neo.ClientError.Statement.SyntaxError")
 }

@@ -3,18 +3,27 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/config"
 	"github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/localization"
+	"github.com/orneryd/nornicdb/pkg/observability"
 )
 
-// isSystemCommandNoGraph returns true for statements that operate on database metadata
-// (CREATE/DROP DATABASE, SHOW DATABASES, etc.) and must not use the async engine or
-// implicit transactions. These are routed to executeWithoutTransaction directly.
-func isSystemCommandNoGraph(cypher string) bool {
-	return startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE") ||
+type metadataCommandPurpose uint8
+
+const (
+	metadataCatalogExecution metadataCommandPurpose = iota
+	metadataCreateAdmission
+)
+
+// isMetadataCommand keeps catalog execution and CREATE semantic admission on
+// one classifier. Schema creation is exempt from pattern validation but retains
+// its existing transactional execution route; catalog commands bypass it.
+func isMetadataCommand(cypher string, purpose metadataCommandPurpose) bool {
+	if startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE") ||
 		isCreateOrReplaceDatabaseQuery(cypher) ||
 		startsWithKeywords(cypher, "CREATE", "DATABASE") ||
 		startsWithKeywords(cypher, "CREATE", "ALIAS") ||
@@ -22,8 +31,26 @@ func isSystemCommandNoGraph(cypher string) bool {
 		startsWithKeywords(cypher, "DROP", "DATABASE") ||
 		startsWithKeywords(cypher, "DROP", "ALIAS") ||
 		startsWithKeywords(cypher, "SHOW", "DATABASES") ||
+		startsWithKeywords(cypher, "ALTER", "COMPOSITE DATABASE") ||
 		startsWithKeywords(cypher, "ALTER", "DATABASE") ||
-		isPrivilegeAdministrationCommand(cypher)
+		isPrivilegeAdministrationCommand(cypher) {
+		return true
+	}
+	if purpose != metadataCreateAdmission {
+		return false
+	}
+	return isCreateProcedureCommand(cypher) ||
+		startsWithKeywords(cypher, "CREATE", "DECAY PROFILE") ||
+		startsWithKeywords(cypher, "CREATE", "PROMOTION PROFILE") ||
+		startsWithKeywords(cypher, "CREATE", "PROMOTION POLICY") ||
+		startsWithKeywords(cypher, "CREATE", "CONSTRAINT") ||
+		startsWithKeywords(cypher, "CREATE", "INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "RANGE INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "FULLTEXT INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "VECTOR INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "TEXT INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "POINT INDEX") ||
+		startsWithKeywords(cypher, "CREATE", "LOOKUP INDEX")
 }
 
 func isShowConstraintContractsCommand(cypher string) bool {
@@ -41,8 +68,17 @@ func topLevelUnion(ctx context.Context, cypher, upperQuery string) (unionAll, un
 	if !strings.Contains(upperQuery, "UNION") {
 		return false, false
 	}
-	branches, unionAll, _, ok := parseTopLevelUnionBranches(ctx, cypher)
-	return unionAll, ok && len(branches) > 1
+	branches, unionAll, mixed, ok := parseTopLevelUnionBranches(ctx, cypher)
+	if !ok {
+		return false, false
+	}
+	// Mixed UNION modes return no branch list because they are invalid, but
+	// they still need to reach executeUnion so it can return the canonical
+	// mixed-operator error.
+	if mixed {
+		return false, true
+	}
+	return unionAll, len(branches) > 1
 }
 
 // executeWithoutTransaction executes query without transaction wrapping (original path).
@@ -225,7 +261,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		findKeywordIndex(cypher, "CREATE INDEX") == 0:
 		return e.executeSchemaCommand(ctx, cypher)
 	case startsWithKeywords(cypher, "CREATE", "COMPOSITE DATABASE"):
-		return e.executeCreateCompositeDatabase(ctx, cypher)
+		return e.executeCompositeCommand(ctx, cypher, compositeCreateCommand)
 	case isCreateOrReplaceDatabaseQuery(cypher):
 		return e.executeCreateOrReplaceDatabase(ctx, cypher)
 	case startsWithKeywords(cypher, "CREATE", "DATABASE"):
@@ -268,7 +304,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 	case findKeywordIndex(cypher, "LOAD CSV") == 0:
 		return e.executeLoadCSV(ctx, cypher)
 	case startsWithKeywords(cypher, "ALTER", "COMPOSITE DATABASE"):
-		return e.executeAlterCompositeDatabase(ctx, cypher)
+		return e.executeCompositeCommand(ctx, cypher, compositeAlterCommand)
 	case startsWithKeywords(cypher, "ALTER", "DECAY PROFILE"),
 		startsWithKeywords(cypher, "ALTER", "PROMOTION PROFILE"),
 		startsWithKeywords(cypher, "ALTER", "PROMOTION POLICY"):
@@ -279,7 +315,7 @@ func (e *StorageExecutor) executeWithoutTransaction(ctx context.Context, cypher 
 		// silent success, alternate text executor, or re-dispatch. Neo4j
 		// reports unrecognized statements as syntax errors, so the localized
 		// message keeps its text while Bolt carries the proper status code.
-		firstWord := strings.Split(upperQuery, " ")[0]
+		firstWord, _, _ := cyphertext.CutWhitespace(upperQuery)
 		err := localizedError(localization.CypherTransactionsQueryTypeUnsupported(firstWord), nil)
 		return nil, &classifiedCypherError{
 			cause:  err,
@@ -332,8 +368,8 @@ func (e *StorageExecutor) executeReturn(ctx context.Context, cypher string) (*Ex
 	items, _ = cutDistinct(items)
 	parts := splitTopLevelComma(items)
 	for index, part := range parts {
-		// Same alias parsing as every projection (parseProjectionExprAlias).
-		part, _ = parseProjectionExprAlias(ctx, strings.TrimSpace(part))
+		// Same alias parsing as every projection (readProjectionItemSource).
+		part = readProjectionItemSource(ctx, strings.TrimSpace(part), projectionAdmitted).expression
 		parts[index] = part
 		if err := e.validateStaticBooleanOperands(ctx, part); err != nil {
 			return nil, err
@@ -393,71 +429,212 @@ func splitReturnExpressions(clause string) []string {
 	return splitTopLevelComma(clause)
 }
 
-// validateSyntax performs syntax validation.
-// When NORNICDB_PARSER=antlr, uses ANTLR for strict OpenCypher grammar validation.
-// When NORNICDB_PARSER=nornic (default), uses fast inline validation.
-// cypher25 is the statement's language version (its scope checks differ).
-func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cypher25 bool) error {
-	// A text the selected validator accepted passed every check below (it
-	// is marked valid only then), so a repeated query skips them all (#823):
-	// under NORNICDB_PARSER=antlr too, where every repeat was parsed again
-	// (#911).
-	validator := activeSyntaxValidator()
-	if e.hasCachedValidSyntax(cypher, validator) {
+// syntaxValidationMode selects the existing statement admission or an isolated
+// parser slice. Core modes are used by parser diagnostics and measurements;
+// they deliberately omit the shared statement validators.
+type syntaxValidationMode uint8
+
+const (
+	syntaxStatement syntaxValidationMode = iota
+	syntaxNativeCore
+	syntaxANTLRCore
+)
+
+// validateSyntax is the sole syntax-validation pipeline. Statement admission
+// uses the configured parser and shared checks; core modes preserve the isolated
+// native benchmark and ANTLR diagnostic contracts. cypher25 selects scope rules.
+func (e *StorageExecutor) validateSyntax(ctx context.Context, cypher string, cypher25 bool, mode syntaxValidationMode) error {
+	if mode == syntaxNativeCore && e.hasCachedValidSyntax(cypher, syntaxValidNornic) {
 		return nil
 	}
-	if err := validateUnicodeOperators(cypher); err != nil {
-		return err
+	validator := uint8(syntaxValidNornic)
+	if mode == syntaxANTLRCore || mode == syntaxStatement && config.IsANTLRParser() {
+		validator = syntaxValidANTLR
 	}
-	if err := validateUnicodeStringLiterals(cypher); err != nil {
-		return err
-	}
-	if err := validateStaticMapKeys(cypher); err != nil {
-		return err
-	}
-	if err := validateNumericLiterals(cypher); err != nil {
-		return err
-	}
-	if err := validateArrowOperators(cypher); err != nil {
-		return err
-	}
-	if err := validatePlaceholderOperands(cypher); err != nil {
-		return err
-	}
-	if config.IsANTLRParser() {
-		return e.validateSyntaxANTLR(ctx, cypher, cypher25)
-	}
-	return e.validateSyntaxNornic(cypher)
-}
-
-// validateSyntaxANTLR uses ANTLR for strict OpenCypher grammar validation.
-// Provides detailed error messages with line/column information.
-func (e *StorageExecutor) validateSyntaxANTLR(ctx context.Context, cypher string, cypher25 bool) error {
-	if isNornicExtensionStatement(cypher) {
-		if err := e.validateSyntaxNornic(cypher); err != nil {
+	if mode == syntaxStatement {
+		// Cancellation precedes even a cached statement admission.
+		if err := ctx.Err(); err != nil {
 			return err
 		}
+	}
+	if mode == syntaxStatement && e.hasCachedValidSyntax(cypher, validator) {
+		return nil
+	}
+	if mode == syntaxStatement {
+		if err := validateUnicodeOperators(cypher); err != nil {
+			return err
+		}
+		if err := validateStaticMapKeys(cypher); err != nil {
+			return err
+		}
+		if err := validateNumericLiterals(cypher); err != nil {
+			return err
+		}
+		if err := validateArrowOperators(cypher); err != nil {
+			return err
+		}
+		if err := validatePlaceholderOperands(cypher); err != nil {
+			return err
+		}
+	}
+
+	var parserError error
+	if validator == syntaxValidANTLR && !isNornicExtensionStatement(cypher) {
+		parserError = antlr.ValidateContext(ctx, cypher, cyphertext.AcceptedSource)
+		if parserError == context.Canceled || parserError == context.DeadlineExceeded {
+			return parserError
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if parserError == nil {
+			e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
+			return nil
+		}
+	}
+
+	if mode == syntaxNativeCore || !e.hasCachedValidSyntax(cypher, syntaxValidNornic) {
+		// Grammar checks consume code from the same lexical expression reader as
+		// projections. Comments cannot introduce operands, quotes or delimiters;
+		// keep the original statement as the validation-cache key.
+		original := cypher
+		cypher = lexicalExpressionText(cypher)
+		if containsNotInOperator(cypher) {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				"Invalid input 'NOT': NOT IN is not a Cypher operator; write NOT x IN [list]")
+		}
+		if containsTrailingListComma(cypher) {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				"Invalid input ']': expected an expression")
+		}
+		if singleNodePatternComprehension(cypher) {
+			// [(n) | …]: a pattern comprehension needs a relationship, as the
+			// ANTLR parser and Neo4j require ("Invalid input '|'").
+			return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				localization.CypherCoreInvalidInputExpectedExpression("|"))
+		}
+		if hasAdjacentStringLiterals(cypher) {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+				"Invalid input: adjacent string literals require an operator between them")
+		}
+		if explainProfileConflict(cypher) {
+			return executionModeConflictError()
+		}
+		if _, ok := readTrailingFinish(cypher, detectFinishSuffix); ok {
+			// FINISH can't follow RETURN, as in Neo4j; every valid trailing
+			// FINISH was stripped before validation.
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "RETURN can only be used at the end of the query")
+		}
+		if !hasValidStartKeyword(cypher) {
+			// Neo4j reports an unrecognized statement as a syntax error; classify
+			// the localized terminal so Bolt carries the proper status code.
+			return &classifiedCypherError{
+				cause:  localizedError(localization.CypherTransactionsSyntaxStartInvalid(), nil),
+				code:   "Neo.ClientError.Statement.SyntaxError",
+				detail: "UnexpectedSyntax",
+			}
+		}
+		if err := validateLeadingNodePatternTransition(cypher); err != nil {
+			return err
+		}
+
+		if isGraphQueryStatement(cypher) && hasAdjacentOperands(cypher) {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: an expression is followed by another expression without an operator")
+		}
+
+		parenCount := 0
+		bracketCount := 0
+		braceCount := 0
+
+		for i := 0; i < len(cypher); i++ {
+			c := cypher[i]
+			if isCypherQuoteByte(c) {
+				end, closed := scanCypherQuotedText(cypher, i, c)
+				if !closed {
+					return &classifiedCypherError{cause: localizedError(localization.CypherTransactionsSyntaxUnclosedQuote(), nil), code: "Neo.ClientError.Statement.SyntaxError", detail: "UnexpectedSyntax"}
+				}
+				i = end - 1
+				continue
+			}
+			if c == '/' {
+				if end := queryCommentEnd(cypher, i); end >= 0 {
+					i = end - 1
+					continue
+				}
+			}
+			if c == '.' && i+1 < len(cypher) && cypher[i+1] == '.' && bracketCount == 0 {
+				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: malformed expression")
+			}
+			if c == '.' && (i == 0 || cypher[i-1] != '.') && (i+1 == len(cypher) || cypher[i+1] != '.') {
+				// A dot other than a range's (1..2) starts a property key (n.k,
+				// n.`k`), a map projection's all-properties (.*) or a number's
+				// digits: RETURN n. is Neo4j's "expected an identifier".
+				if next := queryGapEnd(cypher, i+1); next == len(cypher) || (!cyphertext.NamePartAt(cypher, next) || cypher[next] == '$') && !isCypherBacktickByte(cypher[next]) && cypher[next] != '*' {
+					token := ""
+					if next < len(cypher) {
+						token = cypher[next : next+1]
+					}
+					return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
+						localization.CypherCoreInvalidInputExpectedIdentifier(token))
+				}
+			}
+			if c == '+' {
+				next := skipSpaces(cypher, i+1)
+				if next < len(cypher) && cypher[next] == '*' {
+					return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: malformed expression")
+				}
+			}
+
+			switch c {
+			case '(':
+				parenCount++
+			case ')':
+				parenCount--
+			case '[':
+				bracketCount++
+			case ']':
+				bracketCount--
+			case '{':
+				braceCount++
+			case '}':
+				braceCount--
+			}
+
+			if parenCount < 0 || bracketCount < 0 || braceCount < 0 {
+				return newSemanticError(
+					"Neo.ClientError.Statement.SyntaxError",
+					"UnexpectedSyntax",
+					fmt.Sprintf("syntax error: unbalanced delimiter at position %d", i),
+				)
+			}
+		}
+
+		if parenCount != 0 {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced parentheses")
+		}
+		if bracketCount != 0 {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced square brackets")
+		}
+		if braceCount != 0 {
+			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced curly braces")
+		}
+		e.markCachedValidSyntax(original, syntaxValidNornic)
+		cypher = original
+	}
+	if parserError != nil {
+		if err := e.validateMatchSemanticScopes(ctx, cypher, cypher25); err != nil {
+			return err
+		}
+		if err := validateKnownFunctions(cypher); err != nil {
+			return err
+		}
+		err := syntaxAdmissionError(ctx, cypher, AcceptedSource, parserError)
+		return observability.RedactError(err, observability.ContextCredentials(cypher)...)
+	}
+	if validator == syntaxValidANTLR {
 		e.markCachedValidSyntax(cypher, syntaxValidANTLR)
-		return nil
 	}
-	parserError := antlr.ValidateContext(ctx, cypher)
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if parserError == nil {
-		e.markCachedValidSyntax(cypher, syntaxValidANTLR|syntaxGrammarAccepted)
-		return nil
-	}
-	if err := e.validateSyntaxNornic(cypher); err != nil {
-		return err
-	}
-	if err := e.validateMatchSemanticScopes(ctx, cypher, cypher25); err != nil {
-		return err
-	}
-	if err := validateKnownFunctions(cypher); err != nil {
-		return err
-	}
-	return syntaxAdmissionError(cypher, parserError)
+	return nil
 }
 
 // isNornicExtensionStatement reports whether cypher is a statement outside
@@ -489,139 +666,6 @@ func isDropRoleCommand(cypher string) bool {
 	return startsWithKeywords(cypher, "DROP", "ROLE")
 }
 
-// validateSyntaxNornic performs fast inline syntax validation.
-func (e *StorageExecutor) validateSyntaxNornic(cypher string) error {
-	if e.hasCachedValidSyntax(cypher, syntaxValidNornic) {
-		return nil
-	}
-	// Grammar checks consume code from the same lexical expression reader as
-	// projections. Comments cannot introduce operands, quotes or delimiters;
-	// keep the original statement as the validation-cache key.
-	original := cypher
-	cypher = lexicalExpressionText(cypher)
-	if containsNotInOperator(cypher) {
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			"Invalid input 'NOT': NOT IN is not a Cypher operator; write NOT x IN [list]")
-	}
-	if containsTrailingListComma(cypher) {
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			"Invalid input ']': expected an expression")
-	}
-	if singleNodePatternComprehension(cypher) {
-		// [(n) | …]: a pattern comprehension needs a relationship, as the
-		// ANTLR parser and Neo4j require ("Invalid input '|'").
-		return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			localization.CypherCoreInvalidInputExpectedExpression("|"))
-	}
-	if hasAdjacentStringLiterals(cypher) {
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-			"Invalid input: adjacent string literals require an operator between them")
-	}
-	if explainProfileConflict(cypher) {
-		return executionModeConflictError()
-	}
-	if _, ok := trailingBareFinish(cypher); ok {
-		// FINISH can't follow RETURN, as in Neo4j; every valid trailing
-		// FINISH was stripped before validation.
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "RETURN can only be used at the end of the query")
-	}
-	if !hasValidStartKeyword(cypher) {
-		// Neo4j reports an unrecognized statement as a syntax error; classify
-		// the localized terminal so Bolt carries the proper status code.
-		return &classifiedCypherError{
-			cause:  localizedError(localization.CypherTransactionsSyntaxStartInvalid(), nil),
-			code:   "Neo.ClientError.Statement.SyntaxError",
-			detail: "UnexpectedSyntax",
-		}
-	}
-	if err := validateLeadingNodePatternTransition(cypher); err != nil {
-		return err
-	}
-
-	if isGraphQueryStatement(cypher) && hasAdjacentOperands(cypher) {
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: an expression is followed by another expression without an operator")
-	}
-
-	parenCount := 0
-	bracketCount := 0
-	braceCount := 0
-
-	for i := 0; i < len(cypher); i++ {
-		c := cypher[i]
-		if isCypherQuoteByte(c) {
-			end, closed := scanCypherQuotedText(cypher, i, c)
-			if !closed {
-				return &classifiedCypherError{cause: localizedError(localization.CypherTransactionsSyntaxUnclosedQuote(), nil), code: "Neo.ClientError.Statement.SyntaxError", detail: "UnexpectedSyntax"}
-			}
-			i = end - 1
-			continue
-		}
-		if c == '/' {
-			if end := queryCommentEnd(cypher, i); end >= 0 {
-				i = end - 1
-				continue
-			}
-		}
-		if c == '.' && i+1 < len(cypher) && cypher[i+1] == '.' && bracketCount == 0 {
-			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: malformed expression")
-		}
-		if c == '.' && (i == 0 || cypher[i-1] != '.') && (i+1 == len(cypher) || cypher[i+1] != '.') {
-			// A dot other than a range's (1..2) starts a property key (n.k,
-			// n.`k`), a map projection's all-properties (.*) or a number's
-			// digits: RETURN n. is Neo4j's "expected an identifier".
-			if next := queryGapEnd(cypher, i+1); next == len(cypher) || (!isIdentByte(cypher[next]) || cypher[next] == '$') && !isCypherBacktickByte(cypher[next]) && cypher[next] != '*' {
-				token := ""
-				if next < len(cypher) {
-					token = cypher[next : next+1]
-				}
-				return localizedStatusError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax",
-					localization.CypherCoreInvalidInputExpectedIdentifier(token))
-			}
-		}
-		if c == '+' {
-			next := skipSpaces(cypher, i+1)
-			if next < len(cypher) && cypher[next] == '*' {
-				return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: malformed expression")
-			}
-		}
-
-		switch c {
-		case '(':
-			parenCount++
-		case ')':
-			parenCount--
-		case '[':
-			bracketCount++
-		case ']':
-			bracketCount--
-		case '{':
-			braceCount++
-		case '}':
-			braceCount--
-		}
-
-		if parenCount < 0 || bracketCount < 0 || braceCount < 0 {
-			return newSemanticError(
-				"Neo.ClientError.Statement.SyntaxError",
-				"UnexpectedSyntax",
-				fmt.Sprintf("syntax error: unbalanced delimiter at position %d", i),
-			)
-		}
-	}
-
-	if parenCount != 0 {
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced parentheses")
-	}
-	if bracketCount != 0 {
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced square brackets")
-	}
-	if braceCount != 0 {
-		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "syntax error: unbalanced curly braces")
-	}
-	e.markCachedValidSyntax(original, syntaxValidNornic)
-	return nil
-}
-
 // hasAdjacentOperands reports two operands with no operator between them,
 // such as n.name 'x', (a =~ 'T.*')'T.*', 5 'x', [1] 'x' or n.a n.b, which
 // Neo4j rejects as a syntax error in every expression (RETURN, WITH, WHERE,
@@ -639,7 +683,7 @@ func hasAdjacentOperands(cypher string) bool {
 	for index := 0; index < len(cypher); {
 		c := cypher[index]
 		switch {
-		case c == ' ' || c == '\t' || c == '\n' || c == '\r':
+		case cyphertext.IsWhitespaceAt(cypher, index):
 			index++
 		case isCypherStringQuoteByte(c):
 			if operandEnded {
@@ -656,30 +700,23 @@ func hasAdjacentOperands(cypher string) bool {
 			property := index > 0 && cypher[index-1] == '.'
 			index = end
 			operandEnded = property
-		case c >= '0' && c <= '9':
+		case cyphertext.NumberStartsAt(cypher, index):
 			if operandEnded {
 				return true
 			}
-			index++
-			for index < len(cypher) && (isIdentByte(cypher[index]) ||
-				(cypher[index] == '.' && index+1 < len(cypher) && cypher[index+1] >= '0' && cypher[index+1] <= '9')) {
-				index++
-			}
+			token, _ := cyphertext.ScanNumber(cypher, index)
+			index = token.TailEnd
 			operandEnded = true
 		case c == '$':
 			if operandEnded {
 				return true
 			}
 			index++
-			for index < len(cypher) && isIdentByte(cypher[index]) {
-				index++
-			}
+			index = cyphertext.NamePartEnd(cypher, index)
 			operandEnded = true
-		case isIdentByte(c):
+		case cyphertext.NamePartAt(cypher, index):
 			start := index
-			for index < len(cypher) && isIdentByte(cypher[index]) {
-				index++
-			}
+			index = cyphertext.NamePartEnd(cypher, index)
 			startsProperty := index < len(cypher) && cypher[index] == '.' &&
 				(index+1 >= len(cypher) || cypher[index+1] != '.')
 			if operandEnded && startsProperty {
@@ -741,7 +778,7 @@ func bareWordBeforeLiteral(cypher string, start, end int) bool {
 		return false
 	}
 	switch c := cypher[next]; {
-	case isCypherStringQuoteByte(c) || (c >= '0' && c <= '9'):
+	case isCypherStringQuoteByte(c) || cyphertext.IsDigit(c):
 	case c == '$':
 		// A $parameter after a node or relationship pattern's variable or
 		// label is its property map ((n:Label $props), [r $props]);
@@ -749,7 +786,7 @@ func bareWordBeforeLiteral(cypher string, start, end int) bool {
 		// parameter where a name must be (UNWIND [1] AS $x), Neo4j's
 		// "Invalid input '$'".
 		before := start
-		for before > 0 && isASCIIWhitespace(cypher[before-1]) {
+		for before > 0 && cyphertext.IsWhitespaceAt(cypher, before-1) {
 			before--
 		}
 		if before > 0 && strings.IndexByte("([:|&!", cypher[before-1]) >= 0 {
@@ -758,7 +795,7 @@ func bareWordBeforeLiteral(cypher string, start, end int) bool {
 	default:
 		return false
 	}
-	if c := cypher[start]; c >= '0' && c <= '9' {
+	if cyphertext.IsDigit(cypher[start]) {
 		return false
 	}
 	_, keyword := literalLeadingKeywords[upperASCII(cypher[start:end])]
@@ -789,8 +826,8 @@ func isGraphQueryStatement(cypher string) bool {
 	if strings.HasPrefix(rest, "(") {
 		return true
 	}
-	name, next, ok := scanIdentifierToken(rest, 0)
-	return ok && name != "" && strings.HasPrefix(strings.TrimSpace(rest[next:]), "=")
+	name, ok := cyphertext.ScanIdentifier(rest, 0)
+	return ok && name.Value != "" && strings.HasPrefix(strings.TrimSpace(rest[name.End:]), "=")
 }
 
 func validateLeadingNodePatternTransition(cypher string) error {

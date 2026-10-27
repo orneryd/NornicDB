@@ -21,7 +21,7 @@ func TestEmptyQuotedIncomingScope(t *testing.T) {
 				incoming = []string{""}
 			}
 			known, unresolved := false, false
-			executor.StatementFacts(query, resultmetadata.KnownScope(incoming), false).Visit(func(statement resultmetadata.Statement) {
+			executor.StatementFacts(query, resultmetadata.KnownScope(incoming), false, RawSource).Visit(func(statement resultmetadata.Statement) {
 				known = true
 				statement.Columns.Visit(func(columns []string) { require.Equal(t, []string{""}, columns) }, func() { t.Fatal("known statement has unknown columns") })
 			}, func() { t.Fatal("graph statement declined") }, func(reason resultmetadata.Unresolved) {

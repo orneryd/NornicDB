@@ -42,7 +42,7 @@ func TestSetTerminalErrorObserver(t *testing.T) {
 	engine.SetLifecycleController(controller)
 	exec := cypher.NewStorageExecutor(engine)
 
-	session, err := mgr.OpenWithExecutor(context.Background(), "neo4j", exec)
+	session, err := mgr.OpenWithExecutorForOwner(context.Background(), "neo4j", exec, "")
 	if err != nil {
 		t.Fatalf("open failed: %v", err)
 	}
@@ -70,74 +70,58 @@ func TestSetTerminalErrorObserver(t *testing.T) {
 	_ = mgr.RollbackAndDelete(context.Background(), session)
 }
 
-func TestCommitAndDelete_TerminalError(t *testing.T) {
-	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
-	if engine != nil {
-		fixtureowner.Own(t, engine)
-	}
-	if err != nil {
-		t.Fatalf("failed to create badger engine: %v", err)
-	}
-	t.Cleanup(func() { _ = engine.Close() })
-	controller := &lifecycleControllerStub{}
-	engine.SetLifecycleController(controller)
-	exec := cypher.NewStorageExecutor(engine)
-
-	mgr := NewManager(time.Second, nil)
-	session, err := mgr.OpenWithExecutor(context.Background(), "neo4j", exec)
-	if err != nil {
-		t.Fatalf("open failed: %v", err)
-	}
-
-	// Trigger terminal error via execute first
-	controller.mu.Lock()
-	controller.gracefulExpire = true
-	controller.mu.Unlock()
-
-	_, _ = mgr.ExecuteInSession(context.Background(), session, "CREATE (n:X)", nil)
-
-	// CommitAndDelete should replay the terminal error
-	_, err = mgr.CommitAndDelete(context.Background(), session)
-	if !errors.Is(err, storage.ErrMVCCSnapshotGracefulCancel) {
-		t.Fatalf("expected terminal error on commit, got %v", err)
-	}
-
-	// Session should be deleted
-	if _, ok := mgr.Get(session.ID); ok {
-		t.Fatalf("expected session deleted after failed commit")
-	}
-}
-
-func TestRollbackAndDelete_TerminalError_Succeeds(t *testing.T) {
-	engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
-	if engine != nil {
-		fixtureowner.Own(t, engine)
-	}
-	if err != nil {
-		t.Fatalf("failed to create badger engine: %v", err)
-	}
-	t.Cleanup(func() { _ = engine.Close() })
-	controller := &lifecycleControllerStub{}
-	engine.SetLifecycleController(controller)
-	exec := cypher.NewStorageExecutor(engine)
-
-	mgr := NewManager(time.Second, nil)
-	session, err := mgr.OpenWithExecutor(context.Background(), "neo4j", exec)
-	if err != nil {
-		t.Fatalf("open failed: %v", err)
-	}
-
-	// Set terminal error
-	controller.mu.Lock()
-	controller.gracefulExpire = true
-	controller.mu.Unlock()
-
-	_, _ = mgr.ExecuteInSession(context.Background(), session, "CREATE (n:X)", nil)
-
-	// Rollback after terminal error should succeed (no-op)
-	err = mgr.RollbackAndDelete(context.Background(), session)
-	if err != nil {
-		t.Fatalf("rollback after terminal should succeed, got %v", err)
+func TestManagerTerminalLifecycleScenarios(t *testing.T) {
+	for _, scenario := range []struct {
+		name         string
+		statements   []string
+		checkExecute bool
+		commit       bool
+		checkDeleted bool
+	}{
+		{name: "commit replays terminal error", statements: []string{"CREATE (n:X)"}, commit: true, checkDeleted: true},
+		{name: "rollback after terminal succeeds", statements: []string{"CREATE (n:X)"}},
+		{name: "execute replays terminal error", statements: []string{"CREATE (n:Doc {name:'expired'})", "CREATE (n:Doc {name:'expired-again'})"}, checkExecute: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			engine, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
+			if engine != nil {
+				fixtureowner.Own(t, engine)
+			}
+			if err != nil {
+				t.Fatalf("failed to create badger engine: %v", err)
+			}
+			t.Cleanup(func() { _ = engine.Close() })
+			controller := &lifecycleControllerStub{}
+			engine.SetLifecycleController(controller)
+			exec := cypher.NewStorageExecutor(engine)
+			mgr := NewManager(time.Second, nil)
+			session, err := mgr.OpenWithExecutorForOwner(context.Background(), "neo4j", exec, "")
+			if err != nil {
+				t.Fatalf("open with executor failed: %v", err)
+			}
+			controller.mu.Lock()
+			controller.gracefulExpire = true
+			controller.mu.Unlock()
+			for index, statement := range scenario.statements {
+				_, err = mgr.ExecuteInSession(context.Background(), session, statement, nil)
+				if scenario.checkExecute && !errors.Is(err, storage.ErrMVCCSnapshotGracefulCancel) {
+					t.Fatalf("expected graceful snapshot cancel at execution %d, got %v", index+1, err)
+				}
+			}
+			if scenario.commit {
+				_, err = mgr.CommitAndDelete(context.Background(), session)
+				if !errors.Is(err, storage.ErrMVCCSnapshotGracefulCancel) {
+					t.Fatalf("expected terminal error on commit, got %v", err)
+				}
+			} else if err = mgr.RollbackAndDelete(context.Background(), session); err != nil {
+				t.Fatalf("rollback after terminal error should succeed, got %v", err)
+			}
+			if scenario.checkDeleted {
+				if _, ok := mgr.Get(session.ID); ok {
+					t.Fatalf("expected session deleted after failed commit")
+				}
+			}
+		})
 	}
 }
 

@@ -48,11 +48,11 @@ func TestReviewR73SeedContracts(t *testing.T) {
 
 func TestReviewR73FabricContinuation(t *testing.T) {
 	ctx := context.Background()
-	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	defer mgr.Close()
-	require.NoError(t, mgr.CreateDatabase("review_shard"))
-	require.NoError(t, mgr.CreateCompositeDatabase("review_cmp", []multidb.ConstituentRef{{Alias: "source", DatabaseName: "review_shard", Type: "local", AccessMode: "read_write"}}))
+	require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "review_shard"}))
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "review_cmp", []multidb.ConstituentRef{{Alias: "source", DatabaseName: "review_shard", Type: "local", AccessMode: "read_write"}}))
 	s, err := mgr.GetStorage("review_shard")
 	require.NoError(t, err)
 	_, err = s.CreateNode(&storage.Node{ID: "r73", Labels: []string{"ReviewItem"}, Properties: map[string]interface{}{"k": int64(2)}})

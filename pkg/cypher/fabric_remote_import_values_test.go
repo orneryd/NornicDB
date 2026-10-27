@@ -28,7 +28,7 @@ func fabricRemoteImportExecutor(t *testing.T) (*StorageExecutor, neo4j.DriverWit
 	require.NotEmpty(t, httpURI, "requires the reference HTTP endpoint")
 	exec := fabricDispatchRemoteExecutor(t)
 	mgr := exec.dbManager.(*testDatabaseManagerAdapter).manager
-	require.NoError(t, mgr.AddConstituent("comp", multidb.ConstituentRef{Alias: "http", DatabaseName: "neo4j", Type: "remote", AccessMode: "read_write", URI: httpURI}))
+	require.NoError(t, mgr.AddConstituent(t.Context(), "comp", multidb.ConstituentRef{Alias: "http", DatabaseName: "neo4j", Type: "remote", AccessMode: "read_write", URI: httpURI}))
 	return exec, driver
 }
 

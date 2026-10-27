@@ -37,7 +37,7 @@ func TestProjectionPassThroughUsesSyntax(t *testing.T) {
 	} {
 		t.Run(sample.query, func(t *testing.T) {
 			var projection *resultmetadata.Projection
-			executor.StatementFacts(sample.query+" RETURN 1 AS sentinel", resultmetadata.KnownScope(sample.input), false).Visit(func(statement resultmetadata.Statement) {
+			executor.StatementFacts(sample.query+" RETURN 1 AS sentinel", resultmetadata.KnownScope(sample.input), false, RawSource).Visit(func(statement resultmetadata.Statement) {
 				require.NotEmpty(t, statement.Clauses)
 				require.Equal(t, resultmetadata.ClauseWith, statement.Clauses[0].Kind)
 				projection = statement.Clauses[0].Projection

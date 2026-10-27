@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	antlr4 "github.com/antlr4-go/antlr/v4"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
@@ -111,7 +112,9 @@ const redactGrammarCheckMaxBytes = 8 << 10
 
 // redactGrammarValidate is cantlr.ValidateContext; tests replace it to count the
 // grammar parses the redactor runs.
-var redactGrammarValidate = cantlr.ValidateContext
+var redactGrammarValidate = func(ctx context.Context, query string) error {
+	return cantlr.ValidateContext(ctx, query, cyphertext.AcceptedSource)
+}
 
 // redactGrammarAccepts is the uncached grammar verdict RedactLiterals uses.
 func redactGrammarAccepts(query string) bool {
@@ -156,6 +159,8 @@ func redactLiterals(query string, grammarAccepts func(string) bool) string {
 }
 
 func redactLiteralsContext(ctx context.Context, query string, stripComments bool, grammarAccepts func(string) bool) string {
+	source := cyphertext.SourceFor(ctx, query)
+	query = source.Text
 	trimmed, err := cantlr.TrimSpaceContext(ctx, query)
 	if err != nil || trimmed == "" {
 		return RedactedPlaceholder
@@ -176,7 +181,7 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 			text := tok.GetText()
 			if tok.GetTokenType() == cantlr.CypherLexerCOMMENT || tok.GetTokenType() == cantlr.CypherLexerLINE_COMMENT {
 				var ok bool
-				text, ok = redactCommentReplacement(ctx, text)
+				text, ok = cyphertext.CommentReplacement(text, func() bool { return ctx.Err() != nil })
 				if !ok {
 					return RedactedPlaceholder
 				}
@@ -186,6 +191,12 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 		query = normalized.String()
 	}
 	grammarValid := grammarAccepts(query)
+	// Valid syntax supplies roles: a property named password is ordinary
+	// structure, and all literal values below are still masked. If syntax
+	// cannot establish those roles, retain fail-closed PASSWORD projection.
+	if !grammarValid && cyphertext.PasswordBoundary(query) >= 0 {
+		return RedactedPlaceholder
+	}
 
 	var b strings.Builder
 	b.Grow(len(query))
@@ -193,15 +204,20 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 	// inside a node or relationship pattern, never inside a map.
 	var stack []int
 	prev := noPrevToken
+	acceptedCursor, originalCursor := 0, 0
 	for i, tok := range toks {
 		if i&1023 == 0 && ctx.Err() != nil {
 			return RedactedPlaceholder
 		}
 		ttype := tok.GetTokenType()
 		text := tok.GetText()
+		acceptedCursor += len(text)
+		originalEnd, _ := source.OriginalOffset(acceptedCursor, false, cyphertext.SourceExtent)
+		originalText := source.Original[originalCursor:originalEnd]
+		originalCursor = originalEnd
 		if stripComments && (ttype == cantlr.CypherLexerCOMMENT || ttype == cantlr.CypherLexerLINE_COMMENT) {
 			var ok bool
-			text, ok = redactCommentReplacement(ctx, text)
+			text, ok = cyphertext.CommentReplacement(text, func() bool { return ctx.Err() != nil })
 			if !ok {
 				return RedactedPlaceholder
 			}
@@ -224,12 +240,13 @@ func redactLiteralsContext(ctx context.Context, query string, stripComments bool
 		case !grammarValid && redactStructuralOnly(ttype, prev, stack):
 			b.WriteString(RedactedPlaceholder)
 		default:
-			b.WriteString(text)
+			b.WriteString(originalText)
 		}
 		if tok.GetChannel() == antlr4.TokenDefaultChannel {
 			prev = ttype
 		}
 	}
+	b.WriteString(source.Original[originalCursor:])
 	out := b.String()
 	if out == "" {
 		return RedactedPlaceholder
@@ -249,7 +266,7 @@ type checkedRedactionTokens struct {
 // redactLexCheckedContext applies the step-1 fail-closed signals and records
 // comments in that same pass, avoiding a separate scan of the checked tokens.
 func redactLexCheckedContext(ctx context.Context, query string) (checkedRedactionTokens, bool) {
-	toks, err := cantlr.LexContext(ctx, query)
+	toks, err := cantlr.LexContext(ctx, query, cyphertext.AcceptedSource)
 	if err != nil {
 		return checkedRedactionTokens{}, false
 	}
@@ -320,22 +337,4 @@ func redactStructuralOnly(ttype, prev int, stack []int) bool {
 		return true
 	}
 	return false
-}
-
-// Preserve StripComments' formatting while bounding work within a comment.
-func redactCommentReplacement(ctx context.Context, comment string) (string, bool) {
-	if strings.HasPrefix(comment, "//") {
-		return "", true
-	}
-	var b strings.Builder
-	b.WriteByte(' ')
-	for i := 0; i < len(comment); i++ {
-		if i&1023 == 0 && ctx.Err() != nil {
-			return "", false
-		}
-		if comment[i] == '\r' || comment[i] == '\n' {
-			b.WriteByte(comment[i])
-		}
-	}
-	return b.String(), ctx.Err() == nil
 }

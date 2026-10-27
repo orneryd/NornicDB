@@ -10,11 +10,11 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unicode"
 
 	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/convert"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
+	"github.com/orneryd/nornicdb/pkg/storage"
 	"github.com/orneryd/nornicdb/pkg/util"
 )
 
@@ -34,7 +34,7 @@ type FabricExecutor struct {
 
 	evaluateGraphArguments GraphArgumentEvaluator
 	authorizeGraph         func(context.Context, string, string) error
-	remoteModeUncertain    func(string) bool
+	remoteStatementPolicy  func(context.Context, string) (RemoteStatementPolicy, error)
 	union                  UnionContract
 	resultColumns          resultmetadata.Provider
 	codec                  RemoteValueCodec
@@ -134,6 +134,9 @@ func (e *FabricExecutor) restoreCachedResultColumns(ctx context.Context, result 
 //   - params: query parameters
 //   - authToken: the caller's auth token for OIDC forwarding to remote shards
 func (e *FabricExecutor) Execute(ctx context.Context, tx *FabricTransaction, fragment Fragment, params map[string]interface{}, authToken string) (*ResultStream, error) {
+	if tx != nil {
+		tx.BindContext(ctx)
+	}
 	switch f := fragment.(type) {
 	case *FragmentInit:
 		return e.executeInit(f)
@@ -213,10 +216,17 @@ func (e *FabricExecutor) dispatchExec(ctx context.Context, tx *FabricTransaction
 		if err != nil {
 			return nil, 0, err
 		}
-		if e.remoteModeUncertain != nil && e.remoteModeUncertain(f.Query) {
+		policy := RemoteStatementPolicy{AccessMode: storage.RemoteAccessWrite, Uncertain: true}
+		if e.remoteStatementPolicy != nil {
+			policy, err = e.remoteStatementPolicy(ctx, query)
+			if err != nil {
+				return nil, 0, err
+			}
+		}
+		if policy.Uncertain {
 			ctx = WithUnresolvedRemoteMode(ctx)
 		}
-		res, err := e.remote.Execute(ctx, l, query, remoteParams, authToken)
+		res, err := e.remote.Execute(ctx, l, query, remoteParams, authToken, policy.AccessMode)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -250,28 +260,24 @@ func (e *FabricExecutor) executeRows(ctx context.Context, tx *FabricTransaction,
 		return res.Columns, wrapPipelineIterator(ctx, NewResultRowIterator(res), 128), nil
 	case *FragmentExec:
 		res, prefetch, err := e.dispatchExec(ctx, tx, f, params, authToken)
+		columns, rows, err := resultRows(res, err)
 		if err != nil {
 			return nil, nil, err
 		}
-		if res == nil {
-			return nil, wrapPipelineIterator(ctx, NewResultRowIterator(nil), prefetch), nil
-		}
-		return res.Columns, wrapPipelineIterator(ctx, NewResultRowIterator(res), prefetch), nil
+		return columns, wrapPipelineIterator(ctx, rows, prefetch), nil
 	case *FragmentUnion:
 		return e.executeUnionRows(ctx, tx, f, params, authToken)
 	default:
 		res, err := e.Execute(ctx, tx, fragment, params, authToken)
+		columns, iterator, err := resultRows(res, err)
 		if err != nil {
 			return nil, nil, err
 		}
-		if res == nil {
-			return nil, wrapPipelineIterator(ctx, NewResultRowIterator(nil), 64), nil
-		}
-		rows := wrapPipelineIterator(ctx, NewResultRowIterator(res), 64)
-		if res.RowWrapper {
+		rows := wrapPipelineIterator(ctx, iterator, 64)
+		if res != nil && res.RowWrapper {
 			rows = rowWrapperRows{rows}
 		}
-		return res.Columns, rows, nil
+		return columns, rows, nil
 	}
 }
 
@@ -328,7 +334,7 @@ func (e *FabricExecutor) prepareExecDispatch(ctx context.Context, tx *FabricTran
 	}
 	ctx = context.WithValue(ctx, graphSelectionContextKey{}, graph)
 	if tx != nil {
-		participant := participantKeyFromLocation(loc)
+		participant := ParticipantKeyFromLocation(loc)
 		sub, err := tx.GetOrOpen(participant, f.IsWrite)
 		if err != nil {
 			return nil, nil, ctx, err
@@ -431,11 +437,17 @@ func splitTopLevelCSV(s string) []string {
 	return parts
 }
 
-func participantKeyFromLocation(loc Location) string {
+// ParticipantKeyFromLocation returns the transaction identity for a resolved location.
+// Local locations share an identity by database name, so composite routing and
+// ordinary fragment dispatch join the same local transaction participant.
+func ParticipantKeyFromLocation(loc Location) string {
 	switch l := loc.(type) {
 	case *LocationLocal:
 		return "local:" + strings.TrimSpace(l.DBName)
 	case *LocationRemote:
+		if l.GraphName != "" {
+			return "remote:" + l.GraphName
+		}
 		return "remote:" + strings.TrimSpace(l.URI) + "|" + strings.TrimSpace(l.DBName)
 	default:
 		return fmt.Sprintf("unknown:%T", loc)
@@ -644,7 +656,7 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookup(
 		if !containsFold(trimmed, "RETURN collect(") {
 			return nil, false, nil
 		}
-		spec, ok := parseApplyCorrelatedLookupSubquery(trimmed)
+		spec, ok := parseApplyCorrelatedLookupSubquery(ctx, trimmed)
 		if !ok || spec.importCol == "" || strings.TrimSpace(spec.wherePart) == "" || strings.TrimSpace(spec.returnModifiers) != "" {
 			return nil, false, nil
 		}
@@ -653,11 +665,11 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookup(
 			return nil, false, nil
 		}
 
-		matchVar, matchProp, otherWhere, ok := extractApplyCorrelationWhere(spec.wherePart, spec.importCol)
+		matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere(spec.wherePart, spec.importCol, splitTopLevelAnd, splitTopLevelEquality, parseFabricVarProp, cyphertext.IsIdentifier)
 		if !ok {
 			return nil, false, nil
 		}
-		otherWhere, ok = sanitizeOtherWhereForImportColumn(otherWhere, spec.importCol)
+		otherWhere, ok = cyphertext.FilterImportConjuncts(otherWhere, spec.importCol, cyphertext.IdentifierExact, splitTopLevelAnd)
 		if !ok {
 			return nil, false, nil
 		}
@@ -823,29 +835,29 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookup(
 	if !containsFold(trimmed, "RETURN ") || containsFold(trimmed, "RETURN collect(") {
 		return nil, false, nil
 	}
-	m := reApplyLookupRows.FindStringSubmatch(trimmed)
-	if len(m) != 6 {
+	spec, ok := parseApplyCorrelatedLookupSubquery(ctx, trimmed)
+	if !ok || spec.returnModifiers != "" {
 		return nil, false, nil
 	}
-	importCol := strings.TrimSpace(m[1])
-	useClause := strings.TrimSpace(m[2])
-	matchPart := strings.TrimSpace(m[3])
-	wherePart := strings.TrimSpace(m[4])
-	returnPart := strings.TrimSpace(m[5])
+	importCol := spec.importCol
+	useClause := spec.useClause
+	matchPart := spec.matchPart
+	wherePart := spec.wherePart
+	returnPart := spec.returnProjection
 	if importCol == "" || wherePart == "" || returnPart == "" {
 		return nil, false, nil
 	}
 
-	matchVar, matchProp, otherWhere, ok := extractApplyCorrelationWhere(wherePart, importCol)
+	matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere(wherePart, importCol, splitTopLevelAnd, splitTopLevelEquality, parseFabricVarProp, cyphertext.IsIdentifier)
 	if !ok {
 		return nil, false, nil
 	}
-	otherWhere, ok = sanitizeOtherWhereForImportColumn(otherWhere, importCol)
+	otherWhere, ok = cyphertext.FilterImportConjuncts(otherWhere, importCol, cyphertext.IdentifierExact, splitTopLevelAnd)
 	if !ok {
 		return nil, false, nil
 	}
 
-	returnItems, ok := parseSimpleBatchedLookupReturnItems(returnPart, matchVar)
+	returnItems, ok := readPropertyReturnItems(returnPart, matchVar)
 	if !ok || len(returnItems) == 0 {
 		return nil, false, nil
 	}
@@ -1026,8 +1038,6 @@ type applyCorrelatedLookupSpec struct {
 	returnModifiers  string
 }
 
-var reApplyLookupRows = regexp.MustCompile(`(?is)^WITH\s+([A-Za-z_][A-Za-z0-9_]*)\s+((?:USE\s+[A-Za-z0-9_.` + "`" + `]+\s+)?)MATCH\s+(.+?)\s+WHERE\s+(.+?)\s+RETURN\s+(.+?)\s*;?\s*$`)
-
 type fabricReturnItem struct {
 	expr  string
 	prop  string
@@ -1063,21 +1073,21 @@ func (e *FabricExecutor) tryExecuteApplyBatchedCountLookup(
 		return nil, false, nil
 	}
 
-	spec, ok := parseApplyCorrelatedLookupSubquery(trimmed)
+	spec, ok := parseApplyCorrelatedLookupSubquery(ctx, trimmed)
 	if !ok || spec.importCol == "" || strings.TrimSpace(spec.wherePart) == "" || strings.TrimSpace(spec.returnProjection) == "" || strings.TrimSpace(spec.returnModifiers) != "" {
 		return nil, false, nil
 	}
 
-	matchVar, matchProp, otherWhere, ok := extractApplyCorrelationWhere(spec.wherePart, spec.importCol)
+	matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere(spec.wherePart, spec.importCol, splitTopLevelAnd, splitTopLevelEquality, parseFabricVarProp, cyphertext.IsIdentifier)
 	if !ok {
 		return nil, false, nil
 	}
-	otherWhere, ok = sanitizeOtherWhereForImportColumn(otherWhere, spec.importCol)
+	otherWhere, ok = cyphertext.FilterImportConjuncts(otherWhere, spec.importCol, cyphertext.IdentifierExact, splitTopLevelAnd)
 	if !ok {
 		return nil, false, nil
 	}
 
-	countItems, ok := parseSimpleBatchedCountReturnItems(spec.returnProjection)
+	countItems, ok := readCountReturnItems(spec.returnProjection)
 	if !ok || len(countItems) == 0 {
 		return nil, false, nil
 	}
@@ -1317,20 +1327,20 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 		return nil, false, nil
 	}
 
-	spec, ok := parseApplyCorrelatedLookupSubquery(trimmed)
+	spec, ok := parseApplyCorrelatedLookupSubquery(ctx, trimmed)
 	if !ok || spec.importCol == "" || strings.TrimSpace(spec.wherePart) == "" || strings.TrimSpace(spec.returnProjection) == "" {
 		return nil, false, nil
 	}
-	matchVar, matchProp, otherWhere, ok := extractApplyCorrelationWhere(spec.wherePart, spec.importCol)
+	matchVar, matchProp, otherWhere, ok := cyphertext.ExtractCorrelationWhere(spec.wherePart, spec.importCol, splitTopLevelAnd, splitTopLevelEquality, parseFabricVarProp, cyphertext.IsIdentifier)
 	if !ok {
 		return nil, false, nil
 	}
-	otherWhere, ok = sanitizeOtherWhereForImportColumn(otherWhere, spec.importCol)
+	otherWhere, ok = cyphertext.FilterImportConjuncts(otherWhere, spec.importCol, cyphertext.IdentifierExact, splitTopLevelAnd)
 	if !ok {
 		return nil, false, nil
 	}
 
-	returnItems, ok := parseSimpleBatchedLookupReturnItems(spec.returnProjection, matchVar)
+	returnItems, ok := readPropertyReturnItems(spec.returnProjection, matchVar)
 	if !ok || len(returnItems) == 0 {
 		return nil, false, nil
 	}
@@ -1568,28 +1578,53 @@ func (e *FabricExecutor) tryExecuteApplyBatchedLookupRows(
 	return result, true, nil
 }
 
-func parseSimpleBatchedLookupReturnItems(returnPart, matchVar string) ([]fabricReturnItem, bool) {
+// readBatchedReturnItem owns whitespace, alias framing and identifier admission
+// for batched projections. The typed readers retain their separate products.
+func readBatchedReturnItem(raw string) (expr, alias string, ok bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", false
+	}
+	expr, alias = raw, raw
+	if as := lastAsIndexFold(raw); as >= 0 {
+		expr = strings.TrimSpace(raw[:as])
+		alias = strings.TrimSpace(raw[as+4:])
+	}
+	return expr, alias, cyphertext.IsIdentifier(alias)
+}
+
+func readPropertyReturnItems(returnPart, matchVar string) ([]fabricReturnItem, bool) {
 	items := splitTopLevelCSV(returnPart)
 	if len(items) == 0 {
 		return nil, false
 	}
 	out := make([]fabricReturnItem, 0, len(items))
 	for _, raw := range items {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
+		expr, alias, admitted := readBatchedReturnItem(raw)
+		if !admitted {
 			return nil, false
 		}
-		expr := raw
-		alias := raw
-		if as := lastAsIndexFold(raw); as >= 0 {
-			expr = strings.TrimSpace(raw[:as])
-			alias = strings.TrimSpace(raw[as+4:])
-		}
-		v, p, ok := parseFabricVarProp(expr)
-		if !ok || !strings.EqualFold(v, matchVar) || !isSimpleIdentifier(alias) {
+		variable, property, ok := parseFabricVarProp(expr)
+		if !ok || !strings.EqualFold(variable, matchVar) {
 			return nil, false
 		}
-		out = append(out, fabricReturnItem{expr: strings.TrimSpace(expr), prop: p, alias: alias})
+		out = append(out, fabricReturnItem{expr: expr, prop: property, alias: alias})
+	}
+	return out, true
+}
+
+func readCountReturnItems(returnPart string) ([]fabricCountReturnItem, bool) {
+	items := splitTopLevelCSV(returnPart)
+	if len(items) == 0 {
+		return nil, false
+	}
+	out := make([]fabricCountReturnItem, 0, len(items))
+	for _, raw := range items {
+		expr, alias, admitted := readBatchedReturnItem(raw)
+		if !admitted || !isSimpleCountExpr(expr) {
+			return nil, false
+		}
+		out = append(out, fabricCountReturnItem{expr: expr, alias: alias})
 	}
 	return out, true
 }
@@ -1615,41 +1650,13 @@ func aliasesFromReturnItems(items []fabricReturnItem) []string {
 	return cols
 }
 
-func parseSimpleBatchedCountReturnItems(returnPart string) ([]fabricCountReturnItem, bool) {
-	items := splitTopLevelCSV(returnPart)
-	if len(items) == 0 {
-		return nil, false
-	}
-	out := make([]fabricCountReturnItem, 0, len(items))
-	for _, raw := range items {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
-			return nil, false
-		}
-		expr := raw
-		alias := raw
-		if as := lastAsIndexFold(raw); as >= 0 {
-			expr = strings.TrimSpace(raw[:as])
-			alias = strings.TrimSpace(raw[as+4:])
-		}
-		if !isSimpleIdentifier(alias) {
-			return nil, false
-		}
-		if !isSimpleCountExpr(expr) {
-			return nil, false
-		}
-		out = append(out, fabricCountReturnItem{expr: expr, alias: alias})
-	}
-	return out, true
-}
-
 func isSimpleCountExpr(expr string) bool {
 	expr = strings.TrimSpace(expr)
 	if !startsWithFold(expr, "count(") || !strings.HasSuffix(expr, ")") {
 		return false
 	}
 	inner := strings.TrimSpace(expr[len("count(") : len(expr)-1])
-	if inner == "*" || isSimpleIdentifier(inner) {
+	if inner == "*" || cyphertext.IsIdentifier(inner) {
 		return true
 	}
 	_, _, ok := parseFabricVarProp(inner)
@@ -1684,7 +1691,7 @@ func parseSimpleCollectReturnItem(returnPart string) (collectExpr string, alias 
 	}
 	expr := strings.TrimSpace(item[:asIdx])
 	alias = strings.TrimSpace(item[asIdx+4:])
-	if !isSimpleIdentifier(alias) {
+	if !cyphertext.IsIdentifier(alias) {
 		return "", "", false
 	}
 	if !startsWithFold(expr, "collect(") || !strings.HasSuffix(expr, ")") {
@@ -1697,7 +1704,7 @@ func parseSimpleCollectReturnItem(returnPart string) (collectExpr string, alias 
 	return inner, alias, true
 }
 
-func parseApplyCorrelatedLookupSubquery(query string) (applyCorrelatedLookupSpec, bool) {
+func parseApplyCorrelatedLookupSubquery(ctx context.Context, query string) (applyCorrelatedLookupSpec, bool) {
 	trimmed := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(query), ";"))
 	if !startsWithFold(trimmed, "WITH ") {
 		return applyCorrelatedLookupSpec{}, false
@@ -1712,7 +1719,7 @@ func parseApplyCorrelatedLookupSubquery(query string) (applyCorrelatedLookupSpec
 	}
 
 	importCol, remainder := firstToken(rest)
-	if importCol == "" || !isSimpleIdentifier(importCol) {
+	if importCol == "" || !cyphertext.IsIdentifier(importCol) {
 		return applyCorrelatedLookupSpec{}, false
 	}
 	rest = strings.TrimSpace(remainder)
@@ -1721,16 +1728,13 @@ func parseApplyCorrelatedLookupSubquery(query string) (applyCorrelatedLookupSpec
 	}
 
 	useClause := ""
-	if startsWithFold(rest, "USE ") {
-		matchIdx := indexTopLevelKeyword(rest, "MATCH")
-		if matchIdx <= 0 {
-			return applyCorrelatedLookupSpec{}, false
-		}
-		useClause = strings.TrimSpace(rest[:matchIdx])
-		if !startsWithFold(useClause, "USE ") {
-			return applyCorrelatedLookupSpec{}, false
-		}
-		rest = strings.TrimSpace(rest[matchIdx:])
+	reference, remaining, hasUse, err := ReadUseClause(ctx, rest, true, cyphertext.AcceptedSource)
+	if err != nil {
+		return applyCorrelatedLookupSpec{}, false
+	}
+	if hasUse {
+		useClause = rest[:reference.End]
+		rest = remaining
 	}
 
 	if !startsWithFold(rest, "MATCH ") {
@@ -1785,8 +1789,7 @@ func firstToken(s string) (token string, rest string) {
 		return "", ""
 	}
 	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case ' ', '\t', '\n', '\r':
+		if cyphertext.IsWhitespaceAt(s, i) {
 			return strings.TrimSpace(s[:i]), strings.TrimSpace(s[i:])
 		}
 	}
@@ -1829,90 +1832,6 @@ func indexTopLevelKeyword(s string, keyword string) int {
 		}
 	}
 	return -1
-}
-
-func extractApplyCorrelationWhere(whereClause string, importCol string) (matchVar string, matchProp string, otherWhere string, ok bool) {
-	terms := splitTopLevelAnd(whereClause)
-	if len(terms) == 0 {
-		return "", "", "", false
-	}
-	correlationIdx := -1
-	for i, term := range terms {
-		lhs, rhs, isEq := splitTopLevelEquality(term)
-		if !isEq {
-			continue
-		}
-		leftVar, leftProp, leftOK := parseFabricVarProp(lhs)
-		rightVar, rightProp, rightOK := parseFabricVarProp(rhs)
-		switch {
-		case leftOK && isSimpleIdentifier(strings.TrimSpace(rhs)) && strings.EqualFold(strings.TrimSpace(rhs), importCol):
-			matchVar, matchProp = leftVar, leftProp
-			correlationIdx = i
-		case rightOK && isSimpleIdentifier(strings.TrimSpace(lhs)) && strings.EqualFold(strings.TrimSpace(lhs), importCol):
-			matchVar, matchProp = rightVar, rightProp
-			correlationIdx = i
-		}
-		if correlationIdx >= 0 {
-			break
-		}
-	}
-	if correlationIdx < 0 || matchVar == "" || matchProp == "" {
-		return "", "", "", false
-	}
-	remaining := make([]string, 0, len(terms)-1)
-	for i, term := range terms {
-		if i == correlationIdx {
-			continue
-		}
-		t := strings.TrimSpace(term)
-		if t != "" {
-			remaining = append(remaining, t)
-		}
-	}
-	return matchVar, matchProp, strings.Join(remaining, " AND "), true
-}
-
-func sanitizeOtherWhereForImportColumn(otherWhere string, importCol string) (string, bool) {
-	if strings.TrimSpace(otherWhere) == "" {
-		return "", true
-	}
-	terms := splitTopLevelAnd(otherWhere)
-	if len(terms) == 0 {
-		return "", true
-	}
-	kept := make([]string, 0, len(terms))
-	for _, term := range terms {
-		term = strings.TrimSpace(term)
-		if term == "" {
-			continue
-		}
-		if isImportNotNullGuardTerm(term, importCol) {
-			continue
-		}
-		if containsStandaloneIdentifier(term, importCol) {
-			return "", false
-		}
-		kept = append(kept, term)
-	}
-	if len(kept) == 0 {
-		return "", true
-	}
-	return strings.Join(kept, " AND "), true
-}
-
-func isImportNotNullGuardTerm(term string, importCol string) bool {
-	parts := strings.Fields(strings.TrimSpace(term))
-	if len(parts) != 4 {
-		return false
-	}
-	left := strings.TrimSpace(parts[0])
-	left = strings.Trim(left, "`")
-	if !strings.EqualFold(left, strings.TrimSpace(importCol)) {
-		return false
-	}
-	return strings.EqualFold(parts[1], "IS") &&
-		strings.EqualFold(parts[2], "NOT") &&
-		strings.EqualFold(parts[3], "NULL")
 }
 
 func splitTopLevelAnd(whereClause string) []string {
@@ -2021,37 +1940,15 @@ func parseFabricVarProp(expr string) (varName, prop string, ok bool) {
 	}
 	lhs := strings.TrimSpace(expr[:dot])
 	rhs := strings.TrimSpace(expr[dot+1:])
-	if !isSimpleIdentifier(lhs) || !isSimpleIdentifier(rhs) {
+	if !cyphertext.IsIdentifier(lhs) || !cyphertext.IsIdentifier(rhs) {
 		return "", "", false
 	}
 	return lhs, rhs, true
 }
 
-func containsStandaloneIdentifier(s, ident string) bool {
-	if ident == "" || len(s) < len(ident) {
-		return false
-	}
-	for i := 0; i+len(ident) <= len(s); i++ {
-		if next, quoted := cyphertext.SkipToken(s, i); quoted {
-			i = next - 1
-			continue
-		}
-		if s[i:i+len(ident)] != ident {
-			continue
-		}
-		prevOK := i == 0 || !isIdentChar(s[i-1])
-		next := i + len(ident)
-		nextOK := next >= len(s) || !isIdentChar(s[next])
-		if prevOK && nextOK {
-			return true
-		}
-	}
-	return false
-}
-
 func (e *FabricExecutor) executionProjection(ctx context.Context, query string, incoming []string) resultmetadata.Projection {
 	if provider, ok := e.resultColumns.(resultmetadata.ProjectionProvider); ok {
-		return provider.ResultProjection(ctx, query, incoming)
+		return provider.ResultProjection(ctx, query, incoming, AcceptedSource)
 	}
 	return resultmetadata.Projection{}
 }
@@ -2081,7 +1978,7 @@ func projectSimpleProjectionFromRow(plan resultmetadata.Projection, inputCols []
 	index := buildColumnIndex(inputCols)
 	values := make([]interface{}, 0, len(columns))
 	for i, source := range plan.Expressions {
-		if !isSimpleIdentifier(source) || !isSimpleIdentifier(columns[i]) {
+		if !cyphertext.IsIdentifier(source) || !cyphertext.IsIdentifier(columns[i]) {
 			return nil, nil, false
 		}
 		position, found := index[source]
@@ -2189,7 +2086,7 @@ func executeApplyInMemoryProjectionColumns(inputResult *ResultStream, query stri
 					src = strings.TrimSpace(it[:as])
 					alias = strings.TrimSpace(it[as+4:])
 				}
-				if !isSimpleIdentifier(src) || !isSimpleIdentifier(alias) {
+				if !cyphertext.IsIdentifier(src) || !cyphertext.IsIdentifier(alias) {
 					return nil, false
 				}
 				parsed = append(parsed, retItem{src: src, alias: alias})
@@ -2467,7 +2364,7 @@ func parseSimpleOrderByClause(clause string, aliasToCol map[string]string) []sim
 		if mapped, ok := aliasToCol[item]; ok {
 			item = mapped
 		}
-		if !isSimpleIdentifier(item) {
+		if !cyphertext.IsIdentifier(item) {
 			continue
 		}
 		specs = append(specs, simpleOrderSpec{column: item, desc: desc})
@@ -2476,15 +2373,13 @@ func parseSimpleOrderByClause(clause string, aliasToCol map[string]string) []sim
 }
 
 func parseSimplePositiveInt(s string) (int, bool) {
-	if s == "" {
+	token, ok := cyphertext.ScanNumber(s, 0)
+	if !ok || token.Invalid || token.End != len(s) || token.Base != 10 || token.Fraction || token.Exponent || token.Grouped || token.Suffix != 0 {
 		return 0, false
 	}
 	value := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] < '0' || s[i] > '9' {
-			return 0, false
-		}
-		value = value*10 + int(s[i]-'0')
+	for index := 0; index < token.End; index++ {
+		value = value*10 + int(s[index]-'0')
 	}
 	return value, true
 }
@@ -2592,7 +2487,7 @@ func projectInputRowsAsMaps(input *ResultStream, mapSpec string) ([]map[string]i
 		}
 		k := strings.TrimSpace(e[:colon])
 		v := strings.TrimSpace(e[colon+1:])
-		if !isSimpleIdentifier(k) || !isSimpleIdentifier(v) {
+		if !cyphertext.IsIdentifier(k) || !cyphertext.IsIdentifier(v) {
 			return nil, false
 		}
 		pairs = append(pairs, kv{key: k, col: v})
@@ -2718,7 +2613,7 @@ func executeCollectedMapJoinFlatProjectionColumns(input *ResultStream, query str
 		}
 		key := strings.TrimSpace(p[:colon])
 		src := strings.TrimSpace(p[colon+1:])
-		if !isSimpleIdentifier(key) || !isSimpleIdentifier(src) {
+		if !cyphertext.IsIdentifier(key) || !cyphertext.IsIdentifier(src) {
 			return nil, false
 		}
 		if strings.EqualFold(key, groupKeyField) {
@@ -2748,7 +2643,7 @@ func executeCollectedMapJoinFlatProjectionColumns(input *ResultStream, query str
 		}
 		expr := strings.TrimSpace(part[:as])
 		alias := strings.TrimSpace(part[as+4:])
-		if !isSimpleIdentifier(alias) {
+		if !cyphertext.IsIdentifier(alias) {
 			return nil, false
 		}
 		v, k, ok := parseFabricVarProp(expr)
@@ -2880,7 +2775,7 @@ func (e *FabricExecutor) executeApplyAsPipeline(
 		if col == "" {
 			continue
 		}
-		quotedCol := quoteCypherIdentifier(col)
+		quotedCol := cyphertext.PrintIdentifier(col, cyphertext.IsIdentifier, cyphertext.AcceptedSource)
 		projections = append(projections, rowVar+"."+quotedCol+" AS "+quotedCol)
 	}
 	if len(projections) == 0 {
@@ -2911,24 +2806,6 @@ func (e *FabricExecutor) executeApplyAsPipeline(
 	return res, true, nil
 }
 
-func isSimpleIdentifier(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		if i == 0 {
-			if !(unicode.IsLetter(rune(s[i])) || s[i] == '_') {
-				return false
-			}
-			continue
-		}
-		if !(unicode.IsLetter(rune(s[i])) || unicode.IsDigit(rune(s[i])) || s[i] == '_') {
-			return false
-		}
-	}
-	return true
-}
-
 func importColumnsFromFragment(f Fragment) []string {
 	if f == nil {
 		return nil
@@ -2940,13 +2817,6 @@ func importColumnsFromFragment(f Fragment) []string {
 		return init.Columns
 	}
 	return nil
-}
-
-func quoteCypherIdentifier(identifier string) string {
-	if isSimpleIdentifier(identifier) {
-		return identifier
-	}
-	return "`" + strings.ReplaceAll(identifier, "`", "``") + "`"
 }
 
 func rewriteFragmentWithImports(fragment Fragment) Fragment {
@@ -3075,7 +2945,11 @@ func scopedBindings(bindings map[string]interface{}, scope []string) map[string]
 // sent as parameters, which the remote transport writes as their Cypher
 // types; a fragment that imports nothing runs as it is.
 func (e *FabricExecutor) remoteImportStatement(f *FragmentExec, params, record map[string]interface{}) (query string, out map[string]interface{}, scoped []string, err error) {
-	return e.importStatement(f, params, record, e.codec.Import)
+	query, out, scoped, err = e.importStatement(f, params, record, e.codec.Import)
+	if err == nil {
+		query = cyphertext.EmitRawSource(query)
+	}
+	return query, out, scoped, err
 }
 
 // importStatement preserves scoped imports with the canonical CALL lifetime on
@@ -3108,7 +2982,7 @@ func (e *FabricExecutor) importStatement(f *FragmentExec, params, record map[str
 		if i > 0 {
 			head.WriteString(", ")
 		}
-		head.WriteString("$" + parameter + " AS " + quoteCypherIdentifier(name))
+		head.WriteString("$" + parameter + " AS " + cyphertext.PrintIdentifier(name, cyphertext.IsIdentifier, cyphertext.AcceptedSource))
 	}
 	body := strings.TrimSpace(f.Query)
 	if len(f.ScopeImports) == 0 {
@@ -3116,7 +2990,7 @@ func (e *FabricExecutor) importStatement(f *FragmentExec, params, record map[str
 	}
 	quoted := make([]string, len(names))
 	for i, name := range names {
-		quoted[i] = quoteCypherIdentifier(name)
+		quoted[i] = cyphertext.PrintIdentifier(name, cyphertext.IsIdentifier, cyphertext.AcceptedSource)
 	}
 	return head.String() + " CALL (" + strings.Join(quoted, ", ") + ") { " + body + " } RETURN *", out, names, nil
 }
@@ -3273,7 +3147,7 @@ func isSimpleWithImportClause(withClause string, importCols []string) bool {
 	}
 	for _, p := range parts {
 		name := strings.TrimSpace(p)
-		if !isSimpleIdentifier(name) {
+		if !cyphertext.IsIdentifier(name) {
 			return false
 		}
 		if _, ok := allowed[name]; !ok {
@@ -3310,9 +3184,9 @@ func replaceStandaloneVar(s, ident, replacement string) string {
 		ch := s[i]
 
 		if i+len(ident) <= len(s) && s[i:i+len(ident)] == ident {
-			prevOK := i == 0 || (!isIdentChar(s[i-1]) && s[i-1] != '.')
+			prevOK := i == 0 || (!cyphertext.NamePartAt(s, i-1) && s[i-1] != '.')
 			next := i + len(ident)
-			nextOK := next >= len(s) || !isIdentChar(s[next])
+			nextOK := next >= len(s) || !cyphertext.NamePartAt(s, next)
 			if prevOK && nextOK {
 				b.WriteString(replacement)
 				i = next
@@ -3414,8 +3288,8 @@ func hasKeywordAt(query string, idx int, keyword string) bool {
 		return false
 	}
 	if idx > 0 {
-		prev := rune(query[idx-1])
-		if unicode.IsLetter(prev) || unicode.IsDigit(prev) || prev == '_' {
+		// A word after '$' is a parameter name ($create), never a keyword.
+		if cyphertext.NamePartAt(query, idx-1) {
 			return false
 		}
 	}
@@ -3425,8 +3299,7 @@ func hasKeywordAt(query string, idx int, keyword string) bool {
 	}
 	end := idx + len(keyword)
 	if end < len(query) {
-		next := rune(query[end])
-		if unicode.IsLetter(next) || unicode.IsDigit(next) || next == '_' {
+		if cyphertext.NamePartAt(query, end) {
 			return false
 		}
 	}
@@ -3434,7 +3307,7 @@ func hasKeywordAt(query string, idx int, keyword string) bool {
 }
 
 func skipLeadingSpace(s string, idx int) int {
-	for idx < len(s) && unicode.IsSpace(rune(s[idx])) {
+	for idx < len(s) && cyphertext.IsWhitespaceAt(s, idx) {
 		idx++
 	}
 	return idx
@@ -3875,8 +3748,16 @@ func (e *FabricExecutor) executionColumnNames(ctx context.Context, query string,
 	return columns
 }
 
-// SetRemoteModeUncertainty marks remote procedure calls whose actual mode must
-// come from their result summary. Missing mode evidence never means READ.
-func (e *FabricExecutor) SetRemoteModeUncertainty(uncertain func(string) bool) {
-	e.remoteModeUncertain = uncertain
+// RemoteStatementPolicy is the compiler's exact-source transport intent. A
+// remote CALL can have an opaque resolved write mode even with WRITE routing.
+type RemoteStatementPolicy struct {
+	AccessMode storage.RemoteAccessMode
+	Uncertain  bool
+}
+
+// SetRemoteStatementPolicy installs the statement compiler's policy reader for
+// the actual post-import source sent to a remote. No planner write hint supplies
+// a READ proof; an absent compiler reader conservatively selects WRITE.
+func (e *FabricExecutor) SetRemoteStatementPolicy(read func(context.Context, string) (RemoteStatementPolicy, error)) {
+	e.remoteStatementPolicy = read
 }

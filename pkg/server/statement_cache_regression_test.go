@@ -15,7 +15,7 @@ import (
 func TestStatementHTTPCompositeSelection(t *testing.T) {
 	ctx := context.Background()
 	server, users := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("r2blockedcmp", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "r2blockedcmp", []multidb.ConstituentRef{
 		{Alias: "source", DatabaseName: "nornic", Type: "local", AccessMode: "read_write"},
 	}))
 	_, err := users.CreateUser("r2limited", "password123", []auth.Role{auth.RoleEditor})

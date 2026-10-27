@@ -2,10 +2,9 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"sync"
-
-	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 )
 
 // returnProjection is one RETURN item: its expression, its column name, and
@@ -75,7 +74,13 @@ func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pip
 	if cached {
 		return plan
 	}
-	plan = parseReturnProjectionPlan(ctx, clause)
+	if isFlatReturnProjection(clause) {
+		plan = parseFlatReturnProjection(ctx, clause)
+	} else if node, ok := canonicalQueryClause(ctx, clause); ok {
+		plan = projectionPlanFromSyntax(node)
+	} else {
+		plan = &returnProjectionPlan{}
+	}
 	if ctx.Err() != nil {
 		return &returnProjectionPlan{}
 	}
@@ -92,12 +97,37 @@ func returnProjectionPlanFor(ctx context.Context, clause string, retained ...pip
 	return plan
 }
 
-func parseReturnProjectionPlan(ctx context.Context, clause string) *returnProjectionPlan {
-	node, ok := canonicalQueryClause(ctx, clause)
-	if !ok {
-		return &returnProjectionPlan{}
+// isFlatReturnProjection keeps ordinary scalar RETURN clauses on the short
+// scanner path. Nested expressions, quoted identifiers, strings, wildcards,
+// modifiers, and UNION clauses use the canonical syntax owner above.
+func isFlatReturnProjection(clause string) bool {
+	clause = strings.TrimSpace(clause)
+	const keyword = "RETURN"
+	if len(clause) <= len(keyword) || !strings.EqualFold(clause[:len(keyword)], keyword) || cyphertext.NamePartAt(clause, len(keyword)) {
+		return false
 	}
-	return projectionPlanFromSyntax(node)
+	body := clause[len(keyword):]
+	if strings.ContainsAny(body, "\x60()[]{}\r\n*'\"") || firstTopLevelModifierIndex(body) >= 0 || topLevelKeywordIndex(body, "UNION") >= 0 {
+		return false
+	}
+	return true
+}
+
+func parseFlatReturnProjection(ctx context.Context, clause string) *returnProjectionPlan {
+	body := strings.TrimSpace(clause)
+	modifierStart := len(body)
+	if cut := firstTopLevelModifierIndex(body); cut >= 0 {
+		modifierStart = cut
+	}
+	plan := &returnProjectionPlan{modifiers: strings.TrimSpace(body[modifierStart:])}
+	body, plan.distinct = cutDistinct(pipelineClauseBody(body[:modifierStart], "RETURN"))
+	for _, rawItem := range splitTopLevelComma(body) {
+		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(rawItem), projectionAdmitted)
+		expr, alias := itemSource.expression, itemSource.alias
+		plan.addProjection(expr, alias)
+	}
+	plan.valid = len(plan.projections) > 0
+	return plan
 }
 
 // withStarExpanded is the plan of RETURN *, items with the * written out
@@ -112,7 +142,7 @@ func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProj
 		if named[column] {
 			continue
 		}
-		expanded.addProjection(projectionVariableText(column), column)
+		expanded.addProjection(cyphertext.PrintIdentifier(column, cyphertext.IsIdentifier, cyphertext.AcceptedSource), column)
 		last := &expanded.projections[len(expanded.projections)-1]
 		last.variable = column
 		last.direct = true
@@ -133,26 +163,17 @@ func (plan *returnProjectionPlan) withStarExpanded(columns []string) *returnProj
 func starProjectionItems(ctx context.Context, columns, items []string) []string {
 	named := make(map[string]bool, len(items))
 	for _, item := range items {
-		_, alias := parseProjectionExprAlias(ctx, item)
+		alias := readProjectionItemSource(ctx, item, projectionAdmitted).alias
 		named[alias] = true
 	}
 	out := make([]string, 0, len(columns)+len(items))
 	for _, column := range columns {
 		if !named[column] {
-			variable := projectionVariableText(column)
+			variable := cyphertext.PrintIdentifier(column, cyphertext.IsIdentifier, cyphertext.AcceptedSource)
 			out = append(out, variable+" AS "+variable)
 		}
 	}
 	return append(out, items...)
-}
-
-// projectionVariableText is a variable as an expression: backtick-quoted when
-// it isn't a plain identifier.
-func projectionVariableText(name string) string {
-	if isSimpleIdentifier(name) && !strings.Contains(name, "`") {
-		return name
-	}
-	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }
 
 func (plan *returnProjectionPlan) addProjection(expr, alias string) {
@@ -182,44 +203,6 @@ func pipelineReturnSourceColumns(ctx context.Context, clause string) []string {
 		return append([]string{"*"}, plan.withStarExpanded(nil).columns...)
 	}
 	return append([]string{}, plan.columns...)
-}
-func parseProjectionExprAlias(ctx context.Context, item string) (string, string) {
-	node, ok := canonicalQueryClause(ctx, "RETURN "+item)
-	if !ok {
-		return "", ""
-	}
-	plan := projectionPlanFromSyntax(node)
-	if plan.valid && plan.star && len(plan.starItems) == 0 {
-		return "*", "*"
-	}
-	if !plan.valid || plan.star || len(plan.projections) != 1 {
-		return "", ""
-	}
-	projection := plan.projections[0]
-	return projection.expr, projection.alias
-}
-
-// projectionAliasIndex is a source-spelling adapter of the retained AS token.
-func projectionAliasIndex(ctx context.Context, item string) int {
-	const prefix = "RETURN "
-	node, ok := canonicalQueryClause(ctx, prefix+item)
-	if !ok {
-		return -1
-	}
-	items := node.ChildRule(cypherantlr.CypherParserRULE_projectionBody).ChildRule(cypherantlr.CypherParserRULE_projectionItems)
-	if !items.Valid() {
-		return -1
-	}
-	projection := items.ChildRule(cypherantlr.CypherParserRULE_projectionItem)
-	if !projection.Valid() {
-		return -1
-	}
-	token, ok := projection.DirectToken(cypherantlr.CypherLexerAS)
-	if !ok {
-		return -1
-	}
-	start, _ := token.Span()
-	return start - len(prefix)
 }
 
 // buildColumnsFromReturnItems builds column names from parsed return items

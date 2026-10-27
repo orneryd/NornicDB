@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"log/slog"
 	"sort"
 	"strconv"
@@ -661,8 +662,8 @@ func (e *StorageExecutor) applyShowTail(ctx context.Context, cypher string, resu
 	quoted := make([]string, len(outputs))
 	for i, column := range outputs {
 		quoted[i] = column
-		if name, next, ok := scanIdentifierToken(column, 0); !ok || name != column || next != len(column) {
-			quoted[i] = "`" + strings.ReplaceAll(column, "`", "``") + "` AS `" + strings.ReplaceAll(column, "`", "``") + "`"
+		if name, ok := cyphertext.ScanIdentifier(column, 0); !ok || name.Value != column || name.End != len(column) {
+			quoted[i] = cyphertext.PrintIdentifier(column, nil, cyphertext.AcceptedSource) + " AS " + cyphertext.PrintIdentifier(column, nil, cyphertext.AcceptedSource)
 		}
 	}
 	// The RETURN, or the clauses that continue the query, see only the
@@ -775,10 +776,11 @@ func (e *StorageExecutor) executeShowProcedures(ctx context.Context, cypher stri
 	ensureBuiltInProceduresRegistered()
 	registered := ListRegisteredProcedures()
 	procedures := make([][]interface{}, 0, len(registered))
-	for _, p := range registered {
+	for i := range registered {
+		p := &registered[i]
 		description := p.Description
 		if p.DescriptionMessage.ID != "" && e.localizationRenderer != nil {
-			if rendered, _, err := e.localizationRenderer.Render(ctx, p.DescriptionMessage); err == nil {
+			if rendered, _, err := e.localizationRenderer.Render(ctx, localization.RenderRequest{Purpose: localization.MessageText, Message: &p.DescriptionMessage}); err == nil {
 				description = rendered
 			}
 		}
@@ -1145,7 +1147,10 @@ func showDatabaseCreatedAt(manager DatabaseManagerInterface, name string) time.T
 //   - Success: Result with database name in single row
 //   - Error: If database already exists (unless IF NOT EXISTS is used)
 //   - Error: If DatabaseManager is not configured
-func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
 	e.logEvent(slog.LevelDebug, localization.CypherCreateDatabaseInvokedEvent(len(cypher)))
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE DATABASE"), nil)
@@ -1159,13 +1164,13 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 
 	// Skip "CREATE" and whitespace to find "DATABASE"
 	startPos := createDbIdx + len("CREATE")
-	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 		startPos++
 	}
 	// Skip "DATABASE" and whitespace
 	if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
 		startPos += len("DATABASE")
-		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 			startPos++
 		}
 	}
@@ -1179,9 +1184,6 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	if err != nil {
 		return nil, err
 	}
-	if _, ok := e.dbManager.(DatabaseOptionsManager); len(options) > 0 && !ok {
-		return nil, localizedError(localization.CypherAdminDatabaseOptionsUnavailable("CREATE DATABASE"), nil)
-	}
 
 	// Find end of database name (whitespace, end of string, or "IF NOT EXISTS")
 	// Check for "IF NOT EXISTS" first (with flexible whitespace)
@@ -1192,14 +1194,14 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 		// Found "IF NOT" - check if "EXISTS" follows
 		afterIfNot := startPos + ifNotIdx + len("IF")
 		// Skip whitespace after "IF"
-		for afterIfNot < len(cypher) && isWhitespace(cypher[afterIfNot]) {
+		for afterIfNot < len(cypher) && cyphertext.IsWhitespaceAt(cypher, afterIfNot) {
 			afterIfNot++
 		}
 		// Check for "NOT"
 		if afterIfNot+len("NOT") <= len(cypher) && strings.EqualFold(cypher[afterIfNot:afterIfNot+len("NOT")], "NOT") {
 			afterNot := afterIfNot + len("NOT")
 			// Skip whitespace after "NOT"
-			for afterNot < len(cypher) && isWhitespace(cypher[afterNot]) {
+			for afterNot < len(cypher) && cyphertext.IsWhitespaceAt(cypher, afterNot) {
 				afterNot++
 			}
 			// Check for "EXISTS"
@@ -1229,7 +1231,7 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	}
 
 	// Validate database name (basic validation)
-	if strings.ContainsAny(dbName, " \t\n\r") {
+	if strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
 		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
 	}
 
@@ -1246,19 +1248,16 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 	}
 
 	// Create database
-	err = e.dbManager.CreateDatabase(dbName)
+	err = e.dbManager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: dbName, Options: options})
 	if err != nil {
 		e.logEvent(slog.LevelError, localization.CypherCreateDatabaseFailedEvent())
 		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
 	}
 	e.logEvent(slog.LevelInfo, localization.CypherCreateDatabaseSucceededEvent())
-	if err := e.applyDatabaseOptions(dbName, options); err != nil {
-		return nil, err
-	}
 
 	return &ExecuteResult{
-		Columns: []string{"name"},
-		Rows:    [][]interface{}{{dbName}},
+		Administration: &AdministrationOutcome{CreatedDatabase: dbName},
+		Columns:        []string{"name"}, Rows: [][]interface{}{{dbName}},
 	}, nil
 }
 
@@ -1266,7 +1265,10 @@ func (e *StorageExecutor) executeCreateDatabase(ctx context.Context, cypher stri
 // existing database of that name (if any) is dropped and a fresh one created.
 // It is an admin command, classified by isAdminPermissionQuery, so a caller
 // without the admin permission never reaches it.
-func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE DATABASE"), nil)
 	}
@@ -1275,12 +1277,12 @@ func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cy
 		return nil, localizedError(localization.CypherAdminInvalidSyntax("CREATE DATABASE"), nil)
 	}
 	startPos := orReplace + len("OR REPLACE")
-	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 		startPos++
 	}
 	if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
 		startPos += len("DATABASE")
-		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 			startPos++
 		}
 	} else {
@@ -1291,23 +1293,23 @@ func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cy
 	if err != nil {
 		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawDBName), err)
 	}
-	if dbName == "" || strings.ContainsAny(dbName, " \t\n\r") {
+	if dbName == "" || strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
 		return nil, localizedError(localization.CypherAdminDatabaseNameEmpty("CREATE DATABASE"), nil)
 	}
 
 	if e.dbManager.Exists(dbName) {
-		if err := e.dbManager.DropDatabase(dbName); err != nil {
+		if err := e.dbManager.DropDatabase(ctx, dbName); err != nil {
 			return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
 		}
 	}
-	if err := e.dbManager.CreateDatabase(dbName); err != nil {
+	if err := e.dbManager.CreateDatabase(ctx, multidb.DatabaseCreateRequest{Name: dbName}); err != nil {
 		e.logEvent(slog.LevelError, localization.CypherCreateDatabaseFailedEvent())
 		return nil, localizedError(localization.CypherAdminCreateDatabaseFailed(dbName, err), err)
 	}
 	e.logEvent(slog.LevelInfo, localization.CypherCreateDatabaseSucceededEvent())
 	return &ExecuteResult{
-		Columns: []string{"name"},
-		Rows:    [][]interface{}{{dbName}},
+		Administration: &AdministrationOutcome{CreatedDatabase: dbName},
+		Columns:        []string{"name"}, Rows: [][]interface{}{{dbName}},
 	}, nil
 }
 
@@ -1342,7 +1344,10 @@ func (e *StorageExecutor) executeCreateOrReplaceDatabase(ctx context.Context, cy
 //   - Success: Result with database name in single row (empty if IF EXISTS and not found)
 //   - Error: If database doesn't exist (unless IF EXISTS is used)
 //   - Error: If DatabaseManager is not configured
-func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("DROP DATABASE"), nil)
 	}
@@ -1355,17 +1360,17 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 
 	// Skip "DROP" and whitespace to find "DATABASE"
 	startPos := dropDbIdx + len("DROP")
-	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 		startPos++
 	}
 	// Skip "DATABASE" and whitespace
 	if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
 		startPos += len("DATABASE")
-		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 			startPos++
 		}
 	}
-	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 		startPos++
 	}
 
@@ -1396,7 +1401,7 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 	}
 
 	// Validate database name (basic validation)
-	if strings.ContainsAny(dbName, " \t\n\r") {
+	if strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
 		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
 	}
 
@@ -1413,7 +1418,7 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 	}
 
 	// Drop database
-	err = e.dbManager.DropDatabase(dbName)
+	err = e.dbManager.DropDatabase(ctx, dbName)
 	if err != nil {
 		return nil, localizedError(localization.CypherAdminDropDatabaseFailed(dbName, err), err)
 	}
@@ -1443,7 +1448,10 @@ func (e *StorageExecutor) executeDropDatabase(ctx context.Context, cypher string
 // Returns:
 //   - Success: Result with alias name in single row
 //   - Error: If alias already exists or database doesn't exist
-func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("CREATE ALIAS"), nil)
 	}
@@ -1456,13 +1464,13 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 
 	// Skip "CREATE" and whitespace to find "ALIAS"
 	startPos := createAliasIdx + len("CREATE")
-	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 		startPos++
 	}
 	// Skip "ALIAS" and whitespace
 	if startPos+len("ALIAS") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("ALIAS")], "ALIAS") {
 		startPos += len("ALIAS")
-		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 			startPos++
 		}
 	}
@@ -1477,33 +1485,30 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 		return nil, localizedError(localization.CypherAdminTermExpected("CREATE ALIAS", "FOR DATABASE"), nil)
 	}
 
-	// Extract alias name (trim all whitespace)
-	aliasName := strings.TrimSpace(cypher[startPos : startPos+forIdx])
-	// Remove all whitespace from alias name (handle cases where whitespace variations
-	// might have left whitespace in the extracted name)
-	aliasName = strings.ReplaceAll(aliasName, " ", "")
-	aliasName = strings.ReplaceAll(aliasName, "\t", "")
-	aliasName = strings.ReplaceAll(aliasName, "\n", "")
-	aliasName = strings.ReplaceAll(aliasName, "\r", "")
+	rawAliasName := strings.TrimSpace(cypher[startPos : startPos+forIdx])
+	aliasName, err := unquoteBacktickIdentifier(rawAliasName)
+	if err != nil {
+		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawAliasName), err)
+	}
 
 	if aliasName == "" {
 		return nil, localizedError(localization.CypherAdminAliasNameEmpty("CREATE ALIAS"), nil)
 	}
 
-	// Validate alias name (should not contain whitespace after cleaning)
-	if strings.ContainsAny(aliasName, " \t\n\r") {
+	// Preserve decoded identity; database-alias admission rejects whitespace.
+	if strings.IndexFunc(aliasName, cyphertext.IsWhitespace) >= 0 {
 		return nil, localizedError(localization.CypherAdminInvalidAliasName(aliasName), nil)
 	}
 
 	// Skip "FOR" and whitespace
 	dbStartPos := startPos + forIdx + len("FOR")
-	for dbStartPos < len(cypher) && isWhitespace(cypher[dbStartPos]) {
+	for dbStartPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, dbStartPos) {
 		dbStartPos++
 	}
 	// Skip "DATABASE" and whitespace
 	if dbStartPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[dbStartPos:dbStartPos+len("DATABASE")], "DATABASE") {
 		dbStartPos += len("DATABASE")
-		for dbStartPos < len(cypher) && isWhitespace(cypher[dbStartPos]) {
+		for dbStartPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, dbStartPos) {
 			dbStartPos++
 		}
 	}
@@ -1512,25 +1517,23 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 		return nil, localizedError(localization.CypherAdminDatabaseNameExpected("CREATE ALIAS"), nil)
 	}
 
-	// Extract database name (rest of query, trim all whitespace)
-	dbName := strings.TrimSpace(cypher[dbStartPos:])
-	// Remove all whitespace from database name
-	dbName = strings.ReplaceAll(dbName, " ", "")
-	dbName = strings.ReplaceAll(dbName, "\t", "")
-	dbName = strings.ReplaceAll(dbName, "\n", "")
-	dbName = strings.ReplaceAll(dbName, "\r", "")
+	rawDBName := strings.TrimSpace(cypher[dbStartPos:])
+	dbName, err := unquoteBacktickIdentifier(rawDBName)
+	if err != nil {
+		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawDBName), err)
+	}
 
 	if dbName == "" {
 		return nil, localizedError(localization.CypherAdminDatabaseNameEmpty("CREATE ALIAS"), nil)
 	}
 
-	// Validate database name (should not contain whitespace after cleaning)
-	if strings.ContainsAny(dbName, " \t\n\r") {
+	// Database-name admission rejects whitespace without changing its identity.
+	if strings.IndexFunc(dbName, cyphertext.IsWhitespace) >= 0 {
 		return nil, localizedError(localization.CypherAdminInvalidDatabaseName(dbName), nil)
 	}
 
 	// Create alias
-	err := e.dbManager.CreateAlias(aliasName, dbName)
+	err = e.dbManager.CreateAlias(ctx, aliasName, dbName)
 	if err != nil {
 		return nil, localizedError(localization.CypherAdminCreateAliasFailed(aliasName, dbName, err), err)
 	}
@@ -1560,7 +1563,10 @@ func (e *StorageExecutor) executeCreateAlias(ctx context.Context, cypher string)
 // Returns:
 //   - Success: Result with alias name in single row (empty if IF EXISTS and not found)
 //   - Error: If alias doesn't exist (unless IF EXISTS is used)
-func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("DROP ALIAS"), nil)
 	}
@@ -1573,13 +1579,13 @@ func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (
 
 	// Skip "DROP" and whitespace to find "ALIAS"
 	startPos := dropAliasIdx + len("DROP")
-	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 		startPos++
 	}
 	// Skip "ALIAS" and whitespace
 	if startPos+len("ALIAS") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("ALIAS")], "ALIAS") {
 		startPos += len("ALIAS")
-		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 			startPos++
 		}
 	}
@@ -1597,25 +1603,23 @@ func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (
 		aliasNameEnd = len(cypher)
 	}
 
-	// Extract alias name (trim all whitespace)
-	aliasName := strings.TrimSpace(cypher[startPos:aliasNameEnd])
-	// Remove all whitespace from alias name
-	aliasName = strings.ReplaceAll(aliasName, " ", "")
-	aliasName = strings.ReplaceAll(aliasName, "\t", "")
-	aliasName = strings.ReplaceAll(aliasName, "\n", "")
-	aliasName = strings.ReplaceAll(aliasName, "\r", "")
+	rawAliasName := strings.TrimSpace(cypher[startPos:aliasNameEnd])
+	aliasName, err := unquoteBacktickIdentifier(rawAliasName)
+	if err != nil {
+		return nil, localizedError(localization.CypherAdminInvalidIdentifier(rawAliasName), err)
+	}
 
 	if aliasName == "" {
 		return nil, localizedError(localization.CypherAdminAliasNameEmpty("DROP ALIAS"), nil)
 	}
 
-	// Validate alias name (should not contain whitespace after cleaning)
-	if strings.ContainsAny(aliasName, " \t\n\r") {
+	// Preserve decoded identity; database-alias admission rejects whitespace.
+	if strings.IndexFunc(aliasName, cyphertext.IsWhitespace) >= 0 {
 		return nil, localizedError(localization.CypherAdminInvalidAliasName(aliasName), nil)
 	}
 
 	// Check if alias exists (by checking if it resolves)
-	_, err := e.dbManager.ResolveDatabase(aliasName)
+	_, err = e.dbManager.ResolveDatabase(aliasName)
 	if err != nil {
 		if ifExistsIdx >= 0 {
 			// IF EXISTS - return success with no error
@@ -1628,7 +1632,7 @@ func (e *StorageExecutor) executeDropAlias(ctx context.Context, cypher string) (
 	}
 
 	// Drop alias
-	err = e.dbManager.DropAlias(aliasName)
+	err = e.dbManager.DropAlias(ctx, aliasName)
 	if err != nil {
 		return nil, localizedError(localization.CypherAdminDropAliasFailed(aliasName, err), err)
 	}
@@ -1673,13 +1677,13 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 
 	// Skip "SHOW" and whitespace to find "ALIASES"
 	startPos := showAliasesIdx + len("SHOW")
-	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 		startPos++
 	}
 	// Skip "ALIASES" and whitespace
 	if startPos+len("ALIASES") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("ALIASES")], "ALIASES") {
 		startPos += len("ALIASES")
-		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 			startPos++
 		}
 	}
@@ -1691,13 +1695,13 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 		if forIdx >= 0 {
 			// Extract database name
 			dbStartPos := startPos + forIdx + len("FOR")
-			for dbStartPos < len(cypher) && isWhitespace(cypher[dbStartPos]) {
+			for dbStartPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, dbStartPos) {
 				dbStartPos++
 			}
 			// Skip "DATABASE" and whitespace
 			if dbStartPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[dbStartPos:dbStartPos+len("DATABASE")], "DATABASE") {
 				dbStartPos += len("DATABASE")
-				for dbStartPos < len(cypher) && isWhitespace(cypher[dbStartPos]) {
+				for dbStartPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, dbStartPos) {
 					dbStartPos++
 				}
 			}
@@ -1756,7 +1760,10 @@ func (e *StorageExecutor) executeShowAliases(ctx context.Context, cypher string)
 // Returns:
 //   - Success: Result with database name
 //   - Error: If database doesn't exist or syntax is invalid
-func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("ALTER DATABASE"), nil)
 	}
@@ -1769,13 +1776,13 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 
 	// Skip "ALTER" and whitespace to find "DATABASE"
 	startPos := alterDbIdx + len("ALTER")
-	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 		startPos++
 	}
 	// Skip "DATABASE" and whitespace
 	if startPos+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("DATABASE")], "DATABASE") {
 		startPos += len("DATABASE")
-		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 			startPos++
 		}
 	} else {
@@ -1800,12 +1807,12 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 
 	// Skip "SET LIMIT" and whitespace
 	limitStartPos := startPos + setLimitIdx + len("SET")
-	for limitStartPos < len(cypher) && isWhitespace(cypher[limitStartPos]) {
+	for limitStartPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, limitStartPos) {
 		limitStartPos++
 	}
 	if limitStartPos+len("LIMIT") <= len(cypher) && strings.EqualFold(cypher[limitStartPos:limitStartPos+len("LIMIT")], "LIMIT") {
 		limitStartPos += len("LIMIT")
-		for limitStartPos < len(cypher) && isWhitespace(cypher[limitStartPos]) {
+		for limitStartPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, limitStartPos) {
 			limitStartPos++
 		}
 	} else {
@@ -1949,7 +1956,7 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 	}
 
 	// Update limits in database manager (pass as interface{} to match interface)
-	err = e.dbManager.SetDatabaseLimits(databaseName, limits)
+	err = e.dbManager.SetDatabaseLimits(ctx, databaseName, limits)
 	if err != nil {
 		return nil, localizedError(localization.CypherAdminSetDatabaseLimitsFailed(databaseName, err), err)
 	}
@@ -1978,7 +1985,10 @@ func (e *StorageExecutor) executeAlterDatabase(ctx context.Context, cypher strin
 // Returns:
 //   - Success: Result with limit information in Neo4j-compatible format
 //   - Error: If database doesn't exist
-func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) (*ExecuteResult, error) {
+func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) (result *ExecuteResult, retErr error) {
+	ctx = withStatementCredentials(ctx, cypher)
+	defer redactAdminCommandError(cypher, &retErr, statementCredentials(ctx))
+	cypher = cyphertext.SourceFor(ctx, cypher).Text
 	if e.dbManager == nil {
 		return nil, localizedError(localization.CypherAdminDatabaseManagerUnavailable("SHOW LIMITS"), nil)
 	}
@@ -1991,13 +2001,13 @@ func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) 
 
 	// Skip "SHOW" and whitespace to find "LIMITS"
 	startPos := showLimitsIdx + len("SHOW")
-	for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+	for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 		startPos++
 	}
 	// Skip "LIMITS" and whitespace
 	if startPos+len("LIMITS") <= len(cypher) && strings.EqualFold(cypher[startPos:startPos+len("LIMITS")], "LIMITS") {
 		startPos += len("LIMITS")
-		for startPos < len(cypher) && isWhitespace(cypher[startPos]) {
+		for startPos < len(cypher) && cyphertext.IsWhitespaceAt(cypher, startPos) {
 			startPos++
 		}
 	} else {
@@ -2012,13 +2022,13 @@ func (e *StorageExecutor) executeShowLimits(ctx context.Context, cypher string) 
 
 	// Skip "FOR" and whitespace
 	dbNameStart := startPos + forDbIdx + len("FOR")
-	for dbNameStart < len(cypher) && isWhitespace(cypher[dbNameStart]) {
+	for dbNameStart < len(cypher) && cyphertext.IsWhitespaceAt(cypher, dbNameStart) {
 		dbNameStart++
 	}
 	// Skip "DATABASE" and whitespace
 	if dbNameStart+len("DATABASE") <= len(cypher) && strings.EqualFold(cypher[dbNameStart:dbNameStart+len("DATABASE")], "DATABASE") {
 		dbNameStart += len("DATABASE")
-		for dbNameStart < len(cypher) && isWhitespace(cypher[dbNameStart]) {
+		for dbNameStart < len(cypher) && cyphertext.IsWhitespaceAt(cypher, dbNameStart) {
 			dbNameStart++
 		}
 	} else {

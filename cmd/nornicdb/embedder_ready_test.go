@@ -65,7 +65,7 @@ func TestHybridSearchPicksUpEmbedderAfterStartup(t *testing.T) {
 			require.True(t, svc.IsReady())
 			require.Nil(t, db.GetCypherExecutor().GetEmbedder())
 
-			manager, err := multidb.NewDatabaseManager(db.GetBaseStorageForManager(), nil)
+			manager, err := multidb.NewDatabaseManager(t.Context(), db.GetBaseStorageForManager(), nil)
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				_ = db.Close()

@@ -94,7 +94,7 @@ func (s ProcedureSpec) writes() bool {
 
 // ProcedureMetadataRenderer renders localized procedure metadata for a request context.
 type ProcedureMetadataRenderer interface {
-	Render(context.Context, localization.Message) (string, language.Tag, error)
+	Render(context.Context, localization.RenderRequest) (string, language.Tag, error)
 }
 
 // ProcedureHandler executes a registered procedure.

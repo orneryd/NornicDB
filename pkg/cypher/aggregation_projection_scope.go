@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
 
@@ -38,11 +39,12 @@ func validateProjectionSemantics(ctx context.Context, cypher string) error {
 			if item == "" || item == "{}" {
 				continue
 			}
-			expression, alias := parseProjectionExprAlias(ctx, item)
+			itemSource := readProjectionItemSource(ctx, item, projectionAdmitted)
+			expression, alias := itemSource.expression, itemSource.alias
 			if err := validateExpressionOperandCompleteness(expression); err != nil {
 				return err
 			}
-			explicitAlias := projectionAliasIndex(ctx, item) > 0
+			explicitAlias := itemSource.as > 0
 			// true, false and null are literals, not variables, even when a
 			// variable of that name was declared (isLiteralKeyword).
 			if !explicitAlias && expression != "*" && (simpleSemanticIdentifier(expression) == "" || isLiteralKeyword(expression)) {
@@ -101,7 +103,8 @@ func aggregatingProjectionScopeError(ctx context.Context, clause, keyword string
 	expressions := make([]string, 0, len(items))
 	aggregates := false
 	for _, item := range items {
-		expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(item))
+		itemSource := readProjectionItemSource(ctx, strings.TrimSpace(item), projectionAdmitted)
+		expression, alias := itemSource.expression, itemSource.alias
 		expression = strings.TrimSpace(expression)
 		if expression == "*" {
 			return nil
@@ -200,8 +203,8 @@ func maskProjectedExpression(text, expression string) string {
 		c := text[index]
 		end := index + len(expression)
 		if strings.HasPrefix(text[index:], expression) &&
-			(index == 0 || !(isIdentByte(text[index-1]) || text[index-1] == '.' || text[index-1] == '$')) &&
-			(end == len(text) || !isIdentByte(text[end])) {
+			(index == 0 || !(cyphertext.NamePartAt(text, index-1) || text[index-1] == '.' || text[index-1] == '$')) &&
+			(end == len(text) || !cyphertext.NamePartAt(text, end)) {
 			out.WriteString(projectedExpressionPlaceholder)
 			index = end
 			continue

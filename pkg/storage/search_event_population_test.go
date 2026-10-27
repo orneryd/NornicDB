@@ -232,6 +232,7 @@ var storageMutatorClassification = map[string]string{
 	"BadgerTransaction.PrepareMergeNodeForWrite":        "admits MERGE write keys and may land previously published buffered commits; new entity writes are published by its Commit",
 	"BadgerEngine.Close":                                "deletes the stored suppressions of entities deleted before it (endSuppressions); no entity state",
 	"BadgerEngine.Restore":                              "replaces the whole store offline; DB.Restore owns the reset of search (restartSearchAfterRestore)",
+	"BadgerEngine.RunOnStartMigrations":                 "manual entry rejects pre-V4 stores before any migration writes; opening runs the ordered migration before search exists, and search builds from the migrated snapshot",
 	"BadgerEngine.ConsumeCleanShutdownMarker":           "a startup marker; no entity state",
 	"BadgerEngine.FindNodeNeedingEmbedding":             "maintains the pending-embedding work index; no entity state",
 	"BadgerEngine.RefreshPendingEmbeddingsIndex":        "maintains the pending-embedding work index; no entity state",

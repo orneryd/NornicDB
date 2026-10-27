@@ -15,11 +15,11 @@ import (
 func quotaExecutor(t testing.TB, limits *multidb.Limits) (*StorageExecutor, storage.Engine, *multidb.DatabaseManager) {
 	t.Helper()
 	base := newTestMemoryEngine(t)
-	manager, err := multidb.NewDatabaseManager(base, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
-	require.NoError(t, manager.CreateDatabase("quota"))
-	require.NoError(t, manager.SetDatabaseLimits("quota", limits))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "quota"}))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "quota", limits))
 	engine, err := manager.GetStorage("quota")
 	require.NoError(t, err)
 	return NewStorageExecutor(engine), engine, manager
@@ -134,7 +134,7 @@ func TestTransactionQuotasByteAccounting(t *testing.T) {
 	require.NoError(t, run("CREATE (a:Quota {id: 1})-[:R {payload: 'small'}]->(b:Quota {id: 2})"))
 	created, _, _ := manager.GetStorageSize("quota")
 	require.Positive(t, created)
-	require.NoError(t, manager.SetDatabaseLimits("quota", &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: created}}))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "quota", &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: created}}))
 	for _, query := range []string{
 		"MATCH (n:Quota {id: 1}) SET n.payload = '" + strings.Repeat("x", 2048) + "'",
 		"MATCH (:Quota)-[r:R]->(:Quota) SET r.payload = '" + strings.Repeat("x", 2048) + "'",
@@ -167,13 +167,13 @@ func TestTransactionQuotasPersistedUsage(t *testing.T) {
 			fixtureowner.Own(t, base)
 		}
 		require.NoError(t, err)
-		manager, err := multidb.NewDatabaseManager(base, nil)
+		manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 		require.NoError(t, err)
 		return base, manager
 	}
 	base, manager := open()
-	require.NoError(t, manager.CreateDatabase("quota"))
-	require.NoError(t, manager.SetDatabaseLimits("quota", &multidb.Limits{Storage: multidb.StorageLimits{MaxNodes: 1}}))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "quota"}))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "quota", &multidb.Limits{Storage: multidb.StorageLimits{MaxNodes: 1}}))
 	engine, err := manager.GetStorage("quota")
 	require.NoError(t, err)
 	_, err = NewStorageExecutor(engine).Execute(context.Background(), "CREATE (:Quota)", nil)

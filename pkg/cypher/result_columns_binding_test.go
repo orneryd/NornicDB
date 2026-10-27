@@ -114,7 +114,7 @@ func TestStatementFactsLegacyImportBinding(t *testing.T) {
 								return resultmetadata.UnknownColumns(), nil
 							}
 						}
-						executor.StatementFactsWith(tc.query, resultmetadata.KnownScope(nil), cypher25, schema).Visit(func(statement resultmetadata.Statement) {
+						executor.StatementFactsWith(tc.query, resultmetadata.KnownScope(nil), cypher25, schema, RawSource).Visit(func(statement resultmetadata.Statement) {
 							require.True(t, tc.valid, "a projection read a dropped import but its facts became Known")
 							statement.Columns.Visit(func(names []string) { require.Equal(t, []string{"v", "r"}, names) }, func() { t.Fatal("Known facts contain unknown columns") })
 						}, func() { t.Fatal("the owner has no decline continuation") }, func(reason resultmetadata.Unresolved) {
@@ -128,7 +128,7 @@ func TestStatementFactsLegacyImportBinding(t *testing.T) {
 				}
 			}
 			t.Run("strict_columns", func(t *testing.T) {
-				columns, err := executor.StatementResultColumns(tc.query)
+				columns, err := executor.StatementResultColumns(tc.query, RawSource)
 				checkError(t, err)
 				if tc.valid {
 					require.Equal(t, []string{"v", "r"}, columns)

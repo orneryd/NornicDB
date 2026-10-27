@@ -83,7 +83,7 @@ func TestHTTPRemoteSourceIdentitySurvivesBoltEncoding(t *testing.T) {
 	remote, err := storage.NewRemoteEngine(storage.RemoteEngineConfig{URI: source.URL, Database: "neo4j"})
 	require.NoError(t, err)
 	defer remote.Close()
-	_, rows, err := remote.QueryCypher(context.Background(), "RETURN recorded", nil)
+	_, rows, err := remote.QueryCypher(context.Background(), "RETURN recorded", nil, storage.RemoteAccessRead)
 	require.NoError(t, err)
 	node := rows[0][1].(storage.RemoteEntityValue)
 	edge := rows[0][3].(storage.RemoteEntityValue)

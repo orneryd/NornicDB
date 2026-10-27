@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -72,6 +73,50 @@ func TestRelationshipBracketsIgnoreNodeMapBrackets(t *testing.T) {
 					assert.Equal(t, tc.rels, rels.Rows[0][0], "relationships")
 				})
 			}
+		}
+	}
+}
+
+func BenchmarkRelationshipBracketLookup(b *testing.B) {
+	for _, text := range []string{
+		"(a)-[r:T]->(b)",
+		"(a {items: [1,2], text: 'a-[not relationship]'})-[`r``]x`:T]->(b)",
+		strings.Repeat("(a {items: [1,2]})-->(b), ", 64) + "(x)-[r:T]->(y)",
+	} {
+		b.Run(text[:13], func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				open, close := readRelationshipBracket(text, 0, requireClosedRelationship)
+				if open < 0 || close <= open {
+					b.Fatal("expected a closed relationship bracket")
+				}
+			}
+		})
+	}
+}
+
+func TestRelationshipBracketLookupPolicies(t *testing.T) {
+	for _, tc := range []struct {
+		text              string
+		from, open, close int
+	}{
+		{"(a)-->(b)", 0, -1, -1},
+		{"(a)-[r:T]->(b)", 0, 4, 8},
+		{"(a)-[r:T]->(b)-[s:S]->(c)", 10, 15, 19},
+		{"(a)-[r:T->(b)", 0, 4, -1},
+		{"(a)-[`r ]x`]->(b)", 0, 4, 11},
+		{"(a)-[`r``]x`]->(b)", 0, 4, 12},
+		{"(a {ids: [1,2][i]})", 0, -1, -1},
+		{"(a {k: COUNT { (x)-[r]->() }})", 0, -1, -1},
+		{"(a) /* -[r]-> */ -->(b)", 0, -1, -1},
+	} {
+		for _, policy := range []relationshipBracketPolicy{requireClosedRelationship, reportUnclosedRelationship} {
+			open, close := readRelationshipBracket(tc.text, tc.from, policy)
+			wantOpen := tc.open
+			if tc.close < 0 && policy == requireClosedRelationship {
+				wantOpen = -1
+			}
+			require.Equal(t, []int{wantOpen, tc.close}, []int{open, close}, "%q policy=%d", tc.text, policy)
 		}
 	}
 }

@@ -12,15 +12,15 @@ import (
 func BenchmarkFabricProcedureAdmission(b *testing.B) {
 	for _, route := range []string{"read", "create", "registered", "apoc", "dynamicWrite", "dynamicRead"} {
 		b.Run(route, func(b *testing.B) {
-			manager, err := multidb.NewDatabaseManager(runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed), nil)
+			manager, err := multidb.NewDatabaseManager(b.Context(), runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed), nil)
 			if err != nil {
 				b.Fatal(err)
 			}
 			b.Cleanup(func() { _ = manager.Close() })
-			if err := manager.CreateDatabase("u5_fabric_shard"); err != nil {
+			if err := manager.CreateDatabase(b.Context(), multidb.DatabaseCreateRequest{Name: "u5_fabric_shard"}); err != nil {
 				b.Fatal(err)
 			}
-			if err := manager.CreateCompositeDatabase("u5_fabric", []multidb.ConstituentRef{{Alias: "shard", DatabaseName: "u5_fabric_shard", Type: "local", AccessMode: "read_write"}}); err != nil {
+			if err := manager.CreateCompositeDatabase(b.Context(), "u5_fabric", []multidb.ConstituentRef{{Alias: "shard", DatabaseName: "u5_fabric_shard", Type: "local", AccessMode: "read_write"}}); err != nil {
 				b.Fatal(err)
 			}
 			store, err := manager.GetStorage("u5_fabric")

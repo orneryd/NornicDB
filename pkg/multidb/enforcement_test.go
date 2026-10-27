@@ -45,14 +45,14 @@ func (c *manualClock) Advance(d time.Duration) {
 func setupTestManager(t *testing.T) (*DatabaseManager, string) {
 	t.Helper()
 	inner := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	manager, err := NewDatabaseManager(inner, nil)
+	manager, err := NewDatabaseManager(t.Context(), inner, nil)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		manager.Close()
 	})
 
 	dbName := "testdb"
-	err = manager.CreateDatabase(dbName)
+	err = manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: dbName})
 	require.NoError(t, err)
 
 	return manager, dbName
@@ -62,7 +62,7 @@ func setupTestManager(t *testing.T) (*DatabaseManager, string) {
 func setupTestManagerWithLimits(t *testing.T, limits *Limits) (*DatabaseManager, string) {
 	t.Helper()
 	manager, dbName := setupTestManager(t)
-	err := manager.SetDatabaseLimits(dbName, limits)
+	err := manager.SetDatabaseLimits(t.Context(), dbName, limits)
 	require.NoError(t, err)
 	return manager, dbName
 }
@@ -722,7 +722,7 @@ func TestDatabaseLimitChecker_GetRateLimits(t *testing.T) {
 			}
 			manager, dbName := setupTestManager(t)
 			if configured {
-				require.NoError(t, manager.SetDatabaseLimits(dbName, limits))
+				require.NoError(t, manager.SetDatabaseLimits(t.Context(), dbName, limits))
 			}
 			manager.mu.Lock()
 			_, checker, err := manager.databaseViewLocked(dbName, false)
@@ -749,7 +749,7 @@ func TestDatabaseLimitChecker_RateChecks(t *testing.T) {
 		t.Helper()
 		manager, dbName := setupTestManager(t)
 		if limits != nil {
-			require.NoError(t, manager.SetDatabaseLimits(dbName, limits))
+			require.NoError(t, manager.SetDatabaseLimits(t.Context(), dbName, limits))
 		}
 		manager.mu.Lock()
 		_, checker, err := manager.databaseViewLocked(dbName, false)
@@ -879,7 +879,7 @@ func TestDatabaseLimitChecker_CheckStorageLimits_StorageError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Set database offline
-	err = manager.SetDatabaseStatus(dbName, "offline")
+	err = manager.SetDatabaseStatus(t.Context(), dbName, "offline")
 	require.NoError(t, err)
 
 	// CheckStorageLimits should fail because GetStorage will fail

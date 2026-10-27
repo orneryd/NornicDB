@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -24,7 +25,7 @@ func desugarStandaloneOrderClauses(query string) (string, *queryRewrite) {
 	if len(edits) == 0 {
 		return query, nil
 	}
-	rewrite := &queryRewrite{original: query, edits: make([]queryTextEdit, 0, len(edits)), verbatimColumns: true}
+	rewrite := &queryRewrite{Source: cyphertext.Source{Original: query, Edits: make([]cyphertext.SourceEdit, 0, len(edits))}, verbatimColumns: true}
 	var out strings.Builder
 	out.Grow(len(query) + 8*len(edits))
 	last := 0
@@ -32,12 +33,12 @@ func desugarStandaloneOrderClauses(query string) (string, *queryRewrite) {
 		out.WriteString(query[last:edit.start])
 		canonStart := out.Len()
 		out.WriteString(edit.text)
-		rewrite.edits = append(rewrite.edits, queryTextEdit{origStart: edit.start, origEnd: edit.end, canonStart: canonStart, canonEnd: out.Len()})
+		rewrite.Edits = append(rewrite.Edits, cyphertext.SourceEdit{Original: cyphertext.Span{Start: edit.start, End: edit.end}, Accepted: cyphertext.Span{Start: canonStart, End: out.Len()}})
 		last = edit.end
 	}
 	out.WriteString(query[last:])
-	rewrite.canonical = out.String()
-	return rewrite.canonical, rewrite
+	rewrite.Text = out.String()
+	return rewrite.Text, rewrite
 }
 
 // Stages of a projection's tail, in the order its clauses may come.
@@ -57,13 +58,13 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 	// previousWord is the last word read, "" after any other token; last is
 	// the last character of the last token, comments and spaces skipped (0
 	// at the start of the block).
-	previousWord, last := "", byte(0)
+	previousWord, last := "", rune(0)
 	for index := start; index < end; {
 		character := query[index]
 		switch {
 		case isCypherQuoteByte(character):
 			index = skipCypherQuotedText(query, index, character)
-			previousWord, last = "", character
+			previousWord, last = "", rune(character)
 			continue
 		case character == '/':
 			if commentEnd := queryCommentEnd(query, index); commentEnd > index {
@@ -75,16 +76,16 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 			if character == '[' {
 				closer = ']'
 			}
-			close := findMatchingDelimiter(query[:end], index, rune(character), rune(closer))
+			close := cyphertext.FindMatchingDelimiter(query[:end], index, rune(character), rune(closer), cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return
 			}
 			scanStandaloneOrderContainers(query, index+1, close, edits)
 			index = close + 1
-			previousWord, last = "", closer
+			previousWord, last = "", rune(closer)
 			continue
 		case character == '{':
-			close := findMatchingDelimiter(query[:end], index, '{', '}')
+			close := cyphertext.FindMatchingDelimiter(query[:end], index, '{', '}', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return
 			}
@@ -97,9 +98,9 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 			previousWord, last = "", '}'
 			continue
 		}
-		name, next, ok := scanIdentifierToken(query, index)
+		name, ok := cyphertext.ScanIdentifier(query, index)
 		if !ok {
-			if character == '%' && last != 0 && strings.IndexByte(":|&!", last) >= 0 {
+			if character == '%' && last != 0 && strings.ContainsRune(":|&!", last) {
 				// The label wildcard (a:%) is a complete operand, not the
 				// modulo operator.
 				previousWord, last = "", ')'
@@ -107,25 +108,36 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 				// A quantified path pattern's quantifier ends the pattern:
 				// ((a)-->(b))+ RETURN ….
 				previousWord = ""
-			} else if character > ' ' {
-				previousWord, last = "", character
+			} else if !cyphertext.IsWhitespaceAt(query, index) {
+				previousWord, last = "", rune(character)
 			}
 			index++
 			continue
 		}
 		if index > start && (query[index-1] == '.' || query[index-1] == '$') {
-			previousWord, last = "", query[next-1]
-			index = next
+			previousWord, last = "", cyphertext.RuneAt(query, name.End-1)
+			index = name.End
 			continue
 		}
-		upper := standaloneKeyword(name)
-		kind := standaloneClauseKind(query, upper, next, end)
+		upper := standaloneKeyword(name.Value)
+		kind := standaloneClauseKind(query, upper, name.End, end)
 		if kind == standaloneStageItems && standaloneOperandPosition(previousWord, last) {
 			// A keyword where an operand is expected is a variable:
 			// RETURN finish, n.id AS optional, WITH a, match.
-			previousWord, last = "", query[next-1]
-			index = next
+			previousWord, last = "", cyphertext.RuneAt(query, name.End-1)
+			index = name.End
 			continue
+		}
+		if upper == "USE" {
+			// The USE grammar owns its graph reference, which may be spelled
+			// like a clause keyword: USE GRAPH limit CALL { … }.
+			if referenceEnd := useClauseReferenceEnd(query[:end], index, start > 0); referenceEnd > name.End {
+				reference := strings.TrimRightFunc(query[index:referenceEnd], cyphertext.IsWhitespace)
+				inProjection = false
+				previousWord, last = "", cyphertext.RuneAt(reference, len(reference)-1)
+				index = referenceEnd
+				continue
+			}
 		}
 		if kind == standaloneStageItems {
 			switch upper {
@@ -140,14 +152,14 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 				"DELETE", "DETACH", "FOREACH", "CALL", "UNION", "LOAD", "USE", "FINISH":
 				inProjection = false
 			}
-			previousWord, last = upper, query[next-1]
-			index = next
+			previousWord, last = upper, cyphertext.RuneAt(query, name.End-1)
+			index = name.End
 			continue
 		}
 		if !standaloneClausePosition(previousWord, last) {
 			// A variable: x > limit, AS skip.
-			previousWord, last = "", query[next-1]
-			index = next
+			previousWord, last = "", cyphertext.RuneAt(query, name.End-1)
+			index = name.End
 			continue
 		}
 		if !inProjection || stage >= kind {
@@ -156,13 +168,13 @@ func scanStandaloneOrderClauses(query string, start, end int, edits *[]labelRewr
 		}
 		stage = kind
 		if upper == "OFFSET" {
-			*edits = append(*edits, labelRewriteEdit{start: index, end: next, text: "SKIP"})
+			*edits = append(*edits, labelRewriteEdit{start: index, end: name.End, text: "SKIP"})
 		}
 		if upper == "ORDER" {
-			next = skipSpaces(query, next) + len("BY")
+			name.End = skipSpaces(query, name.End) + len("BY")
 		}
-		previousWord, last = upper, query[next-1]
-		index = next
+		previousWord, last = upper, cyphertext.RuneAt(query, name.End-1)
+		index = name.End
 	}
 }
 
@@ -211,8 +223,8 @@ func standaloneOperandWord(word string) bool {
 // standaloneOperandPosition reports whether an operand is expected after
 // the token previousWord / last: after a standaloneOperandWord, a comma or an
 // operator character (not *, which after WITH or RETURN is the wildcard).
-func standaloneOperandPosition(previousWord string, last byte) bool {
-	return standaloneOperandWord(previousWord) || (last != 0 && strings.IndexByte(",:=<>+-/%^|", last) >= 0)
+func standaloneOperandPosition(previousWord string, last rune) bool {
+	return standaloneOperandWord(previousWord) || (last != 0 && strings.ContainsRune(",:=<>+-/%^|", last))
 }
 
 // standaloneClauseKind is the projection stage the word upper at
@@ -237,14 +249,14 @@ func standaloneClauseKind(query, upper string, next, end int) int {
 // token previousWord / last: at the start of the block, or after a complete
 // expression or pattern, not after an operator or a word that expects an
 // operand (a variable named skip or limit is read as one: x > limit, AS skip).
-func standaloneClausePosition(previousWord string, last byte) bool {
+func standaloneClausePosition(previousWord string, last rune) bool {
 	switch {
 	case last == 0:
 		return true
 	case standaloneOperandWord(previousWord):
 		return false
 	}
-	return isIdentByte(last) || strings.IndexByte(")]}'\"`", last) >= 0
+	return cyphertext.NamePart(last) || strings.ContainsRune(")]}'\"`", last)
 }
 
 // scanStandaloneOrderContainers visits expression containers without treating
@@ -264,7 +276,7 @@ func scanStandaloneOrderContainers(query string, start, end int, edits *[]labelR
 			if !braces.at(index) {
 				continue
 			}
-			close := findMatchingDelimiter(query[:end], index, '{', '}')
+			close := cyphertext.FindMatchingDelimiter(query[:end], index, '{', '}', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return
 			}

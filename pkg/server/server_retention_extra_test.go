@@ -130,7 +130,7 @@ func TestRetentionPolicyByID_AdditionalErrorBranches(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}))
 	req.SetPathValue("id", "   ")
 	rec := httptest.NewRecorder()
-	server.handleRetentionPolicyByID(rec, req)
+	server.handleRetention(rec, req, retentionPolicyRoute)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
@@ -210,7 +210,7 @@ func TestRetentionHoldByID_DeleteAndErrors(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}))
 	req.SetPathValue("id", " \t ")
 	rec := httptest.NewRecorder()
-	server.handleRetentionHoldByID(rec, req)
+	server.handleRetention(rec, req, retentionHoldRoute)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }
 
@@ -259,7 +259,7 @@ func TestRetentionDefaultsStatusAndProcessAdditionalBranches(t *testing.T) {
 	disabledReq := httptest.NewRequest(http.MethodPost, "/admin/retention/erasures/e/process", nil)
 	disabledReq = disabledReq.WithContext(context.WithValue(disabledReq.Context(), contextKeyClaims, &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}))
 	disabledReq.SetPathValue("id", "e")
-	disabledServer.handleRetentionProcessErasure(disabledRec, disabledReq)
+	disabledServer.handleRetention(disabledRec, disabledReq, retentionProcessRoute)
 	require.Equal(t, http.StatusServiceUnavailable, disabledRec.Code)
 
 	resp := makeRequest(t, server, http.MethodGet, "/admin/retention/policies/defaults", nil, "Bearer "+token)
@@ -294,6 +294,6 @@ func TestRetentionDefaultsStatusAndProcessAdditionalBranches(t *testing.T) {
 	req = req.WithContext(context.WithValue(req.Context(), contextKeyClaims, &auth.JWTClaims{Roles: []string{string(auth.RoleAdmin)}}))
 	req.SetPathValue("id", "  ")
 	rec := httptest.NewRecorder()
-	server.handleRetentionProcessErasure(rec, req)
+	server.handleRetention(rec, req, retentionProcessRoute)
 	require.Equal(t, http.StatusBadRequest, rec.Code)
 }

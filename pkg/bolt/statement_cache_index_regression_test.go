@@ -12,7 +12,7 @@ import (
 )
 
 func TestRule73CachedBoltViewsDropCycles64(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +21,7 @@ func TestRule73CachedBoltViewsDropCycles64(t *testing.T) {
 	session := &Session{server: server}
 	for i := range 64 {
 		name := fmt.Sprintf("gate_cached_%d", i)
-		if err := manager.CreateDatabase(name); err != nil {
+		if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}); err != nil {
 			t.Fatal(err)
 		}
 		executor, err := session.getExecutorForDatabase(name)
@@ -31,7 +31,7 @@ func TestRule73CachedBoltViewsDropCycles64(t *testing.T) {
 		if _, err := executor.Execute(context.Background(), "RETURN 67 AS gate_value", nil); err != nil {
 			t.Fatal(err)
 		}
-		if err := manager.DropDatabase(name); err != nil {
+		if err := manager.DropDatabase(t.Context(), name); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -48,14 +48,14 @@ func TestRule73CachedBoltViewsDropCycles64(t *testing.T) {
 }
 
 func TestStatementCacheFamilyCachedIndexConcurrentDrop(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer manager.Close()
 	server := &Server{dbManager: manager, executors: make(map[string]QueryExecutor)}
 	defer server.Close()
-	if err := manager.CreateDatabase("index_concurrent"); err != nil {
+	if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "index_concurrent"}); err != nil {
 		t.Fatal(err)
 	}
 	session := &Session{server: server}
@@ -83,15 +83,15 @@ func TestStatementCacheFamilyCachedIndexConcurrentDrop(t *testing.T) {
 		})
 	}
 	for range 16 {
-		if err := manager.DropDatabase("index_concurrent"); err != nil {
+		if err := manager.DropDatabase(t.Context(), "index_concurrent"); err != nil {
 			t.Fatal(err)
 		}
-		if err := manager.CreateDatabase("index_concurrent"); err != nil {
+		if err := manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "index_concurrent"}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	stopWorkers()
-	if err := manager.DropDatabase("index_concurrent"); err != nil {
+	if err := manager.DropDatabase(t.Context(), "index_concurrent"); err != nil {
 		t.Fatal(err)
 	}
 	server.executorsMu.RLock()

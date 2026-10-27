@@ -1,6 +1,8 @@
 package resolvers
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"testing"
 
@@ -17,7 +19,7 @@ func TestGraphQLStatsRequireSelectedDatabaseRead(t *testing.T) {
 
 	_, err := db.GetStorage().CreateNode(&storage.Node{ID: "default-node", Labels: []string{"DefaultDoc"}})
 	require.NoError(t, err)
-	require.NoError(t, dbManager.CreateDatabase("named"))
+	require.NoError(t, dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "named"}))
 	named, err := dbManager.GetStorage("named")
 	require.NoError(t, err)
 	for _, id := range []storage.NodeID{"named-a", "named-b"} {

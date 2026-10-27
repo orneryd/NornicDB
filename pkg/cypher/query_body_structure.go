@@ -24,12 +24,12 @@ func forEachQueryBody(ctx context.Context, source string, containers []string, v
 	if isNornicExtensionStatement(source) || isSchemaCommandStatement(source) {
 		return nil
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err != nil {
-		return syntaxAdmissionError(source, err)
+		return syntaxAdmissionError(ctx, source, AcceptedSource, err)
 	}
 	var failure error
 	syntax.Walk(func(node cypherantlr.SyntaxNode) func() {
@@ -120,7 +120,7 @@ func readQueryBody(ctx context.Context, source string, start, end int) queryBody
 	if ctx.Err() != nil {
 		return declinedQueryBody(start, end)
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil || ctx.Err() != nil {
 		return declinedQueryBody(start, end)
 	}
@@ -328,6 +328,10 @@ func appendQuerySyntax(branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
 	case cypherantlr.CypherParserRULE_useClause:
 		setQueryBodyUse(branch, node)
 		return
+	case cypherantlr.CypherParserRULE_embeddingSt:
+		// WITH EMBEDDING is an execution option on the preceding updates. It
+		// neither reads nor binds names, so it is not a scope operator.
+		return
 	}
 	if node.IsToken(cypherantlr.CypherLexerFINISH) {
 		branch.finished = true
@@ -355,6 +359,49 @@ func appendQuerySyntax(branch *queryBodyBranch, node cypherantlr.SyntaxNode) {
 		text = text[start-nodeStart:]
 	}
 	branch.clauses = append(branch.clauses, queryBodyClause{pipelineClause: pipelineClause{kind: kind, text: text, optional: optional}, start: start, end: end, syntax: node})
+}
+
+// embeddingCandidate reports the documented nonterminal WITH EMBEDDING form:
+// one unaliased, unquoted EMBEDDING projection after an updating clause and
+// immediately before RETURN. It reads the statement's single parse; the scope
+// compiler, semantic validation and the pipeline frame decide its meaning.
+func embeddingCandidate(clauses []queryBodyClause, index int) string {
+	if index <= 0 || index+1 >= len(clauses) || clauses[index].kind != pipelineClauseWith || clauses[index+1].kind != pipelineClauseReturn {
+		return ""
+	}
+	switch clauses[index-1].kind {
+	case pipelineClauseCreate, pipelineClauseMerge, pipelineClauseSet, pipelineClauseRemove, pipelineClauseDelete, pipelineClauseForeach:
+	default:
+		return ""
+	}
+	code := clauses[index].text
+	if clauses[index].syntax.Valid() {
+		code = clauses[index].syntax.Code()
+	}
+	code = strings.TrimSpace(code)
+	if len(code) < len("WITH") || !strings.EqualFold(code[:len("WITH")], "WITH") {
+		return ""
+	}
+	if name := strings.TrimSpace(code[len("WITH"):]); strings.EqualFold(name, "EMBEDDING") {
+		return name
+	}
+	return ""
+}
+
+// statementHasEmbeddingCandidate reports a nonterminal WITH EMBEDDING
+// projection in any branch of the statement's single parse.
+func statementHasEmbeddingCandidate(ctx context.Context, source string) bool {
+	if !containsFold(source, "EMBEDDING") {
+		return false
+	}
+	for _, branch := range readQueryBody(ctx, source, 0, len(source)).branches {
+		for index := range branch.clauses {
+			if embeddingCandidate(branch.clauses, index) != "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func querySyntaxClauseKind(node cypherantlr.SyntaxNode) (pipelineClauseKind, bool) {
@@ -408,7 +455,7 @@ func statementSyntaxQuery(syntax cypherantlr.StatementSyntax) cypherantlr.Syntax
 }
 
 func queryStatementWindow(ctx context.Context, source string) (start, end int, mode ExecutionMode, ok bool) {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return -1, -1, ModeNormal, false
 	}
@@ -440,7 +487,7 @@ func queryStatementWindow(ctx context.Context, source string) (start, end int, m
 }
 
 func callSubqueryBraces(ctx context.Context, source string) (open, end int, ok bool) {
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.FragmentEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return -1, -1, false
 	}

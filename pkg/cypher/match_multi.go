@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	cypherfn "github.com/orneryd/nornicdb/pkg/cypher/fn"
 	"strconv"
@@ -26,10 +27,10 @@ func countKeywordOccurrences(upper, keyword string) int {
 		// Check word boundary before
 		pos := idx + found
 		// Must have space/newline/tab before, NOT ':' (which would indicate a label)
-		beforeOk := pos == 0 || (upper[pos-1] == ' ' || upper[pos-1] == '\n' || upper[pos-1] == '\t')
+		beforeOk := pos == 0 || (cyphertext.IsWhitespaceAt(upper, pos-1))
 		// Check word boundary after
 		afterPos := pos + len(keyword)
-		afterOk := afterPos >= len(upper) || (upper[afterPos] == ' ' || upper[afterPos] == '(' || upper[afterPos] == '\n' || upper[afterPos] == '\t')
+		afterOk := afterPos >= len(upper) || cyphertext.IsWhitespaceAt(upper, afterPos) || upper[afterPos] == '('
 
 		if beforeOk && afterOk {
 			count++
@@ -157,7 +158,7 @@ func (e *StorageExecutor) executeChainedMatch(ctx context.Context, pattern strin
 		for name, relationship := range existingRels {
 			rowScope[name] = relationship
 		}
-		rowCtx, rowPattern, prepareErr := e.preparePatternRow(ctx, pattern, rowScope)
+		rowCtx, rowPattern, prepareErr := e.bindPatternProperties(ctx, pattern, rowScope)
 		if prepareErr != nil {
 			recordExpressionFailure(ctx, prepareErr)
 			return nil, nil
@@ -1213,22 +1214,7 @@ func parseCartesianInListTerm(term string) (string, string, []interface{}, bool)
 	return v, p, values, true
 }
 
-func isSimpleIdentifierCartesian(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if isIdentStartByte(ch) {
-			continue
-		}
-		if i > 0 && ch >= '0' && ch <= '9' {
-			continue
-		}
-		return false
-	}
-	return true
-}
+func isSimpleIdentifierCartesian(s string) bool { return cyphertext.IsIdentifier(s) }
 
 func parseCartesianVarPropEqualityTerm(term string) (string, string, string, string, int64, bool) {
 	idx := strings.Index(term, "=")
@@ -1434,7 +1420,7 @@ func (e *StorageExecutor) evaluateRowRelationshipPattern(ctx context.Context, cl
 	if !isRelationshipPatternOperand(strings.TrimSpace(clause)) {
 		return false, false
 	}
-	rowCtx, pattern, err := e.preparePatternRow(ctx, strings.TrimSpace(clause), values)
+	rowCtx, pattern, err := e.bindPatternProperties(ctx, strings.TrimSpace(clause), values)
 	if err != nil {
 		recordExpressionFailure(ctx, err)
 		return false, true

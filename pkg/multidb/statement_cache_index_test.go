@@ -9,12 +9,12 @@ import (
 )
 
 func TestStatementCacheIndexCleanupOutsideMetadataLock(t *testing.T) {
-	manager, err := NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	manager, err := NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer manager.Close()
-	if err := manager.CreateAlias("index_alias", "nornic"); err != nil {
+	if err := manager.CreateAlias(t.Context(), "index_alias", "nornic"); err != nil {
 		t.Fatal(err)
 	}
 	var indexMu sync.Mutex
@@ -23,7 +23,7 @@ func TestStatementCacheIndexCleanupOutsideMetadataLock(t *testing.T) {
 	defer cancel()
 	indexMu.Lock()
 	dropped := make(chan error, 1)
-	go func() { dropped <- manager.DropAlias("index_alias") }()
+	go func() { dropped <- manager.DropAlias(t.Context(), "index_alias") }()
 	select {
 	case <-started:
 	case <-time.After(2 * time.Second):
@@ -52,7 +52,7 @@ func TestStatementCacheIndexCleanupOutsideMetadataLock(t *testing.T) {
 }
 
 func TestStatementCacheIndexBindCloseRace(t *testing.T) {
-	manager, err := NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	manager, err := NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	if err != nil {
 		t.Fatal(err)
 	}

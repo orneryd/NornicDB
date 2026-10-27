@@ -35,7 +35,7 @@ func TestMultidbStack_LabelScanScalesWithLabelNotStore(t *testing.T) {
 	base := runtimeFixtureOwner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	t.Cleanup(func() { _ = base.Close() })
 
-	manager, err := multidb.NewDatabaseManager(base, nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	if err != nil {
 		t.Fatalf("NewDatabaseManager: %v", err)
 	}

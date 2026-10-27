@@ -128,8 +128,8 @@ func TestGetExecutorForDatabaseWithAuth_InheritsLoggerAndSlowQueryThreshold(t *t
 	// the remote-auth storage selection (the code under
 	// test), but querying the LOCAL constituent below keeps this test
 	// in-process — no real dial to the remote constituent's URI needed.
-	require.NoError(t, server.dbManager.CreateDatabase("obs_local_shard"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("obs_comp_remote", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "obs_local_shard"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "obs_comp_remote", []multidb.ConstituentRef{
 		{Alias: "local1", DatabaseName: "obs_local_shard", Type: "local", AccessMode: "read_write"},
 		{
 			Alias:        "r1",

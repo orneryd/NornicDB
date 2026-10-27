@@ -25,7 +25,7 @@ func TestSolReviewCompositePasswordTrace(t *testing.T) {
 	base := newTestMemoryEngine(t)
 	cfg := multidb.DefaultConfig()
 	cfg.RemoteCredentialEncryptionKey = "synthetic-sol-metadata-encryption-781624"
-	manager, err := multidb.NewDatabaseManager(base, cfg)
+	manager, err := multidb.NewDatabaseManager(t.Context(), base, cfg)
 	if err != nil {
 		t.Fatal("manager init failed")
 	}

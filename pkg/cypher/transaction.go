@@ -7,10 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"regexp"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"time"
-	"unicode"
 
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
 	"github.com/orneryd/nornicdb/pkg/fabric"
@@ -47,8 +46,6 @@ func clientTransactionCommand(ctx context.Context, query string) error {
 	}
 	return nil
 }
-
-var firstUseGraphPattern = regexp.MustCompile(`(?is)\bUSE\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`)
 
 // TransactionContext holds the active transaction for a Cypher session.
 type TransactionContext struct {
@@ -165,7 +162,7 @@ func bareTransactionCommand(cypher string) string {
 	// Allocation-free: it runs for every client statement.
 	text := strings.TrimSpace(cypher)
 	word, rest := text, ""
-	if i := strings.IndexFunc(text, unicode.IsSpace); i >= 0 {
+	if i := strings.IndexFunc(text, cyphertext.IsWhitespace); i >= 0 {
 		word, rest = text[:i], strings.TrimSpace(text[i:])
 	}
 	if rest != "" && !strings.EqualFold(rest, "TRANSACTION") {
@@ -489,18 +486,11 @@ func (e *StorageExecutor) executeInTransaction(ctx context.Context, cypher strin
 	}
 
 	if ftx, ok := e.txContext.tx.(*fabric.FabricTransaction); ok {
-		if looksLikeWriteQuery(cypher) {
-			if graph := extractFirstUseGraph(cypher); graph != "" {
-				if _, err := ftx.GetOrOpen(graph, true); err != nil {
-					return nil, err
-				}
-			}
-		}
-		// For composite/fabric transactions, route through shared fabric gateway when
-		// query has multi-graph CALL { USE ... } patterns so write-shard constraints are
-		// enforced across statements within the same explicit transaction.
+		// Shared USE syntax selects Fabric routing; its statement contract supplies
+		// write intent. prepareExecDispatch enlists only the resolved participant,
+		// preserving the one-writer rule across statements without guessing from text.
 		params := getParamsFromContext(ctx)
-		if e.shouldUseFabricPlanner(cypher) {
+		if e.shouldUseFabricPlanner(ctx, cypher) {
 			return e.executeViaFabricWithTx(ctx, cypher, params, ftx, false)
 		}
 		// Non-fabric-shaped queries still run on the scoped engine in explicit tx session.
@@ -591,14 +581,6 @@ func looksLikeWriteQuery(cypher string) bool {
 		strings.Contains(upper, "DELETE") ||
 		strings.Contains(upper, "SET ") ||
 		strings.Contains(upper, "REMOVE ")
-}
-
-func extractFirstUseGraph(cypher string) string {
-	m := firstUseGraphPattern.FindStringSubmatch(cypher)
-	if len(m) < 2 {
-		return ""
-	}
-	return strings.TrimSpace(m[1])
 }
 
 // executeQueryAgainstStorage executes query with current storage context.

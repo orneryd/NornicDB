@@ -58,7 +58,7 @@ func (m *SecurityMiddleware) writeError(w http.ResponseWriter, r *http.Request, 
 			match := m.localizer.Resolve("http", preferences...)
 			ctx = localization.WithPreferences(ctx, match.Tag)
 		}
-		if rendered, resolved, err := m.localizer.Render(ctx, message); err == nil {
+		if rendered, resolved, err := m.localizer.Render(ctx, localization.MessageRequest(message)); err == nil {
 			text = rendered
 			tag = resolved
 		}

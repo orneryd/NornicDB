@@ -50,11 +50,11 @@ func TestWriteProcedureStatementAtomicity(t *testing.T) {
 		"CALL apoc.cypher.doIt('CREATE (:U5AtomicWrite) RETURN 1 AS value',{}) YIELD value CALL u5tx.fail() YIELD rejected RETURN rejected",
 	} {
 		t.Run("composite fragment/"+fragment, func(t *testing.T) {
-			manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+			manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = manager.Close() })
-			require.NoError(t, manager.CreateDatabase("atomic_shard"))
-			require.NoError(t, manager.CreateCompositeDatabase("atomic_comp", []multidb.ConstituentRef{{
+			require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "atomic_shard"}))
+			require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "atomic_comp", []multidb.ConstituentRef{{
 				Alias: "shard", DatabaseName: "atomic_shard", Type: "local", AccessMode: "read_write",
 			}}))
 			store, err := manager.GetStorage("atomic_comp")
@@ -115,11 +115,11 @@ func TestWriteProcedureCallbackAtomicityAcrossCarriers(t *testing.T) {
 }
 
 func TestWriteProcedureFabricRegistrationReload(t *testing.T) {
-	manager, err := multidb.NewDatabaseManager(newTestMemoryEngine(t), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), newTestMemoryEngine(t), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = manager.Close() })
-	require.NoError(t, manager.CreateDatabase("reload_shard"))
-	require.NoError(t, manager.CreateCompositeDatabase("reload_comp", []multidb.ConstituentRef{{
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "reload_shard"}))
+	require.NoError(t, manager.CreateCompositeDatabase(t.Context(), "reload_comp", []multidb.ConstituentRef{{
 		Alias: "shard", DatabaseName: "reload_shard", Type: "local", AccessMode: "read_write",
 	}}))
 	store, err := manager.GetStorage("reload_comp")

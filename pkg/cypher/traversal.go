@@ -6,6 +6,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strconv"
 	"strings"
@@ -187,27 +188,26 @@ func (e *StorageExecutor) parseRelationshipPattern(ctx context.Context, pattern 
 	return readRelationshipPattern(ctx, pattern, e.parsePropertyMap)
 }
 
-func readRelationshipPattern(ctx context.Context, pattern string, properties patternPropertyReader) (*RelationshipPattern, error) {
-	result := &RelationshipPattern{
-		Direction:  "both",
-		MinHops:    1,
-		MaxHops:    1,
-		Properties: make(map[string]interface{}),
-	}
-
-	// Determine direction from both ends before trimming either marker. A
-	// relationship carrying arrowheads at both ends is traversable in either
-	// direction; neither marker may overwrite the other.
-	hasIncomingArrow := strings.HasPrefix(pattern, "<-")
-	hasOutgoingArrow := strings.HasSuffix(pattern, "->")
+// relationshipArrows classifies the existing endpoint markers together so a
+// two-headed relationship retains the same both-direction semantics everywhere.
+func relationshipArrows(pattern string) (direction string, incoming, outgoing bool) {
+	incoming = strings.HasPrefix(pattern, "<-")
+	outgoing = strings.HasSuffix(pattern, "->")
 	switch {
-	case hasIncomingArrow && hasOutgoingArrow:
-		result.Direction = "both"
-	case hasIncomingArrow:
-		result.Direction = "incoming"
-	case hasOutgoingArrow:
-		result.Direction = "outgoing"
+	case incoming && outgoing:
+		return "both", incoming, outgoing
+	case incoming:
+		return "incoming", incoming, outgoing
+	case outgoing:
+		return "outgoing", incoming, outgoing
+	default:
+		return "both", incoming, outgoing
 	}
+}
+
+func readRelationshipPattern(ctx context.Context, pattern string, properties patternPropertyReader) (*RelationshipPattern, error) {
+	direction, hasIncomingArrow, hasOutgoingArrow := relationshipArrows(pattern)
+	result := &RelationshipPattern{Direction: direction, MinHops: 1, MaxHops: 1, Properties: make(map[string]interface{})}
 	if hasIncomingArrow {
 		pattern = pattern[2:]
 	} else if strings.HasPrefix(pattern, "-") {
@@ -603,7 +603,7 @@ func (e *StorageExecutor) tryExecuteTraversalSeedOrderLimit(ctx context.Context,
 		return nil, false, nil
 	}
 
-	orderSpecs := e.parseNodeOrderSpecs(orderExpr, matches.EndNode.variable)
+	orderSpecs, _ := e.parseNodeOrderSpecs(orderExpr, matches.EndNode.variable)
 	if len(orderSpecs) == 0 {
 		return nil, false, nil
 	}
@@ -954,15 +954,11 @@ func normalizeAnonymousTraversalRelationships(pattern string) string {
 // isChainedPattern checks if a pattern has multiple relationship segments
 // e.g., (a)<-[:R1]-(b)-[:R2]->(c) or (a)-[:R1]->(b)-[:R2]->(c)
 func (e *StorageExecutor) isChainedPattern(pattern string) bool {
-	// Count relationship patterns by counting ]-
-	// A chained pattern has at least 2 relationship segments
 	count := 0
-	// Reverse iteration: order doesn't matter for counting
-	for i := len(pattern) - 2; i >= 0; i-- {
-		if pattern[i] == ']' && (pattern[i+1] == '-' || pattern[i+1] == '>') {
-			count++
-		}
-	}
+	forEachRelationshipSource(pattern, func(_, _, _, _ int, _, _ bool) bool {
+		count++
+		return count < 2
+	})
 	return count >= 2
 }
 
@@ -1218,14 +1214,14 @@ func (e *StorageExecutor) readTraversalPatternStateMachine(ctx context.Context, 
 }
 
 func findMatchingBracket(s string, startIdx int) int {
-	return findMatchingDelimiter(s, startIdx, '[', ']')
+	return cyphertext.FindMatchingDelimiter(s, startIdx, '[', ']', cyphertext.OpeningDelimiter)
 }
 
 // findMatchingParen finds the index of the closing paren that matches the
 // opening paren at startIdx. It shares the comment- and quote-aware matcher
 // so a ')' inside a string, backtick name or comment never closes early.
 func findMatchingParen(s string, startIdx int) int {
-	return findMatchingDelimiter(s, startIdx, '(', ')')
+	return cyphertext.FindMatchingDelimiter(s, startIdx, '(', ')', cyphertext.OpeningDelimiter)
 }
 
 // parseNodePatternFromString parses n:Label {props} from a string

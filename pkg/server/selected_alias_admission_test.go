@@ -20,7 +20,7 @@ func TestSelectedAliasAdmissionLiveScope(t *testing.T) {
 	ctx := context.Background()
 	const role = "review-r3-reader"
 	const alias = "review_forbidden_alias"
-	require.NoError(t, s.dbManager.CreateAlias(alias, "nornic"))
+	require.NoError(t, s.dbManager.CreateAlias(t.Context(), alias, "nornic"))
 	require.NoError(t, s.roleStore.CreateRole(ctx, role))
 	require.NoError(t, s.roleEntitlementsStore.Set(ctx, role, []string{"read"}))
 	require.NoError(t, s.allowlistStore.SaveRoleDatabases(ctx, role, []string{"nornic"}))

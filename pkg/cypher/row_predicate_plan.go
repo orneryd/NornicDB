@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -195,8 +196,16 @@ func (o *rowOperand) resolveScope(scope compiledRowScope) (interface{}, bool) {
 	}
 }
 
-// parseRowOperand classifies text as a simple operand.
-func parseRowOperand(text string) (rowOperand, bool) {
+type rowOperandPolicy uint8
+
+const (
+	rowOperandSimple rowOperandPolicy = iota
+	rowOperandCompiled
+)
+
+// parseRowOperand owns simple leaf classification and optional compiled
+// arithmetic/size composition. Both policies retain the same literal namespace.
+func parseRowOperand(text string, policy rowOperandPolicy) (rowOperand, bool) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return rowOperand{}, false
@@ -206,43 +215,36 @@ func parseRowOperand(text string) (rowOperand, bool) {
 		case nil, bool, string, int64, float64:
 			return rowOperand{kind: rowOperandLiteral, literal: value}, true
 		}
-		return rowOperand{}, false
-	}
-	if text[0] == '$' {
-		if isValidIdentifier(text[1:]) {
+	} else if text[0] == '$' {
+		if cyphertext.IsIdentifier(text[1:]) {
 			return rowOperand{kind: rowOperandParameter, variable: text}, true
 		}
-		return rowOperand{}, false
-	}
-	if variable, chain, ok := rowPropertyChainShape(text); ok {
-		return rowOperand{kind: rowOperandPropertyChain, variable: variable, chain: chain, directProperty: isValidIdentifier(chain)}, true
-	}
-	if isValidIdentifier(text) {
+	} else if variable, chain, ok := rowPropertyChainShape(text); ok {
+		return rowOperand{kind: rowOperandPropertyChain, variable: variable, chain: chain, directProperty: cyphertext.IsIdentifier(chain)}, true
+	} else if cyphertext.IsIdentifier(text) {
 		return rowOperand{kind: rowOperandVariable, variable: text}, true
 	}
-	return rowOperand{}, false
-}
-
-func parseCompiledRowOperand(text string) (rowOperand, bool) {
-	text = strings.TrimSpace(text)
-	if operand, ok := parseRowOperand(text); ok {
-		return operand, true
+	if policy == rowOperandSimple {
+		return rowOperand{}, false
 	}
 	if inner, enclosed := stripEnclosingExpressionParentheses(text); enclosed {
-		return parseCompiledRowOperand(inner)
+		return parseRowOperand(inner, rowOperandCompiled)
 	}
 	for _, tier := range []string{"+-", "*/%", "^"} {
 		if left, right, operator, split := splitRowArithmeticTier(text, tier); split {
-			leftOperand, leftOK := parseCompiledRowOperand(left)
-			rightOperand, rightOK := parseCompiledRowOperand(right)
+			leftOperand, leftOK := parseRowOperand(left, rowOperandCompiled)
+			rightOperand, rightOK := parseRowOperand(right, rowOperandCompiled)
 			if !leftOK || !rightOK {
 				return rowOperand{}, false
 			}
 			return rowOperand{compiled: &compiledRowOperand{left: leftOperand, right: rightOperand, operator: operator}}, true
 		}
 	}
-	if function, argument, call := parseFunctionCallWS(text); call && equalFoldASCII(function, "size") {
-		operand, ok := parseCompiledRowOperand(argument)
+	var callFacts1 functionCallFacts
+	if call := inspectFunctionCall(text, qualifiedFunctionCall, "", &callFacts1); call && equalFoldASCII(callFacts1.name, "size") {
+		argument := callFacts1.inner
+
+		operand, ok := parseRowOperand(argument, rowOperandCompiled)
 		if ok {
 			return rowOperand{compiled: &compiledRowOperand{left: operand, operator: 's'}}, true
 		}
@@ -391,8 +393,8 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 			span := scan.operator(0)
 			operator := text[span.offset : span.offset+span.length]
 			if operator != "=~" {
-				left, leftOK := parseCompiledRowOperand(scan.operand(text, 0))
-				right, rightOK := parseCompiledRowOperand(scan.operand(text, 1))
+				left, leftOK := parseRowOperand(scan.operand(text, 0), rowOperandCompiled)
+				right, rightOK := parseRowOperand(scan.operand(text, 1), rowOperandCompiled)
 				if leftOK && rightOK {
 					return rowPredicatePart{kind: rowPredicateComparison, text: text, left: left, right: right, operator: comparisonEvaluationHandler(operator),
 						constantNumbers: constantNumericComparison(operator, scan.operand(text, 0), scan.operand(text, 1))}, true
@@ -408,8 +410,8 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 		predicate func(string, string) bool
 	}{{" STARTS WITH ", strings.HasPrefix}, {" ENDS WITH ", strings.HasSuffix}, {" CONTAINS ", strings.Contains}} {
 		if left, right, found := splitByOperatorWithOptions(text, operation.keyword, true, true); found {
-			leftOperand, leftOK := parseRowOperand(left)
-			rightOperand, rightOK := parseRowOperand(right)
+			leftOperand, leftOK := parseRowOperand(left, rowOperandSimple)
+			rightOperand, rightOK := parseRowOperand(right, rowOperandSimple)
 			if !leftOK || !rightOK {
 				return rowPredicatePart{}, false
 			}
@@ -429,8 +431,8 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 		}
 	}
 	if left, right, ok := splitByOperatorWithOptions(text, " IN ", true, true); ok {
-		needle, needleOK := parseRowOperand(left)
-		haystack, haystackOK := parseRowOperand(right)
+		needle, needleOK := parseRowOperand(left, rowOperandSimple)
+		haystack, haystackOK := parseRowOperand(right, rowOperandSimple)
 		if !needleOK || !haystackOK || needle.kind == rowOperandLiteral || haystack.kind == rowOperandLiteral {
 			return rowPredicatePart{}, false
 		}
@@ -441,7 +443,7 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 		kind   rowPredicatePartKind
 	}{{" IS NOT NULL", rowPredicateIsNotNull}, {" IS NULL", rowPredicateIsNull}} {
 		if hasSuffixFoldASCII(text, test.suffix) {
-			operand, ok := parseRowOperand(text[:len(text)-len(test.suffix)])
+			operand, ok := parseRowOperand(text[:len(text)-len(test.suffix)], rowOperandSimple)
 			if !ok || operand.kind == rowOperandLiteral {
 				return rowPredicatePart{}, false
 			}
@@ -452,8 +454,8 @@ func planRowPredicateLeaf(text string) (rowPredicatePart, bool) {
 	if !ok || len(operands) != 2 || len(operators) != 1 {
 		return rowPredicatePart{}, false
 	}
-	left, leftOK := parseRowOperand(operands[0])
-	right, rightOK := parseRowOperand(operands[1])
+	left, leftOK := parseRowOperand(operands[0], rowOperandSimple)
+	right, rightOK := parseRowOperand(operands[1], rowOperandSimple)
 	if !leftOK || !rightOK {
 		return rowPredicatePart{}, false
 	}
@@ -484,7 +486,7 @@ func planRowLiteralListMembership(text string) (rowPredicatePart, bool) {
 	if strings.ContainsAny(left, "()[]:`'\"") || hasPrefixFoldASCII(left, "NOT ") || hasSuffixFoldASCII(left, " NOT") {
 		return rowPredicatePart{}, false
 	}
-	needle, ok := parseRowOperand(left)
+	needle, ok := parseRowOperand(left, rowOperandSimple)
 	if !ok || needle.kind == rowOperandLiteral {
 		return rowPredicatePart{}, false
 	}
@@ -530,7 +532,7 @@ func planRowStringComparison(text string) (rowPredicatePart, bool) {
 		} else if strings.ContainsAny(operand, "()[]:`") || hasPrefixFoldASCII(operand, "NOT ") {
 			return rowPredicatePart{}, false
 		}
-		side, ok := parseRowOperand(operand)
+		side, ok := parseRowOperand(operand, rowOperandSimple)
 		if !ok {
 			return rowPredicatePart{}, false
 		}

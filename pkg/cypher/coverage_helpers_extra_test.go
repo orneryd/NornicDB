@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"testing"
 	"time"
@@ -113,14 +114,14 @@ func TestQueryPatternIdentifierHelpers(t *testing.T) {
 	require.Equal(t, []string{"_anon"}, extractNodeVariables("MATCH (_anon)"))
 	require.Empty(t, extractNodeVariables("MATCH (:Label)-[]->()"))
 
-	name, next, ok := scanIdentifierToken("abc_123 rest", 0)
+	name, ok := cyphertext.ScanIdentifier("abc_123 rest", 0)
 	require.True(t, ok)
-	require.Equal(t, "abc_123", name)
-	require.Equal(t, len("abc_123"), next)
+	require.Equal(t, "abc_123", name.Value)
+	require.Equal(t, len("abc_123"), name.End)
 
-	_, _, ok = scanIdentifierToken("1abc", 0)
+	_, ok = cyphertext.ScanIdentifier("1abc", 0)
 	require.False(t, ok)
-	_, _, ok = scanIdentifierToken("abc", -1)
+	_, ok = cyphertext.ScanIdentifier("abc", -1)
 	require.False(t, ok)
 }
 

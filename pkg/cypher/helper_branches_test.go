@@ -70,9 +70,9 @@ func TestFunctionMatch_HelperBranches(t *testing.T) {
 	re2 := getFuncMatcher("count")
 	assert.Equal(t, re1.String(), re2.String())
 
-	assert.True(t, isFunctionCallWS(`count('x(y)')`, "count"))
-	assert.False(t, isFunctionCallWS(`count('x(y)'`, "count"))
-	assert.False(t, isFunctionCallWS(`prefix_count(n)`, "count"))
+	assert.True(t, inspectFunctionCall(`count('x(y)')`, namedFunctionCall, "count", nil))
+	assert.False(t, inspectFunctionCall(`count('x(y)'`, namedFunctionCall, "count", nil))
+	assert.False(t, inspectFunctionCall(`prefix_count(n)`, namedFunctionCall, "count", nil))
 
 	args, idx := extractFuncArgsLen("sum (n.value)", "sum")
 	assert.Equal(t, "n.value", args)

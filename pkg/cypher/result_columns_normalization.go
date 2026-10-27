@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
@@ -29,9 +30,9 @@ func preserveStatementPresentation(ctx context.Context, source, canonical string
 		if prior == nil {
 			return source, nil
 		}
-		return prior.canonical, prior
+		return prior.Text, prior
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, source, cypherantlr.StatementEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if ctx.Err() != nil {
 		return source, nil
 	}
@@ -42,12 +43,12 @@ func preserveStatementPresentation(ctx context.Context, source, canonical string
 	}
 	protected := statementExpressionNameSpans(syntax)
 	var output strings.Builder
-	var kept []queryTextEdit
+	var kept []cyphertext.SourceEdit
 	last, removed := 0, false
-	for _, edit := range rewrite.edits {
+	for _, edit := range rewrite.Edits {
 		preserve := false
 		for _, span := range protected {
-			if edit.origStart < span.end && edit.origEnd > span.start || edit.origStart == edit.origEnd && span.start <= edit.origStart && edit.origStart < span.end {
+			if edit.Original.Start < span.end && edit.Original.End > span.start || edit.Original.Start == edit.Original.End && span.start <= edit.Original.Start && edit.Original.Start < span.end {
 				preserve = true
 				break
 			}
@@ -56,11 +57,11 @@ func preserveStatementPresentation(ctx context.Context, source, canonical string
 			removed = true
 			continue
 		}
-		output.WriteString(source[last:edit.origStart])
+		output.WriteString(source[last:edit.Original.Start])
 		start := output.Len()
-		output.WriteString(canonical[edit.canonStart:edit.canonEnd])
-		kept = append(kept, queryTextEdit{origStart: edit.origStart, origEnd: edit.origEnd, canonStart: start, canonEnd: output.Len()})
-		last = edit.origEnd
+		output.WriteString(canonical[edit.Accepted.Start:edit.Accepted.End])
+		kept = append(kept, cyphertext.SourceEdit{Original: cyphertext.Span{Start: edit.Original.Start, End: edit.Original.End}, Accepted: cyphertext.Span{Start: start, End: output.Len()}})
+		last = edit.Original.End
 	}
 	if !removed {
 		if ctx.Err() != nil {
@@ -78,7 +79,7 @@ func preserveStatementPresentation(ctx context.Context, source, canonical string
 		statementPresentationRewrites.put(source, nil)
 		return source, nil
 	}
-	rewrite = &queryRewrite{original: source, canonical: canonical, edits: kept, verbatimColumns: rewrite.verbatimColumns, commentsAdmitted: rewrite.commentsAdmitted}
+	rewrite = &queryRewrite{Source: cyphertext.Source{Original: source, Text: canonical, Edits: kept}, verbatimColumns: rewrite.verbatimColumns, commentsAdmitted: rewrite.commentsAdmitted}
 	if ctx.Err() != nil {
 		return source, nil
 	}

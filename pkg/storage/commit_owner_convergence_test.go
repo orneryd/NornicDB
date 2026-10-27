@@ -13,40 +13,52 @@ import (
 func TestReleaseCallbackOwnersDetachBeforeReentry(t *testing.T) {
 	for _, prepared := range []bool{false, true} {
 		t.Run(map[bool]string{false: "native", true: "prepared"}[prepared], func(t *testing.T) {
-			var calls atomic.Int32
-			var unlocked atomic.Bool
-			var release func()
-			if prepared {
-				p := &PreparedEntityCommit{}
-				release = func() { drainReleaseCallbacks(&p.hooksMu, &p.appliedHooks) }
-				p.appliedHooks = []func(){func() {
-					calls.Add(1)
-					if p.hooksMu.TryLock() {
-						unlocked.Store(true)
-						p.hooksMu.Unlock()
-						release()
+			// Concurrent empty drains may briefly acquire the mutex while the
+			// callback runs. Prove reentry without that unrelated contention,
+			// then prove exactly-once release on fresh owners under contention.
+			for _, concurrent := range []bool{false, true} {
+				t.Run(map[bool]string{false: "reentry", true: "concurrent"}[concurrent], func(t *testing.T) {
+					var calls atomic.Int32
+					var unlocked atomic.Bool
+					var release func()
+					if prepared {
+						p := &PreparedEntityCommit{}
+						release = func() { drainReleaseCallbacks(&p.hooksMu, &p.appliedHooks) }
+						p.appliedHooks = []func(){func() {
+							calls.Add(1)
+							if !concurrent && p.hooksMu.TryLock() {
+								unlocked.Store(true)
+								p.hooksMu.Unlock()
+								release()
+							}
+						}}
+					} else {
+						tx := &BadgerTransaction{}
+						release = tx.ReleaseMergeKeys
+						tx.mergeKeyReleases = map[uniqueConstraintLockKey]func(){{label: "Doc", property: "id", value: "one"}: func() {
+							calls.Add(1)
+							if !concurrent && tx.mu.TryLock() {
+								unlocked.Store(true)
+								tx.mu.Unlock()
+								release()
+							}
+						}}
 					}
-				}}
-			} else {
-				tx := &BadgerTransaction{}
-				release = tx.ReleaseMergeKeys
-				tx.mergeKeyReleases = map[uniqueConstraintLockKey]func(){{label: "Doc", property: "id", value: "one"}: func() {
-					calls.Add(1)
-					if tx.mu.TryLock() {
-						unlocked.Store(true)
-						tx.mu.Unlock()
+					if !concurrent {
 						release()
+						require.EqualValues(t, 1, calls.Load())
+						require.True(t, unlocked.Load(), "callbacks execute outside their own mutex and can reenter")
+						return
 					}
-				}}
+					var wg sync.WaitGroup
+					for i := 0; i < 20; i++ {
+						wg.Add(1)
+						go func() { defer wg.Done(); release() }()
+					}
+					wg.Wait()
+					require.EqualValues(t, 1, calls.Load())
+				})
 			}
-			var wg sync.WaitGroup
-			for i := 0; i < 20; i++ {
-				wg.Add(1)
-				go func() { defer wg.Done(); release() }()
-			}
-			wg.Wait()
-			require.EqualValues(t, 1, calls.Load())
-			require.True(t, unlocked.Load(), "callbacks execute outside the owner's mutex")
 		})
 	}
 }

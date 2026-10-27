@@ -3,6 +3,7 @@ package resolvers
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/graphql/models"
@@ -21,7 +22,7 @@ func (r *queryResolver) queryPaths(ctx context.Context, startID, endID string, d
 	types := make([]string, 0, len(relationshipTypes))
 	for _, typ := range relationshipTypes {
 		if typ != "" {
-			types = append(types, "`"+strings.ReplaceAll(typ, "`", "``")+"`")
+			types = append(types, cyphertext.PrintIdentifier(typ, nil, cyphertext.RawSource))
 		}
 	}
 	if len(relationshipTypes) > 0 && len(types) == 0 {

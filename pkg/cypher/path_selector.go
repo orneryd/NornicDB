@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"sort"
 	"strings"
 
@@ -89,7 +90,7 @@ func scanPathPatternPrefix(q string, i, end int) (pathPatternPrefix, bool, error
 		if j < end && q[j] == '$' {
 			j++
 		}
-		for j < end && isIdentByte(q[j]) {
+		for j < end && cyphertext.NamePartAt(q, j) {
 			j++
 		}
 		return q[k:j], j
@@ -176,11 +177,9 @@ func mayUsePathPatternPrefix(query string) bool {
 		switch c := query[i]; {
 		case isCypherStringQuoteByte(c):
 			i = skipCypherQuotedText(query, i, c) - 1
-		case isIdentByte(c):
+		case cyphertext.NamePartAt(query, i):
 			end := i + 1
-			for end < len(query) && isIdentByte(query[end]) {
-				end++
-			}
+			end = cyphertext.NamePartEnd(query, end)
 			if pathPatternPrefixWord(query, i, end) {
 				return true
 			}
@@ -348,7 +347,7 @@ func (r *labelExpressionRewriter) pathPrefixes(start, end int) (pathPrefixRewrit
 // its inside, and its WHERE becomes part of the selector's predicate.
 func (r *labelExpressionRewriter) parenthesisedPathWhere(start, end int, rewrite *pathPrefixRewrite) (bool, error) {
 	q := r.query
-	if inner := skipASCIISpaces(q, start+1, end); inner >= end || q[inner] != '(' || findMatchingDelimiter(q[:end], start, '(', ')') != end-1 {
+	if inner := skipASCIISpaces(q, start+1, end); inner >= end || q[inner] != '(' || cyphertext.FindMatchingDelimiter(q[:end], start, '(', ')', cyphertext.OpeningDelimiter) != end-1 {
 		return false, nil
 	}
 	rewrite.patternStart, rewrite.patternEnd = start+1, end-1
@@ -420,11 +419,11 @@ func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite
 		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '[', '{':
-			if close := findMatchingDelimiter(q[:end], i, rune(c), map[byte]rune{'[': ']', '{': '}'}[c]); close > i {
+			if close := cyphertext.FindMatchingDelimiter(q[:end], i, rune(c), map[byte]rune{'[': ']', '{': '}'}[c], cyphertext.OpeningDelimiter); close > i {
 				i = close
 			}
 		case '(':
-			close := findMatchingDelimiter(q[:end], i, '(', ')')
+			close := cyphertext.FindMatchingDelimiter(q[:end], i, '(', ')', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return nil
 			}
@@ -432,7 +431,7 @@ func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite
 			// path are not plain parenthesised paths.
 			before := trimRightIndex(q, start, i)
 			if inner := skipASCIISpaces(q, i+1, close); inner >= close || q[inner] != '(' || quantifiedGroupAt(q, close, len(q)) ||
-				before > start && isIdentByte(q[before-1]) {
+				before > start && cyphertext.NamePartAt(q, before-1) {
 				i = close
 				continue
 			}
@@ -442,7 +441,7 @@ func (r *labelExpressionRewriter) plainParenthesisedPath(start, end int, rewrite
 			open, last := i, close
 			for {
 				inner := skipASCIISpaces(q, open+1, last)
-				if inner >= last || q[inner] != '(' || findMatchingDelimiter(q[:last], inner, '(', ')') != trimRightIndex(q, inner, last)-1 {
+				if inner >= last || q[inner] != '(' || cyphertext.FindMatchingDelimiter(q[:last], inner, '(', ')', cyphertext.OpeningDelimiter) != trimRightIndex(q, inner, last)-1 {
 					break
 				}
 				open, last = inner, trimRightIndex(q, inner, last)-1
@@ -521,11 +520,11 @@ func hasUnboundedRepetition(q string, start, end int) bool {
 		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '{':
-			if close := findMatchingDelimiter(q[:end], i, '{', '}'); close > i {
+			if close := cyphertext.FindMatchingDelimiter(q[:end], i, '{', '}', cyphertext.OpeningDelimiter); close > i {
 				i = close
 			}
 		case '[':
-			close := findMatchingDelimiter(q[:end], i, '[', ']')
+			close := cyphertext.FindMatchingDelimiter(q[:end], i, '[', ']', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return false
 			}
@@ -568,11 +567,11 @@ func hasVariableLengthRelationship(q string, start, end int) bool {
 		case cypherQuoteClass:
 			i = skipCypherQuotedText(q, i, c) - 1
 		case '{':
-			if close := findMatchingDelimiter(q[:end], i, '{', '}'); close > i {
+			if close := cyphertext.FindMatchingDelimiter(q[:end], i, '{', '}', cyphertext.OpeningDelimiter); close > i {
 				i = close
 			}
 		case '[':
-			close := findMatchingDelimiter(q[:end], i, '[', ']')
+			close := cyphertext.FindMatchingDelimiter(q[:end], i, '[', ']', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return false
 			}

@@ -1,6 +1,8 @@
 package antlr
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	"testing"
 
@@ -14,7 +16,7 @@ func TestCanceledValidationReleasesRetiredPrediction(t *testing.T) {
 		retireCurrentPredictionForTest()
 		cancel()
 	}}
-	require.ErrorIs(t, ValidateContext(during, "MATCH (n) WHERE n.x > 1 RETURN n"), context.Canceled)
+	require.ErrorIs(t, ValidateContext(during, "MATCH (n) WHERE n.x > 1 RETURN n", cyphertext.RawSource), context.Canceled)
 	checkLedger(t)
 	predictions.mu.Lock()
 	for generation := range predictions.retired {

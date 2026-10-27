@@ -124,11 +124,11 @@ func TestStartQdrantGRPC_AdditionalBranches(t *testing.T) {
 		QdrantGRPCEnabled: true,
 	}
 	dbName := server.dbManager.DefaultDatabaseName()
-	require.NoError(t, server.dbManager.SetDatabaseStatus(dbName, "offline"))
+	require.NoError(t, server.dbManager.SetDatabaseStatus(t.Context(), dbName, "offline"))
 	err := server.startQdrantGRPC()
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to get storage")
-	require.NoError(t, server.dbManager.SetDatabaseStatus(dbName, "online"))
+	require.NoError(t, server.dbManager.SetDatabaseStatus(t.Context(), dbName, "online"))
 
 	// start failure branch with invalid listen address.
 	server.config.Features = &nornicConfig.FeatureFlagsConfig{

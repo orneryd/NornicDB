@@ -15,7 +15,7 @@ import (
 
 func TestRemoteDisplaySecretTransactionErrors(t *testing.T) {
 	const credential = "synthetic-remote-credential-314159"
-	for _, mode := range []string{"basic", "bearer", "uri"} {
+	for _, mode := range []string{"basic", "padded_basic", "bearer", "uri"} {
 		t.Run(mode, func(t *testing.T) {
 			var upstream *httptest.Server
 			upstream = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -33,6 +33,8 @@ func TestRemoteDisplaySecretTransactionErrors(t *testing.T) {
 			switch mode {
 			case "basic":
 				cfg.User, cfg.Password = "probe", credential
+			case "padded_basic":
+				cfg.User, cfg.Password = " probe ", " "+credential+" "
 			case "bearer":
 				cfg.AuthToken = "Bearer " + credential
 			case "uri":
@@ -53,7 +55,7 @@ func TestRemoteDisplaySecretTransactionErrors(t *testing.T) {
 					t.Fatal("localized error identity lost")
 				}
 				for _, text := range []string{err.Error(), localized.Error(), fmt.Sprint(localized.Message.Data)} {
-					if strings.Contains(text, credential) || strings.Contains(text, base64.StdEncoding.EncodeToString([]byte("probe:"+credential))) {
+					if strings.Contains(text, credential) || strings.Contains(text, base64.StdEncoding.EncodeToString([]byte("probe:"+credential))) || strings.Contains(text, base64.StdEncoding.EncodeToString([]byte(" probe : "+credential+" "))) {
 						t.Error("remote error disclosed credential (details withheld)")
 					}
 				}
@@ -61,7 +63,7 @@ func TestRemoteDisplaySecretTransactionErrors(t *testing.T) {
 					t.Error("remote status code lost")
 				}
 			}
-			_, _, err = engine.QueryCypher(context.Background(), "RETURN 1", nil)
+			_, _, err = engine.QueryCypher(context.Background(), "RETURN 1", nil, RemoteAccessRead)
 			check(err)
 			for _, operation := range []string{"query", "commit", "rollback"} {
 				tx, err := engine.BeginCypherTx(context.Background())

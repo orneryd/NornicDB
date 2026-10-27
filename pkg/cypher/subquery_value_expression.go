@@ -3,6 +3,7 @@ package cypher
 import (
 	"context"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"regexp"
 	"sort"
 	"strconv"
@@ -57,7 +58,7 @@ func findSubqueryExpressions(expr string) []subqueryExpression {
 			i++
 			continue
 		}
-		closing := findMatchingDelimiter(expr, open, '{', '}')
+		closing := cyphertext.FindMatchingDelimiter(expr, open, '{', '}', cyphertext.OpeningDelimiter)
 		if closing < 0 {
 			return found
 		}
@@ -232,7 +233,7 @@ func rowSubqueryAtom(expr string) (kind string, open int, ok bool) {
 		return "", 0, false
 	}
 	kind, open, ok = subqueryExpressionKeywordAt(expr, 0)
-	if !ok || findMatchingDelimiter(expr, open, '{', '}') != len(expr)-1 {
+	if !ok || cyphertext.FindMatchingDelimiter(expr, open, '{', '}', cyphertext.OpeningDelimiter) != len(expr)-1 {
 		return "", 0, false
 	}
 	return kind, open, true
@@ -729,7 +730,7 @@ func patternMapsAreConstantText(pattern string) bool {
 			if depth <= 0 {
 				continue
 			}
-			close := findMatchingDelimiter(pattern, index, '{', '}')
+			close := cyphertext.FindMatchingDelimiter(pattern, index, '{', '}', cyphertext.OpeningDelimiter)
 			if close < 0 {
 				return false
 			}
@@ -749,7 +750,7 @@ func patternMapsAreConstantText(pattern string) bool {
 // parameter.
 func isConstantMapValue(value string) bool {
 	value = strings.TrimSpace(value)
-	if len(value) > 1 && value[0] == '$' && isValidIdentifier(value[1:]) {
+	if len(value) > 1 && value[0] == '$' && cyphertext.IsIdentifier(value[1:]) {
 		return true
 	}
 	if inner, list := stripEnclosingRowDelimiter(value, '[', ']'); list {
@@ -869,7 +870,7 @@ func containsIdentifierWord(text, name string) bool {
 		}
 		start := from + index
 		end := start + len(name)
-		if (start == 0 || !isIdentByte(text[start-1])) && (end == len(text) || !isIdentByte(text[end])) {
+		if (start == 0 || !cyphertext.NamePartAt(text, start-1)) && (end == len(text) || !cyphertext.NamePartAt(text, end)) {
 			return true
 		}
 		from = start + 1

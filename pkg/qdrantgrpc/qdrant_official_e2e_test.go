@@ -19,7 +19,7 @@ func TestOfficialQdrantGRPC_BasicFlow(t *testing.T) {
 
 	ctx := context.Background()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
@@ -179,7 +179,7 @@ func TestOfficialQdrantGRPC_NamedVectorsRoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()
@@ -256,7 +256,7 @@ func TestOfficialQdrantGRPC_AdvancedFlow(t *testing.T) {
 
 	ctx := context.Background()
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 
 	cfg := DefaultConfig()

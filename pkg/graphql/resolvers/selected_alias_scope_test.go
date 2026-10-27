@@ -15,7 +15,7 @@ import (
 func TestSelectedAliasScopeDirectReads(t *testing.T) {
 	db := testDB(t)
 	manager := testutil.DatabaseManager(t, db)
-	require.NoError(t, manager.CreateAlias("selected_alias", "nornic"))
+	require.NoError(t, manager.CreateAlias(t.Context(), "selected_alias", "nornic"))
 	_, err := db.GetStorage().CreateNode(&storage.Node{ID: "alias-seed", Labels: []string{"Seed"}, ChunkEmbeddings: [][]float32{{1, 0, 0}}})
 	require.NoError(t, err)
 	resolver := NewResolver(db, manager)
@@ -62,7 +62,7 @@ func TestSelectedAliasScopeDirectReads(t *testing.T) {
 func TestSelectedAliasSubscriptionsObserveRevocation(t *testing.T) {
 	db := testDB(t)
 	manager := testutil.DatabaseManager(t, db)
-	require.NoError(t, manager.CreateAlias("selected_alias", "nornic"))
+	require.NoError(t, manager.CreateAlias(t.Context(), "selected_alias", "nornic"))
 	resolver := NewResolver(db, manager)
 	subscriptions := resolver.Subscription()
 	allowed := false

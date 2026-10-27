@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	cypherantlr "github.com/orneryd/nornicdb/pkg/cypher/antlr"
 	"github.com/orneryd/nornicdb/pkg/cypher/resultmetadata"
 )
@@ -11,15 +12,40 @@ var _ resultmetadata.FactsProvider = (*StorageExecutor)(nil)
 // StatementFacts exposes the one cached execution projection program. Scope,
 // imports, classification and ordered columns are established together. The
 // owner's answer is complete or a terminal error; it never declines execution.
-func (e *StorageExecutor) StatementFacts(query string, incoming resultmetadata.Scope, cypher25 bool) resultmetadata.Facts {
-	return e.StatementFactsWith(query, incoming, cypher25, nil)
+func (e *StorageExecutor) StatementFacts(query string, incoming resultmetadata.Scope, cypher25 bool, stage SourceStage) resultmetadata.Facts {
+	return e.StatementFactsWith(query, incoming, cypher25, nil, stage)
 }
 
 // StatementFactsWith completes participant-owned signatures during compilation.
 // Signature answers are not cached under query text: a participant may change
 // its procedure registry independently of this executor's registry generation.
-func (e *StorageExecutor) StatementFactsWith(query string, incoming resultmetadata.Scope, cypher25 bool, schema resultmetadata.ParticipantSchema) resultmetadata.Facts {
-	return e.statementProjectionProgram(context.Background(), query, incoming, cypher25, schema).facts
+func (e *StorageExecutor) StatementFactsWith(query string, incoming resultmetadata.Scope, cypher25 bool, schema resultmetadata.ParticipantSchema, stage SourceStage) resultmetadata.Facts {
+	source := cyphertext.NewSource(context.Background(), query, stage)
+	if source.Err != nil {
+		return resultmetadata.UnresolvedFacts(resultmetadata.Unresolved{Reason: resultmetadata.ReasonParserDecline, Err: source.Err})
+	}
+	query = source.Text
+	if schema != nil && source.Text != source.Original {
+		participant := schema
+		schema = func(obligation resultmetadata.SchemaObligation) (resultmetadata.Columns, error) {
+			if obligation.Start >= 0 && obligation.End >= 0 {
+				span, ok := source.OriginalSpan(cyphertext.Span{Start: obligation.Start, End: obligation.End}, cyphertext.SourceExtent)
+				if !ok {
+					return resultmetadata.Columns{}, unresolvedStatementError()
+				}
+				obligation.Start, obligation.End = span.Start, span.End
+			}
+			if obligation.UseStart >= 0 && obligation.UseEnd >= 0 {
+				span, ok := source.OriginalSpan(cyphertext.Span{Start: obligation.UseStart, End: obligation.UseEnd}, cyphertext.SourceExtent)
+				if !ok {
+					return resultmetadata.Columns{}, unresolvedStatementError()
+				}
+				obligation.UseStart, obligation.UseEnd = span.Start, span.End
+			}
+			return participant(obligation)
+		}
+	}
+	return e.statementProjectionProgram(context.Background(), query, incoming, cypher25, schema).facts.SourceView(source)
 }
 
 func (e *StorageExecutor) statementProjectionProgram(ctx context.Context, query string, incoming resultmetadata.Scope, cypher25 bool, schema resultmetadata.ParticipantSchema) *projectedScopeFacts {

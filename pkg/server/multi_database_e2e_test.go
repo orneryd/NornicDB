@@ -27,10 +27,10 @@ func TestMultiDatabase_E2E_FullSequence(t *testing.T) {
 	ensureCompositeFixture := func(t *testing.T) {
 		t.Helper()
 		if !server.dbManager.Exists("test_db_a") {
-			require.NoError(t, server.dbManager.CreateDatabase("test_db_a"))
+			require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "test_db_a"}))
 		}
 		if !server.dbManager.Exists("test_db_b") {
-			require.NoError(t, server.dbManager.CreateDatabase("test_db_b"))
+			require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "test_db_b"}))
 		}
 
 		seedA := makeRequest(t, server, "POST", "/db/test_db_a/tx/commit", map[string]interface{}{
@@ -62,7 +62,7 @@ func TestMultiDatabase_E2E_FullSequence(t *testing.T) {
 		require.Empty(t, seedBRes.Errors)
 
 		if !server.dbManager.IsCompositeDatabase("test_composite") {
-			require.NoError(t, server.dbManager.CreateCompositeDatabase("test_composite", []multidb.ConstituentRef{
+			require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "test_composite", []multidb.ConstituentRef{
 				{Alias: "db_a", DatabaseName: "test_db_a", Type: "local", AccessMode: "read_write"},
 				{Alias: "db_b", DatabaseName: "test_db_b", Type: "local", AccessMode: "read_write"},
 			}))

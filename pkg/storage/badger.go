@@ -211,9 +211,10 @@ type BadgerEngine struct {
 	writeBarrier sync.RWMutex
 	// deleteCleanup counts deletes and runs the deleted-entry clean-up; nil
 	// for in-memory engines (see badger_delete_cleanup.go).
-	deleteCleanup *deleteCleanup
-	inMemory      bool   // True if running in memory-only mode (testing)
-	dataDir       string // Captured from BadgerOptions.DataDir; used by migration logging.
+	deleteCleanup    *deleteCleanup
+	inMemory         bool   // True if running in memory-only mode (testing)
+	dataDir          string // Captured from BadgerOptions.DataDir; used by migration logging.
+	catalogUpgradeV4 *CatalogUpgradeV4
 
 	// writeBehind buffers implicit autocommit commits for background replay
 	// (see badger_write_behind.go). Nil when disabled.
@@ -665,6 +666,10 @@ func (b *BadgerEngine) dispatchEdgeDeleted(edgeID EdgeID) {
 
 // BadgerOptions configures the BadgerDB engine.
 type BadgerOptions struct {
+	// CatalogUpgradeV4 is the optional exact catalog migration plan. It is
+	// captured at open; startup integration decides when V4 is authorized.
+	CatalogUpgradeV4 *CatalogUpgradeV4
+
 	// DataDir is the directory for storing data files.
 	// Required.
 	DataDir string
@@ -1026,6 +1031,11 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 		log: storageLog,
 	}
 
+	if opts.CatalogUpgradeV4 != nil {
+		plan := *opts.CatalogUpgradeV4
+		engine.catalogUpgradeV4 = &plan
+	}
+
 	if engine.nodeCacheMaxEntries <= 0 {
 		engine.nodeCacheMaxEntries = defaultBadgerNodeCacheMaxEntries
 	}
@@ -1096,7 +1106,7 @@ func NewBadgerEngineWithOptions(opts BadgerOptions) (*BadgerEngine, error) {
 	// would fail immediately on the first v0/v1 body with "unexpected
 	// format byte 0xff; expected V2 (0x10)" and the engine would
 	// refuse to open even with --upgrade-storage.
-	if err := engine.RunOnStartMigrations(opts.AllowStorageUpgrade); err != nil {
+	if err := engine.runOnStartMigrations(opts.AllowStorageUpgrade, migrationStartupOpening); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -1360,42 +1370,42 @@ func (b *BadgerEngine) persistMVCCSequence(namespace string) {
 
 func (b *BadgerEngine) readSchemaVersion() (int, error) {
 	var version int
-	err := b.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get(mvccSchemaVersionKey())
-		if err == badger.ErrKeyNotFound {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		return item.Value(func(val []byte) error {
-			if len(val) == 1 && val[0] == 1 {
-				// Compatibility: a broken startup build wrote the edge-between
-				// ready marker to the schema-version key. Treat that one-byte
-				// value as "version unset" so migrations can restore the proper
-				// 8-byte schema version on open.
-				version = 0
-				return nil
-			}
-			if len(val) != 8 {
-				return fmt.Errorf("invalid schema version length: %d", len(val))
-			}
-			version = int(binary.BigEndian.Uint64(val))
-			return nil
-		})
-	})
+	err := b.db.View(func(txn *badger.Txn) error { var err error; version, err = readSchemaVersionInTxn(txn); return err })
+	return version, err
+}
+
+// readSchemaVersionInTxn is shared by startup and atomic migration arms.
+func readSchemaVersionInTxn(txn *badger.Txn) (int, error) {
+	item, err := txn.Get(mvccSchemaVersionKey())
+	if err == badger.ErrKeyNotFound {
+		return 0, nil
+	}
 	if err != nil {
 		return 0, err
 	}
-	return version, nil
+	var version int
+	err = item.Value(func(val []byte) error {
+		// Compatibility with the historical one-byte edge-between ready marker.
+		if len(val) == 1 && val[0] == 1 {
+			return nil
+		}
+		if len(val) != 8 {
+			return fmt.Errorf("invalid schema version length: %d", len(val))
+		}
+		version = int(binary.BigEndian.Uint64(val))
+		return nil
+	})
+	return version, err
+}
+
+func writeSchemaVersionInTxn(txn *badger.Txn, version int) error {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(version))
+	return txn.Set(mvccSchemaVersionKey(), buf)
 }
 
 func (b *BadgerEngine) writeSchemaVersion(version int) error {
-	return b.db.Update(func(txn *badger.Txn) error {
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, uint64(version))
-		return txn.Set(mvccSchemaVersionKey(), buf)
-	})
+	return b.db.Update(func(txn *badger.Txn) error { return writeSchemaVersionInTxn(txn, version) })
 }
 
 // ============================================================================

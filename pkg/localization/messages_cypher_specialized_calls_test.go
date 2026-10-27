@@ -75,7 +75,7 @@ func TestCypherSpecializedCallsCatalogRendering(t *testing.T) {
 
 	manager, err := NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, err)
-	rendered, tag, err := manager.Render(WithPreferences(context.Background(), language.AmericanEnglish), message)
+	rendered, tag, err := manager.Render(WithPreferences(context.Background(), language.AmericanEnglish), MessageRequest(message))
 	require.NoError(t, err)
 	require.Equal(t, language.AmericanEnglish, tag)
 	require.Equal(t, message.Fallback, rendered)
