@@ -188,8 +188,8 @@ func (s *Server) registerNornicDBRoutes(mux *http.ServeMux) {
 		// Embedding control (NornicDB-specific)
 		{"/nornicdb/embed/trigger", auth.PermWrite, s.handleEmbedTrigger},
 		{"/nornicdb/embed/stats", auth.PermRead, s.handleEmbedStats},
-		{"/nornicdb/embed/failures", auth.PermRead, s.handleEmbedFailures},
-		{"/nornicdb/embed/retry-failures", auth.PermWrite, s.handleEmbedFailureRetry},
+		{"/nornicdb/embed/failures", auth.PermRead, func(w http.ResponseWriter, r *http.Request) { s.handleEmbeddingFailures(w, r, embeddingFailureList) }},
+		{"/nornicdb/embed/retry-failures", auth.PermWrite, func(w http.ResponseWriter, r *http.Request) { s.handleEmbeddingFailures(w, r, embeddingFailureRetry) }},
 		{"/nornicdb/embed/clear", auth.PermAdmin, s.handleEmbedClear},
 		{"/nornicdb/search/rebuild", auth.PermWrite, s.handleSearchRebuild},
 	})
@@ -202,13 +202,13 @@ func (s *Server) registerAdminRoutes(mux *http.ServeMux) {
 	s.registerRouteTable(mux, []routeSpec{
 		{"/admin/stats", auth.PermAdmin, s.handleAdminStats},
 		{"/admin/config", auth.PermAdmin, s.handleAdminConfig},
-		{"/admin/backup", auth.PermAdmin, s.handleBackup},
-		{"/admin/restore", auth.PermAdmin, s.handleRestore},
+		{"/admin/backup", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleBackupOperation(w, r, backupCreate) }},
+		{"/admin/restore", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleBackupOperation(w, r, backupRestore) }},
 
 		// GPU control endpoints (NornicDB-specific)
 		{"/admin/gpu/status", auth.PermAdmin, s.handleGPUStatus},
-		{"/admin/gpu/enable", auth.PermAdmin, s.handleGPUEnable},
-		{"/admin/gpu/disable", auth.PermAdmin, s.handleGPUDisable},
+		{"/admin/gpu/enable", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleGPUControl(w, r, gpuControlEnable) }},
+		{"/admin/gpu/disable", auth.PermAdmin, func(w http.ResponseWriter, r *http.Request) { s.handleGPUControl(w, r, gpuControlDisable) }},
 		{"/admin/gpu/test", auth.PermAdmin, s.handleGPUTest},
 
 		// Per-database config overrides (admin only)

@@ -120,7 +120,7 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 						for _, operation := range []string{"merge-create", "merge-match", "set", "remove", "direct-update", "delete-recreate"} {
 							for _, quota := range []string{"count", "bytes"} {
 								t.Run(visibility+"/"+entity+"/"+operation+"/"+quota, func(t *testing.T) {
-									require.NoError(t, h.server.dbManager.SetDatabaseLimits("nornic", nil))
+									require.NoError(t, h.server.dbManager.SetDatabaseLimits(t.Context(), "nornic", nil))
 									request := func(query string) hiddenDeleteOutcome {
 										t.Helper()
 										deadline := time.Now().Add(time.Second)
@@ -196,7 +196,7 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 										if quota == "bytes" {
 											limits = &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: before}}
 										}
-										require.NoError(t, h.server.dbManager.SetDatabaseLimits("nornic", limits))
+										require.NoError(t, h.server.dbManager.SetDatabaseLimits(t.Context(), "nornic", limits))
 										query := merge + " ON MATCH SET " + target + ".payload = 'small' RETURN reveal(" + target + ")"
 										switch operation {
 										case "merge-create":
@@ -266,7 +266,7 @@ func TestTransactionReplacementRoutesAtQuota(t *testing.T) {
 									before := checkBytes(t)
 									beforePolicy := policyBytes
 									if quota == "bytes" {
-										require.NoError(t, h.server.dbManager.SetDatabaseLimits("nornic", &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: before}}))
+										require.NoError(t, h.server.dbManager.SetDatabaseLimits(t.Context(), "nornic", &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: before}}))
 										require.ErrorIs(t, updateQuotaPayload(store, entity, strings.Repeat("x", 8192)), multidb.ErrStorageLimitExceeded)
 									} else if entity == "node" {
 										require.ErrorIs(t, store.UpdateNode(&storage.Node{ID: "overflow"}), multidb.ErrStorageLimitExceeded)

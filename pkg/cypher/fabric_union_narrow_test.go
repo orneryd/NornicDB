@@ -114,7 +114,7 @@ func TestUnionNarrowRequired(t *testing.T) {
 				server := unionNarrowRemote(t)
 				mgr := exec.dbManager.(*testDatabaseManagerAdapter).manager
 				for _, alias := range []string{"r1", "r2"} {
-					require.NoError(t, mgr.AddConstituent("comp", multidb.ConstituentRef{Alias: alias, DatabaseName: "schema", Type: "remote", AccessMode: "read_write", URI: server.URL}))
+					require.NoError(t, mgr.AddConstituent(t.Context(), "comp", multidb.ConstituentRef{Alias: alias, DatabaseName: "schema", Type: "remote", AccessMode: "read_write", URI: server.URL}))
 				}
 				leftGraph, rightGraph = "comp.r1", "comp.r2"
 			}

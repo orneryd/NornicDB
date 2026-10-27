@@ -1,6 +1,7 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/internal/jsontext"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -46,7 +47,7 @@ func TestGraphNeighborhoodEndpoint_ExcludeSymbolNameFragmentsGraph(t *testing.T)
 	}, "Bearer "+token)
 	require.Equal(t, 200, resp.Code)
 	base := decodeGraphPayload(t, resp.Body)
-	require.Equal(t, 5, base.Meta.NodeCount)
+	require.Equal(t, 5, base.Meta.NodeCount, resp.Body.String())
 	require.Equal(t, 1, base.Meta.ComponentCount)
 
 	resp = makeRequest(t, server, "POST", defaultGraphPath(server, "neighborhood"), map[string]interface{}{
@@ -350,4 +351,18 @@ func TestGraphFilterSet_IncludePropertyGates(t *testing.T) {
 	require.False(t, nameFilters.allowNode(&storage.Node{ID: "b", Labels: []string{"Code"}, Properties: map[string]interface{}{"label": "symC"}}))
 	require.False(t, nameFilters.allowNode(&storage.Node{ID: "c", Labels: []string{"Code"}}))
 	require.True(t, nameFilters.allowEdge(&storage.Edge{ID: "ab", StartNode: "a", EndNode: "b", Type: "CALLS"}), "names gate nodes, not edges")
+}
+
+func TestGraphPayloadJSONRecursiveComponents(t *testing.T) {
+	want := graphPayload{
+		Nodes:      []graphNodePayload{{ID: "a", Labels: []string{"Code"}, Properties: map[string]interface{}{"label": "context.Context"}}},
+		Edges:      []graphEdgePayload{},
+		Meta:       graphMetaPayload{NodeCount: 1, ComponentCount: 1},
+		Components: []graphPayload{{Nodes: []graphNodePayload{{ID: "a"}}, Edges: []graphEdgePayload{}, Meta: graphMetaPayload{NodeCount: 1}}},
+	}
+	raw, err := jsontext.Marshal(want)
+	require.NoError(t, err)
+	var got graphPayload
+	require.NoError(t, jsontext.Unmarshal(raw, &got))
+	require.Equal(t, want, got)
 }

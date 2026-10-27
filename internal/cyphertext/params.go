@@ -17,34 +17,25 @@ func ParameterReferences(text string, visit func(name string, start, end int)) {
 			index = end
 			continue
 		}
-		if text[index] != '$' || index > 0 && isNameByte(text[index-1]) {
+		if text[index] != '$' || index > 0 && NamePartAt(text, index-1) {
 			index++
 			continue
 		}
 		start := index
 		index++
 		if index < len(text) && IsBacktick(text[index]) {
-			end, closed := ScanQuotedText(text, index)
-			if !closed {
+			name, ok := ScanIdentifier(text, index)
+			if !ok {
 				return
 			}
-			visit(strings.ReplaceAll(text[index+1:end-1], "``", "`"), start, end)
-			index = end
+			visit(name.Value, start, name.End)
+			index = name.End
 			continue
 		}
-		end := index
-		for end < len(text) && isNameByte(text[end]) {
-			end++
-		}
+		end := NamePartEnd(text, index)
 		if end > index && (end == len(text) || text[end] != '(') {
 			visit(text[index:end], start, end)
 		}
 		index = end
 	}
-}
-
-// isNameByte reports whether b continues an unquoted name: a letter, a
-// digit, '_', '$' or a byte of a multi-byte character.
-func isNameByte(b byte) bool {
-	return b >= 0x80 || b == '_' || b == '$' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
 }

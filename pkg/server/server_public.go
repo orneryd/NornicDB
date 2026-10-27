@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"net/http"
 	"time"
 
@@ -66,7 +67,7 @@ func (s *Server) handleDiscovery(w http.ResponseWriter, r *http.Request) {
 		response["default_database"] = s.dbManager.DefaultDatabaseName()
 	}
 
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +76,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"status": "healthy",
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -152,7 +153,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"embeddings": embedInfo,
 	}
 
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 // handleMetrics serves the legacy :7474/metrics endpoint by translating

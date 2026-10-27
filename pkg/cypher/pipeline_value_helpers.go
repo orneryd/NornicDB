@@ -4,6 +4,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -162,7 +163,7 @@ func parseLiteralScalarForPipeline(s string) (interface{}, bool) {
 	}
 	// Quoted string.
 	if isWholeCypherQuotedString(s) {
-		return decodeCypherQuotedString(s)
+		return cyphertext.DecodeString(s, cyphertext.AcceptedSource)
 	}
 	// true, false, null, NaN, Infinity.
 	if value, ok := literalKeywordValue(s); ok {
@@ -194,25 +195,13 @@ func parseIntFast(s string) (int64, bool) {
 	if digits == len(s) {
 		return 0, false
 	}
-	base := 10
-	if digits+2 <= len(s) && s[digits] == '0' {
-		switch s[digits+1] {
-		case 'x', 'X':
-			base = 16
-			digits += 2
-		case 'o', 'O':
-			base = 8
-			digits += 2
-		}
+	token, ok := cyphertext.ScanNumber(s, digits)
+	if !ok || token.Invalid || token.End != len(s) || token.Grouped || token.Fraction || token.Exponent || token.Suffix != 0 {
+		return 0, false
 	}
+	base := token.Base
+	digits = token.DigitsStart
 	if base == 10 {
-		// Only digits can follow the sign; checking first keeps text that
-		// isn't a number (n.name, e.uuid) from building a parse error.
-		for i := digits; i < len(s); i++ {
-			if s[i] < '0' || s[i] > '9' {
-				return 0, false
-			}
-		}
 		value, err := strconv.ParseInt(s, 10, 64)
 		return value, err == nil
 	}
@@ -243,7 +232,7 @@ func startsLikeDecimalNumber(s string) bool {
 	if i < len(s) && s[i] == '.' {
 		i++
 	}
-	return i < len(s) && s[i] >= '0' && s[i] <= '9'
+	return i < len(s) && cyphertext.IsDigit(s[i])
 }
 
 func parseFloatFast(s string) (float64, bool) {

@@ -45,6 +45,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -226,8 +227,8 @@ func (e *StorageExecutor) hasConcatOperator(expr string) bool {
 			parenDepth--
 		case c == '+' && parenDepth == 0:
 			// Check for space before and after (to avoid matching ++ or += etc)
-			hasBefore := i > 0 && expr[i-1] == ' '
-			hasAfter := i < len(expr)-1 && expr[i+1] == ' '
+			hasBefore := i > 0 && cyphertext.IsWhitespaceAt(expr, i-1)
+			hasAfter := i < len(expr)-1 && cyphertext.IsWhitespaceAt(expr, i+1)
 			if hasBefore && hasAfter {
 				return true
 			}

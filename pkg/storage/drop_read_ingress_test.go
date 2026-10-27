@@ -25,11 +25,11 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 				var tenant, peer storage.Engine = storage.NewNamespacedEngine(b, "tenant"), storage.NewNamespacedEngine(b, "peer")
 				var manager *multidb.DatabaseManager
 				if managed {
-					manager, err = multidb.NewDatabaseManager(b, nil)
+					manager, err = multidb.NewDatabaseManager(t.Context(), b, nil)
 					require.NoError(t, err)
 					t.Cleanup(func() { require.NoError(t, manager.Close()) })
-					require.NoError(t, manager.CreateDatabase("tenant"))
-					require.NoError(t, manager.CreateDatabase("peer"))
+					require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant"}))
+					require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "peer"}))
 					tenant, err = manager.GetStorage("tenant")
 					require.NoError(t, err)
 					peer, err = manager.GetStorage("peer")
@@ -90,7 +90,7 @@ func TestPendingDropPublicReadIngress(t *testing.T) {
 				storage.ReviewSetDropTailFailure(b, func(string) error { return failure })
 				t.Cleanup(func() { storage.ReviewSetDropTailFailure(b, nil) })
 				if managed {
-					err = manager.DropDatabase("tenant")
+					err = manager.DropDatabase(t.Context(), "tenant")
 				} else {
 					_, _, err = b.DeleteByPrefix("tenant:")
 				}

@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/contextslot"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"strings"
 
@@ -138,7 +140,7 @@ func (e *StorageExecutor) pipelineApplyDelete(ctx context.Context, rows []pipeli
 	for edgeID := range deletedEdges {
 		e.notifyEdgeMutated(string(edgeID))
 	}
-	deleted := deletedEntitiesOf(ctx)
+	deleted := contextslot.Get[deletedEntities](ctx)
 	if deleted == nil {
 		deleted = &deletedEntities{}
 	}
@@ -266,7 +268,7 @@ func validatePipelineSetAssignments(assignments []string) error {
 			return localizedError(localization.CypherMutationsSetAssignmentRequired(), nil)
 		}
 		target, _, operator, right := splitSetAssignment(assignment)
-		if operator == "" || !isValidIdentifier(target) || right == "" {
+		if operator == "" || !cyphertext.IsIdentifier(target) || right == "" {
 			return newSemanticError("Neo.ClientError.Statement.SyntaxError", "UnexpectedSyntax", "invalid SET assignment: "+assignment)
 		}
 		if right == "$" {
@@ -327,7 +329,7 @@ func pipelineSetTargetVariables(assignments []string) []string {
 	var targets []string
 	for _, assignment := range assignments {
 		target, _, operator, _ := splitSetAssignment(assignment)
-		if operator == "" || !isValidIdentifier(target) {
+		if operator == "" || !cyphertext.IsIdentifier(target) {
 			continue
 		}
 		if _, exists := seen[target]; exists {
@@ -531,7 +533,7 @@ func (e *StorageExecutor) pipelinePlanCreateRow(ctx context.Context, row pipelin
 // mutation semantics after UNWIND/WITH without duplicating MERGE behavior.
 func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelineRow, clause string) ([]pipelineRow, *QueryStats, error) {
 	if body := strings.TrimSpace(clause); hasDynamicToken(body) && startsWithKeywordFold(body, "MERGE") {
-		if actions := splitMergeClauseActions(strings.TrimSpace(body[len("MERGE"):])); hasDynamicToken(actions.pattern) {
+		if actions := splitMergeClauseActions(strings.TrimSpace(body[len("MERGE"):]), nil); hasDynamicToken(actions.pattern) {
 			pattern := actions.pattern
 			stats := &QueryStats{}
 			out := make([]pipelineRow, 0, len(rows))
@@ -569,7 +571,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 	var clausePattern, onCreateSet, onMatchSet string
 	multiRelationship := false
 	if isMerge {
-		parts := splitMergeClauseActions(strings.TrimSpace(clauseBody[len("MERGE"):]))
+		parts := splitMergeClauseActions(strings.TrimSpace(clauseBody[len("MERGE"):]), nil)
 		clausePattern, onCreateSet, onMatchSet = parts.pattern, parts.onCreate.setText(), parts.onMatch.setText()
 		multiRelationship = e.isMultiRelationshipPattern(clausePattern)
 	}
@@ -585,7 +587,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 		rowTemplate := template
 		if isMerge && (!containsRelationshipPattern(clausePattern) || template.usable && pipelineBoundMergeEndpoints(template, row)) {
 			var prepareErr error
-			ctx, preparedPattern, prepareErr = e.preparePatternRow(ctx, clausePattern, row)
+			ctx, preparedPattern, prepareErr = e.bindPatternProperties(ctx, clausePattern, row)
 			if prepareErr != nil {
 				return nil, nil, prepareErr
 			}
@@ -659,7 +661,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 				}
 				continue
 			}
-			if open, _ := firstRelationshipBracket(mergePattern); open >= 0 {
+			if open, _ := readRelationshipBracket(mergePattern, 0, requireClosedRelationship); open >= 0 {
 				shape, shapeErr := e.parseMergeRelationshipShape(mergePattern)
 				if shapeErr != nil {
 					return nil, nil, shapeErr
@@ -678,7 +680,7 @@ func (e *StorageExecutor) pipelineApplyMerge(ctx context.Context, rows []pipelin
 					continue
 				}
 				var parseErr error
-				ctx, mergePattern, parseErr = e.preparePatternRow(ctx, mergePattern, row)
+				ctx, mergePattern, parseErr = e.bindPatternProperties(ctx, mergePattern, row)
 				if parseErr != nil {
 					return nil, nil, parseErr
 				}

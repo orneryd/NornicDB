@@ -1,6 +1,7 @@
 package multidb
 
 import (
+	"context"
 	"fmt"
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -12,16 +13,16 @@ import (
 func TestReview1406SecondManagerMustNotStealPublicationOwner(t *testing.T) {
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer base.Close()
-	first, err := NewDatabaseManager(base, nil)
+	first, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	require.NoError(t, first.CreateDatabase("shared"))
+	require.NoError(t, first.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shared"}))
 	view, err := first.GetStorage("shared")
 	require.NoError(t, err)
 	_, err = view.CreateNode(&storage.Node{ID: "n", Properties: map[string]any{"v": "small"}})
 	require.NoError(t, err)
 	before, _, _ := first.GetStorageSize("shared")
 	require.Positive(t, before)
-	second, err := NewDatabaseManager(base, nil)
+	second, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	other, _, _ := second.GetStorageSize("shared")
 	require.Equal(t, before, other)
@@ -35,18 +36,18 @@ func TestReview1406SecondManagerMustNotStealPublicationOwner(t *testing.T) {
 func TestManagedRuntimeSharedPolicyAndReservation(t *testing.T) {
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer base.Close()
-	first, err := NewDatabaseManager(base, nil)
+	first, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	require.NoError(t, first.CreateDatabase("shared"))
+	require.NoError(t, first.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "shared"}))
 	left, err := first.GetStorage("shared")
 	require.NoError(t, err)
-	second, err := NewDatabaseManager(base, nil)
+	second, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	right, err := second.GetStorage("shared")
 	require.NoError(t, err)
 	require.NotSame(t, left, right, "each handle keeps its own engine route")
 	require.Same(t, first.databases["shared"].managed.Load(), second.databases["shared"].managed.Load())
-	require.NoError(t, second.SetDatabaseLimits("shared", &Limits{Storage: StorageLimits{MaxNodes: 1}}))
+	require.NoError(t, second.SetDatabaseLimits(t.Context(), "shared", &Limits{Storage: StorageLimits{MaxNodes: 1}}))
 	limits, err := first.GetDatabaseLimits("shared")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, limits.Storage.MaxNodes)
@@ -54,7 +55,7 @@ func TestManagedRuntimeSharedPolicyAndReservation(t *testing.T) {
 	require.NoError(t, err)
 	_, err = right.CreateNode(&storage.Node{ID: "blocked"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
-	require.NoError(t, first.SetDatabaseLimits("shared", &Limits{Storage: StorageLimits{MaxNodes: 2}}))
+	require.NoError(t, first.SetDatabaseLimits(t.Context(), "shared", &Limits{Storage: StorageLimits{MaxNodes: 2}}))
 	// The shared pending allowance is held between native admission and terminal
 	// publication. A second manager must see it before its own public write.
 	info := first.databases["shared"]
@@ -76,12 +77,12 @@ func TestManagedRuntimeSharedPolicyAndReservation(t *testing.T) {
 func TestManagedRuntimeWholeResetAndRecreate(t *testing.T) {
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer base.Close()
-	manager, err := NewDatabaseManager(base, nil)
+	manager, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
-	require.NoError(t, manager.CreateDatabase("lifecycle"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "lifecycle"}))
 	view, err := manager.GetStorage("lifecycle")
 	require.NoError(t, err)
-	require.NoError(t, manager.SetDatabaseLimits("lifecycle", &Limits{Storage: StorageLimits{MaxNodes: 1}}))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), "lifecycle", &Limits{Storage: StorageLimits{MaxNodes: 1}}))
 	_, err = view.CreateNode(&storage.Node{ID: "before"})
 	require.NoError(t, err)
 	_, _, _ = manager.GetStorageSize("lifecycle")
@@ -98,10 +99,10 @@ func TestManagedRuntimeWholeResetAndRecreate(t *testing.T) {
 	require.NoError(t, err)
 	_, err = view.CreateNode(&storage.Node{ID: "quota"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
-	require.NoError(t, manager.DropDatabase("lifecycle"))
+	require.NoError(t, manager.DropDatabase(t.Context(), "lifecycle"))
 	_, err = view.CreateNode(&storage.Node{ID: "retired"})
 	require.ErrorIs(t, err, ErrDatabaseNotFound)
-	require.NoError(t, manager.CreateDatabase("lifecycle"))
+	require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "lifecycle"}))
 	next, err := manager.GetStorage("lifecycle")
 	require.NoError(t, err)
 	require.Same(t, runtime, manager.databases["lifecycle"].managed.Load(), "namespace lifetime keeps the canonical usage object")
@@ -127,23 +128,40 @@ type managedCatalogFailureEngine struct {
 }
 
 func (e *managedCatalogFailureEngine) GetInnerEngine() storage.Engine { return e.Engine }
-func (e *managedCatalogFailureEngine) UpdateNode(node *storage.Node) error {
-	if node.ID == "system:databases:metadata" {
+
+// Fault catalog writes at their actual authoritative submission boundary.
+func (e *managedCatalogFailureEngine) SubmitEntityCommit(ctx context.Context, prepared *storage.PreparedEntityCommit, settle func(storage.CommitOutcome)) (*storage.CommitReceipt, error) {
+	update := false
+	for _, op := range prepared.Operations() {
+		if op.Type == storage.OpUpdateNode && op.Node != nil && op.Node.ID == "system:databases:metadata" {
+			update = true
+			break
+		}
+	}
+	if update {
 		if e.reject != nil {
-			return e.reject
+			return nil, e.reject
 		}
 		e.updates++
 		if e.rejectAt > 0 && e.updates == e.rejectAt {
-			return storage.ErrConflict
+			return nil, storage.ErrConflict
+		}
+		if e.acceptedError && e.updates == 1 {
+			if err := prepared.Commit(nil); err != nil {
+				return nil, err
+			}
+			receipt, resolve := storage.NewCommitReceipt(settle)
+			if err := resolve.Resolve(storage.CommitOutcome{State: storage.CommitApplied, Err: storage.ErrConflict}); err != nil {
+				return nil, err
+			}
+			return receipt, nil
 		}
 	}
-	if e.acceptedError && node.ID == "system:databases:metadata" && e.updates == 1 {
-		if err := e.Engine.UpdateNode(node); err != nil {
-			return err
-		}
-		return &storage.AcceptedCommitError{State: storage.CommitApplied, LogicalID: "catalog-accepted", Err: storage.ErrConflict}
+	route, found := storage.EntityCommitSubmitterFor(e.Engine)
+	if !found || route.Submitter == nil {
+		return nil, storage.ErrInvalidData
 	}
-	return e.Engine.UpdateNode(node)
+	return route.Submitter.SubmitEntityCommit(ctx, prepared, settle)
 }
 func (e *managedCatalogFailureEngine) DeleteByPrefix(prefix string) (int64, int64, error) {
 	if e.rejectDelete {
@@ -156,21 +174,21 @@ func TestManagedRuntimeMetadataFailurePreservesPolicyAndRestoredDatabase(t *test
 	base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	defer base.Close()
 	backing := &managedCatalogFailureEngine{Engine: base}
-	first, err := NewDatabaseManager(backing, nil)
+	first, err := NewDatabaseManager(t.Context(), backing, nil)
 	require.NoError(t, err)
-	require.NoError(t, first.CreateDatabase("retained"))
+	require.NoError(t, first.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: "retained"}))
 	left, err := first.GetStorage("retained")
 	require.NoError(t, err)
-	second, err := NewDatabaseManager(base, nil)
+	second, err := NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	right, err := second.GetStorage("retained")
 	require.NoError(t, err)
-	require.NoError(t, first.SetDatabaseLimits("retained", &Limits{Storage: StorageLimits{MaxNodes: 1}, Rate: RateLimits{MaxWritesPerSecond: 10}}))
+	require.NoError(t, first.SetDatabaseLimits(t.Context(), "retained", &Limits{Storage: StorageLimits{MaxNodes: 1}, Rate: RateLimits{MaxWritesPerSecond: 10}}))
 	runtime := first.databases["retained"].managed.Load()
 	_, oldRate := runtime.policy.rateSnapshot(writeRate)
 	injected := fmt.Errorf("catalog persistence rejected")
 	backing.reject = injected
-	require.ErrorIs(t, first.SetDatabaseLimits("retained", &Limits{Storage: StorageLimits{MaxNodes: 2}}), injected)
+	require.ErrorIs(t, first.SetDatabaseLimits(t.Context(), "retained", &Limits{Storage: StorageLimits{MaxNodes: 2}}), injected)
 	limits, err := second.GetDatabaseLimits("retained")
 	require.NoError(t, err)
 	require.EqualValues(t, 1, limits.Storage.MaxNodes)
@@ -180,7 +198,7 @@ func TestManagedRuntimeMetadataFailurePreservesPolicyAndRestoredDatabase(t *test
 	require.NoError(t, err)
 	_, err = left.CreateNode(&storage.Node{ID: "blocked"})
 	require.ErrorIs(t, err, ErrStorageLimitExceeded)
-	require.ErrorIs(t, first.DropDatabase("retained"), injected)
+	require.ErrorIs(t, first.DropDatabase(t.Context(), "retained"), injected)
 	_, err = first.GetDatabase("retained")
 	require.NoError(t, err, "metadata failure restores the live catalog record")
 	require.False(t, runtime.retired.Load())

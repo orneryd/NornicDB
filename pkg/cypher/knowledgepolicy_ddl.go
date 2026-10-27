@@ -1,6 +1,9 @@
 package cypher
 
 import (
+	"context"
+	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -9,49 +12,22 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-// Allocation-free keyword scanning helpers for DDL parsing.
-// Same pattern as pkg/storage/constraint_contracts.go (cc* prefix),
-// using kp* prefix to avoid collisions.
+// DDL value readers use the shared allocation-free keyword owner in
+// internal/cyphertext and retain their own value grammar.
 
 func kpSkipSpaces(s string, i int) int {
-	for i < len(s) && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r') {
+	for i < len(s) && (cyphertext.IsWhitespaceAt(s, i)) {
 		i++
 	}
 	return i
 }
 
 func kpScanIdent(s string, i int) (string, int) {
-	if i >= len(s) || !isIdentStartByte(s[i]) {
+	name, ok := cyphertext.ScanIdentifier(s, i)
+	if !ok {
 		return "", i
 	}
-	start := i
-	for i < len(s) && isIdentByte(s[i]) {
-		i++
-	}
-	return s[start:i], i
-}
-
-func kpMatchKeywordAt(s string, i int, kw string) int {
-	if i+len(kw) > len(s) {
-		return -1
-	}
-	for k := 0; k < len(kw); k++ {
-		sc, kc := s[i+k], kw[k]
-		if sc >= 'a' && sc <= 'z' {
-			sc -= 'a' - 'A'
-		}
-		if kc >= 'a' && kc <= 'z' {
-			kc -= 'a' - 'A'
-		}
-		if sc != kc {
-			return -1
-		}
-	}
-	end := i + len(kw)
-	if end < len(s) && isIdentByte(s[end]) {
-		return -1
-	}
-	return end
+	return name.Value, name.End
 }
 
 func kpExpectByte(s string, i int, b byte) int {
@@ -72,66 +48,45 @@ func kpScanQuotedString(s string, i int) (string, int) {
 	if !closed {
 		return "", -1
 	}
-	value, decoded := decodeCypherQuotedString(s[i:end])
+	value, decoded := cyphertext.DecodeString(s[i:end], cyphertext.AcceptedSource)
 	if !decoded {
 		return "", -1
 	}
 	return value, end
 }
 
-func kpScanNumber(s string, i int) (float64, int, bool) {
-	if i >= len(s) {
-		return 0, i, false
-	}
+// kpScanDecimal shares signed decimal extent/admission while preserving the
+// requested magnitude domain: int64 values never pass through float64.
+func kpScanDecimal[T int64 | float64](s string, i int) (T, int, bool) {
+	var zero T
 	start := i
-	if s[i] == '-' || s[i] == '+' {
+	if i < len(s) && (s[i] == '-' || s[i] == '+') {
 		i++
 	}
-	if i >= len(s) || (s[i] < '0' && s[i] != '.') || s[i] > '9' {
-		return 0, start, false
+	token, ok := cyphertext.ScanNumber(s, i)
+	_, integer := any(zero).(int64)
+	if !ok || token.Invalid || token.Base != 10 || token.Grouped || token.Suffix != 0 || integer && (token.Fraction || token.Exponent) {
+		return zero, start, false
 	}
-	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-		i++
-	}
-	if i < len(s) && s[i] == '.' {
-		i++
-		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-			i++
+	if integer {
+		value, err := strconv.ParseInt(s[start:token.End], 10, 64)
+		if err != nil {
+			return zero, start, false
 		}
+		return T(value), token.End, true
 	}
-	f, err := strconv.ParseFloat(s[start:i], 64)
+	value, err := strconv.ParseFloat(s[start:token.End], 64)
 	if err != nil {
-		return 0, start, false
+		return zero, start, false
 	}
-	return f, i, true
-}
-
-func kpScanInt(s string, i int) (int64, int, bool) {
-	if i >= len(s) {
-		return 0, i, false
-	}
-	start := i
-	if s[i] == '-' || s[i] == '+' {
-		i++
-	}
-	if i >= len(s) || s[i] < '0' || s[i] > '9' {
-		return 0, start, false
-	}
-	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-		i++
-	}
-	n, err := strconv.ParseInt(s[start:i], 10, 64)
-	if err != nil {
-		return 0, start, false
-	}
-	return n, i, true
+	return T(value), token.End, true
 }
 
 func kpScanBool(s string, i int) (bool, int, bool) {
-	if j := kpMatchKeywordAt(s, i, "TRUE"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "TRUE", cyphertext.CypherWord); j > 0 {
 		return true, j, true
 	}
-	if j := kpMatchKeywordAt(s, i, "FALSE"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "FALSE", cyphertext.CypherWord); j > 0 {
 		return false, j, true
 	}
 	return false, i, false
@@ -254,88 +209,131 @@ func isKnowledgePolicyDDLStatement(statement string) bool {
 		startsWithKeywords(statement, "SHOW", "PROMOTION POLICIES")
 }
 
+type policyDDLSource struct {
+	*cyphertext.Source
+	original bool
+}
+
+func (source policyDDLSource) window(start, end int) policyDDLSource {
+	return policyDDLSource{Source: source.Window(start, end), original: source.original}
+}
+func (source policyDDLSource) storedText(start, end int) (string, error) {
+	text, ok := source.OriginalText(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExtent, nil)
+	if !ok {
+		return "", fmt.Errorf("invalid policy source span: %w", storage.ErrInvalidData)
+	}
+	text = strings.TrimSpace(text)
+	if !source.original {
+		return cyphertext.EmitRawSource(text), nil
+	}
+	return text, nil
+}
+
 // ParseKnowledgePolicyDDL attempts to parse a knowledge-layer DDL statement.
 // Returns (command, true, nil) on success, (nil, false, nil) if the input
 // is not a knowledge-layer DDL statement, or (nil, false, err) on parse error.
-func ParseKnowledgePolicyDDL(stmt string) (interface{}, bool, error) {
-	s := strings.TrimSpace(stmt)
+// The original context and explicit source stage preserve stored policy spelling.
+func ParseKnowledgePolicyDDL(ctx context.Context, stmt string, stage SourceStage) (command interface{}, owned bool, retErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, false, err
+	}
+	defer func() {
+		if err := ctx.Err(); err != nil {
+			command, owned, retErr = nil, false, err
+		}
+	}()
+	var retained *cyphertext.Source
+	original := stage == RawSource
+	if stage == AcceptedSource {
+		retained, original = cyphertext.RetainedSource(ctx, stmt, cyphertext.AcceptedSource)
+	}
+	if retained == nil {
+		retained = cyphertext.NewSource(ctx, stmt, stage)
+	}
+	if retained.Err != nil {
+		return nil, false, retained.Err
+	}
+	source := policyDDLSource{Source: retained, original: original}
+	left := len(source.Text) - len(strings.TrimLeftFunc(source.Text, cyphertext.IsWhitespace))
+	source = source.window(left, left+len(strings.TrimSpace(source.Text)))
+	s := source.Text
 	i := 0
 	i = kpSkipSpaces(s, i)
 
-	if j := kpMatchKeywordAt(s, i, "CREATE"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "CREATE", cyphertext.CypherWord); j > 0 {
 		j = kpSkipSpaces(s, j)
-		if k := kpMatchKeywordAt(s, j, "DECAY"); k > 0 {
+		if k := cyphertext.KeywordEnd(s, j, "DECAY", cyphertext.CypherWord); k > 0 {
 			k = kpSkipSpaces(s, k)
-			if l := kpMatchKeywordAt(s, k, "PROFILE"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "PROFILE", cyphertext.CypherWord); l > 0 {
 				return parseCreateDecayProfile(s, l)
 			}
 		}
-		if k := kpMatchKeywordAt(s, j, "PROMOTION"); k > 0 {
+		if k := cyphertext.KeywordEnd(s, j, "PROMOTION", cyphertext.CypherWord); k > 0 {
 			k = kpSkipSpaces(s, k)
-			if l := kpMatchKeywordAt(s, k, "PROFILE"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "PROFILE", cyphertext.CypherWord); l > 0 {
 				return parseCreatePromotionProfile(s, l)
 			}
-			if l := kpMatchKeywordAt(s, k, "POLICY"); l > 0 {
-				return parseCreatePromotionPolicy(s, l)
+			if l := cyphertext.KeywordEnd(s, k, "POLICY", cyphertext.CypherWord); l > 0 {
+				return parseCreatePromotionPolicy(source, l)
 			}
 		}
 		return nil, false, nil
 	}
 
-	if j := kpMatchKeywordAt(s, i, "ALTER"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "ALTER", cyphertext.CypherWord); j > 0 {
 		j = kpSkipSpaces(s, j)
-		if k := kpMatchKeywordAt(s, j, "DECAY"); k > 0 {
+		if k := cyphertext.KeywordEnd(s, j, "DECAY", cyphertext.CypherWord); k > 0 {
 			k = kpSkipSpaces(s, k)
-			if l := kpMatchKeywordAt(s, k, "PROFILE"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "PROFILE", cyphertext.CypherWord); l > 0 {
 				return parseAlterDecayProfile(s, l)
 			}
 		}
-		if k := kpMatchKeywordAt(s, j, "PROMOTION"); k > 0 {
+		if k := cyphertext.KeywordEnd(s, j, "PROMOTION", cyphertext.CypherWord); k > 0 {
 			k = kpSkipSpaces(s, k)
-			if l := kpMatchKeywordAt(s, k, "PROFILE"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "PROFILE", cyphertext.CypherWord); l > 0 {
 				return parseAlterPromotionProfile(s, l)
 			}
-			if l := kpMatchKeywordAt(s, k, "POLICY"); l > 0 {
-				return parseAlterPromotionPolicy(s, l)
+			if l := cyphertext.KeywordEnd(s, k, "POLICY", cyphertext.CypherWord); l > 0 {
+				return parseAlterPromotionPolicy(source, l)
 			}
 		}
 		return nil, false, nil
 	}
 
-	if j := kpMatchKeywordAt(s, i, "DROP"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "DROP", cyphertext.CypherWord); j > 0 {
 		j = kpSkipSpaces(s, j)
-		if k := kpMatchKeywordAt(s, j, "DECAY"); k > 0 {
+		if k := cyphertext.KeywordEnd(s, j, "DECAY", cyphertext.CypherWord); k > 0 {
 			k = kpSkipSpaces(s, k)
-			if l := kpMatchKeywordAt(s, k, "PROFILE"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "PROFILE", cyphertext.CypherWord); l > 0 {
 				return parseDropDecayProfile(s, l)
 			}
 		}
-		if k := kpMatchKeywordAt(s, j, "PROMOTION"); k > 0 {
+		if k := cyphertext.KeywordEnd(s, j, "PROMOTION", cyphertext.CypherWord); k > 0 {
 			k = kpSkipSpaces(s, k)
-			if l := kpMatchKeywordAt(s, k, "PROFILE"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "PROFILE", cyphertext.CypherWord); l > 0 {
 				return parseDropPromotionProfile(s, l)
 			}
-			if l := kpMatchKeywordAt(s, k, "POLICY"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "POLICY", cyphertext.CypherWord); l > 0 {
 				return parseDropPromotionPolicy(s, l)
 			}
 		}
 		return nil, false, nil
 	}
 
-	if j := kpMatchKeywordAt(s, i, "SHOW"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "SHOW", cyphertext.CypherWord); j > 0 {
 		j = kpSkipSpaces(s, j)
-		if k := kpMatchKeywordAt(s, j, "DECAY"); k > 0 {
+		if k := cyphertext.KeywordEnd(s, j, "DECAY", cyphertext.CypherWord); k > 0 {
 			k = kpSkipSpaces(s, k)
-			if l := kpMatchKeywordAt(s, k, "PROFILES"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "PROFILES", cyphertext.CypherWord); l > 0 {
 				return &ShowDecayProfilesCmd{}, true, nil
 			}
 		}
-		if k := kpMatchKeywordAt(s, j, "PROMOTION"); k > 0 {
+		if k := cyphertext.KeywordEnd(s, j, "PROMOTION", cyphertext.CypherWord); k > 0 {
 			k = kpSkipSpaces(s, k)
-			if l := kpMatchKeywordAt(s, k, "PROFILES"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "PROFILES", cyphertext.CypherWord); l > 0 {
 				return &ShowPromotionProfilesCmd{}, true, nil
 			}
-			if l := kpMatchKeywordAt(s, k, "POLICIES"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "POLICIES", cyphertext.CypherWord); l > 0 {
 				return &ShowPromotionPoliciesCmd{}, true, nil
 			}
 		}
@@ -352,11 +350,11 @@ func parseCreateDecayProfile(s string, i int) (interface{}, bool, error) {
 	}
 	i = kpSkipSpaces(s, i)
 
-	if j := kpMatchKeywordAt(s, i, "OPTIONS"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "OPTIONS", cyphertext.CypherWord); j > 0 {
 		return parseDecayProfileBundleOptions(name, s, j)
 	}
 
-	if j := kpMatchKeywordAt(s, i, "FOR"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "FOR", cyphertext.CypherWord); j > 0 {
 		return parseDecayProfileBinding(name, s, j)
 	}
 
@@ -490,7 +488,7 @@ func parseDecayProfileBinding(name, s string, i int) (interface{}, bool, error) 
 
 	i = kpSkipSpaces(s, i)
 
-	if j := kpMatchKeywordAt(s, i, "APPLY"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "APPLY", cyphertext.CypherWord); j > 0 {
 		j = kpSkipSpaces(s, j)
 		body, k := kpScanBraceBlock(s, j)
 		if k < 0 {
@@ -620,9 +618,9 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 			break
 		}
 
-		if j := kpMatchKeywordAt(body, i, "DECAY"); j > 0 {
+		if j := cyphertext.KeywordEnd(body, i, "DECAY", cyphertext.CypherWord); j > 0 {
 			j = kpSkipSpaces(body, j)
-			if k := kpMatchKeywordAt(body, j, "PROFILE"); k > 0 {
+			if k := cyphertext.KeywordEnd(body, j, "PROFILE", cyphertext.CypherWord); k > 0 {
 				k = kpSkipSpaces(body, k)
 				ref, l := kpScanName(body, k)
 				if ref == "" {
@@ -632,12 +630,12 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 				i = l
 				continue
 			}
-			if k := kpMatchKeywordAt(body, j, "VISIBILITY"); k > 0 {
+			if k := cyphertext.KeywordEnd(body, j, "VISIBILITY", cyphertext.CypherWord); k > 0 {
 				k = kpSkipSpaces(body, k)
-				if l := kpMatchKeywordAt(body, k, "THRESHOLD"); l > 0 {
+				if l := cyphertext.KeywordEnd(body, k, "THRESHOLD", cyphertext.CypherWord); l > 0 {
 					k = kpSkipSpaces(body, l)
 				}
-				f, l, ok := kpScanNumber(body, k)
+				f, l, ok := kpScanDecimal[float64](body, k)
 				if !ok {
 					return localizedError(localization.CypherKnowledgePolicyNumberExpectedAfter("DECAY VISIBILITY THRESHOLD"), nil)
 				}
@@ -645,11 +643,11 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 				i = l
 				continue
 			}
-			if k := kpMatchKeywordAt(body, j, "HALF"); k > 0 {
+			if k := cyphertext.KeywordEnd(body, j, "HALF", cyphertext.CypherWord); k > 0 {
 				k = kpSkipSpaces(body, k)
-				if l := kpMatchKeywordAt(body, k, "LIFE"); l > 0 {
+				if l := cyphertext.KeywordEnd(body, k, "LIFE", cyphertext.CypherWord); l > 0 {
 					l = kpSkipSpaces(body, l)
-					n, m, ok := kpScanInt(body, l)
+					n, m, ok := kpScanDecimal[int64](body, l)
 					if !ok {
 						return localizedError(localization.CypherKnowledgePolicySecondsExpectedAfter("DECAY HALF LIFE"), nil)
 					}
@@ -658,9 +656,9 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 					continue
 				}
 			}
-			if k := kpMatchKeywordAt(body, j, "FLOOR"); k > 0 {
+			if k := cyphertext.KeywordEnd(body, j, "FLOOR", cyphertext.CypherWord); k > 0 {
 				k = kpSkipSpaces(body, k)
-				f, l, ok := kpScanNumber(body, k)
+				f, l, ok := kpScanDecimal[float64](body, k)
 				if !ok {
 					return localizedError(localization.CypherKnowledgePolicyNumberExpectedAfter("DECAY FLOOR"), nil)
 				}
@@ -670,9 +668,9 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 			}
 		}
 
-		if j := kpMatchKeywordAt(body, i, "NO"); j > 0 {
+		if j := cyphertext.KeywordEnd(body, i, "NO", cyphertext.CypherWord); j > 0 {
 			j = kpSkipSpaces(body, j)
-			if k := kpMatchKeywordAt(body, j, "DECAY"); k > 0 {
+			if k := cyphertext.KeywordEnd(body, j, "DECAY", cyphertext.CypherWord); k > 0 {
 				binding.NoDecay = true
 				i = k
 				continue
@@ -680,7 +678,7 @@ func parseBindingApplyBlock(body string, binding *knowledgepolicy.DecayProfileBi
 		}
 
 		// Plan syntax: <var>.<prop> directives (e.g., n.tenantId NO DECAY)
-		if isIdentStartByte(body[i]) {
+		if cyphertext.NameStartAt(body, i) {
 			ident, j := kpScanIdent(body, i)
 			if ident != "" && j < len(body) && body[j] == '.' {
 				propName, k := kpScanIdent(body, j+1)
@@ -739,18 +737,18 @@ func parsePropertyRuleDirectives(s string, i int) (knowledgepolicy.DecayProfileP
 			break
 		}
 
-		if k := kpMatchKeywordAt(s, i, "NO"); k > 0 {
+		if k := cyphertext.KeywordEnd(s, i, "NO", cyphertext.CypherWord); k > 0 {
 			k = kpSkipSpaces(s, k)
-			if l := kpMatchKeywordAt(s, k, "DECAY"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "DECAY", cyphertext.CypherWord); l > 0 {
 				rule.NoDecay = true
 				i = l
 				continue
 			}
 		}
 
-		if k := kpMatchKeywordAt(s, i, "DECAY"); k > 0 {
+		if k := cyphertext.KeywordEnd(s, i, "DECAY", cyphertext.CypherWord); k > 0 {
 			k = kpSkipSpaces(s, k)
-			if l := kpMatchKeywordAt(s, k, "PROFILE"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "PROFILE", cyphertext.CypherWord); l > 0 {
 				l = kpSkipSpaces(s, l)
 				ref, m := kpScanName(s, l)
 				if ref != "" {
@@ -759,11 +757,11 @@ func parsePropertyRuleDirectives(s string, i int) (knowledgepolicy.DecayProfileP
 					continue
 				}
 			}
-			if l := kpMatchKeywordAt(s, k, "HALF"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "HALF", cyphertext.CypherWord); l > 0 {
 				l = kpSkipSpaces(s, l)
-				if m := kpMatchKeywordAt(s, l, "LIFE"); m > 0 {
+				if m := cyphertext.KeywordEnd(s, l, "LIFE", cyphertext.CypherWord); m > 0 {
 					m = kpSkipSpaces(s, m)
-					n, o, ok := kpScanInt(s, m)
+					n, o, ok := kpScanDecimal[int64](s, m)
 					if ok {
 						rule.HalfLifeSeconds = n
 						i = o
@@ -771,9 +769,9 @@ func parsePropertyRuleDirectives(s string, i int) (knowledgepolicy.DecayProfileP
 					}
 				}
 			}
-			if l := kpMatchKeywordAt(s, k, "FLOOR"); l > 0 {
+			if l := cyphertext.KeywordEnd(s, k, "FLOOR", cyphertext.CypherWord); l > 0 {
 				l = kpSkipSpaces(s, l)
-				f, m, ok := kpScanNumber(s, l)
+				f, m, ok := kpScanDecimal[float64](s, l)
 				if ok {
 					rule.ScoreFloor = f
 					i = m
@@ -819,12 +817,12 @@ func kpParseSetOptions(s string, i int) (updates map[string]interface{}, next in
 }
 
 func kpParseSetOptionsWith(s string, i int, decode func(string) (map[string]interface{}, error)) (updates map[string]interface{}, next int, ok bool, err error) {
-	j := kpMatchKeywordAt(s, i, "SET")
+	j := cyphertext.KeywordEnd(s, i, "SET", cyphertext.CypherWord)
 	if j < 0 {
 		return nil, i, false, nil
 	}
 	j = kpSkipSpaces(s, j)
-	k := kpMatchKeywordAt(s, j, "OPTIONS")
+	k := cyphertext.KeywordEnd(s, j, "OPTIONS", cyphertext.CypherWord)
 	if k < 0 {
 		return nil, j, true, nil
 	}
@@ -844,9 +842,9 @@ func kpParseSetOptionsWith(s string, i int, decode func(string) (map[string]inte
 func kpParseDrop(s string, i int, statement string, isPolicy bool, build func(name string, ifExists bool) interface{}) (interface{}, bool, error) {
 	ifExists := false
 	i = kpSkipSpaces(s, i)
-	if j := kpMatchKeywordAt(s, i, "IF"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "IF", cyphertext.CypherWord); j > 0 {
 		j = kpSkipSpaces(s, j)
-		if k := kpMatchKeywordAt(s, j, "EXISTS"); k > 0 {
+		if k := cyphertext.KeywordEnd(s, j, "EXISTS", cyphertext.CypherWord); k > 0 {
 			ifExists = true
 			i = kpSkipSpaces(s, k)
 		}
@@ -865,7 +863,7 @@ func parseAlterDecayProfile(s string, i int) (interface{}, bool, error) {
 	}
 
 	i = kpSkipSpaces(s, i)
-	if j := kpMatchKeywordAt(s, i, "FOR"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "FOR", cyphertext.CypherWord); j > 0 {
 		cmd, _, err := parseDecayProfileBinding(name, s, j)
 		if err != nil {
 			return nil, false, err
@@ -900,7 +898,7 @@ func parseCreatePromotionProfile(s string, i int) (interface{}, bool, error) {
 	}
 
 	i = kpSkipSpaces(s, i)
-	if j := kpMatchKeywordAt(s, i, "OPTIONS"); j < 0 {
+	if j := cyphertext.KeywordEnd(s, i, "OPTIONS", cyphertext.CypherWord); j < 0 {
 		return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfterProfileName("OPTIONS", name), nil)
 	} else {
 		i = j
@@ -1000,14 +998,15 @@ func parseDropPromotionProfile(s string, i int) (interface{}, bool, error) {
 	})
 }
 
-func parseCreatePromotionPolicy(s string, i int) (interface{}, bool, error) {
+func parseCreatePromotionPolicy(source policyDDLSource, i int) (interface{}, bool, error) {
+	s := source.Text
 	i = kpSkipSpaces(s, i)
 	parseGuard := func(index int) (int, bool, error) {
-		if next := kpMatchKeywordAt(s, index, "IF"); next > 0 {
+		if next := cyphertext.KeywordEnd(s, index, "IF", cyphertext.CypherWord); next > 0 {
 			next = kpSkipSpaces(s, next)
-			if next = kpMatchKeywordAt(s, next, "NOT"); next > 0 {
+			if next = cyphertext.KeywordEnd(s, next, "NOT", cyphertext.CypherWord); next > 0 {
 				next = kpSkipSpaces(s, next)
-				if next = kpMatchKeywordAt(s, next, "EXISTS"); next > 0 {
+				if next = cyphertext.KeywordEnd(s, next, "EXISTS", cyphertext.CypherWord); next > 0 {
 					return kpSkipSpaces(s, next), true, nil
 				}
 			}
@@ -1031,10 +1030,10 @@ func parseCreatePromotionPolicy(s string, i int) (interface{}, bool, error) {
 		}
 	}
 
-	if kpMatchKeywordAt(s, i, "FOR") < 0 {
+	if cyphertext.KeywordEnd(s, i, "FOR", cyphertext.CypherWord) < 0 {
 		return nil, false, localizedError(localization.CypherKnowledgePolicyExpectedAfter("FOR", "CREATE PROMOTION POLICY "+name), nil)
 	}
-	policy, err := parsePromotionPolicyDefinition(name, s, i)
+	policy, err := parsePromotionPolicyDefinition(name, source, i)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1042,11 +1041,12 @@ func parseCreatePromotionPolicy(s string, i int) (interface{}, bool, error) {
 	return &CreatePromotionPolicyCmd{Policy: policy, IfNotExists: ifNotExists}, true, nil
 }
 
-func parsePromotionPolicyDefinition(name, s string, i int) (knowledgepolicy.PromotionPolicyDef, error) {
+func parsePromotionPolicyDefinition(name string, source policyDDLSource, i int) (knowledgepolicy.PromotionPolicyDef, error) {
+	s := source.Text
 	i = kpSkipSpaces(s, i)
 	policy := knowledgepolicy.PromotionPolicyDef{Name: name, Enabled: true}
 
-	if j := kpMatchKeywordAt(s, i, "FOR"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "FOR", cyphertext.CypherWord); j > 0 {
 		i = kpSkipSpaces(s, j)
 		binding := knowledgepolicy.DecayProfileBinding{Name: name}
 		var err error
@@ -1062,7 +1062,7 @@ func parsePromotionPolicyDefinition(name, s string, i int) (knowledgepolicy.Prom
 
 	i = kpSkipSpaces(s, i)
 
-	if j := kpMatchKeywordAt(s, i, "APPLY"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "APPLY", cyphertext.CypherWord); j > 0 {
 		j = kpSkipSpaces(s, j)
 		body, k := kpScanBraceBlock(s, j)
 		if k < 0 {
@@ -1070,7 +1070,7 @@ func parsePromotionPolicyDefinition(name, s string, i int) (knowledgepolicy.Prom
 		}
 		i = k
 
-		if err := parsePolicyApplyBlock(body, &policy); err != nil {
+		if err := parsePolicyApplyBlock(source.window(k-1-len(body), k-1), &policy); err != nil {
 			return policy, err
 		}
 	}
@@ -1081,7 +1081,8 @@ func parsePromotionPolicyDefinition(name, s string, i int) (knowledgepolicy.Prom
 	return policy, nil
 }
 
-func parsePolicyApplyBlock(body string, policy *knowledgepolicy.PromotionPolicyDef) error {
+func parsePolicyApplyBlock(source policyDDLSource, policy *knowledgepolicy.PromotionPolicyDef) error {
+	body := source.Text
 	i := 0
 	for i < len(body) {
 		i = kpSkipSpaces(body, i)
@@ -1089,15 +1090,15 @@ func parsePolicyApplyBlock(body string, policy *knowledgepolicy.PromotionPolicyD
 			break
 		}
 
-		if j := kpMatchKeywordAt(body, i, "ON"); j > 0 {
+		if j := cyphertext.KeywordEnd(body, i, "ON", cyphertext.CypherWord); j > 0 {
 			j = kpSkipSpaces(body, j)
-			if k := kpMatchKeywordAt(body, j, "ACCESS"); k > 0 {
+			if k := cyphertext.KeywordEnd(body, j, "ACCESS", cyphertext.CypherWord); k > 0 {
 				k = kpSkipSpaces(body, k)
 				accessBody, l := kpScanBraceBlock(body, k)
 				if l < 0 {
 					return localizedError(localization.CypherKnowledgePolicyExpectedAfter("{", "ON ACCESS"), nil)
 				}
-				onAccess, err := parseOnAccessBlock(accessBody)
+				onAccess, err := parseOnAccessBlock(source.window(l-1-len(accessBody), l-1))
 				if err != nil {
 					return err
 				}
@@ -1107,8 +1108,8 @@ func parsePolicyApplyBlock(body string, policy *knowledgepolicy.PromotionPolicyD
 			}
 		}
 
-		if j := kpMatchKeywordAt(body, i, "WHEN"); j > 0 {
-			clause, l, err := parsePolicyWhenClause(body, j)
+		if j := cyphertext.KeywordEnd(body, i, "WHEN", cyphertext.CypherWord); j > 0 {
+			clause, l, err := parsePolicyWhenClause(source, j)
 			if err != nil {
 				return err
 			}
@@ -1124,7 +1125,8 @@ func parsePolicyApplyBlock(body string, policy *knowledgepolicy.PromotionPolicyD
 	return nil
 }
 
-func parseOnAccessBlock(body string) (*knowledgepolicy.PromotionPolicyOnAccess, error) {
+func parseOnAccessBlock(source policyDDLSource) (*knowledgepolicy.PromotionPolicyOnAccess, error) {
+	body := source.Text
 	onAccess := &knowledgepolicy.PromotionPolicyOnAccess{}
 	i := 0
 
@@ -1136,9 +1138,9 @@ func parseOnAccessBlock(body string) (*knowledgepolicy.PromotionPolicyOnAccess, 
 
 		var kalmanCfg *knowledgepolicy.KalmanConfig
 
-		if j := kpMatchKeywordAt(body, i, "WITH"); j > 0 {
+		if j := cyphertext.KeywordEnd(body, i, "WITH", cyphertext.CypherWord); j > 0 {
 			j = kpSkipSpaces(body, j)
-			if k := kpMatchKeywordAt(body, j, "KALMAN"); k > 0 {
+			if k := cyphertext.KeywordEnd(body, j, "KALMAN", cyphertext.CypherWord); k > 0 {
 				k = kpSkipSpaces(body, k)
 
 				kalmanCfg = &knowledgepolicy.KalmanConfig{
@@ -1167,14 +1169,18 @@ func parseOnAccessBlock(body string) (*knowledgepolicy.PromotionPolicyOnAccess, 
 			}
 		}
 
-		if j := kpMatchKeywordAt(body, i, "SET"); j > 0 {
+		if j := cyphertext.KeywordEnd(body, i, "SET", cyphertext.CypherWord); j > 0 {
 			j = kpSkipSpaces(body, j)
 			expr, l := scanToNextStatement(body, j)
 			if expr == "" {
 				return nil, localizedError(localization.CypherKnowledgePolicyExpressionExpectedAfterSet(), nil)
 			}
+			rawExpression, err := source.storedText(j, j+len(expr))
+			if err != nil {
+				return nil, err
+			}
 			mut := knowledgepolicy.OnAccessMutation{
-				Expression: strings.TrimSpace(expr),
+				Expression: rawExpression,
 				Kalman:     kalmanCfg,
 			}
 			onAccess.Mutations = append(onAccess.Mutations, mut)
@@ -1234,45 +1240,67 @@ func parseKalmanConfigBlock(body string, cfg *knowledgepolicy.KalmanConfig) erro
 
 func scanToNextStatement(s string, i int) (string, int) {
 	start := i
-	for i < len(s) {
+	boundary := len(s)
+	opts := defaultKeywordScanOpts()
+	opts.SkipBraces = true
+	for _, keyword := range []string{"SET", "WITH"} {
+		if next := keywordIndexFrom(s, keyword, start, opts); next >= 0 && next < boundary {
+			boundary = next
+		}
+	}
+	for i < boundary {
+		if end, opaque := cyphertext.SkipToken(s, i); opaque {
+			i = end
+			continue
+		}
+		var closer rune
+		switch s[i] {
+		case '(':
+			closer = ')'
+		case '[':
+			closer = ']'
+		case '{':
+			closer = '}'
+		}
+		if closer != 0 {
+			if end := cyphertext.FindMatchingDelimiter(s, i, rune(s[i]), closer, cyphertext.OpeningDelimiter); end >= 0 {
+				i = end + 1
+				continue
+			}
+		}
 		if s[i] == '\n' || s[i] == ';' {
-			expr := s[start:i]
-			return expr, i + 1
-		}
-		if j := kpMatchKeywordAt(s, i, "SET"); j > 0 {
-			return s[start:i], i
-		}
-		if j := kpMatchKeywordAt(s, i, "WITH"); j > 0 {
-			return s[start:i], i
+			return s[start:i], i + 1
 		}
 		i++
 	}
-	return s[start:i], i
+	return s[start:boundary], boundary
 }
 
-func parsePolicyWhenClause(s string, i int) (knowledgepolicy.PromotionPolicyWhenClause, int, error) {
+func parsePolicyWhenClause(source policyDDLSource, i int) (knowledgepolicy.PromotionPolicyWhenClause, int, error) {
+	s := source.Text
 	i = kpSkipSpaces(s, i)
 	clause := knowledgepolicy.PromotionPolicyWhenClause{}
 
 	predStart := i
-	applyIdx := -1
-	for j := i; j < len(s); j++ {
-		if k := kpMatchKeywordAt(s, j, "APPLY"); k > 0 {
-			applyIdx = j
-			break
-		}
-	}
+	opts := defaultKeywordScanOpts()
+	opts.SkipBraces = true
+	opts.Boundary = keywordBoundaryWhitespace
+	applyIdx := keywordIndexFrom(s, "APPLY", predStart, opts)
 
 	if applyIdx < 0 {
 		return clause, i, localizedError(localization.CypherKnowledgePolicyExpectedAfter("APPLY", "WHEN predicate"), nil)
 	}
 
-	clause.Predicate = strings.TrimSpace(s[predStart:applyIdx])
+	rawPredicate, err := source.storedText(predStart, applyIdx)
+	if err != nil {
+		return clause, i, err
+	}
+	clause.Predicate = rawPredicate
 	i = applyIdx
 
-	if j := kpMatchKeywordAt(s, i, "APPLY"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "APPLY", cyphertext.CypherWord); j > 0 {
 		j = kpSkipSpaces(s, j)
-		if k := kpMatchKeywordAt(s, j, "PROFILE"); k > 0 {
+		if k := cyphertext.KeywordEnd(s, j, "PROFILE", cyphertext.CypherWord); k > 0 {
 			k = kpSkipSpaces(s, k)
 			ref, l := kpScanQuotedString(s, k)
 			if ref == "" {
@@ -1291,15 +1319,16 @@ func parsePolicyWhenClause(s string, i int) (knowledgepolicy.PromotionPolicyWhen
 	return clause, i, nil
 }
 
-func parseAlterPromotionPolicy(s string, i int) (interface{}, bool, error) {
+func parseAlterPromotionPolicy(source policyDDLSource, i int) (interface{}, bool, error) {
+	s := source.Text
 	name, i, err := kpParseKnowledgeName(s, i, "ALTER PROMOTION POLICY", true)
 	if err != nil {
 		return nil, false, err
 	}
 
 	i = kpSkipSpaces(s, i)
-	if kpMatchKeywordAt(s, i, "FOR") > 0 {
-		policy, err := parsePromotionPolicyDefinition(name, s, i)
+	if cyphertext.KeywordEnd(s, i, "FOR", cyphertext.CypherWord) > 0 {
+		policy, err := parsePromotionPolicyDefinition(name, source, i)
 		if err != nil {
 			return nil, false, err
 		}
@@ -1320,10 +1349,10 @@ func parseAlterPromotionPolicy(s string, i int) (interface{}, bool, error) {
 		updates = parsed
 	}
 
-	if j := kpMatchKeywordAt(s, i, "ENABLE"); j > 0 {
+	if j := cyphertext.KeywordEnd(s, i, "ENABLE", cyphertext.CypherWord); j > 0 {
 		updates["enabled"] = true
 		i = j
-	} else if j := kpMatchKeywordAt(s, i, "DISABLE"); j > 0 {
+	} else if j := cyphertext.KeywordEnd(s, i, "DISABLE", cyphertext.CypherWord); j > 0 {
 		updates["enabled"] = false
 		i = j
 	}

@@ -27,11 +27,11 @@ func TestPendingReplicationRetainsByteReservation(t *testing.T) {
 	require.NoError(t, local.Start(context.Background()))
 	defer local.Shutdown()
 	route := &managedRouteReplicator{Replicator: local, peer: remote}
-	manager, err := multidb.NewDatabaseManager(NewReplicatedEngine(base, route, time.Second), nil)
+	manager, err := multidb.NewDatabaseManager(t.Context(), NewReplicatedEngine(base, route, time.Second), nil)
 	require.NoError(t, err)
 	defer manager.Close()
 	const db = "pending_quota"
-	require.NoError(t, manager.CreateDatabase(db))
+	require.NoError(t, manager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: db}))
 	view, err := manager.GetStorage(db)
 	require.NoError(t, err)
 	at := time.Unix(1700000000, 0)
@@ -50,7 +50,7 @@ func TestPendingReplicationRetainsByteReservation(t *testing.T) {
 	require.NoError(t, view.UpdateNode(prior))
 	restored, _, _ := manager.GetStorageSize(db)
 	require.Equal(t, before, restored)
-	require.NoError(t, manager.SetDatabaseLimits(db, &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: ceiling}}))
+	require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &multidb.Limits{Storage: multidb.StorageLimits{MaxBytes: ceiling}}))
 	route.delay = true
 	err = view.UpdateNode(growth)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -62,7 +62,7 @@ func TestPendingReplicationRetainsByteReservation(t *testing.T) {
 	otherErr := view.UpdateNode(other)
 	assert.ErrorIs(t, otherErr, multidb.ErrStorageLimitExceeded, "the pending command already reserved this only growth allowance")
 	require.NoError(t, route.applyPending(adapter, pending))
-	recount, err := multidb.NewDatabaseManager(base, nil)
+	recount, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	exact, _, _ := recount.GetStorageSize(db)
 	assert.LessOrEqual(t, exact, ceiling, "a late commit and a competing admitted write must not exceed the byte quota")

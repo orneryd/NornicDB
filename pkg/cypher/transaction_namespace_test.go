@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"strings"
 	"testing"
@@ -335,8 +337,8 @@ func TestExecuteQueryAgainstStorage_ShowDispatchWithDatabaseManager(t *testing.T
 	ctx := context.Background()
 
 	mockDBM := newMockDatabaseManager(t)
-	require.NoError(t, mockDBM.CreateDatabase("nornic"))
-	require.NoError(t, mockDBM.CreateDatabase("tenant_a"))
+	require.NoError(t, mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nornic"}))
+	require.NoError(t, mockDBM.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "tenant_a"}))
 	exec.SetDatabaseManager(mockDBM)
 
 	queries := []struct {

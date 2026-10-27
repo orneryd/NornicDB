@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	valueconvert "github.com/orneryd/nornicdb/pkg/convert"
 	"log/slog"
 	"strconv"
@@ -361,7 +362,7 @@ func (e *StorageExecutor) parseVectorQueryParams(cypher string) (indexName strin
 		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorParametersMissing(), nil)
 	}
 
-	endIdx := findMatchingDelimiter(rest, parenIdx, '(', ')')
+	endIdx := cyphertext.FindMatchingDelimiter(rest, parenIdx, '(', ')', cyphertext.OpeningDelimiter)
 	if endIdx < 0 {
 		return "", 0, nil, localizedError(localization.CypherSpecializedCallsVectorUnmatchedParenthesis(), nil)
 	}

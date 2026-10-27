@@ -1,6 +1,8 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	"context"
 	"encoding/json"
 	"fmt"
@@ -14,7 +16,7 @@ import (
 
 func TestHTTPShowDatabasesFiltersSingleStatement(t *testing.T) {
 	server, authenticator := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("private"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "private"}))
 	dbName := server.dbManager.DefaultDatabaseName()
 	require.NoError(t, server.allowlistStore.SaveRoleDatabases(context.Background(), "viewer", []string{dbName}))
 	require.NoError(t, server.privilegesStore.SavePrivilege(context.Background(), "viewer", dbName, true, false))

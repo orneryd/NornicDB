@@ -1,6 +1,8 @@
 package server
 
 import (
+	"github.com/orneryd/nornicdb/pkg/multidb"
+
 	runtimeFixtureOwner "github.com/orneryd/nornicdb/internal/testfixture"
 
 	"context"
@@ -78,7 +80,7 @@ func TestAdminPutRestartSettingReportsPendingRestart(t *testing.T) {
 func TestAdminEmbeddingLabelPoliciesApplyPerDatabaseAfterRestart(t *testing.T) {
 	dataDir := t.TempDir()
 	before, authenticator, database := openPersistentDBConfigTestServer(t, dataDir)
-	require.NoError(t, before.dbManager.CreateDatabase("images"))
+	require.NoError(t, before.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "images"}))
 	token := getAuthToken(t, authenticator, "admin")
 	for _, testCase := range []struct {
 		name, include, exclude string
@@ -225,8 +227,8 @@ func TestAdminDatabaseConfigUsesInjectedProcessConfig(t *testing.T) {
 func TestNewExecutorForDatabaseUsesDatabaseQueryCacheTTL(t *testing.T) {
 	server, _ := setupTestServer(t)
 	ctx := context.Background()
-	require.NoError(t, server.dbManager.CreateDatabase("fast-cache"))
-	require.NoError(t, server.dbManager.CreateDatabase("slow-cache"))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "fast-cache"}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "slow-cache"}))
 	require.NoError(t, server.dbConfigStore.SetOverrides(ctx, "fast-cache", map[string]string{
 		"db.nornic.query_cache.max_entries": "25",
 		"db.nornic.query_cache.ttl":         "2000",

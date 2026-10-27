@@ -64,9 +64,9 @@ func TestDatabaseInfoRequiresDatabaseAndConstituentRead(t *testing.T) {
 	ctx := context.Background()
 	server, users := setupTestServer(t)
 	for _, database := range []string{"named", "open_part", "closed_part"} {
-		require.NoError(t, server.dbManager.CreateDatabase(database))
+		require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: database}))
 	}
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("portfolio", []multidb.ConstituentRef{
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "portfolio", []multidb.ConstituentRef{
 		{Alias: "open", DatabaseName: "open_part", Type: "local", AccessMode: "read_write"},
 		{Alias: "closed", DatabaseName: "closed_part", Type: "local", AccessMode: "read_write"},
 	}))

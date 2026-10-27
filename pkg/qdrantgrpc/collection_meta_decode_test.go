@@ -33,7 +33,7 @@ func TestUpsert_CollectionStaysOpenPastTenThousandPoints(t *testing.T) {
 	be, err := fixtureowner.TrackResult[*storage.BadgerEngine](t, storage.ErrStorageClosed)(storage.NewBadgerEngineInMemory())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = be.Close() })
-	dbm, err := multidb.NewDatabaseManager(be, nil)
+	dbm, err := multidb.NewDatabaseManager(t.Context(), be, nil)
 	require.NoError(t, err)
 	collections, err := NewDatabaseCollectionStore(dbm, nil)
 	require.NoError(t, err)

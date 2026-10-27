@@ -19,13 +19,13 @@ import (
 // a composite constituent, whose access is its composite's and its target
 // database's).
 func TestBoltEveryDatabaseAStatementSelectsIsAuthorized(t *testing.T) {
-	mgr, err := multidb.NewDatabaseManager(fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
+	mgr, err := multidb.NewDatabaseManager(t.Context(), fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)), nil)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = mgr.Close() })
 	for _, name := range []string{"da", "db"} {
-		require.NoError(t, mgr.CreateDatabase(name))
+		require.NoError(t, mgr.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: name}))
 	}
-	require.NoError(t, mgr.CreateCompositeDatabase("cmp", []multidb.ConstituentRef{
+	require.NoError(t, mgr.CreateCompositeDatabase(t.Context(), "cmp", []multidb.ConstituentRef{
 		{Alias: "a", DatabaseName: "da", Type: "local", AccessMode: "read_write"},
 		{Alias: "b", DatabaseName: "db", Type: "local", AccessMode: "read_write"},
 	}))

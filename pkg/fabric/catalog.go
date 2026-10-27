@@ -5,7 +5,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/multidb"
+	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
 // Catalog is the registry of all known graphs and their locations.
@@ -32,14 +34,14 @@ func NewCatalog() *Catalog {
 func (c *Catalog) Register(name string, loc Location) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.graphs[strings.ToLower(name)] = loc
+	c.graphs[cyphertext.NameLower(name)] = loc
 }
 
 // Unregister removes a graph from the catalog.
 func (c *Catalog) Unregister(name string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	delete(c.graphs, strings.ToLower(name))
+	delete(c.graphs, cyphertext.NameLower(name))
 }
 
 // Resolve looks up a graph location by name.
@@ -48,7 +50,7 @@ func (c *Catalog) Resolve(name string) (Location, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 
-	loc, ok := c.graphs[strings.ToLower(name)]
+	loc, ok := c.graphs[cyphertext.NameLower(name)]
 	if !ok {
 		return nil, fmt.Errorf("graph '%s' not found in fabric catalog", name)
 	}
@@ -97,7 +99,7 @@ func (c *Catalog) PopulateFromManager(mgr *multidb.DatabaseManager) error {
 
 	databases := mgr.ListDatabases()
 	for _, db := range databases {
-		dbName := strings.ToLower(db.Name)
+		dbName := cyphertext.NameLower(db.Name)
 		dbType := db.Type
 
 		// Register the database itself.
@@ -105,7 +107,7 @@ func (c *Catalog) PopulateFromManager(mgr *multidb.DatabaseManager) error {
 
 		// Register aliases.
 		for _, alias := range db.Aliases {
-			c.graphs[strings.ToLower(alias)] = &LocationLocal{DBName: dbName}
+			c.graphs[cyphertext.NameLower(alias)] = &LocationLocal{DBName: dbName}
 		}
 
 		// Register constituents for composite databases.
@@ -115,15 +117,25 @@ func (c *Catalog) PopulateFromManager(mgr *multidb.DatabaseManager) error {
 				return fmt.Errorf("failed to load constituents for composite '%s': %w", db.Name, err)
 			}
 			for _, ref := range constituents {
-				qualifiedName := dbName + "." + strings.ToLower(ref.Alias)
+				qualifiedName := dbName + "." + cyphertext.NameLower(ref.Alias)
 				switch ref.Type {
 				case "remote":
+					// Catalog lookup is case-insensitive, but the manager's
+					// composite key retains its original spelling.
+					managerName := db.Name + "." + ref.Alias
+					view, err := mgr.RemoteConstituentForDisplay(ref)
+					if err != nil {
+						return err
+					}
 					c.graphs[qualifiedName] = &LocationRemote{
-						DBName:   ref.DatabaseName,
-						URI:      ref.URI,
-						AuthMode: effectiveAuthMode(ref.AuthMode),
-						User:     ref.User,
-						Password: ref.Password,
+						GraphName:          qualifiedName,
+						DBName:             ref.DatabaseName,
+						URI:                view.URI,
+						AuthMode:           effectiveAuthMode(view.AuthMode),
+						CredentialRevision: ref.ConnectionV1,
+						ResolveEngine: func(authToken string) (storage.Engine, error) {
+							return mgr.GetStorageWithAuth(managerName, authToken)
+						},
 					}
 				default:
 					c.graphs[qualifiedName] = &LocationLocal{

@@ -35,7 +35,7 @@ func TestQdrantGRPC_AuthAndRBAC(t *testing.T) {
 	t.Parallel()
 
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 
 	authStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
@@ -142,7 +142,7 @@ func TestServer_DatabaseAccessHelpers(t *testing.T) {
 	t.Parallel()
 
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	store := newTestCollectionStore(t)
 
@@ -276,7 +276,7 @@ func TestServer_IsRunning_StreamAuthAndStreamContext(t *testing.T) {
 	t.Parallel()
 
 	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	dbm, err := multidb.NewDatabaseManager(t.Context(), base, nil)
 	require.NoError(t, err)
 	authStore := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
 	authCfg := auth.DefaultAuthConfig()

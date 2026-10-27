@@ -3,6 +3,7 @@ package server
 import (
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"log/slog"
 	"net/http"
 	"os"
@@ -67,7 +68,7 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 	// Set an HTTP-only cookie for browser sessions.
 	http.SetCookie(w, sessionTokenCookie(r, tokenResp.AccessToken, 86400*7))
 
-	s.writeJSON(w, http.StatusOK, tokenResp)
+	httpresponse.WriteJSON(w, http.StatusOK, tokenResp)
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +81,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		s.logAudit(r, claims.Sub, "logout", true, "")
 	}
 
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.LogoutComplete())})
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.LogoutComplete())})
 }
 
 // handleGenerateAPIToken generates a stateless API token for MCP servers.
@@ -185,7 +186,7 @@ func (s *Server) handleGenerateAPIToken(w http.ResponseWriter, r *http.Request) 
 		response.ExpiresIn = int64(expiry.Seconds())
 	}
 
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 // handleAuthConfig returns auth configuration for the UI
@@ -226,7 +227,7 @@ func (s *Server) handleAuthConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.writeJSON(w, http.StatusOK, config)
+	httpresponse.WriteJSON(w, http.StatusOK, config)
 }
 
 // getBaseURL returns the base URL for the server from the request
@@ -377,7 +378,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 
 	// If auth is disabled, return anonymous admin user (canonical role from auth)
 	if !s.isRBACEnforced() {
-		s.writeJSON(w, http.StatusOK, map[string]interface{}{
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]interface{}{
 			"id":       "anonymous",
 			"username": "anonymous",
 			"roles":    []string{string(auth.RoleAdmin)},
@@ -441,7 +442,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 // handleChangePassword allows users to change their own password.
@@ -496,7 +497,7 @@ func (s *Server) handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logAudit(r, claims.Sub, "password_change", true, "user changed own password")
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.PasswordChanged())})
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.PasswordChanged())})
 }
 
 // handleUpdateProfile allows users to update their own profile information.
@@ -547,7 +548,7 @@ func (s *Server) handleUpdateProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logAudit(r, claims.Sub, "profile_update", true, "user updated own profile")
-	s.writeJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.ProfileUpdated())})
+	httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": s.localizedText(w, r, localization.ProfileUpdated())})
 }
 
 func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
@@ -555,7 +556,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		// List users
 		users := s.auth.ListUsers()
-		s.writeJSON(w, http.StatusOK, users)
+		httpresponse.WriteJSON(w, http.StatusOK, users)
 
 	case http.MethodPost:
 		// Create user
@@ -581,7 +582,7 @@ func (s *Server) handleUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		s.writeJSON(w, http.StatusCreated, user)
+		httpresponse.WriteJSON(w, http.StatusCreated, user)
 
 	default:
 		s.writeGetOrPostRequired(w, r)
@@ -603,7 +604,7 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 			s.writeUserNotFound(w, r)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, user)
+		httpresponse.WriteJSON(w, http.StatusOK, user)
 
 	case http.MethodPut:
 		var req struct {
@@ -628,14 +629,14 @@ func (s *Server) handleUserByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 
 	case http.MethodDelete:
 		if err := s.auth.DeleteUser(username); err != nil {
 			s.writeUserNotFound(w, r)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 
 	default:
 		s.writeGetPutOrDeleteRequired(w, r)
@@ -648,7 +649,7 @@ func (s *Server) handleEntitlements(w http.ResponseWriter, r *http.Request) {
 		s.writeGetRequired(w, r)
 		return
 	}
-	s.writeJSON(w, http.StatusOK, auth.AllEntitlements())
+	httpresponse.WriteJSON(w, http.StatusOK, auth.AllEntitlements())
 }
 
 // handleRoleEntitlements serves GET/PUT /auth/role-entitlements (per-role global entitlements, admin only).
@@ -676,7 +677,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 				Entitlements []string `json:"entitlements"`
 			}{Role: role, Entitlements: ent})
 		}
-		s.writeJSON(w, http.StatusOK, out)
+		httpresponse.WriteJSON(w, http.StatusOK, out)
 	case http.MethodPut:
 		var body struct {
 			Role         string   `json:"role"`
@@ -744,7 +745,7 @@ func (s *Server) handleRoleEntitlements(w http.ResponseWriter, r *http.Request) 
 			s.writeRoleRecordError(w, r, err)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 	default:
 		s.writeGetOrPutRequired(w, r)
 	}
@@ -770,7 +771,7 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 	}
 	if collection {
 		if r.Method == http.MethodGet {
-			s.writeJSON(w, http.StatusOK, auth.ReadRoleCatalog(s.roleStore, nil).RoleNames)
+			httpresponse.WriteJSON(w, http.StatusOK, auth.ReadRoleCatalog(s.roleStore, nil).RoleNames)
 			return
 		}
 		if r.Method != http.MethodPost {
@@ -831,7 +832,7 @@ func (s *Server) handleRoles(w http.ResponseWriter, r *http.Request) {
 	} else if r.Method == http.MethodDelete {
 		field, value = "status", "deleted"
 	}
-	s.writeJSON(w, status, map[string]string{field: value})
+	httpresponse.WriteJSON(w, status, map[string]string{field: value})
 }
 
 // handleAccessDatabases serves GET/PUT /auth/access/databases (per-database allowlist, admin only).
@@ -856,7 +857,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 				Databases []string `json:"databases"`
 			}{Role: role, Databases: dbs})
 		}
-		s.writeJSON(w, http.StatusOK, out)
+		httpresponse.WriteJSON(w, http.StatusOK, out)
 
 	case http.MethodPut:
 		var req struct {
@@ -892,7 +893,7 @@ func (s *Server) handleAccessDatabases(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 
 	default:
 		s.writeGetOrPutRequired(w, r)
@@ -920,7 +921,7 @@ func (s *Server) handleAccessPrivileges(w http.ResponseWriter, r *http.Request) 
 	}
 	switch r.Method {
 	case http.MethodGet:
-		s.writeJSON(w, http.StatusOK, s.privilegesStore.Matrix())
+		httpresponse.WriteJSON(w, http.StatusOK, s.privilegesStore.Matrix())
 	case http.MethodPut:
 		var entries []struct {
 			Role     string `json:"role"`
@@ -937,7 +938,7 @@ func (s *Server) handleAccessPrivileges(w http.ResponseWriter, r *http.Request) 
 			s.writeRoleRecordError(w, r, err)
 			return
 		}
-		s.writeJSON(w, http.StatusOK, map[string]string{"status": "updated"})
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]string{"status": "updated"})
 	default:
 		s.writeGetOrPutRequired(w, r)
 	}

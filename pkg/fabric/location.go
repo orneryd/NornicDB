@@ -1,5 +1,7 @@
 package fabric
 
+import "github.com/orneryd/nornicdb/pkg/storage"
+
 // Location represents where a FragmentExec runs.
 // It mirrors Neo4j's Location.java sealed hierarchy.
 type Location interface {
@@ -25,6 +27,19 @@ func (l *LocationLocal) DatabaseName() string {
 
 // LocationRemote indicates execution on a remote NornicDB instance.
 type LocationRemote struct {
+	// GraphName identifies a managed constituent, including its composite
+	// namespace. Aliases at the same endpoint may have different credentials.
+	GraphName string
+
+	// CredentialRevision is an opaque stored connection revision used only for
+	// managed-engine cache identity. It must never be displayed as a password.
+	CredentialRevision string
+
+	// ResolveEngine obtains a managed constituent's runtime engine from its
+	// DatabaseManager. Credentials remain owned by the manager rather than
+	// being copied from persisted metadata into the Fabric catalog.
+	ResolveEngine func(authToken string) (storage.Engine, error)
+
 	// DBName is the database name on the remote instance.
 	DBName string
 

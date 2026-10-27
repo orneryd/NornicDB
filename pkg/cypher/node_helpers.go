@@ -39,6 +39,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/storage"
@@ -390,7 +391,7 @@ func (e *StorageExecutor) extractVarName(pattern string) string {
 	pattern = strings.TrimPrefix(pattern, "(")
 	// Find first : or { or )
 	for i, c := range pattern {
-		if c == ':' || c == '{' || c == ')' || c == ' ' {
+		if c == ':' || c == '{' || c == ')' || cyphertext.IsWhitespace(c) {
 			name := strings.TrimSpace(pattern[:i])
 			if name != "" {
 				return name

@@ -6,7 +6,6 @@ import (
 	fixtureowner "github.com/orneryd/nornicdb/internal/testfixture"
 	"testing"
 
-	"github.com/orneryd/nornicdb/pkg/multidb"
 	"github.com/orneryd/nornicdb/pkg/search"
 	qpb "github.com/qdrant/go-client/qdrant"
 	"github.com/stretchr/testify/assert"
@@ -15,33 +14,9 @@ import (
 	"github.com/orneryd/nornicdb/pkg/storage"
 )
 
-func setupPointsService(t *testing.T) (*PointsService, CollectionStore, storage.Engine) {
-	t.Helper()
-
-	ctx := context.Background()
-	base := fixtureowner.Own(t, fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed))
-	dbm, err := multidb.NewDatabaseManager(base, nil)
-	require.NoError(t, err)
-	collections, err := NewDatabaseCollectionStore(dbm, nil)
-	require.NoError(t, err)
-
-	cfg := DefaultConfig()
-	cfg.AllowVectorMutations = true
-	cfg.EmbedQuery = func(ctx context.Context, text string) ([]float32, error) {
-		_ = ctx
-		_ = text
-		return []float32{1, 0, 0, 0}, nil
-	}
-
-	err = collections.Create(ctx, "test_vectors", 4, qpb.Distance_Cosine)
-	require.NoError(t, err)
-
-	return NewPointsService(cfg, collections, sharedSearchProvider(), nil), collections, base
-}
-
 func TestPointsService_UpsertGetDeleteCountSearch(t *testing.T) {
 	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
+	service, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 
 	upsertResp, err := service.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: "test_vectors",
@@ -148,7 +123,7 @@ func TestPointsService_UpsertGetDeleteCountSearch(t *testing.T) {
 
 func TestPointsService_SearchBatch(t *testing.T) {
 	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
+	service, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 
 	_, err := service.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: "test_vectors",
@@ -178,7 +153,7 @@ func TestPointsService_SearchBatch(t *testing.T) {
 
 func TestPointsService_Query_Document(t *testing.T) {
 	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
+	service, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 
 	_, err := service.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: "test_vectors",
@@ -304,7 +279,7 @@ func TestAverageVectors(t *testing.T) {
 
 func TestPointsService_HelperCoverage(t *testing.T) {
 	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
+	service, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 
 	t.Run("query batch nearest", func(t *testing.T) {
 		_, err := service.Upsert(ctx, &qpb.UpsertPoints{
@@ -368,7 +343,7 @@ func TestPointsService_HelperCoverage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, vec, 4)
 
-		noEmbedSvc, _, _ := setupPointsService(t)
+		noEmbedSvc, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 		noEmbedSvc.config.EmbedQuery = nil
 		_, err = noEmbedSvc.vectorFromVector(ctx, &qpb.Vector{
 			Vector: &qpb.Vector_Document{Document: &qpb.Document{Text: "hello"}},
@@ -450,7 +425,7 @@ func TestPointsService_HelperCoverage(t *testing.T) {
 
 func TestPointsService_OverwritePayloadAndRecommendBatch(t *testing.T) {
 	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
+	service, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 
 	_, err := service.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: "test_vectors",
@@ -541,7 +516,7 @@ func TestPointsService_OverwritePayloadAndRecommendBatch(t *testing.T) {
 
 func TestPointsService_HelperFunctions_MoreCoverage(t *testing.T) {
 	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
+	service, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 
 	_, err := service.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: "test_vectors",
@@ -582,7 +557,7 @@ func TestPointsService_HelperFunctions_MoreCoverage(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, vec, 4)
 
-		noEmbedSvc, _, _ := setupPointsService(t)
+		noEmbedSvc, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 		noEmbedSvc.config.EmbedQuery = nil
 		_, err = noEmbedSvc.vectorFromInput(ctx, "test_vectors", "", &qpb.VectorInput{
 			Variant: &qpb.VectorInput_Document{Document: &qpb.Document{}},
@@ -682,7 +657,7 @@ func TestPointsService_HelperFunctions_MoreCoverage(t *testing.T) {
 
 func TestPointsService_SearchCollectionAndLowLevelHelpers(t *testing.T) {
 	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
+	service, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 
 	_, err := service.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: "test_vectors",
@@ -918,13 +893,13 @@ func (e *errEngine) AllNodes() ([]*storage.Node, error) {
 
 func TestPointsService_ErrorBranches(t *testing.T) {
 	ctx := context.Background()
-	service, collections, _ := setupPointsService(t)
+	service, collections, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 
 	t.Run("upsert validation branches", func(t *testing.T) {
 		_, err := service.Upsert(ctx, &qpb.UpsertPoints{})
 		require.Error(t, err)
 
-		noMut, _, _ := setupPointsService(t)
+		noMut, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 		noMut.config.AllowVectorMutations = false
 		_, err = noMut.Upsert(ctx, &qpb.UpsertPoints{
 			CollectionName: "test_vectors",
@@ -1048,7 +1023,7 @@ func TestPointsService_ErrorBranches(t *testing.T) {
 
 		_, err = service.UpdateVectors(ctx, &qpb.UpdatePointVectors{})
 		require.Error(t, err)
-		noMut, _, _ := setupPointsService(t)
+		noMut, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 		noMut.config.AllowVectorMutations = false
 		_, err = noMut.UpdateVectors(ctx, &qpb.UpdatePointVectors{
 			CollectionName: "test_vectors",
@@ -1133,7 +1108,7 @@ func TestPointsService_ErrorBranches(t *testing.T) {
 
 func TestPointsService_SearchProviderMutationPaths(t *testing.T) {
 	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
+	service, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 
 	var sharedSearch *search.Service
 	service.searchProvider = func(database string, st storage.Engine) (*search.Service, error) {
@@ -1273,7 +1248,7 @@ func TestPointsService_SearchProviderMutationPaths(t *testing.T) {
 
 func TestPointsService_MissingCollectionBranches(t *testing.T) {
 	ctx := context.Background()
-	service, _, _ := setupPointsService(t)
+	service, _, _ := newPointsServiceFixture(t, pointsFixtureEmptyVectors)
 
 	_, err := service.Upsert(ctx, &qpb.UpsertPoints{
 		CollectionName: "missing_collection",

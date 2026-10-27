@@ -21,7 +21,7 @@ func TestStatementFactsImportSourceBoundaries(t *testing.T) {
 				query := "USE comp UNWIND [1,2] AS " + name + " CALL { " + importing + bodyTail + " } RETURN value"
 				t.Run(query, func(t *testing.T) {
 					exec := NewStorageExecutor(storage.NewNamespacedEngine(newTestMemoryEngine(t), "import-spans"))
-					exec.StatementFacts(query, resultmetadata.KnownScope(nil), false).Visit(func(statement resultmetadata.Statement) {
+					exec.StatementFacts(query, resultmetadata.KnownScope(nil), false, RawSource).Visit(func(statement resultmetadata.Statement) {
 						var call *resultmetadata.Call
 						for _, clause := range statement.Clauses {
 							if clause.Call != nil {

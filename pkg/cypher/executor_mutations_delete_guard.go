@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -156,19 +157,19 @@ func deleteExpressionRootIdentifier(expression string) string {
 	if expression == "" {
 		return ""
 	}
-	// The name is read by the one identifier rule (scanIdentifierToken):
+	// The name is read by the one identifier rule (cyphertext.ScanIdentifier):
 	// n$ and `a``b` are variables too.
-	name, end, ok := scanIdentifierToken(expression, 0)
-	if !ok || (end < len(expression) && expression[end] == '(') {
+	name, ok := cyphertext.ScanIdentifier(expression, 0)
+	if !ok || (name.End < len(expression) && expression[name.End] == '(') {
 		return ""
 	}
 	if !strings.HasPrefix(expression, "`") {
-		switch lowerASCII(name) {
+		switch lowerASCII(name.Value) {
 		case "null", "true", "false":
 			return ""
 		}
 	}
-	return name
+	return name.Value
 }
 
 func addPipelinePatternBindings(ctx context.Context, executor *StorageExecutor, scope map[string]struct{}, clause, keyword string) {

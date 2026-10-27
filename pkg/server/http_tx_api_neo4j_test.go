@@ -410,7 +410,7 @@ func TestGh776_ReadTransactionRequestBoundaries(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(testCase.body))
 			request.ContentLength = -1
 			var decoded TransactionRequest
-			err := server.readTransactionRequest(request, &decoded)
+			err := decodeTransactionRequest((request).Body, &decoded, transactionRequestLimit{bounded: true, bytes: server.config.MaxRequestSize})
 			if testCase.wantErr {
 				require.Error(t, err)
 				return
@@ -422,7 +422,7 @@ func TestGh776_ReadTransactionRequestBoundaries(t *testing.T) {
 	server := &Server{config: DefaultConfig()}
 	for _, empty := range []string{"", " \n\t"} {
 		var decoded TransactionRequest
-		require.ErrorIs(t, server.readTransactionRequest(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(empty)), &decoded), io.EOF)
+		require.ErrorIs(t, decodeTransactionRequest((httptest.NewRequest(http.MethodPost, "/", strings.NewReader(empty))).Body, &decoded, transactionRequestLimit{bounded: true, bytes: server.config.MaxRequestSize}), io.EOF)
 	}
 }
 
@@ -431,12 +431,12 @@ func TestGh776_DefaultBodyLimit(t *testing.T) {
 	server := &Server{config: DefaultConfig()}
 	require.Equal(t, int64(10<<20), server.config.MaxRequestSize)
 	var decoded TransactionRequest
-	err := server.readTransactionRequest(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), &decoded)
+	err := decodeTransactionRequest((httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))).Body, &decoded, transactionRequestLimit{bounded: true, bytes: server.config.MaxRequestSize})
 	var limitError *http.MaxBytesError
 	require.ErrorAs(t, err, &limitError)
 	require.Equal(t, int64(10<<20), limitError.Limit)
 	server.config.MaxRequestSize = int64(len(body))
-	require.NoError(t, server.readTransactionRequest(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body)), &decoded))
+	require.NoError(t, decodeTransactionRequest((httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))).Body, &decoded, transactionRequestLimit{bounded: true, bytes: server.config.MaxRequestSize}))
 	require.Len(t, decoded.Statements[0].Parameters["unused"], 11<<20)
 }
 
@@ -1202,7 +1202,9 @@ func TestRemoteHTTPGraphRoundTrip(t *testing.T) {
 		name  string
 		query func(context.Context, string, map[string]interface{}) ([]string, [][]interface{}, error)
 	}{
-		{"autocommit", remote.QueryCypher},
+		{"autocommit", func(ctx context.Context, query string, params map[string]interface{}) ([]string, [][]interface{}, error) {
+			return remote.QueryCypher(ctx, query, params, storage.RemoteAccessRead)
+		}},
 		{"explicit", transaction.QueryCypher},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
@@ -1684,7 +1686,7 @@ func TestHTTPFixedDifferentialCorpusMatchesPinnedNeo4j(t *testing.T) {
 func TestDecodeTransactionRequestKeepsIntegerParameters(t *testing.T) {
 	body := `{"statements":[{"statement":"RETURN 1","parameters":{"big":9007199254740993,"f":1.5,"e":1e2,"neg":-3,"huge":1e400,"l":[1,2.5,[3]],"m":{"k":7,"f":0.5}}}]}`
 	var req TransactionRequest
-	require.NoError(t, decodeTransactionRequest(strings.NewReader(body), &req))
+	require.NoError(t, decodeTransactionRequest(strings.NewReader(body), &req, transactionRequestLimit{}))
 	params := req.Statements[0].Parameters
 	require.Equal(t, int64(9007199254740993), params["big"])
 	require.Equal(t, 1.5, params["f"])
@@ -1693,7 +1695,7 @@ func TestDecodeTransactionRequestKeepsIntegerParameters(t *testing.T) {
 	require.Equal(t, "1e400", params["huge"], "a number outside float64 range is kept as its text")
 	require.Equal(t, []interface{}{int64(1), 2.5, []interface{}{int64(3)}}, params["l"])
 	require.Equal(t, map[string]interface{}{"k": int64(7), "f": 0.5}, params["m"])
-	require.Error(t, decodeTransactionRequest(strings.NewReader(`{"statements":[`), &req))
+	require.Error(t, decodeTransactionRequest(strings.NewReader(`{"statements":[`), &req, transactionRequestLimit{}))
 }
 
 func TestHTTPCompoundMergeAndSubqueryRows(t *testing.T) {

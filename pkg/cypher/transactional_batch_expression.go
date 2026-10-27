@@ -22,7 +22,7 @@ func describeScalarExpression(ctx context.Context, expression string) (scalarExp
 	if shape, found := scalarExpressionSyntaxCache.get(expression); found {
 		return shape, ctx.Err()
 	}
-	syntax, err := cypherantlr.ParseSyntax(ctx, expression, cypherantlr.ExpressionEntry, cypherVersionFromContext(ctx) == "25")
+	syntax, err := cypherantlr.ParseSyntax(ctx, expression, cypherantlr.ExpressionEntry, cypherVersionFromContext(ctx) == "25", cypherantlr.AcceptedSource)
 	if err != nil {
 		return scalarExpressionSyntax{}, err
 	}

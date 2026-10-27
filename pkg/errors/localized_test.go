@@ -22,7 +22,7 @@ func TestLocalizedErrorPreservesIdentityAndRendersAtBoundary(t *testing.T) {
 
 	manager, managerErr := localization.NewManager([]language.Tag{language.AmericanEnglish}, nil)
 	require.NoError(t, managerErr)
-	text, tag, renderErr := err.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), manager)
+	text, tag, renderErr := manager.Render(localization.WithPreferences(context.Background(), language.EuropeanSpanish), localization.ErrorRequest(err))
 	require.NoError(t, renderErr)
 	require.Equal(t, language.EuropeanSpanish, tag)
 	require.Equal(t, "La base de datos 'analytics' no existe", text)

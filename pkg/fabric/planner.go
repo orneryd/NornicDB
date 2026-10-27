@@ -1,6 +1,7 @@
 package fabric
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -152,11 +153,12 @@ func keywordAt(s string, idx int, keyword string) bool {
 	if !strings.EqualFold(s[idx:idx+len(keyword)], keyword) {
 		return false
 	}
-	if idx > 0 && isIdentChar(s[idx-1]) {
+	// A word after '$' is a parameter name ($union, $use), never a clause.
+	if idx > 0 && (cyphertext.NamePartAt(s, idx-1) || s[idx-1] == '$') {
 		return false
 	}
 	after := idx + len(keyword)
-	if after < len(s) && isIdentChar(s[after]) {
+	if after < len(s) && cyphertext.NamePartAt(s, after) {
 		return false
 	}
 	return true
@@ -171,35 +173,48 @@ func NewFabricPlanner(catalog *Catalog) *FabricPlanner {
 //
 // Parameters:
 //   - query: the full Cypher query string
+//   - stage: RawSource for client text; AcceptedSource for retained compiler text
 //   - sessionDB: the default database for the session (used when no USE clause is present)
 //
-// Returns a Fragment tree ready for execution by FabricExecutor.
-func (p *FabricPlanner) Plan(query string, sessionDB string) (Fragment, error) {
+// Returns a Fragment tree of accepted source ready for FabricExecutor.
+// RawSource input is projected once before clause and UNION decomposition.
+func (p *FabricPlanner) Plan(ctx context.Context, query string, sessionDB string, stage SourceStage) (Fragment, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	source := cyphertext.NewSource(ctx, query, stage)
+	if source.Err != nil {
+		return nil, source.Err
+	}
+	query = source.Text
 	trimmed := strings.TrimSpace(query)
 	if trimmed == "" {
 		return nil, fmt.Errorf("empty query")
 	}
 	session := planTarget{name: sessionDB}
 	scope := compositeScopeRoot(sessionDB)
-	return p.planQuery(trimmed, session, scope, false)
+	return p.planQuery(ctx, trimmed, session, scope, false)
 }
 
 // planQuery is the entry for every statement and CALL body. Split UNION before
 // selecting a branch's USE target so one branch cannot absorb another's text or
 // graph scope. CALL import binding remains a per-branch responsibility.
-func (p *FabricPlanner) planQuery(trimmed string, current planTarget, scope string, inSubquery bool) (Fragment, error) {
+func (p *FabricPlanner) planQuery(ctx context.Context, trimmed string, current planTarget, scope string, inSubquery bool) (Fragment, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	parts, ops, hasUnion, err := splitTopLevelUnion(trimmed, p.keywordIsName)
 	if err != nil {
 		return nil, err
 	}
 	if hasUnion {
-		lhs, err := p.planQuery(parts[0], current, scope, inSubquery)
+		lhs, err := p.planQuery(ctx, parts[0], current, scope, inSubquery)
 		if err != nil {
 			return nil, err
 		}
 		root := lhs
 		for i := 1; i < len(parts); i++ {
-			rhs, err := p.planQuery(parts[i], current, scope, inSubquery)
+			rhs, err := p.planQuery(ctx, parts[i], current, scope, inSubquery)
 			if err != nil {
 				return nil, err
 			}
@@ -215,19 +230,19 @@ func (p *FabricPlanner) planQuery(trimmed string, current planTarget, scope stri
 	}
 
 	if inSubquery {
-		return p.planCallBranch(trimmed, current, scope)
+		return p.planCallBranch(ctx, trimmed, current, scope)
 	}
-	return p.planSingleQuery(trimmed, current, scope, false)
+	return p.planSingleQuery(ctx, trimmed, current, scope, false)
 }
 
 // planSingleQuery plans one query (no top-level UNION) that runs on
 // current unless it starts with its own USE clause. scope is the session's
 // composite database; inSubquery is true for a CALL { } body.
-func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scope string, inSubquery bool) (Fragment, error) {
+func (p *FabricPlanner) planSingleQuery(ctx context.Context, trimmed string, current planTarget, scope string, inSubquery bool) (Fragment, error) {
 	// Extract leading USE clause if present.
 	top := current
 	remaining := trimmed
-	use, rest, hasTopUse, err := parseLeadingUse(trimmed, inSubquery)
+	use, rest, hasTopUse, err := parseLeadingUse(ctx, trimmed, inSubquery)
 	if err != nil {
 		return nil, err
 	}
@@ -250,7 +265,7 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 	}
 	fabricBlocks := make([]callSubqueryBlock, 0, len(callBlocks))
 	for _, block := range callBlocks {
-		isFabricBlock, err := callBlockContainsFabricUse(block.body)
+		isFabricBlock, err := callBlockContainsFabricUse(ctx, block.body)
 		if err != nil {
 			return nil, err
 		}
@@ -263,7 +278,7 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 		// Support top-level mid-query USE routing (e.g. "WITH ... USE db MATCH ...").
 		// This keeps prefixes in the current graph and routes the remainder to the USE target.
 		if prefix, rest, ok := splitAtTopLevelUse(remaining); ok {
-			subUse, subRest, hasUse, err := parseLeadingUse(rest, true)
+			subUse, subRest, hasUse, err := parseLeadingUse(ctx, rest, true)
 			if err != nil {
 				return nil, err
 			}
@@ -274,7 +289,7 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 			if err := p.validatePlanTarget(scope, sub); err != nil {
 				return nil, err
 			}
-			inner, err := p.planQuery(subRest, sub, scope, true)
+			inner, err := p.planQuery(ctx, subRest, sub, scope, true)
 			if err != nil {
 				return nil, err
 			}
@@ -301,7 +316,7 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 	// Multi-graph case: decompose into Apply chain.
 	// The top-level USE sets the default graph; each CALL { USE ... } block
 	// targets a different constituent.
-	return p.planMultiGraph(top, scope, remaining, fabricBlocks)
+	return p.planMultiGraph(ctx, top, scope, remaining, fabricBlocks)
 }
 
 // SingleGraphStatement is query with every USE clause the planner reads
@@ -309,11 +324,19 @@ func (p *FabricPlanner) planSingleQuery(trimmed string, current planTarget, scop
 // statement, and a CALL body's leading USE, after the body's importing WITH
 // too. It is the statement as one graph runs it, which is how Neo4j checks a
 // composite statement's variable scopes, whichever graphs its parts run on.
-func (p *FabricPlanner) SingleGraphStatement(query string) (string, error) {
-	return p.singleGraphStatement(strings.TrimSpace(query), false)
+func (p *FabricPlanner) SingleGraphStatement(ctx context.Context, query string, stage SourceStage) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	source := cyphertext.NewSource(ctx, query, stage)
+	if source.Err != nil {
+		return "", source.Err
+	}
+	query = source.Text
+	return p.singleGraphStatement(ctx, strings.TrimSpace(query), false)
 }
 
-func (p *FabricPlanner) singleGraphStatement(query string, inSubquery bool) (string, error) {
+func (p *FabricPlanner) singleGraphStatement(ctx context.Context, query string, inSubquery bool) (string, error) {
 	parts, ops, hasUnion, err := splitTopLevelUnion(query, p.keywordIsName)
 	if err != nil {
 		return "", err
@@ -321,7 +344,7 @@ func (p *FabricPlanner) singleGraphStatement(query string, inSubquery bool) (str
 	if hasUnion {
 		var b strings.Builder
 		for i, part := range parts {
-			branch, err := p.singleGraphStatement(strings.TrimSpace(part), inSubquery)
+			branch, err := p.singleGraphStatement(ctx, strings.TrimSpace(part), inSubquery)
 			if err != nil {
 				return "", err
 			}
@@ -336,9 +359,9 @@ func (p *FabricPlanner) singleGraphStatement(query string, inSubquery bool) (str
 		}
 		return b.String(), nil
 	}
-	_, rest, hasUse, err := parseLeadingUse(query, inSubquery)
+	_, rest, hasUse, err := parseLeadingUse(ctx, query, inSubquery)
 	if err == nil && !hasUse && inSubquery {
-		_, rest, hasUse, err = parseLeadingWithUse(query)
+		_, rest, hasUse, err = parseLeadingWithUse(ctx, query)
 	}
 	if err != nil {
 		return "", err
@@ -347,12 +370,12 @@ func (p *FabricPlanner) singleGraphStatement(query string, inSubquery bool) (str
 		query = strings.TrimSpace(rest)
 	}
 	if prefix, after, ok := splitAtTopLevelUse(query); ok {
-		_, rest, hasUse, err := parseLeadingUse(after, true)
+		_, rest, hasUse, err := parseLeadingUse(ctx, after, true)
 		if err != nil {
 			return "", err
 		}
 		if hasUse {
-			tail, err := p.singleGraphStatement(strings.TrimSpace(rest), true)
+			tail, err := p.singleGraphStatement(ctx, strings.TrimSpace(rest), true)
 			if err != nil {
 				return "", err
 			}
@@ -366,7 +389,7 @@ func (p *FabricPlanner) singleGraphStatement(query string, inSubquery bool) (str
 	var b strings.Builder
 	last := 0
 	for _, block := range blocks {
-		body, err := p.singleGraphStatement(block.body, true)
+		body, err := p.singleGraphStatement(ctx, block.body, true)
 		if err != nil {
 			return "", err
 		}
@@ -430,7 +453,7 @@ func splitAtTopLevelUse(query string) (string, string, bool) {
 		if parenDepth != 0 || braceDepth != 0 || bracketDepth != 0 {
 			continue
 		}
-		if !keywordAt(query, i, "USE") {
+		if !useKeywordAt(query, i) {
 			continue
 		}
 		// Leading USE is already handled by parseLeadingUse.
@@ -577,39 +600,21 @@ func trailingWithAliases(query string) []string {
 		}
 		if idx := lastAsIndexFold(item); idx >= 0 {
 			alias := strings.TrimSpace(item[idx+4:])
-			if isValidIdentifier(alias) {
+			if cyphertext.IsIdentifier(alias) {
 				aliases = append(aliases, alias)
 			}
 			continue
 		}
-		if isValidIdentifier(item) {
+		if cyphertext.IsIdentifier(item) {
 			aliases = append(aliases, item)
 		}
 	}
 	return aliases
 }
 
-func isValidIdentifier(s string) bool {
-	if s == "" {
-		return false
-	}
-	for i, r := range s {
-		if i == 0 {
-			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '_') {
-				return false
-			}
-			continue
-		}
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
-			return false
-		}
-	}
-	return true
-}
-
 // planMultiGraph builds a Fragment tree for queries with top-level CALL {} subqueries.
 // Each CALL block is planned recursively so nested USE variants are decomposed correctly.
-func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery string, blocks []callSubqueryBlock) (Fragment, error) {
+func (p *FabricPlanner) planMultiGraph(ctx context.Context, top planTarget, scope string, fullQuery string, blocks []callSubqueryBlock) (Fragment, error) {
 	init := &FragmentInit{Columns: nil}
 	var currentInput Fragment = init
 	lastPos := 0
@@ -621,7 +626,7 @@ func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery s
 			currentInput = &FragmentApply{Input: currentInput, Inner: newExec(ensureRowProducingPrefix(prefix), top, scope), Projection: true, Columns: nil}
 		}
 
-		subqueryFragment, err := p.planQuery(block.body, top, scope, true)
+		subqueryFragment, err := p.planQuery(ctx, block.body, top, scope, true)
 		if err != nil {
 			return nil, err
 		}
@@ -665,10 +670,10 @@ func (p *FabricPlanner) planMultiGraph(top planTarget, scope string, fullQuery s
 
 // planCallBranch preserves the existing USE and import handling for one CALL
 // branch. planQuery has already separated any sibling UNION branches.
-func (p *FabricPlanner) planCallBranch(body string, top planTarget, scope string) (Fragment, error) {
-	subUse, subBody, hasUse, err := parseLeadingUse(body, true)
+func (p *FabricPlanner) planCallBranch(ctx context.Context, body string, top planTarget, scope string) (Fragment, error) {
+	subUse, subBody, hasUse, err := parseLeadingUse(ctx, body, true)
 	if err == nil && !hasUse {
-		subUse, subBody, hasUse, err = parseLeadingWithUse(body)
+		subUse, subBody, hasUse, err = parseLeadingWithUse(ctx, body)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("invalid USE in CALL subquery: %w", err)
@@ -678,7 +683,7 @@ func (p *FabricPlanner) planCallBranch(body string, top planTarget, scope string
 		if err := p.validatePlanTarget(scope, sub); err != nil {
 			return nil, err
 		}
-		fragment, err := p.planSingleQuery(subBody, sub, scope, true)
+		fragment, err := p.planSingleQuery(ctx, subBody, sub, scope, true)
 		if err != nil {
 			return nil, err
 		}
@@ -688,7 +693,7 @@ func (p *FabricPlanner) planCallBranch(body string, top planTarget, scope string
 		}
 		return bindLeadingImportColumns(fragment, imports), nil
 	}
-	fragment, err := p.planSingleQuery(body, top, scope, true)
+	fragment, err := p.planSingleQuery(ctx, body, top, scope, true)
 	if err != nil {
 		return nil, err
 	}
@@ -702,7 +707,7 @@ func (p *FabricPlanner) planCallBranch(body string, top planTarget, scope string
 // parseLeadingWithUse extracts a leading WITH ... USE <graph> pattern from a CALL body.
 // It returns the USE target graph and a rewritten body where USE is removed but the WITH
 // import clause is preserved (e.g. "WITH x USE db MATCH ..." -> "WITH x MATCH ...").
-func parseLeadingWithUse(body string) (use UseClause, rewritten string, ok bool, err error) {
+func parseLeadingWithUse(ctx context.Context, body string) (use UseClause, rewritten string, ok bool, err error) {
 	trimmed := strings.TrimSpace(body)
 	if !startsWithFold(trimmed, "WITH") {
 		return UseClause{}, body, false, nil
@@ -715,11 +720,7 @@ func parseLeadingWithUse(body string) (use UseClause, rewritten string, ok bool,
 
 	withClause := strings.TrimSpace(trimmed[:withEnd])
 	rest := strings.TrimSpace(trimmed[withEnd:])
-	if !startsWithFold(rest, "USE") {
-		return UseClause{}, body, false, nil
-	}
-
-	use, remaining, hasUse, parseErr := parseLeadingUse(rest, true)
+	use, remaining, hasUse, parseErr := parseLeadingUse(ctx, rest, true)
 	if parseErr != nil {
 		return UseClause{}, "", false, parseErr
 	}
@@ -753,7 +754,7 @@ type callSubqueryBlock struct {
 }
 
 func (p *FabricPlanner) validateUseTarget(sessionDB string, targetDB string) error {
-	target := strings.TrimSpace(targetDB)
+	target := targetDB
 	if target == "" {
 		return fmt.Errorf("USE clause requires a database name")
 	}
@@ -765,14 +766,14 @@ func (p *FabricPlanner) validateUseTarget(sessionDB string, targetDB string) err
 
 	scopeRoot := compositeScopeRoot(sessionDB)
 	targetRoot := compositeScopeRoot(target)
-	if strings.Contains(target, ".") && p.inCompositeScope(sessionDB) && scopeRoot != "" && !strings.EqualFold(scopeRoot, targetRoot) {
+	if strings.Contains(target, ".") && p.inCompositeScope(sessionDB) && scopeRoot != "" && !cyphertext.NameEqualFold(scopeRoot, targetRoot) {
 		return fmt.Errorf("invalid USE target '%s': target is out of scope for composite '%s'", target, scopeRoot)
 	}
 	return nil
 }
 
 func (p *FabricPlanner) inCompositeScope(sessionDB string) bool {
-	db := strings.TrimSpace(sessionDB)
+	db := sessionDB
 	if db == "" {
 		return false
 	}
@@ -782,12 +783,11 @@ func (p *FabricPlanner) inCompositeScope(sessionDB string) bool {
 	if p.catalog == nil {
 		return false
 	}
-	prefix := strings.ToLower(db) + "."
+	prefix := cyphertext.NameLower(db) + "."
 	return p.catalog.HasGraphWithPrefix(prefix)
 }
 
 func compositeScopeRoot(graph string) string {
-	graph = strings.TrimSpace(graph)
 	if graph == "" {
 		return ""
 	}
@@ -852,8 +852,8 @@ func bindScopeImports(fragment Fragment, scope []string) Fragment {
 
 // parseLeadingUse reads a leading USE clause with the one USE grammar
 // (ParseUseClause). inSubquery is true for a CALL { } body.
-func parseLeadingUse(query string, inSubquery bool) (UseClause, string, bool, error) {
-	return ParseUseClause(query, inSubquery)
+func parseLeadingUse(ctx context.Context, query string, inSubquery bool) (UseClause, string, bool, error) {
+	return ParseUseClause(ctx, query, inSubquery, cyphertext.AcceptedSource)
 }
 
 // planTarget is the graph a planned fragment runs on: a static graph name,
@@ -991,15 +991,15 @@ func callBodyReturns(body string, isName ClauseKeywordNameReader) bool {
 	return false
 }
 
-func callBlockContainsFabricUse(body string) (bool, error) {
-	_, _, hasUse, err := parseLeadingUse(body, true)
+func callBlockContainsFabricUse(ctx context.Context, body string) (bool, error) {
+	_, _, hasUse, err := parseLeadingUse(ctx, body, true)
 	if err != nil {
 		return false, fmt.Errorf("invalid USE in CALL subquery: %w", err)
 	}
 	if hasUse {
 		return true, nil
 	}
-	_, _, hasWithUse, err := parseLeadingWithUse(body)
+	_, _, hasWithUse, err := parseLeadingWithUse(ctx, body)
 	if err != nil {
 		return false, fmt.Errorf("invalid USE in CALL subquery: %w", err)
 	}
@@ -1015,7 +1015,7 @@ func callBlockContainsFabricUse(body string) (bool, error) {
 		return false, err
 	}
 	for _, block := range nested {
-		found, err := callBlockContainsFabricUse(block.body)
+		found, err := callBlockContainsFabricUse(ctx, block.body)
 		if err != nil {
 			return false, err
 		}
@@ -1056,8 +1056,13 @@ func findMatchingBrace(s string, pos int) (int, error) {
 }
 
 // queryIsWrite performs a simple heuristic check for write operations.
+// Strings, quoted names and comments are skipped; keywords there are text.
 func queryIsWrite(query string) bool {
 	for i := 0; i < len(query); i++ {
+		if next, quoted := cyphertext.SkipToken(query, i); quoted {
+			i = next - 1
+			continue
+		}
 		if hasKeywordAt(query, i, "CREATE") ||
 			hasKeywordAt(query, i, "MERGE") ||
 			hasKeywordAt(query, i, "DETACH DELETE") ||
@@ -1091,13 +1096,4 @@ func containsFold(s, needle string) bool {
 		}
 	}
 	return false
-}
-
-func isWhitespace(b byte) bool {
-	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
-}
-
-func isIdentChar(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
-		(b >= '0' && b <= '9') || b == '_'
 }

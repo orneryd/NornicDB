@@ -886,3 +886,33 @@ func (s *BaseCypherParserListener) EnterProcedurePrivilegePattern(ctx *Procedure
 // ExitProcedurePrivilegePattern is called when production procedurePrivilegePattern is exited.
 func (s *BaseCypherParserListener) ExitProcedurePrivilegePattern(ctx *ProcedurePrivilegePatternContext) {
 }
+
+// EnterCredentialValue is called when production credentialValue is entered.
+func (s *BaseCypherParserListener) EnterCredentialValue(ctx *CredentialValueContext) {}
+
+// ExitCredentialValue is called when production credentialValue is exited.
+func (s *BaseCypherParserListener) ExitCredentialValue(ctx *CredentialValueContext) {}
+
+// EnterCredentialURL is called when production credentialURL is entered.
+func (s *BaseCypherParserListener) EnterCredentialURL(ctx *CredentialURLContext) {}
+
+// ExitCredentialURL is called when production credentialURL is exited.
+func (s *BaseCypherParserListener) ExitCredentialURL(ctx *CredentialURLContext) {}
+
+// EnterUseGraphArguments is called when production useGraphArguments is entered.
+func (s *BaseCypherParserListener) EnterUseGraphArguments(ctx *UseGraphArgumentsContext) {}
+
+// ExitUseGraphArguments is called when production useGraphArguments is exited.
+func (s *BaseCypherParserListener) ExitUseGraphArguments(ctx *UseGraphArgumentsContext) {}
+
+// EnterUseGraphPrefix is called when production useGraphPrefix is entered.
+func (s *BaseCypherParserListener) EnterUseGraphPrefix(ctx *UseGraphPrefixContext) {}
+
+// ExitUseGraphPrefix is called when production useGraphPrefix is exited.
+func (s *BaseCypherParserListener) ExitUseGraphPrefix(ctx *UseGraphPrefixContext) {}
+
+// EnterUseReferencePrefix is called when production useReferencePrefix is entered.
+func (s *BaseCypherParserListener) EnterUseReferencePrefix(ctx *UseReferencePrefixContext) {}
+
+// ExitUseReferencePrefix is called when production useReferencePrefix is exited.
+func (s *BaseCypherParserListener) ExitUseReferencePrefix(ctx *UseReferencePrefixContext) {}

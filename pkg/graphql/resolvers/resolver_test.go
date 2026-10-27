@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/orneryd/nornicdb/internal/catalogadapter"
 	"github.com/orneryd/nornicdb/internal/testutil"
 	"github.com/orneryd/nornicdb/pkg/auth"
 	nornicConfig "github.com/orneryd/nornicdb/pkg/config"
@@ -1462,8 +1463,8 @@ func TestResolverAccessControlAdditionalCoverage(t *testing.T) {
 	})
 
 	t.Run("database aliases use canonical permissions", func(t *testing.T) {
-		require.NoError(t, dbManager.CreateDatabase("restricted"))
-		require.NoError(t, dbManager.CreateAlias("restricted-alias", "restricted"))
+		require.NoError(t, dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "restricted"}))
+		require.NoError(t, dbManager.CreateAlias(t.Context(), "restricted-alias", "restricted"))
 		aliasCtx := auth.WithRequestDatabaseScope(ctx, auth.NewRequestDatabaseScope("nornic", map[string]string{
 			"nornic":           "nornic",
 			"restricted":       "restricted",
@@ -1686,7 +1687,7 @@ func TestCoerceResultNodeID(t *testing.T) {
 func TestGraphqlDatabaseManagerAdapter(t *testing.T) {
 	db := testDB(t)
 	manager := testutil.DatabaseManager(t, db)
-	adapter := &graphqlDatabaseManagerAdapter{manager: manager}
+	adapter := &graphqlDatabaseManagerAdapter{Catalog: catalogadapter.Catalog{Manager: manager}}
 
 	t.Run("Exists", func(t *testing.T) {
 		assert.True(t, adapter.Exists("nornic"))
@@ -1694,17 +1695,17 @@ func TestGraphqlDatabaseManagerAdapter(t *testing.T) {
 	})
 
 	t.Run("CreateDatabase and DropDatabase", func(t *testing.T) {
-		err := adapter.CreateDatabase("adapter-test-db")
+		err := adapter.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "adapter-test-db"})
 		require.NoError(t, err)
 		assert.True(t, adapter.Exists("adapter-test-db"))
 
-		err = adapter.DropDatabase("adapter-test-db")
+		err = adapter.DropDatabase(t.Context(), "adapter-test-db")
 		require.NoError(t, err)
 		assert.False(t, adapter.Exists("adapter-test-db"))
 	})
 
 	t.Run("CreateAlias DropAlias ListAliases ResolveDatabase", func(t *testing.T) {
-		err := adapter.CreateAlias("myalias", "nornic")
+		err := adapter.CreateAlias(t.Context(), "myalias", "nornic")
 		require.NoError(t, err)
 
 		aliases := adapter.ListAliases("nornic")
@@ -1714,7 +1715,7 @@ func TestGraphqlDatabaseManagerAdapter(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "nornic", resolved)
 
-		err = adapter.DropAlias("myalias")
+		err = adapter.DropAlias(t.Context(), "myalias")
 		require.NoError(t, err)
 	})
 
@@ -1749,7 +1750,7 @@ func TestGraphqlDatabaseManagerAdapter(t *testing.T) {
 		limits := &multidb.Limits{
 			Storage: multidb.StorageLimits{MaxNodes: 1000},
 		}
-		err := adapter.SetDatabaseLimits("nornic", limits)
+		err := adapter.SetDatabaseLimits(t.Context(), "nornic", limits)
 		require.NoError(t, err)
 
 		got, err := adapter.GetDatabaseLimits("nornic")
@@ -1758,7 +1759,7 @@ func TestGraphqlDatabaseManagerAdapter(t *testing.T) {
 	})
 
 	t.Run("SetDatabaseLimits invalid type", func(t *testing.T) {
-		err := adapter.SetDatabaseLimits("nornic", "not-a-limits-struct")
+		err := adapter.SetDatabaseLimits(t.Context(), "nornic", "not-a-limits-struct")
 		assert.Error(t, err)
 	})
 
@@ -1782,14 +1783,14 @@ func TestGraphqlDatabaseManagerAdapter(t *testing.T) {
 				"access_mode":   "read_write",
 			},
 		}
-		err := adapter.CreateCompositeDatabase("comp1", constituents)
+		err := adapter.CreateCompositeDatabase(t.Context(), "comp1", constituents)
 		require.NoError(t, err)
 
 		cons, err := adapter.GetCompositeConstituents("comp1")
 		require.NoError(t, err)
 		assert.Len(t, cons, 1)
 
-		err = adapter.DropCompositeDatabase("comp1")
+		err = adapter.DropCompositeDatabase(t.Context(), "comp1")
 		require.NoError(t, err)
 	})
 
@@ -1802,69 +1803,62 @@ func TestGraphqlDatabaseManagerAdapter(t *testing.T) {
 				AccessMode:   "read_write",
 			},
 		}
-		err := adapter.CreateCompositeDatabase("comp2", constituents)
+		err := adapter.CreateCompositeDatabase(t.Context(), "comp2", constituents)
 		require.NoError(t, err)
-		err = adapter.DropCompositeDatabase("comp2")
+		err = adapter.DropCompositeDatabase(t.Context(), "comp2")
 		require.NoError(t, err)
 	})
 
 	t.Run("CreateCompositeDatabase invalid constituent type", func(t *testing.T) {
-		err := adapter.CreateCompositeDatabase("comp3", []interface{}{42})
+		err := adapter.CreateCompositeDatabase(t.Context(), "comp3", []interface{}{42})
 		assert.Error(t, err)
 	})
 
 	t.Run("AddConstituent with map", func(t *testing.T) {
-		err := adapter.CreateCompositeDatabase("comp4", []interface{}{
+		err := adapter.CreateCompositeDatabase(t.Context(), "comp4", []interface{}{
 			multidb.ConstituentRef{Alias: "first", DatabaseName: "nornic", Type: "local", AccessMode: "read_write"},
 		})
 		require.NoError(t, err)
 
-		err = adapter.AddConstituent("comp4", map[string]interface{}{
+		err = adapter.AddConstituent(t.Context(), "comp4", map[string]interface{}{
 			"alias":         "second",
 			"database_name": "nornic",
 			"type":          "local",
 			"access_mode":   "read",
 		})
 		require.NoError(t, err)
-		_ = adapter.DropCompositeDatabase("comp4")
+		_ = adapter.DropCompositeDatabase(t.Context(), "comp4")
 	})
 
 	t.Run("AddConstituent with ConstituentRef", func(t *testing.T) {
-		err := adapter.CreateCompositeDatabase("comp5", []interface{}{
+		err := adapter.CreateCompositeDatabase(t.Context(), "comp5", []interface{}{
 			multidb.ConstituentRef{Alias: "first", DatabaseName: "nornic", Type: "local", AccessMode: "read_write"},
 		})
 		require.NoError(t, err)
 
-		err = adapter.AddConstituent("comp5", multidb.ConstituentRef{
+		err = adapter.AddConstituent(t.Context(), "comp5", multidb.ConstituentRef{
 			Alias: "second", DatabaseName: "nornic", Type: "local", AccessMode: "read",
 		})
 		require.NoError(t, err)
-		_ = adapter.DropCompositeDatabase("comp5")
+		_ = adapter.DropCompositeDatabase(t.Context(), "comp5")
 	})
 
 	t.Run("AddConstituent invalid type", func(t *testing.T) {
-		err := adapter.AddConstituent("nornic", 42)
+		err := adapter.AddConstituent(t.Context(), "nornic", 42)
 		assert.Error(t, err)
 	})
 
 	t.Run("RemoveConstituent", func(t *testing.T) {
-		err := adapter.CreateCompositeDatabase("comp6", []interface{}{
+		err := adapter.CreateCompositeDatabase(t.Context(), "comp6", []interface{}{
 			multidb.ConstituentRef{Alias: "first", DatabaseName: "nornic", Type: "local", AccessMode: "read_write"},
 			multidb.ConstituentRef{Alias: "second", DatabaseName: "nornic", Type: "local", AccessMode: "read"},
 		})
 		require.NoError(t, err)
 
-		err = adapter.RemoveConstituent("comp6", "second")
+		err = adapter.RemoveConstituent(t.Context(), "comp6", "second")
 		require.NoError(t, err)
-		_ = adapter.DropCompositeDatabase("comp6")
+		_ = adapter.DropCompositeDatabase(t.Context(), "comp6")
 	})
-}
-
-func TestAdapterString(t *testing.T) {
-	m := map[string]interface{}{"key": "val", "num": 42}
-	assert.Equal(t, "val", adapterString(m, "key"))
-	assert.Equal(t, "", adapterString(m, "num"))  // not a string
-	assert.Equal(t, "", adapterString(m, "miss")) // missing key
 }
 
 // ---------------------------------------------------------------------------

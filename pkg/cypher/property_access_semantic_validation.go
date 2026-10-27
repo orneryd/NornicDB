@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"strings"
 )
@@ -85,7 +86,8 @@ func validatePropertyAccessClauses(ctx context.Context, cypher string, outer map
 			if clause.kind == pipelineClauseWith {
 				next = map[string]string{}
 				for _, raw := range splitTopLevelComma(body) {
-					expression, alias := parseProjectionExprAlias(ctx, strings.TrimSpace(raw))
+					itemSource := readProjectionItemSource(ctx, strings.TrimSpace(raw), projectionAdmitted)
+					expression, alias := itemSource.expression, itemSource.alias
 					if expression == "*" {
 						for variable, typeName := range types {
 							next[variable] = typeName
@@ -290,7 +292,7 @@ func scanPropertyAccesses(ctx context.Context, text string, types map[string]str
 				index = next - 1
 			}
 		case c == '[':
-			end := findMatchingDelimiter(text, index, '[', ']')
+			end := cyphertext.FindMatchingDelimiter(text, index, '[', ']', cyphertext.OpeningDelimiter)
 			if end < 0 {
 				return nil
 			}
@@ -309,7 +311,7 @@ func scanPropertyAccesses(ctx context.Context, text string, types map[string]str
 			}
 		case c == '{':
 			if index > 0 && braces.at(index) {
-				end := findMatchingDelimiter(text, index, '{', '}')
+				end := cyphertext.FindMatchingDelimiter(text, index, '{', '}', cyphertext.OpeningDelimiter)
 				if end < 0 {
 					return nil
 				}
@@ -320,36 +322,36 @@ func scanPropertyAccesses(ctx context.Context, text string, types map[string]str
 				index = end
 			}
 		case c == '$':
-			name, next, ok := scanIdentifierToken(text, index+1)
+			name, ok := cyphertext.ScanIdentifier(text, index+1)
 			if !ok {
 				continue
 			}
-			if params != nil && propertyAccessFollows(text, next) && !namespacedCallFollows(text, next) {
-				if value, bound := params[name]; bound {
-					if err := propertyAccessMismatch(parameterPropertyAccessType(value), name); err != nil {
+			if params != nil && propertyAccessFollows(text, name.End) && !namespacedCallFollows(text, name.End) {
+				if value, bound := params[name.Value]; bound {
+					if err := propertyAccessMismatch(parameterPropertyAccessType(value), name.Value); err != nil {
 						return err
 					}
 				}
 			}
-			index = next - 1
-		case isIdentStartByte(c):
-			if index > 0 && (isIdentByte(text[index-1]) || text[index-1] == '.' || text[index-1] == '$') {
+			index = name.End - 1
+		case cyphertext.NameStartAt(text, index):
+			if index > 0 && (cyphertext.NamePartAt(text, index-1) || text[index-1] == '.' || text[index-1] == '$') {
 				continue
 			}
-			name, next, _ := scanIdentifierToken(text, index)
-			typeName := types[name]
-			if typeName != "" && localVariableShadowsAt(text, index, name) {
+			name, _ := cyphertext.ScanIdentifier(text, index)
+			typeName := types[name.Value]
+			if typeName != "" && localVariableShadowsAt(text, index, name.Value) {
 				typeName = "" // a local of that name, not the clause's
 			}
-			if propertyAccessFollows(text, next) && !namespacedCallFollows(text, next) {
+			if propertyAccessFollows(text, name.End) && !namespacedCallFollows(text, name.End) {
 				if err := propertyAccessMismatch(typeName, ""); err != nil {
 					return err
 				}
 			}
-			if after := skipSpaces(text, next); expressions && after < len(text) && text[after] == '{' && rejectsPropertyAccess(typeName) && !braces.at(after) {
+			if after := skipSpaces(text, name.End); expressions && after < len(text) && text[after] == '{' && rejectsPropertyAccess(typeName) && !braces.at(after) {
 				return typeNameMismatchError("Map, Node or Relationship", typeName)
 			}
-			index = next - 1
+			index = name.End - 1
 		}
 	}
 	return nil
@@ -372,7 +374,7 @@ func propertyAccessFollows(text string, index int) bool {
 		return false
 	}
 	next := queryGapEnd(text, index+1)
-	return next < len(text) && (isIdentStartByte(text[next]) || isCypherBacktickByte(text[next]))
+	return next < len(text) && (cyphertext.NameStartAt(text, next) || isCypherBacktickByte(text[next]))
 }
 
 // namespacedCallFollows reports whether text[index:] continues a namespaced
@@ -383,11 +385,11 @@ func namespacedCallFollows(text string, index int) bool {
 		if index >= len(text) || text[index] != '.' {
 			return index < len(text) && text[index] == '('
 		}
-		_, next, ok := scanIdentifierToken(text, skipSpaces(text, index+1))
+		next, ok := cyphertext.ScanIdentifier(text, skipSpaces(text, index+1))
 		if !ok {
 			return false
 		}
-		index = next
+		index = next.End
 	}
 }
 
@@ -416,18 +418,18 @@ func parameterMayRejectPropertyAccess(cypher string, params map[string]interface
 			continue
 		}
 		dollar := index
-		name, next, ok := scanIdentifierToken(cypher, index+1)
+		name, ok := cyphertext.ScanIdentifier(cypher, index+1)
 		if !ok {
 			continue
 		}
-		index = next - 1
-		after := queryGapEnd(cypher, next)
-		accessed := propertyAccessFollows(cypher, next) || after < len(cypher) && cypher[after] == '['
-		projected := after+2 <= len(cypher) && strings.EqualFold(cypher[after:after+2], "AS") && (after+2 == len(cypher) || !isIdentByte(cypher[after+2]))
+		index = name.End - 1
+		after := queryGapEnd(cypher, name.End)
+		accessed := propertyAccessFollows(cypher, name.End) || after < len(cypher) && cypher[after] == '['
+		projected := after+2 <= len(cypher) && strings.EqualFold(cypher[after:after+2], "AS") && (after+2 == len(cypher) || !cyphertext.NamePartAt(cypher, after+2))
 		if !accessed && !projected {
 			continue
 		}
-		value, bound := params[name]
+		value, bound := params[name.Value]
 		if !bound {
 			continue
 		}

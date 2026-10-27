@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
@@ -90,7 +91,7 @@ func NewCompositeEngine(
 		if mode == "write" || mode == "read_write" {
 			writableConstituents = append(writableConstituents, alias)
 			// Auto-configure: label matching alias routes to that constituent
-			labelRouting[strings.ToLower(alias)] = []string{alias}
+			labelRouting[cyphertext.NameLower(alias)] = []string{alias}
 		}
 	}
 
@@ -115,7 +116,7 @@ func NewCompositeEngine(
 func (c *CompositeEngine) SetLabelRouting(label string, constituents []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.labelRouting[strings.ToLower(label)] = constituents
+	c.labelRouting[cyphertext.NameLower(label)] = constituents
 }
 
 // SetPropertyRouting configures property-based routing for a specific property value.

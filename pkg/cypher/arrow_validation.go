@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -58,11 +59,11 @@ func validatePlaceholderOperands(query string) error {
 				i = end - 1
 			}
 		case '<':
-			if !isIdentStartByte(query[i+1]) {
+			if !cyphertext.NameStartAt(query, i+1) {
 				continue
 			}
 			before := i - 1
-			for before >= 0 && isASCIIWhitespace(query[before]) {
+			for before >= 0 && cyphertext.IsWhitespaceAt(query, before) {
 				before--
 			}
 			if before >= 0 && strings.IndexByte(":=,([{", query[before]) >= 0 {

@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"reflect"
 	"runtime"
 	"runtime/debug"
@@ -51,7 +52,7 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 		"startNode(r).id", "endNode(r).id + '|' + startNode(r).id",
 	} {
 		got, gotOK, gotErr := exec.evaluateRowValue(expr, values)
-		want, wantOK, wantErr := exec.evaluateRowFallback(expr, values)
+		want, wantOK, wantErr := exec.evaluateRowFallback(expr, values, rowFallbackContext)
 		if gotErr != nil || wantErr != nil {
 			if gotErr == nil || wantErr == nil || gotErr.Error() != wantErr.Error() {
 				t.Fatalf("%s: errors %v / %v", expr, gotErr, wantErr)
@@ -66,7 +67,7 @@ func TestRowRelationshipEndpointMatchesContextEvaluator(t *testing.T) {
 	// evaluators; neither path may silently turn an ordinary value into null.
 	for _, expr := range []string{"startNode(n)", "endNode(n)", "startNode(m)", "endNode(m)"} {
 		_, _, gotErr := exec.evaluateRowValue(expr, values)
-		_, _, wantErr := exec.evaluateRowFallback(expr, values)
+		_, _, wantErr := exec.evaluateRowFallback(expr, values, rowFallbackContext)
 		if gotErr == nil || wantErr == nil || gotErr.Error() != wantErr.Error() ||
 			!strings.Contains(gotErr.Error(), "Neo.ClientError.Statement.TypeError") {
 			t.Fatalf("%s: expected matching TypeError, got %v / %v", expr, gotErr, wantErr)
@@ -234,7 +235,7 @@ func firstRowTextNodeOf(node rowValueNode) string {
 	case *rowTextNode:
 		return n.text
 	case *rowFallbackNode:
-		if !isValidIdentifier(n.text) && !strings.HasPrefix(n.text, "$") {
+		if !cyphertext.IsIdentifier(n.text) && !strings.HasPrefix(n.text, "$") {
 			return n.text
 		}
 	case *rowBoundNode:
@@ -494,6 +495,40 @@ func TestRowContextShapeForms(t *testing.T) {
 		value, ok := exec.evaluateRowExpressionWithContext(ctx, "[(n)-[:R]->(m) | m.id]", pipelineRow{"n": node})
 		if !ok || !reflect.DeepEqual(value, []interface{}{"b"}) {
 			t.Fatalf("run %d: pattern comprehension = %v, %v", run, value, ok)
+		}
+	}
+}
+
+// Row materialization distinguishes absent values from bound NULL before entering
+// the context evaluator. Context policy remains the independent endpoint oracle
+// above, and both policies share depth/error propagation rather than reentry.
+func TestRowFallbackResolutionPolicy(t *testing.T) {
+	exec, _ := perRowTestExecutor(t)
+	ctx := withQueryParams(withValueBindings(context.Background(), pipelineRow{"bound": nil}), map[string]interface{}{"p": int64(7), "object": map[string]interface{}{"k": int64(9)}})
+	values := pipelineRow{rowStatementContextKey: ctx}
+	for _, test := range []struct {
+		expr     string
+		value    interface{}
+		resolved bool
+	}{
+		{"bound", nil, true}, {"absent", nil, false}, {"$p", int64(7), true}, {"$object.k", int64(9), true}, {"$missing", nil, false},
+	} {
+		t.Run(test.expr, func(t *testing.T) {
+			value, resolved, err := exec.evaluateRowFallback(test.expr, values, rowFallbackValue)
+			if err != nil || resolved != test.resolved || !reflect.DeepEqual(value, test.value) {
+				t.Fatalf("got %#v, %v, %v; want %#v, %v", value, resolved, err, test.value, test.resolved)
+			}
+		})
+	}
+	for _, policy := range []rowFallbackPolicy{rowFallbackContext, rowFallbackValue} {
+		depth := context.WithValue(ctx, rowFallbackExpressionKey{}, rowFallbackState{depth: maxRowFallbackDepth})
+		_, resolved, err := exec.evaluateRowFallback("toUpper('a')", pipelineRow{rowStatementContextKey: depth}, policy)
+		if resolved || err == nil {
+			t.Fatalf("policy %d failed to retain depth boundary: resolved=%v err=%v", policy, resolved, err)
+		}
+		_, resolved, err = exec.evaluateRowFallback("substring('a', -1)", values, policy)
+		if resolved || err == nil {
+			t.Fatalf("policy %d swallowed context evaluator argument error: resolved=%v err=%v", policy, resolved, err)
 		}
 	}
 }

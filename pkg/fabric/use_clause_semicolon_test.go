@@ -2,6 +2,7 @@ package fabric
 
 import (
 	"errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -24,7 +25,7 @@ func TestParseUseClauseSemicolonEndsTheStatement(t *testing.T) {
 		"USE db; RETURN 1 AS x; /* c */ ; ":        localization.CypherCommandRoutingMultipleStatements(2),
 		"USE db; RETURN `a;b` AS x; RETURN 2 AS y": localization.CypherCommandRoutingMultipleStatements(3),
 	} {
-		_, _, hasUse, err := ParseUseClause(query, false)
+		_, _, hasUse, err := ParseUseClause(t.Context(), query, false, cyphertext.RawSource)
 		require.True(t, hasUse, query)
 		var syntaxErr *UseSyntaxError
 		require.True(t, errors.As(err, &syntaxErr), query)
@@ -33,7 +34,7 @@ func TestParseUseClauseSemicolonEndsTheStatement(t *testing.T) {
 	require.Equal(t, "Expected exactly one statement per query but got: 2",
 		localization.CypherCommandRoutingMultipleStatements(2).Fallback)
 
-	clause, remaining, hasUse, err := ParseUseClause("USE db RETURN ';' AS x", false)
+	clause, remaining, hasUse, err := ParseUseClause(t.Context(), "USE db RETURN ';' AS x", false, cyphertext.RawSource)
 	require.NoError(t, err)
 	require.True(t, hasUse)
 	require.Equal(t, "db", clause.Name)

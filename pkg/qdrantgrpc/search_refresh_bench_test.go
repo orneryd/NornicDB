@@ -17,7 +17,7 @@ func BenchmarkSearchRefreshQdrantUpsert(b *testing.B) {
 	ctx := context.Background()
 	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	dbm, err := multidb.NewDatabaseManager(b.Context(), base, nil)
 	if err != nil {
 		b.Fatal(err)
 	}

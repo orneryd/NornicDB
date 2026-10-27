@@ -34,7 +34,7 @@ func startBenchServer(b testing.TB) *benchServer {
 	base := runtimeFixtureOwner.Track(b, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 	b.Cleanup(func() { _ = base.Close() })
 
-	dbm, err := multidb.NewDatabaseManager(base, nil)
+	dbm, err := multidb.NewDatabaseManager(b.Context(), base, nil)
 	require.NoError(b, err)
 
 	srv, err := NewServerWithDatabaseManager(cfg, dbm, base, nil, nil)

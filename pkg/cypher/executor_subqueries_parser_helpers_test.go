@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -29,10 +30,10 @@ func TestCallSubqueryStringParsers(t *testing.T) {
 }
 
 func TestCallSubqueryIdentifierHelpers(t *testing.T) {
-	require.True(t, containsStandaloneIdentifier("x = n AND y = 1", "n"))
-	require.False(t, containsStandaloneIdentifier("obj.n = 1", "n"))
-	require.False(t, containsStandaloneIdentifier("'n'", "n"))
-	require.False(t, containsStandaloneIdentifier("prefix_n", "n"))
+	require.True(t, cyphertext.FindIdentifier("x = n AND y = 1", "n", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
+	require.False(t, cyphertext.FindIdentifier("obj.n = 1", "n", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
+	require.False(t, cyphertext.FindIdentifier("'n'", "n", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
+	require.False(t, cyphertext.FindIdentifier("prefix_n", "n", 0, cyphertext.IdentifierUnqualifiedFold) >= 0)
 
 }
 
@@ -58,8 +59,14 @@ func TestCallSubqueryWriteAndIdentifierChecks(t *testing.T) {
 }
 
 func TestCallSubqueryImportNullGuardTerm(t *testing.T) {
-	require.True(t, isCallSubqueryImportNotNullGuardTerm("seed IS NOT NULL", "seed"))
-	require.True(t, isCallSubqueryImportNotNullGuardTerm("`seed` is not null", "seed"))
-	require.False(t, isCallSubqueryImportNotNullGuardTerm("seed IS NULL", "seed"))
-	require.False(t, isCallSubqueryImportNotNullGuardTerm("other IS NOT NULL", "seed"))
+	for _, term := range []string{"seed IS NOT NULL", "`seed` is not null"} {
+		got, ok := cyphertext.FilterImportConjuncts(term, "seed", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
+		require.True(t, ok)
+		require.Empty(t, got)
+	}
+	_, ok := cyphertext.FilterImportConjuncts("seed IS NULL", "seed", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
+	require.False(t, ok)
+	got, ok := cyphertext.FilterImportConjuncts("other IS NOT NULL", "seed", cyphertext.IdentifierUnqualifiedFold, splitTopLevelAndConjuncts)
+	require.True(t, ok)
+	require.Equal(t, "other IS NOT NULL", got)
 }

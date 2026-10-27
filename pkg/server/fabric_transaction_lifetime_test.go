@@ -73,7 +73,7 @@ func TestFabricRemoteTransactionWorkflow(t *testing.T) {
 	}
 	for _, transport := range []struct{ name, uri string }{{"http", remoteHTTP.URL}, {"bolt", remoteBolt}} {
 		dbName := "lifetime_" + transport.name
-		require.NoError(t, coordinator.dbManager.CreateCompositeDatabase(dbName, []multidb.ConstituentRef{{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read_write", URI: transport.uri, AuthMode: "oidc_forwarding"}}))
+		require.NoError(t, coordinator.dbManager.CreateCompositeDatabase(t.Context(), dbName, []multidb.ConstituentRef{{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read_write", URI: transport.uri, AuthMode: "oidc_forwarding"}}))
 		for _, ingress := range []string{"http", "bolt"} {
 			for _, action := range []string{"commit", "rollback", "implicit"} {
 				t.Run(transport.name+"/"+ingress+"/"+action, func(t *testing.T) {
@@ -181,7 +181,7 @@ func TestFabricIdleHTTPTransactionCompletes(t *testing.T) {
 		return result, location
 	}
 	const dbName = "idle_lifetime"
-	require.NoError(t, coordinator.dbManager.CreateCompositeDatabase(dbName, []multidb.ConstituentRef{
+	require.NoError(t, coordinator.dbManager.CreateCompositeDatabase(t.Context(), dbName, []multidb.ConstituentRef{
 		{Alias: "r", DatabaseName: "nornic", Type: "remote", AccessMode: "read_write", URI: remoteHTTP.URL, AuthMode: "oidc_forwarding"},
 		{Alias: "l", DatabaseName: "nornic", Type: "local", AccessMode: "read_write"},
 	}))
@@ -224,8 +224,8 @@ func TestFabricIdleHTTPTransactionCompletes(t *testing.T) {
 func TestFabricNestedUnitCallPublic(t *testing.T) {
 	ctx := context.Background()
 	server, authenticator := setupTestServer(t)
-	require.NoError(t, server.dbManager.CreateDatabase("nestedone"))
-	require.NoError(t, server.dbManager.CreateCompositeDatabase("nestedcomp", []multidb.ConstituentRef{{Alias: "one", DatabaseName: "nestedone", Type: "local", AccessMode: "read_write"}}))
+	require.NoError(t, server.dbManager.CreateDatabase(t.Context(), multidb.DatabaseCreateRequest{Name: "nestedone"}))
+	require.NoError(t, server.dbManager.CreateCompositeDatabase(t.Context(), "nestedcomp", []multidb.ConstituentRef{{Alias: "one", DatabaseName: "nestedone", Type: "local", AccessMode: "read_write"}}))
 	localHTTP := httptest.NewServer(server.buildRouter())
 	t.Cleanup(localHTTP.Close)
 	localBolt := fabricLifetimeBolt(t, server)

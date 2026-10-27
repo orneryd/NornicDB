@@ -2,6 +2,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 	"testing"
 
@@ -21,9 +22,9 @@ func TestStatementNormalizationKeepsAnonymousColumnIdentity(t *testing.T) {
 				require.NotContains(t, canonical, "leading")
 				require.NotContains(t, canonical, "trailing")
 				require.Contains(t, canonical, "column")
-				original, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.StatementEntry, false)
+				original, err := cypherantlr.ParseSyntax(context.Background(), source, cypherantlr.StatementEntry, false, cypherantlr.RawSource)
 				require.NoError(t, err)
-				normalized, err := cypherantlr.ParseSyntax(context.Background(), canonical, cypherantlr.StatementEntry, false)
+				normalized, err := cypherantlr.ParseSyntax(context.Background(), canonical, cypherantlr.StatementEntry, false, cypherantlr.AcceptedSource)
 				require.NoError(t, err)
 				var originalName, normalizedName string
 				for index, syntax := range []cypherantlr.StatementSyntax{original, normalized} {
@@ -42,7 +43,9 @@ func TestStatementNormalizationKeepsAnonymousColumnIdentity(t *testing.T) {
 				require.Equal(t, originalName, normalizedName)
 				start := strings.Index(canonical, normalizedName)
 				require.NotNil(t, rewrite)
-				require.Equal(t, originalName, source[rewrite.originalOffset(start, true):rewrite.originalOffset(start+len(normalizedName), false)])
+				span, ok := rewrite.OriginalSpan(cyphertext.Span{Start: start, End: start + len(normalizedName)}, cyphertext.SourceExtent)
+				require.True(t, ok)
+				require.Equal(t, originalName, source[span.Start:span.End])
 				again, cached := canonicalizeStatementText(t.Context(), source)
 				require.Equal(t, canonical, again)
 				require.Same(t, rewrite, cached)

@@ -1,6 +1,7 @@
 package resultmetadata
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"slices"
 
 	"github.com/orneryd/nornicdb/pkg/localization"
@@ -193,7 +194,7 @@ type Facts struct {
 
 // FactsProvider is the scope and result-schema owner's exact neutral interface.
 type FactsProvider interface {
-	StatementFacts(query string, incoming Scope, cypher25 bool) Facts
+	StatementFacts(query string, incoming Scope, cypher25 bool, stage cyphertext.SourceStage) Facts
 }
 
 // KnownFacts freezes a complete program. Unknown fields and cyclic subqueries
@@ -291,4 +292,51 @@ func cloneStatement(statement Statement) Statement {
 	}
 	statement.UnionAll = append([]bool(nil), statement.UnionAll...)
 	return statement
+}
+
+// SourceView projects retained byte spans to the caller's original source.
+// Accepted products stay immutable and share their identity view unchanged.
+func (f Facts) SourceView(source *cyphertext.Source) Facts {
+	if source == nil || source.Text == source.Original {
+		return f
+	}
+	valid := true
+	span := func(start, end int) (int, int) {
+		if start < 0 || end < 0 {
+			return start, end
+		}
+		mapped, ok := source.OriginalSpan(cyphertext.Span{Start: start, End: end}, cyphertext.SourceExtent)
+		if !ok {
+			valid = false
+			return 0, 0
+		}
+		return mapped.Start, mapped.End
+	}
+	if f.statement != nil {
+		statement := cloneStatement(*f.statement)
+		var project func(*Statement)
+		project = func(s *Statement) {
+			s.Start, s.End = span(s.Start, s.End)
+			for i := range s.Clauses {
+				c := &s.Clauses[i]
+				c.Start, c.End = span(c.Start, c.End)
+				if c.Call != nil && c.Call.Statement != nil {
+					project(c.Call.Statement)
+				}
+			}
+			for i := range s.Branches {
+				project(&s.Branches[i])
+			}
+		}
+		project(&statement)
+		f.statement = &statement
+	} else if f.unresolved.Position >= 0 {
+		if position, ok := source.OriginalOffset(f.unresolved.Position, true, cyphertext.SourceExtent); ok {
+			f.unresolved.Position = position
+		}
+	}
+	if !valid {
+		return UnresolvedFacts(Unresolved{Reason: ReasonParserDecline, Position: -1, Err: unresolvedError()})
+	}
+	return f
 }

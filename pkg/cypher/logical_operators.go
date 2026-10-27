@@ -1,6 +1,7 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
 )
 
@@ -158,7 +159,7 @@ func mayBeLogicalExpression(expr string) bool {
 		return true
 	}
 	for index := 0; index+3 < len(expr); index++ {
-		if expr[index] != ' ' {
+		if !cyphertext.IsWhitespaceAt(expr, index) {
 			continue
 		}
 		switch rest := expr[index+1:]; asciiLowerByte(rest[0]) {
@@ -333,16 +334,16 @@ func evaluateLogicalXor(operands []string, eval func(index int) (interface{}, bo
 func logicalNotOperand(expr string) (string, bool) {
 	expr = logicalOperandKey(expr)
 	if len(expr) <= len("NOT") || !strings.EqualFold(expr[:len("NOT")], "NOT") ||
-		!(isASCIISpace(expr[len("NOT")]) || expr[len("NOT")] == '(') {
+		!(cyphertext.IsWhitespaceAt(expr, len("NOT")) || expr[len("NOT")] == '(') {
 		return "", false
 	}
 	operand := strings.TrimSpace(expr[len("NOT"):])
 	if operand == "" || strings.IndexByte("=<>!*/%^.|,)]}", operand[0]) >= 0 {
 		return "", false
 	}
-	word, _, isWord := scanIdentifierToken(operand, 0)
+	word, isWord := cyphertext.ScanIdentifier(operand, 0)
 	if isWord {
-		switch upperASCII(word) {
+		switch upperASCII(word.Value) {
 		case "AS", "AND", "OR", "XOR", "IN", "IS", "STARTS", "ENDS", "CONTAINS":
 			return "", false
 		}

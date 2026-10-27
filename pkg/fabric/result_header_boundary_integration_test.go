@@ -192,6 +192,6 @@ func TestResultHeaderFabricBoundary(t *testing.T) {
 	require.Nil(t, result.Columns, "a cache miss must stay unknown, never query-parsed")
 }
 
-func (l *headerBoundaryLocal) ResultProjection(ctx context.Context, query string, incoming []string) resultmetadata.Projection {
-	return l.exec.ResultProjection(ctx, query, incoming)
+func (l *headerBoundaryLocal) ResultProjection(ctx context.Context, query string, incoming []string, stage cypher.SourceStage) resultmetadata.Projection {
+	return l.exec.ResultProjection(ctx, query, incoming, stage)
 }

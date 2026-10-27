@@ -1,10 +1,15 @@
 package cypher
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	nornicerrors "github.com/orneryd/nornicdb/pkg/errors"
+	"github.com/orneryd/nornicdb/pkg/localization"
 )
 
 // SemanticError describes a Cypher validation failure that must retain its
@@ -13,6 +18,9 @@ type SemanticError struct {
 	Code    string
 	Detail  string
 	Message string
+	// Source coordinates are recorded by their diagnostic producer, separately
+	// from prose about offsets in data/protocol errors.
+	sourceDiagnostic *sourceByteDiagnostic
 }
 
 // classifiedCypherError adds Neo4j/TCK classification to an existing typed
@@ -82,9 +90,30 @@ func newSemanticError(code, detail, message string) error {
 }
 
 // syntaxAdmissionError retains specific pattern diagnostics at grammar admission.
-func syntaxAdmissionError(source string, cause error) error {
+func syntaxAdmissionError(ctx context.Context, source string, stage SourceStage, cause error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	view := cyphertext.NewSource(ctx, source, stage)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if view.Err == nil {
+		source = view.Text
+		if err := malformedCallScopeError(ctx, source); err != nil {
+			return err
+		}
+	}
 	if invalidRelationshipPattern(source) {
 		return newSemanticError("Neo.ClientError.Statement.SyntaxError", "InvalidRelationshipPattern", "invalid variable-length relationship pattern")
+	}
+	var localized *localization.LocalizedError
+	if errors.As(cause, &localized) {
+		const code = "Neo.ClientError.Statement.SyntaxError"
+		// The grammar owns diagnostic identity and structured coordinates. The
+		// admission adapter adds transport classification without flattening it.
+		classified := localization.NewLocalizedError(code, localized.Message, cause)
+		return &classifiedCypherError{cause: fmt.Errorf("%s: %w", code, classified), code: code, detail: "UnexpectedSyntax"}
 	}
 	message := strings.ReplaceAll(cause.Error(), "mismatched input ", "Invalid input ")
 	message = strings.ReplaceAll(message, "extraneous input ", "Invalid input ")

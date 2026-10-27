@@ -4,6 +4,7 @@ package cypher
 import (
 	"context"
 	stderrors "errors"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 	"sync"
@@ -460,7 +461,7 @@ func mergeStatementSetItems(ctx context.Context, statement, label string) (items
 				items = append(items, mergeSetItem{text: assignment})
 			}
 		case pipelineClauseMerge:
-			parts := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]))
+			parts := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]), nil)
 			mergeKeys = appendPatternPropertyExpressions(mergeKeys, parts.pattern, label)
 			introduced := patternNodeLabels(parts.pattern)
 			for _, assignment := range mergeActionAssignments(parts.onCreate) {
@@ -504,7 +505,7 @@ func statementSetLabels(clauses []pipelineClause) (added map[string][]string, dy
 		case pipelineClauseSet:
 			note(splitSetAssignments(strings.TrimSpace(clause.text[len("SET"):])))
 		case pipelineClauseMerge:
-			parts := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]))
+			parts := splitMergeClauseActions(strings.TrimSpace(clause.text[len("MERGE"):]), nil)
 			note(mergeActionAssignments(parts.onCreate))
 			note(mergeActionAssignments(parts.onMatch))
 		}
@@ -550,7 +551,7 @@ func eachPatternElement(pattern string, visit func(opener byte, element string))
 			if pattern[index] == '[' {
 				closer = ']'
 			}
-			closing := findMatchingDelimiter(pattern, index, rune(pattern[index]), closer)
+			closing := cyphertext.FindMatchingDelimiter(pattern, index, rune(pattern[index]), closer, cyphertext.OpeningDelimiter)
 			if closing < 0 {
 				return
 			}
@@ -577,7 +578,7 @@ func appendPatternPropertyExpressions(keys map[string][]string, pattern, label s
 		if labels, err := parseLabelChain(chain); err != nil || !containsString(labels, label) {
 			return
 		}
-		closing := findMatchingDelimiter(inner, brace, '{', '}')
+		closing := cyphertext.FindMatchingDelimiter(inner, brace, '{', '}', cyphertext.OpeningDelimiter)
 		if closing < 0 {
 			return
 		}
@@ -614,13 +615,13 @@ func setItemKeepsMergeKey(item, property string, mergeKeys map[string][]string, 
 	}
 	var written map[string]interface{}
 	switch {
-	case strings.HasPrefix(right, "$") && isValidIdentifier(right[1:]):
+	case strings.HasPrefix(right, "$") && cyphertext.IsIdentifier(right[1:]):
 		parameter, ok := params[right[1:]].(map[string]interface{})
 		if !ok {
 			return false
 		}
 		written = parameter
-	case strings.HasPrefix(right, "{") && findMatchingDelimiter(right, 0, '{', '}') == len(right)-1:
+	case strings.HasPrefix(right, "{") && cyphertext.FindMatchingDelimiter(right, 0, '{', '}', cyphertext.OpeningDelimiter) == len(right)-1:
 		for _, pair := range splitTopLevelComma(right[1 : len(right)-1]) {
 			separator := findTopLevelMapKeyValueSeparator(pair)
 			if separator <= 0 || normalizePropertyKey(pair[:separator]) != property {
@@ -651,11 +652,11 @@ func isMergeKeyValue(value interface{}, expressions []string, params map[string]
 // expression; ok is false for anything else.
 func staticCommitValue(expression string, params map[string]interface{}) (interface{}, bool) {
 	expression = strings.TrimSpace(expression)
-	if strings.HasPrefix(expression, "$") && isValidIdentifier(expression[1:]) {
+	if strings.HasPrefix(expression, "$") && cyphertext.IsIdentifier(expression[1:]) {
 		value, ok := params[expression[1:]]
 		return value, ok
 	}
-	if value, quoted := decodeCypherQuotedString(expression); quoted {
+	if value, quoted := cyphertext.DecodeString(expression, cyphertext.AcceptedSource); quoted {
 		return value, true
 	}
 	if integer, err := strconv.ParseInt(expression, 10, 64); err == nil {
@@ -686,9 +687,9 @@ func containsKeyword(upper, keyword string) bool {
 		idx += searchFrom // Adjust to absolute position
 
 		// Check it's not part of a larger word
-		isWordStart := idx == 0 || (!isIdentByte(upper[idx-1]) && upper[idx-1] != '_')
+		isWordStart := idx == 0 || (!cyphertext.NamePartAt(upper, idx-1) && upper[idx-1] != '_')
 		end := idx + len(keyword)
-		isWordEnd := end >= len(upper) || (!isIdentByte(upper[end]) && upper[end] != '_')
+		isWordEnd := end >= len(upper) || (!cyphertext.NamePartAt(upper, end) && upper[end] != '_')
 
 		if isWordStart && isWordEnd {
 			return true

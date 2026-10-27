@@ -17,11 +17,11 @@ func TestRejectedManagedGrowthNeverReplays(t *testing.T) {
 			base := fixtureowner.Track(t, storage.NewMemoryEngine(), storage.ErrStorageClosed)
 			wal, err := storage.NewWAL(dir, storage.DefaultWALConfig())
 			require.NoError(t, err)
-			manager, err := NewDatabaseManager(storage.NewWALEngine(base, wal), nil)
+			manager, err := NewDatabaseManager(t.Context(), storage.NewWALEngine(base, wal), nil)
 			require.NoError(t, err)
 			defer manager.Close()
 			const db = "rejected_replay"
-			require.NoError(t, manager.CreateDatabase(db))
+			require.NoError(t, manager.CreateDatabase(t.Context(), DatabaseCreateRequest{Name: db}))
 			view, err := manager.GetStorage(db)
 			require.NoError(t, err)
 			for _, id := range []storage.NodeID{"a", "b"} {
@@ -35,7 +35,7 @@ func TestRejectedManagedGrowthNeverReplays(t *testing.T) {
 			}
 			require.NoError(t, err)
 			before, _, _ := manager.GetStorageSize(db)
-			require.NoError(t, manager.SetDatabaseLimits(db, &Limits{Storage: StorageLimits{MaxBytes: before}}))
+			require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, &Limits{Storage: StorageLimits{MaxBytes: before}}))
 			if entity == "node" {
 				err = view.UpdateNode(&storage.Node{ID: "n", Properties: map[string]any{"payload": strings.Repeat("x", 4096)}})
 			} else {
@@ -44,7 +44,7 @@ func TestRejectedManagedGrowthNeverReplays(t *testing.T) {
 			require.ErrorIs(t, err, ErrStorageLimitExceeded)
 			// Remove the quota before real recovery: absence of the rejected payload
 			// must be a journal property, not another admission check during replay.
-			require.NoError(t, manager.SetDatabaseLimits(db, nil))
+			require.NoError(t, manager.SetDatabaseLimits(t.Context(), db, nil))
 			require.NoError(t, manager.Close())
 			recovered, _, err := fixtureowner.OwnResult3[*storage.MemoryEngine, storage.ReplayResult](t, storage.ErrStorageClosed)(storage.RecoverFromWALWithResult(dir, ""))
 			require.NoError(t, err)

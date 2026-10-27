@@ -2,8 +2,8 @@ package antlr
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 )
 
@@ -21,7 +21,7 @@ func TrimSpaceContext(ctx context.Context, query string) (string, error) {
 			}
 		}
 		r, size := utf8.DecodeRuneInString(query[start:end])
-		if !unicode.IsSpace(r) {
+		if !cyphertext.IsWhitespace(r) {
 			break
 		}
 		start += size
@@ -34,7 +34,7 @@ func TrimSpaceContext(ctx context.Context, query string) (string, error) {
 			}
 		}
 		r, size := utf8.DecodeLastRuneInString(query[start:end])
-		if !unicode.IsSpace(r) {
+		if !cyphertext.IsWhitespace(r) {
 			break
 		}
 		end -= size

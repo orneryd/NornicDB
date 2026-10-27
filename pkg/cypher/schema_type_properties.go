@@ -1,6 +1,8 @@
 package cypher
 
 import (
+	"github.com/orneryd/nornicdb/internal/cyphertext"
+
 	"context"
 	"github.com/orneryd/nornicdb/internal/collection"
 	"sort"
@@ -147,7 +149,7 @@ func (e *StorageExecutor) callDbSchemaTypeProperties(ctx context.Context, nodes 
 func schemaTypeKey(names []string) string {
 	var key strings.Builder
 	for _, name := range names {
-		key.WriteString(":" + quoteSchemaName(name))
+		key.WriteString(":" + cyphertext.PrintIdentifier(name, nil, cyphertext.RawSource))
 	}
 	return key.String()
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/orneryd/nornicdb/internal/httpresponse"
 	"io"
 	"log/slog"
 	"net/http"
@@ -43,7 +44,7 @@ func (s *Server) handleDecay(w http.ResponseWriter, r *http.Request) {
 		"visibilityThreshold": info.VisibilityThreshold,
 		"flushInterval":       info.FlushInterval.String(),
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 // handleEmbedTrigger triggers the embedding worker to process nodes without embeddings.
@@ -84,7 +85,7 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 			"regenerate": true,
 			"message":    s.localizedText(w, r, localization.EmbeddingRegenerationStarted()),
 		}
-		s.writeJSON(w, http.StatusAccepted, response)
+		httpresponse.WriteJSON(w, http.StatusAccepted, response)
 
 		// Start background clearing and regeneration.
 		go func() {
@@ -153,7 +154,7 @@ func (s *Server) handleEmbedTrigger(w http.ResponseWriter, r *http.Request) {
 		"message":        s.localizedText(w, r, message),
 		"stats":          stats,
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 // handleEmbedStats returns embedding worker statistics.
@@ -199,7 +200,7 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 			"configured_provider":     s.config.EmbeddingProvider,
 			"vector_index_dimensions": vectorIndexDims,
 		}
-		s.writeJSON(w, http.StatusOK, response)
+		httpresponse.WriteJSON(w, http.StatusOK, response)
 		return
 	}
 	response := map[string]interface{}{
@@ -212,65 +213,73 @@ func (s *Server) handleEmbedStats(w http.ResponseWriter, r *http.Request) {
 		"configured_provider":     s.config.EmbeddingProvider,
 		"vector_index_dimensions": vectorIndexDims,
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
-// handleEmbedFailures lists durable terminal embedding failures without
-// returning node properties or embedding vectors.
-func (s *Server) handleEmbedFailures(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead) {
-		return
-	}
+type embeddingFailureOperation uint8
 
-	if r.Method != http.MethodGet {
-		s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.Request.Invalid")
+const (
+	embeddingFailureList embeddingFailureOperation = iota
+	embeddingFailureRetry
+)
+
+// handleEmbeddingFailures owns all-database admission and durable terminal
+// failure operations. Retry accepts an empty body or list to retry all failures.
+func (s *Server) handleEmbeddingFailures(w http.ResponseWriter, r *http.Request, operation embeddingFailureOperation) {
+	required := [2]auth.Permission{auth.PermRead, auth.PermWrite}
+	permissions := required[:1]
+	if operation == embeddingFailureRetry {
+		permissions = required[:]
+	}
+	if !s.authorizeAllDatabaseOperation(w, r, permissions...) {
 		return
 	}
-	limit := 100
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > 1000 {
-			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.Invalid", "limit must be between 1 and 1000")
+	switch operation {
+	case embeddingFailureList:
+		if r.Method != http.MethodGet {
+			s.writeNeo4jMethodNotAllowed(w, r, "Neo.ClientError.Request.Invalid")
 			return
 		}
-		limit = parsed
+		limit := 100
+		if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed < 1 || parsed > 1000 {
+				s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.Invalid", "limit must be between 1 and 1000")
+				return
+			}
+			limit = parsed
+		}
+		failures, err := s.db.EmbeddingFailures(r.Context(), limit)
+		if err != nil {
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
+			return
+		}
+		total := len(failures)
+		if stats := s.db.EmbedQueueStats(); stats != nil {
+			total = stats.Parked
+		}
+		httpresponse.WriteJSON(w, http.StatusOK, map[string]any{"failures": failures, "count": total, "returned": len(failures)})
+	case embeddingFailureRetry:
+		if r.Method != http.MethodPost {
+			s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
+			return
+		}
+		var request struct {
+			NodeIDs []storage.NodeID `json:"node_ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
+			s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.Invalid", "invalid retry request")
+			return
+		}
+		retried, err := s.db.RetryEmbeddingFailures(r.Context(), request.NodeIDs)
+		if err != nil {
+			s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
+			return
+		}
+		httpresponse.WriteJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "retried": retried})
+	default:
+		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", errors.New("invalid embedding failure operation"))
 	}
-	failures, err := s.db.EmbeddingFailures(r.Context(), limit)
-	if err != nil {
-		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
-		return
-	}
-	total := len(failures)
-	if stats := s.db.EmbedQueueStats(); stats != nil {
-		total = stats.Parked
-	}
-	s.writeJSON(w, http.StatusOK, map[string]any{"failures": failures, "count": total, "returned": len(failures)})
-}
-
-// handleEmbedFailureRetry restores selected terminal failures to the durable
-// pending queue. An empty request body or node_ids list retries all failures.
-func (s *Server) handleEmbedFailureRetry(w http.ResponseWriter, r *http.Request) {
-	if !s.authorizeAllDatabaseOperation(w, r, auth.PermRead, auth.PermWrite) {
-		return
-	}
-
-	if r.Method != http.MethodPost {
-		s.writeNeo4jPostRequired(w, r, "Neo.ClientError.Request.Invalid")
-		return
-	}
-	var request struct {
-		NodeIDs []storage.NodeID `json:"node_ids"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&request); err != nil && !errors.Is(err, io.EOF) {
-		s.writeNeo4jError(w, http.StatusBadRequest, "Neo.ClientError.Request.Invalid", "invalid retry request")
-		return
-	}
-	retried, err := s.db.RetryEmbeddingFailures(r.Context(), request.NodeIDs)
-	if err != nil {
-		s.writeBoundaryNeo4jError(w, r, http.StatusInternalServerError, "Neo.DatabaseError.General.UnknownError", err)
-		return
-	}
-	s.writeJSON(w, http.StatusAccepted, map[string]any{"accepted": true, "retried": retried})
 }
 
 // handleEmbedClear clears all embeddings from nodes (admin only).
@@ -296,7 +305,7 @@ func (s *Server) handleEmbedClear(w http.ResponseWriter, r *http.Request) {
 		"cleared": cleared,
 		"message": fmt.Sprintf("Cleared embeddings from %d nodes - use /nornicdb/embed/trigger to regenerate", cleared),
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 // handleSearchRebuild rebuilds search indexes from all nodes in the specified database.
@@ -356,7 +365,7 @@ func (s *Server) handleSearchRebuild(w http.ResponseWriter, r *http.Request) {
 		"database": dbName,
 		"message":  fmt.Sprintf("Search indexes rebuilt for database '%s'", dbName),
 	}
-	s.writeJSON(w, http.StatusOK, response)
+	httpresponse.WriteJSON(w, http.StatusOK, response)
 }
 
 // getOrCreateSearchService returns a cached search service for the database,
@@ -479,7 +488,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	continuationResume := req.QID != ""
 	searchStatus := s.db.GetDatabaseSearchStatus(dbName)
 	if !req.Relationships && !continuationResume && !idStart && !searchStatus.BM25Enabled && !searchStatus.VectorEnabled {
-		s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+		httpresponse.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 			"error":          "search is disabled for this database",
 			"database":       dbName,
 			"bm25_enabled":   false,
@@ -520,7 +529,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	// services, so this is free for the steady-state hot path.
 	if !continuationResume && !idStart {
 		if err := searchSvc.EnsureWarm(ctx); err != nil {
-			s.writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			httpresponse.WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 				"error":          "search index warming did not complete: " + err.Error(),
 				"database":       dbName,
 				"bm25_enabled":   searchStatus.BM25Enabled,
@@ -728,7 +737,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}))
 	}
 
-	s.writeJSON(w, http.StatusOK, results)
+	httpresponse.WriteJSON(w, http.StatusOK, results)
 }
 
 func (s *Server) writeSearchContinuationError(w http.ResponseWriter, _ *http.Request, err error) {
@@ -757,7 +766,7 @@ func (s *Server) writeSearchContinuationError(w http.ResponseWriter, _ *http.Req
 		body["request_status"] = "page_size_exceeded"
 		body["max_page_size"] = oversized.MaxPageSize
 	}
-	s.writeJSON(w, status, body)
+	httpresponse.WriteJSON(w, status, body)
 }
 
 func (s *Server) writeSearchContinuationPage(w http.ResponseWriter, r *http.Request, owner, database string, page *search.SearchContinuationPage) {
@@ -959,5 +968,5 @@ func (s *Server) handleSimilar(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.writeJSON(w, http.StatusOK, searchResults)
+	httpresponse.WriteJSON(w, http.StatusOK, searchResults)
 }

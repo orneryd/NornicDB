@@ -6,6 +6,7 @@ package cypher
 
 import (
 	"context"
+	"github.com/orneryd/nornicdb/internal/cyphertext"
 	"strconv"
 	"strings"
 
@@ -45,7 +46,7 @@ var PluginFunctionList func() []PluginFunctionInfo
 var PluginFunctionLookup func(name string) (handler interface{}, found bool)
 
 func isFunctionCall(expr, funcName string) bool {
-	return isFunctionCallWS(expr, funcName)
+	return inspectFunctionCall(expr, namedFunctionCall, funcName, nil)
 }
 
 // evaluateExpression evaluates an expression for a single node context.
@@ -102,8 +103,11 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 			head = head[:len("allShortestPaths")]
 		}
 		if equalFoldASCII(head[:len("shortestPath")], "shortestpath") || equalFoldASCII(head, "allshortestpaths") {
-			if name, inner, ok := parseFunctionCallWS(expr); ok &&
-				(strings.EqualFold(name, "shortestPath") || strings.EqualFold(name, "allShortestPaths")) {
+			var callFacts1 functionCallFacts
+			if ok := inspectFunctionCall(expr, qualifiedFunctionCall, "", &callFacts1); ok &&
+				(strings.EqualFold(callFacts1.name, "shortestPath") || strings.EqualFold(callFacts1.name, "allShortestPaths")) {
+				name, inner := callFacts1.name, callFacts1.inner
+
 				if value, handled, err := e.evaluateShortestPathValue(ctx, name, inner, nodes); handled {
 					if err != nil {
 						recordExpressionFailure(ctx, err)
@@ -117,7 +121,7 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 		// A map projection (o {.s}, n {.*, k: 1}) has one implementation, the
 		// row evaluator's (evaluateRowMapProjection), whatever evaluates it:
 		// SET n = o {.s} among others (#907).
-		if _, _, projection := rowMapProjectionSplit(expr); projection {
+		if _, _, projection := mapProjectionSplit(expr, mapProjectionRuntime); projection {
 			value, _ := e.checkedPropertyExpression(ctx, expr, entityRow(ctx, nodes, rels))
 			return value
 		}
@@ -150,12 +154,12 @@ func (e *StorageExecutor) evaluateExpressionWithContextFull(ctx context.Context,
 	// it, []string / []float64 / map[string]any params keep their
 	// declared shape through reduce(), list comprehensions, SET, and
 	// every other expression context.
-	if v, ok := resolveDirectParamRef(ctx, expr); ok {
+	if v, ok := resolveValueReference(ctx, expr, parameterName); ok {
 		return v
 	}
 	// Resolve dotted/bracketed parameter map paths like $d.uuid and
 	// $d['uuid'] as typed values.
-	if v, ok := resolveParamPathRef(ctx, expr); ok {
+	if v, ok := resolveValueReference(ctx, expr, parameterPath); ok {
 		return normalizeExpressionValue(v)
 	}
 	if baseExpr, property, ok := splitPostfixPropertyAccess(expr); ok {
@@ -232,7 +236,7 @@ func splitPostfixPropertyAccess(expr string) (string, string, bool) {
 	property := strings.TrimSpace(expr[lastDot+1:])
 	if isBacktickQuotedName(property) {
 		property = normalizePropertyKey(property)
-	} else if !isValidIdentifier(property) {
+	} else if !cyphertext.IsIdentifier(property) {
 		return "", "", false
 	}
 	base := strings.TrimSpace(expr[:lastDot])
@@ -258,9 +262,9 @@ func isSimpleIdentifierOrProperty(expr string) bool {
 				return false
 			}
 			expectIdentStart = true
-		case isIdentStartByte(c):
+		case cyphertext.NameStartAt(expr, i):
 			expectIdentStart = false
-		case c >= '0' && c <= '9':
+		case cyphertext.IsDigit(c):
 			if expectIdentStart {
 				return false
 			}
@@ -273,7 +277,7 @@ func isSimpleIdentifierOrProperty(expr string) bool {
 
 func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr string, nodes map[string]*storage.Node, rels map[string]*storage.Edge, paths map[string]*PathResult) (interface{}, bool) {
 	if isWholeCypherQuotedString(expr) {
-		if decoded, ok := decodeCypherQuotedString(expr); ok {
+		if decoded, ok := cyphertext.DecodeString(expr, cyphertext.AcceptedSource); ok {
 			return decoded, true
 		}
 	}
@@ -282,7 +286,7 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 		return value, true
 	}
 
-	if exprCanBeNumber(expr) {
+	if numericExpressionAccepted(expr, numericValuePrefix) {
 		if num, err := strconv.ParseInt(expr, 10, 64); err == nil {
 			return num, true
 		}
@@ -358,15 +362,4 @@ func (e *StorageExecutor) evaluateExpressionFastLeaf(ctx context.Context, expr s
 	}
 
 	return nil, false
-}
-
-func exprCanBeNumber(expr string) bool {
-	if expr == "" {
-		return false
-	}
-	first := expr[0]
-	if first >= '0' && first <= '9' {
-		return true
-	}
-	return first == '-' && len(expr) > 1 && expr[1] >= '0' && expr[1] <= '9'
 }
