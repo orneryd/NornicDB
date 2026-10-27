@@ -1,9 +1,9 @@
+// Author of NOR-291 projection changes: Codex implementation lane, 2026-10-27; TJ rebase 2026-10-29.
 // Package replication provides distributed replication for NornicDB.
 package replication
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -23,10 +23,12 @@ type StorageAdapter struct {
 	engine storage.Engine
 
 	// Persistent WAL for replication commands
-	wal         *storage.WAL
-	walDir      string
-	walMu       sync.RWMutex // Protects wal and walPosition
-	walPosition atomic.Uint64
+	wal               *storage.WAL
+	walDir            string
+	walMu             sync.RWMutex // Protects wal and walPosition
+	walPosition       atomic.Uint64
+	projectedIDs      map[string]struct{} // Retained WAL identities, protected by walMu.
+	projectionLoadErr error               // Immutable startup result; unreadable history cannot be projected safely.
 
 	// In-memory WAL for fast streaming (avoids re-reading wal.log continuously).
 	memWALMu sync.RWMutex
@@ -100,7 +102,9 @@ func NewStorageAdapterWithWAL(engine storage.Engine, walDir string) (*StorageAda
 	}
 
 	// Load existing WAL position
-	_ = adapter.loadWALPosition()
+	// Preserve storage.WAL's opening/repair contract. Once open, do not admit
+	// an application whose prior projection identity could not be reconstructed.
+	adapter.projectionLoadErr = adapter.loadWALPosition()
 
 	// Start async WAL writer
 	adapter.walWg.Add(1)
@@ -116,6 +120,23 @@ func (a *StorageAdapter) loadWALPosition() error {
 	if a.wal != nil {
 		a.walPosition.Store(a.wal.Sequence())
 	}
+	entries, err := storage.ReadWALEntriesFromDir(a.walDir)
+	if err != nil {
+		return localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
+	}
+	a.projectedIDs = make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		if entry.Operation != storage.OperationType("replication_command") {
+			continue
+		}
+		record, err := decodeReplicationWALRecord(entry)
+		if err != nil {
+			return localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
+		}
+		if id := projectionCommandID(record.Command); id != "" {
+			a.projectedIDs[id] = struct{}{}
+		}
+	}
 	return nil
 }
 
@@ -126,6 +147,9 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 
 	if err := retiredCommandError(cmd.Type); err != nil {
 		return err
+	}
+	if a.projectionLoadErr != nil {
+		return a.projectionLoadErr
 	}
 
 	// Decode once before publishing to the replication WAL. An unreadable
@@ -171,14 +195,11 @@ func (a *StorageAdapter) ApplyCommand(cmd *Command) error {
 		// Channel full - fall back to synchronous write to avoid blocking
 		// This should be rare with a 1000-item buffer
 		a.walMu.Lock()
-		if err := a.wal.Append(storage.OperationType("replication_command"), record); err != nil {
+		if err := a.appendProjectionLocked(record); err != nil {
 			a.walMu.Unlock()
-			return localizedError(localization.ReplicationStorageWALAppendFailed(err), err)
+			return err
 		}
-		pos := a.wal.Sequence()
-		a.walPosition.Store(pos)
 		a.walMu.Unlock()
-		a.appendToMemWAL(pos, record, cmd)
 	}
 
 	// Execute the command immediately (don't wait for WAL write)
@@ -278,42 +299,24 @@ func (a *StorageAdapter) flushWALBatch() {
 	// Write each entry to WAL in a single lock to reduce contention
 	// The WAL's internal buffering will batch the actual file writes
 	a.walMu.Lock()
-	positions := make([]uint64, 0, len(batch))
 	for _, req := range batch {
 		if req.barrier {
 			// Sentinel for FlushWAL — no WAL append. The post position
 			// signal happens below so callers are blocked until every
 			// real append in this batch has completed.
-			positions = append(positions, 0)
 			continue
 		}
-		if err := a.wal.Append(storage.OperationType("replication_command"), req.record); err != nil {
+		if err := a.appendProjectionLocked(req.record); err != nil {
 			// Send error to waiting request
 			select {
-			case req.errCh <- localizedError(localization.ReplicationStorageWALAppendFailed(err), err):
+			case req.errCh <- err:
 			default:
 			}
-			positions = append(positions, 0) // Placeholder for failed entry
 			continue
 		}
-		// Get position after append (sequence is incremented atomically by WAL)
-		pos := a.wal.Sequence()
-		positions = append(positions, pos)
-
-	}
-	// Update global position
-	if len(batch) > 0 {
-		a.walPosition.Store(a.wal.Sequence())
 	}
 	currentPos := a.wal.Sequence()
 	a.walMu.Unlock()
-
-	// Update in-memory WAL outside the lock to avoid deadlock
-	for i, req := range batch {
-		if positions[i] > 0 {
-			a.appendToMemWAL(positions[i], req.record, req.record.Command)
-		}
-	}
 
 	// Release any barrier waiters now that every real entry in the
 	// batch has been appended and walPosition has been updated.
@@ -502,13 +505,8 @@ func (a *StorageAdapter) GetWALEntries(fromPosition uint64, maxEntries int) ([]*
 		}
 		// Never return a later position after dropping an unreadable command:
 		// the receiver could acknowledge a window with a missing write.
-		var rec replicationWALRecord
-		if err := json.Unmarshal(storageEntry.Data, &rec); err != nil {
-			err = fmt.Errorf("replication WAL entry %d: %w", pos, err)
-			return nil, localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
-		}
-		if rec.Command == nil {
-			err := fmt.Errorf("replication WAL entry %d has no command", pos)
+		rec, err := decodeReplicationWALRecord(storageEntry)
+		if err != nil {
 			return nil, localizedError(localization.ReplicationStorageReadWALEntriesFailed(err), err)
 		}
 		entries = append(entries, &WALEntry{
